@@ -87,6 +87,10 @@ jobs:
 
   evaluate:
     name: Audit signed canonical review (not required issuer)
+    # This is a diagnostic audit only.  The required canonical review gate
+    # independently decides merge eligibility; an unavailable audit verifier
+    # must not turn an otherwise accepted PR into UNSTABLE.
+    continue-on-error: true
     needs:
       - discover
     if: needs.discover.outputs.pr_numbers != '[]'

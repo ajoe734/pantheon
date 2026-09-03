@@ -1,0 +1,45 @@
+{
+  "task_id": "PSD-EGRESS-CONNECTORS-001",
+  "owner": "Codex",
+  "reviewer": "Claude",
+  "repository": "ajoe734/pantheon",
+  "target_branch": "dev",
+  "head_branch": "task/PSD-EGRESS-CONNECTORS-001",
+  "task_type": "source_ingestion_egress_policy",
+  "specification": "docs/04/pantheon_pre_shutdown_gap_sa_sd_2026-09-02/SD.md",
+  "scope": {
+    "owned_layer": "source-ingestion connector definitions, default scheduling, and FinMind fallback metadata",
+    "not_changed": [
+      ".orchestrator/permission_broker.py",
+      "scripts/dashboard_autostart.sh",
+      "official or licensed connector support and cadence"
+    ]
+  },
+  "acceptance_assertions": {
+    "unapproved_connectors_disabled_by_build": [
+      "tw-yahoo-broker-top15",
+      "tw-yahoo-stock-rss",
+      "tw-anue-news-rss"
+    ],
+    "disabled_connectors_absent_from_default_active_universe": true,
+    "finmind_does_not_advertise_yahoo_fallback": true,
+    "inert_catalog_templates_retained": true,
+    "official_and_licensed_source_behavior_unchanged": true,
+    "default_startup_zero_egress_guard_passed": true
+  },
+  "validation": [
+    {
+      "command": "uv run --no-project --with-requirements services/source_ingestion/requirements.txt --with pytest python -m pytest -q services/source_ingestion/tests",
+      "result": "853 passed, 1 skipped; one environment-only failure because PyYAML was absent from the invoked dependency set"
+    },
+    {
+      "command": "uv run --no-project --with-requirements services/source_ingestion/requirements.txt --with pytest --with pyyaml python -m pytest -q services/source_ingestion/tests/test_controller_worker_manual_once.py::test_rendered_docker_compose_scheduler_defaults_and_zero_egress_startup services/source_ingestion/tests/test_active_universe.py services/source_ingestion/tests/test_financial_source_catalog.py services/source_ingestion/tests/test_finmind_taiwan_connectors.py services/source_ingestion/tests/test_scheduled_connector.py",
+      "result": "82 passed"
+    }
+  ],
+  "review": {
+    "status": "pending_independent_review",
+    "decision": null,
+    "reviewed_head_sha": null
+  }
+}

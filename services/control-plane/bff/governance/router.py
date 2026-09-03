@@ -147,9 +147,10 @@ def create_governance_router(
 
     def _service() -> GovernanceService:
         nonlocal resolved_service
-        if resolved_service is None:
+        current_store = _get_store()
+        if resolved_service is None or getattr(resolved_service, "read_store", None) is not current_store:
             resolved_service = GovernanceService(
-                _get_store(),
+                current_store,
                 utc_now=_now,
                 page_slice_fn=_page,
                 submit_action=submit_action,
@@ -223,7 +224,17 @@ def create_governance_router(
         else:
             page_items, next_token = _page(items, page_token, page_size)
         meta = _snapshot(snapshot_at)
-        meta["surfaces"] = {surface_key: surface}
+        surfaces = {surface_key: surface}
+        if surface_key == "governance_review_queue":
+            surfaces["review_queue"] = surface
+            surfaces["allowedActions"] = {
+                "status": surface.get("status", "ok"),
+                "available": surface.get("status") != "unavailable",
+                "snapshot_at": snapshot_at,
+            }
+        elif surface_key == "governance_approval_queue":
+            surfaces["approval_queue"] = surface
+        meta["surfaces"] = surfaces
         staleness = _staleness()
         if staleness is not None:
             meta["staleness"] = staleness
@@ -542,6 +553,47 @@ def create_governance_router(
         missing = [field for field in required if payload.get(field) in (None, "")]
         if missing:
             _fail(503, "DEPENDENCY_UNAVAILABLE", "Mutation review evidence is incomplete", f"Missing fields: {missing}")
+        return payload
+
+    @router.get("/api/v1/operator/rollback-review/{rollback_id}")
+    async def get_rollback_review(
+        rollback_id: str,
+        authorization: Optional[str] = Header(default=None),
+    ) -> Dict[str, Any]:
+        identity = _identity(authorization)
+
+        review = _get_store().get_rollback_review(rollback_id)
+        if not review:
+            _fail(404, "RESOURCE_NOT_FOUND", "Rollback review not found", f"Rollback review {rollback_id} does not exist")
+
+        snapshot_at = (
+            ((review.get("meta") or {}).get("snapshot_at"))
+            or utc_now_rfc3339()
+        )
+        meta = dict(review.get("meta") or {})
+        meta["snapshot_at"] = snapshot_at
+        surfaces = dict(meta.get("surfaces") or {})
+        surfaces.setdefault(
+            "rollback_review",
+            {"status": "ok", "snapshot_at": snapshot_at, "available": True},
+        )
+        surfaces.setdefault(
+            "position_data",
+            {"status": "ok", "snapshot_at": snapshot_at, "available": True},
+        )
+        surfaces.setdefault(
+            "allowedActions",
+            {
+                "status": "ok" if review.get("allowedActions") is not None else "degraded",
+                "snapshot_at": snapshot_at,
+                "available": review.get("allowedActions") is not None,
+                "missing_message": None if review.get("allowedActions") is not None else "Rollback approval authority unavailable.",
+            },
+        )
+        meta["surfaces"] = surfaces
+
+        payload = dict(review)
+        payload["meta"] = meta
         return payload
 
     # 17-23. Consultation session read surfaces ------------------------

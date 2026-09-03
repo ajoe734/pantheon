@@ -452,7 +452,8 @@ _CANONICAL_DEFINITIONS: tuple[ConnectorDefinition, ...] = (
         required_pit_fields=("event_time", "available_time", "ingest_time"),
         default_limits={"max_records": 50, "max_bytes": 1048576, "timeout_seconds": 15, "max_rate_per_second": 2.0},
         allowed_host_patterns=("tw.stock.yahoo.com",),
-        definition_state=DefinitionState.SUPPORTED,
+        definition_state=DefinitionState.DISABLED_BY_BUILD,
+        disabled_reason="Unapproved Yahoo Taiwan HTML egress is disabled by build policy",
         test_manifest_ref="evidence://connector-definition/tw-yahoo-broker-top15",
     ),
     ConnectorDefinition(
@@ -478,7 +479,8 @@ _CANONICAL_DEFINITIONS: tuple[ConnectorDefinition, ...] = (
         required_pit_fields=("event_time", "available_time", "ingest_time"),
         default_limits={"max_records": 50, "max_bytes": 1048576, "timeout_seconds": 15, "max_rate_per_second": 1.0},
         allowed_host_patterns=("tw.stock.yahoo.com", "finance.yahoo.com"),
-        definition_state=DefinitionState.SUPPORTED,
+        definition_state=DefinitionState.DISABLED_BY_BUILD,
+        disabled_reason="Unapproved Yahoo Taiwan RSS egress is disabled by build policy",
         test_manifest_ref="evidence://connector-definition/tw-yahoo-stock-rss",
     ),
     ConnectorDefinition(
@@ -504,7 +506,8 @@ _CANONICAL_DEFINITIONS: tuple[ConnectorDefinition, ...] = (
         required_pit_fields=("event_time", "available_time", "ingest_time"),
         default_limits={"max_records": 50, "max_bytes": 1048576, "timeout_seconds": 15, "max_rate_per_second": 1.0},
         allowed_host_patterns=("news.cnyes.com",),
-        definition_state=DefinitionState.SUPPORTED,
+        definition_state=DefinitionState.DISABLED_BY_BUILD,
+        disabled_reason="Anue RSS endpoint approval was not established; egress is disabled by build policy",
         test_manifest_ref="evidence://connector-definition/tw-anue-news-rss",
     ),
     ConnectorDefinition(
