@@ -30,6 +30,7 @@ __pycache__/
 .orchestrator/provider_capabilities.json
 .orchestrator/state.json
 .orchestrator/supervisor.pid
+.orchestrator/supervisor.lock
 .orchestrator/watchdog-state.json
 .orchestrator/worker-runtime/
 #.orchestrator/task-briefs/

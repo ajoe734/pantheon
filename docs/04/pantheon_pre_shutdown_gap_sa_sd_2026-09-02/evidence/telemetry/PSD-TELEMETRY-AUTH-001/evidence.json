@@ -1,0 +1,30 @@
+{
+  "task_id": "PSD-TELEMETRY-AUTH-001",
+  "owner": "Codex",
+  "reviewer": "Claude",
+  "repository": "ajoe734/pantheon",
+  "target_branch": "dev",
+  "head_branch": "task/PSD-TELEMETRY-AUTH-001",
+  "task_type": "bootstrap_telemetry_replay_authorization",
+  "source_evidence_head": "66845dd5d97c080cdeda47609b9d63fd2b398d97",
+  "scope": [
+    "scripts/bootstrap.sh",
+    "tests/scripts/test_bootstrap_telemetry_replay.py"
+  ],
+  "acceptance_assertions": {
+    "missing_operator_token_skips_replay_and_continues": true,
+    "explicit_skip_bypasses_replay_and_continues": true,
+    "caller_operator_token_is_forwarded_only_to_replay_invocation": true,
+    "service_token_is_not_substituted_or_elevated": true,
+    "tenant_precedence_matches_deployed_contract": true,
+    "rejected_operator_token_fails_bootstrap": true,
+    "captured_output_does_not_expose_token": true,
+    "production_credentials_or_hosted_execution_changed": false
+  },
+  "validation": {
+    "shell_syntax": "bash -n scripts/bootstrap.sh",
+    "hermetic_test_command": "uv run --with pytest pytest -q tests/scripts/test_bootstrap_telemetry_replay.py",
+    "hermetic_test_result": "5 passed"
+  },
+  "credential_material_recorded": false
+}

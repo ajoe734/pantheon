@@ -1,0 +1,66 @@
+{
+  "schema_version": "pantheon.review-evidence.v1",
+  "task_id": "PSD-RUNTIME-RECOVERY-001",
+  "title": "Deliver machine-neutral supervisor runtime reconstruction and genesis task-store guard",
+  "recorded_at": "2026-09-02T23:45:00Z",
+  "owner": "Claude",
+  "reviewer": "Codex",
+  "target_repo": "pantheon",
+  "task_class": "development_tooling",
+  "source_ref": {
+    "gap": "docs/04/pantheon_pre_shutdown_gap_sa_sd_2026-09-02/GAP_REPORT.md#4.5-psd-gap-05",
+    "sa": "docs/04/pantheon_pre_shutdown_gap_sa_sd_2026-09-02/SA.md",
+    "sd": "docs/04/pantheon_pre_shutdown_gap_sa_sd_2026-09-02/SD.md#6-psd-05"
+  },
+  "scope": {
+    "owned": [
+      "scripts/bootstrap-orchestrator-runtime.sh: idempotent, --dry-run fresh-host runtime bootstrap",
+      "scripts/promote_supervisor_runtime.py: PANTHEON_DEPLOY_ROOT machine-neutral deployment layout",
+      "scripts/seed_task_state_v2.py: genuinely empty-only V2 journal genesis path",
+      "focused pytest coverage for both scripts"
+    ],
+    "not_changing": [
+      ".orchestrator/config.json (already machine-neutral via merged OPS-PROVIDER-CONFIG-PORTABLE-001)",
+      "supervisor_watchdog_install.py, supervisor_runtime_health.py (already command-root aware; unmodified)",
+      "generated runtime state, secrets, or any live host artifact"
+    ],
+    "composes_with": [
+      "scripts/promote_supervisor_runtime.py, scripts/supervisor_watchdog_install.py, scripts/supervisor_runtime_health.py",
+      ".orchestrator/rewrite/task_state_store.py V2 event log"
+    ]
+  },
+  "reconciliation_note": "Origin/ops/bootstrap-orchestrator-runtime (PR #5521, still open, commits without governed task trailers) contained a first implementation. This delivery is a from-scratch reconciliation, not a port: it keeps the same bootstrap-orchestrator-runtime.sh phase design and PANTHEON_DEPLOY_ROOT approach, adds a clean-source-commit preflight check the prior branch lacked, and replaces seed_task_state_genesis.py's design, which populated the genesis event from ai-status.json's task census by default -- a direct violation of SD.md 6.3 ('must never read task rows from ai-status.json, archived projections, or a product API') and SA.md architecture invariant 9 ('may not import a derived projection'). scripts/seed_task_state_v2.py here always writes an empty ({}) genesis state, has no status-file/projection-reading code path at all, requires an explicit non-empty --source, and additionally refuses when the journal snapshot reports ignored_partial_tail_bytes (an ambiguous torn-write tail that the prior design's exact same check would have silently treated as an empty journal). Reviewer reopen (Codex, 2026-09-02T23:28:49Z) found the dev-bridge keypair phase in scripts/bootstrap-orchestrator-runtime.sh was not safely idempotent after interruption: it checked only the authority file's existence to decide whether the pair was already minted, so an interruption between the authority write and the signer write left the signer permanently missing on every subsequent run. Fixed by requiring both files present to skip, and failing closed with an explicit remedy when exactly one is present. Covered by test_partial_keypair_state_fails_closed and test_real_run_mints_keypair_then_second_run_is_idempotent, both real (non-dry-run) invocations via a test-only BOOTSTRAP_ORCHESTRATOR_STOP_AFTER_KEYPAIR seam. The reviewer also found the acceptance_mapping text below rendered the health-probe command's --repo/--config-path values as empty strings; corrected to name the actual $COMMAND_ROOT/$LIVE_CONFIG variables the script passes.",
+  "verification": {
+    "result": "PASS",
+    "commands": [
+      "bash -n scripts/bootstrap-orchestrator-runtime.sh",
+      "pytest -q scripts/test_bootstrap_orchestrator_runtime.py scripts/test_seed_task_state_v2.py scripts/test_promote_supervisor_runtime.py scripts/test_supervisor_watchdog_install.py scripts/test_supervisor_runtime_health.py scripts/test_verify_task_state_store.py .orchestrator/rewrite/test_task_state_store.py"
+    ],
+    "results": [
+      "bash -n: syntax OK",
+      "98 passed, 1 skipped (skip: real bwrap present on minimal PATH in this sandbox, covered by the explicit-failure bwrap-exit variant instead)"
+    ]
+  },
+  "acceptance_mapping": {
+    "Runtime reconstruction uses host-derived paths rather than historical machine paths": "PANTHEON_DEPLOY_ROOT / PANTHEON_STATUS_ROOT env overrides with HOME-relative defaults in bootstrap-orchestrator-runtime.sh and promote_supervisor_runtime.py; provider homes already machine-neutral in .orchestrator/config.json via merged OPS-PROVIDER-CONFIG-PORTABLE-001",
+    "Fresh-host bootstrap is idempotent": "existing key/worktree files are reused rather than regenerated (see test_dry_run_is_idempotent, and file-exists guards in scripts/bootstrap-orchestrator-runtime.sh phases 2-3)",
+    "Missing V2 event log can be initialized only through an explicit safe genesis path": "scripts/seed_task_state_v2.py: refuses any journal with event_count>0 or ignored_partial_tail_bytes>0; requires non-empty --source; always writes empty state",
+    "Health probe checks exact running command identity": "scripts/bootstrap-orchestrator-runtime.sh phase 4 invokes scripts/supervisor_runtime_health.py --repo \"$COMMAND_ROOT\" --config-path \"$LIVE_CONFIG\" --require-watchdog (unmodified, already command-root aware; see scripts/test_supervisor_runtime_health.py)",
+    "Existing ops/bootstrap-orchestrator-runtime work is audited and delivered through the development-tooling flow": "this task branch/PR carries the reconciled delivery with governed commit trailers; PR #5521 is superseded by this delivery, not merged as-is, due to the genesis-source defect documented above"
+  },
+  "residual_risks": [
+    "Not exercised against a real fresh host: bwrap userns capability, systemd lingering, and the promote/watchdog/health chain are covered by existing focused suites and mocked/dry-run bootstrap coverage, not a live rebuild.",
+    "scripts/bootstrap_projection_schema.py and its docker-compose.yml wiring from the prior ops branch address a separate trade-journey-projection bring-up gap; they are out of this task's declared artifact scope and are left for the owning lane to reconcile separately.",
+    "PR #5521 (origin/ops/bootstrap-orchestrator-runtime) remains open with its non-compliant genesis design; it should be closed/superseded once this task's PR merges so it is not merged independently."
+  ],
+  "review_handoff": {
+    "status": "ready_for_independent_review",
+    "reviewer": "Codex",
+    "checks": [
+      "Confirm scripts/seed_task_state_v2.py has no code path that reads ai-status.json, an archived projection, or any product API into the genesis state",
+      "Confirm scripts/bootstrap-orchestrator-runtime.sh phases match SD.md 6.2 items 1-9 in order",
+      "Confirm the cited pytest command is reproducible and covers SD.md 6.4's listed cases",
+      "Confirm no generated runtime state, secrets, or host-specific paths were committed"
+    ]
+  }
+}

@@ -271,14 +271,37 @@ if [[ "$SKIP_TELEMETRY_REPLAY" == "true" ]]; then
   echo "==> [4/5] Skipping telemetry DLQ replay (--skip-telemetry-replay flag set)"
 else
   echo "==> [4/5] Replaying telemetry DLQ write-failure entries..."
-  docker compose "${COMPOSE_ARGS[@]}" exec -T telemetry python - <<'PY'
+  # The replay endpoint requires operator/admin authority. Forward only the
+  # caller-supplied operator credential to this one container invocation; the
+  # bootstrap must never mint authority or substitute a service token.
+  docker compose "${COMPOSE_ARGS[@]}" exec -T \
+    -e "PANTHEON_TELEMETRY_OPERATOR_TOKEN=${PANTHEON_TELEMETRY_OPERATOR_TOKEN:-}" \
+    telemetry python - <<'PY'
 import json
+import os
 import sys
 import urllib.error
 import urllib.request
 
+token = (os.getenv("PANTHEON_TELEMETRY_OPERATOR_TOKEN") or "").strip()
+tenant = (
+    (os.getenv("PANTHEON_TELEMETRY_SERVICE_TENANTS") or "").split(",")[0].strip()
+    or (os.getenv("PANTHEON_TENANT_ID") or "").strip()
+    or "default"
+)
+
+if not token:
+    print(
+        "    telemetry DLQ replay skipped: set PANTHEON_TELEMETRY_OPERATOR_TOKEN "
+        "to an operator or admin credential to enable it",
+        file=sys.stderr,
+    )
+    sys.exit(0)
+
 url = "http://127.0.0.1:8083/api/telemetry/replay"
 req = urllib.request.Request(url, data=b"", method="POST")
+req.add_header("Authorization", "Bearer " + token)
+req.add_header("X-Tenant-Id", tenant)
 try:
     with urllib.request.urlopen(req, timeout=30) as resp:
         body = resp.read().decode()

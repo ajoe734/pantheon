@@ -98,8 +98,7 @@
   "coordination": {
     "repositories": {
       "pantheon": {
-        "repo": "ajoe734/pantheon",
-        "integration_path": "/tmp/pantheon-integration-checkout"
+        "repo": "ajoe734/pantheon"
       },
       "execute_plans": {
         "local_path": "../code/execute-plans"

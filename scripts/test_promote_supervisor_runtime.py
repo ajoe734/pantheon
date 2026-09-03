@@ -653,3 +653,40 @@ def test_replace_supervisor_survives_coordination_code_sync_failure(
     assert result["exit_code"] == 0
     assert result["stopped_pid"] == 41
     assert result["launched_pid"] == 42
+
+
+def test_deploy_root_defaults_to_established_operator_path(tmp_path: Path) -> None:
+    env = dict(os.environ)
+    env.pop("PANTHEON_DEPLOY_ROOT", None)
+    output = subprocess.run(
+        [sys.executable, "-c", "import promote_supervisor_runtime as m; print(m.DEPLOY_ROOT)"],
+        cwd=str(Path(__file__).resolve().parent),
+        env=env,
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    assert output.stdout.strip() == "/home/lupin/pantheon-ci-deploy"
+
+
+def test_deploy_root_honors_env_override_and_expands_user(tmp_path: Path) -> None:
+    env = dict(os.environ)
+    env["PANTHEON_DEPLOY_ROOT"] = "~/custom-deploy-root"
+    output = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            "import promote_supervisor_runtime as m; "
+            "print(m.DEPLOY_ROOT); print(m.LIVE_SUPERVISOR_CONFIG_PATH); print(m.COMMAND_RUNTIME_PARENT)",
+        ],
+        cwd=str(Path(__file__).resolve().parent),
+        env=env,
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    lines = output.stdout.strip().splitlines()
+    expected_root = str(Path("~/custom-deploy-root").expanduser())
+    assert lines[0] == expected_root
+    assert lines[1] == str(Path(expected_root) / "runtime" / "live-supervisor-mainroot-config.json")
+    assert lines[2] == str(Path(expected_root) / "command-runtimes")

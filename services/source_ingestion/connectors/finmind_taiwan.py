@@ -405,7 +405,6 @@ class FinMindTaiwanBrokerDailyReportAdapter(SourceConnectorProvider):
                     "retention_days": 2555,
                     "retention_policy_ref": "market-data://raw-retention/tw-broker-top-7y",
                 },
-                "fallback_connector_id": "tw-yahoo-broker-top15",
                 "expected_rows_per_symbol": self.max_rank * 2,
                 "schema_hash": BROKER_TOP_SCHEMA_HASH,
                 **dict(self.connector_metadata),

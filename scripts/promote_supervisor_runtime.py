@@ -41,10 +41,16 @@ from provision_live_supervisor_config import (
 )
 
 
-LIVE_SUPERVISOR_CONFIG_PATH = Path(
-    "/home/lupin/pantheon-ci-deploy/runtime/live-supervisor-mainroot-config.json"
-)
-COMMAND_RUNTIME_PARENT = Path("/home/lupin/pantheon-ci-deploy/command-runtimes")
+# The deployment layout is host-owned, not repository-owned. The default keeps
+# the established operator path working untouched; PANTHEON_DEPLOY_ROOT lets a
+# rebuilt or additional host own the same shape under its own home, so the
+# control plane is not tied to one machine's directory tree.
+DEFAULT_DEPLOY_ROOT = Path("/home/lupin/pantheon-ci-deploy")
+DEPLOY_ROOT = Path(
+    os.environ.get("PANTHEON_DEPLOY_ROOT") or DEFAULT_DEPLOY_ROOT
+).expanduser()
+LIVE_SUPERVISOR_CONFIG_PATH = DEPLOY_ROOT / "runtime" / "live-supervisor-mainroot-config.json"
+COMMAND_RUNTIME_PARENT = DEPLOY_ROOT / "command-runtimes"
 TASK_STATE_MODE = "authoritative"
 SUPERVISOR_PUBLIC_AUTHORITY_ENV_NAMES = (
     "BRIDGE_SIGNING_PUBLIC_KEYS_JSON",

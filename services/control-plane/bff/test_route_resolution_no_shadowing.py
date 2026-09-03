@@ -15,14 +15,17 @@ if str(BFF_DIR) not in sys.path:
     sys.path.insert(0, str(BFF_DIR))
 
 import main as bff_main  # noqa: E402
-from starlette.routing import Route  # noqa: E402
+from test_normalized_route_uniqueness import (  # noqa: E402
+    find_parameter_route_shadowing,
+    scan_fastapi_routes,
+)
 
 
 def _matching_endpoints(method: str, path: str) -> list[str]:
     return [
-        route.endpoint.__name__
-        for route in bff_main.app.routes
-        if isinstance(route, Route) and route.path == path and method in (route.methods or ())
+        entry.handler_name
+        for entry in scan_fastapi_routes(bff_main.app)
+        if entry.raw_path == path and entry.method == method
     ]
 
 
@@ -34,26 +37,8 @@ def test_management_persona_league_has_single_registered_handler() -> None:
 
 def test_no_static_route_shadowed_by_earlier_param_route() -> None:
     """Assert that no static/literal route is shadowed by an earlier {param} route."""
-    routes = [
-        (r.path, tuple(r.methods or ()), r.endpoint.__name__, idx, r.path_regex)
-        for idx, r in enumerate(bff_main.app.routes)
-        if isinstance(r, Route) and getattr(r, "path", None)
-    ]
-    offenders = []
-    for path, methods, ep, idx, _rx in routes:
-        if "{" in path:
-            continue
-        for path2, methods2, ep2, idx2, rx2 in routes:
-            if idx2 >= idx:
-                break
-            if "{" not in path2:
-                continue
-            if methods and methods2 and not (set(methods) & set(methods2) - {"HEAD", "OPTIONS"}):
-                continue
-            if rx2.match(path):
-                offenders.append(f"{path} ({ep}) shadowed by earlier {path2} ({ep2})")
-                break
-    assert not offenders, "static routes shadowed by an earlier {param} route: " + "; ".join(offenders)
+    offenders = find_parameter_route_shadowing(bff_main.app)
+    assert not offenders, "static routes shadowed by an earlier {param} route: " + str(offenders)
 
 
 def test_route_resolution_has_no_hardcoded_allowlist() -> None:
