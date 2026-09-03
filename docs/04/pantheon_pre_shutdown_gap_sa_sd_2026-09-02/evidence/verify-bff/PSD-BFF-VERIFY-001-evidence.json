@@ -1,0 +1,68 @@
+{
+  "task_id": "PSD-BFF-VERIFY-001",
+  "status": "review",
+  "owner": "Claude",
+  "reviewer": "Codex2",
+  "verifies_task_id": "PSD-BFF-COMPOSITION-001",
+  "repository": "ajoe734/pantheon",
+  "verified_against": {
+    "dev_head_at_verification": "59685a9561088a5dd52eae0fc09d1c7cafc81dcc",
+    "composition_merge_commit": "7518ed65a022bdbd3f3ad8f8a2bec62d304137ff",
+    "composition_pr_head": "092bc42257e0836720a62b1d00f799b8ef7fc0d8",
+    "composition_pr": 5529,
+    "composition_head_is_ancestor_of_dev_head": true
+  },
+  "architecture": "docs/04/pantheon_pre_shutdown_gap_sa_sd_2026-09-02/SA.md",
+  "specification": "docs/04/pantheon_pre_shutdown_gap_sa_sd_2026-09-02/SD.md",
+  "prior_evidence_manifest": "docs/04/pantheon_pre_shutdown_gap_sa_sd_2026-09-02/evidence/bff/PSD-BFF-COMPOSITION-001-evidence.json",
+  "independent_checks": [
+    {
+      "check": "read_store.py deleted",
+      "method": "ls services/control-plane/bff/read_store.py",
+      "result": "pass",
+      "detail": "file does not exist"
+    },
+    {
+      "check": "no production caller of deleted read_store module",
+      "method": "grep -rn read_store services/control-plane/bff excluding test files",
+      "result": "pass",
+      "detail": "remaining read_store references are the ReadSurfacePorts instance created via create_read_surface_ports() at main.py:996 and injected as a dependency, not the deleted module"
+    },
+    {
+      "check": "zero inline @app.<method> route decorators in main.py",
+      "method": "grep -c '@app\\.' services/control-plane/bff/main.py",
+      "result": "pass",
+      "detail": "count=0; routes are mounted exclusively via app.include_router(...)"
+    },
+    {
+      "check": "Pack D exception handlers mounted through _build_bff_app",
+      "method": "inspect services/control-plane/bff/main.py:_build_bff_app",
+      "result": "pass",
+      "detail": "HTTPException, StarletteHTTPException, RequestValidationError, ValueError, and Exception handlers all registered inside _build_bff_app()"
+    },
+    {
+      "check": "governance rollback-review route owned by domain router",
+      "method": "grep rollback-review services/control-plane/bff/governance/router.py",
+      "result": "pass",
+      "detail": "GET /api/v1/operator/rollback-review/{rollback_id} defined in governance/router.py, not main.py"
+    },
+    {
+      "check": "app composition root is single FastAPI instance built by _build_bff_app",
+      "method": "inspect services/control-plane/bff/main.py",
+      "result": "pass",
+      "detail": "app = _build_bff_app() at module scope; all subsequent route wiring uses app.include_router"
+    }
+  ],
+  "validation": {
+    "command": "pytest -q services/control-plane/bff/tests/test_bff_main_composition.py services/control-plane/bff/test_architecture_boundaries.py services/control-plane/bff/tests/test_read_store_final_deletion.py services/control-plane/bff/test_normalized_route_uniqueness.py services/control-plane/bff/test_route_resolution_no_shadowing.py services/control-plane/bff/test_no_undefined_call_symbols.py services/control-plane/bff/smoke_test.py services/control-plane/bff/smoke_test_incident.py",
+    "interpreter": "scripts/dev/provision_python_distribution.py --print-python (checkout-scoped .venv-pantheon)",
+    "passed": 82,
+    "skipped": 1,
+    "failed": 0,
+    "warnings": 3,
+    "duration_seconds": 85.89,
+    "matches_prior_recorded_evidence": true
+  },
+  "conclusion": "Independent re-verification confirms PSD-BFF-COMPOSITION-001 acceptance criteria hold at the current dev tip: single BFF composition root in main.py, no duplicate/legacy route assembly, read_store.py fully removed with no production callers, and the focused BFF composition/route/smoke suite reproduces the committed evidence exactly (82 passed, 1 skipped, 0 failed). No implementation changes were made by this verification lane.",
+  "observed_at": "2026-09-03T00:00:00Z"
+}
