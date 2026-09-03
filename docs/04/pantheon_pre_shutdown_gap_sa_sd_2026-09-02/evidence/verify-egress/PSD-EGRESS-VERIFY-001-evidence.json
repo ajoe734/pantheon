@@ -1,0 +1,88 @@
+{
+  "task_id": "PSD-EGRESS-VERIFY-001",
+  "owner": "Codex",
+  "reviewer": "Claude",
+  "repository": "ajoe734/pantheon",
+  "target_branch": "dev",
+  "head_branch": "task/PSD-EGRESS-VERIFY-001",
+  "task_type": "egress_and_tunnel_safe_default_independent_verification",
+  "depends_on": [
+    "PSD-EGRESS-CONNECTORS-001",
+    "PSD-TUNNEL-CONTROL-001"
+  ],
+  "specification": "docs/04/pantheon_pre_shutdown_gap_sa_sd_2026-09-02/SD.md#4-psd-03--egress-and-tunnel-retirement",
+  "verified_deliveries": [
+    {
+      "task_id": "PSD-EGRESS-CONNECTORS-001",
+      "pull_request": 5526,
+      "merge_commit": "a73a3c8d8d38f9c6c502d002824579f3f79e1c99",
+      "scope": [
+        "services/source_ingestion/connector_definitions.py",
+        "services/source_ingestion/active_universe.py",
+        "services/source_ingestion/connectors/finmind_taiwan.py",
+        "services/source_ingestion/tests"
+      ]
+    },
+    {
+      "task_id": "PSD-TUNNEL-CONTROL-001",
+      "pull_request": 5533,
+      "merge_commit": "17034aa90fab0ea5af15880bc1eb230593b02c83",
+      "scope": [
+        "scripts/dashboard_autostart.sh",
+        "scripts/test_dashboard_autostart.py",
+        ".orchestrator/permission_broker.py",
+        ".orchestrator/test_provider_permissions.py"
+      ]
+    }
+  ],
+  "verification_base": {
+    "commit": "17034aa90fab0ea5af15880bc1eb230593b02c83",
+    "relationship": "task branch and origin/dev were identical before this evidence-only change"
+  },
+  "acceptance_assertions": {
+    "connectors_off_by_default": {
+      "passed": true,
+      "evidence": "Yahoo Taiwan broker/RSS and Anue RSS definitions are DISABLED_BY_BUILD, absent from the default active universe, rejected when supplied as an override, and absent from active policy summaries."
+    },
+    "connector_opt_in_boundary_preserved": {
+      "passed": true,
+      "evidence": "Inert catalog templates remain available for future operator configuration while disabled definitions cannot enter scheduling; approved TWSE, TPEx, FinMind, TEJ, SEC EDGAR, StockTwits, and OpenAlex scheduling assertions remain green."
+    },
+    "quota_fallback_fails_closed": {
+      "passed": true,
+      "evidence": "FinMind metadata and active-universe plan no longer expose fallback_connector_id, so quota exhaustion cannot select Yahoo."
+    },
+    "tunnel_off_by_default": {
+      "passed": true,
+      "evidence": "PANTHEON_DASHBOARD_MANAGE_TUNNEL defaults to 0 and all tunnel launch control flow remains inside the exact MANAGE_TUNNEL == 1 guard."
+    },
+    "tunnel_explicit_opt_in_preserved": {
+      "passed": true,
+      "evidence": "The MANAGE_TUNNEL == 1 branch still performs the existing cloudflared availability check, keepalive-session launch, and current-URL capture; the dashboard/tunnel regression suite passes."
+    },
+    "worker_permission_revocation_fails_closed": {
+      "passed": true,
+      "evidence": "Both scripts/start_dashboard_tunnel.sh and direct cloudflared tunnel commands classify as defer, requiring the approval queue instead of receiving a standing safe-pattern grant."
+    }
+  },
+  "validation": [
+    {
+      "command": "/home/chloe_ong_dev_cctech_support_com/code/pantheon/.venv/bin/python3 -m pytest -q services/source_ingestion/tests/test_controller_worker_manual_once.py::test_rendered_docker_compose_scheduler_defaults_and_zero_egress_startup services/source_ingestion/tests/test_active_universe.py services/source_ingestion/tests/test_financial_source_catalog.py services/source_ingestion/tests/test_finmind_taiwan_connectors.py services/source_ingestion/tests/test_scheduled_connector.py",
+      "result": "82 passed, 1 warning"
+    },
+    {
+      "command": "cd .orchestrator && /home/chloe_ong_dev_cctech_support_com/code/pantheon/.venv/bin/python3 -m pytest -q test_provider_permissions.py",
+      "result": "117 passed, 18 subtests passed"
+    },
+    {
+      "command": "/home/chloe_ong_dev_cctech_support_com/code/pantheon/.venv/bin/python3 -m pytest -q scripts/test_dashboard_autostart.py scripts/test_dashboard_autostart_install.py scripts/test_dashboard_server.py scripts/test_dashboard_tunnel_keepalive.py tests/broker/test_dashboard.py tests/capital/test_dashboard.py",
+      "result": "27 passed"
+    }
+  ],
+  "independent_review_result": {
+    "status": "passed",
+    "new_defects_found": 0,
+    "residual_boundary": "This task verifies repository defaults and permission resolution at merged dev. Hosted public reachability and host process state remain downstream deployment acceptance concerns."
+  },
+  "credential_material_recorded": false
+}

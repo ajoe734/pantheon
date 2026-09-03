@@ -744,7 +744,7 @@ def validate_request_auth(
     raw = authorization or ""
     if not raw.startswith("Bearer "):
         raise AuthError("401", "Unauthorized: missing Bearer token", 401)
-    token = raw.split(None, 1)[1].strip() if " " in raw else ""
+    token = raw[len("Bearer "):].strip()
     if not token:
         raise AuthError("401", "Unauthorized: empty token", 401)
 
