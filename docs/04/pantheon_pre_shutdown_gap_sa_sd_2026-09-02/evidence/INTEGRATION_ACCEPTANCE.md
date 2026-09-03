@@ -7,7 +7,7 @@ Reviewer: `Codex`
 Status: Review Delivery  
 Delivery Baseline: `origin/dev` at `4889e498fbe5c3b87e7a66b3ca19897e030bbcc1`  
 Accepted Integration Baseline: `origin/dev` at `148fc56860380cbae1cecf389529222f9e12f61e`  
-Release Baseline / Rollback Target: `release/v2026.09.01.2` (`master` promotion merge `65bfde7675bc3226e34b81260687075356b9d3f0`)  
+Release Baseline / Rollback Target: promotion PR #5518 head `939645fbf68ced122bf1e0927cf3815443e9d405` merged to `master` at `65bfde7675bc3226e34b81260687075356b9d3f0` (pre-promotion publish tag `release/v2026.09.01.2` at `4889e498fbe5c3b87e7a66b3ca19897e030bbcc1`)  
 Companion Documents: [GAP_REPORT.md](../GAP_REPORT.md), [SA.md](../SA.md), [SD.md](../SD.md)
 
 ---
@@ -37,10 +37,14 @@ All five pre-shutdown gap streams ([GAP_REPORT.md](../GAP_REPORT.md) § 4, [SA.m
 {
   "baseline_dev_sha": "4889e498fbe5c3b87e7a66b3ca19897e030bbcc1",
   "accepted_dev_sha": "148fc56860380cbae1cecf389529222f9e12f61e",
-  "release_tag": "v2026.09.01.2",
+  "release_tag": null,
+  "publish_cut_tag": "release/v2026.09.01.2",
+  "promotion_pr": 5518,
+  "promotion_head_sha": "939645fbf68ced122bf1e0927cf3815443e9d405",
   "promotion_merge_sha": "65bfde7675bc3226e34b81260687075356b9d3f0",
   "hosted_backend_sha": null,
   "hosted_frontend_sha": null,
+  "hosted_served_identity": "unknown/pending authorized readback",
   "task_prs": [
     {
       "task_id": "PSD-EGRESS-CONNECTORS-001",
@@ -177,8 +181,8 @@ As required by [SA.md](../SA.md) § 1 and the task acceptance criteria, three di
 |        DEVELOPMENT CONTROL PLANE         |   |      PRODUCT RUNTIME PLANE      |
 |  - Singleton Supervisor (active)         |   |  - Deployed VM: pantheon-lupin- |
 |  - Authoritative V2 TaskStore Journal    |   |    dev (35.201.204.12)          |
-|  - Sealed Command Root (09dbbf6ed18)     |   |  - Served Manifest: release/    |
-|  - Verified clean genesis refusal guards |   |    v2026.09.01.2 (unmodified)   |
+|  - Sealed Command Root (09dbbf6ed18)     |   |  - Served Manifest: unknown /   |
+|  - Verified clean genesis refusal guards |   |    pending authorized readback  |
 +------------------------------------------+   +---------------------------------+
 ```
 
@@ -297,7 +301,7 @@ Per SD.md § 7.2, the following verification activities cannot be performed by f
    - Execute family corruption drill against non-production queue on dev VM; confirm atomic rename of main, `-wal`, and `-shm` into quarantine directory with fsynced receipt.
 
 8. **Rollback Target Confirmation:**
-   - Confirm rollback release target is `65bfde7675bc3226e34b81260687075356b9d3f0` (`v2026.09.01.2`).
+   - Confirm rollback target is verified promotion PR #5518 head `939645fbf68ced122bf1e0927cf3815443e9d405` merged to `master` at `65bfde7675bc3226e34b81260687075356b9d3f0` (pre-promotion publish tag `release/v2026.09.01.2` at `4889e498fbe5c3b87e7a66b3ca19897e030bbcc1`).
    - Validate that rollback procedure is documented and executable in < 5 minutes without data loss.
 
 ---
