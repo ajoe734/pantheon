@@ -1,0 +1,59 @@
+{
+  "task_id": "PSD-TELEMETRY-VERIFY-001",
+  "owner": "Claude",
+  "reviewer": "Codex",
+  "repository": "ajoe734/pantheon",
+  "target_branch": "dev",
+  "head_branch": "task/PSD-TELEMETRY-VERIFY-001",
+  "task_type": "telemetry_replay_authorization_independent_verification",
+  "depends_on": ["PSD-TELEMETRY-AUTH-001"],
+  "verifies_delivery": {
+    "task_id": "PSD-TELEMETRY-AUTH-001",
+    "merge_commit": "51f0ff67f792bd936e4f9e53a4c505006d425eb8",
+    "scope": ["scripts/bootstrap.sh", "tests/scripts/test_bootstrap_telemetry_replay.py"]
+  },
+  "verification_gap_identified": "PSD-TELEMETRY-AUTH-001's own test (tests/scripts/test_bootstrap_telemetry_replay.py) only proves scripts/bootstrap.sh forwards a caller-supplied header through a stubbed urllib.request.urlopen; it never exercises the real /api/telemetry/replay Flask route or its @require_telemetry_authority((\"operator\",\"admin\")) decorator in services/telemetry/auth.py. This task independently drives that real route with real JWTs.",
+  "scope": [
+    "services/telemetry/test_replay_authorization_boundary.py",
+    "services/runtime_auth_inbound.py"
+  ],
+  "acceptance_assertions": {
+    "authorized_operator_role_admitted": true,
+    "authorized_admin_role_admitted": true,
+    "unauthorized_role_refused_403": true,
+    "service_token_without_operator_role_refused_403": true,
+    "expired_jwt_refused_401_AUTH_JWT_EXPIRED": true,
+    "missing_authorization_header_refused_401": true,
+    "malformed_empty_bearer_token_refused_401": true,
+    "no_response_body_ever_echoes_presented_bearer_token": true
+  },
+  "finding": {
+    "id": "PSD-TELEMETRY-VERIFY-001-F1",
+    "severity": "medium",
+    "summary": "Authorization: Bearer <trailing-whitespace-only> crashed validate_request_auth() with an unhandled IndexError, returning HTTP 500 instead of failing closed with 401 on the missing-authorization boundary.",
+    "location": "services/runtime_auth_inbound.py:747 (validate_request_auth)",
+    "root_cause": "token = raw.split(None, 1)[1].strip() if \" \" in raw else \"\" -- str.split(None, ...) strips trailing whitespace before splitting, so a header of exactly \"Bearer \" (or \"Bearer\" plus only whitespace) satisfies \" \" in raw but produces a single-element list, and [1] raises IndexError uncaught by the route's try/except TelemetryAuthorityError, surfacing as a raw Flask 500.",
+    "fix": "Replaced the split(None, 1) heuristic with a direct slice: token = raw[len(\"Bearer \"):].strip(), which cannot raise IndexError and correctly falls through to the existing empty-token AuthError(\"401\", ...) path for any whitespace-only remainder.",
+    "status": "fixed_in_this_task",
+    "blast_radius_checked": true,
+    "blast_radius_note": "services/runtime_auth_inbound.py is shared by telemetry, runtime-manager, control-plane/bff, capital, training-session, governance, and policy-learning auth call sites. Re-ran their existing auth-focused suites after the fix; all passed unchanged (see validation.regression_test_result)."
+  },
+  "no_secrets_persisted": {
+    "checked": true,
+    "method": "test_no_evidence_response_leaks_the_presented_token asserts neither a rejected (missing tenant header) nor an expired presented Bearer token ever appears in the HTTP response body; no token values, fixtures, or real credentials are written into this evidence.json.",
+    "credential_material_recorded": false
+  },
+  "validation": {
+    "python_provisioning": "python3 scripts/dev/provision_python_distribution.py",
+    "new_test_command": "\"$PANTHEON_PY\" -m pytest -q services/telemetry/test_replay_authorization_boundary.py",
+    "new_test_result": "8 passed",
+    "regression_test_command": "\"$PANTHEON_PY\" -m pytest -q services/test_runtime_auth_inbound_attack_matrix.py services/telemetry/test_main_routes.py tests/scripts/test_bootstrap_telemetry_replay.py",
+    "regression_test_result": "48 passed, 15 subtests passed",
+    "regression_test_result_broader": {
+      "command": "\"$PANTHEON_PY\" -m pytest -q services/runtime-manager/test_runtime_hardening.py services/runtime-manager/test_stage_promotion_http.py services/test_structured_token_mfa_suffix.py services/training-session/tests/test_inbound_authority.py services/telemetry/test_infrastructure_health_ingest.py services/capital/test_service.py",
+      "result": "147 passed"
+    }
+  },
+  "dependency_source_commit": "59685a9561088a5dd52eae0fc09d1c7cafc81dcc",
+  "credential_material_recorded": false
+}
