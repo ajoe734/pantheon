@@ -1,0 +1,150 @@
+{
+  "schema_version": 3,
+  "program_id": "pantheon-structural-closure-2026-09-03",
+  "baseline": "ajoe734/pantheon@675a488d78e8f991e2f1ecfc92e595b2d84625a1",
+  "target_branch": "dev",
+  "dispatch_authority": "pantheon-supervisor",
+  "normative_documents": ["INDEX.md", "REPORT.md", "SA.md", "SD.md", "TRACEABILITY.md", "EXECUTION_TASKS.md"],
+  "tasks": [
+    {
+      "id": "PLAN-ADMIT-001", "title": "Independently review and merge the structural closure planning package", "wave": 0,
+      "owner": "Claude", "reviewer": "Antigravity", "target_repo": "pantheon", "work_class": "functional", "depends_on": [],
+      "artifacts": ["docs/04/pantheon_current_full_gap_audit_2026-09-03/**"],
+      "acceptance": ["Verify exact source-document digests and have an independent reviewer challenge GAP, ownership, dependency and anti-layering decisions.", "Merge the reviewed planning package through PR with required checks and exact merge evidence; do not change product runtime."],
+      "mandatory_deletion": [], "rollback": "Revert the documentation-only merge if review discovers a material planning defect."
+    },
+    {
+      "id": "STRUCT-OWNERSHIP-001", "title": "Materialize and enforce product ownership inventories", "wave": 1,
+      "owner": "Antigravity", "reviewer": "Claude2", "target_repo": "pantheon", "work_class": "functional", "depends_on": ["PLAN-ADMIT-001"],
+      "artifacts": ["docs/02-architecture/product-aggregate-ownership.yaml", "scripts/**ownership*", "services/control-plane/bff/test_architecture_boundaries.py"],
+      "acceptance": ["Map every mutable aggregate and mounted mutation route to exactly one command owner, store owner and readback projection.", "Classify all audited duplicate definitions, dead tails and worker subjects; reject missing or multiple authorities."],
+      "mandatory_deletion": [], "rollback": "Revert enforcement while retaining the reviewed inventory as evidence."
+    },
+    {
+      "id": "ENV-STAGING-PROD-PLAN-001", "title": "Design staging and production closure without provisioning", "wave": 1,
+      "owner": "Claude2", "reviewer": "Antigravity2", "target_repo": "pantheon", "work_class": "read_only", "depends_on": ["PLAN-ADMIT-001"],
+      "artifacts": ["docs/deployment/vm-dev-staging-prod-management-plan.md", "docs/04/pantheon_environment_closure_sa_sd_2026-09/**"],
+      "acceptance": ["Re-verify current staging and production unavailability and produce SA/SD, authority, threat, resource/cost, exact-pair promotion and rollback designs.", "Keep staging ephemeral and production control/execution isolated; create no resource, credential, ingress, production-data or live-capital side effect.", "Materialize any proposed implementation as separately privileged future packets that remain undispatched pending explicit authorized-operator/MFA authorization."],
+      "mandatory_deletion": ["retired environment reuse assumptions"], "rollback": "Documentation-only task; revert its reviewed planning PR if the environment baseline changes."
+    },
+    {
+      "id": "BFF-PACKAGE-001", "title": "Normalize BFF package imports and remove dynamic namespace wiring", "wave": 2,
+      "owner": "Codex2", "reviewer": "Claude", "target_repo": "pantheon", "work_class": "functional", "depends_on": ["STRUCT-OWNERSHIP-001"],
+      "artifacts": ["services/control-plane/bff/**", "docker-compose.yml", "scripts/**bff*"],
+      "acceptance": ["All recorded BFF entrypoints use one stable import root.", "Production domain/router sys.path mutation and globals-based namespace forwarding are zero; no parallel package tree remains."],
+      "mandatory_deletion": ["Persona globals namespace-copy bridge", "production domain/router sys.path surgery", "dynamic globals dependency lookup"], "rollback": "Revert exact import migration commit; do not preserve both package layouts."
+    },
+    {
+      "id": "BFF-COMPOSITION-001", "title": "Make the operator BFF an explicit composition root", "wave": 3,
+      "owner": "Antigravity2", "reviewer": "Codex2", "target_repo": "pantheon", "work_class": "functional", "depends_on": ["BFF-PACKAGE-001"],
+      "artifacts": ["services/control-plane/bff/main.py", "services/control-plane/bff/bootstrap/**", "services/control-plane/bff/*/router.py", "services/control-plane/bff/*/ports.py"],
+      "acceptance": ["Inject typed domain query, command and event dependencies and make required command-owner absence fail startup closed.", "Composition and mounted-route tests finish within budget; no production service imports main."],
+      "mandatory_deletion": ["global read_store service locator and callers", "Deployment service reverse import from main", "copied domain behavior remaining in main for migrated scopes"], "rollback": "Revert the exact wave; never keep old and new dependency assembly active together."
+    },
+    {
+      "id": "BFF-DEADCODE-001", "title": "Delete confirmed unreachable BFF code tails", "wave": 4,
+      "owner": "Claude2", "reviewer": "Codex", "target_repo": "pantheon", "work_class": "functional", "depends_on": ["BFF-COMPOSITION-001"],
+      "artifacts": ["services/control-plane/bff/management_ai_store.py", "services/control-plane/bff/{deployment,personas,strategies,runtime,management_read_models}/**"],
+      "acceptance": ["Control-flow scan reports no audited statement after an unconditional terminal branch.", "Deprecated public routes retain only their intended minimal response and tests no longer exercise dead bodies."],
+      "mandatory_deletion": ["all 17 audited unreachable tails"], "rollback": "Revert only if a documented production caller was missed; do not restore uncallable tails as fallback."
+    },
+    {
+      "id": "BFF-TEST-ARCH-001", "title": "Decouple BFF tests from composition globals", "wave": 5,
+      "owner": "Codex", "reviewer": "Antigravity2", "target_repo": "pantheon", "work_class": "ci", "depends_on": ["BFF-DEADCODE-001"],
+      "artifacts": ["services/control-plane/bff/test_*.py", "services/control-plane/bff/tests/**", "services/control-plane/bff/*/test*.py"],
+      "acceptance": ["Classify and migrate the audited 218 main-importing tests to composition, router, application, adapter or hosted layers.", "Only a reviewed composition allowlist imports the app; focused files collect and complete within explicit timeout budgets."],
+      "mandatory_deletion": ["non-composition global read_store/overlay monkeypatching", "test sys.path surgery made obsolete by package normalization"], "rollback": "Revert fixture migration per domain without restoring product globals."
+    },
+    {
+      "id": "BFF-ROUTER-STRUCT-001", "title": "Split giant BFF router closures by cohesive use case", "wave": 7,
+      "owner": "Claude", "reviewer": "Codex2", "target_repo": "pantheon", "work_class": "functional", "depends_on": ["JOURNAL-OWNER-001"],
+      "artifacts": ["services/control-plane/bff/personas/**", "services/control-plane/bff/research/**", "services/control-plane/bff/agora/{trading_room,research}/**", "services/control-plane/bff/strategies/**"],
+      "acceptance": ["Parent routers only include cohesive resource/use-case subrouters and preserve normalized route contracts.", "Business branching and transactions move to application owners; changed factories meet the review guardrail or document a cohesion exception."],
+      "mandatory_deletion": ["proxy closures", "copied route handlers", "router-owned business/store logic in migrated scopes"], "rollback": "Revert complete resource slices, not individual forwarding shims."
+    },
+    {
+      "id": "DOMAIN-WRITERS-001", "title": "Bind every product mutation to one canonical domain owner", "wave": 8,
+      "owner": "Antigravity", "reviewer": "Claude", "target_repo": "pantheon", "work_class": "functional", "depends_on": ["BFF-ROUTER-STRUCT-001", "STRUCT-OWNERSHIP-001"],
+      "artifacts": ["services/control-plane/bff/{personas,runtime,deployment,research,jobs,governance,capital,management_read_models}/**", "services/{runtime-manager,deployment,research,governance}/**"],
+      "acceptance": ["Replace every audited missing ReadSurfacePorts mutation with a typed owner command and canonical receipt.", "Idempotency, optimistic conflict, tenant isolation, outbox and fresh owner readback pass for every mounted mutation route."],
+      "mandatory_deletion": ["mutation-through-read-facade calls", "BFF-local mutation fallbacks for migrated aggregates"], "rollback": "Use exact prior release/store-compatible schema; never fall back to process memory."
+    },
+    {
+      "id": "JOURNAL-OWNER-001", "title": "Converge Decision Journal to one durable implementation", "wave": 6,
+      "owner": "Codex2", "reviewer": "Antigravity", "target_repo": "pantheon", "work_class": "functional", "depends_on": ["BFF-TEST-ARCH-001", "STRUCT-OWNERSHIP-001"],
+      "artifacts": ["services/governance/decision_journal.py", "services/control-plane/bff/agora/**", "services/control-plane/bff/governance/**"],
+      "acceptance": ["Select the owner using the reviewed transaction, audit, isolation, outbox and consumer scorecard.", "Migrate identities and prove parity/restart/single-write behavior with zero old callers or table writes."],
+      "mandatory_deletion": ["unselected Decision Journal implementation and bootstrap", "journal-to-journal compatibility paths"], "rollback": "Roll back the exact release before old-writer deletion; no permanent dual write."
+    },
+    {
+      "id": "OVERLAY-RETIRE-001", "title": "Retire process-local product state overlays", "wave": 9,
+      "owner": "Antigravity2", "reviewer": "Claude2", "target_repo": "pantheon", "work_class": "functional", "depends_on": ["DOMAIN-WRITERS-001", "JOURNAL-OWNER-001"],
+      "artifacts": ["services/control-plane/bff/{main.py,personas/**,strategies/**,incidents/**,jobs/**,ports/**}", "services/**/migrations/**"],
+      "acceptance": ["Backfill and shadow-compare Persona, Strategy, Incident, Job and Ranking owner projections with conflict reports.", "Restart and multi-replica readback pass with one canonical writer and no fallback acknowledgement."],
+      "mandatory_deletion": ["_PERSONA_BFF_OVERLAY", "_STRATEGY_BFF_OVERLAY", "_GOV_BFF_INCIDENT_OVERLAY", "_GOV_BFF_JOB_OVERLAY", "ReadSurfacePorts._ranking_snapshots"], "rollback": "Deploy the exact prior compatible release; never re-enable dual writes."
+    },
+    {
+      "id": "AGORA-CHAIN-001", "title": "Complete the natural Agora owner and receipt chain", "wave": 10,
+      "owner": "Claude2", "reviewer": "Antigravity2", "target_repo": "pantheon", "work_class": "paper", "depends_on": ["DOMAIN-WRITERS-001", "JOURNAL-OWNER-001", "OVERLAY-RETIRE-001"],
+      "artifacts": ["services/control-plane/bff/agora/**", "services/**/agora*", "scripts/run_agora_interaction_worker.py"],
+      "acceptance": ["Connect workshop request/outbox/worker, authentic research receipt, dataset/candidate, decision, one learning handoff and telemetry-triggered suggestion with one correlation chain.", "Retry, DLQ, SSE cursor, restart and server-side provenance tests pass without a new scheduler."],
+      "mandatory_deletion": ["client-supplied trusted real-provenance flags", "fake synchronous terminal fallbacks", "manual-only suggestion production path"], "rollback": "Disable new consumers and deploy the prior exact paper-safe release without deleting canonical receipts."
+    },
+    {
+      "id": "LOOP-TRUTH-001", "title": "Build durable receipt-derived twelve-loop truth", "wave": 11,
+      "owner": "Codex", "reviewer": "Claude2", "target_repo": "pantheon", "work_class": "functional", "depends_on": ["AGORA-CHAIN-001", "OVERLAY-RETIRE-001"],
+      "artifacts": ["services/control-plane/bff/control_loops/**", "services/control-plane/bff/management_read_models/**", "services/**/migrations/**"],
+      "acceptance": ["Persist release/correlation/loop observations from canonical stimulus, terminal and next-consumer receipts.", "Incremental equals rebuild; backfill cannot replace newer live truth; registry maturity never sets runtime completion."],
+      "mandatory_deletion": ["static or incident-derived success substitution"], "rollback": "Disable the new read projection while preserving source receipts."
+    },
+    {
+      "id": "MGMT-READ-001", "title": "Serve Management and Management AI from owner projections", "wave": 12,
+      "owner": "Antigravity", "reviewer": "Codex", "target_repo": "pantheon", "work_class": "functional", "depends_on": ["LOOP-TRUTH-001", "DOMAIN-WRITERS-001"],
+      "artifacts": ["services/control-plane/bff/management_read_models/**", "services/control-plane/bff/assistant/**", "services/control-plane/bff/main.py"],
+      "acceptance": ["Management rows expose owner, source, version, freshness and degradation without silently omitting unavailable owners.", "Management AI remains product-only and provider failure is independent from ordinary reads; confirmed commands are typed and paper-safe."],
+      "mandatory_deletion": ["seed/task-status product truth", "generic store access and migrated overlay reads", "development-task authority from Management AI"], "rollback": "Return typed unavailable owner rows; do not restore synthetic data."
+    },
+    {
+      "id": "FE-STRICTLIVE-001", "title": "Remove execute-plans production fallback reachability", "wave": 13,
+      "owner": "Antigravity2", "reviewer": "Claude", "target_repo": "execute-plans", "work_class": "functional", "depends_on": ["MGMT-READ-001"],
+      "artifacts": ["src/**", "tests/**", "vite.config.*", "package.json", "public/deployment.json"],
+      "acceptance": ["Production bundle uses live/strict/safe-write defaults and contains no reachable fixture, seed, mock transport, local write overlay or embedded bearer token.", "Management and Agora render honest unavailable/degraded states and the task delivers through execute-plans dev PR/check/review/merge."],
+      "mandatory_deletion": ["production mock/seed/fallback imports", "live write overlay reachability"], "rollback": "Restore the prior accepted frontend artifact, not a rebuilt mutable branch."
+    },
+    {
+      "id": "DEV-DELIVERY-001", "title": "Repair the existing exact-pair release controller and target truth", "wave": 14,
+      "owner": "Claude", "reviewer": "Antigravity", "target_repo": "pantheon", "work_class": "ci", "depends_on": ["FE-STRICTLIVE-001", "PLAN-ADMIT-001"],
+      "artifacts": [".github/workflows/nonprod-deploy.yml", "scripts/**release*", "docs/deployment/vm-dev-staging-prod-management-plan.md", "docs/frontend/execute-plans-dev-hosting.md"],
+      "acceptance": ["Merge one authoritative current target identity and keep one deployment lane.", "Validate hosted manifest HTTP/content/schema before JSON parsing and produce a checksum-bound baseline only from accepted identities; workflow tests cover empty, HTML, invalid and drift cases."],
+      "mandatory_deletion": ["retired current-tense environment targets", "implicit or fabricated rollback baseline paths", "alternate release authority"], "rollback": "Revert the controller/document change; this task performs no hosted mutation."
+    },
+    {
+      "id": "DEV-RELEASE-HOSTED-001", "title": "Deploy and admit one exact Pantheon and execute-plans dev pair", "wave": 15,
+      "owner": "Antigravity", "reviewer": "Claude2", "target_repo": "pantheon", "work_class": "hosted", "depends_on": ["DEV-DELIVERY-001"],
+      "artifacts": ["docs/deployment/evidence/structural-closure/DEV-RELEASE-HOSTED-001/**"],
+      "acceptance": ["Use the repaired existing lane to establish an exact rollback baseline, deploy immutable FE/BFF identities, run auth/CORS/readiness probes and switch atomically.", "Read back deployment.json and bff/version and rehearse exact rollback; no real-capital enablement."],
+      "mandatory_deletion": [], "rollback": "Execute the checksum-bound previous exact-pair rollback and re-observe served identities."
+    },
+    {
+      "id": "L12-HOSTED-001", "title": "Prove all twelve loops in one new hosted correlation chain", "wave": 16,
+      "owner": "Codex2", "reviewer": "Antigravity2", "target_repo": "pantheon", "work_class": "hosted", "depends_on": ["DEV-RELEASE-HOSTED-001", "LOOP-TRUTH-001"],
+      "artifacts": ["tests/integration/l12/**", "docs/deployment/evidence/structural-closure/L12-HOSTED-001/**"],
+      "acceptance": ["Execute every mandatory loop case without skip on the accepted exact pair using paper/sandbox-only effects.", "Record stimulus, terminal, next-consumer and fresh-reader identities for the same release and correlation chain, including retry/idempotency/tenant negatives."],
+      "mandatory_deletion": ["mandatory hosted-test skip paths satisfied by the accepted environment"], "rollback": "Stop bounded test stimuli and preserve evidence; revert the exact pair if product health degrades."
+    },
+    {
+      "id": "MGMT-AGORA-E2E-001", "title": "Prove authenticated Management, Management AI and Agora hosted journeys", "wave": 16,
+      "owner": "Claude2", "reviewer": "Codex", "target_repo": "pantheon", "work_class": "hosted", "depends_on": ["DEV-RELEASE-HOSTED-001", "MGMT-READ-001", "AGORA-CHAIN-001"],
+      "artifacts": ["docs/deployment/evidence/structural-closure/MGMT-AGORA-E2E-001/**"],
+      "acceptance": ["Run authenticated Management desktop, Management AI query/confirmed paper command and Agora workshop-to-suggestion journeys on the same exact pair.", "Restart BFF/workers, reconnect SSE from cursor and prove durable idempotent readback with honest degraded states."],
+      "mandatory_deletion": ["fixture-only acceptance substitutions"], "rollback": "Stop test activity and roll back the exact pair if acceptance changes product health."
+    },
+    {
+      "id": "STRUCT-RETIRE-001", "title": "Retire remaining structural compatibility and copied bodies", "wave": 17,
+      "owner": "Codex2", "reviewer": "Claude2", "target_repo": "pantheon", "work_class": "functional", "depends_on": ["L12-HOSTED-001", "MGMT-AGORA-E2E-001"],
+      "artifacts": ["services/control-plane/bff/**", "docs/deployment/evidence/structural-closure/STRUCT-RETIRE-001/**"],
+      "acceptance": ["Delete satisfied compatibility adapters, classified duplicate bodies, stale facade tests/references and superseded delivery paths after hosted proof.", "All ownership, import, route, state, test-runtime and anti-layering gates pass with independently reviewed closeout evidence."],
+      "mandatory_deletion": ["all reviewed zero-caller compatibility paths", "remaining non-allowlisted duplicate implementations", "superseded open delivery lines"], "rollback": "Revert exact retirement commit only if hosted regression proves a missed caller; reopen the GAP explicitly."
+    }
+  ]
+}
