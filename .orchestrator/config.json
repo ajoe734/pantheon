@@ -98,7 +98,8 @@
   "coordination": {
     "repositories": {
       "pantheon": {
-        "repo": "ajoe734/pantheon"
+        "repo": "ajoe734/pantheon",
+        "integration_path": "/tmp/pantheon-integration-checkout"
       },
       "execute_plans": {
         "local_path": "../code/execute-plans"
@@ -468,13 +469,13 @@
       "antigravity": {
         "cli": ".orchestrator/bin/agy",
         "include_directories": true,
-        "model": "gemini-3.7-flash-high",
+        "model": "gemini-3.8-flash-high",
         "output_format": "stream-json",
         "print_timeout": "2h"
       },
       "model_rotation": {
         "enabled": true,
-        "primary": "gemini-3.7-flash-high",
+        "primary": "gemini-3.8-flash-high",
         "fallback": "claude-sonnet-4-6",
         "cooldown_seconds": 900
       },
@@ -497,13 +498,13 @@
         "config_home": "~/.gemini-agy2",
         "home": "~/.gemini-agy2",
         "include_directories": true,
-        "model": "gemini-3.7-flash-high",
+        "model": "gemini-3.8-flash-high",
         "output_format": "stream-json",
         "print_timeout": "2h"
       },
       "model_rotation": {
         "enabled": true,
-        "primary": "gemini-3.7-flash-high",
+        "primary": "gemini-3.8-flash-high",
         "fallback": "claude-sonnet-4-6",
         "cooldown_seconds": 900
       },
