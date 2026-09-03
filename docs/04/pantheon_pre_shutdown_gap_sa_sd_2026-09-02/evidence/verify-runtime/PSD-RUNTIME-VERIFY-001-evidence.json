@@ -1,0 +1,69 @@
+{
+  "schema_version": "pantheon.review-evidence.v1",
+  "task_id": "PSD-RUNTIME-VERIFY-001",
+  "title": "Independently verify clean-host supervisor reconstruction",
+  "recorded_at": "2026-09-03T03:14:00Z",
+  "owner": "Codex",
+  "reviewer": "Claude",
+  "target_repo": "pantheon",
+  "verification_target": {
+    "task_id": "PSD-RUNTIME-RECOVERY-001",
+    "clean_commit": "59685a9561088a5dd52eae0fc09d1c7cafc81dcc",
+    "delivery": "merge commit for PR #5534"
+  },
+  "scope": {
+    "owned": [
+      "Independent dry-run and isolated reconstruction verification",
+      "Independent task-store genesis refusal verification",
+      "Independent command-root and stale-process health verification evidence"
+    ],
+    "not_changing": [
+      "Supervisor reconstruction implementation",
+      "Hosted runtime, live config, task journal, keys, watchdog, or processes",
+      "Product-runtime readiness claims"
+    ]
+  },
+  "result": "PASS",
+  "verification": {
+    "commands": [
+      "bash -n scripts/bootstrap-orchestrator-runtime.sh",
+      "uv run --with pytest --with cryptography python -m pytest -q scripts/test_bootstrap_orchestrator_runtime.py scripts/test_seed_task_state_v2.py scripts/test_promote_supervisor_runtime.py scripts/test_supervisor_watchdog_install.py scripts/test_supervisor_runtime_health.py scripts/test_verify_task_state_store.py .orchestrator/rewrite/test_task_state_store.py",
+      "PATH=<stub-bwrap>:$PATH PANTHEON_STATUS_ROOT=$PWD PANTHEON_DEPLOY_ROOT=<isolated-temp>/deploy scripts/bootstrap-orchestrator-runtime.sh --dry-run",
+      "python3 scripts/seed_task_state_v2.py --event-log <isolated-temp>/genesis.jsonl --source independent-verify --dry-run --json",
+      "python3 scripts/seed_task_state_v2.py --event-log <isolated-temp>/genesis.jsonl --source independent-verify --json",
+      "python3 scripts/seed_task_state_v2.py --event-log <isolated-temp>/genesis.jsonl --source independent-verify-second",
+      "python3 scripts/seed_task_state_v2.py --event-log <isolated-temp>/partial.jsonl --source independent-verify",
+      "python3 scripts/seed_task_state_v2.py --event-log <isolated-temp>/invalid.jsonl --source independent-verify"
+    ],
+    "results": [
+      "Shell syntax passed.",
+      "98 passed, 1 skipped in 9.52s. The skip is the real-bwrap branch when bwrap is absent from the selected minimal PATH; the explicit bwrap failure variant ran.",
+      "Bootstrap dry-run exited zero and left the isolated deployment root absent.",
+      "Genesis dry-run exited zero and did not create the journal.",
+      "The first real isolated genesis wrote exactly one empty-state event.",
+      "A second genesis refused with: journal already holds 1 event(s); refusing to seed over existing task truth.",
+      "A torn partial journal refused due to 11 unparsed trailing bytes.",
+      "An invalid journal refused as an invalid task-state event."
+    ],
+    "environment_note": "The first suite attempt used an isolated uv environment containing pytest but not cryptography; only test_real_run_mints_keypair_then_second_run_is_idempotent failed at import time (97 passed, 1 failed, 1 skipped). The same suite passed after declaring cryptography, which the bootstrap key-minting phase requires. uv-generated repository metadata was removed before the clean-source dry-run."
+  },
+  "acceptance_mapping": {
+    "Run dry-run and isolated reconstruction tests from an exact clean commit": "Verified at clean commit 59685a9561088a5dd52eae0fc09d1c7cafc81dcc; the manual dry-run made no deployment-root writes and the focused suite passed.",
+    "Confirm task-store genesis refuses unsafe overwrite": "Manual isolated probes confirmed refusal for a non-empty journal, a torn partial tail, and invalid content; the suite also covers absence of a projection-import path.",
+    "Confirm runtime health identifies exact command root and stale processes": "The passing health suite includes test_wrong_runtime_root_fails_identity_even_when_process_is_live, test_held_singleton_cannot_compensate_for_wrong_process_generation, test_live_process_cannot_compensate_for_orphaned_singleton_lock, and test_fresh_identity_and_lock_do_not_compensate_for_stale_heartbeat.",
+    "Record evidence separately from implementation": "This verification adds only this task-scoped evidence manifest and performs no implementation or hosted-runtime mutation."
+  },
+  "residual_risks": [
+    "This is isolated local verification, not a mutation or rebuild of the hosted supervisor runtime.",
+    "Host-specific systemd lingering and real user-namespace policy remain integrated-host acceptance concerns."
+  ],
+  "review_handoff": {
+    "status": "ready_for_independent_review",
+    "reviewer": "Claude",
+    "checks": [
+      "Confirm the evidence commit contains no implementation changes.",
+      "Confirm the cited clean commit is the merged PSD-RUNTIME-RECOVERY-001 delivery.",
+      "Confirm the acceptance mapping is supported by the focused test names and isolated refusal outputs."
+    ]
+  }
+}
