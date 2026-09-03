@@ -853,6 +853,21 @@ EOF
 
         self.assertEqual(permission_broker.classify_command(command), "defer")
 
+    def test_start_dashboard_tunnel_script_requires_review(self) -> None:
+        command = "bash scripts/start_dashboard_tunnel.sh"
+
+        self.assertEqual(permission_broker.classify_command(command), "defer")
+
+    def test_start_dashboard_tunnel_script_with_path_requires_review(self) -> None:
+        command = f"bash {ROOT / 'scripts' / 'start_dashboard_tunnel.sh'}"
+
+        self.assertEqual(permission_broker.classify_command(command), "defer")
+
+    def test_cloudflared_tunnel_invocation_requires_review(self) -> None:
+        command = "cloudflared tunnel --url http://127.0.0.1:4180"
+
+        self.assertEqual(permission_broker.classify_command(command), "defer")
+
     def test_package_inventory_probe_is_auto_allowed(self) -> None:
         command = (
             'apt list --installed 2>/dev/null | grep -i pip; '

@@ -19,3 +19,9 @@ def test_autostart_does_not_leak_singleton_lock_into_tmux_children() -> None:
 
     assert source.count("9>&-") == 2
     assert source.count("tmux new-session") == 2
+
+
+def test_manage_tunnel_defaults_off_without_operator_opt_in() -> None:
+    source = (ROOT / "scripts" / "dashboard_autostart.sh").read_text(encoding="utf-8")
+
+    assert 'MANAGE_TUNNEL="${PANTHEON_DASHBOARD_MANAGE_TUNNEL:-0}"' in source
