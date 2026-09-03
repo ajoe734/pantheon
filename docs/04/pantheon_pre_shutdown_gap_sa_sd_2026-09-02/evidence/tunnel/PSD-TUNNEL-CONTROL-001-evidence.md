@@ -56,6 +56,29 @@ print(pb.classify_command('cloudflared tunnel --url http://127.0.0.1:4180'))  # 
 "
 ```
 
+## Refresh (2026-09-03)
+
+Canonical approval on the prior PR head (`c7a4e74df`) was revoked during
+integration (no code change requested; integrator/tooling recovery events,
+not a review defect). Merged current `dev` (`09dbbf6ed`) into the task
+branch with no conflicts touching the tunnel/permission surface, producing
+merge commit `cf1c99709`. Re-ran the full verification suite below against
+that merged head before requesting a new independent review.
+
+```
+cd .orchestrator && .venv-pantheon/bin/python3 -m pytest -q test_provider_permissions.py
+# 117 passed, 18 subtests passed
+
+.venv-pantheon/bin/python3 -m pytest -q \
+  scripts/test_dashboard_autostart.py \
+  scripts/test_dashboard_autostart_install.py \
+  scripts/test_dashboard_server.py \
+  scripts/test_dashboard_tunnel_keepalive.py \
+  tests/broker/test_dashboard.py \
+  tests/capital/test_dashboard.py
+# 27 passed
+```
+
 ## Acceptance mapping
 
 - Tunnel startup is off unless explicitly opted in: `PANTHEON_DASHBOARD_MANAGE_TUNNEL` defaults to `0`.
