@@ -133,7 +133,7 @@ class CodexAdapter(BaseAdapter):
 
         run_id = new_runtime_id("codex")
         spawn_env["ORCH_RUN_ID"] = run_id
-        log_path = runtime_log_path("codex", request.agent_id)
+        log_path = runtime_log_path("codex", request.agent_id, config=self.config)
         runtime_paths = worker_runtime_paths(self.config, run_id)
         process, _ = spawn_background_process(
             command,

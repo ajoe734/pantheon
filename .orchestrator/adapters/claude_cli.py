@@ -232,7 +232,7 @@ class ClaudeCLIAdapter(BaseAdapter):
             command.extend(["--effort", str(effort)])
 
         run_id = new_runtime_id(provider_id)
-        log_path = runtime_log_path(provider_id, request.agent_id)
+        log_path = runtime_log_path(provider_id, request.agent_id, config=self.config)
         runtime_paths = worker_runtime_paths(self.config, run_id)
         env.update(delivery_runtime_env(self.config, request.metadata))
         env.update(
