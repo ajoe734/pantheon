@@ -140,7 +140,7 @@ jobs:
       DEV_AUTH_PROFILE: ${{ inputs.dev_auth_profile }}
       PPL_ALLOC_009_DEV_PROOF_ENABLED: ${{ inputs.ppl_alloc_009_dev_proof_enabled }}
       BOUNDED_SOURCE_REFRESH_ENABLED: ${{ inputs.run_bounded_source_refresh }}
-      DEV_DEPLOY_SSH_HOST: ${{ vars.DEV_DEPLOY_SSH_HOST || '35.201.204.12' }}
+      DEV_DEPLOY_SSH_HOST: ${{ vars.DEV_DEPLOY_SSH_HOST || '34.81.52.222' }}
       DEV_DEPLOY_SSH_USER: ${{ vars.NONPROD_REMOTE_USER || 'lupin' }}
       BOOTSTRAP_EMPTY_HOST: ${{ inputs.bootstrap_empty_host || false }}
       BOOTSTRAP_PREDECESSOR_BACKEND_SHA: ${{ inputs.bootstrap_predecessor_backend_sha || '' }}
@@ -345,18 +345,23 @@ jobs:
       - name: Capture exact hosted FE and BFF rollback baseline
         id: rollback_baseline
         env:
-          DEV_BFF_URL: ${{ vars.DEV_BFF_URL || 'https://pantheon-lupin-dev-bff.35.201.204.12.sslip.io' }}
-          DEV_FE_URL: ${{ vars.DEV_FE_URL || 'https://pantheon-lupin-dev-fe.35.201.204.12.sslip.io' }}
+          DEV_BFF_URL: ${{ vars.DEV_BFF_URL || 'https://api.dev.mvl-cap.tw' }}
+          DEV_FE_URL: ${{ vars.DEV_FE_URL || 'https://app.dev.mvl-cap.tw' }}
           EVIDENCE_DIR: ${{ steps.release_admission.outputs.evidence_dir }}
         shell: /bin/bash --noprofile --norc -euo pipefail {0}
         run: |
           version_json="${EVIDENCE_DIR}/bff-version-before.json"
           deployment_json="${EVIDENCE_DIR}/frontend-deployment-before.json"
           if [[ "${BOOTSTRAP_EMPTY_HOST:-false}" == "true" ]]; then
-            if curl --fail-with-body --silent --show-error \
+            manifest_status="$(curl --silent --show-error \
               --connect-timeout 10 --max-time 30 \
-              "${DEV_FE_URL%/}/deployment.json" >/dev/null 2>&1; then
-              echo "Repeated bootstrap is rejected: host already has a deployment.json manifest." >&2
+              --output "${deployment_json}" --write-out '%{http_code}' \
+              "${DEV_FE_URL%/}/deployment.json")" || {
+                echo "Empty-host bootstrap prerequisite failed closed: deployment.json was unreachable." >&2
+                exit 1
+              }
+            if [[ "${manifest_status}" != "404" ]]; then
+              echo "Empty-host bootstrap prerequisite failed closed: expected explicit HTTP 404, got ${manifest_status}." >&2
               exit 1
             fi
             bootstrap_backend="${BOOTSTRAP_PREDECESSOR_BACKEND_SHA,,}"
@@ -611,8 +616,8 @@ jobs:
           DEV_BFF_JWT_AUDIENCE: ${{ vars.DEV_BFF_JWT_AUDIENCE || 'bff-operators' }}
           DEV_BFF_JWKS_URI: ${{ vars.DEV_BFF_JWKS_URI || 'https://www.googleapis.com/service_accounts/v1/jwk/securetoken@system.gserviceaccount.com' }}
           DEV_BFF_OIDC_DISCOVERY_URL: ${{ vars.DEV_BFF_OIDC_DISCOVERY_URL }}
-          DEV_BFF_OIDC_ISSUER: ${{ vars.DEV_BFF_OIDC_ISSUER || 'https://securetoken.google.com/pantheon-lupin-dev-20260719' }}
-          DEV_BFF_OIDC_AUDIENCE: ${{ vars.DEV_BFF_OIDC_AUDIENCE || 'pantheon-lupin-dev-20260719' }}
+          DEV_BFF_OIDC_ISSUER: ${{ vars.DEV_BFF_OIDC_ISSUER || 'https://securetoken.google.com/pantheon-dev-20260902' }}
+          DEV_BFF_OIDC_AUDIENCE: ${{ vars.DEV_BFF_OIDC_AUDIENCE || 'pantheon-dev-20260902' }}
           DEV_BFF_OIDC_CLIENT_ID: ${{ secrets.DEV_BFF_OIDC_CLIENT_ID }}
           DEV_BFF_OIDC_CLIENT_SECRET: ${{ secrets.DEV_BFF_OIDC_CLIENT_SECRET }}
           DEV_BFF_DEV_LOGIN_VIEWER_CLIENT_ID: ${{ vars.DEV_BFF_DEV_LOGIN_VIEWER_CLIENT_ID || 'pantheon-dev-viewer-v1' }}
@@ -908,15 +913,15 @@ jobs:
           PANTHEON_DEV_ENVIRONMENT_LEASE_HEARTBEAT_LOG: ${{ steps.lease.outputs.heartbeat_log }}
           PANTHEON_DEV_ENVIRONMENT_LEASE_MAX_HEARTBEAT_AGE_SECONDS: "120"
           PANTHEON_DEV_ENVIRONMENT_LEASE_VERIFY_INTERVAL_SECONDS: "30"
-          DEV_BFF_URL: ${{ vars.DEV_BFF_URL || 'https://pantheon-lupin-dev-bff.35.201.204.12.sslip.io' }}
-          DEV_FE_URL: ${{ vars.DEV_FE_URL || 'https://pantheon-lupin-dev-fe.35.201.204.12.sslip.io' }}
+          DEV_BFF_URL: ${{ vars.DEV_BFF_URL || 'https://api.dev.mvl-cap.tw' }}
+          DEV_FE_URL: ${{ vars.DEV_FE_URL || 'https://app.dev.mvl-cap.tw' }}
           EVIDENCE_DIR: ${{ steps.release_admission.outputs.evidence_dir }}
           BOOTSTRAP_PREDECESSOR_BACKEND_SHA: ${{ steps.rollback_baseline.outputs.sha }}
           BOOTSTRAP_PREDECESSOR_FRONTEND_SHA: ${{ steps.rollback_baseline.outputs.frontend_sha }}
           CROSS_REPO_RELEASE_TOKEN: ${{ secrets.COORDINATION_REPO_TOKEN }}
-          DEV_VM: ${{ vars.DEV_VM || 'pantheon-lupin-dev' }}
+          DEV_VM: ${{ vars.DEV_VM || 'pantheon-dev-deploy' }}
           DEV_ZONE: ${{ vars.DEV_ZONE || 'asia-east1-b' }}
-          GCP_DEPLOY_PROJECT_ID: ${{ vars.DEV_GCP_DEPLOY_PROJECT_ID || 'pantheon-lupin-dev-20260719' }}
+          GCP_DEPLOY_PROJECT_ID: ${{ vars.DEV_GCP_DEPLOY_PROJECT_ID || 'pantheon-dev-20260902' }}
           DEV_DEPLOY_DEADLINE_SECONDS: ${{ vars.DEV_DEPLOY_DEADLINE_SECONDS || '7200' }}
         shell: /bin/bash --noprofile --norc -euo pipefail {0}
         run: |
@@ -1034,13 +1039,13 @@ jobs:
           PANTHEON_DEV_ENVIRONMENT_LEASE_VERIFY_INTERVAL_SECONDS: "30"
           GITHUB_TOKEN: ${{ github.token }}
           REMOTE_USER: ${{ vars.NONPROD_REMOTE_USER || 'lupin' }}
-          DEV_VM: ${{ vars.DEV_VM || 'pantheon-lupin-dev' }}
+          DEV_VM: ${{ vars.DEV_VM || 'pantheon-dev-deploy' }}
           DEV_ZONE: ${{ vars.DEV_ZONE || 'asia-east1-b' }}
           DEV_REMOTE_DIR: ${{ vars.DEV_REMOTE_DIR || '/home/lupin/pantheon' }}
           PANTHEON_DEPLOY_WORKTREE_ROOT: ${{ vars.DEV_DEPLOY_WORKTREE_ROOT || '/home/lupin/pantheon-ci-deploy/managed-deploy-worktrees' }}
           DEV_LIFECYCLE_PROJECTOR_HEALTH_MAX_AGE_SECONDS: ${{ vars.DEV_LIFECYCLE_PROJECTOR_HEALTH_MAX_AGE_SECONDS || '300' }}
-          DEV_BFF_CANONICAL_CORS_ORIGIN: ${{ vars.DEV_BFF_CANONICAL_CORS_ORIGIN || 'https://pantheon-lupin-dev-fe.35.201.204.12.sslip.io' }}
-          DEV_BFF_CORS_ORIGINS: ${{ vars.DEV_BFF_CORS_ORIGINS || vars.DEV_BFF_CORS_ORIGIN || 'https://pantheon-lupin-dev-fe.35.201.204.12.sslip.io' }}
+          DEV_BFF_CANONICAL_CORS_ORIGIN: ${{ vars.DEV_BFF_CANONICAL_CORS_ORIGIN || 'https://app.dev.mvl-cap.tw' }}
+          DEV_BFF_CORS_ORIGINS: ${{ vars.DEV_BFF_CORS_ORIGINS || vars.DEV_BFF_CORS_ORIGIN || 'https://app.dev.mvl-cap.tw' }}
           # Governed verifier/dev-login credentials for the strict auth cutover.
           # Must be provisioned as repo/environment secrets by a human; deploy_nonprod_vm.sh
           # refuses to deploy dev with DEV_BFF_AUTH_MODE=strict if these are empty.
@@ -1051,8 +1056,8 @@ jobs:
           # metadata here. No IdP client secret is shipped to the frontend.
           DEV_BFF_JWKS_URI: ${{ vars.DEV_BFF_JWKS_URI || 'https://www.googleapis.com/service_accounts/v1/jwk/securetoken@system.gserviceaccount.com' }}
           DEV_BFF_OIDC_DISCOVERY_URL: ${{ vars.DEV_BFF_OIDC_DISCOVERY_URL }}
-          DEV_BFF_OIDC_ISSUER: ${{ vars.DEV_BFF_OIDC_ISSUER || 'https://securetoken.google.com/pantheon-lupin-dev-20260719' }}
-          DEV_BFF_OIDC_AUDIENCE: ${{ vars.DEV_BFF_OIDC_AUDIENCE || 'pantheon-lupin-dev-20260719' }}
+          DEV_BFF_OIDC_ISSUER: ${{ vars.DEV_BFF_OIDC_ISSUER || 'https://securetoken.google.com/pantheon-dev-20260902' }}
+          DEV_BFF_OIDC_AUDIENCE: ${{ vars.DEV_BFF_OIDC_AUDIENCE || 'pantheon-dev-20260902' }}
           DEV_BFF_OIDC_CLIENT_ID: ${{ secrets.DEV_BFF_OIDC_CLIENT_ID }}
           DEV_BFF_OIDC_CLIENT_SECRET: ${{ secrets.DEV_BFF_OIDC_CLIENT_SECRET }}
           DEV_BFF_DEV_LOGIN_VIEWER_CLIENT_ID: ${{ vars.DEV_BFF_DEV_LOGIN_VIEWER_CLIENT_ID || 'pantheon-dev-viewer-v1' }}
@@ -1145,7 +1150,7 @@ jobs:
             --environment dev
             --component "${TARGET_COMPONENT}"
             --sha "${TARGET_SHA}"
-            --project-id "${{ vars.DEV_GCP_DEPLOY_PROJECT_ID || 'pantheon-lupin-dev-20260719' }}"
+            --project-id "${{ vars.DEV_GCP_DEPLOY_PROJECT_ID || 'pantheon-dev-20260902' }}"
             --deadline-seconds "${DEV_DEPLOY_DEADLINE_SECONDS}"
             --rollback-sha "${{ steps.rollback_baseline.outputs.sha }}"
           )
@@ -1185,9 +1190,9 @@ jobs:
           PANTHEON_DEV_ENVIRONMENT_LEASE_FAILURE_FILE: ${{ steps.lease.outputs.failure_file }}
           PANTHEON_DEV_ENVIRONMENT_LEASE_HEARTBEAT_LOG: ${{ steps.lease.outputs.heartbeat_log }}
           REMOTE_USER: ${{ vars.NONPROD_REMOTE_USER || 'lupin' }}
-          DEV_VM: ${{ vars.DEV_VM || 'pantheon-lupin-dev' }}
+          DEV_VM: ${{ vars.DEV_VM || 'pantheon-dev-deploy' }}
           DEV_ZONE: ${{ vars.DEV_ZONE || 'asia-east1-b' }}
-          GCP_DEPLOY_PROJECT_ID: ${{ vars.DEV_GCP_DEPLOY_PROJECT_ID || 'pantheon-lupin-dev-20260719' }}
+          GCP_DEPLOY_PROJECT_ID: ${{ vars.DEV_GCP_DEPLOY_PROJECT_ID || 'pantheon-dev-20260902' }}
         shell: /bin/bash --noprofile --norc -euo pipefail {0}
         run: |
           lease_token="${PANTHEON_ENVIRONMENT_LEASE_TOKEN}"
@@ -1211,10 +1216,10 @@ jobs:
         if: ${{ github.event_name == 'workflow_dispatch' && inputs.run_evolution_dispatch_probe && env.TARGET_COMPONENT == 'root' }}
         env:
           REMOTE_USER: ${{ vars.NONPROD_REMOTE_USER || 'lupin' }}
-          DEV_VM: ${{ vars.DEV_VM || 'pantheon-lupin-dev' }}
+          DEV_VM: ${{ vars.DEV_VM || 'pantheon-dev-deploy' }}
           DEV_ZONE: ${{ vars.DEV_ZONE || 'asia-east1-b' }}
           DEV_DEPLOY_WORKTREE: ${{ vars.DEV_DEPLOY_WORKTREE || format('{0}/dev-root', vars.DEV_DEPLOY_WORKTREE_ROOT || '/home/lupin/pantheon-ci-deploy/managed-deploy-worktrees') }}
-          GCP_DEPLOY_PROJECT_ID: ${{ vars.DEV_GCP_DEPLOY_PROJECT_ID || 'pantheon-lupin-dev-20260719' }}
+          GCP_DEPLOY_PROJECT_ID: ${{ vars.DEV_GCP_DEPLOY_PROJECT_ID || 'pantheon-dev-20260902' }}
           DEPLOY_SHA: ${{ steps.target.outputs.sha }}
         run: |
           set -euo pipefail
@@ -1253,11 +1258,11 @@ jobs:
         working-directory: .target
         env:
           REMOTE_USER: ${{ vars.NONPROD_REMOTE_USER || 'lupin' }}
-          DEV_VM: ${{ vars.DEV_VM || 'pantheon-lupin-dev' }}
+          DEV_VM: ${{ vars.DEV_VM || 'pantheon-dev-deploy' }}
           DEV_ZONE: ${{ vars.DEV_ZONE || 'asia-east1-b' }}
           DEV_DEPLOY_WORKTREE: ${{ vars.DEV_DEPLOY_WORKTREE || format('{0}/dev-root', vars.DEV_DEPLOY_WORKTREE_ROOT || '/home/lupin/pantheon-ci-deploy/managed-deploy-worktrees') }}
-          GCP_DEPLOY_PROJECT_ID: ${{ vars.DEV_GCP_DEPLOY_PROJECT_ID || 'pantheon-lupin-dev-20260719' }}
-          DEV_BFF_PUBLIC_URL: ${{ vars.DEV_BFF_PUBLIC_URL || 'https://pantheon-lupin-dev-bff.35.201.204.12.sslip.io' }}
+          GCP_DEPLOY_PROJECT_ID: ${{ vars.DEV_GCP_DEPLOY_PROJECT_ID || 'pantheon-dev-20260902' }}
+          DEV_BFF_PUBLIC_URL: ${{ vars.DEV_BFF_PUBLIC_URL || 'https://api.dev.mvl-cap.tw' }}
           # The generic operator identity is intentionally not MFA-verified.
           # Hosted protected reads use the provisioned governed operator A,
           # which the strict deploy floor requires and binds to MFA.
@@ -1348,13 +1353,13 @@ jobs:
           PANTHEON_DEV_ENVIRONMENT_LEASE_HEARTBEAT_IDENTITY_FILE: ${{ steps.lease.outputs.identity_file }}
           PANTHEON_DEV_ENVIRONMENT_LEASE_FAILURE_FILE: ${{ steps.lease.outputs.failure_file }}
           PANTHEON_DEV_ENVIRONMENT_LEASE_HEARTBEAT_LOG: ${{ steps.lease.outputs.heartbeat_log }}
-          DEV_BFF_URL: ${{ vars.DEV_BFF_URL || 'https://pantheon-lupin-dev-bff.35.201.204.12.sslip.io' }}
-          DEV_BFF_CANONICAL_CORS_ORIGIN: ${{ vars.DEV_BFF_CANONICAL_CORS_ORIGIN || 'https://pantheon-lupin-dev-fe.35.201.204.12.sslip.io' }}
-          DEV_BFF_CORS_ORIGIN: ${{ vars.DEV_BFF_CORS_ORIGIN || 'https://pantheon-lupin-dev-fe.35.201.204.12.sslip.io' }}
+          DEV_BFF_URL: ${{ vars.DEV_BFF_URL || 'https://api.dev.mvl-cap.tw' }}
+          DEV_BFF_CANONICAL_CORS_ORIGIN: ${{ vars.DEV_BFF_CANONICAL_CORS_ORIGIN || 'https://app.dev.mvl-cap.tw' }}
+          DEV_BFF_CORS_ORIGIN: ${{ vars.DEV_BFF_CORS_ORIGIN || 'https://app.dev.mvl-cap.tw' }}
           REMOTE_USER: ${{ vars.NONPROD_REMOTE_USER || 'lupin' }}
-          DEV_VM: ${{ vars.DEV_VM || 'pantheon-lupin-dev' }}
+          DEV_VM: ${{ vars.DEV_VM || 'pantheon-dev-deploy' }}
           DEV_ZONE: ${{ vars.DEV_ZONE || 'asia-east1-b' }}
-          GCP_DEPLOY_PROJECT_ID: ${{ vars.DEV_GCP_DEPLOY_PROJECT_ID || 'pantheon-lupin-dev-20260719' }}
+          GCP_DEPLOY_PROJECT_ID: ${{ vars.DEV_GCP_DEPLOY_PROJECT_ID || 'pantheon-dev-20260902' }}
           PPL_ALLOC_009_DEV_PROOF_ENABLED: ${{ env.PPL_ALLOC_009_DEV_PROOF_ENABLED }}
           TARGET_SHA: ${{ steps.target.outputs.sha }}
         shell: /bin/bash --noprofile --norc -euo pipefail {0}
@@ -1447,9 +1452,9 @@ jobs:
           PANTHEON_DEV_ENVIRONMENT_LEASE_FAILURE_FILE: ${{ steps.lease.outputs.failure_file }}
           PANTHEON_DEV_ENVIRONMENT_LEASE_HEARTBEAT_LOG: ${{ steps.lease.outputs.heartbeat_log }}
           REMOTE_USER: ${{ vars.NONPROD_REMOTE_USER || 'lupin' }}
-          DEV_VM: ${{ vars.DEV_VM || 'pantheon-lupin-dev' }}
+          DEV_VM: ${{ vars.DEV_VM || 'pantheon-dev-deploy' }}
           DEV_ZONE: ${{ vars.DEV_ZONE || 'asia-east1-b' }}
-          GCP_DEPLOY_PROJECT_ID: ${{ vars.DEV_GCP_DEPLOY_PROJECT_ID || 'pantheon-lupin-dev-20260719' }}
+          GCP_DEPLOY_PROJECT_ID: ${{ vars.DEV_GCP_DEPLOY_PROJECT_ID || 'pantheon-dev-20260902' }}
           DEV_OPENCLAW_ADAPTER_SERVICE_TOKEN: ${{ secrets.DEV_OPENCLAW_ADAPTER_SERVICE_TOKEN }}
         shell: /bin/bash --noprofile --norc -euo pipefail {0}
         run: |
@@ -1500,11 +1505,11 @@ jobs:
           PANTHEON_DEV_ENVIRONMENT_LEASE_FAILURE_FILE: ${{ steps.lease.outputs.failure_file }}
           PANTHEON_DEV_ENVIRONMENT_LEASE_HEARTBEAT_LOG: ${{ steps.lease.outputs.heartbeat_log }}
           REMOTE_USER: ${{ vars.NONPROD_REMOTE_USER || 'lupin' }}
-          DEV_VM: ${{ vars.DEV_VM || 'pantheon-lupin-dev' }}
+          DEV_VM: ${{ vars.DEV_VM || 'pantheon-dev-deploy' }}
           DEV_ZONE: ${{ vars.DEV_ZONE || 'asia-east1-b' }}
           DEV_REMOTE_DIR: ${{ vars.DEV_REMOTE_DIR || '/home/lupin/pantheon' }}
-          DEV_BFF_URL: ${{ vars.DEV_BFF_URL || 'https://pantheon-lupin-dev-bff.35.201.204.12.sslip.io' }}
-          GCP_DEPLOY_PROJECT_ID: ${{ vars.DEV_GCP_DEPLOY_PROJECT_ID || 'pantheon-lupin-dev-20260719' }}
+          DEV_BFF_URL: ${{ vars.DEV_BFF_URL || 'https://api.dev.mvl-cap.tw' }}
+          GCP_DEPLOY_PROJECT_ID: ${{ vars.DEV_GCP_DEPLOY_PROJECT_ID || 'pantheon-dev-20260902' }}
           PANTHEON_DEPLOY_SHA: ${{ steps.target.outputs.sha }}
         shell: /bin/bash --noprofile --norc -euo pipefail {0}
         run: |
@@ -1579,20 +1584,20 @@ jobs:
           PANTHEON_DEV_ENVIRONMENT_LEASE_VERIFY_INTERVAL_SECONDS: "30"
           GITHUB_TOKEN: ${{ github.token }}
           REMOTE_USER: ${{ vars.NONPROD_REMOTE_USER || 'lupin' }}
-          DEV_VM: ${{ vars.DEV_VM || 'pantheon-lupin-dev' }}
+          DEV_VM: ${{ vars.DEV_VM || 'pantheon-dev-deploy' }}
           DEV_ZONE: ${{ vars.DEV_ZONE || 'asia-east1-b' }}
           DEV_REMOTE_DIR: ${{ vars.DEV_REMOTE_DIR || '/home/lupin/pantheon' }}
           PANTHEON_DEPLOY_WORKTREE_ROOT: ${{ vars.DEV_DEPLOY_WORKTREE_ROOT || '/home/lupin/pantheon-ci-deploy/managed-deploy-worktrees' }}
           DEV_LIFECYCLE_PROJECTOR_HEALTH_MAX_AGE_SECONDS: ${{ vars.DEV_LIFECYCLE_PROJECTOR_HEALTH_MAX_AGE_SECONDS || '300' }}
-          DEV_BFF_CANONICAL_CORS_ORIGIN: ${{ vars.DEV_BFF_CANONICAL_CORS_ORIGIN || 'https://pantheon-lupin-dev-fe.35.201.204.12.sslip.io' }}
-          DEV_BFF_CORS_ORIGINS: ${{ vars.DEV_BFF_CORS_ORIGINS || vars.DEV_BFF_CORS_ORIGIN || 'https://pantheon-lupin-dev-fe.35.201.204.12.sslip.io' }}
+          DEV_BFF_CANONICAL_CORS_ORIGIN: ${{ vars.DEV_BFF_CANONICAL_CORS_ORIGIN || 'https://app.dev.mvl-cap.tw' }}
+          DEV_BFF_CORS_ORIGINS: ${{ vars.DEV_BFF_CORS_ORIGINS || vars.DEV_BFF_CORS_ORIGIN || 'https://app.dev.mvl-cap.tw' }}
           DEV_BFF_JWT_SECRET: ${{ secrets.DEV_BFF_JWT_SECRET }}
           DEV_BFF_JWT_ISSUER: ${{ vars.DEV_BFF_JWT_ISSUER || 'pantheon-dev' }}
           DEV_BFF_JWT_AUDIENCE: ${{ vars.DEV_BFF_JWT_AUDIENCE || 'bff-operators' }}
           DEV_BFF_JWKS_URI: ${{ vars.DEV_BFF_JWKS_URI || 'https://www.googleapis.com/service_accounts/v1/jwk/securetoken@system.gserviceaccount.com' }}
           DEV_BFF_OIDC_DISCOVERY_URL: ${{ vars.DEV_BFF_OIDC_DISCOVERY_URL }}
-          DEV_BFF_OIDC_ISSUER: ${{ vars.DEV_BFF_OIDC_ISSUER || 'https://securetoken.google.com/pantheon-lupin-dev-20260719' }}
-          DEV_BFF_OIDC_AUDIENCE: ${{ vars.DEV_BFF_OIDC_AUDIENCE || 'pantheon-lupin-dev-20260719' }}
+          DEV_BFF_OIDC_ISSUER: ${{ vars.DEV_BFF_OIDC_ISSUER || 'https://securetoken.google.com/pantheon-dev-20260902' }}
+          DEV_BFF_OIDC_AUDIENCE: ${{ vars.DEV_BFF_OIDC_AUDIENCE || 'pantheon-dev-20260902' }}
           DEV_BFF_OIDC_CLIENT_ID: ${{ secrets.DEV_BFF_OIDC_CLIENT_ID }}
           DEV_BFF_OIDC_CLIENT_SECRET: ${{ secrets.DEV_BFF_OIDC_CLIENT_SECRET }}
           DEV_BFF_DEV_LOGIN_VIEWER_CLIENT_ID: ${{ vars.DEV_BFF_DEV_LOGIN_VIEWER_CLIENT_ID || 'pantheon-dev-viewer-v1' }}
@@ -1636,9 +1641,9 @@ jobs:
           PANTHEON_DEV_ROLLBACK_BACKEND_SHA: ${{ steps.rollback_baseline.outputs.sha }}
           PANTHEON_FAILED_BACKEND_SHA: ${{ steps.target.outputs.sha }}
           PANTHEON_FAILED_FRONTEND_SHA: ${{ steps.frontend.outputs.sha }}
-          DEV_BFF_URL: ${{ vars.DEV_BFF_URL || 'https://pantheon-lupin-dev-bff.35.201.204.12.sslip.io' }}
-          DEV_FE_URL: ${{ vars.DEV_FE_URL || 'https://pantheon-lupin-dev-fe.35.201.204.12.sslip.io' }}
-          GCP_DEPLOY_PROJECT_ID: ${{ vars.DEV_GCP_DEPLOY_PROJECT_ID || 'pantheon-lupin-dev-20260719' }}
+          DEV_BFF_URL: ${{ vars.DEV_BFF_URL || 'https://api.dev.mvl-cap.tw' }}
+          DEV_FE_URL: ${{ vars.DEV_FE_URL || 'https://app.dev.mvl-cap.tw' }}
+          GCP_DEPLOY_PROJECT_ID: ${{ vars.DEV_GCP_DEPLOY_PROJECT_ID || 'pantheon-dev-20260902' }}
           # A rollback is BFF-only and should remain bounded independently of
           # the full root-build deadline.
           DEV_DEPLOY_DEADLINE_SECONDS: ${{ vars.DEV_ROLLBACK_DEPLOY_DEADLINE_SECONDS || '1200' }}
@@ -2119,8 +2124,8 @@ jobs:
     env:
       TARGET_ENV: dev
       RELEASE_EVIDENCE_DIR: ${{ github.workspace }}/.pantheon-cross-repo-release-${{ github.run_id }}-${{ github.run_attempt }}
-      DEV_BFF_URL: ${{ vars.DEV_BFF_URL || 'https://pantheon-lupin-dev-bff.35.201.204.12.sslip.io' }}
-      DEV_FE_URL: ${{ vars.DEV_FE_URL || 'https://pantheon-lupin-dev-fe.35.201.204.12.sslip.io' }}
+      DEV_BFF_URL: ${{ vars.DEV_BFF_URL || 'https://api.dev.mvl-cap.tw' }}
+      DEV_FE_URL: ${{ vars.DEV_FE_URL || 'https://app.dev.mvl-cap.tw' }}
       FRONTEND_REF: ${{ needs.deploy-dev.outputs.frontend_ref }}
     steps:
       - name: Checkout pinned lease controller
@@ -2218,7 +2223,7 @@ jobs:
         uses: google-github-actions/auth@c200f3691d83b41bf9bbd8638997a462592937ed
         with:
           workload_identity_provider: ${{ vars.DEV_GCP_WIF_PROVIDER || 'projects/317269804408/locations/global/workloadIdentityPools/pantheon-github-pool/providers/pantheon-github-provider' }}
-          service_account: ${{ vars.DEV_GCP_DEPLOY_SERVICE_ACCOUNT || 'pantheon-cloud-build@pantheon-lupin-dev-20260719.iam.gserviceaccount.com' }}
+          service_account: ${{ vars.DEV_GCP_DEPLOY_SERVICE_ACCOUNT || 'pantheon-dev-github-deploy@pantheon-dev-20260902.iam.gserviceaccount.com' }}
 
       - name: Set up rollback Cloud SDK
         if: ${{ steps.frontend_release.outcome != 'success' }}
@@ -2229,7 +2234,7 @@ jobs:
         env:
           DEV_DEPLOY_SSH_PRIVATE_KEY: ${{ secrets.DEV_DEPLOY_SSH_PRIVATE_KEY }}
           DEV_DEPLOY_SSH_KNOWN_HOSTS: ${{ vars.DEV_DEPLOY_SSH_KNOWN_HOSTS }}
-          DEV_DEPLOY_SSH_HOST: ${{ vars.DEV_DEPLOY_SSH_HOST || '35.201.204.12' }}
+          DEV_DEPLOY_SSH_HOST: ${{ vars.DEV_DEPLOY_SSH_HOST || '34.81.52.222' }}
         shell: /bin/bash --noprofile --norc -euo pipefail {0}
         run: |
           credentials_dir="${RUNNER_TEMP}/pantheon-dev-ssh-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
@@ -2260,14 +2265,14 @@ jobs:
           PANTHEON_ROLLBACK_EVIDENCE_OUT: ${{ env.RELEASE_EVIDENCE_DIR }}/release-compensation.json
           GITHUB_TOKEN: ${{ github.token }}
           REMOTE_USER: ${{ vars.NONPROD_REMOTE_USER || 'lupin' }}
-          DEV_VM: ${{ vars.DEV_VM || 'pantheon-lupin-dev' }}
+          DEV_VM: ${{ vars.DEV_VM || 'pantheon-dev-deploy' }}
           DEV_ZONE: ${{ vars.DEV_ZONE || 'asia-east1-b' }}
-          GCP_DEPLOY_PROJECT_ID: ${{ vars.DEV_GCP_DEPLOY_PROJECT_ID || 'pantheon-lupin-dev-20260719' }}
+          GCP_DEPLOY_PROJECT_ID: ${{ vars.DEV_GCP_DEPLOY_PROJECT_ID || 'pantheon-dev-20260902' }}
           DEV_REMOTE_DIR: ${{ vars.DEV_REMOTE_DIR || '/home/lupin/pantheon' }}
           PANTHEON_DEPLOY_WORKTREE_ROOT: ${{ vars.DEV_DEPLOY_WORKTREE_ROOT || '/home/lupin/pantheon-ci-deploy/managed-deploy-worktrees' }}
           DEV_LIFECYCLE_PROJECTOR_HEALTH_MAX_AGE_SECONDS: ${{ vars.DEV_LIFECYCLE_PROJECTOR_HEALTH_MAX_AGE_SECONDS || '300' }}
-          DEV_BFF_CANONICAL_CORS_ORIGIN: ${{ vars.DEV_BFF_CANONICAL_CORS_ORIGIN || 'https://pantheon-lupin-dev-fe.35.201.204.12.sslip.io' }}
-          DEV_BFF_CORS_ORIGINS: ${{ vars.DEV_BFF_CORS_ORIGINS || vars.DEV_BFF_CORS_ORIGIN || 'https://pantheon-lupin-dev-fe.35.201.204.12.sslip.io' }}
+          DEV_BFF_CANONICAL_CORS_ORIGIN: ${{ vars.DEV_BFF_CANONICAL_CORS_ORIGIN || 'https://app.dev.mvl-cap.tw' }}
+          DEV_BFF_CORS_ORIGINS: ${{ vars.DEV_BFF_CORS_ORIGINS || vars.DEV_BFF_CORS_ORIGIN || 'https://app.dev.mvl-cap.tw' }}
           DEV_BFF_AUTH_STUB: "false"
           DEV_BFF_AUTH_MODE: strict
           DEV_BFF_JWT_SECRET: ${{ secrets.DEV_BFF_JWT_SECRET }}
@@ -2275,8 +2280,8 @@ jobs:
           DEV_BFF_JWT_AUDIENCE: ${{ vars.DEV_BFF_JWT_AUDIENCE || 'bff-operators' }}
           DEV_BFF_JWKS_URI: ${{ vars.DEV_BFF_JWKS_URI || 'https://www.googleapis.com/service_accounts/v1/jwk/securetoken@system.gserviceaccount.com' }}
           DEV_BFF_OIDC_DISCOVERY_URL: ${{ vars.DEV_BFF_OIDC_DISCOVERY_URL }}
-          DEV_BFF_OIDC_ISSUER: ${{ vars.DEV_BFF_OIDC_ISSUER || 'https://securetoken.google.com/pantheon-lupin-dev-20260719' }}
-          DEV_BFF_OIDC_AUDIENCE: ${{ vars.DEV_BFF_OIDC_AUDIENCE || 'pantheon-lupin-dev-20260719' }}
+          DEV_BFF_OIDC_ISSUER: ${{ vars.DEV_BFF_OIDC_ISSUER || 'https://securetoken.google.com/pantheon-dev-20260902' }}
+          DEV_BFF_OIDC_AUDIENCE: ${{ vars.DEV_BFF_OIDC_AUDIENCE || 'pantheon-dev-20260902' }}
           DEV_BFF_OIDC_CLIENT_ID: ${{ secrets.DEV_BFF_OIDC_CLIENT_ID }}
           DEV_BFF_OIDC_CLIENT_SECRET: ${{ secrets.DEV_BFF_OIDC_CLIENT_SECRET }}
           DEV_BFF_DEV_LOGIN_VIEWER_CLIENT_ID: ${{ vars.DEV_BFF_DEV_LOGIN_VIEWER_CLIENT_ID || 'pantheon-dev-viewer-v1' }}

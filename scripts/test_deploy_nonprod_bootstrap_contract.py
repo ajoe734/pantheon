@@ -87,8 +87,11 @@ def test_workflow_rollback_baseline_rejects_repeated_bootstrap_when_manifest_exi
         dev_job.index("- name: Seal exact-pair admission artifact")
     ]
 
-    assert 'Repeated bootstrap is rejected: host already has a deployment.json manifest.' in baseline_step
-    assert 'curl --fail-with-body --silent --show-error \\\n              --connect-timeout 10 --max-time 30 \\\n              "${DEV_FE_URL%/}/deployment.json" >/dev/null 2>&1' in baseline_step
+    assert 'manifest_status="$(curl --silent --show-error' in baseline_step
+    assert '--output "${deployment_json}" --write-out \'%{http_code}\'' in baseline_step
+    assert 'if [[ "${manifest_status}" != "404" ]]; then' in baseline_step
+    assert "expected explicit HTTP 404" in baseline_step
+    assert "deployment.json was unreachable" in baseline_step
 
 
 def test_workflow_rollback_baseline_requires_ancestor_commits_for_bootstrap() -> None:

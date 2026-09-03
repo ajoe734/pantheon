@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import re
+import urllib.error
 from pathlib import Path
 from typing import Any
 
@@ -1131,8 +1132,8 @@ def test_execution_path_cli_main_workflow_path(tmp_path: Path, monkeypatch: pyte
     exit_code = main([
         "--frontend-sha", REAL_FRONTEND_SHA,
         "--backend-sha", REAL_BACKEND_SHA,
-        "--bff-base-url", "https://pantheon-lupin-dev-bff.35.201.204.12.sslip.io",
-        "--fe-base-url", "https://pantheon-lupin-dev-fe.35.201.204.12.sslip.io",
+        "--bff-base-url", "https://api.dev.mvl-cap.tw",
+        "--fe-base-url", "https://app.dev.mvl-cap.tw",
         "--release-candidate-id", CANDIDATE_ID,
         "--compatibility-manifest-sha256", MANIFEST_SHA,
         "--controller-run-id", "99999",
@@ -1187,8 +1188,8 @@ def test_execution_path_cli_main_stale_pair_rejected(tmp_path: Path, monkeypatch
     exit_code = main([
         "--frontend-sha", REAL_FRONTEND_SHA,
         "--backend-sha", REAL_BACKEND_SHA,
-        "--bff-base-url", "https://pantheon-lupin-dev-bff.35.201.204.12.sslip.io",
-        "--fe-base-url", "https://pantheon-lupin-dev-fe.35.201.204.12.sslip.io",
+        "--bff-base-url", "https://api.dev.mvl-cap.tw",
+        "--fe-base-url", "https://app.dev.mvl-cap.tw",
         "--release-candidate-id", CANDIDATE_ID,
         "--compatibility-manifest-sha256", MANIFEST_SHA,
         "--controller-run-id", "99999",
@@ -1251,8 +1252,10 @@ def test_check_empty_host_prerequisite_accepts_empty_host() -> None:
     from scripts.cross_repo_release_controller import check_empty_host_prerequisite
 
     check_empty_host_prerequisite(
-        "https://pantheon-lupin-dev-fe.test",
-        fetch_fn=lambda url: (_ for _ in ()).throw(Exception("404 Not Found")),
+        "https://app.dev.mvl-cap.tw",
+        fetch_fn=lambda url: (_ for _ in ()).throw(
+            urllib.error.HTTPError(url, 404, "Not Found", {}, None)
+        ),
     )
 
 
@@ -1261,8 +1264,35 @@ def test_check_empty_host_prerequisite_rejects_existing_manifest() -> None:
 
     with pytest.raises(ControllerError, match="repeated bootstrap is rejected"):
         check_empty_host_prerequisite(
-            "https://pantheon-lupin-dev-fe.test",
+            "https://app.dev.mvl-cap.tw",
             fetch_fn=lambda url: {"schemaVersion": 1, "commit": FRONTEND_SHA},
+        )
+
+
+@pytest.mark.parametrize("status", [401, 403, 500, 502, 503])
+def test_check_empty_host_prerequisite_rejects_non_404_http_status(status: int) -> None:
+    from scripts.cross_repo_release_controller import check_empty_host_prerequisite
+
+    def fail(url: str) -> dict[str, Any]:
+        raise urllib.error.HTTPError(url, status, "failure", {}, None)
+
+    with pytest.raises(ControllerError, match=f"returned HTTP {status}"):
+        check_empty_host_prerequisite("https://app.dev.mvl-cap.tw", fetch_fn=fail)
+
+
+@pytest.mark.parametrize(
+    "failure",
+    [TimeoutError("timed out"), ValueError("malformed JSON"), OSError("TLS failure")],
+)
+def test_check_empty_host_prerequisite_rejects_transport_or_parse_failure(
+    failure: Exception,
+) -> None:
+    from scripts.cross_repo_release_controller import check_empty_host_prerequisite
+
+    with pytest.raises(ControllerError, match="failed closed"):
+        check_empty_host_prerequisite(
+            "https://app.dev.mvl-cap.tw",
+            fetch_fn=lambda url: (_ for _ in ()).throw(failure),
         )
 
 
@@ -1288,8 +1318,8 @@ def test_verify_bootstrap_served_identity_accepts_valid_pair() -> None:
         return {}
 
     result = verify_bootstrap_served_identity(
-        bff_base_url="https://pantheon-lupin-dev-bff.test",
-        fe_base_url="https://pantheon-lupin-dev-fe.test",
+        bff_base_url="https://pantheon-dev-deploy-bff.test",
+        fe_base_url="https://pantheon-dev-deploy-fe.test",
         expected_backend_sha=BACKEND_SHA,
         expected_frontend_sha=FRONTEND_SHA,
         fetch_fn=fake_fetch,
@@ -1309,8 +1339,8 @@ def test_verify_bootstrap_served_identity_rejects_mismatched_bff() -> None:
 
     with pytest.raises(ControllerError, match="bootstrap served identity mismatch fails closed: BFF served"):
         verify_bootstrap_served_identity(
-            bff_base_url="https://pantheon-lupin-dev-bff.test",
-            fe_base_url="https://pantheon-lupin-dev-fe.test",
+            bff_base_url="https://pantheon-dev-deploy-bff.test",
+            fe_base_url="https://pantheon-dev-deploy-fe.test",
             expected_backend_sha=BACKEND_SHA,
             expected_frontend_sha=FRONTEND_SHA,
             fetch_fn=fake_fetch,
@@ -1333,8 +1363,8 @@ def test_verify_bootstrap_served_identity_rejects_mismatched_fe() -> None:
 
     with pytest.raises(ControllerError, match="bootstrap served identity mismatch fails closed: FE served"):
         verify_bootstrap_served_identity(
-            bff_base_url="https://pantheon-lupin-dev-bff.test",
-            fe_base_url="https://pantheon-lupin-dev-fe.test",
+            bff_base_url="https://pantheon-dev-deploy-bff.test",
+            fe_base_url="https://pantheon-dev-deploy-fe.test",
             expected_backend_sha=BACKEND_SHA,
             expected_frontend_sha=FRONTEND_SHA,
             fetch_fn=fake_fetch,
@@ -1357,8 +1387,8 @@ def test_verify_bootstrap_served_identity_rejects_non_read_only_profile() -> Non
 
     with pytest.raises(ControllerError, match="must be in read-only profile"):
         verify_bootstrap_served_identity(
-            bff_base_url="https://pantheon-lupin-dev-bff.test",
-            fe_base_url="https://pantheon-lupin-dev-fe.test",
+            bff_base_url="https://pantheon-dev-deploy-bff.test",
+            fe_base_url="https://pantheon-dev-deploy-fe.test",
             expected_backend_sha=BACKEND_SHA,
             expected_frontend_sha=FRONTEND_SHA,
             fetch_fn=fake_fetch,
@@ -1371,8 +1401,10 @@ def test_admit_bootstrap_predecessor_success() -> None:
     res = admit_bootstrap_predecessor(
         backend_sha=BACKEND_SHA,
         frontend_sha=FRONTEND_SHA,
-        fe_base_url="https://pantheon-lupin-dev-fe.test",
-        fetch_fn=lambda url: (_ for _ in ()).throw(Exception("404")),
+        fe_base_url="https://app.dev.mvl-cap.tw",
+        fetch_fn=lambda url: (_ for _ in ()).throw(
+            urllib.error.HTTPError(url, 404, "Not Found", {}, None)
+        ),
         git_checker=lambda sha, ref, git_dir: True,
         compat_checker=lambda bff, fe: True,
     )
@@ -1448,4 +1480,3 @@ def test_coordinate_release_with_predecessor_fe_sha_mismatch_fails_closed() -> N
             fetch_fn=mismatch_fetch,
         )
     assert client.dispatches == []
-

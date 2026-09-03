@@ -406,24 +406,28 @@ def check_empty_host_prerequisite(
     *,
     fetch_fn: Callable[[str], dict[str, Any]] | None = None,
 ) -> None:
-    """Verify that the target host does not already have a deployment manifest.
+    """Admit only an explicit HTTP 404 as the empty-host sentinel.
 
-    If deployment.json exists and is reachable, repeated bootstrap must fail closed.
+    Authentication failures, server errors, malformed JSON, TLS failures and
+    timeouts are not evidence that a host is empty and therefore fail closed.
     """
     fetcher = fetch_fn or fetch_url_json
     fe_deployment_url = f"{fe_base_url.rstrip('/')}/deployment.json"
-    manifest_exists = False
     try:
-        data = fetcher(fe_deployment_url)
-        if isinstance(data, dict) and (data.get("commit") or data.get("frontendSha") or data.get("schemaVersion")):
-            manifest_exists = True
-    except Exception:
-        manifest_exists = False
-
-    if manifest_exists:
+        fetcher(fe_deployment_url)
+    except urllib.error.HTTPError as exc:
+        if exc.code == 404:
+            return
         raise ControllerError(
-            "repeated bootstrap is rejected: host already has a deployment.json manifest"
-        )
+            f"empty-host bootstrap prerequisite failed closed: deployment.json returned HTTP {exc.code}"
+        ) from exc
+    except Exception as exc:
+        raise ControllerError(
+            f"empty-host bootstrap prerequisite failed closed: deployment.json could not be verified: {exc}"
+        ) from exc
+    raise ControllerError(
+        "repeated bootstrap is rejected: host already serves deployment.json"
+    )
 
 
 def verify_bootstrap_served_identity(
