@@ -142,6 +142,23 @@ class RuntimeLogPathTests(unittest.TestCase):
 
         self.assertEqual(log_path.parent, orchestrator_dir / "logs")
 
+    def test_governed_runtime_logs_use_config_status_root_without_environment(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            status_root = Path(tmpdir) / "status-root"
+            candidate_orchestrator = Path(tmpdir) / "candidate" / ".orchestrator"
+            config = {"paths": {"status_file": str(status_root / "ai-status.json")}}
+            with mock.patch.dict(
+                os.environ,
+                {"PANTHEON_STATUS_ROOT": ""},
+                clear=False,
+            ), mock.patch.object(common, "ORCHESTRATOR_DIR", candidate_orchestrator):
+                log_path = common.runtime_log_path(
+                    "codex", "Codex2", config=config
+                )
+
+        self.assertEqual(log_path.parent, status_root / ".orchestrator" / "logs")
+        self.assertNotIn(candidate_orchestrator, log_path.parents)
+
     def test_local_runtime_evidence_keeps_repository_fallback(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             orchestrator_dir = Path(tmpdir) / ".orchestrator"
