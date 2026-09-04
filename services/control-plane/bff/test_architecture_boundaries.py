@@ -190,3 +190,72 @@ def test_composition_boundary_contract_invariants() -> None:
     )
     assert isinstance(mem_router, APIRouter)
     assert len(mem_router.routes) > 0
+
+
+def test_product_aggregate_ownership_inventory_contract() -> None:
+    """SD §3.1 / STRUCT-OWNERSHIP-001: Enforce product aggregate ownership invariants."""
+    from scripts.check_product_ownership import (
+        DEFAULT_MANIFEST,
+        load_ownership_manifest,
+        validate_aggregates,
+    )
+
+    assert DEFAULT_MANIFEST.is_file(), f"Product ownership manifest missing: {DEFAULT_MANIFEST}"
+    manifest = load_ownership_manifest(DEFAULT_MANIFEST)
+    errors = validate_aggregates(manifest)
+    assert not errors, (
+        f"Product aggregate ownership registry failed validation:\n"
+        + "\n".join(f"  - {err}" for err in errors)
+    )
+    aggregates = manifest["aggregates"]
+    assert len(aggregates) >= 20, f"Expected at least 20 aggregates, found {len(aggregates)}"
+
+
+def test_mutation_route_ownership_mapping_contract() -> None:
+    """SD §3.2 / STRUCT-OWNERSHIP-001: Every mounted non-GET route maps to exactly one owner."""
+    from scripts.check_product_ownership import (
+        DEFAULT_MANIFEST,
+        load_ownership_manifest,
+        validate_mutation_routes,
+    )
+
+    manifest = load_ownership_manifest(DEFAULT_MANIFEST)
+    errors = validate_mutation_routes(manifest)
+    assert not errors, (
+        f"Mounted mutation routes failed ownership validation:\n"
+        + "\n".join(f"  - {err}" for err in errors)
+    )
+
+
+def test_worker_ownership_and_partition_invariants() -> None:
+    """SD §3.3 / STRUCT-OWNERSHIP-001: Compose workers have unique leases and partition policies."""
+    from scripts.check_product_ownership import (
+        DEFAULT_COMPOSE,
+        DEFAULT_MANIFEST,
+        load_ownership_manifest,
+        validate_worker_ownership,
+    )
+
+    manifest = load_ownership_manifest(DEFAULT_MANIFEST)
+    errors = validate_worker_ownership(manifest, compose_path=DEFAULT_COMPOSE)
+    assert not errors, (
+        f"Worker ownership inventory failed validation:\n"
+        + "\n".join(f"  - {err}" for err in errors)
+    )
+
+
+def test_symbol_dispositions_inventory_contract() -> None:
+    """SD §3.4 / STRUCT-OWNERSHIP-001: Classify all 208 duplicate groups and 17 unreachable tails."""
+    from scripts.check_product_ownership import (
+        DEFAULT_MANIFEST,
+        load_ownership_manifest,
+        validate_symbol_dispositions,
+    )
+
+    manifest = load_ownership_manifest(DEFAULT_MANIFEST)
+    errors = validate_symbol_dispositions(manifest)
+    assert not errors, (
+        f"Symbol disposition inventory failed validation:\n"
+        + "\n".join(f"  - {err}" for err in errors)
+    )
+
