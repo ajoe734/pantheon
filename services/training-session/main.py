@@ -357,6 +357,29 @@ def _teaching_session_contract(session: Dict[str, Any]) -> Dict[str, Any]:
     return TeachingSession.from_dict(contract).to_dict()
 
 
+def _default_governed_controls(timestamp: str) -> List[Dict[str, Any]]:
+    """Expose bounded vectorbt controls when a teaching session is created."""
+
+    return [
+        {
+            "parameter_key": "short_window",
+            "display_label": "Short moving-average window",
+            "baseline_value": 5,
+            "current_value": 5,
+            "allowed_range": {"min": 1, "max": 64},
+            "last_modified_at": timestamp,
+        },
+        {
+            "parameter_key": "long_window",
+            "display_label": "Long moving-average window",
+            "baseline_value": 20,
+            "current_value": 20,
+            "allowed_range": {"min": 2, "max": 256},
+            "last_modified_at": timestamp,
+        },
+    ]
+
+
 class CreateSessionBody(BaseModel):
     persona_id: str
     objective: str
@@ -581,7 +604,7 @@ def create_session(body: CreateSessionBody) -> Dict[str, Any]:
         {
             "session_id": session_id,
             "tenant_id": authority.tenant_id,
-            "controls": [],
+            "controls": _default_governed_controls(timestamp),
         },
     )
     store.put_preview_bundle(
