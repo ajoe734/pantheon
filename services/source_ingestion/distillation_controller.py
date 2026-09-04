@@ -305,6 +305,12 @@ def _build_registry_payload(
     registry_payload = dict(conversion.registry_payload)
 
     metadata = dict(registry_payload.get("metadata") or {})
+    # Bind the immutable registry projection to the same tenant scope used by
+    # the supervised controller. Ingest records may omit tenant metadata.
+    metadata.setdefault(
+        "tenant_id",
+        str(source.metadata.get("tenant_id") or os.getenv("PANTHEON_TENANT_ID") or "default").strip(),
+    )
     metadata["distillation"] = {
         "schema_version": "source_to_draft.v1",
         "source_id": source.source_id,

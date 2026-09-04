@@ -697,6 +697,9 @@ services:
       PANTHEON_ARTIFACT_BUCKET: ${PANTHEON_ARTIFACT_BUCKET:-pantheon-artifacts}
       RESEARCH_ORCHESTRATOR_EVENT_STORE_BACKEND: ${RESEARCH_ORCHESTRATOR_EVENT_STORE_BACKEND:-jsonl}
       RESEARCH_ORCHESTRATOR_EVENT_STORE_DSN: ${RESEARCH_ORCHESTRATOR_EVENT_STORE_DSN:-}
+      # Keep HTTP admission and the supervised alpha worker on one durable
+      # volume so accepted research specs survive a service restart.
+      ALPHA_REPLICATION_DATA_DIR: /data/research-orchestrator/alpha-replication
     volumes:
       - research-orchestrator-data:/data/research-orchestrator
     ports:
