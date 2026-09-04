@@ -768,19 +768,7 @@ class ReadSurfacePorts:
     def get_ranking_snapshot(self, ranking_id: Optional[str]) -> Optional[Dict[str, Any]]:
         if not ranking_id:
             return None
-        if hasattr(self, "_ranking_snapshots") and ranking_id in self._ranking_snapshots:
-            return self._ranking_snapshots[ranking_id]
         return self.persona_capital_runtime.get_ranking(ranking_id)
-
-    def put_ranking_snapshot(self, record: Dict[str, Any]) -> Optional[Dict[str, Any]]:
-        if hasattr(self.persona_capital_runtime, "put_ranking_snapshot"):
-            return self.persona_capital_runtime.put_ranking_snapshot(record)
-        if not hasattr(self, "_ranking_snapshots"):
-            self._ranking_snapshots = {}
-        snapshot_id = record.get("ranking_snapshot_id") or record.get("id")
-        if snapshot_id:
-            self._ranking_snapshots[str(snapshot_id)] = record
-        return record
 
     def get_allocation_evaluation(self, alloc_id: Optional[str]) -> Optional[Dict[str, Any]]:
         if not alloc_id:

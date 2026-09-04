@@ -22944,7 +22944,7 @@ app.include_router(
         utc_now_fn=utc_now,
     )
 )
-from .integrations.router import create_integrations_router
+from .tools_integrations.router import create_integrations_router
 app.include_router(
     create_integrations_router(
         get_read_store=lambda: read_store,

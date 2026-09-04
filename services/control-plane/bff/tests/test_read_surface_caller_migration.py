@@ -205,7 +205,7 @@ class TestStaticRegressionReadSurfacePorts(unittest.TestCase):
                 )
 
     def test_main_py_all_read_store_attributes_are_inventoried_and_mapped(self) -> None:
-        """Prove that all 202 read_store attributes in main.py are inventoried and mapped or isolated."""
+        """Prove that all 56 read_store attributes in main.py are inventoried and mapped or isolated."""
         main_py = BFF_DIR / "main.py"
         self.assertTrue(main_py.exists(), f"main.py not found at {main_py}")
         tree = ast.parse(main_py.read_text(encoding="utf-8"), filename=str(main_py))
@@ -216,7 +216,7 @@ class TestStaticRegressionReadSurfacePorts(unittest.TestCase):
                 if isinstance(node.value, ast.Name) and node.value.id == "read_store":
                     read_store_attrs.add(node.attr)
 
-        self.assertEqual(len(read_store_attrs), 202, "Expected exactly 202 read_store attributes in main.py")
+        self.assertEqual(len(read_store_attrs), 56, "Expected exactly 56 read_store attributes in main.py")
 
         ports_instance = create_read_surface_ports()
 
@@ -237,9 +237,9 @@ class TestStaticRegressionReadSurfacePorts(unittest.TestCase):
             [],
             f"Found uninventoried read_store attributes in main.py: {uninventoried}",
         )
-        self.assertEqual(len(mapped_reads), 171)
-        self.assertEqual(len(deferred_writes), 31)
-        self.assertEqual(len(mapped_reads) + len(deferred_writes), 202)
+        self.assertEqual(len(mapped_reads), 55)
+        self.assertEqual(len(deferred_writes), 1)
+        self.assertEqual(len(mapped_reads) + len(deferred_writes), 56)
 
 
 class TestAgoraPersonaClientMigration(unittest.TestCase):

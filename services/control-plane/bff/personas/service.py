@@ -147,6 +147,7 @@ try:
     from ports import (
         ReadSurfacePorts,
         create_persona_registry_write_owner,
+        create_ranking_write_owner,
         create_read_surface_ports,
     )
 except ImportError:
@@ -154,11 +155,13 @@ except ImportError:
         from services.control_plane.bff.ports import (  # type: ignore[no-redef]
             ReadSurfacePorts,
             create_persona_registry_write_owner,
+            create_ranking_write_owner,
             create_read_surface_ports,
         )
     except ImportError:
         ReadSurfacePorts = Any
         create_persona_registry_write_owner = None
+        create_ranking_write_owner = None
         create_read_surface_ports = None
 
 try:
@@ -285,6 +288,21 @@ read_store = (
     if create_read_surface_ports is not None
     else None
 )
+
+# Rankings durable writes are never routed through read_store: the write
+# owner is built lazily so import does not require a Rankings DSN, but any
+# actual write attempt fails closed (via services.rankings.store.build_rankings_store)
+# when one is not configured, rather than falling back to local overlay state.
+_ranking_write_owner: Optional[Any] = None
+
+
+def _get_ranking_write_owner() -> Any:
+    global _ranking_write_owner
+    if _ranking_write_owner is None:
+        if create_ranking_write_owner is None:
+            raise RuntimeError("Rankings write-owner port is unavailable")
+        _ranking_write_owner = create_ranking_write_owner()
+    return _ranking_write_owner
 
 class _DefaultCommandStore:
     def _get_all_commands(self) -> List[Dict[str, Any]]:
@@ -12877,7 +12895,7 @@ def _pm12_attach_ranking_snapshot(
         evidence_assertion_digests.setdefault(persona_id, []).append(
             _stable_json_hash(item.get("evidence_refs") or [])
         )
-    read_store.put_ranking_snapshot({
+    _get_ranking_write_owner().put_ranking_snapshot({
         "ranking_snapshot_id": snapshot_id,
         "surface": surface,
         "period": period,

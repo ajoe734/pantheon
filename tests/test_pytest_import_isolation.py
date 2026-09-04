@@ -95,9 +95,9 @@ def test_integrations_package_resolves_to_repo_root() -> None:
         origin_path = Path(spec.origin).resolve()
         expected_root = (ROOT / "integrations").resolve()
         assert str(origin_path).startswith(str(expected_root))
-        # Ensure it does not resolve to services/control-plane/bff/integrations
-        bff_integrations = (SERVICES_DIR / "control-plane" / "bff" / "integrations").resolve()
-        assert not str(origin_path).startswith(str(bff_integrations))
+        # Ensure it does not resolve to services/control-plane/bff/tools_integrations
+        bff_local_tools_integrations = (SERVICES_DIR / "control-plane" / "bff" / "tools_integrations").resolve()
+        assert not str(origin_path).startswith(str(bff_local_tools_integrations))
     finally:
         sys.path[:] = original_path
 

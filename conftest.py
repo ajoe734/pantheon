@@ -50,10 +50,27 @@ def _module_file(module: ModuleType) -> Path | None:
 
 def _is_transient_local_module(name: str, module: ModuleType) -> bool:
     root_name = name.partition(".")[0]
-    if root_name in _STABLE_REPO_PACKAGES:
-        return False
-
     path = _module_file(module)
+
+    if root_name in _STABLE_REPO_PACKAGES:
+        if path is None:
+            return False
+        # A stable package name is only genuinely stable when it actually
+        # resolves under its canonical repo-root package directory. A stray
+        # module cached under a stable name but resolved from a service-local
+        # or test-local directory (for example a wrong-sys.path collision
+        # between the root ``integrations`` package and a same-named
+        # service-local subpackage) is a poisoned cache entry, not a stable
+        # package: treat it as transient so it gets cleared and re-resolved.
+        canonical_root = ROOT / root_name
+        if path == canonical_root or _is_relative_to(path, canonical_root):
+            return False
+        return (
+            _is_relative_to(path, SERVICES_DIR)
+            or _is_relative_to(path, SCRIPTS_DIR)
+            or _is_relative_to(path, TESTS_DIR)
+        )
+
     if path is None:
         return False
 
