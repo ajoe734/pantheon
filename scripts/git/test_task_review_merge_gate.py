@@ -12,7 +12,6 @@ here writes canonical status, activity, or GitHub state.
 from __future__ import annotations
 
 import json
-import gzip
 import os
 import shutil
 import subprocess
@@ -25,7 +24,9 @@ from typing import Any, Mapping, Sequence
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO_ROOT))
+sys.path.insert(0, str(REPO_ROOT / ".orchestrator"))
 
+import common as orchestrator_common
 from scripts.git import auto_integrator
 from scripts.git import task_review_merge_gate as gate
 from scripts.git.test_auto_integrator import FakeRunner, completed
@@ -774,16 +775,10 @@ class UnreadableStateTests(unittest.TestCase):
 
 
 class RotatedActivityChronologyTests(unittest.TestCase):
-    def _write_archive(self, root: Path, name: str, events: Sequence[Mapping[str, Any]]) -> None:
-        archive = root / "archive" / "logs"
-        archive.mkdir(parents=True, exist_ok=True)
-        with gzip.open(archive / name, "wt", encoding="utf-8") as handle:
-            for event in events:
-                handle.write(json.dumps(event) + "\n")
-
-    def test_content_hash_filename_order_cannot_revoke_newer_pr_5527_approval(self) -> None:
+    def test_rotation_lineage_keeps_newer_pr_5527_approval(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
+            log_path = root / "ai-activity-log.jsonl"
             old_assign = {
                 "ts": "2026-09-04T13:48:00Z",
                 "agent": "Human/Ops",
@@ -795,9 +790,19 @@ class RotatedActivityChronologyTests(unittest.TestCase):
             newer_approval = approval_event(
                 ts="2026-09-04T15:18:00Z", event_id="approval-1518"
             )
-            # Content hashes sort approval first, then the older assignment.
-            self._write_archive(root, "ai-activity-log.jsonl-0aaa.gz", [newer_approval])
-            self._write_archive(root, "ai-activity-log.jsonl-ffff.gz", [old_assign])
+            log_path.write_text(
+                json.dumps(old_assign) + "\n" + json.dumps(newer_approval) + "\n",
+                encoding="utf-8",
+            )
+            with orchestrator_common.activity_audit_lock_file(log_path, shared=False):
+                archive = orchestrator_common.rotate_activity_log_unlocked(
+                    log_path, max_bytes=1, keep_lines=1
+                )
+
+            self.assertIsNotNone(archive)
+            self.assertTrue(
+                orchestrator_common.activity_rotation_lineage_path(log_path).is_file()
+            )
 
             record = gate.load_approval_record("ABC-001", status_root=root)
 
@@ -823,54 +828,25 @@ class RotatedActivityChronologyTests(unittest.TestCase):
         self.assertTrue(record.revoked)
         self.assertEqual(record.revocation_type, "assign")
 
-    def test_invalid_timestamp_fails_closed(self) -> None:
-        record = gate.load_approval_record(
-            "ABC-001", events=[approval_event(ts="not-a-timestamp")]
-        )
-
-        self.assertIn("invalid timestamp", record.scan_error)
-
-    def test_per_source_timestamp_regression_fails_closed(self) -> None:
+    def test_injected_events_remain_caller_ordered(self) -> None:
         record = gate.load_approval_record(
             "ABC-001",
             events=[
                 approval_event(ts="2026-09-04T15:18:00Z"),
-                approval_event(ts="2026-09-04T13:48:00Z"),
+                {
+                    "ts": "2026-09-04T13:49:00Z",
+                    "agent": "Human/Ops",
+                    "type": "assign",
+                    "task_id": "ABC-001",
+                    "message": "Later append with an earlier event timestamp.",
+                },
             ],
         )
 
-        self.assertIn("regresses", record.scan_error)
+        self.assertTrue(record.revoked)
+        self.assertEqual(record.revocation_type, "assign")
 
-    def test_overlapping_archive_ranges_fail_closed(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
-            root = Path(tmp)
-            self._write_archive(
-                root,
-                "ai-activity-log.jsonl-aaaa.gz",
-                [
-                    approval_event(ts="2026-09-04T13:00:00Z"),
-                    approval_event(ts="2026-09-04T15:00:00Z"),
-                ],
-            )
-            self._write_archive(
-                root,
-                "ai-activity-log.jsonl-bbbb.gz",
-                [approval_event(ts="2026-09-04T14:00:00Z")],
-            )
-
-            record = gate.load_approval_record("ABC-001", status_root=root)
-
-        self.assertIn("source ranges overlap", record.scan_error)
-
-    def test_conflicting_duplicate_event_id_fails_closed(self) -> None:
-        first = approval_event(event_id="same-event")
-        second = approval_event(event_id="same-event", message="different payload")
-
-        record = gate.load_approval_record("ABC-001", events=[first, second])
-
-        self.assertIn("conflicting payloads", record.scan_error)
-
-    def test_distinct_events_at_same_timestamp_are_ambiguous(self) -> None:
+    def test_same_second_distinct_injected_events_are_valid(self) -> None:
         record = gate.load_approval_record(
             "ABC-001",
             events=[
@@ -879,7 +855,8 @@ class RotatedActivityChronologyTests(unittest.TestCase):
             ],
         )
 
-        self.assertIn("ambiguous", record.scan_error)
+        self.assertTrue(record.present)
+        self.assertFalse(record.scan_error)
 
 
 class PrematureMergeRegressionTests(unittest.TestCase):

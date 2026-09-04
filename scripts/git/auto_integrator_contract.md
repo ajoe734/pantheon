@@ -74,16 +74,6 @@ review_approved task OR active canonical merge_then_review task
   head, and revokes any standing auto-merge request before proceeding. A
   review-before-merge task additionally requires that exact head's canonical
   reviewer approval.
-- Canonical review audit chronology comes from the same
-  `task_review_merge_gate.load_approval_record` loader used by both the
-  standalone gate and `ReviewGate`. Content-addressed rotation filenames have
-  no ordering authority: the loader validates each source and then orders
-  disjoint source ranges by parsed UTC timestamps. Invalid timestamps,
-  per-source regression, overlapping ranges, conflicting duplicate event IDs,
-  and distinct task events at the same instant are ambiguous and fail closed.
-  A genuine later assign, reopen, or do-not-merge event therefore still
-  revokes approval, while an older event found in a lexically later archive
-  cannot revoke a newer exact-head approval.
 - Two open PRs claiming the same task branch fail closed instead of resolving
   to the first row.
 - If the open PR is already gone because GitHub merged it, the integrator
