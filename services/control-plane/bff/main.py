@@ -13477,12 +13477,14 @@ def _management_ai_audit_href(
 def _management_ai_conversation_href(session_id: str, *, trace_id: Optional[str] = None) -> str:
     route = f"/bff/management/ai/conversations/{quote(str(session_id or ''), safe='')}"
     return route
+_MGMT_AI_CONVERSATION_STORE: Optional[ManagementAiConversationStore] = None
+
+
 def _management_ai_conversation_store() -> ManagementAiConversationStore:
-    store = globals().get("_MGMT_AI_CONVERSATION_STORE")
-    if store is None:
-        store = ManagementAiConversationStore()
-        globals()["_MGMT_AI_CONVERSATION_STORE"] = store
-    return store
+    global _MGMT_AI_CONVERSATION_STORE
+    if _MGMT_AI_CONVERSATION_STORE is None:
+        _MGMT_AI_CONVERSATION_STORE = ManagementAiConversationStore()
+    return _MGMT_AI_CONVERSATION_STORE
 def _management_ai_attachment_url(attachment_id: str) -> str:
     return f"/bff/management/ai/attachments/{quote(str(attachment_id or ''), safe='')}"
 def _management_ai_attachment_api_payload(attachment: Dict[str, Any]) -> Dict[str, Any]:
@@ -14011,7 +14013,7 @@ def _assistant_control_mode_for_identity(
     management_session_id: Optional[str] = None,
     touch: bool = False,
 ) -> Dict[str, Any]:
-    store = globals().get("_ASSISTANT_CONTROL_MODE_STORE")
+    store = _ASSISTANT_CONTROL_MODE_STORE
     if store is None:
         return {
             "state": "inactive",
@@ -14077,7 +14079,7 @@ def _mgmt_nl_validate_question_size(question: str) -> None:
         },
     )
 def _mgmt_nl_control_store() -> Optional[Any]:
-    store = globals().get("_ASSISTANT_CONTROL_MODE_STORE")
+    store = _ASSISTANT_CONTROL_MODE_STORE
     if store is None:
         return None
     return store
