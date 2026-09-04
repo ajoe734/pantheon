@@ -283,25 +283,18 @@ persona_write_owner = (
     else None
 )
 
-read_store = (
-    create_read_surface_ports(persona_registry_store=persona_write_owner)
-    if create_read_surface_ports is not None
-    else None
-)
+# read_store is initialized explicitly via PersonaService or router injection;
+# module import must not construct a global read_store instance.
+read_store: Optional[Any] = None
 
-# Rankings durable writes are never routed through read_store: the write
-# owner is built lazily so import does not require a Rankings DSN, but any
-# actual write attempt fails closed (via services.rankings.store.build_rankings_store)
-# when one is not configured, rather than falling back to local overlay state.
+# Rankings write-owner port must be configured at service/app startup;
+# missing required configuration fails startup closed, never deferred to first write.
 _ranking_write_owner: Optional[Any] = None
 
 
 def _get_ranking_write_owner() -> Any:
-    global _ranking_write_owner
     if _ranking_write_owner is None:
-        if create_ranking_write_owner is None:
-            raise RuntimeError("Rankings write-owner port is unavailable")
-        _ranking_write_owner = create_ranking_write_owner()
+        raise RuntimeError("Rankings write-owner port is not configured at startup")
     return _ranking_write_owner
 
 class _DefaultCommandStore:
@@ -13901,25 +13894,39 @@ class PersonaService:
     def __init__(
         self,
         *,
-        read_store: Optional[Any] = None,
+        queries: Optional[Any] = None,
         command_store: Optional[Any] = None,
         provisioning_store: Optional[Any] = None,
         write_owner: Optional[Any] = None,
+        ranking_write_owner: Optional[Any] = None,
         get_read_store: Optional[Callable[[], Any]] = None,
         get_command_store: Optional[Callable[[], Any]] = None,
         get_provisioning_store: Optional[Callable[[], Any]] = None,
+        get_ranking_write_owner: Optional[Callable[[], Any]] = None,
         utc_now_fn: Optional[Callable[[], str]] = None,
         bff_error_fn: Optional[Callable[..., HTTPException]] = None,
         snapshot_meta_fn: Optional[Callable[..., Dict[str, Any]]] = None,
         dataset_surface_status_fn: Optional[Callable[..., Dict[str, Any]]] = None,
         raise_if_read_surface_unavailable_fn: Optional[Callable[..., None]] = None,
     ) -> None:
+        global _ranking_write_owner
         self._write_owner = write_owner or persona_write_owner
-        self._read_store = read_store or (
-            create_read_surface_ports(persona_registry_store=self._write_owner)
-            if create_read_surface_ports is not None
-            else None
+        self._read_store = (
+            queries
+            or (get_read_store() if get_read_store is not None else None)
+            or (
+                create_read_surface_ports(persona_registry_store=self._write_owner)
+                if create_read_surface_ports is not None
+                else None
+            )
         )
+        self._ranking_write_owner = (
+            ranking_write_owner
+            or (get_ranking_write_owner() if get_ranking_write_owner is not None else None)
+        )
+        if self._ranking_write_owner is None and create_ranking_write_owner is not None:
+            self._ranking_write_owner = create_ranking_write_owner()
+        _ranking_write_owner = self._ranking_write_owner
         self._command_store = command_store or (
             CommandStore(os.path.join(BFF_DATA_DIR, "commands.jsonl"))
             if CommandStore is not None
@@ -13929,6 +13936,7 @@ class PersonaService:
         self._get_read_store = get_read_store or (lambda: self._read_store)
         self._get_command_store = get_command_store or (lambda: self._command_store)
         self._get_provisioning_store = get_provisioning_store or (lambda: self._provisioning_store or _persona_provisioning_store())
+        self._get_ranking_write_owner = get_ranking_write_owner or (lambda: self._ranking_write_owner)
         self._utc_now = utc_now_fn or _utc_now_rfc3339
         self._bff_error = bff_error_fn or _bff_error
         self._snapshot_meta = snapshot_meta_fn or _snapshot_meta
@@ -13945,3 +13953,6 @@ class PersonaService:
 
     def get_provisioning_store(self) -> Any:
         return self._get_provisioning_store()
+
+    def get_ranking_write_owner(self) -> Any:
+        return self._get_ranking_write_owner()

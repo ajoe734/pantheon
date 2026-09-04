@@ -20,7 +20,7 @@ def _page_slice(
 
 def _build_router():
     return create_deployment_router(
-        get_read_store=lambda: object(),
+        queries=object(),
         extract_identity=lambda _authorization: object(),
         require_read_role=lambda _identity: None,
         require_operator_role=lambda _identity: None,
@@ -97,3 +97,28 @@ def test_main_composes_deployment_router_without_inline_decorators() -> None:
             r"@app\.(?:get|post|put|patch|delete)\(" + path_pattern,
             main_source,
         ), f"{path_pattern} should be owned by deployment.router, not main.py"
+
+
+def test_deployment_service_accepts_typed_queries() -> None:
+    from services.control_plane.bff.deployment.ports import DeploymentQueries
+    from services.control_plane.bff.deployment.service import DeploymentService
+
+    mock_queries = object()
+    service = DeploymentService(
+        queries=mock_queries,
+        bff_error=lambda *a, **k: RuntimeError(),
+        dataset_surface_status=lambda *a, **k: {},
+        composed_surface_status=lambda *a, **k: {},
+        aggregate_group_surface=lambda *a, **k: {},
+        split_csv_query=lambda *a, **k: None,
+        snapshot_meta=lambda *a, **k: {},
+        surface_degradation_reason=lambda *a, **k: None,
+    )
+    assert service.queries is mock_queries
+    assert not hasattr(service, "read_store")
+
+
+def test_main_composes_deployment_router_with_queries_not_closure() -> None:
+    main_source = (BFF_ROOT / "main.py").read_text(encoding="utf-8")
+    assert "queries=read_store" in main_source
+    assert "_create_deployment_router(\n        queries=read_store," in main_source

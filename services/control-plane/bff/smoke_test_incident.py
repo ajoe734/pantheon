@@ -125,6 +125,9 @@ for _env_name in (
 ):
     os.environ.pop(_env_name, None)
 
+os.environ.setdefault("RANKING_STORE_DSN", "postgresql://test:test@localhost:5432/test")
+os.environ.setdefault("RANKING_STORE_BOOTSTRAP", "0")
+
 from services.control_plane.bff import main as bff_main
 from services.control_plane.bff.main import app
 from services.control_plane.bff.ports import ReadSurfacePorts

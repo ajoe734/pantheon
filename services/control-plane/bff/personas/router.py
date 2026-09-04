@@ -51,6 +51,8 @@ def create_personas_router(
     get_read_store: Optional[Callable[[], Any]] = None,
     get_command_store: Optional[Callable[[], Any]] = None,
     get_provisioning_store: Optional[Callable[[], Any]] = None,
+    ranking_write_owner: Optional[Any] = None,
+    get_ranking_write_owner: Optional[Callable[[], Any]] = None,
     extract_identity_fn: Optional[Callable[..., Any]] = None,
     require_read_role_fn: Optional[Callable[..., None]] = None,
     require_operator_role_fn: Optional[Callable[..., None]] = None,
@@ -74,6 +76,8 @@ def create_personas_router(
         get_read_store=get_read_store,
         get_command_store=get_command_store,
         get_provisioning_store=get_provisioning_store,
+        ranking_write_owner=ranking_write_owner,
+        get_ranking_write_owner=get_ranking_write_owner,
         utc_now_fn=utc_now_fn,
         bff_error_fn=bff_error_fn,
         snapshot_meta_fn=snapshot_meta_fn,
@@ -3430,5 +3434,13 @@ def create_personas_router(
     return router
 
 
-# Canonical default router instance
-router = create_personas_router()
+_default_router: Optional[APIRouter] = None
+
+
+def __getattr__(name: str) -> Any:
+    if name == "router":
+        global _default_router
+        if _default_router is None:
+            _default_router = create_personas_router()
+        return _default_router
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

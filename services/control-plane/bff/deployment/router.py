@@ -39,7 +39,7 @@ from .service import DeploymentService
 
 def create_deployment_router(
     *,
-    get_read_store: Callable[[], Any],
+    queries: Optional[Any] = None,
     extract_identity: Callable[[Optional[str]], Any],
     require_read_role: Callable[[Any], None],
     require_operator_role: Callable[[Any], None],
@@ -71,7 +71,7 @@ def create_deployment_router(
     """Build the dedicated Deployment domain router with injected BFF ports."""
     router = APIRouter()
     service = DeploymentService(
-        get_read_store=get_read_store,
+        queries=queries,
         bff_error=bff_error,
         dataset_surface_status=dataset_surface_status,
         composed_surface_status=composed_surface_status,
@@ -104,7 +104,7 @@ def create_deployment_router(
         )
 
     def _deployment_plan_registry_entry(artifact_id: str) -> Optional[Dict[str, Any]]:
-        for entry in service.read_store.list_registry_entries():
+        for entry in service.queries.list_registry_entries():
             if not isinstance(entry, dict):
                 continue
             candidates = {
@@ -142,7 +142,7 @@ def create_deployment_router(
             )
 
     def _deployment_plan_persona_id(binding_id: str) -> Optional[str]:
-        binding = service.read_store.get_binding(binding_id)
+        binding = service.queries.get_binding(binding_id)
         if isinstance(binding, dict):
             persona_id = str(binding.get("persona_id") or "").strip()
             return persona_id or None
@@ -170,7 +170,7 @@ def create_deployment_router(
         identity = extract_identity(authorization)
         require_read_role(identity)
 
-        plans = service.read_store.list_deployment_plans(
+        plans = service.queries.list_deployment_plans(
             status=status,
             capital_pool_id=capital_pool_id,
             include_fixture_pack=False,
@@ -278,7 +278,7 @@ def create_deployment_router(
                 headers={"X-Correlation-Id": correlation_id},
             )
 
-        if service.read_store.get_deployment_plan(plan_id) is not None:
+        if service.queries.get_deployment_plan(plan_id) is not None:
             raise bff_error(
                 409,
                 ErrorCode.RESOURCE_CONFLICT,
@@ -289,7 +289,7 @@ def create_deployment_router(
                 correlation_id=correlation_id,
             )
 
-        record = service.read_store.create_deployment_plan(
+        record = service.queries.create_deployment_plan(
             plan_id=plan_id,
             binding_id=fields["binding_id"],
             artifact_id=fields["artifact_id"],
@@ -339,7 +339,7 @@ def create_deployment_router(
 
         snapshot_at = utc_now()
         plan_surface = dataset_surface_status("deployment_plans", snapshot_at=snapshot_at)
-        plan = service.read_store.get_deployment_plan(plan_id)
+        plan = service.queries.get_deployment_plan(plan_id)
         if not plan:
             raise_if_read_surface_unavailable(plan_surface, label="Deployment plan")
             raise bff_error(
@@ -350,7 +350,7 @@ def create_deployment_router(
             )
 
         payload = service.deployment_plan_with_stage_truth(plan, snapshot_at=snapshot_at)
-        decision = service.read_store.get_approval_decision(plan.get("approval_decision_id"))
+        decision = service.queries.get_approval_decision(plan.get("approval_decision_id"))
         if decision:
             payload["approval_decision"] = decision
         stage_surfaces = service.deployment_stage_truth_surfaces(
@@ -389,15 +389,15 @@ def create_deployment_router(
 
         matched_items: List[Dict[str, Any]] = []
         allowed_actions_complete = True
-        for plan in service.read_store.list_deployment_plans():
+        for plan in service.queries.list_deployment_plans():
             plan_id = str(plan.get("plan_id") or plan.get("id") or "")
-            approval_decision = service.read_store.get_approval_decision(plan.get("approval_decision_id"))
-            review = service.read_store.get_review_summary(plan_id)
+            approval_decision = service.queries.get_approval_decision(plan.get("approval_decision_id"))
+            review = service.queries.get_review_summary(plan_id)
             derived_status = service.pkt001_plan_filter_status(plan, approval_decision, review)
             if requested_statuses and derived_status not in requested_statuses:
                 continue
             matched_items.append(service.pkt001_plan_list_item(plan, approval_decision, review))
-            if not service.pkt001_allowed_actions_present(service.read_store.get_allowed_actions(plan_id)):
+            if not service.pkt001_allowed_actions_present(service.queries.get_allowed_actions(plan_id)):
                 allowed_actions_complete = False
 
         matched_items.sort(
@@ -445,7 +445,7 @@ def create_deployment_router(
         identity = extract_identity(authorization)
         require_read_role(identity)
 
-        plan = service.read_store.get_deployment_plan(plan_id)
+        plan = service.queries.get_deployment_plan(plan_id)
         if not plan:
             raise bff_error(
                 404,
@@ -454,16 +454,16 @@ def create_deployment_router(
                 f"Deployment plan {plan_id} does not exist",
             )
 
-        pool = service.read_store.get_capital_pool(plan.get("capital_pool_id"))
-        bindings = service.read_store.get_bindings_for_pool(plan.get("capital_pool_id"))
-        runtime_binding = service.read_store.get_runtime_binding(plan.get("runtime_binding_id"))
-        approval_decision = service.read_store.get_approval_decision(plan.get("approval_decision_id"))
-        rollbacks = service.read_store.get_rollbacks(
+        pool = service.queries.get_capital_pool(plan.get("capital_pool_id"))
+        bindings = service.queries.get_bindings_for_pool(plan.get("capital_pool_id"))
+        runtime_binding = service.queries.get_runtime_binding(plan.get("runtime_binding_id"))
+        approval_decision = service.queries.get_approval_decision(plan.get("approval_decision_id"))
+        rollbacks = service.queries.get_rollbacks(
             runtime_binding.get("runtime_id") if runtime_binding else None
         )
-        allowed_actions = service.read_store.get_allowed_actions(plan_id)
-        latest_run = service.read_store.get_latest_run(plan_id)
-        review = service.read_store.get_review_summary(plan_id)
+        allowed_actions = service.queries.get_allowed_actions(plan_id)
+        latest_run = service.queries.get_latest_run(plan_id)
+        review = service.queries.get_review_summary(plan_id)
 
         snapshot_at = utc_now()
 
@@ -564,8 +564,8 @@ def create_deployment_router(
         identity = extract_identity(authorization)
         require_read_role(identity)
 
-        diff = service.read_store.get_deployment_diff(plan_id)
-        diff_source = service.read_store.dataset_source("deployment_diffs")
+        diff = service.queries.get_deployment_diff(plan_id)
+        diff_source = service.queries.dataset_source("deployment_diffs")
         if not diff:
             if diff_source == "missing":
                 return service.unavailable_deployment_diff_payload(plan_id, utc_now())
@@ -641,7 +641,7 @@ def create_deployment_router(
         require_read_role(identity)
 
         snapshot_at = utc_now()
-        plans = service.read_store.list_deployment_plans()
+        plans = service.queries.list_deployment_plans()
         if status:
             requested_statuses = {v.strip().lower() for v in status.split(",") if v.strip()}
             plans = [p for p in plans if str(p.get("status") or "").lower() in requested_statuses]
@@ -690,7 +690,7 @@ def create_deployment_router(
         require_read_role(identity)
 
         clean_id = deployment_id.strip()
-        plan = service.read_store.get_deployment_plan(clean_id)
+        plan = service.queries.get_deployment_plan(clean_id)
         if not plan:
             raise bff_error(
                 404,
@@ -701,8 +701,8 @@ def create_deployment_router(
 
         snapshot_at = utc_now()
         plan_payload = service.deployment_plan_with_stage_truth(plan, snapshot_at=snapshot_at)
-        decision = service.read_store.get_approval_decision(plan.get("approval_decision_id"))
-        review = service.read_store.get_review_summary(clean_id)
+        decision = service.queries.get_approval_decision(plan.get("approval_decision_id"))
+        review = service.queries.get_review_summary(clean_id)
         stage_surfaces = service.deployment_stage_truth_surfaces(
             plan_payload["stage_truth"],
             snapshot_at=snapshot_at,
@@ -747,7 +747,7 @@ def create_deployment_router(
         except Exception:
             pass
         clean_id = deployment_id.strip()
-        plan = service.read_store.get_deployment_plan(clean_id)
+        plan = service.queries.get_deployment_plan(clean_id)
         if not plan:
             raise bff_error(
                 404,

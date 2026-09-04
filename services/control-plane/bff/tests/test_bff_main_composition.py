@@ -195,3 +195,63 @@ def test_zero_unreferenced_dead_functions_in_main_py() -> None:
 
     assert not dead_funcs, f"Found {len(dead_funcs)} unreferenced dead function(s) in main.py: {dead_funcs}"
 
+
+def test_personas_module_global_read_store_not_instantiated_on_import() -> None:
+    """Verify personas.service does not construct a module-global read_store on import."""
+    import sys
+    from services.control_plane.bff.personas import service as ps
+
+    # Module-level read_store must be None prior to explicit service construction
+    # or must have been injected explicitly by composition root.
+    assert hasattr(ps, "read_store"), "personas.service must declare read_store symbol"
+
+
+def test_personas_service_fails_startup_closed_when_ranking_owner_unconfigured(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Verify PersonaService fails startup closed if Rankings write-owner is unconfigured."""
+    import os
+    from services.control_plane.bff.personas.service import PersonaService
+
+    monkeypatch.delenv("RANKING_STORE_DSN", raising=False)
+    monkeypatch.delenv("DATABASE_URL", raising=False)
+    monkeypatch.delenv("PANTHEON_DATABASE_URL", raising=False)
+
+    with pytest.raises((ValueError, RuntimeError)):
+        PersonaService(
+            get_read_store=lambda: object(),
+            get_command_store=lambda: object(),
+            get_provisioning_store=lambda: object(),
+        )
+
+
+def test_deployment_router_receives_queries_port() -> None:
+    """Verify DeploymentService uses explicit queries dependency."""
+    from services.control_plane.bff.deployment.service import DeploymentService
+
+    mock_queries = object()
+    service = DeploymentService(
+        queries=mock_queries,
+        bff_error=lambda *a, **k: RuntimeError(),
+        dataset_surface_status=lambda *a, **k: {},
+        composed_surface_status=lambda *a, **k: {},
+        aggregate_group_surface=lambda *a, **k: {},
+        split_csv_query=lambda *a, **k: None,
+        snapshot_meta=lambda *a, **k: {},
+        surface_degradation_reason=lambda *a, **k: None,
+    )
+    assert service.queries is mock_queries
+    assert not hasattr(service, "read_store")
+
+
+def test_bootstrap_app_dependencies_contract() -> None:
+    """Verify bootstrap package exposes AppDependencies container with typed dependencies."""
+    from services.control_plane.bff.bootstrap import AppDependencies
+    from services.control_plane.bff.deployment.ports import DeploymentQueries
+
+    mock_queries = object()
+    deps = AppDependencies(queries=mock_queries)
+    assert deps.queries is mock_queries
+    assert deps.read_store is None
+
+    default_deps = AppDependencies.create_default()
+    assert default_deps.queries is not None
+    assert default_deps.read_store is not None

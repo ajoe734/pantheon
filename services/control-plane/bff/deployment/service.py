@@ -49,7 +49,7 @@ class DeploymentService:
     def __init__(
         self,
         *,
-        get_read_store: Callable[[], Any],
+        queries: Optional[Any] = None,
         bff_error: Callable[..., Exception],
         dataset_surface_status: Callable[..., Dict[str, Any]],
         composed_surface_status: Callable[..., Dict[str, Any]],
@@ -58,7 +58,7 @@ class DeploymentService:
         snapshot_meta: Callable[[str], Dict[str, Any]],
         surface_degradation_reason: Callable[..., Optional[str]],
     ) -> None:
-        self._get_read_store = get_read_store
+        self._queries = queries
         self._bff_error = bff_error
         self._dataset_surface_status = dataset_surface_status
         self._composed_surface_status = composed_surface_status
@@ -68,9 +68,8 @@ class DeploymentService:
         self._surface_degradation_reason = surface_degradation_reason
 
     @property
-    def read_store(self) -> Any:
-        """Resolve the current store per request, including test substitutions."""
-        return self._get_read_store()
+    def queries(self) -> Any:
+        return self._queries
 
     # -- PKT-001: operator deployment-plans list ---------------------------- #
 
@@ -284,11 +283,11 @@ class DeploymentService:
     def deployment_runtime_binding(self, plan: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         runtime_binding_id = str(plan.get("runtime_binding_id") or "").strip()
         if runtime_binding_id:
-            binding = self.read_store.get_runtime_binding(runtime_binding_id)
+            binding = self.queries.get_runtime_binding(runtime_binding_id)
             if binding:
                 return binding
 
-        for binding in self.read_store.list_runtime_bindings():
+        for binding in self.queries.list_runtime_bindings():
             if self.runtime_binding_matches_deployment_plan(binding, plan):
                 return binding
         return None
@@ -322,7 +321,7 @@ class DeploymentService:
             runtime_binding.get("deployment_stage") or runtime_binding.get("deployment_mode") or ""
         ).strip().lower()
 
-        monitoring = self.read_store.get_paper_runtime_monitoring_session(
+        monitoring = self.queries.get_paper_runtime_monitoring_session(
             runtime_id=runtime_id,
             binding_id=runtime_binding_id,
         )
@@ -350,7 +349,7 @@ class DeploymentService:
                 terminal_reason=terminal_reason,
             )
 
-        telemetry = self.read_store.get_telemetry_summary(runtime_id) if runtime_id else None
+        telemetry = self.queries.get_telemetry_summary(runtime_id) if runtime_id else None
         if telemetry:
             health_summary = telemetry.get("health_summary") if isinstance(telemetry.get("health_summary"), dict) else {}
             unhealthy = [
@@ -398,7 +397,7 @@ class DeploymentService:
     def deployment_stage_truth(self, plan: Dict[str, Any]) -> Dict[str, Dict[str, Any]]:
         plan_id = self.deployment_plan_identifier(plan)
         approval_decision_id = str(plan.get("approval_decision_id") or "").strip()
-        approval_decision = self.read_store.get_approval_decision(approval_decision_id)
+        approval_decision = self.queries.get_approval_decision(approval_decision_id)
         if approval_decision:
             approval_status = approval_decision.get("outcome") or approval_decision.get("state")
             approval_entry = self.deployment_stage_entry(

@@ -22471,7 +22471,7 @@ app.routes.extend(_runtime_router.routes)
 from .deployment.router import create_deployment_router as _create_deployment_router
 app.include_router(
     _create_deployment_router(
-        get_read_store=lambda: read_store,
+        queries=read_store,
         extract_identity=_extract_identity,
         require_read_role=_require_read_role,
         require_operator_role=_require_operator_role,
