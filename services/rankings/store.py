@@ -38,8 +38,10 @@ unchanged.
 """
 from __future__ import annotations
 
+import math
 import os
 import threading
+from collections.abc import Mapping as AbcMapping
 from copy import deepcopy
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
@@ -97,9 +99,15 @@ def _validate(record: RankingRecord) -> None:
 
 
 def _deep_freeze(value: Any) -> Any:
-    """Recursively convert nested dict/list values into immutable structures."""
+    """Recursively convert nested mapping/list values into immutable structures.
 
-    if isinstance(value, dict):
+    Accepts any ``collections.abc.Mapping`` -- not just ``dict`` -- so a
+    caller-supplied custom mapping type is copied field-by-field into a
+    ``MappingProxyType`` rather than referenced. The original object (and any
+    later mutation of it) can never reach the durable/frozen state.
+    """
+
+    if isinstance(value, AbcMapping):
         return MappingProxyType({key: _deep_freeze(item) for key, item in value.items()})
     if isinstance(value, (list, tuple)):
         return tuple(_deep_freeze(item) for item in value)
@@ -109,7 +117,7 @@ def _deep_freeze(value: Any) -> Any:
 def _thaw(value: Any) -> Any:
     """Reverse of ``_deep_freeze`` for durable storage payloads."""
 
-    if isinstance(value, MappingProxyType):
+    if isinstance(value, AbcMapping):
         return {key: _thaw(item) for key, item in value.items()}
     if isinstance(value, tuple):
         return [_thaw(item) for item in value]
@@ -161,13 +169,24 @@ def _validate_durable_value(value: Any, *, path: str = "value") -> None:
     """Reject anything that cannot round-trip through JSON unchanged.
 
     Accepts the frozen shapes produced by ``_deep_freeze`` (``MappingProxyType``
-    and ``tuple``) as well as their unfrozen originals, so this can validate
-    either a raw constructor argument or an already-frozen attribute.
+    and ``tuple``) as well as their unfrozen originals -- and, for mappings,
+    any ``collections.abc.Mapping`` implementation, not just ``dict`` -- so
+    this can validate either a raw constructor argument or an already-frozen
+    attribute. ``NaN``/``Infinity``/``-Infinity`` floats are rejected: they
+    serialize through ``json.dumps`` by default but are not valid portable
+    JSON, so a durable payload containing one would not round-trip through a
+    strict JSON reader.
     """
 
-    if value is None or isinstance(value, (str, int, float, bool)):
+    if value is None or isinstance(value, bool):
         return
-    if isinstance(value, (dict, MappingProxyType)):
+    if isinstance(value, float):
+        if not math.isfinite(value):
+            raise RankingWriteOwnerError(f"{path} must be a finite number, got {value!r}")
+        return
+    if isinstance(value, (str, int)):
+        return
+    if isinstance(value, AbcMapping):
         for key, item in value.items():
             if not isinstance(key, str):
                 raise RankingWriteOwnerError(f"{path} keys must be strings")
@@ -180,10 +199,26 @@ def _validate_durable_value(value: Any, *, path: str = "value") -> None:
     raise RankingWriteOwnerError(f"{path} must be a JSON-compatible value, got {type(value).__name__}")
 
 
+def _validate_mapping_collection(value: Any, *, path: str) -> None:
+    """Require the historical durable shape: a list/tuple of mapping entries.
+
+    Used for ``items``/``lines``, which have always been collections of
+    record-shaped mappings. A bare scalar or a malformed (non-mapping) entry
+    is rejected here rather than silently accepted as "JSON-compatible".
+    """
+
+    if not isinstance(value, (list, tuple)):
+        raise RankingWriteOwnerError(f"{path} must be a list of mapping entries, got {type(value).__name__}")
+    for index, item in enumerate(value):
+        if not isinstance(item, AbcMapping):
+            raise RankingWriteOwnerError(f"{path}[{index}] must be a mapping, got {type(item).__name__}")
+    _validate_durable_value(value, path=path)
+
+
 def _validate_evidence_assertion_digests(value: Any) -> None:
     """Enforce the historical shape: persona id -> list of digest strings."""
 
-    if not isinstance(value, (dict, MappingProxyType)):
+    if not isinstance(value, AbcMapping):
         raise RankingWriteOwnerError(
             "evidence_assertion_digests must be a mapping of persona id to digest list"
         )
@@ -291,7 +326,7 @@ def _validate_snapshot(record: RankingSnapshotRecord) -> None:
         value = getattr(record, attr)
         if not isinstance(value, str) or not value.strip():
             raise RankingWriteOwnerError(f"{attr} is required")
-    _validate_durable_value(record.items, path="items")
+    _validate_mapping_collection(record.items, path="items")
     _validate_evidence_assertion_digests(record.evidence_assertion_digests)
 
 
@@ -316,7 +351,7 @@ def _validate_evaluation(record: AllocationEvaluationRecord) -> None:
         value = getattr(record, optional_attr)
         if value is not None and (not isinstance(value, str) or not value.strip()):
             raise RankingWriteOwnerError(f"{optional_attr} must be a non-empty string when present")
-    _validate_durable_value(record.lines, path="lines")
+    _validate_mapping_collection(record.lines, path="lines")
 
 
 def _decode_ranking_snapshot(payload: Mapping[str, Any]) -> RankingSnapshotRecord:
@@ -325,7 +360,7 @@ def _decode_ranking_snapshot(payload: Mapping[str, Any]) -> RankingSnapshotRecor
         raise RankingWriteOwnerError(f"malformed ranking snapshot payload keys: {sorted(keys)}")
     if payload["record_type"] != _SNAPSHOT_RECORD_TYPE:
         raise RankingWriteOwnerError(f"unexpected record_type for ranking snapshot: {payload['record_type']!r}")
-    return RankingSnapshotRecord(
+    record = RankingSnapshotRecord(
         ranking_snapshot_id=payload["ranking_snapshot_id"],
         surface=payload["surface"],
         period=payload["period"],
@@ -335,6 +370,8 @@ def _decode_ranking_snapshot(payload: Mapping[str, Any]) -> RankingSnapshotRecor
         evidence_assertion_digests=payload["evidence_assertion_digests"],
         created_at=payload["created_at"],
     )
+    _validate_snapshot(record)
+    return record
 
 
 def _decode_allocation_evaluation(payload: Mapping[str, Any]) -> AllocationEvaluationRecord:
@@ -354,7 +391,7 @@ def _decode_allocation_evaluation(payload: Mapping[str, Any]) -> AllocationEvalu
         raise RankingWriteOwnerError(
             f"unexpected record_type for allocation evaluation: {payload['record_type']!r}"
         )
-    return AllocationEvaluationRecord(
+    record = AllocationEvaluationRecord(
         allocation_evaluation_id=payload["allocation_evaluation_id"],
         ranking_snapshot_id=payload["ranking_snapshot_id"],
         allocation_policy_version=payload["allocation_policy_version"],
@@ -365,6 +402,8 @@ def _decode_allocation_evaluation(payload: Mapping[str, Any]) -> AllocationEvalu
         authority_mode=payload.get("authority_mode"),
         promotion_review_id=payload.get("promotion_review_id"),
     )
+    _validate_evaluation(record)
+    return record
 
 
 class RankingWriteStore:
@@ -393,18 +432,32 @@ class RankingWriteStore:
     def _refresh(self) -> Dict[str, RankingRecord]:
         records: Dict[str, RankingRecord] = {}
         for payload in self._records_table.list_all():
-            if "ranking_id" in payload:
-                record = RankingRecord.from_dict(payload)
-                records[record.ranking_id] = record
-                continue
             # Generation 3 stores RankingSnapshotRecord/AllocationEvaluationRecord
             # rows in this same table under namespaced record ids, each tagged
-            # with an explicit record_type envelope. Only a recognized new
-            # kind is invisible to the legacy CRUD surface; an unrecognized
-            # row that is neither a legacy ranking nor a known generation-3
-            # kind is a data integrity problem, not something to silently
-            # ignore.
-            if payload.get("record_type") in _RECOGNIZED_NON_LEGACY_RECORD_TYPES:
+            # with an explicit record_type envelope. record_type is inspected
+            # first, before ranking_id, so a row cannot masquerade as legacy by
+            # carrying both a recognized record_type and a ranking_id: that
+            # combination is a mixed envelope, not a legacy row that merely
+            # happens to also have an extra field. Only a recognized new kind
+            # with no ranking_id is invisible to the legacy CRUD surface; an
+            # unrecognized record_type, or a legacy/new mixed envelope, is a
+            # data integrity problem, not something to silently ignore.
+            record_type = payload.get("record_type")
+            has_ranking_id = "ranking_id" in payload
+            if record_type is not None:
+                if record_type not in _RECOGNIZED_NON_LEGACY_RECORD_TYPES:
+                    raise RankingWriteOwnerError(
+                        f"encountered a ranking row with an unrecognized record_type: {record_type!r}"
+                    )
+                if has_ranking_id:
+                    raise RankingWriteOwnerError(
+                        "encountered a ranking row with a mixed envelope: record_type="
+                        f"{record_type!r} masquerading as legacy with a ranking_id present"
+                    )
+                continue
+            if has_ranking_id:
+                record = RankingRecord.from_dict(payload)
+                records[record.ranking_id] = record
                 continue
             raise RankingWriteOwnerError(
                 "encountered a ranking row that is neither a legacy RankingRecord "

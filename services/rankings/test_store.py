@@ -17,6 +17,7 @@ import json
 import re
 import sys
 import threading
+from collections.abc import Mapping
 from types import MappingProxyType, SimpleNamespace
 from unittest import mock
 
@@ -156,6 +157,27 @@ def _snapshot(ranking_snapshot_id: str = "snap-001", **overrides) -> RankingSnap
     }
     payload.update(overrides)
     return RankingSnapshotRecord(**payload)
+
+
+class _CustomMapping(Mapping):
+    """A ``collections.abc.Mapping`` implementation that is not a ``dict``.
+
+    Used to prove ``_deep_freeze`` copies any mapping (not just ``dict``)
+    field-by-field into immutable state, rather than only recognizing the
+    concrete ``dict`` type.
+    """
+
+    def __init__(self, data):
+        self._data = dict(data)
+
+    def __getitem__(self, key):
+        return self._data[key]
+
+    def __iter__(self):
+        return iter(self._data)
+
+    def __len__(self):
+        return len(self._data)
 
 
 def _evaluation(allocation_evaluation_id: str = "eval-001", **overrides) -> AllocationEvaluationRecord:
@@ -471,6 +493,168 @@ def test_legacy_list_rankings_raises_on_unrecognized_row_missing_ranking_id_and_
     # A row with neither ranking_id nor a recognized record_type is a data
     # integrity problem, not a payload the legacy surface may silently skip.
     store._records_table.put("mystery-row", {"some_other_field": "x"})
+
+    with pytest.raises(RankingWriteOwnerError):
+        store.list_rankings()
+
+
+# --------------------------------------------------------------------------- #
+# Correction wave: collections.abc.Mapping, mapping-collection shape,
+# non-finite floats, decode-time validation, and record_type-first legacy
+# masquerade detection.
+# --------------------------------------------------------------------------- #
+
+
+def test_ranking_snapshot_copies_a_custom_mapping_item_into_immutable_state(store) -> None:
+    source_item = _CustomMapping({"persona_id": "persona-a", "rank": 1, "score": 1.0})
+    created = store.create_ranking_snapshot(_snapshot(items=[source_item]))
+
+    assert isinstance(created.items, tuple)
+    assert isinstance(created.items[0], MappingProxyType)
+    assert dict(created.items[0]) == {"persona_id": "persona-a", "rank": 1, "score": 1.0}
+
+    # Mutating the original custom mapping after the fact must not reach the
+    # durable/frozen copy: proves the mapping was copied, not referenced.
+    source_item._data["rank"] = 99
+    assert created.items[0]["rank"] == 1
+
+
+def test_ranking_snapshot_copies_a_custom_mapping_evidence_digest_value_into_immutable_state(store) -> None:
+    created = store.create_ranking_snapshot(
+        _snapshot(evidence_assertion_digests=_CustomMapping({"persona-a": ["sha256:e1"]}))
+    )
+
+    assert isinstance(created.evidence_assertion_digests, MappingProxyType)
+    assert dict(created.evidence_assertion_digests) == {"persona-a": ("sha256:e1",)}
+
+
+def test_ranking_snapshot_rejects_scalar_items(store) -> None:
+    with pytest.raises(RankingWriteOwnerError):
+        store.create_ranking_snapshot(_snapshot(items="not-a-list"))
+
+
+def test_ranking_snapshot_rejects_scalar_entry_inside_items(store) -> None:
+    with pytest.raises(RankingWriteOwnerError):
+        store.create_ranking_snapshot(_snapshot(items=["not-a-mapping"]))
+
+
+def test_ranking_snapshot_rejects_non_finite_float_in_items(store) -> None:
+    for bad in (float("nan"), float("inf"), float("-inf")):
+        with pytest.raises(RankingWriteOwnerError):
+            store.create_ranking_snapshot(
+                _snapshot(items=[{"persona_id": "persona-a", "rank": 1, "score": bad}])
+            )
+
+
+def test_allocation_evaluation_rejects_scalar_lines(store) -> None:
+    with pytest.raises(RankingWriteOwnerError):
+        store.create_allocation_evaluation(_evaluation(lines="not-a-list"))
+
+
+def test_allocation_evaluation_rejects_scalar_entry_inside_lines(store) -> None:
+    with pytest.raises(RankingWriteOwnerError):
+        store.create_allocation_evaluation(_evaluation(lines=[123]))
+
+
+def test_allocation_evaluation_rejects_non_finite_float_in_lines(store) -> None:
+    for bad in (float("nan"), float("inf"), float("-inf")):
+        with pytest.raises(RankingWriteOwnerError):
+            store.create_allocation_evaluation(
+                _evaluation(lines=[{"persona_id": "persona-a", "weight": bad}])
+            )
+
+
+def test_get_ranking_snapshot_raises_on_corrupted_persisted_items_shape(store) -> None:
+    # Bypass normal create validation entirely: write a corrupted row
+    # straight to the backing table, the way an out-of-band writer or a
+    # pre-correction row would. The decoder must still fail closed on read.
+    store._records_table.put(
+        "ranking-snapshot::corrupt-items",
+        {
+            "record_type": "ranking_snapshot",
+            "ranking_snapshot_id": "corrupt-items",
+            "surface": "persona_league",
+            "period": "2026-W36",
+            "formula_version": "v3",
+            "content_digest": "sha256:corrupt",
+            "items": "not-a-list",
+            "evidence_assertion_digests": {"persona-a": ["sha256:e1"]},
+            "created_at": "2026-09-04T18:00:00Z",
+        },
+    )
+
+    with pytest.raises(RankingWriteOwnerError):
+        store.get_ranking_snapshot("corrupt-items")
+
+
+def test_get_ranking_snapshot_raises_on_corrupted_persisted_field_type(store) -> None:
+    store._records_table.put(
+        "ranking-snapshot::corrupt-field",
+        {
+            "record_type": "ranking_snapshot",
+            "ranking_snapshot_id": "corrupt-field",
+            "surface": "",
+            "period": "2026-W36",
+            "formula_version": "v3",
+            "content_digest": "sha256:corrupt",
+            "items": [{"persona_id": "persona-a", "rank": 1, "score": 1.0}],
+            "evidence_assertion_digests": {"persona-a": ["sha256:e1"]},
+            "created_at": "2026-09-04T18:00:00Z",
+        },
+    )
+
+    with pytest.raises(RankingWriteOwnerError):
+        store.get_ranking_snapshot("corrupt-field")
+
+
+def test_get_allocation_evaluation_raises_on_corrupted_persisted_lines_shape(store) -> None:
+    store._records_table.put(
+        "allocation-evaluation::corrupt-lines",
+        {
+            "record_type": "allocation_evaluation",
+            "allocation_evaluation_id": "corrupt-lines",
+            "ranking_snapshot_id": "snap-001",
+            "allocation_policy_version": "policy-v2",
+            "content_digest": "sha256:corrupt",
+            "lines": ["not-a-mapping"],
+            "created_at": "2026-09-04T18:05:00Z",
+            "applied": False,
+        },
+    )
+
+    with pytest.raises(RankingWriteOwnerError):
+        store.get_allocation_evaluation("corrupt-lines")
+
+
+def test_legacy_list_rankings_raises_on_mixed_envelope_masquerading_as_legacy(store) -> None:
+    # A row carrying both a recognized record_type and a ranking_id is a
+    # mixed envelope, not a legacy row that happens to have an extra field:
+    # record_type must be inspected before ranking_id, not after.
+    store._records_table.put(
+        "ranking-snapshot::masquerade",
+        {
+            "record_type": "ranking_snapshot",
+            "ranking_id": "masquerade",
+            "ranking_snapshot_id": "masquerade",
+            "surface": "persona_league",
+            "period": "2026-W36",
+            "formula_version": "v3",
+            "content_digest": "sha256:masquerade",
+            "items": [{"persona_id": "persona-a", "rank": 1, "score": 1.0}],
+            "evidence_assertion_digests": {"persona-a": ["sha256:e1"]},
+            "created_at": "2026-09-04T18:00:00Z",
+        },
+    )
+
+    with pytest.raises(RankingWriteOwnerError):
+        store.list_rankings()
+
+
+def test_legacy_list_rankings_raises_on_unrecognized_record_type(store) -> None:
+    store._records_table.put(
+        "future-kind::unknown-001",
+        {"record_type": "some_future_kind", "payload": "opaque"},
+    )
 
     with pytest.raises(RankingWriteOwnerError):
         store.list_rankings()
