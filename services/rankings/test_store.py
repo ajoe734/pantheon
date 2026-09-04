@@ -658,3 +658,37 @@ def test_legacy_list_rankings_raises_on_unrecognized_record_type(store) -> None:
 
     with pytest.raises(RankingWriteOwnerError):
         store.list_rankings()
+
+
+def test_legacy_list_rankings_raises_on_null_record_type_with_ranking_id(store) -> None:
+    # Key presence of record_type must be checked, not just a truthy/non-None value:
+    # an envelope where the record_type key exists with null alongside ranking_id
+    # must fail integrity as a mixed envelope and never decode as legacy.
+    store._records_table.put(
+        "ranking-null-record-type-mixed",
+        {
+            "record_type": None,
+            "ranking_id": "null-record-type-spoof",
+            "title": "Spoofed Legacy",
+            "criteria": "sharpe_30d",
+        },
+    )
+
+    with pytest.raises(RankingWriteOwnerError):
+        store.list_rankings()
+
+    with pytest.raises(RankingWriteOwnerError):
+        store.get_ranking("null-record-type-spoof")
+
+
+def test_legacy_list_rankings_raises_on_null_record_type_without_ranking_id(store) -> None:
+    # An envelope carrying record_type: None without ranking_id is an
+    # unrecognized record_type, not an ignorable non-legacy kind.
+    store._records_table.put(
+        "null-record-type-row",
+        {"record_type": None, "payload": "opaque"},
+    )
+
+    with pytest.raises(RankingWriteOwnerError):
+        store.list_rankings()
+

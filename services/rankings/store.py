@@ -434,25 +434,27 @@ class RankingWriteStore:
         for payload in self._records_table.list_all():
             # Generation 3 stores RankingSnapshotRecord/AllocationEvaluationRecord
             # rows in this same table under namespaced record ids, each tagged
-            # with an explicit record_type envelope. record_type is inspected
-            # first, before ranking_id, so a row cannot masquerade as legacy by
-            # carrying both a recognized record_type and a ranking_id: that
-            # combination is a mixed envelope, not a legacy row that merely
-            # happens to also have an extra field. Only a recognized new kind
-            # with no ranking_id is invisible to the legacy CRUD surface; an
-            # unrecognized record_type, or a legacy/new mixed envelope, is a
-            # data integrity problem, not something to silently ignore.
-            record_type = payload.get("record_type")
+            # with an explicit record_type envelope. Key presence of "record_type"
+            # is inspected first, before reading its value or inspecting ranking_id:
+            # legacy decode is allowed only when there is no record_type field in
+            # the envelope at all.
+            # An envelope where the record_type key exists (even with null or
+            # unrecognized value) must fail integrity if present alongside ranking_id
+            # (mixed envelope) or if its value is not a recognized non-legacy kind.
+            # Only a recognized non-legacy kind with no ranking_id is cleanly
+            # skipped by the legacy CRUD surface.
+            has_record_type = "record_type" in payload
             has_ranking_id = "ranking_id" in payload
-            if record_type is not None:
-                if record_type not in _RECOGNIZED_NON_LEGACY_RECORD_TYPES:
-                    raise RankingWriteOwnerError(
-                        f"encountered a ranking row with an unrecognized record_type: {record_type!r}"
-                    )
+            if has_record_type:
+                record_type = payload["record_type"]
                 if has_ranking_id:
                     raise RankingWriteOwnerError(
                         "encountered a ranking row with a mixed envelope: record_type="
                         f"{record_type!r} masquerading as legacy with a ranking_id present"
+                    )
+                if record_type not in _RECOGNIZED_NON_LEGACY_RECORD_TYPES:
+                    raise RankingWriteOwnerError(
+                        f"encountered a ranking row with an unrecognized record_type: {record_type!r}"
                     )
                 continue
             if has_ranking_id:
