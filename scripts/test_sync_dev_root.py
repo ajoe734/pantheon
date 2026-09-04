@@ -8,9 +8,6 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 SYNC_SCRIPT = REPO_ROOT / "scripts" / "sync-dev-root.sh"
-CANONICAL_RUNTIME_PARENT = "/home/lupin/pantheon-ci-deploy/command-runtimes"
-
-
 def _git(cwd: Path, *args: str) -> str:
     return subprocess.run(
         ["git", *args], cwd=cwd, check=True, capture_output=True, text=True
@@ -102,11 +99,8 @@ def _coordination_root(tmp_path: Path) -> Path:
 
 def _patched_sync_script(tmp_path: Path, runtime_parent: Path) -> Path:
     script = tmp_path / "sync-dev-root-under-test.sh"
-    source = SYNC_SCRIPT.read_text(encoding="utf-8").replace(
-        f'COMMAND_RUNTIME_PARENT="{CANONICAL_RUNTIME_PARENT}"',
-        f'COMMAND_RUNTIME_PARENT="{runtime_parent}"',
-    )
-    script.write_text(source, encoding="utf-8")
+    assert runtime_parent == tmp_path / "command-runtimes"
+    script.write_text(SYNC_SCRIPT.read_text(encoding="utf-8"), encoding="utf-8")
     script.chmod(0o755)
     return script
 
@@ -126,6 +120,7 @@ def _run_sync(
 ) -> subprocess.CompletedProcess[str]:
     env = os.environ.copy()
     env["SYNC_PROMOTION_ARGS_FILE"] = str(promotion_args)
+    env["PANTHEON_DEPLOY_ROOT"] = str(script.parent)
     env["PANTHEON_INTEGRATION_RUNTIME_PARENT"] = str(
         script.parent / "integration-runtimes"
     )
@@ -203,7 +198,7 @@ def test_sync_uses_explicit_coordination_root_and_never_inspects_live_cwd(tmp_pa
         "--live-config",
         str(live_config),
         "--authority-env-file",
-        "/home/lupin/pantheon-ci-deploy/runtime/supervisor-authority-public.env",
+        str(script.parent / "runtime" / "supervisor-authority-public.env"),
         "--repository-source-root",
         f"pantheon={dev_root}",
         "--repository-source-root",
@@ -214,6 +209,7 @@ def test_sync_uses_explicit_coordination_root_and_never_inspects_live_cwd(tmp_pa
         f"execute_plans={integration_parent / 'execute_plans' / target}",
     ]
     source = SYNC_SCRIPT.read_text(encoding="utf-8")
+    assert "/home/lupin" not in source
     assert "PID_FILE=" not in source
     assert "ACTIVE_ROOT" not in source
     assert "/proc/$pid/cwd" not in source
@@ -476,6 +472,7 @@ def test_sync_prunes_old_command_runtimes_after_promotion(tmp_path: Path) -> Non
     )
 
     env = os.environ.copy()
+    env["PANTHEON_DEPLOY_ROOT"] = str(script.parent)
     env["SYNC_PROMOTION_ARGS_FILE"] = str(promotion_args)
     env["SYNC_PRUNE_ARGS_FILE"] = str(prune_args)
     env["PANTHEON_INTEGRATION_RUNTIME_PARENT"] = str(
