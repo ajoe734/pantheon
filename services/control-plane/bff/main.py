@@ -892,6 +892,20 @@ def _bff_readiness_dependencies() -> Dict[str, Dict[str, Any]]:
         },
         "lifecycle_projector": _lifecycle_projector_dependency(),
     }
+
+
+# Keep the process-liveness/readiness contract registered on the assembled
+# application. The Compose healthcheck and deployment gate probe ``/livez``;
+# without this registration a freshly built candidate starts successfully but
+# remains unhealthy and is rolled back before exact-pair admission.
+register_fastapi_health_routes(
+    app,
+    "operator-bff",
+    dependencies=_bff_readiness_dependencies,
+    details=lambda: {"version": "0.2.0", "data_dir": BFF_DATA_DIR},
+)
+
+
 _ERROR_CODE_BY_STATUS = {
     400: ErrorCode.VALIDATION_FAILED.value,
     401: ErrorCode.AUTH_REQUIRED.value,
