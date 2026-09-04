@@ -102,6 +102,44 @@ def test_helper_fails_closed_without_postgres_backend(monkeypatch: pytest.Monkey
         helper.require_postgres_backends()
 
 
+def test_helper_reports_backends_resolved_by_the_store_objects() -> None:
+    """The environment stating postgres is not proof the stores resolved to it.
+    The report has to come from the constructed objects so a store that fell
+    back to memory is caught even while the env still claims postgres."""
+    helper = _load_helper()
+    memory_workshop = FakeStore()
+    proposals = helper.ProposalStore(backend="memory")
+    dataset_store = helper.AgoraDatasetStore(backend="memory")
+
+    resolved = helper.resolved_store_backends(memory_workshop, proposals, dataset_store)
+    assert resolved == {
+        "workshop": "memory",
+        "governance": "memory",
+        "dataset": "memory",
+    }
+
+    with pytest.raises(RuntimeError, match="dataset=memory, governance=memory, workshop=memory"):
+        helper.assert_postgres_store_backends(resolved)
+
+    helper.assert_postgres_store_backends(
+        {"workshop": "postgres", "governance": "postgres", "dataset": "postgres"}
+    )
+
+
+def test_assert_backends_action_needs_no_record_identifiers() -> None:
+    """A backend check has no workshop of its own, and seed/verify still must
+    not run without the identifiers that name the record they act on."""
+    helper = _load_helper()
+
+    args = helper.parse_args(["assert-backends"])
+    assert args.action == "assert-backends"
+
+    with pytest.raises(SystemExit):
+        helper.parse_args(["seed"])
+    with pytest.raises(SystemExit):
+        helper.parse_args(["verify", "--workshop-id", "w", "--tenant-id", "t"])
+
+
 def test_helper_rejects_missing_or_wrong_persisted_record() -> None:
     helper = _load_helper()
     store = FakeStore()
@@ -132,10 +170,19 @@ def test_helper_rejects_missing_or_wrong_persisted_record() -> None:
         )
 
 
+SMOKE_STEP_NAME = "- name: Dev Agora restart persistence smoke under lease"
+
+
+def _smoke_step() -> str:
+    workflow = WORKFLOW_PATH.read_text(encoding="utf-8")
+    start = workflow.index(SMOKE_STEP_NAME)
+    end = workflow.find("\n      - name:", start + 1)
+    return workflow[start:] if end == -1 else workflow[start:end]
+
+
 def test_workflow_uses_internal_fresh_process_persistence_proof() -> None:
     workflow = WORKFLOW_PATH.read_text(encoding="utf-8")
-    step = workflow.split("- name: Dev Agora governance restart persistence smoke", 1)[1]
-    step = step.split("- name: Summarize auto-deploy", 1)[0]
+    step = _smoke_step()
 
     assert "agora-deploy-smoke:operator" not in workflow
     assert "Authorization:" not in step
@@ -146,23 +193,24 @@ def test_workflow_uses_internal_fresh_process_persistence_proof() -> None:
     assert seed in step
     assert verify in step
     assert step.index(seed) < step.index(restart) < step.index(verify)
-    assert step.count("docker compose -p pantheon -f docker-compose.yml exec -T operator-bff") == 2
-    assert 'test "${ready}" = true' in step
+    assert step.count("docker compose -p pantheon -f docker-compose.yml exec -T operator-bff") == 3
     assert "proposal-${workshop_id}" in step
     assert "exactly-once replay and pending outbox recovery" in step
 
 
-def test_workflow_log_and_inspect_probes_consume_complete_input_under_pipefail() -> None:
-    workflow = WORKFLOW_PATH.read_text(encoding="utf-8")
-    step = workflow.split("- name: Dev Agora governance restart persistence smoke", 1)[1]
-    step = step.split("- name: Summarize auto-deploy", 1)[0]
+def test_workflow_proves_store_backends_from_the_stores_not_container_logs() -> None:
+    """The backend precondition must be read off the store objects the service
+    builds. The previous probes grepped ``docker logs`` for initialization
+    messages, which the uvicorn-hosted BFF never emitted, so the check could
+    only ever fail regardless of how the stores had actually resolved."""
+    step = _smoke_step()
 
-    assert "grep -q" not in step
-    assert step.count("docker inspect pantheon-operator-bff-1") == 3
-    assert step.count("docker logs pantheon-operator-bff-1") == 3
-    assert "grep -F -x 'AGORA_WORKSHOP_STORE_BACKEND=postgres' >/dev/null" in step
-    assert "grep -F -x 'AGORA_GOVERNANCE_STORE_BACKEND=postgres' >/dev/null" in step
-    assert "grep -F -x 'AGORA_DATASET_STORE_BACKEND=postgres' >/dev/null" in step
-    assert "grep -F 'Agora workshop store initialized backend=postgres' >/dev/null" in step
-    assert "grep -F 'Agora governance store initialized backend=postgres' >/dev/null" in step
-    assert "grep -F 'Agora dataset store initialized backend=postgres' >/dev/null" in step
+    assert "docker logs pantheon-operator-bff-1" not in step
+    assert "store initialized backend=postgres" not in step
+    assert "docker inspect pantheon-operator-bff-1" not in step
+
+    assert_backends = "agora_workshop_restart_persistence_smoke.py assert-backends"
+    assert assert_backends in step
+    assert step.index(assert_backends) < step.index(
+        "agora_workshop_restart_persistence_smoke.py seed"
+    )
