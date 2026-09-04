@@ -920,8 +920,6 @@ jobs:
           EVIDENCE_DIR: ${{ steps.release_admission.outputs.evidence_dir }}
           GITHUB_TOKEN: ${{ github.token }}
           REMOTE_USER: ${{ vars.NONPROD_REMOTE_USER }}
-          DEV_VM: ${{ vars.DEV_VM || 'pantheon-dev-deploy' }}
-          DEV_ZONE: ${{ vars.DEV_ZONE || 'asia-east1-b' }}
           DEV_REMOTE_DIR: ${{ vars.DEV_REMOTE_DIR || '/home/chloe_ong_dev_cctech_support_com/pantheon' }}
           PANTHEON_DEPLOY_WORKTREE_ROOT: ${{ vars.DEV_DEPLOY_WORKTREE_ROOT }}
           DEV_AUTH_PROFILE: ${{ env.DEV_AUTH_PROFILE }}
