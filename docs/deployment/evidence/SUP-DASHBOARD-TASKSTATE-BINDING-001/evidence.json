@@ -1,0 +1,48 @@
+{
+  "schema_version": 1,
+  "task_id": "SUP-DASHBOARD-TASKSTATE-BINDING-001",
+  "title": "Bind supervisor dashboard projection to canonical TaskStore identity",
+  "owner": "Codex",
+  "reviewer": "Claude",
+  "scope": {
+    "owned": [
+      ".orchestrator/supervisor.py::refresh_dashboard_runtime_artifacts",
+      ".orchestrator/test_supervisor.py dashboard refresh regression coverage"
+    ],
+    "not_changing": [
+      "common.task_state_store_runtime_env identity construction",
+      "scripts/ai_status.py TaskStore loading and projection semantics",
+      "canonical journal, ai-status projection, archive, or fallback authority"
+    ]
+  },
+  "failure_reproduction": {
+    "cause": "The supervisor cycle called ai_status.load_state without installing the live config's canonical TaskStore environment, so authoritative projection validation rejected the refresh for missing identity.",
+    "regression_contract": "The test invokes the real canonical_task_state_identity_from_environment validator from inside the mocked ai_status.load_state boundary. The call can succeed only while all three exact values rendered by common.task_state_store_runtime_env are present."
+  },
+  "implementation": {
+    "binding_source": "common.task_state_store_runtime_env(config)",
+    "scope": "Only import/load/write_dashboard_bundle/sync_docs_site execute with the binding installed.",
+    "restoration": "Every touched environment value is restored to its prior value, including deletion when it was originally absent.",
+    "fail_closed": "Missing or malformed authoritative live config fails before ai_status import/load; the existing dashboard refresh error log receives the validation error.",
+    "parallel_authority_added": false,
+    "fallback_projection_added": false,
+    "duplicate_loader_added": false
+  },
+  "verification": {
+    "focused_command": "cd .orchestrator && python3 -m unittest test_supervisor.V2StartupCacheTests.test_dashboard_refresh_uses_scoped_canonical_task_state_identity test_supervisor.V2StartupCacheTests.test_dashboard_refresh_fails_closed_before_projection_on_bad_binding",
+    "focused_result": "2 tests passed",
+    "startup_cache_command": "cd .orchestrator && python3 -m unittest test_supervisor.V2StartupCacheTests",
+    "startup_cache_result": "21 tests passed",
+    "syntax_command": "python3 -m py_compile .orchestrator/supervisor.py .orchestrator/test_supervisor.py",
+    "syntax_result": "passed",
+    "full_suite_attempt": "PYTHONPATH=. python3 -m unittest discover -s .orchestrator -p 'test_supervisor.py'",
+    "full_suite_result": "226 tests passed and 1 unrelated existing test errored in ReviewDecisionIntentLeaseRecoveryTests because its late scripts.ai_status import retained a task archive/status root binding mismatch. The failing test does not exercise dashboard refresh and neither scripts/ai_status.py nor archive binding code is changed by this task."
+  },
+  "acceptance": {
+    "exact_absolute_journal_binding_verified": true,
+    "dashboard_bundle_and_docs_projection_called_with_canonical_state": true,
+    "binding_is_projection_call_scoped": true,
+    "malformed_binding_remains_fail_closed": true,
+    "no_fallback_or_second_authority": true
+  }
+}
