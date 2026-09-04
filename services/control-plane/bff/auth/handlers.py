@@ -12,7 +12,6 @@ import hashlib
 import json
 import os
 import re
-import sys
 import time
 import uuid
 from datetime import datetime, timezone
@@ -22,9 +21,8 @@ from fastapi import HTTPException
 
 
 def _main():
-    module = sys.modules.get("main") or sys.modules.get("__main__")
-    if module is None:
-        raise RuntimeError("BFF main module is not assembled")
+    from .. import main as module
+
     return module
 
 
@@ -121,10 +119,7 @@ def _dev_profile(payload: Mapping[str, Any]) -> Dict[str, Any]:
 
 
 def _issue_token(profile: Mapping[str, Any]) -> Dict[str, Any]:
-    try:
-        from services.runtime_auth_inbound import encode_jwt_hs256
-    except ImportError:  # pragma: no cover - legacy module path
-        from runtime_auth_inbound import encode_jwt_hs256  # type: ignore
+    from services.runtime_auth_inbound import encode_jwt_hs256
     m = _main()
     secret = os.getenv("PANTHEON_BFF_DEV_LOGIN_JWT_SECRET") or os.getenv("PANTHEON_BFF_JWT_SECRET", "")
     if not secret:
@@ -366,7 +361,7 @@ async def bff_auth_readiness(*, authorization: Optional[str] = None, pantheon_se
     user = _user(identity)
     capabilities = set(user["capabilities"])
     try:
-        from agora.identity.scope import resolve_agora_user_scope
+        from ..agora.identity.scope import resolve_agora_user_scope
         capabilities.update(resolve_agora_user_scope(identity, utc_now=m.utc_now, requested_tenant_id=tenant["id"]).granted_capabilities)
     except Exception:
         pass

@@ -1,15 +1,15 @@
 {
   "schema_version": 1,
   "task_id": "BFF-PACKAGE-001",
-  "generated_at": "2026-09-04T11:55:00Z",
+  "generated_at": "2026-09-04T14:28:46Z",
   "evidence_policy": "observed_immutable_only",
   "owner": "Codex",
   "reviewer": "Claude",
   "review_status": "pending_independent_exact_head_review",
   "repository": "ajoe734/pantheon",
   "branch": "task/BFF-PACKAGE-001",
-  "source_base_sha": "b7180e32e",
-  "last_committed_anchor_sha": "d3ab73e0d0118275ed4e7ad2a6b756d3e07bc573",
+  "source_base_sha": "6ddbcd23a",
+  "last_committed_anchor_sha": "18d625cde48ce0c25bbbbefd7cf37cbdb14f3099",
   "acceptance_matrix": [
     {
       "criterion": "All recorded BFF entrypoints use one stable import root",
@@ -39,6 +39,14 @@
     },
     {
       "command": "python3 -m compileall -q services/control-plane/bff services/control-plane/cron services/control_plane",
+      "result": "passed"
+    },
+    {
+      "command": "bash -n scripts/bff/failover_demo.sh scripts/bff/run_multi_replica_smoke.sh",
+      "result": "passed"
+    },
+    {
+      "command": "Static scan of recorded Docker and HA smoke entrypoints for the services.control_plane.bff import root",
       "result": "passed"
     },
     {
