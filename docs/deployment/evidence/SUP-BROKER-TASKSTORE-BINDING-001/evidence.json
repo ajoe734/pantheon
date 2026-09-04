@@ -29,12 +29,12 @@
     {
       "criterion": "Permit only an active exact-generation isolated-worktree lease",
       "status": "passed",
-      "evidence": "Existing stale-generation, expired-lease, mismatched-root, and parent-root negative tests remain green; the new child-process reproducer permits Write at only the exact leased root."
+      "evidence": "Separate promoted child-process cases load the real V2 runtime cache and authoritative task journal: the exact lease is allowed, while stale canonical generation, sibling path, and parent path are denied. Existing expired-lease and mismatched-root coverage also remains green."
     },
     {
       "criterion": "Prove promoted-runtime behavior without broad allowlisting",
       "status": "passed",
-      "evidence": "An independent Python process loads permission_broker from the command-code root while rebinding projection and absolute journal to a separate coordination root, then evaluates the exact lease."
+      "evidence": "An independent Python process loads permission_broker from the command-code root, reads the worker lease from the rebound coordination-root state file, and reads task generation and ownership through task_state_store.load_snapshot(event_log). The ai-status.json projection is deliberately stale, so the exact-root allow result proves the authoritative journal loader supplied the decision state. No loader is monkeypatched in the child process."
     }
   ],
   "verification": {
@@ -45,7 +45,7 @@
       "git diff --check"
     ],
     "results": [
-      "119 provider permission tests passed",
+      "122 provider permission tests passed, including four promoted-runtime real-loader allow/deny cases",
       "permission broker and test module compiled",
       "no whitespace errors"
     ]
@@ -55,7 +55,8 @@
     "required_checks": [
       "Confirm forged or incomplete canonical identity fails closed before path rebinding",
       "Confirm the absolute authoritative event journal replaces the promoted runtime template path",
-      "Confirm lease generation, owner, expiry, and exact workspace checks remain unchanged"
+      "Confirm the subprocess proof uses real runtime and journal files without monkeypatching either loader",
+      "Confirm stale generation, sibling path, and parent path each fail closed"
     ]
   }
 }

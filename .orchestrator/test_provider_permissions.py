@@ -109,7 +109,12 @@ class ProviderPermissionsTest(unittest.TestCase):
                 with self.assertRaisesRegex(RuntimeError, "identity mismatch"):
                     permission_broker.load_broker_runtime_config()
 
-    def test_promoted_broker_process_allows_exact_authoritative_lease(self) -> None:
+    def _evaluate_promoted_broker_process(
+        self,
+        *,
+        canonical_generation: int = 7,
+        target_kind: str = "exact",
+    ) -> dict:
         with tempfile.TemporaryDirectory(prefix="permission-broker-process-") as temp_dir:
             temp_root = Path(temp_dir).resolve()
             status_root = temp_root / "coordination"
@@ -122,13 +127,21 @@ class ProviderPermissionsTest(unittest.TestCase):
                 "tasks": [
                     {
                         "id": "TASK-123",
-                        "generation": 7,
+                        "generation": canonical_generation,
                         "owner": "Claude",
                     }
                 ]
             }
             (status_root / "ai-status.json").write_text(
-                json.dumps(canonical_status),
+                # This mutable projection is deliberately stale. An allow result
+                # therefore proves the child loaded the authoritative journal.
+                json.dumps(
+                    {
+                        "tasks": [
+                            {"id": "TASK-123", "generation": 99, "owner": "Nobody"}
+                        ]
+                    }
+                ),
                 encoding="utf-8",
             )
             task_state_store.append_state_commit(
@@ -145,7 +158,37 @@ class ProviderPermissionsTest(unittest.TestCase):
                 ).isoformat(),
                 "workspace_mode": "isolated_worktree",
                 "workspace_path": str(workspace_root),
+                "queue_event_id": "evt-run-123",
             }
+            (status_root / ".orchestrator" / "state.json").write_text(
+                json.dumps(
+                    {
+                        "version": 2,
+                        "queue": {
+                            "version": 2,
+                            "events": {
+                                "evt-run-123": {
+                                    "status": "started",
+                                    "intent": {
+                                        "event_id": "evt-run-123",
+                                        "task_id": "TASK-123",
+                                    },
+                                }
+                            },
+                        },
+                        "workers": {"run-123": runtime_worker},
+                    }
+                ),
+                encoding="utf-8",
+            )
+            if target_kind == "exact":
+                target_path = workspace_root / "result.txt"
+            elif target_kind == "sibling":
+                target_path = workspace_root.parent / "task-456" / "result.txt"
+            elif target_kind == "parent":
+                target_path = workspace_root.parent / "result.txt"
+            else:
+                raise ValueError(f"unsupported target kind: {target_kind}")
             env = {
                 **os.environ,
                 **self._authoritative_broker_env(status_root, event_log),
@@ -167,28 +210,51 @@ class ProviderPermissionsTest(unittest.TestCase):
                         "assert config['paths']['status_file']==sys.argv[1];"
                         "assert config['task_state_store']=="
                         "{'mode':'authoritative','event_log':sys.argv[2]};"
-                        "permission_broker.load_runtime_state=lambda _config:"
-                        "{'workers':{'run-123':json.loads(sys.argv[3])}};"
-                        "permission_broker.load_status=lambda _config:json.loads(sys.argv[4]);"
+                        "assert permission_broker.load_runtime_state(config)"
+                        "['workers']['run-123']['task_generation']==7;"
+                        "assert permission_broker.load_status(config)"
+                        "['tasks'][0]['generation']==int(sys.argv[4]);"
                         "print(json.dumps(permission_broker.evaluate_tool_request("
-                        "'Write',{'file_path':sys.argv[5]},config)))"
+                        "'Write',{'file_path':sys.argv[3]},config)))"
                     ),
                     str(status_root / "ai-status.json"),
                     str(event_log),
-                    json.dumps(runtime_worker),
-                    json.dumps(canonical_status),
-                    str(workspace_root / "result.txt"),
+                    str(target_path),
+                    str(canonical_generation),
                 ],
                 cwd=Path(permission_broker.__file__).resolve().parent,
                 env=env,
-                check=True,
+                check=False,
                 capture_output=True,
                 text=True,
             )
 
-            evaluation = json.loads(completed.stdout)
-            self.assertEqual(evaluation["decision"], "allow", evaluation)
-            self.assertEqual(evaluation["risk_class"], "repo_write")
+            self.assertEqual(completed.returncode, 0, completed.stderr)
+            return json.loads(completed.stdout)
+
+    def test_promoted_broker_process_allows_exact_authoritative_lease(self) -> None:
+        evaluation = self._evaluate_promoted_broker_process()
+
+        self.assertEqual(evaluation["decision"], "allow", evaluation)
+        self.assertEqual(evaluation["risk_class"], "repo_write")
+
+    def test_promoted_broker_process_denies_stale_authoritative_generation(self) -> None:
+        evaluation = self._evaluate_promoted_broker_process(canonical_generation=8)
+
+        self.assertEqual(evaluation["decision"], "deny", evaluation)
+        self.assertEqual(evaluation["risk_class"], "out_of_workspace")
+
+    def test_promoted_broker_process_denies_sibling_of_authoritative_lease(self) -> None:
+        evaluation = self._evaluate_promoted_broker_process(target_kind="sibling")
+
+        self.assertEqual(evaluation["decision"], "deny", evaluation)
+        self.assertEqual(evaluation["risk_class"], "out_of_workspace")
+
+    def test_promoted_broker_process_denies_parent_of_authoritative_lease(self) -> None:
+        evaluation = self._evaluate_promoted_broker_process(target_kind="parent")
+
+        self.assertEqual(evaluation["decision"], "deny", evaluation)
+        self.assertEqual(evaluation["risk_class"], "out_of_workspace")
 
     def test_toolsearch_is_auto_allowed(self) -> None:
         evaluation = permission_broker.evaluate_tool_request("ToolSearch", {}, {})
