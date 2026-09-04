@@ -2457,6 +2457,66 @@ class StatusRootRoutingTests(unittest.TestCase):
         self.assertEqual(config["paths"]["state_file"], str(status_root / ".orchestrator" / "state.json"))
         self.assertNotIn("event_queue", config["paths"])
 
+    def test_load_config_uses_live_repository_registry_not_command_checkout(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="ai-status-live-registry-") as temp_dir:
+            root = Path(temp_dir)
+            command_root = root / "command-runtime"
+            status_root = root / "coordination-root"
+            command_config = command_root / ".orchestrator" / "config.json"
+            live_config = status_root / ".orchestrator" / "config.json"
+            command_config.parent.mkdir(parents=True)
+            live_config.parent.mkdir(parents=True)
+            command_config.write_text(
+                json.dumps(
+                    {
+                        "coordination": {
+                            "repositories": {
+                                "pantheon": {
+                                    "repo": "ajoe734/pantheon",
+                                    "local_path": str(command_root),
+                                }
+                            }
+                        }
+                    }
+                ),
+                encoding="utf-8",
+            )
+            live_config.write_text(
+                json.dumps(
+                    {
+                        "coordination": {
+                            "repositories": {
+                                "pantheon": {
+                                    "repo": "ajoe734/pantheon",
+                                    "local_path": ".",
+                                }
+                            }
+                        }
+                    }
+                ),
+                encoding="utf-8",
+            )
+            with (
+                mock.patch.object(ai_status, "CONFIG_FILE", command_config),
+                mock.patch.object(ai_status, "STATUS_ROOT", status_root),
+                mock.patch.object(ai_status, "STATUS_FILE", status_root / "ai-status.json"),
+                mock.patch.object(ai_status, "LOG_FILE", status_root / "ai-activity-log.jsonl"),
+                mock.patch.object(ai_status, "CURRENT_WORK_FILE", status_root / "current-work.md"),
+                mock.patch.object(ai_status, "DOCS_SITE_DIR", status_root / "docs-site"),
+                mock.patch.object(ai_status, "ORCHESTRATOR_STATE_FILE", status_root / ".orchestrator" / "state.json"),
+                mock.patch.object(ai_status, "APPROVAL_QUEUE_FILE", status_root / ".orchestrator" / "approval-queue.json"),
+            ):
+                config = ai_status.load_config()
+
+        self.assertEqual(
+            ai_status.repository_local_path(config, "pantheon"),
+            status_root.resolve(),
+        )
+        self.assertNotEqual(
+            ai_status.repository_local_path(config, "pantheon"),
+            command_root.resolve(),
+        )
+
     def test_worktree_status_wrapper_reads_and_writes_only_central_root(self) -> None:
         with tempfile.TemporaryDirectory(prefix="ai-status-central-routing-") as temp_dir:
             root = Path(temp_dir)

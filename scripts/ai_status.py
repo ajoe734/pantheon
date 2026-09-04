@@ -1685,6 +1685,26 @@ def load_config() -> dict[str, Any]:
     payload = load_json_file(CONFIG_FILE, {})
     if not isinstance(payload, dict):
         return {}
+    # The executable can live in an immutable installed command checkout, but
+    # delivery repository identity belongs to the live coordination root.  In
+    # particular, a static ``local_path=.`` in the installed checkout must not
+    # make that checkout the Pantheon worktree-registration authority.
+    live_config_file = STATUS_ROOT / ".orchestrator" / "config.json"
+    if live_config_file.resolve(strict=False) != CONFIG_FILE.resolve(strict=False):
+        live_payload = load_json_file(live_config_file, {})
+        if isinstance(live_payload, dict):
+            live_coordination = live_payload.get("coordination")
+            live_repositories = (
+                live_coordination.get("repositories")
+                if isinstance(live_coordination, dict)
+                else None
+            )
+            if isinstance(live_repositories, dict):
+                coordination = payload.setdefault("coordination", {})
+                if not isinstance(coordination, dict):
+                    coordination = {}
+                    payload["coordination"] = coordination
+                coordination["repositories"] = deepcopy(live_repositories)
     paths = payload.setdefault("paths", {})
     if isinstance(paths, dict):
         paths.update(
