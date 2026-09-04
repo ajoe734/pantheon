@@ -27,7 +27,10 @@ from ..models import (
     ServantCapabilitySummary,
     ServantProfile,
 )
-from ...openclaw_ops_client import OpenClawOpsClient, OpenClawOpsClientError
+try:
+    from openclaw_ops_client import OpenClawOpsClient, OpenClawOpsClientError
+except ImportError:  # pragma: no cover - package entrypoint fallback
+    from ...openclaw_ops_client import OpenClawOpsClient, OpenClawOpsClientError
 try:
     from ports.persona_write_owner import (
         PersonaWriteConflict,
