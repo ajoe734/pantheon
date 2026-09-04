@@ -6,12 +6,12 @@ on:
       bff_base_url:
         description: "Pantheon-owned dev BFF HTTPS origin"
         required: true
-        default: "https://pantheon-lupin-dev-bff.35.201.204.12.sslip.io"
+        default: "https://api.dev.mvl-cap.tw"
         type: string
       fe_base_url:
         description: "Pantheon-owned dev frontend HTTPS origin"
         required: true
-        default: "https://pantheon-lupin-dev-fe.35.201.204.12.sslip.io"
+        default: "https://app.dev.mvl-cap.tw"
         type: string
       expected_bff_sha:
         description: "Exact current dev BFF commit SHA"
@@ -60,7 +60,7 @@ jobs:
       AGORA_HOSTED_VIEWER_CLIENT_SECRET: ${{ secrets.DEV_BFF_DEV_LOGIN_VIEWER_CLIENT_SECRET }}
       REMOTE_USER: ${{ vars.NONPROD_REMOTE_USER || 'lupin' }}
       DEV_REMOTE_DIR: ${{ vars.DEV_REMOTE_DIR || '/home/lupin/pantheon' }}
-      DEV_DEPLOY_SSH_HOST: ${{ vars.DEV_DEPLOY_SSH_HOST || '35.201.204.12' }}
+      DEV_DEPLOY_SSH_HOST: ${{ vars.DEV_DEPLOY_SSH_HOST || '34.81.52.222' }}
       DEV_DEPLOY_SSH_USER: ${{ vars.NONPROD_REMOTE_USER || 'lupin' }}
 
     steps:
@@ -77,8 +77,8 @@ jobs:
           [[ "${GITHUB_REF}" == "refs/heads/dev" ]]
           [[ "${EXPECTED_BFF_SHA}" =~ ^[0-9a-f]{40}$ ]]
           [[ "${EXPECTED_FE_SHA}" =~ ^[0-9a-f]{40}$ ]]
-          [[ "${BFF_BASE_URL}" == "https://pantheon-lupin-dev-bff.35.201.204.12.sslip.io" ]]
-          [[ "${FE_BASE_URL}" == "https://pantheon-lupin-dev-fe.35.201.204.12.sslip.io" ]]
+          [[ "${BFF_BASE_URL%/}" == "${CANONICAL_DEV_BFF_URL%/}" ]]
+          [[ "${FE_BASE_URL%/}" == "${CANONICAL_DEV_FE_URL%/}" ]]
           [[ "$(git rev-parse HEAD)" == "${EXPECTED_BFF_SHA}" ]]
           [[ -n "${AGORA_HOSTED_OPERATOR_CLIENT_SECRET}" ]]
           [[ -n "${AGORA_HOSTED_PEER_CLIENT_SECRET}" ]]
