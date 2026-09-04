@@ -2000,6 +2000,114 @@ class RuntimeConfigurationContractTests(unittest.TestCase):
         self.assertEqual(decision["first_blocking_gate"], "account_capacity_reached")
 
 
+class AutoIntegratorUnblockAuthorityTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        root = Path(self.temp.name)
+        self.status_root = root / "status"
+        (self.status_root / ".orchestrator").mkdir(parents=True)
+        runtime = root / "runtime"
+        runtime.mkdir()
+        self.config = config_fixture(self.status_root)
+        self.config["task_state_store"] = {
+            "mode": "authoritative",
+            "event_log": str(runtime / "tasks.jsonl"),
+        }
+        self.source = task_fixture(
+            "ABC-001", status="review_approved", owner="Codex", reviewer="Claude"
+        ) | {
+            "target_repo": "pantheon",
+            "delivery_binding": {"pr": 44, "head_sha": "a" * 40},
+        }
+        self.status = {"tasks": [self.source], "blockers": [], "handoffs": []}
+        supervisor.rewrite_task_state_store.append_state_commit(
+            self.config["task_state_store"]["event_log"], self.status, source="test-seed"
+        )
+        Path(self.config["paths"]["status_file"]).write_text(
+            json.dumps(self.status), encoding="utf-8"
+        )
+
+    def _publish(self, **changes: object) -> Path:
+        payload: dict[str, object] = {
+            "schema": supervisor.AUTO_INTEGRATOR_UNBLOCK_REQUEST_SCHEMA,
+            "status_root": str(self.status_root.resolve()),
+            "status_identity_sha256": supervisor.canonical_task_state_identity(
+                self.config
+            )["identity_sha256"],
+            "command_runtime_sha": "b" * 40,
+            "source_task_id": "ABC-001",
+            "source_task_generation": 1,
+            "unblock_task_id": "INTEGRATION-UNBLOCK-ABC-001-CI-RED",
+            "reason": "ci-red",
+            "detail": "required CI is red",
+            "repository_id": "pantheon",
+            "repository_slug": "ajoe734/pantheon",
+            "pr": 44,
+            "head_sha": "a" * 40,
+            "owner": "Codex",
+            "reviewer": "Claude",
+        }
+        payload.update(changes)
+        encoded = json.dumps(
+            payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+        ).encode("utf-8")
+        inbox = self.status_root / supervisor.AUTO_INTEGRATOR_UNBLOCK_INBOX
+        inbox.mkdir(exist_ok=True)
+        path = inbox / f"{supervisor.hashlib.sha256(encoded).hexdigest()}.json"
+        path.write_bytes(encoded + b"\n")
+        return path
+
+    def _materialize(self) -> bool:
+        with (
+            mock.patch.object(
+                supervisor,
+                "status_command_runtime_env",
+                return_value={
+                    "PANTHEON_COMMAND_ROOT": "/runtime/" + "b" * 40,
+                    "PANTHEON_COMMAND_RUNTIME_SHA": "b" * 40,
+                },
+            ),
+            mock.patch.object(supervisor, "sync_status_pipeline", return_value=True),
+        ):
+            return supervisor.materialize_auto_integrator_unblock_requests(self.config)
+
+    def test_supervisor_materializes_exact_bound_request_once_through_task_store(self) -> None:
+        self._publish()
+        self.assertTrue(self._materialize())
+        self.assertFalse(self._materialize())
+        snapshot = supervisor.rewrite_task_state_store.load_snapshot(
+            self.config["task_state_store"]["event_log"]
+        )
+        created = [
+            task for task in snapshot["state"]["tasks"]
+            if task["id"] == "INTEGRATION-UNBLOCK-ABC-001-CI-RED"
+        ]
+        self.assertEqual(len(created), 1)
+        self.assertEqual(created[0]["auto_created_by"], "supervisor:auto_integrator_unblock_request")
+        self.assertEqual(snapshot["last_event"]["source"], "supervisor-auto-integrator-unblock")
+
+    def test_forged_stale_wrong_root_runtime_pr_head_and_namespace_are_rejected(self) -> None:
+        mutations = (
+            {"status_root": str(self.status_root / "other")},
+            {"status_identity_sha256": "0" * 64},
+            {"command_runtime_sha": "c" * 40},
+            {"source_task_generation": 2},
+            {"pr": 45},
+            {"head_sha": "c" * 40},
+            {"reason": "arbitrary-mutation"},
+            {"unblock_task_id": "EVIL-001"},
+            {"repository_slug": "attacker/repo"},
+        )
+        for mutation in mutations:
+            with self.subTest(mutation=mutation):
+                path = self._publish(**mutation)
+                self.assertFalse(self._materialize())
+                path.unlink()
+        projected = json.loads(Path(self.config["paths"]["status_file"]).read_text())
+        self.assertEqual([task["id"] for task in projected["tasks"]], ["ABC-001"])
+
+
 class SharedPlannerContractTests(unittest.TestCase):
     def setUp(self) -> None:
         self.config = config_fixture()

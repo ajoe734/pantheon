@@ -81,8 +81,19 @@ review_approved task OR active canonical merge_then_review task
   and reports `already_merged`, preserving canonical task status without
   opening spurious unblock tasks or mutating task status to `done`.
 - The integrator never resolves conflicts and never bypasses branch protection.
-- Blockers create an `INTEGRATION-UNBLOCK-*` task in the canonical status store
-  instead of leaving the parent stranded.
+- Blockers publish a content-addressed request under the canonical status
+  root's `.orchestrator/auto-integrator-unblock-inbox/`. The publisher has no
+  generic status-command identity and never calls `assign` or `progress`.
+  The request binds the canonical status-root identity, promoted immutable
+  command-runtime SHA, source task generation, repository ID/slug, frozen PR
+  and head, owner/reviewer, allow-listed reason, and exact generated
+  `INTEGRATION-UNBLOCK-*` namespace.
+- Only the supervisor consumes that inbox. It revalidates every binding against
+  current canonical task truth and its own promoted runtime, then creates the
+  unblock row idempotently through the authoritative TaskStore transaction.
+  Forged, stale, wrong-root, wrong-runtime, wrong-repository, arbitrary-reason,
+  and arbitrary-task requests remain inert. A request publication failure is
+  reported without discarding the candidate result or aborting the pass.
 
 ## Merge Flow
 

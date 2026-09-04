@@ -30,6 +30,7 @@ import errno
 import fcntl
 import json
 import os
+import re
 import shlex
 import subprocess
 import sys
@@ -112,6 +113,7 @@ class Settings:
     smoke_commands: tuple[str, ...] = ()
     unblock_owner: str | None = None
     unblock_reviewer: str | None = None
+    status_identity_sha256: str | None = None
 
 
 @dataclass(frozen=True)
@@ -518,6 +520,14 @@ def load_settings(path: Path | None = None, *, status_root: Path | None = None) 
             "Governed auto integration requires merge commits; "
             "squash and rebase merges do not preserve the reviewed head"
         )
+    status_identity_sha256 = None
+    try:
+        status_identity_sha256 = str(
+            orchestrator_common.canonical_task_state_identity(config).get("identity_sha256")
+            or ""
+        ) or None
+    except (KeyError, RuntimeError, ValueError):
+        pass
     return Settings(
         dev_branch=dev_branch,
         task_branch_prefix=task_prefix,
@@ -526,6 +536,7 @@ def load_settings(path: Path | None = None, *, status_root: Path | None = None) 
         smoke_commands=smoke_commands,
         unblock_owner=str(auto.get("unblock_owner") or "").strip() or None,
         unblock_reviewer=str(auto.get("unblock_reviewer") or "").strip() or None,
+        status_identity_sha256=status_identity_sha256,
     )
 
 
@@ -1890,22 +1901,37 @@ def open_unblock_task(
     reviewer = settings.unblock_reviewer or candidate.reviewer
     runtime_sha = str(os.environ.get("PANTHEON_COMMAND_RUNTIME_SHA") or "").lower()
     if not review_gate.OID_RE.fullmatch(runtime_sha):
-        raise AutoIntegratorError(
-            "PANTHEON_COMMAND_RUNTIME_SHA must bind unblock requests to an immutable runtime"
+        print(
+            "auto-integrator: unblock request not published: "
+            "PANTHEON_COMMAND_RUNTIME_SHA is not an immutable runtime binding",
+            file=sys.stderr,
         )
+        return task_id
+    status_identity_sha256 = str(settings.status_identity_sha256 or "").lower()
+    if not re.fullmatch(r"[0-9a-f]{64}", status_identity_sha256):
+        print(
+            "auto-integrator: unblock request not published: canonical status identity is missing",
+            file=sys.stderr,
+        )
+        return task_id
     binding = candidate.raw_task.get("delivery_binding")
     binding = binding if isinstance(binding, Mapping) else {}
     pr_number = binding.get("pr") or binding.get("pr_number")
     head_sha = str(binding.get("head_sha") or "").lower()
     if not isinstance(pr_number, int) or pr_number < 1 or not review_gate.OID_RE.fullmatch(head_sha):
-        raise AutoIntegratorError(
-            f"canonical delivery binding for {candidate.task_id} lacks exact PR/head"
+        print(
+            f"auto-integrator: unblock request not published for {candidate.task_id}: "
+            "canonical delivery binding lacks exact PR/head",
+            file=sys.stderr,
         )
-    _write_unblock_request(
-        root,
-        {
+        return task_id
+    try:
+        _write_unblock_request(
+            root,
+            {
             "schema": UNBLOCK_REQUEST_SCHEMA,
             "status_root": str(root.resolve()),
+            "status_identity_sha256": status_identity_sha256,
             "command_runtime_sha": runtime_sha,
             "source_task_id": candidate.task_id,
             "source_task_generation": int(candidate.raw_task.get("generation") or 1),
@@ -1918,8 +1944,13 @@ def open_unblock_task(
             "head_sha": head_sha,
             "owner": owner,
             "reviewer": reviewer,
-        },
-    )
+            },
+        )
+    except (OSError, AutoIntegratorError) as exc:
+        print(
+            f"auto-integrator: unblock request publication failed for {candidate.task_id}: {exc}",
+            file=sys.stderr,
+        )
     return task_id
 
 

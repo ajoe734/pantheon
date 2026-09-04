@@ -1420,7 +1420,7 @@ class IntegrationPlanTests(unittest.TestCase):
 
             result = auto_integrator.integrate_candidate(
                 candidate,
-                auto_integrator.Settings(),
+                auto_integrator.Settings(status_identity_sha256="d" * 64),
                 runner,
                 status_root=status_root,
                 execute=True,
@@ -1443,7 +1443,7 @@ class IntegrationPlanTests(unittest.TestCase):
                 candidate,
                 "ci-red",
                 result.detail,
-                auto_integrator.Settings(),
+                auto_integrator.Settings(status_identity_sha256="d" * 64),
                 runner,
                 root=status_root,
                 execute=True,
@@ -1492,6 +1492,34 @@ class IntegrationPlanTests(unittest.TestCase):
             "INTEGRATION-UNBLOCK-ABC-001-EXACT-HEAD-MERGE-CONFLICT",
         )
         self.assertFalse(any(command[:3] == ["gh", "pr", "merge"] for command in runner.commands))
+
+    def test_unblock_request_write_failure_does_not_abort_candidate_result(self) -> None:
+        candidate = auto_integrator.TaskCandidate(
+            task_id="ABC-001",
+            title="Ready",
+            owner="Codex",
+            reviewer="Claude",
+            branch="task/ABC-001",
+            raw_task={
+                "generation": 1,
+                "delivery_binding": {"pr": 44, "head_sha": APPROVED_HEAD},
+            },
+        )
+        with (
+            mock.patch.dict(os.environ, {"PANTHEON_COMMAND_RUNTIME_SHA": "b" * 40}),
+            mock.patch.object(auto_integrator, "_write_unblock_request", side_effect=OSError("disk full")),
+        ):
+            result = auto_integrator.open_unblock_task(
+                candidate,
+                "ci-red",
+                "CI failed",
+                auto_integrator.Settings(status_identity_sha256="d" * 64),
+                FakeRunner(),
+                root=REPO_ROOT,
+                execute=True,
+            )
+
+        self.assertEqual(result, "INTEGRATION-UNBLOCK-ABC-001-CI-RED")
 
     def test_clean_disposable_exact_head_merge_uses_scoped_identity_and_lands_head(self) -> None:
         candidate = auto_integrator.TaskCandidate(
