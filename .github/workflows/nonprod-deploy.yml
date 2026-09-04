@@ -918,6 +918,37 @@ jobs:
           DEV_BFF_URL: ${{ vars.DEV_BFF_URL || 'https://api.dev.mvl-cap.tw' }}
           DEV_FE_URL: ${{ vars.DEV_FE_URL || 'https://app.dev.mvl-cap.tw' }}
           EVIDENCE_DIR: ${{ steps.release_admission.outputs.evidence_dir }}
+          DEV_AUTH_PROFILE: ${{ env.DEV_AUTH_PROFILE }}
+          DEV_BFF_CANONICAL_CORS_ORIGIN: ${{ vars.DEV_BFF_CANONICAL_CORS_ORIGIN || 'https://app.dev.mvl-cap.tw' }}
+          DEV_BFF_CORS_ORIGINS: ${{ vars.DEV_BFF_CORS_ORIGINS || vars.DEV_BFF_CORS_ORIGIN || 'https://app.dev.mvl-cap.tw' }}
+          DEV_BFF_PUBLIC_HOST: ${{ vars.DEV_BFF_PUBLIC_HOST || 'api.dev.mvl-cap.tw' }}
+          DEV_FE_PUBLIC_HOST: ${{ vars.DEV_FE_PUBLIC_HOST || 'app.dev.mvl-cap.tw' }}
+          DEV_FE_STATIC_ROOT: ${{ vars.DEV_FE_STATIC_ROOT || '/var/www/pantheon-dev-fe' }}
+          DEV_BFF_JWT_SECRET: ${{ secrets.DEV_BFF_JWT_SECRET }}
+          DEV_BFF_JWT_ISSUER: ${{ vars.DEV_BFF_JWT_ISSUER || 'pantheon-dev' }}
+          DEV_BFF_JWT_AUDIENCE: ${{ vars.DEV_BFF_JWT_AUDIENCE || 'bff-operators' }}
+          DEV_BFF_JWKS_URI: ${{ vars.DEV_BFF_JWKS_URI || 'https://www.googleapis.com/service_accounts/v1/jwk/securetoken@system.gserviceaccount.com' }}
+          DEV_BFF_OIDC_DISCOVERY_URL: ${{ vars.DEV_BFF_OIDC_DISCOVERY_URL }}
+          DEV_BFF_OIDC_ISSUER: ${{ vars.DEV_BFF_OIDC_ISSUER || 'https://securetoken.google.com/pantheon-dev-20260902' }}
+          DEV_BFF_OIDC_AUDIENCE: ${{ vars.DEV_BFF_OIDC_AUDIENCE || 'pantheon-dev-20260902' }}
+          DEV_BFF_OIDC_CLIENT_ID: ${{ secrets.DEV_BFF_OIDC_CLIENT_ID }}
+          DEV_BFF_OIDC_CLIENT_SECRET: ${{ secrets.DEV_BFF_OIDC_CLIENT_SECRET }}
+          DEV_BFF_DEV_LOGIN_VIEWER_CLIENT_ID: ${{ vars.DEV_BFF_DEV_LOGIN_VIEWER_CLIENT_ID || 'pantheon-dev-viewer-v1' }}
+          DEV_BFF_DEV_LOGIN_VIEWER_CLIENT_SECRET: ${{ secrets.DEV_BFF_DEV_LOGIN_VIEWER_CLIENT_SECRET }}
+          DEV_BFF_DEV_LOGIN_APPROVER_CLIENT_ID: ${{ vars.DEV_BFF_DEV_LOGIN_APPROVER_CLIENT_ID || 'pantheon-dev-approver-v1' }}
+          DEV_BFF_DEV_LOGIN_APPROVER_CLIENT_SECRET: ${{ secrets.DEV_BFF_DEV_LOGIN_APPROVER_CLIENT_SECRET }}
+          DEV_BFF_DEV_LOGIN_RISK_OWNER_CLIENT_ID: ${{ vars.DEV_BFF_DEV_LOGIN_RISK_OWNER_CLIENT_ID || 'pantheon-dev-risk-owner-v1' }}
+          DEV_BFF_DEV_LOGIN_RISK_OWNER_CLIENT_SECRET: ${{ secrets.DEV_BFF_DEV_LOGIN_RISK_OWNER_CLIENT_SECRET }}
+          DEV_BFF_DEV_LOGIN_OPERATOR_A_CLIENT_ID: ${{ vars.DEV_BFF_DEV_LOGIN_OPERATOR_A_CLIENT_ID || 'pantheon-dev-operator-a-v1' }}
+          DEV_BFF_DEV_LOGIN_OPERATOR_A_CLIENT_SECRET: ${{ secrets.DEV_BFF_DEV_LOGIN_OPERATOR_A_CLIENT_SECRET }}
+          DEV_BFF_DEV_LOGIN_OPERATOR_B_CLIENT_ID: ${{ vars.DEV_BFF_DEV_LOGIN_OPERATOR_B_CLIENT_ID || 'pantheon-dev-operator-b-v1' }}
+          DEV_BFF_DEV_LOGIN_OPERATOR_B_CLIENT_SECRET: ${{ secrets.DEV_BFF_DEV_LOGIN_OPERATOR_B_CLIENT_SECRET }}
+          DEV_BFF_ROLE_CLAIMS: ${{ vars.DEV_BFF_ROLE_CLAIMS || 'roles,role' }}
+          DEV_BFF_ROLE_MAP: ${{ vars.DEV_BFF_ROLE_MAP || 'pantheon-operator=operator;pantheon-viewer=viewer;pantheon-reviewer=reviewer;pantheon-approver=approver;pantheon-risk-owner=risk_owner;pantheon-admin=admin' }}
+          DEV_BFF_ROLE_MAP_MODE: ${{ vars.DEV_BFF_ROLE_MAP_MODE || 'strict' }}
+          DEV_BFF_DEFAULT_ROLE: ${{ vars.DEV_BFF_DEFAULT_ROLE || 'viewer' }}
+          DEV_OPENCLAW_ADAPTER_SERVICE_TOKEN: ${{ secrets.DEV_OPENCLAW_ADAPTER_SERVICE_TOKEN }}
+          DEV_OPENCLAW_ADAPTER_SERVICE_AUTH_REQUIRED: ${{ vars.DEV_OPENCLAW_ADAPTER_SERVICE_AUTH_REQUIRED || 'true' }}
           BOOTSTRAP_PREDECESSOR_BACKEND_SHA: ${{ steps.rollback_baseline.outputs.sha }}
           BOOTSTRAP_PREDECESSOR_FRONTEND_SHA: ${{ steps.rollback_baseline.outputs.frontend_sha }}
           CROSS_REPO_RELEASE_TOKEN: ${{ secrets.COORDINATION_REPO_TOKEN }}
@@ -929,6 +960,20 @@ jobs:
         run: |
           lease_token="${PANTHEON_ENVIRONMENT_LEASE_TOKEN}"
           unset PANTHEON_ENVIRONMENT_LEASE_TOKEN
+          case "${DEV_AUTH_PROFILE}" in
+            strict)
+              export DEV_BFF_AUTH_STUB=false
+              export DEV_BFF_AUTH_MODE=strict
+              ;;
+            permissive-stub)
+              export DEV_BFF_AUTH_STUB=true
+              export DEV_BFF_AUTH_MODE=permissive
+              ;;
+            *)
+              echo "Unknown dev auth profile: ${DEV_AUTH_PROFILE}" >&2
+              exit 1
+              ;;
+          esac
           # 1. Deploy predecessor backend to empty host
           args=(
             bash "${GITHUB_WORKSPACE}/.agora-gate-controller/scripts/deploy_nonprod_vm.sh"

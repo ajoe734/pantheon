@@ -146,6 +146,11 @@ def test_workflow_deploys_predecessor_pair_under_lease_in_strict_read_only_mode(
     assert "bootstrap FE profile must be read-only" in bootstrap_step
     assert 'PANTHEON_DEV_LEASE_EXPECTED_BACKEND_SHA: ${{ steps.target.outputs.sha }}' in bootstrap_step
     assert 'PANTHEON_DEV_BOOTSTRAP_PREDECESSOR: "true"' in bootstrap_step
+    assert 'DEV_BFF_JWT_SECRET: ${{ secrets.DEV_BFF_JWT_SECRET }}' in bootstrap_step
+    assert 'DEV_BFF_OIDC_CLIENT_SECRET: ${{ secrets.DEV_BFF_OIDC_CLIENT_SECRET }}' in bootstrap_step
+    assert 'DEV_BFF_DEV_LOGIN_OPERATOR_A_CLIENT_SECRET: ${{ secrets.DEV_BFF_DEV_LOGIN_OPERATOR_A_CLIENT_SECRET }}' in bootstrap_step
+    assert 'DEV_OPENCLAW_ADAPTER_SERVICE_TOKEN: ${{ secrets.DEV_OPENCLAW_ADAPTER_SERVICE_TOKEN }}' in bootstrap_step
+    assert 'export DEV_BFF_AUTH_MODE=strict' in bootstrap_step
 
 
 def test_deploy_script_allows_only_explicit_bootstrap_lease_identity_override() -> None:
