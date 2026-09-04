@@ -348,9 +348,10 @@ AUTO_INTEGRATOR_UNBLOCK_DRAIN_MAX = 32
 AUTO_INTEGRATOR_UNBLOCK_REASONS = frozenset(
     {
         "ambiguous-open-prs", "auto-merge-revocation-failed", "base-branch-mismatch",
-        "ci-red", "exact-head-merge-conflict", "exact-head-missing",
+        "canonical-authority-lock-failed", "canonical-state-refresh-failed", "ci-red",
+        "dirty-repository-checkout", "exact-head-merge-conflict", "exact-head-missing",
         "final-auto-merge-armed", "final-base-branch-mismatch",
-        "final-canonical-state-refresh-failed", "final-ci-not-green", "final-ci-red", "final-head-branch-mismatch",
+        "final-ci-not-green", "final-ci-red", "final-head-branch-mismatch",
         "final-head-changed", "final-pr-changed", "final-pr-is-draft", "final-pr-missing",
         "final-pr-refresh-failed", "final-repository-mismatch",
         "final-review-contract-changed", "final-review-gate-changed", "final-merge-state-not-direct",
@@ -358,10 +359,11 @@ AUTO_INTEGRATOR_UNBLOCK_REASONS = frozenset(
         "integration-checkout-not-detached", "integration-checkout-not-standalone",
         "git-common-dir-not-writable", "invalid-git-common-dir", "invalid-git-repository",
         "invalid-repository-root", "invalid-repository-scope", "merge-state-blocked", "merge-state-dirty",
-        "merge-state-draft", "missing-dedicated-integration-path", "missing-pr",
-        "merged-pr-no-merge-commit", "missing-repository-checkout", "pr-is-draft", "pr-lookup-failed",
+        "merge-state-draft", "missing-dedicated-integration-path", "missing-origin-remote",
+        "missing-pr", "merged-pr-no-merge-commit", "missing-repository-checkout",
+        "missing-repository-slug", "pr-is-draft", "pr-lookup-failed",
         "rebase-conflict", "repository-checkout-not-writable", "repository-mismatch",
-        "repository-status-unavailable", "smoke-failed",
+        "repository-origin-mismatch", "repository-status-unavailable", "smoke-failed",
         "task-brief-carry-forward-publication-failed",
     }
     | {

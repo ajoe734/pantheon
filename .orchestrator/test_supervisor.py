@@ -2001,6 +2001,54 @@ class RuntimeConfigurationContractTests(unittest.TestCase):
 
 
 class AutoIntegratorUnblockAuthorityTests(unittest.TestCase):
+    def test_consumer_allowlist_covers_literal_auto_integrator_reason_producers(self) -> None:
+        source = (
+            Path(__file__).resolve().parents[1] / "scripts" / "git" / "auto_integrator.py"
+        ).read_text(encoding="utf-8")
+        tree = ast.parse(source)
+        literal_reasons: set[str] = set()
+
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Call):
+                function_name = (
+                    node.func.id if isinstance(node.func, ast.Name) else ""
+                )
+                if (
+                    function_name == "open_unblock_task"
+                    and len(node.args) > 1
+                    and isinstance(node.args[1], ast.Constant)
+                    and isinstance(node.args[1].value, str)
+                ):
+                    literal_reasons.add(node.args[1].value)
+                if (
+                    function_name == "FinalMergeRevalidationError"
+                    and node.args
+                    and isinstance(node.args[0], ast.Constant)
+                    and isinstance(node.args[0].value, str)
+                ):
+                    literal_reasons.add(node.args[0].value)
+
+        preflight = next(
+            node
+            for node in tree.body
+            if isinstance(node, ast.FunctionDef) and node.name == "preflight_repository"
+        )
+        for node in ast.walk(preflight):
+            if (
+                isinstance(node, ast.Return)
+                and isinstance(node.value, ast.Tuple)
+                and node.value.elts
+                and isinstance(node.value.elts[0], ast.Constant)
+                and isinstance(node.value.elts[0].value, str)
+            ):
+                literal_reasons.add(node.value.elts[0].value)
+
+        self.assertTrue(literal_reasons)
+        self.assertEqual(
+            literal_reasons - supervisor.AUTO_INTEGRATOR_UNBLOCK_REASONS,
+            set(),
+        )
+
     def setUp(self) -> None:
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
