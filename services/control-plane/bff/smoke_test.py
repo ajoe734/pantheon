@@ -19,7 +19,6 @@ from __future__ import annotations
 
 import json
 import os
-import sys
 import tempfile
 import unittest
 import uuid
@@ -27,17 +26,21 @@ from pathlib import Path
 from typing import Any, Optional
 from unittest.mock import patch
 
-sys.path.insert(0, os.path.dirname(__file__))
-
 # Use a temp dir so tests don't share state with each other
 os.environ["BFF_DATA_DIR"] = "/tmp/pantheon/bff_test"
 os.environ.setdefault("BFF_READ_SURFACE_STATE", "fresh")
 os.environ.setdefault("PANTHEON_BFF_AUTH_STUB", "true")
 os.environ.setdefault("PANTHEON_BFF_AUTH_MODE", "permissive")
 from fastapi.testclient import TestClient
-import main as bff_main
-from models import CommandReceiptStatus, CommandRoutingPath, CommandStatus, CommandType, ErrorCode
-from ports import ReadSurfacePorts
+from services.control_plane.bff import main as bff_main
+from services.control_plane.bff.models import (
+    CommandReceiptStatus,
+    CommandRoutingPath,
+    CommandStatus,
+    CommandType,
+    ErrorCode,
+)
+from services.control_plane.bff.ports import ReadSurfacePorts
 
 
 class SmokeTestStore(ReadSurfacePorts):
