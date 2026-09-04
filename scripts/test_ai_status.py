@@ -8248,6 +8248,103 @@ class DeliveryWorkspaceAuthorityTests(unittest.TestCase):
         self.assertTrue(metadata["workspace_env_match"])
         self.assertFalse(metadata["workspace_lease_validated"])
 
+    def test_pantheon_workspace_registration_uses_live_root_across_installed_runtime(self) -> None:
+        """Regression for the portable-promotion closeout failure.
+
+        The command checkout has its own valid Git/config snapshot, but only
+        the live coordination checkout owns the supervisor-created worktree.
+        """
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            command_root = root / "command-runtime"
+            status_root = root / "pantheon-live"
+            workspace = root / "worker" / "task-candidate"
+            command_config = command_root / ".orchestrator" / "config.json"
+            live_config = status_root / ".orchestrator" / "config.json"
+
+            command_config.parent.mkdir(parents=True)
+            command_config.write_text(
+                json.dumps(
+                    {
+                        "coordination": {
+                            "repositories": {
+                                "pantheon": {
+                                    "repo": "ajoe734/pantheon",
+                                    "local_path": ".",
+                                }
+                            }
+                        }
+                    }
+                ),
+                encoding="utf-8",
+            )
+            status_root.mkdir()
+            self._git(status_root, "init", "-b", "dev")
+            self._git(status_root, "config", "user.name", "Test")
+            self._git(status_root, "config", "user.email", "test@example.com")
+            (status_root / "README.md").write_text("pantheon\n", encoding="utf-8")
+            self._git(status_root, "add", "README.md")
+            self._git(status_root, "commit", "-m", "initial")
+            self._git(
+                status_root,
+                "remote",
+                "add",
+                "origin",
+                "https://github.com/ajoe734/pantheon.git",
+            )
+            workspace.parent.mkdir()
+            self._git(
+                status_root,
+                "worktree",
+                "add",
+                "-b",
+                "task/OPS-SUPERVISOR-PROMOTION-PORTABLE-002",
+                str(workspace),
+            )
+            live_config.parent.mkdir(exist_ok=True)
+            live_config.write_text(
+                json.dumps(
+                    {
+                        "coordination": {
+                            "repositories": {
+                                "pantheon": {"repo": "ajoe734/pantheon"}
+                            }
+                        }
+                    }
+                ),
+                encoding="utf-8",
+            )
+            task = {
+                "id": "OPS-SUPERVISOR-PROMOTION-PORTABLE-002",
+                "target_repo": "ajoe734/pantheon",
+                "artifacts": ["scripts/promote_supervisor_runtime.py"],
+            }
+            with (
+                mock.patch.object(ai_status, "CONFIG_FILE", command_config),
+                mock.patch.object(ai_status, "STATUS_ROOT", status_root),
+                mock.patch.object(ai_status, "STATUS_FILE", status_root / "ai-status.json"),
+                mock.patch.object(ai_status, "LOG_FILE", status_root / "ai-activity-log.jsonl"),
+                mock.patch.object(ai_status, "CURRENT_WORK_FILE", status_root / "current-work.md"),
+                mock.patch.object(ai_status, "DOCS_SITE_DIR", status_root / "docs-site"),
+                mock.patch.object(ai_status, "ORCHESTRATOR_STATE_FILE", status_root / ".orchestrator" / "state.json"),
+                mock.patch.object(ai_status, "APPROVAL_QUEUE_FILE", status_root / ".orchestrator" / "approval-queue.json"),
+                mock.patch.dict(
+                    os.environ,
+                    {
+                        "PANTHEON_WORKTREE_ROOT": str(workspace),
+                        "ORCH_WORKSPACE_PATH": str(workspace),
+                    },
+                    clear=True,
+                ),
+            ):
+                config = ai_status.load_config()
+                selected, metadata = ai_status._done_delivery_repository_root(
+                    config, task, "pantheon"
+                )
+
+        self.assertEqual(selected, workspace.resolve())
+        self.assertEqual(metadata["repository_path_source"], "explicit_workspace_env")
+
     def test_workspace_binding_requires_both_environment_names(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             config, status_root, _source, workspace, task = self._repository_fixture(
