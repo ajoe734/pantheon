@@ -187,6 +187,7 @@ def _default_read_surface_meta(
 def create_integrations_router(
     *,
     service: Optional[IntegrationsService] = None,
+    read_surface: Optional[Any] = None,
     get_read_store: Optional[Callable[[], Any]] = None,
     openclaw_client: Optional[Any] = None,
     extract_identity: Optional[Callable[[Optional[str]], Any]] = None,
@@ -228,7 +229,12 @@ def create_integrations_router(
 
     resolved_service = service
     if resolved_service is None:
-        read_st = get_read_store() if get_read_store else None
+        if read_surface is not None:
+            read_st = read_surface() if callable(read_surface) else read_surface
+        elif get_read_store:
+            read_st = get_read_store()
+        else:
+            read_st = None
         resolved_service = IntegrationsService(
             read_store=read_st,
             openclaw_client=openclaw_client,

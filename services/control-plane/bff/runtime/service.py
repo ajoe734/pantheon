@@ -47,10 +47,14 @@ class RuntimeRouterService:
     def __init__(
         self,
         *,
-        get_read_store: Optional[Callable[[], Any]],
-        dependencies: Optional[Mapping[str, Any]],
+        read_surface: Optional[Any] = None,
+        get_read_store: Optional[Callable[[], Any]] = None,
+        dependencies: Optional[Mapping[str, Any]] = None,
     ) -> None:
-        self._get_read_store = get_read_store
+        if read_surface is not None:
+            self._get_read_store = (lambda: read_surface() if callable(read_surface) else read_surface)
+        else:
+            self._get_read_store = get_read_store
         self._dependencies = dependencies or {}
 
     @property

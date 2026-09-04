@@ -303,3 +303,87 @@ def test_main_py_uses_app_dependencies_for_composition() -> None:
     assert hasattr(bff_main, "app_deps"), "main.py must hold app_deps"
     from services.control_plane.bff.bootstrap import AppDependencies
     assert isinstance(bff_main.app_deps, AppDependencies)
+
+
+def test_main_py_zero_lambda_read_store_service_locator_seams() -> None:
+    """Verify main.py has zero lambda: read_store service locator seams in router mounting."""
+    import re
+    main_text = (BFF_DIR / "main.py").read_text(encoding="utf-8")
+    seams = re.findall(r"(?:get_read_store\s*=\s*lambda|lambda[^:\n]*:\s*read_store\b)", main_text)
+    assert not seams, f"Found {len(seams)} lambda read_store service locator seam(s) in main.py: {seams}"
+
+
+def test_personas_service_no_import_time_stores_and_explicit_constructor() -> None:
+    """Verify personas.service and router have no import-time store defaults and require explicit injection."""
+    from services.control_plane.bff.personas import service as ps
+    from services.control_plane.bff.personas import router as pr
+
+    assert not hasattr(pr, "router"), "personas.router must not expose a default module-level router"
+    assert getattr(ps, "persona_write_owner", None) is None, "personas.service must not construct persona_write_owner at import time"
+
+    # Verify top-level AST assignments in personas/service.py have no store instantiations
+    service_ast = ast.parse((BFF_DIR / "personas" / "service.py").read_text(encoding="utf-8"))
+    for node in service_ast.body:
+        if isinstance(node, ast.Assign):
+            for target in node.targets:
+                if isinstance(target, ast.Name) and target.id in ("persona_write_owner", "read_store", "_ranking_write_owner"):
+                    assert isinstance(node.value, ast.Constant) and node.value.value is None, (
+                        f"Expected {target.id} to be assigned None at import time, got {ast.dump(node.value)}"
+                    )
+
+    # Verify _get_ranking_write_owner raises RuntimeError if not configured, rather than self-creating defaults
+    original_owner = ps._ranking_write_owner
+    ps._ranking_write_owner = None
+    try:
+        with pytest.raises(RuntimeError):
+            ps._get_ranking_write_owner()
+    finally:
+        ps._ranking_write_owner = original_owner
+
+    with pytest.raises((TypeError, RuntimeError)):
+        ps.PersonaService()  # type: ignore[call-arg]
+
+    with pytest.raises((TypeError, RuntimeError)):
+        pr.create_personas_router()  # type: ignore[call-arg]
+
+
+
+def test_app_dependencies_concrete_types_and_no_any_ports() -> None:
+    """Verify AppDependencies defines concrete typed ports without Any or permissive fallback."""
+    import inspect
+    from typing import get_type_hints, Any
+    from services.control_plane.bff.bootstrap.dependencies import AppDependencies
+
+    hints = get_type_hints(AppDependencies)
+    assert getattr(hints["command_store"], "__name__", "") == "CommandStore", f"Expected CommandStore, got {hints['command_store']}"
+    assert getattr(hints["settings_store"], "__name__", "") == "SettingsStore", f"Expected SettingsStore, got {hints['settings_store']}"
+    assert getattr(hints["persona_write_owner"], "__name__", "") == "PersonaRegistryHttpWritePort", f"Expected PersonaRegistryHttpWritePort, got {hints['persona_write_owner']}"
+    assert getattr(hints["ranking_write_owner"], "__name__", "") == "RankingSnapshotWriteOwnerPort", f"Expected RankingSnapshotWriteOwnerPort, got {hints['ranking_write_owner']}"
+
+    sig = inspect.signature(AppDependencies.create_default)
+    for param_name, param in sig.parameters.items():
+        assert param.annotation is not Any, f"AppDependencies.create_default parameter '{param_name}' must not be Any"
+
+
+
+def test_deployment_adapters_concrete_read_surface_and_canonical_write_owner() -> None:
+    """Verify DeploymentReadSurfaceAdapter requires ReadSurfacePorts and DefaultDeploymentCommands delegates to DeploymentCommandAdapter."""
+    from typing import get_type_hints
+    from services.control_plane.bff.deployment.adapters import (
+        DeploymentReadSurfaceAdapter,
+        DefaultDeploymentCommands,
+        DeploymentCommandAdapter,
+    )
+
+    hints = get_type_hints(DeploymentReadSurfaceAdapter.__init__)
+    read_surface_hint = hints.get("read_surface")
+    assert getattr(read_surface_hint, "__name__", "") == "ReadSurfacePorts", (
+        f"DeploymentReadSurfaceAdapter.read_surface must be ReadSurfacePorts, got {read_surface_hint}"
+    )
+
+    with pytest.raises(TypeError):
+        DeploymentReadSurfaceAdapter(read_surface=object())  # type: ignore[arg-type]
+
+    cmd_adapter = DeploymentCommandAdapter()
+    commands = DefaultDeploymentCommands(write_owner=cmd_adapter)
+    assert commands._write_owner is cmd_adapter

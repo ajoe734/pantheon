@@ -18,12 +18,14 @@ from .service import RuntimeRouterService
 
 def create_runtime_router(
     *,
+    read_surface: Optional[Any] = None,
     get_read_store: Optional[Callable[[], Any]] = None,
     dependencies: Optional[Mapping[str, Any]] = None,
 ) -> APIRouter:
     """Build Runtime routes from composition-root supplied BFF ports."""
     router = APIRouter()
     service = RuntimeRouterService(
+        read_surface=read_surface,
         get_read_store=get_read_store,
         dependencies=dependencies,
     )

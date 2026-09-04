@@ -276,18 +276,9 @@ except ImportError:
 
 log = logging.getLogger(__name__)
 
-# Fallback in-memory stores for standalone operation
-persona_write_owner = (
-    create_persona_registry_write_owner()
-    if create_persona_registry_write_owner is not None
-    else None
-)
-
-read_store = (
-    create_read_surface_ports(persona_registry_store=persona_write_owner)
-    if create_read_surface_ports is not None
-    else None
-)
+# Standalone fallback stores are eliminated; explicit composition root injects dependencies.
+persona_write_owner = None
+read_store = None
 
 # Rankings write-owner port must be configured at service/app startup;
 # missing required configuration fails startup closed, never deferred to first write.
@@ -297,10 +288,7 @@ _ranking_write_owner: Optional[Any] = None
 def _get_ranking_write_owner() -> Any:
     global _ranking_write_owner
     if _ranking_write_owner is None:
-        if create_ranking_write_owner is not None:
-            _ranking_write_owner = create_ranking_write_owner()
-        if _ranking_write_owner is None:
-            raise RuntimeError("Rankings write-owner port is not configured at startup")
+        raise RuntimeError("Rankings write-owner port is not configured at startup")
     return _ranking_write_owner
 
 class _DefaultCommandStore:
@@ -13916,33 +13904,43 @@ class PersonaService:
         raise_if_read_surface_unavailable_fn: Optional[Callable[..., None]] = None,
     ) -> None:
         global _ranking_write_owner
-        self._write_owner = write_owner or persona_write_owner
-        self._read_store = (
+        resolved_write_owner = write_owner
+        if resolved_write_owner is None:
+            raise RuntimeError("Required persona write_owner is absent; failing startup closed.")
+
+        resolved_read_store = (
             read_store
             or (get_read_store() if get_read_store is not None else None)
-            or (
-                create_read_surface_ports(persona_registry_store=self._write_owner)
-                if create_read_surface_ports is not None
-                else None
-            )
         )
-        self._ranking_write_owner = (
+        if resolved_read_store is None:
+            raise RuntimeError("Required read_surface/read_store is absent; failing startup closed.")
+
+        resolved_ranking_write_owner = (
             ranking_write_owner
             or (get_ranking_write_owner() if get_ranking_write_owner is not None else None)
         )
-        if self._ranking_write_owner is None and create_ranking_write_owner is not None:
-            self._ranking_write_owner = create_ranking_write_owner()
-        _ranking_write_owner = self._ranking_write_owner
-        self._command_store = command_store or (
-            CommandStore(os.path.join(BFF_DATA_DIR, "commands.jsonl"))
-            if CommandStore is not None
-            else None
+        if resolved_ranking_write_owner is None:
+            raise RuntimeError("Required ranking_write_owner is absent; failing startup closed.")
+
+        resolved_command_store = (
+            command_store
+            or (get_command_store() if get_command_store is not None else None)
         )
+        if resolved_command_store is None:
+            raise RuntimeError("Required command_store is absent; failing startup closed.")
+
+        self._write_owner = resolved_write_owner
+        self._read_store = resolved_read_store
+        self._ranking_write_owner = resolved_ranking_write_owner
+        _ranking_write_owner = resolved_ranking_write_owner
+        globals()["read_store"] = resolved_read_store
+        self._command_store = resolved_command_store
+        globals()["command_store"] = resolved_command_store
         self._provisioning_store = provisioning_store
-        self._get_read_store = get_read_store or (lambda: self._read_store)
-        self._get_command_store = get_command_store or (lambda: self._command_store)
+        self._get_read_store = lambda: self._read_store
+        self._get_command_store = lambda: self._command_store
         self._get_provisioning_store = get_provisioning_store or (lambda: self._provisioning_store or _persona_provisioning_store())
-        self._get_ranking_write_owner = get_ranking_write_owner or (lambda: self._ranking_write_owner)
+        self._get_ranking_write_owner = lambda: self._ranking_write_owner
         self._utc_now = utc_now_fn or _utc_now_rfc3339
         self._bff_error = bff_error_fn or _bff_error
         self._snapshot_meta = snapshot_meta_fn or _snapshot_meta

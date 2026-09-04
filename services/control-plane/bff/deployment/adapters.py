@@ -1,15 +1,22 @@
 """Consuming-domain-owned adapters implementing Deployment ports."""
 from __future__ import annotations
 
+import uuid
 from typing import Any, Dict, Optional, Sequence
 
+from services.control_plane.bff.command_adapters.deployment_adapter import DeploymentCommandAdapter
+from services.control_plane.bff.ports import ReadSurfacePorts
 from .ports import DeploymentCommands, DeploymentQueries
 
 
 class DeploymentReadSurfaceAdapter:
     """Consuming-domain-owned read adapter implementing DeploymentQueries via ReadSurfacePorts."""
 
-    def __init__(self, read_surface: Any) -> None:
+    def __init__(self, read_surface: ReadSurfacePorts) -> None:
+        if read_surface is None or not isinstance(read_surface, ReadSurfacePorts):
+            raise TypeError(
+                f"read_surface must implement ReadSurfacePorts, got {type(read_surface)}"
+            )
         self._read_surface = read_surface
 
     def list_registry_entries(self) -> Sequence[Dict[str, Any]]:
@@ -65,10 +72,34 @@ class DeploymentReadSurfaceAdapter:
 
 
 class DefaultDeploymentCommands:
-    """Default deployment command implementation handling deployment mutations."""
+    """Default deployment command implementation handling deployment mutations via canonical write owner."""
+
+    def __init__(self, write_owner: Optional[DeploymentCommandAdapter] = None) -> None:
+        resolved = write_owner or DeploymentCommandAdapter()
+        if not (isinstance(resolved, DeploymentCommandAdapter) or hasattr(resolved, "execute")):
+            raise TypeError(
+                f"write_owner must be a DeploymentCommandAdapter, got {type(resolved)}"
+            )
+        self._write_owner = resolved
 
     def create_deployment_plan(self, **kwargs: Any) -> Dict[str, Any]:
-        return dict(kwargs)
+        command_id = f"cmd-{uuid.uuid4().hex[:12]}"
+        receipt = self._write_owner.execute(
+            command_id=command_id,
+            command_type="CreateDeployment",
+            params=dict(kwargs),
+        )
+        record = dict(kwargs)
+        if isinstance(receipt, dict):
+            if receipt.get("entity_id"):
+                record["plan_id"] = receipt["entity_id"]
+                record["id"] = receipt["entity_id"]
+            if receipt.get("status"):
+                record["status"] = receipt["status"]
+            receipt_body = receipt.get("domain_receipt")
+            if isinstance(receipt_body, dict):
+                record.update({k: v for k, v in receipt_body.items() if k not in record})
+        return record
 
 
 __all__ = [

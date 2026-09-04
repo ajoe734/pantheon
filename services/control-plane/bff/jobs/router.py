@@ -25,7 +25,8 @@ SubmitJobAction = Callable[[str, str, str, Any, Dict[str, Any]], Dict[str, Any]]
 
 def create_jobs_router(
     *,
-    get_read_store: Callable[[], Any],
+    read_surface: Optional[Any] = None,
+    get_read_store: Optional[Callable[[], Any]] = None,
     extract_identity: Callable[[Optional[str]], Any],
     require_read_role: Callable[[Any], None],
     bff_error: Callable[..., Exception],
@@ -43,8 +44,15 @@ def create_jobs_router(
 
     router = APIRouter()
 
+    def _resolve_read_store() -> Any:
+        if read_surface is not None:
+            return read_surface() if callable(read_surface) else read_surface
+        if get_read_store is not None:
+            return get_read_store()
+        raise RuntimeError("Neither read_surface nor get_read_store was configured.")
+
     def _lookup_job(job_id: str) -> Optional[Dict[str, Any]]:
-        read_store = get_read_store()
+        read_store = _resolve_read_store()
         return get_job_overlay().get(job_id) or read_store.get_job_bff(job_id)
 
     @router.get("/bff/jobs")
@@ -58,7 +66,7 @@ def create_jobs_router(
         """BFF: job list using narrow port read_store.list_jobs_bff."""
         identity = extract_identity(authorization)
         require_read_role(identity)
-        read_store = get_read_store()
+        read_store = _resolve_read_store()
         snapshot_at = utc_now()
         jobs = list(get_job_overlay().values()) or read_store.list_jobs_bff(status=status, job_type=job_type)
         if status:
@@ -105,7 +113,7 @@ def create_jobs_router(
         """BFF: job logs using narrow port read_store.get_job_logs_bff."""
         identity = extract_identity(authorization)
         require_read_role(identity)
-        read_store = get_read_store()
+        read_store = _resolve_read_store()
         snapshot_at = utc_now()
         job = _lookup_job(job_id)
         if not job:

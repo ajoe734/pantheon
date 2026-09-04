@@ -166,6 +166,7 @@ def _default_read_surface_meta(
 
 def create_strategies_router(
     *,
+    read_surface: Optional[Any] = None,
     get_read_store: Optional[Callable[[], Any]] = None,
     extract_identity: Optional[Callable[..., Any]] = None,
     require_read_role: Optional[Callable[..., None]] = None,
@@ -292,9 +293,11 @@ def create_strategies_router(
         raise NotImplementedError("list_strategy_summaries dependency was not supplied")
 
     def _get_read_store() -> Any:
+        if read_surface is not None:
+            return read_surface() if callable(read_surface) else read_surface
         if get_read_store is not None:
             return get_read_store()
-        raise NotImplementedError("get_read_store dependency was not supplied")
+        raise NotImplementedError("Neither read_surface nor get_read_store dependency was supplied")
 
     def _bff_tenant_id(identity: Any) -> str:
         if bff_me_tenant_payload is None:

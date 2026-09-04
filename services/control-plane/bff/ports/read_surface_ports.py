@@ -125,6 +125,8 @@ class ReadSurfacePorts:
     typed domain ports and ergonomic delegation to domain read methods.
     """
 
+    _active_delegate: Optional[Any] = None
+
     def __init__(
         self,
         *,
@@ -135,6 +137,7 @@ class ReadSurfacePorts:
         lifecycle_telemetry_governance: Optional[CompositeLifecycleTelemetryGovernancePort] = None,
         persona_training: Optional[PersonaTrainingDomainPort] = None,
     ) -> None:
+        self._active_delegate = None
         self.operations_consultation = operations_consultation or create_operations_consultation_port()
         self.persona_capital_runtime = persona_capital_runtime or create_persona_capital_runtime_port()
         self.ooda_management = ooda_management or OodaManagementDomainPort()
@@ -145,6 +148,7 @@ class ReadSurfacePorts:
 
     def __setattr__(self, name: str, value: Any) -> None:
         if name in (
+            "_active_delegate",
             "operations_consultation",
             "persona_capital_runtime",
             "ooda_management",
@@ -159,6 +163,28 @@ class ReadSurfacePorts:
                 setattr(self.lifecycle_telemetry_governance.lifecycle, "_projection_reader_override", value)
                 setattr(self.lifecycle_telemetry_governance, "_projection_reader_override", value)
         super().__setattr__(name, value)
+
+    def __getattribute__(self, name: str) -> Any:
+        if name.startswith("__") or name in (
+            "_active_delegate",
+            "_trade_journey_projection_reader_override",
+            "operations_consultation",
+            "persona_capital_runtime",
+            "ooda_management",
+            "research_knowledge_source",
+            "lifecycle_telemetry_governance",
+            "persona_training",
+        ):
+            return super().__getattribute__(name)
+
+        delegate = super().__getattribute__("_active_delegate")
+        if delegate is not None and delegate is not self and not name.startswith("_"):
+            delegate_cls = type(delegate)
+            if name in delegate.__dict__ or (hasattr(delegate_cls, name) and name in delegate_cls.__dict__):
+                return getattr(delegate, name)
+            if not isinstance(delegate, ReadSurfacePorts) and hasattr(delegate, name):
+                return getattr(delegate, name)
+        return super().__getattribute__(name)
 
     # -------------------------------------------------------------------------
     # Surface Status & Diagnostics

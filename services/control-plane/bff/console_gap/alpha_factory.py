@@ -63,12 +63,20 @@ def _build_alpha_factory_payload(
 
 def create_alpha_factory_router(
     *,
-    get_read_store: Callable[[], Any],
+    read_surface: Optional[Any] = None,
+    get_read_store: Optional[Callable[[], Any]] = None,
     extract_identity: Callable,
     require_read_role: Callable,
     utc_now: Callable[[], str],
 ) -> APIRouter:
     router = APIRouter()
+
+    def _resolve_store() -> Any:
+        if read_surface is not None:
+            return read_surface() if callable(read_surface) else read_surface
+        if get_read_store is not None:
+            return get_read_store()
+        raise RuntimeError("Neither read_surface nor get_read_store was configured.")
 
     @router.get("/bff/alpha-factory")
     async def get_alpha_factory(
@@ -82,7 +90,7 @@ def create_alpha_factory_router(
         require_read_role(identity)
 
         snapshot_at = utc_now()
-        store = get_read_store()
+        store = _resolve_store()
         surface = _build_surface(store, snapshot_at)
 
         if surface.get("status") == "unavailable":

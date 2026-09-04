@@ -32,12 +32,18 @@ class TrainingSessionService:
     def __init__(
         self,
         *,
-        get_read_store: Callable[[], Any],
+        read_surface: Optional[Any] = None,
+        get_read_store: Optional[Callable[[], Any]] = None,
         bff_error: Callable[..., Exception],
         utc_now: Callable[[], str],
         dataset_surface_status: Callable[..., Dict[str, Any]],
     ) -> None:
-        self._get_read_store = get_read_store
+        if read_surface is not None:
+            self._get_read_store = (lambda: read_surface() if callable(read_surface) else read_surface)
+        elif get_read_store is not None:
+            self._get_read_store = get_read_store
+        else:
+            raise RuntimeError("Neither read_surface nor get_read_store was configured.")
         self._bff_error = bff_error
         self._utc_now = utc_now
         self._dataset_surface_status = dataset_surface_status

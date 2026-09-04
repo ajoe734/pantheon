@@ -108,6 +108,7 @@ def _parse_datetime(value: Optional[str]) -> Optional[datetime]:
 
 def create_governance_router(
     *,
+    read_surface: Optional[Any] = None,
     get_read_store: Optional[Callable[[], Any]] = None,
     extract_identity: Optional[Callable[[Optional[str]], Any]] = None,
     require_read_role: Optional[Callable[[Any], None]] = None,
@@ -129,7 +130,11 @@ def create_governance_router(
     """Build the exact 35-route Governance domain router."""
 
     router = APIRouter()
-    _get_store = get_read_store or (lambda: getattr(governance_service, "read_store", None))
+    _get_store = (
+        (lambda: read_surface() if callable(read_surface) else read_surface)
+        if read_surface is not None
+        else (get_read_store or (lambda: getattr(governance_service, "read_store", None)))
+    )
     _extract = extract_identity or _default_extract_identity
     _require_read = require_read_role or _default_require_role
     _require_operator = require_operator_role or _default_require_role

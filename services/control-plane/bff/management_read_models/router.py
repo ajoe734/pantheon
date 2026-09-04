@@ -1282,6 +1282,7 @@ def _register_composed_read_models(
 
 def create_management_read_models_router(
     *,
+    read_surface: Optional[Any] = None,
     get_read_store: Optional[Callable] = None,
     extract_identity: Optional[Callable] = None,
     require_read_role: Optional[Callable] = None,
@@ -1305,6 +1306,8 @@ def create_management_read_models_router(
     _now = utc_now or _utc_now_rfc3339
 
     def _resolve_store() -> Optional[Any]:
+        if read_surface is not None:
+            return read_surface
         if get_read_store is not None:
             try:
                 return get_read_store()
@@ -1333,6 +1336,7 @@ def create_management_read_models_router(
 
 def create_management_router(
     *,
+    read_surface: Optional[Any] = None,
     get_read_store: Optional[Callable] = None,
     extract_identity: Optional[Callable] = None,
     require_read_role: Optional[Callable] = None,
@@ -1355,8 +1359,9 @@ def create_management_router(
     _err = bff_error or _default_bff_error
     _raise_logged_out = raise_session_logged_out_fn or raise_if_session_logged_out
 
+    _store_getter = (lambda: read_surface) if read_surface is not None else get_read_store
     svc = service or ManagementService(
-        get_read_store=get_read_store,
+        get_read_store=_store_getter,
         utc_now=_now,
         ops_read_model_entry_fn=ops_read_model_entry_fn,
     )

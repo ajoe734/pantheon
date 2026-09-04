@@ -134,6 +134,8 @@ class CommandAdapterService:
     def __init__(
         self,
         *,
+        command_store: Optional[Any] = None,
+        read_surface: Optional[Any] = None,
         get_command_store: Optional[Callable[[], Any]] = None,
         get_read_store: Optional[Callable[[], Any]] = None,
         extract_identity: Optional[Callable[..., OperatorIdentity]] = None,
@@ -147,8 +149,14 @@ class CommandAdapterService:
         gov_bff_idempotency: Optional[Dict[str, Dict[str, Any]]] = None,
         check_read_surface_state: Optional[Callable[[], Optional[StalenessWarning]]] = None,
     ) -> None:
-        self._get_command_store = get_command_store
-        self._get_read_store = get_read_store
+        if command_store is not None:
+            self._get_command_store = (lambda: command_store() if callable(command_store) else command_store)
+        else:
+            self._get_command_store = get_command_store
+        if read_surface is not None:
+            self._get_read_store = (lambda: read_surface() if callable(read_surface) else read_surface)
+        else:
+            self._get_read_store = get_read_store
         self._extract_identity = extract_identity
         self._require_operator_role = require_operator_role
         self._require_read_role = require_read_role

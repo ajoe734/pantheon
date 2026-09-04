@@ -245,6 +245,8 @@ def _default_handle_sse_stream(
 
 def create_events_router(
     *,
+    read_surface: Optional[Any] = None,
+    command_store: Optional[Any] = None,
     get_read_store: Optional[Callable[[], Any]] = None,
     get_command_store: Optional[Callable[[], Any]] = None,
     extract_identity: Optional[Callable[..., Any]] = None,
@@ -322,21 +324,25 @@ def create_events_router(
             extra_headers=extra_headers or None,
         )
 
-    @router.get("/bff/events")
-    async def bff_list_events(
-        event_type: Optional[str] = None,
-        actor: Optional[str] = None,
-        target_type: Optional[str] = None,
-        page_token: Optional[str] = None,
-        page_size: int = Query(default=50, ge=1, le=500),
+    @router.get(
+        "/bff/events",
+        summary="List recent events (telemetry + governance audit)",
+        operation_id="listBffEvents",
+    )
+    async def list_events(
+        event_type: Optional[str] = Query(default=None),
+        actor: Optional[str] = Query(default=None),
+        action_types: Optional[str] = Query(default=None),
+        target_type: Optional[str] = Query(default=None),
+        page_token: Optional[str] = Query(default=None),
+        page_size: int = Query(default=50, ge=1, le=200),
         authorization: Optional[str] = Header(default=None),
     ) -> Dict[str, Any]:
-        """BFF: list recent system/audit events (execute-plans compatibility surface)."""
         identity = _extract_ident(authorization)
         _require_read(identity)
 
         snapshot_at = _utc_now()
-        action_types = [event_type] if event_type else None
+        read_store = _resolve_read_store()
 
         events: List[Dict[str, Any]] = []
 
@@ -346,23 +352,21 @@ def create_events_router(
                 action_types=action_types,
                 target_type=target_type,
             )
-        elif get_read_store is not None:
-            store = get_read_store()
-            if hasattr(store, "list_governance_audit_events"):
-                events = store.list_governance_audit_events(
+        elif read_store is not None:
+            if hasattr(read_store, "list_governance_audit_events"):
+                events = read_store.list_governance_audit_events(
                     actor=actor,
                     action_types=action_types,
                     target_type=target_type,
                 )
-            elif hasattr(store, "list_events_bff"):
-                events = store.list_events_bff(event_type=event_type, page_size=page_size)
+            elif hasattr(read_store, "list_events_bff"):
+                events = read_store.list_events_bff(event_type=event_type, page_size=page_size)
 
         if dataset_surface_status is not None:
             surface = dataset_surface_status("audit_log", snapshot_at=snapshot_at)
         else:
-            if get_read_store is not None:
-                store = get_read_store()
-                src = getattr(store, "dataset_source", lambda ds: "local_snapshot")("audit_log")
+            if read_store is not None:
+                src = getattr(read_store, "dataset_source", lambda ds: "local_snapshot")("audit_log")
                 if src in ("missing", "unavailable"):
                     surface = {"status": "unavailable", "source": src}
                 else:

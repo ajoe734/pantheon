@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "task_id": "BFF-COMPOSITION-001",
-  "generated_at": "2026-09-04T22:22:00Z",
+  "generated_at": "2026-09-04T23:05:00Z",
   "evidence_policy": "observed_immutable_only",
   "owner": "Antigravity",
   "reviewer": "Codex",
@@ -12,31 +12,31 @@
   "acceptance_matrix": [
     {
       "criterion": "Inject typed domain query, command and event dependencies into router factories and make required command-owner absence fail startup closed.",
-      "evidence": "Deployment domain dependencies decoupled per SA §4.3/4.4: DeploymentQueries query protocol and DeploymentCommands command protocol defined in deployment/ports.py; consuming-domain-owned DeploymentReadSurfaceAdapter implements DeploymentQueries delegating to ReadSurfacePorts without direct aliasing; DefaultDeploymentCommands implements DeploymentCommands for plan creation; DeploymentService requires typed DeploymentQueries and optional DeploymentCommands; Deployment router receives typed queries and commands directly from bootstrap AppDependencies without get_read_store closure or module-global locator; AppDependencies enforces startup gate requiring configured ranking_write_owner and persona_write_owner (missing owners fail startup closed); AppDependencies.create_default() validates isinstance against DeploymentQueries and DeploymentCommands protocols; main.py instantiates app_deps = AppDependencies.create_default() at startup and passes app_deps.deployment_queries and app_deps.deployment_commands to _create_deployment_router.",
+      "evidence": "Deployment domain dependencies decoupled per SA §4.3/4.4: DeploymentQueries query protocol and DeploymentCommands command protocol defined in deployment/ports.py; consuming-domain-owned DeploymentReadSurfaceAdapter implements DeploymentQueries requiring ReadSurfacePorts; DefaultDeploymentCommands binds to canonical DeploymentCommandAdapter write owner executing commands through execute() rather than returning false-success kwargs; Deployment router receives typed queries and commands directly from bootstrap AppDependencies without get_read_store closure or module-global locator; AppDependencies enforces startup gate requiring concrete typed ports (CommandStore, PersonaRegistryHttpWritePort, RankingSnapshotWriteOwnerPort, SettingsStore) failing startup closed without permissive Any/None swallowing; all 23 get_read_store=lambda service-locator seams eliminated from main.py in favor of direct read_surface=app_deps.read_surface injection; duplicate SettingsStore instantiation removed from main.py.",
       "status": "passed"
     },
     {
       "criterion": "Composition and mounted-route tests finish within budget; no production service imports main.",
-      "evidence": "All 139 targeted tests passed across 8 suites in 53.84s; smoke_test.py (26 tests in 1.80s) and smoke_test_incident.py (21 tests in 1.74s) passed; zero production services import main.",
+      "evidence": "All 184 targeted tests passed across 9 suites in 76.73s (including test_bff_main_composition.py with 17 invariant tests, test_persona_router.py with 41 tests); smoke_test.py (26 tests in 1.79s) and smoke_test_incident.py (21 tests in 1.74s) passed; zero production services import main.",
       "status": "passed"
     },
     {
       "criterion": "Mandatory deletion: global read_store service locator and callers, Deployment service reverse import from main, copied domain behavior remaining in main for migrated scopes.",
-      "evidence": "Deployment service reverse import from main removed; DeploymentService.read_store compatibility property removed; deployment router converted completely to service.queries and service.commands (eliminating getattr fallback and closures); bootstrap AppDependencies eliminated duplicate queries/read_store aliases; TestEndpointLevelRetainedCallers migrated from global bff_main.read_store monkeypatching to explicit AppDependencies and DeploymentReadSurfaceAdapter domain fixtures; ReadSurfacePorts put_ranking_snapshot mutation removed in favor of typed rankings port; unconfigured Rankings write owner fails startup closed instead of lazy first-write deferral; personas/service.py uses typed ranking write owner.",
+      "evidence": "Deployment service reverse import from main removed; DeploymentService.read_store compatibility property removed; deployment router converted completely to service.queries and service.commands; bootstrap AppDependencies eliminated duplicate queries/read_store aliases; personas/service.py has zero import-time store instantiations, PersonaService constructor requires all four typed ports and fails closed, lazy _ranking_write_owner fallback eliminated, and personas.router module-level default router removed; main.py zero lambda read_store seams verified by AST/regex invariant tests.",
       "status": "passed"
     }
   ],
   "validation": [
     {
-      "command": ".venv/bin/python3 -m pytest -q services/rankings/test_store.py tests/test_pytest_import_isolation.py services/control-plane/bff/tests/test_tools_integrations_router.py services/control-plane/bff/tests/test_bff_main_composition.py services/control-plane/bff/tests/test_bff_auth_facade.py services/control-plane/bff/test_normalized_route_uniqueness.py services/control-plane/bff/tests/test_deployment_router.py services/control-plane/bff/tests/test_read_surface_caller_migration.py",
-      "result": "139 passed, 3 warnings in 53.84s"
+      "command": ".venv-pantheon/bin/python3 -m pytest -q services/rankings/test_store.py tests/test_pytest_import_isolation.py services/control-plane/bff/tests/test_tools_integrations_router.py services/control-plane/bff/tests/test_bff_main_composition.py services/control-plane/bff/tests/test_bff_auth_facade.py services/control-plane/bff/test_normalized_route_uniqueness.py services/control-plane/bff/tests/test_deployment_router.py services/control-plane/bff/tests/test_read_surface_caller_migration.py services/control-plane/bff/tests/test_persona_router.py",
+      "result": "184 passed, 3 warnings in 76.73s"
     },
     {
-      "command": "PYTHONPATH=. .venv/bin/python3 services/control-plane/bff/smoke_test.py",
-      "result": "26 passed in 1.80s"
+      "command": "PYTHONPATH=. .venv-pantheon/bin/python3 services/control-plane/bff/smoke_test.py",
+      "result": "26 passed in 1.79s"
     },
     {
-      "command": "PYTHONPATH=. .venv/bin/python3 services/control-plane/bff/smoke_test_incident.py",
+      "command": "PYTHONPATH=. .venv-pantheon/bin/python3 services/control-plane/bff/smoke_test_incident.py",
       "result": "21 passed in 1.74s"
     },
     {

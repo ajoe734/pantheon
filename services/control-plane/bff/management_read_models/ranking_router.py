@@ -120,6 +120,7 @@ def _stable_json_hash(payload: Any) -> str:
 
 def create_ranking_formulas_router(
     *,
+    read_surface: Optional[Any] = None,
     get_read_store: Optional[Callable[[], Any]] = None,
     extract_identity: Optional[Callable[..., Any]] = None,
     require_read_role: Optional[Callable[..., None]] = None,
@@ -138,6 +139,9 @@ def create_ranking_formulas_router(
       POST   /bff/ranking-formulas
       PATCH  /bff/ranking-formulas/{formula_id}
     """
+    if read_surface is not None:
+        get_read_store = (lambda: read_surface() if callable(read_surface) else read_surface)
+
     router = APIRouter()
 
     _extract_ident = extract_identity or _default_extract_identity
@@ -392,6 +396,7 @@ from fastapi import Response
 
 def create_rankings_long_tail_router(
     *,
+    read_surface: Optional[Any] = None,
     get_read_store: Optional[Callable[[], Any]] = None,
     extract_identity: Optional[Callable[..., Any]] = None,
     require_read_role: Optional[Callable[..., None]] = None,
@@ -421,6 +426,9 @@ def create_rankings_long_tail_router(
       GET    /bff/rankings/{ranking_id}
       POST   /bff/rankings/{ranking_id}/actions/{action_id}
     """
+    if read_surface is not None:
+        get_read_store = (lambda: read_surface() if callable(read_surface) else read_surface)
+
     router = APIRouter()
 
     _extract_identity = extract_identity or _default_extract_identity
