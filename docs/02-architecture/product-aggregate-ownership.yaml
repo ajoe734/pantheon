@@ -1,0 +1,5261 @@
+version: 1
+schema_version: 1
+purpose: Authoritative product aggregate ownership, mutation routing, worker ownership,
+  and symbol disposition registries
+aggregates:
+  persona:
+    command_owner: persona_application
+    store_owner: persona_registry
+    read_projection: management_persona_projection
+    event_subjects:
+    - persona.lifecycle.v1
+    bff_routers:
+    - personas
+    forbidden_writers:
+    - _PERSONA_BFF_OVERLAY
+    - _PERSONA_ROUTER_OVERLAY
+  strategy:
+    command_owner: strategy_application
+    store_owner: strategy_store
+    read_projection: management_strategy_projection
+    event_subjects:
+    - strategy.lifecycle.v1
+    bff_routers:
+    - strategies
+    forbidden_writers:
+    - _STRATEGY_BFF_OVERLAY
+  runtime:
+    command_owner: runtime_application
+    store_owner: runtime_manager_store
+    read_projection: management_runtime_projection
+    event_subjects:
+    - runtime.binding.v1
+    bff_routers:
+    - runtime
+    forbidden_writers:
+    - _RUNTIME_BFF_OVERLAY
+  deployment:
+    command_owner: deployment_application
+    store_owner: deployment_store
+    read_projection: management_deployment_projection
+    event_subjects:
+    - deployment.lifecycle.v1
+    bff_routers:
+    - deployment
+    forbidden_writers:
+    - _DEPLOYMENT_BFF_OVERLAY
+  experiment:
+    command_owner: experiment_application
+    store_owner: research_orchestrator_store
+    read_projection: management_experiment_projection
+    event_subjects:
+    - research.experiment.v1
+    bff_routers:
+    - experiments
+    - research
+    forbidden_writers:
+    - _EXPERIMENT_BFF_OVERLAY
+  job:
+    command_owner: job_application
+    store_owner: job_store
+    read_projection: management_job_projection
+    event_subjects:
+    - job.lifecycle.v1
+    bff_routers:
+    - jobs
+    forbidden_writers:
+    - _GOV_BFF_JOB_OVERLAY
+  incident:
+    command_owner: incident_application
+    store_owner: incident_store
+    read_projection: management_incident_projection
+    event_subjects:
+    - incident.lifecycle.v1
+    bff_routers:
+    - incidents
+    forbidden_writers:
+    - _GOV_BFF_INCIDENT_OVERLAY
+  ranking:
+    command_owner: ranking_application
+    store_owner: ranking_store
+    read_projection: management_ranking_projection
+    event_subjects:
+    - ranking.evaluation.v1
+    bff_routers:
+    - ranking
+    - ranking_router
+    forbidden_writers:
+    - _RANKING_BFF_OVERLAY
+  agora_journal:
+    command_owner: agora_journal_application
+    store_owner: agora_journal_store
+    read_projection: management_agora_journal_projection
+    event_subjects:
+    - agora.journal.entry.v1
+    bff_routers:
+    - agora
+    forbidden_writers:
+    - _GOVERNANCE_DECISION_JOURNAL_OVERLAY
+  agora_interaction:
+    command_owner: agora_interaction_application
+    store_owner: agora_interaction_store
+    read_projection: management_agora_interaction_projection
+    event_subjects:
+    - agora.interaction.v1
+    bff_routers:
+    - agora
+    forbidden_writers:
+    - _AGORA_INTERACTION_BFF_OVERLAY
+  governance:
+    command_owner: governance_application
+    store_owner: governance_store
+    read_projection: management_governance_projection
+    event_subjects:
+    - governance.decision.v1
+    bff_routers:
+    - governance
+    - approvals
+    - reviews
+    forbidden_writers:
+    - _GOVERNANCE_BFF_OVERLAY
+  capital:
+    command_owner: capital_application
+    store_owner: capital_store
+    read_projection: management_capital_projection
+    event_subjects:
+    - capital.allocation.v1
+    bff_routers:
+    - capital_pools
+    - rebalances
+    forbidden_writers:
+    - _CAPITAL_BFF_OVERLAY
+  source:
+    command_owner: source_application
+    store_owner: source_store
+    read_projection: management_source_projection
+    event_subjects:
+    - source.ingest.v1
+    bff_routers:
+    - datasources
+    - source_commands
+    forbidden_writers:
+    - _SOURCE_BFF_OVERLAY
+  consultation:
+    command_owner: consultation_application
+    store_owner: consultation_store
+    read_projection: management_consultation_projection
+    event_subjects:
+    - consultation.request.v1
+    bff_routers:
+    - consult_rules
+    - agora_chat
+    forbidden_writers:
+    - _CONSULTATION_BFF_OVERLAY
+  memory:
+    command_owner: memory_application
+    store_owner: memory_store
+    read_projection: management_memory_projection
+    event_subjects:
+    - memory.entry.v1
+    bff_routers:
+    - memory_governance
+    - memory
+    forbidden_writers:
+    - _MEMORY_BFF_OVERLAY
+  workflow:
+    command_owner: workflow_application
+    store_owner: workflow_store
+    read_projection: management_workflow_projection
+    event_subjects:
+    - workflow.trigger.v1
+    bff_routers:
+    - workflows_hooks
+    forbidden_writers:
+    - _WORKFLOW_BFF_OVERLAY
+  trade_journal:
+    command_owner: trade_journal_application
+    store_owner: trade_journal_store
+    read_projection: management_trade_journal_projection
+    event_subjects:
+    - trade.journal.v1
+    bff_routers:
+    - trade_journal
+    - trade_journeys
+    forbidden_writers:
+    - _TRADE_JOURNAL_BFF_OVERLAY
+  permission:
+    command_owner: permission_application
+    store_owner: permission_store
+    read_projection: management_permission_projection
+    event_subjects:
+    - permission.policy.v1
+    bff_routers:
+    - permissions
+    - route_policies
+    forbidden_writers:
+    - _PERMISSION_BFF_OVERLAY
+  evolution:
+    command_owner: evolution_application
+    store_owner: evolution_store
+    read_projection: management_evolution_projection
+    event_subjects:
+    - evolution.program.v1
+    bff_routers:
+    - evolution_programs
+    forbidden_writers:
+    - _EVOLUTION_BFF_OVERLAY
+  assistant:
+    command_owner: assistant_application
+    store_owner: assistant_store
+    read_projection: management_assistant_projection
+    event_subjects:
+    - assistant.session.v1
+    bff_routers:
+    - assistant
+    forbidden_writers:
+    - _ASSISTANT_DEV_BRIDGE_OVERLAY
+  training:
+    command_owner: training_application
+    store_owner: training_store
+    read_projection: management_training_projection
+    event_subjects:
+    - training.session.v1
+    bff_routers:
+    - training
+    forbidden_writers:
+    - _TRAINING_BFF_OVERLAY
+  integrations:
+    command_owner: integration_application
+    store_owner: integration_store
+    read_projection: management_integration_projection
+    event_subjects:
+    - integration.event.v1
+    bff_routers:
+    - integrations
+    forbidden_writers:
+    - _INTEGRATION_BFF_OVERLAY
+  auth:
+    command_owner: auth_application
+    store_owner: session_store
+    read_projection: management_auth_projection
+    event_subjects:
+    - auth.session.v1
+    bff_routers:
+    - auth
+    forbidden_writers:
+    - _AUTH_BFF_OVERLAY
+  control_loops:
+    command_owner: control_loop_application
+    store_owner: control_loop_store
+    read_projection: management_control_loop_projection
+    event_subjects:
+    - control_loop.status.v1
+    bff_routers:
+    - control_loops
+    forbidden_writers:
+    - _CONTROL_LOOP_BFF_OVERLAY
+mutation_routes:
+- route: POST /bff/assistant/sessions/{param}/context
+  command: build_session_context_pack
+  router: assistant
+  application_owner: assistant_application
+  store_owner: assistant_store
+  table_or_stream: assistant_sessions
+  outbox_subject: assistant.session.v1
+  idempotency_scope: session_id
+  readback_projection: management_assistant_projection
+  legacy_path: null
+  legacy_removal_wave: null
+- route: POST /bff/assistant/sessions
+  command: create_assistant_session
+  router: assistant
+  application_owner: assistant_application
+  store_owner: assistant_store
+  table_or_stream: assistant_sessions
+  outbox_subject: assistant.session.v1
+  idempotency_scope: session_id
+  readback_projection: management_assistant_projection
+  legacy_path: null
+  legacy_removal_wave: null
+- route: POST /bff/assistant/sessions/{param}/revoke
+  command: revoke_assistant_session
+  router: assistant
+  application_owner: assistant_application
+  store_owner: assistant_store
+  table_or_stream: assistant_sessions
+  outbox_subject: assistant.session.v1
+  idempotency_scope: session_id
+  readback_projection: management_assistant_projection
+  legacy_path: null
+  legacy_removal_wave: null
+- route: POST /bff/assistant/sessions/{param}/transcript
+  command: append_transcript_turn
+  router: assistant
+  application_owner: assistant_application
+  store_owner: assistant_store
+  table_or_stream: assistant_sessions
+  outbox_subject: assistant.session.v1
+  idempotency_scope: session_id
+  readback_projection: management_assistant_projection
+  legacy_path: null
+  legacy_removal_wave: null
+- route: POST /bff/assistant/control-mode/activate
+  command: activate_control_mode
+  router: assistant
+  application_owner: assistant_application
+  store_owner: assistant_store
+  table_or_stream: assistant_sessions
+  outbox_subject: assistant.session.v1
+  idempotency_scope: session_id
+  readback_projection: management_assistant_projection
+  legacy_path: null
+  legacy_removal_wave: null
+- route: POST /bff/assistant/control-mode/deactivate
+  command: deactivate_control_mode
+  router: assistant
+  application_owner: assistant_application
+  store_owner: assistant_store
+  table_or_stream: assistant_sessions
+  outbox_subject: assistant.session.v1
+  idempotency_scope: session_id
+  readback_projection: management_assistant_projection
+  legacy_path: null
+  legacy_removal_wave: null
+- route: POST /bff/assistant/providers
+  command: register_assistant_provider
+  router: assistant
+  application_owner: assistant_application
+  store_owner: assistant_store
+  table_or_stream: assistant_sessions
+  outbox_subject: assistant.session.v1
+  idempotency_scope: session_id
+  readback_projection: management_assistant_projection
+  legacy_path: null
+  legacy_removal_wave: null
+- route: POST /bff/assistant/provider/reauth
+  command: start_assistant_provider_reauth
+  router: assistant
+  application_owner: assistant_application
+  store_owner: assistant_store
+  table_or_stream: assistant_sessions
+  outbox_subject: assistant.session.v1
+  idempotency_scope: session_id
+  readback_projection: management_assistant_projection
+  legacy_path: null
+  legacy_removal_wave: null
+- route: POST /bff/assistant/provider/reauth/{param}/code
+  command: submit_assistant_provider_reauth_code
+  router: assistant
+  application_owner: assistant_application
+  store_owner: assistant_store
+  table_or_stream: assistant_sessions
+  outbox_subject: assistant.session.v1
+  idempotency_scope: session_id
+  readback_projection: management_assistant_projection
+  legacy_path: null
+  legacy_removal_wave: null
+- route: POST /bff/assistant/tools/preview
+  command: preview_assistant_tool
+  router: assistant
+  application_owner: assistant_application
+  store_owner: assistant_store
+  table_or_stream: assistant_sessions
+  outbox_subject: assistant.session.v1
+  idempotency_scope: session_id
+  readback_projection: management_assistant_projection
+  legacy_path: null
+  legacy_removal_wave: null
+- route: POST /bff/assistant/tools/validate
+  command: validate_assistant_tool
+  router: assistant
+  application_owner: assistant_application
+  store_owner: assistant_store
+  table_or_stream: assistant_sessions
+  outbox_subject: assistant.session.v1
+  idempotency_scope: session_id
+  readback_projection: management_assistant_projection
+  legacy_path: null
+  legacy_removal_wave: null
+- route: POST /bff/assistant/tools/execute
+  command: execute_assistant_tool
+  router: assistant
+  application_owner: assistant_application
+  store_owner: assistant_store
+  table_or_stream: assistant_sessions
+  outbox_subject: assistant.session.v1
+  idempotency_scope: session_id
+  readback_projection: management_assistant_projection
+  legacy_path: null
+  legacy_removal_wave: null
+- route: POST /bff/assistant/control-mode/passphrase
+  command: update_control_mode_passphrase
+  router: assistant
+  application_owner: assistant_application
+  store_owner: assistant_store
+  table_or_stream: assistant_sessions
+  outbox_subject: assistant.session.v1
+  idempotency_scope: session_id
+  readback_projection: management_assistant_projection
+  legacy_path: null
+  legacy_removal_wave: null
+- route: POST /bff/management/data-sources
+  command: bff_create_data_source
+  router: datasources
+  application_owner: source_application
+  store_owner: source_store
+  table_or_stream: data_sources
+  outbox_subject: source.ingest.v1
+  idempotency_scope: source_id
+  readback_projection: management_source_projection
+  legacy_path: null
+  legacy_removal_wave: null
+- route: POST /bff/management/data-sources/{param}/actions/validate
+  command: bff_validate_data_source
+  router: datasources
+  application_owner: source_application
+  store_owner: source_store
+  table_or_stream: data_sources
+  outbox_subject: source.ingest.v1
+  idempotency_scope: source_id
+  readback_projection: management_source_projection
+  legacy_path: null
+  legacy_removal_wave: null
+- route: POST /bff/management/data-sources/{param}/actions/canary
+  command: bff_canary_data_source
+  router: datasources
+  application_owner: source_application
+  store_owner: source_store
+  table_or_stream: data_sources
+  outbox_subject: source.ingest.v1
+  idempotency_scope: source_id
+  readback_projection: management_source_projection
+  legacy_path: null
+  legacy_removal_wave: null
+- route: POST /bff/management/data-sources/{param}/actions/enable
+  command: bff_enable_data_source
+  router: datasources
+  application_owner: source_application
+  store_owner: source_store
+  table_or_stream: data_sources
+  outbox_subject: source.ingest.v1
+  idempotency_scope: source_id
+  readback_projection: management_source_projection
+  legacy_path: null
+  legacy_removal_wave: null
+- route: POST /bff/management/data-sources/{param}/actions/disable
+  command: bff_disable_data_source
+  router: datasources
+  application_owner: source_application
+  store_owner: source_store
+  table_or_stream: data_sources
+  outbox_subject: source.ingest.v1
+  idempotency_scope: source_id
+  readback_projection: management_source_projection
+  legacy_path: null
+  legacy_removal_wave: null
+- route: POST /bff/management/data-sources/{param}/actions/degrade
+  command: bff_degrade_data_source
+  router: datasources
+  application_owner: source_application
+  store_owner: source_store
+  table_or_stream: data_sources
+  outbox_subject: source.ingest.v1
+  idempotency_scope: source_id
+  readback_projection: management_source_projection
+  legacy_path: null
+  legacy_removal_wave: null
+- route: POST /bff/management/data-sources/{param}/actions/resume
+  command: bff_resume_data_source
+  router: datasources
+  application_owner: source_application
+  store_owner: source_store
+  table_or_stream: data_sources
+  outbox_subject: source.ingest.v1
+  idempotency_scope: source_id
+  readback_projection: management_source_projection
+  legacy_path: null
+  legacy_removal_wave: null
+- route: PUT /bff/management/data-sources/{param}/schedule
+  command: bff_change_schedule_data_source
+  router: datasources
+  application_owner: source_application
+  store_owner: source_store
+  table_or_stream: data_sources
+  outbox_subject: source.ingest.v1
+  idempotency_scope: source_id
+  readback_projection: management_source_projection
+  legacy_path: null
+  legacy_removal_wave: null
+- route: POST /bff/management/data-sources/{param}/actions/replace
+  command: bff_replace_data_source
+  router: datasources
+  application_owner: source_application
+  store_owner: source_store
+  table_or_stream: data_sources
+  outbox_subject: source.ingest.v1
+  idempotency_scope: source_id
+  readback_projection: management_source_projection
+  legacy_path: null
+  legacy_removal_wave: null
+- route: POST /bff/management/data-sources/{param}/actions/retire
+  command: bff_retire_data_source
+  router: datasources
+  application_owner: source_application
+  store_owner: source_store
+  table_or_stream: data_sources
+  outbox_subject: source.ingest.v1
+  idempotency_scope: source_id
+  readback_projection: management_source_projection
+  legacy_path: null
+  legacy_removal_wave: null
+- route: POST /bff/personas/{param}/trade-journal/{param}/reflection:retry
+  command: retry
+  router: trade_journal
+  application_owner: trade_journal_application
+  store_owner: trade_journal_store
+  table_or_stream: trade_journal_reflections
+  outbox_subject: trade.journal.v1
+  idempotency_scope: reflection_id
+  readback_projection: management_trade_journal_projection
+  legacy_path: null
+  legacy_removal_wave: null
+- route: POST /bff/personas/{param}/trade-lessons/{param}:submit-review
+  command: submit
+  router: trade_journal
+  application_owner: trade_journal_application
+  store_owner: trade_journal_store
+  table_or_stream: trade_journal_reflections
+  outbox_subject: trade.journal.v1
+  idempotency_scope: reflection_id
+  readback_projection: management_trade_journal_projection
+  legacy_path: null
+  legacy_removal_wave: null
+- route: POST /bff/personas/{param}/trade-lessons/{param}:decide
+  command: decide
+  router: trade_journal
+  application_owner: trade_journal_application
+  store_owner: trade_journal_store
+  table_or_stream: trade_journal_reflections
+  outbox_subject: trade.journal.v1
+  idempotency_scope: reflection_id
+  readback_projection: management_trade_journal_projection
+  legacy_path: null
+  legacy_removal_wave: null
+- route: POST /bff/management/trade-journeys/{param}/actions
+  command: bff_trade_journey_action
+  router: trade_journeys
+  application_owner: trade_journey_application
+  store_owner: trade_journey_store
+  table_or_stream: trade_journeys
+  outbox_subject: trade.journey.v1
+  idempotency_scope: journey_id
+  readback_projection: management_trade_journey_projection
+  legacy_path: null
+  legacy_removal_wave: null
+- route: POST /bff/jobs/{param}/actions/{param}
+  command: job_action
+  router: jobs
+  application_owner: job_application
+  store_owner: job_store
+  table_or_stream: jobs
+  outbox_subject: job.lifecycle.v1
+  idempotency_scope: job_id
+  readback_projection: management_job_projection
+  legacy_path: null
+  legacy_removal_wave: null
+- route: POST /api/v1/internal/sse/publish
+  command: publish_sse_event
+  router: events
+  application_owner: event_application
+  store_owner: event_store
+  table_or_stream: events
+  outbox_subject: event.stream.v1
+  idempotency_scope: event_id
+  readback_projection: management_event_projection
+  legacy_path: null
+  legacy_removal_wave: null
+- route: POST /bff/evolution-programs
+  command: create_evolution_program
+  router: evolution
+  application_owner: evolution_application
+  store_owner: evolution_store
+  table_or_stream: evolution_programs
+  outbox_subject: evolution.program.v1
+  idempotency_scope: program_id
+  readback_projection: management_evolution_projection
+  legacy_path: null
+  legacy_removal_wave: null
+- route: PATCH /bff/evolution-programs/{param}
+  command: patch_evolution_program
+  router: evolution
+  application_owner: evolution_application
+  store_owner: evolution_store
+  table_or_stream: evolution_programs
+  outbox_subject: evolution.program.v1
+  idempotency_scope: program_id
+  readback_projection: management_evolution_projection
+  legacy_path: null
+  legacy_removal_wave: null
+- route: POST /bff/evolution-programs/{param}/actions/{param}
+  command: evolution_program_action
+  router: evolution
+  application_owner: evolution_application
+  store_owner: evolution_store
+  table_or_stream: evolution_programs
+  outbox_subject: evolution.program.v1
+  idempotency_scope: program_id
+  readback_projection: management_evolution_projection
+  legacy_path: null
+  legacy_removal_wave: null
+- route: POST /api/v1/operator/source/dlq/replay
+  command: research_inventory_command_source_dlq_replay
+  router: research
+  application_owner: experiment_application
+  store_owner: research_orchestrator_store
+  table_or_stream: experiments
+  outbox_subject: research.experiment.v1
+  idempotency_scope: experiment_id
+  readback_projection: management_experiment_projection
+  legacy_path: null
+  legacy_removal_wave: null
+- route: POST /api/v1/operator/source/frontier/{param}/replay
+  command: research_inventory_command_source_frontier_replay
+  router: research
+  application_owner: experiment_application
+  store_owner: research_orchestrator_store
+  table_or_stream: experiments
+  outbox_subject: research.experiment.v1
+  idempotency_scope: experiment_id
+  readback_projection: management_experiment_projection
+  legacy_path: null
+  legacy_removal_wave: null
+- route: POST /api/v1/operator/search/index/refresh
+  command: research_inventory_command_search_index_refresh
+  router: research
+  application_owner: experiment_application
+  store_owner: research_orchestrator_store
+  table_or_stream: experiments
+  outbox_subject: research.experiment.v1
+  idempotency_scope: experiment_id
+  readback_projection: management_experiment_projection
+  legacy_path: null
+  legacy_removal_wave: null
+- route: POST /api/v1/operator/search/index/materialize
+  command: research_inventory_command_search_index_materialize
+  router: research
+  application_owner: experiment_application
+  store_owner: research_orchestrator_store
+  table_or_stream: experiments
+  outbox_subject: research.experiment.v1
+  idempotency_scope: experiment_id
+  readback_projection: management_experiment_projection
+  legacy_path: null
+  legacy_removal_wave: null
+- route: POST /api/v1/research/tickets
+  command: research_inventory_create_ticket
+  router: research
+  application_owner: experiment_application
+  store_owner: research_orchestrator_store
+  table_or_stream: experiments
+  outbox_subject: research.experiment.v1
+  idempotency_scope: experiment_id
+  readback_projection: management_experiment_projection
+  legacy_path: null
+  legacy_removal_wave: null
+- route: PATCH /api/v1/research/tickets/{param}
+  command: research_inventory_patch_ticket
+  router: research
+  application_owner: experiment_application
+  store_owner: research_orchestrator_store
+  table_or_stream: experiments
+  outbox_subject: research.experiment.v1
+  idempotency_scope: experiment_id
+  readback_projection: management_experiment_projection
+  legacy_path: null
+  legacy_removal_wave: null
+- route: POST /api/v1/experiments/launch
+  command: research_inventory_launch_experiment
+  router: research
+  application_owner: experiment_application
+  store_owner: research_orchestrator_store
+  table_or_stream: experiments
+  outbox_subject: research.experiment.v1
+  idempotency_scope: experiment_id
+  readback_projection: management_experiment_projection
+  legacy_path: null
+  legacy_removal_wave: null
+- route: POST /api/v1/experiments/{param}/cancel
+  command: research_inventory_cancel_experiment_api
+  router: research
+  application_owner: experiment_application
+  store_owner: research_orchestrator_store
+  table_or_stream: experiments
+  outbox_subject: research.experiment.v1
+  idempotency_scope: experiment_id
+  readback_projection: management_experiment_projection
+  legacy_path: null
+  legacy_removal_wave: null
+- route: POST /api/v1/knowledge/notes
+  command: research_inventory_create_note
+  router: research
+  application_owner: experiment_application
+  store_owner: research_orchestrator_store
+  table_or_stream: experiments
+  outbox_subject: research.experiment.v1
+  idempotency_scope: experiment_id
+  readback_projection: management_experiment_projection
+  legacy_path: null
+  legacy_removal_wave: null
+- route: PATCH /bff/artifacts/{param}
+  command: research_inventory_bff_patch_artifact
+  router: research
+  application_owner: experiment_application
+  store_owner: research_orchestrator_store
+  table_or_stream: experiments
+  outbox_subject: research.experiment.v1
+  idempotency_scope: experiment_id
+  readback_projection: management_experiment_projection
+  legacy_path: null
+  legacy_removal_wave: null
+- route: POST /bff/artifacts
+  command: research_inventory_bff_create_artifact
+  router: research
+  application_owner: experiment_application
+  store_owner: research_orchestrator_store
+  table_or_stream: experiments
+  outbox_subject: research.experiment.v1
+  idempotency_scope: experiment_id
+  readback_projection: management_experiment_projection
+  legacy_path: null
+  legacy_removal_wave: null
+- route: POST /bff/experiments
+  command: create_experiment
+  router: research
+  application_owner: experiment_application
+  store_owner: research_orchestrator_store
+  table_or_stream: experiments
+  outbox_subject: research.experiment.v1
+  idempotency_scope: experiment_id
+  readback_projection: management_experiment_projection
+  legacy_path: null
+  legacy_removal_wave: null
+- route: POST /bff/experiments/{param}/actions/{param}
+  command: experiment_action
+  router: research
+  application_owner: experiment_application
+  store_owner: research_orchestrator_store
+  table_or_stream: experiments
+  outbox_subject: research.experiment.v1
+  idempotency_scope: experiment_id
+  readback_projection: management_experiment_projection
+  legacy_path: null
+  legacy_removal_wave: null
+- route: POST /api/v1/trainer/sessions
+  command: create_trainer_session
+  router: training
+  application_owner: training_application
+  store_owner: training_store
+  table_or_stream: training_sessions
+  outbox_subject: training.session.v1
+  idempotency_scope: session_id
+  readback_projection: management_training_projection
+  legacy_path: null
+  legacy_removal_wave: null
+- route: POST /api/v1/trainer/sessions/{param}/patch
+  command: patch_trainer_controls
+  router: training
+  application_owner: training_application
+  store_owner: training_store
+  table_or_stream: training_sessions
+  outbox_subject: training.session.v1
+  idempotency_scope: session_id
+  readback_projection: management_training_projection
+  legacy_path: null
+  legacy_removal_wave: null
+- route: POST /api/v1/trainer/sessions/{param}/message
+  command: append_trainer_message
+  router: training
+  application_owner: training_application
+  store_owner: training_store
+  table_or_stream: training_sessions
+  outbox_subject: training.session.v1
+  idempotency_scope: session_id
+  readback_projection: management_training_projection
+  legacy_path: null
+  legacy_removal_wave: null
+- route: POST /api/v1/trainer/sessions/{param}/preview
+  command: refresh_trainer_preview
+  router: training
+  application_owner: training_application
+  store_owner: training_store
+  table_or_stream: training_sessions
+  outbox_subject: training.session.v1
+  idempotency_scope: session_id
+  readback_projection: management_training_projection
+  legacy_path: null
+  legacy_removal_wave: null
+- route: POST /api/v1/trainer/sessions/{param}/commit
+  command: commit_trainer_replay
+  router: training
+  application_owner: training_application
+  store_owner: training_store
+  table_or_stream: training_sessions
+  outbox_subject: training.session.v1
+  idempotency_scope: session_id
+  readback_projection: management_training_projection
+  legacy_path: null
+  legacy_removal_wave: null
+- route: POST /api/v1/trainer/sessions/{param}/discard
+  command: discard_trainer_replay
+  router: training
+  application_owner: training_application
+  store_owner: training_store
+  table_or_stream: training_sessions
+  outbox_subject: training.session.v1
+  idempotency_scope: session_id
+  readback_projection: management_training_projection
+  legacy_path: null
+  legacy_removal_wave: null
+- route: POST /api/v1/trainer/sessions/{param}/rapid-eval
+  command: create_rapid_eval
+  router: training
+  application_owner: training_application
+  store_owner: training_store
+  table_or_stream: training_sessions
+  outbox_subject: training.session.v1
+  idempotency_scope: session_id
+  readback_projection: management_training_projection
+  legacy_path: null
+  legacy_removal_wave: null
+- route: POST /api/v1/bindings
+  command: create_binding
+  router: runtime
+  application_owner: runtime_application
+  store_owner: runtime_manager_store
+  table_or_stream: runtime_bindings
+  outbox_subject: runtime.binding.v1
+  idempotency_scope: runtime_id
+  readback_projection: management_runtime_projection
+  legacy_path: null
+  legacy_removal_wave: null
+- route: POST /bff/runtimes
+  command: bff_create_runtime
+  router: runtime
+  application_owner: runtime_application
+  store_owner: runtime_manager_store
+  table_or_stream: runtime_bindings
+  outbox_subject: runtime.binding.v1
+  idempotency_scope: runtime_id
+  readback_projection: management_runtime_projection
+  legacy_path: null
+  legacy_removal_wave: null
+- route: POST /bff/runtimes/{param}/actions/{param}
+  command: bff_runtime_action
+  router: runtime
+  application_owner: runtime_application
+  store_owner: runtime_manager_store
+  table_or_stream: runtime_bindings
+  outbox_subject: runtime.binding.v1
+  idempotency_scope: runtime_id
+  readback_projection: management_runtime_projection
+  legacy_path: null
+  legacy_removal_wave: null
+- route: POST /api/v1/deployment-plans
+  command: create_deployment_plan_v1
+  router: deployment
+  application_owner: deployment_application
+  store_owner: deployment_store
+  table_or_stream: deployment_plans
+  outbox_subject: deployment.lifecycle.v1
+  idempotency_scope: deployment_id
+  readback_projection: management_deployment_projection
+  legacy_path: null
+  legacy_removal_wave: null
+- route: POST /bff/deployments/{param}/actions/{param}
+  command: bff_deployment_action
+  router: deployment
+  application_owner: deployment_application
+  store_owner: deployment_store
+  table_or_stream: deployment_plans
+  outbox_subject: deployment.lifecycle.v1
+  idempotency_scope: deployment_id
+  readback_projection: management_deployment_projection
+  legacy_path: null
+  legacy_removal_wave: null
+- route: POST /bff/deployments
+  command: sem_create_deployment_command
+  router: deployment
+  application_owner: deployment_application
+  store_owner: deployment_store
+  table_or_stream: deployment_plans
+  outbox_subject: deployment.lifecycle.v1
+  idempotency_scope: deployment_id
+  readback_projection: management_deployment_projection
+  legacy_path: null
+  legacy_removal_wave: null
+- route: PATCH /bff/deployments/{param}
+  command: sem_patch_deployment_command
+  router: deployment
+  application_owner: deployment_application
+  store_owner: deployment_store
+  table_or_stream: deployment_plans
+  outbox_subject: deployment.lifecycle.v1
+  idempotency_scope: deployment_id
+  readback_projection: management_deployment_projection
+  legacy_path: null
+  legacy_removal_wave: null
+- route: POST /bff/actions/{param}/{param}/{param}
+  command: sem_canonical_action_command
+  router: command_adapters
+  application_owner: command_adapter_application
+  store_owner: command_store
+  table_or_stream: commands
+  outbox_subject: command.dispatched.v1
+  idempotency_scope: command_id
+  readback_projection: management_command_projection
+  legacy_path: null
+  legacy_removal_wave: null
+- route: POST /api/v1/operator/commands
+  command: submit_command
+  router: command_adapters
+  application_owner: command_adapter_application
+  store_owner: command_store
+  table_or_stream: commands
+  outbox_subject: command.dispatched.v1
+  idempotency_scope: command_id
+  readback_projection: management_command_projection
+  legacy_path: null
+  legacy_removal_wave: null
+- route: POST /bff/v1/commands
+  command: submit_final_command
+  router: command_adapters
+  application_owner: command_adapter_application
+  store_owner: command_store
+  table_or_stream: commands
+  outbox_subject: command.dispatched.v1
+  idempotency_scope: command_id
+  readback_projection: management_command_projection
+  legacy_path: null
+  legacy_removal_wave: null
+- route: POST /bff/command-confirmations
+  command: bff_command_confirmation
+  router: command_adapters
+  application_owner: command_adapter_application
+  store_owner: command_store
+  table_or_stream: commands
+  outbox_subject: command.dispatched.v1
+  idempotency_scope: command_id
+  readback_projection: management_command_projection
+  legacy_path: null
+  legacy_removal_wave: null
+- route: POST /bff/command-confirmations/{param}/confirm
+  command: bff_confirm_command_by_token
+  router: command_adapters
+  application_owner: command_adapter_application
+  store_owner: command_store
+  table_or_stream: commands
+  outbox_subject: command.dispatched.v1
+  idempotency_scope: command_id
+  readback_projection: management_command_projection
+  legacy_path: null
+  legacy_removal_wave: null
+- route: POST /bff/confirm-tokens
+  command: sem_create_confirm_token_command
+  router: command_adapters
+  application_owner: command_adapter_application
+  store_owner: command_store
+  table_or_stream: commands
+  outbox_subject: command.dispatched.v1
+  idempotency_scope: command_id
+  readback_projection: management_command_projection
+  legacy_path: null
+  legacy_removal_wave: null
+- route: POST /bff/confirm-tokens/{param}/redeem
+  command: sem_redeem_confirm_token_command
+  router: command_adapters
+  application_owner: command_adapter_application
+  store_owner: command_store
+  table_or_stream: commands
+  outbox_subject: command.dispatched.v1
+  idempotency_scope: command_id
+  readback_projection: management_command_projection
+  legacy_path: null
+  legacy_removal_wave: null
+- route: DELETE /bff/confirm-tokens/{param}
+  command: sem_delete_confirm_token_command
+  router: command_adapters
+  application_owner: command_adapter_application
+  store_owner: command_store
+  table_or_stream: commands
+  outbox_subject: command.dispatched.v1
+  idempotency_scope: command_id
+  readback_projection: management_command_projection
+  legacy_path: null
+  legacy_removal_wave: null
+- route: POST /bff/ranking-formulas
+  command: bff_create_ranking_formula
+  router: ranking
+  application_owner: ranking_application
+  store_owner: ranking_store
+  table_or_stream: ranking_formulas
+  outbox_subject: ranking.evaluation.v1
+  idempotency_scope: formula_id
+  readback_projection: management_ranking_projection
+  legacy_path: /bff/ranking/formulas
+  legacy_removal_wave: wave-1
+- route: PATCH /bff/ranking-formulas/{param}
+  command: bff_patch_ranking_formula
+  router: ranking
+  application_owner: ranking_application
+  store_owner: ranking_store
+  table_or_stream: ranking_formulas
+  outbox_subject: ranking.evaluation.v1
+  idempotency_scope: formula_id
+  readback_projection: management_ranking_projection
+  legacy_path: /bff/ranking/formulas
+  legacy_removal_wave: wave-1
+- route: POST /bff/ranking/formulas
+  command: bff_deprecated_create_ranking_formula
+  router: ranking
+  application_owner: ranking_application
+  store_owner: ranking_store
+  table_or_stream: ranking_formulas
+  outbox_subject: ranking.evaluation.v1
+  idempotency_scope: formula_id
+  readback_projection: management_ranking_projection
+  legacy_path: /bff/ranking/formulas
+  legacy_removal_wave: wave-1
+- route: PATCH /bff/ranking/formulas/{param}
+  command: bff_deprecated_patch_ranking_formula
+  router: ranking
+  application_owner: ranking_application
+  store_owner: ranking_store
+  table_or_stream: ranking_formulas
+  outbox_subject: ranking.evaluation.v1
+  idempotency_scope: formula_id
+  readback_projection: management_ranking_projection
+  legacy_path: /bff/ranking/formulas
+  legacy_removal_wave: wave-1
+- route: POST /bff/ranking/formulas/{param}/actions/{param}
+  command: bff_deprecated_ranking_formula_action
+  router: ranking
+  application_owner: ranking_application
+  store_owner: ranking_store
+  table_or_stream: ranking_formulas
+  outbox_subject: ranking.evaluation.v1
+  idempotency_scope: formula_id
+  readback_projection: management_ranking_projection
+  legacy_path: /bff/ranking/formulas
+  legacy_removal_wave: wave-1
+- route: POST /bff/rankings/{param}/actions/{param}
+  command: bff_ranking_action
+  router: ranking
+  application_owner: ranking_application
+  store_owner: ranking_store
+  table_or_stream: ranking_formulas
+  outbox_subject: ranking.evaluation.v1
+  idempotency_scope: formula_id
+  readback_projection: management_ranking_projection
+  legacy_path: null
+  legacy_removal_wave: null
+- route: POST /bff/strategies
+  command: bff_create_strategy
+  router: strategies
+  application_owner: strategy_application
+  store_owner: strategy_store
+  table_or_stream: strategies
+  outbox_subject: strategy.lifecycle.v1
+  idempotency_scope: strategy_id
+  readback_projection: management_strategy_projection
+  legacy_path: null
+  legacy_removal_wave: null
+- route: PATCH /bff/strategies/{param}
+  command: bff_patch_strategy
+  router: strategies
+  application_owner: strategy_application
+  store_owner: strategy_store
+  table_or_stream: strategies
+  outbox_subject: strategy.lifecycle.v1
+  idempotency_scope: strategy_id
+  readback_projection: management_strategy_projection
+  legacy_path: null
+  legacy_removal_wave: null
+- route: POST /bff/strategies/{param}/specs
+  command: bff_create_strategy_spec
+  router: strategies
+  application_owner: strategy_application
+  store_owner: strategy_store
+  table_or_stream: strategies
+  outbox_subject: strategy.lifecycle.v1
+  idempotency_scope: strategy_id
+  readback_projection: management_strategy_projection
+  legacy_path: null
+  legacy_removal_wave: null
+- route: POST /bff/strategies/{param}/actions/{param}
+  command: bff_strategy_action
+  router: strategies
+  application_owner: strategy_application
+  store_owner: strategy_store
+  table_or_stream: strategies
+  outbox_subject: strategy.lifecycle.v1
+  idempotency_scope: strategy_id
+  readback_projection: management_strategy_projection
+  legacy_path: null
+  legacy_removal_wave: null
+- route: POST /bff/strategies/{param}/dry-run
+  command: bff_strategy_dry_run
+  router: strategies
+  application_owner: strategy_application
+  store_owner: strategy_store
+  table_or_stream: strategies
+  outbox_subject: strategy.lifecycle.v1
+  idempotency_scope: strategy_id
+  readback_projection: management_strategy_projection
+  legacy_path: null
+  legacy_removal_wave: null
+- route: POST /bff/management/strategy-seeds/{param}/review
+  command: bff_review_strategy_seed
+  router: strategies
+  application_owner: strategy_application
+  store_owner: strategy_store
+  table_or_stream: strategies
+  outbox_subject: strategy.lifecycle.v1
+  idempotency_scope: strategy_id
+  readback_projection: management_strategy_projection
+  legacy_path: null
+  legacy_removal_wave: null
+- route: POST /bff/management/strategy-seeds/{param}/merge
+  command: bff_merge_strategy_seed
+  router: strategies
+  application_owner: strategy_application
+  store_owner: strategy_store
+  table_or_stream: strategies
+  outbox_subject: strategy.lifecycle.v1
+  idempotency_scope: strategy_id
+  readback_projection: management_strategy_projection
+  legacy_path: null
+  legacy_removal_wave: null
+- route: POST /bff/management/strategy-seeds/{param}/submit-replication
+  command: bff_submit_strategy_seed_replication
+  router: strategies
+  application_owner: strategy_application
+  store_owner: strategy_store
+  table_or_stream: strategies
+  outbox_subject: strategy.lifecycle.v1
+  idempotency_scope: strategy_id
+  readback_projection: management_strategy_projection
+  legacy_path: null
+  legacy_removal_wave: null
+- route: POST /bff/risk/alerts/{param}/actions/{param}
+  command: bff_risk_alert_action
+  router: incidents
+  application_owner: incident_application
+  store_owner: incident_store
+  table_or_stream: incidents
+  outbox_subject: incident.lifecycle.v1
+  idempotency_scope: incident_id
+  readback_projection: management_incident_projection
+  legacy_path: null
+  legacy_removal_wave: null
+- route: POST /bff/incidents
+  command: bff_create_incident
+  router: incidents
+  application_owner: incident_application
+  store_owner: incident_store
+  table_or_stream: incidents
+  outbox_subject: incident.lifecycle.v1
+  idempotency_scope: incident_id
+  readback_projection: management_incident_projection
+  legacy_path: null
+  legacy_removal_wave: null
+- route: POST /bff/incidents/{param}/actions/{param}
+  command: bff_incident_action
+  router: incidents
+  application_owner: incident_application
+  store_owner: incident_store
+  table_or_stream: incidents
+  outbox_subject: incident.lifecycle.v1
+  idempotency_scope: incident_id
+  readback_projection: management_incident_projection
+  legacy_path: null
+  legacy_removal_wave: null
+- route: POST /bff/alerts/{param}/acknowledge
+  command: bff_alert_acknowledge
+  router: incidents
+  application_owner: incident_application
+  store_owner: incident_store
+  table_or_stream: incidents
+  outbox_subject: incident.lifecycle.v1
+  idempotency_scope: incident_id
+  readback_projection: management_incident_projection
+  legacy_path: null
+  legacy_removal_wave: null
+- route: POST /bff/audit/export
+  command: sem_audit_export_command
+  router: incidents
+  application_owner: incident_application
+  store_owner: incident_store
+  table_or_stream: incidents
+  outbox_subject: incident.lifecycle.v1
+  idempotency_scope: incident_id
+  readback_projection: management_incident_projection
+  legacy_path: null
+  legacy_removal_wave: null
+- route: POST /bff/incidents/{param}/start-mitigation
+  command: sem_final_generic_id_command_alias
+  router: incidents
+  application_owner: incident_application
+  store_owner: incident_store
+  table_or_stream: incidents
+  outbox_subject: incident.lifecycle.v1
+  idempotency_scope: incident_id
+  readback_projection: management_incident_projection
+  legacy_path: null
+  legacy_removal_wave: null
+- route: POST /bff/incidents/{param}/rollback-deployment
+  command: sem_final_generic_id_command_alias
+  router: incidents
+  application_owner: incident_application
+  store_owner: incident_store
+  table_or_stream: incidents
+  outbox_subject: incident.lifecycle.v1
+  idempotency_scope: incident_id
+  readback_projection: management_incident_projection
+  legacy_path: null
+  legacy_removal_wave: null
+- route: POST /bff/incidents/{param}/resolve
+  command: sem_final_generic_id_command_alias
+  router: incidents
+  application_owner: incident_application
+  store_owner: incident_store
+  table_or_stream: incidents
+  outbox_subject: incident.lifecycle.v1
+  idempotency_scope: incident_id
+  readback_projection: management_incident_projection
+  legacy_path: null
+  legacy_removal_wave: null
+- route: POST /bff/incidents/{param}/append-postmortem
+  command: sem_final_generic_id_command_alias
+  router: incidents
+  application_owner: incident_application
+  store_owner: incident_store
+  table_or_stream: incidents
+  outbox_subject: incident.lifecycle.v1
+  idempotency_scope: incident_id
+  readback_projection: management_incident_projection
+  legacy_path: null
+  legacy_removal_wave: null
+- route: POST /bff/alerts/{param}/escalate-incident
+  command: sem_final_generic_id_command_alias
+  router: incidents
+  application_owner: incident_application
+  store_owner: incident_store
+  table_or_stream: incidents
+  outbox_subject: incident.lifecycle.v1
+  idempotency_scope: incident_id
+  readback_projection: management_incident_projection
+  legacy_path: null
+  legacy_removal_wave: null
+- route: POST /bff/auth/dev-login
+  command: bff_auth_dev_login
+  router: auth
+  application_owner: auth_application
+  store_owner: session_store
+  table_or_stream: auth_sessions
+  outbox_subject: auth.session.v1
+  idempotency_scope: session_id
+  readback_projection: management_auth_projection
+  legacy_path: null
+  legacy_removal_wave: null
+- route: POST /bff/auth/refresh
+  command: bff_auth_refresh
+  router: auth
+  application_owner: auth_application
+  store_owner: session_store
+  table_or_stream: auth_sessions
+  outbox_subject: auth.session.v1
+  idempotency_scope: session_id
+  readback_projection: management_auth_projection
+  legacy_path: null
+  legacy_removal_wave: null
+- route: POST /bff/logout
+  command: bff_logout
+  router: auth
+  application_owner: auth_application
+  store_owner: session_store
+  table_or_stream: auth_sessions
+  outbox_subject: auth.session.v1
+  idempotency_scope: session_id
+  readback_projection: management_auth_projection
+  legacy_path: null
+  legacy_removal_wave: null
+- route: POST /bff/switch-tenant
+  command: bff_switch_tenant
+  router: auth
+  application_owner: auth_application
+  store_owner: session_store
+  table_or_stream: auth_sessions
+  outbox_subject: auth.session.v1
+  idempotency_scope: session_id
+  readback_projection: management_auth_projection
+  legacy_path: null
+  legacy_removal_wave: null
+- route: PATCH /bff/me/locale
+  command: bff_update_locale
+  router: auth
+  application_owner: auth_application
+  store_owner: session_store
+  table_or_stream: auth_sessions
+  outbox_subject: auth.session.v1
+  idempotency_scope: session_id
+  readback_projection: management_auth_projection
+  legacy_path: null
+  legacy_removal_wave: null
+- route: POST /api/v1/settings
+  command: update_settings
+  router: core
+  application_owner: core_application
+  store_owner: core_store
+  table_or_stream: core_sessions
+  outbox_subject: core.session.v1
+  idempotency_scope: session_id
+  readback_projection: management_core_projection
+  legacy_path: null
+  legacy_removal_wave: null
+- route: POST /api/v1/settings/import
+  command: import_settings
+  router: core
+  application_owner: core_application
+  store_owner: core_store
+  table_or_stream: core_sessions
+  outbox_subject: core.session.v1
+  idempotency_scope: session_id
+  readback_projection: management_core_projection
+  legacy_path: null
+  legacy_removal_wave: null
+- route: POST /bff/management/nl/ask
+  command: bff_management_nl_ask
+  router: core
+  application_owner: core_application
+  store_owner: core_store
+  table_or_stream: core_sessions
+  outbox_subject: core.session.v1
+  idempotency_scope: session_id
+  readback_projection: management_core_projection
+  legacy_path: null
+  legacy_removal_wave: null
+- route: POST /bff/management/nl/ask/stream
+  command: bff_management_nl_ask_stream
+  router: core
+  application_owner: core_application
+  store_owner: core_store
+  table_or_stream: core_sessions
+  outbox_subject: core.session.v1
+  idempotency_scope: session_id
+  readback_projection: management_core_projection
+  legacy_path: null
+  legacy_removal_wave: null
+- route: POST /bff/management/personas/{param}/ppl-alloc-009-paper-eligibility-proof
+  command: bff_ppl_alloc_009_paper_eligibility_proof
+  router: personas
+  application_owner: persona_application
+  store_owner: persona_registry
+  table_or_stream: personas
+  outbox_subject: persona.lifecycle.v1
+  idempotency_scope: persona_id
+  readback_projection: management_persona_projection
+  legacy_path: null
+  legacy_removal_wave: null
+- route: POST /bff/personas/{param}/provisioning/reconcile
+  command: bff_reconcile_persona_provisioning
+  router: personas
+  application_owner: persona_application
+  store_owner: persona_registry
+  table_or_stream: personas
+  outbox_subject: persona.lifecycle.v1
+  idempotency_scope: persona_id
+  readback_projection: management_persona_projection
+  legacy_path: null
+  legacy_removal_wave: null
+- route: POST /bff/personas
+  command: bff_create_persona
+  router: personas
+  application_owner: persona_application
+  store_owner: persona_registry
+  table_or_stream: personas
+  outbox_subject: persona.lifecycle.v1
+  idempotency_scope: persona_id
+  readback_projection: management_persona_projection
+  legacy_path: null
+  legacy_removal_wave: null
+- route: POST /bff/management/personas/create-paper-bundle
+  command: bff_create_paper_persona_bundle
+  router: personas
+  application_owner: persona_application
+  store_owner: persona_registry
+  table_or_stream: personas
+  outbox_subject: persona.lifecycle.v1
+  idempotency_scope: persona_id
+  readback_projection: management_persona_projection
+  legacy_path: null
+  legacy_removal_wave: null
+- route: PATCH /bff/personas/{param}
+  command: bff_patch_persona
+  router: personas
+  application_owner: persona_application
+  store_owner: persona_registry
+  table_or_stream: personas
+  outbox_subject: persona.lifecycle.v1
+  idempotency_scope: persona_id
+  readback_projection: management_persona_projection
+  legacy_path: null
+  legacy_removal_wave: null
+- route: POST /bff/personas/{param}/strategy-discovery
+  command: bff_start_persona_strategy_discovery
+  router: personas
+  application_owner: persona_application
+  store_owner: persona_registry
+  table_or_stream: personas
+  outbox_subject: persona.lifecycle.v1
+  idempotency_scope: persona_id
+  readback_projection: management_persona_projection
+  legacy_path: null
+  legacy_removal_wave: null
+- route: POST /api/v1/personas/{param}/strategy-discovery
+  command: bff_start_persona_strategy_discovery
+  router: personas
+  application_owner: persona_application
+  store_owner: persona_registry
+  table_or_stream: personas
+  outbox_subject: persona.lifecycle.v1
+  idempotency_scope: persona_id
+  readback_projection: management_persona_projection
+  legacy_path: null
+  legacy_removal_wave: null
+- route: POST /bff/personas/{param}/strategy-matches/{param}/actions
+  command: bff_persona_strategy_match_action
+  router: personas
+  application_owner: persona_application
+  store_owner: persona_registry
+  table_or_stream: personas
+  outbox_subject: persona.lifecycle.v1
+  idempotency_scope: persona_id
+  readback_projection: management_persona_projection
+  legacy_path: null
+  legacy_removal_wave: null
+- route: POST /api/v1/personas/{param}/strategy-matches/{param}/actions
+  command: bff_persona_strategy_match_action
+  router: personas
+  application_owner: persona_application
+  store_owner: persona_registry
+  table_or_stream: personas
+  outbox_subject: persona.lifecycle.v1
+  idempotency_scope: persona_id
+  readback_projection: management_persona_projection
+  legacy_path: null
+  legacy_removal_wave: null
+- route: POST /bff/management/quarterly-ranking/recommendations/{param}/submit
+  command: bff_management_quarterly_ranking_recommendation_submit
+  router: personas
+  application_owner: persona_application
+  store_owner: persona_registry
+  table_or_stream: personas
+  outbox_subject: persona.lifecycle.v1
+  idempotency_scope: persona_id
+  readback_projection: management_persona_projection
+  legacy_path: null
+  legacy_removal_wave: null
+- route: POST /bff/management/promotion-reviews/{param}/decisions
+  command: bff_management_promotion_review_decision
+  router: personas
+  application_owner: persona_application
+  store_owner: persona_registry
+  table_or_stream: personas
+  outbox_subject: persona.lifecycle.v1
+  idempotency_scope: persona_id
+  readback_projection: management_persona_projection
+  legacy_path: null
+  legacy_removal_wave: null
+- route: POST /bff/personas/{param}/actions/{param}
+  command: bff_persona_action
+  router: personas
+  application_owner: persona_application
+  store_owner: persona_registry
+  table_or_stream: personas
+  outbox_subject: persona.lifecycle.v1
+  idempotency_scope: persona_id
+  readback_projection: management_persona_projection
+  legacy_path: null
+  legacy_removal_wave: null
+- route: POST /bff/personas/{param}/test-prompt
+  command: bff_persona_test_prompt
+  router: personas
+  application_owner: persona_application
+  store_owner: persona_registry
+  table_or_stream: personas
+  outbox_subject: persona.lifecycle.v1
+  idempotency_scope: persona_id
+  readback_projection: management_persona_projection
+  legacy_path: null
+  legacy_removal_wave: null
+- route: POST /bff/capital-pools
+  command: bff_create_capital_pool
+  router: capital
+  application_owner: capital_application
+  store_owner: capital_store
+  table_or_stream: capital_pools
+  outbox_subject: capital.allocation.v1
+  idempotency_scope: pool_id
+  readback_projection: management_capital_projection
+  legacy_path: null
+  legacy_removal_wave: null
+- route: PATCH /bff/capital-pools/{param}
+  command: bff_patch_capital_pool
+  router: capital
+  application_owner: capital_application
+  store_owner: capital_store
+  table_or_stream: capital_pools
+  outbox_subject: capital.allocation.v1
+  idempotency_scope: pool_id
+  readback_projection: management_capital_projection
+  legacy_path: null
+  legacy_removal_wave: null
+- route: POST /bff/capital-pools/{param}/actions/{param}
+  command: bff_capital_pool_action
+  router: capital
+  application_owner: capital_application
+  store_owner: capital_store
+  table_or_stream: capital_pools
+  outbox_subject: capital.allocation.v1
+  idempotency_scope: pool_id
+  readback_projection: management_capital_projection
+  legacy_path: null
+  legacy_removal_wave: null
+- route: POST /bff/management/allocation-policy/evaluate
+  command: bff_evaluate_persona_allocation_policy
+  router: capital
+  application_owner: capital_application
+  store_owner: capital_store
+  table_or_stream: capital_pools
+  outbox_subject: capital.allocation.v1
+  idempotency_scope: pool_id
+  readback_projection: management_capital_projection
+  legacy_path: null
+  legacy_removal_wave: null
+- route: POST /bff/rebalances/{param}/approve
+  command: bff_approve_rebalance_apply
+  router: capital
+  application_owner: capital_application
+  store_owner: capital_store
+  table_or_stream: capital_pools
+  outbox_subject: capital.allocation.v1
+  idempotency_scope: pool_id
+  readback_projection: management_capital_projection
+  legacy_path: null
+  legacy_removal_wave: null
+- route: POST /bff/rebalances/{param}/two-man-sign
+  command: bff_sign_rebalance_apply
+  router: capital
+  application_owner: capital_application
+  store_owner: capital_store
+  table_or_stream: capital_pools
+  outbox_subject: capital.allocation.v1
+  idempotency_scope: pool_id
+  readback_projection: management_capital_projection
+  legacy_path: null
+  legacy_removal_wave: null
+- route: POST /bff/rebalances
+  command: bff_create_rebalance
+  router: capital
+  application_owner: capital_application
+  store_owner: capital_store
+  table_or_stream: capital_pools
+  outbox_subject: capital.allocation.v1
+  idempotency_scope: pool_id
+  readback_projection: management_capital_projection
+  legacy_path: null
+  legacy_removal_wave: null
+- route: POST /bff/rebalances/{param}/apply
+  command: bff_apply_rebalance_proposal
+  router: capital
+  application_owner: capital_application
+  store_owner: capital_store
+  table_or_stream: capital_pools
+  outbox_subject: capital.allocation.v1
+  idempotency_scope: pool_id
+  readback_projection: management_capital_projection
+  legacy_path: null
+  legacy_removal_wave: null
+- route: POST /bff/rebalances/{param}/actions/{param}
+  command: bff_rebalance_action
+  router: capital
+  application_owner: capital_application
+  store_owner: capital_store
+  table_or_stream: capital_pools
+  outbox_subject: capital.allocation.v1
+  idempotency_scope: pool_id
+  readback_projection: management_capital_projection
+  legacy_path: null
+  legacy_removal_wave: null
+- route: PATCH /bff/rebalances/{param}
+  command: sem_patch_rebalance_command
+  router: capital
+  application_owner: capital_application
+  store_owner: capital_store
+  table_or_stream: capital_pools
+  outbox_subject: capital.allocation.v1
+  idempotency_scope: pool_id
+  readback_projection: management_capital_projection
+  legacy_path: null
+  legacy_removal_wave: null
+- route: POST /api/v1/approval-decisions
+  command: create_approval_decision
+  router: governance
+  application_owner: governance_application
+  store_owner: governance_store
+  table_or_stream: governance_decisions
+  outbox_subject: governance.decision.v1
+  idempotency_scope: decision_id
+  readback_projection: management_governance_projection
+  legacy_path: null
+  legacy_removal_wave: null
+- route: POST /api/v1/consult/requests
+  command: create_consult_request
+  router: governance
+  application_owner: governance_application
+  store_owner: governance_store
+  table_or_stream: governance_decisions
+  outbox_subject: governance.decision.v1
+  idempotency_scope: decision_id
+  readback_projection: management_governance_projection
+  legacy_path: null
+  legacy_removal_wave: null
+- route: POST /api/v1/consult/requests/{param}/cancel
+  command: cancel_consult_request
+  router: governance
+  application_owner: governance_application
+  store_owner: governance_store
+  table_or_stream: governance_decisions
+  outbox_subject: governance.decision.v1
+  idempotency_scope: decision_id
+  readback_projection: management_governance_projection
+  legacy_path: null
+  legacy_removal_wave: null
+- route: POST /bff/reviews
+  command: bff_create_review
+  router: governance
+  application_owner: governance_application
+  store_owner: governance_store
+  table_or_stream: governance_decisions
+  outbox_subject: governance.decision.v1
+  idempotency_scope: decision_id
+  readback_projection: management_governance_projection
+  legacy_path: null
+  legacy_removal_wave: null
+- route: POST /bff/reviews/{param}/actions/{param}
+  command: bff_review_action
+  router: governance
+  application_owner: governance_application
+  store_owner: governance_store
+  table_or_stream: governance_decisions
+  outbox_subject: governance.decision.v1
+  idempotency_scope: decision_id
+  readback_projection: management_governance_projection
+  legacy_path: null
+  legacy_removal_wave: null
+- route: POST /bff/approvals/{param}/decide
+  command: bff_approvals_decide
+  router: governance
+  application_owner: governance_application
+  store_owner: governance_store
+  table_or_stream: governance_decisions
+  outbox_subject: governance.decision.v1
+  idempotency_scope: decision_id
+  readback_projection: management_governance_projection
+  legacy_path: null
+  legacy_removal_wave: null
+- route: POST /bff/approvals/batch-decide
+  command: bff_approvals_batch_decide
+  router: governance
+  application_owner: governance_application
+  store_owner: governance_store
+  table_or_stream: governance_decisions
+  outbox_subject: governance.decision.v1
+  idempotency_scope: decision_id
+  readback_projection: management_governance_projection
+  legacy_path: null
+  legacy_removal_wave: null
+- route: POST /bff/v5/interventions/{param}/remediate
+  command: remediate_v5_intervention
+  router: control_loops
+  application_owner: control_loop_application
+  store_owner: control_loop_store
+  table_or_stream: control_loops
+  outbox_subject: control_loop.status.v1
+  idempotency_scope: intervention_id
+  readback_projection: management_control_loop_projection
+  legacy_path: null
+  legacy_removal_wave: null
+- route: POST /bff/v5/interventions/{param}/decide
+  command: sem_v5_intervention_decide_command
+  router: control_loops
+  application_owner: control_loop_application
+  store_owner: control_loop_store
+  table_or_stream: control_loops
+  outbox_subject: control_loop.status.v1
+  idempotency_scope: intervention_id
+  readback_projection: management_control_loop_projection
+  legacy_path: null
+  legacy_removal_wave: null
+- route: POST /bff/v5/interventions/{param}/two-man-sign
+  command: sem_v5_intervention_command
+  router: control_loops
+  application_owner: control_loop_application
+  store_owner: control_loop_store
+  table_or_stream: control_loops
+  outbox_subject: control_loop.status.v1
+  idempotency_scope: intervention_id
+  readback_projection: management_control_loop_projection
+  legacy_path: null
+  legacy_removal_wave: null
+- route: POST /bff/v5/interventions/{param}/release
+  command: sem_v5_intervention_command
+  router: control_loops
+  application_owner: control_loop_application
+  store_owner: control_loop_store
+  table_or_stream: control_loops
+  outbox_subject: control_loop.status.v1
+  idempotency_scope: intervention_id
+  readback_projection: management_control_loop_projection
+  legacy_path: null
+  legacy_removal_wave: null
+- route: POST /bff/v5/interventions/{param}/escalate
+  command: sem_v5_intervention_command
+  router: control_loops
+  application_owner: control_loop_application
+  store_owner: control_loop_store
+  table_or_stream: control_loops
+  outbox_subject: control_loop.status.v1
+  idempotency_scope: intervention_id
+  readback_projection: management_control_loop_projection
+  legacy_path: null
+  legacy_removal_wave: null
+- route: POST /bff/v5/interventions/{param}/claim
+  command: sem_v5_intervention_command
+  router: control_loops
+  application_owner: control_loop_application
+  store_owner: control_loop_store
+  table_or_stream: control_loops
+  outbox_subject: control_loop.status.v1
+  idempotency_scope: intervention_id
+  readback_projection: management_control_loop_projection
+  legacy_path: null
+  legacy_removal_wave: null
+- route: POST /bff/v5/sentinel/findings/{param}/status
+  command: sem_v5_sentinel_status_command
+  router: control_loops
+  application_owner: control_loop_application
+  store_owner: control_loop_store
+  table_or_stream: control_loops
+  outbox_subject: control_loop.status.v1
+  idempotency_scope: intervention_id
+  readback_projection: management_control_loop_projection
+  legacy_path: null
+  legacy_removal_wave: null
+- route: POST /bff/v5/sentinel/remediation/build
+  command: sem_v5_sentinel_remediation_build_command
+  router: control_loops
+  application_owner: control_loop_application
+  store_owner: control_loop_store
+  table_or_stream: control_loops
+  outbox_subject: control_loop.status.v1
+  idempotency_scope: intervention_id
+  readback_projection: management_control_loop_projection
+  legacy_path: null
+  legacy_removal_wave: null
+- route: POST /bff/v5/sentinel/remediation/{param}/execute
+  command: sem_v5_sentinel_remediation_execute_command
+  router: control_loops
+  application_owner: control_loop_application
+  store_owner: control_loop_store
+  table_or_stream: control_loops
+  outbox_subject: control_loop.status.v1
+  idempotency_scope: intervention_id
+  readback_projection: management_control_loop_projection
+  legacy_path: null
+  legacy_removal_wave: null
+- route: POST /bff/v5/downstream-health/dlq/replay
+  command: bff_v5_downstream_health_dlq_replay
+  router: control_loops
+  application_owner: control_loop_application
+  store_owner: control_loop_store
+  table_or_stream: control_loops
+  outbox_subject: control_loop.status.v1
+  idempotency_scope: intervention_id
+  readback_projection: management_control_loop_projection
+  legacy_path: null
+  legacy_removal_wave: null
+- route: POST /api/v1/operator/openclaw/sessions
+  command: create_openclaw_session
+  router: integrations
+  application_owner: integration_application
+  store_owner: integration_store
+  table_or_stream: integration_tools
+  outbox_subject: integration.event.v1
+  idempotency_scope: tool_id
+  readback_projection: management_integration_projection
+  legacy_path: null
+  legacy_removal_wave: null
+- route: POST /api/v1/operator/openclaw/sessions/{param}/cancel
+  command: cancel_openclaw_session
+  router: integrations
+  application_owner: integration_application
+  store_owner: integration_store
+  table_or_stream: integration_tools
+  outbox_subject: integration.event.v1
+  idempotency_scope: tool_id
+  readback_projection: management_integration_projection
+  legacy_path: null
+  legacy_removal_wave: null
+- route: POST /bff/mcp-servers/{param}/import-tools
+  command: import_mcp_server_tools
+  router: integrations
+  application_owner: integration_application
+  store_owner: integration_store
+  table_or_stream: integration_tools
+  outbox_subject: integration.event.v1
+  idempotency_scope: tool_id
+  readback_projection: management_integration_projection
+  legacy_path: /bff/mcp/servers/{param}/import-tools
+  legacy_removal_wave: wave-1
+- route: POST /bff/v1/mcp/servers/{param}/import-tools
+  command: import_mcp_server_tools
+  router: integrations
+  application_owner: integration_application
+  store_owner: integration_store
+  table_or_stream: integration_tools
+  outbox_subject: integration.event.v1
+  idempotency_scope: tool_id
+  readback_projection: management_integration_projection
+  legacy_path: null
+  legacy_removal_wave: null
+- route: POST /bff/mcp-tools/{param}/{param}
+  command: admit_mcp_tool_action_alias
+  router: integrations
+  application_owner: integration_application
+  store_owner: integration_store
+  table_or_stream: integration_tools
+  outbox_subject: integration.event.v1
+  idempotency_scope: tool_id
+  readback_projection: management_integration_projection
+  legacy_path: /bff/mcp/tools/{param}/{param}
+  legacy_removal_wave: wave-1
+- route: POST /bff/v1/mcp/servers/{param}/tools/{param}/actions/{param}
+  command: admit_mcp_tool_action
+  router: integrations
+  application_owner: integration_application
+  store_owner: integration_store
+  table_or_stream: integration_tools
+  outbox_subject: integration.event.v1
+  idempotency_scope: tool_id
+  readback_projection: management_integration_projection
+  legacy_path: null
+  legacy_removal_wave: null
+- route: POST /bff/tools
+  command: bff_create_tool
+  router: integrations
+  application_owner: integration_application
+  store_owner: integration_store
+  table_or_stream: integration_tools
+  outbox_subject: integration.event.v1
+  idempotency_scope: tool_id
+  readback_projection: management_integration_projection
+  legacy_path: null
+  legacy_removal_wave: null
+- route: PATCH /bff/tools/{param}
+  command: bff_patch_tool
+  router: integrations
+  application_owner: integration_application
+  store_owner: integration_store
+  table_or_stream: integration_tools
+  outbox_subject: integration.event.v1
+  idempotency_scope: tool_id
+  readback_projection: management_integration_projection
+  legacy_path: null
+  legacy_removal_wave: null
+- route: POST /bff/tools/{param}/actions/{param}
+  command: bff_tool_action
+  router: integrations
+  application_owner: integration_application
+  store_owner: integration_store
+  table_or_stream: integration_tools
+  outbox_subject: integration.event.v1
+  idempotency_scope: tool_id
+  readback_projection: management_integration_projection
+  legacy_path: null
+  legacy_removal_wave: null
+- route: POST /bff/mcp/servers
+  command: bff_create_mcp_server
+  router: integrations
+  application_owner: integration_application
+  store_owner: integration_store
+  table_or_stream: integration_tools
+  outbox_subject: integration.event.v1
+  idempotency_scope: tool_id
+  readback_projection: management_integration_projection
+  legacy_path: null
+  legacy_removal_wave: null
+- route: POST /bff/mcp/servers/{param}/actions/{param}
+  command: bff_mcp_server_action
+  router: integrations
+  application_owner: integration_application
+  store_owner: integration_store
+  table_or_stream: integration_tools
+  outbox_subject: integration.event.v1
+  idempotency_scope: tool_id
+  readback_projection: management_integration_projection
+  legacy_path: null
+  legacy_removal_wave: null
+- route: POST /bff/mcp/tools/{param}/actions/{param}
+  command: bff_mcp_tool_action_compat
+  router: integrations
+  application_owner: integration_application
+  store_owner: integration_store
+  table_or_stream: integration_tools
+  outbox_subject: integration.event.v1
+  idempotency_scope: tool_id
+  readback_projection: management_integration_projection
+  legacy_path: null
+  legacy_removal_wave: null
+- route: POST /bff/skills
+  command: bff_create_skill
+  router: integrations
+  application_owner: integration_application
+  store_owner: integration_store
+  table_or_stream: integration_tools
+  outbox_subject: integration.event.v1
+  idempotency_scope: tool_id
+  readback_projection: management_integration_projection
+  legacy_path: null
+  legacy_removal_wave: null
+- route: PATCH /bff/skills/{param}
+  command: bff_patch_skill
+  router: integrations
+  application_owner: integration_application
+  store_owner: integration_store
+  table_or_stream: integration_tools
+  outbox_subject: integration.event.v1
+  idempotency_scope: tool_id
+  readback_projection: management_integration_projection
+  legacy_path: null
+  legacy_removal_wave: null
+- route: POST /bff/skills/{param}/actions/{param}
+  command: bff_skill_action
+  router: integrations
+  application_owner: integration_application
+  store_owner: integration_store
+  table_or_stream: integration_tools
+  outbox_subject: integration.event.v1
+  idempotency_scope: tool_id
+  readback_projection: management_integration_projection
+  legacy_path: null
+  legacy_removal_wave: null
+- route: POST /bff/skills/{param}/sandbox-eval
+  command: bff_skill_sandbox_eval
+  router: integrations
+  application_owner: integration_application
+  store_owner: integration_store
+  table_or_stream: integration_tools
+  outbox_subject: integration.event.v1
+  idempotency_scope: tool_id
+  readback_projection: management_integration_projection
+  legacy_path: null
+  legacy_removal_wave: null
+- route: POST /bff/agora/sessions
+  command: bff_create_agora_session
+  router: agora_identity
+  application_owner: agora_application
+  store_owner: agora_store
+  table_or_stream: agora_records
+  outbox_subject: agora.event.v1
+  idempotency_scope: agora_id
+  readback_projection: management_agora_projection
+  legacy_path: null
+  legacy_removal_wave: null
+- route: POST /bff/agora/sessions/{param}/messages
+  command: bff_create_agora_session_message
+  router: agora_identity
+  application_owner: agora_application
+  store_owner: agora_store
+  table_or_stream: agora_records
+  outbox_subject: agora.event.v1
+  idempotency_scope: agora_id
+  readback_projection: management_agora_projection
+  legacy_path: null
+  legacy_removal_wave: null
+- route: POST /bff/agora/messages/{param}/actions/{param}
+  command: bff_agora_message_action
+  router: agora_identity
+  application_owner: agora_application
+  store_owner: agora_store
+  table_or_stream: agora_records
+  outbox_subject: agora.event.v1
+  idempotency_scope: agora_id
+  readback_projection: management_agora_projection
+  legacy_path: null
+  legacy_removal_wave: null
+- route: POST /bff/agora/ask/sessions
+  command: sem_agora_ask_create_session
+  router: agora_identity
+  application_owner: agora_application
+  store_owner: agora_store
+  table_or_stream: agora_records
+  outbox_subject: agora.event.v1
+  idempotency_scope: agora_id
+  readback_projection: management_agora_projection
+  legacy_path: null
+  legacy_removal_wave: null
+- route: POST /bff/agora/ask/sessions/{param}/close
+  command: sem_agora_ask_close_session
+  router: agora_identity
+  application_owner: agora_application
+  store_owner: agora_store
+  table_or_stream: agora_records
+  outbox_subject: agora.event.v1
+  idempotency_scope: agora_id
+  readback_projection: management_agora_projection
+  legacy_path: null
+  legacy_removal_wave: null
+- route: POST /bff/agora/ask
+  command: sem_agora_ask
+  router: agora_identity
+  application_owner: agora_application
+  store_owner: agora_store
+  table_or_stream: agora_records
+  outbox_subject: agora.event.v1
+  idempotency_scope: agora_id
+  readback_projection: management_agora_projection
+  legacy_path: null
+  legacy_removal_wave: null
+- route: POST /bff/agora/servant/ensure
+  command: agora_servant_ensure
+  router: agora_servant
+  application_owner: agora_application
+  store_owner: agora_store
+  table_or_stream: agora_records
+  outbox_subject: agora.event.v1
+  idempotency_scope: agora_id
+  readback_projection: management_agora_projection
+  legacy_path: null
+  legacy_removal_wave: null
+- route: POST /bff/agora/servant/sessions
+  command: create_servant_session
+  router: agora_servant
+  application_owner: agora_application
+  store_owner: agora_store
+  table_or_stream: agora_records
+  outbox_subject: agora.event.v1
+  idempotency_scope: agora_id
+  readback_projection: management_agora_projection
+  legacy_path: null
+  legacy_removal_wave: null
+- route: POST /bff/agora/servant/sessions/{param}/messages
+  command: post_servant_session_message
+  router: agora_servant
+  application_owner: agora_application
+  store_owner: agora_store
+  table_or_stream: agora_records
+  outbox_subject: agora.event.v1
+  idempotency_scope: agora_id
+  readback_projection: management_agora_projection
+  legacy_path: null
+  legacy_removal_wave: null
+- route: POST /bff/agora/servant/sessions/{param}/terminate
+  command: terminate_servant_session
+  router: agora_servant
+  application_owner: agora_application
+  store_owner: agora_store
+  table_or_stream: agora_records
+  outbox_subject: agora.event.v1
+  idempotency_scope: agora_id
+  readback_projection: management_agora_projection
+  legacy_path: null
+  legacy_removal_wave: null
+- route: POST /bff/agora/workshops
+  command: create_workshop
+  router: agora_strategy_workshop
+  application_owner: agora_application
+  store_owner: agora_store
+  table_or_stream: agora_records
+  outbox_subject: agora.event.v1
+  idempotency_scope: agora_id
+  readback_projection: management_agora_projection
+  legacy_path: null
+  legacy_removal_wave: null
+- route: POST /bff/agora/workshops/{param}/messages
+  command: post_workshop_message
+  router: agora_strategy_workshop
+  application_owner: agora_application
+  store_owner: agora_store
+  table_or_stream: agora_records
+  outbox_subject: agora.event.v1
+  idempotency_scope: agora_id
+  readback_projection: management_agora_projection
+  legacy_path: null
+  legacy_removal_wave: null
+- route: POST /bff/agora/workshops/{param}/completeness
+  command: create_workshop_completeness
+  router: agora_strategy_workshop
+  application_owner: agora_application
+  store_owner: agora_store
+  table_or_stream: agora_records
+  outbox_subject: agora.event.v1
+  idempotency_scope: agora_id
+  readback_projection: management_agora_projection
+  legacy_path: null
+  legacy_removal_wave: null
+- route: POST /bff/agora/workshops/{param}/readiness/reassess
+  command: reassess_workshop_readiness
+  router: agora_strategy_workshop
+  application_owner: agora_application
+  store_owner: agora_store
+  table_or_stream: agora_records
+  outbox_subject: agora.event.v1
+  idempotency_scope: agora_id
+  readback_projection: management_agora_projection
+  legacy_path: null
+  legacy_removal_wave: null
+- route: POST /bff/agora/workshops/{param}/reconstruct
+  command: reconstruct_workshop_strategy
+  router: agora_strategy_workshop
+  application_owner: agora_application
+  store_owner: agora_store
+  table_or_stream: agora_records
+  outbox_subject: agora.event.v1
+  idempotency_scope: agora_id
+  readback_projection: management_agora_projection
+  legacy_path: null
+  legacy_removal_wave: null
+- route: POST /bff/agora/workshops/{param}/versions
+  command: create_workshop_version
+  router: agora_strategy_workshop
+  application_owner: agora_application
+  store_owner: agora_store
+  table_or_stream: agora_records
+  outbox_subject: agora.event.v1
+  idempotency_scope: agora_id
+  readback_projection: management_agora_projection
+  legacy_path: null
+  legacy_removal_wave: null
+- route: POST /bff/agora/workshops/{param}/versions/{param}/select
+  command: select_workshop_version
+  router: agora_strategy_workshop
+  application_owner: agora_application
+  store_owner: agora_store
+  table_or_stream: agora_records
+  outbox_subject: agora.event.v1
+  idempotency_scope: agora_id
+  readback_projection: management_agora_projection
+  legacy_path: null
+  legacy_removal_wave: null
+- route: POST /bff/agora/workshops/{param}/research-runs
+  command: create_workshop_research_run
+  router: agora_strategy_workshop
+  application_owner: agora_application
+  store_owner: agora_store
+  table_or_stream: agora_records
+  outbox_subject: agora.event.v1
+  idempotency_scope: agora_id
+  readback_projection: management_agora_projection
+  legacy_path: null
+  legacy_removal_wave: null
+- route: POST /bff/agora/workshops/{param}/consultations
+  command: create_workshop_consultation
+  router: agora_strategy_workshop
+  application_owner: agora_application
+  store_owner: agora_store
+  table_or_stream: agora_records
+  outbox_subject: agora.event.v1
+  idempotency_scope: agora_id
+  readback_projection: management_agora_projection
+  legacy_path: null
+  legacy_removal_wave: null
+- route: POST /bff/agora/workshops/{param}/conclude
+  command: conclude_workshop
+  router: agora_strategy_workshop
+  application_owner: agora_application
+  store_owner: agora_store
+  table_or_stream: agora_records
+  outbox_subject: agora.event.v1
+  idempotency_scope: agora_id
+  readback_projection: management_agora_projection
+  legacy_path: null
+  legacy_removal_wave: null
+- route: POST /bff/agora/candidate-pools
+  command: create_candidate_pool
+  router: research
+  application_owner: experiment_application
+  store_owner: research_orchestrator_store
+  table_or_stream: experiments
+  outbox_subject: research.experiment.v1
+  idempotency_scope: experiment_id
+  readback_projection: management_experiment_projection
+  legacy_path: null
+  legacy_removal_wave: null
+- route: POST /bff/agora/candidate-pools/{param}/score
+  command: trigger_candidate_pool_score
+  router: research
+  application_owner: experiment_application
+  store_owner: research_orchestrator_store
+  table_or_stream: experiments
+  outbox_subject: research.experiment.v1
+  idempotency_scope: experiment_id
+  readback_projection: management_experiment_projection
+  legacy_path: null
+  legacy_removal_wave: null
+- route: POST /bff/agora/candidate-pools/{param}/members/{param}/review
+  command: review_candidate_pool_member
+  router: research
+  application_owner: experiment_application
+  store_owner: research_orchestrator_store
+  table_or_stream: experiments
+  outbox_subject: research.experiment.v1
+  idempotency_scope: experiment_id
+  readback_projection: management_experiment_projection
+  legacy_path: null
+  legacy_removal_wave: null
+- route: POST /bff/agora/candidate-pools/{param}/discussions
+  command: create_candidate_pool_discussion
+  router: research
+  application_owner: experiment_application
+  store_owner: research_orchestrator_store
+  table_or_stream: experiments
+  outbox_subject: research.experiment.v1
+  idempotency_scope: experiment_id
+  readback_projection: management_experiment_projection
+  legacy_path: null
+  legacy_removal_wave: null
+- route: POST /bff/agora/candidate-pools/{param}/members/{param}/discussions
+  command: create_candidate_member_discussion
+  router: research
+  application_owner: experiment_application
+  store_owner: research_orchestrator_store
+  table_or_stream: experiments
+  outbox_subject: research.experiment.v1
+  idempotency_scope: experiment_id
+  readback_projection: management_experiment_projection
+  legacy_path: null
+  legacy_removal_wave: null
+- route: POST /bff/agora/candidate-pools/{param}/members/{param}/monitor
+  command: upsert_candidate_pool_member_monitoring
+  router: research
+  application_owner: experiment_application
+  store_owner: research_orchestrator_store
+  table_or_stream: experiments
+  outbox_subject: research.experiment.v1
+  idempotency_scope: experiment_id
+  readback_projection: management_experiment_projection
+  legacy_path: null
+  legacy_removal_wave: null
+- route: DELETE /bff/agora/candidate-pools/{param}/members/{param}/monitor
+  command: remove_candidate_pool_member_monitoring
+  router: research
+  application_owner: experiment_application
+  store_owner: research_orchestrator_store
+  table_or_stream: experiments
+  outbox_subject: research.experiment.v1
+  idempotency_scope: experiment_id
+  readback_projection: management_experiment_projection
+  legacy_path: null
+  legacy_removal_wave: null
+- route: POST /bff/agora/workshops/{param}/research-plans
+  command: create_workshop_research_plan
+  router: research
+  application_owner: experiment_application
+  store_owner: research_orchestrator_store
+  table_or_stream: experiments
+  outbox_subject: research.experiment.v1
+  idempotency_scope: experiment_id
+  readback_projection: management_experiment_projection
+  legacy_path: null
+  legacy_removal_wave: null
+- route: POST /bff/agora/research-plans/{param}/approve
+  command: approve_agora_research_plan
+  router: research
+  application_owner: experiment_application
+  store_owner: research_orchestrator_store
+  table_or_stream: experiments
+  outbox_subject: research.experiment.v1
+  idempotency_scope: experiment_id
+  readback_projection: management_experiment_projection
+  legacy_path: null
+  legacy_removal_wave: null
+- route: POST /bff/agora/research-plans/{param}/cancel
+  command: cancel_agora_research_plan
+  router: research
+  application_owner: experiment_application
+  store_owner: research_orchestrator_store
+  table_or_stream: experiments
+  outbox_subject: research.experiment.v1
+  idempotency_scope: experiment_id
+  readback_projection: management_experiment_projection
+  legacy_path: null
+  legacy_removal_wave: null
+- route: POST /bff/agora/research-plans/{param}/runs
+  command: dispatch_agora_research_plan
+  router: research
+  application_owner: experiment_application
+  store_owner: research_orchestrator_store
+  table_or_stream: experiments
+  outbox_subject: research.experiment.v1
+  idempotency_scope: experiment_id
+  readback_projection: management_experiment_projection
+  legacy_path: null
+  legacy_removal_wave: null
+- route: POST /bff/agora/research-runs/{param}/cancel
+  command: cancel_agora_research_run
+  router: research
+  application_owner: experiment_application
+  store_owner: research_orchestrator_store
+  table_or_stream: experiments
+  outbox_subject: research.experiment.v1
+  idempotency_scope: experiment_id
+  readback_projection: management_experiment_projection
+  legacy_path: null
+  legacy_removal_wave: null
+- route: POST /bff/agora/strategies/{param}/trading-room/proposals
+  command: create_workspace_proposal
+  router: agora_trading_room
+  application_owner: agora_application
+  store_owner: agora_store
+  table_or_stream: agora_records
+  outbox_subject: agora.event.v1
+  idempotency_scope: agora_id
+  readback_projection: management_agora_projection
+  legacy_path: null
+  legacy_removal_wave: null
+- route: POST /bff/agora/strategies/{param}/trading-room/proposals/{param}/accept
+  command: accept_workspace_proposal
+  router: agora_trading_room
+  application_owner: agora_application
+  store_owner: agora_store
+  table_or_stream: agora_records
+  outbox_subject: agora.event.v1
+  idempotency_scope: agora_id
+  readback_projection: management_agora_projection
+  legacy_path: null
+  legacy_removal_wave: null
+- route: PATCH /bff/agora/trading-room/workspaces/{param}/layout
+  command: patch_workspace_layout
+  router: agora_trading_room
+  application_owner: agora_application
+  store_owner: agora_store
+  table_or_stream: agora_records
+  outbox_subject: agora.event.v1
+  idempotency_scope: agora_id
+  readback_projection: management_agora_projection
+  legacy_path: null
+  legacy_removal_wave: null
+- route: POST /bff/agora/trading-room/workspaces/{param}/views
+  command: add_workspace_view
+  router: agora_trading_room
+  application_owner: agora_application
+  store_owner: agora_store
+  table_or_stream: agora_records
+  outbox_subject: agora.event.v1
+  idempotency_scope: agora_id
+  readback_projection: management_agora_projection
+  legacy_path: null
+  legacy_removal_wave: null
+- route: PATCH /bff/agora/trading-room/workspaces/{param}/views/{param}
+  command: patch_workspace_view
+  router: agora_trading_room
+  application_owner: agora_application
+  store_owner: agora_store
+  table_or_stream: agora_records
+  outbox_subject: agora.event.v1
+  idempotency_scope: agora_id
+  readback_projection: management_agora_projection
+  legacy_path: null
+  legacy_removal_wave: null
+- route: POST /bff/agora/trading-room/workspaces/{param}/widgets
+  command: add_workspace_widget
+  router: agora_trading_room
+  application_owner: agora_application
+  store_owner: agora_store
+  table_or_stream: agora_records
+  outbox_subject: agora.event.v1
+  idempotency_scope: agora_id
+  readback_projection: management_agora_projection
+  legacy_path: null
+  legacy_removal_wave: null
+- route: PATCH /bff/agora/trading-room/workspaces/{param}/widgets/{param}
+  command: patch_workspace_widget
+  router: agora_trading_room
+  application_owner: agora_application
+  store_owner: agora_store
+  table_or_stream: agora_records
+  outbox_subject: agora.event.v1
+  idempotency_scope: agora_id
+  readback_projection: management_agora_projection
+  legacy_path: null
+  legacy_removal_wave: null
+- route: POST /bff/agora/trading-room/workspaces/{param}/widgets/{param}/revision-proposals
+  command: create_widget_revision_proposal
+  router: agora_trading_room
+  application_owner: agora_application
+  store_owner: agora_store
+  table_or_stream: agora_records
+  outbox_subject: agora.event.v1
+  idempotency_scope: agora_id
+  readback_projection: management_agora_projection
+  legacy_path: null
+  legacy_removal_wave: null
+- route: POST /bff/agora/trading-room/widget-revision-proposals/{param}/accept
+  command: accept_widget_revision_proposal
+  router: agora_trading_room
+  application_owner: agora_application
+  store_owner: agora_store
+  table_or_stream: agora_records
+  outbox_subject: agora.event.v1
+  idempotency_scope: agora_id
+  readback_projection: management_agora_projection
+  legacy_path: null
+  legacy_removal_wave: null
+- route: POST /bff/agora/trading-room/workspaces/{param}/versions/{param}/rollback
+  command: rollback_workspace_version
+  router: agora_trading_room
+  application_owner: agora_application
+  store_owner: agora_store
+  table_or_stream: agora_records
+  outbox_subject: agora.event.v1
+  idempotency_scope: agora_id
+  readback_projection: management_agora_projection
+  legacy_path: null
+  legacy_removal_wave: null
+- route: POST /bff/agora/trading-room/decision-events/{param}/decisions
+  command: decide_trading_event
+  router: agora_trading_room
+  application_owner: agora_application
+  store_owner: agora_store
+  table_or_stream: agora_records
+  outbox_subject: agora.event.v1
+  idempotency_scope: agora_id
+  readback_projection: management_agora_projection
+  legacy_path: null
+  legacy_removal_wave: null
+- route: POST /bff/agora/trading-intents/{param}/handoffs
+  command: submit_trading_intent_handoff
+  router: agora_trading_room
+  application_owner: agora_application
+  store_owner: agora_store
+  table_or_stream: agora_records
+  outbox_subject: agora.event.v1
+  idempotency_scope: agora_id
+  readback_projection: management_agora_projection
+  legacy_path: null
+  legacy_removal_wave: null
+- route: POST /bff/agora/trading-intents/{param}/withdraw
+  command: withdraw_trading_intent
+  router: agora_trading_room
+  application_owner: agora_application
+  store_owner: agora_store
+  table_or_stream: agora_records
+  outbox_subject: agora.event.v1
+  idempotency_scope: agora_id
+  readback_projection: management_agora_projection
+  legacy_path: null
+  legacy_removal_wave: null
+- route: POST /bff/agora/trading-room/strategies/{param}/performance/suggestions/{param}/actions
+  command: act_on_suggestion
+  router: agora_performance
+  application_owner: agora_application
+  store_owner: agora_store
+  table_or_stream: agora_records
+  outbox_subject: agora.event.v1
+  idempotency_scope: agora_id
+  readback_projection: management_agora_projection
+  legacy_path: null
+  legacy_removal_wave: null
+- route: POST /bff/agora/strategies/{param}/dashboard-recipes/proposals
+  command: propose_dashboard_recipe
+  router: agora_dashboard
+  application_owner: agora_application
+  store_owner: agora_store
+  table_or_stream: agora_records
+  outbox_subject: agora.event.v1
+  idempotency_scope: agora_id
+  readback_projection: management_agora_projection
+  legacy_path: null
+  legacy_removal_wave: null
+- route: POST /bff/agora/dashboard-recipes/{param}/accept
+  command: accept_dashboard_recipe
+  router: agora_dashboard
+  application_owner: agora_application
+  store_owner: agora_store
+  table_or_stream: agora_records
+  outbox_subject: agora.event.v1
+  idempotency_scope: agora_id
+  readback_projection: management_agora_projection
+  legacy_path: null
+  legacy_removal_wave: null
+- route: PATCH /bff/agora/dashboard-recipes/{param}/layout
+  command: patch_dashboard_recipe_layout
+  router: agora_dashboard
+  application_owner: agora_application
+  store_owner: agora_store
+  table_or_stream: agora_records
+  outbox_subject: agora.event.v1
+  idempotency_scope: agora_id
+  readback_projection: management_agora_projection
+  legacy_path: null
+  legacy_removal_wave: null
+- route: POST /bff/agora/dashboard-recipes/{param}/rollback
+  command: rollback_dashboard_recipe
+  router: agora_dashboard
+  application_owner: agora_application
+  store_owner: agora_store
+  table_or_stream: agora_records
+  outbox_subject: agora.event.v1
+  idempotency_scope: agora_id
+  readback_projection: management_agora_projection
+  legacy_path: null
+  legacy_removal_wave: null
+- route: POST /bff/agora/dashboard-recipes/{param}/feedback
+  command: submit_dashboard_recipe_feedback
+  router: agora_dashboard
+  application_owner: agora_application
+  store_owner: agora_store
+  table_or_stream: agora_records
+  outbox_subject: agora.event.v1
+  idempotency_scope: agora_id
+  readback_projection: management_agora_projection
+  legacy_path: null
+  legacy_removal_wave: null
+- route: POST /bff/agora/widgets/validate
+  command: validate_agora_widget
+  router: agora_dashboard
+  application_owner: agora_application
+  store_owner: agora_store
+  table_or_stream: agora_records
+  outbox_subject: agora.event.v1
+  idempotency_scope: agora_id
+  readback_projection: management_agora_projection
+  legacy_path: null
+  legacy_removal_wave: null
+- route: POST /bff/agora/widgets/{param}/feedback
+  command: submit_widget_feedback
+  router: agora_dashboard
+  application_owner: agora_application
+  store_owner: agora_store
+  table_or_stream: agora_records
+  outbox_subject: agora.event.v1
+  idempotency_scope: agora_id
+  readback_projection: management_agora_projection
+  legacy_path: null
+  legacy_removal_wave: null
+- route: POST /bff/agora/widgets/propose-plugin
+  command: propose_widget_plugin
+  router: agora_dashboard
+  application_owner: agora_application
+  store_owner: agora_store
+  table_or_stream: agora_records
+  outbox_subject: agora.event.v1
+  idempotency_scope: agora_id
+  readback_projection: management_agora_projection
+  legacy_path: null
+  legacy_removal_wave: null
+- route: POST /bff/agora/insights
+  command: bff_create_agora_insight
+  router: agora_personalization
+  application_owner: agora_application
+  store_owner: agora_store
+  table_or_stream: agora_records
+  outbox_subject: agora.event.v1
+  idempotency_scope: agora_id
+  readback_projection: management_agora_projection
+  legacy_path: null
+  legacy_removal_wave: null
+- route: POST /bff/agora/insights/{param}/actions/{param}
+  command: bff_agora_insight_action
+  router: agora_personalization
+  application_owner: agora_application
+  store_owner: agora_store
+  table_or_stream: agora_records
+  outbox_subject: agora.event.v1
+  idempotency_scope: agora_id
+  readback_projection: management_agora_projection
+  legacy_path: null
+  legacy_removal_wave: null
+- route: POST /bff/agora/memory/{param}/actions/{param}
+  command: bff_agora_memory_action
+  router: agora_personalization
+  application_owner: agora_application
+  store_owner: agora_store
+  table_or_stream: agora_records
+  outbox_subject: agora.event.v1
+  idempotency_scope: agora_id
+  readback_projection: management_agora_projection
+  legacy_path: null
+  legacy_removal_wave: null
+- route: POST /bff/memory/{param}/actions/quarantine
+  command: bff_memory_quarantine_action
+  router: agora_personalization
+  application_owner: agora_application
+  store_owner: agora_store
+  table_or_stream: agora_records
+  outbox_subject: agora.event.v1
+  idempotency_scope: agora_id
+  readback_projection: management_agora_projection
+  legacy_path: null
+  legacy_removal_wave: null
+- route: POST /bff/insights/{param}/actions/attach-strategy
+  command: bff_insight_attach_strategy_action
+  router: agora_personalization
+  application_owner: agora_application
+  store_owner: agora_store
+  table_or_stream: agora_records
+  outbox_subject: agora.event.v1
+  idempotency_scope: agora_id
+  readback_projection: management_agora_projection
+  legacy_path: null
+  legacy_removal_wave: null
+- route: POST /bff/agora/management/consult-bundle
+  command: build_consult_bundle
+  router: agora_management_projection
+  application_owner: agora_application
+  store_owner: agora_store
+  table_or_stream: agora_records
+  outbox_subject: agora.event.v1
+  idempotency_scope: agora_id
+  readback_projection: management_agora_projection
+  legacy_path: null
+  legacy_removal_wave: null
+- route: POST /bff/agora/interaction-evidence
+  command: submit_interaction_evidence
+  router: agora_dataset_extraction
+  application_owner: agora_application
+  store_owner: agora_store
+  table_or_stream: agora_records
+  outbox_subject: agora.event.v1
+  idempotency_scope: agora_id
+  readback_projection: management_agora_projection
+  legacy_path: null
+  legacy_removal_wave: null
+- route: POST /bff/agora/dataset-worker/process
+  command: process_dataset_inbox
+  router: agora_dataset_extraction
+  application_owner: agora_application
+  store_owner: agora_store
+  table_or_stream: agora_records
+  outbox_subject: agora.event.v1
+  idempotency_scope: agora_id
+  readback_projection: management_agora_projection
+  legacy_path: null
+  legacy_removal_wave: null
+- route: POST /bff/agora/dataset-worker/dlq/{param}/replay
+  command: replay_dataset_dlq_item
+  router: agora_dataset_extraction
+  application_owner: agora_application
+  store_owner: agora_store
+  table_or_stream: agora_records
+  outbox_subject: agora.event.v1
+  idempotency_scope: agora_id
+  readback_projection: management_agora_projection
+  legacy_path: null
+  legacy_removal_wave: null
+- route: POST /bff/agora/dataset-worker/handoffs/{param}/ack
+  command: acknowledge_dataset_handoff
+  router: agora_dataset_extraction
+  application_owner: agora_application
+  store_owner: agora_store
+  table_or_stream: agora_records
+  outbox_subject: agora.event.v1
+  idempotency_scope: agora_id
+  readback_projection: management_agora_projection
+  legacy_path: null
+  legacy_removal_wave: null
+- route: POST /internal/agora/dataset-handoffs/{param}/ack
+  command: acknowledge_tenant_dataset_handoff
+  router: agora_dataset_extraction
+  application_owner: agora_application
+  store_owner: agora_store
+  table_or_stream: agora_records
+  outbox_subject: agora.event.v1
+  idempotency_scope: agora_id
+  readback_projection: management_agora_projection
+  legacy_path: null
+  legacy_removal_wave: null
+- route: POST /bff/agora/interactions/context:resolve
+  command: resolve_context
+  router: agora_interaction
+  application_owner: agora_interaction_application
+  store_owner: agora_interaction_store
+  table_or_stream: agora_interactions
+  outbox_subject: agora.interaction.v1
+  idempotency_scope: interaction_id
+  readback_projection: management_agora_interaction_projection
+  legacy_path: null
+  legacy_removal_wave: null
+- route: POST /bff/agora/interactions/participants:eligible
+  command: participants
+  router: agora_interaction
+  application_owner: agora_interaction_application
+  store_owner: agora_interaction_store
+  table_or_stream: agora_interactions
+  outbox_subject: agora.interaction.v1
+  idempotency_scope: interaction_id
+  readback_projection: management_agora_interaction_projection
+  legacy_path: null
+  legacy_removal_wave: null
+- route: POST /bff/agora/interactions
+  command: submit
+  router: agora_interaction
+  application_owner: agora_interaction_application
+  store_owner: agora_interaction_store
+  table_or_stream: agora_interactions
+  outbox_subject: agora.interaction.v1
+  idempotency_scope: interaction_id
+  readback_projection: management_agora_interaction_projection
+  legacy_path: null
+  legacy_removal_wave: null
+- route: POST /bff/agora/interactions/{param}:retry
+  command: retry_interaction
+  router: agora_interaction
+  application_owner: agora_interaction_application
+  store_owner: agora_interaction_store
+  table_or_stream: agora_interactions
+  outbox_subject: agora.interaction.v1
+  idempotency_scope: interaction_id
+  readback_projection: management_agora_interaction_projection
+  legacy_path: null
+  legacy_removal_wave: null
+- route: POST /bff/agora/interactions:recover
+  command: recover_interactions
+  router: agora_interaction
+  application_owner: agora_interaction_application
+  store_owner: agora_interaction_store
+  table_or_stream: agora_interactions
+  outbox_subject: agora.interaction.v1
+  idempotency_scope: interaction_id
+  readback_projection: management_agora_interaction_projection
+  legacy_path: null
+  legacy_removal_wave: null
+- route: POST /bff/agora/interactions/{param}/recommended-measures/{param}/candidates
+  command: create_candidate
+  router: agora_candidate_decisions
+  application_owner: agora_journal_application
+  store_owner: agora_journal_store
+  table_or_stream: agora_decisions
+  outbox_subject: agora.decision.v1
+  idempotency_scope: decision_id
+  readback_projection: management_agora_journal_projection
+  legacy_path: null
+  legacy_removal_wave: null
+- route: POST /bff/agora/proposals/{param}/candidate-decisions
+  command: decide_candidate
+  router: agora_candidate_decisions
+  application_owner: agora_journal_application
+  store_owner: agora_journal_store
+  table_or_stream: agora_decisions
+  outbox_subject: agora.decision.v1
+  idempotency_scope: decision_id
+  readback_projection: management_agora_journal_projection
+  legacy_path: null
+  legacy_removal_wave: null
+- route: POST /bff/agora/proposals/{param}/validations
+  command: validate_candidate
+  router: agora_candidate_decisions
+  application_owner: agora_journal_application
+  store_owner: agora_journal_store
+  table_or_stream: agora_decisions
+  outbox_subject: agora.decision.v1
+  idempotency_scope: decision_id
+  readback_projection: management_agora_journal_projection
+  legacy_path: null
+  legacy_removal_wave: null
+- route: POST /bff/agora/proposals/{param}/formal-approvals/{param}:link
+  command: link_formal_approval
+  router: agora_candidate_decisions
+  application_owner: agora_journal_application
+  store_owner: agora_journal_store
+  table_or_stream: agora_decisions
+  outbox_subject: agora.decision.v1
+  idempotency_scope: decision_id
+  readback_projection: management_agora_journal_projection
+  legacy_path: null
+  legacy_removal_wave: null
+- route: POST /bff/agora/proposals
+  command: create
+  router: governance
+  application_owner: governance_application
+  store_owner: governance_store
+  table_or_stream: governance_decisions
+  outbox_subject: governance.decision.v1
+  idempotency_scope: decision_id
+  readback_projection: management_governance_projection
+  legacy_path: null
+  legacy_removal_wave: null
+- route: POST /bff/agora/proposals/{param}/actions
+  command: act
+  router: governance
+  application_owner: governance_application
+  store_owner: governance_store
+  table_or_stream: governance_decisions
+  outbox_subject: governance.decision.v1
+  idempotency_scope: decision_id
+  readback_projection: management_governance_projection
+  legacy_path: null
+  legacy_removal_wave: null
+- route: POST /bff/agora/trading-data/query
+  command: query_trading_data
+  router: agora_trading_data
+  application_owner: agora_application
+  store_owner: agora_store
+  table_or_stream: agora_records
+  outbox_subject: agora.event.v1
+  idempotency_scope: agora_id
+  readback_projection: management_agora_projection
+  legacy_path: null
+  legacy_removal_wave: null
+- route: POST /bff/agora/decision-projection/events
+  command: produce_event
+  router: agora_decision_projection
+  application_owner: agora_journal_application
+  store_owner: agora_journal_store
+  table_or_stream: agora_decisions
+  outbox_subject: agora.decision.v1
+  idempotency_scope: decision_id
+  readback_projection: management_agora_journal_projection
+  legacy_path: null
+  legacy_removal_wave: null
+- route: PATCH /bff/agora/journal/{param}
+  command: agora_patch_journal_entry
+  router: agora_agora_core
+  application_owner: agora_application
+  store_owner: agora_store
+  table_or_stream: agora_records
+  outbox_subject: agora.event.v1
+  idempotency_scope: agora_id
+  readback_projection: management_agora_projection
+  legacy_path: null
+  legacy_removal_wave: null
+- route: POST /bff/agora/signals
+  command: agora_create_signal
+  router: agora_agora_core
+  application_owner: agora_application
+  store_owner: agora_store
+  table_or_stream: agora_records
+  outbox_subject: agora.event.v1
+  idempotency_scope: agora_id
+  readback_projection: management_agora_projection
+  legacy_path: null
+  legacy_removal_wave: null
+- route: POST /bff/agora/feedback
+  command: agora_create_bulk_feedback
+  router: agora_agora_core
+  application_owner: agora_application
+  store_owner: agora_store
+  table_or_stream: agora_records
+  outbox_subject: agora.event.v1
+  idempotency_scope: agora_id
+  readback_projection: management_agora_projection
+  legacy_path: null
+  legacy_removal_wave: null
+- route: POST /bff/agora/signals/{param}/feedback
+  command: agora_record_signal_feedback
+  router: agora_agora_core
+  application_owner: agora_application
+  store_owner: agora_store
+  table_or_stream: agora_records
+  outbox_subject: agora.event.v1
+  idempotency_scope: agora_id
+  readback_projection: management_agora_projection
+  legacy_path: null
+  legacy_removal_wave: null
+- route: POST /bff/agora/committee/{param}/evidence-pack
+  command: agora_committee_evidence_pack
+  router: agora_agora_core
+  application_owner: agora_application
+  store_owner: agora_store
+  table_or_stream: agora_records
+  outbox_subject: agora.event.v1
+  idempotency_scope: agora_id
+  readback_projection: management_agora_projection
+  legacy_path: null
+  legacy_removal_wave: null
+- route: POST /bff/agora/committee/{param}/evidence-pack/files
+  command: agora_committee_evidence_files
+  router: agora_agora_core
+  application_owner: agora_application
+  store_owner: agora_store
+  table_or_stream: agora_records
+  outbox_subject: agora.event.v1
+  idempotency_scope: agora_id
+  readback_projection: management_agora_projection
+  legacy_path: null
+  legacy_removal_wave: null
+- route: POST /bff/agora/notes
+  command: agora_create_note
+  router: agora_agora_core
+  application_owner: agora_application
+  store_owner: agora_store
+  table_or_stream: agora_records
+  outbox_subject: agora.event.v1
+  idempotency_scope: agora_id
+  readback_projection: management_agora_projection
+  legacy_path: null
+  legacy_removal_wave: null
+- route: POST /bff/agora/journal
+  command: agora_create_journal_entry
+  router: agora_agora_core
+  application_owner: agora_application
+  store_owner: agora_store
+  table_or_stream: agora_records
+  outbox_subject: agora.event.v1
+  idempotency_scope: agora_id
+  readback_projection: management_agora_projection
+  legacy_path: null
+  legacy_removal_wave: null
+- route: POST /bff/agora/training-examples
+  command: agora_create_training_example
+  router: agora_agora_core
+  application_owner: agora_application
+  store_owner: agora_store
+  table_or_stream: agora_records
+  outbox_subject: agora.event.v1
+  idempotency_scope: agora_id
+  readback_projection: management_agora_projection
+  legacy_path: null
+  legacy_removal_wave: null
+- route: POST /bff/agora/persona-lab/{param}/actions/submit-commit
+  command: agora_submit_persona_lab_commit
+  router: agora_agora_core
+  application_owner: agora_application
+  store_owner: agora_store
+  table_or_stream: agora_records
+  outbox_subject: agora.event.v1
+  idempotency_scope: agora_id
+  readback_projection: management_agora_projection
+  legacy_path: null
+  legacy_removal_wave: null
+- route: POST /bff/agora/committee/sessions
+  command: agora_create_committee_session
+  router: agora_agora_core
+  application_owner: agora_application
+  store_owner: agora_store
+  table_or_stream: agora_records
+  outbox_subject: agora.event.v1
+  idempotency_scope: agora_id
+  readback_projection: management_agora_projection
+  legacy_path: null
+  legacy_removal_wave: null
+- route: POST /bff/agora/committee/sessions/{param}/open
+  command: agora_open_committee_session
+  router: agora_agora_core
+  application_owner: agora_application
+  store_owner: agora_store
+  table_or_stream: agora_records
+  outbox_subject: agora.event.v1
+  idempotency_scope: agora_id
+  readback_projection: management_agora_projection
+  legacy_path: null
+  legacy_removal_wave: null
+- route: POST /bff/agora/committee/sessions/{param}/close
+  command: agora_close_committee_session
+  router: agora_agora_core
+  application_owner: agora_application
+  store_owner: agora_store
+  table_or_stream: agora_records
+  outbox_subject: agora.event.v1
+  idempotency_scope: agora_id
+  readback_projection: management_agora_projection
+  legacy_path: null
+  legacy_removal_wave: null
+- route: POST /bff/agora/committee/sessions/{param}/memos
+  command: agora_submit_committee_session_memo
+  router: agora_agora_core
+  application_owner: agora_application
+  store_owner: agora_store
+  table_or_stream: agora_records
+  outbox_subject: agora.event.v1
+  idempotency_scope: agora_id
+  readback_projection: management_agora_projection
+  legacy_path: null
+  legacy_removal_wave: null
+- route: POST /bff/agora/committee/sessions/{param}/memos/{param}/publish
+  command: agora_publish_committee_session_memo
+  router: agora_agora_core
+  application_owner: agora_application
+  store_owner: agora_store
+  table_or_stream: agora_records
+  outbox_subject: agora.event.v1
+  idempotency_scope: agora_id
+  readback_projection: management_agora_projection
+  legacy_path: null
+  legacy_removal_wave: null
+workers:
+- service: source-ingest-scheduler
+  profile: null
+  input_subject: source.ingest.tick
+  durable_consumer: source-ingest-scheduler
+  lease_key: lease:source-ingest-scheduler
+  partition_policy: singleton
+  output_subject: source.market.snapshot.v1
+  retry_policy: exponential_backoff
+  dlq: source.ingest.dlq
+  readiness_probe: file:/data/source-ingest/latest_market_snapshots.jsonl
+- service: source-ingest-agora-projector
+  profile: source-ingest-scheduler
+  input_subject: source.market.snapshot.v1
+  durable_consumer: source-ingest-agora-projector
+  lease_key: lease:source-ingest-agora-projector
+  partition_policy: consumer_group:agora_projectors
+  output_subject: agora.market.projection.v1
+  retry_policy: fixed_retry
+  dlq: agora.projection.dlq
+  readiness_probe: http://operator-bff:8080/bff/readyz
+- service: strategy-distillation-worker
+  profile: null
+  input_subject: strategy.distillation.queue
+  durable_consumer: strategy-distillation-worker
+  lease_key: lease:strategy-distillation-worker
+  partition_policy: singleton
+  output_subject: strategy.distillation.completed.v1
+  retry_policy: exponential_backoff
+  dlq: strategy.distillation.dlq
+  readiness_probe: file:/data/source-ingest/distill_job_queue.jsonl
+- service: alpha-replication-worker
+  profile: null
+  input_subject: research.alpha.replication.queue
+  durable_consumer: alpha-replication-worker
+  lease_key: lease:alpha-replication-worker
+  partition_policy: singleton
+  output_subject: research.alpha.replication.completed.v1
+  retry_policy: exponential_backoff
+  dlq: research.alpha.replication.dlq
+  readiness_probe: http://research-orchestrator-svc:8101/readyz
+- service: search-index-scheduler
+  profile: null
+  input_subject: search.index.sync.tick
+  durable_consumer: search-index-scheduler
+  lease_key: lease:search-index-scheduler
+  partition_policy: singleton
+  output_subject: search.index.updated.v1
+  retry_policy: fixed_retry
+  dlq: search.index.dlq
+  readiness_probe: http://search-svc:8099/readyz
+- service: training-session-preview-worker
+  profile: null
+  input_subject: training.session.preview.queue
+  durable_consumer: training-session-preview-worker
+  lease_key: lease:training-session-preview-worker
+  partition_policy: singleton
+  output_subject: training.session.preview.completed.v1
+  retry_policy: exponential_backoff
+  dlq: training.session.preview.dlq
+  readiness_probe: http://training-session-svc:8102/readyz
+- service: policy-learning-shadow-eval-scheduler
+  profile: null
+  input_subject: policy.learning.shadow.eval.tick
+  durable_consumer: policy-learning-shadow-eval-scheduler
+  lease_key: lease:policy-learning-shadow-eval-scheduler
+  partition_policy: singleton
+  output_subject: policy.learning.shadow.evaluation.v1
+  retry_policy: fixed_retry
+  dlq: policy.learning.shadow.dlq
+  readiness_probe: http://policy-learning-svc:8100/readyz
+- service: agora-interaction-worker
+  profile: null
+  input_subject: agora.interaction.request.v1
+  durable_consumer: agora-interaction-worker
+  lease_key: lease:agora-interaction-worker
+  partition_policy: singleton
+  output_subject: agora.interaction.response.v1
+  retry_policy: exponential_backoff
+  dlq: agora.interaction.dlq
+  readiness_probe: http://operator-bff:8080/bff/readyz
+- service: loop-run-projector-scheduler
+  profile: null
+  input_subject: lifecycle.event.stream.v1
+  durable_consumer: loop-run-projector-scheduler
+  lease_key: lease:loop-run-projector-scheduler
+  partition_policy: singleton
+  output_subject: lifecycle.loop_run.projection.v1
+  retry_policy: fixed_retry
+  dlq: lifecycle.projection.dlq
+  readiness_probe: file:/data/bff/latest_market_snapshots.jsonl
+- service: deployment-outbox-consumer
+  profile: null
+  input_subject: deployment.outbox.v1
+  durable_consumer: deployment-outbox-consumer
+  lease_key: lease:deployment-outbox-consumer
+  partition_policy: singleton
+  output_subject: deployment.lifecycle.v1
+  retry_policy: exponential_backoff
+  dlq: deployment.outbox.dlq
+  readiness_probe: http://deployment:8088/readyz
+- service: evolution-dispatch-worker
+  profile: null
+  input_subject: evolution.program.dispatch.v1
+  durable_consumer: evolution-dispatch-worker
+  lease_key: lease:evolution-dispatch-worker
+  partition_policy: singleton
+  output_subject: evolution.program.dispatched.v1
+  retry_policy: exponential_backoff
+  dlq: evolution.dispatch.dlq
+  readiness_probe: http://evolution:8095/readyz
+- service: evolution-daily-sweep-scheduler
+  profile: null
+  input_subject: evolution.daily.sweep.tick
+  durable_consumer: evolution-daily-sweep-scheduler
+  lease_key: lease:evolution-daily-sweep-scheduler
+  partition_policy: singleton
+  output_subject: evolution.sweep.initiated.v1
+  retry_policy: fixed_retry
+  dlq: evolution.sweep.dlq
+  readiness_probe: http://evolution:8095/readyz
+- service: evolution-threshold-sweep-producer
+  profile: null
+  input_subject: evolution.threshold.eval.v1
+  durable_consumer: evolution-threshold-sweep-producer
+  lease_key: lease:evolution-threshold-sweep-producer
+  partition_policy: singleton
+  output_subject: evolution.threshold.sweep.candidate.v1
+  retry_policy: fixed_retry
+  dlq: evolution.threshold.dlq
+  readiness_probe: http://evolution:8095/readyz
+- service: paper-fleet-reconciler
+  profile: null
+  input_subject: runtime.state.heartbeat.v1
+  durable_consumer: paper-fleet-reconciler
+  lease_key: lease:paper-fleet-reconciler
+  partition_policy: singleton
+  output_subject: paper.fleet.status.v1
+  retry_policy: exponential_backoff
+  dlq: paper.fleet.dlq
+  readiness_probe: http://paper-fleet-reconciler:8011/readyz
+- service: paper-signal-producer
+  profile: null
+  input_subject: source.market.snapshot.v1
+  durable_consumer: paper-signal-producer
+  lease_key: lease:paper-signal-producer
+  partition_policy: consumer_group:paper_signal_producers
+  output_subject: execution.signal.paper.v1
+  retry_policy: fixed_retry
+  dlq: execution.signal.dlq
+  readiness_probe: http://source-ingest:8097/readyz
+- service: reconciliation-drift-consumer
+  profile: null
+  input_subject: telemetry.drift.event.v1
+  durable_consumer: reconciliation-drift-consumer
+  lease_key: lease:reconciliation-drift-consumer
+  partition_policy: singleton
+  output_subject: reconciliation.drift.incident.v1
+  retry_policy: exponential_backoff
+  dlq: reconciliation.drift.dlq
+  readiness_probe: http://reconciliation-drift-svc:8105/readyz
+- service: reconciliation-drift-scheduler
+  profile: null
+  input_subject: reconciliation.drift.check.tick
+  durable_consumer: reconciliation-drift-scheduler
+  lease_key: lease:reconciliation-drift-scheduler
+  partition_policy: singleton
+  output_subject: reconciliation.drift.eval.v1
+  retry_policy: fixed_retry
+  dlq: reconciliation.drift.dlq
+  readiness_probe: http://reconciliation-drift-svc:8105/readyz
+- service: reconciliation-drift-incident-listener
+  profile: null
+  input_subject: incident.lifecycle.v1
+  durable_consumer: reconciliation-drift-incident-listener
+  lease_key: lease:reconciliation-drift-incident-listener
+  partition_policy: singleton
+  output_subject: reconciliation.incident.acknowledged.v1
+  retry_policy: exponential_backoff
+  dlq: reconciliation.incident.dlq
+  readiness_probe: http://reconciliation-drift-svc:8105/readyz
+- service: pantheon-paper-runtime
+  profile: static-paper-runtime
+  input_subject: execution.signal.paper.v1
+  durable_consumer: pantheon-paper-runtime
+  lease_key: lease:pantheon-paper-runtime
+  partition_policy: singleton
+  output_subject: execution.order.paper.v1
+  retry_policy: fixed_retry
+  dlq: execution.order.dlq
+  readiness_probe: http://localhost:5000/readyz
+- service: lifecycle-projector-capacity-benchmark
+  profile: lifecycle-capacity-benchmark
+  input_subject: benchmark.synthetic.events.v1
+  durable_consumer: lifecycle-projector-capacity-benchmark
+  lease_key: lease:lifecycle-projector-capacity-benchmark
+  partition_policy: singleton
+  output_subject: benchmark.capacity.completed.v1
+  retry_policy: none
+  dlq: none
+  readiness_probe: file:/data/bff/lifecycle-capacity/evidence.json
+- service: research-worker-gateway-svc
+  profile: null
+  input_subject: research.worker.dispatch.v1
+  durable_consumer: research-worker-gateway-svc
+  lease_key: lease:research-worker-gateway-svc
+  partition_policy: singleton
+  output_subject: research.worker.result.v1
+  retry_policy: exponential_backoff
+  dlq: research.worker.dlq
+  readiness_probe: http://research-worker-gateway-svc:8103/readyz
+symbol_dispositions:
+- symbol: _PersonaOwnerHttpTransport
+  locations:
+  - main.py
+  - personas/service.py
+  canonical_owner: personas/service.py
+  disposition: DELETE_DUPLICATE
+  production_callers_before: 6
+  production_callers_after: 6
+  deletion_wave: wave-7
+- symbol: _aggregate_group_surface
+  locations:
+  - main.py
+  - personas/service.py
+  canonical_owner: personas/service.py
+  disposition: DELETE_DUPLICATE
+  production_callers_before: 44
+  production_callers_after: 44
+  deletion_wave: wave-7
+- symbol: _alert_severity_for_incident
+  locations:
+  - incidents/service.py
+  - main.py
+  canonical_owner: incidents/service.py
+  disposition: DELETE_DUPLICATE
+  production_callers_before: 4
+  production_callers_after: 4
+  deletion_wave: wave-7
+- symbol: _alert_severity_for_risk_level
+  locations:
+  - incidents/service.py
+  - main.py
+  canonical_owner: incidents/service.py
+  disposition: DELETE_DUPLICATE
+  production_callers_before: 6
+  production_callers_after: 6
+  deletion_wave: wave-7
+- symbol: _alert_sort_key
+  locations:
+  - incidents/service.py
+  - main.py
+  canonical_owner: incidents/service.py
+  disposition: MOVE_SHARED_VALUE
+  production_callers_before: 4
+  production_callers_after: 4
+  deletion_wave: wave-1
+- symbol: _alert_target_ref
+  locations:
+  - incidents/service.py
+  - main.py
+  canonical_owner: incidents/service.py
+  disposition: DELETE_DUPLICATE
+  production_callers_before: 15
+  production_callers_after: 15
+  deletion_wave: wave-7
+- symbol: _append_persona_reconcile_diagnostic
+  locations:
+  - main.py
+  - personas/service.py
+  canonical_owner: personas/service.py
+  disposition: DELETE_DUPLICATE
+  production_callers_before: 29
+  production_callers_after: 29
+  deletion_wave: wave-7
+- symbol: _as_float
+  locations:
+  - main.py
+  - personas/service.py
+  canonical_owner: personas/service.py
+  disposition: DELETE_DUPLICATE
+  production_callers_before: 40
+  production_callers_after: 40
+  deletion_wave: wave-7
+- symbol: _audit_datetime
+  locations:
+  - main.py
+  - personas/service.py
+  canonical_owner: personas/service.py
+  disposition: DELETE_DUPLICATE
+  production_callers_before: 29
+  production_callers_after: 29
+  deletion_wave: wave-7
+- symbol: _bff_auth_mode
+  locations:
+  - main.py
+  - personas/service.py
+  canonical_owner: personas/service.py
+  disposition: MOVE_SHARED_VALUE
+  production_callers_before: 10
+  production_callers_after: 10
+  deletion_wave: wave-1
+- symbol: _bff_auth_stub_enabled
+  locations:
+  - main.py
+  - personas/service.py
+  canonical_owner: personas/service.py
+  disposition: MOVE_SHARED_VALUE
+  production_callers_before: 7
+  production_callers_after: 7
+  deletion_wave: wave-1
+- symbol: _bff_error
+  locations:
+  - main.py
+  - personas/service.py
+  canonical_owner: personas/service.py
+  disposition: MOVE_SHARED_VALUE
+  production_callers_before: 390
+  production_callers_after: 390
+  deletion_wave: wave-1
+- symbol: _bff_me_tenant_payload
+  locations:
+  - main.py
+  - personas/service.py
+  canonical_owner: personas/service.py
+  disposition: DELETE_DUPLICATE
+  production_callers_before: 24
+  production_callers_after: 24
+  deletion_wave: wave-7
+- symbol: _bool_from_env
+  locations:
+  - agora/interaction/persona_client.py
+  - main.py
+  - personas/service.py
+  canonical_owner: personas/service.py
+  disposition: DELETE_DUPLICATE
+  production_callers_before: 25
+  production_callers_after: 25
+  deletion_wave: wave-7
+- symbol: _build_alert_summary
+  locations:
+  - incidents/service.py
+  - main.py
+  canonical_owner: incidents/service.py
+  disposition: DELETE_DUPLICATE
+  production_callers_before: 6
+  production_callers_after: 6
+  deletion_wave: wave-7
+- symbol: _canonical_error_code_value
+  locations:
+  - main.py
+  - main.py
+  - personas/service.py
+  canonical_owner: personas/service.py
+  disposition: MOVE_SHARED_VALUE
+  production_callers_before: 8
+  production_callers_after: 8
+  deletion_wave: wave-1
+- symbol: _capabilities_for_identity
+  locations:
+  - main.py
+  - personas/service.py
+  canonical_owner: personas/service.py
+  disposition: DELETE_DUPLICATE
+  production_callers_before: 9
+  production_callers_after: 9
+  deletion_wave: wave-7
+- symbol: _check_read_surface_state
+  locations:
+  - main.py
+  - personas/service.py
+  canonical_owner: personas/service.py
+  disposition: DELETE_DUPLICATE
+  production_callers_before: 16
+  production_callers_after: 16
+  deletion_wave: wave-7
+- symbol: _checkpoint_persona_provisioning_readback
+  locations:
+  - main.py
+  - personas/service.py
+  canonical_owner: personas/service.py
+  disposition: DELETE_DUPLICATE
+  production_callers_before: 7
+  production_callers_after: 7
+  deletion_wave: wave-7
+- symbol: _claim_path_value
+  locations:
+  - main.py
+  - personas/service.py
+  canonical_owner: personas/service.py
+  disposition: MOVE_SHARED_VALUE
+  production_callers_before: 6
+  production_callers_after: 6
+  deletion_wave: wave-1
+- symbol: _claim_value_as_strings
+  locations:
+  - main.py
+  - personas/service.py
+  canonical_owner: personas/service.py
+  disposition: MOVE_SHARED_VALUE
+  production_callers_before: 6
+  production_callers_after: 6
+  deletion_wave: wave-1
+- symbol: _clean
+  locations:
+  - agora/candidate_decisions/source.py
+  - agora/governance/router.py
+  canonical_owner: agora/candidate_decisions/source.py
+  disposition: MOVE_SHARED_VALUE
+  production_callers_before: 57
+  production_callers_after: 57
+  deletion_wave: wave-1
+- symbol: _composed_dataset_surface_status
+  locations:
+  - main.py
+  - personas/service.py
+  canonical_owner: personas/service.py
+  disposition: MOVE_SHARED_VALUE
+  production_callers_before: 11
+  production_callers_after: 11
+  deletion_wave: wave-1
+- symbol: _composed_surface_status
+  locations:
+  - main.py
+  - personas/service.py
+  canonical_owner: personas/service.py
+  disposition: MOVE_SHARED_VALUE
+  production_callers_before: 28
+  production_callers_after: 28
+  deletion_wave: wave-1
+- symbol: _connector_candidates_for_provider
+  locations:
+  - main.py
+  - personas/service.py
+  canonical_owner: personas/service.py
+  disposition: DELETE_DUPLICATE
+  production_callers_before: 4
+  production_callers_after: 4
+  deletion_wave: wave-7
+- symbol: _data_source_ok_tone
+  locations:
+  - main.py
+  - personas/service.py
+  canonical_owner: personas/service.py
+  disposition: DELETE_DUPLICATE
+  production_callers_before: 6
+  production_callers_after: 6
+  deletion_wave: wave-7
+- symbol: _dataset_source_after_read
+  locations:
+  - main.py
+  - personas/service.py
+  canonical_owner: personas/service.py
+  disposition: DELETE_DUPLICATE
+  production_callers_before: 9
+  production_callers_after: 9
+  deletion_wave: wave-7
+- symbol: _dataset_surface_status
+  locations:
+  - main.py
+  - personas/service.py
+  canonical_owner: personas/service.py
+  disposition: MOVE_SHARED_VALUE
+  production_callers_before: 124
+  production_callers_after: 124
+  deletion_wave: wave-1
+- symbol: _decode_page_token
+  locations:
+  - main.py
+  - personas/service.py
+  canonical_owner: personas/service.py
+  disposition: DELETE_DUPLICATE
+  production_callers_before: 9
+  production_callers_after: 9
+  deletion_wave: wave-7
+- symbol: _dedupe_nonblank_strings
+  locations:
+  - main.py
+  - personas/service.py
+  canonical_owner: personas/service.py
+  disposition: DELETE_DUPLICATE
+  production_callers_before: 14
+  production_callers_after: 14
+  deletion_wave: wave-7
+- symbol: _default_bff_error
+  locations:
+  - events/router.py
+  - management_read_models/ranking_router.py
+  - management_read_models/router.py
+  - management_read_models/service.py
+  - strategies/router.py
+  canonical_owner: management_read_models/service.py
+  disposition: MOVE_SHARED_VALUE
+  production_callers_before: 32
+  production_callers_after: 32
+  deletion_wave: wave-1
+- symbol: _default_handle_sse_stream
+  locations:
+  - events/router.py
+  - incidents/router.py
+  canonical_owner: events/router.py
+  disposition: DELETE_DUPLICATE
+  production_callers_before: 3
+  production_callers_after: 3
+  deletion_wave: wave-7
+- symbol: _default_incident_allowed_actions
+  locations:
+  - incidents/service.py
+  - personas/service.py
+  canonical_owner: personas/service.py
+  disposition: DELETE_DUPLICATE
+  production_callers_before: 5
+  production_callers_after: 5
+  deletion_wave: wave-7
+- symbol: _default_require_operator_role
+  locations:
+  - evolution/router.py
+  - incidents/router.py
+  canonical_owner: evolution/router.py
+  disposition: DELETE_DUPLICATE
+  production_callers_before: 21
+  production_callers_after: 21
+  deletion_wave: wave-7
+- symbol: _default_require_read_role
+  locations:
+  - events/router.py
+  - evolution/router.py
+  - incidents/router.py
+  - management_read_models/ranking_router.py
+  - strategies/router.py
+  canonical_owner: events/router.py
+  disposition: DELETE_DUPLICATE
+  production_callers_before: 24
+  production_callers_after: 24
+  deletion_wave: wave-7
+- symbol: _default_snapshot_meta
+  locations:
+  - capital/router.py
+  - evolution/router.py
+  - governance/router.py
+  - integrations/router.py
+  - research/router.py
+  canonical_owner: capital/router.py
+  disposition: DELETE_DUPLICATE
+  production_callers_before: 21
+  production_callers_after: 21
+  deletion_wave: wave-7
+- symbol: _default_snapshot_meta
+  locations:
+  - events/router.py
+  - incidents/router.py
+  - management_read_models/ranking_router.py
+  canonical_owner: events/router.py
+  disposition: DELETE_DUPLICATE
+  production_callers_before: 21
+  production_callers_after: 21
+  deletion_wave: wave-7
+- symbol: _default_sse_stream
+  locations:
+  - events/router.py
+  - incidents/router.py
+  canonical_owner: events/router.py
+  disposition: DELETE_DUPLICATE
+  production_callers_before: 4
+  production_callers_after: 4
+  deletion_wave: wave-7
+- symbol: _default_utc_now
+  locations:
+  - capital/router.py
+  - events/router.py
+  - evolution/router.py
+  - incidents/service.py
+  - management_read_models/ranking_router.py
+  - trade_journeys.py
+  canonical_owner: incidents/service.py
+  disposition: DELETE_DUPLICATE
+  production_callers_before: 23
+  production_callers_after: 23
+  deletion_wave: wave-7
+- symbol: _deployment_url
+  locations:
+  - main.py
+  - personas/service.py
+  canonical_owner: personas/service.py
+  disposition: DELETE_DUPLICATE
+  production_callers_before: 5
+  production_callers_after: 5
+  deletion_wave: wave-7
+- symbol: _deprecated_bff_path_response
+  locations:
+  - main.py
+  - personas/service.py
+  canonical_owner: personas/service.py
+  disposition: DELETE_DUPLICATE
+  production_callers_before: 11
+  production_callers_after: 11
+  deletion_wave: wave-7
+- symbol: _derive_runtime_state_last_updated_at
+  locations:
+  - main.py
+  - management_read_models/service.py
+  canonical_owner: management_read_models/service.py
+  disposition: DELETE_DUPLICATE
+  production_callers_before: 4
+  production_callers_after: 4
+  deletion_wave: wave-7
+- symbol: _derive_runtime_state_row_health
+  locations:
+  - main.py
+  - management_read_models/service.py
+  canonical_owner: management_read_models/service.py
+  disposition: DELETE_DUPLICATE
+  production_callers_before: 4
+  production_callers_after: 4
+  deletion_wave: wave-7
+- symbol: _digest
+  locations:
+  - assistant/command_idempotency.py
+  - management_nl_command_idempotency.py
+  canonical_owner: assistant/command_idempotency.py
+  disposition: DELETE_DUPLICATE
+  production_callers_before: 16
+  production_callers_after: 16
+  deletion_wave: wave-7
+- symbol: _dry_run_success_response
+  locations:
+  - main.py
+  - personas/service.py
+  canonical_owner: personas/service.py
+  disposition: DELETE_DUPLICATE
+  production_callers_before: 9
+  production_callers_after: 9
+  deletion_wave: wave-7
+- symbol: _env_csv
+  locations:
+  - main.py
+  - personas/service.py
+  canonical_owner: personas/service.py
+  disposition: DELETE_DUPLICATE
+  production_callers_before: 11
+  production_callers_after: 11
+  deletion_wave: wave-7
+- symbol: _err
+  locations:
+  - trade_journal.py
+  - trade_journeys.py
+  canonical_owner: trade_journal.py
+  disposition: DELETE_DUPLICATE
+  production_callers_before: 149
+  production_callers_after: 149
+  deletion_wave: wave-7
+- symbol: _event_user_ids
+  locations:
+  - agora/performance/attribution.py
+  - agora/performance/service.py
+  canonical_owner: agora/performance/attribution.py
+  disposition: DELETE_DUPLICATE
+  production_callers_before: 4
+  production_callers_after: 4
+  deletion_wave: wave-7
+- symbol: _extract_identity
+  locations:
+  - main.py
+  - personas/service.py
+  canonical_owner: personas/service.py
+  disposition: DELETE_DUPLICATE
+  production_callers_before: 156
+  production_callers_after: 156
+  deletion_wave: wave-7
+- symbol: _extract_identity_jwt
+  locations:
+  - main.py
+  - personas/service.py
+  canonical_owner: personas/service.py
+  disposition: DELETE_DUPLICATE
+  production_callers_before: 10
+  production_callers_after: 10
+  deletion_wave: wave-7
+- symbol: _extract_identity_stub
+  locations:
+  - main.py
+  - personas/service.py
+  canonical_owner: personas/service.py
+  disposition: DELETE_DUPLICATE
+  production_callers_before: 4
+  production_callers_after: 4
+  deletion_wave: wave-7
+- symbol: _extract_ids_from_item
+  locations:
+  - main.py
+  - personas/service.py
+  canonical_owner: personas/service.py
+  disposition: DELETE_DUPLICATE
+  production_callers_before: 16
+  production_callers_after: 16
+  deletion_wave: wave-7
+- symbol: _filter_by_common_identifiers
+  locations:
+  - main.py
+  - personas/service.py
+  canonical_owner: personas/service.py
+  disposition: DELETE_DUPLICATE
+  production_callers_before: 8
+  production_callers_after: 8
+  deletion_wave: wave-7
+- symbol: _first_nonblank
+  locations:
+  - main.py
+  - personas/service.py
+  canonical_owner: personas/service.py
+  disposition: DELETE_DUPLICATE
+  production_callers_before: 24
+  production_callers_after: 24
+  deletion_wave: wave-7
+- symbol: _first_present
+  locations:
+  - incidents/service.py
+  - main.py
+  canonical_owner: incidents/service.py
+  disposition: DELETE_DUPLICATE
+  production_callers_before: 6
+  production_callers_after: 6
+  deletion_wave: wave-7
+- symbol: _foundation_audit_for_command_record
+  locations:
+  - main.py
+  - personas/service.py
+  canonical_owner: personas/service.py
+  disposition: DELETE_DUPLICATE
+  production_callers_before: 10
+  production_callers_after: 10
+  deletion_wave: wave-7
+- symbol: _get_persona_directory_snapshot
+  locations:
+  - main.py
+  - personas/service.py
+  canonical_owner: personas/service.py
+  disposition: DELETE_DUPLICATE
+  production_callers_before: 11
+  production_callers_after: 11
+  deletion_wave: wave-7
+- symbol: _human_inbox_csv_filter
+  locations:
+  - main.py
+  - personas/service.py
+  canonical_owner: personas/service.py
+  disposition: DELETE_DUPLICATE
+  production_callers_before: 6
+  production_callers_after: 6
+  deletion_wave: wave-7
+- symbol: _human_inbox_decision_projection_from_record
+  locations:
+  - main.py
+  - personas/service.py
+  canonical_owner: personas/service.py
+  disposition: DELETE_DUPLICATE
+  production_callers_before: 9
+  production_callers_after: 9
+  deletion_wave: wave-7
+- symbol: _human_inbox_decision_recommendation_id
+  locations:
+  - main.py
+  - personas/service.py
+  canonical_owner: personas/service.py
+  disposition: DELETE_DUPLICATE
+  production_callers_before: 9
+  production_callers_after: 9
+  deletion_wave: wave-7
+- symbol: _human_inbox_priority
+  locations:
+  - main.py
+  - management_read_models/service.py
+  - personas/service.py
+  canonical_owner: personas/service.py
+  disposition: DELETE_DUPLICATE
+  production_callers_before: 12
+  production_callers_after: 12
+  deletion_wave: wave-7
+- symbol: _human_inbox_sanitize_promotion_snapshot
+  locations:
+  - main.py
+  - personas/service.py
+  canonical_owner: personas/service.py
+  disposition: DELETE_DUPLICATE
+  production_callers_before: 7
+  production_callers_after: 7
+  deletion_wave: wave-7
+- symbol: _identity_claim_strings
+  locations:
+  - main.py
+  - personas/service.py
+  canonical_owner: personas/service.py
+  disposition: MOVE_SHARED_VALUE
+  production_callers_before: 8
+  production_callers_after: 8
+  deletion_wave: wave-1
+- symbol: _incident_detail_href
+  locations:
+  - incidents/service.py
+  - main.py
+  canonical_owner: incidents/service.py
+  disposition: DELETE_DUPLICATE
+  production_callers_before: 8
+  production_callers_after: 8
+  deletion_wave: wave-7
+- symbol: _incident_home_severity
+  locations:
+  - incidents/service.py
+  - main.py
+  - personas/service.py
+  canonical_owner: personas/service.py
+  disposition: DELETE_DUPLICATE
+  production_callers_before: 9
+  production_callers_after: 9
+  deletion_wave: wave-7
+- symbol: _is_persona_lifecycle_operational
+  locations:
+  - main.py
+  - personas/service.py
+  - personas/service.py
+  canonical_owner: personas/service.py
+  disposition: DELETE_DUPLICATE
+  production_callers_before: 10
+  production_callers_after: 10
+  deletion_wave: wave-7
+- symbol: _json_dumps
+  locations:
+  - assistant_conversation_store.py
+  - management_ai_store.py
+  canonical_owner: assistant_conversation_store.py
+  disposition: DELETE_DUPLICATE
+  production_callers_before: 42
+  production_callers_after: 42
+  deletion_wave: wave-7
+- symbol: _latest_promotion_review_command
+  locations:
+  - main.py
+  - personas/service.py
+  canonical_owner: personas/service.py
+  disposition: DELETE_DUPLICATE
+  production_callers_before: 5
+  production_callers_after: 5
+  deletion_wave: wave-7
+- symbol: _latest_promotion_review_submission
+  locations:
+  - main.py
+  - personas/service.py
+  canonical_owner: personas/service.py
+  disposition: DELETE_DUPLICATE
+  production_callers_before: 5
+  production_callers_after: 5
+  deletion_wave: wave-7
+- symbol: _list_governance_audit_events
+  locations:
+  - main.py
+  - personas/service.py
+  canonical_owner: personas/service.py
+  disposition: DELETE_DUPLICATE
+  production_callers_before: 9
+  production_callers_after: 9
+  deletion_wave: wave-7
+- symbol: _list_persona_records
+  locations:
+  - main.py
+  - personas/service.py
+  canonical_owner: personas/service.py
+  disposition: DELETE_DUPLICATE
+  production_callers_before: 12
+  production_callers_after: 12
+  deletion_wave: wave-7
+- symbol: _loop_run_controller_is_formal
+  locations:
+  - main.py
+  - personas/service.py
+  canonical_owner: personas/service.py
+  disposition: DELETE_DUPLICATE
+  production_callers_before: 4
+  production_callers_after: 4
+  deletion_wave: wave-7
+- symbol: _loop_run_projection_metadata
+  locations:
+  - main.py
+  - personas/service.py
+  canonical_owner: personas/service.py
+  disposition: DELETE_DUPLICATE
+  production_callers_before: 4
+  production_callers_after: 4
+  deletion_wave: wave-7
+- symbol: _loop_run_surface_status
+  locations:
+  - main.py
+  - personas/service.py
+  canonical_owner: personas/service.py
+  disposition: MOVE_SHARED_VALUE
+  production_callers_before: 4
+  production_callers_after: 4
+  deletion_wave: wave-1
+- symbol: _loop_run_truth_source
+  locations:
+  - main.py
+  - personas/service.py
+  canonical_owner: personas/service.py
+  disposition: DELETE_DUPLICATE
+  production_callers_before: 4
+  production_callers_after: 4
+  deletion_wave: wave-7
+- symbol: _management_as_float
+  locations:
+  - main.py
+  - personas/service.py
+  canonical_owner: personas/service.py
+  disposition: DELETE_DUPLICATE
+  production_callers_before: 33
+  production_callers_after: 33
+  deletion_wave: wave-7
+- symbol: _management_avg
+  locations:
+  - main.py
+  - management_read_models/service.py
+  - personas/service.py
+  canonical_owner: personas/service.py
+  disposition: DELETE_DUPLICATE
+  production_callers_before: 12
+  production_callers_after: 12
+  deletion_wave: wave-7
+- symbol: _management_camel_to_snake_key
+  locations:
+  - evolution/service.py
+  - main.py
+  - personas/service.py
+  canonical_owner: personas/service.py
+  disposition: DELETE_DUPLICATE
+  production_callers_before: 6
+  production_callers_after: 6
+  deletion_wave: wave-7
+- symbol: _management_count_by
+  locations:
+  - evolution/service.py
+  - main.py
+  - management_read_models/service.py
+  - personas/service.py
+  canonical_owner: personas/service.py
+  disposition: DELETE_DUPLICATE
+  production_callers_before: 28
+  production_callers_after: 28
+  deletion_wave: wave-7
+- symbol: _management_first_float
+  locations:
+  - main.py
+  - personas/service.py
+  canonical_owner: personas/service.py
+  disposition: DELETE_DUPLICATE
+  production_callers_before: 22
+  production_callers_after: 22
+  deletion_wave: wave-7
+- symbol: _management_first_non_empty
+  locations:
+  - evolution/service.py
+  - main.py
+  - personas/service.py
+  canonical_owner: personas/service.py
+  disposition: DELETE_DUPLICATE
+  production_callers_before: 40
+  production_callers_after: 40
+  deletion_wave: wave-7
+- symbol: _management_fleet_autonomy
+  locations:
+  - main.py
+  - personas/service.py
+  canonical_owner: personas/service.py
+  disposition: DELETE_DUPLICATE
+  production_callers_before: 5
+  production_callers_after: 5
+  deletion_wave: wave-7
+- symbol: _management_fleet_ooda_label
+  locations:
+  - main.py
+  - personas/service.py
+  canonical_owner: personas/service.py
+  disposition: DELETE_DUPLICATE
+  production_callers_before: 5
+  production_callers_after: 5
+  deletion_wave: wave-7
+- symbol: _management_json_clone
+  locations:
+  - main.py
+  - management_read_models/service.py
+  - personas/service.py
+  canonical_owner: personas/service.py
+  disposition: DELETE_DUPLICATE
+  production_callers_before: 29
+  production_callers_after: 29
+  deletion_wave: wave-7
+- symbol: _management_link
+  locations:
+  - main.py
+  - management_read_models/service.py
+  canonical_owner: management_read_models/service.py
+  disposition: DELETE_DUPLICATE
+  production_callers_before: 10
+  production_callers_after: 10
+  deletion_wave: wave-7
+- symbol: _management_nested_value
+  locations:
+  - main.py
+  - personas/service.py
+  canonical_owner: personas/service.py
+  disposition: DELETE_DUPLICATE
+  production_callers_before: 5
+  production_callers_after: 5
+  deletion_wave: wave-7
+- symbol: _management_number
+  locations:
+  - main.py
+  - management_read_models/service.py
+  - personas/service.py
+  canonical_owner: personas/service.py
+  disposition: DELETE_DUPLICATE
+  production_callers_before: 55
+  production_callers_after: 55
+  deletion_wave: wave-7
+- symbol: _management_prune_camel_aliases
+  locations:
+  - evolution/service.py
+  - main.py
+  - personas/service.py
+  canonical_owner: personas/service.py
+  disposition: DELETE_DUPLICATE
+  production_callers_before: 16
+  production_callers_after: 16
+  deletion_wave: wave-7
+- symbol: _management_record_id
+  locations:
+  - evolution/service.py
+  - main.py
+  - personas/service.py
+  canonical_owner: personas/service.py
+  disposition: DELETE_DUPLICATE
+  production_callers_before: 63
+  production_callers_after: 63
+  deletion_wave: wave-7
+- symbol: _management_telemetry_rollup
+  locations:
+  - main.py
+  - personas/service.py
+  canonical_owner: personas/service.py
+  disposition: DELETE_DUPLICATE
+  production_callers_before: 6
+  production_callers_after: 6
+  deletion_wave: wave-7
+- symbol: _max_alert_severity
+  locations:
+  - incidents/service.py
+  - main.py
+  canonical_owner: incidents/service.py
+  disposition: DELETE_DUPLICATE
+  production_callers_before: 6
+  production_callers_after: 6
+  deletion_wave: wave-7
+- symbol: _merge_registry_records
+  locations:
+  - main.py
+  - personas/service.py
+  canonical_owner: personas/service.py
+  disposition: DELETE_DUPLICATE
+  production_callers_before: 7
+  production_callers_after: 7
+  deletion_wave: wave-7
+- symbol: _meta_staleness
+  locations:
+  - main.py
+  - personas/service.py
+  canonical_owner: personas/service.py
+  disposition: DELETE_DUPLICATE
+  production_callers_before: 22
+  production_callers_after: 22
+  deletion_wave: wave-7
+- symbol: _normalize_lifecycle_state
+  locations:
+  - main.py
+  - personas/service.py
+  canonical_owner: personas/service.py
+  disposition: DELETE_DUPLICATE
+  production_callers_before: 14
+  production_callers_after: 14
+  deletion_wave: wave-7
+- symbol: _normalize_risk_level
+  locations:
+  - main.py
+  - personas/service.py
+  canonical_owner: personas/service.py
+  disposition: DELETE_DUPLICATE
+  production_callers_before: 12
+  production_callers_after: 12
+  deletion_wave: wave-7
+- symbol: _openclaw_agent_reconcile_request
+  locations:
+  - main.py
+  - personas/service.py
+  canonical_owner: personas/service.py
+  disposition: DELETE_DUPLICATE
+  production_callers_before: 6
+  production_callers_after: 6
+  deletion_wave: wave-7
+- symbol: _optional_str
+  locations:
+  - assistant/transcript_store.py
+  - assistant_conversation_store.py
+  canonical_owner: assistant/transcript_store.py
+  disposition: DELETE_DUPLICATE
+  production_callers_before: 12
+  production_callers_after: 12
+  deletion_wave: wave-7
+- symbol: _overlay_source_health_truth
+  locations:
+  - main.py
+  - personas/service.py
+  canonical_owner: personas/service.py
+  disposition: DELETE_DUPLICATE
+  production_callers_before: 6
+  production_callers_after: 6
+  deletion_wave: wave-7
+- symbol: _pack_d_error_metadata
+  locations:
+  - main.py
+  - main.py
+  - personas/service.py
+  canonical_owner: personas/service.py
+  disposition: MOVE_SHARED_VALUE
+  production_callers_before: 7
+  production_callers_after: 7
+  deletion_wave: wave-1
+- symbol: _page_slice
+  locations:
+  - console_gap/workflows_hooks.py
+  - main.py
+  - personas/service.py
+  canonical_owner: personas/service.py
+  disposition: DELETE_DUPLICATE
+  production_callers_before: 49
+  production_callers_after: 49
+  deletion_wave: wave-7
+- symbol: _parse_iso
+  locations:
+  - agora/decision_projection/producer.py
+  - agora/trading_data/adapters.py
+  canonical_owner: agora/decision_projection/producer.py
+  disposition: DELETE_DUPLICATE
+  production_callers_before: 26
+  production_callers_after: 26
+  deletion_wave: wave-7
+- symbol: _parse_rfc3339
+  locations:
+  - incidents/service.py
+  - ports/lifecycle_telemetry_governance.py
+  canonical_owner: incidents/service.py
+  disposition: DELETE_DUPLICATE
+  production_callers_before: 50
+  production_callers_after: 50
+  deletion_wave: wave-7
+- symbol: _parse_rfc3339
+  locations:
+  - main.py
+  - personas/service.py
+  canonical_owner: personas/service.py
+  disposition: DELETE_DUPLICATE
+  production_callers_before: 50
+  production_callers_after: 50
+  deletion_wave: wave-7
+- symbol: _parse_rfc3339
+  locations:
+  - ports/ooda_management.py
+  - ports/persona_capital_runtime.py
+  canonical_owner: ports/ooda_management.py
+  disposition: DELETE_DUPLICATE
+  production_callers_before: 50
+  production_callers_after: 50
+  deletion_wave: wave-7
+- symbol: _parse_timestamp
+  locations:
+  - agora/performance/attribution.py
+  - agora/performance/service.py
+  canonical_owner: agora/performance/attribution.py
+  disposition: DELETE_DUPLICATE
+  production_callers_before: 7
+  production_callers_after: 7
+  deletion_wave: wave-7
+- symbol: _performance_ranking_source_surface
+  locations:
+  - main.py
+  - personas/service.py
+  canonical_owner: personas/service.py
+  disposition: DELETE_DUPLICATE
+  production_callers_before: 6
+  production_callers_after: 6
+  deletion_wave: wave-7
+- symbol: _persona_first_evaluation_readback_poll_seconds
+  locations:
+  - main.py
+  - personas/service.py
+  canonical_owner: personas/service.py
+  disposition: DELETE_DUPLICATE
+  production_callers_before: 5
+  production_callers_after: 5
+  deletion_wave: wave-7
+- symbol: _persona_first_evaluation_readback_timeout_seconds
+  locations:
+  - main.py
+  - personas/service.py
+  canonical_owner: personas/service.py
+  disposition: DELETE_DUPLICATE
+  production_callers_before: 5
+  production_callers_after: 5
+  deletion_wave: wave-7
+- symbol: _persona_fleet_active_incidents_for_row
+  locations:
+  - main.py
+  - personas/service.py
+  canonical_owner: personas/service.py
+  disposition: DELETE_DUPLICATE
+  production_callers_before: 5
+  production_callers_after: 5
+  deletion_wave: wave-7
+- symbol: _persona_fleet_capital_mode
+  locations:
+  - main.py
+  - personas/service.py
+  canonical_owner: personas/service.py
+  disposition: DELETE_DUPLICATE
+  production_callers_before: 5
+  production_callers_after: 5
+  deletion_wave: wave-7
+- symbol: _persona_fleet_context_defaults_by_market
+  locations:
+  - main.py
+  - personas/service.py
+  canonical_owner: personas/service.py
+  disposition: DELETE_DUPLICATE
+  production_callers_before: 6
+  production_callers_after: 6
+  deletion_wave: wave-7
+- symbol: _persona_fleet_context_missing
+  locations:
+  - main.py
+  - personas/service.py
+  canonical_owner: personas/service.py
+  disposition: DELETE_DUPLICATE
+  production_callers_before: 7
+  production_callers_after: 7
+  deletion_wave: wave-7
+- symbol: _persona_fleet_context_overlay
+  locations:
+  - main.py
+  - personas/service.py
+  canonical_owner: personas/service.py
+  disposition: DELETE_DUPLICATE
+  production_callers_before: 6
+  production_callers_after: 6
+  deletion_wave: wave-7
+- symbol: _persona_fleet_live_capital_pool_id
+  locations:
+  - main.py
+  - personas/service.py
+  canonical_owner: personas/service.py
+  disposition: DELETE_DUPLICATE
+  production_callers_before: 6
+  production_callers_after: 6
+  deletion_wave: wave-7
+- symbol: _persona_fleet_market_key
+  locations:
+  - main.py
+  - personas/service.py
+  canonical_owner: personas/service.py
+  disposition: DELETE_DUPLICATE
+  production_callers_before: 7
+  production_callers_after: 7
+  deletion_wave: wave-7
+- symbol: _persona_fleet_mutation_id
+  locations:
+  - main.py
+  - personas/service.py
+  canonical_owner: personas/service.py
+  disposition: DELETE_DUPLICATE
+  production_callers_before: 5
+  production_callers_after: 5
+  deletion_wave: wave-7
+- symbol: _persona_fleet_mutation_projection
+  locations:
+  - main.py
+  - personas/service.py
+  canonical_owner: personas/service.py
+  disposition: DELETE_DUPLICATE
+  production_callers_before: 5
+  production_callers_after: 5
+  deletion_wave: wave-7
+- symbol: _persona_fleet_paper_budget
+  locations:
+  - main.py
+  - personas/service.py
+  canonical_owner: personas/service.py
+  disposition: DELETE_DUPLICATE
+  production_callers_before: 5
+  production_callers_after: 5
+  deletion_wave: wave-7
+- symbol: _persona_fleet_paper_ledger
+  locations:
+  - main.py
+  - personas/service.py
+  canonical_owner: personas/service.py
+  disposition: DELETE_DUPLICATE
+  production_callers_before: 5
+  production_callers_after: 5
+  deletion_wave: wave-7
+- symbol: _persona_fleet_paper_ledger_id
+  locations:
+  - main.py
+  - personas/service.py
+  canonical_owner: personas/service.py
+  disposition: DELETE_DUPLICATE
+  production_callers_before: 7
+  production_callers_after: 7
+  deletion_wave: wave-7
+- symbol: _persona_fleet_record_value
+  locations:
+  - main.py
+  - personas/service.py
+  canonical_owner: personas/service.py
+  disposition: DELETE_DUPLICATE
+  production_callers_before: 37
+  production_callers_after: 37
+  deletion_wave: wave-7
+- symbol: _persona_fleet_runtime_matches
+  locations:
+  - main.py
+  - personas/service.py
+  canonical_owner: personas/service.py
+  disposition: DELETE_DUPLICATE
+  production_callers_before: 5
+  production_callers_after: 5
+  deletion_wave: wave-7
+- symbol: _persona_health_status
+  locations:
+  - main.py
+  - personas/service.py
+  canonical_owner: personas/service.py
+  disposition: MOVE_SHARED_VALUE
+  production_callers_before: 5
+  production_callers_after: 5
+  deletion_wave: wave-1
+- symbol: _persona_id
+  locations:
+  - main.py
+  - personas/service.py
+  canonical_owner: personas/service.py
+  disposition: DELETE_DUPLICATE
+  production_callers_before: 17
+  production_callers_after: 17
+  deletion_wave: wave-7
+- symbol: _persona_provisioning_metadata
+  locations:
+  - main.py
+  - personas/service.py
+  canonical_owner: personas/service.py
+  disposition: DELETE_DUPLICATE
+  production_callers_before: 6
+  production_callers_after: 6
+  deletion_wave: wave-7
+- symbol: _persona_provisioning_store
+  locations:
+  - main.py
+  - personas/service.py
+  canonical_owner: personas/service.py
+  disposition: DELETE_DUPLICATE
+  production_callers_before: 14
+  production_callers_after: 14
+  deletion_wave: wave-7
+- symbol: _persona_record_tenant_id
+  locations:
+  - main.py
+  - personas/service.py
+  canonical_owner: personas/service.py
+  disposition: DELETE_DUPLICATE
+  production_callers_before: 11
+  production_callers_after: 11
+  deletion_wave: wave-7
+- symbol: _pm12_add_recommendation_action
+  locations:
+  - main.py
+  - personas/service.py
+  canonical_owner: personas/service.py
+  disposition: DELETE_DUPLICATE
+  production_callers_before: 29
+  production_callers_after: 29
+  deletion_wave: wave-7
+- symbol: _pm12_current_quarter_id
+  locations:
+  - main.py
+  - personas/service.py
+  canonical_owner: personas/service.py
+  disposition: DELETE_DUPLICATE
+  production_callers_before: 5
+  production_callers_after: 5
+  deletion_wave: wave-7
+- symbol: _pm12_iso_z
+  locations:
+  - main.py
+  - personas/service.py
+  canonical_owner: personas/service.py
+  disposition: DELETE_DUPLICATE
+  production_callers_before: 10
+  production_callers_after: 10
+  deletion_wave: wave-7
+- symbol: _pm12_quarter_window
+  locations:
+  - main.py
+  - personas/service.py
+  canonical_owner: personas/service.py
+  disposition: DELETE_DUPLICATE
+  production_callers_before: 10
+  production_callers_after: 10
+  deletion_wave: wave-7
+- symbol: _pm12_quarterly_recommendation_item
+  locations:
+  - main.py
+  - personas/service.py
+  canonical_owner: personas/service.py
+  disposition: DELETE_DUPLICATE
+  production_callers_before: 6
+  production_callers_after: 6
+  deletion_wave: wave-7
+- symbol: _pm12_recommendation_action_ids
+  locations:
+  - main.py
+  - personas/service.py
+  canonical_owner: personas/service.py
+  disposition: DELETE_DUPLICATE
+  production_callers_before: 7
+  production_callers_after: 7
+  deletion_wave: wave-7
+- symbol: _pm12_resolve_quarterly_recommendation_submit_params
+  locations:
+  - main.py
+  - personas/service.py
+  canonical_owner: personas/service.py
+  disposition: DELETE_DUPLICATE
+  production_callers_before: 5
+  production_callers_after: 5
+  deletion_wave: wave-7
+- symbol: _ppl_alloc_009_paper_environment_guard
+  locations:
+  - main.py
+  - personas/service.py
+  canonical_owner: personas/service.py
+  disposition: DELETE_DUPLICATE
+  production_callers_before: 5
+  production_callers_after: 5
+  deletion_wave: wave-7
+- symbol: _project_affected_binding
+  locations:
+  - incidents/service.py
+  - personas/service.py
+  canonical_owner: personas/service.py
+  disposition: DELETE_DUPLICATE
+  production_callers_before: 4
+  production_callers_after: 4
+  deletion_wave: wave-7
+- symbol: _project_bff_incident_case
+  locations:
+  - main.py
+  - management_read_models/service.py
+  canonical_owner: management_read_models/service.py
+  disposition: DELETE_DUPLICATE
+  production_callers_before: 15
+  production_callers_after: 15
+  deletion_wave: wave-7
+- symbol: _project_final_command_response
+  locations:
+  - main.py
+  - personas/service.py
+  canonical_owner: personas/service.py
+  disposition: DELETE_DUPLICATE
+  production_callers_before: 14
+  production_callers_after: 14
+  deletion_wave: wave-7
+- symbol: _project_persona_dto
+  locations:
+  - main.py
+  - personas/service.py
+  canonical_owner: personas/service.py
+  disposition: DELETE_DUPLICATE
+  production_callers_before: 13
+  production_callers_after: 13
+  deletion_wave: wave-7
+- symbol: _project_persona_fleet_health
+  locations:
+  - main.py
+  - personas/service.py
+  canonical_owner: personas/service.py
+  disposition: DELETE_DUPLICATE
+  production_callers_before: 6
+  production_callers_after: 6
+  deletion_wave: wave-7
+- symbol: _project_persona_fleet_item
+  locations:
+  - main.py
+  - personas/service.py
+  canonical_owner: personas/service.py
+  disposition: DELETE_DUPLICATE
+  production_callers_before: 6
+  production_callers_after: 6
+  deletion_wave: wave-7
+- symbol: _project_runtime_state_latest_rollback
+  locations:
+  - main.py
+  - management_read_models/service.py
+  canonical_owner: management_read_models/service.py
+  disposition: DELETE_DUPLICATE
+  production_callers_before: 4
+  production_callers_after: 4
+  deletion_wave: wave-7
+- symbol: _project_runtime_state_monitoring_session
+  locations:
+  - main.py
+  - management_read_models/service.py
+  canonical_owner: management_read_models/service.py
+  disposition: DELETE_DUPLICATE
+  production_callers_before: 4
+  production_callers_after: 4
+  deletion_wave: wave-7
+- symbol: _projection_visible_to_user
+  locations:
+  - agora/performance/attribution.py
+  - agora/performance/service.py
+  canonical_owner: agora/performance/attribution.py
+  disposition: DELETE_DUPLICATE
+  production_callers_before: 4
+  production_callers_after: 4
+  deletion_wave: wave-7
+- symbol: _promotion_review_clean_id
+  locations:
+  - main.py
+  - personas/service.py
+  canonical_owner: personas/service.py
+  disposition: MOVE_SHARED_VALUE
+  production_callers_before: 29
+  production_callers_after: 29
+  deletion_wave: wave-1
+- symbol: _promotion_review_decision_projection
+  locations:
+  - main.py
+  - personas/service.py
+  canonical_owner: personas/service.py
+  disposition: DELETE_DUPLICATE
+  production_callers_before: 6
+  production_callers_after: 6
+  deletion_wave: wave-7
+- symbol: _promotion_review_quarter_from_id
+  locations:
+  - main.py
+  - personas/service.py
+  canonical_owner: personas/service.py
+  disposition: DELETE_DUPLICATE
+  production_callers_before: 9
+  production_callers_after: 9
+  deletion_wave: wave-7
+- symbol: _promotion_review_record_revision_id
+  locations:
+  - main.py
+  - personas/service.py
+  canonical_owner: personas/service.py
+  disposition: DELETE_DUPLICATE
+  production_callers_before: 15
+  production_callers_after: 15
+  deletion_wave: wave-7
+- symbol: _promotion_review_revision_id
+  locations:
+  - main.py
+  - personas/service.py
+  canonical_owner: personas/service.py
+  disposition: DELETE_DUPLICATE
+  production_callers_before: 14
+  production_callers_after: 14
+  deletion_wave: wave-7
+- symbol: _promotion_review_revision_recommendation_id
+  locations:
+  - main.py
+  - personas/service.py
+  canonical_owner: personas/service.py
+  disposition: DELETE_DUPLICATE
+  production_callers_before: 12
+  production_callers_after: 12
+  deletion_wave: wave-7
+- symbol: _promotion_review_stage_path
+  locations:
+  - main.py
+  - personas/service.py
+  canonical_owner: personas/service.py
+  disposition: DELETE_DUPLICATE
+  production_callers_before: 9
+  production_callers_after: 9
+  deletion_wave: wave-7
+- symbol: _promotion_review_submission_projection
+  locations:
+  - main.py
+  - personas/service.py
+  canonical_owner: personas/service.py
+  disposition: DELETE_DUPLICATE
+  production_callers_before: 7
+  production_callers_after: 7
+  deletion_wave: wave-7
+- symbol: _promotion_review_target_id
+  locations:
+  - main.py
+  - personas/service.py
+  canonical_owner: personas/service.py
+  disposition: DELETE_DUPLICATE
+  production_callers_before: 13
+  production_callers_after: 13
+  deletion_wave: wave-7
+- symbol: _provider_status_from_truth
+  locations:
+  - main.py
+  - personas/service.py
+  canonical_owner: personas/service.py
+  disposition: MOVE_SHARED_VALUE
+  production_callers_before: 4
+  production_callers_after: 4
+  deletion_wave: wave-1
+- symbol: _raise_cross_user_forbidden
+  locations:
+  - agora/dashboard/router.py
+  - agora/strategy_workshop/_common.py
+  canonical_owner: agora/dashboard/router.py
+  disposition: DELETE_DUPLICATE
+  production_callers_before: 18
+  production_callers_after: 18
+  deletion_wave: wave-7
+- symbol: _raise_if_promotion_review_direct_mutation_requested
+  locations:
+  - main.py
+  - personas/service.py
+  canonical_owner: personas/service.py
+  disposition: DELETE_DUPLICATE
+  production_callers_before: 7
+  production_callers_after: 7
+  deletion_wave: wave-7
+- symbol: _raise_if_read_surface_unavailable
+  locations:
+  - main.py
+  - personas/service.py
+  canonical_owner: personas/service.py
+  disposition: DELETE_DUPLICATE
+  production_callers_before: 23
+  production_callers_after: 23
+  deletion_wave: wave-7
+- symbol: _raise_scope_error
+  locations:
+  - agora/router.py
+  - agora/servant/router.py
+  canonical_owner: agora/router.py
+  disposition: MOVE_SHARED_VALUE
+  production_callers_before: 6
+  production_callers_after: 6
+  deletion_wave: wave-1
+- symbol: _read_store_fixture_records
+  locations:
+  - main.py
+  - personas/service.py
+  canonical_owner: personas/service.py
+  disposition: DELETE_DUPLICATE
+  production_callers_before: 7
+  production_callers_after: 7
+  deletion_wave: wave-7
+- symbol: _read_surface_meta
+  locations:
+  - main.py
+  - personas/service.py
+  canonical_owner: personas/service.py
+  disposition: DELETE_DUPLICATE
+  production_callers_before: 45
+  production_callers_after: 45
+  deletion_wave: wave-7
+- symbol: _read_surface_state
+  locations:
+  - main.py
+  - personas/service.py
+  canonical_owner: personas/service.py
+  disposition: DELETE_DUPLICATE
+  production_callers_before: 7
+  production_callers_after: 7
+  deletion_wave: wave-7
+- symbol: _reconcile_persona_provisioning_compensation
+  locations:
+  - main.py
+  - personas/service.py
+  canonical_owner: personas/service.py
+  disposition: DELETE_DUPLICATE
+  production_callers_before: 9
+  production_callers_after: 9
+  deletion_wave: wave-7
+- symbol: _register_persona_cron_required
+  locations:
+  - main.py
+  - personas/service.py
+  canonical_owner: personas/service.py
+  disposition: DELETE_DUPLICATE
+  production_callers_before: 8
+  production_callers_after: 8
+  deletion_wave: wave-7
+- symbol: _reject_body_idempotency_key
+  locations:
+  - main.py
+  - personas/service.py
+  canonical_owner: personas/service.py
+  disposition: DELETE_DUPLICATE
+  production_callers_before: 36
+  production_callers_after: 36
+  deletion_wave: wave-7
+- symbol: _remove_persona_cron_required
+  locations:
+  - main.py
+  - personas/service.py
+  canonical_owner: personas/service.py
+  disposition: DELETE_DUPLICATE
+  production_callers_before: 9
+  production_callers_after: 9
+  deletion_wave: wave-7
+- symbol: _request_dry_run_requested
+  locations:
+  - main.py
+  - personas/service.py
+  canonical_owner: personas/service.py
+  disposition: DELETE_DUPLICATE
+  production_callers_before: 15
+  production_callers_after: 15
+  deletion_wave: wave-7
+- symbol: _require_operator_role
+  locations:
+  - main.py
+  - personas/service.py
+  canonical_owner: personas/service.py
+  disposition: DELETE_DUPLICATE
+  production_callers_before: 41
+  production_callers_after: 41
+  deletion_wave: wave-7
+- symbol: _require_read_role
+  locations:
+  - main.py
+  - personas/service.py
+  canonical_owner: personas/service.py
+  disposition: DELETE_DUPLICATE
+  production_callers_before: 136
+  production_callers_after: 136
+  deletion_wave: wave-7
+- symbol: _resolve_final_idempotency_key
+  locations:
+  - main.py
+  - personas/service.py
+  canonical_owner: personas/service.py
+  disposition: DELETE_DUPLICATE
+  production_callers_before: 39
+  production_callers_after: 39
+  deletion_wave: wave-7
+- symbol: _resolve_param
+  locations:
+  - main.py
+  - personas/service.py
+  canonical_owner: personas/service.py
+  disposition: DELETE_DUPLICATE
+  production_callers_before: 49
+  production_callers_after: 49
+  deletion_wave: wave-7
+- symbol: _routed_strategies_for_persona
+  locations:
+  - main.py
+  - personas/service.py
+  canonical_owner: personas/service.py
+  disposition: DELETE_DUPLICATE
+  production_callers_before: 13
+  production_callers_after: 13
+  deletion_wave: wave-7
+- symbol: _runtime_state_monitoring_health_check
+  locations:
+  - main.py
+  - management_read_models/service.py
+  canonical_owner: management_read_models/service.py
+  disposition: DELETE_DUPLICATE
+  production_callers_before: 4
+  production_callers_after: 4
+  deletion_wave: wave-7
+- symbol: _runtime_state_monitoring_terminal_reason
+  locations:
+  - main.py
+  - management_read_models/service.py
+  canonical_owner: management_read_models/service.py
+  disposition: DELETE_DUPLICATE
+  production_callers_before: 6
+  production_callers_after: 6
+  deletion_wave: wave-7
+- symbol: _runtime_state_row_health_check
+  locations:
+  - main.py
+  - management_read_models/service.py
+  canonical_owner: management_read_models/service.py
+  disposition: DELETE_DUPLICATE
+  production_callers_before: 16
+  production_callers_after: 16
+  deletion_wave: wave-7
+- symbol: _safe_json
+  locations:
+  - source_management_client.py
+  - source_search_ops_client.py
+  canonical_owner: source_management_client.py
+  disposition: DELETE_DUPLICATE
+  production_callers_before: 11
+  production_callers_after: 11
+  deletion_wave: wave-7
+- symbol: _select_source_truth
+  locations:
+  - main.py
+  - personas/service.py
+  canonical_owner: personas/service.py
+  disposition: DELETE_DUPLICATE
+  production_callers_before: 6
+  production_callers_after: 6
+  deletion_wave: wave-7
+- symbol: _sem_command_response
+  locations:
+  - main.py
+  - personas/service.py
+  canonical_owner: personas/service.py
+  disposition: DELETE_DUPLICATE
+  production_callers_before: 8
+  production_callers_after: 8
+  deletion_wave: wave-7
+- symbol: _sem_session_id
+  locations:
+  - main.py
+  - personas/service.py
+  canonical_owner: personas/service.py
+  disposition: DELETE_DUPLICATE
+  production_callers_before: 4
+  production_callers_after: 4
+  deletion_wave: wave-7
+- symbol: _snapshot_meta
+  locations:
+  - main.py
+  - personas/service.py
+  canonical_owner: personas/service.py
+  disposition: DELETE_DUPLICATE
+  production_callers_before: 66
+  production_callers_after: 66
+  deletion_wave: wave-7
+- symbol: _sort_records_latest_first
+  locations:
+  - main.py
+  - personas/service.py
+  canonical_owner: personas/service.py
+  disposition: DELETE_DUPLICATE
+  production_callers_before: 11
+  production_callers_after: 11
+  deletion_wave: wave-7
+- symbol: _source_failure_reason
+  locations:
+  - main.py
+  - personas/service.py
+  canonical_owner: personas/service.py
+  disposition: DELETE_DUPLICATE
+  production_callers_before: 4
+  production_callers_after: 4
+  deletion_wave: wave-7
+- symbol: _source_health_bindings_from_requirements
+  locations:
+  - main.py
+  - personas/service.py
+  canonical_owner: personas/service.py
+  disposition: DELETE_DUPLICATE
+  production_callers_before: 4
+  production_callers_after: 4
+  deletion_wave: wave-7
+- symbol: _source_ingest_truth_by_connector
+  locations:
+  - main.py
+  - personas/service.py
+  canonical_owner: personas/service.py
+  disposition: DELETE_DUPLICATE
+  production_callers_before: 5
+  production_callers_after: 5
+  deletion_wave: wave-7
+- symbol: _source_truth_projection
+  locations:
+  - main.py
+  - personas/service.py
+  canonical_owner: personas/service.py
+  disposition: DELETE_DUPLICATE
+  production_callers_before: 6
+  production_callers_after: 6
+  deletion_wave: wave-7
+- symbol: _split_claim_string
+  locations:
+  - main.py
+  - personas/service.py
+  canonical_owner: personas/service.py
+  disposition: MOVE_SHARED_VALUE
+  production_callers_before: 8
+  production_callers_after: 8
+  deletion_wave: wave-1
+- symbol: _split_csv_query
+  locations:
+  - main.py
+  - management_read_models/service.py
+  canonical_owner: management_read_models/service.py
+  disposition: DELETE_DUPLICATE
+  production_callers_before: 13
+  production_callers_after: 13
+  deletion_wave: wave-7
+- symbol: _stable_json_hash
+  locations:
+  - main.py
+  - personas/service.py
+  canonical_owner: personas/service.py
+  disposition: DELETE_DUPLICATE
+  production_callers_before: 42
+  production_callers_after: 42
+  deletion_wave: wave-7
+- symbol: _status_error_code
+  locations:
+  - main.py
+  - main.py
+  - personas/service.py
+  canonical_owner: personas/service.py
+  disposition: MOVE_SHARED_VALUE
+  production_callers_before: 11
+  production_callers_after: 11
+  deletion_wave: wave-1
+- symbol: _strategy_persona_action_command
+  locations:
+  - main.py
+  - personas/service.py
+  canonical_owner: personas/service.py
+  disposition: DELETE_DUPLICATE
+  production_callers_before: 6
+  production_callers_after: 6
+  deletion_wave: wave-7
+- symbol: _strategy_persona_idempotency_check
+  locations:
+  - main.py
+  - personas/service.py
+  canonical_owner: personas/service.py
+  disposition: DELETE_DUPLICATE
+  production_callers_before: 10
+  production_callers_after: 10
+  deletion_wave: wave-7
+- symbol: _stub_identity_capabilities
+  locations:
+  - main.py
+  - personas/service.py
+  canonical_owner: personas/service.py
+  disposition: DELETE_DUPLICATE
+  production_callers_before: 8
+  production_callers_after: 8
+  deletion_wave: wave-7
+- symbol: _submitted_promotion_review_record_from_command
+  locations:
+  - main.py
+  - personas/service.py
+  canonical_owner: personas/service.py
+  disposition: DELETE_DUPLICATE
+  production_callers_before: 5
+  production_callers_after: 5
+  deletion_wave: wave-7
+- symbol: _submitted_promotion_review_records
+  locations:
+  - main.py
+  - personas/service.py
+  canonical_owner: personas/service.py
+  disposition: DELETE_DUPLICATE
+  production_callers_before: 5
+  production_callers_after: 5
+  deletion_wave: wave-7
+- symbol: _surface_degradation_reason
+  locations:
+  - main.py
+  - personas/service.py
+  canonical_owner: personas/service.py
+  disposition: DELETE_DUPLICATE
+  production_callers_before: 9
+  production_callers_after: 9
+  deletion_wave: wave-7
+- symbol: _surface_status
+  locations:
+  - main.py
+  - personas/service.py
+  canonical_owner: personas/service.py
+  disposition: MOVE_SHARED_VALUE
+  production_callers_before: 10
+  production_callers_after: 10
+  deletion_wave: wave-1
+- symbol: _timeout_seconds
+  locations:
+  - openclaw_ops_client.py
+  - source_management_client.py
+  - source_search_ops_client.py
+  canonical_owner: openclaw_ops_client.py
+  disposition: DELETE_DUPLICATE
+  production_callers_before: 18
+  production_callers_after: 18
+  deletion_wave: wave-7
+- symbol: _timestamp_in_period
+  locations:
+  - agora/performance/attribution.py
+  - agora/performance/service.py
+  canonical_owner: agora/performance/attribution.py
+  disposition: DELETE_DUPLICATE
+  production_callers_before: 4
+  production_callers_after: 4
+  deletion_wave: wave-7
+- symbol: _trading_performance_delta
+  locations:
+  - main.py
+  - personas/service.py
+  canonical_owner: personas/service.py
+  disposition: DELETE_DUPLICATE
+  production_callers_before: 7
+  production_callers_after: 7
+  deletion_wave: wave-7
+- symbol: _truthy_header
+  locations:
+  - main.py
+  - personas/service.py
+  canonical_owner: personas/service.py
+  disposition: DELETE_DUPLICATE
+  production_callers_before: 7
+  production_callers_after: 7
+  deletion_wave: wave-7
+- symbol: _upgrade_all_green_data_source_state
+  locations:
+  - main.py
+  - personas/service.py
+  canonical_owner: personas/service.py
+  disposition: DELETE_DUPLICATE
+  production_callers_before: 4
+  production_callers_after: 4
+  deletion_wave: wave-7
+- symbol: _utc_now
+  locations:
+  - agora/interaction/worker.py
+  - auth/service.py
+  - core/app_factory.py
+  canonical_owner: agora/interaction/worker.py
+  disposition: DELETE_DUPLICATE
+  production_callers_before: 173
+  production_callers_after: 173
+  deletion_wave: wave-7
+- symbol: _utc_now
+  locations:
+  - agora/strategy_workshop/reconstruction.py
+  - agora/strategy_workshop/store.py
+  - assistant/transcript_store.py
+  - assistant_conversation_store.py
+  - command_executor.py
+  canonical_owner: agora/strategy_workshop/reconstruction.py
+  disposition: DELETE_DUPLICATE
+  production_callers_before: 173
+  production_callers_after: 173
+  deletion_wave: wave-7
+- symbol: _utc_now_iso
+  locations:
+  - agora/research/dispatcher.py
+  - agora/research/store.py
+  canonical_owner: agora/research/dispatcher.py
+  disposition: DELETE_DUPLICATE
+  production_callers_before: 10
+  production_callers_after: 10
+  deletion_wave: wave-7
+- symbol: _utc_now_rfc3339
+  locations:
+  - downstream_health_monitor.py
+  - management_read_models/router.py
+  - management_read_models/service.py
+  - personas/service.py
+  - ports/ooda_management.py
+  - ports/operations_consultation.py
+  - ports/persona_capital_runtime.py
+  - ports/research_knowledge_source.py
+  canonical_owner: personas/service.py
+  disposition: DELETE_DUPLICATE
+  production_callers_before: 49
+  production_callers_after: 49
+  deletion_wave: wave-7
+- symbol: _validate_quarterly_ranking_recommendation_submit
+  locations:
+  - main.py
+  - personas/service.py
+  canonical_owner: personas/service.py
+  disposition: DELETE_DUPLICATE
+  production_callers_before: 6
+  production_callers_after: 6
+  deletion_wave: wave-7
+- symbol: _with_structured_identity_capabilities
+  locations:
+  - main.py
+  - personas/service.py
+  canonical_owner: personas/service.py
+  disposition: DELETE_DUPLICATE
+  production_callers_before: 4
+  production_callers_after: 4
+  deletion_wave: wave-7
+- symbol: utc_now
+  locations:
+  - assistant/context_composer.py
+  - command_adapters/base.py
+  - models.py
+  - persona_provisioning.py
+  canonical_owner: assistant/context_composer.py
+  disposition: DELETE_DUPLICATE
+  production_callers_before: 840
+  production_callers_after: 840
+  deletion_wave: wave-7
+- symbol: utc_now_rfc3339
+  locations:
+  - control_loops/service.py
+  - governance/service.py
+  - integrations/service.py
+  canonical_owner: control_loops/service.py
+  disposition: DELETE_DUPLICATE
+  production_callers_before: 13
+  production_callers_after: 13
+  deletion_wave: wave-7
+- symbol: get_session
+  locations:
+  - management_ai_store.py:529
+  canonical_owner: management_ai_store.py
+  disposition: DELETE_DEAD
+  production_callers_before: 0
+  production_callers_after: 0
+  deletion_wave: wave-1
+- symbol: list_sessions
+  locations:
+  - management_ai_store.py:551
+  canonical_owner: management_ai_store.py
+  disposition: DELETE_DEAD
+  production_callers_before: 0
+  production_callers_after: 0
+  deletion_wave: wave-1
+- symbol: upsert_session
+  locations:
+  - management_ai_store.py:610
+  canonical_owner: management_ai_store.py
+  disposition: DELETE_DEAD
+  production_callers_before: 0
+  production_callers_after: 0
+  deletion_wave: wave-1
+- symbol: append_turn
+  locations:
+  - management_ai_store.py:770
+  canonical_owner: management_ai_store.py
+  disposition: DELETE_DEAD
+  production_callers_before: 0
+  production_callers_after: 0
+  deletion_wave: wave-1
+- symbol: list_turns
+  locations:
+  - management_ai_store.py:868
+  canonical_owner: management_ai_store.py
+  disposition: DELETE_DEAD
+  production_callers_before: 0
+  production_callers_after: 0
+  deletion_wave: wave-1
+- symbol: upsert_assistant_session
+  locations:
+  - management_ai_store.py:932
+  canonical_owner: management_ai_store.py
+  disposition: DELETE_DEAD
+  production_callers_before: 0
+  production_callers_after: 0
+  deletion_wave: wave-1
+- symbol: get_assistant_session
+  locations:
+  - management_ai_store.py:1011
+  canonical_owner: management_ai_store.py
+  disposition: DELETE_DEAD
+  production_callers_before: 0
+  production_callers_after: 0
+  deletion_wave: wave-1
+- symbol: find_attachment
+  locations:
+  - management_ai_store.py:1031
+  canonical_owner: management_ai_store.py
+  disposition: DELETE_DEAD
+  production_callers_before: 0
+  production_callers_after: 0
+  deletion_wave: wave-1
+- symbol: bff_deployment_action
+  locations:
+  - deployment/router.py:735
+  canonical_owner: deployment/router.py
+  disposition: DELETE_DEAD
+  production_callers_before: 0
+  production_callers_after: 0
+  deletion_wave: wave-1
+- symbol: bff_persona_action
+  locations:
+  - personas/router.py:3287
+  canonical_owner: personas/router.py
+  disposition: DELETE_DEAD
+  production_callers_before: 0
+  production_callers_after: 0
+  deletion_wave: wave-1
+- symbol: bff_deprecated_list_ranking_formulas
+  locations:
+  - management_read_models/ranking_router.py:444
+  canonical_owner: management_read_models/ranking_router.py
+  disposition: DELETE_DEAD
+  production_callers_before: 0
+  production_callers_after: 0
+  deletion_wave: wave-1
+- symbol: bff_deprecated_create_ranking_formula
+  locations:
+  - management_read_models/ranking_router.py:472
+  canonical_owner: management_read_models/ranking_router.py
+  disposition: DELETE_DEAD
+  production_callers_before: 0
+  production_callers_after: 0
+  deletion_wave: wave-1
+- symbol: bff_deprecated_get_ranking_formula
+  locations:
+  - management_read_models/ranking_router.py:512
+  canonical_owner: management_read_models/ranking_router.py
+  disposition: DELETE_DEAD
+  production_callers_before: 0
+  production_callers_after: 0
+  deletion_wave: wave-1
+- symbol: bff_deprecated_patch_ranking_formula
+  locations:
+  - management_read_models/ranking_router.py:544
+  canonical_owner: management_read_models/ranking_router.py
+  disposition: DELETE_DEAD
+  production_callers_before: 0
+  production_callers_after: 0
+  deletion_wave: wave-1
+- symbol: bff_deprecated_ranking_formula_action
+  locations:
+  - management_read_models/ranking_router.py:594
+  canonical_owner: management_read_models/ranking_router.py
+  disposition: DELETE_DEAD
+  production_callers_before: 0
+  production_callers_after: 0
+  deletion_wave: wave-1
+- symbol: bff_strategy_action
+  locations:
+  - strategies/router.py:706
+  canonical_owner: strategies/router.py
+  disposition: DELETE_DEAD
+  production_callers_before: 0
+  production_callers_after: 0
+  deletion_wave: wave-1
+- symbol: bff_runtime_action
+  locations:
+  - runtime/router.py:1178
+  canonical_owner: runtime/router.py
+  disposition: DELETE_DEAD
+  production_callers_before: 0
+  production_callers_after: 0
+  deletion_wave: wave-1

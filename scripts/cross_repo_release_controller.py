@@ -15,6 +15,7 @@ import hashlib
 import json
 import os
 import re
+import subprocess
 import sys
 import time
 import urllib.error
@@ -233,6 +234,9 @@ def verify_served_identity(
     expected_candidate: dict[str, Any],
     fe_base_url: str | None = None,
     fetch_fn: Callable[[str], dict[str, Any]] | None = None,
+    expected_fe_sha: str | None = None,
+    expected_bff_manifest_sha: str | None = None,
+    require_pair_id: bool = True,
 ) -> dict[str, Any]:
     fetcher = fetch_fn or fetch_url_json
     if not (bff_base_url.startswith("https://") or bff_base_url.startswith("http://")):
@@ -270,9 +274,10 @@ def verify_served_identity(
             fe_data.get("frontendSha") or fe_data.get("commit") or (fe_data.get("frontend") or {}).get("commitSha") or "",
             "served frontend commit SHA",
         )
-        if observed_fe_sha != expected_candidate["execute_plans_sha"]:
+        target_fe_sha = expected_fe_sha if expected_fe_sha is not None else expected_candidate["execute_plans_sha"]
+        if observed_fe_sha != target_fe_sha:
             raise ControllerError(
-                f"served identity mismatch fails closed: FE served {observed_fe_sha} != candidate {expected_candidate['execute_plans_sha']}"
+                f"served identity mismatch fails closed: FE served {observed_fe_sha} != candidate {target_fe_sha}"
             )
 
         manifest_bff_sha_raw = (
@@ -282,19 +287,23 @@ def verify_served_identity(
         )
         if manifest_bff_sha_raw:
             observed_manifest_bff_sha = exact_sha(manifest_bff_sha_raw, "served frontend manifest BFF commit SHA")
-            if observed_manifest_bff_sha != expected_candidate["pantheon_sha"]:
+            target_manifest_bff = expected_bff_manifest_sha if expected_bff_manifest_sha is not None else expected_candidate["pantheon_sha"]
+            if observed_manifest_bff_sha != target_manifest_bff:
                 raise ControllerError(
-                    f"served identity mismatch fails closed: FE manifest BFF {observed_manifest_bff_sha} != candidate {expected_candidate['pantheon_sha']}"
+                    f"served identity mismatch fails closed: FE manifest BFF {observed_manifest_bff_sha} != candidate {target_manifest_bff}"
                 )
 
         raw_pair_id = fe_data.get("pairId") or fe_data.get("pair_id") or ""
-        if not raw_pair_id:
-            raise ControllerError("served deployment manifest lacks pair ID")
-        observed_pair_id = exact_pair_id(raw_pair_id, "served pair ID")
-        if expected_candidate.get("pair_id") is not None and observed_pair_id != expected_candidate["pair_id"]:
-            raise ControllerError(
-                f"served identity mismatch fails closed: served pair ID {observed_pair_id} != candidate {expected_candidate['pair_id']}"
-            )
+        if require_pair_id:
+            if not raw_pair_id:
+                raise ControllerError("served deployment manifest lacks pair ID")
+            observed_pair_id = exact_pair_id(raw_pair_id, "served pair ID")
+            if expected_candidate.get("pair_id") is not None and observed_pair_id != expected_candidate["pair_id"]:
+                raise ControllerError(
+                    f"served identity mismatch fails closed: served pair ID {observed_pair_id} != candidate {expected_candidate['pair_id']}"
+                )
+        elif raw_pair_id:
+            observed_pair_id = exact_pair_id(raw_pair_id, "served pair ID")
 
     return {
         "status": "verified",
@@ -350,6 +359,212 @@ def restore_read_only_profile(
                     f"read-only restoration verification mismatch: served pair ID {pair_id} != candidate {restored['pair_id']}"
                 )
     return restored
+
+
+def validate_bootstrap_identity(
+    backend_sha: str,
+    frontend_sha: str,
+) -> tuple[str, str]:
+    """Validate that bootstrap predecessor backend and frontend SHAs are exact 40-character lowercase hex commits."""
+    norm_bff = exact_sha(backend_sha, "bootstrap predecessor backend SHA")
+    norm_fe = exact_sha(frontend_sha, "bootstrap predecessor frontend SHA")
+    return norm_bff, norm_fe
+
+
+def check_ancestor_commits(
+    backend_sha: str,
+    frontend_sha: str,
+    *,
+    backend_dev_ref: str = "refs/remotes/origin/dev",
+    frontend_dev_ref: str = "refs/remotes/origin/dev",
+    backend_git_dir: str | Path | None = None,
+    frontend_git_dir: str | Path | None = None,
+    git_checker: Callable[[str, str, str | Path | None], bool] | None = None,
+) -> None:
+    """Verify that bootstrap predecessor SHAs are ancestors of their protected dev branch tips."""
+    def _default_git_is_ancestor(commit: str, ref: str, git_dir: str | Path | None) -> bool:
+        cmd = ["git"]
+        if git_dir:
+            cmd.extend(["-C", str(git_dir)])
+        cmd.extend(["merge-base", "--is-ancestor", commit, ref])
+        res = subprocess.run(cmd, capture_output=True)
+        return res.returncode == 0
+
+    checker = git_checker or _default_git_is_ancestor
+    if not checker(backend_sha, backend_dev_ref, backend_git_dir):
+        raise ControllerError(
+            f"bootstrap predecessor backend commit {backend_sha} is not an ancestor of {backend_dev_ref}"
+        )
+    if not checker(frontend_sha, frontend_dev_ref, frontend_git_dir):
+        raise ControllerError(
+            f"bootstrap predecessor frontend commit {frontend_sha} is not an ancestor of {frontend_dev_ref}"
+        )
+
+
+def check_empty_host_prerequisite(
+    fe_base_url: str,
+    *,
+    fetch_fn: Callable[[str], dict[str, Any]] | None = None,
+) -> None:
+    """Admit only an explicit HTTP 404 as the empty-host sentinel.
+
+    Authentication failures, server errors, malformed JSON, TLS failures and
+    timeouts are not evidence that a host is empty and therefore fail closed.
+    """
+    fetcher = fetch_fn or fetch_url_json
+    fe_deployment_url = f"{fe_base_url.rstrip('/')}/deployment.json"
+    try:
+        fetcher(fe_deployment_url)
+    except urllib.error.HTTPError as exc:
+        if exc.code == 404:
+            return
+        raise ControllerError(
+            f"empty-host bootstrap prerequisite failed closed: deployment.json returned HTTP {exc.code}"
+        ) from exc
+    except Exception as exc:
+        raise ControllerError(
+            f"empty-host bootstrap prerequisite failed closed: deployment.json could not be verified: {exc}"
+        ) from exc
+    raise ControllerError(
+        "repeated bootstrap is rejected: host already serves deployment.json"
+    )
+
+
+def verify_bootstrap_served_identity(
+    *,
+    bff_base_url: str,
+    fe_base_url: str,
+    expected_backend_sha: str,
+    expected_frontend_sha: str,
+    fetch_fn: Callable[[str], dict[str, Any]] | None = None,
+) -> dict[str, Any]:
+    """Verify that the bootstrapped predecessor pair has exact served BFF and FE identity readback in strict live read-only mode."""
+    fetcher = fetch_fn or fetch_url_json
+    # 1. Verify BFF version
+    bff_version_url = f"{bff_base_url.rstrip('/')}/bff/version"
+    try:
+        bff_data = fetcher(bff_version_url)
+    except Exception as exc:
+        raise ControllerError(f"bootstrap served identity verification failed reaching BFF: {exc}") from exc
+
+    observed_bff_sha = exact_sha(
+        bff_data.get("source_commit_sha") or bff_data.get("commit") or "",
+        "served BFF commit SHA",
+    )
+    if observed_bff_sha != expected_backend_sha:
+        raise ControllerError(
+            f"bootstrap served identity mismatch fails closed: BFF served {observed_bff_sha} != expected {expected_backend_sha}"
+        )
+
+    # 2. Verify FE deployment.json
+    fe_deployment_url = f"{fe_base_url.rstrip('/')}/deployment.json"
+    try:
+        fe_data = fetcher(fe_deployment_url)
+    except Exception as exc:
+        raise ControllerError(f"bootstrap served identity verification failed reaching frontend: {exc}") from exc
+
+    observed_fe_sha = exact_sha(
+        fe_data.get("frontendSha") or fe_data.get("commit") or (fe_data.get("frontend") or {}).get("commitSha") or "",
+        "served frontend commit SHA",
+    )
+    if observed_fe_sha != expected_frontend_sha:
+        raise ControllerError(
+            f"bootstrap served identity mismatch fails closed: FE served {observed_fe_sha} != expected {expected_frontend_sha}"
+        )
+
+    manifest_bff_sha_raw = (
+        fe_data.get("bffCommit")
+        or fe_data.get("bffSourceCommitSha")
+        or (fe_data.get("bff") or {}).get("sourceCommitSha")
+    )
+    if manifest_bff_sha_raw:
+        observed_manifest_bff_sha = exact_sha(manifest_bff_sha_raw, "served frontend manifest BFF commit SHA")
+        if observed_manifest_bff_sha != expected_backend_sha:
+            raise ControllerError(
+                f"bootstrap served identity mismatch fails closed: FE manifest BFF {observed_manifest_bff_sha} != expected {expected_backend_sha}"
+            )
+
+    # Must be read-only profile
+    profile = fe_data.get("profile") or fe_data.get("deploymentProfile")
+    if profile != "read-only":
+        raise ControllerError(
+            f"bootstrap served identity must be in read-only profile, got {profile!r}"
+        )
+
+    # Must be strict live read-only buildMode if present
+    build_mode = fe_data.get("buildMode")
+    if isinstance(build_mode, dict):
+        if (
+            build_mode.get("VITE_BFF_MODE") != "live"
+            or build_mode.get("VITE_BFF_FALLBACK") != "strict"
+            or str(build_mode.get("VITE_BFF_REAL_WRITES", "")).lower() != "false"
+            or str(build_mode.get("VITE_BFF_ALLOW_DEV_STUB_WRITES", "")).lower() != "false"
+        ):
+            raise ControllerError("bootstrap frontend must be deployed in strict live read-only mode")
+
+    return {
+        "status": "verified",
+        "observed_bff_sha": observed_bff_sha,
+        "observed_fe_sha": observed_fe_sha,
+        "profile": "read-only",
+        "verified_at": utc_now(),
+        "manifest": fe_data,
+    }
+
+
+def admit_bootstrap_predecessor(
+    *,
+    backend_sha: str,
+    frontend_sha: str,
+    fe_base_url: str | None = None,
+    backend_dev_ref: str = "refs/remotes/origin/dev",
+    frontend_dev_ref: str = "refs/remotes/origin/dev",
+    backend_git_dir: str | Path | None = None,
+    frontend_git_dir: str | Path | None = None,
+    fetch_fn: Callable[[str], dict[str, Any]] | None = None,
+    git_checker: Callable[[str, str, str | Path | None], bool] | None = None,
+    compat_checker: Callable[[str, str], bool] | None = None,
+) -> dict[str, Any]:
+    """Execute governed one-time bootstrap admission for an empty dev host."""
+    # 1. Repeated bootstrap check: if host already has deployment.json, fail closed
+    if fe_base_url:
+        check_empty_host_prerequisite(fe_base_url, fetch_fn=fetch_fn)
+
+    # 2. Malformed identity check
+    norm_bff, norm_fe = validate_bootstrap_identity(backend_sha, frontend_sha)
+
+    # 3. Ancestor commits check
+    check_ancestor_commits(
+        norm_bff,
+        norm_fe,
+        backend_dev_ref=backend_dev_ref,
+        frontend_dev_ref=frontend_dev_ref,
+        backend_git_dir=backend_git_dir,
+        frontend_git_dir=frontend_git_dir,
+        git_checker=git_checker,
+    )
+
+    # 4. Compatibility check
+    if compat_checker and not compat_checker(norm_bff, norm_fe):
+        raise ControllerError(
+            f"bootstrap predecessor pair {norm_bff}+{norm_fe} failed compatibility admission"
+        )
+
+    # Generate bootstrap candidate record
+    candidate = create_candidate_record(
+        pantheon_sha=norm_bff,
+        execute_plans_sha=norm_fe,
+        profile="read-only",
+    )
+
+    return {
+        "schema_version": "pantheon.dev-release-bootstrap-admission.v1",
+        "bootstrap_admission_status": "admitted",
+        "predecessor_backend_sha": norm_bff,
+        "predecessor_frontend_sha": norm_fe,
+        "candidate": candidate,
+        "admitted_at": utc_now(),
+    }
 
 
 class ProofStateMachine:
@@ -588,6 +803,8 @@ def coordinate_release(
     candidate_profile: str = "read-only",
     candidate_out: str | Path | None = None,
     fe_base_url: str | None = None,
+    predecessor_fe_sha: str | None = None,
+    predecessor_bff_sha: str | None = None,
     fetch_fn: Callable[[str], dict[str, Any]] | None = None,
     sleep: Callable[[float], None] = time.sleep,
 ) -> dict[str, Any]:
@@ -600,6 +817,10 @@ def coordinate_release(
             f"frontend ref {frontend_ref} does not point to the exact frontend SHA"
         )
     backend_sha = exact_sha(backend_sha, "backend SHA")
+    if predecessor_fe_sha is not None:
+        predecessor_fe_sha = exact_sha(predecessor_fe_sha, "predecessor frontend SHA")
+    if predecessor_bff_sha is not None:
+        predecessor_bff_sha = exact_sha(predecessor_bff_sha, "predecessor backend SHA")
     release_candidate_id = exact_digest(
         release_candidate_id, "release candidate ID"
     )
@@ -649,8 +870,11 @@ def coordinate_release(
         pre_dispatch_verification = verify_served_identity(
             bff_base_url=bff_base_url,
             expected_candidate=candidate,
-            fe_base_url=None,  # Pre-dispatch: frontend is still on predecessor; do not assert new candidate yet
+            fe_base_url=fe_base_url if predecessor_fe_sha else None,
             fetch_fn=fetch_fn,
+            expected_fe_sha=predecessor_fe_sha,
+            expected_bff_manifest_sha=predecessor_bff_sha,
+            require_pair_id=False if predecessor_fe_sha else True,
         )
         state_machine.transition("IDENTITY_VERIFIED")
 
@@ -800,6 +1024,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--candidate-out", default=None)
     parser.add_argument("--pair-id", default=None)
     parser.add_argument("--candidate-profile", default="read-only")
+    parser.add_argument("--predecessor-fe-sha", default=None)
+    parser.add_argument("--predecessor-bff-sha", default=None)
     parser.add_argument("--api-url", default=os.environ.get("GITHUB_API_URL", "https://api.github.com"))
     parser.add_argument("--gate-timeout-seconds", type=int, default=10_800)
     parser.add_argument("--deploy-timeout-seconds", type=int, default=5_400)
@@ -831,6 +1057,8 @@ def main(argv: list[str] | None = None) -> int:
             backend_sha=args.backend_sha,
             bff_base_url=args.bff_base_url,
             fe_base_url=args.fe_base_url,
+            predecessor_fe_sha=args.predecessor_fe_sha,
+            predecessor_bff_sha=args.predecessor_bff_sha,
             release_candidate_id=args.release_candidate_id,
             compatibility_manifest_sha256=args.compatibility_manifest_sha256,
             controller_run_id=args.controller_run_id,
