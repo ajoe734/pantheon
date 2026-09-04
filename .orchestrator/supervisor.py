@@ -169,6 +169,7 @@ from watch_events import (
 # Supervisor Authority V2 modules.
 from rewrite import concurrency as rewrite_concurrency
 from rewrite import dispatch_admission as rewrite_dispatch_admission
+from rewrite import integration_receipt
 from rewrite import provider_health as rewrite_provider_health
 from rewrite import task_machine as rewrite_task_machine
 from rewrite import task_state_store as rewrite_task_state_store
@@ -12623,6 +12624,13 @@ def task_execution_dispatch_candidate(
         ),
     )
     if decision is None:
+        return None
+    if (
+        decision is rewrite_task_machine.DispatchReason.OWNED_FINALIZE
+        and not integration_receipt.integration_receipt_consumes_candidate(task)
+    ):
+        # Approval and cron integration are separate transactions. Closeout
+        # starts only after the canonical integrator records this exact landing.
         return None
     if (
         decision is rewrite_task_machine.DispatchReason.REVIEW_READY

@@ -54,6 +54,9 @@ RECEIPT_SOURCE = "canonical_auto_integrator"
 # re-evaluation, never a false match).
 _DEFAULT_REPOSITORY_ID = "pantheon"
 _DEFAULT_REPOSITORY_SLUG = "ajoe734/pantheon"
+_DEFAULT_REPOSITORY_ALIASES = frozenset(
+    {_DEFAULT_REPOSITORY_ID.casefold(), _DEFAULT_REPOSITORY_SLUG.casefold()}
+)
 _DEFAULT_TARGET_BRANCH = "dev"
 
 _OID_RE = re.compile(r"^[0-9a-f]{40}$")
@@ -242,7 +245,7 @@ def frozen_delivery_binding(task: Mapping[str, Any]) -> dict[str, Any] | None:
     if not isinstance(task, Mapping):
         return None
     repo_id = str(task.get("target_repo") or _DEFAULT_REPOSITORY_ID).strip() or _DEFAULT_REPOSITORY_ID
-    if repo_id != _DEFAULT_REPOSITORY_ID:
+    if repo_id.casefold() not in _DEFAULT_REPOSITORY_ALIASES:
         return None
     binding = task.get("review_binding")
     if not isinstance(binding, Mapping):
