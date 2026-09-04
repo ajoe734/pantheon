@@ -909,6 +909,26 @@ def coordinate_release(
         ))
 
         deploy_title = f"Deploy release candidate {release_candidate_id}"
+        deploy_inputs = {
+            "candidate_sha": frontend_sha,
+            "frontend_ref": frontend_ref,
+            "gate_run_id": gate_run_id,
+            "release_candidate_id": release_candidate_id,
+            "compatibility_manifest_sha256": compatibility_manifest_sha256,
+            "release_controller_run_id": controller_run_id,
+            "deployment_profile": "read-only",
+            "proof_window_ack": "false",
+            "emergency_override": "false",
+            "rollback_drill": "false",
+            "override_reason": "",
+        }
+        # Empty-host bootstrap is deliberately an explicit read-only exception:
+        # the parent deploy job owns the transaction while its normal
+        # coordinator job is not yet schedulable. Keep ordinary deployments'
+        # exact input contract unchanged.
+        if os.environ.get("PANTHEON_DEV_BOOTSTRAP_PREDECESSOR", "").strip().lower() == "true":
+            deploy_inputs["bootstrap_predecessor"] = "true"
+
         deploy = dispatch_and_wait(
             client,
             expected=ExpectedRun(
@@ -917,19 +937,7 @@ def coordinate_release(
                 head_sha=controller_sha,
                 head_branch=FRONTEND_BRANCH,
             ),
-            inputs={
-                "candidate_sha": frontend_sha,
-                "frontend_ref": frontend_ref,
-                "gate_run_id": gate_run_id,
-                "release_candidate_id": release_candidate_id,
-                "compatibility_manifest_sha256": compatibility_manifest_sha256,
-                "release_controller_run_id": controller_run_id,
-                "deployment_profile": "read-only",
-                "proof_window_ack": "false",
-                "emergency_override": "false",
-                "rollback_drill": "false",
-                "override_reason": "",
-            },
+            inputs=deploy_inputs,
             timeout_seconds=deploy_timeout_seconds,
             poll_seconds=poll_seconds,
             sleep=sleep,
