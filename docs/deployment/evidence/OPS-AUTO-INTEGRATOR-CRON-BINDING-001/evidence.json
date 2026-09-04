@@ -1,0 +1,63 @@
+{
+  "schema_version": "pantheon.ops-auto-integrator-cron-binding.v1",
+  "task": {
+    "id": "OPS-AUTO-INTEGRATOR-CRON-BINDING-001",
+    "title": "Rebind auto-integrator cron to promoted command runtime",
+    "owner": "Codex",
+    "reviewer": "Claude",
+    "base_branch": "dev",
+    "task_branch": "task/OPS-AUTO-INTEGRATOR-CRON-BINDING-001",
+    "review_decision": "ready_for_review",
+    "evidence_recorded_at": "2026-09-04T19:42:19Z"
+  },
+  "scope": {
+    "owned": [
+      "docs/deployment/evidence/OPS-AUTO-INTEGRATOR-CRON-BINDING-001/evidence.json"
+    ],
+    "verified_without_changes": [
+      "scripts/auto_integrator_install.py",
+      "scripts/sync-dev-root.sh",
+      "scripts/test_auto_integrator_install.py",
+      "scripts/test_sync_dev_root.py"
+    ],
+    "not_changing": [
+      "auto-integrator execute authority checks",
+      "supervisor promotion semantics",
+      "cron implementation or installer entry points"
+    ]
+  },
+  "verification": {
+    "base_sha": "3667ea3d33d2fdf44b395787e1c553301bb43bf3",
+    "test_command": ".venv-pantheon/bin/python3 -m pytest -q scripts/test_auto_integrator_install.py scripts/test_sync_dev_root.py",
+    "test_result": "12 passed in 8.65s",
+    "test_status": "pass",
+    "behavior_proved": [
+      "the existing single installer renders the tagged cron entry with explicit command runtime, status root, and live config",
+      "the no-op-current-runtime sync path invokes that installer for the exact current candidate",
+      "the replacement-promotion sync path invokes the same installer for the newly promoted candidate"
+    ]
+  },
+  "live_acceptance": {
+    "evidence_source": "canonical Human/Ops prerequisite recorded in the governed task row; command runtime and merged PR were independently read back where accessible",
+    "promoted_command_runtime_sha": "09dbbf6ed186995a60e0b49472a1135b551fd167",
+    "live_config": "/home/chloe_ong_dev_cctech_support_com/pantheon-ci-deploy/runtime/live-supervisor-mainroot-config.json",
+    "watchdog_supervisor_root_readback": "/home/chloe_ong_dev_cctech_support_com/pantheon-ci-deploy/command-runtimes/09dbbf6ed186995a60e0b49472a1135b551fd167",
+    "installer_exit_code": 0,
+    "tagged_crontab_entries": 1,
+    "cron_tick": {
+      "observed_at": "2026-09-04T19:40:00Z",
+      "candidates": 0,
+      "authority_binding_error": false
+    },
+    "merged_delivery": {
+      "pr": 5583,
+      "approved_head_sha": "e86d5e2ecf95554e83db86b3e4363cd954710390",
+      "merge_commit_sha": "3667ea3d33d2fdf44b395787e1c553301bb43bf3",
+      "merged_at": "2026-09-04T19:37:48Z",
+      "github_state": "MERGED"
+    },
+    "readback_limitations": [
+      "the background worker account could not read the live user's crontab directly; the one-entry assertion is retained as Human/Ops canonical evidence"
+    ]
+  }
+}
