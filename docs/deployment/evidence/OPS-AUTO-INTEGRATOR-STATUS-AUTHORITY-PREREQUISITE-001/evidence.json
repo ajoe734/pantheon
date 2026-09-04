@@ -52,10 +52,24 @@
       "failure_semantics": "malformed or failed request does not prevent a later request from being attempted"
     }
   },
+  "review_reopen_resolution": {
+    "previous_head": "54362b5c81d97d9af0b9556bf8e7b4107d990788",
+    "resolved_defect": "The supervisor reason allowlist now admits every literal reason produced directly, by repository preflight, or by final merge revalidation.",
+    "added_reasons": [
+      "dirty-repository-checkout",
+      "missing-repository-slug",
+      "missing-origin-remote",
+      "repository-origin-mismatch",
+      "canonical-state-refresh-failed",
+      "canonical-authority-lock-failed"
+    ],
+    "removed_unused_reason": "final-canonical-state-refresh-failed",
+    "regression_guard": "AST producer-to-consumer drift test extracts direct open_unblock_task literals, preflight_repository tuple reasons, and FinalMergeRevalidationError reasons and requires all of them in AUTO_INTEGRATOR_UNBLOCK_REASONS."
+  },
   "verification": {
     "focused_supervisor": {
       "command": "python3 .orchestrator/test_supervisor.py AutoIntegratorUnblockAuthorityTests",
-      "result": "5 passed"
+      "result": "6 passed"
     },
     "auto_integrator_suite": {
       "command": "python3 -m unittest scripts.git.test_auto_integrator",
@@ -63,7 +77,7 @@
     },
     "supervisor_suite": {
       "command": "python3 .orchestrator/test_supervisor.py",
-      "result": "229 passed; 1 pre-existing invocation-path error in unrelated ReviewDecisionIntentLeaseRecoveryTests import of scripts.ai_status"
+      "result": "233 passed; 1 pre-existing invocation-path error in unrelated ReviewDecisionIntentLeaseRecoveryTests import of scripts.ai_status"
     },
     "syntax": {
       "command": "python3 -m py_compile .orchestrator/supervisor.py scripts/git/auto_integrator.py",
