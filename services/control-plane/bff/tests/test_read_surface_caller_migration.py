@@ -19,17 +19,15 @@ import unittest
 from unittest.mock import MagicMock, patch
 
 BFF_DIR = Path(__file__).resolve().parent.parent
-if str(BFF_DIR) not in sys.path:
-    sys.path.insert(0, str(BFF_DIR))
 
 from fastapi.testclient import TestClient
 
-from ports import (
+from services.control_plane.bff.ports import (
     ReadSurfacePorts,
     create_read_surface_ports,
     create_in_memory_read_surface_ports,
 )
-from agora.interaction.persona_client import (
+from services.control_plane.bff.agora.interaction.persona_client import (
     PersonaReadPort,
     build_canonical_persona_client,
 )
@@ -395,7 +393,7 @@ class TestBffMainDecoupledStartup(unittest.TestCase):
     """Verifies that BFF main module imports and initializes cleanly with ReadSurfacePorts."""
 
     def test_main_module_read_store_is_read_surface_ports(self) -> None:
-        import main as bff_main
+        from services.control_plane.bff import main as bff_main
 
         self.assertIsInstance(
             bff_main.read_store,
@@ -404,7 +402,7 @@ class TestBffMainDecoupledStartup(unittest.TestCase):
         )
 
     def test_main_module_app_initialization(self) -> None:
-        import main as bff_main
+        from services.control_plane.bff import main as bff_main
 
         self.assertIsNotNone(bff_main.app)
         self.assertEqual(bff_main.app.title, "Pantheon Operator BFF")
@@ -605,7 +603,7 @@ class TestEndpointLevelRetainedCallers(unittest.TestCase):
     """Endpoint-level regressions proving main.py retained callers execute cleanly through ReadSurfacePorts."""
 
     def setUp(self) -> None:
-        import main as bff_main
+        from services.control_plane.bff import main as bff_main
 
         self.original_read_store = bff_main.read_store
         self.ports = create_in_memory_read_surface_ports(
@@ -686,7 +684,7 @@ class TestEndpointLevelRetainedCallers(unittest.TestCase):
         self.auth_headers = {"Authorization": "Bearer admin:admin"}
 
     def tearDown(self) -> None:
-        import main as bff_main
+        from services.control_plane.bff import main as bff_main
         bff_main.read_store = self.original_read_store
 
     def test_endpoint_list_committee_session_memos(self) -> None:
