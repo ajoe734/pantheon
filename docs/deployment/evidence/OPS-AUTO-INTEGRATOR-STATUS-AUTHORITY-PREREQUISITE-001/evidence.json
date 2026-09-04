@@ -38,12 +38,24 @@
       "allow-listed reason",
       "exact INTEGRATION-UNBLOCK namespace"
     ],
-    "retry_behavior": "content-addressed publisher and existing-task consumer checks are idempotent"
+    "retry_behavior": "content-addressed publisher and existing-task consumer checks are idempotent",
+    "consumer_isolation": {
+      "reason_authority": "exact finite string allowlist",
+      "max_requests_per_cycle": 32,
+      "transaction_scope": "one authoritative TaskStore transaction per request",
+      "terminal_receipts": [
+        "processed",
+        "rejected",
+        "error"
+      ],
+      "source_finalization": "move each consumed request to its outcome-specific durable archive",
+      "failure_semantics": "malformed or failed request does not prevent a later request from being attempted"
+    }
   },
   "verification": {
     "focused_supervisor": {
       "command": "python3 .orchestrator/test_supervisor.py AutoIntegratorUnblockAuthorityTests",
-      "result": "2 passed"
+      "result": "5 passed"
     },
     "auto_integrator_suite": {
       "command": "python3 -m unittest scripts.git.test_auto_integrator",
@@ -55,6 +67,10 @@
     },
     "syntax": {
       "command": "python3 -m py_compile .orchestrator/supervisor.py scripts/git/auto_integrator.py",
+      "result": "pass"
+    },
+    "diff_integrity": {
+      "command": "git diff --check",
       "result": "pass"
     }
   }

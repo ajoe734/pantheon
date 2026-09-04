@@ -2100,6 +2100,9 @@ class AutoIntegratorUnblockAuthorityTests(unittest.TestCase):
             {"pr": 45},
             {"head_sha": "c" * 40},
             {"reason": "arbitrary-mutation"},
+            {"reason": "review-gate-invented", "unblock_task_id": "INTEGRATION-UNBLOCK-ABC-001-REVIEW-GATE-INVENTED"},
+            {"reason": "merge-state-invented", "unblock_task_id": "INTEGRATION-UNBLOCK-ABC-001-MERGE-STATE-INVENTED"},
+            {"reason": "final-invented", "unblock_task_id": "INTEGRATION-UNBLOCK-ABC-001-FINAL-INVENTED"},
             {"unblock_task_id": "EVIL-001"},
             {"repository_slug": "attacker/repo"},
         )
