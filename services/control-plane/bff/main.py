@@ -22498,6 +22498,7 @@ app.include_router(
         deprecated_bff_path_response=_deprecated_bff_path_response,
         sem_command_response=_sem_command_response,
         stream_generic_events=stream_generic_events,
+        surface_degradation_reason=_surface_degradation_reason,
     )
 )
 from .command_adapters.router import (

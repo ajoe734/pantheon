@@ -2,15 +2,12 @@
 from __future__ import annotations
 
 import re
-import sys
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 
 BFF_ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(BFF_ROOT))
-
-from deployment.router import create_deployment_router
+from services.control_plane.bff.deployment.router import create_deployment_router
 
 
 def _page_slice(
@@ -50,6 +47,7 @@ def _build_router():
         deprecated_bff_path_response=lambda *_args, **_kwargs: None,
         sem_command_response=lambda *_args, **_kwargs: {},
         stream_generic_events=lambda *_args, **_kwargs: iter(()),
+        surface_degradation_reason=lambda *_args, **_kwargs: None,
     )
 
 
@@ -81,7 +79,7 @@ def test_deployment_router_owns_all_deployment_routes() -> None:
 
 def test_main_composes_deployment_router_without_inline_decorators() -> None:
     main_source = (BFF_ROOT / "main.py").read_text(encoding="utf-8")
-    assert "from deployment.router import create_deployment_router" in main_source
+    assert "from .deployment.router import create_deployment_router" in main_source
 
     extracted_paths = (
         r'"/api/v1/deployment-plans"',

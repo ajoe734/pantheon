@@ -66,6 +66,7 @@ def create_deployment_router(
     deprecated_bff_path_response: Callable[..., Any],
     sem_command_response: Callable[..., Any],
     stream_generic_events: Callable[..., Any],
+    surface_degradation_reason: Callable[..., Optional[str]],
 ) -> APIRouter:
     """Build the dedicated Deployment domain router with injected BFF ports."""
     router = APIRouter()
@@ -77,6 +78,7 @@ def create_deployment_router(
         aggregate_group_surface=aggregate_group_surface,
         split_csv_query=split_csv_query,
         snapshot_meta=snapshot_meta,
+        surface_degradation_reason=surface_degradation_reason,
     )
 
     _DEPLOYMENT_PLAN_CREATE_REQUIRED_FIELDS = ("binding_id", "artifact_id", "capital_pool_id")

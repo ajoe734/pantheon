@@ -56,6 +56,7 @@ class DeploymentService:
         aggregate_group_surface: Callable[..., Dict[str, Any]],
         split_csv_query: Callable[[Optional[str]], Optional[list]],
         snapshot_meta: Callable[[str], Dict[str, Any]],
+        surface_degradation_reason: Callable[..., Optional[str]],
     ) -> None:
         self._get_read_store = get_read_store
         self._bff_error = bff_error
@@ -64,6 +65,7 @@ class DeploymentService:
         self._aggregate_group_surface = aggregate_group_surface
         self._split_csv_query = split_csv_query
         self._snapshot_meta = snapshot_meta
+        self._surface_degradation_reason = surface_degradation_reason
 
     @property
     def read_store(self) -> Any:
@@ -150,8 +152,6 @@ class DeploymentService:
         return all(isinstance(allowed_actions.get(field), bool) for field in required_fields)
 
     def pkt001_degradation_meta(self, surfaces: Dict[str, Dict[str, Any]]) -> Dict[str, Any]:
-        from ..main import _surface_degradation_reason  # local import to avoid composition-root cycle
-
         reason_templates = {
             "deployment_plans": (
                 "Deployment plan list is degraded and may be stale.",
@@ -195,7 +195,7 @@ class DeploymentService:
             templates = reason_templates.get(surface_name)
             if not templates:
                 continue
-            reason = _surface_degradation_reason(
+            reason = self._surface_degradation_reason(
                 surface,
                 degraded_reason=templates[0],
                 unavailable_reason=templates[1],
