@@ -1,0 +1,61 @@
+{
+  "schema_version": "pantheon.review-evidence.v1",
+  "task_id": "SUP-BROKER-TASKSTORE-BINDING-001",
+  "title": "Bind leased worktree writes to authoritative task-state identity",
+  "owner": "Codex",
+  "reviewer": "Claude",
+  "target_repo": "pantheon",
+  "task_class": "development_tooling",
+  "scope": {
+    "owned": [
+      "Permission-broker runtime configuration binding for authoritative task state",
+      "Exact isolated-worktree lease permission regression coverage"
+    ],
+    "not_changing": [
+      "Supervisor lease issuance or task generation semantics",
+      "Configured workspace roots or general Edit/Write allowlisting",
+      "TaskStore journal format and status command mutation behavior"
+    ],
+    "composes_with": [
+      "Supervisor-issued PANTHEON_STATUS_ROOT, PANTHEON_TASK_STATE_EVENT_LOG, and PANTHEON_CANONICAL_TASK_STATE_IDENTITY_JSON"
+    ]
+  },
+  "acceptance": [
+    {
+      "criterion": "Validate the supervisor-issued canonical task-state identity before rebinding broker state",
+      "status": "passed",
+      "evidence": "load_broker_runtime_config requires authoritative mode, an absolute event journal, and an exact canonical identity before replacing mutable paths."
+    },
+    {
+      "criterion": "Permit only an active exact-generation isolated-worktree lease",
+      "status": "passed",
+      "evidence": "Existing stale-generation, expired-lease, mismatched-root, and parent-root negative tests remain green; the new child-process reproducer permits Write at only the exact leased root."
+    },
+    {
+      "criterion": "Prove promoted-runtime behavior without broad allowlisting",
+      "status": "passed",
+      "evidence": "An independent Python process loads permission_broker from the command-code root while rebinding projection and absolute journal to a separate coordination root, then evaluates the exact lease."
+    }
+  ],
+  "verification": {
+    "status": "passed",
+    "commands": [
+      "python3 .orchestrator/test_provider_permissions.py",
+      "python3 -m py_compile .orchestrator/permission_broker.py .orchestrator/test_provider_permissions.py",
+      "git diff --check"
+    ],
+    "results": [
+      "119 provider permission tests passed",
+      "permission broker and test module compiled",
+      "no whitespace errors"
+    ]
+  },
+  "review_handoff": {
+    "status": "ready_for_independent_review_after_commit",
+    "required_checks": [
+      "Confirm forged or incomplete canonical identity fails closed before path rebinding",
+      "Confirm the absolute authoritative event journal replaces the promoted runtime template path",
+      "Confirm lease generation, owner, expiry, and exact workspace checks remain unchanged"
+    ]
+  }
+}
