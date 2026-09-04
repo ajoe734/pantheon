@@ -3213,34 +3213,7 @@ def _try_register_persona_cron(persona_id: str) -> Optional[Dict[str, Any]]:
     persona creation is never blocked by gateway unavailability.
     """
     try:
-        if "persona_cron_registrar" not in sys.modules:
-            # persona_cron_registrar.py does bare `from models import utc_now`
-            # / `from workflows import WORKFLOW_CATALOG`. Both names collide
-            # with same-named, unrelated modules elsewhere on sys.path — this
-            # file's own top-level `from models import (...)` above already
-            # cached sys.modules["models"] as services/control-plane/bff's
-            # models.py before this function ever runs, and Python checks
-            # sys.modules by name before ever consulting sys.path, so bumping
-            # sys.path priority alone can't force a re-resolve. Evict the
-            # colliding names, import fresh (which re-populates them from
-            # services/control-plane/cron), then restore this module's own
-            # "models" binding so nothing else in this process breaks.
-            # persona_cron_registrar keeps direct references to what it
-            # imported, so swapping sys.modules back afterward is safe.
-            _saved_modules = {
-                name: sys.modules.pop(name)
-                for name in ("models", "workflows")
-                if name in sys.modules
-            }
-            sys.path.insert(0, _CRON_SERVICE_DIR)
-            try:
-                import persona_cron_registrar  # noqa: F401
-            finally:
-                sys.path.remove(_CRON_SERVICE_DIR)
-                for name in ("models", "workflows"):
-                    sys.modules.pop(name, None)
-                sys.modules.update(_saved_modules)
-        from persona_cron_registrar import PersonaCronRegistrar  # type: ignore[import]
+        from services.control_plane.cron.persona_cron_registrar import PersonaCronRegistrar
         registrar = PersonaCronRegistrar()
         result = registrar.register_for_persona(persona_id)
         return result.to_dict()
@@ -3270,21 +3243,7 @@ def _register_persona_cron_required(
     runtime_binding_id: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Register and authoritatively read back the required evaluation schedule."""
-    if "persona_cron_registrar" not in sys.modules:
-        saved_modules = {
-            name: sys.modules.pop(name)
-            for name in ("models", "workflows")
-            if name in sys.modules
-        }
-        sys.path.insert(0, _CRON_SERVICE_DIR)
-        try:
-            import persona_cron_registrar  # noqa: F401
-        finally:
-            sys.path.remove(_CRON_SERVICE_DIR)
-            for name in ("models", "workflows"):
-                sys.modules.pop(name, None)
-            sys.modules.update(saved_modules)
-    from persona_cron_registrar import PersonaCronRegistrar  # type: ignore[import]
+    from services.control_plane.cron.persona_cron_registrar import PersonaCronRegistrar
 
     registrar = PersonaCronRegistrar()
     result = registrar.register_for_persona(
@@ -3360,21 +3319,7 @@ def _register_persona_cron_required(
 # --- _remove_persona_cron_required ---
 def _remove_persona_cron_required(persona_id: str) -> Dict[str, Any]:
     """Remove first-evaluation owner rows and require authoritative absence."""
-    if "persona_cron_registrar" not in sys.modules:
-        saved_modules = {
-            name: sys.modules.pop(name)
-            for name in ("models", "workflows")
-            if name in sys.modules
-        }
-        sys.path.insert(0, _CRON_SERVICE_DIR)
-        try:
-            import persona_cron_registrar  # noqa: F401
-        finally:
-            sys.path.remove(_CRON_SERVICE_DIR)
-            for name in ("models", "workflows"):
-                sys.modules.pop(name, None)
-            sys.modules.update(saved_modules)
-    from persona_cron_registrar import PersonaCronRegistrar  # type: ignore[import]
+    from services.control_plane.cron.persona_cron_registrar import PersonaCronRegistrar
 
     result = PersonaCronRegistrar().remove_first_evaluation_registration(persona_id)
     if result.get("registered") is not False:

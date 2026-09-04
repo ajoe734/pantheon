@@ -6,10 +6,10 @@ import uuid
 from pathlib import Path
 from typing import Any, Callable, Mapping
 
-from models import OpenClawRuntimePin, WorkflowDefinition, WorkflowRunResult, utc_now
-from openclaw_client import OpenClawCronClient
-from schema_validation import validate_workflow_handoff
-from workflows import PERSONA_FIRST_EVALUATION_WORKFLOW_ID, get_workflow_definition
+from .models import OpenClawRuntimePin, WorkflowDefinition, WorkflowRunResult, utc_now
+from .openclaw_client import OpenClawCronClient
+from .schema_validation import validate_workflow_handoff
+from .workflows import PERSONA_FIRST_EVALUATION_WORKFLOW_ID, get_workflow_definition
 
 _GOVERNANCE_DIR = Path(__file__).resolve().parents[1] / "governance"
 if str(_GOVERNANCE_DIR) not in sys.path:

@@ -10,18 +10,16 @@ import hashlib
 import json
 import os
 import re
-import sys
 import urllib.error
 import urllib.request
 import uuid
 from collections.abc import Iterable
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from pathlib import Path
 from typing import Any
 
-from models import utc_now
-from workflows import (
+from .models import utc_now
+from .workflows import (
     PERSONA_FIRST_EVALUATION_WORKFLOW_ID,
     WORKFLOW_CATALOG,
     WorkflowDefinition,
@@ -80,16 +78,6 @@ class AdapterCronRuntime:
             )
         data = payload.get("data")
         return data if isinstance(data, dict) else {}
-
-
-def _repo_root() -> str:
-    return str(Path(__file__).resolve().parents[3])
-
-
-def _ensure_adapter_path() -> None:
-    root = _repo_root()
-    if root not in sys.path:
-        sys.path.insert(0, root)
 
 
 _MAX_JOB_NAME_LEN = 60
@@ -207,7 +195,6 @@ class PersonaCronRegistrar:
         if os.environ.get("OPENCLAW_PAPER_ADAPTER_ENABLED", "").lower() != "true":
             return None
         try:
-            _ensure_adapter_path()
             from integrations.openclaw.adapter import (  # type: ignore[import]
                 OpenClawDockerGatewayRuntime,
                 OpenClawGatewayConfig,
