@@ -9,8 +9,7 @@
   "scope": {
     "owned": [
       "Canonical review audit event chronology across active and rotated logs",
-      "Fail-closed chronology validation and focused merge-gate regressions",
-      "Auto-integrator chronology contract documentation"
+      "Fail-closed lineage validation and focused merge-gate regressions"
     ],
     "not_changing": [
       "Activity log rotation or archive naming",
@@ -26,15 +25,14 @@
     "root_cause": "Archive filename order was treated as event chronology even though rotation filenames are content hashes."
   },
   "implementation": {
-    "chronology_authority": "Parsed UTC event timestamps after source validation; archive filenames carry no temporal authority.",
+    "chronology_authority": ".orchestrator/common.py stream_logical_activity logical append order; archive filenames and event timestamps carry no independent ordering authority.",
     "fail_closed_conditions": [
-      "invalid task-event timestamp",
-      "timestamp regression within one source",
-      "overlapping non-empty source time ranges",
-      "conflicting payloads for one event_id",
-      "distinct task events at one timestamp"
+      "invalid rotation lineage or source identity",
+      "invalid JSON or event identity",
+      "unsupported legacy overlap",
+      "conflicting payloads for one event_id"
     ],
-    "consumer_unification": "Standalone canonical review checks and auto-integrator ReviewGate already call the same load_approval_record function; chronology is implemented only there."
+    "consumer_unification": "Standalone canonical review checks and auto-integrator ReviewGate call the same load_approval_record function, which delegates production audit replay to stream_logical_activity. Injected fixture events retain caller order."
   },
   "verification": {
     "status": "passed",
@@ -44,7 +42,7 @@
       "git diff --check"
     ],
     "results": [
-      "113 tests passed, including PR #5527 rotation-order reproduction and fail-closed chronology cases",
+      "110 tests passed, including a real rotation-lineage manifest reproduction of PR #5527 and caller-ordered timestamp-regression fixtures",
       "modified Python modules compiled",
       "no whitespace errors"
     ]
@@ -52,8 +50,8 @@
   "review_handoff": {
     "status": "ready_for_independent_review_after_commit",
     "required_checks": [
-      "Confirm content-hash filename order cannot supersede UTC event chronology",
-      "Confirm malformed or ambiguous multi-source histories fail closed",
+      "Confirm content-hash filename order cannot supersede rotation-lineage logical order",
+      "Confirm production history uses stream_logical_activity validation",
       "Confirm true post-approval assign, reopen, and do-not-merge revocations remain effective",
       "Confirm auto-integrator and standalone gate share the same loader"
     ]
