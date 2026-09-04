@@ -8,9 +8,13 @@ from __future__ import annotations
 
 import inspect
 from datetime import datetime, timezone
-from typing import Any, Callable, Mapping, Optional
+from typing import Any, Callable, Mapping, Optional, get_args, get_origin, get_type_hints
 
 from fastapi import APIRouter, Body, FastAPI, Header, HTTPException, Request
+from fastapi.params import Body as BodyParam
+from fastapi.params import Header as HeaderParam
+from fastapi.params import Path as PathParam
+from fastapi.params import Query as QueryParam
 from fastapi.routing import APIRoute
 
 from auth.router import create_auth_router
@@ -72,11 +76,115 @@ def _missing_handler(name: str) -> HTTPException:
     )
 
 
-async def _dispatch(handlers: Mapping[str, RouteHandler], name: str, request: Request) -> Any:
+_MISSING = object()
+
+
+def _coerce_request_value(value: Any, annotation: Any) -> Any:
+    """Apply the small set of scalar conversions FastAPI normally performs.
+
+    The assembled legacy handlers retain their FastAPI ``Header``/``Query``/
+    ``Body`` defaults.  Core-router wrappers receive a ``Request`` instead, so
+    this bridge resolves those defaults explicitly before invoking the handler.
+    """
+    if value is None or annotation is inspect.Parameter.empty:
+        return value
+    origin = get_origin(annotation)
+    if origin is not None:
+        args = [arg for arg in get_args(annotation) if arg is not type(None)]
+        if args:
+            return _coerce_request_value(value, args[0])
+        return value
+    try:
+        if annotation is bool and isinstance(value, str):
+            return value.strip().lower() in {"1", "true", "yes", "on"}
+        if annotation is int and not isinstance(value, int):
+            return int(value)
+        if annotation is float and not isinstance(value, float):
+            return float(value)
+    except (TypeError, ValueError):
+        return value
+    return value
+
+
+async def _dispatch(
+    handlers: Mapping[str, RouteHandler],
+    name: str,
+    request: Request,
+    **path_params: Any,
+) -> Any:
     handler = handlers.get(name)
     if handler is None:
         raise _missing_handler(name)
-    value = handler(request)
+
+    # The core router is intentionally a thin compatibility layer around the
+    # existing handlers in ``main.py``.  Those handlers were originally
+    # FastAPI endpoints, so their arguments are declared with dependency
+    # markers (Header/Query/Body) rather than a Request parameter.  Calling
+    # them positionally with the wrapper Request silently turns the Request
+    # into the JSON payload (and made zero-argument handlers raise TypeError).
+    # Resolve the declared inputs here so both old and newly assembled handlers
+    # receive the same values they would get from FastAPI's injector.
+    try:
+        signature = inspect.signature(handler)
+    except (TypeError, ValueError):
+        value = handler(request)
+    else:
+        try:
+            type_hints = get_type_hints(handler)
+        except (NameError, TypeError, ValueError):
+            type_hints = {}
+        body: Any = _MISSING
+        kwargs: dict[str, Any] = {}
+        for parameter in signature.parameters.values():
+            name_ = parameter.name
+            annotation = type_hints.get(name_, parameter.annotation)
+            default = parameter.default
+
+            if name_ in path_params:
+                kwargs[name_] = _coerce_request_value(path_params[name_], annotation)
+                continue
+            if name_ == "request" or annotation is Request:
+                kwargs[name_] = request
+                continue
+
+            if isinstance(default, BodyParam):
+                if body is _MISSING:
+                    try:
+                        body = await request.json()
+                    except Exception:
+                        body = _MISSING
+                if body is not _MISSING:
+                    kwargs[name_] = body
+                elif getattr(default, "default_factory", None) is not None:
+                    kwargs[name_] = default.default_factory()
+                elif getattr(default, "default", _MISSING) is not _MISSING:
+                    kwargs[name_] = default.default
+                continue
+
+            if isinstance(default, HeaderParam):
+                alias = getattr(default, "alias", None) or name_.replace("_", "-")
+                raw = request.headers.get(alias)
+                if raw is None:
+                    raw = getattr(default, "default", None)
+                kwargs[name_] = _coerce_request_value(raw, annotation)
+                continue
+
+            if isinstance(default, (QueryParam, PathParam)):
+                alias = getattr(default, "alias", None) or name_
+                raw = request.query_params.get(alias)
+                if raw is not None:
+                    kwargs[name_] = _coerce_request_value(raw, annotation)
+                elif getattr(default, "default", _MISSING) is not _MISSING:
+                    kwargs[name_] = default.default
+                continue
+
+            # Plain optional arguments on the legacy endpoints are query
+            # parameters.  Leave absent values to the function default.
+            raw = request.query_params.get(name_)
+            if raw is not None:
+                kwargs[name_] = _coerce_request_value(raw, annotation)
+
+        value = handler(**kwargs)
     if inspect.isawaitable(value):
         return await value
     return value
@@ -160,11 +268,11 @@ def create_assistant_management_router(handlers: Mapping[str, RouteHandler]) -> 
 
     @router.get("/bff/management/ai/conversations/{session_id}")
     async def bff_management_ai_conversation(session_id: str, request: Request):
-        return await _dispatch(handlers, "bff_management_ai_conversation", request)
+        return await _dispatch(handlers, "bff_management_ai_conversation", request, session_id=session_id)
 
     @router.get("/bff/management/ai/attachments/{attachment_id}")
     async def bff_management_ai_attachment(attachment_id: str, request: Request):
-        return await _dispatch(handlers, "bff_management_ai_attachment", request)
+        return await _dispatch(handlers, "bff_management_ai_attachment", request, attachment_id=attachment_id)
 
     return router
 
