@@ -1,0 +1,65 @@
+{
+  "schema_version": "pantheon.review-evidence.v1",
+  "task_id": "CRON-GOVERNANCE-IMPORT-001",
+  "title": "Normalize cron governance imports without path surgery",
+  "owner": "Codex",
+  "reviewer": "Antigravity",
+  "target_repo": "pantheon",
+  "task_class": "functional",
+  "scope": {
+    "owned": [
+      "services/control-plane/cron/service.py",
+      "services/control-plane/cron/test_service.py",
+      "services/control-plane/governance/deployment_saga.py"
+    ],
+    "not_changing": [
+      "governance contracts or deployment behavior",
+      "parallel package trees, import facades, or fallback aliases",
+      "cron caller APIs"
+    ],
+    "composes_with": [
+      "BFF-PACKAGE-001 canonical services.control_plane package root"
+    ]
+  },
+  "acceptance": [
+    {
+      "criterion": "Remove cron service sys.path mutation and use the canonical governance package root",
+      "status": "passed",
+      "evidence": "service.py imports deployment_plan, deployment_saga, and pool_runtime_compat through services.control_plane.governance; the old Path/sys.path mutation and top-level imports are absent."
+    },
+    {
+      "criterion": "Keep governance module identity canonical without a facade or fallback import",
+      "status": "passed",
+      "evidence": "deployment_saga imports deployment_plan by its canonical absolute package name, and the clean-path test asserts all three exact module names."
+    },
+    {
+      "criterion": "Prove CronOrchestrator import and deployment execution under clean PYTHONPATH=.",
+      "status": "passed",
+      "evidence": "test_service.py launches an isolated child interpreter with PYTHONPATH=., asserts sys.path is unchanged by import, and executes pantheon.deploy through plan and saga creation."
+    }
+  ],
+  "verification": {
+    "status": "passed",
+    "commands": [
+      "PYTHONPATH=. python3 -m unittest services.control_plane.cron.test_service -v",
+      "PYTHONPATH=services/control-plane/governance:. python3 -m unittest discover -s services/control-plane/governance -p 'test_deployment_saga.py' -v",
+      "PYTHONPATH=services/control-plane/governance:. python3 -m unittest discover -s services/control-plane/governance -p 'test_deployment_plan.py' -v",
+      "PYTHONPATH=. python3 -m compileall -q services/control-plane/cron services/control-plane/governance services/control_plane",
+      "git diff --check"
+    ],
+    "results": [
+      "clean-path cron import/deploy regression: 1 passed",
+      "deployment saga regression: 9 passed",
+      "deployment plan regression: 33 passed"
+    ]
+  },
+  "review_handoff": {
+    "status": "ready_for_independent_review_after_commit",
+    "required_checks": [
+      "confirm service.py contains no sys.path mutation or fallback import",
+      "rerun the clean PYTHONPATH=. child-process regression",
+      "confirm deployment workflow reaches awaiting_binding saga state",
+      "confirm no facade or parallel governance package was introduced"
+    ]
+  }
+}

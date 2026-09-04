@@ -21,7 +21,12 @@ from enum import Enum
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Mapping, Optional
 
-from deployment_plan import RollbackActionType, RollbackRef, RuntimeAction, utc_now
+from services.control_plane.governance.deployment_plan import (
+    RollbackActionType,
+    RollbackRef,
+    RuntimeAction,
+    utc_now,
+)
 
 
 class DeploymentSagaError(ValueError):

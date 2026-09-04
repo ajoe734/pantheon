@@ -1,21 +1,10 @@
 from __future__ import annotations
 
 import copy
-import sys
 import uuid
-from pathlib import Path
 from typing import Any, Callable, Mapping
 
-from .models import OpenClawRuntimePin, WorkflowDefinition, WorkflowRunResult, utc_now
-from .openclaw_client import OpenClawCronClient
-from .schema_validation import validate_workflow_handoff
-from .workflows import PERSONA_FIRST_EVALUATION_WORKFLOW_ID, get_workflow_definition
-
-_GOVERNANCE_DIR = Path(__file__).resolve().parents[1] / "governance"
-if str(_GOVERNANCE_DIR) not in sys.path:
-    sys.path.insert(0, str(_GOVERNANCE_DIR))
-
-from deployment_plan import (  # noqa: E402
+from services.control_plane.governance.deployment_plan import (
     DeploymentPlanError,
     DeploymentScale,
     DeploymentStage,
@@ -24,8 +13,13 @@ from deployment_plan import (  # noqa: E402
     ScheduleWindow,
     StagePlanner,
 )
-from deployment_saga import DeploymentSagaOrchestrator  # noqa: E402
-from pool_runtime_compat import enforce_compatibility  # noqa: E402
+from services.control_plane.governance.deployment_saga import DeploymentSagaOrchestrator
+from services.control_plane.governance.pool_runtime_compat import enforce_compatibility
+
+from .models import OpenClawRuntimePin, WorkflowDefinition, WorkflowRunResult, utc_now
+from .openclaw_client import OpenClawCronClient
+from .schema_validation import validate_workflow_handoff
+from .workflows import PERSONA_FIRST_EVALUATION_WORKFLOW_ID, get_workflow_definition
 
 PromotionError = DeploymentPlanError
 
