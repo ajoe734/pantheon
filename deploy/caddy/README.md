@@ -2,9 +2,8 @@
 
 Each non-prod ingress VM runs **Caddy** as public HTTPS termination. Dev serves
 both the operator-bff reverse proxy and the Pantheon-owned static frontend.
-Caddy terminates TLS using Let's Encrypt certs issued automatically for
-[`sslip.io`](https://sslip.io) hostnames that encode the VM's static IP (e.g.
-`pantheon-lupin-dev-bff.35.201.204.12.sslip.io`).
+Caddy terminates TLS using Let's Encrypt certificates for the Pantheon-owned
+dev DNS names `api.dev.mvl-cap.tw` and `app.dev.mvl-cap.tw`.
 
 ## Why this directory exists
 
@@ -30,12 +29,12 @@ artifact so the breakage stops recurring on every rebuild/cutover.
 ## Usage
 
 ```bash
-# dev
+# dev (Pantheon-owned DNS)
 deploy/caddy/sync-caddy.sh \
-  lupin@35.201.204.12 \
-  pantheon-lupin-dev-bff.35.201.204.12.sslip.io \
+  chloe_ong_dev_cctech_support_com@34.81.52.222 \
+  api.dev.mvl-cap.tw \
   deploy/caddy/dev.Caddyfile.tmpl \
-  pantheon-lupin-dev-fe.35.201.204.12.sslip.io \
+  app.dev.mvl-cap.tw \
   /var/www/pantheon-dev-fe
 
 # staging-live

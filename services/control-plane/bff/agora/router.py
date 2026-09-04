@@ -115,6 +115,7 @@ def create_agora_router(
     utc_now: Callable[[], str],
     get_read_store: Callable[[], Any],
     sync_servant_agent: Callable[[Dict[str, Any]], Dict[str, Any]],
+    get_audit_store: Optional[Callable[[], Any]] = None,
     canonical_context_ref_resolver: Optional[Callable[..., Any]] = None,
     get_trade_journey_store: Callable[[], Any] = lambda: None,
     get_persona_write_owner: Optional[Callable[[], Any]] = None,
@@ -159,6 +160,7 @@ def create_agora_router(
 
     agora_service = service or AgoraService(
         get_read_store=get_read_store,
+        get_audit_store=get_audit_store,
         get_command_store=get_command_store,
         idempotency_store=idempotency_store,
         sse_buffers=sse_buffers,
