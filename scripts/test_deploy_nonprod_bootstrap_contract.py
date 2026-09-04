@@ -118,8 +118,9 @@ def test_workflow_rollback_baseline_admits_predecessor_via_agora_compat_manifest
 
     assert "bootstrap-predecessor-compatibility-manifest.json" in baseline_step
     assert "bootstrap-predecessor-candidate-ledger.json" in baseline_step
-    assert "python3 scripts/agora_compat_manifest.py write" in baseline_step
-    assert "python3 scripts/agora_compat_manifest.py deployment-gate" in baseline_step
+    assert "python3 .target/scripts/agora_compat_manifest.py write" in baseline_step
+    assert "python3 .target/scripts/agora_compat_manifest.py deployment-gate" in baseline_step
+    assert "python3 scripts/agora_compat_manifest.py" not in baseline_step
     assert "bootstrap predecessor pair is not compatible" in baseline_step
     assert 'baseline_source="bootstrap_predecessor_pair"' in baseline_step
 
