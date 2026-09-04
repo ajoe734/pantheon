@@ -18,6 +18,7 @@ import pytest
 ROOT = Path(__file__).resolve().parent
 SERVICES_DIR = ROOT / "services"
 SCRIPTS_DIR = ROOT / "scripts"
+TESTS_DIR = ROOT / "tests"
 # A worker shell and a task worktree inherit the provisioned live task-state
 # journal binding. A test run must never reach it: an inherited event log turns
 # any fixture board into a real authoritative commit.
@@ -56,7 +57,11 @@ def _is_transient_local_module(name: str, module: ModuleType) -> bool:
     if path is None:
         return False
 
-    return _is_relative_to(path, SERVICES_DIR) or _is_relative_to(path, SCRIPTS_DIR)
+    return (
+        _is_relative_to(path, SERVICES_DIR)
+        or _is_relative_to(path, SCRIPTS_DIR)
+        or _is_relative_to(path, TESTS_DIR)
+    )
 
 
 def _clear_transient_local_modules() -> None:
@@ -79,7 +84,11 @@ def _remove_service_import_roots() -> None:
         if path == ROOT:
             retained.append(entry)
             continue
-        if _is_relative_to(path, SERVICES_DIR) or _is_relative_to(path, SCRIPTS_DIR):
+        if (
+            _is_relative_to(path, SERVICES_DIR)
+            or _is_relative_to(path, SCRIPTS_DIR)
+            or _is_relative_to(path, TESTS_DIR)
+        ):
             continue
         retained.append(entry)
     sys.path[:] = retained
@@ -89,14 +98,21 @@ def _import_roots_for(module_path: Path) -> list[Path]:
     path = module_path.resolve()
     roots: list[Path] = []
 
+    # 1. Test directory first
+    test_dir = path.parent
+    roots.append(test_dir)
+
+    # 2. Repository root before service-local root
+    roots.append(ROOT)
+
+    # 3. Service-local root
     if _is_relative_to(path, SCRIPTS_DIR):
         roots.append(SCRIPTS_DIR)
     elif _is_relative_to(path, SERVICES_DIR):
-        roots.append(path.parent)
         if path.parent.name == "tests":
             roots.append(path.parent.parent)
-
-    roots.append(ROOT)
+        else:
+            roots.append(path.parent)
 
     unique_roots: list[Path] = []
     seen: set[str] = set()

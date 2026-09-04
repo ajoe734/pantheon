@@ -13,11 +13,9 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 BFF_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
-if BFF_DIR not in sys.path:
-    sys.path.insert(0, BFF_DIR)
 
-from integrations.router import create_integrations_router, router
-from integrations.service import IntegrationsService, default_bff_error
+from services.control_plane.bff.integrations.router import create_integrations_router, router
+from services.control_plane.bff.integrations.service import IntegrationsService, default_bff_error
 
 TASK_REVIEW_MANIFEST = {
     "task_id": "OPGAP-BE-TOOLS-INTEGRATIONS-V2-20260830",
