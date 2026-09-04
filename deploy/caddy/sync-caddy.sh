@@ -13,11 +13,10 @@
 #
 # Usage:
 #   deploy/caddy/sync-caddy.sh <ssh-target> <bff-host> <template> [fe-host] [fe-root]
-#     ssh-target  SSH destination, e.g. lupin@35.201.204.12
-#     bff-host    sslip.io hostname for the new IP,
-#                 e.g. pantheon-lupin-dev-bff.35.201.204.12.sslip.io
+#     ssh-target  SSH destination, e.g. chloe_ong_dev_cctech_support_com@34.81.52.222
+#     bff-host    Pantheon-owned DNS hostname, e.g. api.dev.mvl-cap.tw
 #     template    repo-relative template, e.g. deploy/caddy/dev.Caddyfile.tmpl
-#     fe-host     optional sslip.io hostname for the static dev frontend,
+#     fe-host     optional Pantheon-owned DNS hostname for the static frontend,
 #                 required when template contains __FE_HOST__
 #     fe-root     optional static frontend root (default: /var/www/pantheon-dev-fe)
 #
