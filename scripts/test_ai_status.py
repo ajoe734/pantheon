@@ -2457,7 +2457,7 @@ class StatusRootRoutingTests(unittest.TestCase):
         self.assertEqual(config["paths"]["state_file"], str(status_root / ".orchestrator" / "state.json"))
         self.assertNotIn("event_queue", config["paths"])
 
-    def test_load_config_uses_live_repository_registry_not_command_checkout(self) -> None:
+    def test_load_config_does_not_overlay_status_root_repository_registry(self) -> None:
         with tempfile.TemporaryDirectory(prefix="ai-status-live-registry-") as temp_dir:
             root = Path(temp_dir)
             command_root = root / "command-runtime"
@@ -2509,10 +2509,6 @@ class StatusRootRoutingTests(unittest.TestCase):
                 config = ai_status.load_config()
 
         self.assertEqual(
-            ai_status.repository_local_path(config, "pantheon"),
-            status_root.resolve(),
-        )
-        self.assertNotEqual(
             ai_status.repository_local_path(config, "pantheon"),
             command_root.resolve(),
         )
@@ -2632,6 +2628,7 @@ class StatusRootRoutingTests(unittest.TestCase):
                                 "process_generation": worker_process_generation,
                                 "workspace_path": str(worktree),
                                 "workspace_repository_id": "pantheon",
+                                "workspace_source_root": str(central),
                                 "status_root": str(central),
                                 "status_command_runtime": issued_runtime,
                                 "request_snapshot": {
@@ -2642,6 +2639,7 @@ class StatusRootRoutingTests(unittest.TestCase):
                                         "workspace_task_id": "CENTRAL-ROOT-001",
                                         "workspace_path": str(worktree),
                                         "workspace_repository_id": "pantheon",
+                                        "workspace_source_root": str(central),
                                         "status_root": str(central),
                                         "status_command_runtime": issued_runtime,
                                     }
@@ -2907,7 +2905,7 @@ class StatusRootRoutingTests(unittest.TestCase):
                         "actor": "Codex2",
                         "workspace_repository_id": "pantheon",
                         "workspace_branch": "",
-                        "workspace_source_root": "",
+                        "workspace_source_root": str(central),
                     },
                 )
             self.assertEqual(
@@ -8257,10 +8255,10 @@ class DeliveryWorkspaceAuthorityTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             command_root = root / "command-runtime"
-            status_root = root / "pantheon-live"
+            status_root = root / "coordination-status"
+            source_root = root / "pantheon-live-source"
             workspace = root / "worker" / "task-candidate"
             command_config = command_root / ".orchestrator" / "config.json"
-            live_config = status_root / ".orchestrator" / "config.json"
 
             command_config.parent.mkdir(parents=True)
             command_config.write_text(
@@ -8279,14 +8277,15 @@ class DeliveryWorkspaceAuthorityTests(unittest.TestCase):
                 encoding="utf-8",
             )
             status_root.mkdir()
-            self._git(status_root, "init", "-b", "dev")
-            self._git(status_root, "config", "user.name", "Test")
-            self._git(status_root, "config", "user.email", "test@example.com")
-            (status_root / "README.md").write_text("pantheon\n", encoding="utf-8")
-            self._git(status_root, "add", "README.md")
-            self._git(status_root, "commit", "-m", "initial")
+            source_root.mkdir()
+            self._git(source_root, "init", "-b", "dev")
+            self._git(source_root, "config", "user.name", "Test")
+            self._git(source_root, "config", "user.email", "test@example.com")
+            (source_root / "README.md").write_text("pantheon\n", encoding="utf-8")
+            self._git(source_root, "add", "README.md")
+            self._git(source_root, "commit", "-m", "initial")
             self._git(
-                status_root,
+                source_root,
                 "remote",
                 "add",
                 "origin",
@@ -8294,25 +8293,12 @@ class DeliveryWorkspaceAuthorityTests(unittest.TestCase):
             )
             workspace.parent.mkdir()
             self._git(
-                status_root,
+                source_root,
                 "worktree",
                 "add",
                 "-b",
                 "task/OPS-SUPERVISOR-PROMOTION-PORTABLE-002",
                 str(workspace),
-            )
-            live_config.parent.mkdir(exist_ok=True)
-            live_config.write_text(
-                json.dumps(
-                    {
-                        "coordination": {
-                            "repositories": {
-                                "pantheon": {"repo": "ajoe734/pantheon"}
-                            }
-                        }
-                    }
-                ),
-                encoding="utf-8",
             )
             task = {
                 "id": "OPS-SUPERVISOR-PROMOTION-PORTABLE-002",
@@ -8333,17 +8319,27 @@ class DeliveryWorkspaceAuthorityTests(unittest.TestCase):
                     {
                         "PANTHEON_WORKTREE_ROOT": str(workspace),
                         "ORCH_WORKSPACE_PATH": str(workspace),
+                        "ORCH_RUN_ID": "run-portable-promotion",
                     },
                     clear=True,
                 ),
             ):
                 config = ai_status.load_config()
-                selected, metadata = ai_status._done_delivery_repository_root(
-                    config, task, "pantheon"
-                )
+                ai_status._STATUS_COMMAND_LEASE_LOCAL.binding = {
+                    "task_id": task["id"],
+                    "workspace_repository_id": "pantheon",
+                    "workspace_source_root": str(source_root),
+                }
+                try:
+                    selected, metadata = ai_status._done_delivery_repository_root(
+                        config, task, "pantheon"
+                    )
+                finally:
+                    ai_status._clear_status_command_lease_binding()
 
         self.assertEqual(selected, workspace.resolve())
-        self.assertEqual(metadata["repository_path_source"], "explicit_workspace_env")
+        self.assertEqual(metadata["repository_path_source"], "worker_lease")
+        self.assertTrue(metadata["workspace_lease_validated"])
 
     def test_workspace_binding_requires_both_environment_names(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
