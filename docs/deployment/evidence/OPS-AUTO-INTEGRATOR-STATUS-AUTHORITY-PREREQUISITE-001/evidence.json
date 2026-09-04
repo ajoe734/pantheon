@@ -53,8 +53,8 @@
     }
   },
   "review_reopen_resolution": {
-    "previous_head": "54362b5c81d97d9af0b9556bf8e7b4107d990788",
-    "resolved_defect": "The supervisor reason allowlist now admits every literal reason produced directly, by repository preflight, or by final merge revalidation.",
+    "previous_head": "bc3bbeabaf8d9ecffc5f067dbf6490ffdaa74858",
+    "resolved_defect": "The supervisor drain now contains receipt/archive finalization failures per request, preserves the source request for deterministic retry, and continues to later requests.",
     "added_reasons": [
       "dirty-repository-checkout",
       "missing-repository-slug",
@@ -64,12 +64,12 @@
       "canonical-authority-lock-failed"
     ],
     "removed_unused_reason": "final-canonical-state-refresh-failed",
-    "regression_guard": "AST producer-to-consumer drift test extracts direct open_unblock_task literals, preflight_repository tuple reasons, and FinalMergeRevalidationError reasons and requires all of them in AUTO_INTEGRATOR_UNBLOCK_REASONS."
+    "regression_guard": "AST producer-to-consumer drift coverage remains in place, and a rejection-path archive failure regression proves that the failed source remains retryable while a following valid request materializes."
   },
   "verification": {
     "focused_supervisor": {
       "command": "python3 .orchestrator/test_supervisor.py AutoIntegratorUnblockAuthorityTests",
-      "result": "6 passed"
+      "result": "7 passed"
     },
     "auto_integrator_suite": {
       "command": "python3 -m unittest scripts.git.test_auto_integrator",
@@ -77,10 +77,10 @@
     },
     "supervisor_suite": {
       "command": "python3 .orchestrator/test_supervisor.py",
-      "result": "233 passed; 1 pre-existing invocation-path error in unrelated ReviewDecisionIntentLeaseRecoveryTests import of scripts.ai_status"
+      "result": "pass"
     },
     "syntax": {
-      "command": "python3 -m py_compile .orchestrator/supervisor.py scripts/git/auto_integrator.py",
+      "command": "python3 -m py_compile .orchestrator/supervisor.py .orchestrator/test_supervisor.py scripts/git/auto_integrator.py",
       "result": "pass"
     },
     "diff_integrity": {
