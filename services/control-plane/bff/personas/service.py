@@ -87,6 +87,7 @@ from ..models import (
     OperatorIdentity,
     EVIDENCE_CAPABILITY_MAP,
     SOURCE_TYPE_TO_EVIDENCE_KIND,
+    redact_evidence_refs,
     RecordSponsorDecisionCommandPayload,
     RejectMutationCommandPayload,
     ReviewMutationCommandPayload,
@@ -237,10 +238,15 @@ except ImportError:
     StrategySpecSeedReviewError = Exception
 
 try:
-    from models import redact_evidence_refs
+    # Standalone callers historically imported this module as ``personas``;
+    # keep that compatibility fallback, but prefer the package-local models
+    # contract so the capability-aware three-argument function is never
+    # replaced by an unrelated top-level ``models`` module.
+    from models import redact_evidence_refs as _standalone_redact_evidence_refs
 except ImportError:
-    def redact_evidence_refs(refs: Any) -> Any:
-        return refs
+    _standalone_redact_evidence_refs = None
+if _standalone_redact_evidence_refs is not None and not str(__package__ or "").startswith("services.control_plane"):
+    redact_evidence_refs = _standalone_redact_evidence_refs
 
 try:
     from services.control_plane.persona.persona_strategy_discovery import (

@@ -32,6 +32,16 @@ from . import service as _service_mod
 from .service import *  # noqa: F403 - legacy handlers use service-level helpers
 from .service import PersonaService
 
+# ``from .service import *`` intentionally omits private names.  The router
+# predates the service split and its handlers are deliberately written against
+# those service-level helpers (for example ``_pm12_quarter_formula_payload``
+# and ``_resolve_param``).  Keep the domain boundary explicit while exposing
+# the private service contract to the closures below; otherwise production
+# requests fail with ``NameError`` only after the route is selected.
+for _service_name, _service_value in vars(_service_mod).items():
+    if _service_name.startswith("_") and not _service_name.startswith("__"):
+        globals().setdefault(_service_name, _service_value)
+
 log = logging.getLogger(__name__)
 
 
