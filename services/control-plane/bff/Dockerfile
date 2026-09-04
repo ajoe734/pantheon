@@ -24,4 +24,4 @@ ENV BUILD_TIME=$BUILD_TIME
 
 EXPOSE 8001
 
-CMD ["uvicorn", "main:app", "--app-dir", "/workspace/services/control-plane/bff", "--host", "0.0.0.0", "--port", "8001"]
+CMD ["uvicorn", "services.control_plane.bff.main:app", "--host", "0.0.0.0", "--port", "8001"]

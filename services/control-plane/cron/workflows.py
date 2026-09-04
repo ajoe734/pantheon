@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from models import WorkflowDefinition
+from .models import WorkflowDefinition
 
 
 PERSONA_FIRST_EVALUATION_WORKFLOW_ID = "pantheon.persona.first-evaluation"

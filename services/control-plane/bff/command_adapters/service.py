@@ -19,8 +19,8 @@ from typing import Any, Callable, Dict, List, Optional, Tuple
 from fastapi import HTTPException, Response
 from fastapi.responses import JSONResponse
 
-from action_catalog import get_action_catalog, get_catalog_entry
-from models import (
+from ..action_catalog import get_action_catalog, get_catalog_entry
+from ..models import (
     ActionCommandStatus,
     BffActionCatalogResponse,
     CommandReceipt,

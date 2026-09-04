@@ -9,7 +9,7 @@ from __future__ import annotations
 import logging
 from typing import Any, Callable, Dict, List, Optional
 
-from models import ErrorCode
+from ..models import ErrorCode
 from services.source_ingestion.trainer_seed_bridge import (
     TrainerSeedBridge,
     TrainerSeedBridgeError,

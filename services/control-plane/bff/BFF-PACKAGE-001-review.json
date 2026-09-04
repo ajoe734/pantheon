@@ -1,0 +1,85 @@
+{
+  "schema_version": 1,
+  "task_id": "BFF-PACKAGE-001",
+  "generated_at": "2026-09-04T14:44:00Z",
+  "evidence_policy": "observed_immutable_only",
+  "owner": "Codex",
+  "reviewer": "Claude",
+  "review_status": "pending_independent_exact_head_review",
+  "repository": "ajoe734/pantheon",
+  "branch": "task/BFF-PACKAGE-001",
+  "source_base_sha": "6ddbcd23a",
+  "last_committed_anchor_sha": "4b667e2ee325a72e6b616d8c6ad6a9151839e82c",
+  "acceptance_matrix": [
+    {
+      "criterion": "All recorded BFF entrypoints use one stable import root",
+      "evidence": "Docker entrypoint and production imports resolve through services.control_plane.bff; Persona cron callers resolve through services.control_plane.cron.",
+      "status": "passed"
+    },
+    {
+      "criterion": "Production domain/router sys.path mutation and globals-based namespace forwarding are zero",
+      "evidence": "AST scan of non-test BFF Python modules found no sys.path mutation or globals() calls after the migration.",
+      "status": "passed"
+    },
+    {
+      "criterion": "Persona globals namespace-copy bridge and dynamic cron namespace manipulation are deleted",
+      "evidence": "Persona cron callers use a direct canonical import; sys.modules eviction/restoration and temporary cron-directory sys.path insertion were removed.",
+      "status": "passed"
+    },
+    {
+      "criterion": "No parallel BFF package tree remains",
+      "evidence": "services.control_plane exposes the historical control-plane source directory as one package path; no copied BFF module tree was introduced.",
+      "status": "passed"
+    }
+  ],
+  "validation": [
+    {
+      "command": "PYTHONPATH=. python3 -m unittest discover -s services/control-plane/cron -p 'test_persona_cron_registrar.py' -v",
+      "result": "55 passed"
+    },
+    {
+      "command": "python3 -m compileall -q services/control-plane/bff services/control-plane/cron services/control_plane",
+      "result": "passed"
+    },
+    {
+      "command": "bash -n scripts/bff/failover_demo.sh scripts/bff/run_multi_replica_smoke.sh",
+      "result": "passed"
+    },
+    {
+      "command": "Static scan of recorded Docker and HA smoke entrypoints for the services.control_plane.bff import root",
+      "result": "passed"
+    },
+    {
+      "command": "Stage-0 baseline, BFF target, and release-hardening smoke callers invoke python -m services.control_plane.bff.smoke_test",
+      "result": "passed"
+    },
+    {
+      "command": "/tmp/bff-package-001-venv/bin/python -m services.control_plane.bff.smoke_test",
+      "result": "26 passed; includes direct AgoraScopeResolutionError coverage under the canonical package root"
+    },
+    {
+      "command": "/tmp/bff-package-001-venv/bin/python -m pytest -q tests/test_release_gate_contract.py",
+      "result": "9 passed"
+    },
+    {
+      "command": "AST scan of production services/control-plane/bff Python modules for globals() calls and sys.path mutation",
+      "result": "passed"
+    },
+    {
+      "command": "git diff --check",
+      "result": "passed"
+    }
+  ],
+  "delivery": {
+    "pr": null,
+    "exact_head_sha": null,
+    "merge_method_required": "MERGE",
+    "merge_sha": null,
+    "note": "PR number and exact head are frozen by canonical handoff after this manifest is committed."
+  },
+  "non_actions": [
+    "No production or dev deployment was performed.",
+    "No live trading, broker, order, capital, or execution setting was enabled.",
+    "No reviewer approval or merge evidence is claimed by this owner manifest."
+  ]
+}

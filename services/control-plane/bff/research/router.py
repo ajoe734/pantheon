@@ -44,7 +44,7 @@ from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from fastapi import APIRouter, Body, Header, Query, Request
 
-from models import ErrorCode, ObjectType, SOURCE_TYPE_TO_EVIDENCE_KIND, redact_evidence_refs
+from ..models import ErrorCode, ObjectType, SOURCE_TYPE_TO_EVIDENCE_KIND, redact_evidence_refs
 
 from .service import ResearchNotFoundError, ResearchRouterService, ResearchValidationError
 
@@ -3166,7 +3166,7 @@ def create_research_router(
         )
 
     if include_prepared_subrouters:
-        from console_gap.knowledge import create_knowledge_router
+        from ..console_gap.knowledge import create_knowledge_router
 
         router.include_router(
             create_knowledge_router(

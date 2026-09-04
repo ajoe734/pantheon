@@ -15,7 +15,7 @@ import os
 from typing import Any, Callable, Dict, List, Optional
 
 from fastapi import APIRouter, Body, Header, HTTPException, Query, Response
-from models import CommandResponse, DecisionJournalEntryDTO
+from ..models import CommandResponse, DecisionJournalEntryDTO
 
 try:
     from ports import (
@@ -93,7 +93,7 @@ def _load_capability_manifest() -> Dict[str, Any]:
 
 
 def _raise_scope_error(exc: AgoraScopeResolutionError, bff_error: Callable[..., HTTPException]) -> None:
-    from models import ErrorCode  # BFF top-level models; available via sys.path in runtime
+    from ..models import ErrorCode
 
     code = ErrorCode.AUTH_REQUIRED if exc.status_code == 401 else ErrorCode.FORBIDDEN
     raise bff_error(

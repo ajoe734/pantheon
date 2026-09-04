@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 from urllib.parse import unquote
 
-from assistant_conversation_store import build_assistant_conversation_store, storage_disabled as _conversation_storage_disabled
+from .assistant_conversation_store import build_assistant_conversation_store, storage_disabled as _conversation_storage_disabled
 
 
 STORE_PATH_ENV = "PANTHEON_MANAGEMENT_AI_STORE_PATH"

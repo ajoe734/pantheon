@@ -150,7 +150,7 @@ class DeploymentService:
         return all(isinstance(allowed_actions.get(field), bool) for field in required_fields)
 
     def pkt001_degradation_meta(self, surfaces: Dict[str, Dict[str, Any]]) -> Dict[str, Any]:
-        from main import _surface_degradation_reason  # local import to avoid composition-root cycle
+        from ..main import _surface_degradation_reason  # local import to avoid composition-root cycle
 
         reason_templates = {
             "deployment_plans": (

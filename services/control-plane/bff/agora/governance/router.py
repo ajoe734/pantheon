@@ -398,7 +398,7 @@ def create_governance_router(
     list_approval_decisions: Callable[[], Iterable[Mapping[str, Any]]],
     store: Optional[ProposalStore] = None,
 ) -> APIRouter:
-    from models import ErrorCode
+    from ...models import ErrorCode
 
     router = APIRouter(tags=["agora-governance"])
     proposals = store or ProposalStore()

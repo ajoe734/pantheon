@@ -60,7 +60,7 @@ BFF_VERIFICATION_STEPS = [
     },
     {
         "name": "smoke_test",
-        "command": ["python", "services/control-plane/bff/smoke_test.py"],
+        "command": ["python", "-m", "services.control_plane.bff.smoke_test"],
     },
     {
         "name": "smoke_test_incident",

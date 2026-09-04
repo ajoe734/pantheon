@@ -1870,7 +1870,7 @@ class DownstreamHealthMonitor:
             try:
                 import sys
                 asyncpg_module = sys.modules.get("asyncpg")
-                if asyncpg_module is not None and not isinstance(asyncpg_module, MagicMock if "MagicMock" in globals() else type):
+                if asyncpg_module is not None and getattr(asyncpg_module, "__name__", None) == "asyncpg":
                     import importlib
                     loop_control = importlib.import_module("services.loop-control")
                     writer = loop_control.LoopControllerWriter(

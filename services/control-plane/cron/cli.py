@@ -5,9 +5,9 @@ import argparse
 import json
 from pathlib import Path
 
-from models import OpenClawRuntimePin
-from service import CronOrchestrator
-from workflows import WORKFLOW_CATALOG
+from .models import OpenClawRuntimePin
+from .service import CronOrchestrator
+from .workflows import WORKFLOW_CATALOG
 
 
 def parse_args() -> argparse.Namespace:
