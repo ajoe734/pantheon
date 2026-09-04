@@ -2470,6 +2470,42 @@ class SharedPlannerContractTests(unittest.TestCase):
             )
         )
 
+    def test_review_approved_waits_for_exact_integration_receipt(self) -> None:
+        task = task_fixture(status="review_approved")
+        binding = review_admission_binding()
+        task["generation"] = 4
+        task["review_binding"] = {
+            key: binding[key]
+            for key in ("pr", "head_sha", "head_branch", "base")
+        }
+
+        self.assertIsNone(
+            supervisor.task_execution_dispatch_candidate(
+                self.config, task, "Codex", {"TASK-1": task}
+            )
+        )
+
+        task["integration_receipt"] = {
+            "version": 1,
+            "result": "landed",
+            "observation": "performed_merge",
+            "task_generation": 4,
+            "repository": "ajoe734/pantheon",
+            "target_branch": binding["base"],
+            "pr": binding["pr"],
+            "head_sha": binding["head_sha"],
+            "merge_commit_sha": "8f8383b507b1fb631d44422031f01ebea5024d5e",
+            "observed_at": "2026-09-04T00:00:00Z",
+            "source": "canonical_auto_integrator",
+        }
+
+        self.assertEqual(
+            supervisor.task_execution_dispatch_candidate(
+                self.config, task, "Codex", {"TASK-1": task}
+            ),
+            (supervisor.REASON_OWNED_FINALIZE, 1),
+        )
+
     def _pending_intent_task_with_recovery_receipt(
         self,
         *,

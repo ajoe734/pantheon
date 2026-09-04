@@ -124,6 +124,14 @@ def test_predicate_true_for_matching_receipt_and_binding() -> None:
     assert ir.integration_receipt_consumes_candidate(task) is True
 
 
+def test_predicate_accepts_canonical_pantheon_repository_slug() -> None:
+    task = task_row(
+        target_repo="ajoe734/pantheon",
+        integration_receipt=valid_receipt_payload(),
+    )
+    assert ir.integration_receipt_consumes_candidate(task) is True
+
+
 def test_predicate_false_without_receipt() -> None:
     assert ir.integration_receipt_consumes_candidate(task_row()) is False
 
