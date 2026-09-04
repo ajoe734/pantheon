@@ -650,6 +650,69 @@ def _iter_source_lines(path: Path) -> Iterator[str]:
         yield from handle
 
 
+def _canonical_event_chronology(
+    task_id: str,
+    sourced_events: Iterable[tuple[str, Iterable[Mapping[str, Any]]]],
+) -> tuple[list[Mapping[str, Any]], str]:
+    """Validate and order one task's audit events independently of filenames.
+
+    Rotation archive names are content-addressed and therefore carry no time
+    semantics.  Timestamps are the chronology authority, but only after each
+    source and the collection as a whole prove that they describe one unique,
+    gap-tolerant sequence.
+    """
+
+    ordered: list[tuple[datetime, str, Mapping[str, Any]]] = []
+    ranges: list[tuple[datetime, datetime, str]] = []
+    event_ids: dict[str, str] = {}
+    timestamps: dict[datetime, str] = {}
+
+    for source_name, source_events in sourced_events:
+        source_rows: list[tuple[datetime, Mapping[str, Any]]] = []
+        previous: datetime | None = None
+        for event in source_events:
+            if str(event.get("task_id") or "").strip() != task_id:
+                continue
+            timestamp_text = str(event.get("ts") or "").strip()
+            timestamp = parse_timestamp(timestamp_text)
+            if timestamp is None:
+                return [], f"activity audit event in {source_name} has invalid timestamp {timestamp_text!r}"
+            if previous is not None and timestamp < previous:
+                return [], f"activity audit chronology regresses within {source_name}"
+            previous = timestamp
+
+            canonical = json.dumps(event, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+            event_id = str(event.get("event_id") or "").strip()
+            if event_id:
+                existing = event_ids.get(event_id)
+                if existing is not None:
+                    if existing != canonical:
+                        return [], f"activity audit event_id {event_id!r} has conflicting payloads"
+                    continue
+                event_ids[event_id] = canonical
+
+            existing_at_timestamp = timestamps.get(timestamp)
+            if existing_at_timestamp is not None and existing_at_timestamp != canonical:
+                return [], f"activity audit chronology is ambiguous at {timestamp_text}"
+            timestamps[timestamp] = canonical
+            source_rows.append((timestamp, event))
+
+        if source_rows:
+            ranges.append((source_rows[0][0], source_rows[-1][0], source_name))
+            ordered.extend((timestamp, source_name, event) for timestamp, event in source_rows)
+
+    ranges.sort(key=lambda item: (item[0], item[1], item[2]))
+    for earlier, later in zip(ranges, ranges[1:]):
+        if later[0] <= earlier[1]:
+            return [], (
+                "activity audit source ranges overlap: "
+                f"{earlier[2]} and {later[2]}"
+            )
+
+    ordered.sort(key=lambda item: item[0])
+    return [event for _, _, event in ordered], ""
+
+
 def load_approval_record(
     task_id: str,
     *,
@@ -672,8 +735,9 @@ def load_approval_record(
         sources = _activity_sources(root)
         if not sources:
             return ApprovalRecord(task_id=task_id, scan_error="activity audit is unavailable")
-        materialized: list[Mapping[str, Any]] = []
+        sourced: list[tuple[str, list[Mapping[str, Any]]]] = []
         for source in sources:
+            source_events: list[Mapping[str, Any]] = []
             try:
                 for line in _iter_source_lines(source):
                     line = line.strip()
@@ -687,12 +751,23 @@ def load_approval_record(
                             scan_error=f"activity audit line in {source.name} is not valid JSON",
                         )
                     if isinstance(event, Mapping):
-                        materialized.append(event)
+                        source_events.append(event)
             except OSError as exc:
                 return ApprovalRecord(
                     task_id=task_id,
                     scan_error=f"cannot read activity audit {source.name}: {exc}",
                 )
+            sourced.append((source.name, source_events))
+        materialized, chronology_error = _canonical_event_chronology(task_id, sourced)
+        if chronology_error:
+            return ApprovalRecord(task_id=task_id, scan_error=chronology_error)
+        events = materialized
+    else:
+        materialized, chronology_error = _canonical_event_chronology(
+            task_id, (("provided events", events),)
+        )
+        if chronology_error:
+            return ApprovalRecord(task_id=task_id, scan_error=chronology_error)
         events = materialized
 
     approval: ApprovalRecord | None = None

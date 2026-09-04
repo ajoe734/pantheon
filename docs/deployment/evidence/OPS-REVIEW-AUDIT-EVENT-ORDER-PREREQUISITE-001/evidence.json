@@ -1,0 +1,61 @@
+{
+  "schema_version": "pantheon.review-evidence.v1",
+  "task_id": "OPS-REVIEW-AUDIT-EVENT-ORDER-PREREQUISITE-001",
+  "title": "Fix canonical review audit event chronology across rotations",
+  "owner": "Codex",
+  "reviewer": "Antigravity2",
+  "target_repo": "pantheon",
+  "task_class": "development_tooling",
+  "scope": {
+    "owned": [
+      "Canonical review audit event chronology across active and rotated logs",
+      "Fail-closed chronology validation and focused merge-gate regressions",
+      "Auto-integrator chronology contract documentation"
+    ],
+    "not_changing": [
+      "Activity log rotation or archive naming",
+      "Canonical task lifecycle and review transition writers",
+      "Auto-integrator merge execution or scheduling"
+    ],
+    "composes_with": [
+      "scripts/git/auto_integrator.py ReviewGate consumption of task_review_merge_gate.load_approval_record"
+    ]
+  },
+  "failure_reproduction": {
+    "pr_5527": "A 13:48 assign event in a lexically later content-addressed archive was scanned after a 15:18 exact-head approval and incorrectly revoked it.",
+    "root_cause": "Archive filename order was treated as event chronology even though rotation filenames are content hashes."
+  },
+  "implementation": {
+    "chronology_authority": "Parsed UTC event timestamps after source validation; archive filenames carry no temporal authority.",
+    "fail_closed_conditions": [
+      "invalid task-event timestamp",
+      "timestamp regression within one source",
+      "overlapping non-empty source time ranges",
+      "conflicting payloads for one event_id",
+      "distinct task events at one timestamp"
+    ],
+    "consumer_unification": "Standalone canonical review checks and auto-integrator ReviewGate already call the same load_approval_record function; chronology is implemented only there."
+  },
+  "verification": {
+    "status": "passed",
+    "commands": [
+      "python3 -m unittest scripts.git.test_task_review_merge_gate",
+      "python3 -m py_compile scripts/git/task_review_merge_gate.py scripts/git/test_task_review_merge_gate.py",
+      "git diff --check"
+    ],
+    "results": [
+      "113 tests passed, including PR #5527 rotation-order reproduction and fail-closed chronology cases",
+      "modified Python modules compiled",
+      "no whitespace errors"
+    ]
+  },
+  "review_handoff": {
+    "status": "ready_for_independent_review_after_commit",
+    "required_checks": [
+      "Confirm content-hash filename order cannot supersede UTC event chronology",
+      "Confirm malformed or ambiguous multi-source histories fail closed",
+      "Confirm true post-approval assign, reopen, and do-not-merge revocations remain effective",
+      "Confirm auto-integrator and standalone gate share the same loader"
+    ]
+  }
+}

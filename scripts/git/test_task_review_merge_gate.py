@@ -12,6 +12,7 @@ here writes canonical status, activity, or GitHub state.
 from __future__ import annotations
 
 import json
+import gzip
 import os
 import shutil
 import subprocess
@@ -770,6 +771,115 @@ class UnreadableStateTests(unittest.TestCase):
         self.assertEqual(contract.source, "archive")
         self.assertEqual(contract.policy, gate.POLICY_REVIEW_BEFORE_MERGE)
         self.assertEqual(contract.task_id, task_id)
+
+
+class RotatedActivityChronologyTests(unittest.TestCase):
+    def _write_archive(self, root: Path, name: str, events: Sequence[Mapping[str, Any]]) -> None:
+        archive = root / "archive" / "logs"
+        archive.mkdir(parents=True, exist_ok=True)
+        with gzip.open(archive / name, "wt", encoding="utf-8") as handle:
+            for event in events:
+                handle.write(json.dumps(event) + "\n")
+
+    def test_content_hash_filename_order_cannot_revoke_newer_pr_5527_approval(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            old_assign = {
+                "ts": "2026-09-04T13:48:00Z",
+                "agent": "Human/Ops",
+                "type": "assign",
+                "task_id": "ABC-001",
+                "message": "Earlier reviewer assignment.",
+                "event_id": "assign-1348",
+            }
+            newer_approval = approval_event(
+                ts="2026-09-04T15:18:00Z", event_id="approval-1518"
+            )
+            # Content hashes sort approval first, then the older assignment.
+            self._write_archive(root, "ai-activity-log.jsonl-0aaa.gz", [newer_approval])
+            self._write_archive(root, "ai-activity-log.jsonl-ffff.gz", [old_assign])
+
+            record = gate.load_approval_record("ABC-001", status_root=root)
+
+        self.assertTrue(record.present)
+        self.assertFalse(record.revoked)
+        self.assertEqual(record.approved_at_text, "2026-09-04T15:18:00Z")
+
+    def test_post_approval_assign_remains_non_resumable(self) -> None:
+        events = [
+            approval_event(ts="2026-09-04T15:18:00Z"),
+            {
+                "ts": "2026-09-04T15:19:00Z",
+                "agent": "Human/Ops",
+                "type": "assign",
+                "task_id": "ABC-001",
+                "message": "Reviewer changed after approval.",
+            },
+            integration_resume_event(ts="2026-09-04T15:20:00Z"),
+        ]
+
+        record = gate.load_approval_record("ABC-001", events=events)
+
+        self.assertTrue(record.revoked)
+        self.assertEqual(record.revocation_type, "assign")
+
+    def test_invalid_timestamp_fails_closed(self) -> None:
+        record = gate.load_approval_record(
+            "ABC-001", events=[approval_event(ts="not-a-timestamp")]
+        )
+
+        self.assertIn("invalid timestamp", record.scan_error)
+
+    def test_per_source_timestamp_regression_fails_closed(self) -> None:
+        record = gate.load_approval_record(
+            "ABC-001",
+            events=[
+                approval_event(ts="2026-09-04T15:18:00Z"),
+                approval_event(ts="2026-09-04T13:48:00Z"),
+            ],
+        )
+
+        self.assertIn("regresses", record.scan_error)
+
+    def test_overlapping_archive_ranges_fail_closed(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self._write_archive(
+                root,
+                "ai-activity-log.jsonl-aaaa.gz",
+                [
+                    approval_event(ts="2026-09-04T13:00:00Z"),
+                    approval_event(ts="2026-09-04T15:00:00Z"),
+                ],
+            )
+            self._write_archive(
+                root,
+                "ai-activity-log.jsonl-bbbb.gz",
+                [approval_event(ts="2026-09-04T14:00:00Z")],
+            )
+
+            record = gate.load_approval_record("ABC-001", status_root=root)
+
+        self.assertIn("source ranges overlap", record.scan_error)
+
+    def test_conflicting_duplicate_event_id_fails_closed(self) -> None:
+        first = approval_event(event_id="same-event")
+        second = approval_event(event_id="same-event", message="different payload")
+
+        record = gate.load_approval_record("ABC-001", events=[first, second])
+
+        self.assertIn("conflicting payloads", record.scan_error)
+
+    def test_distinct_events_at_same_timestamp_are_ambiguous(self) -> None:
+        record = gate.load_approval_record(
+            "ABC-001",
+            events=[
+                approval_event(),
+                approval_event(message="different event at the same instant"),
+            ],
+        )
+
+        self.assertIn("ambiguous", record.scan_error)
 
 
 class PrematureMergeRegressionTests(unittest.TestCase):
