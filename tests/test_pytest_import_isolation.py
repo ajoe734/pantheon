@@ -102,6 +102,57 @@ def test_integrations_package_resolves_to_repo_root() -> None:
         sys.path[:] = original_path
 
 
+def test_integrations_openclaw_subpackage_resolves_to_repo_root() -> None:
+    """The real ``integrations.openclaw`` subpackage (not a synthetic stand-in)
+    resolves to the repository-root integrations tree once import roots for a
+    BFF test module are activated."""
+    original_path = list(sys.path)
+    try:
+        bff_test_path = SERVICES_DIR / "control-plane" / "bff" / "tests" / "test_example.py"
+        _activate_import_roots(bff_test_path)
+
+        spec = importlib.util.find_spec("integrations.openclaw")
+        assert spec is not None
+        assert spec.origin is not None
+        origin_path = Path(spec.origin).resolve()
+        expected = (ROOT / "integrations" / "openclaw" / "__init__.py").resolve()
+        assert origin_path == expected
+    finally:
+        sys.path[:] = original_path
+
+
+def test_real_service_local_top_level_import_resolves_via_activated_roots() -> None:
+    """A real service-local top-level module (``consultation_provider``, which
+    itself imports the sibling ``assistant_openclaw_provider`` module and the
+    repo-root ``services.consultation.provider`` package) must actually import
+    once its own service directory is activated -- this is not satisfied by a
+    synthetic ``ModuleType``/``find_spec`` stand-in."""
+    original_path = list(sys.path)
+    original_modules = dict(sys.modules)
+    try:
+        adapter_dir = SERVICES_DIR / "openclaw-gateway-adapter"
+        adapter_test_path = adapter_dir / "test_main.py"
+        _clear_transient_local_modules()
+        _activate_import_roots(adapter_test_path)
+
+        for name in ("consultation_provider", "assistant_openclaw_provider"):
+            sys.modules.pop(name, None)
+
+        module = importlib.import_module("consultation_provider")
+        module_path = Path(module.__file__).resolve()
+        assert module_path == (adapter_dir / "consultation_provider.py").resolve()
+
+        sibling = importlib.import_module("assistant_openclaw_provider")
+        sibling_path = Path(sibling.__file__).resolve()
+        assert sibling_path == (adapter_dir / "assistant_openclaw_provider.py").resolve()
+    finally:
+        sys.path[:] = original_path
+        for name in list(sys.modules):
+            if name not in original_modules:
+                del sys.modules[name]
+        sys.modules.update(original_modules)
+
+
 def test_is_transient_local_module() -> None:
     """Stable packages are non-transient; service-local modules are transient."""
     for pkg in ("services", "scripts", "integrations"):
