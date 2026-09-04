@@ -387,7 +387,7 @@ jobs:
 
             bootstrap_manifest="${EVIDENCE_DIR}/bootstrap-predecessor-compatibility-manifest.json"
             bootstrap_ledger="${EVIDENCE_DIR}/bootstrap-predecessor-candidate-ledger.json"
-            python3 scripts/agora_compat_manifest.py write \
+            python3 .target/scripts/agora_compat_manifest.py write \
               --output "${bootstrap_manifest}" \
               --frontend-root "${GITHUB_WORKSPACE}/.agora-frontend" \
               --backend-dev-ref refs/remotes/origin/dev \
@@ -395,7 +395,7 @@ jobs:
               --backend-runtime-commit "${bootstrap_backend}" \
               --frontend-runtime-commit "${bootstrap_frontend}" \
               --compatibility-status accepted
-            python3 scripts/agora_compat_manifest.py deployment-gate \
+            python3 .target/scripts/agora_compat_manifest.py deployment-gate \
               --manifest "${bootstrap_manifest}" \
               --frontend-root "${GITHUB_WORKSPACE}/.agora-frontend" \
               --backend-dev-ref refs/remotes/origin/dev \
