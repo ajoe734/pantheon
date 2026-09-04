@@ -11,6 +11,7 @@ here writes canonical status, activity, or GitHub state.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import shutil
@@ -790,16 +791,53 @@ class RotatedActivityChronologyTests(unittest.TestCase):
             newer_approval = approval_event(
                 ts="2026-09-04T15:18:00Z", event_id="approval-1518"
             )
-            log_path.write_text(
-                json.dumps(old_assign) + "\n" + json.dumps(newer_approval) + "\n",
-                encoding="utf-8",
+            blocker = {
+                "ts": "2026-09-04T15:19:00Z",
+                "agent": "Codex",
+                "type": "blocker",
+                "task_id": "ABC-001",
+                "message": "Integrator lock is read-only in the worker sandbox.",
+                "event_id": "blocker-1519",
+            }
+            resume = integration_resume_event(
+                ts="2026-09-04T15:20:00Z", event_id="resume-1520"
             )
+
+            # Rotation filenames are payload hashes. Choose harmless message
+            # padding that makes archive sequence 1 sort after sequence 2, the
+            # exact filename-order inversion that regressed PR #5527.
+            newer_payload = (
+                json.dumps(newer_approval) + "\n" + json.dumps(blocker) + "\n"
+            ).encode()
+            newer_digest = hashlib.sha256(newer_payload).hexdigest()
+            for padding in range(10_000):
+                old_assign["message"] = f"Earlier reviewer assignment. {padding}"
+                old_payload = (json.dumps(old_assign) + "\n").encode()
+                if hashlib.sha256(old_payload).hexdigest() > newer_digest:
+                    break
+            else:  # pragma: no cover - a 256-bit ordering must be easy to find
+                self.fail("could not construct inverted content hashes")
+
+            log_path.write_bytes(old_payload)
             with orchestrator_common.activity_audit_lock_file(log_path, shared=False):
-                archive = orchestrator_common.rotate_activity_log_unlocked(
-                    log_path, max_bytes=1, keep_lines=1
+                first_archive = orchestrator_common.rotate_activity_log_unlocked(
+                    log_path, max_bytes=1
+                )
+            with orchestrator_common.activity_audit_lock_file(log_path, shared=False):
+                orchestrator_common.append_activity_log_entries_unlocked(
+                    log_path, [newer_approval, blocker]
+                )
+                second_archive = orchestrator_common.rotate_activity_log_unlocked(
+                    log_path, max_bytes=1
+                )
+                orchestrator_common.append_activity_log_entries_unlocked(
+                    log_path, [resume]
                 )
 
-            self.assertIsNotNone(archive)
+            self.assertIsNotNone(first_archive)
+            self.assertIsNotNone(second_archive)
+            assert first_archive is not None and second_archive is not None
+            self.assertGreater(first_archive.name, second_archive.name)
             self.assertTrue(
                 orchestrator_common.activity_rotation_lineage_path(log_path).is_file()
             )
@@ -809,6 +847,25 @@ class RotatedActivityChronologyTests(unittest.TestCase):
         self.assertTrue(record.present)
         self.assertFalse(record.revoked)
         self.assertEqual(record.approved_at_text, "2026-09-04T15:18:00Z")
+
+    def test_truncated_rotation_lineage_fails_closed(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            log_path = root / "ai-activity-log.jsonl"
+            log_path.write_text(json.dumps(approval_event()) + "\n", encoding="utf-8")
+            with orchestrator_common.activity_audit_lock_file(log_path, shared=False):
+                archive = orchestrator_common.rotate_activity_log_unlocked(
+                    log_path, max_bytes=1
+                )
+            self.assertIsNotNone(archive)
+            lineage_path = orchestrator_common.activity_rotation_lineage_path(log_path)
+            lineage_path.write_bytes(lineage_path.read_bytes()[:-1])
+
+            record = gate.load_approval_record("ABC-001", status_root=root)
+
+        self.assertFalse(record.present)
+        self.assertTrue(record.scan_error)
+        self.assertIn("activity lineage file is truncated", record.scan_error)
 
     def test_post_approval_assign_remains_non_resumable(self) -> None:
         events = [

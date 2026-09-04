@@ -42,7 +42,9 @@
       "git diff --check"
     ],
     "results": [
-      "110 tests passed, including a real rotation-lineage manifest reproduction of PR #5527 and caller-ordered timestamp-regression fixtures",
+      "111 tests passed, including two real content-addressed rotations whose lexical filename order is the reverse of canonical lineage order",
+      "The disk-backed PR #5527 replay preserves approval across earlier assign, later blocker, and Human/Ops integration_resumed semantics",
+      "A truncated rotation-lineage manifest returns a fail-closed scan_error instead of raising from load_approval_record",
       "modified Python modules compiled",
       "no whitespace errors"
     ]
@@ -51,6 +53,8 @@
     "status": "ready_for_independent_review_after_commit",
     "required_checks": [
       "Confirm content-hash filename order cannot supersede rotation-lineage logical order",
+      "Confirm the two-archive fixture replays blocker and local Human/Ops integration resume from disk",
+      "Confirm truncated lineage is surfaced as scan_error without an uncaught exception",
       "Confirm production history uses stream_logical_activity validation",
       "Confirm true post-approval assign, reopen, and do-not-merge revocations remain effective",
       "Confirm auto-integrator and standalone gate share the same loader"
