@@ -8,7 +8,7 @@
   "review_status": "pending_independent_exact_head_review",
   "repository": "ajoe734/pantheon",
   "branch": "task/BFF-COMPOSITION-001",
-  "source_base_sha": "3a119b7cf22f7443f76b2f5cbfe07872ab89f576",
+  "source_base_sha": "54f0f01b7e7a152d2743908e208f47f954348382",
   "acceptance_matrix": [
     {
       "criterion": "Inject typed domain query, command and event dependencies into router factories and make required command-owner absence fail startup closed.",
