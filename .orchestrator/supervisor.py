@@ -2156,6 +2156,17 @@ def materialize_auto_integrator_unblock_requests(config: dict[str, Any]) -> bool
         write_json(receipt_dir / f"{path.stem}.json", receipt)
         os.replace(path, destination_dir / path.name)
 
+    def finalize_safely(
+        path: Path, outcome: str, detail: str, task_id: str = ""
+    ) -> bool:
+        """Keep a request retryable when receipt or archive finalization fails."""
+
+        try:
+            finalize(path, outcome, detail, task_id)
+        except Exception:
+            return False
+        return True
+
     for path in sorted(inbox.glob("*.json"))[:AUTO_INTEGRATOR_UNBLOCK_DRAIN_MAX]:
         if path.is_symlink() or not path.is_file():
             continue
@@ -2228,12 +2239,9 @@ def materialize_auto_integrator_unblock_requests(config: dict[str, Any]) -> bool
             finalize(path, "processed", "materialized", task_id)
             changed = True
         except (KeyError, ValueError) as exc:
-            finalize(path, "rejected", str(exc))
+            finalize_safely(path, "rejected", str(exc))
         except Exception as exc:
-            try:
-                finalize(path, "error", f"{type(exc).__name__}: {exc}")
-            except Exception:
-                pass
+            finalize_safely(path, "error", f"{type(exc).__name__}: {exc}")
     if changed:
         sync_status_pipeline(config)
     return changed

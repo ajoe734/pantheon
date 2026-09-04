@@ -2179,6 +2179,34 @@ class AutoIntegratorUnblockAuthorityTests(unittest.TestCase):
         )
         self.assertTrue(any(task["id"] == "INTEGRATION-UNBLOCK-ABC-001-CI-RED" for task in snapshot["state"]["tasks"]))
 
+    def test_rejection_finalization_failure_preserves_request_and_continues(self) -> None:
+        inbox = self.status_root / supervisor.AUTO_INTEGRATOR_UNBLOCK_INBOX
+        inbox.mkdir(exist_ok=True)
+        malformed = inbox / ("0" * 64 + ".json")
+        malformed.write_text("not-json\n", encoding="utf-8")
+        valid = self._publish()
+        real_replace = supervisor.os.replace
+
+        def fail_malformed_archive(source: object, destination: object) -> None:
+            if Path(source) == malformed:
+                raise OSError("injected archive failure")
+            real_replace(source, destination)
+
+        with mock.patch.object(supervisor.os, "replace", side_effect=fail_malformed_archive):
+            self.assertTrue(self._materialize())
+
+        self.assertTrue(malformed.is_file())
+        self.assertFalse(valid.exists())
+        snapshot = supervisor.rewrite_task_state_store.load_snapshot(
+            self.config["task_state_store"]["event_log"]
+        )
+        self.assertTrue(
+            any(
+                task["id"] == "INTEGRATION-UNBLOCK-ABC-001-CI-RED"
+                for task in snapshot["state"]["tasks"]
+            )
+        )
+
     def test_write_failure_is_receipted_and_does_not_hide_later_valid_request(self) -> None:
         first = self._publish(reason="ci-red")
         second = self._publish(
