@@ -15,7 +15,7 @@ import os
 from typing import Any, Callable, Dict, List, Optional
 
 from fastapi import APIRouter, Body, Header, HTTPException, Query, Response
-from models import CommandResponse, DecisionJournalEntryDTO
+from ..models import CommandResponse, DecisionJournalEntryDTO
 
 try:
     from ports import (

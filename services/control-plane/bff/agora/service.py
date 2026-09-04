@@ -18,7 +18,7 @@ from fastapi import HTTPException
 from fastapi.encoders import jsonable_encoder
 from fastapi.responses import JSONResponse
 
-from models import (
+from ..models import (
     ActionCommandStatus,
     CommandResponse,
     CommandStatus,

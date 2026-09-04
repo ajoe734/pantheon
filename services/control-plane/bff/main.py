@@ -9,7 +9,6 @@ import logging
 import math
 import os
 import re
-import sys
 import threading
 import time
 import uuid
@@ -45,30 +44,6 @@ def _resolve_param(val: Any) -> Any:
         return val.default
     return val
 
-_REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
-if _REPO_ROOT not in sys.path:
-    sys.path.insert(0, _REPO_ROOT)
-if os.path.dirname(__file__) not in sys.path:
-    sys.path.insert(1, os.path.dirname(__file__))
-else:
-    sys.path.remove(os.path.dirname(__file__))
-    sys.path.insert(1, os.path.dirname(__file__))
-
-import integrations
-_repo_integrations = os.path.join(_REPO_ROOT, "integrations")
-_bff_integrations = os.path.join(os.path.dirname(__file__), "integrations")
-for _p in [_repo_integrations, _bff_integrations]:
-    if os.path.exists(_p) and _p not in getattr(integrations, "__path__", []):
-        integrations.__path__.append(_p)
-_PERSONA_SERVICE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "persona"))
-if _PERSONA_SERVICE_DIR not in sys.path:
-    sys.path.insert(0, _PERSONA_SERVICE_DIR)
-_CRON_SERVICE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "cron"))
-if _CRON_SERVICE_DIR not in sys.path:
-    sys.path.append(_CRON_SERVICE_DIR)
-_OODA_SERVICE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "ooda"))
-if _OODA_SERVICE_DIR not in sys.path:
-    sys.path.append(_OODA_SERVICE_DIR)
 from services.foundation import (  # noqa: E402
     ActorRef,
     ActorType,
@@ -95,11 +70,11 @@ from services.foundation.health import (  # noqa: E402
 from services.source_ingestion.strategy_seed_store import (  # noqa: E402
     StrategySpecSeedStore,
 )
-from persona_strategy_discovery import (  # noqa: E402
+from services.control_plane.persona.persona_strategy_discovery import (
     PersonaStrategyDiscoveryService,
     extract_persona_strategy_profile,
 )
-from models import (
+from .models import (
     ActionCommandStatus,
     ApproveMutationCommandPayload,
     AuditContext,
@@ -146,9 +121,9 @@ from models import (
     TargetObject,
     utc_now,
 )
-from action_catalog import get_action_catalog, get_catalog_entry
-from command_queue import CommandStore
-from command_executor import (
+from .action_catalog import get_action_catalog, get_catalog_entry
+from .command_queue import CommandStore
+from .command_executor import (
     create_capital_binding,
     create_capital_pool,
     create_capital_rebalance_proposal,
@@ -157,13 +132,13 @@ from command_executor import (
     _post_json,
     _get_json,
 )
-from persona_allocation_policy import (
+from .persona_allocation_policy import (
     build_pm12_allocation_policy_input,
     calculate_paper_simulation_allocations,
     calculate_target_allocations,
     validate_emergency_lines,
 )
-from paper_eligibility_proof import (
+from .paper_eligibility_proof import (
     BENCHMARK_VERSION as _PPL_ALLOC_009_ELIGIBILITY_BENCHMARK_VERSION,
     EXPECTED_IDEMPOTENCY_KEY as _PPL_ALLOC_009_ELIGIBILITY_IDEMPOTENCY_KEY,
     PaperEligibilityObservationStore,
@@ -171,11 +146,11 @@ from paper_eligibility_proof import (
     TASK_ID as _PPL_ALLOC_009_ELIGIBILITY_TASK_ID,
     build_telemetry_event as _ppl_alloc_009_build_telemetry_event,
 )
-from emergency_containment_policy import validate_emergency_containment
-from session_lifecycle_store import SessionLifecycleStore
-from management_ai_store import ManagementAiAttachmentError, ManagementAiAttachmentStore, ManagementAiConversationStore
-from agora_audit_store import AgoraAuditStore
-from management_nl_command_idempotency import (
+from .emergency_containment_policy import validate_emergency_containment
+from .session_lifecycle_store import SessionLifecycleStore
+from .management_ai_store import ManagementAiAttachmentError, ManagementAiAttachmentStore, ManagementAiConversationStore
+from .agora_audit_store import AgoraAuditStore
+from .management_nl_command_idempotency import (
     DEFAULT_STORAGE_PATH as DEFAULT_MANAGEMENT_NL_COMMAND_IDEMPOTENCY_PATH,
     ManagementNlCommandIdempotencyStore,
     ManagementNlCommandPayloadConflict,
@@ -184,14 +159,14 @@ from management_nl_command_idempotency import (
     ManagementNlCommandScope,
     ManagementNlCommandStorageError,
 )
-from openclaw_ops_client import OpenClawOpsClient, OpenClawOpsClientError
-from source_search_ops_client import (
+from .openclaw_ops_client import OpenClawOpsClient, OpenClawOpsClientError
+from .source_search_ops_client import (
     SearchIndexCommandClient,
     SourceIngestCommandClient,
     SourceSearchOpsClientError,
 )
-from downstream_health_monitor import DownstreamHealthMonitor
-from loop_inventory import (
+from .downstream_health_monitor import DownstreamHealthMonitor
+from .loop_inventory import (
     LoopHealthDetailEnvelope,
     LoopHealthListEnvelope,
     LoopInventoryDetailEnvelope,
@@ -201,8 +176,8 @@ from loop_inventory import (
     loop_inventory_meta,
     truth_label_payload,
 )
-from management_read_models import loop_truth
-from operations_read_model import (
+from .management_read_models import loop_truth
+from .operations_read_model import (
     DataConfidence,
     OperationsReadModelEnvelope,
     OperationsPerformance,
@@ -216,40 +191,27 @@ from operations_read_model import (
     diagnostic as ops_read_model_diagnostic,
     sanitize_metric as ops_read_model_sanitize_metric,
 )
-from models import redact_evidence_refs
-try:
-    from ports import (
-        ReadSurfacePorts,
-        create_persona_registry_write_owner,
-        create_read_surface_ports,
-    )
-except ImportError:
-    from services.control_plane.bff.ports import (  # type: ignore[no-redef]
-        ReadSurfacePorts,
-        create_persona_registry_write_owner,
-        create_read_surface_ports,
-    )
-from settings_store import SettingsStore
-from persona_provisioning import (
+from .models import redact_evidence_refs
+from .ports import (
+    ReadSurfacePorts,
+    create_persona_registry_write_owner,
+    create_read_surface_ports,
+)
+from .settings_store import SettingsStore
+from .persona_provisioning import (
     ProvisioningConflict,
     ProvisioningRecord,
     make_persona_provisioning_store,
 )
-from persona_provisioning_coordinator import (
+from .persona_provisioning_coordinator import (
     PersonaProvisioningCoordinationError,
     PersonaProvisioningCoordinator,
     deterministic_provisioning_ids,
 )
-try:
-    from personas.reconciliation import (
-        PersonaProvisioningReconciliationMutationPort,
-        PersonaReconciliationMutationError,
-    )
-except ImportError:
-    from services.control_plane.bff.personas.reconciliation import (  # type: ignore[no-redef]
-        PersonaProvisioningReconciliationMutationPort,
-        PersonaReconciliationMutationError,
-    )
+from .personas.reconciliation import (
+    PersonaProvisioningReconciliationMutationPort,
+    PersonaReconciliationMutationError,
+)
 try:
     from services.persona.runtime_profile import (
         PersonaRuntimeProfile,
@@ -22299,7 +22261,7 @@ def _include_assistant_routes() -> None:
             provider_reauth_code=_assistant_provider_reauth_code,
         )
     )
-from console_gap.workflows_hooks import create_workflows_hooks_router
+from .console_gap.workflows_hooks import create_workflows_hooks_router
 app.include_router(
     create_workflows_hooks_router(
         read_store_provider=lambda: read_store,
@@ -22309,8 +22271,8 @@ app.include_router(
     )
 )
 _include_assistant_routes()
-from source_management_client import SourceManagementClient  # noqa: E402
-from console_gap.datasources import create_datasources_router  # noqa: E402
+from .source_management_client import SourceManagementClient  # noqa: E402
+from .console_gap.datasources import create_datasources_router  # noqa: E402
 source_management_client = SourceManagementClient()
 app.include_router(
     create_datasources_router(
@@ -22325,7 +22287,7 @@ app.include_router(
         bff_error=_bff_error,
     )
 )
-from management_read_models import (  # noqa: E402
+from .management_read_models import (  # noqa: E402
     create_management_read_models_router,
     create_management_router,
 )
@@ -22350,22 +22312,22 @@ app.include_router(
         tenant_payload_fn=_bff_me_tenant_payload,
     )
 )
-from trade_journal import create_trade_journal_router as _create_trade_journal_router  # noqa: E402
+from .trade_journal import create_trade_journal_router as _create_trade_journal_router  # noqa: E402
 app.include_router(_create_trade_journal_router(
     extract_identity=_extract_identity,
     require_read_role=_require_read_role,
     require_operator_role=_require_operator_role,
 ))
 import trade_journeys as _trade_journeys  # noqa: E402
-from trade_journey_projection_store import InvalidPageToken, ProjectionReadUnavailable  # noqa: E402
-from trade_journeys import create_trade_journeys_router as _create_trade_journeys_router  # noqa: E402
+from .trade_journey_projection_store import InvalidPageToken, ProjectionReadUnavailable  # noqa: E402
+from .trade_journeys import create_trade_journeys_router as _create_trade_journeys_router  # noqa: E402
 app.include_router(_create_trade_journeys_router(
     extract_identity=_extract_identity,
     require_read_role=_require_read_role,
     require_operator_role=_require_operator_role,
     get_projection_reader=lambda: read_store.trade_journey_projection_reader(),
 ))
-from console_gap.lineage import create_lineage_router  # noqa: E402
+from .console_gap.lineage import create_lineage_router  # noqa: E402
 app.include_router(
     create_lineage_router(
         get_read_store=lambda: read_store,
@@ -22375,14 +22337,14 @@ app.include_router(
         utc_now=utc_now,
     )
 )
-from console_gap.alpha_factory import create_alpha_factory_router as _create_alpha_factory_router  # noqa: E402
+from .console_gap.alpha_factory import create_alpha_factory_router as _create_alpha_factory_router  # noqa: E402
 app.include_router(_create_alpha_factory_router(
     get_read_store=lambda: read_store,
     extract_identity=_extract_identity,
     require_read_role=_require_read_role,
     utc_now=utc_now,
 ))
-from jobs.router import create_jobs_router as _create_jobs_router
+from .jobs.router import create_jobs_router as _create_jobs_router
 app.include_router(
     _create_jobs_router(
         get_read_store=lambda: read_store,
@@ -22408,7 +22370,7 @@ app.include_router(
         ),
     )
 )
-from events.router import create_events_router as _create_events_router
+from .events.router import create_events_router as _create_events_router
 app.include_router(
     _create_events_router(
         get_read_store=lambda: read_store,
@@ -22421,7 +22383,7 @@ app.include_router(
         include_domain_sse_aliases=False,
     )
 )
-from evolution.router import create_evolution_router as _create_evolution_router
+from .evolution.router import create_evolution_router as _create_evolution_router
 app.include_router(
     _create_evolution_router(
         get_read_store=lambda: read_store,
@@ -22448,7 +22410,7 @@ app.include_router(
 
     )
 )
-from research.router import create_research_router as _create_research_router
+from .research.router import create_research_router as _create_research_router
 app.include_router(
     _create_research_router(
         get_read_store=lambda: read_store,
@@ -22472,7 +22434,7 @@ app.include_router(
         include_prepared_subrouters=True,
     )
 )
-from training.router import create_training_router as _create_training_router
+from .training.router import create_training_router as _create_training_router
 app.include_router(
     _create_training_router(
         get_read_store=lambda: read_store,
@@ -22484,13 +22446,13 @@ app.include_router(
         dataset_surface_status=_dataset_surface_status,
     )
 )
-from runtime.router import create_runtime_router as _create_runtime_router
+from .runtime.router import create_runtime_router as _create_runtime_router
 _runtime_router = _create_runtime_router(
     get_read_store=lambda: read_store,
     dependencies=globals(),
 )
 app.routes.extend(_runtime_router.routes)
-from deployment.router import create_deployment_router as _create_deployment_router
+from .deployment.router import create_deployment_router as _create_deployment_router
 app.include_router(
     _create_deployment_router(
         get_read_store=lambda: read_store,
@@ -22522,7 +22484,7 @@ app.include_router(
         stream_generic_events=stream_generic_events,
     )
 )
-from command_adapters.router import (
+from .command_adapters.router import (
     create_action_command_router as _create_action_command_router,
     create_command_adapters_router as _create_command_adapters_router,
 )
@@ -22556,7 +22518,7 @@ app.include_router(
         check_read_surface_state=_check_read_surface_state,
     )
 )
-from management_read_models.ranking_router import create_ranking_formulas_router as _create_ranking_formulas_router
+from .management_read_models.ranking_router import create_ranking_formulas_router as _create_ranking_formulas_router
 app.include_router(
     _create_ranking_formulas_router(
         get_read_store=lambda: read_store,
@@ -22568,10 +22530,10 @@ app.include_router(
         snapshot_meta=_snapshot_meta,
     )
 )
-from management_read_models.ranking_router import (
+from .management_read_models.ranking_router import (
     create_performance_attribution_router as _create_performance_attribution_router,
 )
-from management_read_models.ranking_router import (
+from .management_read_models.ranking_router import (
     create_rankings_long_tail_router as _create_rankings_long_tail_router,
 )
 app.include_router(
@@ -22602,7 +22564,7 @@ app.include_router(
         attribution_dimensions=_PM12_ATTRIBUTION_DIMENSIONS,
     )
 )
-from strategies.router import create_strategies_router as _create_strategies_router
+from .strategies.router import create_strategies_router as _create_strategies_router
 app.include_router(
     _create_strategies_router(
         get_read_store=lambda: read_store,
@@ -22635,7 +22597,7 @@ app.include_router(
         list_strategy_summaries=_list_strategy_summaries,
     )
 )
-from incidents.router import create_incident_router as _create_incident_router
+from .incidents.router import create_incident_router as _create_incident_router
 app.include_router(
     _create_incident_router(
         get_read_store=lambda: read_store,
@@ -22820,9 +22782,9 @@ def _resolve_agora_interaction_context_ref(
         f"{kind}_store_unavailable",
         precondition_failed=f"{kind}_store_unavailable",
     )
-from auth.router import create_auth_router
-from auth.service import AuthFacadeService
-from auth.handlers import bff_auth_readiness, create_auth_handlers
+from .auth.router import create_auth_router
+from .auth.service import AuthFacadeService
+from .auth.handlers import bff_auth_readiness, create_auth_handlers
 
 # Auth routes are owned by ``auth.router``; bind the concrete handlers here at
 # the composition root so an unassembled facade cannot silently ship a 503 for
@@ -22832,7 +22794,7 @@ auth_facade_service = AuthFacadeService(
     handlers=create_auth_handlers(),
 )
 app.include_router(create_auth_router(service=auth_facade_service))
-from core.app_factory import (
+from .core.app_factory import (
     create_settings_router,
     create_assistant_management_router,
     create_core_router,
@@ -22865,7 +22827,7 @@ _core_handlers = {
 }
 app.include_router(create_assistant_management_router(_core_handlers))
 app.include_router(create_core_router(_core_handlers))
-from personas.router import create_personas_router
+from .personas.router import create_personas_router
 app.include_router(
     create_personas_router(
         get_read_store=lambda: read_store,
@@ -22883,7 +22845,7 @@ app.include_router(
         resolve_final_idempotency_key_fn=_resolve_final_idempotency_key,
     )
 )
-from capital.router import create_capital_router
+from .capital.router import create_capital_router
 app.include_router(
     create_capital_router(
         get_read_store=lambda: read_store,
@@ -22897,7 +22859,7 @@ app.include_router(
         bff_error=_bff_error,
     )
 )
-from governance.router import create_governance_router
+from .governance.router import create_governance_router
 app.include_router(
     create_governance_router(
         get_read_store=lambda: read_store,
@@ -22922,7 +22884,7 @@ app.include_router(
 
     )
 )
-from postmortems.router import create_postmortem_router
+from .postmortems.router import create_postmortem_router
 app.include_router(
     create_postmortem_router(
         get_read_store=lambda: read_store,
@@ -22932,7 +22894,7 @@ app.include_router(
         meta_staleness=_meta_staleness,
     )
 )
-from control_loops.router import create_control_loops_router
+from .control_loops.router import create_control_loops_router
 app.include_router(
     create_control_loops_router(
         get_read_store=lambda: read_store,
@@ -22948,7 +22910,7 @@ app.include_router(
         utc_now_fn=utc_now,
     )
 )
-from integrations.router import create_integrations_router
+from .integrations.router import create_integrations_router
 app.include_router(
     create_integrations_router(
         get_read_store=lambda: read_store,
@@ -22968,7 +22930,7 @@ app.include_router(
         dry_run_context=_REQUEST_DRY_RUN_CONTEXT,
     )
 )
-from agora.router import create_agora_router as _create_agora_router  # noqa: E402
+from .agora.router import create_agora_router as _create_agora_router  # noqa: E402
 _agora_router = _create_agora_router(
     extract_identity=_extract_identity,
     require_read_role=_require_read_role,

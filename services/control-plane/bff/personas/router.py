@@ -11,7 +11,6 @@ import json
 import logging
 import os
 import re
-import sys
 from typing import (
     Any,
     Callable,
@@ -30,12 +29,8 @@ from fastapi.encoders import jsonable_encoder
 from starlette.responses import JSONResponse
 
 from . import service as _service_mod
+from .service import *  # noqa: F403 - legacy handlers use service-level helpers
 from .service import PersonaService
-
-# Bring all symbols from service into module namespace
-for _k, _v in list(_service_mod.__dict__.items()):
-    if not _k.startswith("__"):
-        globals()[_k] = _v
 
 log = logging.getLogger(__name__)
 

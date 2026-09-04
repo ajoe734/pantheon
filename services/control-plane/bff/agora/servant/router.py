@@ -27,7 +27,7 @@ from ..models import (
     ServantCapabilitySummary,
     ServantProfile,
 )
-from openclaw_ops_client import OpenClawOpsClient, OpenClawOpsClientError
+from ...openclaw_ops_client import OpenClawOpsClient, OpenClawOpsClientError
 try:
     from ports.persona_write_owner import (
         PersonaWriteConflict,

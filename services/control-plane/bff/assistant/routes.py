@@ -6,7 +6,7 @@ from typing import Any, Callable, Dict, Iterator, List, Optional
 
 from fastapi import APIRouter, Body, Header, HTTPException
 
-from models import ErrorCode
+from ..models import ErrorCode
 
 from .context_composer import AssistantContextPolicyError
 from .command_idempotency import (

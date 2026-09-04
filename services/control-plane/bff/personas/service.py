@@ -48,7 +48,7 @@ from starlette.responses import JSONResponse
 
 BFF_DATA_DIR = os.getenv("BFF_DATA_DIR", "/tmp/pantheon/bff")
 
-from models import (
+from ..models import (
     ActionCommandStatus,
     ApproveMutationCommandPayload,
     AuditContext,
@@ -242,12 +242,8 @@ except ImportError:
     def redact_evidence_refs(refs: Any) -> Any:
         return refs
 
-_PERSONA_SERVICE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "persona"))
-if _PERSONA_SERVICE_DIR not in sys.path:
-    sys.path.insert(0, _PERSONA_SERVICE_DIR)
-
 try:
-    from persona_strategy_discovery import (
+    from services.control_plane.persona.persona_strategy_discovery import (
         PersonaStrategyDiscoveryService,
         extract_persona_strategy_profile,
     )
@@ -322,7 +318,7 @@ from persona_strategy_discovery import (  # noqa: E402
 
 
 # --- ProvisioningConflict ---
-from persona_provisioning import (
+from ..persona_provisioning import (
     ProvisioningConflict,
     ProvisioningRecord,
     make_persona_provisioning_store,
@@ -330,7 +326,7 @@ from persona_provisioning import (
 
 
 # --- deterministic_provisioning_ids ---
-from persona_provisioning_coordinator import (
+from ..persona_provisioning_coordinator import (
     PersonaProvisioningCoordinationError,
     PersonaProvisioningCoordinator,
     deterministic_provisioning_ids,

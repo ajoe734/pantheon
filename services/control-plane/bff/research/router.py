@@ -44,7 +44,7 @@ from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from fastapi import APIRouter, Body, Header, Query, Request
 
-from models import ErrorCode, ObjectType, SOURCE_TYPE_TO_EVIDENCE_KIND, redact_evidence_refs
+from ..models import ErrorCode, ObjectType, SOURCE_TYPE_TO_EVIDENCE_KIND, redact_evidence_refs
 
 from .service import ResearchNotFoundError, ResearchRouterService, ResearchValidationError
 

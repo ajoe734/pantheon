@@ -17,8 +17,8 @@ from datetime import datetime, timezone
 from typing import Any, Dict, Optional, Tuple
 from urllib.parse import quote
 
-from models import CommandStatus, CommandType
-from command_adapters import ActionUnavailableError, dispatch_domain_command
+from .models import CommandStatus, CommandType
+from .command_adapters import ActionUnavailableError, dispatch_domain_command
 
 log = logging.getLogger(__name__)
 
