@@ -6,7 +6,7 @@ from typing import Any, Callable, Dict, Optional
 
 from fastapi import APIRouter, Body, Header, HTTPException, Query
 
-from models import CommandType, ErrorCode, ObjectType
+from ...models import CommandType, ErrorCode, ObjectType
 from ..service import AgoraService
 
 

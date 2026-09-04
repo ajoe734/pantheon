@@ -9,13 +9,16 @@ import unittest
 from collections.abc import Callable
 from unittest.mock import patch
 
-from persona_cron_registrar import (
+from services.control_plane.cron.persona_cron_registrar import (
     AdapterCronRuntime,
     PersonaCronRegistrar,
     PersonaCronRegistrationResult,
     _job_name,
 )
-from workflows import PERSONA_FIRST_EVALUATION_WORKFLOW_ID, WORKFLOW_CATALOG
+from services.control_plane.cron.workflows import (
+    PERSONA_FIRST_EVALUATION_WORKFLOW_ID,
+    WORKFLOW_CATALOG,
+)
 
 
 def _existing_job_fixture(

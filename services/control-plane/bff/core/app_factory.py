@@ -17,9 +17,9 @@ from fastapi.params import Path as PathParam
 from fastapi.params import Query as QueryParam
 from fastapi.routing import APIRoute
 
-from auth.router import create_auth_router
-from auth.service import AuthFacadeService
-from core.lifespan import create_lifespan
+from ..auth.router import create_auth_router
+from ..auth.service import AuthFacadeService
+from .lifespan import create_lifespan
 
 
 RouteHandler = Callable[[Request], Any]

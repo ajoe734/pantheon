@@ -8,7 +8,7 @@ from typing import Any, Callable, Dict, Optional
 from fastapi import APIRouter, Body, Header, HTTPException, Query
 from fastapi.responses import JSONResponse
 
-from models import CommandType, ErrorCode, ObjectType, TargetObject
+from ...models import CommandType, ErrorCode, ObjectType, TargetObject
 from ..service import AgoraService
 
 

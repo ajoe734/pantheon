@@ -41,7 +41,6 @@ Routes still in main.py (migration pending -- see router stub comment):
 """
 from __future__ import annotations
 
-import sys
 from pathlib import Path
 from typing import Any, Callable
 
@@ -82,11 +81,7 @@ from .schemas import (  # noqa: F401  (back-compat re-export)
 )
 from .store import WorkshopVersionProjectionConflict, make_workshop_store  # noqa: F401
 
-_CONTROL_PLANE_DIR = Path(__file__).resolve().parents[3]
-if str(_CONTROL_PLANE_DIR) not in sys.path:
-    sys.path.insert(0, str(_CONTROL_PLANE_DIR))
-
-from privacy.private_content_store import (  # noqa: E402
+from services.control_plane.privacy.private_content_store import (
     EphemeralKeyProvider,
     MemoryPrivateContentStore,
 )

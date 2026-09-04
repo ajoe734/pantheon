@@ -28,7 +28,7 @@ from typing import Any, Callable, Dict, Optional
 from fastapi import APIRouter, BackgroundTasks, Body, Header, HTTPException, Request, Response
 from starlette.responses import JSONResponse
 
-from models import (
+from ..models import (
     ActionCommandStatus,
     BffActionCatalogResponse,
     CommandReceipt,

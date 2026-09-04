@@ -23,13 +23,13 @@ if ! "$PYTHON_BIN" -c 'import uvicorn' >/dev/null 2>&1; then
 fi
 
 if ! (
-  cd "$ROOT_DIR/services/control-plane/bff"
-  PYTHONPATH="$ROOT_DIR:$ROOT_DIR/services/control-plane/bff:${PYTHONPATH:-}" \
+  cd "$ROOT_DIR"
+  PYTHONPATH="$ROOT_DIR:${PYTHONPATH:-}" \
     BFF_DATA_DIR="$DATA_DIR" \
     PANTHEON_BFF_AUTH_STUB=true \
     PANTHEON_BFF_AUTH_MODE=permissive \
     PANTHEON_ENV=dev \
-    "$PYTHON_BIN" -c 'import main' >/dev/null
+    "$PYTHON_BIN" -c 'import services.control_plane.bff.main' >/dev/null
 ); then
   echo "HA-007-V2 smoke could not import the BFF app with ${PYTHON_BIN}; install the BFF and imported service requirements, or set PANTHEON_BFF_PYTHON to a prepared venv." >&2
   exit 2
@@ -58,8 +58,8 @@ start_replica() {
   local log_file="${LOG_DIR}/${label}.log"
 
   (
-    cd "$ROOT_DIR/services/control-plane/bff"
-    export PYTHONPATH="$ROOT_DIR:$ROOT_DIR/services/control-plane/bff:${PYTHONPATH:-}"
+    cd "$ROOT_DIR"
+    export PYTHONPATH="$ROOT_DIR:${PYTHONPATH:-}"
     export BFF_DATA_DIR="$DATA_DIR"
     export PANTHEON_BFF_AUTH_STUB=true
     export PANTHEON_BFF_AUTH_MODE=permissive
@@ -67,7 +67,7 @@ start_replica() {
     export PANTHEON_DEPLOYMENT_STAGE=dev
     export PANTHEON_BFF_JWT_SECRET="$SECRET"
     export PANTHEON_BFF_SMOKE_JWT_SECRET="$SECRET"
-    exec "$PYTHON_BIN" -m uvicorn main:app --host 127.0.0.1 --port "$port" --log-level warning
+    exec "$PYTHON_BIN" -m uvicorn services.control_plane.bff.main:app --host 127.0.0.1 --port "$port" --log-level warning
   ) >"$log_file" 2>&1 &
 
   PIDS+=("$!")

@@ -5,7 +5,10 @@ import hashlib
 import uuid
 from typing import Any, Callable, Dict, List, Optional
 
-from openclaw_ops_client import OpenClawOpsClient, OpenClawOpsClientError
+try:
+    from openclaw_ops_client import OpenClawOpsClient, OpenClawOpsClientError
+except ImportError:  # pragma: no cover - package entrypoint fallback
+    from ...openclaw_ops_client import OpenClawOpsClient, OpenClawOpsClientError
 
 from .provider import (
     authority_boundary,

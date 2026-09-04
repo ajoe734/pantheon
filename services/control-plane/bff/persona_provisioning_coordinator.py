@@ -16,7 +16,7 @@ from dataclasses import dataclass
 from typing import Any, Callable, Mapping, Protocol
 from urllib.parse import quote
 
-from persona_provisioning import (
+from .persona_provisioning import (
     TERMINAL_STATES,
     PersonaProvisioningStore,
     ProvisioningRecord,
