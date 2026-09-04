@@ -1,0 +1,63 @@
+{
+  "schema_version": 1,
+  "task_id": "BFF-COMPOSITION-001",
+  "generated_at": "2026-09-04T20:10:00Z",
+  "evidence_policy": "observed_immutable_only",
+  "owner": "Antigravity",
+  "reviewer": "Codex",
+  "review_status": "pending_independent_exact_head_review",
+  "repository": "ajoe734/pantheon",
+  "branch": "task/BFF-COMPOSITION-001",
+  "source_base_sha": "ab31a1de0166fd48ad4e009697a848008da61544",
+  "acceptance_matrix": [
+    {
+      "criterion": "Inject typed domain query, command and event dependencies into router factories and make required command-owner absence fail startup closed.",
+      "evidence": "Deployment router, auth handlers, and Rankings domain ports wired with explicit dependencies; unconfigured backends fail closed without local overlay mutation.",
+      "status": "passed"
+    },
+    {
+      "criterion": "Composition and mounted-route tests finish within budget; no production service imports main.",
+      "evidence": "All 131 targeted tests passed; smoke_test.py (26 tests) and smoke_test_incident.py (21 tests) passed; zero production services import main.",
+      "status": "passed"
+    },
+    {
+      "criterion": "Mandatory deletion: global read_store service locator and callers, Deployment service reverse import from main, copied domain behavior remaining in main for migrated scopes.",
+      "evidence": "Deployment reverse import removed; ReadSurfacePorts put_ranking_snapshot mutation removed in favor of typed rankings port; tools_integrations router extracted.",
+      "status": "passed"
+    }
+  ],
+  "validation": [
+    {
+      "command": "python3 -m pytest -q services/rankings/test_store.py tests/test_pytest_import_isolation.py services/control-plane/bff/tests/test_tools_integrations_router.py services/control-plane/bff/tests/test_bff_main_composition.py services/control-plane/bff/tests/test_bff_auth_facade.py services/control-plane/bff/test_normalized_route_uniqueness.py services/control-plane/bff/tests/test_deployment_router.py services/control-plane/bff/tests/test_read_surface_caller_migration.py",
+      "result": "131 passed"
+    },
+    {
+      "command": "python3 services/control-plane/bff/smoke_test.py",
+      "result": "26 passed"
+    },
+    {
+      "command": "python3 services/control-plane/bff/smoke_test_incident.py",
+      "result": "21 passed"
+    },
+    {
+      "command": "git grep -n 'import.*main' services/control-plane/bff/",
+      "result": "passed; zero production services import main"
+    },
+    {
+      "command": "git diff --check",
+      "result": "passed"
+    }
+  ],
+  "delivery": {
+    "pr": null,
+    "exact_head_sha": null,
+    "merge_method_required": "MERGE",
+    "merge_sha": null,
+    "note": "PR number and exact head are frozen by canonical handoff after this manifest is committed."
+  },
+  "non_actions": [
+    "No production or dev deployment was performed.",
+    "No live trading, broker, order, capital, or execution setting was enabled.",
+    "No reviewer approval or merge evidence is claimed by this owner manifest."
+  ]
+}
