@@ -12,18 +12,18 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 PANTHEON_DEPLOY_CONTROLLER_CONTRACT_VERSION="dev-root-isolation-v1"
 
-PROJECT_ID="${PROJECT_ID:-pantheon-lupin-dev-20260719}"
-REMOTE_USER="${REMOTE_USER:-lupin}"
+PROJECT_ID="${PROJECT_ID:-pantheon-dev-20260902}"
+REMOTE_USER="${REMOTE_USER:-chloe_ong_dev_cctech_support_com}"
 
-DEV_VM="${DEV_VM:-pantheon-lupin-dev}"
+DEV_VM="${DEV_VM:-pantheon-dev-deploy}"
 DEV_ZONE="${DEV_ZONE:-asia-east1-b}"
-DEV_REMOTE_DIR="${DEV_REMOTE_DIR:-/home/lupin/pantheon}"
-DEV_DEPLOY_SSH_HOST="${DEV_DEPLOY_SSH_HOST:-35.201.204.12}"
-DEV_BFF_CANONICAL_CORS_ORIGIN="${DEV_BFF_CANONICAL_CORS_ORIGIN:-https://pantheon-lupin-dev-fe.35.201.204.12.sslip.io}"
-DEV_BFF_CORS_ORIGINS="${DEV_BFF_CORS_ORIGINS:-${DEV_BFF_CANONICAL_CORS_ORIGIN},https://pantheon-ai-system-front-dev.lovable.app,https://pantheon-dev.lovable.app}"
+DEV_REMOTE_DIR="${DEV_REMOTE_DIR:-/home/chloe_ong_dev_cctech_support_com/pantheon}"
+DEV_DEPLOY_SSH_HOST="${DEV_DEPLOY_SSH_HOST:-34.81.52.222}"
+DEV_BFF_CANONICAL_CORS_ORIGIN="${DEV_BFF_CANONICAL_CORS_ORIGIN:-https://app.dev.mvl-cap.tw}"
+DEV_BFF_CORS_ORIGINS="${DEV_BFF_CORS_ORIGINS:-${DEV_BFF_CANONICAL_CORS_ORIGIN}}"
 DEV_BFF_REQUIRED_CORS_ORIGINS="${DEV_BFF_REQUIRED_CORS_ORIGINS:-https://preview--pantheon-dev.lovable.app,https://b75d3452-f667-4cf4-893a-1061de45b347.lovableproject.com,https://id-preview--b75d3452-f667-4cf4-893a-1061de45b347.lovable.app,https://140c41d5-9cd8-4d6b-ba02-66d5941d0dbe.lovableproject.com}"
-DEV_BFF_PUBLIC_HOST="${DEV_BFF_PUBLIC_HOST:-pantheon-lupin-dev-bff.35.201.204.12.sslip.io}"
-DEV_FE_PUBLIC_HOST="${DEV_FE_PUBLIC_HOST:-pantheon-lupin-dev-fe.35.201.204.12.sslip.io}"
+DEV_BFF_PUBLIC_HOST="${DEV_BFF_PUBLIC_HOST:-api.dev.mvl-cap.tw}"
+DEV_FE_PUBLIC_HOST="${DEV_FE_PUBLIC_HOST:-app.dev.mvl-cap.tw}"
 DEV_FE_STATIC_ROOT="${DEV_FE_STATIC_ROOT:-/var/www/pantheon-dev-fe}"
 # Large hosted dev datasets can make one lifecycle projection tick take
 # 150-180 seconds. Keep the compose default fail-closed at 120 seconds, while

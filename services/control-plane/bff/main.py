@@ -174,6 +174,7 @@ from paper_eligibility_proof import (
 from emergency_containment_policy import validate_emergency_containment
 from session_lifecycle_store import SessionLifecycleStore
 from management_ai_store import ManagementAiAttachmentError, ManagementAiAttachmentStore, ManagementAiConversationStore
+from agora_audit_store import AgoraAuditStore
 from management_nl_command_idempotency import (
     DEFAULT_STORAGE_PATH as DEFAULT_MANAGEMENT_NL_COMMAND_IDEMPOTENCY_PATH,
     ManagementNlCommandIdempotencyStore,
@@ -892,6 +893,20 @@ def _bff_readiness_dependencies() -> Dict[str, Dict[str, Any]]:
         },
         "lifecycle_projector": _lifecycle_projector_dependency(),
     }
+
+
+# Keep the process-liveness/readiness contract registered on the assembled
+# application. The Compose healthcheck and deployment gate probe ``/livez``;
+# without this registration a freshly built candidate starts successfully but
+# remains unhealthy and is rolled back before exact-pair admission.
+register_fastapi_health_routes(
+    app,
+    "operator-bff",
+    dependencies=_bff_readiness_dependencies,
+    details=lambda: {"version": "0.2.0", "data_dir": BFF_DATA_DIR},
+)
+
+
 _ERROR_CODE_BY_STATUS = {
     400: ErrorCode.VALIDATION_FAILED.value,
     401: ErrorCode.AUTH_REQUIRED.value,
@@ -989,6 +1004,7 @@ def _pack_d_error_metadata(code: Any, *, status_code: Optional[int] = None) -> D
     }
 command_store = CommandStore(os.path.join(BFF_DATA_DIR, "commands.jsonl"))
 session_lifecycle_store = SessionLifecycleStore(os.path.join(BFF_DATA_DIR, "session_lifecycle.json"))
+agora_audit_store = AgoraAuditStore()
 persona_write_owner = create_persona_registry_write_owner()
 persona_reconciliation_mutation_port = PersonaProvisioningReconciliationMutationPort(
     persona_mutation_port=persona_write_owner,
@@ -996,6 +1012,19 @@ persona_reconciliation_mutation_port = PersonaProvisioningReconciliationMutation
 read_store: ReadSurfacePorts = create_read_surface_ports(
     persona_registry_store=persona_write_owner,
 )
+
+
+def _record_agora_audit_event(event: Dict[str, Any]) -> Dict[str, Any]:
+    """Route mutation audits to the dedicated writer.
+
+    Focused tests may provide a legacy-compatible fake read store; retaining
+    that explicit seam avoids changing their fixture contract while production
+    ``ReadSurfacePorts`` remains strictly read-only.
+    """
+    legacy_writer = getattr(read_store, "record_agora_audit_event", None)
+    if callable(legacy_writer):
+        return legacy_writer(event)
+    return agora_audit_store.record_agora_audit_event(event)
 settings_store = SettingsStore(os.path.join(BFF_DATA_DIR, "settings.json"))
 _COMMAND_AUTH_CONTEXT: Dict[str, Dict[str, Optional[str]]] = {}
 downstream_health_monitor = DownstreamHealthMonitor(
@@ -1963,6 +1992,28 @@ def _list_governance_audit_events(
         str(event.get("entry_id") or event.get("auditId") or event.get("id") or index): event
         for index, event in enumerate(events)
     }
+    # Agora mutation audits are owned by the dedicated append-only writer,
+    # not by the read-only surface ports.  Merge them into the governance
+    # audit readback so entity links and post-restart queries remain durable.
+    for event in agora_audit_store.list_agora_audit_events(
+        actor=actor,
+        action_types=action_types,
+        target_type=target_type,
+        from_ts=from_ts,
+        to_ts=to_ts,
+    ):
+        if _audit_event_matches(
+            event,
+            actor=actor,
+            action_types=action_types,
+            target_type=target_type,
+            from_ts=from_ts,
+            to_ts=to_ts,
+        ):
+            events_by_id.setdefault(
+                str(event.get("entry_id") or event.get("auditId") or event.get("id")),
+                event,
+            )
     if include_command_store:
         for record in command_store._get_all_commands():
             event = _project_command_record_audit_event(record)
@@ -14247,7 +14298,7 @@ def _mgmt_nl_record_control_audit(
         "href": f"/bff/audit/entities/ManagementNLExchange/{message_id}",
     }
     try:
-        accepted_audit = read_store.record_agora_audit_event(
+        accepted_audit = _record_agora_audit_event(
             {
                 "action": f"management.nl.control_mode.{command_kind}",
                 "targetType": "ManagementNLExchange",
@@ -14646,7 +14697,7 @@ def _mgmt_nl_record_high_risk_refusal(
 ) -> Optional[str]:
     """Record a narrow refusal audit event without creating NL session state."""
     try:
-        audit = read_store.record_agora_audit_event(
+        audit = _record_agora_audit_event(
             {
                 "action": "management.nl.high_risk_refused",
                 "targetType": "ManagementNLQuery",
@@ -16684,7 +16735,7 @@ async def bff_management_nl_ask(
 
     try:
         accepted_audit = await asyncio.to_thread(
-            read_store.record_agora_audit_event,
+            _record_agora_audit_event,
             {
                 "action": "management.nl.ask.accepted",
                 "targetType": "ManagementNLExchange",
@@ -22771,7 +22822,15 @@ def _resolve_agora_interaction_context_ref(
     )
 from auth.router import create_auth_router
 from auth.service import AuthFacadeService
-auth_facade_service = AuthFacadeService()
+from auth.handlers import bff_auth_readiness, create_auth_handlers
+
+# Auth routes are owned by ``auth.router``; bind the concrete handlers here at
+# the composition root so an unassembled facade cannot silently ship a 503 for
+# every session request.  Provider readiness remains cache-only and advisory.
+auth_facade_service = AuthFacadeService(
+    local_readiness=bff_auth_readiness,
+    handlers=create_auth_handlers(),
+)
 app.include_router(create_auth_router(service=auth_facade_service))
 from core.app_factory import (
     create_settings_router,
@@ -22921,6 +22980,7 @@ _agora_router = _create_agora_router(
     bff_error=_bff_error,
     utc_now=utc_now,
     get_read_store=lambda: read_store,
+    get_audit_store=lambda: agora_audit_store,
     get_command_store=lambda: command_store,
     get_persona_write_owner=lambda: persona_write_owner,
     get_trade_journey_store=lambda: _trade_journeys.EVENT_STORE,
