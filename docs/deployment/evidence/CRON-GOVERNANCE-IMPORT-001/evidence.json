@@ -6,6 +6,17 @@
   "reviewer": "Antigravity",
   "target_repo": "pantheon",
   "task_class": "functional",
+  "task_generation": 3,
+  "artifact_contract_revision": {
+    "updated_at": "2026-09-04T15:04:42Z",
+    "reason": "Include deployment_saga.py as the minimum prerequisite for canonical deployment_plan module identity.",
+    "artifacts": [
+      "services/control-plane/cron/service.py",
+      "services/control-plane/cron/test_service.py",
+      "docs/deployment/evidence/CRON-GOVERNANCE-IMPORT-001/evidence.json",
+      "services/control-plane/governance/deployment_saga.py"
+    ]
+  },
   "scope": {
     "owned": [
       "services/control-plane/cron/service.py",
