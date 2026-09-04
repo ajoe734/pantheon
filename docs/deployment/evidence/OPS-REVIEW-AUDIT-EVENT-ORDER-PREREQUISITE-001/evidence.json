@@ -1,0 +1,63 @@
+{
+  "schema_version": "pantheon.review-evidence.v1",
+  "task_id": "OPS-REVIEW-AUDIT-EVENT-ORDER-PREREQUISITE-001",
+  "title": "Fix canonical review audit event chronology across rotations",
+  "owner": "Codex",
+  "reviewer": "Antigravity2",
+  "target_repo": "pantheon",
+  "task_class": "development_tooling",
+  "scope": {
+    "owned": [
+      "Canonical review audit event chronology across active and rotated logs",
+      "Fail-closed lineage validation and focused merge-gate regressions"
+    ],
+    "not_changing": [
+      "Activity log rotation or archive naming",
+      "Canonical task lifecycle and review transition writers",
+      "Auto-integrator merge execution or scheduling"
+    ],
+    "composes_with": [
+      "scripts/git/auto_integrator.py ReviewGate consumption of task_review_merge_gate.load_approval_record"
+    ]
+  },
+  "failure_reproduction": {
+    "pr_5527": "A 13:48 assign event in a lexically later content-addressed archive was scanned after a 15:18 exact-head approval and incorrectly revoked it.",
+    "root_cause": "Archive filename order was treated as event chronology even though rotation filenames are content hashes."
+  },
+  "implementation": {
+    "chronology_authority": ".orchestrator/common.py stream_logical_activity logical append order; archive filenames and event timestamps carry no independent ordering authority.",
+    "fail_closed_conditions": [
+      "invalid rotation lineage or source identity",
+      "invalid JSON or event identity",
+      "unsupported legacy overlap",
+      "conflicting payloads for one event_id"
+    ],
+    "consumer_unification": "Standalone canonical review checks and auto-integrator ReviewGate call the same load_approval_record function, which delegates production audit replay to stream_logical_activity. Injected fixture events retain caller order."
+  },
+  "verification": {
+    "status": "passed",
+    "commands": [
+      "python3 -m unittest scripts.git.test_task_review_merge_gate",
+      "python3 -m py_compile scripts/git/task_review_merge_gate.py scripts/git/test_task_review_merge_gate.py",
+      "git diff --check"
+    ],
+    "results": [
+      "111 tests passed, including two real content-addressed rotations whose lexical filename order is the reverse of canonical lineage order",
+      "The disk-backed PR #5527 replay preserves approval across earlier assign, later blocker, and Human/Ops integration_resumed semantics",
+      "A truncated rotation-lineage manifest returns a fail-closed scan_error instead of raising from load_approval_record",
+      "modified Python modules compiled",
+      "no whitespace errors"
+    ]
+  },
+  "review_handoff": {
+    "status": "ready_for_independent_review_after_commit",
+    "required_checks": [
+      "Confirm content-hash filename order cannot supersede rotation-lineage logical order",
+      "Confirm the two-archive fixture replays blocker and local Human/Ops integration resume from disk",
+      "Confirm truncated lineage is surfaced as scan_error without an uncaught exception",
+      "Confirm production history uses stream_logical_activity validation",
+      "Confirm true post-approval assign, reopen, and do-not-merge revocations remain effective",
+      "Confirm auto-integrator and standalone gate share the same loader"
+    ]
+  }
+}
