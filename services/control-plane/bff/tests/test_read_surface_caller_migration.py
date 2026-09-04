@@ -682,12 +682,25 @@ class TestEndpointLevelRetainedCallers(unittest.TestCase):
             },
         )
         from services.control_plane.bff.bootstrap import AppDependencies
+        from services.control_plane.bff.deployment.adapters import (
+            DefaultDeploymentCommands,
+            DeploymentReadSurfaceAdapter,
+        )
 
-        self.deps = AppDependencies(queries=self.ports, read_store=self.ports)
+        self.deps = AppDependencies(
+            deployment_queries=DeploymentReadSurfaceAdapter(self.ports),
+            deployment_commands=DefaultDeploymentCommands(),
+            read_surface=self.ports,
+            command_store=bff_main.command_store,
+            persona_write_owner=bff_main.persona_write_owner,
+            ranking_write_owner=bff_main.ranking_write_owner,
+            settings_store=bff_main.settings_store,
+        )
         test_app = bff_main._build_bff_app()
         test_app.include_router(
             create_deployment_router(
-                queries=self.deps.queries,
+                queries=self.deps.deployment_queries,
+                commands=self.deps.deployment_commands,
                 extract_identity=bff_main._extract_identity,
                 require_read_role=bff_main._require_read_role,
                 require_operator_role=bff_main._require_operator_role,

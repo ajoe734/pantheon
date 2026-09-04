@@ -13,6 +13,9 @@ from __future__ import annotations
 
 from typing import Any, Callable, Dict, Optional, Sequence
 
+from .adapters import DefaultDeploymentCommands
+from .ports import DeploymentCommands, DeploymentQueries
+
 
 class DeploymentService:
     """Shared deployment-domain dependencies and projection helpers."""
@@ -49,7 +52,8 @@ class DeploymentService:
     def __init__(
         self,
         *,
-        queries: Optional[Any] = None,
+        queries: DeploymentQueries,
+        commands: Optional[DeploymentCommands] = None,
         bff_error: Callable[..., Exception],
         dataset_surface_status: Callable[..., Dict[str, Any]],
         composed_surface_status: Callable[..., Dict[str, Any]],
@@ -59,6 +63,7 @@ class DeploymentService:
         surface_degradation_reason: Callable[..., Optional[str]],
     ) -> None:
         self._queries = queries
+        self._commands = commands or DefaultDeploymentCommands()
         self._bff_error = bff_error
         self._dataset_surface_status = dataset_surface_status
         self._composed_surface_status = composed_surface_status
@@ -68,8 +73,12 @@ class DeploymentService:
         self._surface_degradation_reason = surface_degradation_reason
 
     @property
-    def queries(self) -> Any:
+    def queries(self) -> DeploymentQueries:
         return self._queries
+
+    @property
+    def commands(self) -> DeploymentCommands:
+        return self._commands
 
     # -- PKT-001: operator deployment-plans list ---------------------------- #
 

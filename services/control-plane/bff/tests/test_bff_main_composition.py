@@ -242,16 +242,64 @@ def test_deployment_router_receives_queries_port() -> None:
     assert not hasattr(service, "read_store")
 
 
+def test_deployment_service_requires_queries() -> None:
+    """Verify DeploymentService raises TypeError when queries is not provided."""
+    from services.control_plane.bff.deployment.service import DeploymentService
+
+    with pytest.raises(TypeError):
+        DeploymentService(  # type: ignore[call-arg]
+            bff_error=lambda *a, **k: RuntimeError(),
+            dataset_surface_status=lambda *a, **k: {},
+            composed_surface_status=lambda *a, **k: {},
+            aggregate_group_surface=lambda *a, **k: {},
+            split_csv_query=lambda *a, **k: None,
+            snapshot_meta=lambda *a, **k: {},
+            surface_degradation_reason=lambda *a, **k: None,
+        )
+
+
 def test_bootstrap_app_dependencies_contract() -> None:
     """Verify bootstrap package exposes AppDependencies container with typed dependencies."""
     from services.control_plane.bff.bootstrap import AppDependencies
-    from services.control_plane.bff.deployment.ports import DeploymentQueries
+    from services.control_plane.bff.deployment.ports import DeploymentCommands, DeploymentQueries
 
     mock_queries = object()
-    deps = AppDependencies(queries=mock_queries)
-    assert deps.queries is mock_queries
-    assert deps.read_store is None
+    mock_commands = object()
+    mock_read_surface = object()
+    mock_ranking = object()
+    mock_persona = object()
+    mock_cmd = object()
+    mock_settings = object()
+
+    deps = AppDependencies(
+        deployment_queries=mock_queries,
+        deployment_commands=mock_commands,
+        read_surface=mock_read_surface,
+        command_store=mock_cmd,
+        persona_write_owner=mock_persona,
+        ranking_write_owner=mock_ranking,
+        settings_store=mock_settings,
+    )
+    assert deps.deployment_queries is mock_queries
+    assert deps.deployment_commands is mock_commands
+    assert deps.read_surface is mock_read_surface
+    assert deps.ranking_write_owner is mock_ranking
+    assert not hasattr(deps, "queries")
+    assert not hasattr(deps, "read_store")
 
     default_deps = AppDependencies.create_default()
-    assert default_deps.queries is not None
-    assert default_deps.read_store is not None
+    assert default_deps.deployment_queries is not None
+    assert default_deps.deployment_commands is not None
+    assert default_deps.read_surface is not None
+    assert default_deps.ranking_write_owner is not None
+    assert default_deps.persona_write_owner is not None
+    assert isinstance(default_deps.deployment_queries, DeploymentQueries)
+    assert isinstance(default_deps.deployment_commands, DeploymentCommands)
+
+
+def test_main_py_uses_app_dependencies_for_composition() -> None:
+    """Verify main.py uses AppDependencies for composition root assembly."""
+    from services.control_plane.bff import main as bff_main
+    assert hasattr(bff_main, "app_deps"), "main.py must hold app_deps"
+    from services.control_plane.bff.bootstrap import AppDependencies
+    assert isinstance(bff_main.app_deps, AppDependencies)

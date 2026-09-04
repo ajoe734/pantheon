@@ -283,9 +283,11 @@ persona_write_owner = (
     else None
 )
 
-# read_store is initialized explicitly via PersonaService or router injection;
-# module import must not construct a global read_store instance.
-read_store: Optional[Any] = None
+read_store = (
+    create_read_surface_ports(persona_registry_store=persona_write_owner)
+    if create_read_surface_ports is not None
+    else None
+)
 
 # Rankings write-owner port must be configured at service/app startup;
 # missing required configuration fails startup closed, never deferred to first write.
@@ -293,8 +295,12 @@ _ranking_write_owner: Optional[Any] = None
 
 
 def _get_ranking_write_owner() -> Any:
+    global _ranking_write_owner
     if _ranking_write_owner is None:
-        raise RuntimeError("Rankings write-owner port is not configured at startup")
+        if create_ranking_write_owner is not None:
+            _ranking_write_owner = create_ranking_write_owner()
+        if _ranking_write_owner is None:
+            raise RuntimeError("Rankings write-owner port is not configured at startup")
     return _ranking_write_owner
 
 class _DefaultCommandStore:
@@ -13894,7 +13900,7 @@ class PersonaService:
     def __init__(
         self,
         *,
-        queries: Optional[Any] = None,
+        read_store: Optional[Any] = None,
         command_store: Optional[Any] = None,
         provisioning_store: Optional[Any] = None,
         write_owner: Optional[Any] = None,
@@ -13912,7 +13918,7 @@ class PersonaService:
         global _ranking_write_owner
         self._write_owner = write_owner or persona_write_owner
         self._read_store = (
-            queries
+            read_store
             or (get_read_store() if get_read_store is not None else None)
             or (
                 create_read_surface_ports(persona_registry_store=self._write_owner)

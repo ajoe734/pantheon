@@ -34,12 +34,14 @@ from fastapi.responses import JSONResponse
 
 from ..models import CommandType, ErrorCode, ObjectType
 
+from .ports import DeploymentCommands, DeploymentQueries
 from .service import DeploymentService
 
 
 def create_deployment_router(
     *,
-    queries: Optional[Any] = None,
+    queries: DeploymentQueries,
+    commands: Optional[DeploymentCommands] = None,
     extract_identity: Callable[[Optional[str]], Any],
     require_read_role: Callable[[Any], None],
     require_operator_role: Callable[[Any], None],
@@ -72,6 +74,7 @@ def create_deployment_router(
     router = APIRouter()
     service = DeploymentService(
         queries=queries,
+        commands=commands,
         bff_error=bff_error,
         dataset_surface_status=dataset_surface_status,
         composed_surface_status=composed_surface_status,
@@ -288,8 +291,7 @@ def create_deployment_router(
                 suggestion="Replay with the original Idempotency-Key or choose a new plan id",
                 correlation_id=correlation_id,
             )
-
-        record = service.queries.create_deployment_plan(
+        record = service.commands.create_deployment_plan(
             plan_id=plan_id,
             binding_id=fields["binding_id"],
             artifact_id=fields["artifact_id"],

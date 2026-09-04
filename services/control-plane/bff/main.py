@@ -964,16 +964,20 @@ def _pack_d_error_metadata(code: Any, *, status_code: Optional[int] = None) -> D
         "retryable": behavior["retryable"],
         "userActionable": behavior["userActionable"],
     }
-command_store = CommandStore(os.path.join(BFF_DATA_DIR, "commands.jsonl"))
+
+
+from .bootstrap.dependencies import AppDependencies
+
+app_deps = AppDependencies.create_default()
+command_store = app_deps.command_store
 session_lifecycle_store = SessionLifecycleStore(os.path.join(BFF_DATA_DIR, "session_lifecycle.json"))
 agora_audit_store = AgoraAuditStore()
-persona_write_owner = create_persona_registry_write_owner()
+persona_write_owner = app_deps.persona_write_owner
+ranking_write_owner = app_deps.ranking_write_owner
 persona_reconciliation_mutation_port = PersonaProvisioningReconciliationMutationPort(
     persona_mutation_port=persona_write_owner,
 )
-read_store: ReadSurfacePorts = create_read_surface_ports(
-    persona_registry_store=persona_write_owner,
-)
+read_store: ReadSurfacePorts = app_deps.read_surface
 
 
 def _record_agora_audit_event(event: Dict[str, Any]) -> Dict[str, Any]:
@@ -22471,7 +22475,8 @@ app.routes.extend(_runtime_router.routes)
 from .deployment.router import create_deployment_router as _create_deployment_router
 app.include_router(
     _create_deployment_router(
-        queries=read_store,
+        queries=app_deps.deployment_queries,
+        commands=app_deps.deployment_commands,
         extract_identity=_extract_identity,
         require_read_role=_require_read_role,
         require_operator_role=_require_operator_role,

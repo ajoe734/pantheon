@@ -120,5 +120,6 @@ def test_deployment_service_accepts_typed_queries() -> None:
 
 def test_main_composes_deployment_router_with_queries_not_closure() -> None:
     main_source = (BFF_ROOT / "main.py").read_text(encoding="utf-8")
-    assert "queries=read_store" in main_source
-    assert "_create_deployment_router(\n        queries=read_store," in main_source
+    assert "queries=app_deps.deployment_queries" in main_source
+    assert "commands=app_deps.deployment_commands" in main_source
+    assert "_create_deployment_router(\n        queries=app_deps.deployment_queries,\n        commands=app_deps.deployment_commands," in main_source
