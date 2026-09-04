@@ -76,7 +76,6 @@ An acceptance that carries no binding is unusable, not permissive.
 from __future__ import annotations
 
 import argparse
-import gzip
 import json
 import os
 import re
@@ -85,11 +84,15 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from functools import partial
 from pathlib import Path
-from typing import Any, Iterable, Iterator, Mapping, Sequence
+from typing import Any, Iterable, Mapping, Sequence
 from urllib.parse import quote
 
 
 ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(ROOT / ".orchestrator"))
+
+import common as orchestrator_common  # noqa: E402
+
 STATUS_ROOT_ENV = "PANTHEON_STATUS_ROOT"
 DEFAULT_DEV_BRANCH = "dev"
 DEFAULT_TASK_PREFIX = "task/"
@@ -627,29 +630,6 @@ def _is_rejection_note(message: Any) -> bool:
     return any(marker in text for marker in REVOCATION_NOTE_MARKERS)
 
 
-def _activity_sources(status_root: Path) -> list[Path]:
-    active = status_root / ACTIVITY_LOG_NAME
-    sources: list[Path] = []
-    archive_dir = status_root / ACTIVITY_ARCHIVE_SUBDIR
-    legacy_dir = status_root / ACTIVITY_LEGACY_ARCHIVE_SUBDIR
-    if archive_dir.is_dir():
-        sources.extend(sorted(archive_dir.glob(f"{ACTIVITY_LOG_NAME}-*.gz")))
-    if legacy_dir.is_dir():
-        sources.extend(sorted(legacy_dir.glob("ai-activity-log-*.jsonl.gz")))
-    if active.is_file():
-        sources.append(active)
-    return sources
-
-
-def _iter_source_lines(path: Path) -> Iterator[str]:
-    if path.suffix == ".gz":
-        with gzip.open(path, "rt", encoding="utf-8", errors="replace") as handle:
-            yield from handle
-        return
-    with path.open("r", encoding="utf-8", errors="replace") as handle:
-        yield from handle
-
-
 def load_approval_record(
     task_id: str,
     *,
@@ -669,31 +649,19 @@ def load_approval_record(
 
     if events is None:
         root = resolve_status_root(status_root)
-        sources = _activity_sources(root)
-        if not sources:
+        log_path = root / ACTIVITY_LOG_NAME
+        if not log_path.is_file():
             return ApprovalRecord(task_id=task_id, scan_error="activity audit is unavailable")
-        materialized: list[Mapping[str, Any]] = []
-        for source in sources:
-            try:
-                for line in _iter_source_lines(source):
-                    line = line.strip()
-                    if not line or f'"{task_id}"' not in line:
-                        continue
-                    try:
-                        event = json.loads(line)
-                    except json.JSONDecodeError:
-                        return ApprovalRecord(
-                            task_id=task_id,
-                            scan_error=f"activity audit line in {source.name} is not valid JSON",
-                        )
-                    if isinstance(event, Mapping):
-                        materialized.append(event)
-            except OSError as exc:
-                return ApprovalRecord(
-                    task_id=task_id,
-                    scan_error=f"cannot read activity audit {source.name}: {exc}",
+        try:
+            events = [
+                event
+                for event, _source, _line_number in orchestrator_common.stream_logical_activity(
+                    log_path
                 )
-        events = materialized
+                if str(event.get("task_id") or "").strip() == task_id
+            ]
+        except RuntimeError as exc:
+            return ApprovalRecord(task_id=task_id, scan_error=str(exc))
 
     approval: ApprovalRecord | None = None
     revocation: tuple[str, str, str] | None = None
