@@ -1,0 +1,72 @@
+{
+  "schema_version": "pantheon.review-evidence.v1",
+  "task_id": "ENV-STAGING-PROD-PLAN-001",
+  "title": "Design staging and production closure without provisioning",
+  "recorded_at": "2026-09-04T00:50:00Z",
+  "owner": "Antigravity",
+  "reviewer": "Antigravity2",
+  "target_repo": "pantheon",
+  "task_class": "functional",
+  "summary_zh": "完成 Pantheon Dev/Staging/Prod 環境閉環 SA/SD 規範，實測複核並確認 Staging 與 Production 處於 unavailable 狀態；全面廢止並刪除舊 suspended 專案 pantheon-benjamin-20260528 與已釋出 IP 104.155.223.192 之後門與重複使用假設；設計 Ephemeral 0-idle Staging 與生產 Control/Execution 實體隔離邊界架構；並將後續實作具體物化為 3 個處於 undispatched 且需 Operator MFA 批准之未來特權任務封包。",
+  "artifacts": {
+    "implementation_paths": [
+      "docs/deployment/vm-dev-staging-prod-management-plan.md",
+      "docs/04/pantheon_environment_closure_sa_sd_2026-09/INDEX.md",
+      "docs/04/pantheon_environment_closure_sa_sd_2026-09/REPORT.md",
+      "docs/04/pantheon_environment_closure_sa_sd_2026-09/SA.md",
+      "docs/04/pantheon_environment_closure_sa_sd_2026-09/SD.md",
+      "docs/04/pantheon_environment_closure_sa_sd_2026-09/AUTHORITY_AND_THREAT_MODEL.md",
+      "docs/04/pantheon_environment_closure_sa_sd_2026-09/RESOURCE_AND_COST_MODEL.md",
+      "docs/04/pantheon_environment_closure_sa_sd_2026-09/PROMOTION_AND_ROLLBACK_SPEC.md",
+      "docs/04/pantheon_environment_closure_sa_sd_2026-09/FUTURE_PACKETS.md",
+      "docs/04/pantheon_environment_closure_sa_sd_2026-09/TRACEABILITY.md",
+      "docs/04/pantheon_environment_closure_sa_sd_2026-09/evidence.json"
+    ],
+    "evidence_manifest": "docs/04/pantheon_environment_closure_sa_sd_2026-09/evidence.json"
+  },
+  "scope": {
+    "owned": [
+      "Target SA and SD specification for Dev, Ephemeral Staging, and Isolated Production (Prod Control VM + Prod Execution VM)",
+      "Re-verification and empirical probing of Staging/Production unavailability (probe of 35.201.239.38 timeout, 104.155.223.192 third-party k8s reallocation)",
+      "Mandatory deletion and repudiation of retired environment reuse assumptions",
+      "Authority separation and threat modeling across Operator, CI/CD, Product Runtime, and Execution planes",
+      "Resource sizing and cost model based on Phase 0 live measurements (e2-standard-2 / e2-standard-4 with >=30% memory headroom)",
+      "Exact-pair promotion and sub-2-minute rollback specification with database expand/contract protocol",
+      "Materialization of undispatched, privileged future implementation packets (ENV-STG-EPHEMERAL-IMPL-001, ENV-PROD-CONTROL-IMPL-001, ENV-PROD-EXEC-ISOLATE-001)",
+      "Synchronization of docs/deployment/vm-dev-staging-prod-management-plan.md"
+    ],
+    "not_changing": [
+      "No creation of cloud resources, VMs, disks, networks, or VPCs",
+      "No generation of credentials, IAM keys, or Secret Manager secrets",
+      "No opening of network ingress or firewall ports",
+      "No production data access, copying, or replication",
+      "No live-capital trading enablement or execution trigger",
+      "Shared CI/CD deployment workflows (.github/workflows/nonprod-deploy.yml)"
+    ],
+    "known_gap": [
+      "Physical provisioning of ephemeral staging templates and production GCP projects remains deferred to future implementation packets ENV-STG-EPHEMERAL-IMPL-001 and ENV-PROD-CONTROL-IMPL-001 pending explicit operator MFA authorization."
+    ]
+  },
+  "empirical_probes": {
+    "active_dev_vm": {
+      "project": "pantheon-lupin-dev-20260719",
+      "ip": "35.201.204.12",
+      "status": "active_dev_only"
+    },
+    "suspended_project": {
+      "project": "pantheon-benjamin-20260528",
+      "status": "suspended"
+    },
+    "suspended_dev_ip_probe": {
+      "ip": "35.201.239.38",
+      "result": "timeout_unreachable"
+    },
+    "suspended_staging_ip_probe": {
+      "ip": "104.155.223.192",
+      "result": "HTTP/2 401 Unauthorized (reallocated to third-party k8s cluster)"
+    },
+    "staging_status": "unavailable",
+    "production_status": "unavailable"
+  },
+  "verified": "docs inspection, markdown link and schema verification, git status short check, scope enforcement check"
+}
