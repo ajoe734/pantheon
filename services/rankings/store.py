@@ -29,8 +29,12 @@ Generation 3 adds two additional immutable record kinds on the same sole
 prefixes so they can never collide with each other or with a legacy
 ``RankingRecord`` ranking_id, and they intentionally expose no update or
 delete: once created, a snapshot or evaluation is either an idempotent
-byte-identical replay of what already exists, or a rejected conflict. The
-legacy ``RankingRecord`` CRUD surface above is unchanged.
+byte-identical replay of what already exists, or a rejected conflict. Every
+generation-3 durable payload carries an explicit ``record_type`` envelope so
+the legacy CRUD surface can positively recognize and skip exactly the known
+non-legacy kinds, rather than inferring "not a legacy row" from the mere
+absence of ``ranking_id``. The legacy ``RankingRecord`` CRUD surface above is
+unchanged.
 """
 from __future__ import annotations
 
@@ -115,7 +119,18 @@ def _thaw(value: Any) -> Any:
 _SNAPSHOT_ID_PREFIX = "ranking-snapshot::"
 _EVALUATION_ID_PREFIX = "allocation-evaluation::"
 
+# Explicit envelope discriminators. Generation-3 rows always carry one of
+# these so the legacy CRUD surface can recognize and skip exactly the known
+# non-legacy kinds instead of treating every payload lacking ``ranking_id``
+# as safely ignorable.
+_SNAPSHOT_RECORD_TYPE = "ranking_snapshot"
+_EVALUATION_RECORD_TYPE = "allocation_evaluation"
+_RECOGNIZED_NON_LEGACY_RECORD_TYPES = frozenset(
+    (_SNAPSHOT_RECORD_TYPE, _EVALUATION_RECORD_TYPE)
+)
+
 _SNAPSHOT_FIELDS: Tuple[str, ...] = (
+    "record_type",
     "ranking_snapshot_id",
     "surface",
     "period",
@@ -127,6 +142,7 @@ _SNAPSHOT_FIELDS: Tuple[str, ...] = (
 )
 
 _EVALUATION_REQUIRED_FIELDS: Tuple[str, ...] = (
+    "record_type",
     "allocation_evaluation_id",
     "ranking_snapshot_id",
     "allocation_policy_version",
@@ -139,7 +155,50 @@ _EVALUATION_OPTIONAL_FIELDS: Tuple[str, ...] = (
     "authority_mode",
     "promotion_review_id",
 )
-_EVALUATION_FIELDS: Tuple[str, ...] = _EVALUATION_REQUIRED_FIELDS + _EVALUATION_OPTIONAL_FIELDS
+
+
+def _validate_durable_value(value: Any, *, path: str = "value") -> None:
+    """Reject anything that cannot round-trip through JSON unchanged.
+
+    Accepts the frozen shapes produced by ``_deep_freeze`` (``MappingProxyType``
+    and ``tuple``) as well as their unfrozen originals, so this can validate
+    either a raw constructor argument or an already-frozen attribute.
+    """
+
+    if value is None or isinstance(value, (str, int, float, bool)):
+        return
+    if isinstance(value, (dict, MappingProxyType)):
+        for key, item in value.items():
+            if not isinstance(key, str):
+                raise RankingWriteOwnerError(f"{path} keys must be strings")
+            _validate_durable_value(item, path=f"{path}.{key}")
+        return
+    if isinstance(value, (list, tuple)):
+        for index, item in enumerate(value):
+            _validate_durable_value(item, path=f"{path}[{index}]")
+        return
+    raise RankingWriteOwnerError(f"{path} must be a JSON-compatible value, got {type(value).__name__}")
+
+
+def _validate_evidence_assertion_digests(value: Any) -> None:
+    """Enforce the historical shape: persona id -> list of digest strings."""
+
+    if not isinstance(value, (dict, MappingProxyType)):
+        raise RankingWriteOwnerError(
+            "evidence_assertion_digests must be a mapping of persona id to digest list"
+        )
+    for persona_id, digests in value.items():
+        if not isinstance(persona_id, str) or not persona_id.strip():
+            raise RankingWriteOwnerError("evidence_assertion_digests keys must be non-empty persona id strings")
+        if not isinstance(digests, (list, tuple)):
+            raise RankingWriteOwnerError(
+                f"evidence_assertion_digests[{persona_id!r}] must be a list of digest strings"
+            )
+        for digest in digests:
+            if not isinstance(digest, str) or not digest.strip():
+                raise RankingWriteOwnerError(
+                    f"evidence_assertion_digests[{persona_id!r}] entries must be non-empty strings"
+                )
 
 
 @dataclass(frozen=True)
@@ -169,6 +228,7 @@ class RankingSnapshotRecord:
 
     def to_canonical_dict(self) -> Dict[str, Any]:
         return {
+            "record_type": _SNAPSHOT_RECORD_TYPE,
             "ranking_snapshot_id": self.ranking_snapshot_id,
             "surface": self.surface,
             "period": self.period,
@@ -202,7 +262,8 @@ class AllocationEvaluationRecord:
         object.__setattr__(self, "lines", _deep_freeze(self.lines))
 
     def to_canonical_dict(self) -> Dict[str, Any]:
-        return {
+        payload: Dict[str, Any] = {
+            "record_type": _EVALUATION_RECORD_TYPE,
             "allocation_evaluation_id": self.allocation_evaluation_id,
             "ranking_snapshot_id": self.ranking_snapshot_id,
             "allocation_policy_version": self.allocation_policy_version,
@@ -210,9 +271,15 @@ class AllocationEvaluationRecord:
             "lines": _thaw(self.lines),
             "created_at": self.created_at,
             "applied": self.applied,
-            "authority_mode": self.authority_mode,
-            "promotion_review_id": self.promotion_review_id,
         }
+        # Absent optional fields are omitted entirely rather than stored as
+        # explicit nulls, so a durable row that never had them looks
+        # byte-identical to one from before these fields existed.
+        if self.authority_mode is not None:
+            payload["authority_mode"] = self.authority_mode
+        if self.promotion_review_id is not None:
+            payload["promotion_review_id"] = self.promotion_review_id
+        return payload
 
 
 def _validate_snapshot(record: RankingSnapshotRecord) -> None:
@@ -224,6 +291,8 @@ def _validate_snapshot(record: RankingSnapshotRecord) -> None:
         value = getattr(record, attr)
         if not isinstance(value, str) or not value.strip():
             raise RankingWriteOwnerError(f"{attr} is required")
+    _validate_durable_value(record.items, path="items")
+    _validate_evidence_assertion_digests(record.evidence_assertion_digests)
 
 
 def _validate_evaluation(record: AllocationEvaluationRecord) -> None:
@@ -243,12 +312,19 @@ def _validate_evaluation(record: AllocationEvaluationRecord) -> None:
             raise RankingWriteOwnerError(f"{attr} is required")
     if not isinstance(record.applied, bool):
         raise RankingWriteOwnerError("applied must be a bool")
+    for optional_attr in ("authority_mode", "promotion_review_id"):
+        value = getattr(record, optional_attr)
+        if value is not None and (not isinstance(value, str) or not value.strip()):
+            raise RankingWriteOwnerError(f"{optional_attr} must be a non-empty string when present")
+    _validate_durable_value(record.lines, path="lines")
 
 
 def _decode_ranking_snapshot(payload: Mapping[str, Any]) -> RankingSnapshotRecord:
     keys = set(payload.keys())
     if keys != set(_SNAPSHOT_FIELDS):
         raise RankingWriteOwnerError(f"malformed ranking snapshot payload keys: {sorted(keys)}")
+    if payload["record_type"] != _SNAPSHOT_RECORD_TYPE:
+        raise RankingWriteOwnerError(f"unexpected record_type for ranking snapshot: {payload['record_type']!r}")
     return RankingSnapshotRecord(
         ranking_snapshot_id=payload["ranking_snapshot_id"],
         surface=payload["surface"],
@@ -263,8 +339,21 @@ def _decode_ranking_snapshot(payload: Mapping[str, Any]) -> RankingSnapshotRecor
 
 def _decode_allocation_evaluation(payload: Mapping[str, Any]) -> AllocationEvaluationRecord:
     keys = set(payload.keys())
-    if keys != set(_EVALUATION_FIELDS):
-        raise RankingWriteOwnerError(f"malformed allocation evaluation payload keys: {sorted(keys)}")
+    required = set(_EVALUATION_REQUIRED_FIELDS)
+    optional = set(_EVALUATION_OPTIONAL_FIELDS)
+    if not required.issubset(keys):
+        raise RankingWriteOwnerError(
+            f"malformed allocation evaluation payload, missing required keys: {sorted(required - keys)}"
+        )
+    extra = keys - required
+    if not extra.issubset(optional):
+        raise RankingWriteOwnerError(
+            f"malformed allocation evaluation payload, unrecognized keys: {sorted(extra - optional)}"
+        )
+    if payload["record_type"] != _EVALUATION_RECORD_TYPE:
+        raise RankingWriteOwnerError(
+            f"unexpected record_type for allocation evaluation: {payload['record_type']!r}"
+        )
     return AllocationEvaluationRecord(
         allocation_evaluation_id=payload["allocation_evaluation_id"],
         ranking_snapshot_id=payload["ranking_snapshot_id"],
@@ -273,8 +362,8 @@ def _decode_allocation_evaluation(payload: Mapping[str, Any]) -> AllocationEvalu
         lines=payload["lines"],
         created_at=payload["created_at"],
         applied=payload["applied"],
-        authority_mode=payload["authority_mode"],
-        promotion_review_id=payload["promotion_review_id"],
+        authority_mode=payload.get("authority_mode"),
+        promotion_review_id=payload.get("promotion_review_id"),
     )
 
 
@@ -304,14 +393,23 @@ class RankingWriteStore:
     def _refresh(self) -> Dict[str, RankingRecord]:
         records: Dict[str, RankingRecord] = {}
         for payload in self._records_table.list_all():
-            # Generation 3 stores RankingSnapshotRecord/AllocationEvaluationRecord
-            # rows in this same table under namespaced record ids; those payloads
-            # carry no "ranking_id" and must stay invisible to the legacy CRUD
-            # surface rather than being force-decoded as a RankingRecord.
-            if "ranking_id" not in payload:
+            if "ranking_id" in payload:
+                record = RankingRecord.from_dict(payload)
+                records[record.ranking_id] = record
                 continue
-            record = RankingRecord.from_dict(payload)
-            records[record.ranking_id] = record
+            # Generation 3 stores RankingSnapshotRecord/AllocationEvaluationRecord
+            # rows in this same table under namespaced record ids, each tagged
+            # with an explicit record_type envelope. Only a recognized new
+            # kind is invisible to the legacy CRUD surface; an unrecognized
+            # row that is neither a legacy ranking nor a known generation-3
+            # kind is a data integrity problem, not something to silently
+            # ignore.
+            if payload.get("record_type") in _RECOGNIZED_NON_LEGACY_RECORD_TYPES:
+                continue
+            raise RankingWriteOwnerError(
+                "encountered a ranking row that is neither a legacy RankingRecord "
+                f"(missing ranking_id) nor a recognized record_type: {sorted(payload.keys())}"
+            )
         return records
 
     # ---- reads ----

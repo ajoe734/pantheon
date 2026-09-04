@@ -16,6 +16,7 @@ from __future__ import annotations
 import json
 import re
 import sys
+import threading
 from types import MappingProxyType, SimpleNamespace
 from unittest import mock
 
@@ -45,6 +46,7 @@ class _FakeCursor:
 class _FakeConnection:
     rows: dict[str, dict[str, dict]] = {}
     statements: list[str] = []
+    _table_lock = threading.Lock()
 
     def __enter__(self):
         return self
@@ -58,31 +60,40 @@ class _FakeConnection:
         table = self._table_name(sql)
         if normalized.startswith("CREATE"):
             return _FakeCursor([])
+        if normalized.startswith("LOCK TABLE"):
+            return _FakeCursor([])
         if normalized.startswith("INSERT INTO"):
             payload = json.loads(params[1]) if isinstance(params[1], str) else params[1]
-            table_rows = self.rows.setdefault(table, {})
             record_id = str(params[0])
-            if "DO NOTHING" in normalized and record_id in table_rows:
-                return _FakeCursor([])
-            table_rows[record_id] = payload
-            return _FakeCursor([(payload,)] if "RETURNING PAYLOAD" in normalized else [])
+            # Serialize the read-decide-write sequence the same way a real
+            # Postgres unique-constraint insert would, so two threads racing
+            # on the same record_id deterministically produce exactly one
+            # winner instead of a lost update from interleaved dict writes.
+            with self._table_lock:
+                table_rows = self.rows.setdefault(table, {})
+                if "DO NOTHING" in normalized and record_id in table_rows:
+                    return _FakeCursor([])
+                table_rows[record_id] = payload
+                return _FakeCursor([(payload,)] if "RETURNING PAYLOAD" in normalized else [])
         if normalized.startswith("UPDATE"):
             payload = json.loads(params[0]) if isinstance(params[0], str) else params[0]
             record_id = str(params[1])
             expected = json.loads(params[2]) if isinstance(params[2], str) else params[2]
-            table_rows = self.rows.setdefault(table, {})
-            if table_rows.get(record_id) != expected:
-                return _FakeCursor([])
-            table_rows[record_id] = payload
-            return _FakeCursor([(payload,)])
+            with self._table_lock:
+                table_rows = self.rows.setdefault(table, {})
+                if table_rows.get(record_id) != expected:
+                    return _FakeCursor([])
+                table_rows[record_id] = payload
+                return _FakeCursor([(payload,)])
         if normalized.startswith("DELETE FROM"):
             record_id = str(params[0])
             expected = json.loads(params[1]) if isinstance(params[1], str) else params[1]
-            table_rows = self.rows.setdefault(table, {})
-            if table_rows.get(record_id) != expected:
-                return _FakeCursor([])
-            removed = table_rows.pop(record_id)
-            return _FakeCursor([(removed,)])
+            with self._table_lock:
+                table_rows = self.rows.setdefault(table, {})
+                if table_rows.get(record_id) != expected:
+                    return _FakeCursor([])
+                removed = table_rows.pop(record_id)
+                return _FakeCursor([(removed,)])
         if normalized.startswith("SELECT PAYLOAD") and "WHERE RECORD_ID" in normalized:
             record = self.rows.get(table, {}).get(str(params[0]))
             if "AND PAYLOAD" in normalized and record is not None:
@@ -138,7 +149,9 @@ def _snapshot(ranking_snapshot_id: str = "snap-001", **overrides) -> RankingSnap
         "formula_version": "v3",
         "content_digest": "sha256:snap-digest-1",
         "items": [{"persona_id": "persona-a", "rank": 1, "score": 1.42}],
-        "evidence_assertion_digests": ["sha256:evidence-1", "sha256:evidence-2"],
+        "evidence_assertion_digests": {
+            "persona-a": ["sha256:evidence-1", "sha256:evidence-2"],
+        },
         "created_at": "2026-09-04T18:00:00Z",
     }
     payload.update(overrides)
@@ -177,7 +190,7 @@ def test_create_ranking_snapshot_then_fresh_read_round_trips_every_field(store) 
     assert fresh.formula_version == "v3"
     assert fresh.content_digest == "sha256:snap-digest-1"
     assert fresh.items == ({"persona_id": "persona-a", "rank": 1, "score": 1.42},)
-    assert fresh.evidence_assertion_digests == ("sha256:evidence-1", "sha256:evidence-2")
+    assert fresh.evidence_assertion_digests == {"persona-a": ("sha256:evidence-1", "sha256:evidence-2")}
     assert fresh.created_at == "2026-09-04T18:00:00Z"
 
 
@@ -192,6 +205,11 @@ def test_ranking_snapshot_deep_immutability(store) -> None:
         created.items.append({"persona_id": "persona-b"})  # tuples have no append
     with pytest.raises(AttributeError):
         created.ranking_snapshot_id = "mutated"
+    assert isinstance(created.evidence_assertion_digests, MappingProxyType)
+    with pytest.raises(TypeError):
+        created.evidence_assertion_digests["persona-a"] = ["mutated"]
+    with pytest.raises(AttributeError):
+        created.evidence_assertion_digests["persona-a"].append("mutated")
 
 
 def test_ranking_snapshot_same_id_identical_payload_is_idempotent_replay(store) -> None:
@@ -211,22 +229,74 @@ def test_ranking_snapshot_same_id_same_digest_different_items_is_conflict(store)
         )
 
 
-def test_ranking_snapshot_competing_writers_one_creates_one_replays(store) -> None:
-    winner = store.create_ranking_snapshot(_snapshot())
+def test_ranking_snapshot_concurrent_divergent_creators_one_creates_one_conflicts(store) -> None:
+    """A genuine two-thread race on the same id: exactly one create, one conflict.
 
-    other_writer = RankingWriteStore(dsn="postgresql://writer-b@example/db")
-    replay = other_writer.create_ranking_snapshot(_snapshot())
+    Both threads target distinct ``RankingWriteStore`` instances (so the
+    store's own in-process lock cannot serialize them) pointed at the same
+    fake table, and a barrier holds both until they are ready to call
+    ``create_ranking_snapshot`` at effectively the same instant. The table's
+    own compare-and-set semantics (see ``_FakeConnection.execute`` INSERT
+    branch, which mirrors Postgres's ``ON CONFLICT ... DO NOTHING``) decide
+    the winner, not test-side sequencing.
+    """
 
-    assert replay.ranking_snapshot_id == winner.ranking_snapshot_id
-    assert replay.items == winner.items
+    writer_a = store
+    writer_b = RankingWriteStore(dsn="postgresql://writer-b@example/db")
+    barrier = threading.Barrier(2)
+    results: dict[str, object] = {}
 
-    with pytest.raises(RankingConflictError):
-        other_writer.create_ranking_snapshot(_snapshot(content_digest="sha256:snap-digest-1", surface="other"))
+    def _attempt(name: str, writer: RankingWriteStore, **overrides) -> None:
+        record = _snapshot(**overrides)
+        barrier.wait(timeout=5)
+        try:
+            results[name] = writer.create_ranking_snapshot(record)
+        except RankingConflictError as exc:
+            results[name] = exc
+
+    thread_a = threading.Thread(target=_attempt, args=("a", writer_a))
+    thread_b = threading.Thread(
+        target=_attempt,
+        args=("b", writer_b),
+        kwargs={"content_digest": "sha256:snap-digest-1", "surface": "other"},
+    )
+    thread_a.start()
+    thread_b.start()
+    thread_a.join(timeout=5)
+    thread_b.join(timeout=5)
+
+    outcomes = [results["a"], results["b"]]
+    created = [outcome for outcome in outcomes if isinstance(outcome, RankingSnapshotRecord)]
+    conflicted = [outcome for outcome in outcomes if isinstance(outcome, RankingConflictError)]
+    assert len(created) == 1
+    assert len(conflicted) == 1
+
+    reader = RankingWriteStore(dsn="postgresql://reader@example/db")
+    durable = reader.get_ranking_snapshot("snap-001")
+    assert durable is not None
+    assert durable.items == created[0].items
 
 
 def test_ranking_snapshot_create_rejects_plain_mapping(store) -> None:
     with pytest.raises(RankingWriteOwnerError):
         store.create_ranking_snapshot({"ranking_snapshot_id": "snap-002"})  # type: ignore[arg-type]
+
+
+def test_ranking_snapshot_rejects_non_json_compatible_items(store) -> None:
+    with pytest.raises(RankingWriteOwnerError):
+        store.create_ranking_snapshot(_snapshot(items=[{"persona_id": "persona-a", "tags": {1, 2, 3}}]))
+
+
+def test_ranking_snapshot_rejects_flat_list_evidence_assertion_digests(store) -> None:
+    with pytest.raises(RankingWriteOwnerError):
+        store.create_ranking_snapshot(
+            _snapshot(evidence_assertion_digests=["sha256:evidence-1", "sha256:evidence-2"])
+        )
+
+
+def test_ranking_snapshot_rejects_non_string_digest_entries(store) -> None:
+    with pytest.raises(RankingWriteOwnerError):
+        store.create_ranking_snapshot(_snapshot(evidence_assertion_digests={"persona-a": [1, 2]}))
 
 
 def test_ranking_snapshot_has_no_update_or_delete() -> None:
@@ -257,6 +327,17 @@ def test_create_allocation_evaluation_then_fresh_read_round_trips_every_field(st
     assert fresh.promotion_review_id is None
 
 
+def test_allocation_evaluation_optional_fields_omitted_when_absent_from_durable_payload(store) -> None:
+    created = store.create_allocation_evaluation(_evaluation())
+    record_id = "allocation-evaluation::eval-001"
+    durable = store._records_table.get(record_id)
+
+    assert "authority_mode" not in durable
+    assert "promotion_review_id" not in durable
+    assert created.authority_mode is None
+    assert created.promotion_review_id is None
+
+
 def test_allocation_evaluation_optional_fields_round_trip(store) -> None:
     store.create_allocation_evaluation(
         _evaluation(authority_mode="advisory", promotion_review_id="review-77")
@@ -267,6 +348,31 @@ def test_allocation_evaluation_optional_fields_round_trip(store) -> None:
 
     assert fresh.authority_mode == "advisory"
     assert fresh.promotion_review_id == "review-77"
+
+
+def test_allocation_evaluation_decodes_each_allowed_optional_subset(store) -> None:
+    only_authority = _evaluation(allocation_evaluation_id="eval-authority", authority_mode="advisory")
+    only_review = _evaluation(allocation_evaluation_id="eval-review", promotion_review_id="review-1")
+    both = _evaluation(
+        allocation_evaluation_id="eval-both", authority_mode="binding", promotion_review_id="review-2"
+    )
+    neither = _evaluation(allocation_evaluation_id="eval-neither")
+
+    store.create_allocation_evaluation(only_authority)
+    store.create_allocation_evaluation(only_review)
+    store.create_allocation_evaluation(both)
+    store.create_allocation_evaluation(neither)
+
+    reader = RankingWriteStore(dsn="postgresql://reader@example/db")
+    fresh_authority = reader.get_allocation_evaluation("eval-authority")
+    fresh_review = reader.get_allocation_evaluation("eval-review")
+    fresh_both = reader.get_allocation_evaluation("eval-both")
+    fresh_neither = reader.get_allocation_evaluation("eval-neither")
+
+    assert (fresh_authority.authority_mode, fresh_authority.promotion_review_id) == ("advisory", None)
+    assert (fresh_review.authority_mode, fresh_review.promotion_review_id) == (None, "review-1")
+    assert (fresh_both.authority_mode, fresh_both.promotion_review_id) == ("binding", "review-2")
+    assert (fresh_neither.authority_mode, fresh_neither.promotion_review_id) == (None, None)
 
 
 def test_allocation_evaluation_deep_immutability(store) -> None:
@@ -297,6 +403,11 @@ def test_allocation_evaluation_same_digest_different_lines_is_conflict(store) ->
         )
 
 
+def test_allocation_evaluation_rejects_non_json_compatible_lines(store) -> None:
+    with pytest.raises(RankingWriteOwnerError):
+        store.create_allocation_evaluation(_evaluation(lines=[{"persona_id": "persona-a", "tags": {1, 2}}]))
+
+
 def test_allocation_evaluation_has_no_update_or_delete() -> None:
     for verb in (
         "update_allocation_evaluation",
@@ -307,7 +418,7 @@ def test_allocation_evaluation_has_no_update_or_delete() -> None:
 
 
 # --------------------------------------------------------------------------- #
-# Namespacing against the legacy RankingRecord id space
+# Namespacing, explicit envelope, and legacy CRUD isolation
 # --------------------------------------------------------------------------- #
 
 
@@ -343,3 +454,23 @@ def test_legacy_list_rankings_ignores_snapshot_and_evaluation_rows(store) -> Non
     listed = reader.list_rankings()
 
     assert [r.ranking_id for r in listed] == ["legacy-only"]
+
+
+def test_durable_snapshot_and_evaluation_rows_carry_explicit_record_type(store) -> None:
+    store.create_ranking_snapshot(_snapshot(ranking_snapshot_id="snap-envelope"))
+    store.create_allocation_evaluation(_evaluation(allocation_evaluation_id="eval-envelope"))
+
+    snapshot_row = store._records_table.get("ranking-snapshot::snap-envelope")
+    evaluation_row = store._records_table.get("allocation-evaluation::eval-envelope")
+
+    assert snapshot_row["record_type"] == "ranking_snapshot"
+    assert evaluation_row["record_type"] == "allocation_evaluation"
+
+
+def test_legacy_list_rankings_raises_on_unrecognized_row_missing_ranking_id_and_record_type(store) -> None:
+    # A row with neither ranking_id nor a recognized record_type is a data
+    # integrity problem, not a payload the legacy surface may silently skip.
+    store._records_table.put("mystery-row", {"some_other_field": "x"})
+
+    with pytest.raises(RankingWriteOwnerError):
+        store.list_rankings()
