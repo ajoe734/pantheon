@@ -22785,7 +22785,15 @@ def _resolve_agora_interaction_context_ref(
     )
 from auth.router import create_auth_router
 from auth.service import AuthFacadeService
-auth_facade_service = AuthFacadeService()
+from auth.handlers import bff_auth_readiness, create_auth_handlers
+
+# Auth routes are owned by ``auth.router``; bind the concrete handlers here at
+# the composition root so an unassembled facade cannot silently ship a 503 for
+# every session request.  Provider readiness remains cache-only and advisory.
+auth_facade_service = AuthFacadeService(
+    local_readiness=bff_auth_readiness,
+    handlers=create_auth_handlers(),
+)
 app.include_router(create_auth_router(service=auth_facade_service))
 from core.app_factory import (
     create_settings_router,
