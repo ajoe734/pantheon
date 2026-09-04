@@ -90,9 +90,14 @@ review_approved task OR active canonical merge_then_review task
   `INTEGRATION-UNBLOCK-*` namespace.
 - Only the supervisor consumes that inbox. It revalidates every binding against
   current canonical task truth and its own promoted runtime, then creates the
-  unblock row idempotently through the authoritative TaskStore transaction.
+  unblock row idempotently through an isolated authoritative TaskStore
+  transaction. Each cycle drains at most 32 requests. Every consumed source is
+  moved to the outcome-specific durable archive and receives a
+  `processed`, `rejected`, or `error` receipt; one malformed request or failed
+  materialization/write cannot prevent a later valid request from being tried.
   Forged, stale, wrong-root, wrong-runtime, wrong-repository, arbitrary-reason,
-  and arbitrary-task requests remain inert. A request publication failure is
+  and arbitrary-task requests are rejected by an exact finite reason allowlist
+  rather than an extensible regex family. A request publication failure is
   reported without discarding the candidate result or aborting the pass.
 
 ## Merge Flow

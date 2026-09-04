@@ -2086,6 +2086,10 @@ class AutoIntegratorUnblockAuthorityTests(unittest.TestCase):
         self.assertEqual(len(created), 1)
         self.assertEqual(created[0]["auto_created_by"], "supervisor:auto_integrator_unblock_request")
         self.assertEqual(snapshot["last_event"]["source"], "supervisor-auto-integrator-unblock")
+        receipts = self.status_root / supervisor.AUTO_INTEGRATOR_UNBLOCK_RECEIPTS / "processed"
+        archives = self.status_root / supervisor.AUTO_INTEGRATOR_UNBLOCK_ARCHIVE / "processed"
+        self.assertEqual(len(list(receipts.glob("*.json"))), 1)
+        self.assertEqual(len(list(archives.glob("*.json"))), 1)
 
     def test_forged_stale_wrong_root_runtime_pr_head_and_namespace_are_rejected(self) -> None:
         mutations = (
@@ -2103,9 +2107,64 @@ class AutoIntegratorUnblockAuthorityTests(unittest.TestCase):
             with self.subTest(mutation=mutation):
                 path = self._publish(**mutation)
                 self.assertFalse(self._materialize())
-                path.unlink()
+                self.assertFalse(path.exists())
         projected = json.loads(Path(self.config["paths"]["status_file"]).read_text())
         self.assertEqual([task["id"] for task in projected["tasks"]], ["ABC-001"])
+
+    def test_malformed_request_is_rejected_without_hiding_later_valid_request(self) -> None:
+        inbox = self.status_root / supervisor.AUTO_INTEGRATOR_UNBLOCK_INBOX
+        inbox.mkdir(exist_ok=True)
+        (inbox / ("0" * 64 + ".json")).write_text("not-json\n", encoding="utf-8")
+        self._publish()
+
+        self.assertTrue(self._materialize())
+
+        self.assertEqual(
+            len(list((self.status_root / supervisor.AUTO_INTEGRATOR_UNBLOCK_RECEIPTS / "rejected").glob("*.json"))),
+            1,
+        )
+        snapshot = supervisor.rewrite_task_state_store.load_snapshot(
+            self.config["task_state_store"]["event_log"]
+        )
+        self.assertTrue(any(task["id"] == "INTEGRATION-UNBLOCK-ABC-001-CI-RED" for task in snapshot["state"]["tasks"]))
+
+    def test_write_failure_is_receipted_and_does_not_hide_later_valid_request(self) -> None:
+        first = self._publish(reason="ci-red")
+        second = self._publish(
+            reason="smoke-failed",
+            unblock_task_id="INTEGRATION-UNBLOCK-ABC-001-SMOKE-FAILED",
+        )
+        ordered = sorted((first, second))
+        real_write = supervisor.write_status
+        calls = 0
+
+        def fail_once(*args: object, **kwargs: object) -> object:
+            nonlocal calls
+            calls += 1
+            if calls == 1:
+                raise OSError("injected write failure")
+            return real_write(*args, **kwargs)
+
+        with mock.patch.object(supervisor, "write_status", side_effect=fail_once):
+            self.assertTrue(self._materialize())
+
+        error_receipts = self.status_root / supervisor.AUTO_INTEGRATOR_UNBLOCK_RECEIPTS / "error"
+        processed_receipts = self.status_root / supervisor.AUTO_INTEGRATOR_UNBLOCK_RECEIPTS / "processed"
+        self.assertTrue((error_receipts / ordered[0].name).is_file())
+        self.assertTrue((processed_receipts / ordered[1].name).is_file())
+        snapshot = supervisor.rewrite_task_state_store.load_snapshot(
+            self.config["task_state_store"]["event_log"]
+        )
+        created = [task["id"] for task in snapshot["state"]["tasks"] if task["id"].startswith("INTEGRATION-UNBLOCK-")]
+        self.assertEqual(len(created), 1)
+
+    def test_drain_is_bounded(self) -> None:
+        inbox = self.status_root / supervisor.AUTO_INTEGRATOR_UNBLOCK_INBOX
+        inbox.mkdir(exist_ok=True)
+        for index in range(supervisor.AUTO_INTEGRATOR_UNBLOCK_DRAIN_MAX + 1):
+            (inbox / f"{index:064x}.json").write_text("{}\n", encoding="utf-8")
+        self.assertFalse(self._materialize())
+        self.assertEqual(len(list(inbox.glob("*.json"))), 1)
 
 
 class SharedPlannerContractTests(unittest.TestCase):

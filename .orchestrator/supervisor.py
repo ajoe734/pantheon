@@ -342,15 +342,42 @@ REVIEW_REQUEUE_INTENT_KEY = "review_requeue_intent"
 REVIEW_REQUEUE_INTENT_SCHEMA_VERSION = 1
 AUTO_INTEGRATOR_UNBLOCK_REQUEST_SCHEMA = "pantheon-auto-integrator-unblock-request/v1"
 AUTO_INTEGRATOR_UNBLOCK_INBOX = ".orchestrator/auto-integrator-unblock-inbox"
-AUTO_INTEGRATOR_UNBLOCK_REASON_RE = re.compile(
-    r"^(?:missing-dedicated-integration-path|invalid-repository-scope|"
-    r"repository-checkout-not-writable|invalid-git-repository|"
-    r"integration-checkout-(?:identity-mismatch|not-detached)|"
-    r"repository-mismatch|ambiguous-open-prs|pr-lookup-failed|missing-pr|"
-    r"review-gate-[a-z0-9-]+|auto-merge-revocation-failed|ci-red|"
-    r"merge-state-[a-z0-9-]+|rebase-conflict|exact-head-missing|"
-    r"exact-head-merge-conflict|smoke-failed|final-[a-z0-9-]+|"
-    r"merged-pr-no-merge-commit|task-brief-carry-forward-publication-failed)$"
+AUTO_INTEGRATOR_UNBLOCK_RECEIPTS = ".orchestrator/auto-integrator-unblock-receipts"
+AUTO_INTEGRATOR_UNBLOCK_ARCHIVE = ".orchestrator/auto-integrator-unblock-archive"
+AUTO_INTEGRATOR_UNBLOCK_DRAIN_MAX = 32
+AUTO_INTEGRATOR_UNBLOCK_REASONS = frozenset(
+    {
+        "ambiguous-open-prs", "auto-merge-revocation-failed", "base-branch-mismatch",
+        "ci-red", "exact-head-merge-conflict", "exact-head-missing",
+        "final-auto-merge-armed", "final-base-branch-mismatch",
+        "final-canonical-state-refresh-failed", "final-ci-red", "final-head-branch-mismatch",
+        "final-head-changed", "final-pr-changed", "final-pr-is-draft", "final-pr-missing",
+        "final-pr-refresh-failed", "final-repository-mismatch",
+        "final-review-contract-changed", "final-review-gate-changed",
+        "final-authority-timeout", "head-branch-mismatch", "integration-checkout-identity-mismatch",
+        "integration-checkout-not-detached", "integration-checkout-not-standalone",
+        "git-common-dir-not-writable", "invalid-git-common-dir", "invalid-git-repository",
+        "invalid-repository-root", "invalid-repository-scope", "merge-state-blocked", "merge-state-dirty",
+        "merge-state-draft", "missing-dedicated-integration-path", "missing-pr",
+        "merged-pr-no-merge-commit", "missing-repository-checkout", "pr-is-draft", "pr-lookup-failed",
+        "rebase-conflict", "repository-checkout-not-writable", "repository-mismatch",
+        "repository-status-unavailable", "smoke-failed",
+        "task-brief-carry-forward-publication-failed",
+    }
+    | {
+        "review-gate-" + reason.replace("_", "-")
+        for reason in {
+            "approval_audit_unreadable", "approval_base_mismatch", "approval_binding_unusable",
+            "approval_head_binding_missing", "approval_head_branch_mismatch", "approval_head_mismatch",
+            "approval_pr_mismatch", "approval_record_missing", "approval_reviewer_mismatch",
+            "approval_revoked", "approval_timestamp_not_credible", "auto_merge_request_outlived_head",
+            "base_branch_mismatch", "declared_head_branch_mismatch", "declared_head_sha_mismatch",
+            "head_branch_mismatch", "head_changed_after_approval", "merged_before_approval",
+            "merge_timestamp_unknown", "no_independent_reviewer", "pr_head_timestamp_unknown",
+            "pr_head_unknown", "pr_is_draft", "pr_missing", "review_not_approved",
+            "task_state_unavailable",
+        }
+    }
 )
 
 
@@ -2060,7 +2087,7 @@ def _validate_auto_integrator_unblock_request(
         raise ValueError("unblock request command runtime is stale or unpromoted")
     source_task_id = str(request.get("source_task_id") or "")
     reason = str(request.get("reason") or "")
-    if not AUTO_INTEGRATOR_UNBLOCK_REASON_RE.fullmatch(reason):
+    if reason not in AUTO_INTEGRATOR_UNBLOCK_REASONS:
         raise ValueError("unblock request reason is not allowed")
     if request.get("unblock_task_id") != _auto_integrator_unblock_task_id(source_task_id, reason):
         raise ValueError("unblock request task namespace mismatch")
@@ -2107,27 +2134,46 @@ def materialize_auto_integrator_unblock_requests(config: dict[str, Any]) -> bool
         raise RuntimeError(f"auto-integrator unblock inbox is unsafe: {inbox}")
     changed = False
     status_path = config_path(config, "status_file")
-    with canonical_task_state_lock_file(status_path, shared=False, nonblocking=False):
-        status = load_status(config)
-        existing_ids = {str(item.get("id") or "") for item in status.get("tasks", [])}
-        for path in sorted(inbox.glob("*.json")):
-            if path.is_symlink() or not path.is_file():
-                continue
+    status_root = status_path.parent
+    receipt_root = status_root / AUTO_INTEGRATOR_UNBLOCK_RECEIPTS
+    archive_root = status_root / AUTO_INTEGRATOR_UNBLOCK_ARCHIVE
+
+    def finalize(path: Path, outcome: str, detail: str, task_id: str = "") -> None:
+        destination_dir = archive_root / outcome
+        receipt_dir = receipt_root / outcome
+        destination_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
+        receipt_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
+        receipt = {
+            "schema": "pantheon-auto-integrator-unblock-receipt/v1",
+            "request_sha256": path.stem,
+            "outcome": outcome,
+            "detail": detail[:500],
+            "task_id": task_id,
+            "processed_at": utc_now(),
+        }
+        write_json(receipt_dir / f"{path.stem}.json", receipt)
+        os.replace(path, destination_dir / path.name)
+
+    for path in sorted(inbox.glob("*.json"))[:AUTO_INTEGRATOR_UNBLOCK_DRAIN_MAX]:
+        if path.is_symlink() or not path.is_file():
+            continue
+        try:
             request = load_json(path, default={})
             if not isinstance(request, Mapping):
-                continue
-            try:
+                raise ValueError("unblock request is not a JSON object")
+            with canonical_task_state_lock_file(status_path, shared=False, nonblocking=False):
+                status = load_status(config)
                 valid, source = _validate_auto_integrator_unblock_request(
                     config, request, path.name, status
                 )
-            except (KeyError, RuntimeError, ValueError):
-                continue
-            task_id = valid["unblock_task_id"]
-            if task_id in existing_ids:
-                continue
-            timestamp = utc_now()
-            detail = str(valid["detail"])
-            status.setdefault("tasks", []).append(
+                task_id = valid["unblock_task_id"]
+                existing_ids = {str(item.get("id") or "") for item in status.get("tasks", [])}
+                if task_id in existing_ids:
+                    finalize(path, "processed", "already materialized", task_id)
+                    continue
+                timestamp = utc_now()
+                detail = str(valid["detail"])
+                status.setdefault("tasks", []).append(
                 {
                     "id": task_id,
                     "title": f"Unblock integration for {valid['source_task_id']}: {valid['reason']}",
@@ -2163,9 +2209,8 @@ def materialize_auto_integrator_unblock_requests(config: dict[str, Any]) -> bool
                         "command_runtime_sha": valid["command_runtime_sha"],
                     },
                 }
-            )
-            existing_ids.add(task_id)
-            event = {
+                )
+                event = {
                 "event_id": f"auto-integrator-unblock-{path.stem}",
                 "ts": timestamp,
                 "agent": "Orchestrator",
@@ -2173,13 +2218,20 @@ def materialize_auto_integrator_unblock_requests(config: dict[str, Any]) -> bool
                 "task_id": task_id,
                 "source_task_id": valid["source_task_id"],
                 "message": detail,
-            }
-            status["status_activity_outbox"] = _compose_status_activity_outbox(
-                status.get("status_activity_outbox"), event
-            )
+                }
+                status["status_activity_outbox"] = _compose_status_activity_outbox(
+                    status.get("status_activity_outbox"), event
+                )
+                write_status(config, status, source="supervisor-auto-integrator-unblock")
+            finalize(path, "processed", "materialized", task_id)
             changed = True
-        if changed:
-            write_status(config, status, source="supervisor-auto-integrator-unblock")
+        except (KeyError, ValueError) as exc:
+            finalize(path, "rejected", str(exc))
+        except Exception as exc:
+            try:
+                finalize(path, "error", f"{type(exc).__name__}: {exc}")
+            except Exception:
+                pass
     if changed:
         sync_status_pipeline(config)
     return changed
