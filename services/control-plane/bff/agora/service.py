@@ -181,6 +181,7 @@ class AgoraService:
         self,
         *,
         get_read_store: Optional[Callable[[], Any]] = None,
+        get_audit_store: Optional[Callable[[], Any]] = None,
         get_command_store: Optional[Callable[[], Any]] = None,
         idempotency_store: Optional[Dict[str, Any]] = None,
         sse_buffers: Optional[Dict[str, Any]] = None,
@@ -196,6 +197,7 @@ class AgoraService:
         handle_sse_stream: Optional[Callable[..., Any]] = None,
     ) -> None:
         self._get_read_store = get_read_store or (lambda: None)
+        self._get_audit_store = get_audit_store or (lambda: None)
         self._get_command_store = get_command_store or (lambda: None)
         self._idempotency = idempotency_store if idempotency_store is not None else {}
         self._sse_buffers = sse_buffers if sse_buffers is not None else {"ask": [], "signal": [], "journal": [], "inbox": []}
@@ -219,6 +221,25 @@ class AgoraService:
     @property
     def read_store(self) -> Any:
         return self._get_read_store()
+
+    @property
+    def audit_store(self) -> Any:
+        return self._get_audit_store()
+
+    def _record_agora_audit_event(self, event: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        """Write an Agora audit event through its mutation-owned store.
+
+        The read-surface ports deliberately stay read-only.  The fallback keeps
+        compatibility with focused unit-test doubles that still expose the
+        legacy method, while production wiring always supplies ``audit_store``.
+        """
+        writer = self.audit_store
+        if writer is not None and hasattr(writer, "record_agora_audit_event"):
+            return writer.record_agora_audit_event(event)
+        legacy = self.read_store
+        if legacy is not None and hasattr(legacy, "record_agora_audit_event"):
+            return legacy.record_agora_audit_event(event)
+        return None
 
     @property
     def command_store(self) -> Any:
@@ -971,10 +992,9 @@ class AgoraService:
             "idempotencyKey": resolved_key,
             "recordedAt": snapshot_at,
         }
-        if store is not None and hasattr(store, "record_agora_audit_event"):
-            recorded_audit = store.record_agora_audit_event(audit)
-            if recorded_audit:
-                audit = {**audit, **recorded_audit}
+        recorded_audit = self._record_agora_audit_event(audit)
+        if recorded_audit:
+            audit = {**audit, **recorded_audit}
 
         self.publish_sse_event("signal", "agora.signal.created", {"signalId": signal_id, "signal": created_signal})
         self.publish_sse_event("inbox", "agora.inbox.updated", {"type": "signal", "id": signal_id})
@@ -1105,8 +1125,8 @@ class AgoraService:
             }
 
         audit = None
-        if store is not None and hasattr(store, "record_agora_audit_event"):
-            audit = store.record_agora_audit_event({
+        recorded_audit = self._record_agora_audit_event(
+            {
                 "action": "agora.feedback.bulk_create",
                 "targetType": "signal",
                 "targetId": signal_id,
@@ -1114,7 +1134,10 @@ class AgoraService:
                 "correlationId": x_correlation_id,
                 "idempotencyKey": resolved_key,
                 "recordedAt": snapshot_at,
-            })
+            }
+        )
+        if recorded_audit:
+            audit = recorded_audit
 
         self.publish_sse_event("signal", "agora.feedback.created", {"signalId": signal_id, "verdict": verdict})
         result = {
@@ -2691,10 +2714,8 @@ class AgoraService:
                 foundation_context={"idempotency_record": idempotency_record.to_dict()},
             )
 
-        audit_result = None
-        store = self.read_store
-        if store is not None and hasattr(store, "record_agora_audit_event"):
-            audit_result = store.record_agora_audit_event({
+        audit_result = self._record_agora_audit_event(
+            {
                 "action": f"agora.{action_id}",
                 "targetType": entity_type.value,
                 "targetId": entity_id,
@@ -2702,7 +2723,8 @@ class AgoraService:
                 "actorId": identity.operator_id,
                 "recordedAt": submitted_at,
                 "idempotencyKey": resolved_key,
-            })
+            }
+        )
 
         tracking_url = f"/api/v1/operator/commands/{command_id}"
         receipt = {
