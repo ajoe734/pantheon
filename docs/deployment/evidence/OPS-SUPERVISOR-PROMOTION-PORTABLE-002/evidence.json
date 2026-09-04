@@ -1,0 +1,51 @@
+{
+  "schema_version": 1,
+  "task_id": "OPS-SUPERVISOR-PROMOTION-PORTABLE-002",
+  "kind": "supervisor_promotion_portability_review_evidence",
+  "owner": "Codex",
+  "reviewer": "Claude",
+  "delivery_state": "ready_for_independent_review",
+  "scope": {
+    "owned": [
+      "scripts/sync-dev-root.sh deployment-layout derivation",
+      "scripts/promote_supervisor_runtime.py coordination-root preservation",
+      "focused promotion and sync regression tests"
+    ],
+    "not_changed": [
+      "canonical task authority",
+      "supervisor launch and replacement ordering",
+      "auto-integrator merge ownership",
+      "product runtime"
+    ]
+  },
+  "acceptance_mapping": {
+    "portable_layout": "sync-dev-root derives command-runtimes, integration-runtimes, authority file, and defaults from PANTHEON_DEPLOY_ROOT; when it is absent an explicit live-config derives the deployment root, otherwise HOME/pantheon-ci-deploy is used. No /home/lupin literal remains in the script.",
+    "coordination_safety": "promotion records coordination_code_sync=preserved and performs no copy, deletion, chmod, or mirror operation in the shared status checkout; supervisor execution remains pinned to the validated immutable command-runtimes/<SHA> candidate.",
+    "single_authority": "the existing promote-supervisor-runtime lane remains the only live-config writer and supervisor replacement entry point; no fallback loader or parallel promotion mechanism was added.",
+    "regression": "focused tests cover portable deployment roots, immutable exact-SHA identity and ancestry, dirty/shared coordination preservation, replacement failure behavior, watchdog repoint, and cron auto-integrator repoint.",
+    "post_merge_live_gate": "After merge, the supervisor integration lane must promote the exact accepted dev SHA and append evidence of at least three successful live cycles with no dashboard missing-canonical-identity error before owner done finalization."
+  },
+  "verification": [
+    {
+      "command": "bash -n scripts/sync-dev-root.sh",
+      "result": "passed"
+    },
+    {
+      "command": "/tmp/ops-supervisor-promotion-portable-002-venv/bin/python -m pytest -q scripts/test_sync_dev_root.py scripts/test_promote_supervisor_runtime.py",
+      "result": "34 passed"
+    },
+    {
+      "command": "python3 -m py_compile scripts/promote_supervisor_runtime.py scripts/test_sync_dev_root.py scripts/test_promote_supervisor_runtime.py",
+      "result": "passed"
+    },
+    {
+      "command": "git diff --check",
+      "result": "passed"
+    }
+  ],
+  "review_decision": {
+    "status": "pending",
+    "reviewer": "Claude",
+    "note": "Independent reviewer must validate the frozen PR head and this manifest before approval."
+  }
+}

@@ -472,6 +472,7 @@ def test_sync_prunes_old_command_runtimes_after_promotion(tmp_path: Path) -> Non
     )
 
     env = os.environ.copy()
+    env["PANTHEON_DEPLOY_ROOT"] = str(script.parent)
     env["SYNC_PROMOTION_ARGS_FILE"] = str(promotion_args)
     env["SYNC_PRUNE_ARGS_FILE"] = str(prune_args)
     env["PANTHEON_INTEGRATION_RUNTIME_PARENT"] = str(
