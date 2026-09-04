@@ -15,8 +15,6 @@ import sys
 import pytest
 
 BFF_DIR = Path(__file__).resolve().parents[1]
-if str(BFF_DIR) not in sys.path:
-    sys.path.insert(0, str(BFF_DIR))
 
 
 def test_main_py_is_pure_composition_root() -> None:
@@ -74,8 +72,8 @@ def test_zero_production_imports_of_read_store() -> None:
 
 def test_all_canonical_domain_routers_mounted() -> None:
     """Verify that all canonical domain routers are registered on the app."""
-    import main as bff_main
-    from test_normalized_route_uniqueness import scan_fastapi_routes
+    from services.control_plane.bff import main as bff_main
+    from services.control_plane.bff.test_normalized_route_uniqueness import scan_fastapi_routes
 
     entries = scan_fastapi_routes(bff_main.app)
     assert len(entries) >= 400, f"Expected 400+ routes across domain routers, found {len(entries)}"

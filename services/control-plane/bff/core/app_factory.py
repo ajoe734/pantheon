@@ -17,10 +17,6 @@ from fastapi.params import Path as PathParam
 from fastapi.params import Query as QueryParam
 from fastapi.routing import APIRoute
 
-from ..auth.router import create_auth_router
-from ..auth.service import AuthFacadeService
-from .lifespan import create_lifespan
-
 
 RouteHandler = Callable[[Request], Any]
 IdentityExtractor = Callable[..., Any]
@@ -337,54 +333,6 @@ def _default_extract_identity(_authorization: Optional[str], **_kwargs: Any) -> 
 
 def _default_require_admin_mfa(_identity: Any, _action: str) -> None:
     return None
-
-
-def create_app(
-    *,
-    auth_service: Optional[AuthFacadeService] = None,
-    settings_store: Any = None,
-    extract_identity: IdentityExtractor = _default_extract_identity,
-    require_admin_mfa: RoleGuard = _default_require_admin_mfa,
-    handlers: Optional[Mapping[str, RouteHandler]] = None,
-    provider_refresh_interval_seconds: float = 30.0,
-    enable_provider_refresh: bool = True,
-) -> FastAPI:
-    """Build the standalone core slice without importing the legacy app."""
-    service = auth_service or AuthFacadeService()
-    lifespan = (
-        create_lifespan(
-            service.provider_readiness_cache,
-            interval_seconds=provider_refresh_interval_seconds,
-        )
-        if enable_provider_refresh
-        else None
-    )
-    app = FastAPI(title="Pantheon Operator BFF Core", version="0.2.0", lifespan=lifespan)
-    route_handlers = dict(handlers or {})
-    app.include_router(create_auth_router(service=service))
-    if settings_store is None:
-        settings_store = _UnavailableSettingsStore()
-    app.include_router(
-        create_settings_router(
-            settings_store=settings_store,
-            extract_identity=extract_identity,
-            require_admin_mfa=require_admin_mfa,
-        )
-    )
-    app.include_router(create_assistant_management_router(route_handlers))
-    app.include_router(create_core_router(route_handlers))
-    _assert_route_assignment(app)
-    return app
-
-
-create_core_app = create_app
-
-
-class _UnavailableSettingsStore:
-    def _raise(self, *_args: Any, **_kwargs: Any):
-        raise _missing_handler("settings_store")
-
-    get = update = export_json = import_json = _raise
 
 
 def _assert_route_assignment(app: FastAPI) -> None:

@@ -1,29 +1,45 @@
 """Composition handlers for the BFF auth/session facade.
 
 The composition-root refactor keeps auth routes in :mod:`auth.router`, while
-the concrete policy and stores remain owned by ``main``.  These small adapters
-bridge the two without importing ``main`` at module import time (which would
-create a circular import under uvicorn).
+the concrete policy and stores are injected via typed :class:`AuthDependencies`
+at assembly time. No reverse import or dynamic getattr lookup of ``main`` is permitted.
 """
 from __future__ import annotations
 
-import hmac
 import hashlib
+import hmac
 import json
 import os
 import re
 import time
 import uuid
+from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Any, Dict, Mapping, Optional
+from typing import Any, Callable, Dict, List, Mapping, Optional
 
 from fastapi import HTTPException
 
+from ..models import ErrorCode, utc_now
 
-def _main():
-    from .. import main as module
 
-    return module
+@dataclass(frozen=True)
+class AuthDependencies:
+    """Explicit domain dependencies for auth and session handlers."""
+
+    bff_error: Callable[..., HTTPException]
+    dev_login_forbidden_environment: Callable[[], bool]
+    dev_login_identity_registry: Callable[[], Dict[str, Any]]
+    extract_identity: Callable[..., Any]
+    require_read_role: Callable[[Any], None]
+    raise_if_session_logged_out: Callable[[Any], None]
+    session_lifecycle_store: Any
+    bff_me_tenant_payload: Callable[..., Dict[str, Any]]
+    capabilities_for_identity: Callable[[Any], List[str]]
+    bff_auth_stub_enabled: Callable[[], bool]
+    bff_auth_mode: Callable[[], str]
+    bff_source_commit: Callable[[], str]
+    write_roles: frozenset[str] = frozenset({"operator", "approver", "admin", "reviewer"})
+    utc_now: Callable[[], str] = utc_now
 
 
 def _first(*values: Any) -> Optional[str]:
@@ -46,21 +62,20 @@ def _ttl() -> int:
     return max(300, min(value, 3600))
 
 
-def _dev_profile(payload: Mapping[str, Any]) -> Dict[str, Any]:
-    m = _main()
-    if getattr(m, "_dev_login_forbidden_environment")():
-        raise m._bff_error(
+def _dev_profile(payload: Mapping[str, Any], deps: AuthDependencies) -> Dict[str, Any]:
+    if deps.dev_login_forbidden_environment():
+        raise deps.bff_error(
             403,
-            m.ErrorCode.PRECONDITION_FAILED,
+            ErrorCode.PRECONDITION_FAILED,
             "Dev login is disabled for this BFF",
             "dev_login_disabled",
             precondition_failed="dev_login",
             suggestion="Use the dev BFF with configured client credentials; staging-live must use IdP OIDC/JWKS auth",
         )
     if str(payload.get("grant_type") or "client_credentials").strip() != "client_credentials":
-        raise m._bff_error(
+        raise deps.bff_error(
             400,
-            m.ErrorCode.VALIDATION_FAILED,
+            ErrorCode.VALIDATION_FAILED,
             "Unsupported grant_type for dev login",
             "grant_type must be client_credentials",
             precondition_failed="grant_type",
@@ -68,14 +83,14 @@ def _dev_profile(payload: Mapping[str, Any]) -> Dict[str, Any]:
     client_id = str(payload.get("client_id") or payload.get("clientId") or "").strip()
     client_secret = str(payload.get("client_secret") or payload.get("clientSecret") or "").strip()
     profile = None
-    for candidate in getattr(m, "_dev_login_identity_registry")().values():
+    for candidate in deps.dev_login_identity_registry().values():
         if hmac.compare_digest(client_id, candidate["client_id"]) and hmac.compare_digest(client_secret, candidate["client_secret"]):
             profile = candidate
             break
     if profile is None:
-        raise m._bff_error(
+        raise deps.bff_error(
             401,
-            m.ErrorCode.AUTH_REQUIRED,
+            ErrorCode.AUTH_REQUIRED,
             "Invalid dev login client credentials",
             "AUTH_DEV_LOGIN_CLIENT_CREDENTIALS",
             suggestion="Use the configured per-identity PANTHEON_BFF_DEV_LOGIN_<IDENTITY>_CLIENT_ID/SECRET",
@@ -85,9 +100,9 @@ def _dev_profile(payload: Mapping[str, Any]) -> Dict[str, Any]:
         if isinstance(requested_roles, str):
             requested_roles = _csv(requested_roles)
         if not requested_roles or not set(requested_roles).issubset(set(profile["roles"])):
-            raise m._bff_error(
+            raise deps.bff_error(
                 403,
-                m.ErrorCode.FORBIDDEN,
+                ErrorCode.FORBIDDEN,
                 "Requested roles exceed the dev-login identity's bound roles",
                 "AUTH_DEV_LOGIN_ESCALATION_DENIED",
                 precondition_failed="roles",
@@ -95,9 +110,9 @@ def _dev_profile(payload: Mapping[str, Any]) -> Dict[str, Any]:
             )
     requested_tenant = str(payload.get("tenant_id") or payload.get("tenantId") or "").strip()
     if requested_tenant and requested_tenant != profile["tenant_id"]:
-        raise m._bff_error(
+        raise deps.bff_error(
             403,
-            m.ErrorCode.FORBIDDEN,
+            ErrorCode.FORBIDDEN,
             "Requested tenant is outside the dev-login identity's bound tenant",
             "AUTH_DEV_LOGIN_ESCALATION_DENIED",
             precondition_failed="tenant_id",
@@ -107,9 +122,9 @@ def _dev_profile(payload: Mapping[str, Any]) -> Dict[str, Any]:
     if isinstance(requested_allowed, str):
         requested_allowed = _csv(requested_allowed)
     if requested_allowed is not None and set(requested_allowed) - set(profile["allowed_tenants"]):
-        raise m._bff_error(
+        raise deps.bff_error(
             403,
-            m.ErrorCode.FORBIDDEN,
+            ErrorCode.FORBIDDEN,
             "Requested allowed_tenants exceed the dev-login identity's bound tenants",
             "AUTH_DEV_LOGIN_ESCALATION_DENIED",
             precondition_failed="allowed_tenants",
@@ -118,14 +133,14 @@ def _dev_profile(payload: Mapping[str, Any]) -> Dict[str, Any]:
     return profile
 
 
-def _issue_token(profile: Mapping[str, Any]) -> Dict[str, Any]:
+def _issue_token(profile: Mapping[str, Any], deps: AuthDependencies) -> Dict[str, Any]:
     from services.runtime_auth_inbound import encode_jwt_hs256
-    m = _main()
+
     secret = os.getenv("PANTHEON_BFF_DEV_LOGIN_JWT_SECRET") or os.getenv("PANTHEON_BFF_JWT_SECRET", "")
     if not secret:
-        raise m._bff_error(
+        raise deps.bff_error(
             500,
-            m.ErrorCode.PRECONDITION_FAILED,
+            ErrorCode.PRECONDITION_FAILED,
             "Dev login JWT signing secret is not configured",
             "PANTHEON_BFF_JWT_SECRET is required to issue dev-login JWTs",
             precondition_failed="jwt_secret",
@@ -162,9 +177,9 @@ def _issue_token(profile: Mapping[str, Any]) -> Dict[str, Any]:
     }
 
 
-async def bff_auth_dev_login(*, payload: Dict[str, Any]) -> Dict[str, Any]:
-    profile = _dev_profile(payload or {})
-    token = _issue_token(profile)
+async def bff_auth_dev_login(*, payload: Dict[str, Any], deps: AuthDependencies) -> Dict[str, Any]:
+    profile = _dev_profile(payload or {}, deps)
+    token = _issue_token(profile, deps)
     return {
         **token,
         "meta": {
@@ -203,11 +218,10 @@ def _locale(raw: Any) -> Optional[str]:
     return "-".join(part.lower() if i == 0 else (part.upper() if len(part) == 2 else part.title() if len(part) == 4 else part) for i, part in enumerate(clean.split("-")))
 
 
-def _user(identity: Any) -> Dict[str, Any]:
-    m = _main()
+def _user(identity: Any, deps: AuthDependencies) -> Dict[str, Any]:
     claims = _claims(identity)
     caps = _claim_values(identity, ("capabilities", "permissions", "scp", "scope"))
-    caps.extend(getattr(m, "_capabilities_for_identity", lambda _identity: [])(identity))
+    caps.extend(deps.capabilities_for_identity(identity))
     caps = list(dict.fromkeys(caps))
     return {
         "id": identity.operator_id,
@@ -271,12 +285,11 @@ def _epoch_iso(value: Any) -> Optional[str]:
         return clean or None
 
 
-def _tenant(identity: Any, requested: Optional[str]) -> Dict[str, Any]:
-    return _main()._bff_me_tenant_payload(identity, requested_tenant=requested)
+def _tenant(identity: Any, requested: Optional[str], deps: AuthDependencies) -> Dict[str, Any]:
+    return deps.bff_me_tenant_payload(identity, requested_tenant=requested)
 
 
-def _state(identity: Any) -> Dict[str, Any]:
-    m = _main()
+def _state(identity: Any, deps: AuthDependencies) -> Dict[str, Any]:
     session_id = _first(
         _claims(identity).get("sid"),
         _claims(identity).get("session_id"),
@@ -284,7 +297,7 @@ def _state(identity: Any) -> Dict[str, Any]:
         f"bff-session-{identity.operator_id}",
     )
     key = f"operator:{identity.operator_id}:session:{session_id}"
-    store = m.session_lifecycle_store
+    store = deps.session_lifecycle_store
     return store.get_session(key) or store.get_session(f"operator:{identity.operator_id}") or {}
 
 
@@ -301,24 +314,35 @@ def _request_hash(payload: Any) -> str:
     return hashlib.sha256(encoded).hexdigest()
 
 
-def _assert_identity(authorization: Optional[str], *, mfa: Optional[str] = None, cookie: Optional[str] = None) -> Any:
-    m = _main()
-    identity = m._extract_identity(authorization, mfa_token=mfa, session_cookie=cookie)
-    m._require_read_role(identity)
-    m._raise_if_session_logged_out(identity)
+def _assert_identity(authorization: Optional[str], deps: AuthDependencies, *, mfa: Optional[str] = None, cookie: Optional[str] = None) -> Any:
+    identity = deps.extract_identity(authorization, mfa_token=mfa, session_cookie=cookie)
+    deps.require_read_role(identity)
+    deps.raise_if_session_logged_out(identity)
     return identity
 
 
-async def bff_me(*, response: Any, tenant_id: Optional[str] = None, authorization: Optional[str] = None, pantheon_session: Optional[str] = None, x_mfa_token: Optional[str] = None, x_tenant_id: Optional[str] = None, x_pantheon_tenant: Optional[str] = None, x_correlation_id: Optional[str] = None, x_locale: Optional[str] = None, accept_language: Optional[str] = None) -> Dict[str, Any]:
-    m = _main()
+async def bff_me(
+    *,
+    response: Any,
+    tenant_id: Optional[str] = None,
+    authorization: Optional[str] = None,
+    pantheon_session: Optional[str] = None,
+    x_mfa_token: Optional[str] = None,
+    x_tenant_id: Optional[str] = None,
+    x_pantheon_tenant: Optional[str] = None,
+    x_correlation_id: Optional[str] = None,
+    x_locale: Optional[str] = None,
+    accept_language: Optional[str] = None,
+    deps: AuthDependencies,
+) -> Dict[str, Any]:
     correlation = _first(x_correlation_id, str(uuid.uuid4()))
     if response is not None:
         response.headers["X-Correlation-Id"] = correlation
     try:
-        identity = _assert_identity(authorization, mfa=x_mfa_token, cookie=pantheon_session)
-        state = _state(identity)
+        identity = _assert_identity(authorization, deps, mfa=x_mfa_token, cookie=pantheon_session)
+        state = _state(identity, deps)
         requested = _first(x_tenant_id, x_pantheon_tenant, tenant_id, state.get("tenant_id"))
-        tenant = _tenant(identity, requested)
+        tenant = _tenant(identity, requested, deps)
         tenant["source"] = "request" if _first(x_tenant_id, x_pantheon_tenant, tenant_id) else ("session" if state.get("tenant_id") else "default")
         accepted = _locale(str(accept_language or "").split(",", 1)[0])
         locale = {
@@ -329,8 +353,8 @@ async def bff_me(*, response: Any, tenant_id: Optional[str] = None, authorizatio
             "timezone": os.getenv("PANTHEON_TIMEZONE", "UTC"),
             "source": "header" if x_locale else ("accept_language" if accept_language else ("session" if state.get("locale") else "default")),
         }
-        user = _user(identity)
-        session = _session(identity, checked_at=m.utc_now())
+        user = _user(identity, deps)
+        session = _session(identity, checked_at=deps.utc_now())
         session["state"] = str(state.get("state") or "active")
     except HTTPException as exc:
         raise exc
@@ -339,71 +363,136 @@ async def bff_me(*, response: Any, tenant_id: Optional[str] = None, authorizatio
         "user": user, "current_user": user, "currentUser": user,
         "tenant": tenant, "tenant_id": tenant["id"], "tenantId": tenant["id"],
         "allowed_tenants": tenant["allowed_ids"], "allowedTenants": tenant["allowed_ids"],
-        "locale": locale, "environment": {"name": os.getenv("PANTHEON_ENV", "dev"), "deployment_stage": os.getenv("PANTHEON_DEPLOYMENT_STAGE", "dev"), "region": os.getenv("PANTHEON_REGION", ""), "timezone": os.getenv("PANTHEON_TIMEZONE", "UTC"), "auth_mode": "stub" if m._bff_auth_stub_enabled() else m._bff_auth_mode(), "strict_auth": not m._bff_auth_stub_enabled() and m._bff_auth_mode() == "strict"},
+        "locale": locale,
+        "environment": {
+            "name": os.getenv("PANTHEON_ENV", "dev"),
+            "deployment_stage": os.getenv("PANTHEON_DEPLOYMENT_STAGE", "dev"),
+            "region": os.getenv("PANTHEON_REGION", ""),
+            "timezone": os.getenv("PANTHEON_TIMEZONE", "UTC"),
+            "auth_mode": "stub" if deps.bff_auth_stub_enabled() else deps.bff_auth_mode(),
+            "strict_auth": not deps.bff_auth_stub_enabled() and deps.bff_auth_mode() == "strict",
+        },
         "feature_flags": _feature_flags(identity), "featureFlags": _feature_flags(identity),
         "session": session, "session_kind": session["session_kind"], "sessionKind": session["session_kind"],
         "roles": user["roles"], "capabilities": user["capabilities"],
     }
-    return {"data": data, "meta": {"route": "GET /bff/me", "contract": "BFF-LUV-GAP-009", "correlationId": correlation, "snapshot_at": m.utc_now()}}
+    return {"data": data, "meta": {"route": "GET /bff/me", "contract": "BFF-LUV-GAP-009", "correlationId": correlation, "snapshot_at": deps.utc_now()}}
 
 
 def _verifier() -> Dict[str, Any]:
-    m = _main()
     asymmetric = bool(os.getenv("PANTHEON_BFF_JWKS_URI", "").strip() or os.getenv("PANTHEON_BFF_OIDC_DISCOVERY_URL", "").strip())
-    return {"kind": "oidc_jwks" if asymmetric else "hs256", "configured": bool(asymmetric or os.getenv("PANTHEON_BFF_JWT_SECRET", "").strip()), "jwksConfigured": bool(os.getenv("PANTHEON_BFF_JWKS_URI", "").strip()), "discoveryConfigured": bool(os.getenv("PANTHEON_BFF_OIDC_DISCOVERY_URL", "").strip()), "sharedSecretConfigured": bool(os.getenv("PANTHEON_BFF_JWT_SECRET", "").strip()), "issuerConfigured": bool(_first(os.getenv("PANTHEON_BFF_OIDC_ISSUER"), os.getenv("PANTHEON_BFF_JWT_ISSUER"))), "audienceConfigured": bool(_first(os.getenv("PANTHEON_BFF_OIDC_AUDIENCE"), os.getenv("PANTHEON_BFF_JWT_AUDIENCE"))), "roleClaimsConfigured": True, "roleClaimPaths": _csv(os.getenv("PANTHEON_BFF_ROLE_CLAIMS", "roles,role")), "roleMapConfigured": bool(os.getenv("PANTHEON_BFF_ROLE_MAP", "").strip()), "roleMapMode": os.getenv("PANTHEON_BFF_ROLE_MAP_MODE", "passthrough")}
+    return {
+        "kind": "oidc_jwks" if asymmetric else "hs256",
+        "configured": bool(asymmetric or os.getenv("PANTHEON_BFF_JWT_SECRET", "").strip()),
+        "jwksConfigured": bool(os.getenv("PANTHEON_BFF_JWKS_URI", "").strip()),
+        "discoveryConfigured": bool(os.getenv("PANTHEON_BFF_OIDC_DISCOVERY_URL", "").strip()),
+        "sharedSecretConfigured": bool(os.getenv("PANTHEON_BFF_JWT_SECRET", "").strip()),
+        "issuerConfigured": bool(_first(os.getenv("PANTHEON_BFF_OIDC_ISSUER"), os.getenv("PANTHEON_BFF_JWT_ISSUER"))),
+        "audienceConfigured": bool(_first(os.getenv("PANTHEON_BFF_OIDC_AUDIENCE"), os.getenv("PANTHEON_BFF_JWT_AUDIENCE"))),
+        "roleClaimsConfigured": True,
+        "roleClaimPaths": _csv(os.getenv("PANTHEON_BFF_ROLE_CLAIMS", "roles,role")),
+        "roleMapConfigured": bool(os.getenv("PANTHEON_BFF_ROLE_MAP", "").strip()),
+        "roleMapMode": os.getenv("PANTHEON_BFF_ROLE_MAP_MODE", "passthrough"),
+    }
 
 
-async def bff_auth_readiness(*, authorization: Optional[str] = None, pantheon_session: Optional[str] = None, x_mfa_token: Optional[str] = None, x_tenant_id: Optional[str] = None) -> Dict[str, Any]:
-    m = _main()
-    identity = _assert_identity(authorization, mfa=x_mfa_token, cookie=pantheon_session)
+async def bff_auth_readiness(
+    *,
+    authorization: Optional[str] = None,
+    pantheon_session: Optional[str] = None,
+    x_mfa_token: Optional[str] = None,
+    x_tenant_id: Optional[str] = None,
+    deps: AuthDependencies,
+) -> Dict[str, Any]:
+    identity = _assert_identity(authorization, deps, mfa=x_mfa_token, cookie=pantheon_session)
     kind = _session_kind(identity)
-    tenant = _tenant(identity, x_tenant_id)
-    user = _user(identity)
+    tenant = _tenant(identity, x_tenant_id, deps)
+    user = _user(identity, deps)
     capabilities = set(user["capabilities"])
     try:
         from ..agora.identity.scope import resolve_agora_user_scope
-        capabilities.update(resolve_agora_user_scope(identity, utc_now=m.utc_now, requested_tenant_id=tenant["id"]).granted_capabilities)
+        capabilities.update(resolve_agora_user_scope(identity, utc_now=deps.utc_now, requested_tenant_id=tenant["id"]).granted_capabilities)
     except Exception:
         pass
     # The dev operator identities are server-bound and carry the canonical
     # workshop capability even when the optional Agora scope module is not
     # available during a cold-start probe.
-    if set(identity.roles) & set(getattr(m, "_WRITE_ROLES", {"operator", "approver", "admin", "reviewer"})):
+    if set(identity.roles) & set(deps.write_roles):
         capabilities.add("agora.workshop.v1")
     verifier = _verifier()
-    strict = m._bff_auth_mode() == "strict" and not m._bff_auth_stub_enabled()
-    operator_ready = bool(set(getattr(m, "_WRITE_ROLES", {"operator", "approver", "admin", "reviewer"})) & set(identity.roles))
+    strict = deps.bff_auth_mode() == "strict" and not deps.bff_auth_stub_enabled()
+    operator_ready = bool(set(deps.write_roles) & set(identity.roles))
     interaction_ready = "agora.workshop.v1" in capabilities
     verifier_ready = bool(verifier["configured"] and verifier["issuerConfigured"] and verifier["audienceConfigured"] and verifier["roleClaimsConfigured"])
     ready = bool(strict and kind in {"bearer", "cookie"} and operator_ready and interaction_ready and verifier_ready)
-    return {"data": {"ready": ready, "authReady": ready, "providerReady": False, "sourceCommitSha": m._bff_source_commit(), "auth": {"mode": m._bff_auth_mode(), "stub": m._bff_auth_stub_enabled(), "strict": strict, "sessionKind": kind, "sessionReady": kind in {"bearer", "cookie"}, "operatorRoleReady": operator_ready, "interactionCapabilityReady": interaction_ready, "verifierReady": verifier_ready, "verifier": verifier}, "identity": {"operatorId": identity.operator_id, "roles": sorted(identity.roles), "tenantId": tenant["id"], "capabilities": sorted(capabilities)}, "provider": {"provider": "openclaw", "ready": False, "status": "unavailable", "reason": "provider_readiness_observability_only"}, "authority": {"interaction": "advisory", "execution": "none", "broker": "none", "capital": "none"}}, "meta": {"route": "GET /bff/auth/readiness", "contract": "PINT-016-STRICT-BROWSER-READINESS", "snapshot_at": m.utc_now()}}
+    return {
+        "data": {
+            "ready": ready,
+            "authReady": ready,
+            "providerReady": False,
+            "sourceCommitSha": deps.bff_source_commit(),
+            "auth": {
+                "mode": deps.bff_auth_mode(),
+                "stub": deps.bff_auth_stub_enabled(),
+                "strict": strict,
+                "sessionKind": kind,
+                "sessionReady": kind in {"bearer", "cookie"},
+                "operatorRoleReady": operator_ready,
+                "interactionCapabilityReady": interaction_ready,
+                "verifierReady": verifier_ready,
+                "verifier": verifier,
+            },
+            "identity": {
+                "operatorId": identity.operator_id,
+                "roles": sorted(identity.roles),
+                "tenantId": tenant["id"],
+                "capabilities": sorted(capabilities),
+            },
+            "provider": {"provider": "openclaw", "ready": False, "status": "unavailable", "reason": "provider_readiness_observability_only"},
+            "authority": {"interaction": "advisory", "execution": "none", "broker": "none", "capital": "none"},
+        },
+        "meta": {"route": "GET /bff/auth/readiness", "contract": "PINT-016-STRICT-BROWSER-READINESS", "snapshot_at": deps.utc_now()},
+    }
 
 
-async def bff_auth_refresh(*, payload: Dict[str, Any], authorization: Optional[str] = None, pantheon_session: Optional[str] = None, pantheon_refresh: Optional[str] = None, pantheon_refresh_token: Optional[str] = None, x_mfa_token: Optional[str] = None, x_refresh_token: Optional[str] = None, idempotency_key: Optional[str] = None, x_idempotency_key: Optional[str] = None) -> Dict[str, Any]:
+async def bff_auth_refresh(
+    *,
+    payload: Dict[str, Any],
+    authorization: Optional[str] = None,
+    pantheon_session: Optional[str] = None,
+    pantheon_refresh: Optional[str] = None,
+    pantheon_refresh_token: Optional[str] = None,
+    x_mfa_token: Optional[str] = None,
+    x_refresh_token: Optional[str] = None,
+    idempotency_key: Optional[str] = None,
+    x_idempotency_key: Optional[str] = None,
+    deps: AuthDependencies,
+) -> Dict[str, Any]:
     credential = _first((payload or {}).get("refresh_token"), (payload or {}).get("refreshToken"), x_refresh_token, pantheon_refresh, pantheon_refresh_token, pantheon_session, authorization)
     if not credential:
-        raise _main()._bff_error(401, _main().ErrorCode.AUTH_REQUIRED, "Refresh credential is required", "AUTH_REFRESH_CREDENTIAL_REQUIRED", precondition_failed="refresh_credential")
+        raise deps.bff_error(401, ErrorCode.AUTH_REQUIRED, "Refresh credential is required", "AUTH_REFRESH_CREDENTIAL_REQUIRED", precondition_failed="refresh_credential")
     bearer = credential if str(credential).lower().startswith("bearer ") else f"Bearer {credential}"
     source = "body" if (payload or {}).get("refresh_token") or (payload or {}).get("refreshToken") else ("header" if x_refresh_token else ("refresh_cookie" if pantheon_refresh or pantheon_refresh_token else ("session_cookie" if pantheon_session else "bearer")))
     if source in {"refresh_cookie", "session_cookie"}:
-        identity = _assert_identity(None, mfa=x_mfa_token, cookie=str(credential))
+        identity = _assert_identity(None, deps, mfa=x_mfa_token, cookie=str(credential))
     else:
-        identity = _assert_identity(bearer, mfa=x_mfa_token, cookie=pantheon_session)
-    m = _main(); now = m.utc_now(); state = _state(identity)
+        identity = _assert_identity(bearer, deps, mfa=x_mfa_token, cookie=pantheon_session)
+    now = deps.utc_now()
+    state = _state(identity, deps)
     state.update({"state": "active", "last_refreshed_at": now, "last_refresh_credential_source": source})
-    m.session_lifecycle_store.upsert_session(f"operator:{identity.operator_id}:session:{_first(_claims(identity).get('sid'), _claims(identity).get('session_id'), _claims(identity).get('jti'), f'bff-session-{identity.operator_id}')}", state, now=now)
+    deps.session_lifecycle_store.upsert_session(f"operator:{identity.operator_id}:session:{_first(_claims(identity).get('sid'), _claims(identity).get('session_id'), _claims(identity).get('jti'), f'bff-session-{identity.operator_id}')}", state, now=now)
     idem = idempotency_key or x_idempotency_key
     record_key = _idempotency_key("POST /bff/auth/refresh", identity, idem)
     request_hash = _request_hash({"route": "POST /bff/auth/refresh", "payload": payload or {}, "source": source})
     if record_key:
-        cached = m.session_lifecycle_store.get_idempotency(record_key)
+        cached = deps.session_lifecycle_store.get_idempotency(record_key)
         if cached:
             if cached.get("request_hash") != request_hash:
-                raise m._bff_error(409, m.ErrorCode.IDEMPOTENCY_CONFLICT, "Idempotency key was reused with a different refresh payload", "The idempotency key already belongs to another refresh payload", precondition_failed="idempotency_key")
+                raise deps.bff_error(409, ErrorCode.IDEMPOTENCY_CONFLICT, "Idempotency key was reused with a different refresh payload", "The idempotency key already belongs to another refresh payload", precondition_failed="idempotency_key")
             result = cached["result"]
             result.setdefault("meta", {}).setdefault("idempotency", {})["replayed"] = True
             return result
-    result = _lifecycle(identity, "refresh", idem, now)
+    result = _lifecycle(identity, "refresh", idem, now, deps=deps)
     descriptor = {"source": source, "session_kind": _session_kind(identity), "sessionKind": _session_kind(identity), "token_kind": identity.token_kind, "tokenKind": identity.token_kind}
     result["data"]["session"]["last_refreshed_at"] = now
     result["data"]["session"]["last_refresh_credential_source"] = source
@@ -411,48 +500,247 @@ async def bff_auth_refresh(*, payload: Dict[str, Any], authorization: Optional[s
     result["data"]["auth"] = {"refresh_credential": descriptor, "refreshCredential": descriptor}
     result["meta"]["auth"] = {"refreshCredentialSource": source, "sessionKind": _session_kind(identity)}
     if record_key:
-        m.session_lifecycle_store.put_idempotency(record_key, request_hash=request_hash, result=result, now=now)
+        deps.session_lifecycle_store.put_idempotency(record_key, request_hash=request_hash, result=result, now=now)
     return result
 
 
-async def bff_logout(*, response: Any, payload: Dict[str, Any], authorization: Optional[str] = None, pantheon_session: Optional[str] = None, x_mfa_token: Optional[str] = None, idempotency_key: Optional[str] = None, x_idempotency_key: Optional[str] = None) -> Dict[str, Any]:
-    m = _main()
-    identity = m._extract_identity(authorization, mfa_token=x_mfa_token, session_cookie=pantheon_session)
-    m._require_read_role(identity)
+async def bff_logout(
+    *,
+    response: Any,
+    payload: Dict[str, Any],
+    authorization: Optional[str] = None,
+    pantheon_session: Optional[str] = None,
+    x_mfa_token: Optional[str] = None,
+    idempotency_key: Optional[str] = None,
+    x_idempotency_key: Optional[str] = None,
+    deps: AuthDependencies,
+) -> Dict[str, Any]:
+    identity = deps.extract_identity(authorization, mfa_token=x_mfa_token, session_cookie=pantheon_session)
+    deps.require_read_role(identity)
     idem = idempotency_key or x_idempotency_key
     record_key = _idempotency_key("POST /bff/logout", identity, idem)
     request_hash = _request_hash({"route": "POST /bff/logout", "payload": payload or {}})
     if record_key:
-        cached = m.session_lifecycle_store.get_idempotency(record_key)
+        cached = deps.session_lifecycle_store.get_idempotency(record_key)
         if cached:
             if cached.get("request_hash") != request_hash:
-                raise m._bff_error(409, m.ErrorCode.IDEMPOTENCY_CONFLICT, "Idempotency key was reused with a different logout payload", "The idempotency key already belongs to another logout payload", precondition_failed="idempotency_key")
+                raise deps.bff_error(409, ErrorCode.IDEMPOTENCY_CONFLICT, "Idempotency key was reused with a different logout payload", "The idempotency key already belongs to another logout payload", precondition_failed="idempotency_key")
             result = cached["result"]
             result.setdefault("meta", {}).setdefault("idempotency", {})["replayed"] = True
-            if response is not None: response.delete_cookie("pantheon_session", path="/")
+            if response is not None:
+                response.delete_cookie("pantheon_session", path="/")
             return result
-    now = m.utc_now(); key = f"operator:{identity.operator_id}:session:{_first(_claims(identity).get('sid'), _claims(identity).get('session_id'), _claims(identity).get('jti'), f'bff-session-{identity.operator_id}')}"
-    m.session_lifecycle_store.upsert_session(key, {"state": "logged_out", "logged_out_at": now}, now=now)
-    if response is not None: response.delete_cookie("pantheon_session", path="/")
-    result = _lifecycle(identity, "logout", idem, now); result["data"]["session"].update({"authenticated": False, "fresh": False, "state": "logged_out", "logged_out_at": now})
+    now = deps.utc_now()
+    key = f"operator:{identity.operator_id}:session:{_first(_claims(identity).get('sid'), _claims(identity).get('session_id'), _claims(identity).get('jti'), f'bff-session-{identity.operator_id}')}"
+    deps.session_lifecycle_store.upsert_session(key, {"state": "logged_out", "logged_out_at": now}, now=now)
+    if response is not None:
+        response.delete_cookie("pantheon_session", path="/")
+    result = _lifecycle(identity, "logout", idem, now, deps=deps)
+    result["data"]["session"].update({"authenticated": False, "fresh": False, "state": "logged_out", "logged_out_at": now})
     if record_key:
-        m.session_lifecycle_store.put_idempotency(record_key, request_hash=request_hash, result=result, now=now)
+        deps.session_lifecycle_store.put_idempotency(record_key, request_hash=request_hash, result=result, now=now)
     return result
 
 
-async def bff_switch_tenant(*, payload: Dict[str, Any], authorization: Optional[str] = None) -> Dict[str, Any]:
-    identity = _assert_identity(authorization); m = _main(); tenant = _tenant(identity, str(payload.get("tenantId") or payload.get("tenant_id") or "").strip()); tenant["source"] = "session"; now = m.utc_now(); m.session_lifecycle_store.upsert_session(f"operator:{identity.operator_id}:session:{_first(_claims(identity).get('sid'), _claims(identity).get('session_id'), _claims(identity).get('jti'), f'bff-session-{identity.operator_id}')}", {"state": "active", "tenant_id": tenant["id"]}, now=now); return _lifecycle(identity, "switch_tenant", None, now, tenant=tenant)
+async def bff_switch_tenant(
+    *,
+    payload: Dict[str, Any],
+    authorization: Optional[str] = None,
+    deps: AuthDependencies,
+) -> Dict[str, Any]:
+    identity = _assert_identity(authorization, deps)
+    tenant = _tenant(identity, str(payload.get("tenantId") or payload.get("tenant_id") or "").strip(), deps)
+    tenant["source"] = "session"
+    now = deps.utc_now()
+    deps.session_lifecycle_store.upsert_session(
+        f"operator:{identity.operator_id}:session:{_first(_claims(identity).get('sid'), _claims(identity).get('session_id'), _claims(identity).get('jti'), f'bff-session-{identity.operator_id}')}",
+        {"state": "active", "tenant_id": tenant["id"]},
+        now=now,
+    )
+    return _lifecycle(identity, "switch_tenant", None, now, tenant=tenant, deps=deps)
 
 
-async def bff_update_locale(*, payload: Dict[str, Any], authorization: Optional[str] = None) -> Dict[str, Any]:
-    identity = _assert_identity(authorization); m = _main(); value = _locale(payload.get("locale"));
-    if not value: raise m._bff_error(400, m.ErrorCode.VALIDATION_FAILED, "locale is required", "locale must be a non-empty BCP-47-ish language tag", precondition_failed="locale")
-    now = m.utc_now(); m.session_lifecycle_store.upsert_session(f"operator:{identity.operator_id}:session:{_first(_claims(identity).get('sid'), _claims(identity).get('session_id'), _claims(identity).get('jti'), f'bff-session-{identity.operator_id}')}", {"state": "active", "locale": value}, now=now); return _lifecycle(identity, "update_locale", None, now, locale={"resolved": value, "source": "session"})
+async def bff_update_locale(
+    *,
+    payload: Dict[str, Any],
+    authorization: Optional[str] = None,
+    deps: AuthDependencies,
+) -> Dict[str, Any]:
+    identity = _assert_identity(authorization, deps)
+    value = _locale(payload.get("locale"))
+    if not value:
+        raise deps.bff_error(400, ErrorCode.VALIDATION_FAILED, "locale is required", "locale must be a non-empty BCP-47-ish language tag", precondition_failed="locale")
+    now = deps.utc_now()
+    deps.session_lifecycle_store.upsert_session(
+        f"operator:{identity.operator_id}:session:{_first(_claims(identity).get('sid'), _claims(identity).get('session_id'), _claims(identity).get('jti'), f'bff-session-{identity.operator_id}')}",
+        {"state": "active", "locale": value},
+        now=now,
+    )
+    return _lifecycle(identity, "update_locale", None, now, locale={"resolved": value, "source": "session"}, deps=deps)
 
 
-def _lifecycle(identity: Any, operation: str, idem: Optional[str], now: str, *, tenant: Optional[Dict[str, Any]] = None, locale: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
-    m = _main(); state = _state(identity); selected_tenant = tenant or _tenant(identity, state.get("tenant_id")); selected_locale = locale or {"resolved": _locale(state.get("locale")) or "en-US", "source": "session" if state.get("locale") else "default"}; user = _user(identity); session = _session(identity, checked_at=now); session["state"] = str(state.get("state") or "active"); data = {"operation": {"type": operation, "operation_id": f"{operation}-{uuid.uuid4().hex[:12]}", "performed_at": now}, "operator_id": user["operator_id"], "operatorId": user["operator_id"], "user": user, "currentUser": user, "current_user": user, "roles": user["roles"], "capabilities": user["capabilities"], "tenant": selected_tenant, "tenant_id": selected_tenant["id"], "tenantId": selected_tenant["id"], "allowed_tenants": selected_tenant["allowed_ids"], "allowedTenants": selected_tenant["allowed_ids"], "locale": selected_locale, "environment": {"name": os.getenv("PANTHEON_ENV", "dev")}, "feature_flags": _feature_flags(identity), "featureFlags": _feature_flags(identity), "session": session, "session_kind": session["session_kind"], "sessionKind": session["session_kind"]}; return {"data": data, "meta": {"contract": "BFF-LUV-SEM-001", "snapshot_at": now, "idempotency": {"idempotencyKey": idem, "replayed": False}}}
+def _lifecycle(
+    identity: Any,
+    operation: str,
+    idem: Optional[str],
+    now: str,
+    *,
+    tenant: Optional[Dict[str, Any]] = None,
+    locale: Optional[Dict[str, Any]] = None,
+    deps: AuthDependencies,
+) -> Dict[str, Any]:
+    state = _state(identity, deps)
+    selected_tenant = tenant or _tenant(identity, state.get("tenant_id"), deps)
+    selected_locale = locale or {"resolved": _locale(state.get("locale")) or "en-US", "source": "session" if state.get("locale") else "default"}
+    user = _user(identity, deps)
+    session = _session(identity, checked_at=now)
+    session["state"] = str(state.get("state") or "active")
+    data = {
+        "operation": {"type": operation, "operation_id": f"{operation}-{uuid.uuid4().hex[:12]}", "performed_at": now},
+        "operator_id": user["operator_id"],
+        "operatorId": user["operator_id"],
+        "user": user,
+        "currentUser": user,
+        "current_user": user,
+        "roles": user["roles"],
+        "capabilities": user["capabilities"],
+        "tenant": selected_tenant,
+        "tenant_id": selected_tenant["id"],
+        "tenantId": selected_tenant["id"],
+        "allowed_tenants": selected_tenant["allowed_ids"],
+        "allowedTenants": selected_tenant["allowed_ids"],
+        "locale": selected_locale,
+        "environment": {"name": os.getenv("PANTHEON_ENV", "dev")},
+        "feature_flags": _feature_flags(identity),
+        "featureFlags": _feature_flags(identity),
+        "session": session,
+        "session_kind": session["session_kind"],
+        "sessionKind": session["session_kind"],
+    }
+    return {"data": data, "meta": {"contract": "BFF-LUV-SEM-001", "snapshot_at": now, "idempotency": {"idempotencyKey": idem, "replayed": False}}}
 
 
-def create_auth_handlers() -> Dict[str, Any]:
-    return {"bff_auth_dev_login": bff_auth_dev_login, "bff_me": bff_me, "bff_auth_refresh": bff_auth_refresh, "bff_logout": bff_logout, "bff_switch_tenant": bff_switch_tenant, "bff_update_locale": bff_update_locale}
+def create_auth_handlers(deps: AuthDependencies) -> Dict[str, Any]:
+    async def _dev_login(*, payload: Dict[str, Any]) -> Dict[str, Any]:
+        return await bff_auth_dev_login(payload=payload, deps=deps)
+
+    async def _me(
+        *,
+        response: Any,
+        tenant_id: Optional[str] = None,
+        authorization: Optional[str] = None,
+        pantheon_session: Optional[str] = None,
+        x_mfa_token: Optional[str] = None,
+        x_tenant_id: Optional[str] = None,
+        x_pantheon_tenant: Optional[str] = None,
+        x_correlation_id: Optional[str] = None,
+        x_locale: Optional[str] = None,
+        accept_language: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        return await bff_me(
+            response=response,
+            tenant_id=tenant_id,
+            authorization=authorization,
+            pantheon_session=pantheon_session,
+            x_mfa_token=x_mfa_token,
+            x_tenant_id=x_tenant_id,
+            x_pantheon_tenant=x_pantheon_tenant,
+            x_correlation_id=x_correlation_id,
+            x_locale=x_locale,
+            accept_language=accept_language,
+            deps=deps,
+        )
+
+    async def _readiness(
+        *,
+        authorization: Optional[str] = None,
+        pantheon_session: Optional[str] = None,
+        x_mfa_token: Optional[str] = None,
+        x_tenant_id: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        return await bff_auth_readiness(
+            authorization=authorization,
+            pantheon_session=pantheon_session,
+            x_mfa_token=x_mfa_token,
+            x_tenant_id=x_tenant_id,
+            deps=deps,
+        )
+
+    async def _refresh(
+        *,
+        payload: Dict[str, Any],
+        authorization: Optional[str] = None,
+        pantheon_session: Optional[str] = None,
+        pantheon_refresh: Optional[str] = None,
+        pantheon_refresh_token: Optional[str] = None,
+        x_mfa_token: Optional[str] = None,
+        x_refresh_token: Optional[str] = None,
+        idempotency_key: Optional[str] = None,
+        x_idempotency_key: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        return await bff_auth_refresh(
+            payload=payload,
+            authorization=authorization,
+            pantheon_session=pantheon_session,
+            pantheon_refresh=pantheon_refresh,
+            pantheon_refresh_token=pantheon_refresh_token,
+            x_mfa_token=x_mfa_token,
+            x_refresh_token=x_refresh_token,
+            idempotency_key=idempotency_key,
+            x_idempotency_key=x_idempotency_key,
+            deps=deps,
+        )
+
+    async def _logout(
+        *,
+        response: Any,
+        payload: Dict[str, Any],
+        authorization: Optional[str] = None,
+        pantheon_session: Optional[str] = None,
+        x_mfa_token: Optional[str] = None,
+        idempotency_key: Optional[str] = None,
+        x_idempotency_key: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        return await bff_logout(
+            response=response,
+            payload=payload,
+            authorization=authorization,
+            pantheon_session=pantheon_session,
+            x_mfa_token=x_mfa_token,
+            idempotency_key=idempotency_key,
+            x_idempotency_key=x_idempotency_key,
+            deps=deps,
+        )
+
+    async def _switch_tenant(
+        *,
+        payload: Dict[str, Any],
+        authorization: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        return await bff_switch_tenant(
+            payload=payload,
+            authorization=authorization,
+            deps=deps,
+        )
+
+    async def _update_locale(
+        *,
+        payload: Dict[str, Any],
+        authorization: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        return await bff_update_locale(
+            payload=payload,
+            authorization=authorization,
+            deps=deps,
+        )
+
+    return {
+        "bff_auth_dev_login": _dev_login,
+        "bff_me": _me,
+        "bff_auth_readiness": _readiness,
+        "bff_auth_refresh": _refresh,
+        "bff_logout": _logout,
+        "bff_switch_tenant": _switch_tenant,
+        "bff_update_locale": _update_locale,
+    }
+

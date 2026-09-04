@@ -22801,14 +22801,31 @@ def _resolve_agora_interaction_context_ref(
     )
 from .auth.router import create_auth_router
 from .auth.service import AuthFacadeService
-from .auth.handlers import bff_auth_readiness, create_auth_handlers
+from .auth.handlers import AuthDependencies, create_auth_handlers
 
 # Auth routes are owned by ``auth.router``; bind the concrete handlers here at
 # the composition root so an unassembled facade cannot silently ship a 503 for
 # every session request.  Provider readiness remains cache-only and advisory.
+auth_deps = AuthDependencies(
+    bff_error=_bff_error,
+    dev_login_forbidden_environment=_dev_login_forbidden_environment,
+    dev_login_identity_registry=_dev_login_identity_registry,
+    extract_identity=_extract_identity,
+    require_read_role=_require_read_role,
+    raise_if_session_logged_out=_raise_if_session_logged_out,
+    session_lifecycle_store=session_lifecycle_store,
+    bff_me_tenant_payload=_bff_me_tenant_payload,
+    capabilities_for_identity=_capabilities_for_identity,
+    bff_auth_stub_enabled=_bff_auth_stub_enabled,
+    bff_auth_mode=_bff_auth_mode,
+    bff_source_commit=_bff_source_commit,
+    write_roles=frozenset(_WRITE_ROLES),
+    utc_now=utc_now,
+)
+auth_handlers = create_auth_handlers(deps=auth_deps)
 auth_facade_service = AuthFacadeService(
-    local_readiness=bff_auth_readiness,
-    handlers=create_auth_handlers(),
+    local_readiness=auth_handlers["bff_auth_readiness"],
+    handlers=auth_handlers,
 )
 app.include_router(create_auth_router(service=auth_facade_service))
 from .core.app_factory import (
