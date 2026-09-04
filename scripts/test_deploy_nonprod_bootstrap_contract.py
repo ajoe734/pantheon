@@ -144,6 +144,19 @@ def test_workflow_deploys_predecessor_pair_under_lease_in_strict_read_only_mode(
     assert '--candidate-profile "read-only"' in bootstrap_step
     assert "mismatched served identity" in bootstrap_step
     assert "bootstrap FE profile must be read-only" in bootstrap_step
+    assert 'PANTHEON_DEV_LEASE_EXPECTED_BACKEND_SHA: ${{ steps.target.outputs.sha }}' in bootstrap_step
+    assert 'PANTHEON_DEV_BOOTSTRAP_PREDECESSOR: "true"' in bootstrap_step
+
+
+def test_deploy_script_allows_only_explicit_bootstrap_lease_identity_override() -> None:
+    script = (ROOT / "scripts" / "deploy_nonprod_vm.sh").read_text(encoding="utf-8")
+    contract = script[
+        script.index("verify_dev_environment_lease_contract()") :
+        script.index("usage()", script.index("verify_dev_environment_lease_contract()"))
+    ]
+    assert 'PANTHEON_DEV_LEASE_EXPECTED_BACKEND_SHA:-${DEPLOY_SHA}' in contract
+    assert 'PANTHEON_DEV_BOOTSTRAP_PREDECESSOR:-false' in contract
+    assert "dev lease expected backend override is only permitted for an explicit bootstrap predecessor" in contract
 
 
 def test_workflow_candidate_deploy_requires_predecessor_served_identity_readback() -> None:
