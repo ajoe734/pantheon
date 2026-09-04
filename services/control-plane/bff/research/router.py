@@ -3166,7 +3166,7 @@ def create_research_router(
         )
 
     if include_prepared_subrouters:
-        from console_gap.knowledge import create_knowledge_router
+        from ..console_gap.knowledge import create_knowledge_router
 
         router.include_router(
             create_knowledge_router(

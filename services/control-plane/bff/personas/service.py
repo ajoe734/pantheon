@@ -307,11 +307,8 @@ utc_now = _utc_now_rfc3339
 
 
 # --- _PERSONA_SERVICE_DIR ---
-_PERSONA_SERVICE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "persona"))
-
-
 # --- extract_persona_strategy_profile ---
-from persona_strategy_discovery import (  # noqa: E402
+from services.control_plane.persona.persona_strategy_discovery import (
     PersonaStrategyDiscoveryService,
     extract_persona_strategy_profile,
 )

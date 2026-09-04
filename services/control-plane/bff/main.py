@@ -14143,7 +14143,7 @@ def _mgmt_nl_control_options(payload: Dict[str, Any]) -> Dict[str, Any]:
             result[key] = payload.get(key)
     return result
 def _mgmt_nl_raise_control_mode_actor_error(identity: OperatorIdentity) -> None:
-    from assistant.control_mode import (
+    from .assistant.control_mode import (
         CONTROL_MODE_CAPABILITY_PREFIX,
         CONTROL_MODE_ROLES,
         actor_has_control_role,
@@ -14184,7 +14184,7 @@ def _mgmt_nl_raise_control_mode_actor_error(identity: OperatorIdentity) -> None:
             },
         )
 def _mgmt_nl_require_mode_capability(identity: OperatorIdentity, mode: Any) -> None:
-    from assistant.control_mode import actor_capabilities
+    from .assistant.control_mode import actor_capabilities
 
     mode_value = str(getattr(mode, "value", mode) or "").strip()
     required = f"assistant.{mode_value.replace('_', '.')}"
@@ -14350,9 +14350,9 @@ def _mgmt_nl_handle_control_command(
     trace_id: str,
     now: Any,
 ) -> JSONResponse:
-    from assistant.control_mode import ControlModeError, actor_capabilities, default_idle_ttl
-    from assistant.mode_policy import DEFAULT_KERNEL_TTL_SECONDS, ModePolicyViolation, assert_kernel_allowed
-    from assistant.models import AssistantMode
+    from .assistant.control_mode import ControlModeError, actor_capabilities, default_idle_ttl
+    from .assistant.mode_policy import DEFAULT_KERNEL_TTL_SECONDS, ModePolicyViolation, assert_kernel_allowed
+    from .assistant.models import AssistantMode
 
     store = _mgmt_nl_control_store()
     if store is None:
@@ -15593,8 +15593,8 @@ def _mgmt_nl_build_context_pack(
     ui_snapshot: Dict[str, Any],
     control_mode: Dict[str, Any],
 ) -> Dict[str, Any]:
-    from assistant.context_composer import AssistantCollectedSource, compose_context_pack
-    from assistant.models import AssistantContextPackRequest, AssistantMode
+    from .assistant.context_composer import AssistantCollectedSource, compose_context_pack
+    from .assistant.models import AssistantContextPackRequest, AssistantMode
 
     frontend_route = str(ui_snapshot.get("currentRoute") or "/management")
     selected_entity = _mgmt_nl_frontend_selected_entity(ui_snapshot, focus=focus)
@@ -17859,7 +17859,7 @@ def _persona_create_required_data_sources(payload: Mapping[str, Any]) -> List[Di
     required = payload.get("required_data_sources") or payload.get("requiredDataSources")
     market = str(payload.get("market") or "").strip().upper()
     if not required and market:
-        from personas.service import _market_persona_required_data_sources
+        from .personas.service import _market_persona_required_data_sources
 
         required = _market_persona_required_data_sources({"market": market})
     return json.loads(json.dumps(required or []))
@@ -21702,7 +21702,7 @@ def _assistant_unavailable_source(
     dataset: str,
     identity: Optional[OperatorIdentity] = None,
 ) -> Any:
-    from assistant.context_composer import AssistantCollectedSource
+    from .assistant.context_composer import AssistantCollectedSource
 
     surface = _dataset_surface_status(dataset, snapshot_at=snapshot_at, source="missing")
     return AssistantCollectedSource(
@@ -21727,7 +21727,7 @@ def _assistant_collect_jobs_source(
     snapshot_at: str,
     identity: Optional[OperatorIdentity] = None,
 ) -> Any:
-    from assistant.context_composer import AssistantCollectedSource
+    from .assistant.context_composer import AssistantCollectedSource
 
     entity_type, entity_id = _assistant_focus_entity(request)
     selected_job = None
@@ -21775,7 +21775,7 @@ def _assistant_collect_job_logs_source(
     snapshot_at: str,
     identity: Optional[OperatorIdentity] = None,
 ) -> Any:
-    from assistant.context_composer import AssistantCollectedSource
+    from .assistant.context_composer import AssistantCollectedSource
 
     entity_type, entity_id = _assistant_focus_entity(request)
     if not entity_id or (entity_type and entity_type.lower() not in {"job", "jobs"}):
@@ -21816,7 +21816,7 @@ def _assistant_collect_audit_source(
     snapshot_at: str,
     identity: Optional[OperatorIdentity] = None,
 ) -> Any:
-    from assistant.context_composer import AssistantCollectedSource
+    from .assistant.context_composer import AssistantCollectedSource
 
     entity_type, entity_id = _assistant_focus_entity(request)
     href = "/bff/audit"
@@ -21858,7 +21858,7 @@ def _assistant_collect_recent_sse_source(
     snapshot_at: str,
     identity: Optional[OperatorIdentity] = None,
 ) -> Any:
-    from assistant.context_composer import AssistantCollectedSource
+    from .assistant.context_composer import AssistantCollectedSource
 
     events = _assistant_filter_tenant_records(read_store.list_events_bff(page_size=25), identity)
     surface = _dataset_surface_status(
@@ -21930,7 +21930,7 @@ def _assistant_collect_docs_rag_source(
     snapshot_at: str,
     identity: Optional[OperatorIdentity] = None,
 ) -> Any:
-    from assistant.context_composer import AssistantCollectedSource
+    from .assistant.context_composer import AssistantCollectedSource
 
     root = _assistant_repo_root()
     terms = _assistant_doc_query_terms(request)
@@ -22015,7 +22015,7 @@ def _assistant_collect_source(
     snapshot_at: str,
     identity: Optional[OperatorIdentity] = None,
 ) -> Any:
-    from assistant.context_composer import AssistantCollectedSource
+    from .assistant.context_composer import AssistantCollectedSource
 
     if source_id == "control_room":
         payload = _sem_final_generic_list_for_path("/bff/v5/control-room")
@@ -22104,7 +22104,7 @@ def _assistant_collect_source(
         return _assistant_collect_docs_rag_source(request, snapshot_at, identity)
     return None
 def _assistant_build_context_pack(session_id: str, request: Any, identity: OperatorIdentity) -> Any:
-    from assistant.context_composer import compose_context_pack
+    from .assistant.context_composer import compose_context_pack
 
     return compose_context_pack(
         session_id=session_id,
@@ -22217,10 +22217,10 @@ def _assistant_provider_reauth_code(
     except OpenClawOpsClientError as exc:
         raise _openclaw_client_error(exc) from exc
 def _include_governance_subrules_routes() -> None:
-    from console_gap.permissions import create_permissions_router
-    from console_gap.memory_governance import create_memory_governance_router
-    from console_gap.consult_rules import create_consult_rules_router
-    from console_gap.route_policies import create_route_policies_router
+    from .console_gap.permissions import create_permissions_router
+    from .console_gap.memory_governance import create_memory_governance_router
+    from .console_gap.consult_rules import create_consult_rules_router
+    from .console_gap.route_policies import create_route_policies_router
     _get_store = lambda: read_store
     _kw = dict(get_read_store=_get_store, extract_identity=_extract_identity, require_read_role=_require_read_role)
     app.include_router(create_permissions_router(**_kw))
@@ -22230,9 +22230,9 @@ def _include_governance_subrules_routes() -> None:
 _include_governance_subrules_routes()
 def _include_assistant_routes() -> None:
     global _ASSISTANT_SESSION_STORE, _ASSISTANT_TRANSCRIPT_STORE, _ASSISTANT_CONTROL_MODE_STORE
-    from assistant.control_mode import ControlModeStore
-    from assistant.routes import create_assistant_router
-    from assistant.transcript_store import (
+    from .assistant.control_mode import ControlModeStore
+    from .assistant.routes import create_assistant_router
+    from .assistant.transcript_store import (
         ManagementAiAssistantSessionStore,
         ManagementAiAssistantTranscriptStore,
     )
@@ -22318,7 +22318,7 @@ app.include_router(_create_trade_journal_router(
     require_read_role=_require_read_role,
     require_operator_role=_require_operator_role,
 ))
-import trade_journeys as _trade_journeys  # noqa: E402
+from . import trade_journeys as _trade_journeys  # noqa: E402
 from .trade_journey_projection_store import InvalidPageToken, ProjectionReadUnavailable  # noqa: E402
 from .trade_journeys import create_trade_journeys_router as _create_trade_journeys_router  # noqa: E402
 app.include_router(_create_trade_journeys_router(
@@ -22449,7 +22449,53 @@ app.include_router(
 from .runtime.router import create_runtime_router as _create_runtime_router
 _runtime_router = _create_runtime_router(
     get_read_store=lambda: read_store,
-    dependencies=globals(),
+    dependencies={
+        name: value
+        for name, value in (
+            ("_GOVERNANCE_APPROVAL_QUEUE_ROUTE", _GOVERNANCE_APPROVAL_QUEUE_ROUTE),
+            ("_GOV_BFF_IDEMPOTENCY", _GOV_BFF_IDEMPOTENCY),
+            ("_aggregate_group_surface", _aggregate_group_surface),
+            ("_alert_target_ref", _alert_target_ref),
+            ("_bff_error", _bff_error),
+            ("_build_persona_health_items", _build_persona_health_items),
+            ("_capital_bff_idempotency_check", _capital_bff_idempotency_check),
+            ("_capital_bff_idempotency_store", _capital_bff_idempotency_store),
+            ("_capital_owner_role", _capital_owner_role),
+            ("_composed_dataset_surface_status", _composed_dataset_surface_status),
+            ("_composed_surface_status", _composed_surface_status),
+            ("_dataset_surface_status", _dataset_surface_status),
+            ("_deployment_review_href", _deployment_review_href),
+            ("_deprecated_bff_path_response", _deprecated_bff_path_response),
+            ("_dry_run_success_response", _dry_run_success_response),
+            ("_extract_identity", _extract_identity),
+            ("_gov_bff_action_command", _gov_bff_action_command),
+            ("_handle_sse_stream", _handle_sse_stream),
+            ("_incident_detail_href", _incident_detail_href),
+            ("_meta_staleness", _meta_staleness),
+            ("_ooda_packet_list_payload", _ooda_packet_list_payload),
+            ("_page_slice", _page_slice),
+            ("_project_operator_runtime_state_row", _project_operator_runtime_state_row),
+            ("_publish_event", _publish_event),
+            ("_raise_capital_owner_error", _raise_capital_owner_error),
+            ("_raise_if_read_surface_unavailable", _raise_if_read_surface_unavailable),
+            ("_read_surface_meta", _read_surface_meta),
+            ("_reject_body_idempotency_key", _reject_body_idempotency_key),
+            ("_request_dry_run_requested", _request_dry_run_requested),
+            ("_require_ooda_packet_routes_enabled", _require_ooda_packet_routes_enabled),
+            ("_require_operator_role", _require_operator_role),
+            ("_require_read_role", _require_read_role),
+            ("_resolve_final_idempotency_key", _resolve_final_idempotency_key),
+            ("_snapshot_meta", _snapshot_meta),
+            ("_sort_key", _sort_key),
+            ("_split_csv_query", _split_csv_query),
+            ("_sse_buffers", _sse_buffers),
+            ("_sse_subscribers", _sse_subscribers),
+            ("_stable_capital_resource_id", _stable_capital_resource_id),
+            ("_stable_json_hash", _stable_json_hash),
+            ("create_capital_binding", create_capital_binding),
+            ("utc_now", utc_now),
+        )
+    },
 )
 app.routes.extend(_runtime_router.routes)
 from .deployment.router import create_deployment_router as _create_deployment_router
@@ -22678,7 +22724,7 @@ def _resolve_agora_interaction_context_ref(
                 "No canonical frontend Decision Event source-route owner is registered yet",
                 precondition_failed="decision_event_source_route_unavailable",
             )
-        from agora.trading_room.router import _get_store as _get_trading_room_store
+        from .agora.trading_room.router import _get_store as _get_trading_room_store
 
         event = _get_trading_room_store().get_decision_event(ref_id)
         if not isinstance(event, dict):

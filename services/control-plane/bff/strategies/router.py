@@ -37,7 +37,7 @@ from typing import Any, Callable, Dict, List, Optional, Set, Tuple
 
 from fastapi import APIRouter, Body, Header, HTTPException, Query
 
-from persona_strategy_discovery import (
+from services.control_plane.persona.persona_strategy_discovery import (
     PersonaStrategyDiscoveryService,
     extract_persona_strategy_profile,
 )

@@ -48,7 +48,7 @@ from services.trade_journey.slo_data_quality import (
     load_slo_targets,
     metrics_to_dict,
 )
-from trade_journey_projection_store import (
+from .trade_journey_projection_store import (
     DEFAULT_PAGE_SIZE,
     MAX_PAGE_SIZE,
     InvalidPageToken,

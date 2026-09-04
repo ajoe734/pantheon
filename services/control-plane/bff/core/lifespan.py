@@ -7,7 +7,7 @@ from typing import AsyncIterator, Callable
 
 from fastapi import FastAPI
 
-from auth.service import ProviderReadinessCache
+from ..auth.service import ProviderReadinessCache
 
 
 async def refresh_provider_readiness(
@@ -47,4 +47,3 @@ def create_lifespan(
                 await refresh_task
 
     return lifespan
-
