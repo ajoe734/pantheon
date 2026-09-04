@@ -19,7 +19,7 @@ from typing import Any, Callable, Dict, List, Mapping, Optional
 
 from fastapi import HTTPException
 
-from ..models import ErrorCode, utc_now
+from ..models import ErrorCode
 
 
 @dataclass(frozen=True)
@@ -38,8 +38,8 @@ class AuthDependencies:
     bff_auth_stub_enabled: Callable[[], bool]
     bff_auth_mode: Callable[[], str]
     bff_source_commit: Callable[[], str]
-    write_roles: frozenset[str] = frozenset({"operator", "approver", "admin", "reviewer"})
-    utc_now: Callable[[], str] = utc_now
+    write_roles: frozenset[str]
+    utc_now: Callable[[], str]
 
 
 def _first(*values: Any) -> Optional[str]:
@@ -620,7 +620,8 @@ def _lifecycle(
     return {"data": data, "meta": {"contract": "BFF-LUV-SEM-001", "snapshot_at": now, "idempotency": {"idempotencyKey": idem, "replayed": False}}}
 
 
-def create_auth_handlers(deps: AuthDependencies) -> Dict[str, Any]:
+def create_auth_handlers(dependencies: AuthDependencies) -> Dict[str, Any]:
+    deps = dependencies
     async def _dev_login(*, payload: Dict[str, Any]) -> Dict[str, Any]:
         return await bff_auth_dev_login(payload=payload, deps=deps)
 

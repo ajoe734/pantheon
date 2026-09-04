@@ -22822,7 +22822,7 @@ auth_deps = AuthDependencies(
     write_roles=frozenset(_WRITE_ROLES),
     utc_now=utc_now,
 )
-auth_handlers = create_auth_handlers(deps=auth_deps)
+auth_handlers = create_auth_handlers(dependencies=auth_deps)
 auth_facade_service = AuthFacadeService(
     local_readiness=auth_handlers["bff_auth_readiness"],
     handlers=auth_handlers,

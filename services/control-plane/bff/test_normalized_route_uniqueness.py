@@ -14,7 +14,6 @@ from __future__ import annotations
 
 import inspect
 import re
-import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Set, Tuple
@@ -382,6 +381,7 @@ def test_real_bff_main_app_route_scanning_and_collision_characterization() -> No
 
     ACG-01-004 through ACG-01-013 inventory 7 legacy collision groups in main.py that are
     scheduled for cutover in Wave 2 (ACG-BFF-MAIN-CUTOVER-20260828). This test characterizes
+    those exact known collisions and fails immediately if any new/untracked collision is added.
     """
     from services.control_plane.bff import main as bff_main
 
