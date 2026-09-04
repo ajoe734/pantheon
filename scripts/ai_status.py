@@ -404,6 +404,21 @@ def _command_env(name: str, default: str = "") -> str:
 def validate_status_command_runtime_binding() -> None:
     """Ensure auto-worker status commands run from the installed command root."""
 
+    store_mode = _command_env(TASK_STATE_STORE_MODE_ENV).lower()
+    if store_mode != "authoritative":
+        raise RuntimeError(
+            f"{TASK_STATE_STORE_MODE_ENV}=authoritative is required for status commands"
+        )
+    raw_event_log = _command_env(TASK_STATE_EVENT_LOG_ENV)
+    if not raw_event_log or not Path(os.path.expanduser(raw_event_log)).is_absolute():
+        raise RuntimeError(
+            f"{TASK_STATE_EVENT_LOG_ENV} must be an absolute path in authoritative mode"
+        )
+    if not _command_env(CANONICAL_TASK_STATE_IDENTITY_ENV):
+        raise RuntimeError(
+            f"{CANONICAL_TASK_STATE_IDENTITY_ENV} is required in authoritative mode"
+        )
+
     raw_root = _command_env(STATUS_COMMAND_ROOT_ENV)
     if not raw_root:
         if _auto_worker_requires_explicit_status_root():

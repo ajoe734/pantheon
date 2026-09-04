@@ -2960,6 +2960,7 @@ class StatusRootRoutingTests(unittest.TestCase):
             component_symlink_root = link_parent / "component-central"
             runner_status = valid / ".orchestrator" / "worker-runtime" / "status" / "run.json"
             heartbeat = valid / ".orchestrator" / "worker-runtime" / "heartbeats" / "run.json"
+            task_state_event_log = root / "runtime" / "task-state-events-v2.jsonl"
 
             base_env = os.environ.copy()
             base_env.update(
@@ -2974,6 +2975,12 @@ class StatusRootRoutingTests(unittest.TestCase):
                     "PANTHEON_COMMAND_RUNTIME_SHA": command_sha,
                     "PANTHEON_COMMAND_REMOTE": "ajoe734/pantheon",
                     "PANTHEON_COMMAND_BASE_REF": "origin/dev",
+                    "PANTHEON_TASK_STATE_STORE_MODE": "authoritative",
+                    "PANTHEON_TASK_STATE_EVENT_LOG": str(task_state_event_log),
+                    common.CANONICAL_TASK_STATE_IDENTITY_ENV: _canonical_state_identity_json(
+                        valid,
+                        task_state_event_log,
+                    ),
                 }
             )
             cases = [
@@ -3045,6 +3052,7 @@ class StatusRootRoutingTests(unittest.TestCase):
 
             runner_status = valid / ".orchestrator" / "worker-runtime" / "status" / "run.json"
             heartbeat = valid / ".orchestrator" / "worker-runtime" / "heartbeats" / "run.json"
+            task_state_event_log = root / "runtime" / "task-state-events-v2.jsonl"
 
             env = os.environ.copy()
             env.update(
@@ -3060,6 +3068,12 @@ class StatusRootRoutingTests(unittest.TestCase):
                     "PANTHEON_COMMAND_RUNTIME_SHA": command_sha,
                     "PANTHEON_COMMAND_REMOTE": "ajoe734/pantheon",
                     "PANTHEON_COMMAND_BASE_REF": "origin/dev",
+                    "PANTHEON_TASK_STATE_STORE_MODE": "authoritative",
+                    "PANTHEON_TASK_STATE_EVENT_LOG": str(task_state_event_log),
+                    common.CANONICAL_TASK_STATE_IDENTITY_ENV: _canonical_state_identity_json(
+                        valid,
+                        task_state_event_log,
+                    ),
                 }
             )
 
