@@ -11,6 +11,7 @@ import json
 import logging
 import os
 import re
+from urllib import error as urllib_error
 from typing import (
     Any,
     Callable,

@@ -37,6 +37,7 @@ from typing import (
 )
 import urllib.error
 import urllib.parse
+from urllib import error as urllib_error, request as urllib_request
 from urllib.parse import quote, urlencode
 import urllib.request
 import uuid
@@ -200,17 +201,9 @@ try:
 except ImportError:
     get_catalog_entry = None
 
-try:
-    from command_executor import _get_json, _post_json, _runtime_manager_client
-except ImportError:
-    _runtime_manager_client = None
-    _post_json = None
-    _get_json = None
+from ..command_executor import _get_json, _post_json, _runtime_manager_client
 
-try:
-    from persona_allocation_policy import build_pm12_allocation_policy_input
-except ImportError:
-    build_pm12_allocation_policy_input = None
+from ..persona_allocation_policy import build_pm12_allocation_policy_input
 
 try:
     from paper_eligibility_proof import (
