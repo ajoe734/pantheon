@@ -906,6 +906,8 @@ jobs:
           GIT_ASKPASS: ""
           SSH_ASKPASS: ""
           PANTHEON_ENVIRONMENT_LEASE_TOKEN: ${{ secrets.COORDINATION_REPO_TOKEN }}
+          PANTHEON_DEV_LEASE_EXPECTED_BACKEND_SHA: ${{ steps.target.outputs.sha }}
+          PANTHEON_DEV_BOOTSTRAP_PREDECESSOR: "true"
           PANTHEON_DEV_ENVIRONMENT_LEASE_STATE_FILE: ${{ steps.lease.outputs.state_file }}
           PANTHEON_DEV_ENVIRONMENT_LEASE_HEARTBEAT_PID_FILE: ${{ steps.lease.outputs.pid_file }}
           PANTHEON_DEV_ENVIRONMENT_LEASE_HEARTBEAT_IDENTITY_FILE: ${{ steps.lease.outputs.identity_file }}

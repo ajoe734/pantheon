@@ -176,13 +176,24 @@ verify_dev_environment_lease_contract() {
 
   local lease_state_file="${PANTHEON_DEV_ENVIRONMENT_LEASE_STATE_FILE:-}"
   local guarded_lease_id="${PANTHEON_DEV_ENVIRONMENT_LEASE_GUARD_LEASE_ID:-}"
+  local lease_expected_backend_sha="${PANTHEON_DEV_LEASE_EXPECTED_BACKEND_SHA:-${DEPLOY_SHA}}"
+
+  # Empty-host bootstrap deliberately deploys a read-only predecessor before
+  # the candidate.  The job-owned lease remains bound to the candidate SHA;
+  # only this explicitly marked bootstrap invocation may deploy a different
+  # predecessor SHA under that lease.  Ordinary deploys cannot override the
+  # lease identity.
+  if [[ "${lease_expected_backend_sha}" != "${DEPLOY_SHA}" ]]; then
+    [[ "${PANTHEON_DEV_BOOTSTRAP_PREDECESSOR:-false}" == "true" ]] \
+      || error "dev lease expected backend override is only permitted for an explicit bootstrap predecessor"
+  fi
 
   [[ -n "${guarded_lease_id}" ]] \
     || error "dev deployment requires the pinned lease guard lease ID"
   [[ -f "${lease_state_file}" && ! -L "${lease_state_file}" ]] \
     || error "dev deployment requires a regular lease state file"
 
-  python3 - "${lease_state_file}" "${guarded_lease_id}" "${DEPLOY_SHA}" <<'PY'
+  python3 - "${lease_state_file}" "${guarded_lease_id}" "${lease_expected_backend_sha}" <<'PY'
 import json
 import re
 import sys
@@ -212,7 +223,7 @@ if not re.fullmatch(r"[0-9a-f]{40}", deploy_sha):
     raise SystemExit("dev deployment SHA must be a full lowercase commit SHA")
 PY
 
-  info "dev environment lease contract verified: ${guarded_lease_id} -> ${DEPLOY_SHA}"
+  info "dev environment lease contract verified: ${guarded_lease_id} -> ${lease_expected_backend_sha} (deploy=${DEPLOY_SHA})"
 }
 
 usage() {
