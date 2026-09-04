@@ -860,10 +860,20 @@ def refresh_dashboard_runtime_artifacts(config: dict[str, Any]) -> None:
     if scripts_path not in sys.path:
         sys.path.insert(0, scripts_path)
     try:
-        ai_status = importlib.import_module("ai_status")
-        status_state = ai_status.load_state()
-        ai_status.write_dashboard_bundle(status_state)
-        ai_status.sync_docs_site(status_state)
+        runtime_env = task_state_store_runtime_env(config)
+        previous_env = {name: os.environ.get(name) for name in runtime_env}
+        os.environ.update(runtime_env)
+        try:
+            ai_status = importlib.import_module("ai_status")
+            status_state = ai_status.load_state()
+            ai_status.write_dashboard_bundle(status_state)
+            ai_status.sync_docs_site(status_state)
+        finally:
+            for name, previous_value in previous_env.items():
+                if previous_value is None:
+                    os.environ.pop(name, None)
+                else:
+                    os.environ[name] = previous_value
     except Exception as exc:
         console_log(
             f"dashboard bundle refresh failed: {type(exc).__name__}: {exc}",
