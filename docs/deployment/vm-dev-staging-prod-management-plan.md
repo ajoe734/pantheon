@@ -1,7 +1,8 @@
 # Pantheon VM Dev／Staging／Prod 管理計畫
 
 - 狀態：已確認的目標方案，尚待分階段實作
-- 決策日期：2026-08-25
+- 決策日期：2026-08-25（2026-09-04 完成實測複核與架構設計閉環）
+- 規範性架構與設計閉環規格：[`docs/04/pantheon_environment_closure_sa_sd_2026-09/`](../04/pantheon_environment_closure_sa_sd_2026-09/INDEX.md)（任務 `ENV-STAGING-PROD-PLAN-001`）
 - 主要執行平台：Google Compute Engine VM
 - 管理入口：GitHub Actions、`gcloud`、Docker Compose
 
@@ -88,11 +89,20 @@ FE 與 BFF 位於不同 repository，因此不會有同一個 Git SHA。一次 r
 
 舊 `pantheon-benjamin-20260528` project 已停用。舊 staging control/exec 雙 VM 只保留為歷史拓撲，不是可用的部署目標。
 
-因此目標 ephemeral staging 在完成實作與 acceptance 前，必須標記為 `unavailable`；不得把舊 hostname、舊 VM 或範例 env 當作 staging 通過證據。
+2026-09-04 最新實測複核（詳見 [`docs/04/pantheon_environment_closure_sa_sd_2026-09/REPORT.md`](../04/pantheon_environment_closure_sa_sd_2026-09/REPORT.md)）：
+- 舊 Staging Control IP `104.155.223.192` 實測回傳 `HTTP/2 401 Unauthorized`（Kubernetes API Server 回應），證明 GCP 已釋出該 IP 並重新分配給外部第三方。任何將其當作 Staging 的設定均屬資安違規，全面禁止使用。
+- 舊 Dev IP `35.201.239.38` 連線逾時，已徹底廢止。
+- 目前 Staging 處於 **0 台 VM** 狀態，Phase 2 之 ephemeral staging pipeline 與 template 尚未實作。
+- 因此目標 ephemeral staging 在完成實作與 acceptance 前，必須標記為 `unavailable`；不得把舊 hostname、舊 VM、dev 測試通過或範例 env 當作 staging 通過證據。
 
 ### 3.3 Prod
 
-目前沒有可接受的 production GitHub Environment、正式 project、部署 lane 或 hosted identity 證據。本計畫不把「文件已合併」解讀成 production 已建立。
+2026-09-04 最新實測複核：
+- 目前沒有正式 production GCP project（例如 `pantheon-prod-XXXX`）。
+- 沒有已配置 required reviewer / prevent-self-review 的 production GitHub Environment。
+- 沒有生產環境 VM、磁碟、金鑰、部署 lane 或 hosted identity 證據。
+- 標記狀態維持嚴格的 `unavailable`。本計畫不把「文件已合併」或「Dev CI 通過」解讀成 production 已建立。
+
 
 ## 4. 目標拓撲
 
@@ -602,6 +612,8 @@ Dev 是否夜間關機由 supervisor/worker 是否需要 24 小時運作決定�
 
 ### Phase 2：Ephemeral Staging
 
+對應具體實作任務封包：[`ENV-STG-EPHEMERAL-IMPL-001`](../04/pantheon_environment_closure_sa_sd_2026-09/FUTURE_PACKETS.md#packet-1-env-stg-ephemeral-impl-001)（狀態：`undispatched`，嚴格等待 Operator MFA 批准）。
+
 交付：
 
 - Staging instance template。
@@ -614,6 +626,8 @@ Dev 是否夜間關機由 supervisor/worker 是否需要 24 小時運作決定�
 
 ### Phase 3：低資源 Prod control
 
+對應具體實作任務封包：[`ENV-PROD-CONTROL-IMPL-001`](../04/pantheon_environment_closure_sa_sd_2026-09/FUTURE_PACKETS.md#packet-2-env-prod-control-impl-001)（狀態：`undispatched`，嚴格等待 Operator MFA 與正式變更流程批准）。
+
 交付：
 
 - 獨立 production project、GitHub Environment、IAM、secrets 與網路。
@@ -625,7 +639,9 @@ Dev 是否夜間關機由 supervisor/worker 是否需要 24 小時運作決定�
 
 ### Phase 4：真實資金 execution 邊界
 
-只有 operator 明確決定啟用 real-capital mode 才進行。
+只有 operator 與 Trading Risk Officer 明確決定啟用 real-capital mode 並經雙人密碼簽署才進行。
+
+對應具體實作任務封包：[`ENV-PROD-EXEC-ISOLATE-001`](../04/pantheon_environment_closure_sa_sd_2026-09/FUTURE_PACKETS.md#packet-3-env-prod-exec-isolate-001)（狀態：`undispatched`，高特權實體邊界）。
 
 交付：
 
@@ -674,6 +690,7 @@ Dev 是否夜間關機由 supervisor/worker 是否需要 24 小時運作決定�
 
 ## 19. 相關現行文件
 
+- [`docs/04/pantheon_environment_closure_sa_sd_2026-09/`](../04/pantheon_environment_closure_sa_sd_2026-09/INDEX.md)：規範性環境閉環架構與系統設計封包（包含 SA、SD、實測審查報告、威脅模型、資源成本模型、發布回退規範與未來任務規格）。
 - [`nonprod-ci-cd.md`](nonprod-ci-cd.md)：目前 Dev 與歷史 staging-live workflow 行為。
 - [`staging-live-topology.md`](staging-live-topology.md)：目前可用 Dev 與已停用 staging 拓撲事實。
 - [`single-vm-runbook.md`](single-vm-runbook.md)：現有單 VM Compose 操作基線。
