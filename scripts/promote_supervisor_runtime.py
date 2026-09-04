@@ -45,7 +45,7 @@ from provision_live_supervisor_config import (
 # the established operator path working untouched; PANTHEON_DEPLOY_ROOT lets a
 # rebuilt or additional host own the same shape under its own home, so the
 # control plane is not tied to one machine's directory tree.
-DEFAULT_DEPLOY_ROOT = Path("/home/lupin/pantheon-ci-deploy")
+DEFAULT_DEPLOY_ROOT = Path.home() / "pantheon-ci-deploy"
 DEPLOY_ROOT = Path(
     os.environ.get("PANTHEON_DEPLOY_ROOT") or DEFAULT_DEPLOY_ROOT
 ).expanduser()
@@ -328,63 +328,6 @@ def _write_evidence(path: Path | None, result: Mapping[str, Any]) -> None:
     write_json_atomic(path, dict(result))
 
 
-def _sync_directory_tree(source: Path, dest: Path) -> None:
-    if dest.exists():
-        _make_tree_owner_writable(dest)
-        shutil.rmtree(dest)
-    if source.exists():
-        shutil.copytree(source, dest)
-        _make_tree_owner_writable(dest)
-
-
-def _make_tree_owner_writable(root: Path) -> None:
-    """Keep the coordination-root code mirror mutable after a sealed copy."""
-
-    if root.is_symlink() or not root.exists():
-        return
-    for current_root, dirnames, filenames in os.walk(root, topdown=False, followlinks=False):
-        current = Path(current_root)
-        for name in filenames:
-            path = current / name
-            if not path.is_symlink():
-                mode = stat.S_IMODE(path.stat(follow_symlinks=False).st_mode)
-                os.chmod(path, mode | stat.S_IWUSR, follow_symlinks=False)
-        for name in dirnames:
-            path = current / name
-            if not path.is_symlink():
-                mode = stat.S_IMODE(path.stat(follow_symlinks=False).st_mode)
-                os.chmod(
-                    path,
-                    mode | stat.S_IWUSR | stat.S_IXUSR,
-                    follow_symlinks=False,
-                )
-        mode = stat.S_IMODE(current.stat(follow_symlinks=False).st_mode)
-        os.chmod(
-            current,
-            mode | stat.S_IWUSR | stat.S_IXUSR,
-            follow_symlinks=False,
-        )
-
-
-def _sync_top_level_py_files(source_dir: Path, dest_dir: Path) -> None:
-    dest_dir.mkdir(parents=True, exist_ok=True)
-    mode = stat.S_IMODE(dest_dir.stat(follow_symlinks=False).st_mode)
-    os.chmod(
-        dest_dir,
-        mode | stat.S_IWUSR | stat.S_IXUSR,
-        follow_symlinks=False,
-    )
-    wanted = {path.name for path in source_dir.glob("*.py")} if source_dir.exists() else set()
-    existing = {path.name for path in dest_dir.glob("*.py")}
-    for name in existing - wanted:
-        (dest_dir / name).unlink()
-    for name in wanted:
-        destination = dest_dir / name
-        shutil.copy2(source_dir / name, destination)
-        mode = stat.S_IMODE(destination.stat(follow_symlinks=False).st_mode)
-        os.chmod(destination, mode | stat.S_IWUSR, follow_symlinks=False)
-
-
 def seal_command_runtime(root: Path) -> dict[str, Any]:
     """Remove write bits from one validated immutable command runtime.
 
@@ -471,57 +414,21 @@ def verify_worker_sandbox(root: Path) -> dict[str, Any]:
 
 
 def sync_coordination_root_code(candidate_root: Path, status_root: Path) -> dict[str, Any]:
-    """Best-effort refresh of status_root's own governance-tool code.
+    """Preserve the coordination checkout; executable code is immutable.
 
-    status_root (coordination-root) is a stable worktree that also holds
-    live, locally-mutated task/activity/archive data
-    (ai-status.json, ai-task-archive/, current-work.md, .orchestrator/
-    state.json, .orchestrator/logs/, lock files, ...) which this must never
-    touch. Scope is therefore an explicit allowlist of pure-code paths this
-    directory's own scripts/ai-status.sh actually executes when invoked
-    without PANTHEON_COMMAND_ROOT (a bare manual Human/Ops command) --
-    anything not listed here is left alone, never inferred from a directory
-    scan, so a future data file added under an already-synced directory
-    can't be silently overwritten by widening the sweep without a matching
-    allowlist change.
-
-    Mirrors rather than only adds: a file removed from candidate_root's
-    scope is also removed from status_root's copy, so a promotion cannot
-    leave retired code behind.
-
-    Best-effort and independent of the supervisor replacement outcome: a
-    failure here must never fail or roll back an otherwise-successful
-    supervisor replacement. The supervisor dynamically imports the local
-    development_bridge package while draining governed task packets, so that
-    pure-code package is also explicitly synchronized. It must not lag the
-    exact candidate runtime or signer/model compatibility can diverge.
+    The status root is shared mutable state and may contain worker-owned or
+    operator-owned changes. Promotion must therefore never mirror, remove, or
+    chmod repository files there. Supervisor and governed command execution
+    are pinned to candidate_root, the validated command-runtimes/<SHA> tree.
     """
 
-    result: dict[str, Any] = {"outcome": "skipped", "paths": []}
-    try:
-        _sync_directory_tree(candidate_root / "scripts", status_root / "scripts")
-        result["paths"].append("scripts")
-        _sync_top_level_py_files(
-            candidate_root / ".orchestrator", status_root / ".orchestrator"
-        )
-        result["paths"].append(".orchestrator/*.py")
-        _sync_directory_tree(
-            candidate_root / ".orchestrator" / "rewrite",
-            status_root / ".orchestrator" / "rewrite",
-        )
-        result["paths"].append(".orchestrator/rewrite")
-        bridge_source = candidate_root / ".orchestrator" / "development_bridge"
-        if bridge_source.is_dir():
-            _sync_directory_tree(
-                bridge_source,
-                status_root / ".orchestrator" / "development_bridge",
-            )
-            result["paths"].append(".orchestrator/development_bridge")
-        result["outcome"] = "synced"
-    except Exception as exc:
-        result["outcome"] = "failed"
-        result["error"] = f"{type(exc).__name__}: {exc}"
-    return result
+    return {
+        "outcome": "preserved",
+        "reason": "coordination_root_is_state_only",
+        "candidate_root": str(candidate_root.resolve()),
+        "status_root": str(status_root.resolve()),
+        "paths": [],
+    }
 
 
 def _replace_supervisor_locked(

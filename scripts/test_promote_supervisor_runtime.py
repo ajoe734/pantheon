@@ -486,7 +486,7 @@ def test_discover_only_is_read_only_and_reports_v2_identity(tmp_path: Path, caps
     assert not live_config.exists()
 
 
-def test_sync_coordination_root_code_updates_code_and_preserves_data(tmp_path: Path) -> None:
+def test_sync_coordination_root_code_preserves_dirty_shared_checkout(tmp_path: Path) -> None:
     candidate = tmp_path / "command-runtimes" / "candidate"
     status_root = tmp_path / "status"
     (candidate / "scripts").mkdir(parents=True)
@@ -517,31 +517,19 @@ def test_sync_coordination_root_code_updates_code_and_preserves_data(tmp_path: P
     (status_root / ".orchestrator" / "state.json").write_text('{"live": true}\n', encoding="utf-8")
 
     promotion.seal_command_runtime(candidate)
+    before = {path: path.read_bytes() for path in status_root.rglob("*") if path.is_file()}
     result = promotion.sync_coordination_root_code(candidate, status_root)
 
-    assert result["outcome"] == "synced"
-    assert result["paths"] == [
-        "scripts",
-        ".orchestrator/*.py",
-        ".orchestrator/rewrite",
-        ".orchestrator/development_bridge",
-    ]
-    assert (status_root / "scripts" / "ai_status.py").read_text(encoding="utf-8") == "# new version\n"
-    assert stat.S_IMODE((status_root / "scripts" / "ai_status.py").stat().st_mode) & stat.S_IWUSR
-    assert stat.S_IMODE((status_root / "scripts").stat().st_mode) & stat.S_IWUSR
-    assert (status_root / ".orchestrator" / "common.py").read_text(encoding="utf-8") == "# new common\n"
-    assert (
-        status_root / ".orchestrator" / "rewrite" / "task_machine.py"
-    ).read_text(encoding="utf-8") == "# new task_machine\n"
-    assert (
-        status_root / ".orchestrator" / "development_bridge" / "dev_bridge_models.py"
-    ).read_text(encoding="utf-8") == "# new bridge model\n"
+    assert result["outcome"] == "preserved"
+    assert result["reason"] == "coordination_root_is_state_only"
+    assert result["paths"] == []
+    assert {path: path.read_bytes() for path in status_root.rglob("*") if path.is_file()} == before
     # Live data must be byte-for-byte untouched.
     assert (status_root / "ai-status.json").read_text(encoding="utf-8") == live_status
     assert (status_root / ".orchestrator" / "state.json").read_text(encoding="utf-8") == '{"live": true}\n'
 
 
-def test_sync_coordination_root_code_removes_retired_files(tmp_path: Path) -> None:
+def test_sync_coordination_root_code_never_removes_retired_files(tmp_path: Path) -> None:
     candidate = tmp_path / "candidate"
     status_root = tmp_path / "status"
     (candidate / "scripts").mkdir(parents=True)
@@ -567,14 +555,12 @@ def test_sync_coordination_root_code_removes_retired_files(tmp_path: Path) -> No
 
     result = promotion.sync_coordination_root_code(candidate, status_root)
 
-    assert result["outcome"] == "synced"
-    assert not (status_root / "scripts" / "retired_script.py").exists()
-    assert not (status_root / ".orchestrator" / "retired_top_level.py").exists()
-    assert not (status_root / ".orchestrator" / "rewrite" / "retired_module.py").exists()
-    assert not (
-        status_root / ".orchestrator" / "development_bridge" / "retired_bridge.py"
-    ).exists()
-    assert (status_root / "scripts" / "kept.py").read_text(encoding="utf-8") == "# kept\n"
+    assert result["outcome"] == "preserved"
+    assert (status_root / "scripts" / "retired_script.py").exists()
+    assert (status_root / ".orchestrator" / "retired_top_level.py").exists()
+    assert (status_root / ".orchestrator" / "rewrite" / "retired_module.py").exists()
+    assert (status_root / ".orchestrator" / "development_bridge" / "retired_bridge.py").exists()
+    assert (status_root / "scripts" / "kept.py").read_text(encoding="utf-8") == "# stale\n"
 
 
 def test_sync_coordination_root_code_never_touches_orchestrator_json_or_logs(tmp_path: Path) -> None:
@@ -595,7 +581,7 @@ def test_sync_coordination_root_code_never_touches_orchestrator_json_or_logs(tmp
 
     result = promotion.sync_coordination_root_code(candidate, status_root)
 
-    assert result["outcome"] == "synced"
+    assert result["outcome"] == "preserved"
     assert (status_root / ".orchestrator" / "config.json").read_text(
         encoding="utf-8"
     ) == '{"from": "status_root"}\n'
@@ -622,10 +608,10 @@ def test_replace_supervisor_records_coordination_code_sync(
     )
 
     assert result["outcome"] == "launched"
-    assert result["coordination_code_sync"]["outcome"] == "synced"
+    assert result["coordination_code_sync"]["outcome"] == "preserved"
     assert (status_root / ".orchestrator" / "supervisor.py").read_text(
         encoding="utf-8"
-    ) == (candidate / ".orchestrator" / "supervisor.py").read_text(encoding="utf-8")
+    ) == "# stale copy\n"
 
 
 def test_replace_supervisor_survives_coordination_code_sync_failure(
@@ -655,7 +641,7 @@ def test_replace_supervisor_survives_coordination_code_sync_failure(
     assert result["launched_pid"] == 42
 
 
-def test_deploy_root_defaults_to_established_operator_path(tmp_path: Path) -> None:
+def test_deploy_root_defaults_to_current_users_portable_path(tmp_path: Path) -> None:
     env = dict(os.environ)
     env.pop("PANTHEON_DEPLOY_ROOT", None)
     output = subprocess.run(
@@ -666,7 +652,7 @@ def test_deploy_root_defaults_to_established_operator_path(tmp_path: Path) -> No
         text=True,
         check=True,
     )
-    assert output.stdout.strip() == "/home/lupin/pantheon-ci-deploy"
+    assert output.stdout.strip() == str(Path.home() / "pantheon-ci-deploy")
 
 
 def test_deploy_root_honors_env_override_and_expands_user(tmp_path: Path) -> None:
