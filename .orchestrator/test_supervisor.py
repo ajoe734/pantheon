@@ -30,6 +30,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 
 import supervisor
 import runtime_state
+import common
 from adapters.base import DeliveryResult
 from rewrite import worker_workspace
 
@@ -77,6 +78,10 @@ class V2StartupCacheTests(unittest.TestCase):
             def load_state() -> dict[str, object]:
                 observed_env.update(
                     {name: os.environ.get(name) for name in expected_env}
+                )
+                common.canonical_task_state_identity_from_environment(
+                    status_root=status_root,
+                    event_log=runtime_dir / "tasks.jsonl",
                 )
                 return state
 
