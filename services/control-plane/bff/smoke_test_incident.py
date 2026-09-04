@@ -9,9 +9,6 @@ import tempfile
 from pathlib import Path
 from unittest import mock
 
-# Ensure the BFF module is importable
-sys.path.insert(0, os.path.dirname(__file__))
-
 from fastapi.testclient import TestClient
 
 _FIXTURE_TMP = tempfile.TemporaryDirectory(prefix="pantheon-bff-incident-smoke-")
@@ -128,9 +125,9 @@ for _env_name in (
 ):
     os.environ.pop(_env_name, None)
 
-import main as bff_main
-from main import app
-from ports import ReadSurfacePorts
+from services.control_plane.bff import main as bff_main
+from services.control_plane.bff.main import app
+from services.control_plane.bff.ports import ReadSurfacePorts
 
 
 class IncidentSmokeStore(ReadSurfacePorts):
