@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "task_id": "BFF-PACKAGE-001",
-  "generated_at": "2026-09-04T14:28:46Z",
+  "generated_at": "2026-09-04T14:44:00Z",
   "evidence_policy": "observed_immutable_only",
   "owner": "Codex",
   "reviewer": "Claude",
@@ -9,7 +9,7 @@
   "repository": "ajoe734/pantheon",
   "branch": "task/BFF-PACKAGE-001",
   "source_base_sha": "6ddbcd23a",
-  "last_committed_anchor_sha": "18d625cde48ce0c25bbbbefd7cf37cbdb14f3099",
+  "last_committed_anchor_sha": "4b667e2ee325a72e6b616d8c6ad6a9151839e82c",
   "acceptance_matrix": [
     {
       "criterion": "All recorded BFF entrypoints use one stable import root",
@@ -48,6 +48,18 @@
     {
       "command": "Static scan of recorded Docker and HA smoke entrypoints for the services.control_plane.bff import root",
       "result": "passed"
+    },
+    {
+      "command": "Stage-0 baseline, BFF target, and release-hardening smoke callers invoke python -m services.control_plane.bff.smoke_test",
+      "result": "passed"
+    },
+    {
+      "command": "/tmp/bff-package-001-venv/bin/python -m services.control_plane.bff.smoke_test",
+      "result": "25 passed"
+    },
+    {
+      "command": "/tmp/bff-package-001-venv/bin/python -m pytest -q tests/test_release_gate_contract.py",
+      "result": "9 passed"
     },
     {
       "command": "AST scan of production services/control-plane/bff Python modules for globals() calls and sys.path mutation",

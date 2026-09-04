@@ -15,7 +15,7 @@
       "python3 services/runtime_manager/smoke_test_runtime_binding.py",
       "python3 services/telemetry/smoke_test_ingest.py",
       "python3 -m unittest discover -s services/telemetry/lineage_read -p 'test_*.py'",
-      "python3 services/control-plane/bff/smoke_test.py",
+      "python3 -m services.control_plane.bff.smoke_test",
       "python3 -m pytest -q scripts/test_deploy_nonprod_vm.py",
       "python3 -m pytest -q tests/test_release_gate_contract.py tests/test_openclaw_credential_probe.py scripts/test_deploy_nonprod_bff_strict_auth_default_contract.py scripts/git/test_check_commit_trailers_independent_review.py"
     ]
@@ -113,7 +113,7 @@
           "python3 services/control-plane/bff/test_persona_management.py",
           "python3 services/control-plane/bff/test_w3_surfaces.py",
           "python3 services/control-plane/bff/test_w4_remaining_catalog.py",
-          "python3 services/control-plane/bff/smoke_test.py",
+          "python3 -m services.control_plane.bff.smoke_test",
           "python3 services/control-plane/bff/smoke_test_incident.py"
         ]
       }
