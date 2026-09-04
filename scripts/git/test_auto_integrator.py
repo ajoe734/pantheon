@@ -1399,29 +1399,56 @@ class IntegrationPlanTests(unittest.TestCase):
         self.assertNotIn("approved by Claude", result.detail)
 
     def test_red_checks_open_unblock_in_execute_mode(self) -> None:
-        candidate = auto_integrator.TaskCandidate(
-            task_id="ABC-001",
-            title="Ready",
-            owner="Codex",
-            reviewer="Claude",
-            branch="task/ABC-001",
-        )
-        pr = green_pr()
-        pr["statusCheckRollup"] = [{"name": "ci", "conclusion": "FAILURE"}]
-        runner = FakeRunner(pr=pr)
+        with tempfile.TemporaryDirectory() as tmp_dir, mock.patch.dict(
+            os.environ, {"PANTHEON_COMMAND_RUNTIME_SHA": "b" * 40}
+        ):
+            status_root = Path(tmp_dir)
+            candidate = auto_integrator.TaskCandidate(
+                task_id="ABC-001",
+                title="Ready",
+                owner="Codex",
+                reviewer="Claude",
+                branch="task/ABC-001",
+                raw_task={
+                    "generation": 7,
+                    "delivery_binding": {"pr": 44, "head_sha": APPROVED_HEAD},
+                },
+            )
+            pr = green_pr()
+            pr["statusCheckRollup"] = [{"name": "ci", "conclusion": "FAILURE"}]
+            runner = FakeRunner(pr=pr)
 
-        result = auto_integrator.integrate_candidate(
-            candidate,
-            auto_integrator.Settings(),
-            runner,
-            execute=True,
-            gate=approved_gate(),
-        )
+            result = auto_integrator.integrate_candidate(
+                candidate,
+                auto_integrator.Settings(),
+                runner,
+                status_root=status_root,
+                execute=True,
+                gate=approved_gate(),
+            )
 
-        self.assertEqual(result.action, "blocked")
-        self.assertEqual(result.unblock_task_id, "INTEGRATION-UNBLOCK-ABC-001-CI-RED")
-        self.assertTrue(any("scripts/ai_status.py" in " ".join(command) and "assign" in command for command in runner.commands))
-        self.assertFalse(any(command[:3] == ["gh", "pr", "merge"] for command in runner.commands))
+            self.assertEqual(result.action, "blocked")
+            self.assertEqual(result.unblock_task_id, "INTEGRATION-UNBLOCK-ABC-001-CI-RED")
+            requests = list((status_root / auto_integrator.UNBLOCK_REQUEST_INBOX).glob("*.json"))
+            self.assertEqual(len(requests), 1)
+            request = json.loads(requests[0].read_text(encoding="utf-8"))
+            self.assertEqual(request["command_runtime_sha"], "b" * 40)
+            self.assertEqual(request["pr"], 44)
+            self.assertEqual(request["head_sha"], APPROVED_HEAD)
+            self.assertEqual(request["source_task_generation"], 7)
+            self.assertFalse(any("scripts/ai_status.py" in " ".join(command) for command in runner.commands))
+            self.assertFalse(any(command[:3] == ["gh", "pr", "merge"] for command in runner.commands))
+
+            auto_integrator.open_unblock_task(
+                candidate,
+                "ci-red",
+                result.detail,
+                auto_integrator.Settings(),
+                runner,
+                root=status_root,
+                execute=True,
+            )
+            self.assertEqual(len(list((status_root / auto_integrator.UNBLOCK_REQUEST_INBOX).glob("*.json"))), 1)
 
     def test_merge_then_review_exact_head_conflict_opens_unblock_without_merge(self) -> None:
         candidate = auto_integrator.TaskCandidate(

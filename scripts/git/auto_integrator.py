@@ -35,6 +35,7 @@ import subprocess
 import sys
 import tempfile
 import time
+import hashlib
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -64,6 +65,8 @@ DISPOSABLE_MERGE_IDENTITY = (
 )
 DEFAULT_LOCK = ".orchestrator/auto-integrator.lock"
 DEFAULT_MERGE_METHOD = "merge"
+UNBLOCK_REQUEST_SCHEMA = "pantheon-auto-integrator-unblock-request/v1"
+UNBLOCK_REQUEST_INBOX = ".orchestrator/auto-integrator-unblock-inbox"
 DEFAULT_LIVE_CONFIG = Path(
     "/home/lupin/pantheon-ci-deploy/runtime/live-supervisor-mainroot-config.json"
 )
@@ -1835,6 +1838,41 @@ def unblock_task_id(task_id: str, reason: str) -> str:
     return f"INTEGRATION-UNBLOCK-{task_id}-{safe_reason}"[:96]
 
 
+def _write_unblock_request(root: Path, payload: Mapping[str, Any]) -> None:
+    """Durably publish one immutable, content-addressed supervisor request."""
+
+    encoded = json.dumps(
+        payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+    ).encode("utf-8")
+    request_id = hashlib.sha256(encoded).hexdigest()
+    inbox = root / UNBLOCK_REQUEST_INBOX
+    inbox.mkdir(mode=0o700, parents=True, exist_ok=True)
+    destination = inbox / f"{request_id}.json"
+    if destination.exists():
+        if destination.read_bytes() != encoded + b"\n":
+            raise AutoIntegratorError("content-addressed unblock request collision")
+        return
+    descriptor, temporary_name = tempfile.mkstemp(
+        prefix=f".{request_id}.", suffix=".tmp", dir=inbox
+    )
+    temporary = Path(temporary_name)
+    try:
+        with os.fdopen(descriptor, "wb") as stream:
+            stream.write(encoded + b"\n")
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.chmod(temporary, 0o600)
+        os.replace(temporary, destination)
+        directory_fd = os.open(inbox, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
+        try:
+            os.fsync(directory_fd)
+        finally:
+            os.close(directory_fd)
+    finally:
+        if temporary.exists():
+            temporary.unlink()
+
+
 def open_unblock_task(
     candidate: TaskCandidate,
     reason: str,
@@ -1850,47 +1888,37 @@ def open_unblock_task(
         return task_id
     owner = settings.unblock_owner or candidate.owner
     reviewer = settings.unblock_reviewer or candidate.reviewer
-    env = os.environ.copy()
-    env["AI_NAME"] = "AutoIntegrator"
-    env["TASK_PHASE"] = "Auto-integrator unblock"
-    env["TASK_DEPENDS_ON"] = candidate.task_id
-    env["TASK_SUMMARY_ZH"] = (
-        f"auto-integrator 無法安全整合 {candidate.task_id}: {reason}. "
-        "請修正 PR/rebase/CI 後交回整合。"
-    )
-    env["TASK_ACCEPTANCE"] = (
-        f"Root cause for {candidate.task_id} integration blocker is documented,"
-        " original PR is updated or superseded, task no longer strands in review_approved"
-    )
-    env["TASK_ARTIFACTS"] = "ai-status.json,.orchestrator/task-briefs,scripts/git/auto_integrator.py"
-    env["TASK_AUTO_CREATED_BY"] = "auto_integrator"
-    env["TASK_AUTO_GENERATED"] = "true"
-    if candidate.repository_id:
-        env["TASK_TARGET_REPO"] = candidate.repository_id
-    runner.run(
-        [
-            sys.executable,
-            "scripts/ai_status.py",
-            "assign",
-            task_id,
-            owner,
-            reviewer,
-            f"Unblock integration for {candidate.task_id}: {reason}",
-        ],
-        cwd=root,
-        env=env,
-    )
-    runner.run(
-        [
-            sys.executable,
-            "scripts/ai_status.py",
-            "progress",
-            task_id,
-            detail[:500],
-        ],
-        cwd=root,
-        env=env,
-        check=False,
+    runtime_sha = str(os.environ.get("PANTHEON_COMMAND_RUNTIME_SHA") or "").lower()
+    if not review_gate.OID_RE.fullmatch(runtime_sha):
+        raise AutoIntegratorError(
+            "PANTHEON_COMMAND_RUNTIME_SHA must bind unblock requests to an immutable runtime"
+        )
+    binding = candidate.raw_task.get("delivery_binding")
+    binding = binding if isinstance(binding, Mapping) else {}
+    pr_number = binding.get("pr") or binding.get("pr_number")
+    head_sha = str(binding.get("head_sha") or "").lower()
+    if not isinstance(pr_number, int) or pr_number < 1 or not review_gate.OID_RE.fullmatch(head_sha):
+        raise AutoIntegratorError(
+            f"canonical delivery binding for {candidate.task_id} lacks exact PR/head"
+        )
+    _write_unblock_request(
+        root,
+        {
+            "schema": UNBLOCK_REQUEST_SCHEMA,
+            "status_root": str(root.resolve()),
+            "command_runtime_sha": runtime_sha,
+            "source_task_id": candidate.task_id,
+            "source_task_generation": int(candidate.raw_task.get("generation") or 1),
+            "unblock_task_id": task_id,
+            "reason": reason,
+            "detail": detail[:500],
+            "repository_id": candidate.repository_id,
+            "repository_slug": candidate.repository_slug,
+            "pr": pr_number,
+            "head_sha": head_sha,
+            "owner": owner,
+            "reviewer": reviewer,
+        },
     )
     return task_id
 
