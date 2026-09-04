@@ -8,7 +8,7 @@ import time
 import uuid
 from typing import Any, Callable
 
-from models import OpenClawRuntimePin, WorkflowDefinition, utc_now
+from .models import OpenClawRuntimePin, WorkflowDefinition, utc_now
 
 
 Transport = Callable[[dict[str, Any]], dict[str, Any]]

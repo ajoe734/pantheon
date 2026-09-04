@@ -11,7 +11,7 @@ from typing import Any, Callable, Dict, List, Mapping, Optional
 
 from fastapi import APIRouter, Body, Header, Query, Request
 
-from models import CommandType, ErrorCode, ObjectType
+from ..models import CommandType, ErrorCode, ObjectType
 
 from .service import RuntimeRouterService
 

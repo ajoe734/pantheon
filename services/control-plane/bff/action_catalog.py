@@ -18,7 +18,7 @@ Each entry expresses:
 """
 from __future__ import annotations
 
-from models import BffActionCatalogEntry, BffActionCatalogResponse, RiskLevel
+from .models import BffActionCatalogEntry, BffActionCatalogResponse, RiskLevel
 
 _FINAL_COMMAND_ENDPOINT = "/bff/v1/commands"
 

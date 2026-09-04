@@ -9,7 +9,7 @@ import uuid
 from datetime import datetime, timezone
 from typing import Any, Callable, Dict, List, Optional
 
-from openclaw_ops_client import OpenClawOpsClient
+from ...openclaw_ops_client import OpenClawOpsClient
 from .runner import drain_interaction_outbox, run_selected_persona_interaction
 from .store import InteractionLifecycleStore
 

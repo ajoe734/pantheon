@@ -5,7 +5,7 @@ import hashlib
 import uuid
 from typing import Any, Callable, Dict, List, Optional
 
-from openclaw_ops_client import OpenClawOpsClient, OpenClawOpsClientError
+from ...openclaw_ops_client import OpenClawOpsClient, OpenClawOpsClientError
 
 from .provider import (
     authority_boundary,

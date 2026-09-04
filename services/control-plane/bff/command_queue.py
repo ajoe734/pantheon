@@ -9,7 +9,7 @@ from datetime import datetime, timezone
 from threading import RLock
 from typing import Any, Dict, Iterator, List, Optional
 
-from models import CommandStatus, CommandType, ObjectType, TargetObject
+from .models import CommandStatus, CommandType, ObjectType, TargetObject
 
 log = logging.getLogger(__name__)
 

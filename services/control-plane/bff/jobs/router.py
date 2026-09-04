@@ -17,7 +17,7 @@ from typing import Any, Callable, Dict, Optional
 
 from fastapi import APIRouter, Body, Header, Query
 
-from models import ErrorCode
+from ..models import ErrorCode
 
 JobOverlay = Callable[[], Dict[str, Dict[str, Any]]]
 SubmitJobAction = Callable[[str, str, str, Any, Dict[str, Any]], Dict[str, Any]]

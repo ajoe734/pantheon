@@ -19,7 +19,6 @@ from __future__ import annotations
 
 import json
 import os
-import sys
 import tempfile
 import unittest
 import uuid
@@ -27,17 +26,24 @@ from pathlib import Path
 from typing import Any, Optional
 from unittest.mock import patch
 
-sys.path.insert(0, os.path.dirname(__file__))
-
 # Use a temp dir so tests don't share state with each other
 os.environ["BFF_DATA_DIR"] = "/tmp/pantheon/bff_test"
 os.environ.setdefault("BFF_READ_SURFACE_STATE", "fresh")
 os.environ.setdefault("PANTHEON_BFF_AUTH_STUB", "true")
 os.environ.setdefault("PANTHEON_BFF_AUTH_MODE", "permissive")
+from fastapi import HTTPException
 from fastapi.testclient import TestClient
-import main as bff_main
-from models import CommandReceiptStatus, CommandRoutingPath, CommandStatus, CommandType, ErrorCode
-from ports import ReadSurfacePorts
+from services.control_plane.bff import main as bff_main
+from services.control_plane.bff.agora.identity.scope import AgoraScopeResolutionError
+from services.control_plane.bff.agora.router import _raise_scope_error
+from services.control_plane.bff.models import (
+    CommandReceiptStatus,
+    CommandRoutingPath,
+    CommandStatus,
+    CommandType,
+    ErrorCode,
+)
+from services.control_plane.bff.ports import ReadSurfacePorts
 
 
 class SmokeTestStore(ReadSurfacePorts):
@@ -311,6 +317,30 @@ class TestOperatorBFF(unittest.TestCase):
     # ---------------------------------------------------------------------- #
     # Authentication
     # ---------------------------------------------------------------------- #
+    def test_agora_scope_error_uses_canonical_package_import(self):
+        def make_error(status_code, code, message, reason, **details):
+            return HTTPException(
+                status_code=status_code,
+                detail={
+                    "code": code,
+                    "message": message,
+                    "reason": reason,
+                    **details,
+                },
+            )
+
+        scope_error = AgoraScopeResolutionError(
+            status_code=401,
+            reason="missing_identity",
+            message="Authentication required",
+        )
+
+        with self.assertRaises(HTTPException) as raised:
+            _raise_scope_error(scope_error, make_error)
+
+        self.assertEqual(raised.exception.status_code, 401)
+        self.assertEqual(raised.exception.detail["code"], ErrorCode.AUTH_REQUIRED)
+
     def test_missing_auth_header_submit(self):
         r = _submit(self.client, token=None)
         self.assertEqual(r.status_code, 401, r.text)

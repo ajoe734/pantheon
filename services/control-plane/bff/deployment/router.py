@@ -32,7 +32,7 @@ from fastapi import APIRouter, Body, Header, Query, Request, Response
 from fastapi.encoders import jsonable_encoder
 from fastapi.responses import JSONResponse
 
-from models import CommandType, ErrorCode, ObjectType
+from ..models import CommandType, ErrorCode, ObjectType
 
 from .service import DeploymentService
 

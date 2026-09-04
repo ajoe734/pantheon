@@ -5,7 +5,7 @@ from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from fastapi import APIRouter, Body, Header, Query
 
-from models import ErrorCode
+from ..models import ErrorCode
 
 from .service import TrainingSessionService
 
