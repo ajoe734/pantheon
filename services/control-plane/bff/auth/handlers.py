@@ -744,4 +744,3 @@ def create_auth_handlers(dependencies: AuthDependencies) -> Dict[str, Any]:
         "bff_switch_tenant": _switch_tenant,
         "bff_update_locale": _update_locale,
     }
-

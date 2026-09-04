@@ -1,14 +1,14 @@
 {
   "schema_version": 1,
   "task_id": "BFF-COMPOSITION-001",
-  "generated_at": "2026-09-04T20:10:00Z",
+  "generated_at": "2026-09-04T21:22:00Z",
   "evidence_policy": "observed_immutable_only",
   "owner": "Antigravity",
   "reviewer": "Codex",
   "review_status": "pending_independent_exact_head_review",
   "repository": "ajoe734/pantheon",
   "branch": "task/BFF-COMPOSITION-001",
-  "source_base_sha": "ab31a1de0166fd48ad4e009697a848008da61544",
+  "source_base_sha": "3a119b7cf22f7443f76b2f5cbfe07872ab89f576",
   "acceptance_matrix": [
     {
       "criterion": "Inject typed domain query, command and event dependencies into router factories and make required command-owner absence fail startup closed.",
@@ -28,15 +28,15 @@
   ],
   "validation": [
     {
-      "command": "python3 -m pytest -q services/rankings/test_store.py tests/test_pytest_import_isolation.py services/control-plane/bff/tests/test_tools_integrations_router.py services/control-plane/bff/tests/test_bff_main_composition.py services/control-plane/bff/tests/test_bff_auth_facade.py services/control-plane/bff/test_normalized_route_uniqueness.py services/control-plane/bff/tests/test_deployment_router.py services/control-plane/bff/tests/test_read_surface_caller_migration.py",
+      "command": ".venv/bin/python3 -m pytest -q services/rankings/test_store.py tests/test_pytest_import_isolation.py services/control-plane/bff/tests/test_tools_integrations_router.py services/control-plane/bff/tests/test_bff_main_composition.py services/control-plane/bff/tests/test_bff_auth_facade.py services/control-plane/bff/test_normalized_route_uniqueness.py services/control-plane/bff/tests/test_deployment_router.py services/control-plane/bff/tests/test_read_surface_caller_migration.py",
       "result": "131 passed"
     },
     {
-      "command": "python3 services/control-plane/bff/smoke_test.py",
+      "command": "PYTHONPATH=. .venv/bin/python3 services/control-plane/bff/smoke_test.py",
       "result": "26 passed"
     },
     {
-      "command": "python3 services/control-plane/bff/smoke_test_incident.py",
+      "command": "PYTHONPATH=. .venv/bin/python3 services/control-plane/bff/smoke_test_incident.py",
       "result": "21 passed"
     },
     {
@@ -44,7 +44,7 @@
       "result": "passed; zero production services import main"
     },
     {
-      "command": "git diff --check",
+      "command": "git diff --check origin/dev",
       "result": "passed"
     }
   ],

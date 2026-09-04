@@ -691,4 +691,3 @@ def test_legacy_list_rankings_raises_on_null_record_type_without_ranking_id(stor
 
     with pytest.raises(RankingWriteOwnerError):
         store.list_rankings()
-
