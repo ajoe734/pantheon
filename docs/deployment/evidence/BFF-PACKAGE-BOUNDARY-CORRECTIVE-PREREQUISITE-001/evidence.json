@@ -1,0 +1,50 @@
+{
+  "schema_version": "pantheon.task-evidence.v1",
+  "task_id": "BFF-PACKAGE-BOUNDARY-CORRECTIVE-PREREQUISITE-001",
+  "base_ref": "dev@161f0a0d7c179fb5d5299dc9d4bdcaa2f5b11926",
+  "inventory": {
+    "path": "/tmp/pantheon-bff-current-production-import-audit-20260905.json",
+    "sha256": "235db51a1e5ced009ffaee503e8cbc0ce166bad584f06d945bd393dcb06e3db1",
+    "original_unqualified_internal_imports": 197,
+    "original_finding_files": 52,
+    "parse_errors": 0
+  },
+  "results": {
+    "declared_source_artifacts_changed": 51,
+    "remaining_unqualified_internal_imports_in_inventory": 0,
+    "remaining_diagnostic_sys_path_mutations": 0,
+    "cross_user_contract": "HTTP 403 CROSS_USER_ACCESS_FORBIDDEN",
+    "bare_models_alias_loaded": false,
+    "business_rules_changed": false,
+    "hosted_deployment_performed": false
+  },
+  "verification": [
+    {
+      "command": "uv run --with-requirements services/control-plane/bff/requirements.txt python -m pytest -q scripts/test_bff_package_boundary_prerequisite.py",
+      "result": "4 passed",
+      "executed": 4,
+      "collected": 4
+    },
+    {
+      "command": "uv run --with-requirements services/control-plane/bff/requirements.txt python -m compileall -q services/control-plane/bff",
+      "result": "pass"
+    },
+    {
+      "command": "uv run --with-requirements services/control-plane/bff/requirements.txt python -m pytest -q services/control-plane/bff/tests/test_agora_workshop_live_operations.py",
+      "result": "24 passed, 4 skipped",
+      "executed": 24,
+      "collected": 28
+    }
+  ],
+  "coordination_note": "The separately owned test_agora_servant_production_write_owner.py still imports bare main and cannot collect after canonical package enforcement; BFF-TEST-ARCH-001 must rebase and migrate that test without weakening its acceptance.",
+  "review": {
+    "reviewer": "Claude",
+    "decision": "pending independent exact-head review",
+    "binding": "The governed handoff binds this committed manifest blob to the PR head."
+  },
+  "remaining_owned_elsewhere": [
+    "Persona namespace forwarding and globals: BFF-ROUTER-STRUCT-001",
+    "Management projections: MGMT-READ-001",
+    "Migrated negative-path suites: BFF-TEST-ARCH-001"
+  ]
+}
