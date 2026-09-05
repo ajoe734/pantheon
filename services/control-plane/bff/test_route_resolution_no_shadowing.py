@@ -14,7 +14,7 @@ BFF_DIR = Path(__file__).resolve().parent
 if str(BFF_DIR) not in sys.path:
     sys.path.insert(0, str(BFF_DIR))
 
-import main as bff_main  # noqa: E402
+from services.control_plane.bff import main as bff_main
 from test_normalized_route_uniqueness import (  # noqa: E402
     find_parameter_route_shadowing,
     scan_fastapi_routes,

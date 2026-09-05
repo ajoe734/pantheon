@@ -1,6 +1,6 @@
 from fastapi.testclient import TestClient
 
-import main as bff_main
+from services.control_plane.bff import main as bff_main
 
 
 HEADERS = {"Authorization": "Bearer ppl-alloc-003:operator"}

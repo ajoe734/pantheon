@@ -3,7 +3,7 @@ from concurrent.futures import ThreadPoolExecutor
 import pytest
 
 import command_executor
-import main as bff_main
+from services.control_plane.bff import main as bff_main
 from command_executor import (
     _execute_bff_action_adapter,
     _execute_emergency_containment_authority,

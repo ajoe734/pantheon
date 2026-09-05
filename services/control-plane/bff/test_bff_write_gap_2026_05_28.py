@@ -29,7 +29,7 @@ sys.path.insert(0, os.path.dirname(__file__))
 
 os.environ.setdefault("PANTHEON_BFF_AUTH_STUB", "true")
 
-import main as bff_main  # noqa: E402
+from services.control_plane.bff import main as bff_main
 from command_queue import CommandStore  # noqa: E402
 from ports import ReadSurfacePorts  # noqa: E402
 

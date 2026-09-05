@@ -1,6 +1,6 @@
 """Regression tests for P0-TW-PAPER-ACTIVATE-001 console honesty."""
 
-from main import _build_persona_health_items, _trading_performance_delta
+from services.control_plane.bff.main import _build_persona_health_items, _trading_performance_delta
 
 
 def test_trading_performance_delta_is_unavailable_without_return_schema():

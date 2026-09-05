@@ -12,7 +12,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 import command_executor
-import main as bff_main
+from services.control_plane.bff import main as bff_main
 from rebalance_authority_test_support import (
     APPROVER_HEADERS,
     HEADERS,

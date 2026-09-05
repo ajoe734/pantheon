@@ -39,8 +39,8 @@ from typing import Any, Dict, List, Optional
 sys.path.insert(0, os.path.dirname(__file__))
 from ports import create_in_memory_read_surface_ports
 from fastapi.testclient import TestClient
-import main as bff_main
-from main import app
+from services.control_plane.bff import main as bff_main
+from services.control_plane.bff.main import app
 
 client = TestClient(app)
 AUTH = "Bearer test-operator:operator,admin"

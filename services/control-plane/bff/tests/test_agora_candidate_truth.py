@@ -19,7 +19,7 @@ BFF_DIR = Path(__file__).resolve().parents[1]
 REPO_ROOT = Path(__file__).resolve().parents[4]
 sys.path.insert(0, str(BFF_DIR))
 
-import main as bff_main  # noqa: E402
+from services.control_plane.bff import main as bff_main
 import agora.research.router as research_router  # noqa: E402
 
 

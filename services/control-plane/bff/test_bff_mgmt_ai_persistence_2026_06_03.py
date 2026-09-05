@@ -15,7 +15,7 @@ from fastapi.testclient import TestClient
 
 from assistant_conversation_store import AssistantConversationStore, PostgresAssistantConversationStore
 from ports import ReadSurfacePorts
-import main as bff_main
+from services.control_plane.bff import main as bff_main
 
 
 OPERATOR_HEADERS = {"Authorization": "Bearer operator-alpha:operator"}

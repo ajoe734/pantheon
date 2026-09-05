@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import pytest
 
-import main as bff_main
+from services.control_plane.bff import main as bff_main
 from personas.reconciliation import PersonaReconciliationMutationError
 
 

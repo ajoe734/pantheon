@@ -20,7 +20,7 @@ os.environ.setdefault("PANTHEON_BFF_AUTH_STUB", "true")
 os.environ.setdefault("PANTHEON_BFF_AUTH_MODE", "permissive")
 
 import json
-import main as bff_main
+from services.control_plane.bff import main as bff_main
 from ports import ReadSurfacePorts
 from operations_read_model import (
     DataConfidence,

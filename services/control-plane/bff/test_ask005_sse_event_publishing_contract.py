@@ -22,7 +22,7 @@ from fastapi.testclient import TestClient
 
 sys.path.insert(0, os.path.dirname(__file__))
 
-import main as bff_main
+from services.control_plane.bff import main as bff_main
 from command_queue import CommandStore
 
 OPERATOR_HEADERS = {"Authorization": "Bearer ask005-op:operator,approver"}

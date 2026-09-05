@@ -14,7 +14,7 @@ from pathlib import Path
 BFF_DIR = Path(__file__).resolve().parent
 sys.path.insert(0, str(BFF_DIR))
 
-import main as bff_main  # noqa: E402
+from services.control_plane.bff import main as bff_main
 
 
 def _iter_routes(routes):

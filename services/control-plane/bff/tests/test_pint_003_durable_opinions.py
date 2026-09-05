@@ -8,7 +8,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
-import main as bff_main
+from services.control_plane.bff import main as bff_main
 import agora.interaction.runner as interaction_runner
 from agora.interaction.worker import AgoraInteractionWorker
 from openclaw_ops_client import OpenClawOpsClientError

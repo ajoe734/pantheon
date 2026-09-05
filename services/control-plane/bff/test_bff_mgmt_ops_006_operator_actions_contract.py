@@ -14,7 +14,7 @@ os.environ.setdefault("PANTHEON_BFF_AUTH_STUB", "true")
 os.environ.setdefault("PANTHEON_BFF_AUTH_MODE", "permissive")
 
 import json
-import main as bff_main
+from services.control_plane.bff import main as bff_main
 from fastapi.testclient import TestClient
 from ports import ReadSurfacePorts
 from models import CommandType, RiskLevel

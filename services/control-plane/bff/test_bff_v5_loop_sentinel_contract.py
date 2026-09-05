@@ -20,7 +20,7 @@ from fastapi.testclient import TestClient
 BFF_DIR = Path(__file__).resolve().parent
 sys.path.insert(0, str(BFF_DIR))
 
-import main as bff_main  # noqa: E402
+from services.control_plane.bff import main as bff_main
 import downstream_health_monitor as health_module  # noqa: E402
 from downstream_health_monitor import (  # noqa: E402
     DownstreamHealthMonitor,

@@ -40,7 +40,7 @@ for _p in (_REPO_ROOT, _BFF_DIR, _CP_GOV):
     if _p_str not in sys.path:
         sys.path.insert(0, _p_str)
 
-import main as bff_main  # noqa: E402
+from services.control_plane.bff import main as bff_main
 from fastapi.testclient import TestClient  # noqa: E402
 
 # ---- Incident domain — shared across incidents / postmortems / evolution ----

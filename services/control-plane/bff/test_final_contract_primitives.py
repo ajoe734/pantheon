@@ -10,7 +10,7 @@ from pydantic import ValidationError
 
 sys.path.insert(0, os.path.dirname(__file__))
 
-import main as bff_main
+from services.control_plane.bff import main as bff_main
 from command_queue import CommandStore
 from models import (
     ActionCommandStatus,

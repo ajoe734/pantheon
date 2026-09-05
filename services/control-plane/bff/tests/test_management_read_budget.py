@@ -19,7 +19,7 @@ from fastapi.testclient import TestClient
 os.environ.setdefault("PANTHEON_BFF_AUTH_STUB", "true")
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
-import main as bff_main  # noqa: E402
+from services.control_plane.bff import main as bff_main
 from ports import ReadSurfacePorts  # noqa: E402
 from rebalance_authority_test_support import (  # noqa: E402
     create_market_persona_projection_test_double,

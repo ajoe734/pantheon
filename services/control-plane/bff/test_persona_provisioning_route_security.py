@@ -7,7 +7,7 @@ from dataclasses import dataclass
 import pytest
 from fastapi.testclient import TestClient
 
-import main as bff_main
+from services.control_plane.bff import main as bff_main
 from persona_provisioning import MemoryPersonaProvisioningStore
 from ports import ReadSurfacePorts
 from test_loop_prod_per_001_provisioning import _provisioning_read_surface_double

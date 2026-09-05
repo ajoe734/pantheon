@@ -10,7 +10,7 @@ from urllib import error as urllib_error
 
 from fastapi.testclient import TestClient
 
-import main as bff_main
+from services.control_plane.bff import main as bff_main
 import trade_journal
 
 HEADERS = {"Authorization": "Bearer ptj-operator:operator"}

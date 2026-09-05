@@ -11,7 +11,7 @@ SNAPSHOT_DIR = BFF_DIR / "contract_snapshots"
 sys.path.insert(0, str(BFF_DIR))
 sys.path.insert(0, str(SNAPSHOT_DIR))
 
-import main as bff_main  # noqa: E402
+from services.control_plane.bff import main as bff_main
 from execute_plans_bff_contract import (  # noqa: E402
     app_route_index,
     entry_key,

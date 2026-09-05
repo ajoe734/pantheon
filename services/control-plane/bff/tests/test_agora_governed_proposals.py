@@ -5,7 +5,7 @@ from datetime import datetime, timedelta, timezone
 
 from fastapi.testclient import TestClient
 
-import main as bff_main
+from services.control_plane.bff import main as bff_main
 from services.runtime_auth_inbound import encode_jwt_hs256
 
 HEADERS = {"Authorization": "Bearer proposal-user:operator", "Idempotency-Key": "pint-004-create"}

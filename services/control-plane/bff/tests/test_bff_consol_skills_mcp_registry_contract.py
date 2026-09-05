@@ -22,7 +22,7 @@ from fastapi.testclient import TestClient
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-import main as bff_main
+from services.control_plane.bff import main as bff_main
 from ports import create_in_memory_read_surface_ports, create_read_surface_ports
 
 OPERATOR_AUTH = "Bearer consol-skills-op:operator"

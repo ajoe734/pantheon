@@ -27,8 +27,8 @@ _REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..",
 if _REPO_ROOT not in sys.path:
     sys.path.insert(0, _REPO_ROOT)
 
-import main as bff_main
-from main import _extract_identity, _extract_identity_jwt, _extract_identity_stub
+from services.control_plane.bff import main as bff_main
+from services.control_plane.bff.main import _extract_identity, _extract_identity_jwt, _extract_identity_stub
 from models import ErrorCode, OperatorIdentity
 from services.runtime_auth_inbound import encode_jwt_hs256
 

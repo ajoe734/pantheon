@@ -264,7 +264,7 @@ def _import_main_for_inventory() -> Any:
                 sys.modules.pop(name, None)
         sys.path.insert(0, REPO_ROOT)
         importlib.import_module("integrations")
-    return importlib.import_module("main")
+    return importlib.import_module("services.control_plane.bff.main")
 
 
 # ---------------------------------------------------------------------------

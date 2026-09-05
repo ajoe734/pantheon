@@ -28,7 +28,7 @@ sys.path.insert(0, str(BFF_ROOT))
 sys.path.insert(0, str(SCRIPTS_ROOT))
 
 import project_ooda_to_bff_surfaces as projector  # noqa: E402
-import main as bff_main  # noqa: E402
+from services.control_plane.bff import main as bff_main
 from ports import create_in_memory_read_surface_ports  # noqa: E402
 
 

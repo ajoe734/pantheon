@@ -13,7 +13,7 @@ REPO_ROOT = Path(__file__).resolve().parents[4]
 sys.path.insert(0, str(BFF_DIR))
 sys.path.insert(0, str(REPO_ROOT))
 
-import main as bff_main
+from services.control_plane.bff import main as bff_main
 
 
 @pytest.fixture(autouse=True)

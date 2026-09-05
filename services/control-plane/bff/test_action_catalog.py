@@ -19,7 +19,7 @@ from fastapi.testclient import TestClient
 
 sys.path.insert(0, os.path.dirname(__file__))
 
-import main as bff_main
+from services.control_plane.bff import main as bff_main
 from action_catalog import catalog_action_ids, get_action_catalog, get_catalog_entry
 from models import ActionCommandStatus, BffActionCatalogEntry, CommandType, RiskLevel
 

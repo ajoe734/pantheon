@@ -11,7 +11,7 @@ from typing import Any
 
 import pytest
 
-import main as bff_main
+from services.control_plane.bff import main as bff_main
 from personas.reconciliation import PersonaProvisioningReconciliationMutationPort
 from ports import ReadSurfacePorts, create_read_surface_ports
 

@@ -18,7 +18,7 @@ import pytest
 BFF_DIR = Path(__file__).resolve().parent
 sys.path.insert(0, str(BFF_DIR))
 
-import main as bff_main  # noqa: E402
+from services.control_plane.bff import main as bff_main
 import loop_inventory as loop_inventory_model  # noqa: E402
 from downstream_health_monitor import _probe_http  # noqa: E402
 

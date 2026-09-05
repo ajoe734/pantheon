@@ -19,7 +19,7 @@ import time
 BFF_DIR = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, BFF_DIR)
 
-import main as bff_main  # noqa: E402
+from services.control_plane.bff import main as bff_main
 import trade_journeys as tj  # noqa: E402
 from trade_journey_projection_store import (  # noqa: E402
     InvalidPageToken,

@@ -19,7 +19,7 @@ from fastapi.testclient import TestClient
 BFF_DIR = Path(__file__).resolve().parent
 sys.path.insert(0, str(BFF_DIR))
 
-import main as bff_main  # noqa: E402
+from services.control_plane.bff import main as bff_main
 import loop_inventory as loop_inventory_model  # noqa: E402
 from ports import create_in_memory_read_surface_ports  # noqa: E402
 from services.runtime_auth_inbound import encode_jwt_hs256  # noqa: E402

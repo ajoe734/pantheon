@@ -13,7 +13,7 @@ sys.path.insert(0, os.path.dirname(__file__))
 
 import json
 from pathlib import Path
-import main as bff_main
+from services.control_plane.bff import main as bff_main
 from ports import create_in_memory_read_surface_ports
 
 
