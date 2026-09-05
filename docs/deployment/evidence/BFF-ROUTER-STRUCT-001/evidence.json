@@ -2,150 +2,115 @@
   "task_id": "BFF-ROUTER-STRUCT-001",
   "owner": "Antigravity",
   "reviewer": "Claude",
-  "title": "Split giant BFF router closures by cohesive use case",
-  "timestamp": "2026-09-05T18:35:00Z",
-  "summary": "Decomposed the monolithic 3420-line Persona Management router into 5 cohesive resource/use-case subrouters (collection, detail, lifecycle, provisioning, ranking) sharing a strongly-typed PersonaRouteContext. Eliminated module-level globals() mutations in PersonaService.__init__, dynamic namespace forwarding loops, and wildcard imports. Bound read_surface_meta and dataset_surface_status to instance methods and request-scoped ContextVar to eliminate cross-instance metadata contamination. Added two-instance real-router data and metadata isolation regression test.",
-  "structural_refactor": {
-    "parent_factory": {
-      "file": "services/control-plane/bff/personas/router.py",
-      "line_count": 106,
-      "line_guardrail_satisfied": true,
-      "max_line_target": 300,
-      "description": "Thin parent factory creating PersonaRouteContext, building 5 subrouters, and extending router.routes. No closures over module globals; no wildcard imports."
+  "title": "Split giant BFF router closures by cohesive use case across all 5 router domains",
+  "timestamp": "2026-09-05T19:15:00Z",
+  "summary": "Decomposed all 5 monolithic BFF router closures (personas, strategies, research, agora/research, agora/trading_room) into cohesive resource and use-case subrouters per SD.md §4.2A. All parent router factories are now under 200 lines (well below the 300-line review guardrail). Each domain router factory delegates to strongly-typed context dataclasses and mounts cohesive subrouters via router.routes.extend(). Preserved all existing endpoints, query/header parameters, status codes, ETag/CAS mechanics, idempotency scopes, and truth projections with zero regressions.",
+  "router_domains": [
+    {
+      "domain": "personas",
+      "parent_factory": {
+        "file": "services/control-plane/bff/personas/router.py",
+        "line_count": 106,
+        "line_guardrail_satisfied": true,
+        "max_line_target": 300
+      },
+      "subrouters": [
+        {"file": "services/control-plane/bff/personas/routes/collection.py", "line_count": 434, "scope": "Persona collection, fleet catalog, intent listing, creation"},
+        {"file": "services/control-plane/bff/personas/routes/detail.py", "line_count": 834, "scope": "Persona detail, patching, runtime profile, capabilities, skills, tools, memory, audit"},
+        {"file": "services/control-plane/bff/personas/routes/lifecycle.py", "line_count": 594, "scope": "Persona lifecycle transitions, sessions, strategy discovery, paper proof"},
+        {"file": "services/control-plane/bff/personas/routes/provisioning.py", "line_count": 93, "scope": "Persona provisioning state reconciliation"},
+        {"file": "services/control-plane/bff/personas/routes/ranking.py", "line_count": 1694, "scope": "Persona league, quarterly ranking, recommendations, movers, heatmap"}
+      ],
+      "context_model": "PersonaRouteContext (services/control-plane/bff/personas/routes/common.py)"
     },
-    "subrouters": [
-      {
-        "file": "services/control-plane/bff/personas/routes/collection.py",
-        "line_count": 435,
-        "route_count": 6,
-        "handlers": [
-          "list_personas",
-          "bff_management_persona_intent",
-          "bff_list_personas",
-          "bff_create_persona",
-          "bff_create_paper_persona_bundle",
-          "bff_management_persona_fleet"
-        ],
-        "scope": "Persona collection, fleet catalog, intent listing, and creation"
+    {
+      "domain": "strategies",
+      "parent_factory": {
+        "file": "services/control-plane/bff/strategies/router.py",
+        "line_count": 138,
+        "line_guardrail_satisfied": true,
+        "max_line_target": 300
       },
-      {
-        "file": "services/control-plane/bff/personas/routes/detail.py",
-        "line_count": 834,
-        "route_count": 14,
-        "handlers": [
-          "get_persona_detail",
-          "get_persona_capabilities",
-          "get_persona_management",
-          "bff_get_persona",
-          "bff_patch_persona",
-          "bff_get_persona_route_policy",
-          "bff_get_persona_runtime_profile",
-          "bff_get_persona_activity",
-          "bff_get_persona_evaluations",
-          "bff_get_persona_memory",
-          "bff_get_persona_audit",
-          "bff_get_persona_skills",
-          "bff_get_persona_tools",
-          "bff_get_persona_capabilities_surface"
-        ],
-        "scope": "Persona instance details, patching, runtime profile, capabilities, skills, tools, activity, memory, audit"
+      "subrouters": [
+        {"file": "services/control-plane/bff/strategies/routes/collection.py", "line_count": 118, "scope": "Strategy collection listing, creation, and batch queries"},
+        {"file": "services/control-plane/bff/strategies/routes/detail.py", "line_count": 358, "scope": "Strategy detail, patching, status, backtest, and execution routes"},
+        {"file": "services/control-plane/bff/strategies/routes/seeds.py", "line_count": 964, "scope": "Strategy seed catalog, generation, and seed application"}
+      ],
+      "context_model": "StrategiesRouteContext (services/control-plane/bff/strategies/routes/common.py)"
+    },
+    {
+      "domain": "research",
+      "parent_factory": {
+        "file": "services/control-plane/bff/research/router.py",
+        "line_count": 190,
+        "line_guardrail_satisfied": true,
+        "max_line_target": 300
       },
-      {
-        "file": "services/control-plane/bff/personas/routes/lifecycle.py",
-        "line_count": 594,
-        "route_count": 12,
-        "handlers": [
-          "list_persona_sessions",
-          "get_session_detail",
-          "list_persona_teaching_sessions",
-          "bff_ppl_alloc_009_paper_eligibility_proof",
-          "bff_get_persona_strategy_matches",
-          "bff_start_persona_strategy_discovery",
-          "bff_persona_strategy_match_action",
-          "bff_persona_action",
-          "bff_persona_test_prompt"
-        ],
-        "scope": "Persona lifecycle transitions, sessions, strategy discovery, actions, and paper eligibility proof"
+      "subrouters": [
+        {"file": "services/control-plane/bff/research/routes/analyses.py", "line_count": 129, "scope": "Research analyses and analytical queries"},
+        {"file": "services/control-plane/bff/research/routes/artifacts.py", "line_count": 274, "scope": "Research artifacts download, listing, and inspection"},
+        {"file": "services/control-plane/bff/research/routes/experiments.py", "line_count": 506, "scope": "Research experiment execution, status, and reporting"},
+        {"file": "services/control-plane/bff/research/routes/knowledge.py", "line_count": 1684, "scope": "Research knowledge base, search, query, and notes"},
+        {"file": "services/control-plane/bff/research/routes/ops.py", "line_count": 135, "scope": "Research operational tasks and worker coordination"},
+        {"file": "services/control-plane/bff/research/routes/tickets.py", "line_count": 337, "scope": "Research tickets and collaborative tracking"}
+      ],
+      "context_model": "ResearchRouteContext (services/control-plane/bff/research/routes/common.py)"
+    },
+    {
+      "domain": "agora_research",
+      "parent_factory": {
+        "file": "services/control-plane/bff/agora/research/router.py",
+        "line_count": 71,
+        "line_guardrail_satisfied": true,
+        "max_line_target": 300
       },
-      {
-        "file": "services/control-plane/bff/personas/routes/provisioning.py",
-        "line_count": 93,
-        "route_count": 1,
-        "handlers": [
-          "bff_reconcile_persona_provisioning"
-        ],
-        "scope": "Persona provisioning state reconciliation"
+      "subrouters": [
+        {"file": "services/control-plane/bff/agora/research/routes/candidates.py", "line_count": 915, "scope": "Candidate pool CRUD, member reviews, scoring, discussions, monitoring"},
+        {"file": "services/control-plane/bff/agora/research/routes/plans.py", "line_count": 242, "scope": "Research plan lifecycle, create, approve, cancel"},
+        {"file": "services/control-plane/bff/agora/research/routes/runs.py", "line_count": 290, "scope": "Research run execution, dispatch, cancel, artifacts"}
+      ],
+      "context_model": "AgoraResearchRouteContext (services/control-plane/bff/agora/research/routes/common.py)"
+    },
+    {
+      "domain": "agora_trading_room",
+      "parent_factory": {
+        "file": "services/control-plane/bff/agora/trading_room/router.py",
+        "line_count": 94,
+        "line_guardrail_satisfied": true,
+        "max_line_target": 300
       },
-      {
-        "file": "services/control-plane/bff/personas/routes/ranking.py",
-        "line_count": 1694,
-        "route_count": 16,
-        "handlers": [
-          "bff_management_quarterly_ranking_recommendation_submit",
-          "bff_management_promotion_reviews",
-          "bff_management_promotion_review_detail",
-          "bff_management_promotion_review_decision",
-          "bff_management_persona_league",
-          "bff_management_persona_league_rankings",
-          "bff_management_persona_league_movers",
-          "bff_management_persona_league_tiers",
-          "bff_management_persona_league_heatmap",
-          "bff_management_quarterly_ranking_formula",
-          "bff_management_quarterly_ranking",
-          "bff_management_quarterly_ranking_drilldown",
-          "bff_management_quarterly_ranking_recommendations",
-          "bff_persona_league",
-          "bff_persona_league_detail"
-        ],
-        "scope": "Persona league, quarterly ranking, recommendations, movers, heatmap, and promotion reviews"
-      }
-    ],
-    "context_model": {
-      "file": "services/control-plane/bff/personas/routes/common.py",
-      "class": "PersonaRouteContext",
-      "description": "Dataclass holding explicitly injected typed ports and helpers. make_context_dependency attaches async generator dependency setting _current_persona_service ContextVar per request."
+      "subrouters": [
+        {"file": "services/control-plane/bff/agora/trading_room/routes/workspaces.py", "line_count": 1197, "scope": "Workspaces aggregate, proposals, layout operations, views, widgets, versions, rollbacks"},
+        {"file": "services/control-plane/bff/agora/trading_room/routes/decisions.py", "line_count": 240, "scope": "Decision events queue, trader decision recording, and user-scoped SSE stream"},
+        {"file": "services/control-plane/bff/agora/trading_room/routes/intents.py", "line_count": 232, "scope": "Trading intents, governed handoffs submission, and intent withdrawal"}
+      ],
+      "context_model": "TradingRoomRouteContext (services/control-plane/bff/agora/trading_room/routes/common.py)"
     }
-  },
-  "metadata_isolation_fix": {
-    "root_cause": "PersonaService.__init__ previously mutated module globals (globals()[\"read_store\"], globals()[\"command_store\"], _ranking_write_owner). Helper functions _read_surface_meta and _dataset_surface_status read module-level store globals, causing any newly created PersonaService instance to contaminate the response metadata of older instances.",
-    "resolution": "Removed all globals() mutations from PersonaService.__init__. Bound read_surface_meta and dataset_surface_status as instance methods on PersonaService. Introduced _current_persona_service ContextVar for request-scoped access in helper functions with active getters (_get_active_read_store, _get_active_command_store, _get_active_ranking_write_owner).",
-    "regression_test": {
-      "file": "services/control-plane/bff/personas/test_router_isolation.py",
-      "test_name": "test_persona_router_two_instance_isolation",
-      "verification": "Instantiates Client 1 with seeded store and Client 2 with missing store. Confirms Client 1 returns status=ok, source=typed_store, Client 2 returns status=unavailable, source=missing, and subsequent queries to Client 1 remain clean and uncontaminated with status=ok, source=typed_store."
-    }
-  },
+  ],
   "acceptance_criteria_verification": {
-    "total_routes_registered": 49,
-    "unique_handlers": 45,
-    "normalized_route_contracts_preserved": true,
+    "all_5_domains_decomposed": true,
+    "parent_factories_under_300_lines": {
+      "personas": 106,
+      "strategies": 138,
+      "research": 190,
+      "agora_research": 71,
+      "agora_trading_room": 94
+    },
+    "all_parent_factories_satisfy_guardrail": true,
+    "route_contracts_preserved": true,
     "zero_reverse_imports": true,
-    "zero_globals_setdefault": true,
-    "zero_globals_mutation_in_service_init": true,
     "zero_wildcard_imports": true,
-    "parent_router_line_count": 106
+    "python_3_11_compatible": true
   },
   "verification": {
     "commands": [
       {
-        "command": "pytest -q services/control-plane/bff/tests/test_persona_router.py",
-        "result": "41 passed in 22.47s"
+        "command": "docker run --rm pantheon-operator-bff:latest pytest -q (all 5 domains comprehensive suite)",
+        "result": "106 passed, 1 skipped, 3 warnings in 39.89s (Python 3.11.16)"
       },
       {
-        "command": "pytest -q services/control-plane/bff/tests/test_bff_main_composition.py",
-        "result": "17 passed in 14.12s"
-      },
-      {
-        "command": "pytest -q services/control-plane/bff/tests/test_persona_owner_packaged_transport.py",
-        "result": "3 passed in 7.37s"
-      },
-      {
-        "command": "pytest -q services/control-plane/bff/personas/test_router_isolation.py",
-        "result": "1 passed (Python 3.11 compatible f-strings verified)"
-      },
-      {
-        "command": "docker run --rm pantheon-operator-bff:latest pytest -q (all 4 suites)",
-        "result": "62 passed, 3 warnings in 38.20s (Python 3.11.16)"
+        "command": "python3 -m py_compile across all 5 parent routers and 22 subrouter/common files",
+        "result": "0 errors, 0 warnings under Python 3.11"
       }
     ]
   },
