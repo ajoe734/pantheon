@@ -94,7 +94,11 @@ def create_research_experiments_router(
         elif hasattr(read_store, "get_research_experiment"):
             item = read_store.get_research_experiment(clean_id)
         else:
-            item = None
+            rks = getattr(read_store, "research_knowledge_source", None)
+            if rks and hasattr(rks, "get_research_experiment"):
+                item = rks.get_research_experiment(clean_id)
+            else:
+                item = None
         if not item:
             raise bff_error(
                 404,
@@ -158,12 +162,38 @@ def create_research_experiments_router(
                 precondition_failed="name",
             )
         read_store = get_read_store()
-        result = read_store.create_experiment_bff(
-            name=name,
-            actor_id=identity.operator_id,
-            created_at=utc_now(),
-            params=payload,
-        )
+        if hasattr(read_store, "create_experiment_bff"):
+            result = read_store.create_experiment_bff(
+                name=name,
+                actor_id=identity.operator_id,
+                created_at=utc_now(),
+                params=payload,
+            )
+        else:
+            rks = getattr(read_store, "research_knowledge_source", None)
+            creator = getattr(rks, "create_research_experiment", None) if rks else None
+            if creator is None:
+                try:
+                    from services.research.write_owner import build_research_write_owner
+                    creator = getattr(build_research_write_owner(), "create_research_experiment", None)
+                except Exception:
+                    creator = None
+            if creator is None:
+                raise bff_error(
+                    503,
+                    ErrorCode.DEPENDENCY_UNAVAILABLE,
+                    "Research experiment write owner unavailable",
+                    "Cannot execute create_research_experiment mutation",
+                )
+            result = creator(
+                ticket_id=str(payload.get("ticket_id") or ""),
+                experiment_name=name,
+                strategy_selector=payload.get("strategy_selector") or {},
+                parameter_set=payload.get("parameter_set") or {},
+                run_config=payload.get("run_config") or {},
+                launch_context=payload.get("launch_context") or {"actor_id": identity.operator_id},
+                queued_at=utc_now(),
+            )
         if resolved_key:
             _RESEARCH_EXPERIMENT_IDEMPOTENCY[resolved_key] = {"hash": req_hash, "result": result}
         return result
@@ -219,9 +249,14 @@ def create_research_experiments_router(
         clean_id = experiment_id.strip()
         _require_experiment(read_store, clean_id)
         snapshot_at = utc_now()
+        logs_fn = getattr(read_store, "get_experiment_logs", None)
+        if logs_fn is None:
+            rks = getattr(read_store, "research_knowledge_source", None)
+            logs_fn = getattr(rks, "get_experiment_logs", None) if rks else None
+        logs = logs_fn(clean_id) if callable(logs_fn) else []
         return {
             "experiment_id": clean_id,
-            "logs": read_store.get_experiment_logs(clean_id),
+            "logs": logs,
             "meta": snapshot_meta(snapshot_at),
         }
 
@@ -236,9 +271,14 @@ def create_research_experiments_router(
         clean_id = experiment_id.strip()
         _require_experiment(read_store, clean_id)
         snapshot_at = utc_now()
+        metrics_fn = getattr(read_store, "get_experiment_metrics", None)
+        if metrics_fn is None:
+            rks = getattr(read_store, "research_knowledge_source", None)
+            metrics_fn = getattr(rks, "get_experiment_metrics", None) if rks else None
+        metrics = metrics_fn(clean_id) if callable(metrics_fn) else {}
         return {
             "experiment_id": clean_id,
-            "metrics": read_store.get_experiment_metrics(clean_id),
+            "metrics": metrics,
             "meta": snapshot_meta(snapshot_at),
         }
 
@@ -253,9 +293,14 @@ def create_research_experiments_router(
         clean_id = experiment_id.strip()
         _require_experiment(read_store, clean_id)
         snapshot_at = utc_now()
+        artifacts_fn = getattr(read_store, "get_experiment_artifacts", None)
+        if artifacts_fn is None:
+            rks = getattr(read_store, "research_knowledge_source", None)
+            artifacts_fn = getattr(rks, "get_experiment_artifacts", None) if rks else None
+        artifacts = artifacts_fn(clean_id) if callable(artifacts_fn) else []
         return {
             "experiment_id": clean_id,
-            "artifacts": read_store.get_experiment_artifacts(clean_id),
+            "artifacts": artifacts,
             "meta": snapshot_meta(snapshot_at),
         }
 

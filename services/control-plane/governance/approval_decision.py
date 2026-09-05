@@ -257,6 +257,12 @@ class ApprovalDecision:
     proposal_content_digest: Optional[str] = None
     validation_result_digest: Optional[str] = None
     revoked_at: Optional[str] = None
+    session_id: Optional[str] = None
+    candidate_digest: Optional[str] = None
+    proof_digest: Optional[str] = None
+    controller_record_ref: Optional[str] = None
+    recorded_at: Optional[str] = None
+    authority_status: Optional[str] = None
 
     # -- factory helpers -----------------------------------------------------
 
@@ -276,6 +282,10 @@ class ApprovalDecision:
         proposal_revision: Optional[int] = None,
         proposal_content_digest: Optional[str] = None,
         validation_result_digest: Optional[str] = None,
+        session_id: Optional[str] = None,
+        candidate_digest: Optional[str] = None,
+        proof_digest: Optional[str] = None,
+        expires_at: Optional[str] = None,
     ) -> "ApprovalDecision":
         """Create a new decision in the *proposed* state."""
         now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
@@ -302,6 +312,10 @@ class ApprovalDecision:
             proposal_revision=proposal_revision,
             proposal_content_digest=proposal_content_digest,
             validation_result_digest=validation_result_digest,
+            session_id=session_id,
+            candidate_digest=candidate_digest,
+            proof_digest=proof_digest,
+            expires_at=expires_at,
         )
 
     def accept_review(self, actor_role: ActorRole | str, actor_id: str) -> None:
@@ -328,6 +342,10 @@ class ApprovalDecision:
         actor_id: Optional[str] = None,
         conditions: Optional[List[str]] = None,
         evidence_refs: Optional[List[EvidenceRef]] = None,
+        session_id: Optional[str] = None,
+        candidate_digest: Optional[str] = None,
+        proof_digest: Optional[str] = None,
+        expires_at: Optional[str] = None,
     ) -> None:
         """Finalize the decision (→ *decided*)."""
         if self.decision_state != DecisionState.UNDER_REVIEW:
@@ -357,12 +375,34 @@ class ApprovalDecision:
             validate_consultation_gate(effective_refs)
         if evidence_refs:
             self.evidence_refs = evidence_refs
+        if session_id is not None:
+            self.session_id = session_id
+        if candidate_digest is not None:
+            self.candidate_digest = candidate_digest
+        if proof_digest is not None:
+            self.proof_digest = proof_digest
+        if expires_at is not None:
+            self.expires_at = expires_at
         self.decision = outcome
         self.decision_state = DecisionState.DECIDED
         self.rationale = rationale
         self.decided_at = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
         self.actor_role = normalized_role
         self.actor_id = effective_actor_id
+        is_approved = outcome in (
+            DecisionOutcome.APPROVED,
+            DecisionOutcome.APPROVED_WITH_CONDITIONS,
+            "approved",
+            "approved_with_conditions",
+        )
+        if is_approved:
+            self.authority_status = "authoritative"
+            self.controller_record_ref = self.controller_record_ref or f"governance-controller://approval-{self.decision_id}"
+            self.recorded_at = self.decided_at
+        else:
+            self.authority_status = None
+            self.controller_record_ref = None
+            self.recorded_at = self.decided_at
 
     def revoke(self, actor_role: ActorRole | str, actor_id: str) -> None:
         """Revoke a decided decision."""
@@ -511,6 +551,12 @@ class ApprovalDecision:
             proposal_content_digest=data.get("proposal_content_digest"),
             validation_result_digest=data.get("validation_result_digest"),
             revoked_at=data.get("revoked_at"),
+            session_id=data.get("session_id"),
+            candidate_digest=data.get("candidate_digest"),
+            proof_digest=data.get("proof_digest"),
+            controller_record_ref=data.get("controller_record_ref"),
+            recorded_at=data.get("recorded_at"),
+            authority_status=data.get("authority_status"),
         )
 
     @classmethod
