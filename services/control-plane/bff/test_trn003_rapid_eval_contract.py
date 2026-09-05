@@ -13,10 +13,16 @@ import tempfile
 from contextlib import contextmanager
 from typing import Iterator
 
+from fastapi import FastAPI, HTTPException
+from fastapi.responses import JSONResponse
 from fastapi.testclient import TestClient
+from starlette.exceptions import HTTPException as StarletteHTTPException
 
+from types import SimpleNamespace
 
-from services.control_plane.bff import main as bff_main
+from services.control_plane.bff.models import utc_now
+from services.control_plane.bff.personas.service import _bff_error
+from services.control_plane.bff.training.router import create_training_router
 from test_training_session_service_client import create_training_read_surface_double
 
 
@@ -31,17 +37,42 @@ _COMPLETED_SESSION = "trn-20260418-003"  # status=completed
 @contextmanager
 def _client(*, service_backed: bool = False) -> Iterator[TestClient]:
     with tempfile.TemporaryDirectory() as td:
-        original_store = bff_main.read_store
         orig_env = os.environ.get("PANTHEON_BFF_RAPID_EVAL_STORE")
         if service_backed:
             os.environ["PANTHEON_BFF_RAPID_EVAL_STORE"] = os.path.join(td, "rapid_evals.json")
         else:
             os.environ.pop("PANTHEON_BFF_RAPID_EVAL_STORE", None)
-        bff_main.read_store = create_training_read_surface_double()
+        read_store = create_training_read_surface_double()
+        app = FastAPI()
+
+        @app.exception_handler(HTTPException)
+        @app.exception_handler(StarletteHTTPException)
+        async def _bff_err_handler(request, exc):
+            if isinstance(exc.detail, dict) and "error" in exc.detail:
+                return JSONResponse(status_code=exc.status_code, content=exc.detail)
+            return JSONResponse(
+                status_code=exc.status_code,
+                content={"error": {"message": str(exc.detail), "details": {"reason": str(exc.detail)}}},
+            )
+
+        app.include_router(
+            create_training_router(
+                get_read_store=lambda: read_store,
+                extract_identity=lambda _authorization: SimpleNamespace(
+                    operator_id="test-operator",
+                    roles=["operator", "read"],
+                    claims={},
+                ),
+                require_read_role=lambda _identity: None,
+                bff_error=_bff_error,
+                utc_now=utc_now,
+                page_slice=lambda items, _token, _size: (items, None),
+                dataset_surface_status=lambda *_args, **_kwargs: {"status": "available"},
+            )
+        )
         try:
-            yield TestClient(bff_main.app)
+            yield TestClient(app)
         finally:
-            bff_main.read_store = original_store
             if orig_env is None:
                 os.environ.pop("PANTHEON_BFF_RAPID_EVAL_STORE", None)
             else:

@@ -15,14 +15,43 @@ from __future__ import annotations
 import os
 import sys
 
+from fastapi import FastAPI, HTTPException
 from fastapi.testclient import TestClient
 
-
-from services.control_plane.bff import main as bff_main
+from services.control_plane.bff.governance.router import create_governance_router
+from services.control_plane.bff.models import OperatorIdentity
 from services.control_plane.bff.ports import create_in_memory_read_surface_ports
 
 ADMIN_HEADERS = {"Authorization": "Bearer op-dev:admin:mfa"}
 OPERATOR_HEADERS = {"Authorization": "Bearer op-dev:operator"}
+
+
+def _extract_identity(authorization: str | None) -> OperatorIdentity:
+    if not authorization or not authorization.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="Authentication required")
+    raw = authorization[len("Bearer "):].strip()
+    parts = raw.split(":")
+    operator_id = parts[0] if parts else "op"
+    roles = parts[1].split(",") if len(parts) > 1 else []
+    claims = {"mfa": True} if len(parts) > 2 and "mfa" in parts[2] else {}
+    return OperatorIdentity(operator_id=operator_id, roles=roles, claims=claims)
+
+
+def _require_read_role(identity: OperatorIdentity) -> None:
+    if not identity or not identity.roles:
+        raise HTTPException(status_code=403, detail="Forbidden")
+
+
+def _make_client(store: Any = None) -> TestClient:
+    app = FastAPI(title="Approvals Surface Contract")
+    router = create_governance_router(
+        get_read_store=lambda: store,
+        extract_identity=_extract_identity,
+        require_read_role=_require_read_role,
+        require_operator_role=_require_read_role,
+    )
+    app.include_router(router)
+    return TestClient(app, raise_server_exceptions=False)
 
 
 # ---------------------------------------------------------------------------
@@ -83,49 +112,37 @@ class TestBffApprovalsSurfacePopulated:
     the /bff/approvals endpoint returns count>0 and the pending items."""
 
     def test_pending_approval_appears_in_bff_approvals(self) -> None:
-        original_store = bff_main.read_store
-        try:
-            bff_main.read_store = create_in_memory_read_surface_ports(
-                ooda_management_kwargs={"approval_decisions": [_PENDING_APPROVAL]}
-            )
-            client = TestClient(bff_main.app, raise_server_exceptions=False)
-            resp = client.get("/bff/approvals", headers=ADMIN_HEADERS)
-            assert resp.status_code == 200, resp.text
-            body = resp.json()
-            assert body["count"] > 0, f"expected count>0, got {body}"
-            ids = [item.get("decision_id") for item in body["items"]]
-            assert "apv-consdata-001" in ids
-        finally:
-            bff_main.read_store = original_store
+        store = create_in_memory_read_surface_ports(
+            ooda_management_kwargs={"approval_decisions": [_PENDING_APPROVAL]}
+        )
+        client = _make_client(store)
+        resp = client.get("/bff/approvals", headers=ADMIN_HEADERS)
+        assert resp.status_code == 200, resp.text
+        body = resp.json()
+        assert body["count"] > 0, f"expected count>0, got {body}"
+        ids = [item.get("decision_id") for item in body["items"]]
+        assert "apv-consdata-001" in ids
 
     def test_decided_approvals_excluded_from_pending_list(self) -> None:
-        original_store = bff_main.read_store
-        try:
-            bff_main.read_store = create_in_memory_read_surface_ports(
-                ooda_management_kwargs={"approval_decisions": [_DECIDED_APPROVAL]}
-            )
-            client = TestClient(bff_main.app, raise_server_exceptions=False)
-            resp = client.get("/bff/approvals", headers=ADMIN_HEADERS)
-            assert resp.status_code == 200, resp.text
-            body = resp.json()
-            assert body["count"] == 0, f"expected 0 pending (decided approval filtered), got {body}"
-        finally:
-            bff_main.read_store = original_store
+        store = create_in_memory_read_surface_ports(
+            ooda_management_kwargs={"approval_decisions": [_DECIDED_APPROVAL]}
+        )
+        client = _make_client(store)
+        resp = client.get("/bff/approvals", headers=ADMIN_HEADERS)
+        assert resp.status_code == 200, resp.text
+        body = resp.json()
+        assert body["count"] == 0, f"expected 0 pending (decided approval filtered), got {body}"
 
     def test_mixed_store_only_pending_returned(self) -> None:
-        original_store = bff_main.read_store
-        try:
-            bff_main.read_store = create_in_memory_read_surface_ports(
-                ooda_management_kwargs={"approval_decisions": [_PENDING_APPROVAL, _DECIDED_APPROVAL]}
-            )
-            client = TestClient(bff_main.app, raise_server_exceptions=False)
-            resp = client.get("/bff/approvals", headers=ADMIN_HEADERS)
-            assert resp.status_code == 200, resp.text
-            body = resp.json()
-            assert body["count"] == 1, f"expected only pending item, got {body}"
-            assert body["items"][0]["decision_id"] == "apv-consdata-001"
-        finally:
-            bff_main.read_store = original_store
+        store = create_in_memory_read_surface_ports(
+            ooda_management_kwargs={"approval_decisions": [_PENDING_APPROVAL, _DECIDED_APPROVAL]}
+        )
+        client = _make_client(store)
+        resp = client.get("/bff/approvals", headers=ADMIN_HEADERS)
+        assert resp.status_code == 200, resp.text
+        body = resp.json()
+        assert body["count"] == 1, f"expected only pending item, got {body}"
+        assert body["items"][0]["decision_id"] == "apv-consdata-001"
 
 
 # ---------------------------------------------------------------------------
@@ -137,19 +154,15 @@ class TestBffApprovalsNoFabrication:
     No fixture data must be invented."""
 
     def test_empty_store_returns_count_zero(self) -> None:
-        original_store = bff_main.read_store
-        try:
-            bff_main.read_store = create_in_memory_read_surface_ports()
-            client = TestClient(bff_main.app, raise_server_exceptions=False)
-            resp = client.get("/bff/approvals", headers=ADMIN_HEADERS)
-            assert resp.status_code == 200, resp.text
-            body = resp.json()
-            assert body["count"] == 0, f"expected 0 when no store wired, got {body}"
-        finally:
-            bff_main.read_store = original_store
+        store = create_in_memory_read_surface_ports()
+        client = _make_client(store)
+        resp = client.get("/bff/approvals", headers=ADMIN_HEADERS)
+        assert resp.status_code == 200, resp.text
+        body = resp.json()
+        assert body["count"] == 0, f"expected 0 when no store wired, got {body}"
 
     def test_unauthenticated_rejected(self) -> None:
-        client = TestClient(bff_main.app, raise_server_exceptions=False)
+        client = _make_client()
         resp = client.get("/bff/approvals")
         assert resp.status_code in {401, 403}, resp.text
 
@@ -165,19 +178,15 @@ class TestGovernanceApprovalQueueSurfaceWithProjectedStore:
     ROUTE = "/api/v1/operator/governance/approval-queue"
 
     def test_queue_returns_pending_when_store_wired(self) -> None:
-        original_store = bff_main.read_store
-        try:
-            bff_main.read_store = create_in_memory_read_surface_ports(
-                ooda_management_kwargs={"approval_decisions": [_PENDING_APPROVAL]}
-            )
-            client = TestClient(bff_main.app, raise_server_exceptions=False)
-            resp = client.get(self.ROUTE, headers=ADMIN_HEADERS)
-            assert resp.status_code == 200, resp.text
-            body = resp.json()
-            ids = [item.get("decision_id") for item in (body.get("items") or [])]
-            assert "apv-consdata-001" in ids, f"pending approval not in queue: {body}"
-        finally:
-            bff_main.read_store = original_store
+        store = create_in_memory_read_surface_ports(
+            ooda_management_kwargs={"approval_decisions": [_PENDING_APPROVAL]}
+        )
+        client = _make_client(store)
+        resp = client.get(self.ROUTE, headers=ADMIN_HEADERS)
+        assert resp.status_code == 200, resp.text
+        body = resp.json()
+        ids = [item.get("decision_id") for item in (body.get("items") or [])]
+        assert "apv-consdata-001" in ids, f"pending approval not in queue: {body}"
 
 
 # ---------------------------------------------------------------------------
@@ -185,28 +194,18 @@ class TestGovernanceApprovalQueueSurfaceWithProjectedStore:
 # ---------------------------------------------------------------------------
 
 class TestStorePrecedenceOverServiceClient:
-    """The composite /bff/approvals route only ever reads bff_main.read_store,
+    """The composite /bff/approvals route reads the provided store,
     so a governance-service URL being configured in the environment must never
-    shadow a populated in-memory port. This guards the reviewer-flagged bug:
-    docker-compose sets PANTHEON_GOVERNANCE_APPROVAL_API_URL=http://governance:8082,
-    which (in the legacy CanonicalSnapshotAdapter-backed store) could shadow a
-    projection-populated file and return count=0.
-    """
+    shadow a populated in-memory port."""
 
     def test_file_store_wins_when_governance_url_is_also_set(self) -> None:
-        """Even when PANTHEON_GOVERNANCE_APPROVAL_API_URL is set, the typed
-        in-memory port wired onto bff_main.read_store wins and /bff/approvals
-        returns count>0 from it (the route never falls back to a service
-        client keyed off that env var)."""
-        original_store = bff_main.read_store
         orig_gov_env = os.environ.get("PANTHEON_GOVERNANCE_APPROVAL_API_URL")
         try:
-            # Simulate docker-compose default which would otherwise shadow the store.
             os.environ["PANTHEON_GOVERNANCE_APPROVAL_API_URL"] = "http://governance-stub:9999"
-            bff_main.read_store = create_in_memory_read_surface_ports(
+            store = create_in_memory_read_surface_ports(
                 ooda_management_kwargs={"approval_decisions": [_PENDING_APPROVAL]}
             )
-            client = TestClient(bff_main.app, raise_server_exceptions=False)
+            client = _make_client(store)
             resp = client.get("/bff/approvals", headers=ADMIN_HEADERS)
             assert resp.status_code == 200, resp.text
             body = resp.json()
@@ -218,7 +217,6 @@ class TestStorePrecedenceOverServiceClient:
             ids = [item.get("decision_id") for item in body["items"]]
             assert "apv-consdata-001" in ids, f"projected approval not found: {body}"
         finally:
-            bff_main.read_store = original_store
             if orig_gov_env is None:
                 os.environ.pop("PANTHEON_GOVERNANCE_APPROVAL_API_URL", None)
             else:

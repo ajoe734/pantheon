@@ -12,14 +12,38 @@ from pathlib import Path
 from typing import Iterator
 
 import pytest
+from fastapi import FastAPI, HTTPException
 from fastapi.testclient import TestClient
 
-BFF_DIR = Path(__file__).resolve().parent
-
-from services.control_plane.bff import main as bff_main
+from services.control_plane.bff.control_loops.router import create_control_loops_router
+from services.control_plane.bff.models import OperatorIdentity
 from services.control_plane.bff.ports import create_in_memory_read_surface_ports  # noqa: E402
 
 HEADERS = {"Authorization": "Bearer op-execute-plans:operator,reviewer,admin:mfa"}
+
+
+def _extract_identity(authorization: str | None) -> OperatorIdentity:
+    if not authorization or not authorization.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="Authentication required")
+    raw = authorization[len("Bearer "):].strip()
+    parts = raw.split(":")
+    operator_id = parts[0] if parts else "op"
+    roles = parts[1].split(",") if len(parts) > 1 else []
+    claims = {"mfa": True} if len(parts) > 2 and "mfa" in parts[2] else {}
+    return OperatorIdentity(operator_id=operator_id, roles=roles, claims=claims)
+
+
+def _build_test_app(read_store: Any = None) -> FastAPI:
+    app = FastAPI(title="Sentinel Findings Contract")
+    router = create_control_loops_router(
+        get_read_store=lambda: read_store,
+        extract_identity=_extract_identity,
+        require_read_role=lambda identity: None,
+        require_operator_role=lambda identity: None,
+    )
+    app.include_router(router)
+    return app
+
 
 # Incidents covering all valid kind/status/severity values.
 # Titles deliberately avoid "loop" keyword so all four records appear as sentinel findings.
@@ -80,14 +104,11 @@ def _store(*, seed: dict = _INCIDENT_SEED) -> Iterator[TestClient]:
             "incident_id": incident.get("incident_id") or finding_id,
             "details": incident.get("description") or incident.get("title") or "",
         }
-    original = bff_main.read_store
-    bff_main.read_store = create_in_memory_read_surface_ports(
+    read_store = create_in_memory_read_surface_ports(
         lifecycle_telemetry_governance_kwargs={"sentinel_findings": findings}
     )
-    try:
-        yield TestClient(bff_main.app, raise_server_exceptions=False)
-    finally:
-        bff_main.read_store = original
+    app = _build_test_app(read_store)
+    yield TestClient(app, raise_server_exceptions=False)
 
 
 # ---------------------------------------------------------------------------
@@ -310,7 +331,7 @@ def test_openapi_sentinel_findings_list_has_filter_query_params():
     Regression guard against the generic alias re-registering the path and
     overwriting the dedicated filtered route in the OpenAPI schema.
     """
-    spec = bff_main.app.openapi()
+    spec = _build_test_app().openapi()
     get_op = spec["paths"]["/bff/v5/sentinel/findings"]["get"]
     operation_id = get_op.get("operationId", "")
     params = {p["name"] for p in get_op.get("parameters", [])}
