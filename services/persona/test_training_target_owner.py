@@ -172,11 +172,13 @@ def _create_persona(client: TestClient) -> None:
             "persona_id": PERSONA_ID,
             "name": "Alpha",
             "mandate": "focused training-authority test persona",
-            # The Persona's real, governed ``owner`` field is the only
-            # genuine tenant binding this data model has; the training-target
-            # owner derives its tenant authority from it, never from a
-            # caller-asserted ``X-Tenant-Id`` header.
-            "owner": TENANT_ID,
+            # ``tenant_id`` is the real, governed tenant binding the
+            # training-target owner derives its tenant authority from, never
+            # from a caller-asserted ``X-Tenant-Id`` header. ``owner`` is a
+            # distinct actor/resource identity (it defaults to actor_id) and
+            # is deliberately left unset here so this fixture cannot be
+            # mistaken for relabeling actor ownership as tenant authority.
+            "tenant_id": TENANT_ID,
         },
         headers=_auth_header(),
     )
@@ -473,6 +475,143 @@ def test_apply_ignores_out_of_order_lower_generation(owner_env) -> None:
         persona_after["metadata"]["training_target_candidate_digest"]
         == second_receipt["candidate_digest"]
     )
+
+
+def test_apply_survives_generation2_committing_between_read_and_cas(owner_env) -> None:
+    """Root review R3: reproduces the real lost-update race against the
+    actual JSON-backed owner, not just a pre-read-then-late-apply ordering.
+
+    A generation-1 apply attempt reads its guard snapshot, then -- before
+    its own compare-and-set runs -- a concurrent writer durably commits
+    generation 2 against that exact same snapshot. The generation-1 attempt
+    must not then blindly overwrite generation 2 with stale metadata; its
+    own CAS must fail against the now-stale snapshot, and its retry must see
+    the real generation 2 and treat the stale apply as a no-op.
+    """
+
+    client, personas_path, _targets_path, verifier = owner_env
+
+    from services.foundation.reliable_delivery import AtomicJsonRecordStore
+    from services.persona.write_owner import (
+        CommitPersonaTrainingTargetRequest,
+        PersistentPersonaOwner,
+        build_persona_training_target_owner,
+    )
+
+    persona_owner = PersistentPersonaOwner.from_json_path(personas_path)
+    training_target_owner = build_persona_training_target_owner(
+        persona_owner, approval_verifier=verifier
+    )
+
+    stale_request = CommitPersonaTrainingTargetRequest(
+        persona_id=PERSONA_ID,
+        tenant_id=TENANT_ID,
+        session_id="session-race",
+        candidate_digest="a" * 64,
+        control_digest="b" * 64,
+        proof_digest="c" * 64,
+        approval_digest="d" * 64,
+        generation=1,
+        expected_previous_generation=0,
+        expected_precondition_digest="e" * 64,
+        expected_precondition_record_ref="stale-ref",
+        approval_decision_id="stale-approval",
+        approval_decision_ref="stale-approval-ref",
+        candidate={"stale": True},
+        control_state={"stale": True},
+        evaluation_proof={"status": "passed"},
+    )
+
+    real_compare_and_set = AtomicJsonRecordStore.compare_and_set
+    calls = {"count": 0}
+
+    def _racy_compare_and_set(self, record_id, expected_payload, payload):
+        calls["count"] += 1
+        if calls["count"] == 1:
+            # Simulate a concurrent writer durably committing generation 2
+            # against the exact same snapshot this attempt's own guard just
+            # read, immediately before this attempt's CAS below runs.
+            concurrent = dict(expected_payload)
+            concurrent["metadata"] = {
+                **(concurrent.get("metadata") or {}),
+                "training_target_generation": 2,
+                "training_target_control_digest": "f" * 64,
+                "training_target_candidate_digest": "g" * 64,
+            }
+            ok, _ = real_compare_and_set(self, record_id, expected_payload, concurrent)
+            assert ok, "concurrent generation-2 commit setup must succeed"
+        return real_compare_and_set(self, record_id, expected_payload, payload)
+
+    AtomicJsonRecordStore.compare_and_set = _racy_compare_and_set
+    try:
+        training_target_owner._apply_to_persona_owner(
+            PERSONA_ID, stale_request, {"controller_record_ref": "stale-ref"}
+        )
+    finally:
+        AtomicJsonRecordStore.compare_and_set = real_compare_and_set
+
+    persona_after = client.get(f"/api/personas/{PERSONA_ID}").json()
+    assert persona_after["metadata"]["training_target_generation"] == 2
+    assert persona_after["metadata"]["training_target_control_digest"] == "f" * 64
+    assert persona_after["metadata"]["training_target_candidate_digest"] == "g" * 64
+
+
+def test_read_and_commit_fail_closed_without_governed_tenant_binding(owner_env) -> None:
+    """A Persona created with no real ``tenant_id`` has no provable tenant
+    binding; training-target authority must fail closed rather than fall
+    back to ``owner`` (an actor identity) or a caller-asserted header --
+    exactly the relabeling defect root review flagged.
+    """
+
+    client, _personas_path, _targets_path, _verifier = owner_env
+    no_tenant_persona_id = "persona-no-tenant"
+    created = client.post(
+        "/api/personas",
+        json={
+            "actor_id": SERVICE_ACTOR,
+            "persona_id": no_tenant_persona_id,
+            "name": "NoTenant",
+            "mandate": "persona created without a governed tenant_id",
+        },
+        headers=_auth_header(),
+    )
+    assert created.status_code == 201, created.text
+    assert created.json()["tenant_id"] is None
+
+    read = client.get(
+        f"/api/personas/{no_tenant_persona_id}/training-target",
+        headers={**_auth_header(), "X-Tenant-Id": TENANT_ID},
+    )
+    assert read.status_code == 503, read.text
+    assert read.json()["detail"]
+
+    write = client.post(
+        f"/api/personas/{no_tenant_persona_id}/training-target",
+        headers={
+            **_auth_header(),
+            "X-Tenant-Id": TENANT_ID,
+            "Idempotency-Key": "no-tenant-binding-attempt",
+        },
+        json={
+            "persona_id": no_tenant_persona_id,
+            "tenant_id": TENANT_ID,
+            "session_id": "session-no-tenant",
+            "candidate_digest": "a" * 64,
+            "control_digest": "b" * 64,
+            "proof_digest": "c" * 64,
+            "approval_digest": "d" * 64,
+            "generation": 1,
+            "expected_previous_generation": 0,
+            "expected_precondition_digest": "e" * 64,
+            "expected_precondition_record_ref": "forged-ref",
+            "approval_decision_id": "forged-approval",
+            "approval_decision_ref": "forged-approval-ref",
+            "candidate": {"forged": True},
+            "control_state": {"forged": True},
+            "evaluation_proof": {"status": "passed"},
+        },
+    )
+    assert write.status_code == 503, write.text
 
 
 def _first_commit(client: TestClient, module, verifier, *, session_id: str = "session-alpha"):

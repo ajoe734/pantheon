@@ -16,7 +16,7 @@ import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 from dataclasses import dataclass
-from typing import Any, Mapping, Protocol
+from typing import Any, Callable, Mapping, Protocol
 from urllib.error import HTTPError, URLError
 from urllib.request import Request as UrllibRequest, urlopen
 
@@ -142,6 +142,27 @@ class TrainingTargetTenantMismatch(PersonaAuthorityError):
             "TRAINING_TARGET_TENANT_MISMATCH",
             "Persona training target tenant_id does not match its bound tenant",
             403,
+        )
+
+
+class TrainingTargetTenantBindingUnavailable(PersonaAuthorityError):
+    """Raised when a Persona has no real governed ``tenant_id`` binding.
+
+    ``owner`` is an actor/resource-owner identity captured at creation, not
+    a tenant identifier; treating it as one would relabel actor authority
+    as tenant authority, exactly the defect root review flagged. A Persona
+    created before a real ``tenant_id`` was captured (or created without
+    one) has no provable tenant binding, so training-target authority for
+    it must fail closed instead of guessing -- a legacy record needs an
+    explicit migration to backfill ``tenant_id``, not a silent fallback.
+    """
+
+    def __init__(self) -> None:
+        super().__init__(
+            "TRAINING_TARGET_TENANT_BINDING_UNAVAILABLE",
+            "Persona has no governed tenant_id binding; training-target "
+            "authority cannot be established",
+            503,
         )
 
 
@@ -545,6 +566,14 @@ class PersonaBody(BaseModel):
     route_policy_id: str | None = None
     consult_policy_id: str | None = None
     owner: str
+    # The real, governed tenant binding, captured only at creation and never
+    # patchable. Distinct from ``owner`` (an actor/resource identity that
+    # defaults to the creating actor_id): relabeling ``owner`` as tenant
+    # authority was the exact defect root review flagged. ``None`` means this
+    # Persona has no provable tenant binding (a legacy record, or one created
+    # without a real tenant) -- callers that need tenant authority must fail
+    # closed rather than guess.
+    tenant_id: str | None = None
     status: str = "active"
     updated_at: str | None = None
     created_by: str
@@ -623,6 +652,10 @@ class CreatePersonaRequest(BaseModel):
     route_policy_id: str | None = None
     consult_policy_id: str | None = None
     owner: str | None = None
+    # Real tenant binding, set only here; there is no patch path so a
+    # Persona's tenant authority cannot drift after creation. ``None`` is
+    # honest: it means this Persona has no provable tenant binding yet.
+    tenant_id: str | None = None
     status: str = "active"
     required_data_sources: list[RequiredDataSourceBody] = Field(default_factory=list)
     metadata: dict[str, Any] = Field(default_factory=dict)
@@ -689,6 +722,7 @@ class PersistentPersonaOwner:
             route_policy_id=request.route_policy_id,
             consult_policy_id=request.consult_policy_id,
             owner=request.owner or request.actor_id,
+            tenant_id=request.tenant_id,
             status=request.status,
             created_by=request.actor_id,
             required_data_sources=request.required_data_sources,
@@ -733,6 +767,58 @@ class PersistentPersonaOwner:
             )
             if committed:
                 return PersonaBody.model_validate(canonical or updated)
+        raise PersonaConcurrentUpdate(
+            f"Persona {persona_id!r} changed concurrently; retry against a fresh read"
+        )
+
+    def try_metadata_cas(
+        self,
+        persona_id: str,
+        *,
+        guard: Callable[[PersonaBody], bool],
+        metadata_updates: Mapping[str, Any],
+        actor_id: str,
+    ) -> tuple[bool, PersonaBody]:
+        """One CAS attempt whose precondition is checked against the exact
+        snapshot it commits against.
+
+        This exists so a caller-level generation guard cannot be separated
+        from the compare-and-set it protects: ``patch()`` re-reads its own
+        fresh snapshot on every retry and applies the caller's update to it
+        unconditionally, so a guard checked only once by the caller before
+        calling ``patch()`` can be satisfied against a stale read and then
+        blindly overwritten onto whatever committed in between (the exact
+        lost-update race root review reproduced against the real JSON-backed
+        owner). Here, ``guard`` and the ``compare_and_set`` run against the
+        same read, so any interleaving write that would change the guard's
+        answer causes this attempt's CAS to fail instead of silently
+        clobbering newer state; the caller's own retry loop re-reads and
+        re-evaluates ``guard`` before trying again.
+
+        Returns ``(False, current)`` when ``guard(current)`` is false --
+        a legitimate no-op (e.g. a stale generation), not a race. Raises
+        ``PersonaConcurrentUpdate`` when the CAS itself loses a race, so the
+        caller can retry with a fresh read.
+        """
+
+        current_raw = self._records.get(persona_id)
+        if current_raw is None:
+            raise PersonaNotFound(f"Persona {persona_id!r} not found")
+        current = PersonaBody.model_validate(current_raw)
+        if not guard(current):
+            return False, current
+        merged_metadata = dict(current.metadata or {})
+        merged_metadata.update(metadata_updates)
+        updated = dict(current_raw)
+        updated["metadata"] = merged_metadata
+        updated["updated_at"] = _utc_now()
+        updated["updated_by"] = actor_id
+        updated = PersonaBody.model_validate(updated).model_dump(mode="json")
+        committed, canonical = self._records.compare_and_set(
+            persona_id, current_raw, updated
+        )
+        if committed:
+            return True, PersonaBody.model_validate(canonical or updated)
         raise PersonaConcurrentUpdate(
             f"Persona {persona_id!r} changed concurrently; retry against a fresh read"
         )
@@ -1001,15 +1087,17 @@ class PersistentPersonaTrainingTargetOwner:
         """A deterministic, unpersisted generation-0 view.
 
         The tenant is derived from the Persona's own durable, governed
-        ``owner`` field -- established only through the ``persona.admin``
-        gated create/patch path -- never from a caller-asserted header. A
-        caller cannot obtain an authoritative-looking precondition for a
-        tenant it does not actually own; ``read``/``commit`` reject any
-        ``X-Tenant-Id`` that does not match this real owner field before this
-        view is ever returned.
+        ``tenant_id`` field -- captured only at creation through the
+        ``persona.admin`` gated create path -- never from a caller-asserted
+        header. A caller cannot obtain an authoritative-looking precondition
+        for a tenant it does not actually own; ``read``/``commit`` reject any
+        ``X-Tenant-Id`` that does not match this real field (via
+        ``_load_owner_bound_persona``, which also rejects a Persona with no
+        ``tenant_id`` at all) before this view is ever returned, so
+        ``persona.tenant_id`` is guaranteed non-``None`` here.
         """
 
-        tenant_id = str(persona.owner)
+        tenant_id = str(persona.tenant_id)
         return {
             "persona_id": persona.persona_id,
             "tenant_id": tenant_id,
@@ -1025,17 +1113,24 @@ class PersistentPersonaTrainingTargetOwner:
     def _load_owner_bound_persona(
         self, persona_id: str, tenant_id: str
     ) -> PersonaBody:
-        """Read the real Persona and require the caller's tenant to be its owner.
+        """Read the real Persona and require the caller's tenant to be its own.
 
-        The Persona's ``owner`` field is the only genuine, governed tenant
-        binding this data model currently has (set at creation and only
-        mutable through the ``persona.admin`` gated patch path). Trusting a
-        caller-supplied ``X-Tenant-Id`` header instead of this field is
-        exactly the fabricated-authority defect root review flagged.
+        The Persona's ``tenant_id`` field is the only genuine, governed
+        tenant binding this data model has (captured at creation through the
+        ``persona.admin`` gated create path; there is no patch path, so it
+        cannot drift afterward). ``owner`` is a distinct actor/resource
+        identity, not a tenant -- trusting it (or a caller-supplied
+        ``X-Tenant-Id`` header) as tenant authority is exactly the
+        fabricated-authority defect root review flagged. A Persona with no
+        ``tenant_id`` (a legacy record, or one created without one) has no
+        provable tenant binding and fails closed rather than falling back to
+        ``owner`` or the caller's header.
         """
 
         persona = self._persona_owner.get(persona_id)
-        if str(persona.owner) != tenant_id:
+        if persona.tenant_id is None:
+            raise TrainingTargetTenantBindingUnavailable()
+        if str(persona.tenant_id) != tenant_id:
             raise TrainingTargetTenantMismatch()
         return persona
 
@@ -1179,39 +1274,52 @@ class PersistentPersonaTrainingTargetOwner:
         error, and a lower generation's apply that runs after a higher
         generation already landed is a safe no-op instead of clobbering
         newer state.
+
+        The generation guard is checked by ``PersistentPersonaOwner.
+        try_metadata_cas`` against the exact same snapshot its CAS commits
+        against, not by a separate pre-read here: a plain pre-read-then-patch
+        (the shape root review reproduced against the real JSON-backed
+        owner) lets a concurrent higher-generation commit land between the
+        read and the patch, and ``patch()``'s own retry loop re-reads fresh
+        but applies this stale metadata unconditionally, silently
+        overwriting the newer generation. Routing through
+        ``try_metadata_cas`` means any such interleaving fails the CAS
+        instead, and this loop retries with a fresh guard check.
         """
 
-        for _attempt in range(4):
-            current = self._persona_owner.get(persona_id)
+        def _guard(current: PersonaBody) -> bool:
             existing_metadata = dict(current.metadata or {})
             existing_generation = int(
                 existing_metadata.get("training_target_generation") or 0
             )
-            if existing_generation >= request.generation:
-                return
+            return existing_generation < request.generation
+
+        for _attempt in range(4):
             try:
-                self._persona_owner.patch(
+                applied_write, applied = self._persona_owner.try_metadata_cas(
                     persona_id,
-                    PatchPersonaRequest(
-                        actor_id="persona-training-target-owner",
-                        metadata={
-                            "training_target_generation": request.generation,
-                            "training_target_controller_record_ref": committed.get(
-                                "controller_record_ref"
-                            ),
-                            "training_target_control_digest": request.control_digest,
-                            "training_target_candidate_digest": request.candidate_digest,
-                            "training_target_approval_decision_id": (
-                                request.approval_decision_id
-                            ),
-                            "training_target_candidate": request.candidate,
-                            "training_target_control_state": request.control_state,
-                        },
-                    ),
+                    guard=_guard,
+                    metadata_updates={
+                        "training_target_generation": request.generation,
+                        "training_target_controller_record_ref": committed.get(
+                            "controller_record_ref"
+                        ),
+                        "training_target_control_digest": request.control_digest,
+                        "training_target_candidate_digest": request.candidate_digest,
+                        "training_target_approval_decision_id": (
+                            request.approval_decision_id
+                        ),
+                        "training_target_candidate": request.candidate,
+                        "training_target_control_state": request.control_state,
+                    },
+                    actor_id="persona-training-target-owner",
                 )
             except PersonaConcurrentUpdate:
                 continue
-            applied = self._persona_owner.get(persona_id)
+            if not applied_write:
+                # A same-or-higher generation is already applied; this is a
+                # legitimate out-of-order no-op, not a race to retry.
+                return
             applied_metadata = dict(applied.metadata or {})
             if (
                 int(applied_metadata.get("training_target_generation") or 0)
@@ -1741,6 +1849,7 @@ __all__ = [
     "TrainingTargetGenerationConflict",
     "TrainingTargetIdempotencyConflict",
     "TrainingTargetProofInvalid",
+    "TrainingTargetTenantBindingUnavailable",
     "TrainingTargetTenantMismatch",
     "UpsertCapabilitySnapshotRequest",
     "app",
