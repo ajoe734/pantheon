@@ -266,6 +266,116 @@ def test_repository_source_root_requires_absolute_git_root(tmp_path: Path) -> No
         )
 
 
+def test_validate_python_dependencies_reports_real_installed_versions(
+    tmp_path: Path,
+) -> None:
+    requirements = tmp_path / "requirements.txt"
+    requirements.write_text("# comment\npytest\n", encoding="utf-8")
+
+    versions = provision.validate_python_dependencies(Path(sys.executable), requirements)
+
+    assert set(versions) == {"pytest"}
+    assert versions["pytest"]
+
+
+def test_validate_python_dependencies_fails_closed_for_missing_package(
+    tmp_path: Path,
+) -> None:
+    requirements = tmp_path / "requirements.txt"
+    requirements.write_text("definitely-not-a-real-package-xyz\n", encoding="utf-8")
+
+    with pytest.raises(ValueError, match="python dependency preflight failed"):
+        provision.validate_python_dependencies(Path(sys.executable), requirements)
+
+
+def test_validate_python_dependencies_rejects_a_de_virtualized_interpreter(
+    tmp_path: Path,
+) -> None:
+    """Prove the failure mode this task closes: an interpreter that no longer
+    has the venv's packages (e.g. the base interpreter behind a resolved venv
+    symlink) is rejected instead of silently accepted."""
+
+    requirements = tmp_path / "requirements.txt"
+    requirements.write_text("pytest\n", encoding="utf-8")
+    base_interpreter = Path("/usr/bin/python3")
+    if not base_interpreter.is_file():
+        pytest.skip("no base system interpreter available on this host")
+
+    with pytest.raises(ValueError, match="python dependency preflight failed"):
+        provision.validate_python_dependencies(base_interpreter, requirements)
+
+
+def test_cli_preserves_a_venv_symlink_path_instead_of_resolving_it(
+    tmp_path: Path,
+) -> None:
+    """A venv's bin/python is normally a symlink chain to the base
+    interpreter. Fully resolving --python before storing it collapses that
+    chain and launches the base interpreter directly, which never finds the
+    venv's pyvenv.cfg and silently loses every package the venv provides."""
+
+    command, status = _roots(tmp_path)
+    live_path = tmp_path / "runtime" / "live.json"
+    fake_venv_python = tmp_path / "fake-venv" / "bin" / "python3"
+    fake_venv_python.parent.mkdir(parents=True)
+    fake_venv_python.symlink_to(Path(sys.executable))
+
+    code = provision.main(
+        [
+            "--repo-config",
+            str(command / ".orchestrator" / "config.json"),
+            "--live-config",
+            str(live_path),
+            "--command-root",
+            str(command),
+            "--status-root",
+            str(status),
+            "--python",
+            str(fake_venv_python),
+            "--json",
+        ]
+    )
+
+    assert code == 0
+    installed = json.loads(live_path.read_text(encoding="utf-8"))
+    assert installed["watchdog"]["supervisor_command"][0] == str(fake_venv_python)
+    assert installed["watchdog"]["supervisor_command"][0] != str(
+        fake_venv_python.resolve()
+    )
+
+
+def test_cli_dependency_preflight_failure_leaves_no_config_behind(
+    tmp_path: Path,
+) -> None:
+    """A failed dependency preflight must not create the live config at all,
+    matching the "preserve incumbent" requirement for provisioning."""
+
+    command, status = _roots(tmp_path)
+    live_path = tmp_path / "runtime" / "live.json"
+    requirements = tmp_path / "requirements.txt"
+    requirements.write_text("definitely-not-a-real-package-xyz\n", encoding="utf-8")
+
+    code = provision.main(
+        [
+            "--repo-config",
+            str(command / ".orchestrator" / "config.json"),
+            "--live-config",
+            str(live_path),
+            "--command-root",
+            str(command),
+            "--status-root",
+            str(status),
+            "--python",
+            sys.executable,
+            "--requirements",
+            str(requirements),
+            "--json",
+        ]
+    )
+
+    assert code == 2
+    assert not live_path.exists()
+
+
 def test_cli_creates_one_v2_config_without_merging_an_incumbent(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:

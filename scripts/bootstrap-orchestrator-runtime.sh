@@ -191,6 +191,29 @@ else
 fi
 
 # ---------------------------------------------------------------------------
+# 3b. Supervisor Python environment
+#
+# The supervisor must never launch from the ambient /usr/bin/python3: that
+# interpreter has no reason to carry pydantic/cryptography, and losing them
+# silently drops packet intake while the heartbeat stays healthy (see
+# docs/operations/supervisor-python-runtime.md). This venv is deploy-root
+# owned rather than checkout-scoped so it survives command-runtime pruning
+# and re-promotion, and is rebuilt from the exact command root's own
+# .orchestrator/requirements.txt so a fresh host has a documented,
+# reproducible dependency install instead of relying on ambient packages.
+# ---------------------------------------------------------------------------
+SUPERVISOR_PYTHON_DIR="$RUNTIME_DIR/supervisor-python"
+SUPERVISOR_PYTHON="$SUPERVISOR_PYTHON_DIR/bin/python3"
+SUPERVISOR_REQUIREMENTS="$COMMAND_ROOT/.orchestrator/requirements.txt"
+if [[ ! -x "$SUPERVISOR_PYTHON" ]]; then
+  log "creating supervisor Python environment: $SUPERVISOR_PYTHON_DIR"
+  run python3 -m venv "$SUPERVISOR_PYTHON_DIR"
+fi
+log "installing supervisor Python dependencies from $SUPERVISOR_REQUIREMENTS"
+run "$SUPERVISOR_PYTHON" -m pip install --quiet --disable-pip-version-check \
+  -r "$SUPERVISOR_REQUIREMENTS"
+
+# ---------------------------------------------------------------------------
 # 4. Promote, persist, verify
 # ---------------------------------------------------------------------------
 log "promoting supervisor runtime"
@@ -198,6 +221,7 @@ run python3 "$STATUS_ROOT/scripts/promote_supervisor_runtime.py" \
   --repo "$COMMAND_ROOT" \
   --status-root "$STATUS_ROOT" \
   --live-config "$LIVE_CONFIG" \
+  --python "$SUPERVISOR_PYTHON" \
   --authority-env-file "$AUTHORITY_ENV_FILE" \
   --promote \
   --json

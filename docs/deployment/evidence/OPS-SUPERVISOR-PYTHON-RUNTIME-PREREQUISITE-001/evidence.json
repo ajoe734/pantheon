@@ -1,0 +1,97 @@
+{
+  "schema_version": "pantheon.review-evidence.v1",
+  "task_id": "OPS-SUPERVISOR-PYTHON-RUNTIME-PREREQUISITE-001",
+  "title": "Bind supervisor intake to verified Python dependencies through existing bootstrap and promotion flow",
+  "owner": "Claude",
+  "reviewer": "Codex",
+  "target_repo": "ajoe734/pantheon",
+  "task_class": "development_tooling",
+  "delivery_state": "ready_for_independent_review",
+  "base_sha": "8a798bbae82f4e374be04a59db92e1c7b109b722",
+  "source_ref": "/tmp/pantheon-archive-reconcile-prerequisite-20260905.PrI7ms/PYTHON_RUNTIME_SA_SD.md",
+  "scope": {
+    "owned": [
+      "supervisor Python interpreter selection and dependency preflight (provision_live_supervisor_config.py, promote_supervisor_runtime.py)",
+      "scoped .orchestrator/requirements.txt dependency contract for the supervisor runtime only",
+      "fresh-host venv provisioning wired into scripts/bootstrap-orchestrator-runtime.sh and scripts/sync-dev-root.sh",
+      "runbook docs/operations/supervisor-python-runtime.md"
+    ],
+    "not_changing": [
+      "scripts/ai_status.py, task archive, and TaskStore (owned by the separate archive-reconciliation prerequisite)",
+      "signed packet validation, bridge signing keys, or dev-bridge intake logic",
+      "supervisor tick-level imports or a second dispatcher/cron/launcher",
+      "scripts/supervisor_watchdog_install.py (already restarts from the recorded watchdog.supervisor_command, requires no interpreter-selection change)"
+    ],
+    "composes_with": [
+      "root-coordinated exact-version governed promotion on the live host after merge",
+      "the separate archive-reconciliation prerequisite"
+    ]
+  },
+  "failure_reproduction": {
+    "case": "On 2026-09-05 the live promoted supervisor (PID 96329, source 20282eba2ce2304560ab7eab0cd27af824a22b8b) launched with /usr/bin/python3 -- which has cryptography but not pydantic -- so the main loop stayed healthy while every dev-bridge packet drain failed with ModuleNotFoundError: No module named 'pydantic'.",
+    "root_causes": [
+      "scripts/bootstrap-orchestrator-runtime.sh and scripts/sync-dev-root.sh never passed --python to promote_supervisor_runtime.py, so it defaulted to sys.executable (the ambient interpreter running the bootstrap/sync script itself)",
+      "scripts/provision_live_supervisor_config.py resolved --python with Path(...).resolve(), which fully dereferences a venv's bin/python symlink chain back to the base interpreter before CPython's own pyvenv.cfg lookup can run, silently losing every venv-provided package even when a venv path was explicitly passed"
+    ],
+    "reproduction": "test_cli_preserves_a_venv_symlink_path_instead_of_resolving_it (scripts/test_provision_live_supervisor_config.py) builds a real filesystem symlink to sys.executable and proves the pre-fix .resolve() call would have collapsed it; test_validate_python_dependencies_rejects_a_de_virtualized_interpreter proves the base /usr/bin/python3 on this host fails the same pydantic-dependency preflight that was silently bypassed live."
+  },
+  "implementation": {
+    "dependency_contract": ".orchestrator/requirements.txt pins pydantic>=2.9,<3 and cryptography>=42,<51 -- the supervisor's own bridge/task-store imports, not the product BFF's full dependency set.",
+    "interpreter_selection_fix": "provision_live_supervisor_config.py now stores Path(args.python).expanduser().absolute() instead of .resolve(), preserving a venv invocation path so CPython's own symlink-chasing pyvenv.cfg lookup still runs at supervisor launch.",
+    "dependency_preflight": "validate_python_dependencies() in provision_live_supervisor_config.py runs `python -c \"import importlib.metadata; ...\"` inside the exact candidate interpreter and requires every package named by .orchestrator/requirements.txt to resolve with a real installed version. Wired into provision's CLI (_main_locked) before any config write, and into promote's render_v2_config() -- called before _replace_supervisor_locked's try block, i.e. before seal/stop/write/launch -- so a failed preflight raises before the incumbent supervisor, live config, leases, or watchdog/cron binding are touched.",
+    "fresh_host_provisioning": "scripts/bootstrap-orchestrator-runtime.sh creates $PANTHEON_DEPLOY_ROOT/runtime/supervisor-python via `python3 -m venv`, installs .orchestrator/requirements.txt into it, and passes --python <that venv>/bin/python3 to promote_supervisor_runtime.py. scripts/sync-dev-root.sh does the same against the exact candidate being promoted (reinstalling from the candidate's own requirements.txt on every promotion) before invoking promote-supervisor-runtime.sh, and fails closed if the candidate is missing .orchestrator/requirements.txt.",
+    "watchdog_restart_preservation": "No change was needed in scripts/supervisor_watchdog_install.py or .orchestrator/supervisor_watchdog.py: both already restart the supervisor by re-executing the recorded watchdog.supervisor_command from the live config, so the accepted --python path survives every subsequent restart once promotion renders it correctly.",
+    "new_dispatcher_added": false,
+    "new_cron_or_launcher_added": false,
+    "canonical_state_json_altered": false
+  },
+  "verification": {
+    "passed": [
+      {
+        "command": ".venv-pantheon/bin/python3 -m pytest -q scripts/test_provision_live_supervisor_config.py scripts/test_promote_supervisor_runtime.py scripts/test_bootstrap_orchestrator_runtime.py scripts/test_sync_dev_root.py scripts/test_supervisor_watchdog_install.py",
+        "result": "77 passed, 1 skipped"
+      },
+      {
+        "command": ".venv-pantheon/bin/python3 -m py_compile scripts/promote_supervisor_runtime.py scripts/provision_live_supervisor_config.py scripts/test_promote_supervisor_runtime.py scripts/test_provision_live_supervisor_config.py scripts/test_sync_dev_root.py",
+        "result": "passed"
+      },
+      {
+        "command": "bash -n scripts/bootstrap-orchestrator-runtime.sh && bash -n scripts/sync-dev-root.sh",
+        "result": "passed"
+      },
+      {
+        "command": "PANTHEON_STATUS_ROOT=<synthetic checkout> PANTHEON_DEPLOY_ROOT=<tmp> bash scripts/bootstrap-orchestrator-runtime.sh --dry-run",
+        "result": "manual smoke: dry-run plan includes creating $DEPLOY_ROOT/runtime/supervisor-python, installing <command-root>/.orchestrator/requirements.txt into it, and passing --python <that venv>/bin/python3 into the promote_supervisor_runtime.py invocation"
+      }
+    ],
+    "new_tests_added": [
+      "test_validate_python_dependencies_reports_real_installed_versions",
+      "test_validate_python_dependencies_fails_closed_for_missing_package",
+      "test_validate_python_dependencies_rejects_a_de_virtualized_interpreter",
+      "test_cli_preserves_a_venv_symlink_path_instead_of_resolving_it",
+      "test_cli_dependency_preflight_failure_leaves_no_config_behind",
+      "test_render_v2_config_accepts_a_candidate_with_required_dependencies",
+      "test_render_v2_config_dependency_preflight_fails_closed",
+      "test_replace_supervisor_preserves_incumbent_on_dependency_preflight_failure",
+      "test_cli_promote_dependency_preflight_failure_never_stops_incumbent"
+    ],
+    "runner": {
+      "python": "3.12.3",
+      "pytest": "9.1.1",
+      "interpreter": "checkout-scoped .venv-pantheon provisioned via scripts/dev/provision_python_distribution.py with PANTHEON_DEPENDENCY_PYTHON pointed at the pre-existing pantheon .venv (pydantic 2.13.5, cryptography 50.0.1)"
+    },
+    "checksums": {
+      "scripts/promote_supervisor_runtime.py": "f305eacf2c24ae7b70286a40b661538845beccc47fde3cc0f4b8c776257b98b7",
+      "scripts/provision_live_supervisor_config.py": "f23ef42d22050e090358da2d94a6732452c02d41b20385b2ff2cbc61c0609633",
+      "scripts/bootstrap-orchestrator-runtime.sh": "b0536926f8b9a1a560d16698d5428b94b092edfd9f0e476d1f83640a16e60b22",
+      "scripts/sync-dev-root.sh": "c4c92aeb8ec15040a511c262b0cc69af329a9b952db09368c35265bace40a530",
+      ".orchestrator/requirements.txt": "3f9cf60b8fd12f6337017e6e75c2e7989e5487acc07cb25b372baa4670ded272"
+    }
+  },
+  "root_coordination_note": "This delivery is source-only, per the SA/SD: exact-version governed promotion after merge, confirming the launched interpreter, automatic pending -> processed admission and canonical readback, a fresh heartbeat, and worker-lease preservation are coordinated by root and are not claimed here.",
+  "review_decision": {
+    "status": "pending",
+    "reviewer": "Codex",
+    "note": "Independently verify the .resolve() symlink-collapse fix, the dependency-preflight fail-closed ordering ahead of stop/write/launch in _replace_supervisor_locked, the bootstrap/sync-dev-root venv wiring, and that no supervisor tick-level or archive/TaskStore code was touched."
+  }
+}

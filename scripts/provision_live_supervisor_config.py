@@ -41,6 +41,72 @@ WATCHDOG_RUNTIME_PATH_DEFAULTS = {
 TASK_STATE_STORE_DEFAULT_FILENAME = "task-state-events.jsonl"
 
 
+def parse_requirements_packages(path: Path) -> list[str]:
+    """Return the distribution names named by a minimal requirements file."""
+
+    if path.is_symlink() or not path.is_file():
+        raise ValueError(f"requirements file must be a regular non-symlink file: {path}")
+    packages: list[str] = []
+    for raw_line in path.read_text(encoding="utf-8").splitlines():
+        line = raw_line.split("#", 1)[0].strip()
+        if not line:
+            continue
+        match = re.match(r"[A-Za-z0-9][A-Za-z0-9._-]*", line)
+        if not match:
+            raise ValueError(f"invalid requirements entry in {path}: {raw_line!r}")
+        packages.append(match.group(0))
+    if not packages:
+        raise ValueError(f"requirements file defines no packages: {path}")
+    return packages
+
+
+def validate_python_dependencies(
+    python_executable: Path, requirements_path: Path
+) -> dict[str, str]:
+    """Prove the selected interpreter already has the required bridge deps.
+
+    Runs entirely inside the candidate interpreter (not the caller's) so a
+    de-virtualized symlink, a half-provisioned venv, or a fresh host missing
+    packages fails closed here -- before any incumbent supervisor state is
+    touched -- instead of surfacing later as a silent packet-drain failure.
+    """
+
+    packages = parse_requirements_packages(requirements_path)
+    probe = (
+        "import importlib.metadata as m, json, sys\n"
+        f"names = {packages!r}\n"
+        "print(json.dumps({name: m.version(name) for name in names}))\n"
+    )
+    try:
+        result = subprocess.run(
+            [str(python_executable), "-c", probe],
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        raise ValueError(
+            f"python dependency preflight could not run {python_executable}: {exc}"
+        ) from exc
+    if result.returncode != 0:
+        detail = (result.stderr or result.stdout or "unknown import failure").strip()
+        raise ValueError(
+            f"python dependency preflight failed for {python_executable}: {detail}"
+        )
+    try:
+        versions = json.loads(result.stdout.strip())
+    except json.JSONDecodeError as exc:
+        raise ValueError(
+            f"python dependency preflight produced invalid output for {python_executable}"
+        ) from exc
+    if not isinstance(versions, dict) or set(versions) != set(packages):
+        raise ValueError(
+            f"python dependency preflight missing packages for {python_executable}: "
+            f"expected {sorted(packages)}, got {sorted(versions) if isinstance(versions, dict) else versions!r}"
+        )
+    return versions
+
+
 def load_json_object(path: Path) -> dict[str, Any]:
     payload = json.loads(path.read_text(encoding="utf-8"))
     if not isinstance(payload, dict):
@@ -680,6 +746,15 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--status-root")
     parser.add_argument("--python", default=sys.executable)
     parser.add_argument(
+        "--requirements",
+        default=None,
+        help=(
+            "Minimal supervisor dependency contract to preflight-check against "
+            "--python before accepting it. Defaults to "
+            "<command-root>/.orchestrator/requirements.txt when that file exists."
+        ),
+    )
+    parser.add_argument(
         "--repository-source-root",
         action="append",
         default=[],
@@ -744,9 +819,27 @@ def _main_locked(argv: list[str] | None = None) -> int:
                 raise ValueError(f"live config must be a regular non-symlink file: {live_config_path}")
             existing = load_json_object(live_config_path)
 
-        python_executable = Path(args.python).expanduser().resolve()
+        # Preserve a venv invocation path (typically a symlink chain to the
+        # base interpreter) instead of collapsing it with .resolve(). A fully
+        # resolved path launches the base interpreter directly, which never
+        # locates the venv's pyvenv.cfg and silently loses every dependency
+        # the venv provides -- exactly the missing-pydantic failure mode this
+        # task exists to close.
+        python_executable = Path(args.python).expanduser().absolute()
         if not python_executable.is_file():
             raise ValueError(f"python executable does not exist: {python_executable}")
+        requirements_path = (
+            Path(args.requirements).expanduser().absolute()
+            if args.requirements
+            else command_root / ".orchestrator" / "requirements.txt"
+        )
+        python_dependencies: dict[str, str] | None = None
+        if requirements_path.is_file():
+            python_dependencies = validate_python_dependencies(
+                python_executable, requirements_path
+            )
+        elif args.requirements:
+            raise ValueError(f"requirements file does not exist: {requirements_path}")
         rendered = build_live_config(
             repo_config,
             existing_live_config=existing,
@@ -787,6 +880,8 @@ def _main_locked(argv: list[str] | None = None) -> int:
         "approval_queue_created": approval_queue_created,
         "config_created": config_created,
         "command_runtime": command_identity,
+        "python_executable": str(python_executable),
+        "python_dependencies": python_dependencies,
         "supervisor_command": rendered["watchdog"]["supervisor_command"],
         "repository_source_roots": {
             repository_id: str(entry.get("local_path"))

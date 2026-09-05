@@ -370,10 +370,39 @@ if ! materialize_candidate_runtime "$DEV_ROOT" "$candidate_root" "$target_sha"; 
   exit 1
 fi
 
+# The promoted supervisor must never launch from the ambient /usr/bin/python3
+# (see docs/operations/supervisor-python-runtime.md): that interpreter has no
+# reason to carry pydantic/cryptography, and losing them silently drops
+# packet intake while the heartbeat stays healthy. This venv is deploy-root
+# owned so it survives command-runtime pruning, and is (re)installed from the
+# exact candidate's own .orchestrator/requirements.txt on every promotion so
+# a dependency bump lands with the code that needs it.
+SUPERVISOR_PYTHON_DIR="${PANTHEON_SUPERVISOR_PYTHON_DIR:-${DEPLOY_ROOT}/runtime/supervisor-python}"
+SUPERVISOR_PYTHON="${SUPERVISOR_PYTHON_DIR}/bin/python3"
+SUPERVISOR_REQUIREMENTS="${candidate_root}/.orchestrator/requirements.txt"
+if [[ ! -x "$SUPERVISOR_PYTHON" ]]; then
+  log "creating supervisor Python environment: $SUPERVISOR_PYTHON_DIR"
+  if ! python3 -m venv "$SUPERVISOR_PYTHON_DIR"; then
+    log "FATAL: failed to create supervisor Python environment: $SUPERVISOR_PYTHON_DIR"
+    exit 1
+  fi
+fi
+if [[ -f "$SUPERVISOR_REQUIREMENTS" ]]; then
+  if ! "$SUPERVISOR_PYTHON" -m pip install --quiet --disable-pip-version-check \
+    -r "$SUPERVISOR_REQUIREMENTS"; then
+    log "FATAL: failed to install supervisor Python dependencies from $SUPERVISOR_REQUIREMENTS"
+    exit 1
+  fi
+else
+  log "FATAL: candidate is missing .orchestrator/requirements.txt: $SUPERVISOR_REQUIREMENTS"
+  exit 1
+fi
+
 log "replacing supervisor from explicit config identity=${active_root:-none} candidate=$candidate_root coordination=$COORDINATION_ROOT"
 if ! "$candidate_root/scripts/promote-supervisor-runtime.sh" \
   --promote --repo "$candidate_root" --status-root "$COORDINATION_ROOT" \
   --live-config "$LIVE_CONFIG" \
+  --python "$SUPERVISOR_PYTHON" \
   --authority-env-file "$AUTHORITY_ENV_FILE" \
   --repository-source-root "pantheon=$DEV_ROOT" \
   --repository-source-root "execute_plans=$EXECUTE_PLANS_SOURCE_ROOT" \

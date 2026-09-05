@@ -26,6 +26,7 @@ def _seed_remote(tmp_path: Path) -> tuple[Path, Path]:
     (seed / ".orchestrator").mkdir()
     (seed / "scripts").mkdir()
     (seed / ".orchestrator" / "supervisor.py").write_text("# V2\n", encoding="utf-8")
+    (seed / ".orchestrator" / "requirements.txt").write_text("pydantic\n", encoding="utf-8")
     (seed / "version.txt").write_text("one\n", encoding="utf-8")
     (seed / "scripts" / "provision_live_supervisor_config.py").write_text(
         "import sys\nsys.exit(0)\n", encoding="utf-8"
@@ -97,6 +98,23 @@ def _coordination_root(tmp_path: Path) -> Path:
     return root
 
 
+def _stub_supervisor_python(deploy_root: Path) -> Path:
+    """Pre-seed the deploy-root-owned supervisor venv with a no-op stub.
+
+    Production sync-dev-root.sh creates a real venv and pip-installs
+    .orchestrator/requirements.txt into it. Tests exercise the wiring
+    (creation is skipped when the interpreter already exists executable,
+    the dependency install command must still succeed) without requiring
+    real network access to a package index.
+    """
+
+    python_path = deploy_root / "runtime" / "supervisor-python" / "bin" / "python3"
+    python_path.parent.mkdir(parents=True, exist_ok=True)
+    python_path.write_text("#!/usr/bin/env bash\nexit 0\n", encoding="utf-8")
+    python_path.chmod(0o755)
+    return python_path
+
+
 def _patched_sync_script(tmp_path: Path, runtime_parent: Path) -> Path:
     script = tmp_path / "sync-dev-root-under-test.sh"
     assert runtime_parent == tmp_path / "command-runtimes"
@@ -118,6 +136,7 @@ def _run_sync(
     auto_integrator_args_file: Path | None = None,
     auto_integrator_exit_code: int | None = None,
 ) -> subprocess.CompletedProcess[str]:
+    _stub_supervisor_python(script.parent)
     env = os.environ.copy()
     env["SYNC_PROMOTION_ARGS_FILE"] = str(promotion_args)
     env["PANTHEON_DEPLOY_ROOT"] = str(script.parent)
@@ -197,6 +216,8 @@ def test_sync_uses_explicit_coordination_root_and_never_inspects_live_cwd(tmp_pa
         str(coordination),
         "--live-config",
         str(live_config),
+        "--python",
+        str(script.parent / "runtime" / "supervisor-python" / "bin" / "python3"),
         "--authority-env-file",
         str(script.parent / "runtime" / "supervisor-authority-public.env"),
         "--repository-source-root",
@@ -471,6 +492,7 @@ def test_sync_prunes_old_command_runtimes_after_promotion(tmp_path: Path) -> Non
         encoding="utf-8",
     )
 
+    _stub_supervisor_python(script.parent)
     env = os.environ.copy()
     env["PANTHEON_DEPLOY_ROOT"] = str(script.parent)
     env["SYNC_PROMOTION_ARGS_FILE"] = str(promotion_args)
