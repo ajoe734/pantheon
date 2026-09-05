@@ -14,7 +14,6 @@ from __future__ import annotations
 
 import inspect
 import re
-import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Set, Tuple
@@ -25,8 +24,6 @@ from starlette.routing import BaseRoute, Mount, Route
 
 
 BFF_DIR = Path(__file__).resolve().parent
-if str(BFF_DIR) not in sys.path:
-    sys.path.insert(0, str(BFF_DIR))
 
 
 PARAM_PATTERN = re.compile(r"\{[^/:]+(?::[^}]+)?\}")
@@ -319,19 +316,19 @@ def assert_unique_openapi_operation_ids(app: FastAPI) -> None:
 
 def _instantiate_domain_routers() -> List[Tuple[str, APIRouter]]:
     """Instantiate all domain router factories with mock ports for contract verification."""
-    from agora.router import create_agora_router
-    from console_gap.alpha_factory import create_alpha_factory_router
-    from console_gap.consult_rules import create_consult_rules_router
-    from console_gap.datasources import create_datasources_router
-    from console_gap.knowledge import create_knowledge_router
-    from console_gap.lineage import create_lineage_router
-    from console_gap.memory_governance import create_memory_governance_router
-    from console_gap.permissions import create_permissions_router
-    from console_gap.route_policies import create_route_policies_router
-    from console_gap.workflows_hooks import create_workflows_hooks_router
-    from management_read_models import create_management_read_models_router
-    from trade_journal import create_trade_journal_router
-    from trade_journeys import create_trade_journeys_router
+    from services.control_plane.bff.agora.router import create_agora_router
+    from services.control_plane.bff.console_gap.alpha_factory import create_alpha_factory_router
+    from services.control_plane.bff.console_gap.consult_rules import create_consult_rules_router
+    from services.control_plane.bff.console_gap.datasources import create_datasources_router
+    from services.control_plane.bff.console_gap.knowledge import create_knowledge_router
+    from services.control_plane.bff.console_gap.lineage import create_lineage_router
+    from services.control_plane.bff.console_gap.memory_governance import create_memory_governance_router
+    from services.control_plane.bff.console_gap.permissions import create_permissions_router
+    from services.control_plane.bff.console_gap.route_policies import create_route_policies_router
+    from services.control_plane.bff.console_gap.workflows_hooks import create_workflows_hooks_router
+    from services.control_plane.bff.management_read_models import create_management_read_models_router
+    from services.control_plane.bff.trade_journal import create_trade_journal_router
+    from services.control_plane.bff.trade_journeys import create_trade_journeys_router
 
     mock_store = lambda *a, **k: None
     mock_fn = lambda *a, **k: None
@@ -386,7 +383,7 @@ def test_real_bff_main_app_route_scanning_and_collision_characterization() -> No
     scheduled for cutover in Wave 2 (ACG-BFF-MAIN-CUTOVER-20260828). This test characterizes
     those exact known collisions and fails immediately if any new/untracked collision is added.
     """
-    import main as bff_main
+    from services.control_plane.bff import main as bff_main
 
     entries = scan_fastapi_routes(bff_main.app)
     assert len(entries) >= 400, f"Expected real bff_main.app to have 400+ routes, got {len(entries)}"
@@ -427,7 +424,7 @@ def test_real_bff_main_app_route_scanning_and_collision_characterization() -> No
 
 def test_real_bff_main_app_openapi_operation_id_characterization() -> None:
     """Scan bff_main.app for OpenAPI operation ID duplicates, characterizing them and guarding against new ones."""
-    import main as bff_main
+    from services.control_plane.bff import main as bff_main
 
     dup_ops = find_duplicate_openapi_operation_ids(bff_main.app)
     assert len(dup_ops) > 0, "Expected to detect existing legacy operation ID duplicates on bff_main.app"
@@ -445,7 +442,7 @@ def test_real_bff_main_app_openapi_operation_id_characterization() -> None:
 
 def test_real_bff_main_app_zero_static_route_shadowing() -> None:
     """Verify that bff_main.app has zero static route shadowing by earlier parameterized routes."""
-    import main as bff_main
+    from services.control_plane.bff import main as bff_main
 
     offenders = find_parameter_route_shadowing(bff_main.app)
     assert not offenders, "Static routes shadowed on bff_main.app:\n" + "\n".join(offenders)
@@ -622,8 +619,7 @@ def test_scanner_excludes_framework_head_by_explicit_rule() -> None:
 
 
 def test_gate_has_no_hardcoded_duplicate_allowlist() -> None:
-    """Verify that the uniqueness gate has no hardcoded allowlist or bypass tables."""
-    import test_normalized_route_uniqueness as gate_module
+    from services.control_plane.bff import test_normalized_route_uniqueness as gate_module
     module_dict = gate_module.__dict__
     forbidden_tokens = ["EXPECTED_" + "WINNERS", "DUPLICATE_" + "ALLOWLIST", "ALLOWLIST"]
     for token in forbidden_tokens:

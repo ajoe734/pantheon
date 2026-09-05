@@ -142,7 +142,8 @@ def _readback_response(data: Any, *, meta: Dict[str, Any], items: Optional[List[
 
 def create_capital_router(
     *,
-    get_read_store: Callable[[], Any] = lambda: None,
+    read_surface: Optional[Any] = None,
+    get_read_store: Optional[Callable[[], Any]] = None,
     get_capital_authority: Optional[Callable[[], Any]] = None,
     extract_identity: Callable[[Optional[str]], Any] = _default_extract_identity,
     require_read_role: Callable[[Any], None] = _default_require_read_role,
@@ -154,9 +155,16 @@ def create_capital_router(
     bff_error: Callable[..., Exception] = _default_bff_error,
 ) -> APIRouter:
     """Build the standalone Capital router and its explicit dependency boundary."""
+    if read_surface is not None:
+        resolved_get_read_store = (lambda: read_surface() if callable(read_surface) else read_surface)
+    elif get_read_store is not None:
+        resolved_get_read_store = get_read_store
+    else:
+        resolved_get_read_store = lambda: None
+
     router = APIRouter(tags=["capital"])
     service = CapitalService(
-        get_read_store=get_read_store,
+        get_read_store=resolved_get_read_store,
         get_capital_authority=get_capital_authority,
         utc_now=utc_now,
     )

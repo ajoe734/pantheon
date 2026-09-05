@@ -184,7 +184,8 @@ def _filter_by_status_csv(records: List[Dict[str, Any]], status_csv: Optional[st
 
 def create_research_experiments_router(
     *,
-    get_read_store: Callable[[], Any],
+    read_surface: Optional[Any] = None,
+    get_read_store: Optional[Callable[[], Any]] = None,
     extract_identity: Callable[[Optional[str]], Any],
     require_read_role: Callable[[Any], None],
     require_operator_role: Callable[[Any], None],
@@ -200,6 +201,10 @@ def create_research_experiments_router(
     ``get_read_store`` is called per-request so the router observes the same
     read_store instance main.py swaps in during tests via monkeypatching.
     """
+    if read_surface is not None:
+        get_read_store = (lambda: read_surface() if callable(read_surface) else read_surface)
+    elif get_read_store is None:
+        raise RuntimeError("Neither read_surface nor get_read_store was configured.")
 
     router = APIRouter()
 
@@ -478,7 +483,8 @@ def create_research_experiments_router(
 
 def create_research_router(
     *,
-    get_read_store: Callable[[], Any],
+    read_surface: Optional[Any] = None,
+    get_read_store: Optional[Callable[[], Any]] = None,
     extract_identity: Callable[[Optional[str]], Any],
     require_read_role: Callable[[Any], None],
     bff_error: Callable[..., Exception],
@@ -504,6 +510,10 @@ def create_research_router(
     action seams, then remove the generic aliases it supersedes without a
     circular import back into ``main``.
     """
+    if read_surface is not None:
+        get_read_store = (lambda: read_surface() if callable(read_surface) else read_surface)
+    elif get_read_store is None:
+        raise RuntimeError("Neither read_surface nor get_read_store was configured.")
 
     router = APIRouter(tags=["research"])
     service = ResearchRouterService(

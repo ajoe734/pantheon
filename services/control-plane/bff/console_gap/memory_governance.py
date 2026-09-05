@@ -13,7 +13,8 @@ _SURFACE_KEY = "memory_governance_rules"
 
 def create_memory_governance_router(
     *,
-    get_read_store: Callable[[], Any],
+    read_surface: Optional[Any] = None,
+    get_read_store: Optional[Callable[[], Any]] = None,
     extract_identity: Callable[..., Any],
     require_read_role: Callable[..., None],
 ) -> APIRouter:
@@ -33,7 +34,9 @@ def create_memory_governance_router(
         identity = extract_identity(authorization)
         require_read_role(identity)
 
-        store = get_read_store()
+        store = read_surface if read_surface is not None else (get_read_store() if get_read_store is not None else None)
+        if store is None:
+            raise RuntimeError("Required read_surface is absent; failing startup closed.")
         source = store.dataset_source(_DATASET)
         from models import utc_now
         snapshot_at = utc_now()

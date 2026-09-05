@@ -189,7 +189,8 @@ def _filter_by_status_csv(records: List[Dict[str, Any]], status_csv: Optional[st
 def _register_evolution_programs_routes(
     router: APIRouter,
     *,
-    get_read_store: Callable[[], Any],
+    read_surface: Optional[Any] = None,
+    get_read_store: Optional[Callable[[], Any]] = None,
     extract_identity: Callable[[Optional[str]], Any],
     require_read_role: Callable[[Any], None],
     require_operator_role: Callable[[Any], None],
@@ -200,6 +201,13 @@ def _register_evolution_programs_routes(
     dataset_surface_status: SurfaceStatus,
     submit_program_action: Optional[SubmitAction] = None,
 ) -> None:
+    def _resolve_read_store() -> Any:
+        if read_surface is not None:
+            return read_surface() if callable(read_surface) else read_surface
+        if get_read_store is not None:
+            return get_read_store()
+        return None
+
     def _require_program(read_store: Any, program_id: str) -> Dict[str, Any]:
         program = getattr(read_store, "get_evolution_program", lambda pid: None)(program_id)
         if not program:
@@ -221,7 +229,7 @@ def _register_evolution_programs_routes(
         """List evolution programs. Filter: comma-separated ``status`` (case-insensitive)."""
         identity = extract_identity(authorization)
         require_read_role(identity)
-        read_store = get_read_store()
+        read_store = _resolve_read_store()
         snapshot_at = utc_now()
         raw_programs = getattr(read_store, "list_evolution_programs", lambda: [])() or []
         programs = _filter_by_status_csv(raw_programs, status)
@@ -252,7 +260,7 @@ def _register_evolution_programs_routes(
                 "Evolution program name must be a non-empty string",
                 precondition_failed="name",
             )
-        read_store = get_read_store()
+        read_store = _resolve_read_store()
         snapshot_at = utc_now()
         program_id = str(
             payload.get("program_id")
@@ -275,7 +283,7 @@ def _register_evolution_programs_routes(
     ) -> Dict[str, Any]:
         identity = extract_identity(authorization)
         require_read_role(identity)
-        read_store = get_read_store()
+        read_store = _resolve_read_store()
         program = _require_program(read_store, program_id.strip())
         snapshot_at = utc_now()
         return {"data": program, "meta": snapshot_meta(snapshot_at)}
@@ -289,7 +297,7 @@ def _register_evolution_programs_routes(
         """Patch ``name``/``status``/``params``; other fields are ignored."""
         identity = extract_identity(authorization)
         require_operator_role(identity)
-        read_store = get_read_store()
+        read_store = _resolve_read_store()
         clean_id = program_id.strip()
         _require_program(read_store, clean_id)
         snapshot_at = utc_now()
@@ -311,7 +319,7 @@ def _register_evolution_programs_routes(
     ) -> Dict[str, Any]:
         identity = extract_identity(authorization)
         require_read_role(identity)
-        read_store = get_read_store()
+        read_store = _resolve_read_store()
         clean_id = program_id.strip()
         _require_program(read_store, clean_id)
         snapshot_at = utc_now()
@@ -329,7 +337,7 @@ def _register_evolution_programs_routes(
     ) -> Dict[str, Any]:
         identity = extract_identity(authorization)
         require_read_role(identity)
-        read_store = get_read_store()
+        read_store = _resolve_read_store()
         clean_id = program_id.strip()
         _require_program(read_store, clean_id)
         snapshot_at = utc_now()
@@ -350,7 +358,7 @@ def _register_evolution_programs_routes(
         identity = extract_identity(authorization)
         require_operator_role(identity)
         resolved_key = (idempotency_key or x_idempotency_key or "").strip()
-        read_store = get_read_store()
+        read_store = _resolve_read_store()
         clean_id = program_id.strip()
         _require_program(read_store, clean_id)
         if submit_program_action is None:
@@ -369,6 +377,7 @@ def _register_evolution_programs_routes(
 
 def create_evolution_programs_router(
     *,
+    read_surface: Optional[Any] = None,
     get_read_store: Optional[Callable[[], Any]] = None,
     extract_identity: Optional[Callable[[Optional[str]], Any]] = None,
     require_read_role: Optional[Callable[[Any], None]] = None,
@@ -389,6 +398,7 @@ def create_evolution_programs_router(
     router = APIRouter()
     _register_evolution_programs_routes(
         router,
+        read_surface=read_surface,
         get_read_store=get_read_store or (lambda: None),
         extract_identity=extract_identity or _default_extract_identity,
         require_read_role=require_read_role or _default_require_read_role,
@@ -405,6 +415,7 @@ def create_evolution_programs_router(
 
 def create_evolution_router(
     *,
+    read_surface: Optional[Any] = None,
     get_read_store: Optional[Callable[[], Any]] = None,
     extract_identity: Optional[Callable[[Optional[str]], Any]] = None,
     require_read_role: Optional[Callable[[Any], None]] = None,
@@ -428,7 +439,11 @@ def create_evolution_router(
     """
     router = APIRouter()
 
-    _get_store = get_read_store or (lambda: getattr(evolution_service, "read_store", None))
+    _get_store = (
+        (lambda: (read_surface() if callable(read_surface) else read_surface))
+        if read_surface is not None
+        else (get_read_store or (lambda: getattr(evolution_service, "read_store", None)))
+    )
     _extract_ident = extract_identity or _default_extract_identity
     _require_read = require_read_role or _default_require_read_role
     _require_op = require_operator_role or _default_require_operator_role
@@ -450,6 +465,7 @@ def create_evolution_router(
     # Register evolution programs routes
     _register_evolution_programs_routes(
         router,
+        read_surface=read_surface,
         get_read_store=_get_store,
         extract_identity=_extract_ident,
         require_read_role=_require_read,

@@ -147,6 +147,7 @@ try:
     from ports import (
         ReadSurfacePorts,
         create_persona_registry_write_owner,
+        create_ranking_write_owner,
         create_read_surface_ports,
     )
 except ImportError:
@@ -154,11 +155,13 @@ except ImportError:
         from services.control_plane.bff.ports import (  # type: ignore[no-redef]
             ReadSurfacePorts,
             create_persona_registry_write_owner,
+            create_ranking_write_owner,
             create_read_surface_ports,
         )
     except ImportError:
         ReadSurfacePorts = Any
         create_persona_registry_write_owner = None
+        create_ranking_write_owner = None
         create_read_surface_ports = None
 
 try:
@@ -273,18 +276,20 @@ except ImportError:
 
 log = logging.getLogger(__name__)
 
-# Fallback in-memory stores for standalone operation
-persona_write_owner = (
-    create_persona_registry_write_owner()
-    if create_persona_registry_write_owner is not None
-    else None
-)
+# Standalone fallback stores are eliminated; explicit composition root injects dependencies.
+persona_write_owner = None
+read_store = None
 
-read_store = (
-    create_read_surface_ports(persona_registry_store=persona_write_owner)
-    if create_read_surface_ports is not None
-    else None
-)
+# Rankings write-owner port must be configured at service/app startup;
+# missing required configuration fails startup closed, never deferred to first write.
+_ranking_write_owner: Optional[Any] = None
+
+
+def _get_ranking_write_owner() -> Any:
+    global _ranking_write_owner
+    if _ranking_write_owner is None:
+        raise RuntimeError("Rankings write-owner port is not configured at startup")
+    return _ranking_write_owner
 
 class _DefaultCommandStore:
     def _get_all_commands(self) -> List[Dict[str, Any]]:
@@ -12877,7 +12882,7 @@ def _pm12_attach_ranking_snapshot(
         evidence_assertion_digests.setdefault(persona_id, []).append(
             _stable_json_hash(item.get("evidence_refs") or [])
         )
-    read_store.put_ranking_snapshot({
+    _get_ranking_write_owner().put_ranking_snapshot({
         "ranking_snapshot_id": snapshot_id,
         "surface": surface,
         "period": period,
@@ -13887,30 +13892,55 @@ class PersonaService:
         command_store: Optional[Any] = None,
         provisioning_store: Optional[Any] = None,
         write_owner: Optional[Any] = None,
+        ranking_write_owner: Optional[Any] = None,
         get_read_store: Optional[Callable[[], Any]] = None,
         get_command_store: Optional[Callable[[], Any]] = None,
         get_provisioning_store: Optional[Callable[[], Any]] = None,
+        get_ranking_write_owner: Optional[Callable[[], Any]] = None,
         utc_now_fn: Optional[Callable[[], str]] = None,
         bff_error_fn: Optional[Callable[..., HTTPException]] = None,
         snapshot_meta_fn: Optional[Callable[..., Dict[str, Any]]] = None,
         dataset_surface_status_fn: Optional[Callable[..., Dict[str, Any]]] = None,
         raise_if_read_surface_unavailable_fn: Optional[Callable[..., None]] = None,
     ) -> None:
-        self._write_owner = write_owner or persona_write_owner
-        self._read_store = read_store or (
-            create_read_surface_ports(persona_registry_store=self._write_owner)
-            if create_read_surface_ports is not None
-            else None
+        global _ranking_write_owner
+        resolved_write_owner = write_owner
+        if resolved_write_owner is None:
+            raise RuntimeError("Required persona write_owner is absent; failing startup closed.")
+
+        resolved_read_store = (
+            read_store
+            or (get_read_store() if get_read_store is not None else None)
         )
-        self._command_store = command_store or (
-            CommandStore(os.path.join(BFF_DATA_DIR, "commands.jsonl"))
-            if CommandStore is not None
-            else None
+        if resolved_read_store is None:
+            raise RuntimeError("Required read_surface/read_store is absent; failing startup closed.")
+
+        resolved_ranking_write_owner = (
+            ranking_write_owner
+            or (get_ranking_write_owner() if get_ranking_write_owner is not None else None)
         )
+        if resolved_ranking_write_owner is None:
+            raise RuntimeError("Required ranking_write_owner is absent; failing startup closed.")
+
+        resolved_command_store = (
+            command_store
+            or (get_command_store() if get_command_store is not None else None)
+        )
+        if resolved_command_store is None:
+            raise RuntimeError("Required command_store is absent; failing startup closed.")
+
+        self._write_owner = resolved_write_owner
+        self._read_store = resolved_read_store
+        self._ranking_write_owner = resolved_ranking_write_owner
+        _ranking_write_owner = resolved_ranking_write_owner
+        globals()["read_store"] = resolved_read_store
+        self._command_store = resolved_command_store
+        globals()["command_store"] = resolved_command_store
         self._provisioning_store = provisioning_store
-        self._get_read_store = get_read_store or (lambda: self._read_store)
-        self._get_command_store = get_command_store or (lambda: self._command_store)
+        self._get_read_store = lambda: self._read_store
+        self._get_command_store = lambda: self._command_store
         self._get_provisioning_store = get_provisioning_store or (lambda: self._provisioning_store or _persona_provisioning_store())
+        self._get_ranking_write_owner = lambda: self._ranking_write_owner
         self._utc_now = utc_now_fn or _utc_now_rfc3339
         self._bff_error = bff_error_fn or _bff_error
         self._snapshot_meta = snapshot_meta_fn or _snapshot_meta
@@ -13927,3 +13957,6 @@ class PersonaService:
 
     def get_provisioning_store(self) -> Any:
         return self._get_provisioning_store()
+
+    def get_ranking_write_owner(self) -> Any:
+        return self._get_ranking_write_owner()

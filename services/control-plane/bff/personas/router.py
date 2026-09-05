@@ -70,16 +70,9 @@ def create_personas_router(
     """
     router = APIRouter(tags=["personas"])
 
-    _service = service or PersonaService(
-        get_read_store=get_read_store,
-        get_command_store=get_command_store,
-        get_provisioning_store=get_provisioning_store,
-        utc_now_fn=utc_now_fn,
-        bff_error_fn=bff_error_fn,
-        snapshot_meta_fn=snapshot_meta_fn,
-        dataset_surface_status_fn=dataset_surface_status_fn,
-        raise_if_read_surface_unavailable_fn=raise_if_read_surface_unavailable_fn,
-    )
+    if service is None:
+        raise RuntimeError("PersonaService must be explicitly provided; router cannot self-create defaults.")
+    _service = service
 
     read_store = _service.get_read_store()
     command_store = _service.get_command_store()
@@ -3428,7 +3421,3 @@ def create_personas_router(
         )
 
     return router
-
-
-# Canonical default router instance
-router = create_personas_router()

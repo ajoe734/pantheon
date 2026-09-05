@@ -964,16 +964,20 @@ def _pack_d_error_metadata(code: Any, *, status_code: Optional[int] = None) -> D
         "retryable": behavior["retryable"],
         "userActionable": behavior["userActionable"],
     }
-command_store = CommandStore(os.path.join(BFF_DATA_DIR, "commands.jsonl"))
+
+
+from .bootstrap.dependencies import AppDependencies
+
+app_deps = AppDependencies.create_default()
+command_store = app_deps.command_store
 session_lifecycle_store = SessionLifecycleStore(os.path.join(BFF_DATA_DIR, "session_lifecycle.json"))
 agora_audit_store = AgoraAuditStore()
-persona_write_owner = create_persona_registry_write_owner()
+persona_write_owner = app_deps.persona_write_owner
+ranking_write_owner = app_deps.ranking_write_owner
 persona_reconciliation_mutation_port = PersonaProvisioningReconciliationMutationPort(
     persona_mutation_port=persona_write_owner,
 )
-read_store: ReadSurfacePorts = create_read_surface_ports(
-    persona_registry_store=persona_write_owner,
-)
+read_store: ReadSurfacePorts = app_deps.read_surface
 
 
 def _record_agora_audit_event(event: Dict[str, Any]) -> Dict[str, Any]:
@@ -987,7 +991,7 @@ def _record_agora_audit_event(event: Dict[str, Any]) -> Dict[str, Any]:
     if callable(legacy_writer):
         return legacy_writer(event)
     return agora_audit_store.record_agora_audit_event(event)
-settings_store = SettingsStore(os.path.join(BFF_DATA_DIR, "settings.json"))
+settings_store: SettingsStore = app_deps.settings_store
 _COMMAND_AUTH_CONTEXT: Dict[str, Dict[str, Optional[str]]] = {}
 downstream_health_monitor = DownstreamHealthMonitor(
     state_path=os.path.join(BFF_DATA_DIR, "downstream_health.sqlite3"),
@@ -22195,8 +22199,7 @@ def _include_governance_subrules_routes() -> None:
     from .console_gap.memory_governance import create_memory_governance_router
     from .console_gap.consult_rules import create_consult_rules_router
     from .console_gap.route_policies import create_route_policies_router
-    _get_store = lambda: read_store
-    _kw = dict(get_read_store=_get_store, extract_identity=_extract_identity, require_read_role=_require_read_role)
+    _kw = dict(read_surface=app_deps.read_surface, extract_identity=_extract_identity, require_read_role=_require_read_role)
     app.include_router(create_permissions_router(**_kw))
     app.include_router(create_memory_governance_router(**_kw))
     app.include_router(create_consult_rules_router(**_kw))
@@ -22238,7 +22241,7 @@ def _include_assistant_routes() -> None:
 from .console_gap.workflows_hooks import create_workflows_hooks_router
 app.include_router(
     create_workflows_hooks_router(
-        read_store_provider=lambda: read_store,
+        workflow_hook_port=app_deps.read_surface,
         extract_identity=_extract_identity,
         require_read_role=_require_read_role,
         snapshot_now=utc_now,
@@ -22250,7 +22253,7 @@ from .console_gap.datasources import create_datasources_router  # noqa: E402
 source_management_client = SourceManagementClient()
 app.include_router(
     create_datasources_router(
-        get_read_store=lambda: read_store,
+        read_surface=app_deps.read_surface,
         extract_identity=_extract_identity,
         require_read_role=_require_read_role,
         snapshot_meta=_snapshot_meta,
@@ -22267,7 +22270,7 @@ from .management_read_models import (  # noqa: E402
 )
 app.include_router(
     create_management_read_models_router(
-        get_read_store=lambda: read_store,
+        read_surface=app_deps.read_surface,
         extract_identity=_extract_identity,
         require_read_role=_require_read_role,
         snapshot_meta=_snapshot_meta,
@@ -22276,7 +22279,7 @@ app.include_router(
 )
 app.include_router(
     create_management_router(
-        get_read_store=lambda: read_store,
+        read_surface=app_deps.read_surface,
         extract_identity=_extract_identity,
         require_read_role=_require_read_role,
         snapshot_meta=_snapshot_meta,
@@ -22299,12 +22302,12 @@ app.include_router(_create_trade_journeys_router(
     extract_identity=_extract_identity,
     require_read_role=_require_read_role,
     require_operator_role=_require_operator_role,
-    get_projection_reader=lambda: read_store.trade_journey_projection_reader(),
+    get_projection_reader=app_deps.read_surface.trade_journey_projection_reader,
 ))
 from .console_gap.lineage import create_lineage_router  # noqa: E402
 app.include_router(
     create_lineage_router(
-        get_read_store=lambda: read_store,
+        read_surface=app_deps.read_surface,
         extract_identity=_extract_identity,
         require_read_role=_require_read_role,
         snapshot_meta=_snapshot_meta,
@@ -22313,7 +22316,7 @@ app.include_router(
 )
 from .console_gap.alpha_factory import create_alpha_factory_router as _create_alpha_factory_router  # noqa: E402
 app.include_router(_create_alpha_factory_router(
-    get_read_store=lambda: read_store,
+    read_surface=app_deps.read_surface,
     extract_identity=_extract_identity,
     require_read_role=_require_read_role,
     utc_now=utc_now,
@@ -22321,7 +22324,7 @@ app.include_router(_create_alpha_factory_router(
 from .jobs.router import create_jobs_router as _create_jobs_router
 app.include_router(
     _create_jobs_router(
-        get_read_store=lambda: read_store,
+        read_surface=app_deps.read_surface,
         extract_identity=_extract_identity,
         require_read_role=_require_read_role,
         bff_error=_bff_error,
@@ -22347,8 +22350,8 @@ app.include_router(
 from .events.router import create_events_router as _create_events_router
 app.include_router(
     _create_events_router(
-        get_read_store=lambda: read_store,
-        get_command_store=lambda: command_store,
+        read_surface=app_deps.read_surface,
+        command_store=app_deps.command_store,
         extract_identity=_extract_identity,
         require_read_role=_require_read_role,
         bff_error=_bff_error,
@@ -22360,7 +22363,7 @@ app.include_router(
 from .evolution.router import create_evolution_router as _create_evolution_router
 app.include_router(
     _create_evolution_router(
-        get_read_store=lambda: read_store,
+        read_surface=app_deps.read_surface,
         extract_identity=_extract_identity,
         require_read_role=_require_read_role,
         require_operator_role=_require_operator_role,
@@ -22387,7 +22390,7 @@ app.include_router(
 from .research.router import create_research_router as _create_research_router
 app.include_router(
     _create_research_router(
-        get_read_store=lambda: read_store,
+        read_surface=app_deps.read_surface,
         extract_identity=_extract_identity,
         require_read_role=_require_read_role,
         require_operator_role=_require_operator_role,
@@ -22411,7 +22414,7 @@ app.include_router(
 from .training.router import create_training_router as _create_training_router
 app.include_router(
     _create_training_router(
-        get_read_store=lambda: read_store,
+        read_surface=app_deps.read_surface,
         extract_identity=_extract_identity,
         require_read_role=_require_read_role,
         bff_error=_bff_error,
@@ -22422,7 +22425,7 @@ app.include_router(
 )
 from .runtime.router import create_runtime_router as _create_runtime_router
 _runtime_router = _create_runtime_router(
-    get_read_store=lambda: read_store,
+    read_surface=app_deps.read_surface,
     dependencies={
         name: value
         for name, value in (
@@ -22471,7 +22474,8 @@ app.routes.extend(_runtime_router.routes)
 from .deployment.router import create_deployment_router as _create_deployment_router
 app.include_router(
     _create_deployment_router(
-        get_read_store=lambda: read_store,
+        queries=app_deps.deployment_queries,
+        commands=app_deps.deployment_commands,
         extract_identity=_extract_identity,
         require_read_role=_require_read_role,
         require_operator_role=_require_operator_role,
@@ -22498,6 +22502,7 @@ app.include_router(
         deprecated_bff_path_response=_deprecated_bff_path_response,
         sem_command_response=_sem_command_response,
         stream_generic_events=stream_generic_events,
+        surface_degradation_reason=_surface_degradation_reason,
     )
 )
 from .command_adapters.router import (
@@ -22511,13 +22516,13 @@ app.include_router(
         require_operator_role=_require_operator_role,
         bff_error=_bff_error,
         utc_now=utc_now,
-        command_store=lambda: command_store,
+        command_store=app_deps.command_store,
     )
 )
 app.include_router(
     _create_command_adapters_router(
-        get_command_store=lambda: command_store,
-        get_read_store=lambda: read_store,
+        command_store=app_deps.command_store,
+        read_surface=app_deps.read_surface,
         extract_identity=_extract_identity,
         require_operator_role=_require_operator_role,
         require_read_role=_require_read_role,
@@ -22537,7 +22542,7 @@ app.include_router(
 from .management_read_models.ranking_router import create_ranking_formulas_router as _create_ranking_formulas_router
 app.include_router(
     _create_ranking_formulas_router(
-        get_read_store=lambda: read_store,
+        read_surface=app_deps.read_surface,
         extract_identity=_extract_identity,
         require_read_role=_require_read_role,
         require_operator_role=_require_operator_role,
@@ -22554,7 +22559,7 @@ from .management_read_models.ranking_router import (
 )
 app.include_router(
     _create_rankings_long_tail_router(
-        get_read_store=lambda: read_store,
+        read_surface=app_deps.read_surface,
         extract_identity=_extract_identity,
         require_read_role=_require_read_role,
         bff_error=_bff_error,
@@ -22583,7 +22588,7 @@ app.include_router(
 from .strategies.router import create_strategies_router as _create_strategies_router
 app.include_router(
     _create_strategies_router(
-        get_read_store=lambda: read_store,
+        read_surface=app_deps.read_surface,
         extract_identity=_extract_identity,
         require_read_role=_require_read_role,
         require_operator_role=_require_operator_role,
@@ -22616,8 +22621,8 @@ app.include_router(
 from .incidents.router import create_incident_router as _create_incident_router
 app.include_router(
     _create_incident_router(
-        get_read_store=lambda: read_store,
-        get_command_store=lambda: command_store,
+        read_surface=app_deps.read_surface,
+        command_store=app_deps.command_store,
         extract_identity=_extract_identity,
         require_read_role=_require_read_role,
         require_operator_role=_require_operator_role,
@@ -22800,14 +22805,31 @@ def _resolve_agora_interaction_context_ref(
     )
 from .auth.router import create_auth_router
 from .auth.service import AuthFacadeService
-from .auth.handlers import bff_auth_readiness, create_auth_handlers
+from .auth.handlers import AuthDependencies, create_auth_handlers
 
 # Auth routes are owned by ``auth.router``; bind the concrete handlers here at
 # the composition root so an unassembled facade cannot silently ship a 503 for
 # every session request.  Provider readiness remains cache-only and advisory.
+auth_deps = AuthDependencies(
+    bff_error=_bff_error,
+    dev_login_forbidden_environment=_dev_login_forbidden_environment,
+    dev_login_identity_registry=_dev_login_identity_registry,
+    extract_identity=_extract_identity,
+    require_read_role=_require_read_role,
+    raise_if_session_logged_out=_raise_if_session_logged_out,
+    session_lifecycle_store=session_lifecycle_store,
+    bff_me_tenant_payload=_bff_me_tenant_payload,
+    capabilities_for_identity=_capabilities_for_identity,
+    bff_auth_stub_enabled=_bff_auth_stub_enabled,
+    bff_auth_mode=_bff_auth_mode,
+    bff_source_commit=_bff_source_commit,
+    write_roles=frozenset(_WRITE_ROLES),
+    utc_now=utc_now,
+)
+auth_handlers = create_auth_handlers(dependencies=auth_deps)
 auth_facade_service = AuthFacadeService(
-    local_readiness=bff_auth_readiness,
-    handlers=create_auth_handlers(),
+    local_readiness=auth_handlers["bff_auth_readiness"],
+    handlers=auth_handlers,
 )
 app.include_router(create_auth_router(service=auth_facade_service))
 from .core.app_factory import (
@@ -22844,10 +22866,16 @@ _core_handlers = {
 app.include_router(create_assistant_management_router(_core_handlers))
 app.include_router(create_core_router(_core_handlers))
 from .personas.router import create_personas_router
+from .personas.service import PersonaService
+persona_service = PersonaService(
+    write_owner=app_deps.persona_write_owner,
+    read_store=app_deps.read_surface,
+    ranking_write_owner=app_deps.ranking_write_owner,
+    command_store=app_deps.command_store,
+)
 app.include_router(
     create_personas_router(
-        get_read_store=lambda: read_store,
-        get_command_store=lambda: command_store,
+        service=persona_service,
         extract_identity_fn=_extract_identity,
         require_read_role_fn=_require_read_role,
         require_operator_role_fn=_require_operator_role,
@@ -22864,7 +22892,7 @@ app.include_router(
 from .capital.router import create_capital_router
 app.include_router(
     create_capital_router(
-        get_read_store=lambda: read_store,
+        read_surface=app_deps.read_surface,
         extract_identity=_extract_identity,
         require_read_role=_require_read_role,
         require_operator_role=_require_operator_role,
@@ -22878,7 +22906,7 @@ app.include_router(
 from .governance.router import create_governance_router
 app.include_router(
     create_governance_router(
-        get_read_store=lambda: read_store,
+        read_surface=app_deps.read_surface,
         extract_identity=_extract_identity,
         require_read_role=_require_read_role,
         require_operator_role=_require_operator_role,
@@ -22903,7 +22931,7 @@ app.include_router(
 from .postmortems.router import create_postmortem_router
 app.include_router(
     create_postmortem_router(
-        get_read_store=lambda: read_store,
+        read_surface=app_deps.read_surface,
         extract_identity=_extract_identity,
         require_read_role=_require_read_role,
         bff_error=_bff_error,
@@ -22913,7 +22941,7 @@ app.include_router(
 from .control_loops.router import create_control_loops_router
 app.include_router(
     create_control_loops_router(
-        get_read_store=lambda: read_store,
+        read_surface=app_deps.read_surface,
         loop_truth_adapter=loop_truth,
         downstream_health_monitor=downstream_health_monitor,
         submit_sem_command=_sem_command_response,
@@ -22926,10 +22954,10 @@ app.include_router(
         utc_now_fn=utc_now,
     )
 )
-from .integrations.router import create_integrations_router
+from .tools_integrations.router import create_integrations_router
 app.include_router(
     create_integrations_router(
-        get_read_store=lambda: read_store,
+        read_surface=app_deps.read_surface,
         openclaw_client=OpenClawOpsClient(),
         extract_identity=_extract_identity,
         require_read_role=_require_read_role,
@@ -22957,10 +22985,10 @@ _agora_router = _create_agora_router(
     require_agora_bulk_feedback_role=_require_agora_bulk_feedback_role,
     bff_error=_bff_error,
     utc_now=utc_now,
-    get_read_store=lambda: read_store,
+    read_surface=app_deps.read_surface,
     get_audit_store=lambda: agora_audit_store,
-    get_command_store=lambda: command_store,
-    get_persona_write_owner=lambda: persona_write_owner,
+    command_store=app_deps.command_store,
+    persona_write_owner=app_deps.persona_write_owner,
     get_trade_journey_store=lambda: _trade_journeys.EVENT_STORE,
     sync_servant_agent=lambda persona: _ensure_agora_servant_openclaw_agent(dict(persona)),
     canonical_context_ref_resolver=_resolve_agora_interaction_context_ref,
@@ -22979,6 +23007,20 @@ app.include_router(_agora_router)
 interaction_lifecycle = _agora_router.interaction_lifecycle
 workshop_store = _agora_router.workshop_store
 proposal_store = _agora_router.proposal_store
+
+import types as _types
+class _BffMainModule(_types.ModuleType):
+    def __setattr__(self, name: str, value: Any) -> None:
+        super().__setattr__(name, value)
+        if name == "read_store" and hasattr(self, "app_deps") and hasattr(self.app_deps, "read_surface"):
+            if value is not self.app_deps.read_surface:
+                self.app_deps.read_surface._active_delegate = value
+            else:
+                self.app_deps.read_surface._active_delegate = None
+
+import sys as _sys
+_sys.modules[__name__].__class__ = _BffMainModule
+
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=8001)
