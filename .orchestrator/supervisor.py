@@ -2195,7 +2195,7 @@ def materialize_auto_integrator_unblock_requests(config: dict[str, Any]) -> bool
                     "reviewer": valid["reviewer"],
                     "status": "todo",
                     "generation": 1,
-                    "depends_on": [valid["source_task_id"]],
+                    "depends_on": [],
                     "target_repo": valid["repository_id"],
                     "summary_zh": (
                         f"auto-integrator 無法安全整合 {valid['source_task_id']}: "
@@ -2215,6 +2215,7 @@ def materialize_auto_integrator_unblock_requests(config: dict[str, Any]) -> bool
                     "auto_generated": True,
                     "unblock_request": {
                         "request_sha256": path.stem,
+                        "source_task_id": valid["source_task_id"],
                         "source_task_generation": valid["source_task_generation"],
                         "repository_slug": valid["repository_slug"],
                         "pr": valid["pr"],

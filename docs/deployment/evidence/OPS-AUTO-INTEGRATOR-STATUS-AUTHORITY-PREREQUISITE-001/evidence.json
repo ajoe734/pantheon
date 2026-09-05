@@ -53,8 +53,8 @@
     }
   },
   "review_reopen_resolution": {
-    "previous_head": "bc3bbeabaf8d9ecffc5f067dbf6490ffdaa74858",
-    "resolved_defect": "The supervisor drain now contains receipt/archive finalization failures per request, preserves the source request for deterministic retry, and continues to later requests.",
+    "previous_head": "d1cbbb837a971085b8c93c60d948a8fc1070a2ae",
+    "resolved_defect": "Generated unblock tasks no longer depend on their still-active source task. Source provenance remains in the existing unblock_request object, and the real dispatch-decision path proves the todo task is owner-dispatchable while its source remains review_approved.",
     "added_reasons": [
       "dirty-repository-checkout",
       "missing-repository-slug",
@@ -64,7 +64,7 @@
       "canonical-authority-lock-failed"
     ],
     "removed_unused_reason": "final-canonical-state-refresh-failed",
-    "regression_guard": "AST producer-to-consumer drift coverage remains in place, and a rejection-path archive failure regression proves that the failed source remains retryable while a following valid request materializes."
+    "regression_guard": "AST producer-to-consumer drift coverage remains in place, rejection-path archive failure remains retryable, and materialization coverage calls task_execution_dispatch_candidate to reject recurrence of the source-task dependency deadlock."
   },
   "verification": {
     "focused_supervisor": {

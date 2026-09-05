@@ -2133,6 +2133,18 @@ class AutoIntegratorUnblockAuthorityTests(unittest.TestCase):
         ]
         self.assertEqual(len(created), 1)
         self.assertEqual(created[0]["auto_created_by"], "supervisor:auto_integrator_unblock_request")
+        self.assertEqual(created[0]["depends_on"], [])
+        self.assertEqual(created[0]["unblock_request"]["source_task_id"], "ABC-001")
+        task_map = supervisor.task_index_from_status(self.config, snapshot["state"])
+        decision = supervisor.task_execution_dispatch_candidate(
+            self.config,
+            created[0],
+            "Codex",
+            supervisor.task_resolver_for_config(self.config, task_map),
+        )
+        self.assertIsNotNone(decision)
+        self.assertEqual(decision[0], supervisor.REASON_OWNED_READY)
+        self.assertEqual(task_map["ABC-001"]["status"], "review_approved")
         self.assertEqual(snapshot["last_event"]["source"], "supervisor-auto-integrator-unblock")
         receipts = self.status_root / supervisor.AUTO_INTEGRATOR_UNBLOCK_RECEIPTS / "processed"
         archives = self.status_root / supervisor.AUTO_INTEGRATOR_UNBLOCK_ARCHIVE / "processed"
