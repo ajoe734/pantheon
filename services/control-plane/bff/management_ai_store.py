@@ -527,16 +527,6 @@ class ManagementAiConversationStore:
     def get_session(self, session_id: str) -> Optional[Dict[str, Any]]:
         clean_session_id = str(session_id or "").strip()
         return self._conversation_store.get_session(clean_session_id)
-        with self._lock:
-            if self._enabled():
-                with self._connect() as conn:
-                    row = conn.execute(
-                        "SELECT * FROM management_ai_sessions WHERE id = ?",
-                        (clean_session_id,),
-                    ).fetchone()
-                return self._row_to_session(row) if row is not None else None
-            session = self._sessions.get(clean_session_id)
-            return dict(session) if session is not None else None
 
     def list_sessions(
         self,
@@ -553,48 +543,6 @@ class ManagementAiConversationStore:
             tenant_id=clean_tenant_id or None,
             limit=clean_limit,
         )
-        with self._lock:
-            if self._enabled():
-                where: List[str] = []
-                params: List[Any] = []
-                if clean_owner_id:
-                    where.append("owner_id = ?")
-                    params.append(clean_owner_id)
-                if clean_tenant_id:
-                    where.append("tenant_id = ?")
-                    params.append(clean_tenant_id)
-                query = "SELECT * FROM management_ai_sessions"
-                if where:
-                    query += " WHERE " + " OR ".join(where)
-                query += " ORDER BY updated_at DESC, created_at DESC, id ASC LIMIT ?"
-                params.append(clean_limit)
-                with self._connect() as conn:
-                    rows = conn.execute(query, tuple(params)).fetchall()
-                return [self._row_to_session(row) for row in rows]
-
-            sessions = list(self._sessions.values())
-
-        def visible(session: Dict[str, Any]) -> bool:
-            session_owner = str(session.get("ownerId") or session.get("owner_id") or "").strip()
-            session_tenant = str(session.get("tenantId") or session.get("tenant_id") or "").strip()
-            return (
-                (clean_owner_id and session_owner == clean_owner_id)
-                or (clean_tenant_id and session_tenant == clean_tenant_id)
-                or (not clean_owner_id and not clean_tenant_id)
-            )
-
-        return [
-            dict(item)
-            for item in sorted(
-                (session for session in sessions if visible(session)),
-                key=lambda item: (
-                    str(item.get("updatedAt") or item.get("updated_at") or ""),
-                    str(item.get("createdAt") or item.get("created_at") or ""),
-                    str(item.get("sessionId") or item.get("session_id") or item.get("id") or ""),
-                ),
-                reverse=True,
-            )[:clean_limit]
-        ]
 
     def upsert_session(
         self,
@@ -614,62 +562,6 @@ class ManagementAiConversationStore:
             now=now,
             title=clean_title,
         )
-        with self._lock:
-            if self._enabled():
-                with self._connect() as conn:
-                    existing = conn.execute(
-                        "SELECT * FROM management_ai_sessions WHERE id = ?",
-                        (clean_session_id,),
-                    ).fetchone()
-                    if existing is None:
-                        conn.execute(
-                            """
-                            INSERT INTO management_ai_sessions
-                              (id, owner_id, tenant_id, title, created_at, updated_at)
-                            VALUES (?, ?, ?, ?, ?, ?)
-                            """,
-                            (clean_session_id, str(owner_id or ""), str(tenant_id or "") or None, clean_title, now, now),
-                        )
-                    else:
-                        next_title = existing["title"] or clean_title
-                        conn.execute(
-                            """
-                            UPDATE management_ai_sessions
-                            SET updated_at = ?, title = ?
-                            WHERE id = ?
-                            """,
-                            (now, next_title, clean_session_id),
-                        )
-                    row = conn.execute(
-                        "SELECT * FROM management_ai_sessions WHERE id = ?",
-                        (clean_session_id,),
-                    ).fetchone()
-                return self._row_to_session(row)
-
-            existing = self._sessions.get(clean_session_id)
-            if existing is None:
-                existing = {
-                    "id": clean_session_id,
-                    "sessionId": clean_session_id,
-                    "session_id": clean_session_id,
-                    "ownerId": str(owner_id or ""),
-                    "owner_id": str(owner_id or ""),
-                    "tenantId": str(tenant_id or "") or None,
-                    "tenant_id": str(tenant_id or "") or None,
-                    "title": clean_title,
-                    "createdAt": now,
-                    "created_at": now,
-                    "updatedAt": now,
-                    "updated_at": now,
-                }
-                self._sessions[clean_session_id] = existing
-                self._turns.setdefault(clean_session_id, [])
-            else:
-                existing["updatedAt"] = now
-                existing["updated_at"] = now
-                if clean_title and not existing.get("title"):
-                    existing["title"] = clean_title
-            return dict(existing)
 
     def store_attachments(
         self,
@@ -780,115 +672,10 @@ class ManagementAiConversationStore:
             ui_actions=clean_ui_actions,
             assistant_metadata=clean_assistant_metadata,
         )
-        with self._lock:
-            if self._enabled():
-                with self._connect() as conn:
-                    session = conn.execute(
-                        "SELECT id FROM management_ai_sessions WHERE id = ?",
-                        (clean_session_id,),
-                    ).fetchone()
-                    if session is None:
-                        raise KeyError(clean_session_id)
-                    next_sequence = int(
-                        conn.execute(
-                            "SELECT COALESCE(MAX(sequence), 0) + 1 AS next_sequence FROM management_ai_turns"
-                        ).fetchone()["next_sequence"]
-                    )
-                    conn.execute(
-                        """
-                        INSERT INTO management_ai_turns
-                          (id, session_id, role, text, attachments, provider_status,
-                           trace_id, ui_snapshot, ui_actions, assistant_metadata,
-                           created_at, sequence)
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                        """,
-                        (
-                            clean_turn_id,
-                            clean_session_id,
-                            clean_role,
-                            clean_text,
-                            _json_dumps(clean_attachments),
-                            _json_dumps(provider_status) if isinstance(provider_status, dict) else None,
-                            clean_trace_id,
-                            _json_dumps(ui_snapshot) if isinstance(ui_snapshot, dict) else None,
-                            _json_dumps(clean_ui_actions),
-                            _json_dumps(clean_assistant_metadata) if clean_assistant_metadata else None,
-                            created_at,
-                            next_sequence,
-                        ),
-                    )
-                    conn.execute(
-                        "UPDATE management_ai_sessions SET updated_at = ? WHERE id = ?",
-                        (created_at, clean_session_id),
-                    )
-                    row = conn.execute(
-                        "SELECT * FROM management_ai_turns WHERE id = ?",
-                        (clean_turn_id,),
-                    ).fetchone()
-                return self._row_to_turn(row)
-
-            if clean_session_id not in self._sessions:
-                raise KeyError(clean_session_id)
-            self._sequence += 1
-            provider = dict(provider_status) if isinstance(provider_status, dict) else None
-            snapshot = dict(ui_snapshot) if isinstance(ui_snapshot, dict) else None
-            turn = {
-                "id": clean_turn_id,
-                "turnId": clean_turn_id,
-                "turn_id": clean_turn_id,
-                "sessionId": clean_session_id,
-                "session_id": clean_session_id,
-                "role": clean_role,
-                "text": clean_text,
-                "content": clean_text,
-                "attachments": clean_attachments,
-                "providerStatus": provider,
-                "provider_status": provider,
-                "traceId": clean_trace_id,
-                "trace_id": clean_trace_id,
-                "uiSnapshot": snapshot,
-                "ui_snapshot": snapshot,
-                "uiActions": clean_ui_actions,
-                "ui_actions": clean_ui_actions,
-                "actions": clean_ui_actions,
-                "assistantMetadata": clean_assistant_metadata,
-                "assistant_metadata": clean_assistant_metadata,
-                "createdAt": created_at,
-                "created_at": created_at,
-                "sequence": self._sequence,
-            }
-            self._turns.setdefault(clean_session_id, []).append(turn)
-            session = self._sessions[clean_session_id]
-            session["updatedAt"] = created_at
-            session["updated_at"] = created_at
-            return dict(turn)
 
     def list_turns(self, session_id: str) -> List[Dict[str, Any]]:
         clean_session_id = str(session_id or "").strip()
         return self._conversation_store.list_turns(clean_session_id)
-        with self._lock:
-            if self._enabled():
-                with self._connect() as conn:
-                    rows = conn.execute(
-                        """
-                        SELECT * FROM management_ai_turns
-                        WHERE session_id = ?
-                        ORDER BY created_at ASC, sequence ASC
-                        """,
-                        (clean_session_id,),
-                    ).fetchall()
-                return [self._row_to_turn(row) for row in rows]
-            turns = list(self._turns.get(clean_session_id) or [])
-        return [
-            dict(item)
-            for item in sorted(
-                turns,
-                key=lambda item: (
-                    str(item.get("createdAt") or item.get("created_at") or ""),
-                    int(item.get("sequence") or 0),
-                ),
-            )
-        ]
 
     def upsert_assistant_session(
         self,
@@ -930,95 +717,10 @@ class ManagementAiConversationStore:
             updated_at=updated_at,
         )
         return payload
-        with self._lock:
-            if self._enabled():
-                with self._connect() as conn:
-                    existing = conn.execute(
-                        "SELECT session_id FROM management_ai_assistant_sessions WHERE session_id = ?",
-                        (clean_session_id,),
-                    ).fetchone()
-                    values = (
-                        clean_session_id,
-                        payload["mode"],
-                        payload["actorId"],
-                        _json_dumps(payload["roles"]),
-                        _json_dumps(payload["capabilities"]),
-                        payload["createdAt"],
-                        expires_at,
-                        payload["status"],
-                        reason,
-                        payload["ttlSeconds"],
-                        context_pack_id,
-                        provider_run_id,
-                        _json_dumps(payload["auditRefs"]),
-                        revoked_at,
-                        revoke_reason,
-                        clean_updated_at,
-                    )
-                    if existing is None:
-                        conn.execute(
-                            """
-                            INSERT INTO management_ai_assistant_sessions
-                              (session_id, mode, actor_id, roles, capabilities, created_at,
-                               expires_at, status, reason, ttl_seconds, context_pack_id,
-                               provider_run_id, audit_refs, revoked_at, revoke_reason,
-                               updated_at)
-                            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                            """,
-                            values,
-                        )
-                    else:
-                        conn.execute(
-                            """
-                            UPDATE management_ai_assistant_sessions
-                            SET mode = ?, actor_id = ?, roles = ?, capabilities = ?,
-                                created_at = ?, expires_at = ?, status = ?, reason = ?,
-                                ttl_seconds = ?, context_pack_id = ?, provider_run_id = ?,
-                                audit_refs = ?, revoked_at = ?, revoke_reason = ?,
-                                updated_at = ?
-                            WHERE session_id = ?
-                            """,
-                            (
-                                payload["mode"],
-                                payload["actorId"],
-                                _json_dumps(payload["roles"]),
-                                _json_dumps(payload["capabilities"]),
-                                payload["createdAt"],
-                                expires_at,
-                                payload["status"],
-                                reason,
-                                payload["ttlSeconds"],
-                                context_pack_id,
-                                provider_run_id,
-                                _json_dumps(payload["auditRefs"]),
-                                revoked_at,
-                                revoke_reason,
-                                clean_updated_at,
-                                clean_session_id,
-                            ),
-                        )
-                    row = conn.execute(
-                        "SELECT * FROM management_ai_assistant_sessions WHERE session_id = ?",
-                        (clean_session_id,),
-                    ).fetchone()
-                return self._row_to_assistant_session(row)
-
-            self._assistant_sessions[clean_session_id] = payload
-            return dict(payload)
 
     def get_assistant_session(self, session_id: str) -> Optional[Dict[str, Any]]:
         clean_session_id = str(session_id or "").strip()
         return self._conversation_store.get_assistant_session(clean_session_id)
-        with self._lock:
-            if self._enabled():
-                with self._connect() as conn:
-                    row = conn.execute(
-                        "SELECT * FROM management_ai_assistant_sessions WHERE session_id = ?",
-                        (clean_session_id,),
-                    ).fetchone()
-                return self._row_to_assistant_session(row) if row is not None else None
-            session = self._assistant_sessions.get(clean_session_id)
-            return dict(session) if session is not None else None
 
     def find_attachment(self, attachment_id: str) -> Optional[Tuple[Dict[str, Any], Dict[str, Any]]]:
         clean_id = str(attachment_id or "").strip()
@@ -1028,28 +730,6 @@ class ManagementAiConversationStore:
                     continue
                 if str(attachment.get("id") or attachment.get("attachmentId") or attachment.get("attachment_id") or "") == clean_id:
                     return dict(attachment), dict(turn)
-        return None
-        if self._enabled():
-            with self._lock:
-                with self._connect() as conn:
-                    rows = conn.execute("SELECT * FROM management_ai_turns").fetchall()
-                for row in rows:
-                    turn = self._row_to_turn(row)
-                    for attachment in turn.get("attachments") or []:
-                        if not isinstance(attachment, dict):
-                            continue
-                        if str(attachment.get("id") or attachment.get("attachmentId") or attachment.get("attachment_id") or "") == clean_id:
-                            return dict(attachment), turn
-            return None
-
-        with self._lock:
-            for turns in self._turns.values():
-                for turn in turns:
-                    for attachment in turn.get("attachments") or []:
-                        if not isinstance(attachment, dict):
-                            continue
-                        if str(attachment.get("id") or attachment.get("attachmentId") or attachment.get("attachment_id") or "") == clean_id:
-                            return dict(attachment), dict(turn)
         return None
 
     def read_attachment(self, attachment_id: str, metadata: Dict[str, Any]) -> Tuple[bytes, str, str]:

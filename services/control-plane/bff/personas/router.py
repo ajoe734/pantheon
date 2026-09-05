@@ -3286,20 +3286,7 @@ def create_personas_router(
             route="/bff/personas/{persona_id}/actions/{action_id}",
             replacement="/bff/actions/persona/{persona_id}/{action_id}",
         )
-        identity = _extract_identity(authorization)  # noqa: F841 — unreachable; preserved for future de-deprecation
-        _require_read_role(identity)
-        _reject_body_idempotency_key(payload)
-        resolved_key = _resolve_final_idempotency_key(idempotency_key, x_idempotency_key)
-        _ensure_persona_exists(persona_id)
-        return _strategy_persona_action_command(
-            entity_type=ObjectType.PERSONA,
-            entity_id=persona_id,
-            action_id=action_id,
-            resolved_key=resolved_key,
-            identity=identity,
-            payload=payload,
-            command_type=CommandType.PERSONA_ACTION,
-        )
+
 
     # --- bff_persona_test_prompt ---
     @router.post("/bff/personas/{persona_id}/test-prompt", status_code=202)
