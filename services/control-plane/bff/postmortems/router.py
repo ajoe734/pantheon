@@ -12,14 +12,7 @@ from typing import Any, Callable, Dict, Optional
 
 from fastapi import APIRouter, Header, HTTPException
 
-try:
-    from models import ErrorCode
-except ImportError:
-    try:
-        from ..models import ErrorCode  # type: ignore[no-redef]
-    except Exception:
-        class ErrorCode(str, Enum):  # type: ignore[no-redef]
-            RESOURCE_NOT_FOUND = "RESOURCE_NOT_FOUND"
+from services.control_plane.bff.models import ErrorCode
 
 from .service import PostmortemService
 

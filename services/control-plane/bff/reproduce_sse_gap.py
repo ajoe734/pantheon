@@ -1,13 +1,8 @@
-import os
-import sys
 import pytest
 import asyncio
 from fastapi.testclient import TestClient
 
-# Add current directory to path to import main
-sys.path.insert(0, os.path.dirname(__file__))
-
-import main as bff_main
+from services.control_plane.bff import main as bff_main
 
 AUTH = "Bearer test-operator:operator,admin"
 

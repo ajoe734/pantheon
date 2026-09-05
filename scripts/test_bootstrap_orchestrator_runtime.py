@@ -13,15 +13,59 @@ SCRIPT = ROOT / "scripts" / "bootstrap-orchestrator-runtime.sh"
 
 
 def _make_status_root(tmp_path: Path) -> Path:
+    """A minimal fake checkout materialized as the bootstrap script's command
+    root worktree.
+
+    Real bootstrap installs the exact candidate's own ``.orchestrator/
+    requirements.txt`` into the deploy-root-owned supervisor venv before ever
+    generating the dev-bridge keypair, so the fixture must carry a real
+    dependency contract -- not a description of one -- for the real-run tests
+    below to exercise the genuine ordering fix (venv/pip-install before
+    keypair) instead of a stub.
+
+    The real-run tests also exercise the read-only-validate-first supervisor
+    Python provisioning path, which calls the real
+    ``scripts/provision_live_supervisor_config.py --validate-python-
+    dependencies-only`` against the exact command root -- and that call
+    validates the whole immutable command root identity (Git remote, clean
+    tree, and the exact launch entry points), not just the requirements file.
+    So this fixture is a minimal but complete command root: a real dependency
+    contract, a real preflight script, a committed origin remote, and stub
+    launch entry points that only need to exist and be executable for this
+    phase (phase 5's real promotion is never reached in these tests).
+    """
+
     status_root = tmp_path / "checkout"
     status_root.mkdir()
     subprocess.run(["git", "init", "-q"], cwd=status_root, check=True)
     subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=status_root, check=True)
     subprocess.run(["git", "config", "user.name", "Test"], cwd=status_root, check=True)
     (status_root / "ai-status.json").write_text("{}\n", encoding="utf-8")
-    (status_root / ".orchestrator").mkdir()
+    orchestrator_dir = status_root / ".orchestrator"
+    orchestrator_dir.mkdir()
+    (orchestrator_dir / "requirements.txt").write_text(
+        (ROOT / ".orchestrator" / "requirements.txt").read_text(encoding="utf-8"),
+        encoding="utf-8",
+    )
+    (orchestrator_dir / "config.json").write_text("{}\n", encoding="utf-8")
+    (orchestrator_dir / "supervisor.py").write_text("# fake supervisor\n", encoding="utf-8")
+    scripts_dir = status_root / "scripts"
+    scripts_dir.mkdir()
+    (scripts_dir / "provision_live_supervisor_config.py").write_text(
+        (ROOT / "scripts" / "provision_live_supervisor_config.py").read_text(encoding="utf-8"),
+        encoding="utf-8",
+    )
+    for launch_entry_point in ("run-supervisor-watchdog.sh", "promote-supervisor-runtime.sh"):
+        stub = scripts_dir / launch_entry_point
+        stub.write_text("#!/usr/bin/env bash\nexit 0\n", encoding="utf-8")
+        stub.chmod(stub.stat().st_mode | stat.S_IEXEC | stat.S_IXGRP | stat.S_IXOTH)
     subprocess.run(["git", "add", "-A"], cwd=status_root, check=True)
     subprocess.run(["git", "commit", "-q", "-m", "init"], cwd=status_root, check=True)
+    subprocess.run(
+        ["git", "remote", "add", "origin", "https://example.invalid/fake/pantheon.git"],
+        cwd=status_root,
+        check=True,
+    )
     return status_root
 
 
@@ -172,6 +216,19 @@ def test_dry_run_is_idempotent(tmp_path: Path) -> None:
     assert "would generate Ed25519 keypair" in second.stdout
 
 
+def _run_stop_after_keypair(
+    tmp_path: Path, status_root: Path, deploy_root: Path
+) -> subprocess.CompletedProcess[str]:
+    env = dict(os.environ)
+    env["PATH"] = os.pathsep.join(
+        [str(_stub_bin_dir(tmp_path, bwrap_exit=0)), env.get("PATH", "")]
+    )
+    env["PANTHEON_STATUS_ROOT"] = str(status_root)
+    env["PANTHEON_DEPLOY_ROOT"] = str(deploy_root)
+    env["BOOTSTRAP_ORCHESTRATOR_STOP_AFTER_KEYPAIR"] = "1"
+    return subprocess.run([str(SCRIPT)], capture_output=True, text=True, check=False, env=env)
+
+
 def test_real_run_mints_keypair_then_second_run_is_idempotent(tmp_path: Path) -> None:
     """A real (non-dry-run) invocation must mint the pair once; a second real
     run must recognize the existing pair and leave it untouched rather than
@@ -179,19 +236,8 @@ def test_real_run_mints_keypair_then_second_run_is_idempotent(tmp_path: Path) ->
     status_root = _make_status_root(tmp_path)
     deploy_root = tmp_path / "deploy"
 
-    env_extra = {"BOOTSTRAP_ORCHESTRATOR_STOP_AFTER_KEYPAIR": "1"}
-
     def run_stop_after_keypair() -> subprocess.CompletedProcess[str]:
-        env = dict(os.environ)
-        env["PATH"] = os.pathsep.join(
-            [str(_stub_bin_dir(tmp_path, bwrap_exit=0)), env.get("PATH", "")]
-        )
-        env["PANTHEON_STATUS_ROOT"] = str(status_root)
-        env["PANTHEON_DEPLOY_ROOT"] = str(deploy_root)
-        env.update(env_extra)
-        return subprocess.run(
-            [str(SCRIPT)], capture_output=True, text=True, check=False, env=env
-        )
+        return _run_stop_after_keypair(tmp_path, status_root, deploy_root)
 
     authority_file = deploy_root / "runtime" / "supervisor-authority-public.env"
     signer_file = deploy_root / "runtime" / "dev-bridge-signing-private.env"
@@ -210,6 +256,48 @@ def test_real_run_mints_keypair_then_second_run_is_idempotent(tmp_path: Path) ->
     assert "generating Ed25519 keypair" not in second.stdout
     assert authority_file.read_bytes() == first_authority_bytes
     assert signer_file.read_bytes() == first_signer_bytes
+
+
+def test_second_real_run_on_same_sha_reuses_verified_supervisor_python(
+    tmp_path: Path,
+) -> None:
+    """Re-running bootstrap for the exact same command SHA (idempotent by
+    design, for example after an operator re-invokes it following an earlier
+    unrelated failure) must not re-install into the per-SHA supervisor Python
+    directory once that exact directory is already verified healthy -- that
+    directory can already be the one a currently running incumbent
+    supervisor launched from. The first real run must provision it in
+    isolation and publish it; a second real run against the same command SHA
+    must reuse it in place and never repeat venv creation or pip install."""
+    status_root = _make_status_root(tmp_path)
+    deploy_root = tmp_path / "deploy"
+
+    first = _run_stop_after_keypair(tmp_path, status_root, deploy_root)
+    assert first.returncode == 0, first.stdout + first.stderr
+    assert "creating supervisor Python environment in isolation" in first.stdout
+    assert "published verified supervisor Python environment" in first.stdout
+
+    command_sha = subprocess.run(
+        ["git", "rev-parse", "HEAD"], cwd=status_root, check=True, capture_output=True, text=True
+    ).stdout.strip()
+    supervisor_python_dir = deploy_root / "runtime" / "supervisor-python" / command_sha
+    site_packages = next((supervisor_python_dir / "lib").glob("python*/site-packages"))
+    first_installed_at = {
+        path: path.stat().st_mtime for path in site_packages.rglob("*") if path.is_file()
+    }
+
+    second = _run_stop_after_keypair(tmp_path, status_root, deploy_root)
+    assert second.returncode == 0, second.stdout + second.stderr
+    assert "reusing already-verified supervisor Python environment" in second.stdout
+    assert "creating supervisor Python environment in isolation" not in second.stdout
+    assert "installing supervisor Python dependencies" not in second.stdout
+    second_installed_at = {
+        path: path.stat().st_mtime for path in site_packages.rglob("*") if path.is_file()
+    }
+    assert second_installed_at == first_installed_at, (
+        "same-SHA re-entry must not rewrite any file in the already-verified "
+        "per-SHA supervisor Python environment"
+    )
 
 
 def test_partial_keypair_state_fails_closed(tmp_path: Path) -> None:

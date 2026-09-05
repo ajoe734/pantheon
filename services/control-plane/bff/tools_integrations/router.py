@@ -15,70 +15,28 @@ from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
 from fastapi import APIRouter, Body, Header, HTTPException, Query
 from starlette.responses import JSONResponse
 
-try:
-    from models import (
-        ActionCommandStatus,
-        CommandResponse,
-        CommandType,
-        ErrorCode,
-        McpImportedTool,
-        McpRejectedTool,
-        McpToolActionData,
-        McpToolActionRequest,
-        McpToolActionVerb,
-        McpToolClass,
-        McpToolDescriptor,
-        McpToolImportData,
-        McpToolImportRequest,
-        McpToolLifecycleStatus,
-        ObjectType,
-        OperatorIdentity,
-        TargetObject,
-        utc_now,
-    )
-except ImportError:
-    try:
-        from ..models import (  # type: ignore[no-redef]
-            ActionCommandStatus,
-            CommandResponse,
-            CommandType,
-            ErrorCode,
-            McpImportedTool,
-            McpRejectedTool,
-            McpToolActionData,
-            McpToolActionRequest,
-            McpToolActionVerb,
-            McpToolClass,
-            McpToolDescriptor,
-            McpToolImportData,
-            McpToolImportRequest,
-            McpToolLifecycleStatus,
-            ObjectType,
-            OperatorIdentity,
-            TargetObject,
-            utc_now,
-        )
-    except Exception:
-        from enum import Enum
+from services.control_plane.bff.models import (
+    ActionCommandStatus,
+    CommandResponse,
+    CommandType,
+    ErrorCode,
+    McpImportedTool,
+    McpRejectedTool,
+    McpToolActionData,
+    McpToolActionRequest,
+    McpToolActionVerb,
+    McpToolClass,
+    McpToolDescriptor,
+    McpToolImportData,
+    McpToolImportRequest,
+    McpToolLifecycleStatus,
+    ObjectType,
+    OperatorIdentity,
+    TargetObject,
+    utc_now,
+)
 
-        class ErrorCode(str, Enum):  # type: ignore[no-redef]
-            AUTH_REQUIRED = "AUTH_REQUIRED"
-            RESOURCE_NOT_FOUND = "RESOURCE_NOT_FOUND"
-            VALIDATION_FAILED = "VALIDATION_FAILED"
-            DEPENDENCY_UNAVAILABLE = "DEPENDENCY_UNAVAILABLE"
-            IDEMPOTENCY_CONFLICT = "IDEMPOTENCY_CONFLICT"
-            FORBIDDEN = "FORBIDDEN"
-            PRECONDITION_FAILED = "PRECONDITION_FAILED"
-            OPERATION_NOT_ALLOWED = "OPERATION_NOT_ALLOWED"
-            INTERNAL_ERROR = "INTERNAL_ERROR"
-
-try:
-    from openclaw_ops_client import OpenClawOpsClient, OpenClawOpsClientError
-except ImportError:
-    try:
-        from ..openclaw_ops_client import OpenClawOpsClient, OpenClawOpsClientError  # type: ignore[no-redef]
-    except Exception:
-        pass
+from services.control_plane.bff.openclaw_ops_client import OpenClawOpsClient, OpenClawOpsClientError
 
 from contextvars import ContextVar
 

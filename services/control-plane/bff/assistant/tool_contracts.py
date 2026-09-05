@@ -166,7 +166,7 @@ def preview_tool(action_id: str) -> ToolPreview:
     Raises ToolNotAllowedError when action_id is not in the allowlist or
     not present in the action catalog.
     """
-    from action_catalog import get_catalog_entry
+    from services.control_plane.bff.action_catalog import get_catalog_entry
 
     if action_id not in ASSISTANT_TOOL_ALLOWLIST:
         raise ToolNotAllowedError(action_id)
@@ -204,7 +204,7 @@ def validate_tool(
     Returns ToolValidationResult with ok=False and detailed errors on policy
     failures. Raises ToolNotAllowedError if action_id is not in the allowlist.
     """
-    from action_catalog import get_catalog_entry
+    from services.control_plane.bff.action_catalog import get_catalog_entry
 
     if action_id not in ASSISTANT_TOOL_ALLOWLIST:
         raise ToolNotAllowedError(action_id)
@@ -277,9 +277,9 @@ def execute_governed_tool(
     - ToolRbacError         (actor missing required role)
     - ToolValidationError   (missing reason or confirm_token)
     """
-    from action_catalog import get_catalog_entry
-    from command_executor import execute_command_with_status
-    from models import CommandType
+    from services.control_plane.bff.action_catalog import get_catalog_entry
+    from services.control_plane.bff.command_executor import execute_command_with_status
+    from services.control_plane.bff.models import CommandType
 
     _trace_id = trace_id or f"asst-tool-{uuid.uuid4().hex[:12]}"
     _command_id = f"cmd-asst-{uuid.uuid4().hex[:12]}"

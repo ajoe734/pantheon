@@ -60,7 +60,7 @@ def build_execution_router(
         idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
         x_request_id: Optional[str] = Header(default=None, alias="X-Request-Id"),
     ) -> Dict[str, Any]:
-        from models import ErrorCode
+        from services.control_plane.bff.models import ErrorCode
 
         scope = _scope(
             authorization,
@@ -307,7 +307,7 @@ def build_execution_router(
         idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
         x_request_id: Optional[str] = Header(default=None, alias="X-Request-Id"),
     ) -> Dict[str, Any]:
-        from models import ErrorCode
+        from services.control_plane.bff.models import ErrorCode
 
         scope = _scope(
             authorization,
@@ -575,7 +575,7 @@ def build_execution_router(
         idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
         x_request_id: Optional[str] = Header(default=None, alias="X-Request-Id"),
     ) -> Dict[str, Any]:
-        from models import ErrorCode
+        from services.control_plane.bff.models import ErrorCode
 
         scope = _scope(
             authorization,

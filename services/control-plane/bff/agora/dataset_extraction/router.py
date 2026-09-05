@@ -96,7 +96,7 @@ def create_dataset_extraction_router(
             return ErrorCode
         except Exception:
             try:
-                from models import ErrorCode  # type: ignore[import]
+                from services.control_plane.bff.models import ErrorCode  # type: ignore[import]
                 return ErrorCode
             except Exception:
                 class FallbackErrorCode:

@@ -99,7 +99,7 @@ def evolution_url(path: str) -> str:
 
 def record_downstream_outcome(url: str, ok: bool, status_code: int, detail: Optional[str] = None) -> None:
     try:
-        from downstream_health_monitor import get_downstream_health_monitor
+        from services.control_plane.bff.downstream_health_monitor import get_downstream_health_monitor
         monitor = get_downstream_health_monitor()
         if monitor is None:
             return
@@ -127,8 +127,7 @@ def http_request_json(
     timeout: Optional[int] = None,
 ) -> Any:
     """Execute HTTP request to a domain authority endpoint and parse JSON response."""
-    import command_executor
-
+    from services.control_plane.bff import command_executor
     if method.upper() == "GET" and hasattr(command_executor, "_get_json"):
         return command_executor._get_json(url, auth_token=auth_token, mfa_token=mfa_token)
     if hasattr(command_executor, "_post_json"):

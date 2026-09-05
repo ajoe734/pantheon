@@ -10,9 +10,12 @@ from __future__ import annotations
 
 import argparse
 import copy
+import ctypes
+import errno
 import json
 import os
 import re
+import shutil
 import stat
 import subprocess
 import sys
@@ -30,7 +33,13 @@ GIT_SCRIPTS_DIR = Path(__file__).resolve().parent / "git"
 if str(GIT_SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(GIT_SCRIPTS_DIR))
 
-import auto_integrator  # noqa: E402  (shared stable integration lock)
+# ``auto_integrator`` is only needed by main()'s full-config-render lock, not
+# by --validate-command-root-only or --validate-python-dependencies-only.
+# Importing it lazily (inside main(), where it is actually used) keeps the
+# lightweight preflight paths free of that module's own dependency surface --
+# in particular the fresh-host Python dependency preflight below must be
+# callable before any Pantheon repository tree beyond this one file and the
+# candidate interpreter itself is guaranteed to exist.
 
 
 WATCHDOG_RUNTIME_PATH_DEFAULTS = {
@@ -39,6 +48,285 @@ WATCHDOG_RUNTIME_PATH_DEFAULTS = {
     "contention_metrics_file": ".orchestrator/metrics/supervisor-watchdog-contention.jsonl",
 }
 TASK_STATE_STORE_DEFAULT_FILENAME = "task-state-events.jsonl"
+
+
+def parse_requirements_packages(path: Path) -> list[tuple[str, str]]:
+    """Return (distribution_name, specifier) pairs from a minimal requirements file.
+
+    ``specifier`` is the raw remainder of the line after the distribution name
+    (for example ``>=2.9,<3``), or ``""`` when the line names a bare package
+    with no version constraint.
+    """
+
+    if path.is_symlink() or not path.is_file():
+        raise ValueError(f"requirements file must be a regular non-symlink file: {path}")
+    packages: list[tuple[str, str]] = []
+    for raw_line in path.read_text(encoding="utf-8").splitlines():
+        line = raw_line.split("#", 1)[0].strip()
+        if not line:
+            continue
+        match = re.match(r"[A-Za-z0-9][A-Za-z0-9._-]*", line)
+        if not match:
+            raise ValueError(f"invalid requirements entry in {path}: {raw_line!r}")
+        packages.append((match.group(0), line[match.end():].strip()))
+    if not packages:
+        raise ValueError(f"requirements file defines no packages: {path}")
+    return packages
+
+
+def _import_name_for(distribution_name: str) -> str:
+    """Best-effort distribution -> import name mapping for the probe below.
+
+    The supervisor's minimal dependency contract only ever names packages
+    whose import name is their lower-cased, underscore-normalized
+    distribution name (``pydantic``, ``cryptography``); this keeps the probe
+    generic without vendoring a full metadata-to-import-name index.
+    """
+
+    return distribution_name.lower().replace("-", "_")
+
+
+# Runs entirely inside the candidate interpreter (not the caller's) so a
+# de-virtualized symlink, a half-provisioned venv, a fresh host missing
+# packages, an incompatible version, or a broken native extension (a
+# pydantic install whose pydantic_core does not actually load, for example)
+# fails closed here -- before any incumbent supervisor state is touched --
+# instead of surfacing later as a silent packet-drain failure. Distribution
+# metadata alone is not enough: metadata can report a version string that
+# satisfies every specifier while the module itself fails to import.
+#
+# The specifier check itself must use the standard PEP 440 authority
+# (``packaging``, declared in .orchestrator/requirements.txt) rather than a
+# hand-rolled numeric-prefix comparator: a numeric-prefix comparator strips
+# pre/post-release suffixes before comparing, so it silently accepts
+# ``2.9rc1`` against ``>=2.9,<3`` (a pre-release the specifier never opted
+# into), accepts ``2.9`` against ``>=2.9.post1`` (post-releases sort after
+# their base release, so ``2.9 < 2.9.post1``), and accepts an invalid
+# specifier such as ``>=not-a-version`` by silently comparing against ``0``.
+_DEPENDENCY_PROBE = r"""
+import importlib
+import importlib.metadata as m
+import json
+
+from packaging.specifiers import InvalidSpecifier, SpecifierSet
+from packaging.version import InvalidVersion, Version
+
+specs = __SPECS_JSON__
+
+versions = {}
+for spec in specs:
+    name = spec["name"]
+    specifier = spec["specifier"]
+    version_text = m.version(name)
+    if specifier:
+        try:
+            specifier_set = SpecifierSet(specifier)
+        except InvalidSpecifier as exc:
+            raise SystemExit(
+                json.dumps({"error": f"{name} has invalid specifier {specifier!r}: {exc}"})
+            )
+        try:
+            version = Version(version_text)
+        except InvalidVersion as exc:
+            raise SystemExit(
+                json.dumps(
+                    {"error": f"{name} has invalid installed version {version_text!r}: {exc}"}
+                )
+            )
+        if not specifier_set.contains(version):
+            raise SystemExit(
+                json.dumps({"error": f"{name} {version_text} does not satisfy {specifier!r}"})
+            )
+    importlib.import_module(spec["import_name"])
+    versions[name] = version_text
+
+print(json.dumps({"versions": versions}))
+"""
+
+
+def validate_python_dependencies(
+    python_executable: Path, requirements_path: Path
+) -> dict[str, str]:
+    """Prove the selected interpreter can import each required dependency at
+    a version satisfying its declared specifier.
+
+    See ``_DEPENDENCY_PROBE`` for why a real import plus specifier check is
+    required instead of a metadata-only lookup.
+    """
+
+    packages = parse_requirements_packages(requirements_path)
+    probe_specs = [
+        {"name": name, "specifier": specifier, "import_name": _import_name_for(name)}
+        for name, specifier in packages
+    ]
+    probe = _DEPENDENCY_PROBE.replace("__SPECS_JSON__", json.dumps(probe_specs))
+    try:
+        result = subprocess.run(
+            [str(python_executable), "-c", probe],
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        raise ValueError(
+            f"python dependency preflight could not run {python_executable}: {exc}"
+        ) from exc
+    if result.returncode != 0:
+        detail = (result.stderr or result.stdout or "unknown import failure").strip()
+        raise ValueError(
+            f"python dependency preflight failed for {python_executable}: {detail}"
+        )
+    try:
+        payload = json.loads(result.stdout.strip())
+    except json.JSONDecodeError as exc:
+        raise ValueError(
+            f"python dependency preflight produced invalid output for {python_executable}"
+        ) from exc
+    versions = payload.get("versions") if isinstance(payload, dict) else None
+    expected_names = [name for name, _ in packages]
+    if not isinstance(versions, dict) or set(versions) != set(expected_names):
+        raise ValueError(
+            f"python dependency preflight missing packages for {python_executable}: "
+            f"expected {sorted(expected_names)}, got {sorted(versions) if isinstance(versions, dict) else versions!r}"
+        )
+    return versions
+
+
+def _publish_directory_no_clobber(source: Path, destination: Path) -> None:
+    """Atomically publish ``source`` to ``destination`` iff nothing is there yet.
+
+    Uses ``renameat2`` with ``RENAME_NOREPLACE`` so the destination -- which
+    can already be the exact directory a currently running incumbent
+    supervisor launched from -- is never opened for writing, whether this is
+    the first publish for that path or a race against a concurrent publisher.
+    A racing publisher that wins is accepted as success (``EEXIST``) rather
+    than treated as a failure of this publish.
+    """
+
+    libc = ctypes.CDLL(None, use_errno=True)
+    renameat2 = libc.renameat2
+    renameat2.argtypes = [ctypes.c_int, ctypes.c_char_p, ctypes.c_int, ctypes.c_char_p, ctypes.c_uint]
+    renameat2.restype = ctypes.c_int
+    if renameat2(-100, os.fsencode(source), -100, os.fsencode(destination), 1) != 0:
+        error = ctypes.get_errno()
+        if error != errno.EEXIST:
+            raise OSError(error, os.strerror(error), str(destination))
+    directory_fd = os.open(destination.parent, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
+    try:
+        os.fsync(directory_fd)
+    finally:
+        os.close(directory_fd)
+
+
+def ensure_supervisor_python_environment(
+    *,
+    python_parent: Path,
+    sha: str,
+    requirements_path: Path,
+) -> dict[str, Any]:
+    """Ensure one verified, per-SHA supervisor Python environment exists.
+
+    This is the single owner of the environment provisioning/reuse/
+    publication policy that both ``bootstrap-orchestrator-runtime.sh`` and
+    ``sync-dev-root.sh`` need: they call this with their own contextual
+    ``python_parent``/``sha``/``requirements_path`` instead of each
+    re-implementing the decision loop.
+
+    An existing per-SHA directory is only ever validated read-only first --
+    it can already be the one a currently running incumbent supervisor
+    launched from, so a re-run reaching this function (idempotent bootstrap
+    re-entry, same-SHA config-drift re-promotion, or any other repeat call
+    for the same SHA) must never mutate it in place. Only a missing or
+    failing environment is (re)provisioned, and it is provisioned into an
+    isolated, never-before-published directory and preflighted there, then
+    published into the per-SHA path with a create-only (no-clobber) rename --
+    so the per-SHA path itself is never opened for writing once it is
+    healthy, whether this is the first provisioning of that SHA or the
+    tenth.
+    """
+
+    if not re.fullmatch(r"[0-9a-f]{40}", sha):
+        raise ValueError(f"supervisor python environment sha must be a lowercase full SHA: {sha!r}")
+    if requirements_path.is_symlink() or not requirements_path.is_file():
+        raise ValueError(f"requirements file does not exist: {requirements_path}")
+
+    python_parent = python_parent.expanduser().absolute()
+    python_dir = python_parent / sha
+    python_executable = python_dir / "bin" / "python3"
+
+    if python_executable.is_file():
+        try:
+            python_dependencies = validate_python_dependencies(python_executable, requirements_path)
+        except ValueError:
+            pass
+        else:
+            return {
+                "python_executable": str(python_executable),
+                "reused": True,
+                "python_dependencies": python_dependencies,
+            }
+
+    python_parent.mkdir(parents=True, exist_ok=True)
+    candidate_dir = Path(
+        tempfile.mkdtemp(prefix=f".supervisor-python-provision-{sha}.", dir=python_parent)
+    )
+    try:
+        candidate_python = candidate_dir / "bin" / "python3"
+        venv_proc = subprocess.run(
+            [sys.executable, "-m", "venv", str(candidate_dir)],
+            capture_output=True,
+            text=True,
+        )
+        if venv_proc.returncode != 0:
+            raise ValueError(
+                f"failed to create supervisor Python environment {candidate_dir}: "
+                f"{(venv_proc.stderr or venv_proc.stdout).strip()}"
+            )
+        install_proc = subprocess.run(
+            [
+                str(candidate_python),
+                "-m",
+                "pip",
+                "install",
+                "--quiet",
+                "--disable-pip-version-check",
+                "-r",
+                str(requirements_path),
+            ],
+            capture_output=True,
+            text=True,
+        )
+        if install_proc.returncode != 0:
+            raise ValueError(
+                f"failed to install supervisor Python dependencies from {requirements_path}: "
+                f"{(install_proc.stderr or install_proc.stdout).strip()}"
+            )
+        validate_python_dependencies(candidate_python, requirements_path)
+        if python_dir.exists() or python_dir.is_symlink():
+            raise ValueError(
+                "refusing to replace an existing supervisor Python environment that "
+                f"failed read-only validation: {python_dir}"
+            )
+        _publish_directory_no_clobber(candidate_dir, python_dir)
+        # _publish_directory_no_clobber can lose a publish race (EEXIST) and
+        # still return success, so the proof this function hands back must be
+        # earned by the interpreter that actually ended up at python_dir --
+        # ours or a concurrent winner's -- never by the discarded candidate.
+        try:
+            python_dependencies = validate_python_dependencies(python_executable, requirements_path)
+        except ValueError as exc:
+            raise ValueError(
+                "supervisor Python environment publish raced with an invalid "
+                f"winner at {python_dir}: {exc}"
+            ) from exc
+    finally:
+        shutil.rmtree(candidate_dir, ignore_errors=True)
+
+    return {
+        "python_executable": str(python_executable),
+        "reused": False,
+        "python_dependencies": python_dependencies,
+    }
 
 
 def load_json_object(path: Path) -> dict[str, Any]:
@@ -680,6 +968,15 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--status-root")
     parser.add_argument("--python", default=sys.executable)
     parser.add_argument(
+        "--requirements",
+        default=None,
+        help=(
+            "Minimal supervisor dependency contract to preflight-check against "
+            "--python before accepting it. Defaults to "
+            "<command-root>/.orchestrator/requirements.txt when that file exists."
+        ),
+    )
+    parser.add_argument(
         "--repository-source-root",
         action="append",
         default=[],
@@ -694,16 +991,49 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="Render one dedicated clean merge checkout into coordination.repositories.",
     )
     parser.add_argument(
+        "--ensure-python-environment",
+        action="store_true",
+        help=(
+            "Ensure one verified supervisor Python environment exists under "
+            "--python-parent, named by --command-root's exact HEAD SHA -- "
+            "reusing it after read-only validation, or provisioning and "
+            "atomically publishing a fresh one -- then print it as JSON. "
+            "Single owner of the provisioning/reuse/publish policy shared "
+            "by the bootstrap and sync-dev-root entrypoints."
+        ),
+    )
+    parser.add_argument(
+        "--python-parent",
+        default=None,
+        help="Parent directory holding per-SHA supervisor Python environments; required with --ensure-python-environment.",
+    )
+    parser.add_argument(
         "--validate-command-root-only",
         action="store_true",
         help="Validate immutable command runtime identity without writing state.",
     )
+    parser.add_argument(
+        "--validate-python-dependencies-only",
+        action="store_true",
+        help=(
+            "Run only the --python dependency preflight (real import plus "
+            "version-specifier check) against --requirements (or "
+            "<command-root>/.orchestrator/requirements.txt) and exit, "
+            "without touching live config or any incumbent state."
+        ),
+    )
     parser.add_argument("--json", action="store_true")
     args = parser.parse_args(argv)
-    if not args.validate_command_root_only:
+    if (
+        not args.validate_command_root_only
+        and not args.validate_python_dependencies_only
+        and not args.ensure_python_environment
+    ):
         for option in ("repo_config", "live_config", "status_root"):
             if not getattr(args, option):
                 parser.error(f"--{option.replace('_', '-')} is required")
+    if args.ensure_python_environment and not args.python_parent:
+        parser.error("--python-parent is required with --ensure-python-environment")
     return args
 
 
@@ -719,6 +1049,61 @@ def _main_locked(argv: list[str] | None = None) -> int:
                 print(
                     "validated immutable supervisor command root: "
                     f"root={command_root} head={command_identity['head']}"
+                )
+            return 0
+
+        if args.validate_python_dependencies_only:
+            python_executable = Path(args.python).expanduser().absolute()
+            if not python_executable.is_file():
+                raise ValueError(f"python executable does not exist: {python_executable}")
+            requirements_path = (
+                Path(args.requirements).expanduser().absolute()
+                if args.requirements
+                else command_root / ".orchestrator" / "requirements.txt"
+            )
+            if not requirements_path.is_file():
+                raise ValueError(f"requirements file does not exist: {requirements_path}")
+            python_dependencies = validate_python_dependencies(
+                python_executable, requirements_path
+            )
+            if args.json:
+                print(
+                    json.dumps(
+                        {
+                            "python_executable": str(python_executable),
+                            "requirements": str(requirements_path),
+                            "python_dependencies": python_dependencies,
+                        },
+                        indent=2,
+                        sort_keys=True,
+                    )
+                )
+            else:
+                print(
+                    "validated python dependency preflight: "
+                    f"python={python_executable} requirements={requirements_path} "
+                    f"versions={python_dependencies}"
+                )
+            return 0
+
+        if args.ensure_python_environment:
+            python_parent = Path(args.python_parent).expanduser().absolute()
+            requirements_path = (
+                Path(args.requirements).expanduser().absolute()
+                if args.requirements
+                else command_root / ".orchestrator" / "requirements.txt"
+            )
+            result = ensure_supervisor_python_environment(
+                python_parent=python_parent,
+                sha=command_identity["head"],
+                requirements_path=requirements_path,
+            )
+            if args.json:
+                print(json.dumps(result, indent=2, sort_keys=True))
+            else:
+                print(
+                    "supervisor python environment ready: "
+                    f"python={result['python_executable']} reused={str(result['reused']).lower()}"
                 )
             return 0
 
@@ -744,9 +1129,27 @@ def _main_locked(argv: list[str] | None = None) -> int:
                 raise ValueError(f"live config must be a regular non-symlink file: {live_config_path}")
             existing = load_json_object(live_config_path)
 
-        python_executable = Path(args.python).expanduser().resolve()
+        # Preserve a venv invocation path (typically a symlink chain to the
+        # base interpreter) instead of collapsing it with .resolve(). A fully
+        # resolved path launches the base interpreter directly, which never
+        # locates the venv's pyvenv.cfg and silently loses every dependency
+        # the venv provides -- exactly the missing-pydantic failure mode this
+        # task exists to close.
+        python_executable = Path(args.python).expanduser().absolute()
         if not python_executable.is_file():
             raise ValueError(f"python executable does not exist: {python_executable}")
+        requirements_path = (
+            Path(args.requirements).expanduser().absolute()
+            if args.requirements
+            else command_root / ".orchestrator" / "requirements.txt"
+        )
+        python_dependencies: dict[str, str] | None = None
+        if requirements_path.is_file():
+            python_dependencies = validate_python_dependencies(
+                python_executable, requirements_path
+            )
+        elif args.requirements:
+            raise ValueError(f"requirements file does not exist: {requirements_path}")
         rendered = build_live_config(
             repo_config,
             existing_live_config=existing,
@@ -787,6 +1190,8 @@ def _main_locked(argv: list[str] | None = None) -> int:
         "approval_queue_created": approval_queue_created,
         "config_created": config_created,
         "command_runtime": command_identity,
+        "python_executable": str(python_executable),
+        "python_dependencies": python_dependencies,
         "supervisor_command": rendered["watchdog"]["supervisor_command"],
         "repository_source_roots": {
             repository_id: str(entry.get("local_path"))
@@ -818,9 +1223,21 @@ def main(argv: list[str] | None = None) -> int:
     probe = argparse.ArgumentParser(add_help=False)
     probe.add_argument("--status-root")
     probe.add_argument("--validate-command-root-only", action="store_true")
+    probe.add_argument("--validate-python-dependencies-only", action="store_true")
+    probe.add_argument("--ensure-python-environment", action="store_true")
     known, _ = probe.parse_known_args(argv)
-    if known.validate_command_root_only or not known.status_root:
+    if (
+        known.validate_command_root_only
+        or known.validate_python_dependencies_only
+        or known.ensure_python_environment
+        or not known.status_root
+    ):
         return _main_locked(argv)
+
+    if str(GIT_SCRIPTS_DIR) not in sys.path:
+        sys.path.insert(0, str(GIT_SCRIPTS_DIR))
+    import auto_integrator  # noqa: PLC0415  (see module-level comment above)
+
     lock_path = (
         Path(known.status_root).expanduser().absolute()
         / auto_integrator.DEFAULT_LOCK

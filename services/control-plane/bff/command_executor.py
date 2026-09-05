@@ -215,7 +215,7 @@ def _evolution_actor_role(actor_role: str) -> str:
 
 def _record_outcome_for_target(url: str, ok: bool, status_code: int, detail: Optional[str] = None) -> None:
     try:
-        from downstream_health_monitor import DownstreamTarget, get_downstream_health_monitor
+        from services.control_plane.bff.downstream_health_monitor import DownstreamTarget, get_downstream_health_monitor
         monitor = get_downstream_health_monitor()
         if monitor is None:
             return
@@ -1657,7 +1657,7 @@ def _execute_bff_action_adapter(
         "live_capital_side_effects": False,
     }
     if params.get("action_id") == "EmergencyContainment":
-        from emergency_containment_policy import containment_receipt_fields
+        from services.control_plane.bff.emergency_containment_policy import containment_receipt_fields
 
         result.update(containment_receipt_fields(params))
     return result

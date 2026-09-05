@@ -370,10 +370,60 @@ if ! materialize_candidate_runtime "$DEV_ROOT" "$candidate_root" "$target_sha"; 
   exit 1
 fi
 
+# The promoted supervisor must never launch from the ambient /usr/bin/python3
+# (see docs/operations/supervisor-python-runtime.md): that interpreter has no
+# reason to carry pydantic/cryptography, and losing them silently drops
+# packet intake while the heartbeat stays healthy. This venv is deploy-root
+# owned so it survives command-runtime pruning, and is (re)installed from the
+# exact candidate's own .orchestrator/requirements.txt on every promotion so
+# a dependency bump lands with the code that needs it.
+#
+# The provisioning/reuse/publication policy itself (read-only validate an
+# existing per-SHA directory first; provision+preflight a fresh one in
+# isolation only when missing or failing; publish with a create-only rename)
+# is owned by ``ensure_supervisor_python_environment`` in
+# provision_live_supervisor_config.py, the single owner shared with
+# bootstrap-orchestrator-runtime.sh's equivalent phase -- see that function's
+# docstring for why an existing per-SHA directory (which can already be the
+# one a currently running incumbent supervisor launched from, including on
+# a same-SHA config-drift re-promotion or any other repeat call for the same
+# SHA) is never mutated in place.
+SUPERVISOR_PYTHON_PARENT="${PANTHEON_SUPERVISOR_PYTHON_DIR:-${DEPLOY_ROOT}/runtime/supervisor-python}"
+SUPERVISOR_PYTHON_DIR="${SUPERVISOR_PYTHON_PARENT}/${target_sha}"
+SUPERVISOR_PYTHON="${SUPERVISOR_PYTHON_DIR}/bin/python3"
+SUPERVISOR_REQUIREMENTS="${candidate_root}/.orchestrator/requirements.txt"
+if [[ ! -f "$SUPERVISOR_REQUIREMENTS" ]]; then
+  log "FATAL: candidate is missing .orchestrator/requirements.txt: $SUPERVISOR_REQUIREMENTS"
+  exit 1
+fi
+
+ensure_output="$(python3 -B "${candidate_root}/scripts/provision_live_supervisor_config.py" \
+  --ensure-python-environment \
+  --command-root "$candidate_root" \
+  --python-parent "$SUPERVISOR_PYTHON_PARENT" \
+  --requirements "$SUPERVISOR_REQUIREMENTS" \
+  --json)" || {
+  log "FATAL: python dependency preflight failed for candidate=$candidate_root; incumbent=${active_root:-none} untouched"
+  exit 1
+}
+mapfile -t _ensure_fields < <(python3 -c '
+import json, sys
+payload = json.load(sys.stdin)
+print(payload["python_executable"])
+print("1" if payload["reused"] else "0")
+' <<<"$ensure_output")
+SUPERVISOR_PYTHON="${_ensure_fields[0]}"
+if [[ "${_ensure_fields[1]}" == "1" ]]; then
+  log "reusing already-verified supervisor Python environment: $SUPERVISOR_PYTHON_DIR"
+else
+  log "published verified supervisor Python environment: $SUPERVISOR_PYTHON_DIR"
+fi
+
 log "replacing supervisor from explicit config identity=${active_root:-none} candidate=$candidate_root coordination=$COORDINATION_ROOT"
 if ! "$candidate_root/scripts/promote-supervisor-runtime.sh" \
   --promote --repo "$candidate_root" --status-root "$COORDINATION_ROOT" \
   --live-config "$LIVE_CONFIG" \
+  --python "$SUPERVISOR_PYTHON" \
   --authority-env-file "$AUTHORITY_ENV_FILE" \
   --repository-source-root "pantheon=$DEV_ROOT" \
   --repository-source-root "execute_plans=$EXECUTE_PLANS_SOURCE_ROOT" \
