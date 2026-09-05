@@ -1,0 +1,55 @@
+{
+  "schema_version": 1,
+  "task_id": "DEV-DEPLOY-PREFLIGHT-20260905",
+  "kind": "dev_deploy_remote_assembly_preflight_evidence",
+  "task": {
+    "id": "DEV-DEPLOY-PREFLIGHT-20260905",
+    "title": "Repair dev deploy remote assembly without staging-only variables",
+    "owner": "Antigravity2",
+    "reviewer": "Claude",
+    "base_branch": "dev",
+    "task_branch": "task/DEV-DEPLOY-PREFLIGHT-20260905",
+    "delivery_state": "ready_for_independent_review"
+  },
+  "scope": {
+    "owned": [
+      "scripts/deploy_nonprod_vm.sh",
+      "scripts/test_deploy_nonprod_bootstrap_contract.py",
+      "scripts/test_deploy_nonprod_vm.py",
+      "docs/deployment/evidence/DEV-DEPLOY-PREFLIGHT-20260905/evidence.json"
+    ],
+    "not_changing": [
+      ".github/workflows/nonprod-deploy.yml",
+      "product runtime service files",
+      "staging-live target validation and fail-closed rules in validate_target_selection",
+      "shared dev environment lease or release admission policy",
+      "hosted deployment state"
+    ]
+  },
+  "acceptance_mapping": {
+    "fix_dev_remote_command_assembly": "scripts/deploy_nonprod_vm.sh safely expands STAGING_EXEC_HEALTH_URL and STAGING_BFF_CORS_ORIGINS (as well as DEV_BFF_* sibling variables in staging) using default-empty parameter expansion ${VAR:-} in ssh_bash command_prefix assembly, preventing unbound variable errors under bash -u when deploying dev with staging variables unset.",
+    "preserve_staging_live_and_retired_target_validations": "validate_target_selection retains strict required-variable and retired-target identity enforcement without fabricated staging defaults.",
+    "reproduce_and_prove_via_stubbed_ssh": "Executable tests reproduce real assembly beyond dry-run with all staging variables unset using a stubbed SSH boundary, capturing and asserting exact selected dev target (host and user), exact command prefix, and script payload delivered via stdin without invoking any real remote.",
+    "contract_tests_and_rejection_tests": "Explicit-empty and retired-target rejection tests are preserved and pass cleanly, alongside new beyond-dry-run tests for both dev and staging-live environments.",
+    "runtime_safety": "No hosted runtime mutation is performed; integration verification and redeploy remain owned by root GPT-6 Astra."
+  },
+  "verification": [
+    {
+      "command": "bash -n scripts/deploy_nonprod_vm.sh",
+      "result": "syntax OK"
+    },
+    {
+      "command": "pytest -q scripts/test_deploy_nonprod_vm.py scripts/test_deploy_nonprod_bootstrap_contract.py",
+      "result": "92 passed, 2 skipped"
+    },
+    {
+      "command": "git diff --check",
+      "result": "passed"
+    }
+  ],
+  "review_decision": {
+    "status": "pending",
+    "reviewer": "Claude",
+    "note": "Independent reviewer must validate the frozen PR head, test coverage, and this manifest before approval."
+  }
+}

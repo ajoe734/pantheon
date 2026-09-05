@@ -386,7 +386,7 @@ def _cors_origin_allowed(origin: Optional[str]) -> bool:
     normalized = _normalized_origin(origin)
     if normalized in _cors_origins:
         return True
-    if not _is_production_strict_mode() and _LOVABLE_PREVIEW_ORIGIN_REGEX.match(origin):
+    if not _is_production_strict_mode() and _LOVABLE_PREVIEW_ORIGIN_PATTERN.fullmatch(origin):
         return True
     return False
 
@@ -605,6 +605,9 @@ async def _bff_unhandled_exception_handler(
         message="Internal server error",
         correlation_id=correlation_id,
         details={"reason": "INTERNAL_SERVER_ERROR"},
+        # Starlette's outer error handler runs after the CORS middleware has
+        # unwound. Preserve the same allowlist on this terminal response.
+        headers=_with_cors_actual_response_headers(request, {}),
     )
 
 def _build_bff_app() -> FastAPI:

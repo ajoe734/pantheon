@@ -21,6 +21,15 @@ MODEL_POOL_BATCH='[
   {"path":"agents.defaults.models[\"google/gemini-3.1-pro-preview\"]","value":{"alias":"gemini","agentRuntime":{"id":"google-gemini-cli"}}}
 ]'
 
+# OpenClaw 2026.7.1 clears ambient Claude credentials before spawning its CLI.
+# Bind only the explicitly provisioned product token, using an unresolved env
+# reference on disk. Do not disable clearEnv or copy a native CLI login. The
+# backend command is required by this pinned release's override schema.
+CLAUDE_TOKEN_BATCH='[
+  {"path":"agents.defaults.cliBackends[\"claude-cli\"].command","value":"claude"},
+  {"path":"agents.defaults.cliBackends[\"claude-cli\"].env.CLAUDE_CODE_OAUTH_TOKEN","value":"${CLAUDE_CODE_OAUTH_TOKEN}"}
+]'
+
 cd "$REPO_ROOT"
 
 compose() {
@@ -33,6 +42,11 @@ openclaw() {
 }
 
 openclaw config set --batch-json "$MODEL_POOL_BATCH"
+if compose exec -T -u node openclaw-gateway node -e \
+  'process.exit(process.env.CLAUDE_CODE_OAUTH_TOKEN?.trim() ? 0 : 1)'; then
+  # The argv contains only the literal reference, never the credential value.
+  openclaw config set --batch-json "$CLAUDE_TOKEN_BATCH" >/dev/null
+fi
 openclaw config validate
 
 # OpenClaw reports that a restart is required after config mutation. Apply it
