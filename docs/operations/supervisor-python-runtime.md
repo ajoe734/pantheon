@@ -11,7 +11,8 @@ kept working), but every signed dev-bridge packet drain failed silently with
 `ModuleNotFoundError: No module named 'pydantic'`. The failure was invisible
 in health checks because the health surface never exercised the drain path.
 
-Two independent bugs produced this:
+Independent review of the first delivery (head `cbea5c308bf2994e7ce1b3c238f39ab1374582b0`)
+found two more real defects beyond the original two, all four now closed here:
 
 1. Nothing in the promotion chain ever selected a dependency-carrying
    interpreter. `scripts/bootstrap-orchestrator-runtime.sh` and
@@ -28,6 +29,19 @@ Two independent bugs produced this:
    before storing it collapses the chain in Python, so the stored
    `supervisor_command` launches the base interpreter directly, which never
    finds `pyvenv.cfg` and silently loses every package the venv provided.
+3. (found in review) `scripts/bootstrap-orchestrator-runtime.sh` generated
+   the dev-bridge keypair -- which imports `cryptography` -- with the
+   ambient `python3`, before the supervisor venv was ever created. A clean
+   host with no ambient `cryptography` could not bootstrap at all.
+4. (found in review) `validate_python_dependencies()` called
+   `importlib.metadata.version()` only: it never enforced the
+   `requirements.txt` version specifier and never imported the module, so an
+   incompatible version or a broken native extension could report a passing
+   preflight. Separately, `scripts/sync-dev-root.sh` pip-installed every
+   promotion into one fixed venv directory -- the same directory a currently
+   running incumbent supervisor had already launched from -- before any
+   preflight ran, so a partial or failed install could break the live
+   incumbent regardless of whether the candidate was ever accepted.
 
 ## The runtime contract
 
@@ -42,11 +56,19 @@ shim.
   supervisor's bridge/task-store code actually imports (`pydantic`,
   `cryptography`) -- not the product BFF's full dependency set.
 - **Environment**: a dedicated venv at
-  `$PANTHEON_DEPLOY_ROOT/runtime/supervisor-python`, created with
-  `python3 -m venv` and kept current with
-  `pip install -r .orchestrator/requirements.txt` from the exact candidate
-  being promoted. This directory is deploy-root owned (not inside any Git
-  worktree), so it survives command-runtime pruning and re-promotion.
+  `$PANTHEON_DEPLOY_ROOT/runtime/supervisor-python/<exact-candidate-SHA>`,
+  created with `python3 -m venv` and installed with
+  `pip install -r .orchestrator/requirements.txt` from that exact candidate.
+  This directory is deploy-root owned (not inside any Git worktree), so it
+  survives command-runtime pruning and re-promotion. It is versioned per
+  exact candidate SHA, not kept at one fixed path: a fixed path would mean an
+  install (or a failed reinstall) for a *new* candidate mutates the very
+  directory a currently *running* incumbent supervisor already launched
+  from, so a partial or failed install could break the live process before
+  promotion ever decides whether to accept the candidate. A per-SHA
+  directory makes that impossible by construction -- an install can never
+  touch the directory backing a different, already-promoted SHA -- and every
+  prior verified environment stays on disk, usable for rollback.
 - **Selection**: both `scripts/bootstrap-orchestrator-runtime.sh` (fresh
   host) and `scripts/sync-dev-root.sh` (ongoing promotion) explicitly pass
   `--python "$SUPERVISOR_PYTHON"` to `promote_supervisor_runtime.py`
@@ -60,22 +82,51 @@ shim.
 - **Preflight, not blind trust**: before either
   `provision_live_supervisor_config.py` or `promote_supervisor_runtime.py`
   will accept a candidate interpreter, they run
-  `validate_python_dependencies()`, which executes
-  `python -c "import importlib.metadata; ..."` *inside that exact
-  interpreter* and requires every package named by
-  `.orchestrator/requirements.txt` to resolve with a real installed version.
-  A failed preflight raises before any incumbent state is touched: promotion
-  never stops the running supervisor, never writes the live config, and
-  never disturbs worker leases or the watchdog/cron binding.
+  `validate_python_dependencies()` *inside that exact interpreter*. The
+  probe parses each requirements line into a distribution name and version
+  specifier, calls `importlib.metadata.version()` for the real installed
+  version, enforces the specifier with a self-contained numeric comparator,
+  and then calls `importlib.import_module()` on the package -- so a wrong
+  version *or* a broken native extension (an unloadable `pydantic_core`, for
+  example) fails the preflight, not just a missing package. Checking
+  distribution metadata alone was not enough: metadata can report a version
+  string that satisfies every specifier while the module itself fails to
+  import. `scripts/sync-dev-root.sh` also runs this preflight explicitly
+  (`provision_live_supervisor_config.py --validate-python-dependencies-only`)
+  right after installing the candidate's per-SHA venv and before invoking
+  `promote-supervisor-runtime.sh`, so a bad candidate install is caught and
+  logged with the untouched incumbent root named in the failure, in addition
+  to the preflight `promote_supervisor_runtime.py` always runs before writing
+  live config. A failed preflight raises before any incumbent state is
+  touched: promotion never stops the running supervisor, never writes the
+  live config, and never disturbs worker leases or the watchdog/cron binding.
 
 ## Fresh-host reproducibility
 
-`scripts/bootstrap-orchestrator-runtime.sh` creates the venv and installs
+`scripts/bootstrap-orchestrator-runtime.sh` materializes the immutable
+command root, then creates the per-SHA venv and installs
 `.orchestrator/requirements.txt` into it as an explicit, scripted step (no
 reliance on whatever happens to already be importable from the chatbox shell
-that ran the script). Re-running the script is idempotent: an existing venv
-is reused, and `pip install` of an already-satisfied requirements file is a
+that ran the script) -- **before** generating the dev-bridge Ed25519 keypair.
+Keypair generation imports `cryptography` and now runs under that venv's
+`python3`, never the ambient one: a fresh host has no reason to carry
+`cryptography` on its system interpreter, and bootstrap must not depend on it
+being there. Re-running the script is idempotent: an existing per-SHA venv is
+reused, and `pip install` of an already-satisfied requirements file is a
 no-op.
+
+## Real signed-intake proof, not just a metadata probe
+
+`.orchestrator/development_bridge/tests/test_dev_bridge_inbox_bootstrap_python_runtime.py`
+builds a real interpreter the same way these scripts do (`python3 -m venv`
+plus `pip install -r .orchestrator/requirements.txt`) and genuinely queues
+and drains a real Ed25519-signed `DevTaskPacket` through it -- proving the
+bridge's pydantic parsing and cryptography signature verification actually
+work end to end under that interpreter, not merely that a dependency-metadata
+probe accepts it. A second test in the same file builds a bare venv (never
+given the requirements file) and proves the real drain fails closed instead
+of looking healthy, reproducing the original incident's failure mode
+deterministically.
 
 ## What this does not change
 

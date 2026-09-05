@@ -98,17 +98,22 @@ def _coordination_root(tmp_path: Path) -> Path:
     return root
 
 
-def _stub_supervisor_python(deploy_root: Path) -> Path:
-    """Pre-seed the deploy-root-owned supervisor venv with a no-op stub.
+def _stub_supervisor_python(deploy_root: Path, target_sha: str) -> Path:
+    """Pre-seed the deploy-root-owned, per-candidate-SHA supervisor venv path
+    with a no-op stub.
 
-    Production sync-dev-root.sh creates a real venv and pip-installs
-    .orchestrator/requirements.txt into it. Tests exercise the wiring
-    (creation is skipped when the interpreter already exists executable,
-    the dependency install command must still succeed) without requiring
-    real network access to a package index.
+    Production sync-dev-root.sh creates a real venv per exact candidate SHA
+    and pip-installs .orchestrator/requirements.txt into it, then preflights
+    it through the candidate's own provision_live_supervisor_config.py
+    (a no-op stub in this fixture -- see _seed_remote). Tests exercise the
+    wiring (creation is skipped when the interpreter already exists
+    executable, the dependency install/preflight commands must still
+    succeed) without requiring real network access to a package index.
     """
 
-    python_path = deploy_root / "runtime" / "supervisor-python" / "bin" / "python3"
+    python_path = (
+        deploy_root / "runtime" / "supervisor-python" / target_sha / "bin" / "python3"
+    )
     python_path.parent.mkdir(parents=True, exist_ok=True)
     python_path.write_text("#!/usr/bin/env bash\nexit 0\n", encoding="utf-8")
     python_path.chmod(0o755)
@@ -130,13 +135,14 @@ def _run_sync(
     coordination_root: Path,
     promotion_args: Path,
     *,
+    target_sha: str,
     authority_env_file: Path | None = None,
     watchdog_args_file: Path | None = None,
     watchdog_exit_code: int | None = None,
     auto_integrator_args_file: Path | None = None,
     auto_integrator_exit_code: int | None = None,
 ) -> subprocess.CompletedProcess[str]:
-    _stub_supervisor_python(script.parent)
+    _stub_supervisor_python(script.parent, target_sha)
     env = os.environ.copy()
     env["SYNC_PROMOTION_ARGS_FILE"] = str(promotion_args)
     env["PANTHEON_DEPLOY_ROOT"] = str(script.parent)
@@ -178,7 +184,7 @@ def test_sync_uses_explicit_coordination_root_and_never_inspects_live_cwd(tmp_pa
     live_config = tmp_path / "runtime" / "live.json"
     promotion_args = tmp_path / "promotion-args.txt"
 
-    result = _run_sync(script, dev_root, live_config, coordination, promotion_args)
+    result = _run_sync(script, dev_root, live_config, coordination, promotion_args, target_sha=target)
 
     candidate = runtime_parent / target
     integration_parent = script.parent / "integration-runtimes"
@@ -217,7 +223,7 @@ def test_sync_uses_explicit_coordination_root_and_never_inspects_live_cwd(tmp_pa
         "--live-config",
         str(live_config),
         "--python",
-        str(script.parent / "runtime" / "supervisor-python" / "bin" / "python3"),
+        str(script.parent / "runtime" / "supervisor-python" / target / "bin" / "python3"),
         "--authority-env-file",
         str(script.parent / "runtime" / "supervisor-authority-public.env"),
         "--repository-source-root",
@@ -237,7 +243,7 @@ def test_sync_uses_explicit_coordination_root_and_never_inspects_live_cwd(tmp_pa
 
 
 def test_sync_rejects_staging_as_its_own_coordination_root(tmp_path: Path) -> None:
-    remote, _seed = _seed_remote(tmp_path)
+    remote, seed = _seed_remote(tmp_path)
     dev_root = tmp_path / "dev-root"
     _git(tmp_path, "clone", "--branch", "dev", str(remote), str(dev_root))
     script = _patched_sync_script(tmp_path, tmp_path / "command-runtimes")
@@ -248,6 +254,7 @@ def test_sync_rejects_staging_as_its_own_coordination_root(tmp_path: Path) -> No
         tmp_path / "runtime" / "live.json",
         dev_root,
         tmp_path / "promotion-args.txt",
+        target_sha=_git(seed, "rev-parse", "HEAD"),
     )
 
     assert result.returncode == 1
@@ -291,6 +298,7 @@ def test_sync_is_a_noop_when_installed_config_already_names_exact_candidate(tmp_
         live_config,
         coordination,
         promotion_args,
+        target_sha=head,
         auto_integrator_args_file=integrator_args,
     )
 
@@ -329,6 +337,7 @@ def test_sync_repoints_the_watchdog_after_a_real_promotion(tmp_path: Path) -> No
         live_config,
         coordination,
         promotion_args,
+        target_sha=target,
         authority_env_file=authority_env_file,
         watchdog_args_file=watchdog_args,
     )
@@ -354,7 +363,7 @@ def test_sync_skips_watchdog_repoint_without_failing_the_deploy(tmp_path: Path) 
     _add_fake_watchdog_installer(seed)
     dev_root = tmp_path / "dev-root"
     _git(tmp_path, "clone", "--branch", "dev", str(remote), str(dev_root))
-    _advance(seed)
+    target = _advance(seed)
     runtime_parent = tmp_path / "command-runtimes"
     script = _patched_sync_script(tmp_path, runtime_parent)
     coordination = _coordination_root(tmp_path)
@@ -369,6 +378,7 @@ def test_sync_skips_watchdog_repoint_without_failing_the_deploy(tmp_path: Path) 
         live_config,
         coordination,
         promotion_args,
+        target_sha=target,
         authority_env_file=missing_authority_env_file,
         watchdog_args_file=watchdog_args,
     )
@@ -384,7 +394,7 @@ def test_sync_survives_watchdog_repoint_failure(tmp_path: Path) -> None:
     _add_fake_watchdog_installer(seed)
     dev_root = tmp_path / "dev-root"
     _git(tmp_path, "clone", "--branch", "dev", str(remote), str(dev_root))
-    _advance(seed)
+    target = _advance(seed)
     runtime_parent = tmp_path / "command-runtimes"
     script = _patched_sync_script(tmp_path, runtime_parent)
     coordination = _coordination_root(tmp_path)
@@ -400,6 +410,7 @@ def test_sync_survives_watchdog_repoint_failure(tmp_path: Path) -> None:
         live_config,
         coordination,
         promotion_args,
+        target_sha=target,
         authority_env_file=authority_env_file,
         watchdog_exit_code=1,
     )
@@ -430,6 +441,7 @@ def test_sync_installs_auto_integrator_with_live_config_after_promotion(
         live_config,
         coordination,
         promotion_args,
+        target_sha=target,
         auto_integrator_args_file=integrator_args,
     )
 
@@ -451,7 +463,7 @@ def test_sync_survives_auto_integrator_install_failure(tmp_path: Path) -> None:
     _add_fake_auto_integrator_installer(seed)
     dev_root = tmp_path / "dev-root"
     _git(tmp_path, "clone", "--branch", "dev", str(remote), str(dev_root))
-    _advance(seed)
+    target = _advance(seed)
     runtime_parent = tmp_path / "command-runtimes"
     script = _patched_sync_script(tmp_path, runtime_parent)
     coordination = _coordination_root(tmp_path)
@@ -464,6 +476,7 @@ def test_sync_survives_auto_integrator_install_failure(tmp_path: Path) -> None:
         live_config,
         coordination,
         promotion_args,
+        target_sha=target,
         auto_integrator_exit_code=1,
     )
 
@@ -476,7 +489,7 @@ def test_sync_prunes_old_command_runtimes_after_promotion(tmp_path: Path) -> Non
     remote, seed = _seed_remote(tmp_path)
     dev_root = tmp_path / "dev-root"
     _git(tmp_path, "clone", "--branch", "dev", str(remote), str(dev_root))
-    _advance(seed)
+    target = _advance(seed)
     runtime_parent = tmp_path / "command-runtimes"
     script = _patched_sync_script(tmp_path, runtime_parent)
     coordination = _coordination_root(tmp_path)
@@ -492,7 +505,7 @@ def test_sync_prunes_old_command_runtimes_after_promotion(tmp_path: Path) -> Non
         encoding="utf-8",
     )
 
-    _stub_supervisor_python(script.parent)
+    _stub_supervisor_python(script.parent, target)
     env = os.environ.copy()
     env["PANTHEON_DEPLOY_ROOT"] = str(script.parent)
     env["SYNC_PROMOTION_ARGS_FILE"] = str(promotion_args)

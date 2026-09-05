@@ -13,13 +13,29 @@ SCRIPT = ROOT / "scripts" / "bootstrap-orchestrator-runtime.sh"
 
 
 def _make_status_root(tmp_path: Path) -> Path:
+    """A minimal fake checkout materialized as the bootstrap script's command
+    root worktree.
+
+    Real bootstrap installs the exact candidate's own ``.orchestrator/
+    requirements.txt`` into the deploy-root-owned supervisor venv before ever
+    generating the dev-bridge keypair, so the fixture must carry a real
+    dependency contract -- not a description of one -- for the real-run tests
+    below to exercise the genuine ordering fix (venv/pip-install before
+    keypair) instead of a stub.
+    """
+
     status_root = tmp_path / "checkout"
     status_root.mkdir()
     subprocess.run(["git", "init", "-q"], cwd=status_root, check=True)
     subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=status_root, check=True)
     subprocess.run(["git", "config", "user.name", "Test"], cwd=status_root, check=True)
     (status_root / "ai-status.json").write_text("{}\n", encoding="utf-8")
-    (status_root / ".orchestrator").mkdir()
+    orchestrator_dir = status_root / ".orchestrator"
+    orchestrator_dir.mkdir()
+    (orchestrator_dir / "requirements.txt").write_text(
+        (ROOT / ".orchestrator" / "requirements.txt").read_text(encoding="utf-8"),
+        encoding="utf-8",
+    )
     subprocess.run(["git", "add", "-A"], cwd=status_root, check=True)
     subprocess.run(["git", "commit", "-q", "-m", "init"], cwd=status_root, check=True)
     return status_root

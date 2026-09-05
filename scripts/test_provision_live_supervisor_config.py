@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -305,6 +306,65 @@ def test_validate_python_dependencies_rejects_a_de_virtualized_interpreter(
         provision.validate_python_dependencies(base_interpreter, requirements)
 
 
+def test_validate_python_dependencies_enforces_the_version_specifier(
+    tmp_path: Path,
+) -> None:
+    """Metadata-only comparisons were rejected because they never enforce
+    the requirements file's version specifier at all. A satisfiable
+    specifier must pass and an unsatisfiable one must fail closed with the
+    real installed version named in the error."""
+
+    installed_version = provision.validate_python_dependencies(
+        Path(sys.executable), _write_requirements(tmp_path, "pytest\n")
+    )["pytest"]
+
+    satisfiable = _write_requirements(tmp_path, "pytest>=1\n")
+    versions = provision.validate_python_dependencies(Path(sys.executable), satisfiable)
+    assert versions["pytest"] == installed_version
+
+    unsatisfiable = _write_requirements(tmp_path, "pytest>=9999,<10000\n")
+    with pytest.raises(ValueError, match="does not satisfy"):
+        provision.validate_python_dependencies(Path(sys.executable), unsatisfiable)
+
+
+def _write_requirements(tmp_path: Path, content: str, *, name: str = "requirements.txt") -> Path:
+    path = tmp_path / name
+    path.write_text(content, encoding="utf-8")
+    return path
+
+
+def test_validate_python_dependencies_actually_imports_not_just_metadata(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A distribution can report a version that satisfies every specifier
+    while its module fails to import (a broken native extension, a
+    half-removed package). Metadata-only preflight passed this silently;
+    the real preflight must import the module and fail closed here."""
+
+    site_dir = tmp_path / "fake-site"
+    package_dir = site_dir / "broken_pkg"
+    package_dir.mkdir(parents=True)
+    (package_dir / "__init__.py").write_text(
+        "raise RuntimeError('this module cannot actually be imported')\n",
+        encoding="utf-8",
+    )
+    dist_info = site_dir / "broken_pkg-1.0.dist-info"
+    dist_info.mkdir()
+    (dist_info / "METADATA").write_text(
+        "Metadata-Version: 2.1\nName: broken-pkg\nVersion: 1.0\n", encoding="utf-8"
+    )
+
+    requirements = _write_requirements(tmp_path, "broken-pkg\n")
+    existing_pythonpath = os.environ.get("PYTHONPATH")
+    monkeypatch.setenv(
+        "PYTHONPATH",
+        os.pathsep.join(filter(None, [str(site_dir), existing_pythonpath])),
+    )
+
+    with pytest.raises(ValueError, match="python dependency preflight failed"):
+        provision.validate_python_dependencies(Path(sys.executable), requirements)
+
+
 def test_cli_preserves_a_venv_symlink_path_instead_of_resolving_it(
     tmp_path: Path,
 ) -> None:
@@ -374,6 +434,54 @@ def test_cli_dependency_preflight_failure_leaves_no_config_behind(
 
     assert code == 2
     assert not live_path.exists()
+
+
+def test_cli_validate_python_dependencies_only_never_touches_live_config(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The lightweight preflight-only CLI mode (used by bootstrap/sync before
+    they ever mutate incumbent state) must run the real preflight and return
+    without any of --repo-config/--live-config/--status-root."""
+
+    command, _status = _roots(tmp_path)
+    requirements = _write_requirements(tmp_path, "pytest\n")
+
+    code = provision.main(
+        [
+            "--command-root",
+            str(command),
+            "--python",
+            sys.executable,
+            "--requirements",
+            str(requirements),
+            "--validate-python-dependencies-only",
+            "--json",
+        ]
+    )
+
+    assert code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["python_dependencies"]["pytest"]
+    assert not (tmp_path / "runtime").exists()
+
+
+def test_cli_validate_python_dependencies_only_fails_closed(tmp_path: Path) -> None:
+    command, _status = _roots(tmp_path)
+    requirements = _write_requirements(tmp_path, "definitely-not-a-real-package-xyz\n")
+
+    code = provision.main(
+        [
+            "--command-root",
+            str(command),
+            "--python",
+            sys.executable,
+            "--requirements",
+            str(requirements),
+            "--validate-python-dependencies-only",
+        ]
+    )
+
+    assert code == 2
 
 
 def test_cli_creates_one_v2_config_without_merging_an_incumbent(

@@ -30,7 +30,13 @@ GIT_SCRIPTS_DIR = Path(__file__).resolve().parent / "git"
 if str(GIT_SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(GIT_SCRIPTS_DIR))
 
-import auto_integrator  # noqa: E402  (shared stable integration lock)
+# ``auto_integrator`` is only needed by main()'s full-config-render lock, not
+# by --validate-command-root-only or --validate-python-dependencies-only.
+# Importing it lazily (inside main(), where it is actually used) keeps the
+# lightweight preflight paths free of that module's own dependency surface --
+# in particular the fresh-host Python dependency preflight below must be
+# callable before any Pantheon repository tree beyond this one file and the
+# candidate interpreter itself is guaranteed to exist.
 
 
 WATCHDOG_RUNTIME_PATH_DEFAULTS = {
@@ -41,12 +47,17 @@ WATCHDOG_RUNTIME_PATH_DEFAULTS = {
 TASK_STATE_STORE_DEFAULT_FILENAME = "task-state-events.jsonl"
 
 
-def parse_requirements_packages(path: Path) -> list[str]:
-    """Return the distribution names named by a minimal requirements file."""
+def parse_requirements_packages(path: Path) -> list[tuple[str, str]]:
+    """Return (distribution_name, specifier) pairs from a minimal requirements file.
+
+    ``specifier`` is the raw remainder of the line after the distribution name
+    (for example ``>=2.9,<3``), or ``""`` when the line names a bare package
+    with no version constraint.
+    """
 
     if path.is_symlink() or not path.is_file():
         raise ValueError(f"requirements file must be a regular non-symlink file: {path}")
-    packages: list[str] = []
+    packages: list[tuple[str, str]] = []
     for raw_line in path.read_text(encoding="utf-8").splitlines():
         line = raw_line.split("#", 1)[0].strip()
         if not line:
@@ -54,29 +65,111 @@ def parse_requirements_packages(path: Path) -> list[str]:
         match = re.match(r"[A-Za-z0-9][A-Za-z0-9._-]*", line)
         if not match:
             raise ValueError(f"invalid requirements entry in {path}: {raw_line!r}")
-        packages.append(match.group(0))
+        packages.append((match.group(0), line[match.end():].strip()))
     if not packages:
         raise ValueError(f"requirements file defines no packages: {path}")
     return packages
 
 
+def _import_name_for(distribution_name: str) -> str:
+    """Best-effort distribution -> import name mapping for the probe below.
+
+    The supervisor's minimal dependency contract only ever names packages
+    whose import name is their lower-cased, underscore-normalized
+    distribution name (``pydantic``, ``cryptography``); this keeps the probe
+    generic without vendoring a full metadata-to-import-name index.
+    """
+
+    return distribution_name.lower().replace("-", "_")
+
+
+# Runs entirely inside the candidate interpreter (not the caller's) so a
+# de-virtualized symlink, a half-provisioned venv, a fresh host missing
+# packages, an incompatible version, or a broken native extension (a
+# pydantic install whose pydantic_core does not actually load, for example)
+# fails closed here -- before any incumbent supervisor state is touched --
+# instead of surfacing later as a silent packet-drain failure. Distribution
+# metadata alone is not enough: metadata can report a version string that
+# satisfies every specifier while the module itself fails to import.
+_DEPENDENCY_PROBE = r"""
+import importlib
+import importlib.metadata as m
+import json
+import re
+
+specs = __SPECS_JSON__
+
+
+def _parse_version(text):
+    match = re.match(r"\d+(?:\.\d+)*", text)
+    if not match:
+        return (0,)
+    return tuple(int(part) for part in match.group(0).split("."))
+
+
+def _satisfies(version_text, specifier):
+    if not specifier:
+        return True
+    version = _parse_version(version_text)
+    for clause in specifier.split(","):
+        clause = clause.strip()
+        if not clause:
+            continue
+        for op in ("===", "==", "!=", "<=", ">=", "<", ">"):
+            if clause.startswith(op):
+                target = _parse_version(clause[len(op):].strip())
+                length = max(len(version), len(target))
+                v = version + (0,) * (length - len(version))
+                t = target + (0,) * (length - len(target))
+                ok = {
+                    "===": v == t,
+                    "==": v == t,
+                    "!=": v != t,
+                    "<=": v <= t,
+                    ">=": v >= t,
+                    "<": v < t,
+                    ">": v > t,
+                }[op]
+                if not ok:
+                    return False
+                break
+        else:
+            raise ValueError(f"unsupported specifier clause: {clause!r}")
+    return True
+
+
+versions = {}
+for spec in specs:
+    name = spec["name"]
+    specifier = spec["specifier"]
+    version = m.version(name)
+    if not _satisfies(version, specifier):
+        raise SystemExit(
+            json.dumps({"error": f"{name} {version} does not satisfy {specifier!r}"})
+        )
+    importlib.import_module(spec["import_name"])
+    versions[name] = version
+
+print(json.dumps({"versions": versions}))
+"""
+
+
 def validate_python_dependencies(
     python_executable: Path, requirements_path: Path
 ) -> dict[str, str]:
-    """Prove the selected interpreter already has the required bridge deps.
+    """Prove the selected interpreter can import each required dependency at
+    a version satisfying its declared specifier.
 
-    Runs entirely inside the candidate interpreter (not the caller's) so a
-    de-virtualized symlink, a half-provisioned venv, or a fresh host missing
-    packages fails closed here -- before any incumbent supervisor state is
-    touched -- instead of surfacing later as a silent packet-drain failure.
+    See ``_DEPENDENCY_PROBE`` for why a real import plus specifier check is
+    required instead of a metadata-only lookup.
     """
 
     packages = parse_requirements_packages(requirements_path)
-    probe = (
-        "import importlib.metadata as m, json, sys\n"
-        f"names = {packages!r}\n"
-        "print(json.dumps({name: m.version(name) for name in names}))\n"
-    )
+    probe_specs = [
+        {"name": name, "specifier": specifier, "import_name": _import_name_for(name)}
+        for name, specifier in packages
+    ]
+    probe = _DEPENDENCY_PROBE.replace("__SPECS_JSON__", json.dumps(probe_specs))
     try:
         result = subprocess.run(
             [str(python_executable), "-c", probe],
@@ -94,15 +187,17 @@ def validate_python_dependencies(
             f"python dependency preflight failed for {python_executable}: {detail}"
         )
     try:
-        versions = json.loads(result.stdout.strip())
+        payload = json.loads(result.stdout.strip())
     except json.JSONDecodeError as exc:
         raise ValueError(
             f"python dependency preflight produced invalid output for {python_executable}"
         ) from exc
-    if not isinstance(versions, dict) or set(versions) != set(packages):
+    versions = payload.get("versions") if isinstance(payload, dict) else None
+    expected_names = [name for name, _ in packages]
+    if not isinstance(versions, dict) or set(versions) != set(expected_names):
         raise ValueError(
             f"python dependency preflight missing packages for {python_executable}: "
-            f"expected {sorted(packages)}, got {sorted(versions) if isinstance(versions, dict) else versions!r}"
+            f"expected {sorted(expected_names)}, got {sorted(versions) if isinstance(versions, dict) else versions!r}"
         )
     return versions
 
@@ -773,9 +868,19 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         action="store_true",
         help="Validate immutable command runtime identity without writing state.",
     )
+    parser.add_argument(
+        "--validate-python-dependencies-only",
+        action="store_true",
+        help=(
+            "Run only the --python dependency preflight (real import plus "
+            "version-specifier check) against --requirements (or "
+            "<command-root>/.orchestrator/requirements.txt) and exit, "
+            "without touching live config or any incumbent state."
+        ),
+    )
     parser.add_argument("--json", action="store_true")
     args = parser.parse_args(argv)
-    if not args.validate_command_root_only:
+    if not args.validate_command_root_only and not args.validate_python_dependencies_only:
         for option in ("repo_config", "live_config", "status_root"):
             if not getattr(args, option):
                 parser.error(f"--{option.replace('_', '-')} is required")
@@ -794,6 +899,40 @@ def _main_locked(argv: list[str] | None = None) -> int:
                 print(
                     "validated immutable supervisor command root: "
                     f"root={command_root} head={command_identity['head']}"
+                )
+            return 0
+
+        if args.validate_python_dependencies_only:
+            python_executable = Path(args.python).expanduser().absolute()
+            if not python_executable.is_file():
+                raise ValueError(f"python executable does not exist: {python_executable}")
+            requirements_path = (
+                Path(args.requirements).expanduser().absolute()
+                if args.requirements
+                else command_root / ".orchestrator" / "requirements.txt"
+            )
+            if not requirements_path.is_file():
+                raise ValueError(f"requirements file does not exist: {requirements_path}")
+            python_dependencies = validate_python_dependencies(
+                python_executable, requirements_path
+            )
+            if args.json:
+                print(
+                    json.dumps(
+                        {
+                            "python_executable": str(python_executable),
+                            "requirements": str(requirements_path),
+                            "python_dependencies": python_dependencies,
+                        },
+                        indent=2,
+                        sort_keys=True,
+                    )
+                )
+            else:
+                print(
+                    "validated python dependency preflight: "
+                    f"python={python_executable} requirements={requirements_path} "
+                    f"versions={python_dependencies}"
                 )
             return 0
 
@@ -913,9 +1052,19 @@ def main(argv: list[str] | None = None) -> int:
     probe = argparse.ArgumentParser(add_help=False)
     probe.add_argument("--status-root")
     probe.add_argument("--validate-command-root-only", action="store_true")
+    probe.add_argument("--validate-python-dependencies-only", action="store_true")
     known, _ = probe.parse_known_args(argv)
-    if known.validate_command_root_only or not known.status_root:
+    if (
+        known.validate_command_root_only
+        or known.validate_python_dependencies_only
+        or not known.status_root
+    ):
         return _main_locked(argv)
+
+    if str(GIT_SCRIPTS_DIR) not in sys.path:
+        sys.path.insert(0, str(GIT_SCRIPTS_DIR))
+    import auto_integrator  # noqa: PLC0415  (see module-level comment above)
+
     lock_path = (
         Path(known.status_root).expanduser().absolute()
         / auto_integrator.DEFAULT_LOCK

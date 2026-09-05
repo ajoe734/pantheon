@@ -377,9 +377,24 @@ fi
 # owned so it survives command-runtime pruning, and is (re)installed from the
 # exact candidate's own .orchestrator/requirements.txt on every promotion so
 # a dependency bump lands with the code that needs it.
-SUPERVISOR_PYTHON_DIR="${PANTHEON_SUPERVISOR_PYTHON_DIR:-${DEPLOY_ROOT}/runtime/supervisor-python}"
+#
+# It is versioned per exact candidate SHA rather than kept at one fixed path.
+# A fixed path would mean this install (and its preflight below) target the
+# very same directory a currently running incumbent supervisor already
+# launched from -- a partial or failed reinstall could break that live
+# process before promotion even decides whether to accept the candidate. A
+# per-SHA directory means this install can never touch the directory backing
+# a different, already promoted SHA: the incumbent (and every prior verified
+# environment, usable for rollback) is untouched by construction, not by
+# ordering or by hoping the preflight below runs first.
+SUPERVISOR_PYTHON_PARENT="${PANTHEON_SUPERVISOR_PYTHON_DIR:-${DEPLOY_ROOT}/runtime/supervisor-python}"
+SUPERVISOR_PYTHON_DIR="${SUPERVISOR_PYTHON_PARENT}/${target_sha}"
 SUPERVISOR_PYTHON="${SUPERVISOR_PYTHON_DIR}/bin/python3"
 SUPERVISOR_REQUIREMENTS="${candidate_root}/.orchestrator/requirements.txt"
+if [[ ! -f "$SUPERVISOR_REQUIREMENTS" ]]; then
+  log "FATAL: candidate is missing .orchestrator/requirements.txt: $SUPERVISOR_REQUIREMENTS"
+  exit 1
+fi
 if [[ ! -x "$SUPERVISOR_PYTHON" ]]; then
   log "creating supervisor Python environment: $SUPERVISOR_PYTHON_DIR"
   if ! python3 -m venv "$SUPERVISOR_PYTHON_DIR"; then
@@ -387,14 +402,18 @@ if [[ ! -x "$SUPERVISOR_PYTHON" ]]; then
     exit 1
   fi
 fi
-if [[ -f "$SUPERVISOR_REQUIREMENTS" ]]; then
-  if ! "$SUPERVISOR_PYTHON" -m pip install --quiet --disable-pip-version-check \
-    -r "$SUPERVISOR_REQUIREMENTS"; then
-    log "FATAL: failed to install supervisor Python dependencies from $SUPERVISOR_REQUIREMENTS"
-    exit 1
-  fi
-else
-  log "FATAL: candidate is missing .orchestrator/requirements.txt: $SUPERVISOR_REQUIREMENTS"
+if ! "$SUPERVISOR_PYTHON" -m pip install --quiet --disable-pip-version-check \
+  -r "$SUPERVISOR_REQUIREMENTS"; then
+  log "FATAL: failed to install supervisor Python dependencies from $SUPERVISOR_REQUIREMENTS"
+  exit 1
+fi
+log "preflighting supervisor Python dependencies for $SUPERVISOR_PYTHON"
+if ! python3 -B "${candidate_root}/scripts/provision_live_supervisor_config.py" \
+  --command-root "$candidate_root" \
+  --python "$SUPERVISOR_PYTHON" \
+  --requirements "$SUPERVISOR_REQUIREMENTS" \
+  --validate-python-dependencies-only >/dev/null; then
+  log "FATAL: python dependency preflight failed for candidate=$candidate_root; incumbent=${active_root:-none} untouched"
   exit 1
 fi
 
