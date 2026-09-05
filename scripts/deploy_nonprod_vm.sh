@@ -213,19 +213,32 @@ validate_target_selection() {
     PROJECT_ID
     REMOTE_USER
     DEV_VM
+    DEV_ZONE
+    DEV_REMOTE_DIR
     DEV_DEPLOY_SSH_HOST
+    DEV_DEPLOY_SSH_USER
     DEV_BFF_PUBLIC_HOST
     DEV_FE_PUBLIC_HOST
+    DEV_FE_STATIC_ROOT
     DEV_BFF_CORS_ORIGINS
+    DEV_BFF_CANONICAL_CORS_ORIGIN
+    DEV_BFF_REQUIRED_CORS_ORIGINS
+    PANTHEON_DEPLOY_WORKTREE_ROOT
     STAGING_CONTROL_VM
+    STAGING_CONTROL_ZONE
+    STAGING_CONTROL_REMOTE_DIR
     STAGING_EXEC_VM
+    STAGING_EXEC_ZONE
+    STAGING_EXEC_REMOTE_DIR
     STAGING_EXEC_HEALTH_URL
     STAGING_BFF_CORS_ORIGINS
+    STAGING_BFF_CANONICAL_CORS_ORIGIN
   )
   local var_name val
+  local retired_pattern='sslip\.io|104\.155\.223\.192|35\.201\.204\.12|35\.201\.239\.38|34\.81\.75\.241|35\.236\.178\.81|pantheon-benjamin-20260528|pantheon-lupin-dev-20260719|pantheon-lupin-dev|/home/lupin|^lupin$'
   for var_name in "${check_vars[@]}"; do
     val="${!var_name:-}"
-    if [[ -n "$val" && "$val" =~ sslip\.io|104\.155\.223\.192|35\.201\.204\.12|pantheon-benjamin-20260528|pantheon-lupin-dev-20260719 ]]; then
+    if [[ -n "$val" && "$val" =~ ${retired_pattern} ]]; then
       error "${var_name} contains retired target identity (${val}); refusing to deploy"
     fi
   done
@@ -2622,7 +2635,8 @@ verify_exact_component_deployment() {
   local fe_url="${PANTHEON_FE_BASE_URL:-https://${PANTHEON_DEV_FE_PUBLIC_HOST:-${DEV_FE_PUBLIC_HOST:-app.dev.mvl-cap.tw}}}"
   local receipt_root="${PANTHEON_DEPLOY_RECEIPT_ROOT:-${HOME}/pantheon-ci-deploy/deployment-receipts}"
   local receipt_path="${PANTHEON_BACKEND_COMPONENTS_RECEIPT_PATH:-${receipt_root}/${deploy_environment}/${deploy_component}/backend-components-receipt.json}"
-  if [[ "$bff_url" =~ sslip\.io|104\.155\.223\.192|35\.201\.204\.12 || "$fe_url" =~ sslip\.io|104\.155\.223\.192|35\.201\.204\.12 ]]; then
+  local retired_url_pattern='sslip\.io|104\.155\.223\.192|35\.201\.204\.12|35\.201\.239\.38|34\.81\.75\.241|35\.236\.178\.81'
+  if [[ "$bff_url" =~ ${retired_url_pattern} || "$fe_url" =~ ${retired_url_pattern} ]]; then
     printf '[remote-deploy] exact component verification rejects retired target identity in URLs\n' >&2
     return 1
   fi

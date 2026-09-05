@@ -28,13 +28,13 @@
     "strict_read_only_mode": "Bootstrap predecessor pair is compatibility-admitted and deployed in strict live read-only mode under lease before candidate switch.",
     "gate_before_switch": "Candidate remains gate-before-switch and cannot deploy until the predecessor pair has exact served BFF/FE identity readback.",
     "fail_closed_empty_host_prerequisite": "Empty-host check admits only an explicit HTTP 404 as sentinel; 401, 403, 5xx, TLS, timeout, transport errors, and malformed JSON fail closed.",
-    "no_retired_fallbacks": "Retired projects (pantheon-benjamin-20260528, pantheon-lupin-dev-20260719) and retired hostnames/IPs (sslip.io, 104.155.223.192, 35.201.204.12) are eliminated from deploy_nonprod_vm.sh and nonprod-deploy.yml; explicit valid target identities are enforced before side effects with executable missing-variable and composed explicit-empty negative tests with neutral fixtures.",
+    "no_retired_fallbacks": "Retired projects (pantheon-benjamin-20260528, pantheon-lupin-dev-20260719), retired hostnames/IPs (sslip.io, 104.155.223.192, 35.201.204.12, 35.201.239.38, 34.81.75.241, 35.236.178.81), and retired user/paths (pantheon-lupin-dev, lupin, /home/lupin/...) are eliminated and fail closed across all target and remote directory variables in deploy_nonprod_vm.sh; explicit valid target identities are enforced before side effects with executable missing-variable, retired-target, and composed explicit-empty negative tests using neutral fixtures.",
     "test_coverage": "Contract and unit tests cover missing manifest, malformed identity, non-ancestor commits, mismatched served identity, repeated bootstrap, malformed JSON, HTTP status errors, missing target variables, composed explicit-empty dev variables, retired identities, and successful bootstrap admission."
   },
   "verification": [
     {
-      "command": ".venv-pantheon/bin/python3 -m pytest -q scripts/test_cross_repo_release_controller.py scripts/test_deploy_nonprod*.py",
-      "result": "199 passed, 2 skipped in 48.71s"
+      "command": "pytest -q scripts/test_cross_repo_release_controller.py scripts/test_deploy_nonprod*.py",
+      "result": "220 passed, 2 skipped in 52.91s"
     },
     {
       "command": "python3 -m py_compile scripts/cross_repo_release_controller.py scripts/test_cross_repo_release_controller.py scripts/test_deploy_nonprod*.py",

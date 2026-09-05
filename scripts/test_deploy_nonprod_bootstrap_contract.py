@@ -26,6 +26,19 @@ VALID_NEUTRAL_STAGING_ENV = {
     "STAGING_BFF_CORS_ORIGINS": "https://neutral-staging-fe.example.com",
 }
 
+VALID_NEUTRAL_DEV_ENV = {
+    "PROJECT_ID": "synthetic-dev-project",
+    "REMOTE_USER": "synthetic-user",
+    "DEV_VM": "synthetic-dev-vm",
+    "DEV_ZONE": "asia-east1-b",
+    "DEV_REMOTE_DIR": "/home/synthetic-user/pantheon",
+    "DEV_DEPLOY_SSH_HOST": "192.0.2.50",
+    "DEV_BFF_PUBLIC_HOST": "api.synthetic.invalid",
+    "DEV_FE_PUBLIC_HOST": "app.synthetic.invalid",
+    "DEV_FE_STATIC_ROOT": "/var/www/pantheon-dev-fe",
+    "DEV_BFF_CORS_ORIGINS": "https://app.synthetic.invalid",
+}
+
 
 def _clean_env(extra_env: dict[str, str] | None = None) -> dict[str, str]:
     clean = {"PATH": os.environ.get("PATH", "/usr/bin:/bin")}
@@ -380,8 +393,15 @@ def test_deploy_script_rejects_retired_project(retired_project: str) -> None:
     [
         ("DEV_BFF_PUBLIC_HOST", "pantheon-lupin-dev-bff.35.201.204.12.sslip.io"),
         ("DEV_DEPLOY_SSH_HOST", "35.201.204.12"),
+        ("DEV_DEPLOY_SSH_HOST", "35.201.239.38"),
+        ("DEV_DEPLOY_SSH_HOST", "34.81.75.241"),
+        ("DEV_DEPLOY_SSH_HOST", "35.236.178.81"),
         ("STAGING_CONTROL_VM", "pantheon-benjamin-20260528-control"),
+        ("STAGING_CONTROL_VM", "pantheon-lupin-dev"),
         ("STAGING_BFF_CORS_ORIGINS", "https://pantheon-lupin-staging-fe.104.155.223.192.sslip.io"),
+        ("STAGING_CONTROL_REMOTE_DIR", "/home/lupin/code/pantheon"),
+        ("STAGING_EXEC_REMOTE_DIR", "/home/lupin/pantheon"),
+        ("REMOTE_USER", "lupin"),
     ],
 )
 def test_deploy_script_rejects_retired_target_identity(var_name: str, retired_value: str) -> None:
@@ -394,6 +414,46 @@ def test_deploy_script_rejects_retired_target_identity(var_name: str, retired_va
             "staging-live",
             "--component",
             "all",
+            "--sha",
+            DUMMY_SHA,
+            "--dry-run",
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+        env=_clean_env(env),
+        cwd=ROOT,
+    )
+    assert proc.returncode == 1
+    assert f"{var_name} contains retired target identity" in proc.stderr
+
+
+@pytest.mark.parametrize(
+    ("var_name", "retired_value"),
+    [
+        ("DEV_DEPLOY_SSH_HOST", "35.201.239.38"),
+        ("DEV_DEPLOY_SSH_HOST", "34.81.75.241"),
+        ("DEV_DEPLOY_SSH_HOST", "35.201.204.12"),
+        ("DEV_DEPLOY_SSH_HOST", "104.155.223.192"),
+        ("DEV_DEPLOY_SSH_HOST", "35.236.178.81"),
+        ("DEV_REMOTE_DIR", "/home/lupin/code/pantheon"),
+        ("DEV_REMOTE_DIR", "/home/lupin/pantheon"),
+        ("DEV_VM", "pantheon-lupin-dev"),
+        ("REMOTE_USER", "lupin"),
+        ("DEV_BFF_PUBLIC_HOST", "pantheon-lupin-dev-bff.35.201.239.38.sslip.io"),
+        ("DEV_FE_PUBLIC_HOST", "pantheon-lupin-dev-fe.35.201.239.38.sslip.io"),
+        ("DEV_BFF_CORS_ORIGINS", "https://pantheon-lupin-dev-fe.35.201.239.38.sslip.io"),
+        ("DEV_FE_STATIC_ROOT", "/home/lupin/pantheon-dev-fe"),
+    ],
+)
+def test_deploy_script_dev_rejects_retired_target_identity(var_name: str, retired_value: str) -> None:
+    env = dict(VALID_NEUTRAL_DEV_ENV)
+    env[var_name] = retired_value
+    proc = subprocess.run(
+        [
+            str(DEPLOY_SCRIPT),
+            "--environment",
+            "dev",
             "--sha",
             DUMMY_SHA,
             "--dry-run",
@@ -436,8 +496,52 @@ def test_deploy_script_staging_live_accepts_valid_neutral_fixtures() -> None:
         "sslip.io",
         "104.155.223.192",
         "35.201.204.12",
+        "35.201.239.38",
+        "34.81.75.241",
+        "35.236.178.81",
         "pantheon-benjamin-20260528",
         "pantheon-lupin-dev-20260719",
+        "pantheon-lupin-dev",
+        "/home/lupin",
+    ]:
+        assert retired not in proc.stdout
+        assert retired not in proc.stderr
+
+
+def test_deploy_script_dev_dry_run_accepts_valid_neutral_fixtures() -> None:
+    proc = subprocess.run(
+        [
+            str(DEPLOY_SCRIPT),
+            "--environment",
+            "dev",
+            "--sha",
+            DUMMY_SHA,
+            "--dry-run",
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+        env=_clean_env(VALID_NEUTRAL_DEV_ENV),
+        cwd=ROOT,
+    )
+    assert proc.returncode == 0, f"Dev neutral dry run failed: {proc.stderr}"
+    assert "project=synthetic-dev-project" in proc.stdout
+    assert "environment=dev" in proc.stdout
+    assert "component=root" in proc.stdout
+    assert "dev_bff_public_host=api.synthetic.invalid" in proc.stdout
+    assert "dev_fe_public_host=app.synthetic.invalid" in proc.stdout
+
+    for retired in [
+        "sslip.io",
+        "104.155.223.192",
+        "35.201.204.12",
+        "35.201.239.38",
+        "34.81.75.241",
+        "35.236.178.81",
+        "pantheon-benjamin-20260528",
+        "pantheon-lupin-dev-20260719",
+        "pantheon-lupin-dev",
+        "/home/lupin",
     ]:
         assert retired not in proc.stdout
         assert retired not in proc.stderr
@@ -470,8 +574,13 @@ def test_deploy_script_dev_dry_run_accepts_default_dev_identity() -> None:
         "sslip.io",
         "104.155.223.192",
         "35.201.204.12",
+        "35.201.239.38",
+        "34.81.75.241",
+        "35.236.178.81",
         "pantheon-benjamin-20260528",
         "pantheon-lupin-dev-20260719",
+        "pantheon-lupin-dev",
+        "/home/lupin",
     ]:
         assert retired not in proc.stdout
         assert retired not in proc.stderr
