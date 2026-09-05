@@ -21,7 +21,9 @@ Think OS processes:
 
 The idempotent route declaration lives in
 `scripts/openclaw-configure-shared-model-pool.sh` and is applied after every
-root dev deploy. Provider OAuth remains only in the persistent OpenClaw volume.
+root dev deploy. Native provider login remains in the persistent OpenClaw volume;
+an explicitly provisioned product Claude setup-token may instead come from the
+gateway environment, as described below.
 
 Current model slots:
 
@@ -32,6 +34,29 @@ Current model slots:
 | Claude Opus | `anthropic/claude-opus-4-8` | `claude-cli` | persisted Claude CLI login |
 | Claude Sonnet | `anthropic/claude-sonnet-4-6` | `claude-cli` | persisted Claude CLI login |
 | Gemini Pro | `google/gemini-3.1-pro-preview` | `google-gemini-cli` | Gemini CLI OAuth profile |
+
+### Explicit product Claude token
+
+The optional Compose input `PANTHEON_OPENCLAW_CLAUDE_CODE_OAUTH_TOKEN` becomes
+`CLAUDE_CODE_OAUTH_TOKEN` inside the product gateway. OpenClaw **2026.7.1** clears
+that ambient variable before starting its Claude CLI child. Therefore a direct
+`claude auth status` or `claude -p` success does not establish gateway readiness.
+
+When this product token is non-empty, the model-pool configure script sets only
+the `claude-cli` backend command and its `CLAUDE_CODE_OAUTH_TOKEN` env override.
+The persisted value is the literal `${CLAUDE_CODE_OAUTH_TOKEN}` reference; the
+secret is not put in the script, command arguments, or committed configuration.
+Other credential/endpoint variables remain subject to upstream environment
+cleaning. Tool permissions and provider/model routing are unchanged. An absent
+token does not create an unresolved reference on a new native-login deployment;
+a configured reference whose token is later removed must fail validation, not
+silently switch credentials.
+
+Use only the credential already authorized for the product gateway. Do not copy
+developer-worker logins into the product, disable `clearEnv`, or use the upstream
+live-test preserve-env escape hatch. After configuration, validate a real
+OpenClaw turn, then the authenticated Management journey; neither a non-empty env
+value nor a passing schema check proves a terminal product answer/action receipt.
 
 So "make a new persona that runs on Claude" is **not** an install task. It is a
 single config field on the persona pointing at an already-pooled model ref.

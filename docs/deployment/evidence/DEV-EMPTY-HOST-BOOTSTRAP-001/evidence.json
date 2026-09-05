@@ -1,0 +1,53 @@
+{
+  "schema_version": 1,
+  "task_id": "DEV-EMPTY-HOST-BOOTSTRAP-001",
+  "kind": "empty_host_bootstrap_admission_review_evidence",
+  "owner": "Antigravity",
+  "reviewer": "Antigravity2",
+  "delivery_state": "ready_for_independent_review",
+  "scope": {
+    "owned": [
+      ".github/workflows/nonprod-deploy.yml",
+      "scripts/cross_repo_release_controller.py",
+      "scripts/deploy_nonprod_vm.sh",
+      "scripts/test_cross_repo_release_controller.py",
+      "scripts/test_deploy_nonprod_bootstrap_contract.py",
+      "scripts/test_deploy_nonprod_telemetry_prune.py",
+      "scripts/test_deploy_nonprod_vm.py",
+      "docs/deployment/evidence/DEV-EMPTY-HOST-BOOTSTRAP-001/evidence.json"
+    ],
+    "not_changed": [
+      "staging-live or production infrastructure",
+      "normal predecessor manifest requirements for non-bootstrap deployments",
+      "task state store or canonical coordination logic"
+    ]
+  },
+  "acceptance_mapping": {
+    "dev_only_bootstrap_input": "nonprod-deploy workflow declares bootstrap_empty_host, bootstrap_predecessor_backend_sha, and bootstrap_predecessor_frontend_sha inputs; staging-live rejects bootstrap inputs immediately.",
+    "exact_40_hex_and_ancestor_commits": "Predecessor backend and frontend SHAs must match exact 40-hex lowercase commit pattern and are verified as ancestors of protected dev branch tips via git merge-base --is-ancestor.",
+    "strict_read_only_mode": "Bootstrap predecessor pair is compatibility-admitted and deployed in strict live read-only mode under lease before candidate switch.",
+    "gate_before_switch": "Candidate remains gate-before-switch and cannot deploy until the predecessor pair has exact served BFF/FE identity readback.",
+    "fail_closed_empty_host_prerequisite": "Empty-host check admits only an explicit HTTP 404 as sentinel; 401, 403, 5xx, TLS, timeout, transport errors, and malformed JSON fail closed.",
+    "no_retired_fallbacks": "Retired projects (pantheon-benjamin-20260528, pantheon-lupin-dev-20260719), retired hostnames/IPs (sslip.io, 104.155.223.192, 35.201.204.12, 35.201.239.38, 34.81.75.241, 35.236.178.81), and retired user/paths (pantheon-lupin-dev, lupin, /home/lupin/...) are eliminated and fail closed across all target and remote directory variables in deploy_nonprod_vm.sh; explicit valid target identities are enforced before side effects with executable missing-variable, retired-target, and composed explicit-empty negative tests using neutral fixtures.",
+    "test_coverage": "Contract and unit tests cover missing manifest, malformed identity, non-ancestor commits, mismatched served identity, repeated bootstrap, malformed JSON, HTTP status errors, missing target variables, composed explicit-empty dev variables, retired identities, and successful bootstrap admission."
+  },
+  "verification": [
+    {
+      "command": "pytest -q scripts/test_cross_repo_release_controller.py scripts/test_deploy_nonprod*.py",
+      "result": "220 passed, 2 skipped in 52.91s"
+    },
+    {
+      "command": "python3 -m py_compile scripts/cross_repo_release_controller.py scripts/test_cross_repo_release_controller.py scripts/test_deploy_nonprod*.py",
+      "result": "passed"
+    },
+    {
+      "command": "git diff --check",
+      "result": "passed"
+    }
+  ],
+  "review_decision": {
+    "status": "pending",
+    "reviewer": "Antigravity2",
+    "note": "Independent reviewer must validate the frozen PR head, test coverage, and this manifest before approval."
+  }
+}

@@ -12,19 +12,6 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 PANTHEON_DEPLOY_CONTROLLER_CONTRACT_VERSION="dev-root-isolation-v1"
 
-PROJECT_ID="${PROJECT_ID:-pantheon-dev-20260902}"
-REMOTE_USER="${REMOTE_USER:-chloe_ong_dev_cctech_support_com}"
-
-DEV_VM="${DEV_VM:-pantheon-dev-deploy}"
-DEV_ZONE="${DEV_ZONE:-asia-east1-b}"
-DEV_REMOTE_DIR="${DEV_REMOTE_DIR:-/home/chloe_ong_dev_cctech_support_com/pantheon}"
-DEV_DEPLOY_SSH_HOST="${DEV_DEPLOY_SSH_HOST:-34.81.52.222}"
-DEV_BFF_CANONICAL_CORS_ORIGIN="${DEV_BFF_CANONICAL_CORS_ORIGIN:-https://app.dev.mvl-cap.tw}"
-DEV_BFF_CORS_ORIGINS="${DEV_BFF_CORS_ORIGINS:-${DEV_BFF_CANONICAL_CORS_ORIGIN}}"
-DEV_BFF_REQUIRED_CORS_ORIGINS="${DEV_BFF_REQUIRED_CORS_ORIGINS:-https://preview--pantheon-dev.lovable.app,https://b75d3452-f667-4cf4-893a-1061de45b347.lovableproject.com,https://id-preview--b75d3452-f667-4cf4-893a-1061de45b347.lovable.app,https://140c41d5-9cd8-4d6b-ba02-66d5941d0dbe.lovableproject.com}"
-DEV_BFF_PUBLIC_HOST="${DEV_BFF_PUBLIC_HOST:-api.dev.mvl-cap.tw}"
-DEV_FE_PUBLIC_HOST="${DEV_FE_PUBLIC_HOST:-app.dev.mvl-cap.tw}"
-DEV_FE_STATIC_ROOT="${DEV_FE_STATIC_ROOT:-/var/www/pantheon-dev-fe}"
 # Large hosted dev datasets can make one lifecycle projection tick take
 # 150-180 seconds. Keep the compose default fail-closed at 120 seconds, while
 # managed dev deploys explicitly allow one slow tick plus scheduling headroom.
@@ -151,17 +138,6 @@ if [[ "${SOURCE_REFRESH_SELECTED}" == "true" \
 fi
 DEV_APP_DB_USER="${DEV_APP_DB_USER:-${PANTHEON_APP_DB_USER:-pantheon_app}}"
 
-STAGING_CONTROL_VM="${STAGING_CONTROL_VM:-pantheon-lupin-staging-control}"
-STAGING_CONTROL_ZONE="${STAGING_CONTROL_ZONE:-asia-east1-b}"
-STAGING_CONTROL_REMOTE_DIR="${STAGING_CONTROL_REMOTE_DIR:-/home/lupin/code/pantheon}"
-
-STAGING_EXEC_VM="${STAGING_EXEC_VM:-pantheon-lupin-staging-exec}"
-STAGING_EXEC_ZONE="${STAGING_EXEC_ZONE:-asia-east1-b}"
-STAGING_EXEC_REMOTE_DIR="${STAGING_EXEC_REMOTE_DIR:-/home/lupin/code/pantheon}"
-STAGING_EXEC_HEALTH_URL="${STAGING_EXEC_HEALTH_URL:-http://10.50.0.21:28081}"
-STAGING_BFF_CANONICAL_CORS_ORIGIN="${STAGING_BFF_CANONICAL_CORS_ORIGIN:-https://pantheon-lupin-staging-fe.104.155.223.192.sslip.io}"
-STAGING_BFF_CORS_ORIGINS="${STAGING_BFF_CORS_ORIGINS:-${STAGING_BFF_CANONICAL_CORS_ORIGIN},https://pantheon-ai-system-front-staging-live.lovable.app}"
-
 DEPLOY_ENV=""
 COMPONENT="auto"
 DEPLOY_SHA="${GITHUB_SHA:-}"
@@ -226,6 +202,91 @@ PY
   info "dev environment lease contract verified: ${guarded_lease_id} -> ${lease_expected_backend_sha} (deploy=${DEPLOY_SHA})"
 }
 
+validate_target_selection() {
+  case "${PROJECT_ID:-}" in
+    pantheon-benjamin-20260528|pantheon-lupin-dev-20260719)
+      error "GCP project ${PROJECT_ID} is retired; refusing to deploy"
+      ;;
+  esac
+
+  local check_vars=(
+    PROJECT_ID
+    REMOTE_USER
+    DEV_VM
+    DEV_ZONE
+    DEV_REMOTE_DIR
+    DEV_DEPLOY_SSH_HOST
+    DEV_DEPLOY_SSH_USER
+    DEV_BFF_PUBLIC_HOST
+    DEV_FE_PUBLIC_HOST
+    DEV_FE_STATIC_ROOT
+    DEV_BFF_CORS_ORIGINS
+    DEV_BFF_CANONICAL_CORS_ORIGIN
+    DEV_BFF_REQUIRED_CORS_ORIGINS
+    PANTHEON_DEPLOY_WORKTREE_ROOT
+    STAGING_CONTROL_VM
+    STAGING_CONTROL_ZONE
+    STAGING_CONTROL_REMOTE_DIR
+    STAGING_EXEC_VM
+    STAGING_EXEC_ZONE
+    STAGING_EXEC_REMOTE_DIR
+    STAGING_EXEC_HEALTH_URL
+    STAGING_BFF_CORS_ORIGINS
+    STAGING_BFF_CANONICAL_CORS_ORIGIN
+  )
+  local var_name val
+  local retired_pattern='sslip\.io|104\.155\.223\.192|35\.201\.204\.12|35\.201\.239\.38|34\.81\.75\.241|35\.236\.178\.81|pantheon-benjamin-20260528|pantheon-lupin-dev-20260719|pantheon-lupin-dev|/home/lupin|^lupin$'
+  for var_name in "${check_vars[@]}"; do
+    val="${!var_name:-}"
+    if [[ -n "$val" && "$val" =~ ${retired_pattern} ]]; then
+      error "${var_name} contains retired target identity (${val}); refusing to deploy"
+    fi
+  done
+
+  case "${DEPLOY_ENV}" in
+    dev)
+      [[ -n "${PROJECT_ID:-}" ]] || error "dev deployment requires --project-id or PROJECT_ID to be set"
+      [[ -n "${REMOTE_USER:-}" ]] || error "dev deployment requires REMOTE_USER to be set"
+      local required_dev_vars=(
+        DEV_VM
+        DEV_ZONE
+        DEV_REMOTE_DIR
+        DEV_DEPLOY_SSH_HOST
+        DEV_BFF_PUBLIC_HOST
+        DEV_FE_PUBLIC_HOST
+        DEV_FE_STATIC_ROOT
+        DEV_BFF_CORS_ORIGINS
+      )
+      for var_name in "${required_dev_vars[@]}"; do
+        if [[ -z "${!var_name:-}" ]]; then
+          error "dev deployment requires ${var_name} to be set; refusing to deploy with missing target identity"
+        fi
+      done
+      ;;
+    staging-live)
+      [[ -n "${PROJECT_ID:-}" ]] || error "staging-live deployment requires --project-id or PROJECT_ID to be set"
+      [[ -n "${REMOTE_USER:-}" ]] || error "staging-live deployment requires REMOTE_USER to be set"
+      local required_staging_vars=()
+      case "${COMPONENT}" in
+        control)
+          required_staging_vars=(STAGING_CONTROL_VM STAGING_CONTROL_ZONE STAGING_CONTROL_REMOTE_DIR STAGING_BFF_CORS_ORIGINS)
+          ;;
+        exec)
+          required_staging_vars=(STAGING_EXEC_VM STAGING_EXEC_ZONE STAGING_EXEC_REMOTE_DIR STAGING_EXEC_HEALTH_URL)
+          ;;
+        all)
+          required_staging_vars=(STAGING_CONTROL_VM STAGING_CONTROL_ZONE STAGING_CONTROL_REMOTE_DIR STAGING_EXEC_VM STAGING_EXEC_ZONE STAGING_EXEC_REMOTE_DIR STAGING_EXEC_HEALTH_URL STAGING_BFF_CORS_ORIGINS)
+          ;;
+      esac
+      for var_name in "${required_staging_vars[@]}"; do
+        if [[ -z "${!var_name:-}" ]]; then
+          error "staging-live deployment requires ${var_name} to be set; refusing to deploy with missing target identity"
+        fi
+      done
+      ;;
+  esac
+}
+
 usage() {
   cat <<'EOF'
 Usage:
@@ -238,7 +299,7 @@ Options:
                          bff (dev only): rebuild operator-bff and its lifecycle
                          projector; paper fleet and all other services stay running.
   --sha <commit>         Required unless GITHUB_SHA is set. Commit to deploy.
-  --project-id <id>      GCP project. Default: pantheon-lupin-dev-20260719.
+  --project-id <id>      GCP project. Default: pantheon-dev-20260902 for dev.
   --allow-dirty          Emergency only: stash dirty managed deploy worktree
                          changes before checkout.
   --allow-example-env    Allow staging to use env/*.env.example if real env files
@@ -391,10 +452,6 @@ configure_management_ai_dev_kernel_env() {
   PANTHEON_OPENCLAW_CLAUDE_CODE_OAUTH_TOKEN="${PANTHEON_OPENCLAW_CLAUDE_CODE_OAUTH_TOKEN:-$DEV_OPENCLAW_CLAUDE_CODE_OAUTH_TOKEN}"
 }
 
-DEV_BFF_CORS_ORIGINS="$(append_csv_unique "$DEV_BFF_CORS_ORIGINS" "$DEV_BFF_CANONICAL_CORS_ORIGIN")"
-DEV_BFF_CORS_ORIGINS="$(append_csv_unique "$DEV_BFF_CORS_ORIGINS" "$DEV_BFF_REQUIRED_CORS_ORIGINS")"
-STAGING_BFF_CORS_ORIGINS="$(append_csv_unique "$STAGING_BFF_CORS_ORIGINS" "$STAGING_BFF_CANONICAL_CORS_ORIGIN")"
-
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --environment)
@@ -448,7 +505,6 @@ done
 
 [[ -n "$DEPLOY_ENV" ]] || error "--environment is required"
 [[ -n "$DEPLOY_SHA" ]] || error "--sha is required unless GITHUB_SHA is set"
-[[ -n "$PROJECT_ID" ]] || error "--project-id is required or PROJECT_ID must be set"
 
 case "$DEPLOY_ENV" in
   dev)
@@ -457,6 +513,26 @@ case "$DEPLOY_ENV" in
       root|bff) ;;
       *) error "dev supports only --component root or --component bff" ;;
     esac
+    # Documented dev defaults apply only when unset. If explicitly empty,
+    # keep empty so validate_target_selection fails closed.
+    if [[ -z "${PROJECT_ID+x}" ]]; then PROJECT_ID="pantheon-dev-20260902"; fi
+    if [[ -z "${REMOTE_USER+x}" ]]; then REMOTE_USER="chloe_ong_dev_cctech_support_com"; fi
+    if [[ -z "${DEV_VM+x}" ]]; then DEV_VM="pantheon-dev-deploy"; fi
+    if [[ -z "${DEV_ZONE+x}" ]]; then DEV_ZONE="asia-east1-b"; fi
+    if [[ -z "${DEV_REMOTE_DIR+x}" ]]; then DEV_REMOTE_DIR="/home/chloe_ong_dev_cctech_support_com/pantheon"; fi
+    if [[ -z "${DEV_DEPLOY_SSH_HOST+x}" ]]; then DEV_DEPLOY_SSH_HOST="34.81.52.222"; fi
+    if [[ -z "${DEV_BFF_CANONICAL_CORS_ORIGIN+x}" ]]; then DEV_BFF_CANONICAL_CORS_ORIGIN="https://app.dev.mvl-cap.tw"; fi
+    if [[ -z "${DEV_BFF_REQUIRED_CORS_ORIGINS+x}" ]]; then DEV_BFF_REQUIRED_CORS_ORIGINS="https://preview--pantheon-dev.lovable.app,https://b75d3452-f667-4cf4-893a-1061de45b347.lovableproject.com,https://id-preview--b75d3452-f667-4cf4-893a-1061de45b347.lovable.app,https://140c41d5-9cd8-4d6b-ba02-66d5941d0dbe.lovableproject.com"; fi
+    if [[ -z "${DEV_BFF_CORS_ORIGINS+x}" ]]; then
+      DEV_BFF_CORS_ORIGINS="${DEV_BFF_CANONICAL_CORS_ORIGIN}"
+      DEV_BFF_CORS_ORIGINS="$(append_csv_unique "$DEV_BFF_CORS_ORIGINS" "$DEV_BFF_REQUIRED_CORS_ORIGINS")"
+    elif [[ -n "$DEV_BFF_CORS_ORIGINS" ]]; then
+      DEV_BFF_CORS_ORIGINS="$(append_csv_unique "$DEV_BFF_CORS_ORIGINS" "${DEV_BFF_CANONICAL_CORS_ORIGIN:-}")"
+      DEV_BFF_CORS_ORIGINS="$(append_csv_unique "$DEV_BFF_CORS_ORIGINS" "${DEV_BFF_REQUIRED_CORS_ORIGINS:-}")"
+    fi
+    if [[ -z "${DEV_BFF_PUBLIC_HOST+x}" ]]; then DEV_BFF_PUBLIC_HOST="api.dev.mvl-cap.tw"; fi
+    if [[ -z "${DEV_FE_PUBLIC_HOST+x}" ]]; then DEV_FE_PUBLIC_HOST="app.dev.mvl-cap.tw"; fi
+    if [[ -z "${DEV_FE_STATIC_ROOT+x}" ]]; then DEV_FE_STATIC_ROOT="/var/www/pantheon-dev-fe"; fi
     ;;
   staging-live)
     [[ "$COMPONENT" == "auto" ]] && COMPONENT="all"
@@ -464,11 +540,18 @@ case "$DEPLOY_ENV" in
       control|exec|all) ;;
       *) error "staging-live supports --component control, exec, or all" ;;
     esac
+    if [[ -n "${STAGING_BFF_CORS_ORIGINS:-}" && -n "${STAGING_BFF_CANONICAL_CORS_ORIGIN:-}" ]]; then
+      STAGING_BFF_CORS_ORIGINS="$(append_csv_unique "$STAGING_BFF_CORS_ORIGINS" "$STAGING_BFF_CANONICAL_CORS_ORIGIN")"
+    elif [[ -z "${STAGING_BFF_CORS_ORIGINS+x}" && -n "${STAGING_BFF_CANONICAL_CORS_ORIGIN:-}" ]]; then
+      STAGING_BFF_CORS_ORIGINS="$STAGING_BFF_CANONICAL_CORS_ORIGIN"
+    fi
     ;;
   *)
     error "--environment must be dev or staging-live"
     ;;
 esac
+
+validate_target_selection
 
 case "$DEV_PPL_ALLOC_009_DEV_PROOF_ENABLED" in
   true|false) ;;
@@ -496,10 +579,10 @@ if [[ "$DRY_RUN" == "true" ]]; then
   info "allow_dirty=${ALLOW_DIRTY}"
   info "allow_example_env=${ALLOW_EXAMPLE_ENV}"
   info "dev_deploy_deadline_seconds=${DEV_DEPLOY_DEADLINE_SECONDS}"
-  info "dev_bff_cors_origins=${DEV_BFF_CORS_ORIGINS}"
-  info "dev_bff_public_host=${DEV_BFF_PUBLIC_HOST}"
-  info "dev_fe_public_host=${DEV_FE_PUBLIC_HOST}"
-  info "dev_fe_static_root=${DEV_FE_STATIC_ROOT}"
+  info "dev_bff_cors_origins=${DEV_BFF_CORS_ORIGINS:-}"
+  info "dev_bff_public_host=${DEV_BFF_PUBLIC_HOST:-}"
+  info "dev_fe_public_host=${DEV_FE_PUBLIC_HOST:-}"
+  info "dev_fe_static_root=${DEV_FE_STATIC_ROOT:-}"
   info "dev_bff_auth_stub=${DEV_BFF_AUTH_STUB}"
   info "dev_bff_auth_mode=${DEV_BFF_AUTH_MODE}"
   info "dev_ppl_alloc_009_dev_proof_enabled=${DEV_PPL_ALLOC_009_DEV_PROOF_ENABLED}"
@@ -543,8 +626,8 @@ if [[ "$DRY_RUN" == "true" ]]; then
   info "management_ai_database_url_configured=$([[ -n "${MANAGEMENT_AI_DATABASE_URL:-}" ]] && echo true || echo false)"
   info "management_ai_attach_bucket=${PANTHEON_MGMT_AI_ATTACH_BUCKET:-}"
   info "management_ai_attach_location=${DEV_MANAGEMENT_AI_ATTACH_LOCATION}"
-  info "staging_exec_health_url=${STAGING_EXEC_HEALTH_URL}"
-  info "staging_bff_cors_origins=${STAGING_BFF_CORS_ORIGINS}"
+  info "staging_exec_health_url=${STAGING_EXEC_HEALTH_URL:-}"
+  info "staging_bff_cors_origins=${STAGING_BFF_CORS_ORIGINS:-}"
   exit 0
 fi
 
@@ -632,10 +715,10 @@ ssh_bash() {
   command_prefix+=" PANTHEON_GITHUB_TOKEN=$(shell_quote "${GITHUB_TOKEN:-}")"
   command_prefix+=" PANTHEON_ALLOW_DIRTY_DEPLOY=$(shell_quote "$ALLOW_DIRTY")"
   command_prefix+=" PANTHEON_ALLOW_EXAMPLE_ENV=$(shell_quote "$ALLOW_EXAMPLE_ENV")"
-  command_prefix+=" PANTHEON_DEV_BFF_CORS_ORIGINS=$(shell_quote "$DEV_BFF_CORS_ORIGINS")"
-  command_prefix+=" PANTHEON_DEV_BFF_PUBLIC_HOST=$(shell_quote "$DEV_BFF_PUBLIC_HOST")"
-  command_prefix+=" PANTHEON_DEV_FE_PUBLIC_HOST=$(shell_quote "$DEV_FE_PUBLIC_HOST")"
-  command_prefix+=" PANTHEON_DEV_FE_STATIC_ROOT=$(shell_quote "$DEV_FE_STATIC_ROOT")"
+  command_prefix+=" PANTHEON_DEV_BFF_CORS_ORIGINS=$(shell_quote "${DEV_BFF_CORS_ORIGINS:-}")"
+  command_prefix+=" PANTHEON_DEV_BFF_PUBLIC_HOST=$(shell_quote "${DEV_BFF_PUBLIC_HOST:-}")"
+  command_prefix+=" PANTHEON_DEV_FE_PUBLIC_HOST=$(shell_quote "${DEV_FE_PUBLIC_HOST:-}")"
+  command_prefix+=" PANTHEON_DEV_FE_STATIC_ROOT=$(shell_quote "${DEV_FE_STATIC_ROOT:-}")"
   command_prefix+=" PANTHEON_DEV_LIFECYCLE_PROJECTOR_HEALTH_MAX_AGE_SECONDS=$(shell_quote "$DEV_LIFECYCLE_PROJECTOR_HEALTH_MAX_AGE_SECONDS")"
   command_prefix+=" PANTHEON_DEV_BFF_AUTH_STUB=$(shell_quote "$DEV_BFF_AUTH_STUB")"
   command_prefix+=" PANTHEON_DEV_BFF_AUTH_MODE=$(shell_quote "$DEV_BFF_AUTH_MODE")"
@@ -708,14 +791,15 @@ ssh_bash() {
   command_prefix+=" PANTHEON_MANAGEMENT_AI_DB_PASSWORD=$(shell_quote "${DEV_MANAGEMENT_AI_DB_PASSWORD:-}")"
   command_prefix+=" PANTHEON_MANAGEMENT_AI_DB_NAME=$(shell_quote "${DEV_MANAGEMENT_AI_DB_NAME:-}")"
   command_prefix+=" PANTHEON_MANAGEMENT_AI_APP_DB_USER=$(shell_quote "${DEV_APP_DB_USER:-pantheon_app}")"
-  command_prefix+=" PANTHEON_STAGING_EXEC_HEALTH_URL=$(shell_quote "$STAGING_EXEC_HEALTH_URL")"
-  command_prefix+=" PANTHEON_STAGING_BFF_CORS_ORIGINS=$(shell_quote "$STAGING_BFF_CORS_ORIGINS")"
+  command_prefix+=" PANTHEON_STAGING_EXEC_HEALTH_URL=$(shell_quote "${STAGING_EXEC_HEALTH_URL:-}")"
+  command_prefix+=" PANTHEON_STAGING_BFF_CORS_ORIGINS=$(shell_quote "${STAGING_BFF_CORS_ORIGINS:-}")"
   command_prefix+=" bash -s"
 
   local deadline_seconds="${DEV_DEPLOY_DEADLINE_SECONDS:-7200}"
   local -a remote_command
   if [[ "$DEPLOY_ENV" == "dev" ]]; then
     info "direct ssh ${REMOTE_USER}@${DEV_DEPLOY_SSH_HOST} component=${remote_component} sha=${DEPLOY_SHA} (deadline=${deadline_seconds}s)"
+    export DEV_DEPLOY_SSH_HOST REMOTE_USER
     remote_command=("$SCRIPT_DIR/dev_vm_ssh.sh" exec "$command_prefix")
   else
     info "gcloud ssh ${vm} (${zone}) component=${remote_component} sha=${DEPLOY_SHA} (deadline=${deadline_seconds}s)"
@@ -2548,10 +2632,15 @@ verify_exact_component_deployment() {
   local expected_frontend_sha="${PANTHEON_DEV_FRONTEND_SHA:-${PANTHEON_FE_SHA:-}}"
   local deploy_environment="${PANTHEON_DEPLOY_ENV:-dev}"
   local deploy_component="${PANTHEON_DEPLOY_COMPONENT:-root}"
-  local bff_url="${PANTHEON_BFF_BASE_URL:-https://${PANTHEON_DEV_BFF_PUBLIC_HOST:-pantheon-lupin-dev-bff.35.201.204.12.sslip.io}}"
-  local fe_url="${PANTHEON_FE_BASE_URL:-https://${PANTHEON_DEV_FE_PUBLIC_HOST:-pantheon-lupin-dev-fe.35.201.204.12.sslip.io}}"
+  local bff_url="${PANTHEON_BFF_BASE_URL:-https://${PANTHEON_DEV_BFF_PUBLIC_HOST:-${DEV_BFF_PUBLIC_HOST:-api.dev.mvl-cap.tw}}}"
+  local fe_url="${PANTHEON_FE_BASE_URL:-https://${PANTHEON_DEV_FE_PUBLIC_HOST:-${DEV_FE_PUBLIC_HOST:-app.dev.mvl-cap.tw}}}"
   local receipt_root="${PANTHEON_DEPLOY_RECEIPT_ROOT:-${HOME}/pantheon-ci-deploy/deployment-receipts}"
   local receipt_path="${PANTHEON_BACKEND_COMPONENTS_RECEIPT_PATH:-${receipt_root}/${deploy_environment}/${deploy_component}/backend-components-receipt.json}"
+  local retired_url_pattern='sslip\.io|104\.155\.223\.192|35\.201\.204\.12|35\.201\.239\.38|34\.81\.75\.241|35\.236\.178\.81'
+  if [[ "$bff_url" =~ ${retired_url_pattern} || "$fe_url" =~ ${retired_url_pattern} ]]; then
+    printf '[remote-deploy] exact component verification rejects retired target identity in URLs\n' >&2
+    return 1
+  fi
   local missing=() restarting=() unhealthy=() wrong_sha=() duplicates=() identity_errors=()
   local now deploy_checkout_sha
   now="$(date -u +%Y-%m-%dT%H:%M:%SZ)"

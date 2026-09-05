@@ -27,20 +27,11 @@ from ..models import (
     ServantCapabilitySummary,
     ServantProfile,
 )
-try:
-    from openclaw_ops_client import OpenClawOpsClient, OpenClawOpsClientError
-except ImportError:  # pragma: no cover - package entrypoint fallback
-    from ...openclaw_ops_client import OpenClawOpsClient, OpenClawOpsClientError
-try:
-    from ports.persona_write_owner import (
-        PersonaWriteConflict,
-        PersonaWriteOwnerUnavailable,
-    )
-except ImportError:
-    from services.control_plane.bff.ports.persona_write_owner import (  # type: ignore[no-redef]
-        PersonaWriteConflict,
-        PersonaWriteOwnerUnavailable,
-    )
+from services.control_plane.bff.openclaw_ops_client import OpenClawOpsClient, OpenClawOpsClientError
+from services.control_plane.bff.ports.persona_write_owner import (
+    PersonaWriteConflict,
+    PersonaWriteOwnerUnavailable,
+)
 
 
 _SERVANT_CAPABILITY = "agora.servant.v1"
@@ -425,7 +416,7 @@ def _persona_owner_call(
     dependency: str,
     bff_error: Callable[..., HTTPException],
 ) -> Any:
-    from models import ErrorCode
+    from services.control_plane.bff.models import ErrorCode
 
     try:
         return call()
@@ -493,7 +484,7 @@ def _require_header(value: Optional[str], name: str, bff_error: Callable[..., HT
     clean = str(value or "").strip()
     if clean:
         return clean
-    from models import ErrorCode
+    from services.control_plane.bff.models import ErrorCode
 
     raise bff_error(
         422,
@@ -505,7 +496,7 @@ def _require_header(value: Optional[str], name: str, bff_error: Callable[..., HT
 
 
 def _raise_scope_error(exc: AgoraScopeResolutionError, bff_error: Callable[..., HTTPException]) -> None:
-    from models import ErrorCode
+    from services.control_plane.bff.models import ErrorCode
 
     code = ErrorCode.AUTH_REQUIRED if exc.status_code == 401 else ErrorCode.FORBIDDEN
     raise bff_error(
@@ -523,7 +514,7 @@ def _raise_cross_user_session_forbidden(
     bff_error: Callable[..., HTTPException],
     audit: Mapping[str, Any],
 ) -> None:
-    from models import ErrorCode
+    from services.control_plane.bff.models import ErrorCode
 
     raise bff_error(
         403,
@@ -552,7 +543,7 @@ def _servant_profile_for_scope(
         expected_persona_id=persona_id,
     )
     if existing is None:
-        from models import ErrorCode
+        from services.control_plane.bff.models import ErrorCode
 
         raise bff_error(
             404,
@@ -594,7 +585,7 @@ def _scope_for_servant_session(
 
 
 def _openclaw_error_code(exc: OpenClawOpsClientError) -> Any:
-    from models import ErrorCode
+    from services.control_plane.bff.models import ErrorCode
 
     if exc.status_code == 404:
         return ErrorCode.RESOURCE_NOT_FOUND
@@ -841,7 +832,7 @@ def create_servant_router(
             sync_persona["_agent_sync_idempotency_key"] = str(idempotency_key)
             sync_result = sync_servant_agent(sync_persona)
         except Exception as exc:  # noqa: BLE001
-            from models import ErrorCode
+            from services.control_plane.bff.models import ErrorCode
 
             raise bff_error(
                 503,
@@ -1141,7 +1132,7 @@ def create_servant_router(
             _raise_cross_user_session_forbidden(bff_error=bff_error, audit=audit)
         state = str(record.get("state") or record.get("status") or "").lower()
         if state in {"canceled", "cancelled", "failed"}:
-            from models import ErrorCode
+            from services.control_plane.bff.models import ErrorCode
 
             raise bff_error(
                 409,

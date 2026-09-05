@@ -751,7 +751,7 @@ def test_agora_routers_have_zero_reverse_imports_of_main():
 
 
 def test_default_allowlisted_adapter_emits_simulation_provenance_by_default():
-    """OP-G01: DefaultAllowlistedAdapter must emit simulation provenance unless real backend receipt exists."""
+    """OP-G01: Locally generated results cannot claim real execution."""
     from agora.research.dispatcher import DefaultAllowlistedAdapter
 
     adapter = DefaultAllowlistedAdapter("backtest", "vectorbt_runner")
@@ -776,14 +776,14 @@ def test_default_allowlisted_adapter_emits_simulation_provenance_by_default():
     )
     assert result_unverified_real.provenance == "simulation"
 
-    # When real mode is requested WITH real receipt, emits real
+    # A claimed receipt is not owner readback and cannot promote synthetic data.
     result_verified_real = adapter.execute(
         stage={"stage_id": "stg-3", "routing": {"backend_mode": "real"}, "real_backend_receipt_id": "rcpt-123"},
         plan={"strategy_id": "strat-1"},
         context={"has_real_receipt": True},
         downstream_key="key-3",
     )
-    assert result_verified_real.provenance == "real"
+    assert result_verified_real.provenance == "simulation"
 
 
 def test_agora_service_session_and_insight_lifecycle():

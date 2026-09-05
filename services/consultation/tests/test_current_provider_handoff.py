@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import json
+import shlex
 import socket
+import subprocess
 import sys
 import threading
 import time
@@ -341,6 +343,37 @@ def _http_provider(config: ExecutorConfig) -> HttpContributionProvider:
     )
 
 
+def test_container_entrypoint_mounts_consultation_route() -> None:
+    # Import in a fresh interpreter: importing consultation_provider in this
+    # test module has already attached the route to main.app in this process.
+    dockerfile = (_ADAPTER_DIR / "Dockerfile").read_text(encoding="utf-8")
+    command = json.loads(next(line[4:] for line in dockerfile.splitlines() if line.startswith("CMD ")))
+    argv = shlex.split(command[2])
+    assert argv[0] == "uvicorn"
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            "import json, sys; "
+            "from uvicorn.importer import import_from_string; "
+            "sys.path.insert(0, sys.argv[2]); "
+            "app = import_from_string(sys.argv[1]); "
+            "print(json.dumps([getattr(route, 'path', None) for route in app.routes]))",
+            argv[1],
+            argv[argv.index("--app-dir") + 1],
+        ],
+        cwd=_ADAPTER_DIR.parents[1],
+        capture_output=True,
+        text=True,
+        check=True,
+        timeout=30,
+    )
+    paths = json.loads(result.stdout.strip().splitlines()[-1])
+    assert CONSULTATION_CONTRIBUTION_PATH in paths
+    assert "/livez" in paths
+    assert "/api/openclaw-adapter/assistant/providers/openclaw/invoke" in paths
+
+
 def test_consultation_entrypoint_preserves_existing_adapter_routes() -> None:
     paths = {getattr(route, "path", None) for route in integrated_adapter_app.routes}
 
@@ -512,4 +545,3 @@ def test_workflow_executor_loop_control_observation(
     assert record["type"] == "success"
     assert record["loop_id"] == "consultation"
     assert "consultation://memos/" in record["kwargs"]["evidence_refs"][0]
-

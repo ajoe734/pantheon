@@ -18,8 +18,10 @@
 #   PANTHEON_DEPLOY_ROOT   deployment layout parent (default ~/pantheon-ci-deploy)
 #   PANTHEON_STATUS_ROOT   control-plane state owner (default: this checkout)
 #   BOOTSTRAP_ORCHESTRATOR_STOP_AFTER_KEYPAIR   test-only seam: exit 0 right
-#     after the dev-bridge keypair phase, before touching git worktrees or the
-#     supervisor promote/watchdog/health chain. Never set this on a real host.
+#     after the dev-bridge keypair phase (which itself runs after the command
+#     root worktree and supervisor venv are materialized, since keypair
+#     generation needs that venv's cryptography), before the supervisor
+#     promote/watchdog/health chain. Never set this on a real host.
 set -euo pipefail
 
 DRY_RUN=0
@@ -98,13 +100,88 @@ run mkdir -p "$RUNTIME_DIR" "$COMMAND_RUNTIME_PARENT"
 run chmod 700 "$DEPLOY_ROOT" "$RUNTIME_DIR" "$COMMAND_RUNTIME_PARENT"
 
 # ---------------------------------------------------------------------------
-# 2. Dev bridge signing keys
+# 2. Immutable command root
+#
+# The promoted supervisor must launch from an exact, clean tree. A detached
+# worktree at the current commit gives that without duplicating Git objects.
+# This must exist before the supervisor Python environment below, which
+# installs from this exact command root's own .orchestrator/requirements.txt.
+# ---------------------------------------------------------------------------
+COMMAND_SHA="$(git -C "$STATUS_ROOT" rev-parse HEAD)"
+COMMAND_ROOT="$COMMAND_RUNTIME_PARENT/$COMMAND_SHA"
+if [[ -d "$COMMAND_ROOT" ]]; then
+  log "command root already materialized: $COMMAND_ROOT"
+else
+  log "materializing command root at $COMMAND_SHA"
+  run git -C "$STATUS_ROOT" worktree add --detach "$COMMAND_ROOT" "$COMMAND_SHA"
+fi
+
+# ---------------------------------------------------------------------------
+# 3. Supervisor Python environment
+#
+# The supervisor must never launch from the ambient /usr/bin/python3: that
+# interpreter has no reason to carry pydantic/cryptography, and losing them
+# silently drops packet intake while the heartbeat stays healthy (see
+# docs/operations/supervisor-python-runtime.md). This venv is deploy-root
+# owned rather than checkout-scoped so it survives command-runtime pruning
+# and re-promotion.
+#
+# This must run before the keypair phase below: keypair generation needs
+# ``cryptography``, and on a completely fresh host the ambient interpreter
+# has no reason to carry it -- the deploy-root-owned venv must exist and be
+# proven first so the keypair step never depends on ambient packages.
+#
+# The provisioning/reuse/publication policy itself (read-only validate an
+# existing per-SHA directory first; provision+preflight a fresh one in
+# isolation only when missing or failing; publish with a create-only rename)
+# is owned by ``ensure_supervisor_python_environment`` in
+# provision_live_supervisor_config.py, the single owner shared with
+# sync-dev-root.sh's equivalent phase -- see that function's docstring for
+# why an existing per-SHA directory is never mutated in place.
+# ---------------------------------------------------------------------------
+SUPERVISOR_PYTHON_PARENT="$RUNTIME_DIR/supervisor-python"
+SUPERVISOR_PYTHON_DIR="$SUPERVISOR_PYTHON_PARENT/$COMMAND_SHA"
+SUPERVISOR_PYTHON="$SUPERVISOR_PYTHON_DIR/bin/python3"
+SUPERVISOR_REQUIREMENTS="$COMMAND_ROOT/.orchestrator/requirements.txt"
+
+if [[ $DRY_RUN -eq 1 ]]; then
+  echo "  would run: python3 -B $COMMAND_ROOT/scripts/provision_live_supervisor_config.py --ensure-python-environment --command-root $COMMAND_ROOT --python-parent $SUPERVISOR_PYTHON_PARENT --requirements $SUPERVISOR_REQUIREMENTS"
+else
+  log "ensuring supervisor Python environment: $SUPERVISOR_PYTHON_DIR"
+  ensure_output="$(python3 -B "$COMMAND_ROOT/scripts/provision_live_supervisor_config.py" \
+    --ensure-python-environment \
+    --command-root "$COMMAND_ROOT" \
+    --python-parent "$SUPERVISOR_PYTHON_PARENT" \
+    --requirements "$SUPERVISOR_REQUIREMENTS" \
+    --json)" || { log "FATAL: python dependency preflight failed for command root=$COMMAND_ROOT"; exit 1; }
+  mapfile -t _ensure_fields < <(python3 -c '
+import json, sys
+payload = json.load(sys.stdin)
+print(payload["python_executable"])
+print("1" if payload["reused"] else "0")
+' <<<"$ensure_output")
+  SUPERVISOR_PYTHON="${_ensure_fields[0]}"
+  if [[ "${_ensure_fields[1]}" == "1" ]]; then
+    log "reusing already-verified supervisor Python environment: $SUPERVISOR_PYTHON_DIR"
+  else
+    log "creating supervisor Python environment in isolation"
+    log "installing supervisor Python dependencies from $SUPERVISOR_REQUIREMENTS"
+    log "published verified supervisor Python environment: $SUPERVISOR_PYTHON_DIR"
+  fi
+fi
+
+# ---------------------------------------------------------------------------
+# 4. Dev bridge signing keys
 #
 # The keypair is a purely local trust boundary: local tooling signs dev task
 # packets and the local dev-bridge inbox verifies them. Product BFF processes
 # receive neither the private key nor the signer module, so a fresh machine may
 # mint a fresh keypair. The private half is written to its own file and is
 # never placed in the supervisor's authority environment.
+#
+# Key generation runs under $SUPERVISOR_PYTHON (the venv proven above), never
+# the ambient python3: a fresh host has no reason to carry cryptography on
+# its system interpreter, and this step must not depend on it.
 # ---------------------------------------------------------------------------
 if [[ -f "$AUTHORITY_ENV_FILE" && -f "$SIGNER_ENV_FILE" ]]; then
   log "keypair already present, keeping existing key: $AUTHORITY_ENV_FILE"
@@ -122,7 +199,7 @@ elif [[ $DRY_RUN -eq 1 ]]; then
   echo "  would write $SIGNER_ENV_FILE (mode 600)"
 else
   log "generating Ed25519 keypair for key id $KEY_ID"
-  python3 - "$AUTHORITY_ENV_FILE" "$SIGNER_ENV_FILE" "$KEY_ID" <<'PYTHON'
+  "$SUPERVISOR_PYTHON" - "$AUTHORITY_ENV_FILE" "$SIGNER_ENV_FILE" "$KEY_ID" <<'PYTHON'
 import base64
 import json
 import os
@@ -176,28 +253,14 @@ if [[ "${BOOTSTRAP_ORCHESTRATOR_STOP_AFTER_KEYPAIR:-0}" -eq 1 ]]; then
 fi
 
 # ---------------------------------------------------------------------------
-# 3. Immutable command root
-#
-# The promoted supervisor must launch from an exact, clean tree. A detached
-# worktree at the current commit gives that without duplicating Git objects.
-# ---------------------------------------------------------------------------
-COMMAND_SHA="$(git -C "$STATUS_ROOT" rev-parse HEAD)"
-COMMAND_ROOT="$COMMAND_RUNTIME_PARENT/$COMMAND_SHA"
-if [[ -d "$COMMAND_ROOT" ]]; then
-  log "command root already materialized: $COMMAND_ROOT"
-else
-  log "materializing command root at $COMMAND_SHA"
-  run git -C "$STATUS_ROOT" worktree add --detach "$COMMAND_ROOT" "$COMMAND_SHA"
-fi
-
-# ---------------------------------------------------------------------------
-# 4. Promote, persist, verify
+# 5. Promote, persist, verify
 # ---------------------------------------------------------------------------
 log "promoting supervisor runtime"
 run python3 "$STATUS_ROOT/scripts/promote_supervisor_runtime.py" \
   --repo "$COMMAND_ROOT" \
   --status-root "$STATUS_ROOT" \
   --live-config "$LIVE_CONFIG" \
+  --python "$SUPERVISOR_PYTHON" \
   --authority-env-file "$AUTHORITY_ENV_FILE" \
   --promote \
   --json

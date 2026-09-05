@@ -278,20 +278,20 @@ def create_interaction_router(*, extract_identity: Callable[..., Any], require_r
         try:
             resolved = resolve_agora_user_scope(identity, utc_now=utc_now, requested_tenant_id=tenant)
         except AgoraScopeResolutionError as exc:
-            from models import ErrorCode
+            from services.control_plane.bff.models import ErrorCode
             raise bff_error(exc.status_code, ErrorCode.FORBIDDEN, exc.message, exc.reason)
         if "agora.workshop.v1" not in resolved.granted_capabilities:
-            from models import ErrorCode
+            from services.control_plane.bff.models import ErrorCode
             raise bff_error(403, ErrorCode.FORBIDDEN, "Agora interaction capability denied", "capability_missing")
         return resolved
 
     def session_for(workshop_id: str, resolved: Any) -> Dict[str, Any]:
         session = workshop_store.get_session(workshop_id)
         if not session:
-            from models import ErrorCode
+            from services.control_plane.bff.models import ErrorCode
             raise bff_error(404, ErrorCode.RESOURCE_NOT_FOUND, "Workshop not found", workshop_id)
         if session.get("tenant_id") != resolved.tenant_id or session.get("user_id") != resolved.user_id:
-            from models import ErrorCode
+            from services.control_plane.bff.models import ErrorCode
             raise bff_error(403, ErrorCode.FORBIDDEN, "Workshop scope denied", "audience_mismatch")
         return session
 
@@ -366,28 +366,28 @@ def create_interaction_router(*, extract_identity: Callable[..., Any], require_r
             resolved.tenant_id, resolved.user_id, body.workshop_id, submitted,
         )
         if binding is None:
-            from models import ErrorCode
+            from services.control_plane.bff.models import ErrorCode
             raise bff_error(409, ErrorCode.RESOURCE_CONFLICT, "A durable daily context resolver receipt is required", "context_binding_missing")
         if snapshot.tenant_id != resolved.tenant_id:
-            from models import ErrorCode
+            from services.control_plane.bff.models import ErrorCode
             raise bff_error(403, ErrorCode.FORBIDDEN, "Interaction context tenant does not match authenticated tenant", "tenant_mismatch")
         submitted_at = human.submitted_at
         server_now = datetime.fromisoformat(utc_now().replace("Z", "+00:00"))
         if submitted_at > server_now + timedelta(seconds=30):
-            from models import ErrorCode
+            from services.control_plane.bff.models import ErrorCode
             raise bff_error(422, ErrorCode.VALIDATION_FAILED, "Human request time cannot be in the future", "human_submitted_at_future")
         if snapshot.captured_at != submitted_at:
-            from models import ErrorCode
+            from services.control_plane.bff.models import ErrorCode
             raise bff_error(409, ErrorCode.RESOURCE_CONFLICT, "Context capture must bind the immutable human request time", "context_capture_mismatch")
         if snapshot.evidence_cutoff > snapshot.captured_at:
-            from models import ErrorCode
+            from services.control_plane.bff.models import ErrorCode
             raise bff_error(409, ErrorCode.RESOURCE_CONFLICT, "Evidence cutoff cannot be later than context capture", "evidence_cutoff_future")
         for route_value in (snapshot.source_route, snapshot.return_route):
             if not route_value.startswith("/") or "://" in route_value or "\\" in route_value:
-                from models import ErrorCode
+                from services.control_plane.bff.models import ErrorCode
                 raise bff_error(422, ErrorCode.VALIDATION_FAILED, "Source and return routes must be local Pantheon routes", "invalid_source_route")
         if snapshot.source_route != snapshot.return_route:
-            from models import ErrorCode
+            from services.control_plane.bff.models import ErrorCode
             raise bff_error(409, ErrorCode.RESOURCE_CONFLICT, "Source and return route binding differs", "source_return_route_mismatch")
         refs = snapshot.context_refs
         focused = snapshot.focused_object
@@ -395,7 +395,7 @@ def create_interaction_router(*, extract_identity: Callable[..., Any], require_r
             item.kind == focused.kind and item.id == focused.id and item.version == focused.version
             for item in refs
         ):
-            from models import ErrorCode
+            from services.control_plane.bff.models import ErrorCode
             raise bff_error(409, ErrorCode.RESOURCE_CONFLICT, "Focused object is not present in the immutable context refs", "focused_object_unbound")
         strategy_items = [item for item in refs if item.kind == "strategy"]
         expected_strategy = (
@@ -403,22 +403,22 @@ def create_interaction_router(*, extract_identity: Callable[..., Any], require_r
             if strategy_items else None
         )
         if snapshot.strategy_ref != expected_strategy:
-            from models import ErrorCode
+            from services.control_plane.bff.models import ErrorCode
             raise bff_error(409, ErrorCode.RESOURCE_CONFLICT, "Strategy reference does not match immutable context refs", "strategy_ref_mismatch")
         if strategy_items and (
             session.get("strategy_id") != strategy_items[0].id
             or session.get("active_strategy_spec_registry_id") != strategy_items[0].version
         ):
-            from models import ErrorCode
+            from services.control_plane.bff.models import ErrorCode
             raise bff_error(409, ErrorCode.RESOURCE_CONFLICT, "Strategy context does not match canonical Workshop state", "workshop_strategy_mismatch")
         expected_decision = next((item.id for item in refs if item.kind == "decision_event"), None)
         expected_journal = next((item.id for item in refs if item.kind == "journal_entry"), None)
         if snapshot.decision_ref != expected_decision or snapshot.journal_ref != expected_journal:
-            from models import ErrorCode
+            from services.control_plane.bff.models import ErrorCode
             raise bff_error(409, ErrorCode.RESOURCE_CONFLICT, "Journal or decision binding does not match immutable context refs", "source_reference_mismatch")
         expected_positions = [item.id for item in refs if item.kind == "position"]
         if snapshot.position_risk_snapshot_refs != expected_positions:
-            from models import ErrorCode
+            from services.control_plane.bff.models import ErrorCode
             raise bff_error(409, ErrorCode.RESOURCE_CONFLICT, "Position/risk snapshot refs do not match immutable context refs", "position_snapshot_mismatch")
         exact_keys = (
             "tenant_id", "source_route", "focused_object", "context_refs", "strategy_ref",
@@ -427,7 +427,7 @@ def create_interaction_router(*, extract_identity: Callable[..., Any], require_r
         )
         mismatched = [key for key in exact_keys if submitted.get(key) != binding.get(key)]
         if mismatched:
-            from models import ErrorCode
+            from services.control_plane.bff.models import ErrorCode
             raise bff_error(
                 409, ErrorCode.RESOURCE_CONFLICT,
                 "Submitted context does not match the authoritative resolver receipt",
@@ -468,7 +468,7 @@ def create_interaction_router(*, extract_identity: Callable[..., Any], require_r
                         idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key")) -> Dict[str, Any]:
         resolved = scope(authorization, x_tenant_id, write=True)
         if not idempotency_key:
-            from models import ErrorCode
+            from services.control_plane.bff.models import ErrorCode
             raise bff_error(400, ErrorCode.VALIDATION_FAILED, "Idempotency-Key header is required", "missing_idempotency_key")
         request_payload = body.model_dump(mode="json")
         canonical = json.dumps(request_payload, sort_keys=True)
@@ -494,7 +494,7 @@ def create_interaction_router(*, extract_identity: Callable[..., Any], require_r
                 session.get("strategy_id") != strategy.id
                 or session.get("active_strategy_spec_registry_id") != strategy.version_id
             ):
-                from models import ErrorCode
+                from services.control_plane.bff.models import ErrorCode
                 raise bff_error(409, ErrorCode.RESOURCE_CONFLICT, "Immutable strategy version mismatch", "strategy_version_mismatch")
             resolved_at = utc_now()
             response = {"workshop_id": session["workshop_id"], "context_refs": [r.model_dump() for r in body.context_refs],
@@ -503,7 +503,7 @@ def create_interaction_router(*, extract_identity: Callable[..., Any], require_r
             if body.has_daily_binding:
                 focused = dict(body.focused_object or {})
                 if set(focused) - {"kind", "id", "version"} or not focused.get("kind") or not focused.get("id"):
-                    from models import ErrorCode
+                    from services.control_plane.bff.models import ErrorCode
                     raise bff_error(422, ErrorCode.VALIDATION_FAILED, "focused_object is invalid", "focused_object_invalid")
                 focused = {"kind": focused["kind"], "id": focused["id"], "version": focused.get("version")}
                 normalized_refs = [
@@ -515,17 +515,17 @@ def create_interaction_router(*, extract_identity: Callable[..., Any], require_r
                     and item.get("version") == focused.get("version")
                     for item in normalized_refs
                 ):
-                    from models import ErrorCode
+                    from services.control_plane.bff.models import ErrorCode
                     raise bff_error(409, ErrorCode.RESOURCE_CONFLICT, "Focused object is not in resolved context", "focused_object_unbound")
                 if body.source_route != body.return_route or not str(body.source_route).startswith("/") or "://" in str(body.source_route):
-                    from models import ErrorCode
+                    from services.control_plane.bff.models import ErrorCode
                     raise bff_error(422, ErrorCode.VALIDATION_FAILED, "Daily source/return routes are not a canonical local binding", "source_route_invalid")
                 source_path = unquote(urlsplit(str(body.source_route)).path).rstrip("/")
                 if focused["kind"] == "persona" and source_path != f"/management/personas/{focused['id']}":
-                    from models import ErrorCode
+                    from services.control_plane.bff.models import ErrorCode
                     raise bff_error(409, ErrorCode.RESOURCE_CONFLICT, "Persona source route is not canonical", "focused_source_route_mismatch")
                 if focused["kind"] == "workshop" and source_path != f"/agora/strategy-workshop/{focused['id']}":
-                    from models import ErrorCode
+                    from services.control_plane.bff.models import ErrorCode
                     raise bff_error(409, ErrorCode.RESOURCE_CONFLICT, "Workshop source route is not canonical", "focused_source_route_mismatch")
                 canonical_read = get_read_store()
                 personas = {
@@ -536,9 +536,9 @@ def create_interaction_router(*, extract_identity: Callable[..., Any], require_r
                 for persona_id in body.selected_persona_ids or []:
                     persona = personas.get(persona_id)
                     if not persona or persona.get("tenant_id") != resolved.tenant_id:
-                        from models import ErrorCode
+                        from services.control_plane.bff.models import ErrorCode
                         raise bff_error(409, ErrorCode.RESOURCE_CONFLICT, "Selected Persona is not canonical in this tenant", "selected_persona_not_found")
-                from models import ErrorCode
+                from services.control_plane.bff.models import ErrorCode
                 journal_reader = getattr(canonical_read, "list_decision_journal_entries", None)
                 journal_rows = (
                     {
@@ -549,7 +549,7 @@ def create_interaction_router(*, extract_identity: Callable[..., Any], require_r
                 )
                 def legacy_canonical_ref(kind: str, ref_id: str) -> Optional[Dict[str, Any]]:
                     if kind == "decision_event":
-                        from agora.trading_room.router import _get_store as get_trading_room_store
+                        from services.control_plane.bff.agora.trading_room.router import _get_store as get_trading_room_store
                         return get_trading_room_store().get_decision_event(ref_id)
                     if kind == "journal_entry":
                         if journal_rows is None:
@@ -752,7 +752,7 @@ def create_interaction_router(*, extract_identity: Callable[..., Any], require_r
                idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key")) -> Dict[str, Any]:
         resolved = scope(authorization, x_tenant_id, write=True)
         if not idempotency_key:
-            from models import ErrorCode
+            from services.control_plane.bff.models import ErrorCode
             raise bff_error(400, ErrorCode.VALIDATION_FAILED, "Idempotency-Key header is required", "missing_idempotency_key")
         session = session_for(body.workshop_id, resolved)
         normalized_refs = body.normalized_context_refs
@@ -762,7 +762,7 @@ def create_interaction_router(*, extract_identity: Callable[..., Any], require_r
         advice_environment = str(context_binding["advice_environment"]) if context_binding else body.environment
         strategy = next((r for r in normalized_refs if r.type == "strategy"), None)
         if normalized_mode == "propose_action" and strategy is None:
-            from models import ErrorCode
+            from services.control_plane.bff.models import ErrorCode
             raise bff_error(
                 422,
                 ErrorCode.VALIDATION_FAILED,
@@ -773,7 +773,7 @@ def create_interaction_router(*, extract_identity: Callable[..., Any], require_r
             session.get("strategy_id") != strategy.id
             or session.get("active_strategy_spec_registry_id") != strategy.version_id
         ):
-            from models import ErrorCode
+            from services.control_plane.bff.models import ErrorCode
             raise bff_error(409, ErrorCode.RESOURCE_CONFLICT, "Interaction context does not match immutable workshop strategy", "strategy_context_mismatch")
         eligibility_request = EligibilityRequest(
             workshop_id=body.workshop_id,
@@ -784,7 +784,7 @@ def create_interaction_router(*, extract_identity: Callable[..., Any], require_r
         eligibility_result = eligibility(eligibility_request, resolved)
         eligible_rows = {x["persona_id"]: x for x in eligibility_result["included"]}
         if not set(selected_persona_ids).issubset(eligible_rows):
-            from models import ErrorCode
+            from services.control_plane.bff.models import ErrorCode
             raise bff_error(422, ErrorCode.VALIDATION_FAILED, "One or more participants are ineligible", "participant_eligibility_failed")
         command_scope = f"command:{resolved.tenant_id}:{resolved.user_id}"
         request_payload = body.model_dump(mode="json")
@@ -792,7 +792,7 @@ def create_interaction_router(*, extract_identity: Callable[..., Any], require_r
         trace_id = session.get("openclaw_session_id") or f"trace-{uuid.uuid4().hex[:12]}"
 
         if body.human_request and body.human_request.operator_id != resolved.operator_id:
-            from models import ErrorCode
+            from services.control_plane.bff.models import ErrorCode
             raise bff_error(403, ErrorCode.FORBIDDEN, "Human request operator does not match authenticated operator", "operator_mismatch")
         canonical_personas = {
             _persona_id(persona): persona
@@ -803,7 +803,7 @@ def create_interaction_router(*, extract_identity: Callable[..., Any], require_r
         for persona_id in selected_persona_ids:
             persona = canonical_personas.get(persona_id)
             if persona is None:
-                from models import ErrorCode
+                from services.control_plane.bff.models import ErrorCode
                 raise bff_error(409, ErrorCode.RESOURCE_CONFLICT, "Selected Persona disappeared before freeze", "participant_registry_drift")
             metadata = persona.get("metadata") if isinstance(persona.get("metadata"), dict) else {}
             snapshot_id = str(persona.get("capability_snapshot_id") or metadata.get("capability_snapshot_id") or "")
@@ -822,14 +822,14 @@ def create_interaction_router(*, extract_identity: Callable[..., Any], require_r
                     captured_at=captured_at,
                 )
             except ValueError as exc:
-                from models import ErrorCode
+                from services.control_plane.bff.models import ErrorCode
                 raise bff_error(409, ErrorCode.RESOURCE_CONFLICT, "Persona admission drifted before freeze", str(exc)) from exc
             if body.participants:
                 submitted = next(item for item in body.participants if item.persona_id == persona_id)
                 submitted_json = submitted.model_dump(mode="json")
                 mismatched = [key for key in canonical_participant if submitted_json.get(key) != canonical_participant.get(key)]
                 if mismatched:
-                    from models import ErrorCode
+                    from services.control_plane.bff.models import ErrorCode
                     raise bff_error(
                         409, ErrorCode.RESOURCE_CONFLICT,
                         "Submitted Persona snapshot is no longer canonical",
@@ -1036,7 +1036,7 @@ def create_interaction_router(*, extract_identity: Callable[..., Any], require_r
                 page_size=page_size, page_token=page_token,
             )
         except ValueError as exc:
-            from models import ErrorCode
+            from services.control_plane.bff.models import ErrorCode
             raise bff_error(422, ErrorCode.VALIDATION_FAILED, "Invalid interaction page token", str(exc)) from exc
         return {"data": [public_resource(item) for item in items], "meta": daily_meta(resolved, next_page_token=next_token)}
 
@@ -1049,7 +1049,7 @@ def create_interaction_router(*, extract_identity: Callable[..., Any], require_r
         resolved = scope(authorization, x_tenant_id)
         resource = lifecycle.get(interaction_id, resolved.tenant_id, resolved.user_id)
         if resource is None:
-            from models import ErrorCode
+            from services.control_plane.bff.models import ErrorCode
             raise bff_error(404, ErrorCode.RESOURCE_NOT_FOUND, "Interaction not found", interaction_id)
         return {"data": public_resource(resource), "meta": daily_meta(resolved)}
 
@@ -1062,7 +1062,7 @@ def create_interaction_router(*, extract_identity: Callable[..., Any], require_r
         resolved = scope(authorization, x_tenant_id)
         items = lifecycle.timeline(interaction_id, resolved.tenant_id, resolved.user_id)
         if items is None:
-            from models import ErrorCode
+            from services.control_plane.bff.models import ErrorCode
             raise bff_error(404, ErrorCode.RESOURCE_NOT_FOUND, "Interaction not found", interaction_id)
         return {"data": items, "meta": daily_meta(resolved)}
 
@@ -1076,7 +1076,7 @@ def create_interaction_router(*, extract_identity: Callable[..., Any], require_r
     ) -> Dict[str, Any]:
         resolved = scope(authorization, x_tenant_id, write=True)
         if not idempotency_key:
-            from models import ErrorCode
+            from services.control_plane.bff.models import ErrorCode
             raise bff_error(400, ErrorCode.VALIDATION_FAILED, "Idempotency-Key header is required", "missing_idempotency_key")
         try:
             retry_fingerprint = payload_fingerprint({
@@ -1094,7 +1094,7 @@ def create_interaction_router(*, extract_identity: Callable[..., Any], require_r
                 reason=body.reason,
             )
         except KeyError:
-            from models import ErrorCode
+            from services.control_plane.bff.models import ErrorCode
             raise bff_error(404, ErrorCode.RESOURCE_NOT_FOUND, "Interaction not found", interaction_id)
         except InteractionConflict as exc:
             raise HTTPException(409, detail=str(exc)) from exc
@@ -1124,7 +1124,7 @@ def create_interaction_router(*, extract_identity: Callable[..., Any], require_r
         resolved = scope(authorization, x_tenant_id)
         timeline = lifecycle.timeline(interaction_id, resolved.tenant_id, resolved.user_id)
         if timeline is None:
-            from models import ErrorCode
+            from services.control_plane.bff.models import ErrorCode
             raise bff_error(404, ErrorCode.RESOURCE_NOT_FOUND, "Interaction not found", interaction_id)
         start = 0
         if last_event_id:

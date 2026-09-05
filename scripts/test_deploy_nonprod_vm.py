@@ -188,7 +188,7 @@ def test_deploy_nonprod_vm_dry_run_execution() -> None:
             str(DEPLOY_SCRIPT),
             "--environment", "dev",
             "--sha", "95a1455e3dc1a275b8d541fd2c432c3971013308",
-            "--project-id", "pantheon-lupin-dev-20260719",
+            "--project-id", "pantheon-dev-20260902",
             "--dry-run",
         ],
         capture_output=True,
@@ -198,6 +198,147 @@ def test_deploy_nonprod_vm_dry_run_execution() -> None:
     )
     assert proc.returncode == 0, f"deploy_nonprod_vm.sh --dry-run failed with stderr: {proc.stderr}"
     assert "management_ai_store_schema=" in proc.stdout or "DEPLOY_COMPONENT" in proc.stdout or proc.returncode == 0
+
+
+def _setup_stubbed_dev_environment(
+    tmp_path: Path,
+    sha: str = "4804b6d863e68dc65ab8a923ebc93eeef7923cec",
+    extra_env: dict[str, str] | None = None,
+) -> tuple[dict[str, str], Path, Path]:
+    lease_file = tmp_path / "dev-lease.json"
+    lease_file.write_text(
+        json.dumps({
+            "schemaVersion": 1,
+            "repository": "ajoe734/execute-plans",
+            "branch": "environment-coordination",
+            "path": ".pantheon/environment-leases/pantheon-dev-environment.json",
+            "resource": "pantheon-dev-environment",
+            "mode": "deployment",
+            "leaseId": "stub-lease-20260905",
+            "expectedBackendSha": sha,
+        }),
+        encoding="utf-8",
+    )
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir(parents=True, exist_ok=True)
+    key_file = tmp_path / "dev_key"
+    key_file.write_text("fake-dev-key\n", encoding="utf-8")
+    key_file.chmod(0o600)
+    known_hosts = tmp_path / "known_hosts"
+    known_hosts.write_text("fake-known-hosts\n", encoding="utf-8")
+    known_hosts.chmod(0o600)
+    args_file = tmp_path / "ssh_args.txt"
+    stdin_file = tmp_path / "ssh_stdin.txt"
+    stub_ssh = bin_dir / "ssh"
+    stub_ssh.write_text(
+        f"""#!/bin/sh
+printf '%s\\n' "$@" > '{args_file}'
+cat > '{stdin_file}'
+exit 0
+""",
+        encoding="utf-8",
+    )
+    stub_ssh.chmod(0o755)
+
+    env = {
+        "PATH": f"{bin_dir}:/usr/bin:/bin",
+        "PANTHEON_DEV_ENVIRONMENT_LEASE_STATE_FILE": str(lease_file),
+        "PANTHEON_DEV_ENVIRONMENT_LEASE_GUARD_LEASE_ID": "stub-lease-20260905",
+        "DEV_BFF_AUTH_STUB": "true",
+        "DEV_BFF_AUTH_MODE": "permissive",
+        "DEV_OPENCLAW_ADAPTER_SERVICE_AUTH_REQUIRED": "false",
+        "DEV_DEPLOY_SSH_KEY_FILE": str(key_file),
+        "DEV_DEPLOY_SSH_KNOWN_HOSTS_FILE": str(known_hosts),
+    }
+    if extra_env:
+        env.update(extra_env)
+    return env, args_file, stdin_file
+
+
+def test_deploy_nonprod_vm_dev_execution_stubbed_ssh_without_staging_vars(tmp_path: Path) -> None:
+    """Regression test: dev execution beyond dry-run succeeds with stubbed SSH when all staging variables are unset."""
+    sha = "4804b6d863e68dc65ab8a923ebc93eeef7923cec"
+    env, args_file, stdin_file = _setup_stubbed_dev_environment(tmp_path, sha=sha)
+
+    # Prove staging variables are completely unset in the execution environment
+    assert "STAGING_EXEC_HEALTH_URL" not in env
+    assert "STAGING_BFF_CORS_ORIGINS" not in env
+    assert "STAGING_CONTROL_VM" not in env
+    assert "STAGING_EXEC_VM" not in env
+
+    proc = subprocess.run(
+        [
+            str(DEPLOY_SCRIPT),
+            "--environment", "dev",
+            "--component", "root",
+            "--sha", sha,
+            "--project-id", "pantheon-dev-20260902",
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+        env=env,
+        cwd=ROOT,
+    )
+    assert proc.returncode == 0, f"deploy_nonprod_vm.sh failed with stderr: {proc.stderr}\nstdout: {proc.stdout}"
+    assert "direct ssh chloe_ong_dev_cctech_support_com@34.81.52.222 component=root" in proc.stdout
+    assert f"deployment complete: dev/root {sha}" in proc.stdout
+
+    # Prove selected dev target and exact payload passed to stubbed transport
+    assert args_file.exists()
+    ssh_args = args_file.read_text(encoding="utf-8").splitlines()
+    assert "chloe_ong_dev_cctech_support_com@34.81.52.222" in ssh_args
+    command_prefix = ssh_args[-1]
+    assert "PANTHEON_DEPLOY_ENV=dev" in command_prefix
+    assert "PANTHEON_DEPLOY_COMPONENT=root" in command_prefix
+    assert f"PANTHEON_DEPLOY_SHA={sha}" in command_prefix
+    assert "PANTHEON_STAGING_EXEC_HEALTH_URL=''" in command_prefix
+    assert "PANTHEON_STAGING_BFF_CORS_ORIGINS=''" in command_prefix
+    assert command_prefix.endswith("bash -s")
+
+    # Prove remote script payload delivered over stdin
+    assert stdin_file.exists()
+    stdin_content = stdin_file.read_text(encoding="utf-8")
+    assert "PANTHEON_DEPLOY_COMPONENT" in stdin_content
+    assert "case \"${PANTHEON_DEPLOY_COMPONENT}\" in" in stdin_content
+
+
+def test_deploy_nonprod_vm_dev_execution_custom_target_and_bff_component(tmp_path: Path) -> None:
+    """dev execution beyond dry-run correctly propagates custom target host and user for bff component."""
+    sha = "4804b6d863e68dc65ab8a923ebc93eeef7923cec"
+    extra_env = {
+        "DEV_DEPLOY_SSH_HOST": "192.0.2.77",
+        "REMOTE_USER": "custom-dev-user",
+        "DEV_VM": "custom-dev-vm",
+        "DEV_ZONE": "asia-east1-a",
+        "DEV_REMOTE_DIR": "/home/custom-dev-user/pantheon",
+    }
+    env, args_file, stdin_file = _setup_stubbed_dev_environment(tmp_path, sha=sha, extra_env=extra_env)
+
+    proc = subprocess.run(
+        [
+            str(DEPLOY_SCRIPT),
+            "--environment", "dev",
+            "--component", "bff",
+            "--sha", sha,
+            "--project-id", "pantheon-dev-20260902",
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+        env=env,
+        cwd=ROOT,
+    )
+    assert proc.returncode == 0, f"deploy_nonprod_vm.sh failed: {proc.stderr}"
+    assert "direct ssh custom-dev-user@192.0.2.77 component=bff" in proc.stdout
+    assert f"deployment complete: dev/bff {sha}" in proc.stdout
+
+    ssh_args = args_file.read_text(encoding="utf-8").splitlines()
+    assert "custom-dev-user@192.0.2.77" in ssh_args
+    command_prefix = ssh_args[-1]
+    assert "PANTHEON_DEPLOY_COMPONENT=bff" in command_prefix
+    assert "PANTHEON_STAGING_EXEC_HEALTH_URL=''" in command_prefix
+    assert "PANTHEON_STAGING_BFF_CORS_ORIGINS=''" in command_prefix
 
 
 def test_postgres_live_container_shm_size() -> None:
@@ -424,8 +565,8 @@ error() {{ echo "[error] $*" >&2; exit 1; }}
 export PATH="{bin_dir}:$PATH"
 export PANTHEON_BACKEND_COMPONENTS_RECEIPT_PATH="{receipt_path}"
 export PANTHEON_DEV_FRONTEND_SHA="8337b19a0cf6ac41aa2a4c2fa3950f6af3a87abf"
-export PANTHEON_BFF_BASE_URL="https://pantheon-lupin-dev-bff.35.201.204.12.sslip.io"
-export PANTHEON_FE_BASE_URL="https://pantheon-lupin-dev-fe.35.201.204.12.sslip.io"
+export PANTHEON_BFF_BASE_URL="https://bff.example.test"
+export PANTHEON_FE_BASE_URL="https://fe.example.test"
 export PANTHEON_DEPLOY_ENV="dev"
 export PANTHEON_DEPLOY_COMPONENT="bff"
 export GIT_SHA="7a9674ea259bbac883e42f3ee217b3e8f68170fe"

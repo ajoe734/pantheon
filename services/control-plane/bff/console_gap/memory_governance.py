@@ -38,7 +38,7 @@ def create_memory_governance_router(
         if store is None:
             raise RuntimeError("Required read_surface is absent; failing startup closed.")
         source = store.dataset_source(_DATASET)
-        from models import utc_now
+        from services.control_plane.bff.models import utc_now
         snapshot_at = utc_now()
 
         items: List[Dict[str, Any]] = store.list_memory_governance_rules() if source != "missing" else []
