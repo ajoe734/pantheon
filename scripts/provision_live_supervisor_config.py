@@ -301,13 +301,24 @@ def ensure_supervisor_python_environment(
                 f"failed to install supervisor Python dependencies from {requirements_path}: "
                 f"{(install_proc.stderr or install_proc.stdout).strip()}"
             )
-        python_dependencies = validate_python_dependencies(candidate_python, requirements_path)
+        validate_python_dependencies(candidate_python, requirements_path)
         if python_dir.exists() or python_dir.is_symlink():
             raise ValueError(
                 "refusing to replace an existing supervisor Python environment that "
                 f"failed read-only validation: {python_dir}"
             )
         _publish_directory_no_clobber(candidate_dir, python_dir)
+        # _publish_directory_no_clobber can lose a publish race (EEXIST) and
+        # still return success, so the proof this function hands back must be
+        # earned by the interpreter that actually ended up at python_dir --
+        # ours or a concurrent winner's -- never by the discarded candidate.
+        try:
+            python_dependencies = validate_python_dependencies(python_executable, requirements_path)
+        except ValueError as exc:
+            raise ValueError(
+                "supervisor Python environment publish raced with an invalid "
+                f"winner at {python_dir}: {exc}"
+            ) from exc
     finally:
         shutil.rmtree(candidate_dir, ignore_errors=True)
 

@@ -653,6 +653,45 @@ def test_ensure_supervisor_python_environment_preserves_incumbent_on_failed_pref
     )
 
 
+def test_ensure_supervisor_python_environment_rejects_invalid_publish_race_winner(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """``_publish_directory_no_clobber`` treats a concurrent publisher's
+    EEXIST as success even if that publisher's directory never actually
+    lands a working interpreter. This function's caller-facing proof must
+    therefore be earned by the exact path it selected (``python_dir``), not
+    by the discarded candidate that only proves our own, possibly-losing,
+    provisioning attempt was valid."""
+
+    python_parent = tmp_path / "supervisor-python"
+    requirements = _write_requirements(tmp_path, "packaging\n")
+    sha = _fake_sha(tmp_path, "raced")
+    python_dir = python_parent / sha
+
+    real_publish = provision._publish_directory_no_clobber
+
+    def _racing_publish(source: Path, destination: Path) -> None:
+        # Simulate losing the publish race to a concurrent publisher that
+        # created the destination directory but never finished installing a
+        # working interpreter into it -- exactly the "final bin/python3 does
+        # not exist" scenario the acceptance gap describes.
+        destination.mkdir(parents=True)
+
+    monkeypatch.setattr(provision, "_publish_directory_no_clobber", _racing_publish)
+
+    with pytest.raises(ValueError, match="invalid winner"):
+        provision.ensure_supervisor_python_environment(
+            python_parent=python_parent, sha=sha, requirements_path=requirements
+        )
+
+    assert not (python_dir / "bin" / "python3").is_file()
+    assert list(python_parent.glob(f".supervisor-python-provision-{sha}.*")) == [], (
+        "a rejected racing winner must not leak the losing candidate directory"
+    )
+
+    monkeypatch.setattr(provision, "_publish_directory_no_clobber", real_publish)
+
+
 def test_ensure_supervisor_python_environment_requires_existing_requirements_file(
     tmp_path: Path,
 ) -> None:

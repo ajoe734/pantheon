@@ -89,6 +89,24 @@ for a defect the fixes above did not close:
    to the new `--ensure-python-environment` CLI mode; neither entrypoint
    re-implements reuse, install, preflight, or publish.
 
+Human/Ops rejected that consolidated delivery's exact published head (PR
+#5599 head `06671fb888b2cb8d41c104b466d4f73c878be8a0`) for one more real
+defect the single-owner consolidation did not close:
+
+8. `_publish_directory_no_clobber` accepts a concurrent publisher's `EEXIST`
+   as success -- by design, so a losing publisher never opens the winner's
+   directory for writing -- but `ensure_supervisor_python_environment` still
+   returned the *candidate's* preflight proof (validated before publish) as
+   if it were proof of the path it actually selected. A synthetic
+   competing-publisher probe showed this returns success even when the
+   final `<per-SHA>/bin/python3` does not exist: no validator call was ever
+   made against the selected final path. `ensure_supervisor_python_environment`
+   now re-validates dependencies against the exact final `python_executable`
+   after publish -- whether this call's own candidate won the race or a
+   concurrent publisher did -- and raises before returning if that final
+   path fails, instead of handing back proof earned by a directory that may
+   have already been discarded.
+
 ## The runtime contract
 
 There is exactly one supported way to select the supervisor's Python
@@ -156,15 +174,23 @@ shim.
   (called by both `scripts/sync-dev-root.sh` and
   `scripts/bootstrap-orchestrator-runtime.sh` via
   `provision_live_supervisor_config.py --ensure-python-environment`) runs
-  this same preflight both read-only against an existing per-SHA environment
-  before deciding whether to reuse it, and again against any newly isolated
-  candidate before it is published -- so a bad candidate install is caught
-  and logged with the untouched incumbent root named in the failure, in
-  addition to the preflight `promote_supervisor_runtime.py` always runs
-  before writing live config. A failed preflight raises before any incumbent
-  state is touched: promotion never stops the running supervisor, never
-  writes the live config, and never disturbs worker leases or the
-  watchdog/cron binding.
+  this same preflight read-only against an existing per-SHA environment
+  before deciding whether to reuse it, again against any newly isolated
+  candidate before it is published, and then a third time against the exact
+  final `python_executable` after publish -- so a bad candidate install is
+  caught and logged with the untouched incumbent root named in the failure,
+  in addition to the preflight `promote_supervisor_runtime.py` always runs
+  before writing live config. That final-path check is not redundant with
+  the pre-publish one: `_publish_directory_no_clobber` treats losing a
+  publish race to a concurrent publisher (`EEXIST`) as success, so the path
+  this call ends up returning proof for can be a directory it never
+  installed into itself. Re-validating the selected path after publish
+  means a concurrent publisher's invalid environment is rejected too,
+  instead of this call handing back its own (possibly discarded) candidate's
+  proof for a path it does not actually vouch for. A failed preflight at any
+  of the three points raises before any incumbent state is touched:
+  promotion never stops the running supervisor, never writes the live
+  config, and never disturbs worker leases or the watchdog/cron binding.
 
 ## Fresh-host reproducibility
 
