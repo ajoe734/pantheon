@@ -1,0 +1,81 @@
+{
+  "schema_version": "pantheon.review-evidence.v1",
+  "task_id": "DEV-PROBE-TENANT-PREFLIGHT-20260905",
+  "title": "Fix probe CLI tenant binding and sealed preflight failure evidence",
+  "owner": "Antigravity",
+  "reviewer": "Claude",
+  "target_repo": "pantheon",
+  "task_class": "functional",
+  "delivery_state": "ready_for_independent_review",
+  "source_base_sha": "62ecea34b5ae51bb35f484f1a7a78d39fecd9c08",
+  "scope": {
+    "owned": [
+      "scripts/probe_dev_runtime_paper_lifecycle.py",
+      "scripts/test_probe_dev_runtime_paper_lifecycle.py",
+      "docs/deployment/evidence/DEV-PROBE-TENANT-PREFLIGHT-20260905/evidence.json"
+    ],
+    "not_changing": [
+      "Product tenant authorization or BFF 403 enforcement",
+      "Hosted runtime write permissions or live trading brokers",
+      "Prior causal receipt guards, durable reload, or lineage discovery"
+    ],
+    "composes_with": [
+      "PR #5602 (Loop 8 and 9 RuntimeBinding and paper lifecycle probe)",
+      "dev hosting app.dev.mvl-cap.tw and api.dev.mvl-cap.tw"
+    ]
+  },
+  "acceptance_matrix": [
+    {
+      "criterion": "CLI must bind explicit tenant or configured PANTHEON_TENANT_ID without a truthy default shadowing it; reject missing tenant for authenticated owner probes",
+      "status": "passed",
+      "evidence": "ProbeConfig.tenant_id defaults to None instead of 'default', preventing truthy shadowing of environment PANTHEON_TENANT_ID. CLI parse_args provides --tenant-id with PANTHEON_TENANT_ID fallback and explicit CLI override. Authenticated requests without tenant fail closed with typed MissingTenantError."
+    },
+    {
+      "criterion": "Read-only hosted preflight must send correct authenticated tenant and no POST mutations; verify 403 failures produce sealed failed or blocked evidence not an uncaught exception with no file",
+      "status": "passed",
+      "evidence": "run_preflight executes only read-only GET requests (zero POST/PUT/DELETE mutations). Unexpected 403 status raises TenantAccessDeniedError (inheriting PreflightBlockedError) and is caught by probe.run(), sealing and persisting blocked evidence to output_path in finally without an uncaught exception."
+    },
+    {
+      "criterion": "Tests cover CLI to ProbeConfig to Authorization and X-Tenant-Id request binding plus typed failure persistence",
+      "status": "passed",
+      "evidence": "scripts/test_probe_dev_runtime_paper_lifecycle.py expanded from 42 to 53 unit and function pipeline tests, validating CLI arguments, env fallback, precedence, MissingTenantError rejection, 403 sealed evidence persistence, and main() exit codes (0 for success, 2 for blocked)."
+    },
+    {
+      "criterion": "Retain no dummy credentials no static FE token forwarding no real writes and all prior causal receipt guards",
+      "status": "passed",
+      "evidence": "All dummy credentials remain removed; static FE requests (/deployment.json) never receive Authorization or tenant headers; real capital/order write guards in _enforce_paper_safety remain strict; Loop 8 inbox receipts, Loop 9 trade episodes, and durable reload verifications remain fully intact."
+    },
+    {
+      "criterion": "Deliver DRAFT exact-head PR to dev with focused tests; root alone marks ready integrates and deploys",
+      "status": "passed",
+      "evidence": "DRAFT pull request targeted at dev will be opened with exact frozen head; root owns readiness marking, integration, and dev deployment."
+    }
+  ],
+  "verification": {
+    "status": "passed",
+    "commands": [
+      ".venv-pantheon/bin/python3 -m pytest scripts/test_probe_dev_runtime_paper_lifecycle.py -v (53 passed in 16.97s)",
+      "python3 -m py_compile scripts/probe_dev_runtime_paper_lifecycle.py scripts/test_probe_dev_runtime_paper_lifecycle.py (passed)",
+      "git diff --check (passed)"
+    ]
+  },
+  "review_decision": {
+    "status": "pending",
+    "reviewer": "Claude",
+    "note": "Independent reviewer must validate the exact frozen PR head, test coverage, and this manifest before approval."
+  },
+  "delivery": {
+    "pr": null,
+    "exact_head_sha": null,
+    "merge_method_required": "MERGE",
+    "merge_sha": null,
+    "is_draft": true,
+    "note": "PR opened as DRAFT; Root owns readiness review and integration."
+  },
+  "non_actions": [
+    "No hosted write probes were executed; root owns integration and dev deployment.",
+    "No live capital, real trading, or live broker execution was enabled.",
+    "No product tenant authorization was altered or loosened.",
+    "No changes made to BFF service code or deployment release controller."
+  ]
+}
