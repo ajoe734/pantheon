@@ -151,6 +151,38 @@ def test_build_live_config_ignores_live_overlay_and_renders_v2_paths(tmp_path: P
     assert rendered["paths"]["status_file"] == str(status / "ai-status.json")
 
 
+def test_build_live_config_projects_repository_claude_foreground_policy(
+    tmp_path: Path,
+) -> None:
+    command, status = _roots(tmp_path)
+    repo_config = json.loads(
+        (command / ".orchestrator" / "config.json").read_text(encoding="utf-8")
+    )
+
+    rendered = provision.build_live_config(
+        repo_config,
+        existing_live_config={
+            "providers": {
+                "claude": {
+                    "runtime": {"env": {"CLAUDE_CODE_DISABLE_BACKGROUND_TASKS": "0"}}
+                }
+            }
+        },
+        command_root=command,
+        status_root=status,
+        live_config_path=tmp_path / "runtime" / "live.json",
+        python_executable=Path(sys.executable),
+    )
+
+    for provider_id in ("claude", "claude2"):
+        assert (
+            rendered["providers"][provider_id]["runtime"]["env"][
+                "CLAUDE_CODE_DISABLE_BACKGROUND_TASKS"
+            ]
+            == "1"
+        )
+
+
 def test_build_live_config_pins_high_reasoning_antigravity_models(tmp_path: Path) -> None:
     command, status = _roots(tmp_path)
     repo_config = json.loads(
