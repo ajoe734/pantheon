@@ -1,0 +1,83 @@
+{
+  "schema_version": "pantheon.task-evidence.v1",
+  "task_id": "BFF-CW-READ-POLICY-CLOSURE-PREREQUISITE-001",
+  "base_ref": "dev@f797244b7905d722072180505f8ee348dacf8618",
+  "depends_on": "BFF-GOVERNANCE-CW-CONTRACT-CORRECTIVE-PREREQUISITE-001 (done, archived, terminal head a91100e860cb35eb0cd98527de543e1084bc6870)",
+  "normative_plan": "CW_READ_POLICY_CLOSURE_SA_SD.md (packet pkt-bff-cw-read-policy-closure-prerequisite-20260905-v1); predecessor GOVERNANCE_CW_CONTRACT_SA_SD.md",
+  "results": {
+    "read_port_committee_cross_domain_fallback_removed": {
+      "file": "services/control-plane/bff/ports/read_surface_ports.py",
+      "before": "list_committees fell back to list_workflow_templates() on a falsy/empty result; get_committee fell back to get_consult_request(committee_id) on a None result",
+      "after": "list_committees/get_committee delegate directly to operations_consultation with no cross-domain fallback; an authoritative empty list or missing committee is returned as-is"
+    },
+    "in_memory_typed_double_committee_methods_added": {
+      "file": "services/control-plane/bff/ports/operations_consultation.py",
+      "detail": "InMemoryOperationsConsultationPort (the local-store typed test double) gained list_committees/get_committee mirroring DomainConsultationPort's committee-board projection over consult_sessions, so both the service_client/service_store branch and the in-memory typed-double branch expose real committee reads instead of a missing-attribute gap"
+    },
+    "consultation_reader_port_protocol_declares_committee_methods": true,
+    "dataset_source_availability_precedence_fixed": {
+      "file": "services/control-plane/bff/ports/read_surface_ports.py",
+      "before": "consult_requests/consult_memos/consult_rules/route_policies/workflow_templates and sibling catalog datasets always resolved to a hardcoded 'typed_store' whenever research_knowledge_source did not recognize the dataset, regardless of whether the consultation client/store was actually available",
+      "after": "those operations-consultation-owned datasets now delegate to operations_consultation.dataset_source(...), which truthfully reports service_client/service_store/missing"
+    },
+    "committee_surface_state_explicit_unavailable_precedence_fixed": {
+      "file": "services/control-plane/bff/governance/service.py",
+      "before": "_committee_surface_state only checked a committee record's own surface_state for 'degraded', silently ignoring an explicit 'unavailable' record state whenever the dataset source reported 'ok'",
+      "after": "explicit 'unavailable' is checked first and dominates a healthy dataset source, matching the CW04 memo path's existing precedence"
+    },
+    "redaction_default_fail_closed": {
+      "file": "services/control-plane/bff/governance/service.py",
+      "before": "GovernanceService's built-in default redact_evidence_refs (used only when no redactor is injected) unconditionally returned evidence unredacted",
+      "after": "_fail_closed_redact_evidence_refs withholds every evidence ref with reason=redaction_policy_unavailable by default; consult_memo_projection also normalizes a None/failed capabilities_for_identity result to an explicit empty capability list before calling the real redactor so a capability-lookup exception is gated instead of passed through",
+      "production_wiring_unchanged": "main.py already injects the real models.redact_evidence_refs/_capabilities_for_identity pair into create_governance_router; these fixes only close the fail-open default path used when no redactor is wired"
+    },
+    "business_rules_changed": false,
+    "hosted_deployment_performed": false,
+    "new_dispatcher_or_cron_added": false,
+    "eighth_artifact_read_facade_path": "services/control-plane/bff/ports/read_surface_ports.py is an essential eighth artifact, not an alternate implementation of the predecessor's seven-file contract; the predecessor's contract did not include this file and never touched the ReadSurfacePorts committee/dataset_source cross-domain gaps closed here"
+  },
+  "verification": [
+    {
+      "command": ".venv-pantheon/bin/python3 -m pytest -q scripts/test_bff_cw_contract_prerequisite.py",
+      "result": "21 passed (14 predecessor + 7 new: committee no-cross-domain-fallback, committee real-data delegation, dataset_source routing, committee explicit-unavailable precedence, capability-lookup-failure fail-closed, default-redactor fail-closed, authorized-capabilities still disclose)",
+      "executed": 21,
+      "collected": 21
+    },
+    {
+      "command": ".venv-pantheon/bin/python3 -m compileall -q services/control-plane/bff/governance services/control-plane/bff/ports/operations_consultation.py services/control-plane/bff/ports/read_surface_ports.py services/control-plane/bff/main.py scripts/test_bff_cw_contract_prerequisite.py",
+      "result": "pass"
+    },
+    {
+      "command": ".venv-pantheon/bin/python3 services/control-plane/bff/smoke_test.py",
+      "result": "26 passed",
+      "executed": 26,
+      "collected": 26
+    },
+    {
+      "command": ".venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/tests/test_read_surface_port_cutover.py services/control-plane/bff/tests/test_operations_consultation_ports.py",
+      "result": "57 passed, 1 failed (pre-existing, unrelated: TestOpenClawOperationsPort::test_openclaw_truthful_error_propagation; reproduced identically with this task's diff stashed out against unmodified dev tip)",
+      "executed": 58,
+      "collected": 58
+    },
+    {
+      "command": ".venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/tests/test_governance_router.py",
+      "result": "7 passed, 2 failed (both pre-existing/expected per prior task's coordination_note; unchanged by this task, see coordination_note)",
+      "executed": 9,
+      "collected": 9
+    },
+    {
+      "command": "services.control_plane.bff.main app import smoke check (RANKING_STORE_DSN/PANTHEON_BFF_AUTH_STUB set)",
+      "result": "pass, 62 routes registered"
+    }
+  ],
+  "coordination_note": "The two test_governance_router.py failures (test_router_registers_exactly_the_35_catalog_routes and test_consult_request_committee_memo_and_workbench_routes) and the one test_operations_consultation_ports.py failure (TestOpenClawOperationsPort::test_openclaw_truthful_error_propagation) are unchanged pre-existing gaps already documented in BFF-GOVERNANCE-CW-CONTRACT-CORRECTIVE-PREREQUISITE-001's evidence.json coordination_note (BFF-TEST-ARCH-001 characterization-test migration scope, and an unrelated OpenClaw error-code mapping gap in DomainOpenClawOperationsPort that this task's read-port/availability/redaction fixes never touch). Reconfirmed by stashing this task's full diff and re-running the OpenClaw test against unmodified dev tip f797244b7905d722072180505f8ee348dacf8618: identical failure.",
+  "known_gap_deferred": "RecordSponsorDecision command execution (persisting the sponsor decision) still calls read_store.record_sponsor_decision(...), which no port in the current composition implements. Deferred to DOMAIN-WRITERS-001 per the signed predecessor SA/SD; unchanged by this task.",
+  "review": {
+    "reviewer": "Antigravity",
+    "decision": "pending independent exact-head review"
+  },
+  "remaining_owned_elsewhere": [
+    "RecordSponsorDecision write persistence: DOMAIN-WRITERS-001",
+    "Existing CW characterization test migration and 'import main' loader repair: BFF-TEST-ARCH-001"
+  ]
+}
