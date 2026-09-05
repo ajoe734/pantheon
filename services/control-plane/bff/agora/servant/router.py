@@ -27,20 +27,11 @@ from ..models import (
     ServantCapabilitySummary,
     ServantProfile,
 )
-try:
-    from services.control_plane.bff.openclaw_ops_client import OpenClawOpsClient, OpenClawOpsClientError
-except ImportError:  # pragma: no cover - package entrypoint fallback
-    from ...openclaw_ops_client import OpenClawOpsClient, OpenClawOpsClientError
-try:
-    from services.control_plane.bff.ports.persona_write_owner import (
-        PersonaWriteConflict,
-        PersonaWriteOwnerUnavailable,
-    )
-except ImportError:
-    from services.control_plane.bff.ports.persona_write_owner import (  # type: ignore[no-redef]
-        PersonaWriteConflict,
-        PersonaWriteOwnerUnavailable,
-    )
+from services.control_plane.bff.openclaw_ops_client import OpenClawOpsClient, OpenClawOpsClientError
+from services.control_plane.bff.ports.persona_write_owner import (
+    PersonaWriteConflict,
+    PersonaWriteOwnerUnavailable,
+)
 
 
 _SERVANT_CAPABILITY = "agora.servant.v1"

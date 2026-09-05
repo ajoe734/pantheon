@@ -148,53 +148,34 @@ from services.control_plane.bff.ports.persona_capital_runtime import (
     create_persona_capital_runtime_port,
 )
 
-try:
-    from services.control_plane.bff.persona_provisioning import (
-        MemoryPersonaProvisioningStore,
-        ProvisioningConflict,
-        ProvisioningRecord,
-        TERMINAL_STATES,
-        make_persona_provisioning_store,
-    )
-except ImportError:
-    class ProvisioningConflict(ValueError):
-        pass
-    class MemoryPersonaProvisioningStore:
-        pass
-    make_persona_provisioning_store = None
+from services.control_plane.bff.persona_provisioning import (
+    MemoryPersonaProvisioningStore,
+    ProvisioningConflict,
+    ProvisioningRecord,
+    TERMINAL_STATES,
+    make_persona_provisioning_store,
+)
 
-try:
-    from services.control_plane.bff.persona_provisioning_coordinator import (
-        PersonaCronRegistrar,
-        PersonaProvisioningCoordinator,
-        deterministic_provisioning_ids,
-    )
-except ImportError:
-    PersonaCronRegistrar = None
-    PersonaProvisioningCoordinator = None
-    deterministic_provisioning_ids = None
+from services.control_plane.bff.persona_provisioning_coordinator import (
+    PersonaCronRegistrar,
+    PersonaProvisioningCoordinator,
+    deterministic_provisioning_ids,
+)
 
-try:
-    from services.control_plane.bff.action_catalog import get_catalog_entry
-except ImportError:
-    get_catalog_entry = None
+from services.control_plane.bff.action_catalog import get_catalog_entry
 
 from ..command_executor import _get_json, _post_json, _runtime_manager_client
 
 from ..persona_allocation_policy import build_pm12_allocation_policy_input
 
-try:
-    from services.control_plane.bff.paper_eligibility_proof import (
-        BENCHMARK_VERSION as _PPL_ALLOC_009_ELIGIBILITY_BENCHMARK_VERSION,
-        EXPECTED_IDEMPOTENCY_KEY as _PPL_ALLOC_009_ELIGIBILITY_IDEMPOTENCY_KEY,
-        RUN_KEY as _PPL_ALLOC_009_ELIGIBILITY_RUN_KEY,
-        TASK_ID as _PPL_ALLOC_009_ELIGIBILITY_TASK_ID,
-        PaperEligibilityObservationStore,
-        build_telemetry_event as _ppl_alloc_009_build_telemetry_event,
-    )
-except ImportError:
-    PaperEligibilityObservationStore = None
-    _ppl_alloc_009_build_telemetry_event = None
+from services.control_plane.bff.paper_eligibility_proof import (
+    BENCHMARK_VERSION as _PPL_ALLOC_009_ELIGIBILITY_BENCHMARK_VERSION,
+    EXPECTED_IDEMPOTENCY_KEY as _PPL_ALLOC_009_ELIGIBILITY_IDEMPOTENCY_KEY,
+    RUN_KEY as _PPL_ALLOC_009_ELIGIBILITY_RUN_KEY,
+    TASK_ID as _PPL_ALLOC_009_ELIGIBILITY_TASK_ID,
+    PaperEligibilityObservationStore,
+    build_telemetry_event as _ppl_alloc_009_build_telemetry_event,
+)
 
 try:
     from services.source_ingestion.strategy_seed_store import (

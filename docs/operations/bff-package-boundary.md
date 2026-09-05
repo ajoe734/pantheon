@@ -6,6 +6,11 @@ permission, provider-unavailable, and worker paths, must use that root or an
 unambiguous package-relative import. Bare imports such as `from models import`
 are not supported.
 
+Canonical internal imports fail closed. Production modules must not catch a
+missing BFF module to retry the same namespace, substitute `None`, or define a
+copied enum/model. Optional third-party integrations may still expose an
+explicit unavailable adapter; a missing internal module is a packaging error.
+
 Run diagnostic entrypoints as modules from the repository root. For example:
 
 ```bash

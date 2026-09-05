@@ -100,7 +100,7 @@ sys.path.insert(0, '.')
 real_import = builtins.__import__
 def guarded(name, globals=None, locals=None, fromlist=(), level=0):
     if name == 'services.control_plane.bff.operations_read_model':
-        raise ModuleNotFoundError(name)
+        raise ModuleNotFoundError(name, name=name)
     return real_import(name, globals, locals, fromlist, level)
 builtins.__import__ = guarded
 try:

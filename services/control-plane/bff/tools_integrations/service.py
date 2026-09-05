@@ -27,162 +27,32 @@ from fastapi import HTTPException
 from fastapi.encoders import jsonable_encoder
 from starlette.responses import JSONResponse
 
-try:
-    from services.control_plane.bff.models import (
-        ActionCommandStatus,
-        BffActionCatalogEntry,
-        CommandResponse,
-        CommandStatus,
-        CommandType,
-        ErrorCode,
-        McpImportedTool,
-        McpRejectedTool,
-        McpToolActionData,
-        McpToolActionDescriptor,
-        McpToolActionRequest,
-        McpToolActionVerb,
-        McpToolClass,
-        McpToolDescriptor,
-        McpToolImportData,
-        McpToolImportRequest,
-        McpToolLifecycleStatus,
-        ObjectType,
-        OperatorIdentity,
-        RiskLevel,
-        TargetObject,
-        utc_now,
-    )
-except ImportError:
-    try:
-        from ..models import (  # type: ignore[no-redef]
-            ActionCommandStatus,
-            BffActionCatalogEntry,
-            CommandResponse,
-            CommandStatus,
-            CommandType,
-            ErrorCode,
-            McpImportedTool,
-            McpRejectedTool,
-            McpToolActionData,
-            McpToolActionDescriptor,
-            McpToolActionRequest,
-            McpToolActionVerb,
-            McpToolClass,
-            McpToolDescriptor,
-            McpToolImportData,
-            McpToolImportRequest,
-            McpToolLifecycleStatus,
-            ObjectType,
-            OperatorIdentity,
-            RiskLevel,
-            TargetObject,
-            utc_now,
-        )
-    except Exception:
-        class ErrorCode(str, Enum):  # type: ignore[no-redef]
-            AUTH_REQUIRED = "AUTH_REQUIRED"
-            RESOURCE_NOT_FOUND = "RESOURCE_NOT_FOUND"
-            VALIDATION_FAILED = "VALIDATION_FAILED"
-            DEPENDENCY_UNAVAILABLE = "DEPENDENCY_UNAVAILABLE"
-            IDEMPOTENCY_CONFLICT = "IDEMPOTENCY_CONFLICT"
-            FORBIDDEN = "FORBIDDEN"
-            PRECONDITION_FAILED = "PRECONDITION_FAILED"
-            OPERATION_NOT_ALLOWED = "OPERATION_NOT_ALLOWED"
-            INTERNAL_ERROR = "INTERNAL_ERROR"
+from services.control_plane.bff.models import (
+    ActionCommandStatus,
+    BffActionCatalogEntry,
+    CommandResponse,
+    CommandStatus,
+    CommandType,
+    ErrorCode,
+    McpImportedTool,
+    McpRejectedTool,
+    McpToolActionData,
+    McpToolActionDescriptor,
+    McpToolActionRequest,
+    McpToolActionVerb,
+    McpToolClass,
+    McpToolDescriptor,
+    McpToolImportData,
+    McpToolImportRequest,
+    McpToolLifecycleStatus,
+    ObjectType,
+    OperatorIdentity,
+    RiskLevel,
+    TargetObject,
+    utc_now,
+)
 
-        class ActionCommandStatus(str, Enum):  # type: ignore[no-redef]
-            COMPLETED = "COMPLETED"
-            ACCEPTED = "ACCEPTED"
-            REJECTED = "REJECTED"
-
-        class CommandStatus(str, Enum):  # type: ignore[no-redef]
-            SUBMITTED = "SUBMITTED"
-            COMPLETED = "COMPLETED"
-            REJECTED = "REJECTED"
-
-        class CommandType(str, Enum):  # type: ignore[no-redef]
-            TOOL_ACTION = "TOOL_ACTION"
-            MCP_SERVER_ACTION = "MCP_SERVER_ACTION"
-            MCP_TOOL_ACTION = "MCP_TOOL_ACTION"
-            SKILL_ACTION = "SKILL_ACTION"
-
-        class ObjectType(str, Enum):  # type: ignore[no-redef]
-            TOOL = "TOOL"
-            MCP_SERVER = "MCP_SERVER"
-            MCP_TOOL = "MCP_TOOL"
-            SKILL = "SKILL"
-            CHANNEL = "CHANNEL"
-
-        class McpToolClass(str, Enum):  # type: ignore[no-redef]
-            GENERIC = "generic"
-            RESEARCH = "research"
-            STATUS = "status"
-            LEAN_DIRECT = "lean_direct"
-
-        class McpToolActionVerb(str, Enum):  # type: ignore[no-redef]
-            GRANT = "grant"
-            REVOKE = "revoke"
-            DISABLE = "disable"
-            TEST = "test"
-
-        class McpToolLifecycleStatus(str, Enum):  # type: ignore[no-redef]
-            IMPORTED = "imported"
-            ENABLED = "enabled"
-            DISABLED = "disabled"
-            TESTED = "tested"
-
-try:
-    from services.control_plane.bff.openclaw_ops_client import OpenClawOpsClient, OpenClawOpsClientError
-except ImportError:
-    try:
-        from ..openclaw_ops_client import OpenClawOpsClient, OpenClawOpsClientError  # type: ignore[no-redef]
-    except Exception:
-        class OpenClawOpsClientError(RuntimeError):  # type: ignore[no-redef]
-            def __init__(
-                self,
-                message: str,
-                *,
-                status_code: int = 502,
-                error_code: str = "OPENCLAW_ERROR",
-                payload: Optional[Dict[str, Any]] = None,
-            ) -> None:
-                super().__init__(message)
-                self.message = message
-                self.status_code = status_code
-                self.error_code = error_code
-                self.payload = payload or {}
-
-        class OpenClawOpsClient:  # type: ignore[no-redef]
-            def get_live_gate_status(self) -> Dict[str, Any]:
-                return {"harness_enabled": True, "gate_checks": ["paper_drift", "risk_limits"]}
-
-            def list_live_gate_audit(self, **kwargs: Any) -> Dict[str, Any]:
-                return {"items": [], "total": 0}
-
-            def create_session(
-                self,
-                *,
-                agent_id: str,
-                session_type: str,
-                operator_id: str,
-                idempotency_key: str,
-                context_bundle: Optional[Dict[str, Any]] = None,
-            ) -> Dict[str, Any]:
-                return {
-                    "session_id": f"session-{uuid.uuid4().hex[:8]}",
-                    "status": "created",
-                    "agent_id": agent_id,
-                    "session_type": session_type,
-                }
-
-            def cancel_session(
-                self,
-                *,
-                session_id: str,
-                operator_id: str,
-                idempotency_key: str,
-            ) -> Dict[str, Any]:
-                return {"session_id": session_id, "status": "canceled"}
+from services.control_plane.bff.openclaw_ops_client import OpenClawOpsClient, OpenClawOpsClientError
 
 log = logging.getLogger(__name__)
 

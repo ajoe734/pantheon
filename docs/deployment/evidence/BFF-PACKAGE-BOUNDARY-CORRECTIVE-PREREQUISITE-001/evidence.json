@@ -13,6 +13,9 @@
     "declared_source_artifacts_changed": 51,
     "remaining_unqualified_internal_imports_in_inventory": 0,
     "remaining_diagnostic_sys_path_mutations": 0,
+    "remaining_internal_import_fallbacks": 0,
+    "canonical_management_model_identity": true,
+    "missing_internal_dependency_fails_closed": true,
     "cross_user_contract": "HTTP 403 CROSS_USER_ACCESS_FORBIDDEN",
     "bare_models_alias_loaded": false,
     "business_rules_changed": false,
@@ -21,9 +24,9 @@
   "verification": [
     {
       "command": "uv run --with-requirements services/control-plane/bff/requirements.txt python -m pytest -q scripts/test_bff_package_boundary_prerequisite.py",
-      "result": "4 passed",
-      "executed": 4,
-      "collected": 4
+      "result": "7 passed",
+      "executed": 7,
+      "collected": 7
     },
     {
       "command": "uv run --with-requirements services/control-plane/bff/requirements.txt python -m compileall -q services/control-plane/bff",
