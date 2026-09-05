@@ -6,10 +6,11 @@ import tempfile
 from contextlib import contextmanager
 from typing import Iterator
 
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.responses import JSONResponse
 from fastapi.testclient import TestClient
 
-
-from services.control_plane.bff import main as bff_main
+from services.control_plane.bff.command_adapters.router import create_command_adapters_router
 from services.control_plane.bff.command_queue import CommandStore
 
 
@@ -19,16 +20,20 @@ HEADERS = {"Authorization": "Bearer op-bff-b1-009:operator,approver:mfa"}
 @contextmanager
 def _isolated_confirm_tokens() -> Iterator[TestClient]:
     with tempfile.TemporaryDirectory() as td:
-        original_command_store = bff_main.command_store
-        bff_main.command_store = CommandStore(os.path.join(td, "commands.jsonl"))
-        bff_main._FINAL_CONTRACT_IDEMPOTENCY.clear()
-        bff_main._GOV_BFF_IDEMPOTENCY.clear()
-        try:
-            yield TestClient(bff_main.app)
-        finally:
-            bff_main.command_store = original_command_store
-            bff_main._FINAL_CONTRACT_IDEMPOTENCY.clear()
-            bff_main._GOV_BFF_IDEMPOTENCY.clear()
+        store = CommandStore(os.path.join(td, "commands.jsonl"))
+        app = FastAPI()
+        router = create_command_adapters_router(
+            get_command_store=lambda: store,
+            get_read_store=lambda: None,
+        )
+        app.include_router(router)
+
+        @app.exception_handler(HTTPException)
+        def _exc_handler(request: Request, exc: HTTPException):
+            content = exc.detail if isinstance(exc.detail, dict) else {"error": {"message": str(exc.detail)}}
+            return JSONResponse(status_code=exc.status_code, content=content)
+
+        yield TestClient(app)
 
 
 def test_confirm_token_and_command_confirmation_lifecycle() -> None:

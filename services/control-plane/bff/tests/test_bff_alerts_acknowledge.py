@@ -2,13 +2,15 @@ from __future__ import annotations
 
 import os
 import sys
-from typing import Any, Dict
+from typing import Any, Callable, Dict, Optional
 
 import pytest
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.responses import JSONResponse
 from fastapi.testclient import TestClient
 
-
-from services.control_plane.bff import main as bff_main
+from services.control_plane.bff.incidents.router import create_incident_router
+from services.control_plane.bff.models import ErrorCode, OperatorIdentity
 
 _TEST_ALERT_ID = "alert-test-ack-001"
 _TEST_ALERT: Dict[str, Any] = {
@@ -20,26 +22,112 @@ _TEST_ALERT: Dict[str, Any] = {
 }
 _OPERATOR_AUTH = "Bearer op-ack-tester:operator"
 
+_ACKNOWLEDGED_ALERTS: Dict[str, Any] = {}
+_GOV_BFF_IDEMPOTENCY: Dict[str, Dict[str, Any]] = {}
+_CUSTOM_ALERTS_PAYLOAD: Optional[Callable[[str], Dict[str, Any]]] = None
 
-def _client(monkeypatch) -> TestClient:
-    monkeypatch.setenv("PANTHEON_BFF_AUTH_STUB", "true")
-    monkeypatch.setenv("PANTHEON_BFF_AUTH_MODE", "permissive")
-    return TestClient(bff_main.app)
+
+def _reject_body_idempotency_key(payload: Dict[str, Any]) -> None:
+    body_key = "idempotencyKey" if "idempotencyKey" in payload else "idempotency_key" if "idempotency_key" in payload else None
+    if body_key is not None:
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "error": {
+                    "code": ErrorCode.VALIDATION_FAILED.value,
+                    "message": f"{body_key} must not appear in the request body",
+                    "details": {"precondition_failed": "body_idempotency_key"},
+                }
+            },
+        )
+
+
+def _extract_identity(authorization: Optional[str] = None, **kwargs) -> OperatorIdentity:
+    if not authorization or not authorization.startswith("Bearer "):
+        raise HTTPException(
+            status_code=401,
+            detail={
+                "error": {
+                    "code": ErrorCode.AUTH_REQUIRED.value,
+                    "message": "Authorization header is required",
+                    "details": {},
+                }
+            },
+        )
+    token = authorization[len("Bearer "):].strip()
+    parts = token.split(":")
+    op = parts[0]
+    roles = parts[1].split(",") if len(parts) > 1 else ["operator"]
+    return OperatorIdentity(operator_id=op, roles=roles)
+
+
+def _bff_error(status_code: int, code: Any, message: str, reason: str = "", precondition_failed: Optional[str] = None, **kwargs):
+    code_val = getattr(code, "value", str(code))
+    details: Dict[str, Any] = {"reason": reason}
+    if precondition_failed:
+        details["precondition_failed"] = precondition_failed
+    return HTTPException(
+        status_code=status_code,
+        detail={
+            "error": {
+                "code": code_val,
+                "message": message,
+                "details": details,
+            }
+        },
+    )
+
+
+def _alerts_payload_builder(snapshot_at: str) -> Dict[str, Any]:
+    if _CUSTOM_ALERTS_PAYLOAD is not None:
+        return _CUSTOM_ALERTS_PAYLOAD(snapshot_at)
+    return {
+        "alerts": [],
+        "summary": {"total_active": 0},
+        "meta": {
+            "snapshot_at": snapshot_at,
+            "acknowledgement_supported": True,
+            "surfaces": {"alerts": {"status": "ok"}},
+        },
+    }
+
+
+def _client(monkeypatch=None) -> TestClient:
+    app = FastAPI()
+    router = create_incident_router(
+        extract_identity=_extract_identity,
+        bff_error=_bff_error,
+        build_operator_alerts_payload=_alerts_payload_builder,
+        acknowledged_alerts=_ACKNOWLEDGED_ALERTS,
+        idempotency_ledger=_GOV_BFF_IDEMPOTENCY,
+        reject_body_idempotency_key=_reject_body_idempotency_key,
+    )
+    app.include_router(router)
+
+    @app.exception_handler(HTTPException)
+    def _exc_handler(request: Request, exc: HTTPException):
+        content = exc.detail if isinstance(exc.detail, dict) else {"error": {"message": str(exc.detail)}}
+        return JSONResponse(status_code=exc.status_code, content=content)
+
+    return TestClient(app)
 
 
 @pytest.fixture(autouse=True)
 def clear_idempotency_store():
-    bff_main._GOV_BFF_IDEMPOTENCY.clear()
-    bff_main._ACKNOWLEDGED_ALERTS.clear()
+    _GOV_BFF_IDEMPOTENCY.clear()
+    _ACKNOWLEDGED_ALERTS.clear()
+    global _CUSTOM_ALERTS_PAYLOAD
+    _CUSTOM_ALERTS_PAYLOAD = None
     yield
-    bff_main._GOV_BFF_IDEMPOTENCY.clear()
-    bff_main._ACKNOWLEDGED_ALERTS.clear()
+    _GOV_BFF_IDEMPOTENCY.clear()
+    _ACKNOWLEDGED_ALERTS.clear()
+    _CUSTOM_ALERTS_PAYLOAD = None
 
 
 @pytest.fixture()
 def seeded_alerts(monkeypatch):
-    """Patch _build_operator_alerts_payload to always return a known test alert."""
-    original = bff_main._build_operator_alerts_payload
+    """Patch alerts builder to return known test alert."""
+    global _CUSTOM_ALERTS_PAYLOAD
 
     def _patched(snapshot_at: str) -> Dict[str, Any]:
         return {
@@ -52,7 +140,7 @@ def seeded_alerts(monkeypatch):
             },
         }
 
-    monkeypatch.setattr(bff_main, "_build_operator_alerts_payload", _patched)
+    _CUSTOM_ALERTS_PAYLOAD = _patched
     yield _TEST_ALERT_ID
 
 
@@ -153,8 +241,8 @@ def test_acknowledge_populates_ack_store(monkeypatch, seeded_alerts) -> None:
         headers={"Authorization": _OPERATOR_AUTH, "Idempotency-Key": "ack-store-key"},
     )
     assert resp.status_code == 202, resp.text
-    assert seeded_alerts in bff_main._ACKNOWLEDGED_ALERTS
-    ack = bff_main._ACKNOWLEDGED_ALERTS[seeded_alerts]
+    assert seeded_alerts in _ACKNOWLEDGED_ALERTS
+    ack = _ACKNOWLEDGED_ALERTS[seeded_alerts]
     assert "acknowledged_by" in ack
     assert "acknowledged_at" in ack
 

@@ -35,7 +35,7 @@
       "conftest.py",
       "knowledge_read_port_fixtures.py"
     ],
-    "reconciled_direct_main_imports": 169,
+    "reconciled_direct_main_imports": 164,
     "reconciled_migrated_tests": [
       "services/control-plane/bff/test_mgmt_load_002_shell_summary.py",
       "services/control-plane/bff/tests/test_bff_management_cockpit.py",
@@ -79,7 +79,12 @@
       "services/control-plane/bff/tests/test_bff_me_locale.py",
       "services/control-plane/bff/tests/test_bff_auth_refresh.py",
       "services/control-plane/bff/tests/test_console_data_incidents_reviews.py",
-      "services/control-plane/bff/tests/test_console_data_ooda_projection.py"
+      "services/control-plane/bff/tests/test_console_data_ooda_projection.py",
+      "services/control-plane/bff/tests/test_bff_me_session_bootstrap.py",
+      "services/control-plane/bff/tests/test_confirm_token_lifecycle.py",
+      "services/control-plane/bff/tests/test_bff_alerts_acknowledge.py",
+      "services/control-plane/bff/test_tw03_before_after_compare_contract.py",
+      "services/control-plane/bff/test_tw02_parameter_controls_contract.py"
     ],
     "test_layer_classification_summary": {
       "composition": 11,

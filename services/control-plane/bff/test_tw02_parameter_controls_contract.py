@@ -7,14 +7,45 @@ import tempfile
 from contextlib import contextmanager
 from pathlib import Path
 
+from typing import Any
+
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.responses import JSONResponse
 from fastapi.testclient import TestClient
 
-
-from services.control_plane.bff import main as bff_main
+from services.control_plane.bff.models import ErrorCode, OperatorIdentity
+from services.control_plane.bff.training.router import create_training_router
 from test_training_session_service_client import create_training_read_surface_double
 
 
 OPERATOR_AUTH = "Bearer test-operator:operator"
+
+
+def _extract_identity(authorization: str | None = None) -> OperatorIdentity:
+    if not authorization or not authorization.startswith("Bearer "):
+        return OperatorIdentity(operator_id="anonymous", roles=[])
+    token = authorization[len("Bearer "):].strip()
+    parts = token.split(":")
+    op = parts[0]
+    roles = parts[1].split(",") if len(parts) > 1 else ["operator"]
+    return OperatorIdentity(operator_id=op, roles=roles)
+
+
+def _bff_error(status_code: int, code: Any, message: str, reason: str = "", precondition_failed: str | None = None, **kwargs):
+    code_val = getattr(code, "value", str(code))
+    details = {"reason": reason}
+    if precondition_failed:
+        details["precondition_failed"] = precondition_failed
+    return HTTPException(
+        status_code=status_code,
+        detail={
+            "error": {
+                "code": code_val,
+                "message": message,
+                "details": details,
+            }
+        },
+    )
 
 
 @contextmanager
@@ -48,13 +79,29 @@ def _seeded_client(*, service_backed_control_store: bool = False):
         else:
             os.environ.pop("PANTHEON_BFF_TRAINER_CONTROL_STORE", None)
 
-        original_store = bff_main.read_store
-        bff_main.read_store = create_training_read_surface_double()
-        client = TestClient(bff_main.app)
+        store = create_training_read_surface_double()
+        app = FastAPI()
+        router = create_training_router(
+            read_surface=store,
+            get_read_store=lambda: store,
+            extract_identity=_extract_identity,
+            require_read_role=lambda _identity: None,
+            bff_error=_bff_error,
+            utc_now=lambda: "2026-04-20T19:50:00Z",
+            page_slice=lambda items, _tok, _sz: (items, None),
+            dataset_surface_status=lambda *_args, **_kwargs: {"status": "available"},
+        )
+        app.include_router(router)
+
+        @app.exception_handler(HTTPException)
+        def _exc_handler(request: Request, exc: HTTPException):
+            content = exc.detail if isinstance(exc.detail, dict) else {"error": {"message": str(exc.detail)}}
+            return JSONResponse(status_code=exc.status_code, content=content)
+
+        client = TestClient(app)
         try:
             yield client, control_store_path
         finally:
-            bff_main.read_store = original_store
             for key, value in tracked_env.items():
                 if value is None:
                     os.environ.pop(key, None)

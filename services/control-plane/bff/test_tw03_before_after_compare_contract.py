@@ -9,11 +9,49 @@ from unittest import mock
 from fastapi.testclient import TestClient
 
 
-from services.control_plane.bff import main as bff_main
+from typing import Any
+
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.responses import JSONResponse
+from fastapi.testclient import TestClient
+
+from services.control_plane.bff.models import ErrorCode, OperatorIdentity
+from services.control_plane.bff.training.router import create_training_router
 from test_training_session_service_client import create_training_read_surface_double
 
 
 OPERATOR_AUTH = "Bearer test-operator:operator"
+
+
+def _extract_identity(authorization: str | None = None) -> OperatorIdentity:
+    if not authorization or not authorization.startswith("Bearer "):
+        return OperatorIdentity(operator_id="anonymous", roles=[])
+    token = authorization[len("Bearer "):].strip()
+    parts = token.split(":")
+    op = parts[0]
+    roles = parts[1].split(",") if len(parts) > 1 else ["operator"]
+    return OperatorIdentity(operator_id=op, roles=roles)
+
+
+def _bff_error(status_code: int, code: Any, message: str, reason: str = "", precondition_failed: str | None = None, **kwargs):
+    code_val = getattr(code, "value", str(code))
+    details = {"reason": reason}
+    if precondition_failed:
+        details["precondition_failed"] = precondition_failed
+    return HTTPException(
+        status_code=status_code,
+        detail={
+            "error": {
+                "code": code_val,
+                "message": message,
+                "details": details,
+            }
+        },
+    )
+
+
+def _utc_now() -> str:
+    return "2026-04-20T19:50:00Z"
 
 
 @contextmanager
@@ -23,7 +61,6 @@ def _seeded_client(
     service_backed_preview_store: bool = False,
 ):
     with tempfile.TemporaryDirectory() as td:
-        original_store = bff_main.read_store
         original_preview_store = os.environ.get("PANTHEON_BFF_TRAINER_PREVIEW_STORE")
         if service_backed_preview_store:
             os.environ["PANTHEON_BFF_TRAINER_PREVIEW_STORE"] = os.path.join(
@@ -32,12 +69,29 @@ def _seeded_client(
             )
         else:
             os.environ.pop("PANTHEON_BFF_TRAINER_PREVIEW_STORE", None)
-        bff_main.read_store = create_training_read_surface_double()
-        client = TestClient(bff_main.app)
+        store = create_training_read_surface_double()
+        app = FastAPI()
+        router = create_training_router(
+            read_surface=store,
+            get_read_store=lambda: store,
+            extract_identity=_extract_identity,
+            require_read_role=lambda _identity: None,
+            bff_error=_bff_error,
+            utc_now=lambda: _utc_now(),
+            page_slice=lambda items, _tok, _sz: (items, None),
+            dataset_surface_status=lambda *_args, **_kwargs: {"status": "available"},
+        )
+        app.include_router(router)
+
+        @app.exception_handler(HTTPException)
+        def _exc_handler(request: Request, exc: HTTPException):
+            content = exc.detail if isinstance(exc.detail, dict) else {"error": {"message": str(exc.detail)}}
+            return JSONResponse(status_code=exc.status_code, content=content)
+
+        client = TestClient(app)
         try:
             yield client
         finally:
-            bff_main.read_store = original_store
             if original_preview_store is None:
                 os.environ.pop("PANTHEON_BFF_TRAINER_PREVIEW_STORE", None)
             else:
@@ -80,7 +134,7 @@ def test_tw03_get_preview_returns_backend_owned_compare_payload() -> None:
 
 def test_tw03_pending_preview_supports_eval_lookup_and_polling_contract() -> None:
     with _seeded_client() as client:
-        with mock.patch.object(bff_main, "utc_now", return_value="2026-04-20T19:50:00Z"):
+        with mock.patch("services.control_plane.bff.test_tw03_before_after_compare_contract._utc_now", return_value="2026-04-20T19:50:00Z"):
             response = client.get(
                 "/api/v1/trainer/sessions/trn-20260419-001/preview",
                 params={"eval_id": "teval-20260419-015"},

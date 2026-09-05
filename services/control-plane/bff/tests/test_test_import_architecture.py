@@ -147,8 +147,8 @@ def test_direct_main_import_trend_gate_and_allowlist() -> None:
                 offenders.append(rel)
 
     assert not offenders, "Test files importing main outside classified allowlist:\n" + "\n".join(offenders)
-    assert len(observed_importers) <= 169, (
-        f"Direct main import count {len(observed_importers)} exceeds monotonic ceiling 169"
+    assert len(observed_importers) <= 164, (
+        f"Direct main import count {len(observed_importers)} exceeds monotonic ceiling 164"
     )
 
 
