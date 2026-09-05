@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import subprocess
+import sys
 import venv
 from pathlib import Path
 
@@ -21,44 +22,47 @@ from .test_dev_bridge_inbox_cli import (
     _write_fake_repo,
 )
 
-# OPS-SUPERVISOR-PYTHON-RUNTIME-PREREQUISITE-001: the promotion chain proves a
-# candidate interpreter with importlib.metadata + a real module import
-# (provision_live_supervisor_config.validate_python_dependencies), but that is
-# a proxy for the thing that actually matters: the exact signed dev-bridge
-# packet intake this task exists to keep working must genuinely succeed under
-# an interpreter built the same way bootstrap/sync build the supervisor's own
-# venv (``python3 -m venv`` plus ``pip install -r
-# .orchestrator/requirements.txt``), not merely report importable metadata.
+sys.path.insert(0, str(REPO_ROOT / "scripts"))
+import provision_live_supervisor_config as provision  # noqa: E402
+
+# OPS-SUPERVISOR-PYTHON-RUNTIME-PREREQUISITE-001: this must exercise the exact
+# shared provisioning function bootstrap-orchestrator-runtime.sh and
+# sync-dev-root.sh both call
+# (provision_live_supervisor_config.ensure_supervisor_python_environment),
+# not a hand-rolled venv/pip-install stand-in for it. The real proof this
+# task cares about is that the exact signed dev-bridge packet intake this
+# task exists to keep working genuinely succeeds under the final published
+# ``python_executable`` that function hands back.
 REQUIREMENTS = REPO_ROOT / ".orchestrator" / "requirements.txt"
 
 
 @pytest.fixture(scope="module")
 def bootstrap_style_venv_python(tmp_path_factory: pytest.TempPathFactory) -> Path:
-    venv_dir = tmp_path_factory.mktemp("supervisor-python-runtime-venv")
-    venv.EnvBuilder(with_pip=True, clear=True).create(venv_dir)
-    python_path = venv_dir / "bin" / "python3"
-    if not python_path.is_file():
-        pytest.skip("python3 -m venv did not produce a usable interpreter on this host")
-
-    install = subprocess.run(
-        [
-            str(python_path),
-            "-m",
-            "pip",
-            "install",
-            "--quiet",
-            "--disable-pip-version-check",
-            "-r",
-            str(REQUIREMENTS),
-        ],
+    python_parent = tmp_path_factory.mktemp("supervisor-python-runtime")
+    sha = subprocess.run(
+        ["git", "rev-parse", "HEAD"],
+        cwd=REPO_ROOT,
         capture_output=True,
         text=True,
-    )
-    if install.returncode != 0:
-        pytest.skip(
-            "could not install .orchestrator/requirements.txt into a fresh venv "
-            f"(likely no package-index access in this environment): {install.stderr}"
+        check=True,
+    ).stdout.strip()
+
+    try:
+        result = provision.ensure_supervisor_python_environment(
+            python_parent=python_parent,
+            sha=sha,
+            requirements_path=REQUIREMENTS,
         )
+    except ValueError as exc:
+        pytest.skip(
+            "could not provision the supervisor Python environment via "
+            f"ensure_supervisor_python_environment (likely no package-index "
+            f"access in this environment): {exc}"
+        )
+
+    python_path = Path(result["python_executable"])
+    if not python_path.is_file():
+        pytest.skip("python3 -m venv did not produce a usable interpreter on this host")
     return python_path
 
 
@@ -66,12 +70,15 @@ def test_bootstrap_style_venv_drains_a_real_signed_packet(
     bootstrap_style_venv_python: Path, tmp_path: Path
 ) -> None:
     """Genuinely queue and drain a real Ed25519-signed DevTaskPacket using
-    the queue/drain CLIs run under an interpreter built exactly the way
+    the queue/drain CLIs run under the exact final published
+    ``python_executable`` that
+    ``provision_live_supervisor_config.ensure_supervisor_python_environment``
+    hands back -- the same shared function
     scripts/bootstrap-orchestrator-runtime.sh and scripts/sync-dev-root.sh
-    build the supervisor's own venv -- not the pytest interpreter -- proving
-    the bridge's pydantic parsing and cryptography signature verification
-    actually work end to end under that interpreter, not merely that a
-    dependency-metadata probe accepts it.
+    both call -- not the pytest interpreter, proving the bridge's pydantic
+    parsing and cryptography signature verification actually work end to end
+    under that interpreter, not merely that a dependency-metadata probe
+    accepts it.
     """
 
     repo_root = _write_fake_repo(tmp_path)
