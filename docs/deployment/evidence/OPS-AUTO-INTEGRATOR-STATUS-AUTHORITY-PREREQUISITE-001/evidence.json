@@ -41,7 +41,7 @@
     ],
     "retry_behavior": "processed/rejected receipts are validated terminal content-addressed tombstones; a processed receipt returns only its exact validated task ID, while rejected or failed publication returns no task ID; error remains retryable; publisher-consumer-publisher replay creates no new inbox/archive write",
     "runtime_binding_source": "resolve_execute_authority-proven promoted command root HEAD carried in immutable Settings; no cron environment dependency",
-    "task_id_derivation": "shared producer/consumer contract; bounded readable prefix plus deterministic digest of source task, generation, canonical repository slug, PR, exact head, and reason",
+    "task_id_derivation": "one shared fail-closed producer/consumer builder over raw identity scalars; generation and PR reject bool, float, and numeric-string values before bounded readable-prefix plus deterministic-digest derivation",
     "consumer_isolation": {
       "reason_authority": "exact finite string allowlist",
       "max_requests_per_cycle": 32,
@@ -56,8 +56,8 @@
     }
   },
   "review_reopen_resolution": {
-    "previous_head": "7b9283123962df73f5a3989c1dea64228ee19848",
-    "resolved_defect": "The shared ID now identifies the exact source generation/repository/PR/head candidate; generation and PR are type-validated before ID conversion; execute refusal, rejected tombstones, mismatched processed tombstones, and write failure return no phantom task ID; only a processed receipt carrying the exact request task ID returns that ID; existing canonical IDs require exact request provenance.",
+    "previous_head": "d68cf58c1850fb7dba2f99aa3c4bb678baa5b0b7",
+    "resolved_defect": "Removed the duplicate producer derivation path and the consumer's coercive str/int reconstruction. Publisher, tests, and supervisor now use one shared fail-closed raw-identity builder; bool, float, and numeric-string generation/PR values are rejected at producer and real supervisor-consumer boundaries. Typed terminal receipts, exact processed task-ID validation, and publisher-consumer-publisher replay remain intact.",
     "added_reasons": [
       "dirty-repository-checkout",
       "missing-repository-slug",
@@ -67,16 +67,16 @@
       "canonical-authority-lock-failed"
     ],
     "removed_unused_reason": "final-canonical-state-refresh-failed",
-    "regression_guard": "Same-candidate equality, changed-head/generation inequality, invalid generation/PR rejection, publication-failure None, real publisher-supervisor-publisher processed and rejected replay, exact processed receipt task-ID validation, terminal tombstones, and existing-row provenance mismatch are covered alongside the existing authority suites."
+    "regression_guard": "Direct bool/float/numeric-string generation and PR rejection at producer and real supervisor drain boundaries; same-candidate equality; changed-head/generation inequality; publication-failure None; real publisher-supervisor-publisher processed and rejected replay; exact processed receipt task-ID validation; terminal tombstones; and existing-row provenance mismatch are covered."
   },
   "verification": {
     "focused_supervisor": {
       "command": "python3 .orchestrator/test_supervisor.py AutoIntegratorUnblockAuthorityTests",
-      "result": "11 passed"
+      "result": "12 passed"
     },
     "auto_integrator_suite": {
       "command": "python3 -m unittest scripts.git.test_auto_integrator",
-      "result": "109 passed"
+      "result": "110 passed"
     },
     "supervisor_suite": {
       "command": "python3 .orchestrator/test_supervisor.py",

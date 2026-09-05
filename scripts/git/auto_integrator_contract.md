@@ -106,8 +106,10 @@ review_approved task OR active canonical merge_then_review task
   ID only after publication succeeds, or when a validated `processed` tombstone
   carries that exact task ID. A `rejected` tombstone, mismatched processed task
   ID, refusal, or write failure retains the blocked candidate result but returns
-  no phantom ID. Generation and PR types are validated before task-ID conversion.
-  Dry-run may report the would-create ID.
+  no phantom ID. One shared fail-closed builder derives IDs from the raw
+  producer/consumer identity; generation and PR must be positive JSON integers
+  (never booleans, floats, or numeric strings) before derivation. Dry-run may
+  report the would-create ID.
 - Publisher and supervisor use one pure request contract for schema, inbox,
   canonical request serialization/filename, and generated task IDs. IDs longer
   retain a readable prefix plus a deterministic digest suffix within 96
