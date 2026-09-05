@@ -8,17 +8,70 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Iterator
 
+from datetime import datetime, timezone
+from typing import Any, Iterator
+
+from fastapi import FastAPI, HTTPException
+from fastapi.responses import JSONResponse
 from fastapi.testclient import TestClient
 
-
-from services.control_plane.bff import main as bff_main
+from services.control_plane.bff.agora.router import create_agora_router
 from services.control_plane.bff.command_queue import CommandStore
-from services.control_plane.bff.models import CommandType
+from services.control_plane.bff.models import CommandType, OperatorIdentity
 from services.control_plane.bff.ports import ReadSurfacePorts, create_in_memory_read_surface_ports
 
 
 OPERATOR_TOKEN = "Bearer op-agora:operator"
 HEADERS = {"Authorization": OPERATOR_TOKEN}
+
+
+def _extract_identity(authorization: str | None) -> OperatorIdentity:
+    if not authorization or not authorization.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="Authentication required")
+    raw = authorization[len("Bearer "):].strip()
+    parts = raw.split(":")
+    operator_id = parts[0] if parts else "op"
+    roles = parts[1].split(",") if len(parts) > 1 else []
+    return OperatorIdentity(operator_id=operator_id, roles=roles, claims={})
+
+
+def _require_role(identity: OperatorIdentity) -> None:
+    if not identity or not identity.roles:
+        raise HTTPException(status_code=403, detail="Forbidden")
+
+
+def _bff_error(
+    status_code: int,
+    code: Any,
+    message: str,
+    reason: str = "",
+    precondition_failed: Optional[str] = None,
+    suggestion: Optional[str] = None,
+    details_extra: Optional[dict[str, Any]] = None,
+    **kwargs: Any,
+) -> HTTPException:
+    val = code.value if hasattr(code, "value") else str(code)
+    details: dict[str, Any] = {
+        "reason": reason or message,
+        "precondition_failed": precondition_failed,
+        "suggestion": suggestion,
+    }
+    if details_extra:
+        details.update(details_extra)
+    return HTTPException(
+        status_code=status_code,
+        detail={
+            "error": {
+                "code": val,
+                "message": message,
+                "details": details,
+            }
+        },
+    )
+
+
+def _utc_now() -> str:
+    return datetime.now(timezone.utc).isoformat()
 
 
 def _error(resp):
@@ -285,20 +338,61 @@ def _seed_read_store() -> AgoraCoreTestReadPorts:
     return AgoraCoreTestReadPorts(data)
 
 
+_active_store: Any = None
+_active_cmd_store: Any = None
+_idempotency_store: dict[str, dict[str, Any]] = {}
+
+_app = FastAPI(title="Agora Core Test App")
+
+
+@_app.exception_handler(HTTPException)
+def _http_exception_handler(request: Any, exc: HTTPException) -> Any:
+    detail = exc.detail
+    if isinstance(detail, dict) and "error" in detail:
+        content = detail
+    elif isinstance(detail, dict):
+        content = {"error": detail}
+    else:
+        content = {"error": {"message": str(detail), "code": "HTTP_ERROR"}}
+    return JSONResponse(status_code=exc.status_code, content=content)
+
+
+_app.include_router(
+    create_agora_router(
+        extract_identity=_extract_identity,
+        require_read_role=_require_role,
+        require_write_role=_require_role,
+        require_operator_role=_require_role,
+        require_journal_write_role=_require_role,
+        require_agora_signal_write_role=_require_role,
+        require_agora_bulk_feedback_role=_require_role,
+        bff_error=_bff_error,
+        utc_now=_utc_now,
+        get_read_store=lambda: _active_store,
+        get_command_store=lambda: _active_cmd_store,
+        idempotency_store=_idempotency_store,
+        sync_servant_agent=lambda p: dict(p),
+    )
+)
+_test_client = TestClient(_app, raise_server_exceptions=False)
+
+
 @contextmanager
 def _isolated_agora_bff() -> Iterator[TestClient]:
+    global _active_store, _active_cmd_store
     with tempfile.TemporaryDirectory() as td:
-        original_store = bff_main.read_store
-        original_command_store = bff_main.command_store
-        bff_main.read_store = _seed_read_store()
-        bff_main.command_store = CommandStore(os.path.join(td, "commands.jsonl"))
-        bff_main._AGORA_CORE_BFF_IDEMPOTENCY.clear()
+        prev_store = _active_store
+        prev_cmd = _active_cmd_store
+        _active_store = _seed_read_store()
+        _active_cmd_store = CommandStore(os.path.join(td, "commands.jsonl"))
+        _idempotency_store.clear()
         try:
-            yield TestClient(bff_main.app)
+            yield _test_client
         finally:
-            bff_main.read_store = original_store
-            bff_main.command_store = original_command_store
-            bff_main._AGORA_CORE_BFF_IDEMPOTENCY.clear()
+            _active_store = prev_store
+            _active_cmd_store = prev_cmd
+            _idempotency_store.clear()
+
 
 
 def _assert_command(payload: dict, command: CommandType) -> None:

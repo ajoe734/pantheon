@@ -14,16 +14,43 @@ from __future__ import annotations
 import os
 import sys
 
+from typing import Any
+
 import pytest
+from fastapi import FastAPI, HTTPException
 from fastapi.testclient import TestClient
 
-
-from services.control_plane.bff import main as bff_main
 from services.control_plane.bff.action_catalog import catalog_action_ids, get_action_catalog, get_catalog_entry
-from services.control_plane.bff.models import ActionCommandStatus, BffActionCatalogEntry, CommandType, RiskLevel
+from services.control_plane.bff.command_adapters.router import create_command_adapters_router
+from services.control_plane.bff.models import (
+    ActionCommandStatus,
+    BffActionCatalogEntry,
+    CommandType,
+    OperatorIdentity,
+    RiskLevel,
+)
 
 OPERATOR_TOKEN = "Bearer op-2:operator"
 APPROVER_TOKEN = "Bearer op-6:approver"
+
+
+def _extract_identity(authorization: str | None = None, **kwargs: Any) -> OperatorIdentity:
+    if not authorization or not authorization.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="Authentication required")
+    raw = authorization[len("Bearer "):].strip()
+    parts = raw.split(":")
+    operator_id = parts[0] if parts else "op"
+    roles = [r.strip() for r in parts[1].split(",")] if len(parts) > 1 else []
+    return OperatorIdentity(operator_id=operator_id, roles=roles, auth_mode="bearer")
+
+
+def _make_client() -> TestClient:
+    app = FastAPI(title="Action Catalog Test App")
+    router = create_command_adapters_router(
+        extract_identity=_extract_identity,
+    )
+    app.include_router(router)
+    return TestClient(app, raise_server_exceptions=False)
 
 
 # --------------------------------------------------------------------------- #
@@ -140,7 +167,7 @@ def test_runtime_repair_actions_are_high_risk_confirmed_and_auditable() -> None:
 # --------------------------------------------------------------------------- #
 
 def test_get_bff_actions_endpoint_returns_catalog() -> None:
-    client = TestClient(bff_main.app)
+    client = _make_client()
     response = client.get(
         "/bff/actions",
         headers={"Authorization": OPERATOR_TOKEN},
@@ -154,13 +181,13 @@ def test_get_bff_actions_endpoint_returns_catalog() -> None:
 
 
 def test_get_bff_actions_requires_auth() -> None:
-    client = TestClient(bff_main.app)
+    client = _make_client()
     response = client.get("/bff/actions")
     assert response.status_code == 401, response.text
 
 
 def test_get_bff_actions_entry_schema() -> None:
-    client = TestClient(bff_main.app)
+    client = _make_client()
     response = client.get(
         "/bff/actions",
         headers={"Authorization": APPROVER_TOKEN},
@@ -180,7 +207,7 @@ def test_get_bff_actions_entry_schema() -> None:
 
 
 def test_get_bff_actions_all_command_types_present_in_response() -> None:
-    client = TestClient(bff_main.app)
+    client = _make_client()
     response = client.get(
         "/bff/actions",
         headers={"Authorization": OPERATOR_TOKEN},

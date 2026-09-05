@@ -41,9 +41,30 @@ from fastapi.testclient import TestClient
 
 from services.control_plane.bff.governance.router import create_governance_router
 from services.control_plane.bff.models import OperatorIdentity
-from services.control_plane.bff.ports import create_in_memory_read_surface_ports
+from services.control_plane.bff.personas import PersonaService, create_personas_router
+from services.control_plane.bff.ports import (
+    create_in_memory_read_surface_ports,
+    create_persona_registry_write_owner,
+)
 
 AUTH = "Bearer test-operator:operator,admin"
+
+
+class _FakeRankingWriteOwner:
+    def put_ranking_snapshot(self, snapshot: Dict[str, Any]) -> Dict[str, Any]:
+        sid = snapshot.get("snapshot_id") or "snap-1"
+        return {"status": "created", "snapshot_id": sid, "snapshot": snapshot}
+
+    def get_ranking_snapshot(self, snapshot_id: str) -> Optional[Dict[str, Any]]:
+        return None
+
+    def list_ranking_snapshots(self) -> List[Dict[str, Any]]:
+        return []
+
+
+class _FakeCommandStore:
+    def submit_command(self, *args: Any, **kwargs: Any) -> Any:
+        return None
 
 
 def _extract_identity(authorization: str | None) -> OperatorIdentity:
@@ -71,12 +92,19 @@ def _make_client(store: Any) -> TestClient:
     )
     app.include_router(gov_router)
 
-    @app.get("/api/v1/personas/{persona_id}")
-    def _get_persona_route(persona_id: str):
-        persona = store.get_persona(persona_id)
-        if not persona:
-            raise HTTPException(status_code=404, detail="Persona not found")
-        return {"data": persona}
+    persona_service = PersonaService(
+        write_owner=create_persona_registry_write_owner(),
+        ranking_write_owner=_FakeRankingWriteOwner(),
+        read_store=store,
+        command_store=_FakeCommandStore(),
+    )
+    persona_router = create_personas_router(
+        service=persona_service,
+        extract_identity_fn=_extract_identity,
+        require_read_role_fn=_require_read_role,
+        require_operator_role_fn=_require_read_role,
+    )
+    app.include_router(persona_router)
 
     return TestClient(app, raise_server_exceptions=False)
 

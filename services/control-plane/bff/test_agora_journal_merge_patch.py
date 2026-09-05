@@ -8,13 +8,59 @@ import uuid
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
+from fastapi import FastAPI, HTTPException
+from fastapi.responses import JSONResponse
 from fastapi.testclient import TestClient
 
-
-from services.control_plane.bff import main as bff_main
-
+from services.control_plane.bff.agora.router import create_agora_router
+from services.control_plane.bff.models import OperatorIdentity
 
 OPERATOR_TOKEN = "Bearer op-2:operator"
+
+
+def _extract_identity(authorization: str | None = None, **kwargs: Any) -> OperatorIdentity:
+    if not authorization or not authorization.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="Authentication required")
+    raw = authorization[len("Bearer "):].strip()
+    parts = raw.split(":")
+    operator_id = parts[0] if parts else "op"
+    roles = [r.strip() for r in parts[1].split(",")] if len(parts) > 1 else []
+    return OperatorIdentity(operator_id=operator_id, roles=roles, auth_mode="bearer")
+
+
+def _require_role(identity: OperatorIdentity) -> None:
+    if not identity or not identity.roles:
+        raise HTTPException(status_code=403, detail="Forbidden")
+
+
+def _bff_error(
+    status_code: int,
+    code: Any,
+    message: str,
+    reason: str = "",
+    precondition_failed: Optional[str] = None,
+    suggestion: Optional[str] = None,
+    details_extra: Optional[dict[str, Any]] = None,
+    **kwargs: Any,
+) -> HTTPException:
+    val = code.value if hasattr(code, "value") else str(code)
+    details: dict[str, Any] = {
+        "reason": reason or message,
+        "precondition_failed": precondition_failed,
+        "suggestion": suggestion,
+    }
+    if details_extra:
+        details.update(details_extra)
+    return HTTPException(
+        status_code=status_code,
+        detail={
+            "error": {
+                "code": val,
+                "message": message,
+                "details": details,
+            }
+        },
+    )
 
 _PATCH_CANDIDATE_FIELDS = [
     "title",
@@ -213,10 +259,43 @@ def _headers(key: str, *, content_type: str = "application/merge-patch+json") ->
     }
 
 
+_active_store: Any = None
+
+_app = FastAPI(title="Agora Journal Test App")
+
+
+@_app.exception_handler(HTTPException)
+def _http_exception_handler(request: Any, exc: HTTPException) -> Any:
+    detail = exc.detail
+    if isinstance(detail, dict) and "error" in detail:
+        content = detail
+    elif isinstance(detail, dict):
+        content = {"error": detail}
+    else:
+        content = {"error": {"message": str(detail), "code": "HTTP_ERROR"}}
+    return JSONResponse(status_code=exc.status_code, content=content)
+
+
+_app.include_router(
+    create_agora_router(
+        extract_identity=_extract_identity,
+        require_read_role=_require_role,
+        require_write_role=_require_role,
+        require_journal_write_role=_require_role,
+        bff_error=_bff_error,
+        utc_now=_utc_now_rfc3339,
+        get_read_store=lambda: _active_store,
+        sync_servant_agent=lambda p: dict(p),
+    )
+)
+_client = TestClient(_app, raise_server_exceptions=False)
+
+
 def test_agora_journal_patch_rejects_non_merge_patch_content_type() -> None:
-    original_store = bff_main.read_store
-    bff_main.read_store = _seeded_store()
-    client = TestClient(bff_main.app)
+    global _active_store
+    prev_store = _active_store
+    _active_store = _seeded_store()
+    client = _client
 
     try:
         response = client.patch(
@@ -230,13 +309,14 @@ def test_agora_journal_patch_rejects_non_merge_patch_content_type() -> None:
         assert detail["error"]["code"] == "VALIDATION_FAILED"
         assert detail["error"]["details"]["precondition_failed"] == "content_type"
     finally:
-        bff_main.read_store = original_store
+        _active_store = prev_store
 
 
 def test_agora_journal_patch_rejects_body_idempotency_key() -> None:
-    original_store = bff_main.read_store
-    bff_main.read_store = _seeded_store()
-    client = TestClient(bff_main.app)
+    global _active_store
+    prev_store = _active_store
+    _active_store = _seeded_store()
+    client = _client
 
     try:
         response = client.patch(
@@ -253,14 +333,15 @@ def test_agora_journal_patch_rejects_body_idempotency_key() -> None:
         assert detail["error"]["code"] == "VALIDATION_FAILED"
         assert detail["error"]["details"]["precondition_failed"] == "body_idempotency_key"
     finally:
-        bff_main.read_store = original_store
+        _active_store = prev_store
 
 
 def test_agora_journal_patch_returns_data_and_audit_diff() -> None:
-    original_store = bff_main.read_store
+    global _active_store
+    prev_store = _active_store
     store = _seeded_store()
-    bff_main.read_store = store
-    client = TestClient(bff_main.app)
+    _active_store = store
+    client = _client
 
     try:
         response = client.patch(
@@ -304,13 +385,14 @@ def test_agora_journal_patch_returns_data_and_audit_diff() -> None:
         assert stored_audit["diff"]["before"]["body"] == "Initial body"
         assert stored_audit["diff"]["after"]["body"] == "The committee approved the paper rollout."
     finally:
-        bff_main.read_store = original_store
+        _active_store = prev_store
 
 
 def test_agora_journal_patch_idempotency_conflict_rejected() -> None:
-    original_store = bff_main.read_store
-    bff_main.read_store = _seeded_store()
-    client = TestClient(bff_main.app)
+    global _active_store
+    prev_store = _active_store
+    _active_store = _seeded_store()
+    client = _client
 
     try:
         headers = _headers("idem-journal-conflict")
@@ -331,4 +413,4 @@ def test_agora_journal_patch_idempotency_conflict_rejected() -> None:
         assert detail["error"]["code"] == "IDEMPOTENCY_CONFLICT"
         assert detail["error"]["details"]["precondition_failed"] == "idempotency_conflict"
     finally:
-        bff_main.read_store = original_store
+        _active_store = prev_store
