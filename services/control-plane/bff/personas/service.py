@@ -260,6 +260,20 @@ def _get_ranking_write_owner() -> Any:
         raise RuntimeError("Rankings write-owner port is not configured at startup")
     return owner
 
+
+def _get_active_write_owner(explicit: Optional[Any] = None) -> Any:
+    if explicit is not None:
+        return explicit
+    svc = _current_persona_service.get()
+    if svc is not None and hasattr(svc, "get_write_owner"):
+        return svc.get_write_owner()
+    if persona_write_owner is not None:
+        return persona_write_owner
+    try:
+        return create_persona_registry_write_owner()
+    except Exception:
+        return None
+
 class _DefaultCommandStore:
     def _get_all_commands(self) -> List[Dict[str, Any]]:
         return []
@@ -1169,11 +1183,16 @@ def _materialize_terminal_persona_provisioning_ledger(
         _append_persona_reconcile_diagnostic(diagnostics, "provisioning_ledger")
         return "provisioning"
 
-    _get_active_read_store().update_persona(
-        persona_id,
-        lifecycle_state=new_state,
-        metadata=metadata_updates,
-    )
+    _active_writer = _get_active_write_owner()
+    _updater = getattr(_active_writer, "update_persona", None) if _active_writer else None
+    if _updater is None:
+        _updater = getattr(_get_active_read_store(), "update_persona", None)
+    if _updater is not None:
+        _updater(
+            persona_id,
+            lifecycle_state=new_state,
+            metadata=metadata_updates,
+        )
     if persona_id in _PERSONA_BFF_OVERLAY:
         _PERSONA_BFF_OVERLAY[persona_id]["state"] = _normalize_lifecycle_state(new_state)
         _PERSONA_BFF_OVERLAY[persona_id]["lifecycleStatus"] = new_state
@@ -1265,11 +1284,16 @@ def _evaluate_persona_provisioning_status(
             if metadata.get(key) != value
         }
         if changed_updates:
-            _get_active_read_store().update_persona(
-                persona_id,
-                lifecycle_state="provisioning_failed",
-                metadata=changed_updates,
-            )
+            _active_writer = _get_active_write_owner()
+            _updater = getattr(_active_writer, "update_persona", None) if _active_writer else None
+            if _updater is None:
+                _updater = getattr(_get_active_read_store(), "update_persona", None)
+            if _updater is not None:
+                _updater(
+                    persona_id,
+                    lifecycle_state="provisioning_failed",
+                    metadata=changed_updates,
+                )
             raw.setdefault("metadata", {}).update(changed_updates)
         return "provisioning_failed"
     if current_state not in ("provisioning", "draft", "paper_running"):
@@ -1788,11 +1812,16 @@ def _evaluate_persona_provisioning_status(
                     )
 
     if new_state != current_state or metadata_updates:
-        _get_active_read_store().update_persona(
-            persona_id,
-            lifecycle_state=new_state,
-            metadata=metadata_updates,
-        )
+        _active_writer = _get_active_write_owner()
+        _updater = getattr(_active_writer, "update_persona", None) if _active_writer else None
+        if _updater is None:
+            _updater = getattr(_get_active_read_store(), "update_persona", None)
+        if _updater is not None:
+            _updater(
+                persona_id,
+                lifecycle_state=new_state,
+                metadata=metadata_updates,
+            )
         if persona_id in _PERSONA_BFF_OVERLAY:
             _PERSONA_BFF_OVERLAY[persona_id]["state"] = _normalize_lifecycle_state(new_state)
             _PERSONA_BFF_OVERLAY[persona_id]["lifecycleStatus"] = new_state
@@ -2427,7 +2456,25 @@ def _persona_strategy_match_action_response(
         )
 
     if action == "create_research_ticket":
-        ticket = _get_active_read_store().create_research_ticket(
+        read_store = _get_active_read_store()
+        creator = getattr(read_store, "create_research_ticket", None)
+        if creator is None:
+            rks = getattr(read_store, "research_knowledge_source", None)
+            creator = getattr(rks, "create_research_ticket", None) if rks else None
+        if creator is None:
+            try:
+                from services.research.write_owner import build_research_write_owner
+                creator = getattr(build_research_write_owner(), "create_research_ticket", None)
+            except Exception:
+                creator = None
+        if creator is None:
+            raise _bff_error(
+                503,
+                ErrorCode.DEPENDENCY_UNAVAILABLE,
+                "Research ticket write owner unavailable",
+                "Cannot execute create_research_ticket mutation",
+            )
+        ticket = creator(
             title=str(payload.get("title") or f"Research persona strategy match {match_id}"),
             description=str(
                 payload.get("description")
@@ -3666,8 +3713,13 @@ def _persona_record_for_provisioning(
         traits=traits,
         lifecycle_state=lifecycle_state,
     )
-    creator = getattr(_get_active_read_store(), "create_persona", None)
-    updater = getattr(_get_active_read_store(), "update_persona", None)
+    _active_writer = _get_active_write_owner()
+    creator = getattr(_active_writer, "create_persona", None) if _active_writer else None
+    if creator is None:
+        creator = getattr(_get_active_read_store(), "create_persona", None)
+    updater = getattr(_active_writer, "update_persona", None) if _active_writer else None
+    if updater is None:
+        updater = getattr(_get_active_read_store(), "update_persona", None)
     existing = _get_active_read_store().get_persona(record.persona_id)
     if existing is None:
         if mutate_store and callable(creator):

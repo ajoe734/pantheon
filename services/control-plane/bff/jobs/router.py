@@ -122,7 +122,15 @@ def create_jobs_router(
                 "Job not found",
                 f"Job {job_id} does not exist",
             )
-        logs = job.get("logs") if isinstance(job, dict) and "logs" in job else read_store.get_job_logs_bff(job_id)
+        logs = (
+            job.get("logs")
+            if isinstance(job, dict) and "logs" in job
+            else (
+                read_store.get_job_logs_bff(job_id)
+                if hasattr(read_store, "get_job_logs_bff")
+                else []
+            )
+        )
         return {
             "job_id": job_id,
             "status": job.get("status") if isinstance(job, dict) else "unknown",

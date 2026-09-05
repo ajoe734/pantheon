@@ -11,7 +11,13 @@ from typing import Any, Callable, Dict, List, Mapping, Optional
 
 from fastapi import APIRouter, Body, Header, Query, Request
 
-from ..models import CommandType, ErrorCode, ObjectType
+try:
+    from ..models import CommandType, ErrorCode, ObjectType
+except (ImportError, ValueError):
+    try:
+        from services.control_plane.bff.models import CommandType, ErrorCode, ObjectType
+    except (ImportError, ValueError):
+        from models import CommandType, ErrorCode, ObjectType
 
 from .service import RuntimeRouterService
 
@@ -1039,17 +1045,32 @@ def create_runtime_router(
             "created_at": snapshot_at,
         }
         if not dry_run:
-            record = read_store.create_runtime_binding(
-                runtime_id=runtime_id,
-                name=fields["name"],
-                persona_id=fields["persona_id"],
-                binding_id=fields["binding_id"],
-                deployment_plan_id=fields["deployment_plan_id"],
-                runtime_kind=runtime_kind,
-                actor_id=identity.operator_id,
-                created_at=snapshot_at,
-                params=payload.get("params") if isinstance(payload.get("params"), dict) else {},
-            )
+            if hasattr(read_store, "create_runtime_binding"):
+                record = read_store.create_runtime_binding(
+                    runtime_id=runtime_id,
+                    name=fields["name"],
+                    persona_id=fields["persona_id"],
+                    binding_id=fields["binding_id"],
+                    deployment_plan_id=fields["deployment_plan_id"],
+                    runtime_kind=runtime_kind,
+                    actor_id=identity.operator_id,
+                    created_at=snapshot_at,
+                    params=payload.get("params") if isinstance(payload.get("params"), dict) else {},
+                )
+            else:
+                from services.runtime_manager.runtime_manager_client import RuntimeManagerClient
+                client = RuntimeManagerClient(allow_local=True)
+                deploy_req = {
+                    "deployment_plan_id": fields["deployment_plan_id"],
+                    "binding_id": fields["binding_id"],
+                    "runtime_id": runtime_id,
+                    "name": fields["name"],
+                    "persona_id": fields["persona_id"],
+                    "deployment_mode": runtime_kind,
+                    "actor_id": identity.operator_id,
+                    **(payload.get("params") if isinstance(payload.get("params"), dict) else {}),
+                }
+                record = client.deploy(deploy_req)
         data = _project_runtime_create_response(record)
         surface = _dataset_surface_status("runtime_bindings", snapshot_at=snapshot_at)
         meta = _snapshot_meta(snapshot_at)
