@@ -8,21 +8,17 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Iterator
 
+from fastapi import FastAPI
+from fastapi.responses import JSONResponse
 from fastapi.testclient import TestClient
+from starlette.exceptions import HTTPException as StarletteHTTPException
 
-
-from services.control_plane.bff import main as bff_main
-from services.control_plane.bff.ports import create_read_surface_ports  # noqa: E402
+from services.control_plane.bff.incidents.router import create_incident_router
+from services.control_plane.bff.models import OperatorIdentity
+from services.control_plane.bff.ports import create_in_memory_read_surface_ports, create_read_surface_ports  # noqa: E402
 
 
 HEADERS = {"Authorization": "Bearer inc001-operator:operator"}
-_TRACKED_ENV = (
-    "PANTHEON_BFF_INCIDENT_STORE",
-    "INCIDENTS_DATA_DIR",
-    "POSTMORTEMS_DATA_DIR",
-    "PANTHEON_INCIDENTS_API_URL",
-    "PANTHEON_INCIDENTS_URL",
-)
 
 _INCIDENT_CASE_EVIDENCE_FIELDS = (
     "binding_id",
@@ -41,51 +37,41 @@ _INCIDENT_CASE_EVIDENCE_FIELDS = (
 def _isolated_incident_bff(
     incidents: list[dict[str, Any]] | None,
 ) -> Iterator[TestClient]:
-    original_store = bff_main.read_store
-    original_env = {key: os.environ.get(key) for key in _TRACKED_ENV}
-    original_overlay = dict(bff_main._GOV_BFF_INCIDENT_OVERLAY)
-    original_idempotency = dict(bff_main._GOV_BFF_IDEMPOTENCY)
-    with tempfile.TemporaryDirectory(prefix="inc001_bff_") as td:
-        root = Path(td)
-        incident_dir = root / "incidents"
-        for key in _TRACKED_ENV:
-            os.environ.pop(key, None)
-        if incidents is not None:
-            incident_dir.mkdir(parents=True, exist_ok=True)
-            (incident_dir / "incidents.json").write_text(
-                json.dumps({"incidents": incidents}, indent=2),
-                encoding="utf-8",
-            )
-            os.environ["INCIDENTS_DATA_DIR"] = str(incident_dir)
+    if incidents is not None:
+        store = create_in_memory_read_surface_ports(
+            lifecycle_telemetry_governance_kwargs={
+                "incidents": {i["incident_id"]: i for i in incidents},
+            }
+        )
+        store.dataset_source = lambda ds: "service_store" if ds == "incidents" else "typed_store"
+    else:
+        store = create_in_memory_read_surface_ports()
+        store.dataset_source = lambda ds: "missing" if ds == "incidents" else "typed_store"
 
-        from services.control_plane.bff.ports import create_in_memory_read_surface_ports
+    app = FastAPI(title="Incident router contract")
 
-        if incidents is not None:
-            store = create_in_memory_read_surface_ports(
-                lifecycle_telemetry_governance_kwargs={
-                    "incidents": {i["incident_id"]: i for i in incidents},
-                }
-            )
-            store.dataset_source = lambda ds: "service_store" if ds == "incidents" else "typed_store"
-        else:
-            store = create_in_memory_read_surface_ports()
-            store.dataset_source = lambda ds: "missing" if ds == "incidents" else "typed_store"
-        bff_main.read_store = store
-        bff_main._GOV_BFF_INCIDENT_OVERLAY.clear()
-        bff_main._GOV_BFF_IDEMPOTENCY.clear()
-        try:
-            yield TestClient(bff_main.app, raise_server_exceptions=False)
-        finally:
-            bff_main.read_store = original_store
-            bff_main._GOV_BFF_INCIDENT_OVERLAY.clear()
-            bff_main._GOV_BFF_INCIDENT_OVERLAY.update(original_overlay)
-            bff_main._GOV_BFF_IDEMPOTENCY.clear()
-            bff_main._GOV_BFF_IDEMPOTENCY.update(original_idempotency)
-            for key, value in original_env.items():
-                if value is None:
-                    os.environ.pop(key, None)
-                else:
-                    os.environ[key] = value
+    @app.exception_handler(StarletteHTTPException)
+    async def _http_exc_handler(req, exc):
+        if isinstance(exc.detail, dict) and "error" in exc.detail:
+            return JSONResponse(status_code=exc.status_code, content=exc.detail)
+        elif isinstance(exc.detail, dict):
+            return JSONResponse(status_code=exc.status_code, content={"error": exc.detail})
+        return JSONResponse(
+            status_code=exc.status_code,
+            content={"error": {"code": "ERROR", "message": str(exc.detail)}},
+        )
+
+    def _extract_id(auth: str | None = None, **kwargs: Any) -> OperatorIdentity:
+        return OperatorIdentity(operator_id="inc001-operator", roles=["operator", "viewer"])
+
+    router = create_incident_router(
+        read_surface=store,
+        extract_identity=_extract_id,
+        incident_overlay={},
+        idempotency_ledger={},
+    )
+    app.include_router(router)
+    yield TestClient(app, raise_server_exceptions=False)
 
 
 def _incident_records() -> list[dict[str, Any]]:

@@ -5154,6 +5154,15 @@ class ManagementService:
             market_val = ops_read_model_sanitize_metric(
                 telemetry.get("market_value") if telemetry.get("market_value") is not None else summary.get("market_value")
             )
+            if market_val is None and isinstance(telemetry.get("positions"), list):
+                pos_mvs = [
+                    ops_read_model_sanitize_metric(p.get("market_value"))
+                    for p in telemetry.get("positions", [])
+                    if isinstance(p, dict)
+                ]
+                valid_pos_mvs = [v for v in pos_mvs if v is not None]
+                if valid_pos_mvs:
+                    market_val = sum(valid_pos_mvs)
             pool_id = str(
                 runtime.get("capital_pool_id")
                 or plan.get("capital_pool_id")

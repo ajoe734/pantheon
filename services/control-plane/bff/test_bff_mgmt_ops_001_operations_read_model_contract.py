@@ -26,8 +26,11 @@ os.environ.setdefault("PANTHEON_BFF_AUTH_STUB", "true")
 os.environ.setdefault("PANTHEON_BFF_AUTH_MODE", "permissive")
 
 import json
-from services.control_plane.bff import main as bff_main
+from fastapi import FastAPI
+from fastapi.responses import JSONResponse
 from fastapi.testclient import TestClient  # noqa: E402
+from starlette.exceptions import HTTPException as StarletteHTTPException
+from services.control_plane.bff.management_read_models.router import create_management_router
 from services.control_plane.bff.ports import ReadSurfacePorts  # noqa: E402
 from services.control_plane.bff.operations_read_model import (  # noqa: E402
     DataConfidence,
@@ -144,12 +147,21 @@ class OperationsReadModelTestReadPorts(ReadSurfacePorts):
 
 @contextmanager
 def _client_with_store(store: OperationsReadModelTestReadPorts) -> Iterator[TestClient]:
-    original_store = bff_main.read_store
-    bff_main.read_store = store
-    try:
-        yield TestClient(bff_main.app, raise_server_exceptions=False)
-    finally:
-        bff_main.read_store = original_store
+    app = FastAPI(title="Operations read model router contract")
+
+    @app.exception_handler(StarletteHTTPException)
+    async def _http_exc_handler(req, exc):
+        if isinstance(exc.detail, dict) and "error" in exc.detail:
+            return JSONResponse(status_code=exc.status_code, content=exc.detail)
+        elif isinstance(exc.detail, dict):
+            return JSONResponse(status_code=exc.status_code, content={"error": exc.detail})
+        return JSONResponse(
+            status_code=exc.status_code,
+            content={"error": {"code": "ERROR", "message": str(exc.detail)}},
+        )
+
+    app.include_router(create_management_router(read_surface=store))
+    yield TestClient(app, raise_server_exceptions=False)
 
 
 def _fresh_store(*, allow_local_snapshot_fallback: bool) -> OperationsReadModelTestReadPorts:
@@ -174,8 +186,9 @@ def _response_schema_ref(schema: dict[str, Any], path: str) -> str:
 
 
 def test_operations_read_model_publishes_typed_openapi_envelope() -> None:
-    bff_main.app.openapi_schema = None
-    schema = TestClient(bff_main.app).get("/openapi.json").json()
+    app = FastAPI(title="Operations read model router contract")
+    app.include_router(create_management_router(read_surface=_fresh_store(allow_local_snapshot_fallback=True)))
+    schema = TestClient(app).get("/openapi.json").json()
     path = "/bff/management/operations-read-model/{persona_id}"
 
     assert path in schema["paths"]
