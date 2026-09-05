@@ -38,7 +38,7 @@ def create_consult_rules_router(
         if store is None:
             raise RuntimeError("Required read_surface is absent; failing startup closed.")
         source = store.dataset_source(_DATASET)
-        from models import utc_now
+        from services.control_plane.bff.models import utc_now
         snapshot_at = utc_now()
 
         items: List[Dict[str, Any]] = store.list_consult_rules() if source != "missing" else []

@@ -30,15 +30,7 @@ from starlette.responses import JSONResponse, StreamingResponse
 
 from .service import EventStreamService
 
-try:
-    from models import ErrorCode
-except ImportError:
-    class ErrorCode:
-        VALIDATION_FAILED = "VALIDATION_FAILED"
-        AUTH_REQUIRED = "AUTH_REQUIRED"
-        FORBIDDEN = "FORBIDDEN"
-        RESOURCE_CONFLICT = "RESOURCE_CONFLICT"
-        INTERNAL_ERROR = "INTERNAL_ERROR"
+from services.control_plane.bff.models import ErrorCode
 
 log = logging.getLogger(__name__)
 

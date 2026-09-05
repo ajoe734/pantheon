@@ -74,7 +74,7 @@ def build_versions_router(
                     document_sha256=active_digest,
                 )
             except CanonicalOperationError as exc:
-                from models import ErrorCode
+                from services.control_plane.bff.models import ErrorCode
                 raise bff_error(
                     503 if exc.retryable else 502,
                     ErrorCode.DEPENDENCY_UNAVAILABLE if exc.retryable else ErrorCode.UPSTREAM_ERROR,
@@ -83,7 +83,7 @@ def build_versions_router(
                     precondition_failed="strategy_registry",
                 ) from exc
             except _StrategyVersionProjectionError as exc:
-                from models import ErrorCode
+                from services.control_plane.bff.models import ErrorCode
                 code = (
                     ErrorCode.FORBIDDEN
                     if exc.status_code == 403
@@ -99,7 +99,7 @@ def build_versions_router(
                     precondition_failed="strategy_version_projection",
                 ) from exc
             except WorkshopVersionProjectionConflict as exc:
-                from models import ErrorCode
+                from services.control_plane.bff.models import ErrorCode
                 raise bff_error(
                     409,
                     ErrorCode.RESOURCE_CONFLICT,
@@ -129,7 +129,7 @@ def build_versions_router(
                     document_sha256=digest,
                 )
             except CanonicalOperationError as exc:
-                from models import ErrorCode
+                from services.control_plane.bff.models import ErrorCode
                 raise bff_error(
                     503 if exc.retryable else 502,
                     ErrorCode.DEPENDENCY_UNAVAILABLE if exc.retryable else ErrorCode.UPSTREAM_ERROR,
@@ -138,7 +138,7 @@ def build_versions_router(
                     precondition_failed="strategy_registry",
                 ) from exc
             except _StrategyVersionProjectionError as exc:
-                from models import ErrorCode
+                from services.control_plane.bff.models import ErrorCode
                 code = (
                     ErrorCode.FORBIDDEN
                     if exc.status_code == 403
@@ -154,7 +154,7 @@ def build_versions_router(
                     precondition_failed="strategy_version_projection",
                 ) from exc
             except WorkshopVersionProjectionConflict as exc:
-                from models import ErrorCode
+                from services.control_plane.bff.models import ErrorCode
                 raise bff_error(
                     409,
                     ErrorCode.RESOURCE_CONFLICT,
@@ -198,7 +198,7 @@ def build_versions_router(
         idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
         x_request_id: Optional[str] = Header(default=None, alias="X-Request-Id"),
     ) -> Dict[str, Any]:
-        from models import ErrorCode
+        from services.control_plane.bff.models import ErrorCode
         from services.research.strategy_spec.models import validate_strategy_spec_payload
         from services.research.strategy_spec.patching import PatchError, apply_patch_validated
 
@@ -511,7 +511,7 @@ def build_versions_router(
         idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
         x_request_id: Optional[str] = Header(default=None, alias="X-Request-Id"),
     ) -> Dict[str, Any]:
-        from models import ErrorCode
+        from services.control_plane.bff.models import ErrorCode
 
         scope = _scope(
             authorization,

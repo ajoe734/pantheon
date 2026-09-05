@@ -53,7 +53,7 @@ def build_stream_router(
         scope = _scope(authorization, x_tenant_id)
         session = store.get_session(workshop_id)
         if session is None:
-            from models import ErrorCode
+            from services.control_plane.bff.models import ErrorCode
             raise bff_error(404, ErrorCode.RESOURCE_NOT_FOUND, "Workshop not found", workshop_id)
         if session["user_id"] != scope.user_id or session["tenant_id"] != scope.tenant_id:
             _raise_cross_user_forbidden(

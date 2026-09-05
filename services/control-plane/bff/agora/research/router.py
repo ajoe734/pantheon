@@ -1140,7 +1140,7 @@ def publish_research_progress(
     phase: str = "running",
     utc_now_fn: Optional[Callable[[], str]] = None,
 ) -> str:
-    from agora.strategy_workshop.events import _ws_publish  # noqa: PLC0415
+    from services.control_plane.bff.agora.strategy_workshop.events import _ws_publish  # noqa: PLC0415
     return _ws_publish(
         workshop_id,
         "research.run.progress",
@@ -1160,7 +1160,7 @@ def publish_openclaw_degraded(
     *,
     utc_now_fn: Optional[Callable[[], str]] = None,
 ) -> str:
-    from agora.strategy_workshop.events import _ws_publish  # noqa: PLC0415
+    from services.control_plane.bff.agora.strategy_workshop.events import _ws_publish  # noqa: PLC0415
     return _ws_publish(
         workshop_id,
         "workshop.openclaw.degraded",
@@ -1202,7 +1202,7 @@ def create_research_router(
         except Exception:
             pass
         try:
-            from models import ErrorCode
+            from services.control_plane.bff.models import ErrorCode
             if hasattr(ErrorCode, "FORBIDDEN"):
                 return ErrorCode
         except Exception:
@@ -1361,7 +1361,7 @@ def create_research_router(
         return member
 
     def _validate_create_body(body: ResearchPlanCreateRequest, workshop_id: str) -> None:
-        from models import ErrorCode
+        from services.control_plane.bff.models import ErrorCode
         if body.spec_version != "1.0":
             raise bff_error(
                 422, ErrorCode.VALIDATION_FAILED,
@@ -1450,7 +1450,7 @@ def create_research_router(
         return plan
 
     def _publish_research_event(workshop_id: str, event_type: str, data: Dict[str, Any]) -> None:
-        from agora.strategy_workshop.events import _ws_publish  # noqa: PLC0415
+        from services.control_plane.bff.agora.strategy_workshop.events import _ws_publish  # noqa: PLC0415
         _ws_publish(workshop_id, event_type, data, utc_now_fn=utc_now)
 
     def _validate_pool_filter(pool_filter: Dict[str, Any]) -> None:
@@ -1661,7 +1661,7 @@ def create_research_router(
             suffix = page_token[len(_MEMBER_PAGE_TOKEN_PREFIX):]
             if suffix.isdigit():
                 return int(suffix)
-        from models import ErrorCode
+        from services.control_plane.bff.models import ErrorCode
         raise bff_error(
             422, ErrorCode.VALIDATION_FAILED,
             "Invalid candidate member page_token",

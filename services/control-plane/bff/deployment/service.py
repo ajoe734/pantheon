@@ -83,7 +83,7 @@ class DeploymentService:
     # -- PKT-001: operator deployment-plans list ---------------------------- #
 
     def pkt001_requested_plan_statuses(self, status: Optional[str]) -> Optional[set]:
-        from models import ErrorCode
+        from services.control_plane.bff.models import ErrorCode
 
         requested = self._split_csv_query(status)
         if requested is None:
