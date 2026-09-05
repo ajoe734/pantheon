@@ -92,17 +92,25 @@ class GovernanceService:
     """Application service over existing governance and consultation ports."""
 
     _CONSULT_TARGET_TYPES = {"persona", "committee", "red_team"}
-    _CONSULT_PRIORITIES = {"low", "normal", "high", "urgent"}
+    _CONSULT_PRIORITIES = {"low", "normal", "high", "critical"}
     _CONSULTATION_TYPES = {
-        "strategy_review",
-        "redteam",
-        "red_team",
-        "data_leakage",
-        "execution_risk",
-        "capital_pool",
-        "incident",
-        "persona_policy",
+        "pre_deployment",
+        "risk_review",
+        "macro_regime_shift",
+        "incident_response",
+        "policy_change",
+        "general",
     }
+    _CONTEXT_REF_TYPES = {
+        "artifact",
+        "deployment_plan",
+        "incident",
+        "lineage_edge",
+        "telemetry_ref",
+        "note",
+    }
+    _CW04_GOVERNANCE_ROLES = {"reviewer", "approver", "admin", "governance_committee"}
+    _CW04_SUPPORTED_TARGET_TYPES = {"strategy", "artifact", "deployment_plan"}
     _PENDING_APPROVAL_STATES = {
         "pending",
         "in_review",
@@ -128,6 +136,9 @@ class GovernanceService:
         submit_action: Optional[SubmitAction] = None,
         publish_event: Optional[Callable[[str, Dict[str, Any]], Any]] = None,
         get_interventions: Optional[Callable[[], List[Dict[str, Any]]]] = None,
+        dataset_surface_status: Optional[Callable[..., Dict[str, Any]]] = None,
+        redact_evidence_refs: Optional[Callable[..., Tuple[List[Dict[str, Any]], int]]] = None,
+        capabilities_for_identity: Optional[Callable[[Any], Any]] = None,
     ) -> None:
         self.read_store = read_store
         self.utc_now = utc_now
@@ -135,8 +146,26 @@ class GovernanceService:
         self.submit_action = submit_action
         self.publish_event = publish_event
         self.get_interventions = get_interventions or (lambda: [])
+        self.dataset_surface_status = dataset_surface_status or self._default_dataset_surface_status
+        self.redact_evidence_refs = redact_evidence_refs or (
+            lambda identity, refs, *, capabilities=None: (list(refs), 0)
+        )
+        self.capabilities_for_identity = capabilities_for_identity or (lambda identity: None)
         self._created_approvals: Dict[str, Dict[str, Any]] = {}
         self._idempotency: Dict[str, Dict[str, Any]] = {}
+
+    @staticmethod
+    def _default_dataset_surface_status(
+        dataset: str, *, snapshot_at: str, source: Optional[str] = None, **_: Any
+    ) -> Dict[str, Any]:
+        source = source or "ok"
+        if source in {"missing", "unavailable"}:
+            status = "unavailable"
+        elif source in {"local_snapshot", "degraded"}:
+            status = "degraded"
+        else:
+            status = "ok"
+        return {"status": status, "source": source, "dataset": dataset, "snapshot_at": snapshot_at}
 
     def _call(self, name: str, *args: Any, default: Any = None, **kwargs: Any) -> Any:
         method = getattr(self.read_store, name, None)
@@ -290,6 +319,24 @@ class GovernanceService:
             raise ValueError(field)
         return value
 
+    def _validate_context_refs(self, value: Any) -> List[Dict[str, str]]:
+        if value in (None, ""):
+            return []
+        if not isinstance(value, list):
+            raise ValueError("context_refs")
+        refs: List[Dict[str, str]] = []
+        for item in value:
+            if not isinstance(item, dict):
+                raise ValueError("context_refs")
+            ref_type = str(item.get("type") or "").strip().lower()
+            if ref_type not in self._CONTEXT_REF_TYPES:
+                raise ValueError("context_refs")
+            ref_id = str(item.get("id") or "").strip()
+            if not ref_id:
+                raise ValueError("context_refs")
+            refs.append({"type": ref_type, "id": ref_id})
+        return refs
+
     def validate_consult_request(self, payload: Mapping[str, Any]) -> Dict[str, Any]:
         target_type = self.required_text(payload, "target_type").lower()
         if target_type not in self._CONSULT_TARGET_TYPES:
@@ -297,21 +344,20 @@ class GovernanceService:
         priority = str(payload.get("priority") or "normal").strip().lower()
         if priority not in self._CONSULT_PRIORITIES:
             raise ValueError("priority")
-        consultation_type = str(payload.get("consultation_type") or "strategy_review").strip().lower()
+        consultation_type = str(payload.get("consultation_type") or "general").strip().lower()
         if consultation_type not in self._CONSULTATION_TYPES:
             raise ValueError("consultation_type")
-        context_refs = payload.get("context_refs") or []
-        if not isinstance(context_refs, list) or any(not isinstance(ref, dict) for ref in context_refs):
-            raise ValueError("context_refs")
+        context_refs = self._validate_context_refs(payload.get("context_refs"))
         return {
             "from_persona_id": self.required_text(payload, "from_persona_id"),
             "target_type": target_type,
             "target_ref": self.required_text(payload, "target_ref"),
             "task": self.required_text(payload, "task"),
-            "context_refs": copy.deepcopy(context_refs),
+            "context_refs": context_refs,
             "priority": priority,
             "consultation_type": consultation_type,
         }
+
     def create_consult_request(self, payload: Mapping[str, Any], identity: Any) -> Dict[str, Any]:
         fields = self.validate_consult_request(payload)
         created = self._call(
@@ -321,18 +367,8 @@ class GovernanceService:
             created_at=self.utc_now(),
             default=None,
         )
-        if created is None:
-            created_at = self.utc_now()
-            request_id = str(payload.get("request_id") or uuid.uuid4())
-            created = {
-                **fields,
-                "request_id": request_id,
-                "status": "created",
-                "created_at": created_at,
-                "linked_session_id": None,
-                "request_to_session_status": "pending",
-                "allowedActions": {"canCancel": True},
-            }
+        if not created:
+            raise RuntimeError("consult_request_create_unavailable")
         return copy.deepcopy(created)
 
     def list_consult_requests(
@@ -367,38 +403,226 @@ class GovernanceService:
         )
 
     def list_committees(
-        self, *, status: Optional[str], page_token: Optional[str], page_size: int
+        self,
+        *,
+        quorum_state: Optional[str] = None,
+        consensus_state: Optional[str] = None,
+        page_token: Optional[str],
+        page_size: int,
     ) -> Tuple[List[Dict[str, Any]], Optional[str], int]:
-        statuses = split_csv(status)
-        try:
-            records = self._call("list_committees", statuses=statuses, default=[])
-        except TypeError:
-            records = self._call("list_committees", default=[])
+        records = self._call(
+            "list_committees",
+            quorum_states=split_csv(quorum_state),
+            consensus_states=split_csv(consensus_state),
+            default=[],
+        )
         items = list(records or [])
-        if statuses:
-            allowed = {value.lower() for value in statuses}
-            items = [item for item in items if str(item.get("status") or item.get("consensus_state") or "").lower() in allowed]
         page, token = self.page_slice(items, page_token, page_size)
         return page, token, len(items)
 
     def get_committee(self, committee_id: str) -> Optional[Dict[str, Any]]:
         return self._call("get_committee", committee_id, default=None)
 
+    def _committee_surface_state(self, committee: Optional[Dict[str, Any]], *, snapshot_at: str) -> str:
+        surface = self.dataset_surface_status(
+            "consultation_sessions",
+            snapshot_at=snapshot_at,
+            source=self.dataset_source("consult_requests"),
+        )
+        if surface.get("status") == "unavailable" or committee is None:
+            return "unavailable"
+        if committee.get("surface_state") == "degraded":
+            return "degraded"
+        return str(surface.get("status") or "ok")
+
+    def _committee_allowed_actions(
+        self, committee: Dict[str, Any], *, identity: Any, surface_state: str
+    ) -> Dict[str, bool]:
+        if surface_state == "unavailable":
+            return {"canRecordSponsorDecision": False}
+        sponsor_decision = committee.get("sponsor_decision")
+        consensus_state = str(committee.get("consensus_state") or "").strip().lower()
+        roles = set(getattr(identity, "roles", set()) or set())
+        sponsor_assignment = committee.get("sponsor_assignment") or {}
+        sponsor_participant_id = str(sponsor_assignment.get("participant_id") or "").strip()
+        return {
+            "canRecordSponsorDecision": (
+                sponsor_decision in (None, "")
+                and consensus_state == "sponsor_required"
+                and bool(sponsor_participant_id)
+                and bool(roles.intersection({"operator", "approver", "admin"}))
+            )
+        }
+
+    def committee_projection(
+        self, committee_id: str, *, identity: Any, snapshot_at: Optional[str] = None
+    ) -> Optional[Dict[str, Any]]:
+        committee = self.get_committee(committee_id)
+        if committee is None:
+            return None
+        snap = snapshot_at or self.utc_now()
+        surface_state = self._committee_surface_state(committee, snapshot_at=snap)
+        allowed_actions = self._committee_allowed_actions(committee, identity=identity, surface_state=surface_state)
+        return {
+            "committee_id": committee.get("committee_id"),
+            "committee_ref": committee.get("committee_ref"),
+            "linked_request_id": committee.get("linked_request_id"),
+            "linked_session_id": committee.get("linked_session_id"),
+            "started_at": committee.get("started_at"),
+            "escalation_reason": copy.deepcopy(committee.get("escalation_reason") or {}),
+            "quorum_state": committee.get("quorum_state"),
+            "consensus_state": committee.get("consensus_state"),
+            "participant_roster": copy.deepcopy(committee.get("participant_roster") or []),
+            "sponsor_assignment": copy.deepcopy(committee.get("sponsor_assignment") or {}),
+            "sponsor_decision": committee.get("sponsor_decision"),
+            "sponsor_decided_at": committee.get("sponsor_decided_at"),
+            "sponsor_decided_by": committee.get("sponsor_decided_by"),
+            "synthesis_summary": copy.deepcopy(committee.get("synthesis_summary") or {}),
+            "linked_evidence": copy.deepcopy(committee.get("linked_evidence") or []),
+            "service_handoff": copy.deepcopy(committee.get("service_handoff") or {}),
+            "allowedActions": allowed_actions,
+            "meta": {
+                "snapshot_at": snap,
+                "surfaces": {"committee_board": surface_state},
+            },
+        }
+
     def list_consult_memos(
-        self, *, status: Optional[str], page_token: Optional[str], page_size: int
-    ) -> Tuple[List[Dict[str, Any]], Optional[str], int]:
+        self, *, status: Optional[str], page_token: Optional[str], page_size: int, snapshot_at: Optional[str] = None
+    ) -> Tuple[List[Dict[str, Any]], Optional[str], int, str]:
         statuses = split_csv(status)
+        if statuses:
+            normalized = [value.strip().lower() for value in statuses]
+            invalid = [value for value in normalized if value not in {"draft", "published"}]
+            if invalid:
+                raise ValueError("status")
+            statuses = normalized
         records = list(self._call("list_consult_memos", statuses=statuses, default=[]) or [])
+        snap = snapshot_at or self.utc_now()
+        surface_state = self._memo_collection_surface_state(snapshot_at=snap)
+        if surface_state == "unavailable":
+            return [], None, 0, surface_state
         page, token = self.page_slice(records, page_token, page_size)
-        return page, token, len(records)
+        return page, token, len(records), surface_state
 
     def get_consult_memo(self, memo_id: str) -> Optional[Dict[str, Any]]:
         return self._call("get_consult_memo", memo_id, default=None)
 
+    def _memo_collection_surface_state(self, *, snapshot_at: str) -> str:
+        surface = self.dataset_surface_status(
+            "consult_memos",
+            snapshot_at=snapshot_at,
+            source=self.dataset_source("consult_memos"),
+        )
+        if surface.get("status") == "unavailable":
+            return "unavailable"
+        if surface.get("source") == "local_snapshot" or surface.get("status") == "degraded":
+            return "degraded"
+        return "ok"
+
+    def _memo_surface_state(self, memo: Dict[str, Any], *, snapshot_at: str) -> str:
+        dataset_state = self._memo_collection_surface_state(snapshot_at=snapshot_at)
+        explicit_state = str(memo.get("surface_state") or "").strip().lower()
+        if explicit_state == "unavailable":
+            return "unavailable"
+        if explicit_state == "degraded":
+            return "degraded"
+        return dataset_state
+
+    @staticmethod
+    def _memo_staleness(surface_state: str, *, snapshot_at: str) -> Dict[str, Any]:
+        return {"status": "fresh" if surface_state == "ok" else "stale", "as_of": snapshot_at}
+
+    @staticmethod
+    def _memo_governance_target(memo: Dict[str, Any]) -> Tuple[str, str, bool]:
+        target = memo.get("governance_target") if isinstance(memo.get("governance_target"), dict) else {}
+        target_type = str(target.get("target_type") or "").strip().lower()
+        target_id = str(target.get("target_id") or "").strip()
+        strategy_id = str(target.get("strategy_id") or "").strip()
+        artifact_id = str(target.get("artifact_id") or "").strip()
+        deployment_plan_id = str(target.get("deployment_plan_id") or "").strip()
+        if not target_type:
+            if strategy_id:
+                target_type, target_id = "strategy", strategy_id
+            elif artifact_id:
+                target_type, target_id = "artifact", artifact_id
+            elif deployment_plan_id:
+                target_type, target_id = "deployment_plan", deployment_plan_id
+        has_valid_target = bool(strategy_id or artifact_id or deployment_plan_id or target_id)
+        return target_type, target_id, has_valid_target
+
+    def _memo_allowed_actions(self, memo: Dict[str, Any], *, identity: Any, surface_state: str) -> Dict[str, bool]:
+        if surface_state != "ok":
+            return {"canInitiateGovernanceReview": False}
+        lifecycle_state = str(memo.get("lifecycle_state") or memo.get("status") or "").strip().lower()
+        target_type, _target_id, has_valid_target = self._memo_governance_target(memo)
+        roles = set(getattr(identity, "roles", set()) or set())
+        has_authority = bool(roles.intersection(self._CW04_GOVERNANCE_ROLES))
+        has_active_review = bool(str(memo.get("active_governance_review_id") or "").strip())
+        suppressed = bool(memo.get("suppressed"))
+        withdrawn = bool(memo.get("withdrawn"))
+        governance_accepts_target_type = target_type in self._CW04_SUPPORTED_TARGET_TYPES
+        return {
+            "canInitiateGovernanceReview": (
+                lifecycle_state == "published"
+                and has_valid_target
+                and has_authority
+                and not has_active_review
+                and not suppressed
+                and not withdrawn
+                and governance_accepts_target_type
+            )
+        }
+
+    def consult_memo_projection(
+        self, memo_id: str, *, identity: Any, snapshot_at: Optional[str] = None
+    ) -> Optional[Dict[str, Any]]:
+        memo = self.get_consult_memo(memo_id)
+        if memo is None:
+            return None
+        snap = snapshot_at or self.utc_now()
+        surface_state = self._memo_surface_state(memo, snapshot_at=snap)
+        allowed_actions = self._memo_allowed_actions(memo, identity=identity, surface_state=surface_state)
+        hide_memo_content = surface_state == "unavailable"
+        evidence_refs = [] if hide_memo_content else copy.deepcopy(memo.get("evidence_refs") or [])
+        try:
+            capabilities = self.capabilities_for_identity(identity)
+        except Exception:
+            capabilities = None
+        evidence_refs, redacted_count = self.redact_evidence_refs(identity, evidence_refs, capabilities=capabilities)
+        meta = {
+            "snapshot_at": snap,
+            "staleness": self._memo_staleness(surface_state, snapshot_at=snap),
+            "surfaces": {"redteam_memo": {"state": surface_state}},
+            "supporting_counts": {"redacted_evidence_count": redacted_count},
+        }
+        return {
+            "object_ref": copy.deepcopy(memo.get("object_ref") or {}),
+            "memo_id": memo.get("memo_id"),
+            "memo_type": memo.get("memo_type") or "red_team",
+            "status": memo.get("status"),
+            "lifecycle_state": memo.get("lifecycle_state"),
+            "author_ref": memo.get("author_ref"),
+            "linked_request_id": memo.get("linked_request_id"),
+            "linked_session_id": memo.get("linked_session_id"),
+            "session_to_memo_mapping": copy.deepcopy(memo.get("session_to_memo_mapping") or {}),
+            "summary": None if hide_memo_content else memo.get("summary"),
+            "recommendations": [] if hide_memo_content else list(memo.get("recommendations") or []),
+            "evidence_refs": evidence_refs,
+            "published_at": memo.get("published_at"),
+            "created_at": memo.get("created_at"),
+            "supersedes_memo_id": memo.get("supersedes_memo_id"),
+            "superseded_by_memo_id": memo.get("superseded_by_memo_id"),
+            "allowedActions": allowed_actions,
+            "meta": meta,
+        }
+
     def consultation_workbench(self) -> Dict[str, Any]:
         requests = self.list_consult_requests(status=None, target_type=None, consultation_type=None)
-        committees, _, committee_count = self.list_committees(status=None, page_token=None, page_size=200)
-        memos, _, memo_count = self.list_consult_memos(status=None, page_token=None, page_size=200)
+        committees, _, committee_count = self.list_committees(
+            quorum_state=None, consensus_state=None, page_token=None, page_size=200
+        )
+        memos, _, memo_count, _ = self.list_consult_memos(status=None, page_token=None, page_size=200)
         snapshot_at = self.utc_now()
         return {
             "data": {

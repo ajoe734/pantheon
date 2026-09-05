@@ -161,6 +161,9 @@ def create_governance_router(
                 submit_action=submit_action,
                 publish_event=publish_event,
                 get_interventions=get_interventions,
+                dataset_surface_status=_surface,
+                redact_evidence_refs=_redact,
+                capabilities_for_identity=_capabilities,
             )
         return resolved_service
 
@@ -346,6 +349,13 @@ def create_governance_router(
         except ValueError as exc:
             field = str(exc)
             _fail(422, "VALIDATION_FAILED", f"{field} is invalid", f"Invalid or missing {field}", precondition_failed=field)
+        except RuntimeError:
+            _fail(
+                503,
+                "DEPENDENCY_UNAVAILABLE",
+                "Consult request store unavailable",
+                "Create operation could not be persisted.",
+            )
         return {
             key: request.get(key)
             for key in (
@@ -368,18 +378,31 @@ def create_governance_router(
         authorization: Optional[str] = Header(default=None),
     ) -> Dict[str, Any]:
         _identity(authorization)
+        snapshot_at = _now()
         items = _service().list_consult_requests(
             status=status,
             target_type=target_type,
             consultation_type=consultation_type,
         )
-        return _paged(
-            items,
-            page_token=page_token,
-            page_size=page_size,
-            surface_key="consult_requests",
-            dataset="consult_requests",
+        surface = _surface(
+            "consult_requests",
+            snapshot_at=snapshot_at,
+            source=_service().dataset_source("consult_requests"),
         )
+        if surface.get("status") == "unavailable":
+            page_items: List[Dict[str, Any]] = []
+            next_token = None
+            total = 0
+        else:
+            page_items, next_token = _page(items, page_token, page_size)
+            total = len(items)
+        meta = _snapshot(snapshot_at)
+        meta["surfaces"] = {"consult_request_list": surface}
+        return {
+            "data": page_items,
+            "page_info": {"next_page_token": next_token, "total": total, "page_size": page_size},
+            "meta": meta,
+        }
 
     @router.get("/api/v1/consult/requests/{request_id}")
     async def get_consult_request(
@@ -387,10 +410,35 @@ def create_governance_router(
         authorization: Optional[str] = Header(default=None),
     ) -> Dict[str, Any]:
         _identity(authorization)
+        snapshot_at = _now()
         record = _service().get_consult_request(request_id)
+        surface = _surface(
+            "consult_requests",
+            snapshot_at=snapshot_at,
+            source=_service().dataset_source("consult_requests"),
+        )
         if record is None:
+            if surface.get("status") == "unavailable":
+                _fail(
+                    503,
+                    "DEPENDENCY_UNAVAILABLE",
+                    "Consult request unavailable",
+                    "Consult request read surface is unavailable",
+                )
             _not_found("Consult request", request_id)
-        return {"data": record, "meta": _snapshot(_now())}
+        return {
+            **record,
+            "links": {
+                "self": f"/api/v1/consult/requests/{request_id}",
+                "workbench_detail": f"/consultation/requests/{request_id}",
+            },
+            "meta": _read_meta(
+                "consult_requests",
+                "consult_request_detail",
+                snapshot_at=snapshot_at,
+                surface=surface,
+            ),
+        }
 
     @router.post("/api/v1/consult/requests/{request_id}/cancel")
     async def cancel_consult_request(
@@ -398,26 +446,73 @@ def create_governance_router(
         authorization: Optional[str] = Header(default=None),
     ) -> Dict[str, Any]:
         identity = _identity(authorization, operator=True)
-        record = _service().cancel_consult_request(request_id, identity)
+        record = _service().get_consult_request(request_id)
         if record is None:
             _not_found("Consult request", request_id)
-        return {"data": record, "meta": _snapshot(_now())}
+        if not (record.get("allowedActions") or {}).get("canCancel"):
+            _fail(
+                409,
+                "PRECONDITION_FAILED",
+                "Consult request cannot be canceled",
+                f"allowedActions.canCancel is false for request {request_id}",
+                precondition_failed="allowedActions.canCancel",
+            )
+        canceled = _service().cancel_consult_request(request_id, identity)
+        if canceled is None:
+            refreshed = _service().get_consult_request(request_id)
+            if refreshed and not (refreshed.get("allowedActions") or {}).get("canCancel"):
+                _fail(
+                    409,
+                    "PRECONDITION_FAILED",
+                    "Consult request cannot be canceled",
+                    f"allowedActions.canCancel is false for request {request_id}",
+                    precondition_failed="allowedActions.canCancel",
+                )
+            _fail(
+                503,
+                "DEPENDENCY_UNAVAILABLE",
+                "Consult request store unavailable",
+                "Cancel operation could not be persisted.",
+            )
+        return {
+            key: canceled.get(key)
+            for key in (
+                "request_id",
+                "status",
+                "canceled_at",
+                "linked_session_id",
+                "request_to_session_status",
+                "allowedActions",
+            )
+        }
 
     @router.get("/api/v1/committees")
     async def list_committees(
-        status: Optional[str] = None,
+        quorum_state: Optional[str] = None,
+        consensus_state: Optional[str] = None,
         page_token: Optional[str] = None,
         page_size: int = Query(default=20, ge=1, le=200),
         authorization: Optional[str] = Header(default=None),
     ) -> Dict[str, Any]:
         _identity(authorization)
+        snapshot_at = _now()
         items, next_token, total = _service().list_committees(
-            status=status, page_token=page_token, page_size=page_size
+            quorum_state=quorum_state,
+            consensus_state=consensus_state,
+            page_token=page_token,
+            page_size=page_size,
         )
+        surface = _surface(
+            "consultation_sessions",
+            snapshot_at=snapshot_at,
+            source=_service().dataset_source("consult_requests"),
+        )
+        meta = _snapshot(snapshot_at)
+        meta["surfaces"] = {"committee_board": surface.get("status", "ok")}
         return {
-            "items": items,
+            "data": items,
             "page_info": {"next_page_token": next_token, "total": total, "page_size": page_size},
-            "meta": _snapshot(_now()),
+            "meta": meta,
         }
 
     @router.get("/api/v1/committees/{committee_id}")
@@ -425,29 +520,36 @@ def create_governance_router(
         committee_id: str,
         authorization: Optional[str] = Header(default=None),
     ) -> Dict[str, Any]:
-        _identity(authorization)
-        committee = _service().get_committee(committee_id)
-        if committee is None:
+        identity = _identity(authorization)
+        projection = _service().committee_projection(committee_id, identity=identity, snapshot_at=_now())
+        if projection is None:
             _not_found("Committee", committee_id)
-        payload = dict(committee)
-        payload.setdefault("meta", _snapshot(_now()))
-        return payload
+        return projection
 
     @router.get("/api/v1/consult/memos")
     async def list_consult_memos(
         status: Optional[str] = None,
         page_token: Optional[str] = None,
-        page_size: int = Query(default=20, ge=1, le=200),
+        page_size: int = Query(default=25, ge=1, le=200),
         authorization: Optional[str] = Header(default=None),
     ) -> Dict[str, Any]:
         _identity(authorization)
-        items, next_token, total = _service().list_consult_memos(
-            status=status, page_token=page_token, page_size=page_size
-        )
+        snapshot_at = _now()
+        try:
+            items, next_token, total, surface_state = _service().list_consult_memos(
+                status=status, page_token=page_token, page_size=page_size, snapshot_at=snapshot_at
+            )
+        except ValueError as exc:
+            field = str(exc)
+            _fail(422, "VALIDATION_FAILED", f"{field} is invalid", f"Invalid {field} filter", precondition_failed=field)
         return {
             "items": items,
-            "page_info": {"next_page_token": next_token, "total": total, "page_size": page_size},
-            "meta": _snapshot(_now()),
+            "page_info": {"next_page_token": next_token, "page_size": page_size, "total": total},
+            "meta": {
+                "snapshot_at": snapshot_at,
+                "staleness": {"status": "fresh" if surface_state == "ok" else "stale", "as_of": snapshot_at},
+                "surfaces": {"redteam_memo": {"state": surface_state}},
+            },
         }
 
     @router.get("/api/v1/consult/memos/{memo_id}")
@@ -456,10 +558,10 @@ def create_governance_router(
         authorization: Optional[str] = Header(default=None),
     ) -> Dict[str, Any]:
         identity = _identity(authorization)
-        memo = _service().get_consult_memo(memo_id)
-        if memo is None:
+        projection = _service().consult_memo_projection(memo_id, identity=identity, snapshot_at=_now())
+        if projection is None:
             _not_found("Consult memo", memo_id)
-        return {"data": memo, "meta": {**_snapshot(_now()), "viewer": getattr(identity, "operator_id", None)}}
+        return projection
 
     # 13-16. Operator governance queues, audit, and mutation review -----
 
