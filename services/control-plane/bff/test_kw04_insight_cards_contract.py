@@ -11,34 +11,15 @@ from pathlib import Path
 from fastapi.testclient import TestClient
 
 _MODULE_DIR = Path(__file__).resolve().parent
-sys.path.insert(0, str(_MODULE_DIR / "tests"))
-from knowledge_read_port_fixtures import (  # noqa: E402
+from services.control_plane.bff.tests.knowledge_read_port_fixtures import (  # noqa: E402
     create_environment_knowledge_read_ports,
     create_seeded_knowledge_read_ports,
 )
 
 
-def _load_module(name: str, path: Path):
-    spec = importlib.util.spec_from_file_location(name, path)
-    if spec is None or spec.loader is None:
-        raise RuntimeError(f"Unable to load module {name} from {path}")
-    module = importlib.util.module_from_spec(spec)
-    sys.modules[name] = module
-    previous_main = sys.modules.get("main")
-    sys.modules["main"] = module
-    sys.path.insert(0, str(path.parent))
-    try:
-        spec.loader.exec_module(module)
-    finally:
-        sys.path.pop(0)
-        if previous_main is None:
-            sys.modules.pop("main", None)
-        else:
-            sys.modules["main"] = previous_main
-    return module
+from services.control_plane.bff.tests.isolated_composition import load_isolated_composition
 
-
-bff_main = _load_module("bff_main_kw04_test_module", _MODULE_DIR / "main.py")
+bff_main = load_isolated_composition("kw04")
 
 
 OPERATOR_TOKEN = "Bearer op-2:operator"

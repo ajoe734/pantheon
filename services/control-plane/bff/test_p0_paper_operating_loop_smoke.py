@@ -24,7 +24,7 @@ for _path in (_REPO_ROOT, _GOVERNANCE_DIR, _BFF_DIR):
 os.environ.setdefault("PANTHEON_EXEC_RUNTIME_MANAGER_DIR", str(_EXEC_RUNTIME_MANAGER_DIR))
 
 from services.control_plane.bff import main as bff_main
-from deployment_plan import RollbackRef, StagePlanner  # noqa: E402
+from services.control_plane.governance.deployment_plan import RollbackRef, StagePlanner  # noqa: E402
 from services.execution.lean_runtime.bootstrap_contract import (  # noqa: E402
     PANTHEON_LEAN_REMOTE,
     PANTHEON_LEAN_SOURCE_PATH,

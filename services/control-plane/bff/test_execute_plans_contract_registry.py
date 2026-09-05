@@ -10,7 +10,7 @@ BFF_DIR = Path(__file__).resolve().parent
 SNAPSHOT_DIR = BFF_DIR / "contract_snapshots"
 
 from services.control_plane.bff import main as bff_main
-from execute_plans_bff_contract import (  # noqa: E402
+from services.control_plane.bff.contract_snapshots.execute_plans_bff_contract import (  # noqa: E402
     app_route_index,
     entry_key,
     format_coverage_report,

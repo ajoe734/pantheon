@@ -1,0 +1,44 @@
+{
+  "schema_version": "pantheon.bff-test-architecture.v1",
+  "task_id": "BFF-TEST-ARCH-001",
+  "owner": "Codex",
+  "reviewer": "Antigravity2",
+  "status": "ready_for_review",
+  "scope": {
+    "owned": "BFF test import and collection architecture",
+    "not_changing": "production composition, router, application, and adapter behavior",
+    "composes_with": ["BFF-PACKAGE-001", "BFF-DEADCODE-001"]
+  },
+  "baseline": {
+    "audited_main_importing_modules": 218,
+    "dispatch_branch_main_importing_modules": 213,
+    "initial_failure": "test_bff_path_dedupe.py failed collection because unqualified main loaded package-relative .models without a parent package"
+  },
+  "delivery": {
+    "unqualified_main_imports": 0,
+    "ordinary_test_sys_path_mutations": 0,
+    "external_file_loader_allowlist": []
+  },
+  "verification": [
+    {
+      "command": "python -m pytest -q services/control-plane/bff/tests/test_bff_path_dedupe.py",
+      "result": "4 passed in 6.14s",
+      "timeout_seconds": 180
+    },
+    {
+      "command": "python -m pytest --collect-only -q services/control-plane/bff/tests",
+      "result": "1722 tests collected in 74.11s; zero collection errors",
+      "timeout_seconds": 180
+    },
+    {
+      "command": "python -m pytest --collect-only -q services/control-plane/bff/test_*.py services/control-plane/bff/tests services/control-plane/bff/*/test*.py",
+      "result": "3432 tests collected in 205.64s; zero collection errors",
+      "timeout_seconds": 240
+    },
+    {
+      "command": "python -m pytest -q services/control-plane/bff/tests/test_test_import_architecture.py services/control-plane/bff/tests/test_bff_path_dedupe.py",
+      "result": "6 passed in 11.85s",
+      "timeout_seconds": 90
+    }
+  ]
+}
