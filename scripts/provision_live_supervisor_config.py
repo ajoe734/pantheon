@@ -91,64 +91,51 @@ def _import_name_for(distribution_name: str) -> str:
 # instead of surfacing later as a silent packet-drain failure. Distribution
 # metadata alone is not enough: metadata can report a version string that
 # satisfies every specifier while the module itself fails to import.
+#
+# The specifier check itself must use the standard PEP 440 authority
+# (``packaging``, declared in .orchestrator/requirements.txt) rather than a
+# hand-rolled numeric-prefix comparator: a numeric-prefix comparator strips
+# pre/post-release suffixes before comparing, so it silently accepts
+# ``2.9rc1`` against ``>=2.9,<3`` (a pre-release the specifier never opted
+# into), accepts ``2.9`` against ``>=2.9.post1`` (post-releases sort after
+# their base release, so ``2.9 < 2.9.post1``), and accepts an invalid
+# specifier such as ``>=not-a-version`` by silently comparing against ``0``.
 _DEPENDENCY_PROBE = r"""
 import importlib
 import importlib.metadata as m
 import json
-import re
+
+from packaging.specifiers import InvalidSpecifier, SpecifierSet
+from packaging.version import InvalidVersion, Version
 
 specs = __SPECS_JSON__
-
-
-def _parse_version(text):
-    match = re.match(r"\d+(?:\.\d+)*", text)
-    if not match:
-        return (0,)
-    return tuple(int(part) for part in match.group(0).split("."))
-
-
-def _satisfies(version_text, specifier):
-    if not specifier:
-        return True
-    version = _parse_version(version_text)
-    for clause in specifier.split(","):
-        clause = clause.strip()
-        if not clause:
-            continue
-        for op in ("===", "==", "!=", "<=", ">=", "<", ">"):
-            if clause.startswith(op):
-                target = _parse_version(clause[len(op):].strip())
-                length = max(len(version), len(target))
-                v = version + (0,) * (length - len(version))
-                t = target + (0,) * (length - len(target))
-                ok = {
-                    "===": v == t,
-                    "==": v == t,
-                    "!=": v != t,
-                    "<=": v <= t,
-                    ">=": v >= t,
-                    "<": v < t,
-                    ">": v > t,
-                }[op]
-                if not ok:
-                    return False
-                break
-        else:
-            raise ValueError(f"unsupported specifier clause: {clause!r}")
-    return True
-
 
 versions = {}
 for spec in specs:
     name = spec["name"]
     specifier = spec["specifier"]
-    version = m.version(name)
-    if not _satisfies(version, specifier):
-        raise SystemExit(
-            json.dumps({"error": f"{name} {version} does not satisfy {specifier!r}"})
-        )
+    version_text = m.version(name)
+    if specifier:
+        try:
+            specifier_set = SpecifierSet(specifier)
+        except InvalidSpecifier as exc:
+            raise SystemExit(
+                json.dumps({"error": f"{name} has invalid specifier {specifier!r}: {exc}"})
+            )
+        try:
+            version = Version(version_text)
+        except InvalidVersion as exc:
+            raise SystemExit(
+                json.dumps(
+                    {"error": f"{name} has invalid installed version {version_text!r}: {exc}"}
+                )
+            )
+        if not specifier_set.contains(version):
+            raise SystemExit(
+                json.dumps({"error": f"{name} {version_text} does not satisfy {specifier!r}"})
+            )
     importlib.import_module(spec["import_name"])
-    versions[name] = version
+    versions[name] = version_text
 
 print(json.dumps({"versions": versions}))
 """

@@ -43,6 +43,35 @@ found two more real defects beyond the original two, all four now closed here:
    preflight ran, so a partial or failed install could break the live
    incumbent regardless of whether the candidate was ever accepted.
 
+Human/Ops rejected that first delivery (PR #5599 head
+`82aaf61b8677c57c8d10a2ef98c0775dc52d4659`) and found two more real defects in
+the fixes above, both now closed here:
+
+5. The version-specifier check added for defect 4 was a self-contained
+   numeric-prefix comparator: it stripped pre/post-release suffixes before
+   comparing, so it silently accepted `2.9rc1` against `>=2.9,<3` (a
+   pre-release the specifier never opted into), accepted `2.9` against
+   `>=2.9.post1` (PEP 440 orders a post-release after its base release, so
+   `2.9 < 2.9.post1`), and accepted the invalid specifier `>=not-a-version`
+   by silently comparing against `0`. The probe now uses `packaging`
+   (declared in `.orchestrator/requirements.txt`, the standard PEP 440
+   version/specifier authority) inside the candidate interpreter instead.
+6. The per-SHA venv directory fix for defect 4 only protected against a
+   *different* SHA touching an incumbent's directory. A same-SHA re-entry
+   (config drift, or any other path that reaches the promotion logic without
+   the SHA changing) still unconditionally pip-installed into the existing
+   per-SHA directory before any preflight ran -- and that directory can
+   already be the one a currently running incumbent supervisor launched
+   from. Both `scripts/sync-dev-root.sh` and
+   `scripts/bootstrap-orchestrator-runtime.sh` now validate an existing
+   per-SHA environment read-only first; only a missing or failing
+   environment is (re)provisioned, and it is provisioned into an isolated,
+   never-before-published directory and preflighted there before being
+   published into the per-SHA path with a create-only (no-clobber) rename.
+   The per-SHA path itself is therefore never opened for writing once it is
+   healthy, whether this is the first promotion of that SHA or a later
+   re-entry.
+
 ## The runtime contract
 
 There is exactly one supported way to select the supervisor's Python
@@ -54,7 +83,9 @@ shim.
 - **Dependency contract**: `.orchestrator/requirements.txt` in the exact
   promoted command source. It is intentionally minimal -- only what the
   supervisor's bridge/task-store code actually imports (`pydantic`,
-  `cryptography`) -- not the product BFF's full dependency set.
+  `cryptography`) plus `packaging` (the specifier-check authority the
+  preflight probe itself needs, see below) -- not the product BFF's full
+  dependency set.
 - **Environment**: a dedicated venv at
   `$PANTHEON_DEPLOY_ROOT/runtime/supervisor-python/<exact-candidate-SHA>`,
   created with `python3 -m venv` and installed with
@@ -69,6 +100,17 @@ shim.
   directory makes that impossible by construction -- an install can never
   touch the directory backing a different, already-promoted SHA -- and every
   prior verified environment stays on disk, usable for rollback.
+- **Same-SHA re-entry is read-only until proven unhealthy**: per-SHA naming
+  alone does not protect a *repeat* run for the exact same SHA (config-drift
+  re-promotion, or any other re-entrant path). Both
+  `scripts/sync-dev-root.sh` and `scripts/bootstrap-orchestrator-runtime.sh`
+  first validate an existing per-SHA environment read-only (the same
+  `--validate-python-dependencies-only` preflight described below); only a
+  missing or failing environment is (re)provisioned, and it is provisioned
+  into an isolated, never-before-published directory and preflighted there,
+  then published into the per-SHA path with a create-only (no-clobber)
+  rename. The per-SHA path itself is therefore never opened for writing once
+  it is healthy.
 - **Selection**: both `scripts/bootstrap-orchestrator-runtime.sh` (fresh
   host) and `scripts/sync-dev-root.sh` (ongoing promotion) explicitly pass
   `--python "$SUPERVISOR_PYTHON"` to `promote_supervisor_runtime.py`
@@ -85,19 +127,23 @@ shim.
   `validate_python_dependencies()` *inside that exact interpreter*. The
   probe parses each requirements line into a distribution name and version
   specifier, calls `importlib.metadata.version()` for the real installed
-  version, enforces the specifier with a self-contained numeric comparator,
-  and then calls `importlib.import_module()` on the package -- so a wrong
-  version *or* a broken native extension (an unloadable `pydantic_core`, for
-  example) fails the preflight, not just a missing package. Checking
-  distribution metadata alone was not enough: metadata can report a version
-  string that satisfies every specifier while the module itself fails to
-  import. `scripts/sync-dev-root.sh` also runs this preflight explicitly
-  (`provision_live_supervisor_config.py --validate-python-dependencies-only`)
-  right after installing the candidate's per-SHA venv and before invoking
-  `promote-supervisor-runtime.sh`, so a bad candidate install is caught and
-  logged with the untouched incumbent root named in the failure, in addition
-  to the preflight `promote_supervisor_runtime.py` always runs before writing
-  live config. A failed preflight raises before any incumbent state is
+  version, enforces the specifier with `packaging.specifiers.SpecifierSet`
+  (the standard PEP 440 authority -- not a hand-rolled comparator, see the
+  review-round defects above), and then calls `importlib.import_module()` on
+  the package -- so a wrong version *or* a broken native extension (an
+  unloadable `pydantic_core`, for example) fails the preflight, not just a
+  missing package. Checking distribution metadata alone was not enough:
+  metadata can report a version string that satisfies every specifier while
+  the module itself fails to import. `scripts/sync-dev-root.sh` and
+  `scripts/bootstrap-orchestrator-runtime.sh` also run this preflight
+  explicitly (`provision_live_supervisor_config.py
+  --validate-python-dependencies-only`), both read-only against an existing
+  per-SHA environment before deciding whether to reuse it, and again against
+  any newly isolated candidate before it is published -- so a bad candidate
+  install is caught and logged with the untouched incumbent root named in
+  the failure, in addition to the preflight `promote_supervisor_runtime.py`
+  always runs before writing live config. A failed preflight raises before
+  any incumbent state is
   touched: promotion never stops the running supervisor, never writes the
   live config, and never disturbs worker leases or the watchdog/cron binding.
 
@@ -111,9 +157,10 @@ that ran the script) -- **before** generating the dev-bridge Ed25519 keypair.
 Keypair generation imports `cryptography` and now runs under that venv's
 `python3`, never the ambient one: a fresh host has no reason to carry
 `cryptography` on its system interpreter, and bootstrap must not depend on it
-being there. Re-running the script is idempotent: an existing per-SHA venv is
-reused, and `pip install` of an already-satisfied requirements file is a
-no-op.
+being there. Re-running the script is idempotent: an existing per-SHA venv
+that already passes the read-only dependency preflight is reused as-is and
+never reinstalled into; only a missing or failing environment is
+provisioned again, in isolation, as described above.
 
 ## Real signed-intake proof, not just a metadata probe
 

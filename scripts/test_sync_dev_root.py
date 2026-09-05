@@ -81,6 +81,22 @@ def _add_fake_auto_integrator_installer(seed: Path) -> None:
     _git(seed, "push", "origin", "dev")
 
 
+def _add_fake_config_drift_script(seed: Path, *, exit_code: int) -> None:
+    """Force check_config_drift.py to report drift regardless of inputs.
+
+    Used to reach the same-SHA re-promotion path (config_drift=1 while
+    active_root already equals candidate_root) without needing a real
+    config-drift scenario, so a same-SHA re-entry can be exercised without
+    depending on the no-op shortcut above it.
+    """
+
+    script = seed / "scripts" / "check_config_drift.py"
+    script.write_text(f"import sys\nsys.exit({exit_code})\n", encoding="utf-8")
+    _git(seed, "add", "scripts/check_config_drift.py")
+    _git(seed, "commit", "-m", "add fake config drift checker")
+    _git(seed, "push", "origin", "dev")
+
+
 def _advance(seed: Path) -> str:
     (seed / "version.txt").write_text("two\n", encoding="utf-8")
     _git(seed, "add", "version.txt")
@@ -115,7 +131,14 @@ def _stub_supervisor_python(deploy_root: Path, target_sha: str) -> Path:
         deploy_root / "runtime" / "supervisor-python" / target_sha / "bin" / "python3"
     )
     python_path.parent.mkdir(parents=True, exist_ok=True)
-    python_path.write_text("#!/usr/bin/env bash\nexit 0\n", encoding="utf-8")
+    python_path.write_text(
+        "#!/usr/bin/env bash\n"
+        'if [ -n "${SYNC_SUPERVISOR_PYTHON_INVOKE_LOG:-}" ]; then\n'
+        '  printf \'%s\\n\' "$*" >>"$SYNC_SUPERVISOR_PYTHON_INVOKE_LOG"\n'
+        "fi\n"
+        "exit 0\n",
+        encoding="utf-8",
+    )
     python_path.chmod(0o755)
     return python_path
 
@@ -141,9 +164,12 @@ def _run_sync(
     watchdog_exit_code: int | None = None,
     auto_integrator_args_file: Path | None = None,
     auto_integrator_exit_code: int | None = None,
+    supervisor_python_invoke_log: Path | None = None,
 ) -> subprocess.CompletedProcess[str]:
     _stub_supervisor_python(script.parent, target_sha)
     env = os.environ.copy()
+    if supervisor_python_invoke_log is not None:
+        env["SYNC_SUPERVISOR_PYTHON_INVOKE_LOG"] = str(supervisor_python_invoke_log)
     env["SYNC_PROMOTION_ARGS_FILE"] = str(promotion_args)
     env["PANTHEON_DEPLOY_ROOT"] = str(script.parent)
     env["PANTHEON_INTEGRATION_RUNTIME_PARENT"] = str(
@@ -313,6 +339,70 @@ def test_sync_is_a_noop_when_installed_config_already_names_exact_candidate(tmp_
         "--config-file",
         str(live_config),
     ]
+
+
+def test_sync_reuses_a_verified_supervisor_python_env_on_same_sha_config_drift(
+    tmp_path: Path,
+) -> None:
+    """A same-SHA re-entry (for example config drift, or any other path that
+    reaches the promotion below without the SHA changing) must never
+    re-install into the per-SHA supervisor Python directory once that exact
+    directory is already verified healthy -- that directory can already be
+    the one a currently running incumbent supervisor launched from. Force
+    config_drift=1 so the no-op shortcut above is skipped, and prove the
+    stubbed supervisor Python interpreter is never invoked at all: the
+    read-only preflight (the fake no-op provision_live_supervisor_config.py
+    from _seed_remote) reports the existing environment healthy, so this run
+    must reuse it in place instead of touching it."""
+
+    remote, seed = _seed_remote(tmp_path)
+    _add_fake_config_drift_script(seed, exit_code=1)
+    dev_root = tmp_path / "dev-root"
+    _git(tmp_path, "clone", "--branch", "dev", str(remote), str(dev_root))
+    head = _git(seed, "rev-parse", "HEAD")
+    runtime_parent = tmp_path / "command-runtimes"
+    runtime_parent.mkdir()
+    candidate = runtime_parent / head
+    _git(runtime_parent, "clone", str(remote), str(candidate))
+    _git(candidate, "checkout", "--detach", head)
+    script = _patched_sync_script(tmp_path, runtime_parent)
+    coordination = _coordination_root(tmp_path)
+    live_config = tmp_path / "runtime" / "live.json"
+    live_config.parent.mkdir()
+    live_config.write_text(
+        json.dumps(
+            {
+                "watchdog": {
+                    "supervisor_command": [
+                        "python3",
+                        str(candidate / ".orchestrator" / "supervisor.py"),
+                    ]
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    promotion_args = tmp_path / "promotion-args.txt"
+    supervisor_python_invoke_log = tmp_path / "supervisor-python-invocations.txt"
+
+    result = _run_sync(
+        script,
+        dev_root,
+        live_config,
+        coordination,
+        promotion_args,
+        target_sha=head,
+        supervisor_python_invoke_log=supervisor_python_invoke_log,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert "CONFIG_DRIFT_REQUIRES_PROMOTION" in result.stdout
+    assert "reusing already-verified supervisor Python environment" in result.stdout
+    assert not supervisor_python_invoke_log.exists(), (
+        "same-SHA re-entry must not invoke (and so must not pip-install into) "
+        "an already-verified per-SHA supervisor Python environment"
+    )
+    assert promotion_args.exists()
 
 
 def test_sync_repoints_the_watchdog_after_a_real_promotion(tmp_path: Path) -> None:

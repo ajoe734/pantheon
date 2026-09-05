@@ -365,6 +365,80 @@ def test_validate_python_dependencies_actually_imports_not_just_metadata(
         provision.validate_python_dependencies(Path(sys.executable), requirements)
 
 
+def _install_fake_distribution(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, *, name: str, version: str
+) -> None:
+    """Register an importable fake distribution reporting an exact version.
+
+    Mirrors ``test_validate_python_dependencies_actually_imports_not_just_metadata``
+    above: a real dist-info directory plus an importable package under a
+    dedicated site directory prepended to PYTHONPATH, so the real preflight
+    probe sees a genuine ``importlib.metadata`` version string instead of a
+    value this test synthesizes by hand.
+    """
+
+    site_dir = tmp_path / f"fake-site-{name}"
+    import_name = name.lower().replace("-", "_")
+    package_dir = site_dir / import_name
+    package_dir.mkdir(parents=True)
+    (package_dir / "__init__.py").write_text("", encoding="utf-8")
+    dist_info = site_dir / f"{import_name}-{version}.dist-info"
+    dist_info.mkdir()
+    (dist_info / "METADATA").write_text(
+        f"Metadata-Version: 2.1\nName: {name}\nVersion: {version}\n", encoding="utf-8"
+    )
+    existing_pythonpath = os.environ.get("PYTHONPATH")
+    monkeypatch.setenv(
+        "PYTHONPATH",
+        os.pathsep.join(filter(None, [str(site_dir), existing_pythonpath])),
+    )
+
+
+def test_validate_python_dependencies_rejects_a_prerelease_against_a_release_specifier(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A numeric-prefix comparator strips the ``rc1`` suffix before comparing,
+    so it silently accepts a pre-release build against a specifier that never
+    opted into pre-releases. The standard PEP 440 specifier authority must
+    reject it instead."""
+
+    _install_fake_distribution(tmp_path, monkeypatch, name="fake-prerelease-pkg", version="2.9rc1")
+    requirements = _write_requirements(tmp_path, "fake-prerelease-pkg>=2.9,<3\n")
+
+    with pytest.raises(ValueError, match="does not satisfy"):
+        provision.validate_python_dependencies(Path(sys.executable), requirements)
+
+
+def test_validate_python_dependencies_rejects_a_release_before_a_required_post_release(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A numeric-prefix comparator ignores the ``.post1`` suffix on the
+    specifier's target version, so it silently treats ``2.9`` as satisfying
+    ``>=2.9.post1`` even though PEP 440 orders a post-release after the
+    release it is based on (``2.9 < 2.9.post1``)."""
+
+    _install_fake_distribution(tmp_path, monkeypatch, name="fake-postrelease-pkg", version="2.9")
+    requirements = _write_requirements(tmp_path, "fake-postrelease-pkg>=2.9.post1\n")
+
+    with pytest.raises(ValueError, match="does not satisfy"):
+        provision.validate_python_dependencies(Path(sys.executable), requirements)
+
+
+def test_validate_python_dependencies_rejects_an_invalid_specifier(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A numeric-prefix comparator cannot parse ``not-a-version`` at all, so
+    it silently falls back to comparing against ``0`` and accepts almost
+    anything. The standard specifier authority must reject the malformed
+    requirements entry outright instead of accepting it."""
+
+    _install_fake_distribution(tmp_path, monkeypatch, name="fake-invalid-specifier-pkg", version="1.0")
+    requirements = _write_requirements(tmp_path, "fake-invalid-specifier-pkg>=not-a-version\n")
+
+    with pytest.raises(ValueError, match="invalid specifier"):
+        provision.validate_python_dependencies(Path(sys.executable), requirements)
+
+
 def test_cli_preserves_a_venv_symlink_path_instead_of_resolving_it(
     tmp_path: Path,
 ) -> None:

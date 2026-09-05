@@ -387,6 +387,19 @@ fi
 # a different, already promoted SHA: the incumbent (and every prior verified
 # environment, usable for rollback) is untouched by construction, not by
 # ordering or by hoping the preflight below runs first.
+#
+# Per-SHA naming alone does not protect a *repeat* run for the exact same
+# SHA (config-drift re-promotion, a re-entrant sync, or any other path that
+# reaches here without changing target_sha): the directory this run intends
+# to (re)install into can already be the one directory a currently running
+# incumbent supervisor launched from. So an existing environment is only
+# ever validated read-only first; a new environment is provisioned into an
+# isolated, never-before-published directory and preflighted there, and is
+# published into the per-SHA path with a create-only (no-clobber) rename --
+# the same atomic-publish pattern already used for command/integration
+# runtime materialization above -- only after it independently proves out.
+# The per-SHA path itself is therefore never opened for writing once it is
+# healthy, whether this is the first promotion of that SHA or the tenth.
 SUPERVISOR_PYTHON_PARENT="${PANTHEON_SUPERVISOR_PYTHON_DIR:-${DEPLOY_ROOT}/runtime/supervisor-python}"
 SUPERVISOR_PYTHON_DIR="${SUPERVISOR_PYTHON_PARENT}/${target_sha}"
 SUPERVISOR_PYTHON="${SUPERVISOR_PYTHON_DIR}/bin/python3"
@@ -395,26 +408,82 @@ if [[ ! -f "$SUPERVISOR_REQUIREMENTS" ]]; then
   log "FATAL: candidate is missing .orchestrator/requirements.txt: $SUPERVISOR_REQUIREMENTS"
   exit 1
 fi
-if [[ ! -x "$SUPERVISOR_PYTHON" ]]; then
-  log "creating supervisor Python environment: $SUPERVISOR_PYTHON_DIR"
-  if ! python3 -m venv "$SUPERVISOR_PYTHON_DIR"; then
-    log "FATAL: failed to create supervisor Python environment: $SUPERVISOR_PYTHON_DIR"
-    exit 1
+
+supervisor_python_verified=0
+if [[ -x "$SUPERVISOR_PYTHON" ]]; then
+  log "validating existing supervisor Python environment read-only: $SUPERVISOR_PYTHON_DIR"
+  if python3 -B "${candidate_root}/scripts/provision_live_supervisor_config.py" \
+    --command-root "$candidate_root" \
+    --python "$SUPERVISOR_PYTHON" \
+    --requirements "$SUPERVISOR_REQUIREMENTS" \
+    --validate-python-dependencies-only >/dev/null 2>&1; then
+    supervisor_python_verified=1
+  else
+    log "existing supervisor Python environment failed read-only validation; provisioning a fresh one instead of mutating it in place: $SUPERVISOR_PYTHON_DIR"
   fi
 fi
-if ! "$SUPERVISOR_PYTHON" -m pip install --quiet --disable-pip-version-check \
-  -r "$SUPERVISOR_REQUIREMENTS"; then
-  log "FATAL: failed to install supervisor Python dependencies from $SUPERVISOR_REQUIREMENTS"
-  exit 1
-fi
-log "preflighting supervisor Python dependencies for $SUPERVISOR_PYTHON"
-if ! python3 -B "${candidate_root}/scripts/provision_live_supervisor_config.py" \
-  --command-root "$candidate_root" \
-  --python "$SUPERVISOR_PYTHON" \
-  --requirements "$SUPERVISOR_REQUIREMENTS" \
-  --validate-python-dependencies-only >/dev/null; then
-  log "FATAL: python dependency preflight failed for candidate=$candidate_root; incumbent=${active_root:-none} untouched"
-  exit 1
+
+if [[ "$supervisor_python_verified" -eq 1 ]]; then
+  log "reusing already-verified supervisor Python environment: $SUPERVISOR_PYTHON_DIR"
+else
+  mkdir -p "$SUPERVISOR_PYTHON_PARENT"
+  candidate_python_dir="$(mktemp -d "${SUPERVISOR_PYTHON_PARENT}/.supervisor-python-provision-${target_sha}.XXXXXX")"
+  log "creating supervisor Python environment in isolation: $candidate_python_dir"
+  if ! python3 -m venv "$candidate_python_dir"; then
+    log "FATAL: failed to create supervisor Python environment: $candidate_python_dir"
+    rm -rf -- "$candidate_python_dir"
+    exit 1
+  fi
+  if ! "${candidate_python_dir}/bin/python3" -m pip install --quiet --disable-pip-version-check \
+    -r "$SUPERVISOR_REQUIREMENTS"; then
+    log "FATAL: failed to install supervisor Python dependencies from $SUPERVISOR_REQUIREMENTS"
+    rm -rf -- "$candidate_python_dir"
+    exit 1
+  fi
+  log "preflighting isolated supervisor Python dependencies for ${candidate_python_dir}/bin/python3"
+  if ! python3 -B "${candidate_root}/scripts/provision_live_supervisor_config.py" \
+    --command-root "$candidate_root" \
+    --python "${candidate_python_dir}/bin/python3" \
+    --requirements "$SUPERVISOR_REQUIREMENTS" \
+    --validate-python-dependencies-only >/dev/null; then
+    log "FATAL: python dependency preflight failed for candidate=$candidate_root; incumbent=${active_root:-none} untouched"
+    rm -rf -- "$candidate_python_dir"
+    exit 1
+  fi
+  if [[ -e "$SUPERVISOR_PYTHON_DIR" ]]; then
+    log "FATAL: refusing to replace an existing supervisor Python environment that failed read-only validation: $SUPERVISOR_PYTHON_DIR"
+    rm -rf -- "$candidate_python_dir"
+    exit 1
+  fi
+  if ! python3 - "$candidate_python_dir" "$SUPERVISOR_PYTHON_DIR" "$SUPERVISOR_PYTHON_PARENT" <<'PY'
+import ctypes
+import errno
+import os
+import sys
+from pathlib import Path
+
+source, destination, parent = map(Path, sys.argv[1:])
+libc = ctypes.CDLL(None, use_errno=True)
+renameat2 = libc.renameat2
+renameat2.argtypes = [ctypes.c_int, ctypes.c_char_p, ctypes.c_int, ctypes.c_char_p, ctypes.c_uint]
+renameat2.restype = ctypes.c_int
+if renameat2(-100, os.fsencode(source), -100, os.fsencode(destination), 1) != 0:
+    error = ctypes.get_errno()
+    if error != errno.EEXIST:
+        raise OSError(error, os.strerror(error), destination)
+fd = os.open(parent, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
+try:
+    os.fsync(fd)
+finally:
+    os.close(fd)
+PY
+  then
+    log "FATAL: failed to publish supervisor Python environment atomically: $SUPERVISOR_PYTHON_DIR"
+    rm -rf -- "$candidate_python_dir"
+    exit 1
+  fi
+  rm -rf -- "$candidate_python_dir"
+  log "published verified supervisor Python environment: $SUPERVISOR_PYTHON_DIR"
 fi
 
 log "replacing supervisor from explicit config identity=${active_root:-none} candidate=$candidate_root coordination=$COORDINATION_ROOT"
