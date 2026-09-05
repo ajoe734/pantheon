@@ -19,11 +19,9 @@ from fastapi.responses import JSONResponse
 from fastapi.testclient import TestClient
 
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
-
-import main as bff_main
-from agora.servant import router as servant_router
-from ports import (
+from services.control_plane.bff import main as bff_main
+from services.control_plane.bff.agora.servant import router as servant_router
+from services.control_plane.bff.ports import (
     PersonaRegistryHttpWritePort,
     PersonaWriteOwnerUnavailable,
     create_persona_registry_write_owner,
@@ -148,6 +146,20 @@ def _configure_service_env(monkeypatch: pytest.MonkeyPatch, base_url: str) -> No
     monkeypatch.setenv("PERSONA_AUTH_MODE", "strict")
 
 
+def _sync_persona_write_owner(monkeypatch: pytest.MonkeyPatch, source_owner: PersonaRegistryHttpWritePort) -> None:
+    targets = [
+        getattr(bff_main, "persona_write_owner", None),
+        getattr(getattr(bff_main, "app_deps", None), "persona_write_owner", None),
+    ]
+    for target in targets:
+        if target is not None:
+            monkeypatch.setattr(target, "_base_url", source_owner._base_url)
+            monkeypatch.setattr(target, "_service_token", source_owner._service_token)
+            monkeypatch.setattr(target, "_timeout_seconds", source_owner._timeout_seconds)
+            monkeypatch.setattr(target, "_service_actor_id", source_owner._service_actor_id)
+            monkeypatch.setattr(target, "_opener", source_owner._opener)
+
+
 def _install_production_wiring(
     monkeypatch: pytest.MonkeyPatch,
     base_url: str,
@@ -162,6 +174,7 @@ def _install_production_wiring(
     read_ports = create_read_surface_ports(persona_registry_store=write_owner)
     monkeypatch.setattr(bff_main, "persona_write_owner", write_owner)
     monkeypatch.setattr(bff_main, "read_store", read_ports)
+    _sync_persona_write_owner(monkeypatch, write_owner)
     monkeypatch.setattr(
         bff_main,
         "_ensure_agora_servant_openclaw_agent",
@@ -276,6 +289,7 @@ def test_service_restart_and_fresh_bff_port_preserve_identity_and_capability(
 
         monkeypatch.setattr(bff_main, "persona_write_owner", fresh_owner)
         monkeypatch.setattr(bff_main, "read_store", fresh_read_ports)
+        _sync_persona_write_owner(monkeypatch, fresh_owner)
         replayed = client.post(
             "/bff/agora/servant/ensure",
             headers={**headers, "X-Request-Id": "req-production-servant-restart-002"},
@@ -319,6 +333,7 @@ def test_http_owner_restart_preserves_fleet_to_detail_read_symmetry(
         fresh_read_ports = create_read_surface_ports(persona_registry_store=fresh_owner)
         monkeypatch.setattr(bff_main, "persona_write_owner", fresh_owner)
         monkeypatch.setattr(bff_main, "read_store", fresh_read_ports)
+        _sync_persona_write_owner(monkeypatch, fresh_owner)
         fresh_client = TestClient(bff_main.app, raise_server_exceptions=False)
 
         for role in ("operator", "viewer"):

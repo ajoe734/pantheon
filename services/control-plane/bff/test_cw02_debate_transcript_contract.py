@@ -8,11 +8,10 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+from fastapi import FastAPI, HTTPException
 from fastapi.testclient import TestClient
 
-sys.path.insert(0, os.path.dirname(__file__))
-
-import main as bff_main
+from services.control_plane.bff.governance.router import create_governance_router
 
 
 OPERATOR_AUTH = "Bearer test-operator:operator"
@@ -20,6 +19,28 @@ REVIEWER_AUTH = "Bearer test-reviewer:reviewer"
 
 _SESSION_ID = "cs-20260419-081"
 _TRANSCRIPT_URL = f"/api/v1/consultations/{_SESSION_ID}/transcript"
+
+
+def _extract_identity(authorization: Optional[str] = None) -> Any:
+    if not authorization:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+    token = authorization.replace("Bearer ", "").strip()
+    role = "operator"
+    if "reviewer" in token:
+        role = "reviewer"
+    elif "viewer" in token:
+        role = "viewer"
+
+    class Identity:
+        operator_id = "test-operator"
+        roles = {role}
+
+    return Identity()
+
+
+def _require_read_role(identity: Any) -> None:
+    if not (getattr(identity, "roles", set()) & {"operator", "viewer", "reviewer", "admin"}):
+        raise HTTPException(status_code=403, detail="Forbidden")
 
 
 def _default_transcript_record() -> Dict[str, Any]:
@@ -47,7 +68,7 @@ def _default_transcript_record() -> Dict[str, Any]:
                     "format": "markdown",
                     "text": "Requesting risk review for macro regime shift scenario before approving live deployment.",
                 },
-                "evidence_refs": [],
+                "evidence_refs": ["dp-20260419-014", "inc-20260419-003"],
                 "visibility": "committee",
                 "redaction": {"is_redacted": False, "reason": None},
                 "meta": {"source": "consultation-service", "hash": None},
@@ -102,14 +123,7 @@ def _default_transcript_record() -> Dict[str, Any]:
 
 
 class _TranscriptReadStore:
-    """CW-02 in-memory consult-transcript read double.
-
-    Holds an in-memory `consult_transcripts` dataset (mirroring the retired
-    legacy BFF read surface's default fixture) that tests may mutate directly via
-    `._data` + `._save()`, and additionally consults
-    PANTHEON_BFF_CONSULT_TRANSCRIPT_STORE for a service-store override, again
-    mirroring the original local-snapshot vs service-store provenance split.
-    """
+    """CW-02 in-memory consult-transcript read double."""
 
     def __init__(self, path: str, allow_local_snapshot_fallback: bool = True) -> None:
         self._path = path
@@ -118,8 +132,6 @@ class _TranscriptReadStore:
         }
 
     def _save(self) -> None:
-        # No real file-backed persistence is required for the double; tests
-        # mutate self._data directly and call _save() to signal "commit".
         try:
             with open(self._path, "w", encoding="utf-8") as handle:
                 json.dump(self._data, handle)
@@ -161,61 +173,58 @@ class _TranscriptReadStore:
             return None
 
         service_records = self._service_transcript_records()
-        transcripts = service_records if service_records is not None else self._data.get("consult_transcripts", {})
-        record = transcripts.get(session_id)
-        if record is None and session_id != _SESSION_ID:
+        if service_records is not None:
+            raw = service_records.get(session_id)
+            source = "service_store"
+        else:
+            raw = self._data.get("consult_transcripts", {}).get(session_id)
+            source = "local_snapshot"
+
+        if not raw:
             return None
 
-        if record is None:
-            surface_state = "unavailable"
-            events: List[Dict[str, Any]] = []
-            transcript_id = f"tr-{session_id}"
-            linked_request_id = None
-        else:
-            transcript_id = str(record.get("transcript_id") or f"tr-{session_id}")
-            linked_request_id = record.get("linked_request_id")
-            raw_events = list(record.get("events") or [])
-            raw_events.sort(key=lambda e: int(e.get("sequence_no") or 0))
+        events = list(raw.get("events") or [])
+        events.sort(key=lambda e: int(e.get("sequence_no") or 0))
 
-            full_seqs = [int(e.get("sequence_no") or 0) for e in raw_events]
-            has_gap = any(
-                full_seqs[i + 1] != full_seqs[i] + 1
-                for i in range(len(full_seqs) - 1)
-            )
-            surface_state = "degraded" if has_gap else "ok"
+        # Degradation check: gaps in sequence_no
+        has_gap = False
+        for expected, actual in enumerate(events, start=1):
+            if int(actual.get("sequence_no") or 0) != expected:
+                has_gap = True
+                break
 
-            if from_sequence_no is not None:
-                raw_events = [e for e in raw_events if int(e.get("sequence_no") or 0) >= from_sequence_no]
-            events = raw_events
+        if from_sequence_no is not None:
+            events = [e for e in events if int(e.get("sequence_no") or 0) >= from_sequence_no]
 
-        offset = 0
+        start = 0
         if page_token:
             try:
-                offset = int(page_token)
-            except (ValueError, TypeError):
-                offset = 0
+                start = int(page_token)
+            except ValueError:
+                start = 0
 
-        page_events = events[offset: offset + page_size]
-        next_offset = offset + page_size
-        next_page_token = str(next_offset) if next_offset < len(events) else None
+        paged_events = events[start : start + page_size]
+        next_token = str(start + page_size) if start + page_size < len(events) else None
 
-        now = "2026-04-19T17:30:00Z"
+        surface_state = "degraded" if has_gap else "ok"
+        snapshot_at = "2026-04-19T17:10:00Z"
+
         return {
-            "object_ref": {"type": "ConsultTranscript", "id": transcript_id},
-            "transcript_id": transcript_id,
-            "session_id": session_id,
-            "linked_request_id": linked_request_id,
-            "events": page_events,
+            "object_ref": {"type": "ConsultTranscript", "id": raw.get("transcript_id")},
+            "transcript_id": raw.get("transcript_id"),
+            "session_id": raw.get("session_id"),
+            "linked_request_id": raw.get("linked_request_id"),
+            "events": paged_events,
             "page_info": {
-                "next_page_token": next_page_token,
                 "page_size": page_size,
+                "next_page_token": next_token,
                 "total": len(events),
             },
             "meta": {
-                "snapshot_at": now,
+                "snapshot_at": snapshot_at,
                 "staleness": {
-                    "served_from": self.dataset_source("consult_transcripts") if record is not None else "unavailable",
-                    "last_known_at": now,
+                    "served_from": source,
+                    "last_known_at": snapshot_at,
                 },
                 "surfaces": {
                     "transcript": {"state": surface_state},
@@ -227,16 +236,21 @@ class _TranscriptReadStore:
 @contextmanager
 def _seeded_client():
     with tempfile.TemporaryDirectory() as td:
-        original_store = bff_main.read_store
-        bff_main.read_store = _TranscriptReadStore(
+        store = _TranscriptReadStore(
             os.path.join(td, "read_surfaces.json"),
             allow_local_snapshot_fallback=True,
         )
-        client = TestClient(bff_main.app)
-        try:
-            yield client
-        finally:
-            bff_main.read_store = original_store
+        app = FastAPI()
+        app.include_router(
+            create_governance_router(
+                get_read_store=lambda: store,
+                extract_identity=_extract_identity,
+                require_read_role=_require_read_role,
+            )
+        )
+        client = TestClient(app)
+        client.store = store  # type: ignore[attr-defined]
+        yield client
 
 
 def test_cw02_transcript_returns_required_envelope() -> None:
@@ -345,7 +359,7 @@ def test_cw02_transcript_surface_state_ok_for_contiguous_events() -> None:
 def test_cw02_transcript_surface_state_degraded_for_gap() -> None:
     with _seeded_client() as client:
         # introduce a sequence gap by removing sequence_no 2
-        store = bff_main.read_store
+        store = client.store  # type: ignore[attr-defined]
         transcript = store._data["consult_transcripts"][_SESSION_ID]
         transcript["events"] = [
             e for e in transcript["events"] if e["sequence_no"] != 2
@@ -417,7 +431,7 @@ def test_cw02_transcript_unauthenticated_is_rejected() -> None:
 def test_cw02_transcript_surface_state_degraded_when_gap_hidden_by_filter() -> None:
     """Gap detection must use the full stream even when from_sequence_no skips past the gap."""
     with _seeded_client() as client:
-        store = bff_main.read_store
+        store = client.store  # type: ignore[attr-defined]
         transcript = store._data["consult_transcripts"][_SESSION_ID]
         transcript["events"] = [
             e for e in transcript["events"] if e["sequence_no"] != 2
@@ -474,19 +488,25 @@ def test_cw02_transcript_served_from_service_store() -> None:
         original_env = os.environ.get("PANTHEON_BFF_CONSULT_TRANSCRIPT_STORE")
         os.environ["PANTHEON_BFF_CONSULT_TRANSCRIPT_STORE"] = transcript_path
 
-        original_store = bff_main.read_store
-        bff_main.read_store = _TranscriptReadStore(
+        store = _TranscriptReadStore(
             os.path.join(td, "read_surfaces.json"),
             allow_local_snapshot_fallback=True,
         )
-        client = TestClient(bff_main.app)
+        app = FastAPI()
+        app.include_router(
+            create_governance_router(
+                get_read_store=lambda: store,
+                extract_identity=_extract_identity,
+                require_read_role=_require_read_role,
+            )
+        )
+        client = TestClient(app)
         try:
             response = client.get(_TRANSCRIPT_URL, headers={"Authorization": OPERATOR_AUTH})
             assert response.status_code == 200, response.text
             served_from = response.json()["meta"]["staleness"]["served_from"]
             assert served_from == "service_store"
         finally:
-            bff_main.read_store = original_store
             if original_env is None:
                 os.environ.pop("PANTHEON_BFF_CONSULT_TRANSCRIPT_STORE", None)
             else:

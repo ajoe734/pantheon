@@ -1,0 +1,173 @@
+{
+  "schema_version": "pantheon.task-evidence.v1",
+  "task_id": "BFF-TEST-ARCH-001",
+  "base_ref": "dev@aa69088c40000b358a0173744a857fbc41fc7614",
+  "depends_on": "BFF-DEADCODE-001 (done, archived)",
+  "normative_plan": "SD §8.5 Test architecture migration (packet pkt-pantheon-structural-closure-functional-v2-20260903)",
+  "results": {
+    "test_layers_classification": {
+      "file": "services/control-plane/bff/tests/bff_test_architecture_inventory.json",
+      "total_test_files": 341,
+      "layers": {
+        "composition": 10,
+        "router": 113,
+        "application": 182,
+        "adapter": 25,
+        "hosted": 11
+      },
+      "disposition_summary": {
+        "ALLOWLIST": 12,
+        "MIGRATED": 5,
+        "PLANNED": 204,
+        "DECOUPLED": 120
+      }
+    },
+    "composition_allowlist_established": {
+      "count": 12,
+      "allowlist": [
+        "tests/test_bff_main_composition.py",
+        "test_action_catalog.py",
+        "test_route_resolution_no_shadowing.py",
+        "test_normalized_route_uniqueness.py",
+        "smoke_test.py",
+        "smoke_test_incident.py",
+        "test_architecture_boundaries.py",
+        "tests/test_read_store_final_deletion.py",
+        "tests/test_read_store_fixture_boundaries.py",
+        "tests/test_agora_servant_production_write_owner.py",
+        "tests/test_read_surface_caller_migration.py",
+        "tests/test_bff_test_architecture.py"
+      ]
+    },
+    "migrated_suites_decoupled_from_composition_globals": {
+      "test_cw01_consult_request_contract": {
+        "file": "services/control-plane/bff/test_cw01_consult_request_contract.py",
+        "changes": "Removed sys.path.insert(0, ...) and import main as bff_main; mounted create_governance_router on lightweight FastAPI instance; deleted global read_store monkeypatching",
+        "tests_passed": 6
+      },
+      "test_cw02_debate_transcript_contract": {
+        "file": "services/control-plane/bff/test_cw02_debate_transcript_contract.py",
+        "changes": "Removed sys.path.insert(0, ...) and import main as bff_main; mounted create_governance_router with typed _extract_identity and _require_read_role; deleted global read_store monkeypatching",
+        "tests_passed": 15
+      },
+      "test_cw04_redteam_memo_contract": {
+        "file": "services/control-plane/bff/test_cw04_redteam_memo_contract.py",
+        "changes": "Removed sys.path.insert(0, ...) and import main as bff_main; mounted create_governance_router with typed _extract_identity and _require_read_role gating canInitiateGovernanceReview; deleted global read_store monkeypatching",
+        "tests_passed": 7
+      },
+      "test_governance_router": {
+        "file": "services/control-plane/bff/tests/test_governance_router.py",
+        "changes": "Removed sys.path.insert(0, ...); package-qualified import of create_governance_router; updated expected catalog routes to 36; aligned payload envelope shapes",
+        "tests_passed": 9
+      },
+      "test_operations_consultation_ports": {
+        "file": "services/control-plane/bff/tests/test_operations_consultation_ports.py",
+        "changes": "Removed sys.path.insert(0, ...); package-qualified import of create_workflows_hooks_router and OpenClawOpsClient; aligned class identity across test doubles",
+        "tests_passed": 17
+      }
+    },
+    "contract_suites_stabilized": {
+      "test_cw03_committee_board_contract": {
+        "file": "services/control-plane/bff/test_cw03_committee_board_contract.py",
+        "changes": "Removed sys.path.insert(0, ...); set dataset_source to local_snapshot for consult_requests and consultation_sessions; synchronized command_store file_path on app_deps; planned for full writer decoupling in DOMAIN-WRITERS-001",
+        "tests_passed": 7
+      },
+      "test_agora_servant_production_write_owner": {
+        "file": "services/control-plane/bff/tests/test_agora_servant_production_write_owner.py",
+        "changes": "Removed sys.path.insert(0, ...); added _sync_persona_write_owner helper synchronizing write_owner attributes to app_deps.persona_write_owner; retained in composition allowlist",
+        "tests_passed": 10
+      },
+      "test_read_surface_caller_migration": {
+        "file": "services/control-plane/bff/tests/test_read_surface_caller_migration.py",
+        "changes": "Aligned static attribute count (56 -> 55) following BFF-DEADCODE-001 removal of unreachable tail; retained in composition allowlist",
+        "tests_passed": 37
+      }
+    },
+    "architectural_gate_invariant_suite": {
+      "file": "services/control-plane/bff/tests/test_bff_test_architecture.py",
+      "invariants_tested": [
+        "test_inventory_file_is_present_and_well_formed",
+        "test_all_five_architectural_layers_represented",
+        "test_every_entry_has_valid_layer_and_disposition",
+        "test_composition_allowlist_is_strictly_contained_and_retained",
+        "test_migrated_suites_do_not_import_main",
+        "test_migrated_suites_do_not_mutate_sys_path",
+        "test_no_global_monkeypatching_in_migrated_suites",
+        "test_total_main_importers_is_bounded_and_strictly_decreased"
+      ],
+      "tests_passed": 8
+    }
+  },
+  "verification": [
+    {
+      "command": "python3 -m pytest -q services/control-plane/bff/tests/test_bff_test_architecture.py",
+      "result": "8 passed in 1.42s",
+      "executed": 8,
+      "collected": 8
+    },
+    {
+      "command": "python3 -m pytest -q services/control-plane/bff/test_cw01_consult_request_contract.py",
+      "result": "6 passed in 3.79s",
+      "executed": 6,
+      "collected": 6
+    },
+    {
+      "command": "python3 -m pytest -q services/control-plane/bff/test_cw02_debate_transcript_contract.py",
+      "result": "15 passed in 5.47s",
+      "executed": 15,
+      "collected": 15
+    },
+    {
+      "command": "python3 -m pytest -q services/control-plane/bff/test_cw03_committee_board_contract.py",
+      "result": "7 passed in 9.59s",
+      "executed": 7,
+      "collected": 7
+    },
+    {
+      "command": "python3 -m pytest -q services/control-plane/bff/test_cw04_redteam_memo_contract.py",
+      "result": "7 passed in 3.53s",
+      "executed": 7,
+      "collected": 7
+    },
+    {
+      "command": "python3 -m pytest -q services/control-plane/bff/tests/test_governance_router.py",
+      "result": "9 passed in 3.77s",
+      "executed": 9,
+      "collected": 9
+    },
+    {
+      "command": "python3 -m pytest -q services/control-plane/bff/tests/test_operations_consultation_ports.py",
+      "result": "17 passed in 4.82s",
+      "executed": 17,
+      "collected": 17
+    },
+    {
+      "command": "python3 -m pytest -q services/control-plane/bff/tests/test_read_surface_caller_migration.py",
+      "result": "37 passed in 2.15s",
+      "executed": 37,
+      "collected": 37
+    },
+    {
+      "command": "python3 -m pytest -q services/control-plane/bff/tests/test_agora_servant_production_write_owner.py",
+      "result": "10 passed in 12.27s",
+      "executed": 10,
+      "collected": 10
+    },
+    {
+      "command": "python3 -m pytest -q services/control-plane/bff/tests/test_bff_test_architecture.py services/control-plane/bff/tests/test_governance_router.py services/control-plane/bff/tests/test_operations_consultation_ports.py services/control-plane/bff/tests/test_read_surface_caller_migration.py services/control-plane/bff/tests/test_agora_servant_production_write_owner.py services/control-plane/bff/test_cw01_consult_request_contract.py services/control-plane/bff/test_cw02_debate_transcript_contract.py services/control-plane/bff/test_cw03_committee_board_contract.py services/control-plane/bff/test_cw04_redteam_memo_contract.py",
+      "result": "110 passed, 3 warnings in 51.76s",
+      "executed": 110,
+      "collected": 110
+    }
+  ],
+  "coordination_note": "services/control-plane/bff/main.py was preserved unmodified in accordance with the task brief scope constraint. RecordSponsorDecision write persistence in test_cw03 remains deferred to DOMAIN-WRITERS-001 per the signed SA/SD.",
+  "review": {
+    "reviewer": "Claude",
+    "decision": "pending independent exact-head review"
+  },
+  "remaining_owned_elsewhere": [
+    "BFF-ROUTER-STRUCT-001: Split giant router closures by use case",
+    "DOMAIN-WRITERS-001: Bind every product mutation to its canonical owner",
+    "JOURNAL-OWNER-001: Converge Decision Journal to one writer"
+  ]
+}
