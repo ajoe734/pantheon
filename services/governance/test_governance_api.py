@@ -615,3 +615,58 @@ def test_decide_records_actual_approver_identity_and_audit():
     assert len(decided_events) == 1
     assert decided_events[0]["actor_role"] == "risk_owner"
     assert decided_events[0]["actor_id"] == "risk-owner-2"
+
+
+def test_authoritative_approval_readback_and_anti_forgery():
+    did = uid()
+    r_prop = client.post("/api/governance/approvals", json={
+        "decision_id": did,
+        "target_type": "registry_entry",
+        "target_id": "target-123",
+        "target_version": "v1",
+        "risk_level": "low",
+        "session_id": "sess-alpha",
+        "candidate_digest": "cd" * 32,
+        "proof_digest": "pd" * 32,
+        "expires_at": "2026-12-31T23:59:59Z",
+    })
+    assert r_prop.status_code == 201
+    prop_body = r_prop.json()
+    assert prop_body["session_id"] == "sess-alpha"
+    assert prop_body["candidate_digest"] == "cd" * 32
+    assert prop_body["proof_digest"] == "pd" * 32
+    assert prop_body["expires_at"] == "2026-12-31T23:59:59Z"
+    # Authority flags must NOT be set on proposed
+    assert prop_body.get("authority_status") is None
+    assert prop_body.get("controller_record_ref") is None
+
+    client.post(f"/api/governance/approvals/{did}/review", json={
+        "actor_role": "governance_reviewer",
+        "actor_id": "rev-1",
+    })
+
+    # Decide with approval
+    r_dec = client.post(f"/api/governance/approvals/{did}/decide", json={
+        "actor_role": "governance_reviewer",
+        "actor_id": "rev-1",
+        "outcome": "approved",
+        "rationale": "Verified proofs and candidate",
+    })
+    assert r_dec.status_code == 200
+    dec_body = r_dec.json()
+    assert dec_body["authority_status"] == "authoritative"
+    assert dec_body["controller_record_ref"] == f"governance-controller://approval-{did}"
+    assert dec_body["recorded_at"] is not None
+    assert dec_body["recorded_at"] == dec_body["decided_at"]
+    assert dec_body["session_id"] == "sess-alpha"
+    assert dec_body["candidate_digest"] == "cd" * 32
+    assert dec_body["proof_digest"] == "pd" * 32
+
+    # Verify lookup by id maintains authoritative readback
+    r_get = client.get(f"/api/governance/approvals/{did}")
+    assert r_get.status_code == 200
+    get_body = r_get.json()
+    assert get_body["authority_status"] == "authoritative"
+    assert get_body["controller_record_ref"] == f"governance-controller://approval-{did}"
+    assert get_body["recorded_at"] == dec_body["recorded_at"]
+

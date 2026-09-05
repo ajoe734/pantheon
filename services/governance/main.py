@@ -1335,6 +1335,10 @@ def propose_approval(body: ProposeApprovalRequest) -> ApprovalDecisionResponse:
         proposal_revision=body.proposal_revision,
         proposal_content_digest=body.proposal_content_digest,
         validation_result_digest=body.validation_result_digest,
+        session_id=body.session_id,
+        candidate_digest=body.candidate_digest,
+        proof_digest=body.proof_digest,
+        expires_at=body.expires_at,
     )
 
     errors = decision.validate()
@@ -1493,6 +1497,10 @@ def record_decision(
             actor_id=body.actor_id,
             conditions=body.conditions,
             evidence_refs=evidence_refs,
+            session_id=body.session_id,
+            candidate_digest=body.candidate_digest,
+            proof_digest=body.proof_digest,
+            expires_at=body.expires_at,
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))

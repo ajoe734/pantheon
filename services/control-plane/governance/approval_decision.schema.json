@@ -197,6 +197,32 @@
       "type": "string",
       "format": "date-time"
     },
+    "session_id": {
+      "type": "string",
+      "description": "Training or execution session bound to this approval."
+    },
+    "candidate_digest": {
+      "type": "string",
+      "description": "Content digest of the candidate object."
+    },
+    "proof_digest": {
+      "type": "string",
+      "description": "Content digest of the evaluation proof."
+    },
+    "controller_record_ref": {
+      "type": "string",
+      "description": "Authoritative controller record reference."
+    },
+    "recorded_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "Authoritative controller timestamp."
+    },
+    "authority_status": {
+      "type": "string",
+      "enum": ["authoritative"],
+      "description": "Authoritative status flag."
+    },
     "metadata": {
       "type": "object",
       "description": "Additional metadata for downstream consumers."

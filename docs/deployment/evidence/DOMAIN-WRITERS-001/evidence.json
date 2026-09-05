@@ -1,0 +1,107 @@
+{
+  "schema_version": "pantheon.task-evidence.v1",
+  "task_id": "DOMAIN-WRITERS-001",
+  "base_ref": "dev@8e1e4cfb0fd769675ebbc0e29331f88e768f5c3d",
+  "depends_on": "BFF-ROUTER-STRUCT-001 (done), STRUCT-OWNERSHIP-001 (done)",
+  "normative_plan": "SD \u00a74.4, \u00a74.5, GAP-MGMT-03A; pkt-pantheon-structural-closure-functional-v2-20260903",
+  "owner_selection": {
+    "governance": {
+      "selected_owner": "services/governance/ (models.py, main.py) and services/control-plane/governance/approval_decision.py",
+      "rationale": "Closes the Governance approval readback gap identified in Dev closure evidence 20260904 and training-session/persona_target.py. Enforces that session_id, candidate_digest, proof_digest, controller_record_ref, recorded_at, and authority_status == \"authoritative\" are returned on decided approvals. Authority flags are stamped strictly by the governance controller when outcome is approved/approved_with_conditions and are never filled from untrusted request metadata."
+    },
+    "runtime": {
+      "selected_owner": "services/runtime_manager/runtime_manager_client.py (RuntimeManagerClient)",
+      "rationale": "BFF runtime creation in services/control-plane/bff/runtime/router.py dispatches through RuntimeManagerClient.deploy() when read_store lacks create_runtime_binding, eliminating direct mutation-through-read-surface dependency."
+    },
+    "personas": {
+      "selected_owner": "services/control-plane/bff/ports/persona_write_owner.py (PersonaRegistryHttpWritePort)",
+      "rationale": "Persona updates and creation in services/control-plane/bff/personas/service.py and routes/detail.py route through _get_active_write_owner() (PersonaRegistryHttpWritePort) before falling back to read_store."
+    },
+    "research": {
+      "selected_owner": "services/research/write_owner.py (ResearchWriteOwner) / DefaultResearchKnowledgeSourcePort",
+      "rationale": "In personas/service.py, create_research_ticket routes through research_knowledge_source port or build_research_write_owner. In research/routes/experiments.py, create_experiment routes through research_knowledge_source port or build_research_write_owner, while experiment logs, metrics, and artifacts queries gracefully handle ReadSurfacePorts."
+    },
+    "jobs": {
+      "selected_owner": "services/control-plane/bff/jobs/router.py",
+      "rationale": "In jobs/router.py, get_job_logs safely inspects read_store for get_job_logs_bff, preventing AttributeErrors against pure ReadSurfacePorts."
+    }
+  },
+  "implementation": {
+    "files_modified": [
+      "services/governance/models.py",
+      "services/governance/main.py",
+      "services/governance/test_governance_api.py",
+      "services/control-plane/governance/approval_decision.py",
+      "services/control-plane/governance/approval_decision.schema.json",
+      "services/control-plane/bff/runtime/router.py",
+      "services/control-plane/bff/personas/routes/detail.py",
+      "services/control-plane/bff/personas/service.py",
+      "services/control-plane/bff/research/routes/experiments.py",
+      "services/control-plane/bff/jobs/router.py"
+    ],
+    "read_surface_invariants_preserved": "ReadSurfacePorts in services/control-plane/bff/ports/read_surface_ports.py is completely unmodified and maintains zero mutation methods, adhering strictly to RETAINED_WRITES_DEFERRED_FROM_READ_SURFACE."
+  },
+  "verification": {
+    "commands": [
+      {
+        "command": ".venv-pantheon/bin/python3 -m pytest services/governance/",
+        "result": "46 passed, 1 warning in 9.16s",
+        "executed": 46,
+        "collected": 46
+      },
+      {
+        "command": ".venv-pantheon/bin/python3 -m pytest services/training-session/tests/test_persona_target.py",
+        "result": "42 passed in 4.03s",
+        "executed": 42,
+        "collected": 42
+      },
+      {
+        "command": ".venv-pantheon/bin/python3 -m pytest services/control-plane/bff/tests/test_read_surface_caller_migration.py",
+        "result": "31 passed, 3 warnings in 25.48s",
+        "executed": 31,
+        "collected": 31
+      },
+      {
+        "command": ".venv-pantheon/bin/python3 -m pytest services/control-plane/bff/personas/test_router_isolation.py",
+        "result": "1 passed, 1 warning in 2.90s",
+        "executed": 1,
+        "collected": 1
+      },
+      {
+        "command": ".venv-pantheon/bin/python3 -m pytest tests/research_write_owner/test_research_write_owner.py",
+        "result": "7 passed in 0.89s",
+        "executed": 7,
+        "collected": 7
+      },
+      {
+        "command": ".venv-pantheon/bin/python3 -m pytest services/control-plane/bff/tests/test_research_router.py",
+        "result": "18 passed, 1 warning in 10.06s",
+        "executed": 18,
+        "collected": 18
+      },
+      {
+        "command": ".venv-pantheon/bin/python3 -m pytest services/control-plane/bff/tests/test_persona_capital_runtime_ports.py",
+        "result": "22 passed in 4.88s",
+        "executed": 22,
+        "collected": 22
+      },
+      {
+        "command": ".venv-pantheon/bin/python3 -m pytest services/control-plane/bff/tests/test_research_knowledge_source_ports.py",
+        "result": "15 passed, 1 warning in 4.29s",
+        "executed": 15,
+        "collected": 15
+      }
+    ]
+  },
+  "acceptance_check": {
+    "one_schema_one_write_owner": true,
+    "governance_authoritative_approval_readback": true,
+    "anti_forgery_authority_flags": true,
+    "mutation_through_read_facade_eliminated": true,
+    "read_surface_narrow_invariants_intact": true
+  },
+  "review": {
+    "reviewer": "Claude",
+    "decision": "pending independent exact-head review"
+  }
+}

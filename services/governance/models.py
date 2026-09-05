@@ -82,6 +82,10 @@ class ProposeApprovalRequest(BaseModel):
     proposal_revision: Optional[int] = Field(default=None, ge=1)
     proposal_content_digest: Optional[str] = Field(default=None, min_length=1)
     validation_result_digest: Optional[str] = Field(default=None, min_length=1)
+    session_id: Optional[str] = None
+    candidate_digest: Optional[str] = None
+    proof_digest: Optional[str] = None
+    expires_at: Optional[str] = None
 
 
 class AcceptReviewRequest(BaseModel):
@@ -96,6 +100,10 @@ class DecideRequest(BaseModel):
     actor_id: str
     conditions: Optional[List[str]] = None
     evidence_refs: Optional[List[EvidenceRefBody]] = None
+    session_id: Optional[str] = None
+    candidate_digest: Optional[str] = None
+    proof_digest: Optional[str] = None
+    expires_at: Optional[str] = None
 
 
 class RevokeRequest(BaseModel):
@@ -148,6 +156,12 @@ class ApprovalDecisionResponse(BaseModel):
     proposal_content_digest: Optional[str]
     validation_result_digest: Optional[str]
     revoked_at: Optional[str]
+    session_id: Optional[str] = None
+    candidate_digest: Optional[str] = None
+    proof_digest: Optional[str] = None
+    controller_record_ref: Optional[str] = None
+    recorded_at: Optional[str] = None
+    authority_status: Optional[str] = None
 
 
 class WriteAuthorityEntry(BaseModel):
