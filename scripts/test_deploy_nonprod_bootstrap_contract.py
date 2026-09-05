@@ -673,3 +673,122 @@ def test_deploy_script_dev_rejects_empty_cli_project_id() -> None:
     )
     assert proc.returncode == 1
     assert "dev deployment requires --project-id or PROJECT_ID to be set" in proc.stderr
+
+
+def test_deploy_script_dev_executes_beyond_dry_run_with_stubbed_ssh_and_no_staging_vars(tmp_path: Path) -> None:
+    """Dev deployment beyond dry-run executes cleanly with stubbed SSH when all staging variables are unset."""
+    import json
+    lease_file = tmp_path / "dev-lease.json"
+    lease_file.write_text(
+        json.dumps({
+            "schemaVersion": 1,
+            "repository": "ajoe734/execute-plans",
+            "branch": "environment-coordination",
+            "path": ".pantheon/environment-leases/pantheon-dev-environment.json",
+            "resource": "pantheon-dev-environment",
+            "mode": "deployment",
+            "leaseId": "stub-lease-bootstrap",
+            "expectedBackendSha": DUMMY_SHA,
+        }),
+        encoding="utf-8",
+    )
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir(parents=True, exist_ok=True)
+    key_file = tmp_path / "dev_key"
+    key_file.write_text("fake-dev-key\n", encoding="utf-8")
+    key_file.chmod(0o600)
+    known_hosts = tmp_path / "known_hosts"
+    known_hosts.write_text("fake-known-hosts\n", encoding="utf-8")
+    known_hosts.chmod(0o600)
+    args_file = tmp_path / "ssh_args.txt"
+    stub_ssh = bin_dir / "ssh"
+    stub_ssh.write_text(
+        f"""#!/bin/sh
+printf '%s\\n' "$@" > '{args_file}'
+exit 0
+""",
+        encoding="utf-8",
+    )
+    stub_ssh.chmod(0o755)
+
+    env = dict(VALID_NEUTRAL_DEV_ENV)
+    env.update({
+        "PATH": f"{bin_dir}:/usr/bin:/bin",
+        "PANTHEON_DEV_ENVIRONMENT_LEASE_STATE_FILE": str(lease_file),
+        "PANTHEON_DEV_ENVIRONMENT_LEASE_GUARD_LEASE_ID": "stub-lease-bootstrap",
+        "DEV_BFF_AUTH_STUB": "true",
+        "DEV_BFF_AUTH_MODE": "permissive",
+        "DEV_OPENCLAW_ADAPTER_SERVICE_AUTH_REQUIRED": "false",
+        "DEV_DEPLOY_SSH_KEY_FILE": str(key_file),
+        "DEV_DEPLOY_SSH_KNOWN_HOSTS_FILE": str(known_hosts),
+    })
+    # Ensure no staging variables leak into the execution environment
+    for k in list(env.keys()):
+        if k.startswith("STAGING_"):
+            del env[k]
+
+    proc = subprocess.run(
+        [
+            str(DEPLOY_SCRIPT),
+            "--environment", "dev",
+            "--sha", DUMMY_SHA,
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+        env=env,
+        cwd=ROOT,
+    )
+    assert proc.returncode == 0, f"deploy_nonprod_vm.sh failed: {proc.stderr}"
+    assert "direct ssh synthetic-user@192.0.2.50 component=root" in proc.stdout
+    assert f"deployment complete: dev/root {DUMMY_SHA}" in proc.stdout
+
+    ssh_args = args_file.read_text(encoding="utf-8").splitlines()
+    assert "synthetic-user@192.0.2.50" in ssh_args
+    command_prefix = ssh_args[-1]
+    assert "PANTHEON_DEPLOY_ENV=dev" in command_prefix
+    assert "PANTHEON_STAGING_EXEC_HEALTH_URL=''" in command_prefix
+    assert "PANTHEON_STAGING_BFF_CORS_ORIGINS=''" in command_prefix
+
+
+def test_deploy_script_staging_live_executes_beyond_dry_run_with_stubbed_gcloud_and_no_dev_vars(tmp_path: Path) -> None:
+    """Staging-live deployment beyond dry-run executes cleanly with stubbed gcloud without requiring dev variables."""
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir(parents=True, exist_ok=True)
+    stub_gcloud = bin_dir / "gcloud"
+    cmd_file = tmp_path / "gcloud_cmd.txt"
+    stub_gcloud.write_text(
+        f"""#!/bin/sh
+printf '%s\\n' "$@" > '{cmd_file}'
+exit 0
+""",
+        encoding="utf-8",
+    )
+    stub_gcloud.chmod(0o755)
+
+    env = dict(VALID_NEUTRAL_STAGING_ENV)
+    env["PATH"] = f"{bin_dir}:/usr/bin:/bin"
+    # Ensure no DEV variables are in the environment
+    for k in list(env.keys()):
+        if k.startswith("DEV_"):
+            del env[k]
+
+    proc = subprocess.run(
+        [
+            str(DEPLOY_SCRIPT),
+            "--environment", "staging-live",
+            "--component", "control",
+            "--sha", DUMMY_SHA,
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+        env=env,
+        cwd=ROOT,
+    )
+    assert proc.returncode == 0, f"deploy_nonprod_vm.sh staging-live failed: {proc.stderr}"
+    assert f"deployment complete: staging-live/control {DUMMY_SHA}" in proc.stdout
+    assert cmd_file.exists()
+    gcloud_args = cmd_file.read_text(encoding="utf-8")
+    assert "--project=neutral-staging-project" in gcloud_args
+    assert "deployer@neutral-staging-control" in gcloud_args
