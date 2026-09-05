@@ -6,6 +6,13 @@ endpoints against the frozen client validator in
 that service's own tests load it) so the Persona owner is proven against the
 exact contract the training-session authority boundary enforces, without
 touching that frozen module or the Governance owner.
+
+A dedicated block of tests below sends direct owner requests that bypass the
+frozen client validator entirely, proving the owner itself -- not just the
+happy-path client -- rejects an unissued approval, a wrong precondition, a
+failed proof, a first-reader tenant hijack, and a replay whose real content
+was swapped out from under its claimed digests, and that a genuine commit
+applies a real, observable mutation to the Persona owner record.
 """
 from __future__ import annotations
 
@@ -19,6 +26,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from services.persona.write_owner import (
+    PatchPersonaRequest,
     PersistentPersonaOwner,
     PersistentPersonaTrainingTargetOwner,
     create_app,
@@ -74,6 +82,66 @@ class _BridgeTransport:
         return self._module.PersonaTargetResponse(response.status_code, response.json())
 
 
+class _FakeGovernanceApprovalVerifier:
+    """Owner-side test double for the real Governance approval boundary.
+
+    Mirrors the checks the production ``HttpGovernanceApprovalVerifier``
+    performs against Governance's own approval-readback response (decision
+    state, exact persona/tenant/session/digest binding, expiry), but reads
+    from an in-memory registry of approvals a test has proven were really
+    issued instead of making a live HTTP call. An unregistered
+    ``approval_decision_id`` -- an unissued approval -- always fails closed.
+    """
+
+    def __init__(self) -> None:
+        self._issued: dict[str, dict[str, Any]] = {}
+
+    def issue(self, approval: Mapping[str, Any]) -> None:
+        decision_id = str(approval.get("decision_id") or approval.get("approval_id") or "").strip()
+        assert decision_id, "test approval fixture must carry a decision_id"
+        self._issued[decision_id] = dict(approval)
+
+    def verify_training_target_approval(
+        self,
+        *,
+        approval_decision_id: str,
+        approval_decision_ref: str,
+        persona_id: str,
+        tenant_id: str,
+        session_id: str,
+        candidate_digest: str,
+        proof_digest: str,
+    ) -> bool:
+        decision = self._issued.get(approval_decision_id)
+        if decision is None:
+            return False
+        lifecycle = str(decision.get("decision_state") or "").strip().lower()
+        outcome = str(decision.get("decision") or "").strip().lower()
+        if lifecycle not in {"decided", "approved"}:
+            return False
+        if outcome and outcome != "approved":
+            return False
+        if decision.get("persona_id") != persona_id:
+            return False
+        if decision.get("tenant_id") != tenant_id:
+            return False
+        if decision.get("session_id") != session_id:
+            return False
+        if decision.get("candidate_digest") != candidate_digest:
+            return False
+        if decision.get("proof_digest") != proof_digest:
+            return False
+        if decision.get("approval_decision_ref") != approval_decision_ref:
+            return False
+        expires_at = decision.get("expires_at")
+        if not isinstance(expires_at, str) or not expires_at.strip():
+            return False
+        normalized = expires_at[:-1] + "+00:00" if expires_at.endswith("Z") else expires_at
+        if datetime.fromisoformat(normalized).astimezone(timezone.utc) <= datetime.now(timezone.utc):
+            return False
+        return True
+
+
 @pytest.fixture()
 def owner_env(monkeypatch, tmp_path):
     monkeypatch.setenv("PANTHEON_PERSONA_SERVICE_TOKEN", SERVICE_TOKEN)
@@ -82,13 +150,14 @@ def owner_env(monkeypatch, tmp_path):
     personas_path = tmp_path / "personas.json"
     targets_path = tmp_path / "training_targets.json"
     persona_owner = PersistentPersonaOwner.from_json_path(personas_path)
+    verifier = _FakeGovernanceApprovalVerifier()
     training_target_owner = PersistentPersonaTrainingTargetOwner.from_json_path(
-        targets_path, persona_owner=persona_owner
+        targets_path, persona_owner=persona_owner, approval_verifier=verifier
     )
     app = create_app(owner=persona_owner, training_target_owner=training_target_owner)
     client = TestClient(app, raise_server_exceptions=False)
     _create_persona(client)
-    return client, personas_path, targets_path
+    return client, personas_path, targets_path, verifier
 
 
 def _auth_header() -> dict[str, str]:
@@ -176,7 +245,7 @@ def _commit_inputs(module, precondition: Mapping[str, Any], *, session_id: str, 
 
 
 def test_precondition_read_commit_and_restart_readback(owner_env) -> None:
-    client, personas_path, targets_path = owner_env
+    client, personas_path, targets_path, verifier = owner_env
     module = _load_persona_target_module()
     trusted_now = datetime.now(timezone.utc)
 
@@ -193,6 +262,7 @@ def test_precondition_read_commit_and_restart_readback(owner_env) -> None:
     assert precondition["target_generation"] == 1
 
     inputs, approval = _commit_inputs(module, precondition, session_id="session-alpha", trusted_now=trusted_now)
+    verifier.issue(approval)
     transport = _BridgeTransport(client, approval, module)
 
     receipt = module.commit_persona_target(**inputs, transport=transport)
@@ -206,7 +276,7 @@ def test_precondition_read_commit_and_restart_readback(owner_env) -> None:
     # Simulate a fresh owner process reading the same durable store back.
     restarted_persona_owner = PersistentPersonaOwner.from_json_path(personas_path)
     restarted_training_target_owner = PersistentPersonaTrainingTargetOwner.from_json_path(
-        targets_path, persona_owner=restarted_persona_owner
+        targets_path, persona_owner=restarted_persona_owner, approval_verifier=verifier
     )
     restarted_app = create_app(
         owner=restarted_persona_owner, training_target_owner=restarted_training_target_owner
@@ -226,8 +296,17 @@ def test_precondition_read_commit_and_restart_readback(owner_env) -> None:
     assert body["proof_digest"] == receipt["proof_digest"]
     assert body["approval_digest"] == receipt["approval_digest"]
 
+    # The commit is a real, applied mutation of the actual Persona owner
+    # record -- not a second receipt-only store the owner never observes.
+    persona = restarted_client.get(f"/api/personas/{PERSONA_ID}")
+    assert persona.status_code == 200, persona.text
+    metadata = persona.json()["metadata"]
+    assert metadata["training_target_generation"] == 1
+    assert metadata["training_target_controller_record_ref"] == committed_ref
+    assert metadata["training_target_control_digest"] == receipt["control_digest"]
 
-def _first_commit(client: TestClient, module, *, session_id: str = "session-alpha"):
+
+def _first_commit(client: TestClient, module, verifier, *, session_id: str = "session-alpha"):
     trusted_now = datetime.now(timezone.utc)
     precondition = module.read_persona_target_precondition(
         persona_id=PERSONA_ID,
@@ -238,6 +317,7 @@ def _first_commit(client: TestClient, module, *, session_id: str = "session-alph
         transport=_BridgeTransport(client, {}, module),
     )
     inputs, approval = _commit_inputs(module, precondition, session_id=session_id, trusted_now=trusted_now)
+    verifier.issue(approval)
     receipt = module.commit_persona_target(
         **inputs, transport=_BridgeTransport(client, approval, module)
     )
@@ -246,9 +326,9 @@ def _first_commit(client: TestClient, module, *, session_id: str = "session-alph
 
 
 def test_cross_tenant_read_and_write_are_denied(owner_env) -> None:
-    client, _personas_path, _targets_path = owner_env
+    client, _personas_path, _targets_path, verifier = owner_env
     module = _load_persona_target_module()
-    _first_commit(client, module)
+    _first_commit(client, module, verifier)
 
     read = client.get(
         f"/api/personas/{PERSONA_ID}/training-target",
@@ -274,15 +354,189 @@ def test_cross_tenant_read_and_write_are_denied(owner_env) -> None:
             "expected_precondition_record_ref": "forged-ref",
             "approval_decision_id": "forged-approval",
             "approval_decision_ref": "forged-approval-ref",
+            "candidate": {"forged": True},
+            "control_state": {"forged": True},
+            "evaluation_proof": {"status": "passed"},
         },
     )
     assert write.status_code == 403
 
 
-def test_semantic_idempotency_conflict_rejects_reused_generation_new_payload(owner_env) -> None:
-    client, _personas_path, _targets_path = owner_env
+def test_first_reader_cannot_hijack_tenant_via_read(owner_env) -> None:
+    """A GET from an unrelated tenant must not durably bind that tenant.
+
+    Root review finding: ``_load_or_init`` used to verify existence only and
+    trust the first reader's tenant, so a hostile first GET could steal a
+    Persona's training-target authority for an arbitrary tenant. A read must
+    never manufacture durable authority.
+    """
+
+    client, _personas_path, _targets_path, verifier = owner_env
     module = _load_persona_target_module()
-    receipt, inputs = _first_commit(client, module)
+
+    hostile_read = client.get(
+        f"/api/personas/{PERSONA_ID}/training-target",
+        headers={**_auth_header(), "X-Tenant-Id": "tenant-hostile"},
+    )
+    assert hostile_read.status_code == 200
+    assert hostile_read.json()["generation"] == 0
+
+    another_read = client.get(
+        f"/api/personas/{PERSONA_ID}/training-target",
+        headers={**_auth_header(), "X-Tenant-Id": "tenant-also-hostile"},
+    )
+    assert another_read.status_code == 200
+    assert another_read.json()["generation"] == 0
+
+    # The legitimate tenant can still commit the real first generation; the
+    # earlier unauthenticated-tenant reads left no durable binding behind.
+    receipt, _inputs = _first_commit(client, module, verifier)
+    assert receipt["status"] == "committed"
+    assert receipt["generation"] == 1
+
+    now_locked_out = client.get(
+        f"/api/personas/{PERSONA_ID}/training-target",
+        headers={**_auth_header(), "X-Tenant-Id": "tenant-hostile"},
+    )
+    assert now_locked_out.status_code == 403
+
+
+def test_commit_rejects_unissued_approval(owner_env) -> None:
+    client, _personas_path, _targets_path, verifier = owner_env
+    module = _load_persona_target_module()
+    trusted_now = datetime.now(timezone.utc)
+    precondition = module.read_persona_target_precondition(
+        persona_id=PERSONA_ID,
+        tenant_id=TENANT_ID,
+        persona_readback_url=TRAINING_TARGET_URL,
+        authorization_token=SERVICE_TOKEN,
+        trusted_now=trusted_now,
+        transport=_BridgeTransport(client, {}, module),
+    )
+    inputs, approval = _commit_inputs(module, precondition, session_id="session-alpha", trusted_now=trusted_now)
+    # Deliberately never verifier.issue(approval): this approval was never
+    # actually decided by Governance.
+    write_body = _write_body_from_client_inputs(module, inputs)
+
+    response = client.post(
+        f"/api/personas/{PERSONA_ID}/training-target",
+        headers={
+            **_auth_header(),
+            "X-Tenant-Id": TENANT_ID,
+            "Idempotency-Key": "unissued-approval-attempt",
+        },
+        json=write_body,
+    )
+    assert response.status_code in (403, 422), response.text
+    assert response.json()["detail"]
+
+    # And the owner is proven never to have applied it.
+    still_absent = client.get(
+        f"/api/personas/{PERSONA_ID}/training-target",
+        headers={**_auth_header(), "X-Tenant-Id": TENANT_ID},
+    )
+    assert still_absent.json()["generation"] == 0
+
+
+def test_commit_rejects_wrong_precondition_digest(owner_env) -> None:
+    client, _personas_path, _targets_path, verifier = owner_env
+    module = _load_persona_target_module()
+    trusted_now = datetime.now(timezone.utc)
+    precondition = module.read_persona_target_precondition(
+        persona_id=PERSONA_ID,
+        tenant_id=TENANT_ID,
+        persona_readback_url=TRAINING_TARGET_URL,
+        authorization_token=SERVICE_TOKEN,
+        trusted_now=trusted_now,
+        transport=_BridgeTransport(client, {}, module),
+    )
+    inputs, approval = _commit_inputs(module, precondition, session_id="session-alpha", trusted_now=trusted_now)
+    verifier.issue(approval)
+    write_body = _write_body_from_client_inputs(module, inputs)
+    write_body["expected_precondition_digest"] = "f" * 64  # wrong precondition
+
+    response = client.post(
+        f"/api/personas/{PERSONA_ID}/training-target",
+        headers={
+            **_auth_header(),
+            "X-Tenant-Id": TENANT_ID,
+            "Idempotency-Key": "wrong-precondition-attempt",
+        },
+        json=write_body,
+    )
+    assert response.status_code == 422, response.text
+
+
+def test_commit_rejects_failed_evaluation_proof(owner_env) -> None:
+    client, _personas_path, _targets_path, verifier = owner_env
+    module = _load_persona_target_module()
+    trusted_now = datetime.now(timezone.utc)
+    precondition = module.read_persona_target_precondition(
+        persona_id=PERSONA_ID,
+        tenant_id=TENANT_ID,
+        persona_readback_url=TRAINING_TARGET_URL,
+        authorization_token=SERVICE_TOKEN,
+        trusted_now=trusted_now,
+        transport=_BridgeTransport(client, {}, module),
+    )
+    inputs, approval = _commit_inputs(module, precondition, session_id="session-alpha", trusted_now=trusted_now)
+    inputs["evaluation_proof"]["status"] = "failed"
+    inputs["evaluation_proof"]["proof_digest"] = module.canonical_digest(
+        {k: v for k, v in inputs["evaluation_proof"].items() if k != "proof_digest"}
+    )
+    verifier.issue(approval)
+    write_body = _write_body_from_client_inputs(module, inputs)
+
+    response = client.post(
+        f"/api/personas/{PERSONA_ID}/training-target",
+        headers={
+            **_auth_header(),
+            "X-Tenant-Id": TENANT_ID,
+            "Idempotency-Key": "failed-proof-attempt",
+        },
+        json=write_body,
+    )
+    assert response.status_code == 422, response.text
+
+
+def _write_body_from_client_inputs(module, inputs: Mapping[str, Any]) -> dict[str, Any]:
+    """Build the exact write body the frozen client would POST, directly.
+
+    Lets a test bypass ``commit_persona_target`` (and thus its own
+    pre-checks) while still exercising the real owner endpoint with a
+    genuinely shaped body, proving the owner enforces these checks itself.
+    """
+
+    candidate_digest = module.canonical_digest(inputs["candidate"])
+    control_digest = module.canonical_digest(inputs["control_state"])
+    proof_digest = inputs["evaluation_proof"]["proof_digest"]
+    approval_digest = module.canonical_digest({})
+    return {
+        "persona_id": inputs["persona_id"],
+        "tenant_id": inputs["tenant_id"],
+        "session_id": inputs["session_id"],
+        "candidate_digest": candidate_digest,
+        "control_digest": control_digest,
+        "proof_digest": proof_digest,
+        "approval_digest": approval_digest,
+        "generation": inputs["generation"],
+        "expected_previous_generation": inputs["generation"] - 1,
+        "expected_precondition_digest": inputs["expected_precondition_digest"],
+        "expected_precondition_record_ref": inputs["evaluation_proof"]["target_precondition"][
+            "controller_record_ref"
+        ],
+        "approval_decision_id": f"approval-{PERSONA_ID}-{inputs['generation']}",
+        "approval_decision_ref": inputs["approval_decision_ref"],
+        "candidate": inputs["candidate"],
+        "control_state": inputs["control_state"],
+        "evaluation_proof": inputs["evaluation_proof"],
+    }
+
+
+def test_semantic_idempotency_conflict_rejects_reused_generation_new_payload(owner_env) -> None:
+    client, _personas_path, _targets_path, verifier = owner_env
+    module = _load_persona_target_module()
+    receipt, inputs = _first_commit(client, module, verifier)
 
     conflicting = client.post(
         f"/api/personas/{PERSONA_ID}/training-target",
@@ -301,16 +555,72 @@ def test_semantic_idempotency_conflict_rejects_reused_generation_new_payload(own
             "expected_precondition_record_ref": "some-ref",
             "approval_decision_id": "approval-id",
             "approval_decision_ref": "approval-ref",
+            "candidate": inputs["candidate"],
+            "control_state": inputs["control_state"],
+            "evaluation_proof": inputs["evaluation_proof"],
         },
     )
-    assert conflicting.status_code == 409
+    assert conflicting.status_code in (409, 422), conflicting.text
+
+
+def test_replay_with_swapped_content_same_claimed_digests_is_rejected(owner_env) -> None:
+    """Root review finding: a replay must not trust caller-claimed digests.
+
+    A second request changing the real candidate/proof content while
+    keeping the *claimed* digest fields identical, under a different
+    Idempotency-Key, must not be treated as an idempotent replay just
+    because the (stale) claimed digests still match the stored record.
+    """
+
+    client, _personas_path, _targets_path, verifier = owner_env
+    module = _load_persona_target_module()
+    receipt, inputs = _first_commit(client, module, verifier)
+
+    swapped_candidate = {**inputs["candidate"], "parameters": {"risk.max_drawdown": 0.99}}
+    tampered = client.post(
+        f"/api/personas/{PERSONA_ID}/training-target",
+        headers={
+            **_auth_header(),
+            "X-Tenant-Id": TENANT_ID,
+            "Idempotency-Key": "a-completely-different-idempotency-key",
+        },
+        json={
+            "persona_id": PERSONA_ID,
+            "tenant_id": TENANT_ID,
+            "session_id": inputs["session_id"],
+            "candidate_digest": receipt["candidate_digest"],  # stale claimed digest
+            "control_digest": receipt["control_digest"],
+            "proof_digest": receipt["proof_digest"],
+            "approval_digest": receipt["approval_digest"],
+            "generation": 1,
+            "expected_previous_generation": 0,
+            "expected_precondition_digest": inputs["expected_precondition_digest"],
+            "expected_precondition_record_ref": inputs["evaluation_proof"]["target_precondition"][
+                "controller_record_ref"
+            ],
+            "approval_decision_id": f"approval-{PERSONA_ID}-1",
+            "approval_decision_ref": inputs["approval_decision_ref"],
+            "candidate": swapped_candidate,  # real content changed
+            "control_state": inputs["control_state"],
+            "evaluation_proof": inputs["evaluation_proof"],
+        },
+    )
+    assert tampered.status_code in (409, 422), tampered.text
+    assert tampered.json().get("replayed") is not True
+
+    # The genuinely committed target is unchanged.
+    unchanged = client.get(
+        f"/api/personas/{PERSONA_ID}/training-target",
+        headers={**_auth_header(), "X-Tenant-Id": TENANT_ID},
+    )
+    assert unchanged.json()["candidate_digest"] == receipt["candidate_digest"]
 
 
 def test_stale_generation_commit_is_rejected(owner_env) -> None:
-    client, _personas_path, _targets_path = owner_env
+    client, _personas_path, _targets_path, verifier = owner_env
     module = _load_persona_target_module()
-    _first_commit(client, module, session_id="session-one")
-    _first_commit(client, module, session_id="session-two")  # advances generation 1 -> 2
+    _first_commit(client, module, verifier, session_id="session-one")
+    _first_commit(client, module, verifier, session_id="session-two")  # advances generation 1 -> 2
 
     stale = client.post(
         f"/api/personas/{PERSONA_ID}/training-target",
@@ -329,13 +639,16 @@ def test_stale_generation_commit_is_rejected(owner_env) -> None:
             "expected_precondition_record_ref": "stale-ref",
             "approval_decision_id": "stale-approval",
             "approval_decision_ref": "stale-approval-ref",
+            "candidate": {"stale": True},
+            "control_state": {"stale": True},
+            "evaluation_proof": {"status": "passed"},
         },
     )
     assert stale.status_code == 409
 
 
 def test_replayed_commit_at_same_generation_and_binding_is_idempotent(owner_env) -> None:
-    client, _personas_path, _targets_path = owner_env
+    client, _personas_path, _targets_path, verifier = owner_env
     module = _load_persona_target_module()
     trusted_now = datetime.now(timezone.utc)
     precondition = module.read_persona_target_precondition(
@@ -347,6 +660,7 @@ def test_replayed_commit_at_same_generation_and_binding_is_idempotent(owner_env)
         transport=_BridgeTransport(client, {}, module),
     )
     inputs, approval = _commit_inputs(module, precondition, session_id="session-alpha", trusted_now=trusted_now)
+    verifier.issue(approval)
     first = module.commit_persona_target(**inputs, transport=_BridgeTransport(client, approval, module))
     assert first["replayed"] is False
 

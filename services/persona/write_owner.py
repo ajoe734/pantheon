@@ -8,13 +8,17 @@ fallback.  BFF callers are expected to use this HTTP boundary instead of
 """
 from __future__ import annotations
 
+import hashlib
 import hmac
+import json
 import os
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 from dataclasses import dataclass
 from typing import Any, Mapping, Protocol
+from urllib.error import HTTPError, URLError
+from urllib.request import Request as UrllibRequest, urlopen
 
 from fastapi import FastAPI, Header, HTTPException, Query, status
 from pydantic import BaseModel, ConfigDict, Field, model_validator
@@ -28,6 +32,30 @@ from services.runtime_auth_inbound import AuthContext, AuthError, validate_reque
 
 def _utc_now() -> str:
     return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+
+
+def _canonical_digest(payload: Any) -> str:
+    """Return a stable SHA-256 identity for finite JSON data.
+
+    Mirrors ``services/training-session/persona_target.py::canonical_digest``
+    without importing that frozen module, so the Persona owner can
+    independently re-derive a digest from actual content instead of trusting
+    a caller-claimed digest field.
+    """
+
+    try:
+        encoded = json.dumps(
+            payload,
+            ensure_ascii=True,
+            sort_keys=True,
+            separators=(",", ":"),
+            allow_nan=False,
+        ).encode("utf-8")
+    except (TypeError, ValueError) as exc:
+        raise TrainingTargetProofInvalid(
+            "training target payload is not finite canonical JSON"
+        ) from exc
+    return hashlib.sha256(encoded).hexdigest()
 
 
 _LIFECYCLE_TRANSITIONS = {
@@ -125,6 +153,35 @@ class TrainingTargetIdempotencyConflict(PersonaOwnerError):
     """Raised when a replayed idempotency key targets a different committed payload."""
 
 
+class TrainingTargetProofInvalid(PersonaOwnerError):
+    """Raised when a commit's candidate/control/proof binding does not verify.
+
+    Covers a claimed digest that does not match the actual submitted content,
+    an internally inconsistent evaluation proof, a proof bound to a different
+    precondition/generation than the one being committed, or a proof whose
+    status is not ``passed``. The owner must prove this itself; it cannot
+    trust the training-session client validator to have already done so.
+    """
+
+
+class TrainingTargetApprovalInvalid(PersonaOwnerError):
+    """Raised when the claimed approval decision does not verify against Governance."""
+
+
+class TrainingTargetApprovalUnavailable(PersonaAuthorityError):
+    """Raised when no Governance approval verifier is configured for a commit.
+
+    A missing verifier must block the commit, not silently mint authority.
+    """
+
+    def __init__(self) -> None:
+        super().__init__(
+            "TRAINING_TARGET_APPROVAL_VERIFIER_UNAVAILABLE",
+            "No Governance approval verifier is configured for training-target commits",
+            503,
+        )
+
+
 @dataclass(frozen=True)
 class PersonaInboundAuthority:
     """Authenticated identity used for Persona mutation policy decisions."""
@@ -145,6 +202,126 @@ class GovernanceDecisionVerifier(Protocol):
         source_state: str,
         target_state: str,
     ) -> bool: ...
+
+
+class TrainingTargetApprovalVerifier(Protocol):
+    """Verify one exact persona training-target approval against Governance truth.
+
+    This is the owner-side authority check the training-session client
+    validator cannot substitute for: a caller hitting this HTTP boundary
+    directly must still prove its claimed ``approval_decision_id`` is a real,
+    approved, unexpired Governance decision bound to this exact persona,
+    tenant, session, and candidate/proof digests.
+    """
+
+    def verify_training_target_approval(
+        self,
+        *,
+        approval_decision_id: str,
+        approval_decision_ref: str,
+        persona_id: str,
+        tenant_id: str,
+        session_id: str,
+        candidate_digest: str,
+        proof_digest: str,
+    ) -> bool: ...
+
+
+class HttpGovernanceApprovalVerifier:
+    """Default ``TrainingTargetApprovalVerifier`` backed by the real Governance API.
+
+    Narrowly scoped adapter: it re-reads the exact approval decision the
+    caller claims to have used from Governance's own
+    ``/api/governance/approvals/{decision_id}`` endpoint and independently
+    checks that it is approved, unexpired, and bound to this exact
+    persona/tenant/session/candidate/proof identity. It never trusts a
+    caller-supplied approval object; it only trusts what Governance itself
+    returns.
+    """
+
+    def __init__(
+        self, *, base_url: str, service_token: str, timeout_seconds: float = 5.0
+    ) -> None:
+        self._base_url = base_url.rstrip("/")
+        self._service_token = service_token
+        self._timeout_seconds = timeout_seconds
+
+    def verify_training_target_approval(
+        self,
+        *,
+        approval_decision_id: str,
+        approval_decision_ref: str,
+        persona_id: str,
+        tenant_id: str,
+        session_id: str,
+        candidate_digest: str,
+        proof_digest: str,
+    ) -> bool:
+        url = f"{self._base_url}/api/governance/approvals/{approval_decision_id}"
+        request = UrllibRequest(
+            url,
+            headers={
+                "Accept": "application/json",
+                "Authorization": f"Bearer {self._service_token}",
+                "X-Tenant-Id": tenant_id,
+            },
+            method="GET",
+        )
+        try:
+            with urlopen(request, timeout=self._timeout_seconds) as response:  # noqa: S310
+                if int(response.status) != 200:
+                    return False
+                body = json.loads(response.read().decode("utf-8"))
+        except (HTTPError, URLError, TimeoutError, OSError, ValueError):
+            return False
+        if not isinstance(body, Mapping):
+            return False
+        decision = body.get("approval")
+        if not isinstance(decision, Mapping):
+            decision = body.get("approval_decision")
+        if not isinstance(decision, Mapping):
+            decision = body
+
+        lifecycle = str(decision.get("decision_state") or "").strip().lower()
+        outcome = str(decision.get("decision") or "").strip().lower()
+        if lifecycle not in {"decided", "approved"}:
+            return False
+        if outcome and outcome != "approved":
+            return False
+        if not outcome and lifecycle != "approved":
+            return False
+        if str(decision.get("persona_id") or "") != persona_id:
+            return False
+        if str(decision.get("tenant_id") or "") != tenant_id:
+            return False
+        if str(decision.get("session_id") or "") != session_id:
+            return False
+        if str(decision.get("candidate_digest") or "") != candidate_digest:
+            return False
+        if str(decision.get("proof_digest") or "") != proof_digest:
+            return False
+        declared_ref = decision.get("approval_decision_ref")
+        identity = decision.get("decision_id") or decision.get("approval_id")
+        if declared_ref is not None:
+            if str(declared_ref) != approval_decision_ref:
+                return False
+        elif str(identity or "") != approval_decision_ref:
+            return False
+        expires_at = decision.get("expires_at")
+        if not isinstance(expires_at, str) or not expires_at.strip():
+            return False
+        try:
+            normalized = (
+                expires_at[:-1] + "+00:00" if expires_at.endswith("Z") else expires_at
+            )
+            parsed_expiry = datetime.fromisoformat(normalized)
+        except ValueError:
+            return False
+        if parsed_expiry.tzinfo is None:
+            return False
+        if parsed_expiry.astimezone(timezone.utc) <= datetime.now(timezone.utc):
+            return False
+        return True
 
 
 def _persona_auth_env() -> dict[str, str]:
@@ -756,9 +933,9 @@ class CommitPersonaTrainingTargetRequest(BaseModel):
     expected_precondition_record_ref: str = Field(min_length=1)
     approval_decision_id: str = Field(min_length=1)
     approval_decision_ref: str = Field(min_length=1)
-    candidate: Any = None
-    control_state: Any = None
-    evaluation_proof: Any = None
+    candidate: Any
+    control_state: Any
+    evaluation_proof: Any
 
     @model_validator(mode="after")
     def validate_generation_successor(self) -> "CommitPersonaTrainingTargetRequest":
@@ -766,6 +943,19 @@ class CommitPersonaTrainingTargetRequest(BaseModel):
             raise ValueError(
                 "generation must be exactly expected_previous_generation + 1"
             )
+        return self
+
+    @model_validator(mode="after")
+    def validate_training_payloads_present(
+        self,
+    ) -> "CommitPersonaTrainingTargetRequest":
+        # The owner must independently re-derive digests from real content; a
+        # commit that omits the content it claims a digest for cannot be
+        # verified and must not be accepted as if it were.
+        if self.candidate is None or self.control_state is None:
+            raise ValueError("candidate and control_state are required")
+        if not isinstance(self.evaluation_proof, Mapping):
+            raise ValueError("evaluation_proof must be a JSON object")
         return self
 
 
@@ -787,43 +977,203 @@ class PersistentPersonaTrainingTargetOwner:
         records: _OwnerRecordStore,
         *,
         persona_owner: PersistentPersonaOwner,
+        approval_verifier: TrainingTargetApprovalVerifier | None = None,
     ) -> None:
         self._records = records
         self._persona_owner = persona_owner
+        self._approval_verifier = approval_verifier
 
     @classmethod
     def from_json_path(
-        cls, path: str | Path, *, persona_owner: PersistentPersonaOwner
+        cls,
+        path: str | Path,
+        *,
+        persona_owner: PersistentPersonaOwner,
+        approval_verifier: TrainingTargetApprovalVerifier | None = None,
     ) -> "PersistentPersonaTrainingTargetOwner":
-        return cls(AtomicJsonRecordStore(path), persona_owner=persona_owner)
+        return cls(
+            AtomicJsonRecordStore(path),
+            persona_owner=persona_owner,
+            approval_verifier=approval_verifier,
+        )
 
-    def _load_or_init(self, persona_id: str, tenant_id: str) -> dict[str, Any]:
-        # Fail closed against a training-target authority for a Persona that the
-        # actual owner store does not know about; never fabricate one.
-        self._persona_owner.get(persona_id)
-        current = self._records.get(persona_id)
-        if current is None:
-            initial = {
-                "persona_id": persona_id,
-                "tenant_id": tenant_id,
-                "status": "active",
-                "generation": 0,
-                "authority_status": "authoritative",
-                "controller_record_ref": (
-                    f"persona-training-target:{persona_id}:0:{uuid.uuid4().hex}"
-                ),
-                "recorded_at": _utc_now(),
-            }
-            _committed, canonical = self._records.compare_and_set(
-                persona_id, None, initial
-            )
-            current = canonical or initial
-        if current.get("tenant_id") != tenant_id:
-            raise TrainingTargetTenantMismatch()
-        return current
+    def _virtual_initial_record(self, persona_id: str, tenant_id: str) -> dict[str, Any]:
+        """A deterministic, unpersisted generation-0 view.
+
+        A caller reading (or attempting to commit against) a Persona that has
+        never had a training target committed sees this exact same view no
+        matter what tenant_id it asserts -- nothing is written and no tenant
+        is bound. Only a fully verified commit (real digests, a real
+        approved Governance decision) may durably create the record and bind
+        its tenant_id; an unauthenticated read can no longer claim a Persona
+        for an arbitrary tenant merely by asking first.
+        """
+
+        persona = self._persona_owner.get(persona_id)
+        return {
+            "persona_id": persona_id,
+            "tenant_id": tenant_id,
+            "status": "active",
+            "generation": 0,
+            "authority_status": "authoritative",
+            "controller_record_ref": (
+                f"persona-training-target:{persona_id}:0:{tenant_id}"
+            ),
+            "recorded_at": persona.created_at,
+        }
 
     def read(self, *, persona_id: str, tenant_id: str) -> dict[str, Any]:
-        return dict(self._load_or_init(persona_id, tenant_id))
+        # Fail closed against a training-target authority for a Persona that
+        # the actual owner store does not know about; never fabricate one.
+        self._persona_owner.get(persona_id)
+        persisted = self._records.get(persona_id)
+        if persisted is None:
+            return self._virtual_initial_record(persona_id, tenant_id)
+        if persisted.get("tenant_id") != tenant_id:
+            raise TrainingTargetTenantMismatch()
+        return dict(persisted)
+
+    def _verify_semantic_payload(
+        self,
+        *,
+        persona_id: str,
+        tenant_id: str,
+        request: CommitPersonaTrainingTargetRequest,
+    ) -> None:
+        """Independently re-derive every claimed digest from real content.
+
+        A caller cannot commit (or replay) a training target by claiming a
+        digest that does not actually match the candidate/control_state it
+        submits, nor by attaching an evaluation proof that is internally
+        inconsistent, bound to a different precondition/generation, or not
+        ``passed``.
+        """
+
+        candidate_digest = _canonical_digest(request.candidate)
+        if candidate_digest != request.candidate_digest:
+            raise TrainingTargetProofInvalid(
+                "candidate content does not match the claimed candidate_digest"
+            )
+        control_digest = _canonical_digest(request.control_state)
+        if control_digest != request.control_digest:
+            raise TrainingTargetProofInvalid(
+                "control_state content does not match the claimed control_digest"
+            )
+        proof: Mapping[str, Any] = request.evaluation_proof
+        if str(proof.get("status") or "").strip().lower() != "passed":
+            raise TrainingTargetProofInvalid(
+                "evaluation_proof status is not passed"
+            )
+        unsigned = {
+            key: value
+            for key, value in dict(proof).items()
+            if key not in ("proof_digest", "runtime_evidence")
+        }
+        if _canonical_digest(unsigned) != request.proof_digest:
+            raise TrainingTargetProofInvalid(
+                "evaluation_proof proof_digest does not match its own content"
+            )
+        if _canonical_digest(proof.get("candidate_binding")) != candidate_digest:
+            raise TrainingTargetProofInvalid(
+                "evaluation_proof candidate_binding digest mismatch"
+            )
+        if _canonical_digest(proof.get("controls")) != control_digest:
+            raise TrainingTargetProofInvalid(
+                "evaluation_proof controls digest mismatch"
+            )
+        precondition = proof.get("target_precondition")
+        if not isinstance(precondition, Mapping):
+            raise TrainingTargetProofInvalid(
+                "evaluation_proof target_precondition is missing"
+            )
+        if (
+            precondition.get("persona_id") != persona_id
+            or precondition.get("tenant_id") != tenant_id
+            or precondition.get("expected_previous_generation")
+            != request.expected_previous_generation
+            or precondition.get("target_generation") != request.generation
+            or precondition.get("precondition_digest")
+            != request.expected_precondition_digest
+            or precondition.get("controller_record_ref")
+            != request.expected_precondition_record_ref
+        ):
+            raise TrainingTargetProofInvalid(
+                "evaluation_proof target_precondition does not match this commit's binding"
+            )
+        authority = proof.get("authority")
+        policy = authority.get("policy") if isinstance(authority, Mapping) else None
+        if (
+            not isinstance(policy, Mapping)
+            or policy.get("approval_decision_ref") != request.approval_decision_ref
+        ):
+            raise TrainingTargetProofInvalid(
+                "evaluation_proof policy authority does not match approval_decision_ref"
+            )
+
+    def _verify_approval_authority(
+        self,
+        *,
+        persona_id: str,
+        tenant_id: str,
+        request: CommitPersonaTrainingTargetRequest,
+    ) -> None:
+        """Independently verify the claimed approval against real Governance truth.
+
+        The happy-path training-session client validator does not secure this
+        HTTP boundary: a caller hitting it directly must still prove a real,
+        approved, unexpired Governance decision exists for this exact
+        binding. An unavailable verifier fails closed rather than minting
+        authority.
+        """
+
+        if self._approval_verifier is None:
+            raise TrainingTargetApprovalUnavailable()
+        verified = self._approval_verifier.verify_training_target_approval(
+            approval_decision_id=request.approval_decision_id,
+            approval_decision_ref=request.approval_decision_ref,
+            persona_id=persona_id,
+            tenant_id=tenant_id,
+            session_id=request.session_id,
+            candidate_digest=request.candidate_digest,
+            proof_digest=request.proof_digest,
+        )
+        if not verified:
+            raise TrainingTargetApprovalInvalid(
+                "approval_decision_id does not verify as an approved, unexpired, "
+                "exactly bound Governance decision"
+            )
+
+    def _apply_to_persona_owner(
+        self,
+        persona_id: str,
+        request: CommitPersonaTrainingTargetRequest,
+        committed: Mapping[str, Any],
+    ) -> None:
+        """Apply the approved policy/control mutation to the real Persona owner.
+
+        A training-target commit is a real, applied authority change, not a
+        second receipt-only store: the actual Persona record must observably
+        change (and read back changed after a restart) once a target is
+        committed.
+        """
+
+        self._persona_owner.patch(
+            persona_id,
+            PatchPersonaRequest(
+                actor_id="persona-training-target-owner",
+                metadata={
+                    "training_target_generation": request.generation,
+                    "training_target_controller_record_ref": committed.get(
+                        "controller_record_ref"
+                    ),
+                    "training_target_control_digest": request.control_digest,
+                    "training_target_candidate_digest": request.candidate_digest,
+                    "training_target_approval_decision_id": (
+                        request.approval_decision_id
+                    ),
+                },
+            ),
+        )
 
     def commit(
         self,
@@ -844,28 +1194,44 @@ class PersistentPersonaTrainingTargetOwner:
             field: getattr(request, field) for field in _TRAINING_TARGET_BINDING_FIELDS
         }
         for _attempt in range(4):
-            current = self._load_or_init(persona_id, tenant_id)
-            current_generation = int(current.get("generation") or 0)
+            self._persona_owner.get(persona_id)
+            persisted = self._records.get(persona_id)
+            if persisted is not None and persisted.get("tenant_id") != tenant_id:
+                raise TrainingTargetTenantMismatch()
+            current_generation = int((persisted or {}).get("generation") or 0)
             if current_generation == request.generation:
-                if current.get("status") != "committed":
+                if persisted is None or persisted.get("status") != "committed":
                     raise TrainingTargetGenerationConflict(
                         "persona training target generation is stale"
                     )
+                self._verify_semantic_payload(
+                    persona_id=persona_id, tenant_id=tenant_id, request=request
+                )
                 stored_binding = {
-                    field: current.get(field) for field in _TRAINING_TARGET_BINDING_FIELDS
+                    field: persisted.get(field)
+                    for field in _TRAINING_TARGET_BINDING_FIELDS
                 }
-                if stored_binding != binding:
+                if (
+                    stored_binding != binding
+                    or persisted.get("idempotency_key") != clean_key
+                ):
                     raise TrainingTargetIdempotencyConflict(
                         "persona training target idempotency key was reused for a "
                         "different payload"
                     )
-                replayed = dict(current)
+                replayed = dict(persisted)
                 replayed["replayed"] = True
                 return replayed
             if current_generation != request.expected_previous_generation:
                 raise TrainingTargetGenerationConflict(
                     "persona training target generation is stale"
                 )
+            self._verify_semantic_payload(
+                persona_id=persona_id, tenant_id=tenant_id, request=request
+            )
+            self._verify_approval_authority(
+                persona_id=persona_id, tenant_id=tenant_id, request=request
+            )
             updated = {
                 **binding,
                 "status": "committed",
@@ -885,18 +1251,46 @@ class PersistentPersonaTrainingTargetOwner:
                 "replayed": False,
             }
             committed, canonical = self._records.compare_and_set(
-                persona_id, current, updated
+                persona_id, persisted, updated
             )
             if committed:
-                return canonical or updated
+                result = canonical or updated
+                self._apply_to_persona_owner(persona_id, request, result)
+                return result
         raise PersonaConcurrentUpdate(
             f"Persona training target {persona_id!r} changed concurrently; "
             "retry against a fresh read"
         )
 
 
+def build_training_target_approval_verifier() -> TrainingTargetApprovalVerifier | None:
+    """Build the real Governance approval verifier from configured env, or None.
+
+    A missing configuration is a real, typed contract dependency -- not
+    something this owner may paper over. When unset, every commit fails
+    closed with ``TRAINING_TARGET_APPROVAL_VERIFIER_UNAVAILABLE`` (503)
+    instead of accepting an unverified approval.
+    """
+
+    base_url = str(
+        os.getenv("PERSONA_TRAINING_TARGET_GOVERNANCE_BASE_URL") or ""
+    ).strip()
+    service_token = str(
+        os.getenv("PANTHEON_GOVERNANCE_SERVICE_TOKEN")
+        or os.getenv("PANTHEON_PERSONA_SERVICE_TOKEN")
+        or ""
+    ).strip()
+    if not base_url or not service_token:
+        return None
+    return HttpGovernanceApprovalVerifier(
+        base_url=base_url, service_token=service_token
+    )
+
+
 def build_persona_training_target_owner(
     persona_owner: PersistentPersonaOwner,
+    *,
+    approval_verifier: TrainingTargetApprovalVerifier | None = None,
 ) -> PersistentPersonaTrainingTargetOwner:
     backend = os.getenv(
         "PERSONA_TRAINING_TARGET_STORE_BACKEND",
@@ -921,7 +1315,15 @@ def build_persona_training_target_owner(
         json_path=path,
         owner_service="persona-svc",
     )
-    return PersistentPersonaTrainingTargetOwner(records, persona_owner=persona_owner)
+    return PersistentPersonaTrainingTargetOwner(
+        records,
+        persona_owner=persona_owner,
+        approval_verifier=(
+            approval_verifier
+            if approval_verifier is not None
+            else build_training_target_approval_verifier()
+        ),
+    )
 
 
 def build_persona_owner() -> PersistentPersonaOwner:
@@ -1198,6 +1600,7 @@ __all__ = [
     "CapabilitySnapshotNotFound",
     "CommitPersonaTrainingTargetRequest",
     "CreatePersonaRequest",
+    "HttpGovernanceApprovalVerifier",
     "PatchPersonaRequest",
     "PersistentCapabilitySnapshotOwner",
     "PersistentPersonaOwner",
@@ -1211,13 +1614,18 @@ __all__ = [
     "PersonaOwnerError",
     "GovernanceDecisionVerifier",
     "RequiredDataSourceBody",
+    "TrainingTargetApprovalInvalid",
+    "TrainingTargetApprovalUnavailable",
+    "TrainingTargetApprovalVerifier",
     "TrainingTargetGenerationConflict",
     "TrainingTargetIdempotencyConflict",
+    "TrainingTargetProofInvalid",
     "TrainingTargetTenantMismatch",
     "UpsertCapabilitySnapshotRequest",
     "app",
     "build_capability_snapshot_owner",
     "build_persona_owner",
     "build_persona_training_target_owner",
+    "build_training_target_approval_verifier",
     "create_app",
 ]
