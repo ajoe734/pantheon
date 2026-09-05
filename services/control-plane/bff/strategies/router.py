@@ -710,20 +710,7 @@ def create_strategies_router(
             route="/bff/strategies/{strategy_id}/actions/{action_id}",
             replacement="/bff/actions/strategy/{strategy_id}/{action_id}",
         )
-        identity = _extract_identity(authorization)
-        _require_read_role(identity)
-        reject_body_idempotency_key(payload)
-        resolved_key = resolve_final_idempotency_key(idempotency_key, x_idempotency_key)
-        _ensure_strategy_exists(strategy_id)
-        return strategy_persona_action_command(
-            entity_type=ObjectType.STRATEGY,
-            entity_id=strategy_id,
-            action_id=action_id,
-            resolved_key=resolved_key,
-            identity=identity,
-            payload=payload,
-            command_type=CommandType.STRATEGY_ACTION,
-        )
+
 
     @router.post("/bff/strategies/{strategy_id}/dry-run", status_code=202)
     async def bff_strategy_dry_run(
