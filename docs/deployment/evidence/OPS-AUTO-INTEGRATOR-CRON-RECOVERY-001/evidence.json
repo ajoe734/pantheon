@@ -1,0 +1,104 @@
+{
+  "schema_version": "pantheon.review-evidence.v1",
+  "task_id": "OPS-AUTO-INTEGRATOR-CRON-RECOVERY-001",
+  "title": "Promote and prove recovered auto-integrator cron",
+  "owner": "Codex",
+  "reviewer": "Claude",
+  "target_repo": "pantheon",
+  "task_class": "development_tooling",
+  "delivery_state": "ready_for_independent_review",
+  "scope": {
+    "owned": [
+      "Redacted recovery receipts for the promoted auto-integrator runtime",
+      "Operations guidance for separating host attestation from reproducible verification"
+    ],
+    "not_changing": [
+      "Auto-integrator implementation, merge authority, or task lifecycle",
+      "Live crontab, supervisor configuration, or runtime files",
+      "Product runtime or production deployment"
+    ],
+    "composes_with": [
+      "OPS-REVIEW-AUDIT-EVENT-ORDER-PREREQUISITE-001",
+      "OPS-AUTO-INTEGRATOR-STATUS-AUTHORITY-PREREQUISITE-001"
+    ]
+  },
+  "operator_recovery_attestation": {
+    "actor": "Human/Ops",
+    "recorded_at": "2026-09-05T01:15:54Z",
+    "canonical_event_id": "ai-status-event-0508f4b2aa5ef74c81aef6e310948f6ff9362b666152b987919828456e91bf01",
+    "command_runtime_sha": "20282eba2ce2304560ab7eab0cd27af824a22b8b",
+    "single_tagged_cron_entry": true,
+    "live_supervisor_config_rebound": true,
+    "serialized_execute_ticks_observed": 2,
+    "authority_chronology_root_or_lock_errors": 0,
+    "first_tick": "Merged PR #5527 exact head 664376405deb15c86285741b5d51b2cf98d9e290.",
+    "second_tick": "Completed serialization observation; PR #5528 was already merged and archived done.",
+    "verification_boundary": "The isolated worker cannot read the host crontab and therefore treats entry count and tick count as the canonical Human/Ops attestation, not as worker-generated evidence."
+  },
+  "independent_verification": {
+    "runtime": {
+      "command_runtime_sha": "20282eba2ce2304560ab7eab0cd27af824a22b8b",
+      "command_runtime_exists": true,
+      "live_pantheon_integration_path_sha": "20282eba2ce2304560ab7eab0cd27af824a22b8b",
+      "runtime_is_ancestor_of_dev": true,
+      "contains_both_declared_prerequisites": true
+    },
+    "serialization": {
+      "canonical_lock_path": ".orchestrator/auto-integrator.lock",
+      "overlap_log_result": "integration_lock_held",
+      "overlap_exit_semantics": "successful skip while the active flock protects owner metadata",
+      "second_integrator_implementation_found": false
+    },
+    "pr_5527": {
+      "state": "MERGED",
+      "head_sha": "664376405deb15c86285741b5d51b2cf98d9e290",
+      "merge_commit_sha": "4407c6063f4d7b31863c0e5fa450f29cfe3fc90e",
+      "head_is_ancestor_of_dev": true,
+      "integration_receipt_source": "canonical_auto_integrator",
+      "integration_receipt_observation": "performed_merge",
+      "canonical_task_state": "done",
+      "canonical_task_source": "archive"
+    },
+    "pr_5528": {
+      "state": "MERGED",
+      "head_sha": "753d61a02976aea2cb146604fd204de6cf81ce37",
+      "merge_commit_sha": "54f0f01b7e7a152d2743908e208f47f954348382",
+      "canonical_task_state": "done",
+      "canonical_task_source": "archive"
+    }
+  },
+  "source_receipts": [
+    "Canonical Human/Ops reopen event ai-status-event-0508f4b2aa5ef74c81aef6e310948f6ff9362b666152b987919828456e91bf01",
+    "Canonical archived task snapshot ai-task-archive/tasks/OPS-HOST-REBUILD-RUNTIME-BOOTSTRAP-20260902.json",
+    "Live supervisor config runtime/live-supervisor-mainroot-config.json (paths and SHA only; contents not copied)",
+    "Canonical cron log .orchestrator/logs/auto-integrator-cron.log (result token only; historical secrets and process output not copied)",
+    "GitHub pull request metadata for #5527 and #5528",
+    "origin/dev ancestry checks"
+  ],
+  "verification": {
+    "status": "passed",
+    "commands": [
+      "AI_NAME=Codex $PANTHEON_COMMAND_ROOT/scripts/ai-status.sh show OPS-AUTO-INTEGRATOR-CRON-RECOVERY-001",
+      "AI_NAME=Codex $PANTHEON_COMMAND_ROOT/scripts/ai-status.sh show OPS-HOST-REBUILD-RUNTIME-BOOTSTRAP-20260902",
+      "gh pr view 5527 --repo ajoe734/pantheon --json number,state,mergeCommit,headRefOid,baseRefName,mergedAt",
+      "gh pr view 5528 --repo ajoe734/pantheon --json number,state,mergeCommit,headRefOid,baseRefName,mergedAt",
+      "git merge-base --is-ancestor 664376405deb15c86285741b5d51b2cf98d9e290 origin/dev",
+      "git merge-base --is-ancestor 20282eba2ce2304560ab7eab0cd27af824a22b8b origin/dev",
+      "jq '{coordination:.coordination, task_state_store:.task_state_store}' <live-supervisor-config>",
+      "rg 'integration_lock_held' <canonical-status-root>/.orchestrator/logs/auto-integrator-cron.log",
+      "python3 -m json.tool docs/deployment/evidence/OPS-AUTO-INTEGRATOR-CRON-RECOVERY-001/evidence.json",
+      "git diff --check"
+    ],
+    "notes": [
+      "The live configuration binds the Pantheon integration checkout to the same immutable SHA as the command runtime.",
+      "PR #5527 metadata, ancestry, archive state, and its canonical integration receipt agree on the exact head and merge commit.",
+      "PR #5528 metadata and canonical archive agree that it was already merged and finalized.",
+      "The overlap log is positive serialization evidence; historical pre-promotion failures in the same append-only log are not post-recovery failures."
+    ]
+  },
+  "review_decision": {
+    "status": "pending",
+    "reviewer": "Claude",
+    "note": "Independently validate the exact PR metadata, canonical receipts, runtime binding, ancestry, and attestation boundary before approval."
+  }
+}
