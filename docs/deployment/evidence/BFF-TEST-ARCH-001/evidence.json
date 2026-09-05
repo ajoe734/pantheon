@@ -31,7 +31,7 @@
     "unqualified_main_imports": 0,
     "ordinary_test_sys_path_mutations": 0,
     "external_file_loader_allowlist": [],
-    "reconciled_direct_main_imports": 205,
+    "reconciled_direct_main_imports": 201,
     "reconciled_migrated_tests": [
       "services/control-plane/bff/test_mgmt_load_002_shell_summary.py",
       "services/control-plane/bff/tests/test_bff_management_cockpit.py",
@@ -39,7 +39,11 @@
       "services/control-plane/bff/tests/test_bff_management_data_sources_contract.py",
       "services/control-plane/bff/tests/test_bff_knowledge_inbox.py",
       "services/control-plane/bff/tests/test_incident_router.py",
-      "services/control-plane/bff/test_inc001_rebaseline_incidents_contract.py"
+      "services/control-plane/bff/test_inc001_rebaseline_incidents_contract.py",
+      "services/control-plane/bff/test_settings_contract.py",
+      "services/control-plane/bff/test_bff_audit_contract.py",
+      "services/control-plane/bff/test_evolution_center_contract.py",
+      "services/control-plane/bff/test_devloop_telread_telemetry_contract.py"
     ],
     "test_layer_classification_summary": {
       "composition": 11,
@@ -271,17 +275,17 @@
   "acceptance_matrix": [
     {
       "criterion": "Classify and migrate the audited 218 main-importing tests to composition, router, application, adapter or hosted layers.",
-      "evidence": "All 218 audited baseline cases (216 unique files) classified into 5 layers (11 composition, 96 router, 106 application, 3 adapter, 0 hosted). In-process TestClient smoke tests corrected from hosted to composition/router/application (repo hosted count is 0). 7 domain suites migrated with isolated router fixtures across Management and Incident domains.",
+      "evidence": "All 218 audited baseline cases (216 unique files) classified into 5 layers (11 composition, 96 router, 106 application, 3 adapter, 0 hosted). In-process TestClient smoke tests corrected from hosted to composition/router/application (repo hosted count is 0). 11 domain suites migrated with isolated router fixtures across Management, Incident, Settings, and Evolution domains.",
       "status": "in_progress"
     },
     {
       "criterion": "Only a reviewed composition allowlist imports the app; focused files collect and complete within explicit timeout budgets.",
-      "evidence": "Architecture gates in test_test_import_architecture.py enforce the strict direct-main allowlist (ceiling lowered monotonically from 210 to <= 205), package qualification, and timeout-bounded test collection.",
+      "evidence": "Architecture gates in test_test_import_architecture.py enforce the strict direct-main allowlist (ceiling lowered monotonically from 210 to 205 to <= 201), package qualification, and timeout-bounded test collection.",
       "status": "in_progress"
     },
     {
       "criterion": "Mandatory deletion: non-composition global read_store/overlay monkeypatching, test sys.path surgery made obsolete by package normalization.",
-      "evidence": "Zero test-local sys.path insertions outside conftest; migrated router contract tests decouple from bff_main.read_store and bff_main.app, constructing isolated router fixtures.",
+      "evidence": "Zero test-local sys.path insertions outside conftest; 11 migrated router contract tests decouple from bff_main.read_store, bff_main.settings_store, and bff_main.app, constructing isolated router fixtures.",
       "status": "in_progress"
     }
   ],
@@ -292,8 +296,8 @@
       "timeout_seconds": 90
     },
     {
-      "command": "python -m pytest -q services/control-plane/bff/test_mgmt_load_002_shell_summary.py services/control-plane/bff/tests/test_bff_management_cockpit.py services/control-plane/bff/test_bff_mgmt_ops_001_operations_read_model_contract.py services/control-plane/bff/tests/test_bff_management_data_sources_contract.py services/control-plane/bff/tests/test_bff_knowledge_inbox.py services/control-plane/bff/tests/test_incident_router.py services/control-plane/bff/test_inc001_rebaseline_incidents_contract.py",
-      "result": "41 passed in 18.2s across 7 decoupled suites",
+      "command": "python -m pytest -q services/control-plane/bff/test_mgmt_load_002_shell_summary.py services/control-plane/bff/tests/test_bff_management_cockpit.py services/control-plane/bff/test_bff_mgmt_ops_001_operations_read_model_contract.py services/control-plane/bff/tests/test_bff_management_data_sources_contract.py services/control-plane/bff/tests/test_bff_knowledge_inbox.py services/control-plane/bff/tests/test_incident_router.py services/control-plane/bff/test_inc001_rebaseline_incidents_contract.py services/control-plane/bff/test_settings_contract.py services/control-plane/bff/test_bff_audit_contract.py services/control-plane/bff/test_evolution_center_contract.py services/control-plane/bff/test_devloop_telread_telemetry_contract.py",
+      "result": "60 passed across 11 decoupled suites (65 passed including architecture gate in 38.89s)",
       "timeout_seconds": 60
     }
   ]

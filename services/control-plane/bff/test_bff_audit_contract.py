@@ -8,14 +8,14 @@ from __future__ import annotations
 import os
 import sys
 import tempfile
-
-import pytest
-from fastapi.testclient import TestClient
-
-
-from services.control_plane.bff import main as bff_main
 from typing import Any
 
+import pytest
+from fastapi import FastAPI, HTTPException
+from fastapi.testclient import TestClient
+
+from services.control_plane.bff.incidents.router import create_incident_router
+from services.control_plane.bff.models import OperatorIdentity
 from services.control_plane.bff.ports import ReadSurfacePorts, create_in_memory_read_surface_ports
 
 OPERATOR_HEADERS = {"Authorization": "Bearer op-aud:operator"}
@@ -78,9 +78,35 @@ class AuditTestReadPorts(ReadSurfacePorts):
         return filtered
 
 
-def _fresh_client(td: str, *, allow_fallback: bool = True) -> TestClient:
-    bff_main.read_store = AuditTestReadPorts(allow_fallback=allow_fallback)
-    return TestClient(bff_main.app, raise_server_exceptions=False)
+def _fresh_client(td: str = "", *, allow_fallback: bool = True) -> TestClient:
+    store = AuditTestReadPorts(allow_fallback=allow_fallback)
+    app = FastAPI(title="Audit router contract")
+
+    def _extract_identity(authorization: str | None) -> OperatorIdentity:
+        if not authorization or not authorization.startswith("Bearer "):
+            raise HTTPException(status_code=401, detail="Authentication required")
+        raw = authorization[len("Bearer "):].strip()
+        parts = raw.split(":")
+        operator_id = parts[0] if parts else "op"
+        roles = parts[1].split(",") if len(parts) > 1 else []
+        return OperatorIdentity(operator_id=operator_id, roles=roles, claims={})
+
+    def _require_read_role(identity: OperatorIdentity) -> None:
+        if not identity or not identity.roles:
+            raise HTTPException(status_code=403, detail="Forbidden")
+
+    router = create_incident_router(
+        list_governance_audit_events=store.list_governance_audit_events,
+        extract_identity=_extract_identity,
+        require_read_role=_require_read_role,
+        read_surface_meta=lambda surface, view, **kwargs: {
+            "snapshot_at": "2026-05-01T12:00:00Z",
+            "source": "local_store",
+            "total": kwargs.get("total", 0),
+        },
+    )
+    app.include_router(router)
+    return TestClient(app, raise_server_exceptions=False)
 
 
 # ---------------------------------------------------------------------------
@@ -88,49 +114,34 @@ def _fresh_client(td: str, *, allow_fallback: bool = True) -> TestClient:
 # ---------------------------------------------------------------------------
 
 def test_bff_audit_returns_200_with_standard_envelope() -> None:
-    with tempfile.TemporaryDirectory() as td:
-        original = bff_main.read_store
-        try:
-            client = _fresh_client(td)
-            resp = client.get("/bff/audit", headers=OPERATOR_HEADERS)
-            assert resp.status_code == 200, resp.text
-            body = resp.json()
-            assert "data" in body
-            assert "items" in body
-            assert "page_info" in body
-            assert "meta" in body
-            assert isinstance(body["data"], list)
-            assert isinstance(body["items"], list)
-        finally:
-            bff_main.read_store = original
+    client = _fresh_client()
+    resp = client.get("/bff/audit", headers=OPERATOR_HEADERS)
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert "data" in body
+    assert "items" in body
+    assert "page_info" in body
+    assert "meta" in body
+    assert isinstance(body["data"], list)
+    assert isinstance(body["items"], list)
 
 
 def test_bff_audit_returns_fixture_events_from_pack_a() -> None:
-    with tempfile.TemporaryDirectory() as td:
-        original = bff_main.read_store
-        try:
-            client = _fresh_client(td, allow_fallback=True)
-            resp = client.get("/bff/audit", headers=OPERATOR_HEADERS)
-            assert resp.status_code == 200, resp.text
-            body = resp.json()
-            # pack_a fixture ships two governance_audit_events
-            assert len(body["data"]) >= 2
-        finally:
-            bff_main.read_store = original
+    client = _fresh_client(allow_fallback=True)
+    resp = client.get("/bff/audit", headers=OPERATOR_HEADERS)
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    # pack_a fixture ships two governance_audit_events
+    assert len(body["data"]) >= 2
 
 
 def test_bff_audit_page_info_has_total() -> None:
-    with tempfile.TemporaryDirectory() as td:
-        original = bff_main.read_store
-        try:
-            client = _fresh_client(td, allow_fallback=True)
-            resp = client.get("/bff/audit", headers=OPERATOR_HEADERS)
-            assert resp.status_code == 200, resp.text
-            page_info = resp.json()["page_info"]
-            assert "total" in page_info
-            assert isinstance(page_info["total"], int)
-        finally:
-            bff_main.read_store = original
+    client = _fresh_client(allow_fallback=True)
+    resp = client.get("/bff/audit", headers=OPERATOR_HEADERS)
+    assert resp.status_code == 200, resp.text
+    page_info = resp.json()["page_info"]
+    assert "total" in page_info
+    assert isinstance(page_info["total"], int)
 
 
 # ---------------------------------------------------------------------------
@@ -138,75 +149,55 @@ def test_bff_audit_page_info_has_total() -> None:
 # ---------------------------------------------------------------------------
 
 def test_bff_audit_filter_by_actor() -> None:
-    with tempfile.TemporaryDirectory() as td:
-        original = bff_main.read_store
-        try:
-            client = _fresh_client(td, allow_fallback=True)
-            resp = client.get(
-                "/bff/audit",
-                params={"actor": "fixture-governance-reviewer"},
-                headers=OPERATOR_HEADERS,
-            )
-            assert resp.status_code == 200, resp.text
-            body = resp.json()
-            for event in body["data"]:
-                assert event.get("actor") == "fixture-governance-reviewer"
-        finally:
-            bff_main.read_store = original
+    client = _fresh_client(allow_fallback=True)
+    resp = client.get(
+        "/bff/audit",
+        params={"actor": "fixture-governance-reviewer"},
+        headers=OPERATOR_HEADERS,
+    )
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    for event in body["data"]:
+        assert event.get("actor") == "fixture-governance-reviewer"
 
 
 def test_bff_audit_filter_by_target_type() -> None:
-    with tempfile.TemporaryDirectory() as td:
-        original = bff_main.read_store
-        try:
-            client = _fresh_client(td, allow_fallback=True)
-            resp = client.get(
-                "/bff/audit",
-                params={"target_type": "strategy"},
-                headers=OPERATOR_HEADERS,
-            )
-            assert resp.status_code == 200, resp.text
-            body = resp.json()
-            for event in body["data"]:
-                assert event.get("target_type") == "strategy"
-        finally:
-            bff_main.read_store = original
+    client = _fresh_client(allow_fallback=True)
+    resp = client.get(
+        "/bff/audit",
+        params={"target_type": "strategy"},
+        headers=OPERATOR_HEADERS,
+    )
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    for event in body["data"]:
+        assert event.get("target_type") == "strategy"
 
 
 def test_bff_audit_filter_by_action_type() -> None:
-    with tempfile.TemporaryDirectory() as td:
-        original = bff_main.read_store
-        try:
-            client = _fresh_client(td, allow_fallback=True)
-            resp = client.get(
-                "/bff/audit",
-                params={"action_type": "route_policy_published"},
-                headers=OPERATOR_HEADERS,
-            )
-            assert resp.status_code == 200, resp.text
-            body = resp.json()
-            for event in body["data"]:
-                assert event.get("action_type") == "route_policy_published"
-        finally:
-            bff_main.read_store = original
+    client = _fresh_client(allow_fallback=True)
+    resp = client.get(
+        "/bff/audit",
+        params={"action_type": "route_policy_published"},
+        headers=OPERATOR_HEADERS,
+    )
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    for event in body["data"]:
+        assert event.get("action_type") == "route_policy_published"
 
 
 def test_bff_audit_filter_nonexistent_actor_returns_empty() -> None:
-    with tempfile.TemporaryDirectory() as td:
-        original = bff_main.read_store
-        try:
-            client = _fresh_client(td, allow_fallback=True)
-            resp = client.get(
-                "/bff/audit",
-                params={"actor": "no-such-actor-xyz"},
-                headers=OPERATOR_HEADERS,
-            )
-            assert resp.status_code == 200, resp.text
-            body = resp.json()
-            assert body["data"] == []
-            assert body["page_info"]["total"] == 0
-        finally:
-            bff_main.read_store = original
+    client = _fresh_client(allow_fallback=True)
+    resp = client.get(
+        "/bff/audit",
+        params={"actor": "no-such-actor-xyz"},
+        headers=OPERATOR_HEADERS,
+    )
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["data"] == []
+    assert body["page_info"]["total"] == 0
 
 
 # ---------------------------------------------------------------------------
@@ -214,52 +205,42 @@ def test_bff_audit_filter_nonexistent_actor_returns_empty() -> None:
 # ---------------------------------------------------------------------------
 
 def test_bff_audit_pagination_respects_page_size() -> None:
-    with tempfile.TemporaryDirectory() as td:
-        original = bff_main.read_store
-        try:
-            client = _fresh_client(td, allow_fallback=True)
-            resp = client.get(
-                "/bff/audit",
-                params={"page_size": 1},
-                headers=OPERATOR_HEADERS,
-            )
-            assert resp.status_code == 200, resp.text
-            body = resp.json()
-            assert len(body["data"]) <= 1
-            total = body["page_info"]["total"]
-            if total > 1:
-                assert body["page_info"]["next_page_token"] is not None
-        finally:
-            bff_main.read_store = original
+    client = _fresh_client(allow_fallback=True)
+    resp = client.get(
+        "/bff/audit",
+        params={"page_size": 1},
+        headers=OPERATOR_HEADERS,
+    )
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert len(body["data"]) <= 1
+    total = body["page_info"]["total"]
+    if total > 1:
+        assert body["page_info"]["next_page_token"] is not None
 
 
 def test_bff_audit_pagination_page_token_advances() -> None:
-    with tempfile.TemporaryDirectory() as td:
-        original = bff_main.read_store
-        try:
-            client = _fresh_client(td, allow_fallback=True)
-            first = client.get(
-                "/bff/audit",
-                params={"page_size": 1},
-                headers=OPERATOR_HEADERS,
-            )
-            assert first.status_code == 200
-            first_body = first.json()
-            if first_body["page_info"]["next_page_token"] is None:
-                pytest.skip("Only one event in fixture; pagination not exercised")
-            token = first_body["page_info"]["next_page_token"]
-            second = client.get(
-                "/bff/audit",
-                params={"page_size": 1, "page_token": token},
-                headers=OPERATOR_HEADERS,
-            )
-            assert second.status_code == 200
-            second_body = second.json()
-            first_ids = {e.get("entry_id") for e in first_body["data"]}
-            second_ids = {e.get("entry_id") for e in second_body["data"]}
-            assert first_ids.isdisjoint(second_ids), "Pages must not overlap"
-        finally:
-            bff_main.read_store = original
+    client = _fresh_client(allow_fallback=True)
+    first = client.get(
+        "/bff/audit",
+        params={"page_size": 1},
+        headers=OPERATOR_HEADERS,
+    )
+    assert first.status_code == 200
+    first_body = first.json()
+    if first_body["page_info"]["next_page_token"] is None:
+        pytest.skip("Only one event in fixture; pagination not exercised")
+    token = first_body["page_info"]["next_page_token"]
+    second = client.get(
+        "/bff/audit",
+        params={"page_size": 1, "page_token": token},
+        headers=OPERATOR_HEADERS,
+    )
+    assert second.status_code == 200
+    second_body = second.json()
+    first_ids = {e.get("entry_id") for e in first_body["data"]}
+    second_ids = {e.get("entry_id") for e in second_body["data"]}
+    assert first_ids.isdisjoint(second_ids), "Pages must not overlap"
 
 
 # ---------------------------------------------------------------------------
@@ -267,7 +248,7 @@ def test_bff_audit_pagination_page_token_advances() -> None:
 # ---------------------------------------------------------------------------
 
 def test_bff_audit_requires_auth() -> None:
-    client = TestClient(bff_main.app, raise_server_exceptions=False)
+    client = _fresh_client(allow_fallback=True)
     resp = client.get("/bff/audit", headers=ANON_HEADERS)
     assert resp.status_code in {401, 403}, resp.text
 
@@ -277,13 +258,8 @@ def test_bff_audit_requires_auth() -> None:
 # ---------------------------------------------------------------------------
 
 def test_bff_audit_meta_has_snapshot_at() -> None:
-    with tempfile.TemporaryDirectory() as td:
-        original = bff_main.read_store
-        try:
-            client = _fresh_client(td)
-            resp = client.get("/bff/audit", headers=OPERATOR_HEADERS)
-            assert resp.status_code == 200, resp.text
-            meta = resp.json()["meta"]
-            assert "snapshot_at" in meta
-        finally:
-            bff_main.read_store = original
+    client = _fresh_client()
+    resp = client.get("/bff/audit", headers=OPERATOR_HEADERS)
+    assert resp.status_code == 200, resp.text
+    meta = resp.json()["meta"]
+    assert "snapshot_at" in meta

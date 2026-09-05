@@ -7,10 +7,10 @@ import tempfile
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
+from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-
-from services.control_plane.bff import main as bff_main
+from services.control_plane.bff.evolution.router import create_evolution_router
 
 
 OPERATOR_TOKEN = "Bearer op-2:operator"
@@ -146,6 +146,31 @@ def _store() -> InMemoryTelemetryReadStore:
     return InMemoryTelemetryReadStore()
 
 
+def _make_telemetry_client(store: InMemoryTelemetryReadStore) -> TestClient:
+    def _dataset_surface_status(
+        dataset: str,
+        *,
+        snapshot_at: str | None = None,
+        has_data: bool | None = None,
+        missing_message: str | None = None,
+        source: str | None = None,
+    ) -> Dict[str, Any]:
+        return {
+            "status": "ok" if (has_data is None or has_data) else "missing",
+            "source": source or "ok",
+            "dataset": dataset,
+            "snapshot_at": snapshot_at or "2026-06-14T00:00:00Z",
+        }
+
+    app = FastAPI(title="Telemetry Contract Test")
+    router = create_evolution_router(
+        read_surface=store,
+        dataset_surface_status=_dataset_surface_status,
+    )
+    app.include_router(router)
+    return TestClient(app)
+
+
 def test_api_v1_telemetry_prefers_real_event_store_over_summary_projection(monkeypatch) -> None:
     with tempfile.TemporaryDirectory() as td:
         tmp_path = Path(td)
@@ -183,28 +208,23 @@ def test_api_v1_telemetry_prefers_real_event_store_over_summary_projection(monke
         monkeypatch.setenv("PANTHEON_BFF_TELEMETRY_EVENT_STORE", str(event_store))
         monkeypatch.setenv("PANTHEON_BFF_TELEMETRY_SUMMARY_STORE", str(summary_store))
 
-        original_store = bff_main.read_store
-        bff_main.read_store = _store()
-        client = TestClient(bff_main.app)
+        client = _make_telemetry_client(_store())
 
-        try:
-            response = client.get(
-                "/api/v1/telemetry",
-                headers={"Authorization": OPERATOR_TOKEN},
-            )
-            assert response.status_code == 200, response.text
-            payload = response.json()
+        response = client.get(
+            "/api/v1/telemetry",
+            headers={"Authorization": OPERATOR_TOKEN},
+        )
+        assert response.status_code == 200, response.text
+        payload = response.json()
 
-            assert [event["id"] for event in payload["data"]] == ["tel-real-001"]
-            assert payload["data"][0]["type"] == "paper_fill_simulated"
-            assert payload["data"][0]["metrics"] == {"fill_qty": 10}
-            assert all(event["id"] != "tl-evt-runtime-summary-only" for event in payload["data"])
-            surface = payload["meta"]["surfaces"]["telemetry"]
-            assert surface["status"] == "ok"
-            assert surface["source"] == "service_store"
-            assert payload["meta"]["total"] == 1
-        finally:
-            bff_main.read_store = original_store
+        assert [event["id"] for event in payload["data"]] == ["tel-real-001"]
+        assert payload["data"][0]["type"] == "paper_fill_simulated"
+        assert payload["data"][0]["metrics"] == {"fill_qty": 10}
+        assert all(event["id"] != "tl-evt-runtime-summary-only" for event in payload["data"])
+        surface = payload["meta"]["surfaces"]["telemetry"]
+        assert surface["status"] == "ok"
+        assert surface["source"] == "service_store"
+        assert payload["meta"]["total"] == 1
 
 
 def test_api_v1_telemetry_marks_summary_projection_when_event_store_empty(monkeypatch) -> None:
@@ -233,25 +253,20 @@ def test_api_v1_telemetry_marks_summary_projection_when_event_store_empty(monkey
         monkeypatch.setenv("PANTHEON_BFF_TELEMETRY_EVENT_STORE", str(event_store))
         monkeypatch.setenv("PANTHEON_BFF_TELEMETRY_SUMMARY_STORE", str(summary_store))
 
-        original_store = bff_main.read_store
-        bff_main.read_store = _store()
-        client = TestClient(bff_main.app)
+        client = _make_telemetry_client(_store())
 
-        try:
-            response = client.get(
-                "/api/v1/telemetry",
-                headers={"Authorization": OPERATOR_TOKEN},
-            )
-            assert response.status_code == 200, response.text
-            payload = response.json()
+        response = client.get(
+            "/api/v1/telemetry",
+            headers={"Authorization": OPERATOR_TOKEN},
+        )
+        assert response.status_code == 200, response.text
+        payload = response.json()
 
-            assert [event["id"] for event in payload["data"]] == ["tl-evt-runtime-fallback"]
-            assert payload["data"][0]["type"] == "telemetry_snapshot"
-            assert payload["data"][0]["metrics"]["pnl"] == 0.17
-            surface = payload["meta"]["surfaces"]["telemetry"]
-            assert surface["status"] == "degraded"
-            assert surface["source"] == "telemetry_summary_fallback"
-            assert surface["staleness"]["served_from"] == "telemetry_summary_fallback"
-            assert "event store is empty" in surface["note"]
-        finally:
-            bff_main.read_store = original_store
+        assert [event["id"] for event in payload["data"]] == ["tl-evt-runtime-fallback"]
+        assert payload["data"][0]["type"] == "telemetry_snapshot"
+        assert payload["data"][0]["metrics"]["pnl"] == 0.17
+        surface = payload["meta"]["surfaces"]["telemetry"]
+        assert surface["status"] == "degraded"
+        assert surface["source"] == "telemetry_summary_fallback"
+        assert surface["staleness"]["served_from"] == "telemetry_summary_fallback"
+        assert "event store is empty" in surface["note"]
