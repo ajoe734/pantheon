@@ -8,10 +8,11 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+from fastapi import FastAPI, HTTPException
 from fastapi.testclient import TestClient
 
-
-from services.control_plane.bff import main as bff_main
+from services.control_plane.bff.governance.router import create_governance_router
+from services.control_plane.bff.models import OperatorIdentity
 
 
 OPERATOR_AUTH = "Bearer test-operator:operator"
@@ -223,19 +224,42 @@ class _TranscriptReadStore:
         }
 
 
+def _make_client(store: _TranscriptReadStore) -> TestClient:
+    def _extract_identity(authorization: str | None) -> OperatorIdentity:
+        if not authorization or not authorization.startswith("Bearer "):
+            raise HTTPException(status_code=401, detail="Authentication required")
+        raw = authorization[len("Bearer "):].strip()
+        parts = raw.split(":")
+        operator_id = parts[0] if parts else "op"
+        roles = parts[1].split(",") if len(parts) > 1 else []
+        return OperatorIdentity(operator_id=operator_id, roles=roles, claims={})
+
+    def _require_read_role(identity: OperatorIdentity) -> None:
+        if not identity or not identity.roles:
+            raise HTTPException(status_code=403, detail="Forbidden")
+
+    app = FastAPI(title="Consultation Transcript Contract")
+    router = create_governance_router(
+        get_read_store=lambda: store,
+        extract_identity=_extract_identity,
+        require_read_role=_require_read_role,
+        require_operator_role=_require_read_role,
+    )
+    app.include_router(router)
+    client = TestClient(app, raise_server_exceptions=False)
+    client.store = store
+    return client
+
+
 @contextmanager
 def _seeded_client():
     with tempfile.TemporaryDirectory() as td:
-        original_store = bff_main.read_store
-        bff_main.read_store = _TranscriptReadStore(
+        store = _TranscriptReadStore(
             os.path.join(td, "read_surfaces.json"),
             allow_local_snapshot_fallback=True,
         )
-        client = TestClient(bff_main.app)
-        try:
-            yield client
-        finally:
-            bff_main.read_store = original_store
+        client = _make_client(store)
+        yield client
 
 
 def test_cw02_transcript_returns_required_envelope() -> None:
@@ -344,7 +368,7 @@ def test_cw02_transcript_surface_state_ok_for_contiguous_events() -> None:
 def test_cw02_transcript_surface_state_degraded_for_gap() -> None:
     with _seeded_client() as client:
         # introduce a sequence gap by removing sequence_no 2
-        store = bff_main.read_store
+        store = client.store
         transcript = store._data["consult_transcripts"][_SESSION_ID]
         transcript["events"] = [
             e for e in transcript["events"] if e["sequence_no"] != 2
@@ -416,7 +440,7 @@ def test_cw02_transcript_unauthenticated_is_rejected() -> None:
 def test_cw02_transcript_surface_state_degraded_when_gap_hidden_by_filter() -> None:
     """Gap detection must use the full stream even when from_sequence_no skips past the gap."""
     with _seeded_client() as client:
-        store = bff_main.read_store
+        store = client.store
         transcript = store._data["consult_transcripts"][_SESSION_ID]
         transcript["events"] = [
             e for e in transcript["events"] if e["sequence_no"] != 2
@@ -428,8 +452,9 @@ def test_cw02_transcript_surface_state_degraded_when_gap_hidden_by_filter() -> N
             headers={"Authorization": OPERATOR_AUTH},
         )
         assert response.status_code == 200, response.text
+
         state = response.json()["meta"]["surfaces"]["transcript"]["state"]
-        assert state == "degraded", "gap in full stream must surface as degraded even when filtered slice looks contiguous"
+        assert state == "degraded"
 
 
 def test_cw02_transcript_served_from_local_snapshot() -> None:
@@ -440,7 +465,8 @@ def test_cw02_transcript_served_from_local_snapshot() -> None:
         assert served_from == "local_snapshot"
 
 
-def test_cw02_transcript_served_from_service_store() -> None:
+def test_cw02_transcript_reads_from_consultation_service_store_when_configured() -> None:
+    """When PANTHEON_BFF_CONSULT_TRANSCRIPT_STORE is set, transcript reads prefer it."""
     seed_record = {
         "transcript_id": "tr-cs-20260419-081",
         "session_id": _SESSION_ID,
@@ -449,7 +475,7 @@ def test_cw02_transcript_served_from_service_store() -> None:
             {
                 "transcript_id": "tr-cs-20260419-081",
                 "session_id": _SESSION_ID,
-                "event_id": "evt-001",
+                "event_id": "evt-s-001",
                 "sequence_no": 1,
                 "parent_event_id": None,
                 "event_type": "message",
@@ -473,19 +499,17 @@ def test_cw02_transcript_served_from_service_store() -> None:
         original_env = os.environ.get("PANTHEON_BFF_CONSULT_TRANSCRIPT_STORE")
         os.environ["PANTHEON_BFF_CONSULT_TRANSCRIPT_STORE"] = transcript_path
 
-        original_store = bff_main.read_store
-        bff_main.read_store = _TranscriptReadStore(
+        store = _TranscriptReadStore(
             os.path.join(td, "read_surfaces.json"),
             allow_local_snapshot_fallback=True,
         )
-        client = TestClient(bff_main.app)
+        client = _make_client(store)
         try:
             response = client.get(_TRANSCRIPT_URL, headers={"Authorization": OPERATOR_AUTH})
             assert response.status_code == 200, response.text
             served_from = response.json()["meta"]["staleness"]["served_from"]
             assert served_from == "service_store"
         finally:
-            bff_main.read_store = original_store
             if original_env is None:
                 os.environ.pop("PANTHEON_BFF_CONSULT_TRANSCRIPT_STORE", None)
             else:

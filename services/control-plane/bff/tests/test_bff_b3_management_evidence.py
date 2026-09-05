@@ -15,11 +15,14 @@ from pathlib import Path
 from typing import Iterator
 from contextlib import contextmanager
 
+from fastapi import FastAPI, HTTPException
 from fastapi.testclient import TestClient
+from starlette.responses import JSONResponse
 
-
-from services.control_plane.bff import main as bff_main
+from services.control_plane.bff.management_read_models.router import create_management_router
+from services.control_plane.bff.models import OperatorIdentity
 from services.control_plane.bff.ports import create_read_surface_ports
+from services.control_plane.bff.research.router import create_research_router
 
 
 ADMIN_HEADERS = {"Authorization": "Bearer op-b3:admin"}
@@ -59,6 +62,49 @@ class _EvidenceRefsTestStore:
 
     def __getattr__(self, name: str) -> Any:
         return getattr(self.ports, name)
+
+
+def _make_client(store: Any) -> TestClient:
+    def _extract_identity(authorization: Optional[str] = None) -> OperatorIdentity:
+        if not authorization or not authorization.startswith("Bearer "):
+            raise HTTPException(status_code=401, detail={"error": {"code": "AUTH_REQUIRED", "message": "Authorization required"}})
+        raw = authorization[len("Bearer "):].strip()
+        parts = raw.split(":")
+        operator_id = parts[0] if parts else "op"
+        roles = parts[1].split(",") if len(parts) > 1 else []
+        return OperatorIdentity(operator_id=operator_id, roles=roles, claims={})
+
+    def _require_read_role(identity: Any) -> None:
+        roles = set(getattr(identity, "roles", []))
+        if not roles.intersection({"operator", "admin", "reviewer"}):
+            raise HTTPException(status_code=403, detail={"error": {"code": "FORBIDDEN", "message": "Forbidden"}})
+
+    def _bff_error(status_code: int, code: Any, message: str, **kwargs: Any) -> HTTPException:
+        return HTTPException(
+            status_code=status_code,
+            detail={"error": {"code": getattr(code, "value", str(code)), "message": message, **kwargs}},
+        )
+
+    app = FastAPI(title="Management Evidence Contract")
+
+    @app.exception_handler(HTTPException)
+    async def _http_exc_handler(req, exc):
+        if isinstance(exc.detail, dict) and "error" in exc.detail:
+            return JSONResponse(status_code=exc.status_code, content=exc.detail)
+        return JSONResponse(status_code=exc.status_code, content={"error": {"code": "ERROR", "message": str(exc.detail)}})
+
+    app.include_router(create_management_router(read_surface=store))
+    app.include_router(
+        create_research_router(
+            read_surface=store,
+            extract_identity=_extract_identity,
+            require_read_role=_require_read_role,
+            require_operator_role=_require_read_role,
+            bff_error=_bff_error,
+            utc_now=lambda: "2026-05-23T09:00:00Z",
+        )
+    )
+    return TestClient(app, raise_server_exceptions=False)
 
 
 @contextmanager
@@ -166,13 +212,10 @@ def _evidence_client() -> Iterator[TestClient]:
         os.environ["PANTHEON_BFF_EVIDENCE_REF_STORE"] = str(evidence_store)
         os.environ.pop("PANTHEON_BFF_LIVE_EVIDENCE_VERIFY_JSON", None)
         os.environ.pop("PANTHEON_AUDIT_OUT_DIR", None)
-        original_store = bff_main.read_store
         try:
-            bff_main.read_store = _EvidenceRefsTestStore()
-            with TestClient(bff_main.app) as client:
-                yield client
+            client = _make_client(_EvidenceRefsTestStore())
+            yield client
         finally:
-            bff_main.read_store = original_store
             for key, value in tracked_env.items():
                 if value is None:
                     os.environ.pop(key, None)
@@ -257,13 +300,10 @@ def _current_run_evidence_client(verifier_path: Path) -> Iterator[TestClient]:
     os.environ.pop("PANTHEON_BFF_EVIDENCE_REF_STORE", None)
     os.environ["PANTHEON_BFF_LIVE_EVIDENCE_VERIFY_JSON"] = str(verifier_path)
     os.environ.pop("PANTHEON_AUDIT_OUT_DIR", None)
-    original_store = bff_main.read_store
     try:
-        bff_main.read_store = create_read_surface_ports()
-        with TestClient(bff_main.app) as client:
-            yield client
+        client = _make_client(create_read_surface_ports())
+        yield client
     finally:
-        bff_main.read_store = original_store
         for key, value in tracked_env.items():
             if value is None:
                 os.environ.pop(key, None)

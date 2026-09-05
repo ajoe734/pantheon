@@ -11,10 +11,11 @@ import os
 import sys
 import tempfile
 
+from fastapi import FastAPI, HTTPException
 from fastapi.testclient import TestClient
+from starlette.responses import JSONResponse
 
-
-from services.control_plane.bff import main as bff_main
+from services.control_plane.bff.management_read_models.router import create_management_router
 from services.control_plane.bff.ports import create_in_memory_read_surface_ports
 
 OPERATOR_HEADERS = {"Authorization": "Bearer op-b3-trading:operator,reviewer"}
@@ -224,222 +225,210 @@ def _fresh_client(td: str, *, include_gap: bool = False) -> TestClient:
         "paper_live_drift_reports": "service_store",
         "rollbacks": "service_store",
     }.get(dataset, "missing")
-    bff_main.read_store = store
-    return TestClient(bff_main.app)
+    app = FastAPI(title="Trading Pulse Contract")
+
+    @app.exception_handler(HTTPException)
+    async def _http_exc_handler(req, exc):
+        if isinstance(exc.detail, dict) and "error" in exc.detail:
+            return JSONResponse(status_code=exc.status_code, content=exc.detail)
+        return JSONResponse(status_code=exc.status_code, content={"error": {"code": "ERROR", "message": str(exc.detail)}})
+
+    app.include_router(create_management_router(read_surface=store))
+    return TestClient(app, raise_server_exceptions=False)
 
 
 def test_trading_pulse_returns_card_aggregate_and_runtime_rankings() -> None:
     with tempfile.TemporaryDirectory() as td:
-        original_store = bff_main.read_store
-        try:
-            client = _fresh_client(td)
-            resp = client.get("/bff/management/trading-pulse", headers=OPERATOR_HEADERS)
+        client = _fresh_client(td)
+        resp = client.get("/bff/management/trading-pulse", headers=OPERATOR_HEADERS)
 
-            assert resp.status_code == 200, resp.text
-            body = resp.json()
-            assert set(body) == {"data", "page_info", "meta"}
-            data = body["data"]
-            summary = data["summary"]
-            assert data["id"] == "management-trading-pulse"
-            assert "items" not in body
-            assert "summary" not in body
-            assert summary["runtime_count"] == 2
-            assert summary["telemetry_coverage_count"] == 2
-            assert summary["total_pnl"] == 0.3
-            assert summary["worst_drawdown"] == 0.11
-            assert summary["average_fill_rate"] == 0.89
-            assert summary["worst_slippage_bps"] == 4.8
-            assert summary["total_trades"] == 42
-            assert summary["by_status"] == {"running": 1, "paused": 1}
-            assert summary["by_stage"] == {"paper": 1, "canary": 1}
-            assert summary["baseline_comparison_count"] == 2
-            assert summary["baseline_breached_count"] == 1
-            assert summary["baseline_watch_count"] == 1
-            assert summary["by_baseline_status"] == {"watch": 1, "breached": 1}
-            assert summary["row_health_degraded_count"] == 0
-            assert summary["row_health_status_counts"] == {"ok": 2}
-            assert summary["monitoring_coverage_count"] == 1
-            assert summary["missing_monitoring_runtime_ids"] == []
-            assert summary["coverage"]["metric_coverage"]["pnl"]["available_count"] == 2
-            assert "rowHealthDegradedCount" not in summary
-            assert "rowHealthStatusCounts" not in summary
-            assert "monitoringCoverageCount" not in summary
-            assert "metricCoverage" not in summary["coverage"]
+        assert resp.status_code == 200, resp.text
+        body = resp.json()
+        assert set(body) == {"data", "page_info", "meta"}
+        data = body["data"]
+        summary = data["summary"]
+        assert data["id"] == "management-trading-pulse"
+        assert "items" not in body
+        assert "summary" not in body
+        assert summary["runtime_count"] == 2
+        assert summary["telemetry_coverage_count"] == 2
+        assert summary["total_pnl"] == 0.3
+        assert summary["worst_drawdown"] == 0.11
+        assert summary["average_fill_rate"] == 0.89
+        assert summary["worst_slippage_bps"] == 4.8
+        assert summary["total_trades"] == 42
+        assert summary["by_status"] == {"running": 1, "paused": 1}
+        assert summary["by_stage"] == {"paper": 1, "canary": 1}
+        assert summary["baseline_comparison_count"] == 2
+        assert summary["baseline_breached_count"] == 1
+        assert summary["baseline_watch_count"] == 1
+        assert summary["by_baseline_status"] == {"watch": 1, "breached": 1}
+        assert summary["row_health_degraded_count"] == 0
+        assert summary["row_health_status_counts"] == {"ok": 2}
+        assert summary["monitoring_coverage_count"] == 1
+        assert summary["missing_monitoring_runtime_ids"] == []
+        assert summary["coverage"]["metric_coverage"]["pnl"]["available_count"] == 2
+        assert "rowHealthDegradedCount" not in summary
+        assert "rowHealthStatusCounts" not in summary
+        assert "monitoringCoverageCount" not in summary
+        assert "metricCoverage" not in summary["coverage"]
 
-            assert len(data["cards"]) == 6
-            assert {card["card_id"] for card in data["cards"]} >= {"row-health"}
-            assert data["rankings"][0]["runtime_id"] == "runtime-alpha"
-            assert data["rankings"][0]["rank"] == 1
-            assert data["rankings"][0]["baseline_comparison_status"] == "watch"
-            assert "rowHealthStatus" not in data["rankings"][0]
-            assert "rowHealthDegradedChecks" not in data["rankings"][0]
-            rows_by_runtime = {row["runtime_id"]: row for row in data["runtime_rows"]}
-            assert data["runtime_rows"][0]["runtime_id"] == "runtime-beta"
-            assert rows_by_runtime["runtime-alpha"]["telemetry_summary"]["metrics"]["pnl"] == 0.42
-            assert (
-                rows_by_runtime["runtime-alpha"]["baseline_comparison"]["paper_baseline"]["metrics"]["pnl"]
-                == 0.25
-            )
-            comparisons_by_runtime = {
-                comparison["runtime_id"]: comparison
-                for comparison in data["baseline_comparisons"]
-            }
-            assert comparisons_by_runtime["runtime-beta"]["status"] == "breached"
-            assert comparisons_by_runtime["runtime-beta"]["paper_live_drift"]["available"] is True
-            assert body["page_info"] == {
-                "next_page_token": None,
-                "total": 6,
-                "page_size": 6,
-            }
-            assert body["meta"]["surfaces"]["management_trading_pulse"]["source"] == "bff_composed"
-            assert body["meta"]["surfaces"]["runtime_roster"]["source"] == "canonical"
-            assert body["meta"]["surfaces"]["telemetry_summary"]["source"] == "service_store"
-            assert body["meta"]["surfaces"]["paper_runtime_monitoring"]["source"] == "service_store"
-            assert body["meta"]["surfaces"]["paper_live_drift"]["source"] == "service_store"
-            assert body["meta"]["surfaces"]["baseline_comparison"]["source"] == "bff_composed"
-            assert body["meta"]["surfaces"]["runtime_row_health"]["status"] == "ok"
-        finally:
-            bff_main.read_store = original_store
+        assert len(data["cards"]) == 6
+        assert {card["card_id"] for card in data["cards"]} >= {"row-health"}
+        assert data["rankings"][0]["runtime_id"] == "runtime-alpha"
+        assert data["rankings"][0]["rank"] == 1
+        assert data["rankings"][0]["baseline_comparison_status"] == "watch"
+        assert "rowHealthStatus" not in data["rankings"][0]
+        assert "rowHealthDegradedChecks" not in data["rankings"][0]
+        rows_by_runtime = {row["runtime_id"]: row for row in data["runtime_rows"]}
+        assert data["runtime_rows"][0]["runtime_id"] == "runtime-beta"
+        assert rows_by_runtime["runtime-alpha"]["telemetry_summary"]["metrics"]["pnl"] == 0.42
+        assert (
+            rows_by_runtime["runtime-alpha"]["baseline_comparison"]["paper_baseline"]["metrics"]["pnl"]
+            == 0.25
+        )
+        comparisons_by_runtime = {
+            comparison["runtime_id"]: comparison
+            for comparison in data["baseline_comparisons"]
+        }
+        assert comparisons_by_runtime["runtime-beta"]["status"] == "breached"
+        assert comparisons_by_runtime["runtime-beta"]["paper_live_drift"]["available"] is True
+        assert body["page_info"] == {
+            "next_page_token": None,
+            "total": 6,
+            "page_size": 6,
+        }
+        assert body["meta"]["surfaces"]["management_trading_pulse"]["source"] == "bff_composed"
+        assert body["meta"]["surfaces"]["runtime_roster"]["source"] == "canonical"
+        assert body["meta"]["surfaces"]["telemetry_summary"]["source"] == "service_store"
+        assert body["meta"]["surfaces"]["paper_runtime_monitoring"]["source"] == "service_store"
+        assert body["meta"]["surfaces"]["paper_live_drift"]["source"] == "service_store"
+        assert body["meta"]["surfaces"]["baseline_comparison"]["source"] == "bff_composed"
+        assert body["meta"]["surfaces"]["runtime_row_health"]["status"] == "ok"
 
 
 def test_trading_pulse_exposes_operator_coverage_gaps_and_row_health() -> None:
     with tempfile.TemporaryDirectory() as td:
-        original_store = bff_main.read_store
-        try:
-            client = _fresh_client(td, include_gap=True)
-            resp = client.get("/bff/management/trading-pulse", headers=OPERATOR_HEADERS)
+        client = _fresh_client(td, include_gap=True)
+        resp = client.get("/bff/management/trading-pulse", headers=OPERATOR_HEADERS)
 
-            assert resp.status_code == 200, resp.text
-            body = resp.json()
-            data = body["data"]
-            summary = data["summary"]
-            assert summary["runtime_count"] == 3
-            assert summary["telemetry_coverage_count"] == 2
-            assert summary["baseline_comparison_count"] == 2
-            assert summary["monitoring_coverage_count"] == 1
-            assert summary["row_health_degraded_count"] == 1
-            assert summary["row_health_status_counts"] == {"degraded": 1, "ok": 2}
-            assert summary["missing_telemetry_runtime_ids"] == ["runtime-gamma"]
-            assert summary["missing_monitoring_runtime_ids"] == ["runtime-gamma"]
-            assert summary["missing_baseline_runtime_ids"] == ["runtime-gamma"]
-            assert summary["metric_coverage"]["pnl"]["missing_runtime_ids"] == ["runtime-gamma"]
+        assert resp.status_code == 200, resp.text
+        body = resp.json()
+        data = body["data"]
+        summary = data["summary"]
+        assert summary["runtime_count"] == 3
+        assert summary["telemetry_coverage_count"] == 2
+        assert summary["baseline_comparison_count"] == 2
+        assert summary["monitoring_coverage_count"] == 1
+        assert summary["row_health_degraded_count"] == 1
+        assert summary["row_health_status_counts"] == {"degraded": 1, "ok": 2}
+        assert summary["missing_telemetry_runtime_ids"] == ["runtime-gamma"]
+        assert summary["missing_monitoring_runtime_ids"] == ["runtime-gamma"]
+        assert summary["missing_baseline_runtime_ids"] == ["runtime-gamma"]
+        assert summary["metric_coverage"]["pnl"]["missing_runtime_ids"] == ["runtime-gamma"]
 
-            assert data["runtime_rows"][0]["runtime_id"] == "runtime-gamma"
-            assert data["runtime_rows"][0]["row_health"]["status"] == "degraded"
-            assert set(data["runtime_rows"][0]["row_health"]["degraded_checks"]) == {
-                "telemetry_summary",
-                "paper_runtime_monitoring",
-            }
-            assert data["runtime_rows"][0]["baseline_comparison"]["status"] == "unavailable"
+        assert data["runtime_rows"][0]["runtime_id"] == "runtime-gamma"
+        assert data["runtime_rows"][0]["row_health"]["status"] == "degraded"
+        assert set(data["runtime_rows"][0]["row_health"]["degraded_checks"]) == {
+            "telemetry_summary",
+            "paper_runtime_monitoring",
+        }
+        assert data["runtime_rows"][0]["baseline_comparison"]["status"] == "unavailable"
 
-            surfaces = body["meta"]["surfaces"]
-            assert surfaces["management_trading_pulse"]["status"] == "degraded"
-            assert surfaces["telemetry_summary"]["status"] == "degraded"
-            assert surfaces["paper_runtime_monitoring"]["status"] == "degraded"
-            assert surfaces["paper_live_drift"]["status"] == "degraded"
-            assert surfaces["runtime_row_health"]["status"] == "degraded"
-            assert body["meta"]["coverage"]["missing_baseline_runtime_ids"] == ["runtime-gamma"]
-        finally:
-            bff_main.read_store = original_store
+        surfaces = body["meta"]["surfaces"]
+        assert surfaces["management_trading_pulse"]["status"] == "degraded"
+        assert surfaces["telemetry_summary"]["status"] == "degraded"
+        assert surfaces["paper_runtime_monitoring"]["status"] == "degraded"
+        assert surfaces["paper_live_drift"]["status"] == "degraded"
+        assert surfaces["runtime_row_health"]["status"] == "degraded"
+        assert body["meta"]["coverage"]["missing_baseline_runtime_ids"] == ["runtime-gamma"]
 
 
 def test_trading_pulse_rankings_returns_computed_blocks_with_limit() -> None:
     with tempfile.TemporaryDirectory() as td:
-        original_store = bff_main.read_store
-        try:
-            client = _fresh_client(td)
-            resp = client.get(
-                "/bff/management/trading-pulse/rankings?limit=1",
-                headers=OPERATOR_HEADERS,
-            )
+        client = _fresh_client(td)
+        resp = client.get(
+            "/bff/management/trading-pulse/rankings?limit=1",
+            headers=OPERATOR_HEADERS,
+        )
 
-            assert resp.status_code == 200, resp.text
-            body = resp.json()
-            assert set(body) == {"data", "page_info", "meta"}
-            data = body["data"]
-            summary = data["summary"]
-            assert set(data) == {"id", "items", "summary"}
-            assert "items" not in body
-            assert "rankings" not in body
-            assert summary["runtime_count"] == 2
-            assert summary["ranking_block_count"] == 4
-            assert summary["ranked_item_count"] == 4
-            assert summary["eligible_item_count"] == 8
-            assert summary["missing_metric_item_count"] == 0
-            assert summary["limit"] == 1
-            assert "eligibleItemCount" not in summary
-            assert "missingMetricItemCount" not in summary
-            assert body["page_info"] == {
-                "next_page_token": None,
-                "total": 4,
-                "page_size": 4,
-            }
+        assert resp.status_code == 200, resp.text
+        body = resp.json()
+        assert set(body) == {"data", "page_info", "meta"}
+        data = body["data"]
+        summary = data["summary"]
+        assert set(data) == {"id", "items", "summary"}
+        assert "items" not in body
+        assert "rankings" not in body
+        assert summary["runtime_count"] == 2
+        assert summary["ranking_block_count"] == 4
+        assert summary["ranked_item_count"] == 4
+        assert summary["eligible_item_count"] == 8
+        assert summary["missing_metric_item_count"] == 0
+        assert summary["limit"] == 1
+        assert "eligibleItemCount" not in summary
+        assert "missingMetricItemCount" not in summary
+        assert body["page_info"] == {
+            "next_page_token": None,
+            "total": 4,
+            "page_size": 4,
+        }
 
-            blocks = {block["block_id"]: block for block in data["items"]}
-            assert blocks["pnl-leaders"]["eligible_item_count"] == 2
-            assert blocks["pnl-leaders"]["missing_metric_count"] == 0
-            assert "blockId" not in blocks["pnl-leaders"]
-            assert "sortOrder" not in blocks["pnl-leaders"]
-            assert "eligibleItemCount" not in blocks["pnl-leaders"]
-            assert "missingMetricCount" not in blocks["pnl-leaders"]
-            assert "missingMetricRuntimeIds" not in blocks["pnl-leaders"]
-            assert blocks["pnl-leaders"]["items"][0]["runtime_id"] == "runtime-alpha"
-            assert blocks["pnl-leaders"]["items"][0]["ranking_eligible"] is True
-            assert blocks["pnl-leaders"]["items"][0]["ranking_metric"] == "pnl"
-            assert blocks["drawdown-control"]["items"][0]["runtime_id"] == "runtime-beta"
-            assert blocks["execution-quality"]["items"][0]["ranking_metric"] == "fill_rate"
-            assert blocks["execution-quality"]["secondary_metric"] == "avg_slippage_bps"
-            assert "secondaryMetric" not in blocks["execution-quality"]
-            assert blocks["sharpe-leaders"]["items"][0]["runtime_id"] == "runtime-alpha"
-            assert blocks["pnl-leaders"]["items"][0]["baseline_comparison_status"] == "watch"
-            assert (
-                body["meta"]["surfaces"]["management_trading_pulse_rankings"]["source"]
-                == "bff_composed"
-            )
-            assert body["meta"]["surfaces"]["baseline_comparison"]["source"] == "bff_composed"
-        finally:
-            bff_main.read_store = original_store
+        blocks = {block["block_id"]: block for block in data["items"]}
+        assert blocks["pnl-leaders"]["eligible_item_count"] == 2
+        assert blocks["pnl-leaders"]["missing_metric_count"] == 0
+        assert "blockId" not in blocks["pnl-leaders"]
+        assert "sortOrder" not in blocks["pnl-leaders"]
+        assert "eligibleItemCount" not in blocks["pnl-leaders"]
+        assert "missingMetricCount" not in blocks["pnl-leaders"]
+        assert "missingMetricRuntimeIds" not in blocks["pnl-leaders"]
+        assert blocks["pnl-leaders"]["items"][0]["runtime_id"] == "runtime-alpha"
+        assert blocks["pnl-leaders"]["items"][0]["ranking_eligible"] is True
+        assert blocks["pnl-leaders"]["items"][0]["ranking_metric"] == "pnl"
+        assert blocks["drawdown-control"]["items"][0]["runtime_id"] == "runtime-beta"
+        assert blocks["execution-quality"]["items"][0]["ranking_metric"] == "fill_rate"
+        assert blocks["execution-quality"]["secondary_metric"] == "avg_slippage_bps"
+        assert "secondaryMetric" not in blocks["execution-quality"]
+        assert blocks["sharpe-leaders"]["items"][0]["runtime_id"] == "runtime-alpha"
+        assert blocks["pnl-leaders"]["items"][0]["baseline_comparison_status"] == "watch"
+        assert (
+            body["meta"]["surfaces"]["management_trading_pulse_rankings"]["source"]
+            == "bff_composed"
+        )
+        assert body["meta"]["surfaces"]["baseline_comparison"]["source"] == "bff_composed"
 
 
 def test_trading_pulse_rankings_exclude_missing_metrics() -> None:
     with tempfile.TemporaryDirectory() as td:
-        original_store = bff_main.read_store
-        try:
-            client = _fresh_client(td, include_gap=True)
-            resp = client.get(
-                "/bff/management/trading-pulse/rankings?limit=5",
-                headers=OPERATOR_HEADERS,
-            )
+        client = _fresh_client(td, include_gap=True)
+        resp = client.get(
+            "/bff/management/trading-pulse/rankings?limit=5",
+            headers=OPERATOR_HEADERS,
+        )
 
-            assert resp.status_code == 200, resp.text
-            body = resp.json()
-            data = body["data"]
-            blocks = {block["block_id"]: block for block in data["items"]}
-            assert blocks["pnl-leaders"]["eligible_item_count"] == 2
-            assert blocks["pnl-leaders"]["missing_metric_count"] == 1
-            assert blocks["pnl-leaders"]["missing_metric_runtime_ids"] == ["runtime-gamma"]
-            assert [item["runtime_id"] for item in blocks["pnl-leaders"]["items"]] == [
-                "runtime-alpha",
-                "runtime-beta",
-            ]
-            assert data["summary"]["missing_metric_item_count"] == 4
-            assert body["meta"]["surfaces"]["management_trading_pulse_rankings"]["status"] == "degraded"
-        finally:
-            bff_main.read_store = original_store
+        assert resp.status_code == 200, resp.text
+        body = resp.json()
+        data = body["data"]
+        blocks = {block["block_id"]: block for block in data["items"]}
+        assert blocks["pnl-leaders"]["eligible_item_count"] == 2
+        assert blocks["pnl-leaders"]["missing_metric_count"] == 1
+        assert blocks["pnl-leaders"]["missing_metric_runtime_ids"] == ["runtime-gamma"]
+        assert [item["runtime_id"] for item in blocks["pnl-leaders"]["items"]] == [
+            "runtime-alpha",
+            "runtime-beta",
+        ]
+        assert data["summary"]["missing_metric_item_count"] == 4
+        assert body["meta"]["surfaces"]["management_trading_pulse_rankings"]["status"] == "degraded"
 
 
 def test_trading_pulse_routes_require_read_authentication() -> None:
     with tempfile.TemporaryDirectory() as td:
-        original_store = bff_main.read_store
-        try:
-            client = _fresh_client(td)
-            for path in (
-                "/bff/management/trading-pulse",
-                "/bff/management/trading-pulse/rankings",
-            ):
-                resp = client.get(path)
+        client = _fresh_client(td)
+        for path in (
+            "/bff/management/trading-pulse",
+            "/bff/management/trading-pulse/rankings",
+        ):
+            resp = client.get(path)
 
-                assert resp.status_code == 401, resp.text
-                assert resp.json()["error"]["code"] == "AUTH_REQUIRED"
-        finally:
-            bff_main.read_store = original_store
+            assert resp.status_code == 401, resp.text
+            assert resp.json()["error"]["code"] == "AUTH_REQUIRED"
