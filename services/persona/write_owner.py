@@ -997,38 +997,56 @@ class PersistentPersonaTrainingTargetOwner:
             approval_verifier=approval_verifier,
         )
 
-    def _virtual_initial_record(self, persona_id: str, tenant_id: str) -> dict[str, Any]:
+    def _virtual_initial_record(self, persona: PersonaBody) -> dict[str, Any]:
         """A deterministic, unpersisted generation-0 view.
 
-        A caller reading (or attempting to commit against) a Persona that has
-        never had a training target committed sees this exact same view no
-        matter what tenant_id it asserts -- nothing is written and no tenant
-        is bound. Only a fully verified commit (real digests, a real
-        approved Governance decision) may durably create the record and bind
-        its tenant_id; an unauthenticated read can no longer claim a Persona
-        for an arbitrary tenant merely by asking first.
+        The tenant is derived from the Persona's own durable, governed
+        ``owner`` field -- established only through the ``persona.admin``
+        gated create/patch path -- never from a caller-asserted header. A
+        caller cannot obtain an authoritative-looking precondition for a
+        tenant it does not actually own; ``read``/``commit`` reject any
+        ``X-Tenant-Id`` that does not match this real owner field before this
+        view is ever returned.
         """
 
-        persona = self._persona_owner.get(persona_id)
+        tenant_id = str(persona.owner)
         return {
-            "persona_id": persona_id,
+            "persona_id": persona.persona_id,
             "tenant_id": tenant_id,
             "status": "active",
             "generation": 0,
             "authority_status": "authoritative",
             "controller_record_ref": (
-                f"persona-training-target:{persona_id}:0:{tenant_id}"
+                f"persona-training-target:{persona.persona_id}:0:{tenant_id}"
             ),
             "recorded_at": persona.created_at,
         }
 
+    def _load_owner_bound_persona(
+        self, persona_id: str, tenant_id: str
+    ) -> PersonaBody:
+        """Read the real Persona and require the caller's tenant to be its owner.
+
+        The Persona's ``owner`` field is the only genuine, governed tenant
+        binding this data model currently has (set at creation and only
+        mutable through the ``persona.admin`` gated patch path). Trusting a
+        caller-supplied ``X-Tenant-Id`` header instead of this field is
+        exactly the fabricated-authority defect root review flagged.
+        """
+
+        persona = self._persona_owner.get(persona_id)
+        if str(persona.owner) != tenant_id:
+            raise TrainingTargetTenantMismatch()
+        return persona
+
     def read(self, *, persona_id: str, tenant_id: str) -> dict[str, Any]:
         # Fail closed against a training-target authority for a Persona that
-        # the actual owner store does not know about; never fabricate one.
-        self._persona_owner.get(persona_id)
+        # the actual owner store does not know about, or whose real owner
+        # does not match the asserted tenant; never fabricate one.
+        persona = self._load_owner_bound_persona(persona_id, tenant_id)
         persisted = self._records.get(persona_id)
         if persisted is None:
-            return self._virtual_initial_record(persona_id, tenant_id)
+            return self._virtual_initial_record(persona)
         if persisted.get("tenant_id") != tenant_id:
             raise TrainingTargetTenantMismatch()
         return dict(persisted)
@@ -1152,27 +1170,93 @@ class PersistentPersonaTrainingTargetOwner:
         """Apply the approved policy/control mutation to the real Persona owner.
 
         A training-target commit is a real, applied authority change, not a
-        second receipt-only store: the actual Persona record must observably
-        change (and read back changed after a restart) once a target is
-        committed.
+        second receipt-only store: the actual candidate/control_state content
+        (not just its digest) must observably land on the Persona record, and
+        read back changed after a restart, once a target is committed.
+
+        Idempotent and order-safe: a retry after a crash between durability
+        and application re-applies the same generation's content without
+        error, and a lower generation's apply that runs after a higher
+        generation already landed is a safe no-op instead of clobbering
+        newer state.
         """
 
-        self._persona_owner.patch(
-            persona_id,
-            PatchPersonaRequest(
-                actor_id="persona-training-target-owner",
-                metadata={
-                    "training_target_generation": request.generation,
-                    "training_target_controller_record_ref": committed.get(
-                        "controller_record_ref"
+        for _attempt in range(4):
+            current = self._persona_owner.get(persona_id)
+            existing_metadata = dict(current.metadata or {})
+            existing_generation = int(
+                existing_metadata.get("training_target_generation") or 0
+            )
+            if existing_generation >= request.generation:
+                return
+            try:
+                self._persona_owner.patch(
+                    persona_id,
+                    PatchPersonaRequest(
+                        actor_id="persona-training-target-owner",
+                        metadata={
+                            "training_target_generation": request.generation,
+                            "training_target_controller_record_ref": committed.get(
+                                "controller_record_ref"
+                            ),
+                            "training_target_control_digest": request.control_digest,
+                            "training_target_candidate_digest": request.candidate_digest,
+                            "training_target_approval_decision_id": (
+                                request.approval_decision_id
+                            ),
+                            "training_target_candidate": request.candidate,
+                            "training_target_control_state": request.control_state,
+                        },
                     ),
-                    "training_target_control_digest": request.control_digest,
-                    "training_target_candidate_digest": request.candidate_digest,
-                    "training_target_approval_decision_id": (
-                        request.approval_decision_id
-                    ),
-                },
-            ),
+                )
+            except PersonaConcurrentUpdate:
+                continue
+            applied = self._persona_owner.get(persona_id)
+            applied_metadata = dict(applied.metadata or {})
+            if (
+                int(applied_metadata.get("training_target_generation") or 0)
+                >= request.generation
+                and applied_metadata.get("training_target_control_digest")
+                == request.control_digest
+                and applied_metadata.get("training_target_candidate_digest")
+                == request.candidate_digest
+            ):
+                return
+        raise PersonaConcurrentUpdate(
+            f"Persona {persona_id!r} training-target application changed "
+            "concurrently; retry against a fresh read"
+        )
+
+    def _finalize_committed(
+        self, persona_id: str, expected_generation: int
+    ) -> dict[str, Any]:
+        """Move a durably-applied ``applying`` record to terminal ``committed``.
+
+        Only issued after :meth:`_apply_to_persona_owner` has proven the real
+        Persona record carries this exact generation's applied content --
+        never before. If the process crashes before this runs, the record
+        stays ``applying`` (not a false terminal ``committed``) and a later
+        retry with the same binding re-applies (idempotently) and finalizes.
+        """
+
+        for _attempt in range(4):
+            current = self._records.get(persona_id)
+            if current is None or int(current.get("generation") or 0) != expected_generation:
+                raise PersonaOwnerError(
+                    f"Persona training target {persona_id!r} record missing or "
+                    "changed during finalize"
+                )
+            if current.get("status") == "committed":
+                return current
+            finalized = {**current, "status": "committed"}
+            ok, canonical = self._records.compare_and_set(
+                persona_id, current, finalized
+            )
+            if ok:
+                return canonical or finalized
+        raise PersonaConcurrentUpdate(
+            f"Persona training target {persona_id!r} changed concurrently "
+            "during finalize; retry against a fresh read"
         )
 
     def commit(
@@ -1194,13 +1278,13 @@ class PersistentPersonaTrainingTargetOwner:
             field: getattr(request, field) for field in _TRAINING_TARGET_BINDING_FIELDS
         }
         for _attempt in range(4):
-            self._persona_owner.get(persona_id)
+            persona = self._load_owner_bound_persona(persona_id, tenant_id)
             persisted = self._records.get(persona_id)
             if persisted is not None and persisted.get("tenant_id") != tenant_id:
                 raise TrainingTargetTenantMismatch()
             current_generation = int((persisted or {}).get("generation") or 0)
             if current_generation == request.generation:
-                if persisted is None or persisted.get("status") != "committed":
+                if persisted is None:
                     raise TrainingTargetGenerationConflict(
                         "persona training target generation is stale"
                     )
@@ -1219,6 +1303,19 @@ class PersistentPersonaTrainingTargetOwner:
                         "persona training target idempotency key was reused for a "
                         "different payload"
                     )
+                if persisted.get("status") != "committed":
+                    # A prior attempt durably recorded this exact generation and
+                    # binding but crashed (or lost a race) before the separate
+                    # Persona apply/finalize completed. Replaying the identical
+                    # binding recovers by re-applying (idempotently) and
+                    # finalizing rather than returning a false terminal result.
+                    self._apply_to_persona_owner(persona_id, request, persisted)
+                    finalized = self._finalize_committed(
+                        persona_id, request.generation
+                    )
+                    replayed = dict(finalized)
+                    replayed["replayed"] = True
+                    return replayed
                 replayed = dict(persisted)
                 replayed["replayed"] = True
                 return replayed
@@ -1226,15 +1323,38 @@ class PersistentPersonaTrainingTargetOwner:
                 raise TrainingTargetGenerationConflict(
                     "persona training target generation is stale"
                 )
+            actual_precondition = (
+                persisted
+                if persisted is not None
+                else self._virtual_initial_record(persona)
+            )
+            actual_precondition_digest = _canonical_digest(actual_precondition)
+            actual_precondition_record_ref = actual_precondition.get(
+                "controller_record_ref"
+            )
+            if (
+                request.expected_precondition_digest != actual_precondition_digest
+                or request.expected_precondition_record_ref
+                != actual_precondition_record_ref
+            ):
+                raise TrainingTargetProofInvalid(
+                    "expected_precondition_digest/expected_precondition_record_ref "
+                    "does not match the actual current owner record"
+                )
             self._verify_semantic_payload(
                 persona_id=persona_id, tenant_id=tenant_id, request=request
             )
             self._verify_approval_authority(
                 persona_id=persona_id, tenant_id=tenant_id, request=request
             )
-            updated = {
+            pending = {
                 **binding,
-                "status": "committed",
+                # Durable but not yet terminal: the CAS below only proves this
+                # binding was accepted, not that the real Persona owner record
+                # has been mutated to match it yet. A crash or failure between
+                # this write and the separate Persona patch below must not be
+                # observable as a false terminal ``committed`` readback.
+                "status": "applying",
                 "authority_status": "authoritative",
                 "controller_record_ref": (
                     f"persona-training-target:{persona_id}:{request.generation}:"
@@ -1251,12 +1371,13 @@ class PersistentPersonaTrainingTargetOwner:
                 "replayed": False,
             }
             committed, canonical = self._records.compare_and_set(
-                persona_id, persisted, updated
+                persona_id, persisted, pending
             )
             if committed:
-                result = canonical or updated
+                result = canonical or pending
                 self._apply_to_persona_owner(persona_id, request, result)
-                return result
+                finalized = self._finalize_committed(persona_id, request.generation)
+                return finalized
         raise PersonaConcurrentUpdate(
             f"Persona training target {persona_id!r} changed concurrently; "
             "retry against a fresh read"

@@ -172,6 +172,11 @@ def _create_persona(client: TestClient) -> None:
             "persona_id": PERSONA_ID,
             "name": "Alpha",
             "mandate": "focused training-authority test persona",
+            # The Persona's real, governed ``owner`` field is the only
+            # genuine tenant binding this data model has; the training-target
+            # owner derives its tenant authority from it, never from a
+            # caller-asserted ``X-Tenant-Id`` header.
+            "owner": TENANT_ID,
         },
         headers=_auth_header(),
     )
@@ -297,13 +302,177 @@ def test_precondition_read_commit_and_restart_readback(owner_env) -> None:
     assert body["approval_digest"] == receipt["approval_digest"]
 
     # The commit is a real, applied mutation of the actual Persona owner
-    # record -- not a second receipt-only store the owner never observes.
+    # record -- not a second receipt-only store the owner never observes --
+    # and it carries the actual candidate/control_state content, not just
+    # digest metadata.
     persona = restarted_client.get(f"/api/personas/{PERSONA_ID}")
     assert persona.status_code == 200, persona.text
     metadata = persona.json()["metadata"]
     assert metadata["training_target_generation"] == 1
     assert metadata["training_target_controller_record_ref"] == committed_ref
     assert metadata["training_target_control_digest"] == receipt["control_digest"]
+    assert metadata["training_target_candidate"] == inputs["candidate"]
+    assert metadata["training_target_control_state"] == inputs["control_state"]
+
+
+def test_commit_recovers_after_crash_between_durability_and_application(
+    owner_env,
+) -> None:
+    """A crash between the target CAS and the Persona apply must not lie.
+
+    Root review finding: the target store used to CAS ``status=committed``
+    before the separate Persona patch ran, so a crash (or patch failure)
+    between those two steps left a false terminal readback that a replay
+    would return as success without ever repairing the real Persona record.
+    Simulate that crash by committing directly against the training-target
+    owner with the Persona apply monkeypatched to fail once, then prove a
+    plain replay of the identical binding repairs and finalizes it.
+    """
+
+    client, _personas_path, targets_path, verifier = owner_env
+    module = _load_persona_target_module()
+    trusted_now = datetime.now(timezone.utc)
+    precondition = module.read_persona_target_precondition(
+        persona_id=PERSONA_ID,
+        tenant_id=TENANT_ID,
+        persona_readback_url=TRAINING_TARGET_URL,
+        authorization_token=SERVICE_TOKEN,
+        trusted_now=trusted_now,
+        transport=_BridgeTransport(client, {}, module),
+    )
+    inputs, approval = _commit_inputs(
+        module, precondition, session_id="session-crash", trusted_now=trusted_now
+    )
+    verifier.issue(approval)
+    write_body = _write_body_from_client_inputs(module, inputs)
+
+    from services.persona.write_owner import PersonaConcurrentUpdate
+
+    real_apply = PersistentPersonaTrainingTargetOwner._apply_to_persona_owner
+    calls = {"count": 0}
+
+    def _failing_once(self, persona_id, request, committed):
+        calls["count"] += 1
+        if calls["count"] == 1:
+            raise PersonaConcurrentUpdate("simulated crash before Persona apply")
+        return real_apply(self, persona_id, request, committed)
+
+    PersistentPersonaTrainingTargetOwner._apply_to_persona_owner = _failing_once
+    try:
+        response = client.post(
+            f"/api/personas/{PERSONA_ID}/training-target",
+            headers={
+                **_auth_header(),
+                "X-Tenant-Id": TENANT_ID,
+                "Idempotency-Key": "crash-recovery-attempt",
+            },
+            json=write_body,
+        )
+        assert response.status_code == 409, response.text
+    finally:
+        PersistentPersonaTrainingTargetOwner._apply_to_persona_owner = real_apply
+
+    # The record is durably ``applying``, not a false terminal ``committed``:
+    # a fresh read must fail closed rather than report success.
+    mid_crash_read = client.get(
+        f"/api/personas/{PERSONA_ID}/training-target",
+        headers={**_auth_header(), "X-Tenant-Id": TENANT_ID},
+    )
+    assert mid_crash_read.status_code == 200, mid_crash_read.text
+    assert mid_crash_read.json()["status"] == "applying"
+
+    persona_mid_crash = client.get(f"/api/personas/{PERSONA_ID}")
+    assert persona_mid_crash.json()["metadata"].get("training_target_generation") != 1
+
+    # Replaying the identical binding recovers: applies and finalizes.
+    recovered = client.post(
+        f"/api/personas/{PERSONA_ID}/training-target",
+        headers={
+            **_auth_header(),
+            "X-Tenant-Id": TENANT_ID,
+            "Idempotency-Key": "crash-recovery-attempt",
+        },
+        json=write_body,
+    )
+    assert recovered.status_code == 200, recovered.text
+    assert recovered.json()["status"] == "committed"
+    assert recovered.json()["replayed"] is True
+
+    final_read = client.get(
+        f"/api/personas/{PERSONA_ID}/training-target",
+        headers={**_auth_header(), "X-Tenant-Id": TENANT_ID},
+    )
+    assert final_read.json()["status"] == "committed"
+    persona_after = client.get(f"/api/personas/{PERSONA_ID}")
+    assert persona_after.json()["metadata"]["training_target_generation"] == 1
+
+
+def test_apply_ignores_out_of_order_lower_generation(owner_env) -> None:
+    """A stale generation's apply must not clobber a newer one.
+
+    Root review finding: a later concurrent generation could apply out of
+    order. Prove the owner's apply step is generation-gated: applying an
+    older generation's content after a newer generation is already recorded
+    on the Persona is a safe no-op, not a regression.
+    """
+
+    client, _personas_path, _targets_path, verifier = owner_env
+    module = _load_persona_target_module()
+    first_receipt, first_inputs = _first_commit(
+        client, module, verifier, session_id="session-one"
+    )
+    second_receipt, _second_inputs = _first_commit(
+        client, module, verifier, session_id="session-two"
+    )
+    assert second_receipt["generation"] == 2
+
+    from services.persona.write_owner import (
+        CommitPersonaTrainingTargetRequest,
+        PersistentPersonaTrainingTargetOwner,
+    )
+
+    # Reconstruct the owner instance the app uses so we can call the internal
+    # apply step directly with stale (generation-1) content.
+    stale_request = CommitPersonaTrainingTargetRequest(
+        persona_id=PERSONA_ID,
+        tenant_id=TENANT_ID,
+        session_id="session-one",
+        candidate_digest=first_receipt["candidate_digest"],
+        control_digest=first_receipt["control_digest"],
+        proof_digest=first_receipt["proof_digest"],
+        approval_digest=first_receipt["approval_digest"],
+        generation=1,
+        expected_previous_generation=0,
+        expected_precondition_digest=first_receipt["expected_precondition_digest"],
+        expected_precondition_record_ref=first_receipt[
+            "expected_precondition_record_ref"
+        ],
+        approval_decision_id=first_receipt["approval_decision_id"],
+        approval_decision_ref=first_receipt["approval_decision_ref"],
+        candidate=first_inputs["candidate"],
+        control_state=first_inputs["control_state"],
+        evaluation_proof=first_inputs["evaluation_proof"],
+    )
+
+    from services.persona.write_owner import build_persona_training_target_owner
+
+    persona_before = client.get(f"/api/personas/{PERSONA_ID}").json()
+    assert persona_before["metadata"]["training_target_generation"] == 2
+
+    training_target_owner = build_persona_training_target_owner(
+        PersistentPersonaOwner.from_json_path(_personas_path),
+        approval_verifier=verifier,
+    )
+    training_target_owner._apply_to_persona_owner(
+        PERSONA_ID, stale_request, {"controller_record_ref": "stale-ref"}
+    )
+
+    persona_after = client.get(f"/api/personas/{PERSONA_ID}").json()
+    assert persona_after["metadata"]["training_target_generation"] == 2
+    assert (
+        persona_after["metadata"]["training_target_candidate_digest"]
+        == second_receipt["candidate_digest"]
+    )
 
 
 def _first_commit(client: TestClient, module, verifier, *, session_id: str = "session-alpha"):
@@ -363,12 +532,16 @@ def test_cross_tenant_read_and_write_are_denied(owner_env) -> None:
 
 
 def test_first_reader_cannot_hijack_tenant_via_read(owner_env) -> None:
-    """A GET from an unrelated tenant must not durably bind that tenant.
+    """A GET (or commit) from any non-owner tenant must be rejected outright.
 
-    Root review finding: ``_load_or_init`` used to verify existence only and
-    trust the first reader's tenant, so a hostile first GET could steal a
-    Persona's training-target authority for an arbitrary tenant. A read must
-    never manufacture durable authority.
+    Root review finding: an earlier fix returned an unpersisted "virtual"
+    generation-0 view with ``authority_status=authoritative`` to whichever
+    tenant asked first, which still let a caller obtain an
+    authoritative-looking precondition for a tenant it does not own. The
+    training-target owner must derive tenant authority from the Persona's
+    real, governed ``owner`` field and reject any other asserted tenant
+    before ever returning a precondition -- not merely avoid persisting a
+    fabricated read.
     """
 
     client, _personas_path, _targets_path, verifier = owner_env
@@ -378,27 +551,31 @@ def test_first_reader_cannot_hijack_tenant_via_read(owner_env) -> None:
         f"/api/personas/{PERSONA_ID}/training-target",
         headers={**_auth_header(), "X-Tenant-Id": "tenant-hostile"},
     )
-    assert hostile_read.status_code == 200
-    assert hostile_read.json()["generation"] == 0
+    assert hostile_read.status_code == 403
 
     another_read = client.get(
         f"/api/personas/{PERSONA_ID}/training-target",
         headers={**_auth_header(), "X-Tenant-Id": "tenant-also-hostile"},
     )
-    assert another_read.status_code == 200
-    assert another_read.json()["generation"] == 0
+    assert another_read.status_code == 403
 
-    # The legitimate tenant can still commit the real first generation; the
-    # earlier unauthenticated-tenant reads left no durable binding behind.
+    # The real, governed owner tenant can still read and commit normally.
+    genuine_read = client.get(
+        f"/api/personas/{PERSONA_ID}/training-target",
+        headers={**_auth_header(), "X-Tenant-Id": TENANT_ID},
+    )
+    assert genuine_read.status_code == 200
+    assert genuine_read.json()["generation"] == 0
+
     receipt, _inputs = _first_commit(client, module, verifier)
     assert receipt["status"] == "committed"
     assert receipt["generation"] == 1
 
-    now_locked_out = client.get(
+    still_locked_out = client.get(
         f"/api/personas/{PERSONA_ID}/training-target",
         headers={**_auth_header(), "X-Tenant-Id": "tenant-hostile"},
     )
-    assert now_locked_out.status_code == 403
+    assert still_locked_out.status_code == 403
 
 
 def test_commit_rejects_unissued_approval(owner_env) -> None:
