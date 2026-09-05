@@ -64,50 +64,13 @@ from .service import (
     _stable_json_hash,
 )
 
-try:
-    from models import (
-        CommandStatus,
-        CommandType,
-        ErrorCode,
-        ObjectType,
-        OperatorIdentity,
-    )
-except ImportError:
-    try:
-        from ..models import (  # type: ignore[no-redef]
-            CommandStatus,
-            CommandType,
-            ErrorCode,
-            ObjectType,
-            OperatorIdentity,
-        )
-    except ImportError:
-        class ErrorCode:  # type: ignore[no-redef]
-            RESOURCE_NOT_FOUND = "RESOURCE_NOT_FOUND"
-            FORBIDDEN = "FORBIDDEN"
-            VALIDATION_FAILED = "VALIDATION_FAILED"
-            IDEMPOTENCY_CONFLICT = "IDEMPOTENCY_CONFLICT"
-            DEPENDENCY_UNAVAILABLE = "DEPENDENCY_UNAVAILABLE"
-            INTERNAL_ERROR = "INTERNAL_ERROR"
-
-        class CommandType:  # type: ignore[no-redef]
-            INCIDENT_ACTION = "IncidentAction"
-            RISK_ALERT_ACTION = "RiskAlertAction"
-            ALERT_ACKNOWLEDGE = "AlertAcknowledge"
-            AUDIT_EXPORT = "AuditExport"
-
-        class ObjectType:  # type: ignore[no-redef]
-            INCIDENT = "Incident"
-            RISK_ALERT = "RiskAlert"
-            AUDIT_EXPORT = "AuditExport"
-
-        class CommandStatus:  # type: ignore[no-redef]
-            SUBMITTED = "submitted"
-
-        class OperatorIdentity:  # type: ignore[no-redef]
-            def __init__(self, operator_id: str = "operator", roles: Optional[List[str]] = None):
-                self.operator_id = operator_id
-                self.roles = roles or ["operator"]
+from services.control_plane.bff.models import (
+    CommandStatus,
+    CommandType,
+    ErrorCode,
+    ObjectType,
+    OperatorIdentity,
+)
 
 log = logging.getLogger(__name__)
 

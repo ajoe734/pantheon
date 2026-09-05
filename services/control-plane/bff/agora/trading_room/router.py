@@ -1750,7 +1750,7 @@ def create_trading_room_router(
         except Exception:
             pass
         try:
-            from models import ErrorCode
+            from services.control_plane.bff.models import ErrorCode
             if hasattr(ErrorCode, "FORBIDDEN"):
                 return ErrorCode
         except Exception:

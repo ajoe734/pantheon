@@ -119,7 +119,7 @@ def build_admission_context(
                     and getattr(identity, "token_kind", "") in {"stub", "test"}
                 )
                 if not stub_mfa:
-                    from models import ErrorCode
+                    from services.control_plane.bff.models import ErrorCode
                     raise bff_error(
                         401,
                         ErrorCode.AUTH_REQUIRED,
@@ -135,7 +135,7 @@ def build_admission_context(
                 requested_tenant_id=x_tenant_id,
             )
         except AgoraScopeResolutionError as exc:
-            from models import ErrorCode  # BFF top-level models
+            from services.control_plane.bff.models import ErrorCode  # BFF top-level models
             code = ErrorCode.AUTH_REQUIRED if exc.status_code == 401 else ErrorCode.FORBIDDEN
             raise bff_error(
                 exc.status_code,
@@ -149,7 +149,7 @@ def build_admission_context(
     def _scoped_session(workshop_id: str, scope: Any) -> Dict[str, Any]:
         session = store.get_session(workshop_id)
         if session is None:
-            from models import ErrorCode
+            from services.control_plane.bff.models import ErrorCode
             raise bff_error(404, ErrorCode.RESOURCE_NOT_FOUND, "Workshop not found", workshop_id)
         if session["user_id"] != scope.user_id or session["tenant_id"] != scope.tenant_id:
             _raise_cross_user_forbidden(
@@ -250,7 +250,7 @@ def build_admission_context(
         idempotency_key: Optional[str],
         request_id: Optional[str],
     ) -> tuple[int, str, str]:
-        from models import ErrorCode
+        from services.control_plane.bff.models import ErrorCode
 
         if if_match is None:
             raise bff_error(
@@ -349,7 +349,7 @@ def build_admission_context(
         workshop_id: str,
         result: Mapping[str, Any],
     ) -> None:
-        from models import ErrorCode
+        from services.control_plane.bff.models import ErrorCode
 
         outcome = str(result.get("outcome") or "")
         current_version = int(result.get("current_lock_version") or 1)
@@ -430,7 +430,7 @@ def build_admission_context(
             _raise_admission_failure(workshop_id=workshop_id, result=admission)
         receipt = admission.get("receipt")
         if not isinstance(receipt, dict):
-            from models import ErrorCode
+            from services.control_plane.bff.models import ErrorCode
             raise bff_error(
                 500,
                 ErrorCode.UPSTREAM_ERROR,
@@ -451,7 +451,7 @@ def build_admission_context(
         resume_digest: Optional[str] = None,
         resume: Optional[Mapping[str, Any]] = None,
     ) -> None:
-        from models import ErrorCode
+        from services.control_plane.bff.models import ErrorCode
 
         partial_effects = {
             key: value
@@ -582,7 +582,7 @@ def build_admission_context(
         receipt: Mapping[str, Any],
         workshop_id: str,
     ) -> Optional[Dict[str, Any]]:
-        from models import ErrorCode
+        from services.control_plane.bff.models import ErrorCode
 
         status = str(receipt.get("status") or "")
         if status == "completed":
@@ -622,7 +622,7 @@ def build_admission_context(
         downstream_digest: Optional[str] = None,
         resume: Optional[Mapping[str, Any]] = None,
     ) -> Dict[str, Any]:
-        from models import ErrorCode
+        from services.control_plane.bff.models import ErrorCode
 
         def _commit_failure_compensation() -> Dict[str, Any]:
             # The canonical downstream effect exists; only the local
@@ -837,7 +837,7 @@ def build_admission_context(
         session: Mapping[str, Any],
         scope: Any,
     ) -> Dict[str, Any]:
-        from models import ErrorCode
+        from services.control_plane.bff.models import ErrorCode
 
         try:
             decision = canonical.get_approval_decision(approval_decision_id)

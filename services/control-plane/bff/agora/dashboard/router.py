@@ -134,7 +134,7 @@ def _raise_cross_user_forbidden(
     resource: str,
     resource_id: str,
 ) -> None:
-    from models import ErrorCode  # noqa: PLC0415
+    from services.control_plane.bff.models import ErrorCode  # noqa: PLC0415
 
     raise bff_error(
         403,
@@ -438,7 +438,7 @@ def create_dashboard_router(
         authorization: Optional[str] = Header(default=None),
         idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
     ) -> Dict[str, Any]:
-        from models import ErrorCode  # noqa: PLC0415
+        from services.control_plane.bff.models import ErrorCode  # noqa: PLC0415
         identity = extract_identity(authorization)
         require_read_role(identity)
 
@@ -525,7 +525,7 @@ def create_dashboard_router(
         response: Response,
         authorization: Optional[str] = Header(default=None),
     ) -> Dict[str, Any]:
-        from models import ErrorCode  # noqa: PLC0415
+        from services.control_plane.bff.models import ErrorCode  # noqa: PLC0415
         identity = extract_identity(authorization)
         require_read_role(identity)
 
@@ -567,7 +567,7 @@ def create_dashboard_router(
         if_match: Optional[str] = Header(default=None, alias="If-Match"),
         idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
     ) -> Dict[str, Any]:
-        from models import ErrorCode  # noqa: PLC0415
+        from services.control_plane.bff.models import ErrorCode  # noqa: PLC0415
         identity = extract_identity(authorization)
         require_read_role(identity)
 
@@ -658,7 +658,7 @@ def create_dashboard_router(
         if_match: Optional[str] = Header(default=None, alias="If-Match"),
         idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
     ) -> Dict[str, Any]:
-        from models import ErrorCode  # noqa: PLC0415
+        from services.control_plane.bff.models import ErrorCode  # noqa: PLC0415
         identity = extract_identity(authorization)
         require_read_role(identity)
 
@@ -781,7 +781,7 @@ def create_dashboard_router(
         if_match: Optional[str] = Header(default=None, alias="If-Match"),
         idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
     ) -> Dict[str, Any]:
-        from models import ErrorCode  # noqa: PLC0415
+        from services.control_plane.bff.models import ErrorCode  # noqa: PLC0415
         identity = extract_identity(authorization)
         require_read_role(identity)
 
@@ -877,7 +877,7 @@ def create_dashboard_router(
         body: Dict[str, Any],
         authorization: Optional[str] = Header(default=None),
     ) -> Dict[str, Any]:
-        from models import ErrorCode  # noqa: PLC0415
+        from services.control_plane.bff.models import ErrorCode  # noqa: PLC0415
         identity = extract_identity(authorization)
         require_read_role(identity)
 
@@ -919,7 +919,7 @@ def create_dashboard_router(
         cursor: Optional[str] = Query(default=None),
         limit: int = Query(default=20, ge=1, le=100),
     ) -> Dict[str, Any]:
-        from models import ErrorCode  # noqa: PLC0415
+        from services.control_plane.bff.models import ErrorCode  # noqa: PLC0415
         identity = extract_identity(authorization)
         require_read_role(identity)
 
@@ -974,7 +974,7 @@ def create_dashboard_router(
         body: Dict[str, Any],
         authorization: Optional[str] = Header(default=None),
     ) -> Dict[str, Any]:
-        from models import ErrorCode  # noqa: PLC0415
+        from services.control_plane.bff.models import ErrorCode  # noqa: PLC0415
         identity = extract_identity(authorization)
         require_read_role(identity)
 
@@ -1004,7 +1004,7 @@ def create_dashboard_router(
         body: Dict[str, Any],
         authorization: Optional[str] = Header(default=None),
     ) -> Dict[str, Any]:
-        from models import ErrorCode  # noqa: PLC0415
+        from services.control_plane.bff.models import ErrorCode  # noqa: PLC0415
         identity = extract_identity(authorization)
         require_read_role(identity)
 
@@ -1038,7 +1038,7 @@ def create_dashboard_router(
         body: Dict[str, Any],
         authorization: Optional[str] = Header(default=None),
     ) -> Dict[str, Any]:
-        from models import ErrorCode  # noqa: PLC0415
+        from services.control_plane.bff.models import ErrorCode  # noqa: PLC0415
         identity = extract_identity(authorization)
         require_read_role(identity)
 
