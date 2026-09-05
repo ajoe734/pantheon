@@ -10,9 +10,12 @@ from __future__ import annotations
 
 import argparse
 import copy
+import ctypes
+import errno
 import json
 import os
 import re
+import shutil
 import stat
 import subprocess
 import sys
@@ -187,6 +190,132 @@ def validate_python_dependencies(
             f"expected {sorted(expected_names)}, got {sorted(versions) if isinstance(versions, dict) else versions!r}"
         )
     return versions
+
+
+def _publish_directory_no_clobber(source: Path, destination: Path) -> None:
+    """Atomically publish ``source`` to ``destination`` iff nothing is there yet.
+
+    Uses ``renameat2`` with ``RENAME_NOREPLACE`` so the destination -- which
+    can already be the exact directory a currently running incumbent
+    supervisor launched from -- is never opened for writing, whether this is
+    the first publish for that path or a race against a concurrent publisher.
+    A racing publisher that wins is accepted as success (``EEXIST``) rather
+    than treated as a failure of this publish.
+    """
+
+    libc = ctypes.CDLL(None, use_errno=True)
+    renameat2 = libc.renameat2
+    renameat2.argtypes = [ctypes.c_int, ctypes.c_char_p, ctypes.c_int, ctypes.c_char_p, ctypes.c_uint]
+    renameat2.restype = ctypes.c_int
+    if renameat2(-100, os.fsencode(source), -100, os.fsencode(destination), 1) != 0:
+        error = ctypes.get_errno()
+        if error != errno.EEXIST:
+            raise OSError(error, os.strerror(error), str(destination))
+    directory_fd = os.open(destination.parent, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
+    try:
+        os.fsync(directory_fd)
+    finally:
+        os.close(directory_fd)
+
+
+def ensure_supervisor_python_environment(
+    *,
+    python_parent: Path,
+    sha: str,
+    requirements_path: Path,
+) -> dict[str, Any]:
+    """Ensure one verified, per-SHA supervisor Python environment exists.
+
+    This is the single owner of the environment provisioning/reuse/
+    publication policy that both ``bootstrap-orchestrator-runtime.sh`` and
+    ``sync-dev-root.sh`` need: they call this with their own contextual
+    ``python_parent``/``sha``/``requirements_path`` instead of each
+    re-implementing the decision loop.
+
+    An existing per-SHA directory is only ever validated read-only first --
+    it can already be the one a currently running incumbent supervisor
+    launched from, so a re-run reaching this function (idempotent bootstrap
+    re-entry, same-SHA config-drift re-promotion, or any other repeat call
+    for the same SHA) must never mutate it in place. Only a missing or
+    failing environment is (re)provisioned, and it is provisioned into an
+    isolated, never-before-published directory and preflighted there, then
+    published into the per-SHA path with a create-only (no-clobber) rename --
+    so the per-SHA path itself is never opened for writing once it is
+    healthy, whether this is the first provisioning of that SHA or the
+    tenth.
+    """
+
+    if not re.fullmatch(r"[0-9a-f]{40}", sha):
+        raise ValueError(f"supervisor python environment sha must be a lowercase full SHA: {sha!r}")
+    if requirements_path.is_symlink() or not requirements_path.is_file():
+        raise ValueError(f"requirements file does not exist: {requirements_path}")
+
+    python_parent = python_parent.expanduser().absolute()
+    python_dir = python_parent / sha
+    python_executable = python_dir / "bin" / "python3"
+
+    if python_executable.is_file():
+        try:
+            python_dependencies = validate_python_dependencies(python_executable, requirements_path)
+        except ValueError:
+            pass
+        else:
+            return {
+                "python_executable": str(python_executable),
+                "reused": True,
+                "python_dependencies": python_dependencies,
+            }
+
+    python_parent.mkdir(parents=True, exist_ok=True)
+    candidate_dir = Path(
+        tempfile.mkdtemp(prefix=f".supervisor-python-provision-{sha}.", dir=python_parent)
+    )
+    try:
+        candidate_python = candidate_dir / "bin" / "python3"
+        venv_proc = subprocess.run(
+            [sys.executable, "-m", "venv", str(candidate_dir)],
+            capture_output=True,
+            text=True,
+        )
+        if venv_proc.returncode != 0:
+            raise ValueError(
+                f"failed to create supervisor Python environment {candidate_dir}: "
+                f"{(venv_proc.stderr or venv_proc.stdout).strip()}"
+            )
+        install_proc = subprocess.run(
+            [
+                str(candidate_python),
+                "-m",
+                "pip",
+                "install",
+                "--quiet",
+                "--disable-pip-version-check",
+                "-r",
+                str(requirements_path),
+            ],
+            capture_output=True,
+            text=True,
+        )
+        if install_proc.returncode != 0:
+            raise ValueError(
+                f"failed to install supervisor Python dependencies from {requirements_path}: "
+                f"{(install_proc.stderr or install_proc.stdout).strip()}"
+            )
+        python_dependencies = validate_python_dependencies(candidate_python, requirements_path)
+        if python_dir.exists() or python_dir.is_symlink():
+            raise ValueError(
+                "refusing to replace an existing supervisor Python environment that "
+                f"failed read-only validation: {python_dir}"
+            )
+        _publish_directory_no_clobber(candidate_dir, python_dir)
+    finally:
+        shutil.rmtree(candidate_dir, ignore_errors=True)
+
+    return {
+        "python_executable": str(python_executable),
+        "reused": False,
+        "python_dependencies": python_dependencies,
+    }
 
 
 def load_json_object(path: Path) -> dict[str, Any]:
@@ -851,6 +980,23 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="Render one dedicated clean merge checkout into coordination.repositories.",
     )
     parser.add_argument(
+        "--ensure-python-environment",
+        action="store_true",
+        help=(
+            "Ensure one verified supervisor Python environment exists under "
+            "--python-parent, named by --command-root's exact HEAD SHA -- "
+            "reusing it after read-only validation, or provisioning and "
+            "atomically publishing a fresh one -- then print it as JSON. "
+            "Single owner of the provisioning/reuse/publish policy shared "
+            "by the bootstrap and sync-dev-root entrypoints."
+        ),
+    )
+    parser.add_argument(
+        "--python-parent",
+        default=None,
+        help="Parent directory holding per-SHA supervisor Python environments; required with --ensure-python-environment.",
+    )
+    parser.add_argument(
         "--validate-command-root-only",
         action="store_true",
         help="Validate immutable command runtime identity without writing state.",
@@ -867,10 +1013,16 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     )
     parser.add_argument("--json", action="store_true")
     args = parser.parse_args(argv)
-    if not args.validate_command_root_only and not args.validate_python_dependencies_only:
+    if (
+        not args.validate_command_root_only
+        and not args.validate_python_dependencies_only
+        and not args.ensure_python_environment
+    ):
         for option in ("repo_config", "live_config", "status_root"):
             if not getattr(args, option):
                 parser.error(f"--{option.replace('_', '-')} is required")
+    if args.ensure_python_environment and not args.python_parent:
+        parser.error("--python-parent is required with --ensure-python-environment")
     return args
 
 
@@ -920,6 +1072,27 @@ def _main_locked(argv: list[str] | None = None) -> int:
                     "validated python dependency preflight: "
                     f"python={python_executable} requirements={requirements_path} "
                     f"versions={python_dependencies}"
+                )
+            return 0
+
+        if args.ensure_python_environment:
+            python_parent = Path(args.python_parent).expanduser().absolute()
+            requirements_path = (
+                Path(args.requirements).expanduser().absolute()
+                if args.requirements
+                else command_root / ".orchestrator" / "requirements.txt"
+            )
+            result = ensure_supervisor_python_environment(
+                python_parent=python_parent,
+                sha=command_identity["head"],
+                requirements_path=requirements_path,
+            )
+            if args.json:
+                print(json.dumps(result, indent=2, sort_keys=True))
+            else:
+                print(
+                    "supervisor python environment ready: "
+                    f"python={result['python_executable']} reused={str(result['reused']).lower()}"
                 )
             return 0
 
@@ -1040,10 +1213,12 @@ def main(argv: list[str] | None = None) -> int:
     probe.add_argument("--status-root")
     probe.add_argument("--validate-command-root-only", action="store_true")
     probe.add_argument("--validate-python-dependencies-only", action="store_true")
+    probe.add_argument("--ensure-python-environment", action="store_true")
     known, _ = probe.parse_known_args(argv)
     if (
         known.validate_command_root_only
         or known.validate_python_dependencies_only
+        or known.ensure_python_environment
         or not known.status_root
     ):
         return _main_locked(argv)

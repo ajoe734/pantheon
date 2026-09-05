@@ -126,116 +126,48 @@ fi
 # owned rather than checkout-scoped so it survives command-runtime pruning
 # and re-promotion.
 #
-# It is versioned per exact command SHA rather than kept at one fixed path:
-# a fixed path would mean this install (or a failed reinstall) mutates the
-# same directory a currently running incumbent supervisor already launched
-# from, and a partial/failed install could break that live process before
-# any preflight ever runs. A per-SHA directory means an install for a new
-# candidate can never touch the directory backing a different, already
-# promoted SHA -- the incumbent (and every prior verified environment,
-# usable for rollback) is untouched by construction, not by ordering.
-#
 # This must run before the keypair phase below: keypair generation needs
 # ``cryptography``, and on a completely fresh host the ambient interpreter
 # has no reason to carry it -- the deploy-root-owned venv must exist and be
 # proven first so the keypair step never depends on ambient packages.
 #
-# Re-running this script (idempotent by design) must not unconditionally
-# pip-install into an *existing* per-SHA venv: the exact directory named by
-# COMMAND_SHA can already be the one a currently running incumbent
-# supervisor launched from, so a re-run reaching this phase (for example
-# after an earlier phase failed and the operator re-invokes the script) must
-# not mutate a healthy incumbent in place. An existing environment is
-# therefore validated read-only first; only a missing or failing environment
-# is (re)provisioned, and it is provisioned into an isolated, never-before-
-# published directory and preflighted there, then published into the
-# per-SHA path with a create-only (no-clobber) rename -- so the per-SHA path
-# itself is never opened for writing once it is healthy.
+# The provisioning/reuse/publication policy itself (read-only validate an
+# existing per-SHA directory first; provision+preflight a fresh one in
+# isolation only when missing or failing; publish with a create-only rename)
+# is owned by ``ensure_supervisor_python_environment`` in
+# provision_live_supervisor_config.py, the single owner shared with
+# sync-dev-root.sh's equivalent phase -- see that function's docstring for
+# why an existing per-SHA directory is never mutated in place.
 # ---------------------------------------------------------------------------
 SUPERVISOR_PYTHON_PARENT="$RUNTIME_DIR/supervisor-python"
 SUPERVISOR_PYTHON_DIR="$SUPERVISOR_PYTHON_PARENT/$COMMAND_SHA"
 SUPERVISOR_PYTHON="$SUPERVISOR_PYTHON_DIR/bin/python3"
 SUPERVISOR_REQUIREMENTS="$COMMAND_ROOT/.orchestrator/requirements.txt"
 
-supervisor_python_verified=0
-if [[ -x "$SUPERVISOR_PYTHON" ]]; then
-  log "validating existing supervisor Python environment read-only: $SUPERVISOR_PYTHON_DIR"
-  if python3 -B "$COMMAND_ROOT/scripts/provision_live_supervisor_config.py" \
-    --command-root "$COMMAND_ROOT" \
-    --python "$SUPERVISOR_PYTHON" \
-    --requirements "$SUPERVISOR_REQUIREMENTS" \
-    --validate-python-dependencies-only >/dev/null 2>&1; then
-    supervisor_python_verified=1
-  else
-    log "existing supervisor Python environment failed read-only validation; provisioning a fresh one instead of mutating it in place: $SUPERVISOR_PYTHON_DIR"
-  fi
-fi
-
-if [[ "$supervisor_python_verified" -eq 1 ]]; then
-  log "reusing already-verified supervisor Python environment: $SUPERVISOR_PYTHON_DIR"
-elif [[ $DRY_RUN -eq 1 ]]; then
-  echo "  would run: python3 -m venv $SUPERVISOR_PYTHON_DIR (via isolated staging + atomic publish)"
-  echo "  would run: $SUPERVISOR_PYTHON -m pip install --quiet --disable-pip-version-check -r $SUPERVISOR_REQUIREMENTS"
+if [[ $DRY_RUN -eq 1 ]]; then
+  echo "  would run: python3 -B $COMMAND_ROOT/scripts/provision_live_supervisor_config.py --ensure-python-environment --command-root $COMMAND_ROOT --python-parent $SUPERVISOR_PYTHON_PARENT --requirements $SUPERVISOR_REQUIREMENTS"
 else
-  mkdir -p "$SUPERVISOR_PYTHON_PARENT"
-  candidate_python_dir="$(mktemp -d "$SUPERVISOR_PYTHON_PARENT/.supervisor-python-provision-$COMMAND_SHA.XXXXXX")"
-  log "creating supervisor Python environment in isolation: $candidate_python_dir"
-  if ! python3 -m venv "$candidate_python_dir"; then
-    log "FATAL: failed to create supervisor Python environment: $candidate_python_dir"
-    rm -rf -- "$candidate_python_dir"
-    exit 1
-  fi
-  log "installing supervisor Python dependencies from $SUPERVISOR_REQUIREMENTS"
-  if ! "$candidate_python_dir/bin/python3" -m pip install --quiet --disable-pip-version-check \
-    -r "$SUPERVISOR_REQUIREMENTS"; then
-    log "FATAL: failed to install supervisor Python dependencies from $SUPERVISOR_REQUIREMENTS"
-    rm -rf -- "$candidate_python_dir"
-    exit 1
-  fi
-  log "preflighting isolated supervisor Python dependencies for $candidate_python_dir/bin/python3"
-  if ! python3 -B "$COMMAND_ROOT/scripts/provision_live_supervisor_config.py" \
+  log "ensuring supervisor Python environment: $SUPERVISOR_PYTHON_DIR"
+  ensure_output="$(python3 -B "$COMMAND_ROOT/scripts/provision_live_supervisor_config.py" \
+    --ensure-python-environment \
     --command-root "$COMMAND_ROOT" \
-    --python "$candidate_python_dir/bin/python3" \
+    --python-parent "$SUPERVISOR_PYTHON_PARENT" \
     --requirements "$SUPERVISOR_REQUIREMENTS" \
-    --validate-python-dependencies-only >/dev/null; then
-    log "FATAL: python dependency preflight failed for command root=$COMMAND_ROOT"
-    rm -rf -- "$candidate_python_dir"
-    exit 1
+    --json)" || { log "FATAL: python dependency preflight failed for command root=$COMMAND_ROOT"; exit 1; }
+  mapfile -t _ensure_fields < <(python3 -c '
+import json, sys
+payload = json.load(sys.stdin)
+print(payload["python_executable"])
+print("1" if payload["reused"] else "0")
+' <<<"$ensure_output")
+  SUPERVISOR_PYTHON="${_ensure_fields[0]}"
+  if [[ "${_ensure_fields[1]}" == "1" ]]; then
+    log "reusing already-verified supervisor Python environment: $SUPERVISOR_PYTHON_DIR"
+  else
+    log "creating supervisor Python environment in isolation"
+    log "installing supervisor Python dependencies from $SUPERVISOR_REQUIREMENTS"
+    log "published verified supervisor Python environment: $SUPERVISOR_PYTHON_DIR"
   fi
-  if [[ -e "$SUPERVISOR_PYTHON_DIR" ]]; then
-    log "FATAL: refusing to replace an existing supervisor Python environment that failed read-only validation: $SUPERVISOR_PYTHON_DIR"
-    rm -rf -- "$candidate_python_dir"
-    exit 1
-  fi
-  if ! python3 - "$candidate_python_dir" "$SUPERVISOR_PYTHON_DIR" "$SUPERVISOR_PYTHON_PARENT" <<'PY'
-import ctypes
-import errno
-import os
-import sys
-from pathlib import Path
-
-source, destination, parent = map(Path, sys.argv[1:])
-libc = ctypes.CDLL(None, use_errno=True)
-renameat2 = libc.renameat2
-renameat2.argtypes = [ctypes.c_int, ctypes.c_char_p, ctypes.c_int, ctypes.c_char_p, ctypes.c_uint]
-renameat2.restype = ctypes.c_int
-if renameat2(-100, os.fsencode(source), -100, os.fsencode(destination), 1) != 0:
-    error = ctypes.get_errno()
-    if error != errno.EEXIST:
-        raise OSError(error, os.strerror(error), destination)
-fd = os.open(parent, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
-try:
-    os.fsync(fd)
-finally:
-    os.close(fd)
-PY
-  then
-    log "FATAL: failed to publish supervisor Python environment atomically: $SUPERVISOR_PYTHON_DIR"
-    rm -rf -- "$candidate_python_dir"
-    exit 1
-  fi
-  rm -rf -- "$candidate_python_dir"
-  log "published verified supervisor Python environment: $SUPERVISOR_PYTHON_DIR"
 fi
 
 # ---------------------------------------------------------------------------

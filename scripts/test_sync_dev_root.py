@@ -29,7 +29,37 @@ def _seed_remote(tmp_path: Path) -> tuple[Path, Path]:
     (seed / ".orchestrator" / "requirements.txt").write_text("pydantic\n", encoding="utf-8")
     (seed / "version.txt").write_text("one\n", encoding="utf-8")
     (seed / "scripts" / "provision_live_supervisor_config.py").write_text(
-        "import sys\nsys.exit(0)\n", encoding="utf-8"
+        # Fakes only the wiring this suite exercises: --validate-command-root-only
+        # (used by materialize_candidate_runtime) is a pure no-op success, and
+        # --ensure-python-environment reports whatever _stub_supervisor_python
+        # already pre-seeded as "reused" -- the same shortcut the old
+        # --validate-python-dependencies-only stub took, now against the single
+        # consolidated entrypoint in the real
+        # scripts/provision_live_supervisor_config.py. The real provisioning
+        # policy itself is exercised against the genuine module in
+        # test_provision_live_supervisor_config.py and
+        # test_bootstrap_orchestrator_runtime.py, not here.
+        "import argparse\n"
+        "import json\n"
+        "import sys\n"
+        "from pathlib import Path\n"
+        "\n"
+        "parser = argparse.ArgumentParser()\n"
+        "parser.add_argument('--command-root')\n"
+        "parser.add_argument('--python-parent')\n"
+        "parser.add_argument('--ensure-python-environment', action='store_true')\n"
+        "args, _ = parser.parse_known_args()\n"
+        "\n"
+        "if args.ensure_python_environment:\n"
+        "    sha = Path(args.command_root).name\n"
+        "    python_executable = Path(args.python_parent) / sha / 'bin' / 'python3'\n"
+        "    print(json.dumps({\n"
+        "        'python_executable': str(python_executable),\n"
+        "        'reused': python_executable.is_file(),\n"
+        "        'python_dependencies': {},\n"
+        "    }))\n"
+        "sys.exit(0)\n",
+        encoding="utf-8",
     )
     promotion = seed / "scripts" / "promote-supervisor-runtime.sh"
     promotion.write_text(

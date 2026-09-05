@@ -558,6 +558,154 @@ def test_cli_validate_python_dependencies_only_fails_closed(tmp_path: Path) -> N
     assert code == 2
 
 
+def _fake_sha(tmp_path: Path, marker: str) -> str:
+    import hashlib
+
+    return hashlib.sha1((str(tmp_path) + marker).encode()).hexdigest()
+
+
+def test_ensure_supervisor_python_environment_provisions_and_reuses(
+    tmp_path: Path,
+) -> None:
+    """Single owner of the provisioning/reuse/publish policy that bootstrap
+    and sync-dev-root both call into. A fresh SHA must be provisioned in
+    isolation and published; a repeat call for the exact same SHA must reuse
+    it read-only and never touch the site-packages it already installed --
+    the same same-SHA re-entry guarantee bootstrap and sync each need."""
+
+    python_parent = tmp_path / "supervisor-python"
+    requirements = _write_requirements(tmp_path, "packaging\n")
+    sha = _fake_sha(tmp_path, "fresh")
+
+    first = provision.ensure_supervisor_python_environment(
+        python_parent=python_parent, sha=sha, requirements_path=requirements
+    )
+    assert first["reused"] is False
+    python_executable = Path(first["python_executable"])
+    assert python_executable == python_parent / sha / "bin" / "python3"
+    assert python_executable.is_file()
+    assert first["python_dependencies"]["packaging"]
+    # Real imports/intake under the final published interpreter, not just
+    # metadata: the published venv must actually import the dependency.
+    subprocess.run(
+        [str(python_executable), "-c", "import packaging"], check=True
+    )
+    site_packages = next((python_parent / sha / "lib").glob("python*/site-packages"))
+    installed_at = {p: p.stat().st_mtime for p in site_packages.rglob("*") if p.is_file()}
+    leftover_candidates = list(python_parent.glob(f".supervisor-python-provision-{sha}.*"))
+    assert leftover_candidates == []
+
+    second = provision.ensure_supervisor_python_environment(
+        python_parent=python_parent, sha=sha, requirements_path=requirements
+    )
+    assert second["reused"] is True
+    assert second["python_executable"] == first["python_executable"]
+    reused_at = {p: p.stat().st_mtime for p in site_packages.rglob("*") if p.is_file()}
+    assert reused_at == installed_at, (
+        "reusing an already-verified per-SHA environment must not rewrite any "
+        "file in it"
+    )
+
+
+def test_ensure_supervisor_python_environment_rejects_invalid_sha(tmp_path: Path) -> None:
+    with pytest.raises(ValueError, match="lowercase full SHA"):
+        provision.ensure_supervisor_python_environment(
+            python_parent=tmp_path / "supervisor-python",
+            sha="not-a-sha",
+            requirements_path=_write_requirements(tmp_path, "packaging\n"),
+        )
+
+
+def test_ensure_supervisor_python_environment_preserves_incumbent_on_failed_preflight(
+    tmp_path: Path,
+) -> None:
+    """A failed dependency preflight for a fresh candidate must leave any
+    existing (even already-broken) per-SHA directory completely untouched and
+    must not leak a temporary candidate directory -- the "preserve incumbent"
+    requirement that both entrypoints depend on this shared function for."""
+
+    python_parent = tmp_path / "supervisor-python"
+    sha = _fake_sha(tmp_path, "broken")
+    incumbent_dir = python_parent / sha
+    incumbent_bin = incumbent_dir / "bin"
+    incumbent_bin.mkdir(parents=True)
+    # A real interpreter that exists but does not satisfy the requirements
+    # below, so the read-only reuse check fails closed and the function must
+    # attempt (and then fail) a fresh isolated provision instead of mutating
+    # this directory.
+    (incumbent_bin / "python3").symlink_to(Path(sys.executable))
+    marker = incumbent_dir / "marker.txt"
+    marker.write_text("incumbent\n", encoding="utf-8")
+
+    requirements = _write_requirements(tmp_path, "definitely-not-a-real-package-xyz\n")
+
+    with pytest.raises(ValueError, match="failed to install supervisor Python dependencies"):
+        provision.ensure_supervisor_python_environment(
+            python_parent=python_parent, sha=sha, requirements_path=requirements
+        )
+
+    assert marker.read_text(encoding="utf-8") == "incumbent\n", (
+        "a failed fresh-candidate preflight must leave the existing per-SHA "
+        "directory byte-for-byte untouched"
+    )
+    assert list(python_parent.glob(f".supervisor-python-provision-{sha}.*")) == [], (
+        "a failed provision must not leak its isolated candidate directory"
+    )
+
+
+def test_ensure_supervisor_python_environment_requires_existing_requirements_file(
+    tmp_path: Path,
+) -> None:
+    with pytest.raises(ValueError, match="requirements file does not exist"):
+        provision.ensure_supervisor_python_environment(
+            python_parent=tmp_path / "supervisor-python",
+            sha=_fake_sha(tmp_path, "missing-requirements"),
+            requirements_path=tmp_path / "does-not-exist.txt",
+        )
+
+
+def test_cli_ensure_python_environment_prints_python_executable_as_json(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Entrypoint-level coverage of the consolidated CLI mode both
+    bootstrap-orchestrator-runtime.sh and sync-dev-root.sh call into."""
+
+    command, _status = _roots(tmp_path)
+    requirements = _write_requirements(tmp_path, "packaging\n")
+    python_parent = tmp_path / "supervisor-python"
+
+    code = provision.main(
+        [
+            "--command-root",
+            str(command),
+            "--python-parent",
+            str(python_parent),
+            "--requirements",
+            str(requirements),
+            "--ensure-python-environment",
+            "--json",
+        ]
+    )
+
+    assert code == 0
+    payload = json.loads(capsys.readouterr().out)
+    command_head = provision.validated_immutable_command_root(command)["head"]
+    assert payload["python_executable"] == str(
+        python_parent / command_head / "bin" / "python3"
+    )
+    assert payload["reused"] is False
+    assert not (tmp_path / "runtime").exists()
+
+
+def test_cli_ensure_python_environment_requires_python_parent(tmp_path: Path) -> None:
+    command, _status = _roots(tmp_path)
+
+    with pytest.raises(SystemExit):
+        provision.parse_args(
+            ["--command-root", str(command), "--ensure-python-environment"]
+        )
+
+
 def test_cli_creates_one_v2_config_without_merging_an_incumbent(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:

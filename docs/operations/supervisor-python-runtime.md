@@ -72,6 +72,23 @@ the fixes above, both now closed here:
    healthy, whether this is the first promotion of that SHA or a later
    re-entry.
 
+Independent structural review of that same delivery's exact published head
+(PR #5599 head `68e2277aa33b53f4f95e7d6aebac521dc75178c3`) rejected it again
+for a defect the fixes above did not close:
+
+7. The environment provisioning/reuse/publication policy from defect 6 was
+   implemented twice: `scripts/bootstrap-orchestrator-runtime.sh` and
+   `scripts/sync-dev-root.sh` each independently decided whether to reuse an
+   existing environment, created a temporary venv, invoked pip, preflighted
+   it, rejected an existing invalid destination, and performed the no-clobber
+   `renameat2` publication -- the exact mechanism, implemented twice, that the
+   original failure already showed can drift between the bootstrap and sync
+   paths. That policy now has one owner: `ensure_supervisor_python_environment`
+   in `scripts/provision_live_supervisor_config.py`. Both entrypoints are thin
+   callers that pass their own contextual `--python-parent` and `--command-root`
+   to the new `--ensure-python-environment` CLI mode; neither entrypoint
+   re-implements reuse, install, preflight, or publish.
+
 ## The runtime contract
 
 There is exactly one supported way to select the supervisor's Python
@@ -100,21 +117,22 @@ shim.
   directory makes that impossible by construction -- an install can never
   touch the directory backing a different, already-promoted SHA -- and every
   prior verified environment stays on disk, usable for rollback.
-- **Same-SHA re-entry is read-only until proven unhealthy**: per-SHA naming
-  alone does not protect a *repeat* run for the exact same SHA (config-drift
-  re-promotion, or any other re-entrant path). Both
+- **Same-SHA re-entry is read-only until proven unhealthy, with one policy
+  owner**: per-SHA naming alone does not protect a *repeat* run for the exact
+  same SHA (config-drift re-promotion, or any other re-entrant path). Both
   `scripts/sync-dev-root.sh` and `scripts/bootstrap-orchestrator-runtime.sh`
-  first validate an existing per-SHA environment read-only (the same
-  `--validate-python-dependencies-only` preflight described below); only a
-  missing or failing environment is (re)provisioned, and it is provisioned
-  into an isolated, never-before-published directory and preflighted there,
-  then published into the per-SHA path with a create-only (no-clobber)
-  rename. The per-SHA path itself is therefore never opened for writing once
-  it is healthy.
+  call `scripts/provision_live_supervisor_config.py --ensure-python-environment`,
+  which is the single owner of this decision: it validates an existing
+  per-SHA environment read-only first; only a missing or failing environment
+  is (re)provisioned, and it is provisioned into an isolated, never-before-
+  published directory and preflighted there, then published into the per-SHA
+  path with a create-only (no-clobber) rename. The per-SHA path itself is
+  therefore never opened for writing once it is healthy, and neither
+  entrypoint re-implements this decision loop itself.
 - **Selection**: both `scripts/bootstrap-orchestrator-runtime.sh` (fresh
-  host) and `scripts/sync-dev-root.sh` (ongoing promotion) explicitly pass
-  `--python "$SUPERVISOR_PYTHON"` to `promote_supervisor_runtime.py`
-  pointing at that venv's `bin/python3`.
+  host) and `scripts/sync-dev-root.sh` (ongoing promotion) read the
+  `python_executable` that `--ensure-python-environment` reports and pass it
+  as `--python "$SUPERVISOR_PYTHON"` to `promote_supervisor_runtime.py`.
 - **Propagation**: `promote_supervisor_runtime.py` renders the exact
   `--python` path (unresolved) into `watchdog.supervisor_command` in the
   live config. `scripts/supervisor_watchdog_install.py` and
@@ -134,18 +152,19 @@ shim.
   unloadable `pydantic_core`, for example) fails the preflight, not just a
   missing package. Checking distribution metadata alone was not enough:
   metadata can report a version string that satisfies every specifier while
-  the module itself fails to import. `scripts/sync-dev-root.sh` and
-  `scripts/bootstrap-orchestrator-runtime.sh` also run this preflight
-  explicitly (`provision_live_supervisor_config.py
-  --validate-python-dependencies-only`), both read-only against an existing
-  per-SHA environment before deciding whether to reuse it, and again against
-  any newly isolated candidate before it is published -- so a bad candidate
-  install is caught and logged with the untouched incumbent root named in
-  the failure, in addition to the preflight `promote_supervisor_runtime.py`
-  always runs before writing live config. A failed preflight raises before
-  any incumbent state is
-  touched: promotion never stops the running supervisor, never writes the
-  live config, and never disturbs worker leases or the watchdog/cron binding.
+  the module itself fails to import. `ensure_supervisor_python_environment`
+  (called by both `scripts/sync-dev-root.sh` and
+  `scripts/bootstrap-orchestrator-runtime.sh` via
+  `provision_live_supervisor_config.py --ensure-python-environment`) runs
+  this same preflight both read-only against an existing per-SHA environment
+  before deciding whether to reuse it, and again against any newly isolated
+  candidate before it is published -- so a bad candidate install is caught
+  and logged with the untouched incumbent root named in the failure, in
+  addition to the preflight `promote_supervisor_runtime.py` always runs
+  before writing live config. A failed preflight raises before any incumbent
+  state is touched: promotion never stops the running supervisor, never
+  writes the live config, and never disturbs worker leases or the
+  watchdog/cron binding.
 
 ## Fresh-host reproducibility
 
