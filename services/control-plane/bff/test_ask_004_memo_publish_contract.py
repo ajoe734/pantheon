@@ -385,60 +385,37 @@ def _bff_error(status_code: int, code: Any, message: str, reason: Optional[str] 
     return HTTPException(status_code=status_code, detail=f"{code}: {message}")
 
 
-_active_store: Any = None
-_active_cmd_store: Any = None
-_idempotency_store: Dict[str, Any] = {}
-
-
-def _get_active_store() -> Any:
-    return _active_store
-
-
-def _get_active_cmd_store() -> Any:
-    return _active_cmd_store
-
-
-_app = FastAPI(title="Agora Committee Memo Contract")
-_app.include_router(
-    create_agora_router(
-        extract_identity=_extract_identity,
-        require_read_role=_require_read_role,
-        require_write_role=_require_write_role,
-        require_operator_role=_require_write_role,
-        bff_error=_bff_error,
-        utc_now=_utc_now,
-        get_read_store=_get_active_store,
-        get_command_store=_get_active_cmd_store,
-        idempotency_store=_idempotency_store,
-        sync_servant_agent=lambda p: dict(p),
-    )
-)
-_app.include_router(
-    create_governance_router(
-        get_read_store=_get_active_store,
-        extract_identity=_extract_identity,
-        require_read_role=_require_read_role,
-        require_operator_role=_require_write_role,
-    )
-)
-_test_client = TestClient(_app, raise_server_exceptions=False)
-
-
 @contextmanager
 def _client(*, seeded: bool = False) -> Iterator[TestClient]:
-    global _active_store, _active_cmd_store
     with tempfile.TemporaryDirectory() as td:
-        prev_store = _active_store
-        prev_cmd = _active_cmd_store
-        _active_store = _CommitteeMemoReadStore(_SEED_SESSIONS if seeded else None)
-        _active_cmd_store = CommandStore(os.path.join(td, "commands.jsonl"))
-        _idempotency_store.clear()
-        try:
-            yield _test_client
-        finally:
-            _active_store = prev_store
-            _active_cmd_store = prev_cmd
-            _idempotency_store.clear()
+        read_store = _CommitteeMemoReadStore(_SEED_SESSIONS if seeded else None)
+        cmd_store = CommandStore(os.path.join(td, "commands.jsonl"))
+        idempotency_store: Dict[str, Any] = {}
+
+        app = FastAPI(title="Agora Committee Memo Contract")
+        app.include_router(
+            create_agora_router(
+                extract_identity=_extract_identity,
+                require_read_role=_require_read_role,
+                require_write_role=_require_write_role,
+                require_operator_role=_require_write_role,
+                bff_error=_bff_error,
+                utc_now=_utc_now,
+                get_read_store=lambda: read_store,
+                get_command_store=lambda: cmd_store,
+                idempotency_store=idempotency_store,
+                sync_servant_agent=lambda p: dict(p),
+            )
+        )
+        app.include_router(
+            create_governance_router(
+                get_read_store=lambda: read_store,
+                extract_identity=_extract_identity,
+                require_read_role=_require_read_role,
+                require_operator_role=_require_write_role,
+            )
+        )
+        yield TestClient(app, raise_server_exceptions=False)
 
 
 # --------------------------------------------------------------------------- #
@@ -920,3 +897,45 @@ def test_ask_004_publish_memo_rejects_body_idempotency_key() -> None:
             headers=AUTH,
         )
         assert resp.status_code == 400, resp.text
+
+
+def test_ask_004_nested_client_isolation_and_replay_behavior() -> None:
+    """Verify nested client contexts do not bleed stores or clear outer idempotency cache."""
+    with _client(seeded=True) as outer:
+        resp = outer.get("/bff/agora/committee/sessions/committee-memo-001/memos", headers=AUTH)
+        assert resp.status_code == 200
+        assert resp.json()["items"] == []
+
+        key = _idem()
+        post_resp = outer.post(
+            "/bff/agora/committee/sessions/committee-memo-001/memos",
+            json={"memoId": "memo-nested-001", "summary": "Nested test memo"},
+            headers={**AUTH, "Idempotency-Key": key},
+        )
+        assert post_resp.status_code == 201
+
+        resp_with_memo = outer.get("/bff/agora/committee/sessions/committee-memo-001/memos", headers=AUTH)
+        assert resp_with_memo.status_code == 200
+        assert len(resp_with_memo.json()["items"]) == 1
+
+        with _client(seeded=False) as inner:
+            inner_resp = inner.get("/bff/agora/committee/sessions/committee-memo-001/memos", headers=AUTH)
+            assert inner_resp.status_code == 404
+
+        resp_after = outer.get("/bff/agora/committee/sessions/committee-memo-001/memos", headers=AUTH)
+        assert resp_after.status_code == 200
+        assert len(resp_after.json()["items"]) == 1
+        assert resp_after.json()["items"][0]["memo_id"] == "memo-nested-001"
+
+        replay_resp = outer.post(
+            "/bff/agora/committee/sessions/committee-memo-001/memos",
+            json={"memoId": "memo-nested-001", "summary": "Nested test memo"},
+            headers={**AUTH, "Idempotency-Key": key},
+        )
+        assert replay_resp.status_code == 201
+        assert replay_resp.json()["data"]["memo_id"] == post_resp.json()["data"]["memo_id"]
+
+        resp_final = outer.get("/bff/agora/committee/sessions/committee-memo-001/memos", headers=AUTH)
+        assert len(resp_final.json()["items"]) == 1
+
+

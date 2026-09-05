@@ -203,67 +203,43 @@ def _bff_error(
     )
 
 
-_active_store: Any = None
-_active_cmd_store: Any = None
-_idempotency_store: Dict[str, Any] = {}
-
-
-def _get_active_store() -> Any:
-    return _active_store
-
-
-def _get_active_cmd_store() -> Any:
-    return _active_cmd_store
-
-
-_app = FastAPI(title="Agora Committee Sessions Contract")
-
-
-@_app.exception_handler(HTTPException)
-def _http_exception_handler(request: Any, exc: HTTPException) -> Any:
-    from fastapi.responses import JSONResponse
-    detail = exc.detail
-    if isinstance(detail, dict) and "error" in detail:
-        content = detail
-    elif isinstance(detail, dict):
-        content = {"error": detail}
-    else:
-        content = {"error": {"message": str(detail), "code": "HTTP_ERROR"}}
-    return JSONResponse(status_code=exc.status_code, content=content)
-
-
-_app.include_router(
-    create_agora_router(
-        extract_identity=_extract_identity,
-        require_read_role=_require_read_role,
-        require_write_role=_require_write_role,
-        require_operator_role=_require_write_role,
-        bff_error=_bff_error,
-        utc_now=_utc_now,
-        get_read_store=_get_active_store,
-        get_command_store=_get_active_cmd_store,
-        idempotency_store=_idempotency_store,
-        sync_servant_agent=lambda p: dict(p),
-    )
-)
-_test_client = TestClient(_app, raise_server_exceptions=False)
-
-
 @contextmanager
 def _client(*, seeded: bool = False) -> Iterator[TestClient]:
-    global _active_store, _active_cmd_store
     with tempfile.TemporaryDirectory() as td:
-        prev_store = _active_store
-        prev_cmd = _active_cmd_store
-        _active_store = _CommitteeSessionsReadStore(_SEED_SESSIONS if seeded else None)
-        _active_cmd_store = CommandStore(os.path.join(td, "commands.jsonl"))
-        _idempotency_store.clear()
-        try:
-            yield _test_client
-        finally:
-            _active_store = prev_store
-            _active_cmd_store = prev_cmd
-            _idempotency_store.clear()
+        read_store = _CommitteeSessionsReadStore(_SEED_SESSIONS if seeded else None)
+        cmd_store = CommandStore(os.path.join(td, "commands.jsonl"))
+        idempotency_store: Dict[str, Any] = {}
+
+        app = FastAPI(title="Agora Committee Sessions Contract")
+
+        @app.exception_handler(HTTPException)
+        def _http_exception_handler(request: Any, exc: HTTPException) -> Any:
+            from fastapi.responses import JSONResponse
+
+            detail = exc.detail
+            if isinstance(detail, dict) and "error" in detail:
+                content = detail
+            elif isinstance(detail, dict):
+                content = {"error": detail}
+            else:
+                content = {"error": {"message": str(detail), "code": "HTTP_ERROR"}}
+            return JSONResponse(status_code=exc.status_code, content=content)
+
+        app.include_router(
+            create_agora_router(
+                extract_identity=_extract_identity,
+                require_read_role=_require_read_role,
+                require_write_role=_require_write_role,
+                require_operator_role=_require_write_role,
+                bff_error=_bff_error,
+                utc_now=_utc_now,
+                get_read_store=lambda: read_store,
+                get_command_store=lambda: cmd_store,
+                idempotency_store=idempotency_store,
+                sync_servant_agent=lambda p: dict(p),
+            )
+        )
+        yield TestClient(app, raise_server_exceptions=False)
 
 
 # --------------------------------------------------------------------------- #

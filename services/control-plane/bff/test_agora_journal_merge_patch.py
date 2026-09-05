@@ -259,158 +259,134 @@ def _headers(key: str, *, content_type: str = "application/merge-patch+json") ->
     }
 
 
-_active_store: Any = None
+def _make_client(store: Any) -> TestClient:
+    app = FastAPI(title="Agora Journal Test App")
 
-_app = FastAPI(title="Agora Journal Test App")
+    @app.exception_handler(HTTPException)
+    def _http_exception_handler(request: Any, exc: HTTPException) -> Any:
+        detail = exc.detail
+        if isinstance(detail, dict) and "error" in detail:
+            content = detail
+        elif isinstance(detail, dict):
+            content = {"error": detail}
+        else:
+            content = {"error": {"message": str(detail), "code": "HTTP_ERROR"}}
+        return JSONResponse(status_code=exc.status_code, content=content)
 
-
-@_app.exception_handler(HTTPException)
-def _http_exception_handler(request: Any, exc: HTTPException) -> Any:
-    detail = exc.detail
-    if isinstance(detail, dict) and "error" in detail:
-        content = detail
-    elif isinstance(detail, dict):
-        content = {"error": detail}
-    else:
-        content = {"error": {"message": str(detail), "code": "HTTP_ERROR"}}
-    return JSONResponse(status_code=exc.status_code, content=content)
-
-
-_app.include_router(
-    create_agora_router(
-        extract_identity=_extract_identity,
-        require_read_role=_require_role,
-        require_write_role=_require_role,
-        require_journal_write_role=_require_role,
-        bff_error=_bff_error,
-        utc_now=_utc_now_rfc3339,
-        get_read_store=lambda: _active_store,
-        sync_servant_agent=lambda p: dict(p),
+    app.include_router(
+        create_agora_router(
+            extract_identity=_extract_identity,
+            require_read_role=_require_role,
+            require_write_role=_require_role,
+            require_journal_write_role=_require_role,
+            bff_error=_bff_error,
+            utc_now=_utc_now_rfc3339,
+            get_read_store=lambda: store,
+            sync_servant_agent=lambda p: dict(p),
+        )
     )
-)
-_client = TestClient(_app, raise_server_exceptions=False)
+    return TestClient(app, raise_server_exceptions=False)
 
 
 def test_agora_journal_patch_rejects_non_merge_patch_content_type() -> None:
-    global _active_store
-    prev_store = _active_store
-    _active_store = _seeded_store()
-    client = _client
+    store = _seeded_store()
+    client = _make_client(store)
 
-    try:
-        response = client.patch(
-            "/bff/agora/journal/journal-001",
-            headers=_headers("idem-journal-content-type", content_type="application/json"),
-            json={"title": "Updated decision"},
-        )
+    response = client.patch(
+        "/bff/agora/journal/journal-001",
+        headers=_headers("idem-journal-content-type", content_type="application/json"),
+        json={"title": "Updated decision"},
+    )
 
-        assert response.status_code == 415, response.text
-        detail = response.json()
-        assert detail["error"]["code"] == "VALIDATION_FAILED"
-        assert detail["error"]["details"]["precondition_failed"] == "content_type"
-    finally:
-        _active_store = prev_store
+    assert response.status_code == 415, response.text
+    detail = response.json()
+    assert detail["error"]["code"] == "VALIDATION_FAILED"
+    assert detail["error"]["details"]["precondition_failed"] == "content_type"
 
 
 def test_agora_journal_patch_rejects_body_idempotency_key() -> None:
-    global _active_store
-    prev_store = _active_store
-    _active_store = _seeded_store()
-    client = _client
+    store = _seeded_store()
+    client = _make_client(store)
 
-    try:
-        response = client.patch(
-            "/bff/agora/journal/journal-001",
-            headers=_headers("idem-journal-body-idempotency"),
-            json={
-                "title": "Updated decision",
-                "idempotencyKey": "must-not-be-here",
-            },
-        )
+    response = client.patch(
+        "/bff/agora/journal/journal-001",
+        headers=_headers("idem-journal-body-idempotency"),
+        json={
+            "title": "Updated decision",
+            "idempotencyKey": "must-not-be-here",
+        },
+    )
 
-        assert response.status_code == 400, response.text
-        detail = response.json()
-        assert detail["error"]["code"] == "VALIDATION_FAILED"
-        assert detail["error"]["details"]["precondition_failed"] == "body_idempotency_key"
-    finally:
-        _active_store = prev_store
+    assert response.status_code == 400, response.text
+    detail = response.json()
+    assert detail["error"]["code"] == "VALIDATION_FAILED"
+    assert detail["error"]["details"]["precondition_failed"] == "body_idempotency_key"
 
 
 def test_agora_journal_patch_returns_data_and_audit_diff() -> None:
-    global _active_store
-    prev_store = _active_store
     store = _seeded_store()
-    _active_store = store
-    client = _client
+    client = _make_client(store)
 
-    try:
-        response = client.patch(
-            "/bff/agora/journal/journal-001",
-            headers=_headers("idem-journal-success"),
-            json={
-                "title": "Approved rollout notes",
-                "body": "The committee approved the paper rollout.",
-                "tags": ["paper.rollout", "committee-review"],
-                "linkedStrategyIds": ["strategy-alpha", "strategy-beta"],
-                "visibility": "team",
-            },
-        )
+    response = client.patch(
+        "/bff/agora/journal/journal-001",
+        headers=_headers("idem-journal-success"),
+        json={
+            "title": "Approved rollout notes",
+            "body": "The committee approved the paper rollout.",
+            "tags": ["paper.rollout", "committee-review"],
+            "linkedStrategyIds": ["strategy-alpha", "strategy-beta"],
+            "visibility": "team",
+        },
+    )
 
-        assert response.status_code == 200, response.text
-        payload = response.json()
-        assert payload["status"] == "completed"
-        assert payload["data"]["id"] == "journal-001"
-        assert payload["data"]["title"] == "Approved rollout notes"
-        assert payload["data"]["linkedStrategyIds"] == ["strategy-alpha", "strategy-beta"]
-        assert payload["data"]["canonicalWriteAuthority"] == "agora_journal_service"
-        assert payload["data"]["persistenceMode"] == "bff_local_dev_store"
+    assert response.status_code == 200, response.text
+    payload = response.json()
+    assert payload["status"] == "completed"
+    assert payload["data"]["id"] == "journal-001"
+    assert payload["data"]["title"] == "Approved rollout notes"
+    assert payload["data"]["linkedStrategyIds"] == ["strategy-alpha", "strategy-beta"]
+    assert payload["data"]["canonicalWriteAuthority"] == "agora_journal_service"
+    assert payload["data"]["persistenceMode"] == "bff_local_dev_store"
 
-        audit = payload["meta"]["audit"]
-        assert audit["action"] == "agora.journal.merge_patch"
-        assert audit["correlationId"] == "corr-journal-001"
-        assert audit["degraded"] is True
-        assert audit["diff"]["before"]["title"] == "Original decision"
-        assert audit["diff"]["after"]["title"] == "Approved rollout notes"
-        assert set(audit["diff"]["changedFields"]) >= {
-            "title",
-            "body",
-            "tags",
-            "linkedStrategyIds",
-            "visibility",
-        }
+    audit = payload["meta"]["audit"]
+    assert audit["action"] == "agora.journal.merge_patch"
+    assert audit["correlationId"] == "corr-journal-001"
+    assert audit["degraded"] is True
+    assert audit["diff"]["before"]["title"] == "Original decision"
+    assert audit["diff"]["after"]["title"] == "Approved rollout notes"
+    assert set(audit["diff"]["changedFields"]) >= {
+        "title",
+        "body",
+        "tags",
+        "linkedStrategyIds",
+        "visibility",
+    }
 
-        audit_records = store.list_agora_journal_audit_events()
-        assert len(audit_records) == 1
-        stored_audit = next(iter(audit_records.values()))
-        assert stored_audit["diff"]["before"]["body"] == "Initial body"
-        assert stored_audit["diff"]["after"]["body"] == "The committee approved the paper rollout."
-    finally:
-        _active_store = prev_store
+    audit_records = store.list_agora_journal_audit_events()
+    assert len(audit_records) == 1
+    stored_audit = next(iter(audit_records.values()))
+    assert stored_audit["diff"]["before"]["body"] == "Initial body"
+    assert stored_audit["diff"]["after"]["body"] == "The committee approved the paper rollout."
 
 
 def test_agora_journal_patch_idempotency_conflict_rejected() -> None:
-    global _active_store
-    prev_store = _active_store
-    _active_store = _seeded_store()
-    client = _client
+    store = _seeded_store()
+    client = _make_client(store)
 
-    try:
-        headers = _headers("idem-journal-conflict")
-        first = client.patch(
-            "/bff/agora/journal/journal-001",
-            headers=headers,
-            json={"title": "First patch"},
-        )
-        second = client.patch(
-            "/bff/agora/journal/journal-001",
-            headers=headers,
-            json={"title": "Different patch"},
-        )
+    headers = _headers("idem-journal-conflict")
+    first = client.patch(
+        "/bff/agora/journal/journal-001",
+        headers=headers,
+        json={"title": "First patch"},
+    )
+    second = client.patch(
+        "/bff/agora/journal/journal-001",
+        headers=headers,
+        json={"title": "Different patch"},
+    )
 
-        assert first.status_code == 200, first.text
-        assert second.status_code == 409, second.text
-        detail = second.json()
-        assert detail["error"]["code"] == "IDEMPOTENCY_CONFLICT"
-        assert detail["error"]["details"]["precondition_failed"] == "idempotency_conflict"
-    finally:
-        _active_store = prev_store
+    assert first.status_code == 200, first.text
+    assert second.status_code == 409, second.text
+    detail = second.json()
+    assert detail["error"]["code"] == "IDEMPOTENCY_CONFLICT"
+    assert detail["error"]["details"]["precondition_failed"] == "idempotency_conflict"

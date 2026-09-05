@@ -8,21 +8,32 @@ from pathlib import Path
 BFF_ROOT = Path(__file__).resolve().parents[1]
 REPO_ROOT = BFF_ROOT.parents[2]
 EXTERNAL_FILE_LOADER_ALLOWLIST: set[str] = set()
+BASELINE_HELPER_SYS_PATH_ALLOWLIST: set[str] = {
+    "conftest.py",
+    "knowledge_read_port_fixtures.py",
+}
 
 
 def _test_modules() -> list[Path]:
     return sorted(BFF_ROOT.rglob("test*.py"))
 
 
+def _test_and_helper_modules() -> list[Path]:
+    modules = set(BFF_ROOT.rglob("test*.py"))
+    for helper in (BFF_ROOT / "tests").rglob("*.py"):
+        modules.add(helper)
+    return sorted(modules)
+
+
 def test_bff_tests_do_not_import_unqualified_product_modules() -> None:
-    """Tests must resolve BFF code through its installed package root."""
+    """Tests and helpers must resolve BFF code through its installed package root."""
     product_roots = {
         path.stem if path.is_file() else path.name
         for path in BFF_ROOT.iterdir()
         if (path.suffix == ".py" and not path.name.startswith("test_")) or path.is_dir()
     }
     offenders: list[str] = []
-    for path in _test_modules():
+    for path in _test_and_helper_modules():
         tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
         for node in ast.walk(tree):
             names: list[str] = []
@@ -42,7 +53,8 @@ def test_sys_path_mutation_is_limited_to_external_file_loaders() -> None:
     """BFF package imports cannot be enabled by test-local path surgery."""
     offenders: list[str] = []
     observed_allowlist: set[str] = set()
-    for path in _test_modules():
+    allowed = EXTERNAL_FILE_LOADER_ALLOWLIST | BASELINE_HELPER_SYS_PATH_ALLOWLIST
+    for path in _test_and_helper_modules():
         tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
         for node in ast.walk(tree):
             if not isinstance(node, ast.Call) or not isinstance(node.func, ast.Attribute):
@@ -55,12 +67,12 @@ def test_sys_path_mutation_is_limited_to_external_file_loaders() -> None:
                 and owner.attr == "path"
                 and node.func.attr in {"insert", "append"}
             ):
-                if path.name in EXTERNAL_FILE_LOADER_ALLOWLIST:
+                if path.name in allowed:
                     observed_allowlist.add(path.name)
                 else:
                     offenders.append(f"{path.relative_to(BFF_ROOT)}:{node.lineno}")
     assert not offenders, "Unexpected sys.path mutation:\n" + "\n".join(offenders)
-    assert observed_allowlist == EXTERNAL_FILE_LOADER_ALLOWLIST
+    assert observed_allowlist == allowed
 
 
 def test_baseline_test_layer_classification_completeness() -> None:
@@ -135,8 +147,8 @@ def test_direct_main_import_trend_gate_and_allowlist() -> None:
                 offenders.append(rel)
 
     assert not offenders, "Test files importing main outside classified allowlist:\n" + "\n".join(offenders)
-    assert len(observed_importers) <= 181, (
-        f"Direct main import count {len(observed_importers)} exceeds monotonic ceiling 181"
+    assert len(observed_importers) <= 179, (
+        f"Direct main import count {len(observed_importers)} exceeds monotonic ceiling 179"
     )
 
 
@@ -161,4 +173,21 @@ def test_migrated_tests_do_not_import_main_or_patch_globals() -> None:
         assert target.is_file(), f"Migrated test file missing: {rel}"
         text = target.read_text(encoding="utf-8")
         assert "bff_main.read_store" not in text, f"{rel} patches bff_main.read_store"
+        assert "bff_main.command_store" not in text, f"{rel} patches bff_main.command_store"
         assert "main as bff_main" not in text, f"{rel} imports bff_main"
+
+        tree = ast.parse(text, filename=str(target))
+        for stmt in tree.body:
+            if isinstance(stmt, ast.Assign):
+                for tgt in stmt.targets:
+                    if isinstance(tgt, ast.Name):
+                        assert tgt.id not in ("_active_store", "_active_cmd_store", "_test_client"), (
+                            f"{rel} defines module-level test double/client global: {tgt.id}"
+                        )
+            elif isinstance(stmt, ast.FunctionDef):
+                for sub in ast.walk(stmt):
+                    if isinstance(sub, ast.Global):
+                        for gname in sub.names:
+                            assert gname not in ("_active_store", "_active_cmd_store"), (
+                                f"{rel}:{stmt.name} mutates module-level global {gname}"
+                            )

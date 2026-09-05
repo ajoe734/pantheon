@@ -176,67 +176,43 @@ def _bff_error(
     )
 
 
-_active_store: Any = None
-_active_cmd_store: Any = None
-_idempotency_store: Dict[str, Any] = {}
-
-
-def _get_active_store() -> Any:
-    return _active_store
-
-
-def _get_active_cmd_store() -> Any:
-    return _active_cmd_store
-
-
-_app = FastAPI(title="Agora Ask Sessions Contract")
-
-
-@_app.exception_handler(HTTPException)
-def _http_exception_handler(request: Any, exc: HTTPException) -> Any:
-    from fastapi.responses import JSONResponse
-    detail = exc.detail
-    if isinstance(detail, dict) and "error" in detail:
-        content = detail
-    elif isinstance(detail, dict):
-        content = {"error": detail}
-    else:
-        content = {"error": {"message": str(detail), "code": "HTTP_ERROR"}}
-    return JSONResponse(status_code=exc.status_code, content=content)
-
-
-_app.include_router(
-    create_agora_router(
-        extract_identity=_extract_identity,
-        require_read_role=_require_read_role,
-        require_write_role=_require_write_role,
-        require_operator_role=_require_write_role,
-        bff_error=_bff_error,
-        utc_now=_utc_now,
-        get_read_store=_get_active_store,
-        get_command_store=_get_active_cmd_store,
-        idempotency_store=_idempotency_store,
-        sync_servant_agent=lambda p: dict(p),
-    )
-)
-_test_client = TestClient(_app, raise_server_exceptions=False)
-
-
 @contextmanager
 def _client(*, seeded: bool = False) -> Iterator[TestClient]:
-    global _active_store, _active_cmd_store
     with tempfile.TemporaryDirectory() as td:
-        prev_store = _active_store
-        prev_cmd = _active_cmd_store
-        _active_store = _AskSessionsReadStore(_SEED_SESSIONS if seeded else None)
-        _active_cmd_store = CommandStore(os.path.join(td, "commands.jsonl"))
-        _idempotency_store.clear()
-        try:
-            yield _test_client
-        finally:
-            _active_store = prev_store
-            _active_cmd_store = prev_cmd
-            _idempotency_store.clear()
+        read_store = _AskSessionsReadStore(_SEED_SESSIONS if seeded else None)
+        cmd_store = CommandStore(os.path.join(td, "commands.jsonl"))
+        idempotency_store: Dict[str, Any] = {}
+
+        app = FastAPI(title="Agora Ask Sessions Contract")
+
+        @app.exception_handler(HTTPException)
+        def _http_exception_handler(request: Any, exc: HTTPException) -> Any:
+            from fastapi.responses import JSONResponse
+
+            detail = exc.detail
+            if isinstance(detail, dict) and "error" in detail:
+                content = detail
+            elif isinstance(detail, dict):
+                content = {"error": detail}
+            else:
+                content = {"error": {"message": str(detail), "code": "HTTP_ERROR"}}
+            return JSONResponse(status_code=exc.status_code, content=content)
+
+        app.include_router(
+            create_agora_router(
+                extract_identity=_extract_identity,
+                require_read_role=_require_read_role,
+                require_write_role=_require_write_role,
+                require_operator_role=_require_write_role,
+                bff_error=_bff_error,
+                utc_now=_utc_now,
+                get_read_store=lambda: read_store,
+                get_command_store=lambda: cmd_store,
+                idempotency_store=idempotency_store,
+                sync_servant_agent=lambda p: dict(p),
+            )
+        )
+        yield TestClient(app, raise_server_exceptions=False)
 
 
 # --------------------------------------------------------------------------- #
@@ -579,3 +555,44 @@ def test_ask_001_full_lifecycle_create_detail_close() -> None:
         detail_after = client.get(f"/bff/agora/ask/sessions/{session_id}", headers=AUTH)
         assert detail_after.status_code == 200, detail_after.text
         assert detail_after.json()["data"]["status"] == "closed"
+
+
+def test_ask_001_nested_client_isolation_and_replay_behavior() -> None:
+    """Verify nested client contexts do not bleed stores or clear outer idempotency cache."""
+    with _client(seeded=True) as outer:
+        resp = outer.get("/bff/agora/ask/sessions", headers=AUTH)
+        assert resp.status_code == 200
+        outer_items = resp.json()["items"]
+        assert len(outer_items) == 1
+
+        key = _idem()
+        post_resp = outer.post(
+            "/bff/agora/ask/sessions",
+            headers={**AUTH, "Idempotency-Key": key},
+            json={"title": "Outer session"},
+        )
+        assert post_resp.status_code == 201
+
+        with _client(seeded=False) as inner:
+            inner_resp = inner.get("/bff/agora/ask/sessions", headers=AUTH)
+            assert inner_resp.status_code == 200
+            assert len(inner_resp.json()["items"]) == 0
+
+        # After inner closes, outer list is unchanged and still has its records
+        resp_after = outer.get("/bff/agora/ask/sessions", headers=AUTH)
+        assert resp_after.status_code == 200
+        assert len(resp_after.json()["items"]) == 2
+
+        # Replay with same idempotency key does not create duplicate
+        replay_resp = outer.post(
+            "/bff/agora/ask/sessions",
+            headers={**AUTH, "Idempotency-Key": key},
+            json={"title": "Outer session"},
+        )
+        assert replay_resp.status_code == 201
+        assert replay_resp.json()["data"]["sessionId"] == post_resp.json()["data"]["sessionId"]
+
+        # Ensure still only 2 items in outer
+        resp_final = outer.get("/bff/agora/ask/sessions", headers=AUTH)
+        assert len(resp_final.json()["items"]) == 2
+
