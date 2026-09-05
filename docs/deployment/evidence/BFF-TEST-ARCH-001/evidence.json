@@ -1,8 +1,8 @@
 {
   "schema_version": "pantheon.bff-test-architecture.v1",
   "task_id": "BFF-TEST-ARCH-001",
-  "owner": "Antigravity",
-  "reviewer": "Antigravity2",
+  "owner": "Antigravity2",
+  "reviewer": "Codex",
   "status": "in_progress",
   "scope": {
     "owned": "BFF test import, collection architecture, and 5-layer classification",
@@ -31,7 +31,7 @@
     "unqualified_main_imports": 0,
     "ordinary_test_sys_path_mutations": 0,
     "external_file_loader_allowlist": [],
-    "reconciled_direct_main_imports": 189,
+    "reconciled_direct_main_imports": 185,
     "reconciled_migrated_tests": [
       "services/control-plane/bff/test_mgmt_load_002_shell_summary.py",
       "services/control-plane/bff/tests/test_bff_management_cockpit.py",
@@ -55,7 +55,11 @@
       "services/control-plane/bff/test_sent001_sentinel_findings_contract.py",
       "services/control-plane/bff/tests/test_bff_approvals_surface_contract.py",
       "services/control-plane/bff/tests/test_bff_governance_subrules_contract.py",
-      "services/control-plane/bff/test_trn003_rapid_eval_contract.py"
+      "services/control-plane/bff/test_trn003_rapid_eval_contract.py",
+      "services/control-plane/bff/test_consultation_surfaces.py",
+      "services/control-plane/bff/test_ask_004_memo_publish_contract.py",
+      "services/control-plane/bff/test_ask_001_sessions_contract.py",
+      "services/control-plane/bff/test_ask_003_committee_lifecycle.py"
     ],
     "test_layer_classification_summary": {
       "composition": 11,

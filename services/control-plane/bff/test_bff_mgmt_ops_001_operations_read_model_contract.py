@@ -473,6 +473,7 @@ def _seed_isolated_sources(store: OperationsReadModelTestReadPorts) -> None:
         "runtime-mgmt-ops-formal": {
             "runtime_id": "runtime-mgmt-ops-formal",
             "pnl": 1200.0,
+            "market_value": 1200.0,
             "drawdown": 0.03,
             "collected_at": "2026-07-01T00:00:00Z",
             "positions": [

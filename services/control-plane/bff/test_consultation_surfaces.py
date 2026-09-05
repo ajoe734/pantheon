@@ -36,13 +36,49 @@ import sys
 from contextlib import contextmanager
 from typing import Any, Dict, List, Optional
 
-from services.control_plane.bff.ports import create_in_memory_read_surface_ports
+from fastapi import FastAPI, HTTPException
 from fastapi.testclient import TestClient
-from services.control_plane.bff import main as bff_main
-from services.control_plane.bff.main import app
 
-client = TestClient(app)
+from services.control_plane.bff.governance.router import create_governance_router
+from services.control_plane.bff.models import OperatorIdentity
+from services.control_plane.bff.ports import create_in_memory_read_surface_ports
+
 AUTH = "Bearer test-operator:operator,admin"
+
+
+def _extract_identity(authorization: str | None) -> OperatorIdentity:
+    if not authorization or not authorization.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="Authentication required")
+    raw = authorization[len("Bearer "):].strip()
+    parts = raw.split(":")
+    operator_id = parts[0] if parts else "op"
+    roles = parts[1].split(",") if len(parts) > 1 else []
+    return OperatorIdentity(operator_id=operator_id, roles=roles, claims={})
+
+
+def _require_read_role(identity: OperatorIdentity) -> None:
+    if not identity or not identity.roles:
+        raise HTTPException(status_code=403, detail="Forbidden")
+
+
+def _make_client(store: Any) -> TestClient:
+    app = FastAPI(title="Consultation Surfaces Contract")
+    gov_router = create_governance_router(
+        get_read_store=lambda: store,
+        extract_identity=_extract_identity,
+        require_read_role=_require_read_role,
+        require_operator_role=_require_read_role,
+    )
+    app.include_router(gov_router)
+
+    @app.get("/api/v1/personas/{persona_id}")
+    def _get_persona_route(persona_id: str):
+        persona = store.get_persona(persona_id)
+        if not persona:
+            raise HTTPException(status_code=404, detail="Persona not found")
+        return {"data": persona}
+
+    return TestClient(app, raise_server_exceptions=False)
 
 
 # --------------------------------------------------------------------------- #
@@ -364,12 +400,7 @@ def _build_consultation_ports() -> _ConsultationSurfacePorts:
 @contextmanager
 def _seeded_app_read_store():
     seeded = _build_consultation_ports()
-    original_read_store = bff_main.read_store
-    bff_main.read_store = seeded
-    try:
-        yield
-    finally:
-        bff_main.read_store = original_read_store
+    yield _make_client(seeded)
 
 
 def test_consultation_surfaces():
@@ -532,7 +563,7 @@ def test_consultation_surfaces():
 
 def test_consultation_routes_requester_happy_path():
     """HTTP-level: requester session returns populated participants, outcome, and evidence."""
-    with _seeded_app_read_store():
+    with _seeded_app_read_store() as client:
         # CS-02: detail
         resp = client.get("/api/v1/consultations/cs-20260410-001", headers={"Authorization": AUTH})
         assert resp.status_code == 200, f"CS-02 requester detail failed: {resp.status_code}"
@@ -572,7 +603,7 @@ def test_consultation_routes_responder_path():
     """HTTP-level: responder session id resolves to root data (non-empty participants/outcome/evidence)."""
     resp_id = "cs-resp-20260410-001"
 
-    with _seeded_app_read_store():
+    with _seeded_app_read_store() as client:
         # CS-02: responder detail is served (200)
         resp = client.get(f"/api/v1/consultations/{resp_id}", headers={"Authorization": AUTH})
         assert resp.status_code == 200, f"CS-02 responder detail failed: {resp.status_code}"
@@ -604,7 +635,7 @@ def test_consultation_routes_responder_path():
 
 def test_consultation_participant_persona_links_resolve():
     """HTTP-level: persona_id values on participants resolve to real persona records (200)."""
-    with _seeded_app_read_store():
+    with _seeded_app_read_store() as client:
         resp = client.get(
             "/api/v1/consultations/cs-20260410-001/participants",
             headers={"Authorization": AUTH},

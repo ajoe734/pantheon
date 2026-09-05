@@ -20,11 +20,13 @@ from contextlib import contextmanager
 from datetime import datetime, timezone
 from typing import Any, Dict, Iterator, List, Optional
 
+from fastapi import FastAPI, HTTPException
 from fastapi.testclient import TestClient
 
-
-from services.control_plane.bff import main as bff_main
+from services.control_plane.bff.agora.router import create_agora_router
 from services.control_plane.bff.command_queue import CommandStore
+from services.control_plane.bff.governance.router import create_governance_router
+from services.control_plane.bff.models import OperatorIdentity
 
 AUTH = {"Authorization": "Bearer ask-test-op:operator"}
 
@@ -359,21 +361,84 @@ def _idem() -> str:
     return f"idem-{uuid.uuid4().hex[:16]}"
 
 
+def _extract_identity(auth: Optional[str]) -> OperatorIdentity:
+    if not auth or not auth.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="Authentication required")
+    raw = auth[len("Bearer "):].strip()
+    parts = raw.split(":")
+    operator_id = parts[0] if parts else "op"
+    roles = parts[1].split(",") if len(parts) > 1 else []
+    return OperatorIdentity(operator_id=operator_id, roles=roles, claims={})
+
+
+def _require_read_role(identity: OperatorIdentity) -> None:
+    if not identity or not identity.roles:
+        raise HTTPException(status_code=403, detail="Forbidden")
+
+
+def _require_write_role(identity: OperatorIdentity) -> None:
+    if not identity or not identity.roles or "operator" not in identity.roles:
+        raise HTTPException(status_code=403, detail="Forbidden: operator role required")
+
+
+def _bff_error(status_code: int, code: Any, message: str, reason: Optional[str] = None, **kwargs: Any) -> HTTPException:
+    return HTTPException(status_code=status_code, detail=f"{code}: {message}")
+
+
+_active_store: Any = None
+_active_cmd_store: Any = None
+_idempotency_store: Dict[str, Any] = {}
+
+
+def _get_active_store() -> Any:
+    return _active_store
+
+
+def _get_active_cmd_store() -> Any:
+    return _active_cmd_store
+
+
+_app = FastAPI(title="Agora Committee Memo Contract")
+_app.include_router(
+    create_agora_router(
+        extract_identity=_extract_identity,
+        require_read_role=_require_read_role,
+        require_write_role=_require_write_role,
+        require_operator_role=_require_write_role,
+        bff_error=_bff_error,
+        utc_now=_utc_now,
+        get_read_store=_get_active_store,
+        get_command_store=_get_active_cmd_store,
+        idempotency_store=_idempotency_store,
+        sync_servant_agent=lambda p: dict(p),
+    )
+)
+_app.include_router(
+    create_governance_router(
+        get_read_store=_get_active_store,
+        extract_identity=_extract_identity,
+        require_read_role=_require_read_role,
+        require_operator_role=_require_write_role,
+    )
+)
+_test_client = TestClient(_app, raise_server_exceptions=False)
+
+
 @contextmanager
 def _client(*, seeded: bool = False) -> Iterator[TestClient]:
+    global _active_store, _active_cmd_store
     with tempfile.TemporaryDirectory() as td:
-        original_store = bff_main.read_store
-        original_cmd = bff_main.command_store
-        bff_main.read_store = _CommitteeMemoReadStore(_SEED_SESSIONS if seeded else None)
-        bff_main.command_store = CommandStore(os.path.join(td, "commands.jsonl"))
-        bff_main._AGORA_CORE_BFF_IDEMPOTENCY.clear()
-        client = TestClient(bff_main.app)
+        prev_store = _active_store
+        prev_cmd = _active_cmd_store
+        _active_store = _CommitteeMemoReadStore(_SEED_SESSIONS if seeded else None)
+        _active_cmd_store = CommandStore(os.path.join(td, "commands.jsonl"))
+        _idempotency_store.clear()
         try:
-            yield client
+            yield _test_client
         finally:
-            bff_main.read_store = original_store
-            bff_main.command_store = original_cmd
-            bff_main._AGORA_CORE_BFF_IDEMPOTENCY.clear()
+            _active_store = prev_store
+            _active_cmd_store = prev_cmd
+            _idempotency_store.clear()
 
 
 # --------------------------------------------------------------------------- #
