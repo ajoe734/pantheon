@@ -50,6 +50,7 @@ import task_review_merge_gate as review_gate  # noqa: E402  (local helper module
 import github_review_bridge  # noqa: E402  (local helper module)
 import multi_repo_registry  # noqa: E402  (orchestrator module)
 import common as orchestrator_common  # noqa: E402  (canonical lock helpers)
+import auto_integrator_unblock_contract as unblock_contract  # noqa: E402
 from rewrite import integration_receipt  # noqa: E402  (DTG-INT-01 canonical receipt authority)
 
 
@@ -66,8 +67,8 @@ DISPOSABLE_MERGE_IDENTITY = (
 )
 DEFAULT_LOCK = ".orchestrator/auto-integrator.lock"
 DEFAULT_MERGE_METHOD = "merge"
-UNBLOCK_REQUEST_SCHEMA = "pantheon-auto-integrator-unblock-request/v1"
-UNBLOCK_REQUEST_INBOX = ".orchestrator/auto-integrator-unblock-inbox"
+UNBLOCK_REQUEST_SCHEMA = unblock_contract.REQUEST_SCHEMA
+UNBLOCK_REQUEST_INBOX = unblock_contract.REQUEST_INBOX
 DEFAULT_LIVE_CONFIG = Path(
     "/home/lupin/pantheon-ci-deploy/runtime/live-supervisor-mainroot-config.json"
 )
@@ -114,6 +115,7 @@ class Settings:
     unblock_owner: str | None = None
     unblock_reviewer: str | None = None
     status_identity_sha256: str | None = None
+    command_runtime_sha: str | None = None
 
 
 @dataclass(frozen=True)
@@ -618,6 +620,7 @@ def resolve_execute_authority(
         raise ExecuteAuthorityError(
             f"live auto-integrator lock must be canonical ({settings.lock_path} != {canonical_lock})"
         )
+    settings = Settings(**{**settings.__dict__, "command_runtime_sha": head})
     return status_file, status_root, settings, payload
 
 
@@ -1845,17 +1848,14 @@ def final_authority_read_locks(
 
 
 def unblock_task_id(task_id: str, reason: str) -> str:
-    safe_reason = "".join(ch if ch.isalnum() else "-" for ch in reason.upper()).strip("-")
-    return f"INTEGRATION-UNBLOCK-{task_id}-{safe_reason}"[:96]
+    return unblock_contract.task_id(task_id, reason)
 
 
 def _write_unblock_request(root: Path, payload: Mapping[str, Any]) -> None:
     """Durably publish one immutable, content-addressed supervisor request."""
 
-    encoded = json.dumps(
-        payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")
-    ).encode("utf-8")
-    request_id = hashlib.sha256(encoded).hexdigest()
+    encoded = unblock_contract.canonical_bytes(payload)
+    request_id = Path(unblock_contract.request_filename(payload)).stem
     inbox = root / UNBLOCK_REQUEST_INBOX
     inbox.mkdir(mode=0o700, parents=True, exist_ok=True)
     destination = inbox / f"{request_id}.json"
@@ -1899,11 +1899,11 @@ def open_unblock_task(
         return task_id
     owner = settings.unblock_owner or candidate.owner
     reviewer = settings.unblock_reviewer or candidate.reviewer
-    runtime_sha = str(os.environ.get("PANTHEON_COMMAND_RUNTIME_SHA") or "").lower()
+    runtime_sha = str(settings.command_runtime_sha or "").lower()
     if not review_gate.OID_RE.fullmatch(runtime_sha):
         print(
             "auto-integrator: unblock request not published: "
-            "PANTHEON_COMMAND_RUNTIME_SHA is not an immutable runtime binding",
+            "execute authority did not provide an immutable runtime binding",
             file=sys.stderr,
         )
         return task_id

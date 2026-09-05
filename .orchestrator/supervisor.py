@@ -31,6 +31,7 @@ if str(THIS_DIR) not in sys.path:
     sys.path.insert(0, str(THIS_DIR))
 
 import model_rotation
+import auto_integrator_unblock_contract as unblock_contract
 from approval_queue import prune_stale_approvals
 from adapters import ADAPTERS, build_adapter
 from adapters.base import DeliveryRequest
@@ -340,8 +341,8 @@ RUNTIME_PHASE_LAUNCH_INTENT_STALE_DEFAULT_SECONDS = 30.0
 RUNTIME_PHASE_LAUNCH_INTENT_STALE_MAX_SECONDS = 300.0
 REVIEW_REQUEUE_INTENT_KEY = "review_requeue_intent"
 REVIEW_REQUEUE_INTENT_SCHEMA_VERSION = 1
-AUTO_INTEGRATOR_UNBLOCK_REQUEST_SCHEMA = "pantheon-auto-integrator-unblock-request/v1"
-AUTO_INTEGRATOR_UNBLOCK_INBOX = ".orchestrator/auto-integrator-unblock-inbox"
+AUTO_INTEGRATOR_UNBLOCK_REQUEST_SCHEMA = unblock_contract.REQUEST_SCHEMA
+AUTO_INTEGRATOR_UNBLOCK_INBOX = unblock_contract.REQUEST_INBOX
 AUTO_INTEGRATOR_UNBLOCK_RECEIPTS = ".orchestrator/auto-integrator-unblock-receipts"
 AUTO_INTEGRATOR_UNBLOCK_ARCHIVE = ".orchestrator/auto-integrator-unblock-archive"
 AUTO_INTEGRATOR_UNBLOCK_DRAIN_MAX = 32
@@ -2055,10 +2056,7 @@ def record_delivery_health_refresh_authority_consumed(
 
 
 def _auto_integrator_unblock_task_id(source_task_id: str, reason: str) -> str:
-    safe_reason = "".join(
-        character if character.isalnum() else "-" for character in reason.upper()
-    ).strip("-")
-    return f"INTEGRATION-UNBLOCK-{source_task_id}-{safe_reason}"[:96]
+    return unblock_contract.task_id(source_task_id, reason)
 
 
 def _validate_auto_integrator_unblock_request(
@@ -2066,17 +2064,10 @@ def _validate_auto_integrator_unblock_request(
 ) -> tuple[dict[str, Any], Mapping[str, Any]]:
     """Validate every authority binding without granting publisher identity."""
 
-    required = {
-        "schema", "status_root", "status_identity_sha256", "command_runtime_sha", "source_task_id",
-        "source_task_generation", "unblock_task_id", "reason", "detail",
-        "repository_id", "repository_slug", "pr", "head_sha", "owner", "reviewer",
-    }
+    required = unblock_contract.REQUEST_FIELDS
     if set(request) != required or request.get("schema") != AUTO_INTEGRATOR_UNBLOCK_REQUEST_SCHEMA:
         raise ValueError("unblock request schema or fields are invalid")
-    digest = hashlib.sha256(
-        json.dumps(request, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
-    ).hexdigest()
-    if filename != f"{digest}.json":
+    if filename != unblock_contract.request_filename(request):
         raise ValueError("unblock request filename is not its canonical digest")
     status_root = config_path(config, "status_file").parent.resolve()
     if request.get("status_root") != str(status_root):

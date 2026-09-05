@@ -817,6 +817,7 @@ class IntegrationPlanTests(unittest.TestCase):
                 resolved[2].lock_path.resolve(),
                 (status_root / auto_integrator.DEFAULT_LOCK).resolve(),
             )
+            self.assertEqual(resolved[2].command_runtime_sha, head)
 
             forged = json.loads(json.dumps(payload))
             forged["branch_workflow"]["auto_integrator"]["lock_file"] = str(
@@ -1400,7 +1401,7 @@ class IntegrationPlanTests(unittest.TestCase):
 
     def test_red_checks_open_unblock_in_execute_mode(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir, mock.patch.dict(
-            os.environ, {"PANTHEON_COMMAND_RUNTIME_SHA": "b" * 40}
+            os.environ, {}, clear=True
         ):
             status_root = Path(tmp_dir)
             candidate = auto_integrator.TaskCandidate(
@@ -1420,7 +1421,10 @@ class IntegrationPlanTests(unittest.TestCase):
 
             result = auto_integrator.integrate_candidate(
                 candidate,
-                auto_integrator.Settings(status_identity_sha256="d" * 64),
+                auto_integrator.Settings(
+                    status_identity_sha256="d" * 64,
+                    command_runtime_sha="b" * 40,
+                ),
                 runner,
                 status_root=status_root,
                 execute=True,
@@ -1443,7 +1447,10 @@ class IntegrationPlanTests(unittest.TestCase):
                 candidate,
                 "ci-red",
                 result.detail,
-                auto_integrator.Settings(status_identity_sha256="d" * 64),
+                auto_integrator.Settings(
+                    status_identity_sha256="d" * 64,
+                    command_runtime_sha="b" * 40,
+                ),
                 runner,
                 root=status_root,
                 execute=True,
@@ -1506,20 +1513,42 @@ class IntegrationPlanTests(unittest.TestCase):
             },
         )
         with (
-            mock.patch.dict(os.environ, {"PANTHEON_COMMAND_RUNTIME_SHA": "b" * 40}),
+            mock.patch.dict(os.environ, {}, clear=True),
             mock.patch.object(auto_integrator, "_write_unblock_request", side_effect=OSError("disk full")),
         ):
             result = auto_integrator.open_unblock_task(
                 candidate,
                 "ci-red",
                 "CI failed",
-                auto_integrator.Settings(status_identity_sha256="d" * 64),
+                auto_integrator.Settings(
+                    status_identity_sha256="d" * 64,
+                    command_runtime_sha="b" * 40,
+                ),
                 FakeRunner(),
                 root=REPO_ROOT,
                 execute=True,
             )
 
         self.assertEqual(result, "INTEGRATION-UNBLOCK-ABC-001-CI-RED")
+
+    def test_shared_unblock_ids_are_bounded_and_long_reasons_do_not_collide(self) -> None:
+        source = "OPS-AUTO-INTEGRATOR-STATUS-AUTHORITY-PREREQUISITE-001"
+        first = auto_integrator.unblock_task_id(
+            source, "review-gate-approval-head-" + "a" * 80
+        )
+        second = auto_integrator.unblock_task_id(
+            source, "review-gate-approval-head-" + "b" * 80
+        )
+
+        self.assertLessEqual(len(first), 96)
+        self.assertLessEqual(len(second), 96)
+        self.assertNotEqual(first, second)
+        self.assertEqual(
+            first,
+            auto_integrator.unblock_contract.task_id(
+                source, "review-gate-approval-head-" + "a" * 80
+            ),
+        )
 
     def test_clean_disposable_exact_head_merge_uses_scoped_identity_and_lands_head(self) -> None:
         candidate = auto_integrator.TaskCandidate(

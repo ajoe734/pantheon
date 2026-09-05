@@ -84,8 +84,10 @@ review_approved task OR active canonical merge_then_review task
 - Blockers publish a content-addressed request under the canonical status
   root's `.orchestrator/auto-integrator-unblock-inbox/`. The publisher has no
   generic status-command identity and never calls `assign` or `progress`.
-  The request binds the canonical status-root identity, promoted immutable
-  command-runtime SHA, source task generation, repository ID/slug, frozen PR
+  The request binds the canonical status-root identity and the promoted
+  immutable command-runtime SHA already proven by live execute-authority
+  resolution (it does not depend on cron exporting that SHA), source task
+  generation, repository ID/slug, frozen PR
   and head, owner/reviewer, allow-listed reason, and exact generated
   `INTEGRATION-UNBLOCK-*` namespace.
 - Only the supervisor consumes that inbox. It revalidates every binding against
@@ -99,6 +101,11 @@ review_approved task OR active canonical merge_then_review task
   and arbitrary-task requests are rejected by an exact finite reason allowlist
   rather than an extensible regex family. A request publication failure is
   reported without discarding the candidate result or aborting the pass.
+- Publisher and supervisor use one pure request contract for schema, inbox,
+  canonical request serialization/filename, and generated task IDs. IDs longer
+  than 96 characters retain a readable prefix plus a deterministic digest
+  suffix, preventing distinct long blocker reasons from truncating to the same
+  task ID.
 
 ## Merge Flow
 

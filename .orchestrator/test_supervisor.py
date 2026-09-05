@@ -2151,6 +2151,18 @@ class AutoIntegratorUnblockAuthorityTests(unittest.TestCase):
         self.assertEqual(len(list(receipts.glob("*.json"))), 1)
         self.assertEqual(len(list(archives.glob("*.json"))), 1)
 
+    def test_consumer_uses_shared_bounded_noncolliding_task_id_contract(self) -> None:
+        source = "OPS-AUTO-INTEGRATOR-STATUS-AUTHORITY-PREREQUISITE-001"
+        first_reason = "review-gate-approval-head-" + "a" * 80
+        second_reason = "review-gate-approval-head-" + "b" * 80
+
+        first = supervisor._auto_integrator_unblock_task_id(source, first_reason)
+        second = supervisor._auto_integrator_unblock_task_id(source, second_reason)
+
+        self.assertEqual(first, supervisor.unblock_contract.task_id(source, first_reason))
+        self.assertLessEqual(len(first), supervisor.unblock_contract.TASK_ID_LIMIT)
+        self.assertNotEqual(first, second)
+
     def test_forged_stale_wrong_root_runtime_pr_head_and_namespace_are_rejected(self) -> None:
         mutations = (
             {"status_root": str(self.status_root / "other")},
