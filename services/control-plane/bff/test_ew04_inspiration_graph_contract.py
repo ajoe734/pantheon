@@ -5,10 +5,14 @@ import sys
 import tempfile
 from contextlib import contextmanager
 
+from fastapi import FastAPI, HTTPException
 from fastapi.testclient import TestClient
+from starlette.exceptions import HTTPException as StarletteHTTPException
+from starlette.responses import JSONResponse
 
-
-from services.control_plane.bff import main as bff_main
+from services.control_plane.bff.evolution.router import create_evolution_router
+from services.control_plane.bff.evolution.service import ew04_inspiration_projection_from_lineage_edges
+from services.control_plane.bff.models import OperatorIdentity
 from services.control_plane.bff.ports import create_in_memory_read_surface_ports
 
 
@@ -56,19 +60,51 @@ def _seeded_client(
     inspiration_graphs: dict | None = None,
     lineage_edges: list | None = None,
 ):
-    original_store = bff_main.read_store
     graphs = dict(_DEFAULT_INSPIRATION_GRAPHS if inspiration_graphs is None else inspiration_graphs)
-    bff_main.read_store = create_in_memory_read_surface_ports(
+    store = create_in_memory_read_surface_ports(
         lifecycle_telemetry_governance_kwargs={
             "inspiration_graphs": graphs,
             "lineage_edges": lineage_edges or [],
         }
     )
-    client = TestClient(bff_main.app)
-    try:
-        yield client
-    finally:
-        bff_main.read_store = original_store
+
+    def _extract_identity(authorization: str | None) -> OperatorIdentity:
+        if not authorization or not authorization.startswith("Bearer "):
+            raise HTTPException(status_code=401, detail="Authentication required")
+        raw = authorization[len("Bearer "):].strip()
+        parts = raw.split(":")
+        operator_id = parts[0] if parts else "op"
+        roles = parts[1].split(",") if len(parts) > 1 else []
+        return OperatorIdentity(operator_id=operator_id, roles=roles, claims={})
+
+    def _require_read_role(identity: OperatorIdentity) -> None:
+        if not identity or not identity.roles:
+            raise HTTPException(status_code=403, detail="Forbidden")
+
+    app = FastAPI(title="Inspiration Graph Contract")
+
+    @app.exception_handler(StarletteHTTPException)
+    async def _http_exc_handler(req, exc):
+        if isinstance(exc.detail, dict) and "error" in exc.detail:
+            return JSONResponse(status_code=exc.status_code, content=exc.detail)
+        elif isinstance(exc.detail, dict):
+            return JSONResponse(status_code=exc.status_code, content={"error": exc.detail})
+        return JSONResponse(
+            status_code=exc.status_code,
+            content={"error": {"code": "ERROR", "message": str(exc.detail)}},
+        )
+
+    router = create_evolution_router(
+        read_surface=store,
+        extract_identity=_extract_identity,
+        require_read_role=_require_read_role,
+        require_operator_role=_require_read_role,
+        utc_now=lambda: "2026-04-19T03:00:00Z",
+    )
+    app.include_router(router)
+    client = TestClient(app)
+    client.store = store
+    yield client
 
 
 def test_ew04_inspiration_graph_contract_returns_published_projection() -> None:
@@ -121,20 +157,13 @@ def test_ew04_inspiration_graph_contract_returns_published_projection() -> None:
 
 def test_ew04_inspiration_graph_returns_unavailable_surface_when_dataset_is_missing() -> None:
     with _seeded_client() as client:
-        original_get = bff_main.read_store.get_inspiration_graph
-        original_source = bff_main.read_store.dataset_source
-        try:
-            bff_main.read_store.get_inspiration_graph = lambda artifact_id: None
-            bff_main.read_store.dataset_source = lambda dataset: "missing"
+        client.store.get_inspiration_graph = lambda artifact_id: None
+        client.store.dataset_source = lambda dataset: "missing"
 
-            response = client.get(
-                "/api/v1/lineage/inspiration/artifact-042",
-                headers={"Authorization": OPERATOR_AUTH},
-            )
-        finally:
-            bff_main.read_store.get_inspiration_graph = original_get
-            bff_main.read_store.dataset_source = original_source
-
+        response = client.get(
+            "/api/v1/lineage/inspiration/artifact-042",
+            headers={"Authorization": OPERATOR_AUTH},
+        )
         assert response.status_code == 200, response.text
         payload = response.json()
         assert payload["artifact_id"] == "artifact-042"
@@ -145,16 +174,11 @@ def test_ew04_inspiration_graph_returns_unavailable_surface_when_dataset_is_miss
 
 def test_ew04_inspiration_graph_returns_404_for_unknown_artifact_even_when_dataset_is_missing() -> None:
     with _seeded_client() as client:
-        original_source = bff_main.read_store.dataset_source
-        try:
-            bff_main.read_store.dataset_source = lambda dataset: "missing"
-            response = client.get(
-                "/api/v1/lineage/inspiration/artifact-missing",
-                headers={"Authorization": OPERATOR_AUTH},
-            )
-        finally:
-            bff_main.read_store.dataset_source = original_source
-
+        client.store.dataset_source = lambda dataset: "missing"
+        response = client.get(
+            "/api/v1/lineage/inspiration/artifact-missing",
+            headers={"Authorization": OPERATOR_AUTH},
+        )
         assert response.status_code == 404, response.text
         payload = response.json()
         assert payload["error"]["code"] == "RESOURCE_NOT_FOUND"
@@ -171,8 +195,12 @@ def test_ew04_inspiration_graph_fallback_from_lineage_edges_does_not_synthesize_
             "strategy_id": "alpha-strategy",
         }
     ]
-    with _seeded_client(lineage_edges=edges) as _client:
-        projection = bff_main._ew04_inspiration_projection_from_lineage_edges("artifact-fallback-01")
+    with _seeded_client(lineage_edges=edges) as client:
+        projection = ew04_inspiration_projection_from_lineage_edges(
+            "artifact-fallback-01",
+            client.store,
+            utc_now=lambda: "2026-04-19T03:00:00Z",
+        )
         assert projection is not None
         assert projection["artifact_id"] == "artifact-fallback-01"
         assert len(projection["inspiration_edges"]) == 1

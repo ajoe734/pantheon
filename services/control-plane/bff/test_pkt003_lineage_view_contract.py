@@ -2,23 +2,61 @@
 """HTTP contract tests for PKT-003 Lineage View BFF surfaces."""
 from __future__ import annotations
 
-import os
-import sys
 from contextlib import contextmanager
 
+from fastapi import FastAPI, HTTPException
+from fastapi.responses import JSONResponse
 from fastapi.testclient import TestClient
+from starlette.exceptions import HTTPException as StarletteHTTPException
 
-
-from services.control_plane.bff import main as bff_main
+from services.control_plane.bff.evolution.router import create_evolution_router
+from services.control_plane.bff.models import OperatorIdentity
 from services.control_plane.bff.ports import create_in_memory_read_surface_ports
 
 AUTH = "Bearer test-operator:operator,admin"
 
 
+def _build_test_client(store) -> TestClient:
+    def _extract_identity(authorization: str | None) -> OperatorIdentity:
+        if not authorization or not authorization.startswith("Bearer "):
+            raise HTTPException(status_code=401, detail="Authentication required")
+        raw = authorization[len("Bearer "):].strip()
+        parts = raw.split(":")
+        operator_id = parts[0] if parts else "op"
+        roles = parts[1].split(",") if len(parts) > 1 else []
+        return OperatorIdentity(operator_id=operator_id, roles=roles, claims={})
+
+    def _require_read_role(identity: OperatorIdentity) -> None:
+        if not identity or not identity.roles:
+            raise HTTPException(status_code=403, detail="Forbidden")
+
+    app = FastAPI(title="Lineage View Contract")
+
+    @app.exception_handler(StarletteHTTPException)
+    async def _http_exc_handler(req, exc):
+        if isinstance(exc.detail, dict) and "error" in exc.detail:
+            return JSONResponse(status_code=exc.status_code, content=exc.detail)
+        elif isinstance(exc.detail, dict):
+            return JSONResponse(status_code=exc.status_code, content={"error": exc.detail})
+        return JSONResponse(
+            status_code=exc.status_code,
+            content={"error": {"code": "ERROR", "message": str(exc.detail)}},
+        )
+
+    router = create_evolution_router(
+        read_surface=store,
+        extract_identity=_extract_identity,
+        require_read_role=_require_read_role,
+        require_operator_role=_require_read_role,
+        utc_now=lambda: "2026-04-19T03:00:00Z",
+    )
+    app.include_router(router)
+    return TestClient(app, raise_server_exceptions=False)
+
+
 @contextmanager
 def _seeded_client():
-    original_store = bff_main.read_store
-    bff_main.read_store = create_in_memory_read_surface_ports(
+    store = create_in_memory_read_surface_ports(
         lifecycle_telemetry_governance_kwargs={
             "lineage_edges": [
                 {
@@ -55,17 +93,13 @@ def _seeded_client():
             ],
         }
     )
-    client = TestClient(bff_main.app)
-    try:
-        yield client
-    finally:
-        bff_main.read_store = original_store
+    client = _build_test_client(store)
+    yield client
 
 
 @contextmanager
 def _registry_backed_client():
-    original_store = bff_main.read_store
-    bff_main.read_store = create_in_memory_read_surface_ports(
+    store = create_in_memory_read_surface_ports(
         lifecycle_telemetry_governance_kwargs={
             "lineage_edges": [
                 {
@@ -105,11 +139,8 @@ def _registry_backed_client():
             ],
         }
     )
-    client = TestClient(bff_main.app)
-    try:
-        yield client
-    finally:
-        bff_main.read_store = original_store
+    client = _build_test_client(store)
+    yield client
 
 
 def test_lineage_list_contract():
