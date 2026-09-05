@@ -1,0 +1,241 @@
+# Supervisor Python runtime contract
+
+Status: active operating rule
+Task: OPS-SUPERVISOR-PYTHON-RUNTIME-PREREQUISITE-001
+
+## The failure this closes
+
+On 2026-09-05 the promoted supervisor was launched with `/usr/bin/python3`.
+The main loop stayed healthy (heartbeat, ai-status sync, worker dispatch all
+kept working), but every signed dev-bridge packet drain failed silently with
+`ModuleNotFoundError: No module named 'pydantic'`. The failure was invisible
+in health checks because the health surface never exercised the drain path.
+
+Independent review of the first delivery (head `cbea5c308bf2994e7ce1b3c238f39ab1374582b0`)
+found two more real defects beyond the original two, all four now closed here:
+
+1. Nothing in the promotion chain ever selected a dependency-carrying
+   interpreter. `scripts/bootstrap-orchestrator-runtime.sh` and
+   `scripts/sync-dev-root.sh` called `promote_supervisor_runtime.py` without
+   `--python`, so it defaulted to `sys.executable` -- whatever interpreter
+   happened to run the bootstrap/sync script, which on a fresh host is the
+   ambient `/usr/bin/python3`.
+2. Even when a venv interpreter *was* passed explicitly,
+   `scripts/provision_live_supervisor_config.py` called
+   `Path(args.python).expanduser().resolve()`. A venv's `bin/python` is a
+   symlink chain to the base interpreter. CPython's own startup walks that
+   chain looking for `pyvenv.cfg` and stops as soon as it finds one -- but
+   only when it is invoked *through* the symlink. Fully resolving the path
+   before storing it collapses the chain in Python, so the stored
+   `supervisor_command` launches the base interpreter directly, which never
+   finds `pyvenv.cfg` and silently loses every package the venv provided.
+3. (found in review) `scripts/bootstrap-orchestrator-runtime.sh` generated
+   the dev-bridge keypair -- which imports `cryptography` -- with the
+   ambient `python3`, before the supervisor venv was ever created. A clean
+   host with no ambient `cryptography` could not bootstrap at all.
+4. (found in review) `validate_python_dependencies()` called
+   `importlib.metadata.version()` only: it never enforced the
+   `requirements.txt` version specifier and never imported the module, so an
+   incompatible version or a broken native extension could report a passing
+   preflight. Separately, `scripts/sync-dev-root.sh` pip-installed every
+   promotion into one fixed venv directory -- the same directory a currently
+   running incumbent supervisor had already launched from -- before any
+   preflight ran, so a partial or failed install could break the live
+   incumbent regardless of whether the candidate was ever accepted.
+
+Human/Ops rejected that first delivery (PR #5599 head
+`82aaf61b8677c57c8d10a2ef98c0775dc52d4659`) and found two more real defects in
+the fixes above, both now closed here:
+
+5. The version-specifier check added for defect 4 was a self-contained
+   numeric-prefix comparator: it stripped pre/post-release suffixes before
+   comparing, so it silently accepted `2.9rc1` against `>=2.9,<3` (a
+   pre-release the specifier never opted into), accepted `2.9` against
+   `>=2.9.post1` (PEP 440 orders a post-release after its base release, so
+   `2.9 < 2.9.post1`), and accepted the invalid specifier `>=not-a-version`
+   by silently comparing against `0`. The probe now uses `packaging`
+   (declared in `.orchestrator/requirements.txt`, the standard PEP 440
+   version/specifier authority) inside the candidate interpreter instead.
+6. The per-SHA venv directory fix for defect 4 only protected against a
+   *different* SHA touching an incumbent's directory. A same-SHA re-entry
+   (config drift, or any other path that reaches the promotion logic without
+   the SHA changing) still unconditionally pip-installed into the existing
+   per-SHA directory before any preflight ran -- and that directory can
+   already be the one a currently running incumbent supervisor launched
+   from. Both `scripts/sync-dev-root.sh` and
+   `scripts/bootstrap-orchestrator-runtime.sh` now validate an existing
+   per-SHA environment read-only first; only a missing or failing
+   environment is (re)provisioned, and it is provisioned into an isolated,
+   never-before-published directory and preflighted there before being
+   published into the per-SHA path with a create-only (no-clobber) rename.
+   The per-SHA path itself is therefore never opened for writing once it is
+   healthy, whether this is the first promotion of that SHA or a later
+   re-entry.
+
+Independent structural review of that same delivery's exact published head
+(PR #5599 head `68e2277aa33b53f4f95e7d6aebac521dc75178c3`) rejected it again
+for a defect the fixes above did not close:
+
+7. The environment provisioning/reuse/publication policy from defect 6 was
+   implemented twice: `scripts/bootstrap-orchestrator-runtime.sh` and
+   `scripts/sync-dev-root.sh` each independently decided whether to reuse an
+   existing environment, created a temporary venv, invoked pip, preflighted
+   it, rejected an existing invalid destination, and performed the no-clobber
+   `renameat2` publication -- the exact mechanism, implemented twice, that the
+   original failure already showed can drift between the bootstrap and sync
+   paths. That policy now has one owner: `ensure_supervisor_python_environment`
+   in `scripts/provision_live_supervisor_config.py`. Both entrypoints are thin
+   callers that pass their own contextual `--python-parent` and `--command-root`
+   to the new `--ensure-python-environment` CLI mode; neither entrypoint
+   re-implements reuse, install, preflight, or publish.
+
+Human/Ops rejected that consolidated delivery's exact published head (PR
+#5599 head `06671fb888b2cb8d41c104b466d4f73c878be8a0`) for one more real
+defect the single-owner consolidation did not close:
+
+8. `_publish_directory_no_clobber` accepts a concurrent publisher's `EEXIST`
+   as success -- by design, so a losing publisher never opens the winner's
+   directory for writing -- but `ensure_supervisor_python_environment` still
+   returned the *candidate's* preflight proof (validated before publish) as
+   if it were proof of the path it actually selected. A synthetic
+   competing-publisher probe showed this returns success even when the
+   final `<per-SHA>/bin/python3` does not exist: no validator call was ever
+   made against the selected final path. `ensure_supervisor_python_environment`
+   now re-validates dependencies against the exact final `python_executable`
+   after publish -- whether this call's own candidate won the race or a
+   concurrent publisher did -- and raises before returning if that final
+   path fails, instead of handing back proof earned by a directory that may
+   have already been discarded.
+
+## The runtime contract
+
+There is exactly one supported way to select the supervisor's Python
+environment, and it is threaded through the same bootstrap -> config
+renderer -> promotion -> watchdog path that already exists. There is no
+second dispatcher, no ambient dependency workaround, and no per-tick import
+shim.
+
+- **Dependency contract**: `.orchestrator/requirements.txt` in the exact
+  promoted command source. It is intentionally minimal -- only what the
+  supervisor's bridge/task-store code actually imports (`pydantic`,
+  `cryptography`) plus `packaging` (the specifier-check authority the
+  preflight probe itself needs, see below) -- not the product BFF's full
+  dependency set.
+- **Environment**: a dedicated venv at
+  `$PANTHEON_DEPLOY_ROOT/runtime/supervisor-python/<exact-candidate-SHA>`,
+  created with `python3 -m venv` and installed with
+  `pip install -r .orchestrator/requirements.txt` from that exact candidate.
+  This directory is deploy-root owned (not inside any Git worktree), so it
+  survives command-runtime pruning and re-promotion. It is versioned per
+  exact candidate SHA, not kept at one fixed path: a fixed path would mean an
+  install (or a failed reinstall) for a *new* candidate mutates the very
+  directory a currently *running* incumbent supervisor already launched
+  from, so a partial or failed install could break the live process before
+  promotion ever decides whether to accept the candidate. A per-SHA
+  directory makes that impossible by construction -- an install can never
+  touch the directory backing a different, already-promoted SHA -- and every
+  prior verified environment stays on disk, usable for rollback.
+- **Same-SHA re-entry is read-only until proven unhealthy, with one policy
+  owner**: per-SHA naming alone does not protect a *repeat* run for the exact
+  same SHA (config-drift re-promotion, or any other re-entrant path). Both
+  `scripts/sync-dev-root.sh` and `scripts/bootstrap-orchestrator-runtime.sh`
+  call `scripts/provision_live_supervisor_config.py --ensure-python-environment`,
+  which is the single owner of this decision: it validates an existing
+  per-SHA environment read-only first; only a missing or failing environment
+  is (re)provisioned, and it is provisioned into an isolated, never-before-
+  published directory and preflighted there, then published into the per-SHA
+  path with a create-only (no-clobber) rename. The per-SHA path itself is
+  therefore never opened for writing once it is healthy, and neither
+  entrypoint re-implements this decision loop itself.
+- **Selection**: both `scripts/bootstrap-orchestrator-runtime.sh` (fresh
+  host) and `scripts/sync-dev-root.sh` (ongoing promotion) read the
+  `python_executable` that `--ensure-python-environment` reports and pass it
+  as `--python "$SUPERVISOR_PYTHON"` to `promote_supervisor_runtime.py`.
+- **Propagation**: `promote_supervisor_runtime.py` renders the exact
+  `--python` path (unresolved) into `watchdog.supervisor_command` in the
+  live config. `scripts/supervisor_watchdog_install.py` and
+  `.orchestrator/supervisor_watchdog.py` restart the supervisor by re-running
+  that recorded `supervisor_command`, so the accepted interpreter survives
+  every subsequent watchdog restart without re-selection.
+- **Preflight, not blind trust**: before either
+  `provision_live_supervisor_config.py` or `promote_supervisor_runtime.py`
+  will accept a candidate interpreter, they run
+  `validate_python_dependencies()` *inside that exact interpreter*. The
+  probe parses each requirements line into a distribution name and version
+  specifier, calls `importlib.metadata.version()` for the real installed
+  version, enforces the specifier with `packaging.specifiers.SpecifierSet`
+  (the standard PEP 440 authority -- not a hand-rolled comparator, see the
+  review-round defects above), and then calls `importlib.import_module()` on
+  the package -- so a wrong version *or* a broken native extension (an
+  unloadable `pydantic_core`, for example) fails the preflight, not just a
+  missing package. Checking distribution metadata alone was not enough:
+  metadata can report a version string that satisfies every specifier while
+  the module itself fails to import. `ensure_supervisor_python_environment`
+  (called by both `scripts/sync-dev-root.sh` and
+  `scripts/bootstrap-orchestrator-runtime.sh` via
+  `provision_live_supervisor_config.py --ensure-python-environment`) runs
+  this same preflight read-only against an existing per-SHA environment
+  before deciding whether to reuse it, again against any newly isolated
+  candidate before it is published, and then a third time against the exact
+  final `python_executable` after publish -- so a bad candidate install is
+  caught and logged with the untouched incumbent root named in the failure,
+  in addition to the preflight `promote_supervisor_runtime.py` always runs
+  before writing live config. That final-path check is not redundant with
+  the pre-publish one: `_publish_directory_no_clobber` treats losing a
+  publish race to a concurrent publisher (`EEXIST`) as success, so the path
+  this call ends up returning proof for can be a directory it never
+  installed into itself. Re-validating the selected path after publish
+  means a concurrent publisher's invalid environment is rejected too,
+  instead of this call handing back its own (possibly discarded) candidate's
+  proof for a path it does not actually vouch for. A failed preflight at any
+  of the three points raises before any incumbent state is touched:
+  promotion never stops the running supervisor, never writes the live
+  config, and never disturbs worker leases or the watchdog/cron binding.
+
+## Fresh-host reproducibility
+
+`scripts/bootstrap-orchestrator-runtime.sh` materializes the immutable
+command root, then creates the per-SHA venv and installs
+`.orchestrator/requirements.txt` into it as an explicit, scripted step (no
+reliance on whatever happens to already be importable from the chatbox shell
+that ran the script) -- **before** generating the dev-bridge Ed25519 keypair.
+Keypair generation imports `cryptography` and now runs under that venv's
+`python3`, never the ambient one: a fresh host has no reason to carry
+`cryptography` on its system interpreter, and bootstrap must not depend on it
+being there. Re-running the script is idempotent: an existing per-SHA venv
+that already passes the read-only dependency preflight is reused as-is and
+never reinstalled into; only a missing or failing environment is
+provisioned again, in isolation, as described above.
+
+## Real signed-intake proof, not just a metadata probe
+
+`.orchestrator/development_bridge/tests/test_dev_bridge_inbox_bootstrap_python_runtime.py`
+builds a real interpreter the same way these scripts do (`python3 -m venv`
+plus `pip install -r .orchestrator/requirements.txt`) and genuinely queues
+and drains a real Ed25519-signed `DevTaskPacket` through it -- proving the
+bridge's pydantic parsing and cryptography signature verification actually
+work end to end under that interpreter, not merely that a dependency-metadata
+probe accepts it. A second test in the same file builds a bare venv (never
+given the requirements file) and proves the real drain fails closed instead
+of looking healthy, reproducing the original incident's failure mode
+deterministically.
+
+## What this does not change
+
+- No second supervisor launcher, packet dispatcher, or cron path was added.
+- No signed packet validation was disabled, no mock keys were injected, no
+  `sys.modules` import shim was added.
+- `scripts/ai_status.py`, the task archive, and `TaskStore` changes are owned
+  by the separate archive-reconciliation prerequisite and are not touched
+  here.
+- This task is source-only. Exact-version governed promotion, confirming the
+  launched interpreter, automatic pending -> processed admission, and a
+  fresh heartbeat on the live host are coordinated separately after merge.
+
+## Rollback
+
+Roll back with the existing exact-version promotion flow
+(`scripts/promote-supervisor-runtime.sh --promote`) pointed at the last
+verified command source and the last verified `--python` interpreter. Task
+packets, admission receipts, and historical audit are untouched by a
+promotion rollback.

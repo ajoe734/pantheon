@@ -32,6 +32,8 @@ auto worker 的狀態命令會由 supervisor 提供的 `PANTHEON_COMMAND_ROOT` /
 不要用臨時 Python/heredoc 直接改 `ai-status.json`、`current-work.md` 或 `ai-activity-log.jsonl`。
 你在 background auto worker 裡執行，請不要使用 `git add -p`、`git add -i`、`git commit --interactive`、`git rebase -i` 或其他需要人工輸入的互動式命令。
 
+驗證與長時間命令必須使用有界的 foreground batches，並在 final、handoff 或 task 狀態轉移前收齊每批的 terminal output 與 exit status。若工具回傳 background handle，必須用該工具既有的 blocking output collection（Claude Code 使用 `TaskOutput(block=true)`）等到終局；不得以啟動成功、開始收集或「等待通知」當成完成。不得用 `nohup` 或 `&` 放走本 task 需要據以驗收的命令。若工作無法在本次 bounded batch 完成，先做 anchor commit，再正式 handoff 或回報 genuine blocker；timeout、killed、collection 中都不得計為 passed。
+
 Task ID: {{task_id}}
 原因: {{reason}}
 可能相關檔案:

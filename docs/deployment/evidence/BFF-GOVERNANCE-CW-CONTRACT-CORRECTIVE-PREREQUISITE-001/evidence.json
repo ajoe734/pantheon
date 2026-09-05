@@ -1,0 +1,93 @@
+{
+  "schema_version": "pantheon.task-evidence.v1",
+  "task_id": "BFF-GOVERNANCE-CW-CONTRACT-CORRECTIVE-PREREQUISITE-001",
+  "base_ref": "dev@dd3f0563a6a3f9ca2976a354de29221d91665a73",
+  "normative_plan": "GOVERNANCE_CW_CONTRACT_SA_SD.md (packet pkt-bff-governance-cw-contract-corrective-prerequisite-20260905-v1)",
+  "results": {
+    "cw01_public_consultation_type_restored": [
+      "pre_deployment",
+      "risk_review",
+      "macro_regime_shift",
+      "incident_response",
+      "policy_change",
+      "general"
+    ],
+    "cw01_public_priority_restored": ["low", "normal", "high", "critical"],
+    "cw01_context_ref_types_restored": [
+      "artifact",
+      "deployment_plan",
+      "incident",
+      "lineage_edge",
+      "telemetry_ref",
+      "note"
+    ],
+    "cw01_domain_port_subtype_priority_mapping_restored": true,
+    "cw01_synthetic_create_success_branch_removed": true,
+    "cw01_create_missing_provider_fails_closed": "503 DEPENDENCY_UNAVAILABLE",
+    "cw01_list_envelope": "data[]/page_info/meta.surfaces.consult_request_list",
+    "cw01_detail_cancel_envelope": "published root fields (no data wrapper)",
+    "cw03_committee_projection_single_owner": "GovernanceService.committee_projection",
+    "cw03_main_duplicate_implementations_removed": [
+      "_cw03_committee_surface_state",
+      "_cw03_allowed_actions",
+      "_cw03_committee_projection"
+    ],
+    "cw03_record_sponsor_decision_validator_reuses_get_projection": true,
+    "cw03_list_get_committee_added_to_domain_consultation_port": true,
+    "cw03_list_envelope": "data[]/page_info/meta.surfaces.committee_board",
+    "cw04_can_initiate_governance_review_gate_added": true,
+    "cw04_gate_conditions": [
+      "lifecycle_state == published",
+      "has_valid_target (strategy_id/artifact_id/deployment_plan_id)",
+      "actor role intersects {reviewer, approver, admin, governance_committee}",
+      "no active_governance_review_id",
+      "not suppressed",
+      "not withdrawn",
+      "target_type in {strategy, artifact, deployment_plan}",
+      "surface_state == ok"
+    ],
+    "business_rules_changed": false,
+    "hosted_deployment_performed": false,
+    "new_dispatcher_or_cron_added": false
+  },
+  "verification": [
+    {
+      "command": "python3 -m pytest -q scripts/test_bff_cw_contract_prerequisite.py",
+      "result": "14 passed",
+      "executed": 14,
+      "collected": 14
+    },
+    {
+      "command": "python3 -m compileall -q services/control-plane/bff/governance services/control-plane/bff/ports/operations_consultation.py services/control-plane/bff/main.py scripts/test_bff_cw_contract_prerequisite.py",
+      "result": "pass"
+    },
+    {
+      "command": "python3 services/control-plane/bff/smoke_test.py",
+      "result": "26 passed",
+      "executed": 26,
+      "collected": 26
+    },
+    {
+      "command": "python3 -m pytest -q services/control-plane/bff/tests/test_operations_consultation_ports.py",
+      "result": "16 passed, 1 failed (pre-existing, unrelated: TestOpenClawOperationsPort::test_openclaw_truthful_error_propagation)",
+      "executed": 17,
+      "collected": 17
+    },
+    {
+      "command": "python3 -m pytest -q services/control-plane/bff/tests/test_governance_router.py",
+      "result": "7 passed, 2 failed (both pre-existing/expected, see coordination_note)",
+      "executed": 9,
+      "collected": 9
+    }
+  ],
+  "coordination_note": "test_governance_router.py::test_router_registers_exactly_the_35_catalog_routes was already failing on dev tip before this task (its hardcoded EXPECTED_ROUTES set is missing the pre-existing '/api/v1/operator/rollback-review/{rollback_id}' route this task never touched). test_governance_router.py::test_consult_request_committee_memo_and_workbench_routes sends a create-request payload using the pre-regression internal enum literal (consultation_type='strategy_review') and wrong context-ref keys (ref_type/ref_id instead of type/id); it now correctly receives 422 against the restored published CW-01 contract. Both are BFF-TEST-ARCH-001's characterization-test migration scope, not this corrective's. Separately, services/control-plane/bff/test_cw03_committee_board_contract.py, test_cw04_redteam_memo_contract.py, and several sibling test_*_contract.py files use a pre-existing sys.path/importlib 'import main as bff_main' loader trick that fails independently of this task (ImportError: attempted relative import with no known parent package, reproduced identically against unmodified dev tip) -- this task's own regression suite instead imports the real services.control_plane.bff.main package path.",
+  "known_gap_deferred": "RecordSponsorDecision command execution (persisting the sponsor decision) still calls read_store.record_sponsor_decision(...), which no port in the current composition implements (AttributeError inside the async command worker). This pre-existing write-path gap is explicitly deferred to DOMAIN-WRITERS-001 per the signed SA/SD; this corrective only restores read projections and the existing command validator's authorization policy.",
+  "review": {
+    "reviewer": "Codex",
+    "decision": "pending independent exact-head review"
+  },
+  "remaining_owned_elsewhere": [
+    "RecordSponsorDecision write persistence: DOMAIN-WRITERS-001",
+    "Existing CW characterization test migration and 'import main' loader repair: BFF-TEST-ARCH-001"
+  ]
+}

@@ -8,13 +8,17 @@ fallback.  BFF callers are expected to use this HTTP boundary instead of
 """
 from __future__ import annotations
 
+import hashlib
 import hmac
+import json
 import os
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 from dataclasses import dataclass
-from typing import Any, Mapping, Protocol
+from typing import Any, Callable, Mapping, Protocol
+from urllib.error import HTTPError, URLError
+from urllib.request import Request as UrllibRequest, urlopen
 
 from fastapi import FastAPI, Header, HTTPException, Query, status
 from pydantic import BaseModel, ConfigDict, Field, model_validator
@@ -28,6 +32,30 @@ from services.runtime_auth_inbound import AuthContext, AuthError, validate_reque
 
 def _utc_now() -> str:
     return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+
+
+def _canonical_digest(payload: Any) -> str:
+    """Return a stable SHA-256 identity for finite JSON data.
+
+    Mirrors ``services/training-session/persona_target.py::canonical_digest``
+    without importing that frozen module, so the Persona owner can
+    independently re-derive a digest from actual content instead of trusting
+    a caller-claimed digest field.
+    """
+
+    try:
+        encoded = json.dumps(
+            payload,
+            ensure_ascii=True,
+            sort_keys=True,
+            separators=(",", ":"),
+            allow_nan=False,
+        ).encode("utf-8")
+    except (TypeError, ValueError) as exc:
+        raise TrainingTargetProofInvalid(
+            "training target payload is not finite canonical JSON"
+        ) from exc
+    return hashlib.sha256(encoded).hexdigest()
 
 
 _LIFECYCLE_TRANSITIONS = {
@@ -106,6 +134,75 @@ class PersonaAuthorityError(PersonaOwnerError):
         self.status_code = status_code
 
 
+class TrainingTargetTenantMismatch(PersonaAuthorityError):
+    """Raised when a caller's tenant does not own the Persona training target."""
+
+    def __init__(self) -> None:
+        super().__init__(
+            "TRAINING_TARGET_TENANT_MISMATCH",
+            "Persona training target tenant_id does not match its bound tenant",
+            403,
+        )
+
+
+class TrainingTargetTenantBindingUnavailable(PersonaAuthorityError):
+    """Raised when a Persona has no real governed ``tenant_id`` binding.
+
+    ``owner`` is an actor/resource-owner identity captured at creation, not
+    a tenant identifier; treating it as one would relabel actor authority
+    as tenant authority, exactly the defect root review flagged. A Persona
+    created before a real ``tenant_id`` was captured (or created without
+    one) has no provable tenant binding, so training-target authority for
+    it must fail closed instead of guessing -- a legacy record needs an
+    explicit migration to backfill ``tenant_id``, not a silent fallback.
+    """
+
+    def __init__(self) -> None:
+        super().__init__(
+            "TRAINING_TARGET_TENANT_BINDING_UNAVAILABLE",
+            "Persona has no governed tenant_id binding; training-target "
+            "authority cannot be established",
+            503,
+        )
+
+
+class TrainingTargetGenerationConflict(PersonaOwnerError):
+    """Raised when a training-target commit's generation is not the exact CAS successor."""
+
+
+class TrainingTargetIdempotencyConflict(PersonaOwnerError):
+    """Raised when a replayed idempotency key targets a different committed payload."""
+
+
+class TrainingTargetProofInvalid(PersonaOwnerError):
+    """Raised when a commit's candidate/control/proof binding does not verify.
+
+    Covers a claimed digest that does not match the actual submitted content,
+    an internally inconsistent evaluation proof, a proof bound to a different
+    precondition/generation than the one being committed, or a proof whose
+    status is not ``passed``. The owner must prove this itself; it cannot
+    trust the training-session client validator to have already done so.
+    """
+
+
+class TrainingTargetApprovalInvalid(PersonaOwnerError):
+    """Raised when the claimed approval decision does not verify against Governance."""
+
+
+class TrainingTargetApprovalUnavailable(PersonaAuthorityError):
+    """Raised when no Governance approval verifier is configured for a commit.
+
+    A missing verifier must block the commit, not silently mint authority.
+    """
+
+    def __init__(self) -> None:
+        super().__init__(
+            "TRAINING_TARGET_APPROVAL_VERIFIER_UNAVAILABLE",
+            "No Governance approval verifier is configured for training-target commits",
+            503,
+        )
+
+
 @dataclass(frozen=True)
 class PersonaInboundAuthority:
     """Authenticated identity used for Persona mutation policy decisions."""
@@ -126,6 +223,126 @@ class GovernanceDecisionVerifier(Protocol):
         source_state: str,
         target_state: str,
     ) -> bool: ...
+
+
+class TrainingTargetApprovalVerifier(Protocol):
+    """Verify one exact persona training-target approval against Governance truth.
+
+    This is the owner-side authority check the training-session client
+    validator cannot substitute for: a caller hitting this HTTP boundary
+    directly must still prove its claimed ``approval_decision_id`` is a real,
+    approved, unexpired Governance decision bound to this exact persona,
+    tenant, session, and candidate/proof digests.
+    """
+
+    def verify_training_target_approval(
+        self,
+        *,
+        approval_decision_id: str,
+        approval_decision_ref: str,
+        persona_id: str,
+        tenant_id: str,
+        session_id: str,
+        candidate_digest: str,
+        proof_digest: str,
+    ) -> bool: ...
+
+
+class HttpGovernanceApprovalVerifier:
+    """Default ``TrainingTargetApprovalVerifier`` backed by the real Governance API.
+
+    Narrowly scoped adapter: it re-reads the exact approval decision the
+    caller claims to have used from Governance's own
+    ``/api/governance/approvals/{decision_id}`` endpoint and independently
+    checks that it is approved, unexpired, and bound to this exact
+    persona/tenant/session/candidate/proof identity. It never trusts a
+    caller-supplied approval object; it only trusts what Governance itself
+    returns.
+    """
+
+    def __init__(
+        self, *, base_url: str, service_token: str, timeout_seconds: float = 5.0
+    ) -> None:
+        self._base_url = base_url.rstrip("/")
+        self._service_token = service_token
+        self._timeout_seconds = timeout_seconds
+
+    def verify_training_target_approval(
+        self,
+        *,
+        approval_decision_id: str,
+        approval_decision_ref: str,
+        persona_id: str,
+        tenant_id: str,
+        session_id: str,
+        candidate_digest: str,
+        proof_digest: str,
+    ) -> bool:
+        url = f"{self._base_url}/api/governance/approvals/{approval_decision_id}"
+        request = UrllibRequest(
+            url,
+            headers={
+                "Accept": "application/json",
+                "Authorization": f"Bearer {self._service_token}",
+                "X-Tenant-Id": tenant_id,
+            },
+            method="GET",
+        )
+        try:
+            with urlopen(request, timeout=self._timeout_seconds) as response:  # noqa: S310
+                if int(response.status) != 200:
+                    return False
+                body = json.loads(response.read().decode("utf-8"))
+        except (HTTPError, URLError, TimeoutError, OSError, ValueError):
+            return False
+        if not isinstance(body, Mapping):
+            return False
+        decision = body.get("approval")
+        if not isinstance(decision, Mapping):
+            decision = body.get("approval_decision")
+        if not isinstance(decision, Mapping):
+            decision = body
+
+        lifecycle = str(decision.get("decision_state") or "").strip().lower()
+        outcome = str(decision.get("decision") or "").strip().lower()
+        if lifecycle not in {"decided", "approved"}:
+            return False
+        if outcome and outcome != "approved":
+            return False
+        if not outcome and lifecycle != "approved":
+            return False
+        if str(decision.get("persona_id") or "") != persona_id:
+            return False
+        if str(decision.get("tenant_id") or "") != tenant_id:
+            return False
+        if str(decision.get("session_id") or "") != session_id:
+            return False
+        if str(decision.get("candidate_digest") or "") != candidate_digest:
+            return False
+        if str(decision.get("proof_digest") or "") != proof_digest:
+            return False
+        declared_ref = decision.get("approval_decision_ref")
+        identity = decision.get("decision_id") or decision.get("approval_id")
+        if declared_ref is not None:
+            if str(declared_ref) != approval_decision_ref:
+                return False
+        elif str(identity or "") != approval_decision_ref:
+            return False
+        expires_at = decision.get("expires_at")
+        if not isinstance(expires_at, str) or not expires_at.strip():
+            return False
+        try:
+            normalized = (
+                expires_at[:-1] + "+00:00" if expires_at.endswith("Z") else expires_at
+            )
+            parsed_expiry = datetime.fromisoformat(normalized)
+        except ValueError:
+            return False
+        if parsed_expiry.tzinfo is None:
+            return False
+        if parsed_expiry.astimezone(timezone.utc) <= datetime.now(timezone.utc):
+            return False
+        return True
 
 
 def _persona_auth_env() -> dict[str, str]:
@@ -349,6 +566,14 @@ class PersonaBody(BaseModel):
     route_policy_id: str | None = None
     consult_policy_id: str | None = None
     owner: str
+    # The real, governed tenant binding, captured only at creation and never
+    # patchable. Distinct from ``owner`` (an actor/resource identity that
+    # defaults to the creating actor_id): relabeling ``owner`` as tenant
+    # authority was the exact defect root review flagged. ``None`` means this
+    # Persona has no provable tenant binding (a legacy record, or one created
+    # without a real tenant) -- callers that need tenant authority must fail
+    # closed rather than guess.
+    tenant_id: str | None = None
     status: str = "active"
     updated_at: str | None = None
     created_by: str
@@ -427,6 +652,10 @@ class CreatePersonaRequest(BaseModel):
     route_policy_id: str | None = None
     consult_policy_id: str | None = None
     owner: str | None = None
+    # Real tenant binding, set only here; there is no patch path so a
+    # Persona's tenant authority cannot drift after creation. ``None`` is
+    # honest: it means this Persona has no provable tenant binding yet.
+    tenant_id: str | None = None
     status: str = "active"
     required_data_sources: list[RequiredDataSourceBody] = Field(default_factory=list)
     metadata: dict[str, Any] = Field(default_factory=dict)
@@ -493,6 +722,7 @@ class PersistentPersonaOwner:
             route_policy_id=request.route_policy_id,
             consult_policy_id=request.consult_policy_id,
             owner=request.owner or request.actor_id,
+            tenant_id=request.tenant_id,
             status=request.status,
             created_by=request.actor_id,
             required_data_sources=request.required_data_sources,
@@ -537,6 +767,58 @@ class PersistentPersonaOwner:
             )
             if committed:
                 return PersonaBody.model_validate(canonical or updated)
+        raise PersonaConcurrentUpdate(
+            f"Persona {persona_id!r} changed concurrently; retry against a fresh read"
+        )
+
+    def try_metadata_cas(
+        self,
+        persona_id: str,
+        *,
+        guard: Callable[[PersonaBody], bool],
+        metadata_updates: Mapping[str, Any],
+        actor_id: str,
+    ) -> tuple[bool, PersonaBody]:
+        """One CAS attempt whose precondition is checked against the exact
+        snapshot it commits against.
+
+        This exists so a caller-level generation guard cannot be separated
+        from the compare-and-set it protects: ``patch()`` re-reads its own
+        fresh snapshot on every retry and applies the caller's update to it
+        unconditionally, so a guard checked only once by the caller before
+        calling ``patch()`` can be satisfied against a stale read and then
+        blindly overwritten onto whatever committed in between (the exact
+        lost-update race root review reproduced against the real JSON-backed
+        owner). Here, ``guard`` and the ``compare_and_set`` run against the
+        same read, so any interleaving write that would change the guard's
+        answer causes this attempt's CAS to fail instead of silently
+        clobbering newer state; the caller's own retry loop re-reads and
+        re-evaluates ``guard`` before trying again.
+
+        Returns ``(False, current)`` when ``guard(current)`` is false --
+        a legitimate no-op (e.g. a stale generation), not a race. Raises
+        ``PersonaConcurrentUpdate`` when the CAS itself loses a race, so the
+        caller can retry with a fresh read.
+        """
+
+        current_raw = self._records.get(persona_id)
+        if current_raw is None:
+            raise PersonaNotFound(f"Persona {persona_id!r} not found")
+        current = PersonaBody.model_validate(current_raw)
+        if not guard(current):
+            return False, current
+        merged_metadata = dict(current.metadata or {})
+        merged_metadata.update(metadata_updates)
+        updated = dict(current_raw)
+        updated["metadata"] = merged_metadata
+        updated["updated_at"] = _utc_now()
+        updated["updated_by"] = actor_id
+        updated = PersonaBody.model_validate(updated).model_dump(mode="json")
+        committed, canonical = self._records.compare_and_set(
+            persona_id, current_raw, updated
+        )
+        if committed:
+            return True, PersonaBody.model_validate(canonical or updated)
         raise PersonaConcurrentUpdate(
             f"Persona {persona_id!r} changed concurrently; retry against a fresh read"
         )
@@ -701,6 +983,578 @@ class PersistentCapabilitySnapshotOwner:
         )[0]
 
 
+_TRAINING_TARGET_DIGEST_PATTERN = r"^[0-9a-f]{64}$"
+_TRAINING_TARGET_BINDING_FIELDS = (
+    "persona_id",
+    "tenant_id",
+    "session_id",
+    "candidate_digest",
+    "control_digest",
+    "proof_digest",
+    "approval_digest",
+    "generation",
+)
+
+
+class CommitPersonaTrainingTargetRequest(BaseModel):
+    """Authoritative teaching-target commit accepted by the Persona write owner.
+
+    Field shape mirrors the frozen write body built by
+    ``services/training-session/persona_target.py::commit_persona_target`` so this
+    owner can be the exact-head authority that validator reads back.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    persona_id: str = Field(min_length=1)
+    tenant_id: str = Field(min_length=1)
+    session_id: str = Field(min_length=1)
+    candidate_digest: str = Field(pattern=_TRAINING_TARGET_DIGEST_PATTERN)
+    control_digest: str = Field(pattern=_TRAINING_TARGET_DIGEST_PATTERN)
+    proof_digest: str = Field(pattern=_TRAINING_TARGET_DIGEST_PATTERN)
+    approval_digest: str = Field(pattern=_TRAINING_TARGET_DIGEST_PATTERN)
+    generation: int = Field(ge=1)
+    expected_previous_generation: int = Field(ge=0)
+    expected_precondition_digest: str = Field(pattern=_TRAINING_TARGET_DIGEST_PATTERN)
+    expected_precondition_record_ref: str = Field(min_length=1)
+    approval_decision_id: str = Field(min_length=1)
+    approval_decision_ref: str = Field(min_length=1)
+    candidate: Any
+    control_state: Any
+    evaluation_proof: Any
+
+    @model_validator(mode="after")
+    def validate_generation_successor(self) -> "CommitPersonaTrainingTargetRequest":
+        if self.generation != self.expected_previous_generation + 1:
+            raise ValueError(
+                "generation must be exactly expected_previous_generation + 1"
+            )
+        return self
+
+    @model_validator(mode="after")
+    def validate_training_payloads_present(
+        self,
+    ) -> "CommitPersonaTrainingTargetRequest":
+        # The owner must independently re-derive digests from real content; a
+        # commit that omits the content it claims a digest for cannot be
+        # verified and must not be accepted as if it were.
+        if self.candidate is None or self.control_state is None:
+            raise ValueError("candidate and control_state are required")
+        if not isinstance(self.evaluation_proof, Mapping):
+            raise ValueError("evaluation_proof must be a JSON object")
+        return self
+
+
+class PersistentPersonaTrainingTargetOwner:
+    """Persistent, tenant-bound owner for one Persona's training-target authority.
+
+    Serves the frozen ``persona_target.py`` contract: the same durable record is
+    read as the pre-commit precondition, re-read as the in-commit pre-readback,
+    and read again as the post-commit terminal readback. Compare-and-set on
+    ``generation`` is the only accepted write path; a repeated commit at the
+    already-committed generation with an identical binding is an idempotent
+    replay, and one with a different binding is a hard idempotency conflict.
+    There is no in-process cache or fixture fallback -- every read goes back to
+    the durable store so a restarted owner process reads back the same truth.
+    """
+
+    def __init__(
+        self,
+        records: _OwnerRecordStore,
+        *,
+        persona_owner: PersistentPersonaOwner,
+        approval_verifier: TrainingTargetApprovalVerifier | None = None,
+    ) -> None:
+        self._records = records
+        self._persona_owner = persona_owner
+        self._approval_verifier = approval_verifier
+
+    @classmethod
+    def from_json_path(
+        cls,
+        path: str | Path,
+        *,
+        persona_owner: PersistentPersonaOwner,
+        approval_verifier: TrainingTargetApprovalVerifier | None = None,
+    ) -> "PersistentPersonaTrainingTargetOwner":
+        return cls(
+            AtomicJsonRecordStore(path),
+            persona_owner=persona_owner,
+            approval_verifier=approval_verifier,
+        )
+
+    def _virtual_initial_record(self, persona: PersonaBody) -> dict[str, Any]:
+        """A deterministic, unpersisted generation-0 view.
+
+        The tenant is derived from the Persona's own durable, governed
+        ``tenant_id`` field -- captured only at creation through the
+        ``persona.admin`` gated create path -- never from a caller-asserted
+        header. A caller cannot obtain an authoritative-looking precondition
+        for a tenant it does not actually own; ``read``/``commit`` reject any
+        ``X-Tenant-Id`` that does not match this real field (via
+        ``_load_owner_bound_persona``, which also rejects a Persona with no
+        ``tenant_id`` at all) before this view is ever returned, so
+        ``persona.tenant_id`` is guaranteed non-``None`` here.
+        """
+
+        tenant_id = str(persona.tenant_id)
+        return {
+            "persona_id": persona.persona_id,
+            "tenant_id": tenant_id,
+            "status": "active",
+            "generation": 0,
+            "authority_status": "authoritative",
+            "controller_record_ref": (
+                f"persona-training-target:{persona.persona_id}:0:{tenant_id}"
+            ),
+            "recorded_at": persona.created_at,
+        }
+
+    def _load_owner_bound_persona(
+        self, persona_id: str, tenant_id: str
+    ) -> PersonaBody:
+        """Read the real Persona and require the caller's tenant to be its own.
+
+        The Persona's ``tenant_id`` field is the only genuine, governed
+        tenant binding this data model has (captured at creation through the
+        ``persona.admin`` gated create path; there is no patch path, so it
+        cannot drift afterward). ``owner`` is a distinct actor/resource
+        identity, not a tenant -- trusting it (or a caller-supplied
+        ``X-Tenant-Id`` header) as tenant authority is exactly the
+        fabricated-authority defect root review flagged. A Persona with no
+        ``tenant_id`` (a legacy record, or one created without one) has no
+        provable tenant binding and fails closed rather than falling back to
+        ``owner`` or the caller's header.
+        """
+
+        persona = self._persona_owner.get(persona_id)
+        if persona.tenant_id is None:
+            raise TrainingTargetTenantBindingUnavailable()
+        if str(persona.tenant_id) != tenant_id:
+            raise TrainingTargetTenantMismatch()
+        return persona
+
+    def read(self, *, persona_id: str, tenant_id: str) -> dict[str, Any]:
+        # Fail closed against a training-target authority for a Persona that
+        # the actual owner store does not know about, or whose real owner
+        # does not match the asserted tenant; never fabricate one.
+        persona = self._load_owner_bound_persona(persona_id, tenant_id)
+        persisted = self._records.get(persona_id)
+        if persisted is None:
+            return self._virtual_initial_record(persona)
+        if persisted.get("tenant_id") != tenant_id:
+            raise TrainingTargetTenantMismatch()
+        return dict(persisted)
+
+    def _verify_semantic_payload(
+        self,
+        *,
+        persona_id: str,
+        tenant_id: str,
+        request: CommitPersonaTrainingTargetRequest,
+    ) -> None:
+        """Independently re-derive every claimed digest from real content.
+
+        A caller cannot commit (or replay) a training target by claiming a
+        digest that does not actually match the candidate/control_state it
+        submits, nor by attaching an evaluation proof that is internally
+        inconsistent, bound to a different precondition/generation, or not
+        ``passed``.
+        """
+
+        candidate_digest = _canonical_digest(request.candidate)
+        if candidate_digest != request.candidate_digest:
+            raise TrainingTargetProofInvalid(
+                "candidate content does not match the claimed candidate_digest"
+            )
+        control_digest = _canonical_digest(request.control_state)
+        if control_digest != request.control_digest:
+            raise TrainingTargetProofInvalid(
+                "control_state content does not match the claimed control_digest"
+            )
+        proof: Mapping[str, Any] = request.evaluation_proof
+        if str(proof.get("status") or "").strip().lower() != "passed":
+            raise TrainingTargetProofInvalid(
+                "evaluation_proof status is not passed"
+            )
+        unsigned = {
+            key: value
+            for key, value in dict(proof).items()
+            if key not in ("proof_digest", "runtime_evidence")
+        }
+        if _canonical_digest(unsigned) != request.proof_digest:
+            raise TrainingTargetProofInvalid(
+                "evaluation_proof proof_digest does not match its own content"
+            )
+        if _canonical_digest(proof.get("candidate_binding")) != candidate_digest:
+            raise TrainingTargetProofInvalid(
+                "evaluation_proof candidate_binding digest mismatch"
+            )
+        if _canonical_digest(proof.get("controls")) != control_digest:
+            raise TrainingTargetProofInvalid(
+                "evaluation_proof controls digest mismatch"
+            )
+        precondition = proof.get("target_precondition")
+        if not isinstance(precondition, Mapping):
+            raise TrainingTargetProofInvalid(
+                "evaluation_proof target_precondition is missing"
+            )
+        if (
+            precondition.get("persona_id") != persona_id
+            or precondition.get("tenant_id") != tenant_id
+            or precondition.get("expected_previous_generation")
+            != request.expected_previous_generation
+            or precondition.get("target_generation") != request.generation
+            or precondition.get("precondition_digest")
+            != request.expected_precondition_digest
+            or precondition.get("controller_record_ref")
+            != request.expected_precondition_record_ref
+        ):
+            raise TrainingTargetProofInvalid(
+                "evaluation_proof target_precondition does not match this commit's binding"
+            )
+        authority = proof.get("authority")
+        policy = authority.get("policy") if isinstance(authority, Mapping) else None
+        if (
+            not isinstance(policy, Mapping)
+            or policy.get("approval_decision_ref") != request.approval_decision_ref
+        ):
+            raise TrainingTargetProofInvalid(
+                "evaluation_proof policy authority does not match approval_decision_ref"
+            )
+
+    def _verify_approval_authority(
+        self,
+        *,
+        persona_id: str,
+        tenant_id: str,
+        request: CommitPersonaTrainingTargetRequest,
+    ) -> None:
+        """Independently verify the claimed approval against real Governance truth.
+
+        The happy-path training-session client validator does not secure this
+        HTTP boundary: a caller hitting it directly must still prove a real,
+        approved, unexpired Governance decision exists for this exact
+        binding. An unavailable verifier fails closed rather than minting
+        authority.
+        """
+
+        if self._approval_verifier is None:
+            raise TrainingTargetApprovalUnavailable()
+        verified = self._approval_verifier.verify_training_target_approval(
+            approval_decision_id=request.approval_decision_id,
+            approval_decision_ref=request.approval_decision_ref,
+            persona_id=persona_id,
+            tenant_id=tenant_id,
+            session_id=request.session_id,
+            candidate_digest=request.candidate_digest,
+            proof_digest=request.proof_digest,
+        )
+        if not verified:
+            raise TrainingTargetApprovalInvalid(
+                "approval_decision_id does not verify as an approved, unexpired, "
+                "exactly bound Governance decision"
+            )
+
+    def _apply_to_persona_owner(
+        self,
+        persona_id: str,
+        request: CommitPersonaTrainingTargetRequest,
+        committed: Mapping[str, Any],
+    ) -> None:
+        """Apply the approved policy/control mutation to the real Persona owner.
+
+        A training-target commit is a real, applied authority change, not a
+        second receipt-only store: the actual candidate/control_state content
+        (not just its digest) must observably land on the Persona record, and
+        read back changed after a restart, once a target is committed.
+
+        Idempotent and order-safe: a retry after a crash between durability
+        and application re-applies the same generation's content without
+        error, and a lower generation's apply that runs after a higher
+        generation already landed is a safe no-op instead of clobbering
+        newer state.
+
+        The generation guard is checked by ``PersistentPersonaOwner.
+        try_metadata_cas`` against the exact same snapshot its CAS commits
+        against, not by a separate pre-read here: a plain pre-read-then-patch
+        (the shape root review reproduced against the real JSON-backed
+        owner) lets a concurrent higher-generation commit land between the
+        read and the patch, and ``patch()``'s own retry loop re-reads fresh
+        but applies this stale metadata unconditionally, silently
+        overwriting the newer generation. Routing through
+        ``try_metadata_cas`` means any such interleaving fails the CAS
+        instead, and this loop retries with a fresh guard check.
+        """
+
+        def _guard(current: PersonaBody) -> bool:
+            existing_metadata = dict(current.metadata or {})
+            existing_generation = int(
+                existing_metadata.get("training_target_generation") or 0
+            )
+            return existing_generation < request.generation
+
+        for _attempt in range(4):
+            try:
+                applied_write, applied = self._persona_owner.try_metadata_cas(
+                    persona_id,
+                    guard=_guard,
+                    metadata_updates={
+                        "training_target_generation": request.generation,
+                        "training_target_controller_record_ref": committed.get(
+                            "controller_record_ref"
+                        ),
+                        "training_target_control_digest": request.control_digest,
+                        "training_target_candidate_digest": request.candidate_digest,
+                        "training_target_approval_decision_id": (
+                            request.approval_decision_id
+                        ),
+                        "training_target_candidate": request.candidate,
+                        "training_target_control_state": request.control_state,
+                    },
+                    actor_id="persona-training-target-owner",
+                )
+            except PersonaConcurrentUpdate:
+                continue
+            if not applied_write:
+                # A same-or-higher generation is already applied; this is a
+                # legitimate out-of-order no-op, not a race to retry.
+                return
+            applied_metadata = dict(applied.metadata or {})
+            if (
+                int(applied_metadata.get("training_target_generation") or 0)
+                >= request.generation
+                and applied_metadata.get("training_target_control_digest")
+                == request.control_digest
+                and applied_metadata.get("training_target_candidate_digest")
+                == request.candidate_digest
+            ):
+                return
+        raise PersonaConcurrentUpdate(
+            f"Persona {persona_id!r} training-target application changed "
+            "concurrently; retry against a fresh read"
+        )
+
+    def _finalize_committed(
+        self, persona_id: str, expected_generation: int
+    ) -> dict[str, Any]:
+        """Move a durably-applied ``applying`` record to terminal ``committed``.
+
+        Only issued after :meth:`_apply_to_persona_owner` has proven the real
+        Persona record carries this exact generation's applied content --
+        never before. If the process crashes before this runs, the record
+        stays ``applying`` (not a false terminal ``committed``) and a later
+        retry with the same binding re-applies (idempotently) and finalizes.
+        """
+
+        for _attempt in range(4):
+            current = self._records.get(persona_id)
+            if current is None or int(current.get("generation") or 0) != expected_generation:
+                raise PersonaOwnerError(
+                    f"Persona training target {persona_id!r} record missing or "
+                    "changed during finalize"
+                )
+            if current.get("status") == "committed":
+                return current
+            finalized = {**current, "status": "committed"}
+            ok, canonical = self._records.compare_and_set(
+                persona_id, current, finalized
+            )
+            if ok:
+                return canonical or finalized
+        raise PersonaConcurrentUpdate(
+            f"Persona training target {persona_id!r} changed concurrently "
+            "during finalize; retry against a fresh read"
+        )
+
+    def commit(
+        self,
+        *,
+        persona_id: str,
+        tenant_id: str,
+        request: CommitPersonaTrainingTargetRequest,
+        idempotency_key: str,
+    ) -> dict[str, Any]:
+        if request.persona_id != persona_id or request.tenant_id != tenant_id:
+            raise PersonaOwnerError(
+                "training target commit identity does not match request path/headers"
+            )
+        clean_key = str(idempotency_key or "").strip()
+        if not clean_key:
+            raise PersonaOwnerError("Idempotency-Key header is required")
+        binding = {
+            field: getattr(request, field) for field in _TRAINING_TARGET_BINDING_FIELDS
+        }
+        for _attempt in range(4):
+            persona = self._load_owner_bound_persona(persona_id, tenant_id)
+            persisted = self._records.get(persona_id)
+            if persisted is not None and persisted.get("tenant_id") != tenant_id:
+                raise TrainingTargetTenantMismatch()
+            current_generation = int((persisted or {}).get("generation") or 0)
+            if current_generation == request.generation:
+                if persisted is None:
+                    raise TrainingTargetGenerationConflict(
+                        "persona training target generation is stale"
+                    )
+                self._verify_semantic_payload(
+                    persona_id=persona_id, tenant_id=tenant_id, request=request
+                )
+                stored_binding = {
+                    field: persisted.get(field)
+                    for field in _TRAINING_TARGET_BINDING_FIELDS
+                }
+                if (
+                    stored_binding != binding
+                    or persisted.get("idempotency_key") != clean_key
+                ):
+                    raise TrainingTargetIdempotencyConflict(
+                        "persona training target idempotency key was reused for a "
+                        "different payload"
+                    )
+                if persisted.get("status") != "committed":
+                    # A prior attempt durably recorded this exact generation and
+                    # binding but crashed (or lost a race) before the separate
+                    # Persona apply/finalize completed. Replaying the identical
+                    # binding recovers by re-applying (idempotently) and
+                    # finalizing rather than returning a false terminal result.
+                    self._apply_to_persona_owner(persona_id, request, persisted)
+                    finalized = self._finalize_committed(
+                        persona_id, request.generation
+                    )
+                    replayed = dict(finalized)
+                    replayed["replayed"] = True
+                    return replayed
+                replayed = dict(persisted)
+                replayed["replayed"] = True
+                return replayed
+            if current_generation != request.expected_previous_generation:
+                raise TrainingTargetGenerationConflict(
+                    "persona training target generation is stale"
+                )
+            actual_precondition = (
+                persisted
+                if persisted is not None
+                else self._virtual_initial_record(persona)
+            )
+            actual_precondition_digest = _canonical_digest(actual_precondition)
+            actual_precondition_record_ref = actual_precondition.get(
+                "controller_record_ref"
+            )
+            if (
+                request.expected_precondition_digest != actual_precondition_digest
+                or request.expected_precondition_record_ref
+                != actual_precondition_record_ref
+            ):
+                raise TrainingTargetProofInvalid(
+                    "expected_precondition_digest/expected_precondition_record_ref "
+                    "does not match the actual current owner record"
+                )
+            self._verify_semantic_payload(
+                persona_id=persona_id, tenant_id=tenant_id, request=request
+            )
+            self._verify_approval_authority(
+                persona_id=persona_id, tenant_id=tenant_id, request=request
+            )
+            pending = {
+                **binding,
+                # Durable but not yet terminal: the CAS below only proves this
+                # binding was accepted, not that the real Persona owner record
+                # has been mutated to match it yet. A crash or failure between
+                # this write and the separate Persona patch below must not be
+                # observable as a false terminal ``committed`` readback.
+                "status": "applying",
+                "authority_status": "authoritative",
+                "controller_record_ref": (
+                    f"persona-training-target:{persona_id}:{request.generation}:"
+                    f"{uuid.uuid4().hex}"
+                ),
+                "recorded_at": _utc_now(),
+                "approval_decision_id": request.approval_decision_id,
+                "approval_decision_ref": request.approval_decision_ref,
+                "expected_precondition_digest": request.expected_precondition_digest,
+                "expected_precondition_record_ref": (
+                    request.expected_precondition_record_ref
+                ),
+                "idempotency_key": clean_key,
+                "replayed": False,
+            }
+            committed, canonical = self._records.compare_and_set(
+                persona_id, persisted, pending
+            )
+            if committed:
+                result = canonical or pending
+                self._apply_to_persona_owner(persona_id, request, result)
+                finalized = self._finalize_committed(persona_id, request.generation)
+                return finalized
+        raise PersonaConcurrentUpdate(
+            f"Persona training target {persona_id!r} changed concurrently; "
+            "retry against a fresh read"
+        )
+
+
+def build_training_target_approval_verifier() -> TrainingTargetApprovalVerifier | None:
+    """Build the real Governance approval verifier from configured env, or None.
+
+    A missing configuration is a real, typed contract dependency -- not
+    something this owner may paper over. When unset, every commit fails
+    closed with ``TRAINING_TARGET_APPROVAL_VERIFIER_UNAVAILABLE`` (503)
+    instead of accepting an unverified approval.
+    """
+
+    base_url = str(
+        os.getenv("PERSONA_TRAINING_TARGET_GOVERNANCE_BASE_URL") or ""
+    ).strip()
+    service_token = str(
+        os.getenv("PANTHEON_GOVERNANCE_SERVICE_TOKEN")
+        or os.getenv("PANTHEON_PERSONA_SERVICE_TOKEN")
+        or ""
+    ).strip()
+    if not base_url or not service_token:
+        return None
+    return HttpGovernanceApprovalVerifier(
+        base_url=base_url, service_token=service_token
+    )
+
+
+def build_persona_training_target_owner(
+    persona_owner: PersistentPersonaOwner,
+    *,
+    approval_verifier: TrainingTargetApprovalVerifier | None = None,
+) -> PersistentPersonaTrainingTargetOwner:
+    backend = os.getenv(
+        "PERSONA_TRAINING_TARGET_STORE_BACKEND",
+        os.getenv("PERSONA_STORE_BACKEND", "json"),
+    )
+    dsn = (
+        os.getenv("PERSONA_TRAINING_TARGET_STORE_DSN")
+        or os.getenv("PERSONA_STORE_DSN")
+        or os.getenv("DATABASE_URL")
+    )
+    path = os.getenv(
+        "PERSONA_TRAINING_TARGET_STORE_PATH",
+        "/tmp/pantheon/persona/training_targets.json",
+    )
+    records = build_record_store(
+        backend=backend,
+        dsn=dsn,
+        table_name=os.getenv(
+            "PERSONA_TRAINING_TARGET_STORE_TABLE",
+            "persona.training_targets",
+        ),
+        json_path=path,
+        owner_service="persona-svc",
+    )
+    return PersistentPersonaTrainingTargetOwner(
+        records,
+        persona_owner=persona_owner,
+        approval_verifier=(
+            approval_verifier
+            if approval_verifier is not None
+            else build_training_target_approval_verifier()
+        ),
+    )
+
+
 def build_persona_owner() -> PersistentPersonaOwner:
     backend = os.getenv("PERSONA_STORE_BACKEND", "json")
     dsn = os.getenv("PERSONA_STORE_DSN") or os.getenv("DATABASE_URL")
@@ -749,10 +1603,15 @@ def create_app(
     owner: PersistentPersonaOwner | None = None,
     *,
     capability_owner: PersistentCapabilitySnapshotOwner | None = None,
+    training_target_owner: PersistentPersonaTrainingTargetOwner | None = None,
     governance_decision_verifier: GovernanceDecisionVerifier | None = None,
 ) -> FastAPI:
     persistent_owner = owner or build_persona_owner()
     persistent_capability_owner = capability_owner or build_capability_snapshot_owner()
+    persistent_training_target_owner = (
+        training_target_owner
+        or build_persona_training_target_owner(persistent_owner)
+    )
     app = FastAPI(
         title="Pantheon Persona Registry Owner",
         version="1.0.0",
@@ -902,6 +1761,53 @@ def create_app(
         except (PersonaNotFound, CapabilitySnapshotNotFound) as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
 
+    @app.get("/api/personas/{persona_id}/training-target")
+    def get_persona_training_target(
+        persona_id: str,
+        tenant_id: str = Header(alias="X-Tenant-Id"),
+        authorization: str | None = Header(default=None),
+    ) -> dict[str, Any]:
+        try:
+            authority = _authenticate_persona_mutation(authorization)
+            _require_persona_plane_owner(authority)
+            return persistent_training_target_owner.read(
+                persona_id=persona_id, tenant_id=tenant_id
+            )
+        except PersonaAuthorityError as exc:
+            raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
+        except PersonaNotFound as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+    @app.post("/api/personas/{persona_id}/training-target")
+    def commit_persona_training_target(
+        persona_id: str,
+        body: CommitPersonaTrainingTargetRequest,
+        tenant_id: str = Header(alias="X-Tenant-Id"),
+        idempotency_key: str = Header(alias="Idempotency-Key"),
+        authorization: str | None = Header(default=None),
+    ) -> dict[str, Any]:
+        try:
+            authority = _authenticate_persona_mutation(authorization)
+            _require_persona_plane_owner(authority)
+            return persistent_training_target_owner.commit(
+                persona_id=persona_id,
+                tenant_id=tenant_id,
+                request=body,
+                idempotency_key=idempotency_key,
+            )
+        except PersonaAuthorityError as exc:
+            raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
+        except PersonaNotFound as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except (
+            TrainingTargetGenerationConflict,
+            TrainingTargetIdempotencyConflict,
+            PersonaConcurrentUpdate,
+        ) as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        except PersonaOwnerError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+
     @app.get("/health")
     def health() -> dict[str, Any]:
         return {
@@ -921,10 +1827,13 @@ __all__ = [
     "CapabilitySnapshotBody",
     "CapabilitySnapshotConflict",
     "CapabilitySnapshotNotFound",
+    "CommitPersonaTrainingTargetRequest",
     "CreatePersonaRequest",
+    "HttpGovernanceApprovalVerifier",
     "PatchPersonaRequest",
     "PersistentCapabilitySnapshotOwner",
     "PersistentPersonaOwner",
+    "PersistentPersonaTrainingTargetOwner",
     "PersonaAlreadyExists",
     "PersonaAuthorityError",
     "PersonaBody",
@@ -934,9 +1843,19 @@ __all__ = [
     "PersonaOwnerError",
     "GovernanceDecisionVerifier",
     "RequiredDataSourceBody",
+    "TrainingTargetApprovalInvalid",
+    "TrainingTargetApprovalUnavailable",
+    "TrainingTargetApprovalVerifier",
+    "TrainingTargetGenerationConflict",
+    "TrainingTargetIdempotencyConflict",
+    "TrainingTargetProofInvalid",
+    "TrainingTargetTenantBindingUnavailable",
+    "TrainingTargetTenantMismatch",
     "UpsertCapabilitySnapshotRequest",
     "app",
     "build_capability_snapshot_owner",
     "build_persona_owner",
+    "build_persona_training_target_owner",
+    "build_training_target_approval_verifier",
     "create_app",
 ]

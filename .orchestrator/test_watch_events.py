@@ -97,6 +97,21 @@ class WakeupMessageRoleGuardrailTests(unittest.TestCase):
         self.assertIn("task_dependency <TASK-ID>", message)
         self.assertIn("最後加 `external`", message)
 
+    def test_wakeup_requires_bounded_foreground_terminal_validation(self) -> None:
+        self.event["reason"] = "owned_in_progress_dispatch"
+
+        message = watch_events.render_wakeup_message(
+            self.config,
+            self.event,
+            "Antigravity",
+        )
+
+        self.assertIn("有界的 foreground batches", message)
+        self.assertIn("terminal output 與 exit status", message)
+        self.assertIn("TaskOutput(block=true)", message)
+        self.assertIn("不得用 `nohup` 或 `&`", message)
+        self.assertIn("timeout、killed、collection 中都不得計為 passed", message)
+
     def test_anchor_subject_is_bounded_for_long_task_id(self) -> None:
         long_id = (
             "SUP-WORKER-SUBJECT-GUARD-20260811-EXTREMELY-LONG-TASK-ID-"

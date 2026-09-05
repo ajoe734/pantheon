@@ -242,6 +242,47 @@ class AdapterDeliveryPolicyTests(unittest.TestCase):
         self.assertFalse(result.manual_confirmation_required)
         self.assertEqual(result.mode, "claude_cli")
 
+    def test_repository_claude_providers_disable_background_tasks_in_child_env(self) -> None:
+        config = json.loads((THIS_DIR / "config.json").read_text(encoding="utf-8"))
+
+        for provider_id in ("claude", "claude2"):
+            with self.subTest(provider=provider_id):
+                request = DeliveryRequest(
+                    agent_id=provider_id,
+                    provider=provider_id,
+                    delivery_mode="claude_cli",
+                    message="wake",
+                )
+                adapter = ClaudeCLIAdapter(config=config, provider_capabilities={})
+                fake_process = mock.Mock(pid=1234)
+                with (
+                    mock.patch.dict(
+                        os.environ,
+                        {"CLAUDE_CODE_DISABLE_BACKGROUND_TASKS": "0"},
+                        clear=False,
+                    ),
+                    mock.patch(
+                        "adapters.claude_cli._configured_claude_cli",
+                        return_value=".orchestrator/bin/claude",
+                    ),
+                    mock.patch(
+                        "adapters.claude_cli._claude_auth_ready", return_value=True
+                    ),
+                    mock.patch(
+                        "adapters.claude_cli.spawn_background_process",
+                        return_value=(fake_process, Path(f"/tmp/{provider_id}.log")),
+                    ) as spawn,
+                ):
+                    result = adapter.deliver(request)
+
+                self.assertTrue(result.ok)
+                env = spawn.call_args.kwargs["env"]
+                self.assertEqual(env["CLAUDE_CODE_DISABLE_BACKGROUND_TASKS"], "1")
+                expected_dir = (
+                    "~/.claude" if provider_id == "claude" else "~/.claude2"
+                )
+                self.assertEqual(env["CLAUDE_CONFIG_DIR"], os.path.expanduser(expected_dir))
+
     def test_claude_alias_uses_provider_specific_home_env(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)

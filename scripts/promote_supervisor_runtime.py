@@ -35,6 +35,7 @@ from provision_live_supervisor_config import (
     load_json_object,
     parse_repository_integration_roots,
     parse_repository_source_roots,
+    validate_python_dependencies,
     validated_immutable_command_root,
     validated_root,
     write_json_atomic,
@@ -183,10 +184,17 @@ def render_v2_config(
     python_executable: Path,
     repository_source_roots: Mapping[str, Path | str] | None = None,
     repository_integration_roots: Mapping[str, Path | str] | None = None,
+    requirements_path: Path | None = None,
 ) -> tuple[dict[str, Any], dict[str, str]]:
     """Render a new V2 runtime config without using an incumbent overlay."""
 
     identity = candidate_runtime_identity(repo_root)
+    # Validate before touching any state so a candidate interpreter that is
+    # missing a required dependency (or was silently de-virtualized back to
+    # the base interpreter) fails here, leaving the incumbent supervisor,
+    # live config, leases, and cron/watchdog binding untouched.
+    if requirements_path is not None:
+        validate_python_dependencies(python_executable, requirements_path)
     repo_config = _load_json(repo_root / ".orchestrator" / "config.json", label="candidate config")
     rendered = build_live_config(
         repo_config,
@@ -442,6 +450,7 @@ def _replace_supervisor_locked(
     authority_env_file: Path | None = None,
     repository_source_roots: Mapping[str, Path | str] | None = None,
     repository_integration_roots: Mapping[str, Path | str] | None = None,
+    requirements_path: Path | None = None,
 ) -> dict[str, Any]:
     """Stop old, install exact V2 config, then launch exact V2 source."""
 
@@ -454,6 +463,7 @@ def _replace_supervisor_locked(
         python_executable=python_executable,
         repository_source_roots=repository_source_roots,
         repository_integration_roots=repository_integration_roots,
+        requirements_path=requirements_path,
     )
     # A direct promotion bypasses the watchdog wrapper, so prove that the
     # verifier-only child environment is complete before stopping the healthy
@@ -540,6 +550,7 @@ def replace_supervisor(
     authority_env_file: Path | None = None,
     repository_source_roots: Mapping[str, Path | str] | None = None,
     repository_integration_roots: Mapping[str, Path | str] | None = None,
+    requirements_path: Path | None = None,
 ) -> dict[str, Any]:
     """Validate and switch config while excluding the canonical merge owner."""
 
@@ -554,6 +565,7 @@ def replace_supervisor(
             authority_env_file=authority_env_file,
             repository_source_roots=repository_source_roots,
             repository_integration_roots=repository_integration_roots,
+            requirements_path=requirements_path,
         )
 
 
@@ -563,6 +575,15 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--status-root", required=True)
     parser.add_argument("--live-config", default=str(LIVE_SUPERVISOR_CONFIG_PATH))
     parser.add_argument("--python", default=sys.executable)
+    parser.add_argument(
+        "--requirements",
+        default=None,
+        help=(
+            "Minimal supervisor dependency contract to preflight-check against "
+            "--python before stopping the incumbent. Defaults to "
+            "<repo>/.orchestrator/requirements.txt when that file exists."
+        ),
+    )
     parser.add_argument("--termination-timeout", type=float, default=15.0)
     parser.add_argument("--evidence-path")
     parser.add_argument(
@@ -610,6 +631,15 @@ def main(argv: list[str] | None = None) -> int:
         )
         if not python_executable.is_file():
             raise ValueError(f"python executable does not exist: {python_executable}")
+        requirements_path = (
+            _path(args.requirements)
+            if args.requirements
+            else repo_root / ".orchestrator" / "requirements.txt"
+        )
+        if not requirements_path.is_file():
+            if args.requirements:
+                raise ValueError(f"requirements file does not exist: {requirements_path}")
+            requirements_path = None
         validated_root(status_root, label="status root", required=(".git", "ai-status.json"))
         if args.discover_only:
             rendered, identity = render_v2_config(
@@ -619,6 +649,7 @@ def main(argv: list[str] | None = None) -> int:
                 python_executable=python_executable,
                 repository_source_roots=repository_source_roots,
                 repository_integration_roots=repository_integration_roots,
+                requirements_path=requirements_path,
             )
             result: dict[str, Any] = {
                 "schema_version": 2,
@@ -658,6 +689,7 @@ def main(argv: list[str] | None = None) -> int:
                 authority_env_file=authority_env_file,
                 repository_source_roots=repository_source_roots,
                 repository_integration_roots=repository_integration_roots,
+                requirements_path=requirements_path,
             )
     except (OSError, ValueError, auto_integrator.IntegrationLockError) as exc:
         result = {"outcome": "failed", "exit_code": 1, "error": f"{type(exc).__name__}: {exc}"}

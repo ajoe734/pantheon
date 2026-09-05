@@ -24,41 +24,7 @@ from datetime import datetime, timezone
 from typing import Any, Callable, Dict, List, Mapping, Optional, Protocol, Sequence, Set, Tuple, Union, runtime_checkable
 
 # Typed service client imports with fail-safe fallbacks
-try:
-    from openclaw_ops_client import OpenClawOpsClient, OpenClawOpsClientError
-except ImportError:  # pragma: no cover
-    try:
-        from services.control_plane.bff.openclaw_ops_client import (  # type: ignore[no-redef]
-            OpenClawOpsClient,
-            OpenClawOpsClientError,
-        )
-    except ImportError:  # pragma: no cover
-        class OpenClawOpsClientError(RuntimeError):  # type: ignore[no-redef]
-            def __init__(self, message: str, *, status_code: Optional[int] = None, error_code: Optional[str] = None, details: Optional[Dict[str, Any]] = None) -> None:
-                super().__init__(message)
-                self.status_code = status_code
-                self.error_code = error_code
-                self.details = details or {}
-
-            def to_surface(self) -> Dict[str, Any]:
-                return {
-                    "status": "unavailable" if self.status_code in (None, 503) else "degraded",
-                    "source": "service_client",
-                    "reason": self.error_code or "openclaw_client_error",
-                    "message": str(self),
-                    "http_status": self.status_code,
-                    "details": self.details,
-                }
-
-        class OpenClawOpsClient:  # type: ignore[no-redef]
-            configured = False
-            def get_capabilities(self) -> Dict[str, Any]: raise OpenClawOpsClientError("OpenClaw client not configured")
-            def get_upstream_status(self) -> Dict[str, Any]: raise OpenClawOpsClientError("OpenClaw client not configured")
-            def list_lifecycle_sessions(self, **kwargs: Any) -> Dict[str, Any]: raise OpenClawOpsClientError("OpenClaw client not configured")
-            def get_tool_policy(self) -> Dict[str, Any]: raise OpenClawOpsClientError("OpenClaw client not configured")
-            def list_invocation_audit(self, **kwargs: Any) -> Dict[str, Any]: raise OpenClawOpsClientError("OpenClaw client not configured")
-            def list_effective_tools(self, **kwargs: Any) -> Dict[str, Any]: raise OpenClawOpsClientError("OpenClaw client not configured")
-            def get_broker_capabilities(self) -> Dict[str, Any]: raise OpenClawOpsClientError("OpenClaw client not configured")
+from services.control_plane.bff.openclaw_ops_client import OpenClawOpsClient, OpenClawOpsClientError
 
 try:
     from services.consultation.client import ConsultationClientError, ConsultationServiceClient
@@ -180,21 +146,19 @@ _BFF_TO_SERVICE_REQUEST_TYPE: Dict[str, Any] = {}
 _BFF_TO_SERVICE_PRIORITY: Dict[str, Any] = {}
 if ConsultRequestType is not None:
     _BFF_TO_SERVICE_REQUEST_TYPE = {
-        "strategy_review": ConsultRequestType.STRATEGY_REVIEW,
-        "redteam": ConsultRequestType.REDTEAM,
-        "red_team": ConsultRequestType.REDTEAM,
-        "data_leakage": ConsultRequestType.DATA_LEAKAGE,
-        "execution_risk": ConsultRequestType.EXECUTION_RISK,
-        "capital_pool": ConsultRequestType.CAPITAL_POOL,
-        "incident": ConsultRequestType.INCIDENT,
-        "persona_policy": ConsultRequestType.PERSONA_POLICY,
+        "pre_deployment": ConsultRequestType.STRATEGY_REVIEW,
+        "risk_review": ConsultRequestType.EXECUTION_RISK,
+        "macro_regime_shift": ConsultRequestType.STRATEGY_REVIEW,
+        "incident_response": ConsultRequestType.INCIDENT,
+        "policy_change": ConsultRequestType.PERSONA_POLICY,
+        "general": ConsultRequestType.STRATEGY_REVIEW,
     }
 if ConsultPriority is not None:
     _BFF_TO_SERVICE_PRIORITY = {
         "low": ConsultPriority.LOW,
         "normal": ConsultPriority.NORMAL,
         "high": ConsultPriority.HIGH,
-        "urgent": ConsultPriority.URGENT,
+        "critical": ConsultPriority.URGENT,
     }
 
 
@@ -2398,6 +2362,110 @@ class DomainConsultationPort:
             "active_governance_review_id": memo.get("active_governance_review_id"),
         }
 
+    @staticmethod
+    def _committee_board_row(root_session: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        consult = (root_session.get("metadata") or {}).get("consultation", {})
+        committee_id = str(consult.get("committee_ref") or "").strip()
+        committee_session_ids = list(consult.get("committee_session_ids") or [])
+        if not committee_id or not committee_session_ids:
+            return None
+        return {
+            "committee_id": committee_id,
+            "committee_ref": committee_id,
+            "escalation_reason": json.loads(json.dumps(consult.get("escalation_reason") or {})),
+            "quorum_state": consult.get("quorum_state"),
+            "consensus_state": consult.get("consensus_state"),
+            "linked_request_id": root_session.get("request_id"),
+            "started_at": consult.get("committee_started_at") or root_session.get("started_at"),
+            "surface_state": str(consult.get("committee_surface_state") or "ok"),
+            "route_href": f"/consultation/committees/{committee_id}",
+        }
+
+    def list_committees(
+        self,
+        *,
+        quorum_states: Optional[List[str]] = None,
+        consensus_states: Optional[List[str]] = None,
+    ) -> List[Dict[str, Any]]:
+        sessions = self._consultation_session_records()
+        rows: List[Dict[str, Any]] = []
+        for session in sessions.values():
+            if session.get("session_type") != "consult":
+                continue
+            row = self._committee_board_row(session)
+            if row is None:
+                continue
+            rows.append(row)
+        if quorum_states:
+            requested = {str(v).strip().lower() for v in quorum_states if str(v).strip()}
+            rows = [r for r in rows if str(r.get("quorum_state") or "").strip().lower() in requested]
+        if consensus_states:
+            requested = {str(v).strip().lower() for v in consensus_states if str(v).strip()}
+            rows = [r for r in rows if str(r.get("consensus_state") or "").strip().lower() in requested]
+        return rows
+
+    def get_committee(self, committee_id: Optional[str]) -> Optional[Dict[str, Any]]:
+        if not committee_id:
+            return None
+        sessions = self._consultation_session_records()
+        root_session: Optional[Dict[str, Any]] = None
+        for session in sessions.values():
+            if session.get("session_type") != "consult":
+                continue
+            consult = (session.get("metadata") or {}).get("consultation", {})
+            if str(consult.get("committee_ref") or "") == str(committee_id):
+                root_session = session
+                break
+        if root_session is None:
+            return None
+
+        consult = (root_session.get("metadata") or {}).get("consultation", {})
+        committee_session_ids = list(consult.get("committee_session_ids") or [])
+        sponsor_session_id = str(consult.get("sponsor_session_id") or "").strip()
+
+        participant_roster: List[Dict[str, Any]] = []
+        for session_id in committee_session_ids:
+            participant = sessions.get(session_id)
+            if not participant:
+                continue
+            participant_consult = (participant.get("metadata") or {}).get("consultation", {})
+            participant_roster.append(
+                {
+                    "participant_id": participant.get("session_id"),
+                    "persona_id": participant.get("persona_id"),
+                    "persona_label": None,
+                    "role": (
+                        "sponsor"
+                        if participant.get("session_id") == sponsor_session_id
+                        else (participant_consult.get("role") or "committee_participant")
+                    ),
+                    "status": participant_consult.get("participant_status") or participant.get("status"),
+                    "outcome_signal": participant_consult.get("outcome_signal"),
+                    "rationale_ref": participant_consult.get("rationale_ref"),
+                }
+            )
+
+        sponsor_assignment = next(
+            (row for row in participant_roster if str(row.get("participant_id") or "") == sponsor_session_id),
+            None,
+        )
+        board_row = self._committee_board_row(root_session)
+        if board_row is None:
+            return None
+
+        return {
+            **board_row,
+            "linked_session_id": root_session.get("session_id"),
+            "participant_roster": participant_roster,
+            "sponsor_assignment": sponsor_assignment,
+            "sponsor_decision": consult.get("sponsor_decision"),
+            "sponsor_decided_at": consult.get("sponsor_decided_at"),
+            "sponsor_decided_by": consult.get("sponsor_decided_by"),
+            "synthesis_summary": json.loads(json.dumps(consult.get("synthesis_summary") or {})),
+            "linked_evidence": json.loads(json.dumps(consult.get("evidence_refs") or [])),
+            "service_handoff": json.loads(json.dumps(consult.get("service_handoff") or {})),
+        }
+
 
 # =====================================================================
 # Composite & In-Memory Ports
@@ -2590,6 +2658,20 @@ class CompositeOperationsConsultationPort:
 
     def get_consult_memo(self, memo_id: Optional[str]) -> Optional[Dict[str, Any]]:
         return self._consultation.get_consult_memo(memo_id)
+
+    def list_committees(
+        self,
+        *,
+        quorum_states: Optional[List[str]] = None,
+        consensus_states: Optional[List[str]] = None,
+    ) -> List[Dict[str, Any]]:
+        return self._consultation.list_committees(
+            quorum_states=quorum_states,
+            consensus_states=consensus_states,
+        )
+
+    def get_committee(self, committee_id: Optional[str]) -> Optional[Dict[str, Any]]:
+        return self._consultation.get_committee(committee_id)
 
     def dataset_source(self, dataset: str) -> str:
         if dataset in ("workflow_templates", "hook_registry", "governance_permissions", "memory_governance_rules", "consult_rules", "route_policies", "alpha_factory_cards", "skills", "tools", "mcp_servers", "mcp_tools"):

@@ -41,8 +41,7 @@ except ImportError:
             self.status_code = status_code
             self.detail = detail
 
-try:
-    from operations_read_model import (
+from services.control_plane.bff.operations_read_model import (
         DataConfidence,
         SourceState,
         SourceStatus,
@@ -56,72 +55,19 @@ try:
         classify_confidence,
         dedupe_ids,
         diagnostic as ops_read_model_diagnostic,
-    )
-except ImportError:
-    from services.control_plane.bff.operations_read_model import (  # type: ignore[no-redef]
-        DataConfidence,
-        SourceState,
-        SourceStatus,
-        SourceDiagnostic,
-        OperationsIdentity,
-        OperationsPerformance,
-        OperationsReadModelEntry,
-        OperationsReadModelEnvelope,
-        sanitize_metric as ops_read_model_sanitize_metric,
-        build_operations_identity,
-        classify_confidence,
-        dedupe_ids,
-        diagnostic as ops_read_model_diagnostic,
-    )
+)
 
 from pathlib import Path
 
-try:
-    from models import (
-        redact_evidence_refs,
-        EVIDENCE_CAPABILITY_MAP,
-        SOURCE_TYPE_TO_EVIDENCE_KIND,
-    )
-except ImportError:
-    try:
-        from services.control_plane.bff.models import (  # type: ignore[no-redef]
-            redact_evidence_refs,
-            EVIDENCE_CAPABILITY_MAP,
-            SOURCE_TYPE_TO_EVIDENCE_KIND,
-        )
-    except ImportError:
-        redact_evidence_refs = None  # type: ignore[assignment]
-        EVIDENCE_CAPABILITY_MAP = {}
-        SOURCE_TYPE_TO_EVIDENCE_KIND = {}
-
-try:
-    from models import (
-        ErrorCode,
-        OperatorIdentity,
-        EvidenceKind,
-        RedactedEvidenceRef,
-    )
-except ImportError:
-    try:
-        from services.control_plane.bff.models import (  # type: ignore[no-redef]
-            ErrorCode,
-            OperatorIdentity,
-            EvidenceKind,
-            RedactedEvidenceRef,
-        )
-    except ImportError:
-        class ErrorCode:  # type: ignore[no-redef]
-            VALIDATION_FAILED = "VALIDATION_FAILED"
-            AUTH_REQUIRED = "AUTH_REQUIRED"
-            FORBIDDEN = "FORBIDDEN"
-            OPERATION_NOT_ALLOWED = "OPERATION_NOT_ALLOWED"
-            RESOURCE_NOT_FOUND = "RESOURCE_NOT_FOUND"
-            RESOURCE_CONFLICT = "RESOURCE_CONFLICT"
-            DEPENDENCY_UNAVAILABLE = "DEPENDENCY_UNAVAILABLE"
-            INTERNAL_ERROR = "INTERNAL_ERROR"
-        OperatorIdentity = None  # type: ignore[assignment]
-        EvidenceKind = None  # type: ignore[assignment]
-        RedactedEvidenceRef = None  # type: ignore[assignment]
+from services.control_plane.bff.models import (
+    EVIDENCE_CAPABILITY_MAP,
+    SOURCE_TYPE_TO_EVIDENCE_KIND,
+    ErrorCode,
+    EvidenceKind,
+    OperatorIdentity,
+    RedactedEvidenceRef,
+    redact_evidence_refs,
+)
 
 
 def _default_bff_error(

@@ -1,10 +1,50 @@
 from __future__ import annotations
 
+import os
 import re
+import subprocess
 from pathlib import Path
+
+import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
 WORKFLOW_PATH = ROOT / ".github" / "workflows" / "nonprod-deploy.yml"
+DEPLOY_SCRIPT = ROOT / "scripts" / "deploy_nonprod_vm.sh"
+DUMMY_SHA = "249cd9c03675e2566a3d5f1e6a4be06af405da45"
+
+VALID_NEUTRAL_STAGING_ENV = {
+    "PROJECT_ID": "neutral-staging-project",
+    "REMOTE_USER": "deployer",
+    "STAGING_CONTROL_VM": "neutral-staging-control",
+    "STAGING_CONTROL_ZONE": "asia-east1-b",
+    "STAGING_CONTROL_REMOTE_DIR": "/home/deployer/pantheon",
+    "STAGING_EXEC_VM": "neutral-staging-exec",
+    "STAGING_EXEC_ZONE": "asia-east1-b",
+    "STAGING_EXEC_REMOTE_DIR": "/home/deployer/pantheon",
+    "STAGING_EXEC_HEALTH_URL": "http://10.0.0.1:28081",
+    "STAGING_BFF_CANONICAL_CORS_ORIGIN": "https://neutral-staging-fe.example.com",
+    "STAGING_BFF_CORS_ORIGINS": "https://neutral-staging-fe.example.com",
+}
+
+VALID_NEUTRAL_DEV_ENV = {
+    "PROJECT_ID": "synthetic-dev-project",
+    "REMOTE_USER": "synthetic-user",
+    "DEV_VM": "synthetic-dev-vm",
+    "DEV_ZONE": "asia-east1-b",
+    "DEV_REMOTE_DIR": "/home/synthetic-user/pantheon",
+    "DEV_DEPLOY_SSH_HOST": "192.0.2.50",
+    "DEV_BFF_PUBLIC_HOST": "api.synthetic.invalid",
+    "DEV_FE_PUBLIC_HOST": "app.synthetic.invalid",
+    "DEV_FE_STATIC_ROOT": "/var/www/pantheon-dev-fe",
+    "DEV_BFF_CORS_ORIGINS": "https://app.synthetic.invalid",
+}
+
+
+def _clean_env(extra_env: dict[str, str] | None = None) -> dict[str, str]:
+    clean = {"PATH": os.environ.get("PATH", "/usr/bin:/bin")}
+    if extra_env:
+        clean.update(extra_env)
+    return clean
 
 
 def _workflow_text() -> str:
@@ -188,3 +228,567 @@ def test_workflow_coordinate_release_passes_predecessor_pair_shas() -> None:
     assert "PREVIOUS_FRONTEND_SHA: ${{ needs.deploy-dev.outputs.previous_frontend_sha }}" in coordinate_job
     assert '--predecessor-fe-sha "${PREVIOUS_FRONTEND_SHA}"' in coordinate_job
     assert '--predecessor-bff-sha "${PREVIOUS_BACKEND_SHA}"' in coordinate_job
+
+
+def test_workflow_bootstrap_requires_dev_variables() -> None:
+    workflow = _workflow_text()
+    dev_job = _extract_job(workflow, "deploy-dev", "coordinate-dev-release")
+    bootstrap_step = dev_job[
+        dev_job.index("- name: Deploy bootstrap predecessor pair in strict live read-only mode under lease") :
+        dev_job.index("- name: Deploy dev VM stack under lease")
+    ]
+
+    assert "for var_name in DEV_VM DEV_ZONE GCP_DEPLOY_PROJECT_ID DEV_BFF_URL DEV_FE_URL DEV_DEPLOY_DEADLINE_SECONDS; do" in bootstrap_step
+    assert 'echo "Required bootstrap variable ${var_name} is unset or empty; refusing to deploy." >&2' in bootstrap_step
+    assert "exit 1" in bootstrap_step
+
+
+def test_workflow_rollback_baseline_requires_dev_urls_when_bootstrapping() -> None:
+    workflow = _workflow_text()
+    dev_job = _extract_job(workflow, "deploy-dev", "coordinate-dev-release")
+    baseline_step = dev_job[
+        dev_job.index("- name: Capture exact hosted FE and BFF rollback baseline") :
+        dev_job.index("- name: Seal exact-pair admission artifact")
+    ]
+
+    assert 'if [[ -z "${DEV_FE_URL:-}" || -z "${DEV_BFF_URL:-}" ]]; then' in baseline_step
+    assert 'Empty-host bootstrap requires DEV_FE_URL and DEV_BFF_URL to be set.' in baseline_step
+
+
+def test_workflow_contains_no_retired_project_or_host_fallbacks_in_bootstrap_or_staging() -> None:
+    workflow = _workflow_text()
+    dev_job = _extract_job(workflow, "deploy-dev", "coordinate-dev-release")
+    staging_job = _extract_job(workflow, "deploy-staging-live")
+
+    # In dev bootstrap steps
+    bootstrap_step = dev_job[
+        dev_job.index("- name: Deploy bootstrap predecessor pair in strict live read-only mode under lease") :
+        dev_job.index("- name: Deploy dev VM stack under lease")
+    ]
+    assert "pantheon-lupin-dev-20260719" not in bootstrap_step
+    assert "sslip.io" not in bootstrap_step
+    assert "35.201.204.12" not in bootstrap_step
+
+    # In staging job
+    assert "pantheon-benjamin-20260528" not in staging_job
+    assert "104.155.223.192" not in staging_job
+    assert "sslip.io" not in staging_job
+
+
+def test_deploy_script_contains_no_retired_fallbacks_in_source() -> None:
+    script_text = DEPLOY_SCRIPT.read_text(encoding="utf-8")
+    assert "pantheon-lupin-staging-control" not in script_text
+    assert "pantheon-lupin-staging-exec" not in script_text
+    assert "10.50.0.21" not in script_text
+    assert "pantheon-lupin-staging-fe.104.155.223.192.sslip.io" not in script_text
+    assert "pantheon-lupin-dev-bff.35.201.204.12.sslip.io" not in script_text
+    assert "pantheon-lupin-dev-fe.35.201.204.12.sslip.io" not in script_text
+
+
+def test_deploy_script_staging_live_rejects_missing_target_identity() -> None:
+    proc = subprocess.run(
+        [str(DEPLOY_SCRIPT), "--environment", "staging-live", "--sha", DUMMY_SHA, "--dry-run"],
+        capture_output=True,
+        text=True,
+        check=False,
+        env=_clean_env(),
+        cwd=ROOT,
+    )
+    assert proc.returncode == 1
+    assert "staging-live deployment requires --project-id or PROJECT_ID to be set" in proc.stderr
+
+
+def test_deploy_script_staging_live_rejects_missing_remote_user() -> None:
+    proc = subprocess.run(
+        [
+            str(DEPLOY_SCRIPT),
+            "--environment",
+            "staging-live",
+            "--project-id",
+            "neutral-project",
+            "--sha",
+            DUMMY_SHA,
+            "--dry-run",
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+        env=_clean_env(),
+        cwd=ROOT,
+    )
+    assert proc.returncode == 1
+    assert "staging-live deployment requires REMOTE_USER to be set" in proc.stderr
+
+
+@pytest.mark.parametrize(
+    "missing_var",
+    [
+        "STAGING_CONTROL_VM",
+        "STAGING_CONTROL_ZONE",
+        "STAGING_CONTROL_REMOTE_DIR",
+        "STAGING_EXEC_VM",
+        "STAGING_EXEC_ZONE",
+        "STAGING_EXEC_REMOTE_DIR",
+        "STAGING_EXEC_HEALTH_URL",
+        "STAGING_BFF_CORS_ORIGINS",
+    ],
+)
+def test_deploy_script_staging_live_rejects_missing_required_variable(missing_var: str) -> None:
+    env = dict(VALID_NEUTRAL_STAGING_ENV)
+    del env[missing_var]
+    if missing_var == "STAGING_BFF_CORS_ORIGINS":
+        env.pop("STAGING_BFF_CANONICAL_CORS_ORIGIN", None)
+    proc = subprocess.run(
+        [
+            str(DEPLOY_SCRIPT),
+            "--environment",
+            "staging-live",
+            "--component",
+            "all",
+            "--sha",
+            DUMMY_SHA,
+            "--dry-run",
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+        env=_clean_env(env),
+        cwd=ROOT,
+    )
+    assert proc.returncode == 1
+    assert f"staging-live deployment requires {missing_var} to be set; refusing to deploy with missing target identity" in proc.stderr
+
+
+@pytest.mark.parametrize(
+    "retired_project",
+    [
+        "pantheon-benjamin-20260528",
+        "pantheon-lupin-dev-20260719",
+    ],
+)
+def test_deploy_script_rejects_retired_project(retired_project: str) -> None:
+    proc = subprocess.run(
+        [
+            str(DEPLOY_SCRIPT),
+            "--environment",
+            "dev",
+            "--project-id",
+            retired_project,
+            "--sha",
+            DUMMY_SHA,
+            "--dry-run",
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+        env=_clean_env(),
+        cwd=ROOT,
+    )
+    assert proc.returncode == 1
+    assert f"GCP project {retired_project} is retired; refusing to deploy" in proc.stderr
+
+
+@pytest.mark.parametrize(
+    ("var_name", "retired_value"),
+    [
+        ("DEV_BFF_PUBLIC_HOST", "pantheon-lupin-dev-bff.35.201.204.12.sslip.io"),
+        ("DEV_DEPLOY_SSH_HOST", "35.201.204.12"),
+        ("DEV_DEPLOY_SSH_HOST", "35.201.239.38"),
+        ("DEV_DEPLOY_SSH_HOST", "34.81.75.241"),
+        ("DEV_DEPLOY_SSH_HOST", "35.236.178.81"),
+        ("STAGING_CONTROL_VM", "pantheon-benjamin-20260528-control"),
+        ("STAGING_CONTROL_VM", "pantheon-lupin-dev"),
+        ("STAGING_BFF_CORS_ORIGINS", "https://pantheon-lupin-staging-fe.104.155.223.192.sslip.io"),
+        ("STAGING_CONTROL_REMOTE_DIR", "/home/lupin/code/pantheon"),
+        ("STAGING_EXEC_REMOTE_DIR", "/home/lupin/pantheon"),
+        ("REMOTE_USER", "lupin"),
+    ],
+)
+def test_deploy_script_rejects_retired_target_identity(var_name: str, retired_value: str) -> None:
+    env = dict(VALID_NEUTRAL_STAGING_ENV)
+    env[var_name] = retired_value
+    proc = subprocess.run(
+        [
+            str(DEPLOY_SCRIPT),
+            "--environment",
+            "staging-live",
+            "--component",
+            "all",
+            "--sha",
+            DUMMY_SHA,
+            "--dry-run",
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+        env=_clean_env(env),
+        cwd=ROOT,
+    )
+    assert proc.returncode == 1
+    assert f"{var_name} contains retired target identity" in proc.stderr
+
+
+@pytest.mark.parametrize(
+    ("var_name", "retired_value"),
+    [
+        ("DEV_DEPLOY_SSH_HOST", "35.201.239.38"),
+        ("DEV_DEPLOY_SSH_HOST", "34.81.75.241"),
+        ("DEV_DEPLOY_SSH_HOST", "35.201.204.12"),
+        ("DEV_DEPLOY_SSH_HOST", "104.155.223.192"),
+        ("DEV_DEPLOY_SSH_HOST", "35.236.178.81"),
+        ("DEV_REMOTE_DIR", "/home/lupin/code/pantheon"),
+        ("DEV_REMOTE_DIR", "/home/lupin/pantheon"),
+        ("DEV_VM", "pantheon-lupin-dev"),
+        ("REMOTE_USER", "lupin"),
+        ("DEV_BFF_PUBLIC_HOST", "pantheon-lupin-dev-bff.35.201.239.38.sslip.io"),
+        ("DEV_FE_PUBLIC_HOST", "pantheon-lupin-dev-fe.35.201.239.38.sslip.io"),
+        ("DEV_BFF_CORS_ORIGINS", "https://pantheon-lupin-dev-fe.35.201.239.38.sslip.io"),
+        ("DEV_FE_STATIC_ROOT", "/home/lupin/pantheon-dev-fe"),
+    ],
+)
+def test_deploy_script_dev_rejects_retired_target_identity(var_name: str, retired_value: str) -> None:
+    env = dict(VALID_NEUTRAL_DEV_ENV)
+    env[var_name] = retired_value
+    proc = subprocess.run(
+        [
+            str(DEPLOY_SCRIPT),
+            "--environment",
+            "dev",
+            "--sha",
+            DUMMY_SHA,
+            "--dry-run",
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+        env=_clean_env(env),
+        cwd=ROOT,
+    )
+    assert proc.returncode == 1
+    assert f"{var_name} contains retired target identity" in proc.stderr
+
+
+def test_deploy_script_staging_live_accepts_valid_neutral_fixtures() -> None:
+    proc = subprocess.run(
+        [
+            str(DEPLOY_SCRIPT),
+            "--environment",
+            "staging-live",
+            "--component",
+            "all",
+            "--sha",
+            DUMMY_SHA,
+            "--dry-run",
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+        env=_clean_env(VALID_NEUTRAL_STAGING_ENV),
+        cwd=ROOT,
+    )
+    assert proc.returncode == 0, f"Staging dry run failed: {proc.stderr}"
+    assert "environment=staging-live" in proc.stdout
+    assert "component=all" in proc.stdout
+    assert "staging_exec_health_url=http://10.0.0.1:28081" in proc.stdout
+    assert "staging_bff_cors_origins=https://neutral-staging-fe.example.com" in proc.stdout
+
+    for retired in [
+        "sslip.io",
+        "104.155.223.192",
+        "35.201.204.12",
+        "35.201.239.38",
+        "34.81.75.241",
+        "35.236.178.81",
+        "pantheon-benjamin-20260528",
+        "pantheon-lupin-dev-20260719",
+        "pantheon-lupin-dev",
+        "/home/lupin",
+    ]:
+        assert retired not in proc.stdout
+        assert retired not in proc.stderr
+
+
+def test_deploy_script_dev_dry_run_accepts_valid_neutral_fixtures() -> None:
+    proc = subprocess.run(
+        [
+            str(DEPLOY_SCRIPT),
+            "--environment",
+            "dev",
+            "--sha",
+            DUMMY_SHA,
+            "--dry-run",
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+        env=_clean_env(VALID_NEUTRAL_DEV_ENV),
+        cwd=ROOT,
+    )
+    assert proc.returncode == 0, f"Dev neutral dry run failed: {proc.stderr}"
+    assert "project=synthetic-dev-project" in proc.stdout
+    assert "environment=dev" in proc.stdout
+    assert "component=root" in proc.stdout
+    assert "dev_bff_public_host=api.synthetic.invalid" in proc.stdout
+    assert "dev_fe_public_host=app.synthetic.invalid" in proc.stdout
+
+    for retired in [
+        "sslip.io",
+        "104.155.223.192",
+        "35.201.204.12",
+        "35.201.239.38",
+        "34.81.75.241",
+        "35.236.178.81",
+        "pantheon-benjamin-20260528",
+        "pantheon-lupin-dev-20260719",
+        "pantheon-lupin-dev",
+        "/home/lupin",
+    ]:
+        assert retired not in proc.stdout
+        assert retired not in proc.stderr
+
+
+def test_deploy_script_dev_dry_run_accepts_default_dev_identity() -> None:
+    proc = subprocess.run(
+        [
+            str(DEPLOY_SCRIPT),
+            "--environment",
+            "dev",
+            "--sha",
+            DUMMY_SHA,
+            "--dry-run",
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+        env=_clean_env(),
+        cwd=ROOT,
+    )
+    assert proc.returncode == 0, f"Dev dry run failed: {proc.stderr}"
+    assert "project=pantheon-dev-20260902" in proc.stdout
+    assert "environment=dev" in proc.stdout
+    assert "component=root" in proc.stdout
+    assert "dev_bff_public_host=api.dev.mvl-cap.tw" in proc.stdout
+    assert "dev_fe_public_host=app.dev.mvl-cap.tw" in proc.stdout
+
+    for retired in [
+        "sslip.io",
+        "104.155.223.192",
+        "35.201.204.12",
+        "35.201.239.38",
+        "34.81.75.241",
+        "35.236.178.81",
+        "pantheon-benjamin-20260528",
+        "pantheon-lupin-dev-20260719",
+        "pantheon-lupin-dev",
+        "/home/lupin",
+    ]:
+        assert retired not in proc.stdout
+        assert retired not in proc.stderr
+
+
+def test_deploy_script_dev_rejects_composed_explicit_empty_variables() -> None:
+    empty_env = {
+        "PROJECT_ID": "",
+        "REMOTE_USER": "",
+        "DEV_VM": "",
+        "DEV_ZONE": "",
+        "DEV_REMOTE_DIR": "",
+        "DEV_DEPLOY_SSH_HOST": "",
+        "DEV_BFF_PUBLIC_HOST": "",
+        "DEV_FE_PUBLIC_HOST": "",
+        "DEV_FE_STATIC_ROOT": "",
+        "DEV_BFF_CORS_ORIGINS": "",
+    }
+    proc = subprocess.run(
+        [
+            str(DEPLOY_SCRIPT),
+            "--environment",
+            "dev",
+            "--sha",
+            DUMMY_SHA,
+            "--dry-run",
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+        env=_clean_env(empty_env),
+        cwd=ROOT,
+    )
+    assert proc.returncode == 1
+    assert "dev deployment requires --project-id or PROJECT_ID to be set" in proc.stderr
+
+
+@pytest.mark.parametrize(
+    ("empty_var", "expected_err"),
+    [
+        ("PROJECT_ID", "dev deployment requires --project-id or PROJECT_ID to be set"),
+        ("REMOTE_USER", "dev deployment requires REMOTE_USER to be set"),
+        ("DEV_VM", "dev deployment requires DEV_VM to be set; refusing to deploy with missing target identity"),
+        ("DEV_ZONE", "dev deployment requires DEV_ZONE to be set; refusing to deploy with missing target identity"),
+        ("DEV_REMOTE_DIR", "dev deployment requires DEV_REMOTE_DIR to be set; refusing to deploy with missing target identity"),
+        ("DEV_DEPLOY_SSH_HOST", "dev deployment requires DEV_DEPLOY_SSH_HOST to be set; refusing to deploy with missing target identity"),
+        ("DEV_BFF_PUBLIC_HOST", "dev deployment requires DEV_BFF_PUBLIC_HOST to be set; refusing to deploy with missing target identity"),
+        ("DEV_FE_PUBLIC_HOST", "dev deployment requires DEV_FE_PUBLIC_HOST to be set; refusing to deploy with missing target identity"),
+        ("DEV_FE_STATIC_ROOT", "dev deployment requires DEV_FE_STATIC_ROOT to be set; refusing to deploy with missing target identity"),
+        ("DEV_BFF_CORS_ORIGINS", "dev deployment requires DEV_BFF_CORS_ORIGINS to be set; refusing to deploy with missing target identity"),
+    ],
+)
+def test_deploy_script_dev_rejects_individual_explicit_empty_variable(empty_var: str, expected_err: str) -> None:
+    proc = subprocess.run(
+        [
+            str(DEPLOY_SCRIPT),
+            "--environment",
+            "dev",
+            "--sha",
+            DUMMY_SHA,
+            "--dry-run",
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+        env=_clean_env({empty_var: ""}),
+        cwd=ROOT,
+    )
+    assert proc.returncode == 1
+    assert expected_err in proc.stderr
+
+
+def test_deploy_script_dev_rejects_empty_cli_project_id() -> None:
+    proc = subprocess.run(
+        [
+            str(DEPLOY_SCRIPT),
+            "--environment",
+            "dev",
+            "--project-id",
+            "",
+            "--sha",
+            DUMMY_SHA,
+            "--dry-run",
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+        env=_clean_env(),
+        cwd=ROOT,
+    )
+    assert proc.returncode == 1
+    assert "dev deployment requires --project-id or PROJECT_ID to be set" in proc.stderr
+
+
+def test_deploy_script_dev_executes_beyond_dry_run_with_stubbed_ssh_and_no_staging_vars(tmp_path: Path) -> None:
+    """Dev deployment beyond dry-run executes cleanly with stubbed SSH when all staging variables are unset."""
+    import json
+    lease_file = tmp_path / "dev-lease.json"
+    lease_file.write_text(
+        json.dumps({
+            "schemaVersion": 1,
+            "repository": "ajoe734/execute-plans",
+            "branch": "environment-coordination",
+            "path": ".pantheon/environment-leases/pantheon-dev-environment.json",
+            "resource": "pantheon-dev-environment",
+            "mode": "deployment",
+            "leaseId": "stub-lease-bootstrap",
+            "expectedBackendSha": DUMMY_SHA,
+        }),
+        encoding="utf-8",
+    )
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir(parents=True, exist_ok=True)
+    key_file = tmp_path / "dev_key"
+    key_file.write_text("fake-dev-key\n", encoding="utf-8")
+    key_file.chmod(0o600)
+    known_hosts = tmp_path / "known_hosts"
+    known_hosts.write_text("fake-known-hosts\n", encoding="utf-8")
+    known_hosts.chmod(0o600)
+    args_file = tmp_path / "ssh_args.txt"
+    stub_ssh = bin_dir / "ssh"
+    stub_ssh.write_text(
+        f"""#!/bin/sh
+printf '%s\\n' "$@" > '{args_file}'
+exit 0
+""",
+        encoding="utf-8",
+    )
+    stub_ssh.chmod(0o755)
+
+    env = dict(VALID_NEUTRAL_DEV_ENV)
+    env.update({
+        "PATH": f"{bin_dir}:/usr/bin:/bin",
+        "PANTHEON_DEV_ENVIRONMENT_LEASE_STATE_FILE": str(lease_file),
+        "PANTHEON_DEV_ENVIRONMENT_LEASE_GUARD_LEASE_ID": "stub-lease-bootstrap",
+        "DEV_BFF_AUTH_STUB": "true",
+        "DEV_BFF_AUTH_MODE": "permissive",
+        "DEV_OPENCLAW_ADAPTER_SERVICE_AUTH_REQUIRED": "false",
+        "DEV_DEPLOY_SSH_KEY_FILE": str(key_file),
+        "DEV_DEPLOY_SSH_KNOWN_HOSTS_FILE": str(known_hosts),
+    })
+    # Ensure no staging variables leak into the execution environment
+    for k in list(env.keys()):
+        if k.startswith("STAGING_"):
+            del env[k]
+
+    proc = subprocess.run(
+        [
+            str(DEPLOY_SCRIPT),
+            "--environment", "dev",
+            "--sha", DUMMY_SHA,
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+        env=env,
+        cwd=ROOT,
+    )
+    assert proc.returncode == 0, f"deploy_nonprod_vm.sh failed: {proc.stderr}"
+    assert "direct ssh synthetic-user@192.0.2.50 component=root" in proc.stdout
+    assert f"deployment complete: dev/root {DUMMY_SHA}" in proc.stdout
+
+    ssh_args = args_file.read_text(encoding="utf-8").splitlines()
+    assert "synthetic-user@192.0.2.50" in ssh_args
+    command_prefix = ssh_args[-1]
+    assert "PANTHEON_DEPLOY_ENV=dev" in command_prefix
+    assert "PANTHEON_STAGING_EXEC_HEALTH_URL=''" in command_prefix
+    assert "PANTHEON_STAGING_BFF_CORS_ORIGINS=''" in command_prefix
+
+
+def test_deploy_script_staging_live_executes_beyond_dry_run_with_stubbed_gcloud_and_no_dev_vars(tmp_path: Path) -> None:
+    """Staging-live deployment beyond dry-run executes cleanly with stubbed gcloud without requiring dev variables."""
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir(parents=True, exist_ok=True)
+    stub_gcloud = bin_dir / "gcloud"
+    cmd_file = tmp_path / "gcloud_cmd.txt"
+    stub_gcloud.write_text(
+        f"""#!/bin/sh
+printf '%s\\n' "$@" > '{cmd_file}'
+exit 0
+""",
+        encoding="utf-8",
+    )
+    stub_gcloud.chmod(0o755)
+
+    env = dict(VALID_NEUTRAL_STAGING_ENV)
+    env["PATH"] = f"{bin_dir}:/usr/bin:/bin"
+    # Ensure no DEV variables are in the environment
+    for k in list(env.keys()):
+        if k.startswith("DEV_"):
+            del env[k]
+
+    proc = subprocess.run(
+        [
+            str(DEPLOY_SCRIPT),
+            "--environment", "staging-live",
+            "--component", "control",
+            "--sha", DUMMY_SHA,
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+        env=env,
+        cwd=ROOT,
+    )
+    assert proc.returncode == 0, f"deploy_nonprod_vm.sh staging-live failed: {proc.stderr}"
+    assert f"deployment complete: staging-live/control {DUMMY_SHA}" in proc.stdout
+    assert cmd_file.exists()
+    gcloud_args = cmd_file.read_text(encoding="utf-8")
+    assert "--project=neutral-staging-project" in gcloud_args
+    assert "deployer@neutral-staging-control" in gcloud_args

@@ -95,12 +95,16 @@ class StageAdapter(Protocol):
 
 
 class DefaultAllowlistedAdapter:
-    """Standard adapter implementation for allowlisted research backends."""
+    """Synthetic adapter for allowlisted stages, without backend execution.
+
+    Real provenance belongs to a registered adapter which actually obtains
+    owner receipts. A caller's receipt label cannot attest these local outputs.
+    """
 
     def __init__(self, stage_type: str, preferred_backend: str, default_provenance: str = "simulation") -> None:
         self.stage_type = stage_type
         self.preferred_backend = preferred_backend
-        self.default_provenance = default_provenance
+        self.default_provenance = "simulation" if default_provenance == "real" else default_provenance
 
     def execute(
         self,
@@ -111,15 +115,12 @@ class DefaultAllowlistedAdapter:
         downstream_key: str,
     ) -> ResearchStageResult:
         routing = stage.get("routing") or {}
-        has_real_receipt = bool(context.get("has_real_receipt") or stage.get("real_backend_receipt_id"))
         requested_mode = routing.get("backend_mode") or context.get("backend_mode") or "simulation"
         if requested_mode == "fixture":
             provenance = "fixture"
         elif requested_mode == "simulation":
             provenance = "simulation"
-        elif requested_mode == "real" and has_real_receipt:
-            provenance = "real"
-        elif requested_mode == "real" and not has_real_receipt:
+        elif requested_mode == "real":
             provenance = "simulation"
         else:
             provenance = self.default_provenance
@@ -170,7 +171,10 @@ class DefaultAllowlistedAdapter:
             backend_version="1.0.0",
             metrics=metrics,
             findings=[{"stage_type": self.stage_type, "status": "completed", "backend": self.preferred_backend}],
-            warnings=[],
+            warnings=(
+                ["default_adapter_did_not_execute_real_backend"]
+                if requested_mode == "real" else []
+            ),
             blocking_reasons=[],
             artifact_refs=[artifact_ref],
             evidence_refs=[evidence_ref],
