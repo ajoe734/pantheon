@@ -1,0 +1,2439 @@
+{
+  "task_id": "BFF-TEST-ARCH-001",
+  "version": "1.0",
+  "description": "Architectural classification of BFF test suites and composition allowlist",
+  "total_test_files": 341,
+  "audited_baseline_main_importers": 218,
+  "current_main_importers": 211,
+  "migrated_in_task_count": 5,
+  "composition_allowlist": [
+    "tests/test_bff_main_composition.py",
+    "test_action_catalog.py",
+    "test_route_resolution_no_shadowing.py",
+    "test_normalized_route_uniqueness.py",
+    "smoke_test.py",
+    "smoke_test_incident.py",
+    "test_architecture_boundaries.py",
+    "tests/test_read_store_final_deletion.py",
+    "tests/test_read_store_fixture_boundaries.py",
+    "tests/test_agora_servant_production_write_owner.py",
+    "tests/test_read_surface_caller_migration.py",
+    "tests/test_bff_test_architecture.py"
+  ],
+  "migrated_suites": [
+    "test_cw01_consult_request_contract.py",
+    "test_cw02_debate_transcript_contract.py",
+    "test_cw04_redteam_memo_contract.py",
+    "tests/test_governance_router.py",
+    "tests/test_operations_consultation_ports.py"
+  ],
+  "layer_summary": {
+    "composition": 11,
+    "router": 114,
+    "application": 180,
+    "adapter": 25,
+    "hosted": 11
+  },
+  "main_by_layer": {
+    "composition": 7,
+    "router": 79,
+    "application": 115,
+    "adapter": 4,
+    "hosted": 6
+  },
+  "disposition_summary": {
+    "ALLOWLIST": 11,
+    "MIGRATED": 5,
+    "PLANNED": 204,
+    "DECOUPLED": 121
+  },
+  "tests": [
+    {
+      "file": "agora/candidate_decisions/test_postgres_store.py",
+      "layer": "adapter",
+      "imports_main": false,
+      "disposition": "DECOUPLED",
+      "rationale": "Already decoupled from main composition globals"
+    },
+    {
+      "file": "agora/dataset_extraction/test_extractor.py",
+      "layer": "application",
+      "imports_main": false,
+      "disposition": "DECOUPLED",
+      "rationale": "Already decoupled from main composition globals"
+    },
+    {
+      "file": "agora/dataset_extraction/test_router.py",
+      "layer": "router",
+      "imports_main": false,
+      "disposition": "DECOUPLED",
+      "rationale": "Already decoupled from main composition globals"
+    },
+    {
+      "file": "agora/decision_projection/test_agora_projections_decision_producer.py",
+      "layer": "application",
+      "imports_main": false,
+      "disposition": "DECOUPLED",
+      "rationale": "Already decoupled from main composition globals"
+    },
+    {
+      "file": "agora/decision_projection/test_decision_projection.py",
+      "layer": "application",
+      "imports_main": false,
+      "disposition": "DECOUPLED",
+      "rationale": "Already decoupled from main composition globals"
+    },
+    {
+      "file": "agora/governance/test_postgres_store.py",
+      "layer": "adapter",
+      "imports_main": false,
+      "disposition": "DECOUPLED",
+      "rationale": "Already decoupled from main composition globals"
+    },
+    {
+      "file": "agora/interaction/test_worker.py",
+      "layer": "application",
+      "imports_main": true,
+      "disposition": "PLANNED",
+      "rationale": "Planned for decoupling in subsequent wave (layer: application)"
+    },
+    {
+      "file": "agora/performance/test_agora_projections_performance_widgets.py",
+      "layer": "application",
+      "imports_main": false,
+      "disposition": "DECOUPLED",
+      "rationale": "Already decoupled from main composition globals"
+    },
+    {
+      "file": "agora/performance/test_performance.py",
+      "layer": "application",
+      "imports_main": false,
+      "disposition": "DECOUPLED",
+      "rationale": "Already decoupled from main composition globals"
+    },
+    {
+      "file": "agora/strategy_workshop/test_operation_lifecycle.py",
+      "layer": "application",
+      "imports_main": false,
+      "disposition": "DECOUPLED",
+      "rationale": "Already decoupled from main composition globals"
+    },
+    {
+      "file": "agora/strategy_workshop/test_reconstruction.py",
+      "layer": "application",
+      "imports_main": false,
+      "disposition": "DECOUPLED",
+      "rationale": "Already decoupled from main composition globals"
+    },
+    {
+      "file": "agora/strategy_workshop/test_reconstruction_worker.py",
+      "layer": "application",
+      "imports_main": false,
+      "disposition": "DECOUPLED",
+      "rationale": "Already decoupled from main composition globals"
+    },
+    {
+      "file": "agora/strategy_workshop/test_versions.py",
+      "layer": "application",
+      "imports_main": false,
+      "disposition": "DECOUPLED",
+      "rationale": "Already decoupled from main composition globals"
+    },
+    {
+      "file": "agora/test_operational_readiness.py",
+      "layer": "application",
+      "imports_main": false,
+      "disposition": "DECOUPLED",
+      "rationale": "Already decoupled from main composition globals"
+    },
+    {
+      "file": "agora/trading_data/test_trading_data.py",
+      "layer": "application",
+      "imports_main": false,
+      "disposition": "DECOUPLED",
+      "rationale": "Already decoupled from main composition globals"
+    },
+    {
+      "file": "agora/trading_room/test_agora_projections_workspace_pool_identity.py",
+      "layer": "application",
+      "imports_main": false,
+      "disposition": "DECOUPLED",
+      "rationale": "Already decoupled from main composition globals"
+    },
+    {
+      "file": "agora/trading_room/test_postgres_store.py",
+      "layer": "adapter",
+      "imports_main": false,
+      "disposition": "DECOUPLED",
+      "rationale": "Already decoupled from main composition globals"
+    },
+    {
+      "file": "agora/trading_room/test_trading_room.py",
+      "layer": "application",
+      "imports_main": false,
+      "disposition": "DECOUPLED",
+      "rationale": "Already decoupled from main composition globals"
+    },
+    {
+      "file": "agora/trading_room/test_trading_room_stream.py",
+      "layer": "application",
+      "imports_main": false,
+      "disposition": "DECOUPLED",
+      "rationale": "Already decoupled from main composition globals"
+    },
+    {
+      "file": "assistant/tests/test_command_idempotency.py",
+      "layer": "application",
+      "imports_main": false,
+      "disposition": "DECOUPLED",
+      "rationale": "Already decoupled from main composition globals"
+    },
+    {
+      "file": "assistant/tests/test_redaction.py",
+      "layer": "application",
+      "imports_main": false,
+      "disposition": "DECOUPLED",
+      "rationale": "Already decoupled from main composition globals"
+    },
+    {
+      "file": "assistant/tests/test_user_mode_regression.py",
+      "layer": "application",
+      "imports_main": false,
+      "disposition": "DECOUPLED",
+      "rationale": "Already decoupled from main composition globals"
+    },
+    {
+      "file": "events/test_router.py",
+      "layer": "router",
+      "imports_main": false,
+      "disposition": "DECOUPLED",
+      "rationale": "Already decoupled from main composition globals"
+    },
+    {
+      "file": "evolution/test_router.py",
+      "layer": "router",
+      "imports_main": false,
+      "disposition": "DECOUPLED",
+      "rationale": "Already decoupled from main composition globals"
+    },
+    {
+      "file": "http_smoke_test.py",
+      "layer": "application",
+      "imports_main": false,
+      "disposition": "DECOUPLED",
+      "rationale": "Already decoupled from main composition globals"
+    },
+    {
+      "file": "research/test_router.py",
+      "layer": "router",
+      "imports_main": false,
+      "disposition": "DECOUPLED",
+      "rationale": "Already decoupled from main composition globals"
+    },
+    {
+      "file": "smoke_test.py",
+      "layer": "composition",
+      "imports_main": true,
+      "disposition": "ALLOWLIST",
+      "rationale": "Reviewed composition/architecture test permitted to import composition root"
+    },
+    {
+      "file": "test_action_catalog.py",
+      "layer": "composition",
+      "imports_main": true,
+      "disposition": "ALLOWLIST",
+      "rationale": "Reviewed composition/architecture test permitted to import composition root"
+    },
+    {
+      "file": "test_action_catalog_safety_invariants.py",
+      "layer": "application",
+      "imports_main": false,
+      "disposition": "DECOUPLED",
+      "rationale": "Already decoupled from main composition globals"
+    },
+    {
+      "file": "test_agora_audit_store.py",
+      "layer": "adapter",
+      "imports_main": false,
+      "disposition": "DECOUPLED",
+      "rationale": "Already decoupled from main composition globals"
+    },
+    {
+      "file": "test_agora_journal_merge_patch.py",
+      "layer": "application",
+      "imports_main": true,
+      "disposition": "PLANNED",
+      "rationale": "Planned for decoupling in subsequent wave (layer: application)"
+    },
+    {
+      "file": "test_architecture_boundaries.py",
+      "layer": "composition",
+      "imports_main": false,
+      "disposition": "ALLOWLIST",
+      "rationale": "Reviewed composition/architecture test permitted to import composition root"
+    },
+    {
+      "file": "test_ask005_sse_event_publishing_contract.py",
+      "layer": "router",
+      "imports_main": true,
+      "disposition": "PLANNED",
+      "rationale": "Planned for decoupling in subsequent wave (layer: router)"
+    },
+    {
+      "file": "test_ask_001_sessions_contract.py",
+      "layer": "router",
+      "imports_main": true,
+      "disposition": "PLANNED",
+      "rationale": "Planned for decoupling in subsequent wave (layer: router)"
+    },
+    {
+      "file": "test_ask_003_committee_lifecycle.py",
+      "layer": "application",
+      "imports_main": true,
+      "disposition": "PLANNED",
+      "rationale": "Planned for decoupling in subsequent wave (layer: application)"
+    },
+    {
+      "file": "test_ask_004_memo_publish_contract.py",
+      "layer": "router",
+      "imports_main": true,
+      "disposition": "PLANNED",
+      "rationale": "Planned for decoupling in subsequent wave (layer: router)"
+    },
+    {
+      "file": "test_aud_002_audit_action_write_engine.py",
+      "layer": "application",
+      "imports_main": true,
+      "disposition": "PLANNED",
+      "rationale": "Planned for decoupling in subsequent wave (layer: application)"
+    },
+    {
+      "file": "test_audit_timestamp_filter_no_500.py",
+      "layer": "application",
+      "imports_main": true,
+      "disposition": "PLANNED",
+      "rationale": "Planned for decoupling in subsequent wave (layer: application)"
+    },
+    {
+      "file": "test_bff_agora_core_contract.py",
+      "layer": "router",
+      "imports_main": true,
+      "disposition": "PLANNED",
+      "rationale": "Planned for decoupling in subsequent wave (layer: router)"
+    },
+    {
+      "file": "test_bff_agora_extended_contract.py",
+      "layer": "router",
+      "imports_main": true,
+      "disposition": "PLANNED",
+      "rationale": "Planned for decoupling in subsequent wave (layer: router)"
+    },
+    {
+      "file": "test_bff_approvals_decide_contract.py",
+      "layer": "router",
+      "imports_main": true,
+      "disposition": "PLANNED",
+      "rationale": "Planned for decoupling in subsequent wave (layer: router)"
+    },
+    {
+      "file": "test_bff_audit_contract.py",
+      "layer": "router",
+      "imports_main": true,
+      "disposition": "PLANNED",
+      "rationale": "Planned for decoupling in subsequent wave (layer: router)"
+    },
+    {
+      "file": "test_bff_auth_facade.py",
+      "layer": "application",
+      "imports_main": true,
+      "disposition": "PLANNED",
+      "rationale": "Planned for decoupling in subsequent wave (layer: application)"
+    },
+    {
+      "file": "test_bff_b2_005_agora_canonical_aliases.py",
+      "layer": "application",
+      "imports_main": true,
+      "disposition": "PLANNED",
+      "rationale": "Planned for decoupling in subsequent wave (layer: application)"
+    },
+    {
+      "file": "test_bff_capital_ranking_rebalance_contract.py",
+      "layer": "router",
+      "imports_main": true,
+      "disposition": "PLANNED",
+      "rationale": "Planned for decoupling in subsequent wave (layer: router)"
+    },
+    {
+      "file": "test_bff_consol_008_fixture_pack_a.py",
+      "layer": "application",
+      "imports_main": true,
+      "disposition": "PLANNED",
+      "rationale": "Planned for decoupling in subsequent wave (layer: application)"
+    },
+    {
+      "file": "test_bff_consol_009_fixture_pack_b.py",
+      "layer": "application",
+      "imports_main": true,
+      "disposition": "PLANNED",
+      "rationale": "Planned for decoupling in subsequent wave (layer: application)"
+    },
+    {
+      "file": "test_bff_consol_010_fixture_pack_c.py",
+      "layer": "application",
+      "imports_main": true,
+      "disposition": "PLANNED",
+      "rationale": "Planned for decoupling in subsequent wave (layer: application)"
+    },
+    {
+      "file": "test_bff_consol_013_cookie_session_write_gate.py",
+      "layer": "application",
+      "imports_main": true,
+      "disposition": "PLANNED",
+      "rationale": "Planned for decoupling in subsequent wave (layer: application)"
+    },
+    {
+      "file": "test_bff_consol_016_detail_smoke_a.py",
+      "layer": "application",
+      "imports_main": true,
+      "disposition": "PLANNED",
+      "rationale": "Planned for decoupling in subsequent wave (layer: application)"
+    },
+    {
+      "file": "test_bff_consol_017_detail_smoke_b.py",
+      "layer": "application",
+      "imports_main": true,
+      "disposition": "PLANNED",
+      "rationale": "Planned for decoupling in subsequent wave (layer: application)"
+    },
+    {
+      "file": "test_bff_downstream_health_monitor.py",
+      "layer": "application",
+      "imports_main": true,
+      "disposition": "PLANNED",
+      "rationale": "Planned for decoupling in subsequent wave (layer: application)"
+    },
+    {
+      "file": "test_bff_dry_run_rbac_contract.py",
+      "layer": "router",
+      "imports_main": true,
+      "disposition": "PLANNED",
+      "rationale": "Planned for decoupling in subsequent wave (layer: router)"
+    },
+    {
+      "file": "test_bff_error_envelope_shape.py",
+      "layer": "application",
+      "imports_main": true,
+      "disposition": "PLANNED",
+      "rationale": "Planned for decoupling in subsequent wave (layer: application)"
+    },
+    {
+      "file": "test_bff_evolution_experiment_jobs_events_contract.py",
+      "layer": "router",
+      "imports_main": true,
+      "disposition": "PLANNED",
+      "rationale": "Planned for decoupling in subsequent wave (layer: router)"
+    },
+    {
+      "file": "test_bff_governance_runtime_risk_audit_contract.py",
+      "layer": "router",
+      "imports_main": true,
+      "disposition": "PLANNED",
+      "rationale": "Planned for decoupling in subsequent wave (layer: router)"
+    },
+    {
+      "file": "test_bff_management_delta_routes.py",
+      "layer": "router",
+      "imports_main": true,
+      "disposition": "PLANNED",
+      "rationale": "Planned for decoupling in subsequent wave (layer: router)"
+    },
+    {
+      "file": "test_bff_mgmt_ai_persistence_2026_06_03.py",
+      "layer": "application",
+      "imports_main": true,
+      "disposition": "PLANNED",
+      "rationale": "Planned for decoupling in subsequent wave (layer: application)"
+    },
+    {
+      "file": "test_bff_mgmt_common_filters.py",
+      "layer": "application",
+      "imports_main": true,
+      "disposition": "PLANNED",
+      "rationale": "Planned for decoupling in subsequent wave (layer: application)"
+    },
+    {
+      "file": "test_bff_mgmt_ops_001_operations_read_model_contract.py",
+      "layer": "router",
+      "imports_main": true,
+      "disposition": "PLANNED",
+      "rationale": "Planned for decoupling in subsequent wave (layer: router)"
+    },
+    {
+      "file": "test_bff_mgmt_ops_006_operator_actions_contract.py",
+      "layer": "router",
+      "imports_main": true,
+      "disposition": "PLANNED",
+      "rationale": "Planned for decoupling in subsequent wave (layer: router)"
+    },
+    {
+      "file": "test_bff_oidc_staging_env_contract.py",
+      "layer": "router",
+      "imports_main": false,
+      "disposition": "DECOUPLED",
+      "rationale": "Already decoupled from main composition globals"
+    },
+    {
+      "file": "test_bff_performance_ranking_read_model_contract.py",
+      "layer": "router",
+      "imports_main": true,
+      "disposition": "PLANNED",
+      "rationale": "Planned for decoupling in subsequent wave (layer: router)"
+    },
+    {
+      "file": "test_bff_pm12_portfolio_book_contract.py",
+      "layer": "router",
+      "imports_main": true,
+      "disposition": "PLANNED",
+      "rationale": "Planned for decoupling in subsequent wave (layer: router)"
+    },
+    {
+      "file": "test_bff_promotion_review_governance.py",
+      "layer": "application",
+      "imports_main": true,
+      "disposition": "PLANNED",
+      "rationale": "Planned for decoupling in subsequent wave (layer: application)"
+    },
+    {
+      "file": "test_bff_read_cutoff_wave4_contract.py",
+      "layer": "router",
+      "imports_main": true,
+      "disposition": "PLANNED",
+      "rationale": "Planned for decoupling in subsequent wave (layer: router)"
+    },
+    {
+      "file": "test_bff_runtimes_contract.py",
+      "layer": "router",
+      "imports_main": true,
+      "disposition": "PLANNED",
+      "rationale": "Planned for decoupling in subsequent wave (layer: router)"
+    },
+    {
+      "file": "test_bff_session_auth_me_contract.py",
+      "layer": "router",
+      "imports_main": true,
+      "disposition": "PLANNED",
+      "rationale": "Planned for decoupling in subsequent wave (layer: router)"
+    },
+    {
+      "file": "test_bff_strategy_persona_contract.py",
+      "layer": "router",
+      "imports_main": true,
+      "disposition": "PLANNED",
+      "rationale": "Planned for decoupling in subsequent wave (layer: router)"
+    },
+    {
+      "file": "test_bff_two_man_sign_race_contract.py",
+      "layer": "router",
+      "imports_main": true,
+      "disposition": "PLANNED",
+      "rationale": "Planned for decoupling in subsequent wave (layer: router)"
+    },
+    {
+      "file": "test_bff_v5_loop_sentinel_contract.py",
+      "layer": "router",
+      "imports_main": true,
+      "disposition": "PLANNED",
+      "rationale": "Planned for decoupling in subsequent wave (layer: router)"
+    },
+    {
+      "file": "test_bff_write_gap_2026_05_28.py",
+      "layer": "application",
+      "imports_main": true,
+      "disposition": "PLANNED",
+      "rationale": "Planned for decoupling in subsequent wave (layer: application)"
+    },
+    {
+      "file": "test_command_executor.py",
+      "layer": "application",
+      "imports_main": false,
+      "disposition": "DECOUPLED",
+      "rationale": "Already decoupled from main composition globals"
+    },
+    {
+      "file": "test_consultation_surfaces.py",
+      "layer": "application",
+      "imports_main": true,
+      "disposition": "PLANNED",
+      "rationale": "Planned for decoupling in subsequent wave (layer: application)"
+    },
+    {
+      "file": "test_current_twelve_owner_truth.py",
+      "layer": "application",
+      "imports_main": true,
+      "disposition": "PLANNED",
+      "rationale": "Planned for decoupling in subsequent wave (layer: application)"
+    },
+    {
+      "file": "test_cw01_consult_request_contract.py",
+      "layer": "router",
+      "imports_main": false,
+      "disposition": "MIGRATED",
+      "rationale": "Decoupled from main composition globals in BFF-TEST-ARCH-001"
+    },
+    {
+      "file": "test_cw02_debate_transcript_contract.py",
+      "layer": "router",
+      "imports_main": false,
+      "disposition": "MIGRATED",
+      "rationale": "Decoupled from main composition globals in BFF-TEST-ARCH-001"
+    },
+    {
+      "file": "test_cw03_committee_board_contract.py",
+      "layer": "router",
+      "imports_main": true,
+      "disposition": "PLANNED",
+      "rationale": "Planned for decoupling in subsequent wave (layer: router)"
+    },
+    {
+      "file": "test_cw04_redteam_memo_contract.py",
+      "layer": "router",
+      "imports_main": false,
+      "disposition": "MIGRATED",
+      "rationale": "Decoupled from main composition globals in BFF-TEST-ARCH-001"
+    },
+    {
+      "file": "test_datastrat_persona_strategy_discovery_bff.py",
+      "layer": "application",
+      "imports_main": true,
+      "disposition": "PLANNED",
+      "rationale": "Planned for decoupling in subsequent wave (layer: application)"
+    },
+    {
+      "file": "test_datastrat_seed_replication_bff.py",
+      "layer": "application",
+      "imports_main": true,
+      "disposition": "PLANNED",
+      "rationale": "Planned for decoupling in subsequent wave (layer: application)"
+    },
+    {
+      "file": "test_datastrat_seed_review_bff.py",
+      "layer": "application",
+      "imports_main": true,
+      "disposition": "PLANNED",
+      "rationale": "Planned for decoupling in subsequent wave (layer: application)"
+    },
+    {
+      "file": "test_devloop_telread_telemetry_contract.py",
+      "layer": "router",
+      "imports_main": true,
+      "disposition": "PLANNED",
+      "rationale": "Planned for decoupling in subsequent wave (layer: router)"
+    },
+    {
+      "file": "test_downstream_health_monitor.py",
+      "layer": "application",
+      "imports_main": false,
+      "disposition": "DECOUPLED",
+      "rationale": "Already decoupled from main composition globals"
+    },
+    {
+      "file": "test_evolution_center_contract.py",
+      "layer": "router",
+      "imports_main": true,
+      "disposition": "PLANNED",
+      "rationale": "Planned for decoupling in subsequent wave (layer: router)"
+    },
+    {
+      "file": "test_ew04_inspiration_graph_contract.py",
+      "layer": "router",
+      "imports_main": true,
+      "disposition": "PLANNED",
+      "rationale": "Planned for decoupling in subsequent wave (layer: router)"
+    },
+    {
+      "file": "test_ew05_mutation_review_contract.py",
+      "layer": "router",
+      "imports_main": true,
+      "disposition": "PLANNED",
+      "rationale": "Planned for decoupling in subsequent wave (layer: router)"
+    },
+    {
+      "file": "test_execute_plans_contract_registry.py",
+      "layer": "router",
+      "imports_main": true,
+      "disposition": "PLANNED",
+      "rationale": "Planned for decoupling in subsequent wave (layer: router)"
+    },
+    {
+      "file": "test_execute_plans_final_live_wiring_contract.py",
+      "layer": "hosted",
+      "imports_main": true,
+      "disposition": "PLANNED",
+      "rationale": "Planned for decoupling in subsequent wave (layer: hosted)"
+    },
+    {
+      "file": "test_exp002_bff_research_experiments_contract.py",
+      "layer": "router",
+      "imports_main": true,
+      "disposition": "PLANNED",
+      "rationale": "Planned for decoupling in subsequent wave (layer: router)"
+    },
+    {
+      "file": "test_final_command_execution_bridge.py",
+      "layer": "application",
+      "imports_main": true,
+      "disposition": "PLANNED",
+      "rationale": "Planned for decoupling in subsequent wave (layer: application)"
+    },
+    {
+      "file": "test_final_contract_primitives.py",
+      "layer": "router",
+      "imports_main": true,
+      "disposition": "PLANNED",
+      "rationale": "Planned for decoupling in subsequent wave (layer: router)"
+    },
+    {
+      "file": "test_final_precondition_errors.py",
+      "layer": "application",
+      "imports_main": true,
+      "disposition": "PLANNED",
+      "rationale": "Planned for decoupling in subsequent wave (layer: application)"
+    },
+    {
+      "file": "test_governance_command_submission.py",
+      "layer": "application",
+      "imports_main": true,
+      "disposition": "PLANNED",
+      "rationale": "Planned for decoupling in subsequent wave (layer: application)"
+    },
+    {
+      "file": "test_idempotency_concurrency_guard.py",
+      "layer": "application",
+      "imports_main": true,
+      "disposition": "PLANNED",
+      "rationale": "Planned for decoupling in subsequent wave (layer: application)"
+    },
+    {
+      "file": "test_inc001_rebaseline_incidents_contract.py",
+      "layer": "router",
+      "imports_main": true,
+      "disposition": "PLANNED",
+      "rationale": "Planned for decoupling in subsequent wave (layer: router)"
+    },
+    {
+      "file": "test_incident_stream_route_order.py",
+      "layer": "router",
+      "imports_main": true,
+      "disposition": "PLANNED",
+      "rationale": "Planned for decoupling in subsequent wave (layer: router)"
+    },
+    {
+      "file": "test_kw01_institutional_memory_contract.py",
+      "layer": "router",
+      "imports_main": false,
+      "disposition": "DECOUPLED",
+      "rationale": "Already decoupled from main composition globals"
+    },
+    {
+      "file": "test_kw02_research_notes_contract.py",
+      "layer": "router",
+      "imports_main": false,
+      "disposition": "DECOUPLED",
+      "rationale": "Already decoupled from main composition globals"
+    },
+    {
+      "file": "test_kw03_evidence_refs_contract.py",
+      "layer": "router",
+      "imports_main": false,
+      "disposition": "DECOUPLED",
+      "rationale": "Already decoupled from main composition globals"
+    },
+    {
+      "file": "test_kw04_insight_cards_contract.py",
+      "layer": "router",
+      "imports_main": false,
+      "disposition": "DECOUPLED",
+      "rationale": "Already decoupled from main composition globals"
+    },
+    {
+      "file": "test_kw05_strategy_spec_contract.py",
+      "layer": "router",
+      "imports_main": false,
+      "disposition": "DECOUPLED",
+      "rationale": "Already decoupled from main composition globals"
+    },
+    {
+      "file": "test_lifecycle_projector_readiness.py",
+      "layer": "application",
+      "imports_main": true,
+      "disposition": "PLANNED",
+      "rationale": "Planned for decoupling in subsequent wave (layer: application)"
+    },
+    {
+      "file": "test_loop_auto_bff004_cross_loop_drill.py",
+      "layer": "application",
+      "imports_main": true,
+      "disposition": "PLANNED",
+      "rationale": "Planned for decoupling in subsequent wave (layer: application)"
+    },
+    {
+      "file": "test_loop_auto_dep004_stage_truth.py",
+      "layer": "application",
+      "imports_main": true,
+      "disposition": "PLANNED",
+      "rationale": "Planned for decoupling in subsequent wave (layer: application)"
+    },
+    {
+      "file": "test_loop_health_read_model_contract.py",
+      "layer": "router",
+      "imports_main": true,
+      "disposition": "PLANNED",
+      "rationale": "Planned for decoupling in subsequent wave (layer: router)"
+    },
+    {
+      "file": "test_loop_inventory_read_model_contract.py",
+      "layer": "router",
+      "imports_main": true,
+      "disposition": "PLANNED",
+      "rationale": "Planned for decoupling in subsequent wave (layer: router)"
+    },
+    {
+      "file": "test_loop_prod_per_001_provisioning.py",
+      "layer": "hosted",
+      "imports_main": true,
+      "disposition": "PLANNED",
+      "rationale": "Planned for decoupling in subsequent wave (layer: hosted)"
+    },
+    {
+      "file": "test_loop_run_ledger_merge.py",
+      "layer": "application",
+      "imports_main": false,
+      "disposition": "DECOUPLED",
+      "rationale": "Already decoupled from main composition globals"
+    },
+    {
+      "file": "test_management_data_sources_v2.py",
+      "layer": "application",
+      "imports_main": true,
+      "disposition": "PLANNED",
+      "rationale": "Planned for decoupling in subsequent wave (layer: application)"
+    },
+    {
+      "file": "test_management_list_contract_guardrail.py",
+      "layer": "router",
+      "imports_main": false,
+      "disposition": "DECOUPLED",
+      "rationale": "Already decoupled from main composition globals"
+    },
+    {
+      "file": "test_management_list_response_guardrail.py",
+      "layer": "application",
+      "imports_main": false,
+      "disposition": "DECOUPLED",
+      "rationale": "Already decoupled from main composition globals"
+    },
+    {
+      "file": "test_mcp_tool_import.py",
+      "layer": "application",
+      "imports_main": true,
+      "disposition": "PLANNED",
+      "rationale": "Planned for decoupling in subsequent wave (layer: application)"
+    },
+    {
+      "file": "test_mgmt_load_002_shell_summary.py",
+      "layer": "application",
+      "imports_main": true,
+      "disposition": "PLANNED",
+      "rationale": "Planned for decoupling in subsequent wave (layer: application)"
+    },
+    {
+      "file": "test_mgmt_load_005_read_concurrency.py",
+      "layer": "application",
+      "imports_main": true,
+      "disposition": "PLANNED",
+      "rationale": "Planned for decoupling in subsequent wave (layer: application)"
+    },
+    {
+      "file": "test_mgmt_ooda_004_bff_routes.py",
+      "layer": "router",
+      "imports_main": true,
+      "disposition": "PLANNED",
+      "rationale": "Planned for decoupling in subsequent wave (layer: router)"
+    },
+    {
+      "file": "test_mgmt_ooda_005_control_room_card.py",
+      "layer": "application",
+      "imports_main": true,
+      "disposition": "PLANNED",
+      "rationale": "Planned for decoupling in subsequent wave (layer: application)"
+    },
+    {
+      "file": "test_mgmt_qlib_006_artifact_research_linkage.py",
+      "layer": "application",
+      "imports_main": true,
+      "disposition": "PLANNED",
+      "rationale": "Planned for decoupling in subsequent wave (layer: application)"
+    },
+    {
+      "file": "test_mgmt_syn_006_conflict_log_view.py",
+      "layer": "application",
+      "imports_main": true,
+      "disposition": "PLANNED",
+      "rationale": "Planned for decoupling in subsequent wave (layer: application)"
+    },
+    {
+      "file": "test_no_undefined_call_symbols.py",
+      "layer": "application",
+      "imports_main": false,
+      "disposition": "DECOUPLED",
+      "rationale": "Already decoupled from main composition globals"
+    },
+    {
+      "file": "test_normalized_route_uniqueness.py",
+      "layer": "composition",
+      "imports_main": true,
+      "disposition": "ALLOWLIST",
+      "rationale": "Reviewed composition/architecture test permitted to import composition root"
+    },
+    {
+      "file": "test_openclaw_ops_surface.py",
+      "layer": "application",
+      "imports_main": true,
+      "disposition": "PLANNED",
+      "rationale": "Planned for decoupling in subsequent wave (layer: application)"
+    },
+    {
+      "file": "test_p0_paper_operating_loop_smoke.py",
+      "layer": "application",
+      "imports_main": true,
+      "disposition": "PLANNED",
+      "rationale": "Planned for decoupling in subsequent wave (layer: application)"
+    },
+    {
+      "file": "test_p0_tw_paper_activate_honesty.py",
+      "layer": "application",
+      "imports_main": true,
+      "disposition": "PLANNED",
+      "rationale": "Planned for decoupling in subsequent wave (layer: application)"
+    },
+    {
+      "file": "test_pathreon_market_persona_fleet_contract.py",
+      "layer": "router",
+      "imports_main": true,
+      "disposition": "PLANNED",
+      "rationale": "Planned for decoupling in subsequent wave (layer: router)"
+    },
+    {
+      "file": "test_per002_bff_persona_skills_tools_capabilities_contract.py",
+      "layer": "router",
+      "imports_main": true,
+      "disposition": "PLANNED",
+      "rationale": "Planned for decoupling in subsequent wave (layer: router)"
+    },
+    {
+      "file": "test_persona_league_detail_not_found.py",
+      "layer": "application",
+      "imports_main": true,
+      "disposition": "PLANNED",
+      "rationale": "Planned for decoupling in subsequent wave (layer: application)"
+    },
+    {
+      "file": "test_persona_live_integration.py",
+      "layer": "hosted",
+      "imports_main": true,
+      "disposition": "PLANNED",
+      "rationale": "Planned for decoupling in subsequent wave (layer: hosted)"
+    },
+    {
+      "file": "test_persona_management.py",
+      "layer": "application",
+      "imports_main": false,
+      "disposition": "DECOUPLED",
+      "rationale": "Already decoupled from main composition globals"
+    },
+    {
+      "file": "test_persona_provisioning_coordinator.py",
+      "layer": "application",
+      "imports_main": false,
+      "disposition": "DECOUPLED",
+      "rationale": "Already decoupled from main composition globals"
+    },
+    {
+      "file": "test_persona_provisioning_postgres_integration.py",
+      "layer": "adapter",
+      "imports_main": false,
+      "disposition": "DECOUPLED",
+      "rationale": "Already decoupled from main composition globals"
+    },
+    {
+      "file": "test_persona_provisioning_readback.py",
+      "layer": "adapter",
+      "imports_main": true,
+      "disposition": "PLANNED",
+      "rationale": "Planned for decoupling in subsequent wave (layer: adapter)"
+    },
+    {
+      "file": "test_persona_provisioning_reconcile_orphan_skip.py",
+      "layer": "application",
+      "imports_main": true,
+      "disposition": "PLANNED",
+      "rationale": "Planned for decoupling in subsequent wave (layer: application)"
+    },
+    {
+      "file": "test_persona_provisioning_route_security.py",
+      "layer": "router",
+      "imports_main": true,
+      "disposition": "PLANNED",
+      "rationale": "Planned for decoupling in subsequent wave (layer: router)"
+    },
+    {
+      "file": "test_persona_provisioning_store.py",
+      "layer": "adapter",
+      "imports_main": false,
+      "disposition": "DECOUPLED",
+      "rationale": "Already decoupled from main composition globals"
+    },
+    {
+      "file": "test_pkt001_deployment_review_console_contract.py",
+      "layer": "router",
+      "imports_main": true,
+      "disposition": "PLANNED",
+      "rationale": "Planned for decoupling in subsequent wave (layer: router)"
+    },
+    {
+      "file": "test_pkt001_governance_review_queue_contract.py",
+      "layer": "router",
+      "imports_main": true,
+      "disposition": "PLANNED",
+      "rationale": "Planned for decoupling in subsequent wave (layer: router)"
+    },
+    {
+      "file": "test_pkt003_lineage_view_contract.py",
+      "layer": "router",
+      "imports_main": true,
+      "disposition": "PLANNED",
+      "rationale": "Planned for decoupling in subsequent wave (layer: router)"
+    },
+    {
+      "file": "test_pkt004_capital_binding_drilldowns_contract.py",
+      "layer": "router",
+      "imports_main": true,
+      "disposition": "PLANNED",
+      "rationale": "Planned for decoupling in subsequent wave (layer: router)"
+    },
+    {
+      "file": "test_pkt004_deployment_approval_drilldowns_contract.py",
+      "layer": "router",
+      "imports_main": true,
+      "disposition": "PLANNED",
+      "rationale": "Planned for decoupling in subsequent wave (layer: router)"
+    },
+    {
+      "file": "test_pkt005_sse_substrate_contract.py",
+      "layer": "router",
+      "imports_main": true,
+      "disposition": "PLANNED",
+      "rationale": "Planned for decoupling in subsequent wave (layer: router)"
+    },
+    {
+      "file": "test_pkt006_approval_queue_contract.py",
+      "layer": "router",
+      "imports_main": true,
+      "disposition": "PLANNED",
+      "rationale": "Planned for decoupling in subsequent wave (layer: router)"
+    },
+    {
+      "file": "test_pkt007_deployment_diff_contract.py",
+      "layer": "router",
+      "imports_main": true,
+      "disposition": "PLANNED",
+      "rationale": "Planned for decoupling in subsequent wave (layer: router)"
+    },
+    {
+      "file": "test_pkt008_rollback_review_contract.py",
+      "layer": "router",
+      "imports_main": false,
+      "disposition": "DECOUPLED",
+      "rationale": "Already decoupled from main composition globals"
+    },
+    {
+      "file": "test_pkt009_governance_audit_contract.py",
+      "layer": "router",
+      "imports_main": true,
+      "disposition": "PLANNED",
+      "rationale": "Planned for decoupling in subsequent wave (layer: router)"
+    },
+    {
+      "file": "test_pkt010_runtime_state_board_contract.py",
+      "layer": "router",
+      "imports_main": true,
+      "disposition": "PLANNED",
+      "rationale": "Planned for decoupling in subsequent wave (layer: router)"
+    },
+    {
+      "file": "test_pkt011_health_status_board_contract.py",
+      "layer": "router",
+      "imports_main": true,
+      "disposition": "PLANNED",
+      "rationale": "Planned for decoupling in subsequent wave (layer: router)"
+    },
+    {
+      "file": "test_pkt012_alerts_rail_contract.py",
+      "layer": "router",
+      "imports_main": true,
+      "disposition": "PLANNED",
+      "rationale": "Planned for decoupling in subsequent wave (layer: router)"
+    },
+    {
+      "file": "test_pkt013_operator_home_contract.py",
+      "layer": "router",
+      "imports_main": true,
+      "disposition": "PLANNED",
+      "rationale": "Planned for decoupling in subsequent wave (layer: router)"
+    },
+    {
+      "file": "test_pkt014_paper_live_drift_contract.py",
+      "layer": "hosted",
+      "imports_main": true,
+      "disposition": "PLANNED",
+      "rationale": "Planned for decoupling in subsequent wave (layer: hosted)"
+    },
+    {
+      "file": "test_pkt015_consultation_workbench_contract.py",
+      "layer": "router",
+      "imports_main": true,
+      "disposition": "PLANNED",
+      "rationale": "Planned for decoupling in subsequent wave (layer: router)"
+    },
+    {
+      "file": "test_pkt016_knowledge_workbench_contract.py",
+      "layer": "router",
+      "imports_main": true,
+      "disposition": "PLANNED",
+      "rationale": "Planned for decoupling in subsequent wave (layer: router)"
+    },
+    {
+      "file": "test_product_closeout_verdict.py",
+      "layer": "application",
+      "imports_main": false,
+      "disposition": "DECOUPLED",
+      "rationale": "Already decoupled from main composition globals"
+    },
+    {
+      "file": "test_ptj_004_trade_journal.py",
+      "layer": "application",
+      "imports_main": true,
+      "disposition": "PLANNED",
+      "rationale": "Planned for decoupling in subsequent wave (layer: application)"
+    },
+    {
+      "file": "test_read_store_bootstrap_snapshot.py",
+      "layer": "adapter",
+      "imports_main": false,
+      "disposition": "DECOUPLED",
+      "rationale": "Already decoupled from main composition globals"
+    },
+    {
+      "file": "test_read_store_capital_pool_detail.py",
+      "layer": "adapter",
+      "imports_main": false,
+      "disposition": "DECOUPLED",
+      "rationale": "Already decoupled from main composition globals"
+    },
+    {
+      "file": "test_read_store_deployment.py",
+      "layer": "adapter",
+      "imports_main": false,
+      "disposition": "DECOUPLED",
+      "rationale": "Already decoupled from main composition globals"
+    },
+    {
+      "file": "test_read_store_incident.py",
+      "layer": "adapter",
+      "imports_main": false,
+      "disposition": "DECOUPLED",
+      "rationale": "Already decoupled from main composition globals"
+    },
+    {
+      "file": "test_read_store_service_clients.py",
+      "layer": "adapter",
+      "imports_main": false,
+      "disposition": "DECOUPLED",
+      "rationale": "Already decoupled from main composition globals"
+    },
+    {
+      "file": "test_read_store_sort_key_tz_safe.py",
+      "layer": "adapter",
+      "imports_main": false,
+      "disposition": "DECOUPLED",
+      "rationale": "Already decoupled from main composition globals"
+    },
+    {
+      "file": "test_research_analyses_mixed_tz_sort.py",
+      "layer": "application",
+      "imports_main": false,
+      "disposition": "DECOUPLED",
+      "rationale": "Already decoupled from main composition globals"
+    },
+    {
+      "file": "test_research_oss_preactivation_contract.py",
+      "layer": "router",
+      "imports_main": true,
+      "disposition": "PLANNED",
+      "rationale": "Planned for decoupling in subsequent wave (layer: router)"
+    },
+    {
+      "file": "test_route_resolution_no_shadowing.py",
+      "layer": "composition",
+      "imports_main": true,
+      "disposition": "ALLOWLIST",
+      "rationale": "Reviewed composition/architecture test permitted to import composition root"
+    },
+    {
+      "file": "test_runtime_state_trades.py",
+      "layer": "application",
+      "imports_main": true,
+      "disposition": "PLANNED",
+      "rationale": "Planned for decoupling in subsequent wave (layer: application)"
+    },
+    {
+      "file": "test_rw01_research_ticket_contract.py",
+      "layer": "router",
+      "imports_main": true,
+      "disposition": "PLANNED",
+      "rationale": "Planned for decoupling in subsequent wave (layer: router)"
+    },
+    {
+      "file": "test_rw02_search_contract.py",
+      "layer": "router",
+      "imports_main": true,
+      "disposition": "PLANNED",
+      "rationale": "Planned for decoupling in subsequent wave (layer: router)"
+    },
+    {
+      "file": "test_rw03_analyze_contract.py",
+      "layer": "router",
+      "imports_main": true,
+      "disposition": "PLANNED",
+      "rationale": "Planned for decoupling in subsequent wave (layer: router)"
+    },
+    {
+      "file": "test_rw04_experiment_launch_contract.py",
+      "layer": "router",
+      "imports_main": true,
+      "disposition": "PLANNED",
+      "rationale": "Planned for decoupling in subsequent wave (layer: router)"
+    },
+    {
+      "file": "test_rw05_artifact_compare_contract.py",
+      "layer": "router",
+      "imports_main": true,
+      "disposition": "PLANNED",
+      "rationale": "Planned for decoupling in subsequent wave (layer: router)"
+    },
+    {
+      "file": "test_search_retrieval_cutoff_contract.py",
+      "layer": "router",
+      "imports_main": false,
+      "disposition": "DECOUPLED",
+      "rationale": "Already decoupled from main composition globals"
+    },
+    {
+      "file": "test_search_service_client.py",
+      "layer": "application",
+      "imports_main": false,
+      "disposition": "DECOUPLED",
+      "rationale": "Already decoupled from main composition globals"
+    },
+    {
+      "file": "test_security_headers.py",
+      "layer": "application",
+      "imports_main": true,
+      "disposition": "PLANNED",
+      "rationale": "Planned for decoupling in subsequent wave (layer: application)"
+    },
+    {
+      "file": "test_sent001_sentinel_findings_contract.py",
+      "layer": "router",
+      "imports_main": true,
+      "disposition": "PLANNED",
+      "rationale": "Planned for decoupling in subsequent wave (layer: router)"
+    },
+    {
+      "file": "test_sentinel_healthreason_rule_coverage.py",
+      "layer": "application",
+      "imports_main": true,
+      "disposition": "PLANNED",
+      "rationale": "Planned for decoupling in subsequent wave (layer: application)"
+    },
+    {
+      "file": "test_settings_contract.py",
+      "layer": "router",
+      "imports_main": true,
+      "disposition": "PLANNED",
+      "rationale": "Planned for decoupling in subsequent wave (layer: router)"
+    },
+    {
+      "file": "test_source_connector_service_client.py",
+      "layer": "application",
+      "imports_main": false,
+      "disposition": "DECOUPLED",
+      "rationale": "Already decoupled from main composition globals"
+    },
+    {
+      "file": "test_source_search_ops_bff.py",
+      "layer": "application",
+      "imports_main": false,
+      "disposition": "DECOUPLED",
+      "rationale": "Already decoupled from main composition globals"
+    },
+    {
+      "file": "test_srclive_overlay_contract.py",
+      "layer": "hosted",
+      "imports_main": true,
+      "disposition": "PLANNED",
+      "rationale": "Planned for decoupling in subsequent wave (layer: hosted)"
+    },
+    {
+      "file": "test_staging_read_store_cutoff_contract.py",
+      "layer": "adapter",
+      "imports_main": false,
+      "disposition": "DECOUPLED",
+      "rationale": "Already decoupled from main composition globals"
+    },
+    {
+      "file": "test_tj_e2e_005_trade_journeys_read_api.py",
+      "layer": "hosted",
+      "imports_main": true,
+      "disposition": "PLANNED",
+      "rationale": "Planned for decoupling in subsequent wave (layer: hosted)"
+    },
+    {
+      "file": "test_tj_e2e_007_sse_attention.py",
+      "layer": "hosted",
+      "imports_main": false,
+      "disposition": "DECOUPLED",
+      "rationale": "Already decoupled from main composition globals"
+    },
+    {
+      "file": "test_tj_e2e_008_governed_journey_actions.py",
+      "layer": "hosted",
+      "imports_main": false,
+      "disposition": "DECOUPLED",
+      "rationale": "Already decoupled from main composition globals"
+    },
+    {
+      "file": "test_tj_e2e_011_slo_alert_endpoint.py",
+      "layer": "hosted",
+      "imports_main": false,
+      "disposition": "DECOUPLED",
+      "rationale": "Already decoupled from main composition globals"
+    },
+    {
+      "file": "test_trade_journey_contract.py",
+      "layer": "router",
+      "imports_main": false,
+      "disposition": "DECOUPLED",
+      "rationale": "Already decoupled from main composition globals"
+    },
+    {
+      "file": "test_trade_journey_correlation_envelope.py",
+      "layer": "application",
+      "imports_main": false,
+      "disposition": "DECOUPLED",
+      "rationale": "Already decoupled from main composition globals"
+    },
+    {
+      "file": "test_training_session_service_client.py",
+      "layer": "application",
+      "imports_main": false,
+      "disposition": "DECOUPLED",
+      "rationale": "Already decoupled from main composition globals"
+    },
+    {
+      "file": "test_trn002_trainer_session_contract.py",
+      "layer": "router",
+      "imports_main": true,
+      "disposition": "PLANNED",
+      "rationale": "Planned for decoupling in subsequent wave (layer: router)"
+    },
+    {
+      "file": "test_trn003_rapid_eval_contract.py",
+      "layer": "router",
+      "imports_main": true,
+      "disposition": "PLANNED",
+      "rationale": "Planned for decoupling in subsequent wave (layer: router)"
+    },
+    {
+      "file": "test_tw01_teaching_dialog_contract.py",
+      "layer": "router",
+      "imports_main": true,
+      "disposition": "PLANNED",
+      "rationale": "Planned for decoupling in subsequent wave (layer: router)"
+    },
+    {
+      "file": "test_tw02_parameter_controls_contract.py",
+      "layer": "router",
+      "imports_main": true,
+      "disposition": "PLANNED",
+      "rationale": "Planned for decoupling in subsequent wave (layer: router)"
+    },
+    {
+      "file": "test_tw03_before_after_compare_contract.py",
+      "layer": "router",
+      "imports_main": true,
+      "disposition": "PLANNED",
+      "rationale": "Planned for decoupling in subsequent wave (layer: router)"
+    },
+    {
+      "file": "test_tw04_teaching_replay_contract.py",
+      "layer": "router",
+      "imports_main": true,
+      "disposition": "PLANNED",
+      "rationale": "Planned for decoupling in subsequent wave (layer: router)"
+    },
+    {
+      "file": "test_v5_interventions.py",
+      "layer": "application",
+      "imports_main": true,
+      "disposition": "PLANNED",
+      "rationale": "Planned for decoupling in subsequent wave (layer: application)"
+    },
+    {
+      "file": "test_w3_surfaces.py",
+      "layer": "application",
+      "imports_main": false,
+      "disposition": "DECOUPLED",
+      "rationale": "Already decoupled from main composition globals"
+    },
+    {
+      "file": "test_w4_remaining_catalog.py",
+      "layer": "application",
+      "imports_main": false,
+      "disposition": "DECOUPLED",
+      "rationale": "Already decoupled from main composition globals"
+    },
+    {
+      "file": "tests/conftest.py",
+      "layer": "application",
+      "imports_main": false,
+      "disposition": "DECOUPLED",
+      "rationale": "Already decoupled from main composition globals"
+    },
+    {
+      "file": "tests/knowledge_read_port_fixtures.py",
+      "layer": "application",
+      "imports_main": false,
+      "disposition": "DECOUPLED",
+      "rationale": "Already decoupled from main composition globals"
+    },
+    {
+      "file": "tests/management_projection_test_doubles.py",
+      "layer": "application",
+      "imports_main": false,
+      "disposition": "DECOUPLED",
+      "rationale": "Already decoupled from main composition globals"
+    },
+    {
+      "file": "tests/read_store_fixtures.py",
+      "layer": "adapter",
+      "imports_main": false,
+      "disposition": "DECOUPLED",
+      "rationale": "Already decoupled from main composition globals"
+    },
+    {
+      "file": "tests/rebalance_authority_test_support.py",
+      "layer": "application",
+      "imports_main": true,
+      "disposition": "PLANNED",
+      "rationale": "Planned for decoupling in subsequent wave (layer: application)"
+    },
+    {
+      "file": "tests/test_actions_to_commands_adapter.py",
+      "layer": "adapter",
+      "imports_main": true,
+      "disposition": "PLANNED",
+      "rationale": "Planned for decoupling in subsequent wave (layer: adapter)"
+    },
+    {
+      "file": "tests/test_agora_candidate_decisions.py",
+      "layer": "application",
+      "imports_main": false,
+      "disposition": "DECOUPLED",
+      "rationale": "Already decoupled from main composition globals"
+    },
+    {
+      "file": "tests/test_agora_candidate_pool.py",
+      "layer": "application",
+      "imports_main": true,
+      "disposition": "PLANNED",
+      "rationale": "Planned for decoupling in subsequent wave (layer: application)"
+    },
+    {
+      "file": "tests/test_agora_candidate_truth.py",
+      "layer": "application",
+      "imports_main": true,
+      "disposition": "PLANNED",
+      "rationale": "Planned for decoupling in subsequent wave (layer: application)"
+    },
+    {
+      "file": "tests/test_agora_dashboard_store.py",
+      "layer": "adapter",
+      "imports_main": false,
+      "disposition": "DECOUPLED",
+      "rationale": "Already decoupled from main composition globals"
+    },
+    {
+      "file": "tests/test_agora_dataset_handoff_integration.py",
+      "layer": "application",
+      "imports_main": false,
+      "disposition": "DECOUPLED",
+      "rationale": "Already decoupled from main composition globals"
+    },
+    {
+      "file": "tests/test_agora_governed_proposals.py",
+      "layer": "application",
+      "imports_main": true,
+      "disposition": "PLANNED",
+      "rationale": "Planned for decoupling in subsequent wave (layer: application)"
+    },
+    {
+      "file": "tests/test_agora_identity_scope.py",
+      "layer": "application",
+      "imports_main": false,
+      "disposition": "DECOUPLED",
+      "rationale": "Already decoupled from main composition globals"
+    },
+    {
+      "file": "tests/test_agora_locale_contract.py",
+      "layer": "router",
+      "imports_main": false,
+      "disposition": "DECOUPLED",
+      "rationale": "Already decoupled from main composition globals"
+    },
+    {
+      "file": "tests/test_agora_operational_readiness_live_binding.py",
+      "layer": "hosted",
+      "imports_main": false,
+      "disposition": "DECOUPLED",
+      "rationale": "Already decoupled from main composition globals"
+    },
+    {
+      "file": "tests/test_agora_persona_interactions.py",
+      "layer": "application",
+      "imports_main": true,
+      "disposition": "PLANNED",
+      "rationale": "Planned for decoupling in subsequent wave (layer: application)"
+    },
+    {
+      "file": "tests/test_agora_research_candidate_governed.py",
+      "layer": "application",
+      "imports_main": true,
+      "disposition": "PLANNED",
+      "rationale": "Planned for decoupling in subsequent wave (layer: application)"
+    },
+    {
+      "file": "tests/test_agora_research_run_projection.py",
+      "layer": "application",
+      "imports_main": true,
+      "disposition": "PLANNED",
+      "rationale": "Planned for decoupling in subsequent wave (layer: application)"
+    },
+    {
+      "file": "tests/test_agora_research_store_backend.py",
+      "layer": "adapter",
+      "imports_main": false,
+      "disposition": "DECOUPLED",
+      "rationale": "Already decoupled from main composition globals"
+    },
+    {
+      "file": "tests/test_agora_route_ownership.py",
+      "layer": "router",
+      "imports_main": false,
+      "disposition": "DECOUPLED",
+      "rationale": "Already decoupled from main composition globals"
+    },
+    {
+      "file": "tests/test_agora_router.py",
+      "layer": "router",
+      "imports_main": true,
+      "disposition": "PLANNED",
+      "rationale": "Planned for decoupling in subsequent wave (layer: router)"
+    },
+    {
+      "file": "tests/test_agora_servant_production_write_owner.py",
+      "layer": "composition",
+      "imports_main": true,
+      "disposition": "ALLOWLIST",
+      "rationale": "Reviewed composition/architecture test permitted to import composition root"
+    },
+    {
+      "file": "tests/test_agora_servant_sessions.py",
+      "layer": "application",
+      "imports_main": true,
+      "disposition": "PLANNED",
+      "rationale": "Planned for decoupling in subsequent wave (layer: application)"
+    },
+    {
+      "file": "tests/test_agora_strategy_workshop.py",
+      "layer": "application",
+      "imports_main": true,
+      "disposition": "PLANNED",
+      "rationale": "Planned for decoupling in subsequent wave (layer: application)"
+    },
+    {
+      "file": "tests/test_agora_workshop_dev_deploy_config.py",
+      "layer": "application",
+      "imports_main": false,
+      "disposition": "DECOUPLED",
+      "rationale": "Already decoupled from main composition globals"
+    },
+    {
+      "file": "tests/test_agora_workshop_live_operations.py",
+      "layer": "hosted",
+      "imports_main": false,
+      "disposition": "DECOUPLED",
+      "rationale": "Already decoupled from main composition globals"
+    },
+    {
+      "file": "tests/test_agora_workshop_partial_effects.py",
+      "layer": "application",
+      "imports_main": false,
+      "disposition": "DECOUPLED",
+      "rationale": "Already decoupled from main composition globals"
+    },
+    {
+      "file": "tests/test_agora_write_authority.py",
+      "layer": "application",
+      "imports_main": true,
+      "disposition": "PLANNED",
+      "rationale": "Planned for decoupling in subsequent wave (layer: application)"
+    },
+    {
+      "file": "tests/test_assistant_agora_ask.py",
+      "layer": "application",
+      "imports_main": true,
+      "disposition": "PLANNED",
+      "rationale": "Planned for decoupling in subsequent wave (layer: application)"
+    },
+    {
+      "file": "tests/test_assistant_context_pack.py",
+      "layer": "application",
+      "imports_main": true,
+      "disposition": "PLANNED",
+      "rationale": "Planned for decoupling in subsequent wave (layer: application)"
+    },
+    {
+      "file": "tests/test_assistant_conversation_store_bootstrap_resilience.py",
+      "layer": "adapter",
+      "imports_main": false,
+      "disposition": "DECOUPLED",
+      "rationale": "Already decoupled from main composition globals"
+    },
+    {
+      "file": "tests/test_assistant_dev_compose_flags.py",
+      "layer": "application",
+      "imports_main": false,
+      "disposition": "DECOUPLED",
+      "rationale": "Already decoupled from main composition globals"
+    },
+    {
+      "file": "tests/test_assistant_security.py",
+      "layer": "application",
+      "imports_main": true,
+      "disposition": "PLANNED",
+      "rationale": "Planned for decoupling in subsequent wave (layer: application)"
+    },
+    {
+      "file": "tests/test_assistant_sessions.py",
+      "layer": "application",
+      "imports_main": false,
+      "disposition": "DECOUPLED",
+      "rationale": "Already decoupled from main composition globals"
+    },
+    {
+      "file": "tests/test_auth_jwks_strict.py",
+      "layer": "application",
+      "imports_main": true,
+      "disposition": "PLANNED",
+      "rationale": "Planned for decoupling in subsequent wave (layer: application)"
+    },
+    {
+      "file": "tests/test_bff_alerts_acknowledge.py",
+      "layer": "application",
+      "imports_main": true,
+      "disposition": "PLANNED",
+      "rationale": "Planned for decoupling in subsequent wave (layer: application)"
+    },
+    {
+      "file": "tests/test_bff_alpha_factory_contract.py",
+      "layer": "router",
+      "imports_main": true,
+      "disposition": "PLANNED",
+      "rationale": "Planned for decoupling in subsequent wave (layer: router)"
+    },
+    {
+      "file": "tests/test_bff_approvals_surface_contract.py",
+      "layer": "router",
+      "imports_main": true,
+      "disposition": "PLANNED",
+      "rationale": "Planned for decoupling in subsequent wave (layer: router)"
+    },
+    {
+      "file": "tests/test_bff_auth_facade.py",
+      "layer": "application",
+      "imports_main": false,
+      "disposition": "DECOUPLED",
+      "rationale": "Already decoupled from main composition globals"
+    },
+    {
+      "file": "tests/test_bff_auth_refresh.py",
+      "layer": "application",
+      "imports_main": true,
+      "disposition": "PLANNED",
+      "rationale": "Planned for decoupling in subsequent wave (layer: application)"
+    },
+    {
+      "file": "tests/test_bff_b1_007_security_hardening.py",
+      "layer": "application",
+      "imports_main": true,
+      "disposition": "PLANNED",
+      "rationale": "Planned for decoupling in subsequent wave (layer: application)"
+    },
+    {
+      "file": "tests/test_bff_b2_002_evolution_jobs_ops.py",
+      "layer": "application",
+      "imports_main": true,
+      "disposition": "PLANNED",
+      "rationale": "Planned for decoupling in subsequent wave (layer: application)"
+    },
+    {
+      "file": "tests/test_bff_b2_003_capabilities.py",
+      "layer": "application",
+      "imports_main": true,
+      "disposition": "PLANNED",
+      "rationale": "Planned for decoupling in subsequent wave (layer: application)"
+    },
+    {
+      "file": "tests/test_bff_b2_004_research_search.py",
+      "layer": "application",
+      "imports_main": true,
+      "disposition": "PLANNED",
+      "rationale": "Planned for decoupling in subsequent wave (layer: application)"
+    },
+    {
+      "file": "tests/test_bff_b2_006_v5_closed_loop_reads.py",
+      "layer": "application",
+      "imports_main": true,
+      "disposition": "PLANNED",
+      "rationale": "Planned for decoupling in subsequent wave (layer: application)"
+    },
+    {
+      "file": "tests/test_bff_b2_list_detail_facade.py",
+      "layer": "application",
+      "imports_main": true,
+      "disposition": "PLANNED",
+      "rationale": "Planned for decoupling in subsequent wave (layer: application)"
+    },
+    {
+      "file": "tests/test_bff_b3_evolution_journal.py",
+      "layer": "application",
+      "imports_main": true,
+      "disposition": "PLANNED",
+      "rationale": "Planned for decoupling in subsequent wave (layer: application)"
+    },
+    {
+      "file": "tests/test_bff_b3_human_inbox.py",
+      "layer": "application",
+      "imports_main": true,
+      "disposition": "PLANNED",
+      "rationale": "Planned for decoupling in subsequent wave (layer: application)"
+    },
+    {
+      "file": "tests/test_bff_b3_management_evidence.py",
+      "layer": "application",
+      "imports_main": true,
+      "disposition": "PLANNED",
+      "rationale": "Planned for decoupling in subsequent wave (layer: application)"
+    },
+    {
+      "file": "tests/test_bff_b3_persona_fleet.py",
+      "layer": "application",
+      "imports_main": true,
+      "disposition": "PLANNED",
+      "rationale": "Planned for decoupling in subsequent wave (layer: application)"
+    },
+    {
+      "file": "tests/test_bff_b3_persona_intent.py",
+      "layer": "application",
+      "imports_main": true,
+      "disposition": "PLANNED",
+      "rationale": "Planned for decoupling in subsequent wave (layer: application)"
+    },
+    {
+      "file": "tests/test_bff_b3_readiness.py",
+      "layer": "application",
+      "imports_main": true,
+      "disposition": "PLANNED",
+      "rationale": "Planned for decoupling in subsequent wave (layer: application)"
+    },
+    {
+      "file": "tests/test_bff_b3_trading_pulse.py",
+      "layer": "application",
+      "imports_main": true,
+      "disposition": "PLANNED",
+      "rationale": "Planned for decoupling in subsequent wave (layer: application)"
+    },
+    {
+      "file": "tests/test_bff_b5_001_security_hardening.py",
+      "layer": "application",
+      "imports_main": true,
+      "disposition": "PLANNED",
+      "rationale": "Planned for decoupling in subsequent wave (layer: application)"
+    },
+    {
+      "file": "tests/test_bff_b5_humangate_commands.py",
+      "layer": "application",
+      "imports_main": true,
+      "disposition": "PLANNED",
+      "rationale": "Planned for decoupling in subsequent wave (layer: application)"
+    },
+    {
+      "file": "tests/test_bff_b6_001_security_hardening.py",
+      "layer": "application",
+      "imports_main": true,
+      "disposition": "PLANNED",
+      "rationale": "Planned for decoupling in subsequent wave (layer: application)"
+    },
+    {
+      "file": "tests/test_bff_b6_003_nl_high_risk_refusal.py",
+      "layer": "application",
+      "imports_main": true,
+      "disposition": "PLANNED",
+      "rationale": "Planned for decoupling in subsequent wave (layer: application)"
+    },
+    {
+      "file": "tests/test_bff_b6_management_nl_ask.py",
+      "layer": "application",
+      "imports_main": true,
+      "disposition": "PLANNED",
+      "rationale": "Planned for decoupling in subsequent wave (layer: application)"
+    },
+    {
+      "file": "tests/test_bff_capital_pool_bindings.py",
+      "layer": "application",
+      "imports_main": true,
+      "disposition": "PLANNED",
+      "rationale": "Planned for decoupling in subsequent wave (layer: application)"
+    },
+    {
+      "file": "tests/test_bff_consol_skills_mcp_registry_contract.py",
+      "layer": "router",
+      "imports_main": true,
+      "disposition": "PLANNED",
+      "rationale": "Planned for decoupling in subsequent wave (layer: router)"
+    },
+    {
+      "file": "tests/test_bff_emergency_containment.py",
+      "layer": "application",
+      "imports_main": true,
+      "disposition": "PLANNED",
+      "rationale": "Planned for decoupling in subsequent wave (layer: application)"
+    },
+    {
+      "file": "tests/test_bff_governance_subrules_contract.py",
+      "layer": "router",
+      "imports_main": true,
+      "disposition": "PLANNED",
+      "rationale": "Planned for decoupling in subsequent wave (layer: router)"
+    },
+    {
+      "file": "tests/test_bff_jwks_prewarm.py",
+      "layer": "application",
+      "imports_main": true,
+      "disposition": "PLANNED",
+      "rationale": "Planned for decoupling in subsequent wave (layer: application)"
+    },
+    {
+      "file": "tests/test_bff_knowledge_inbox.py",
+      "layer": "application",
+      "imports_main": true,
+      "disposition": "PLANNED",
+      "rationale": "Planned for decoupling in subsequent wave (layer: application)"
+    },
+    {
+      "file": "tests/test_bff_lineage_contract.py",
+      "layer": "router",
+      "imports_main": true,
+      "disposition": "PLANNED",
+      "rationale": "Planned for decoupling in subsequent wave (layer: router)"
+    },
+    {
+      "file": "tests/test_bff_logout.py",
+      "layer": "application",
+      "imports_main": true,
+      "disposition": "PLANNED",
+      "rationale": "Planned for decoupling in subsequent wave (layer: application)"
+    },
+    {
+      "file": "tests/test_bff_main_composition.py",
+      "layer": "composition",
+      "imports_main": true,
+      "disposition": "ALLOWLIST",
+      "rationale": "Reviewed composition/architecture test permitted to import composition root"
+    },
+    {
+      "file": "tests/test_bff_management_cockpit.py",
+      "layer": "application",
+      "imports_main": true,
+      "disposition": "PLANNED",
+      "rationale": "Planned for decoupling in subsequent wave (layer: application)"
+    },
+    {
+      "file": "tests/test_bff_management_data_sources_contract.py",
+      "layer": "router",
+      "imports_main": true,
+      "disposition": "PLANNED",
+      "rationale": "Planned for decoupling in subsequent wave (layer: router)"
+    },
+    {
+      "file": "tests/test_bff_management_gap_003_contract_schema.py",
+      "layer": "router",
+      "imports_main": true,
+      "disposition": "PLANNED",
+      "rationale": "Planned for decoupling in subsequent wave (layer: router)"
+    },
+    {
+      "file": "tests/test_bff_me_locale.py",
+      "layer": "application",
+      "imports_main": true,
+      "disposition": "PLANNED",
+      "rationale": "Planned for decoupling in subsequent wave (layer: application)"
+    },
+    {
+      "file": "tests/test_bff_me_session_bootstrap.py",
+      "layer": "application",
+      "imports_main": true,
+      "disposition": "PLANNED",
+      "rationale": "Planned for decoupling in subsequent wave (layer: application)"
+    },
+    {
+      "file": "tests/test_bff_path_dedupe.py",
+      "layer": "application",
+      "imports_main": true,
+      "disposition": "PLANNED",
+      "rationale": "Planned for decoupling in subsequent wave (layer: application)"
+    },
+    {
+      "file": "tests/test_bff_persona_allocation_policy.py",
+      "layer": "application",
+      "imports_main": false,
+      "disposition": "DECOUPLED",
+      "rationale": "Already decoupled from main composition globals"
+    },
+    {
+      "file": "tests/test_bff_persona_create_paper_bundle.py",
+      "layer": "application",
+      "imports_main": true,
+      "disposition": "PLANNED",
+      "rationale": "Planned for decoupling in subsequent wave (layer: application)"
+    },
+    {
+      "file": "tests/test_bff_persona_provisioning_baseline_500.py",
+      "layer": "application",
+      "imports_main": true,
+      "disposition": "PLANNED",
+      "rationale": "Planned for decoupling in subsequent wave (layer: application)"
+    },
+    {
+      "file": "tests/test_bff_pm12_persona_league.py",
+      "layer": "application",
+      "imports_main": true,
+      "disposition": "PLANNED",
+      "rationale": "Planned for decoupling in subsequent wave (layer: application)"
+    },
+    {
+      "file": "tests/test_bff_rebalance_proposals.py",
+      "layer": "application",
+      "imports_main": true,
+      "disposition": "PLANNED",
+      "rationale": "Planned for decoupling in subsequent wave (layer: application)"
+    },
+    {
+      "file": "tests/test_bff_test_architecture.py",
+      "layer": "composition",
+      "imports_main": false,
+      "disposition": "ALLOWLIST",
+      "rationale": "Reviewed composition/architecture test permitted to import composition root"
+    },
+    {
+      "file": "tests/test_bff_workflows_hooks.py",
+      "layer": "application",
+      "imports_main": true,
+      "disposition": "PLANNED",
+      "rationale": "Planned for decoupling in subsequent wave (layer: application)"
+    },
+    {
+      "file": "tests/test_capital_router.py",
+      "layer": "router",
+      "imports_main": false,
+      "disposition": "DECOUPLED",
+      "rationale": "Already decoupled from main composition globals"
+    },
+    {
+      "file": "tests/test_command_adapters_router.py",
+      "layer": "adapter",
+      "imports_main": true,
+      "disposition": "PLANNED",
+      "rationale": "Planned for decoupling in subsequent wave (layer: adapter)"
+    },
+    {
+      "file": "tests/test_command_replay_conflict.py",
+      "layer": "application",
+      "imports_main": true,
+      "disposition": "PLANNED",
+      "rationale": "Planned for decoupling in subsequent wave (layer: application)"
+    },
+    {
+      "file": "tests/test_confirm_token_lifecycle.py",
+      "layer": "application",
+      "imports_main": true,
+      "disposition": "PLANNED",
+      "rationale": "Planned for decoupling in subsequent wave (layer: application)"
+    },
+    {
+      "file": "tests/test_console_data_agora_projection.py",
+      "layer": "application",
+      "imports_main": true,
+      "disposition": "PLANNED",
+      "rationale": "Planned for decoupling in subsequent wave (layer: application)"
+    },
+    {
+      "file": "tests/test_console_data_incidents_reviews.py",
+      "layer": "application",
+      "imports_main": true,
+      "disposition": "PLANNED",
+      "rationale": "Planned for decoupling in subsequent wave (layer: application)"
+    },
+    {
+      "file": "tests/test_console_data_ooda_projection.py",
+      "layer": "application",
+      "imports_main": true,
+      "disposition": "PLANNED",
+      "rationale": "Planned for decoupling in subsequent wave (layer: application)"
+    },
+    {
+      "file": "tests/test_console_data_rankings_projection.py",
+      "layer": "application",
+      "imports_main": true,
+      "disposition": "PLANNED",
+      "rationale": "Planned for decoupling in subsequent wave (layer: application)"
+    },
+    {
+      "file": "tests/test_console_data_route_workflows_projection.py",
+      "layer": "router",
+      "imports_main": true,
+      "disposition": "PLANNED",
+      "rationale": "Planned for decoupling in subsequent wave (layer: router)"
+    },
+    {
+      "file": "tests/test_console_research_projection.py",
+      "layer": "application",
+      "imports_main": true,
+      "disposition": "PLANNED",
+      "rationale": "Planned for decoupling in subsequent wave (layer: application)"
+    },
+    {
+      "file": "tests/test_control_loops_router.py",
+      "layer": "router",
+      "imports_main": false,
+      "disposition": "DECOUPLED",
+      "rationale": "Already decoupled from main composition globals"
+    },
+    {
+      "file": "tests/test_deployment_router.py",
+      "layer": "router",
+      "imports_main": false,
+      "disposition": "DECOUPLED",
+      "rationale": "Already decoupled from main composition globals"
+    },
+    {
+      "file": "tests/test_dev_login_pantheon_local_tenant_contract.py",
+      "layer": "router",
+      "imports_main": false,
+      "disposition": "DECOUPLED",
+      "rationale": "Already decoupled from main composition globals"
+    },
+    {
+      "file": "tests/test_development_route_boundary.py",
+      "layer": "router",
+      "imports_main": false,
+      "disposition": "DECOUPLED",
+      "rationale": "Already decoupled from main composition globals"
+    },
+    {
+      "file": "tests/test_events_router.py",
+      "layer": "router",
+      "imports_main": false,
+      "disposition": "DECOUPLED",
+      "rationale": "Already decoupled from main composition globals"
+    },
+    {
+      "file": "tests/test_evochain_004_freeze_rollback_store.py",
+      "layer": "adapter",
+      "imports_main": true,
+      "disposition": "PLANNED",
+      "rationale": "Planned for decoupling in subsequent wave (layer: adapter)"
+    },
+    {
+      "file": "tests/test_evochain_005_governance_writes.py",
+      "layer": "application",
+      "imports_main": true,
+      "disposition": "PLANNED",
+      "rationale": "Planned for decoupling in subsequent wave (layer: application)"
+    },
+    {
+      "file": "tests/test_evolution_programs_population_contract.py",
+      "layer": "router",
+      "imports_main": true,
+      "disposition": "PLANNED",
+      "rationale": "Planned for decoupling in subsequent wave (layer: router)"
+    },
+    {
+      "file": "tests/test_evolution_router.py",
+      "layer": "router",
+      "imports_main": false,
+      "disposition": "DECOUPLED",
+      "rationale": "Already decoupled from main composition globals"
+    },
+    {
+      "file": "tests/test_governance_router.py",
+      "layer": "router",
+      "imports_main": false,
+      "disposition": "MIGRATED",
+      "rationale": "Decoupled from main composition globals in BFF-TEST-ARCH-001"
+    },
+    {
+      "file": "tests/test_incident_router.py",
+      "layer": "router",
+      "imports_main": true,
+      "disposition": "PLANNED",
+      "rationale": "Planned for decoupling in subsequent wave (layer: router)"
+    },
+    {
+      "file": "tests/test_lifecycle_telemetry_governance_ports.py",
+      "layer": "application",
+      "imports_main": false,
+      "disposition": "DECOUPLED",
+      "rationale": "Already decoupled from main composition globals"
+    },
+    {
+      "file": "tests/test_management_domain_actions.py",
+      "layer": "application",
+      "imports_main": false,
+      "disposition": "DECOUPLED",
+      "rationale": "Already decoupled from main composition globals"
+    },
+    {
+      "file": "tests/test_management_nl_assistant_provider.py",
+      "layer": "application",
+      "imports_main": true,
+      "disposition": "PLANNED",
+      "rationale": "Planned for decoupling in subsequent wave (layer: application)"
+    },
+    {
+      "file": "tests/test_management_projection_test_doubles.py",
+      "layer": "application",
+      "imports_main": false,
+      "disposition": "DECOUPLED",
+      "rationale": "Already decoupled from main composition globals"
+    },
+    {
+      "file": "tests/test_management_read_budget.py",
+      "layer": "application",
+      "imports_main": true,
+      "disposition": "PLANNED",
+      "rationale": "Planned for decoupling in subsequent wave (layer: application)"
+    },
+    {
+      "file": "tests/test_management_read_models_router.py",
+      "layer": "router",
+      "imports_main": false,
+      "disposition": "DECOUPLED",
+      "rationale": "Already decoupled from main composition globals"
+    },
+    {
+      "file": "tests/test_management_real_read_models.py",
+      "layer": "application",
+      "imports_main": false,
+      "disposition": "DECOUPLED",
+      "rationale": "Already decoupled from main composition globals"
+    },
+    {
+      "file": "tests/test_ooda_management_ports.py",
+      "layer": "application",
+      "imports_main": false,
+      "disposition": "DECOUPLED",
+      "rationale": "Already decoupled from main composition globals"
+    },
+    {
+      "file": "tests/test_openclaw_ops_service_auth.py",
+      "layer": "application",
+      "imports_main": false,
+      "disposition": "DECOUPLED",
+      "rationale": "Already decoupled from main composition globals"
+    },
+    {
+      "file": "tests/test_openclaw_ops_stream.py",
+      "layer": "application",
+      "imports_main": false,
+      "disposition": "DECOUPLED",
+      "rationale": "Already decoupled from main composition globals"
+    },
+    {
+      "file": "tests/test_operations_consultation_ports.py",
+      "layer": "application",
+      "imports_main": false,
+      "disposition": "MIGRATED",
+      "rationale": "Decoupled from main composition globals in BFF-TEST-ARCH-001"
+    },
+    {
+      "file": "tests/test_persona_capital_runtime_ports.py",
+      "layer": "application",
+      "imports_main": false,
+      "disposition": "DECOUPLED",
+      "rationale": "Already decoupled from main composition globals"
+    },
+    {
+      "file": "tests/test_persona_owner_packaged_transport.py",
+      "layer": "adapter",
+      "imports_main": false,
+      "disposition": "DECOUPLED",
+      "rationale": "Already decoupled from main composition globals"
+    },
+    {
+      "file": "tests/test_persona_provisioning_read_surface_mutation.py",
+      "layer": "application",
+      "imports_main": true,
+      "disposition": "PLANNED",
+      "rationale": "Planned for decoupling in subsequent wave (layer: application)"
+    },
+    {
+      "file": "tests/test_persona_router.py",
+      "layer": "router",
+      "imports_main": false,
+      "disposition": "DECOUPLED",
+      "rationale": "Already decoupled from main composition globals"
+    },
+    {
+      "file": "tests/test_persona_training_ports.py",
+      "layer": "application",
+      "imports_main": false,
+      "disposition": "DECOUPLED",
+      "rationale": "Already decoupled from main composition globals"
+    },
+    {
+      "file": "tests/test_pint_003_durable_opinions.py",
+      "layer": "application",
+      "imports_main": true,
+      "disposition": "PLANNED",
+      "rationale": "Planned for decoupling in subsequent wave (layer: application)"
+    },
+    {
+      "file": "tests/test_pint_012_real_persona_provider.py",
+      "layer": "application",
+      "imports_main": false,
+      "disposition": "DECOUPLED",
+      "rationale": "Already decoupled from main composition globals"
+    },
+    {
+      "file": "tests/test_pint_013_durable_interactions.py",
+      "layer": "application",
+      "imports_main": true,
+      "disposition": "PLANNED",
+      "rationale": "Planned for decoupling in subsequent wave (layer: application)"
+    },
+    {
+      "file": "tests/test_pint_013_interaction_store_postgres.py",
+      "layer": "adapter",
+      "imports_main": false,
+      "disposition": "DECOUPLED",
+      "rationale": "Already decoupled from main composition globals"
+    },
+    {
+      "file": "tests/test_pint_016_strict_browser_readiness.py",
+      "layer": "application",
+      "imports_main": true,
+      "disposition": "PLANNED",
+      "rationale": "Planned for decoupling in subsequent wave (layer: application)"
+    },
+    {
+      "file": "tests/test_ports_namespace_consolidation.py",
+      "layer": "application",
+      "imports_main": false,
+      "disposition": "DECOUPLED",
+      "rationale": "Already decoupled from main composition globals"
+    },
+    {
+      "file": "tests/test_postmortem_router.py",
+      "layer": "router",
+      "imports_main": false,
+      "disposition": "DECOUPLED",
+      "rationale": "Already decoupled from main composition globals"
+    },
+    {
+      "file": "tests/test_ppl_alloc_009_assertion_semantics.py",
+      "layer": "application",
+      "imports_main": true,
+      "disposition": "PLANNED",
+      "rationale": "Planned for decoupling in subsequent wave (layer: application)"
+    },
+    {
+      "file": "tests/test_ppl_alloc_009_paper_eligibility_proof.py",
+      "layer": "application",
+      "imports_main": true,
+      "disposition": "PLANNED",
+      "rationale": "Planned for decoupling in subsequent wave (layer: application)"
+    },
+    {
+      "file": "tests/test_ppl_alloc_012_ranking_projection.py",
+      "layer": "application",
+      "imports_main": true,
+      "disposition": "PLANNED",
+      "rationale": "Planned for decoupling in subsequent wave (layer: application)"
+    },
+    {
+      "file": "tests/test_project_approvals_regression.py",
+      "layer": "router",
+      "imports_main": false,
+      "disposition": "DECOUPLED",
+      "rationale": "Already decoupled from main composition globals"
+    },
+    {
+      "file": "tests/test_ranking_evolution_projection_ports.py",
+      "layer": "application",
+      "imports_main": false,
+      "disposition": "DECOUPLED",
+      "rationale": "Already decoupled from main composition globals"
+    },
+    {
+      "file": "tests/test_read_store_final_deletion.py",
+      "layer": "composition",
+      "imports_main": false,
+      "disposition": "ALLOWLIST",
+      "rationale": "Reviewed composition/architecture test permitted to import composition root"
+    },
+    {
+      "file": "tests/test_read_store_fixture_boundaries.py",
+      "layer": "composition",
+      "imports_main": false,
+      "disposition": "ALLOWLIST",
+      "rationale": "Reviewed composition/architecture test permitted to import composition root"
+    },
+    {
+      "file": "tests/test_read_surface_caller_migration.py",
+      "layer": "composition",
+      "imports_main": true,
+      "disposition": "ALLOWLIST",
+      "rationale": "Reviewed composition/architecture test permitted to import composition root"
+    },
+    {
+      "file": "tests/test_read_surface_port_cutover.py",
+      "layer": "application",
+      "imports_main": false,
+      "disposition": "DECOUPLED",
+      "rationale": "Already decoupled from main composition globals"
+    },
+    {
+      "file": "tests/test_research_default_provenance.py",
+      "layer": "application",
+      "imports_main": false,
+      "disposition": "DECOUPLED",
+      "rationale": "Already decoupled from main composition globals"
+    },
+    {
+      "file": "tests/test_research_knowledge_source_ports.py",
+      "layer": "application",
+      "imports_main": false,
+      "disposition": "DECOUPLED",
+      "rationale": "Already decoupled from main composition globals"
+    },
+    {
+      "file": "tests/test_research_router.py",
+      "layer": "router",
+      "imports_main": false,
+      "disposition": "DECOUPLED",
+      "rationale": "Already decoupled from main composition globals"
+    },
+    {
+      "file": "tests/test_runtime_router.py",
+      "layer": "router",
+      "imports_main": false,
+      "disposition": "DECOUPLED",
+      "rationale": "Already decoupled from main composition globals"
+    },
+    {
+      "file": "tests/test_sse_backpressure.py",
+      "layer": "application",
+      "imports_main": true,
+      "disposition": "PLANNED",
+      "rationale": "Planned for decoupling in subsequent wave (layer: application)"
+    },
+    {
+      "file": "tests/test_strategy_ranking_router.py",
+      "layer": "router",
+      "imports_main": true,
+      "disposition": "PLANNED",
+      "rationale": "Planned for decoupling in subsequent wave (layer: router)"
+    },
+    {
+      "file": "tests/test_strategy_workshop_command_store.py",
+      "layer": "adapter",
+      "imports_main": false,
+      "disposition": "DECOUPLED",
+      "rationale": "Already decoupled from main composition globals"
+    },
+    {
+      "file": "tests/test_strategy_workshop_store_bootstrap.py",
+      "layer": "adapter",
+      "imports_main": false,
+      "disposition": "DECOUPLED",
+      "rationale": "Already decoupled from main composition globals"
+    },
+    {
+      "file": "tests/test_tools_integrations_router.py",
+      "layer": "router",
+      "imports_main": false,
+      "disposition": "DECOUPLED",
+      "rationale": "Already decoupled from main composition globals"
+    },
+    {
+      "file": "tests/test_trade_journey_residual_deploy_config.py",
+      "layer": "application",
+      "imports_main": false,
+      "disposition": "DECOUPLED",
+      "rationale": "Already decoupled from main composition globals"
+    },
+    {
+      "file": "tests/test_training_router.py",
+      "layer": "router",
+      "imports_main": false,
+      "disposition": "DECOUPLED",
+      "rationale": "Already decoupled from main composition globals"
+    },
+    {
+      "file": "tests/test_unhandled_error_cors.py",
+      "layer": "application",
+      "imports_main": false,
+      "disposition": "DECOUPLED",
+      "rationale": "Already decoupled from main composition globals"
+    },
+    {
+      "file": "tests/test_workshop_stream_ag_be_sw_004.py",
+      "layer": "application",
+      "imports_main": true,
+      "disposition": "PLANNED",
+      "rationale": "Planned for decoupling in subsequent wave (layer: application)"
+    }
+  ]
+}
