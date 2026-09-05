@@ -1,9 +1,9 @@
 {
   "task_id": "BFF-ROUTER-STRUCT-001",
   "owner": "Antigravity",
-  "reviewer": "Codex",
+  "reviewer": "Claude",
   "title": "Split giant BFF router closures by cohesive use case",
-  "timestamp": "2026-09-05T18:25:00Z",
+  "timestamp": "2026-09-05T18:35:00Z",
   "summary": "Decomposed the monolithic 3420-line Persona Management router into 5 cohesive resource/use-case subrouters (collection, detail, lifecycle, provisioning, ranking) sharing a strongly-typed PersonaRouteContext. Eliminated module-level globals() mutations in PersonaService.__init__, dynamic namespace forwarding loops, and wildcard imports. Bound read_surface_meta and dataset_surface_status to instance methods and request-scoped ContextVar to eliminate cross-instance metadata contamination. Added two-instance real-router data and metadata isolation regression test.",
   "structural_refactor": {
     "parent_factory": {
@@ -141,12 +141,16 @@
       },
       {
         "command": "pytest -q services/control-plane/bff/personas/test_router_isolation.py",
-        "result": "1 passed in 3.08s"
+        "result": "1 passed (Python 3.11 compatible f-strings verified)"
+      },
+      {
+        "command": "docker run --rm pantheon-operator-bff:latest pytest -q (all 4 suites)",
+        "result": "62 passed, 3 warnings in 38.20s (Python 3.11.16)"
       }
     ]
   },
   "review": {
-    "reviewer": "Codex",
+    "reviewer": "Claude",
     "decision": "pending independent exact-head review"
   }
 }

@@ -129,8 +129,9 @@ def test_persona_router_two_instance_isolation(tmp_path):
     assert body_1_after["data"] == [fake_persona]
     meta_1_after = body_1_after["meta"]["surfaces"]["persona_list"]
     assert meta_1_after["status"] == "ok", (
-        f"Cross-instance contamination detected! Client 1 status changed to {meta_1_after["status"]}"
+        f"Cross-instance contamination detected! Client 1 status changed to {meta_1_after['status']}"
     )
     assert meta_1_after["source"] == "typed_store", (
-        f"Cross-instance contamination detected! Client 1 source changed to {meta_1_after["source"]}"
+        f"Cross-instance contamination detected! Client 1 source changed to {meta_1_after['source']}"
     )
+
