@@ -18,6 +18,7 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Iterator
 
+from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 REPO_ROOT = Path(__file__).resolve().parents[4]
@@ -25,7 +26,7 @@ BFF_ROOT = Path(__file__).resolve().parents[1]
 SCRIPTS_ROOT = REPO_ROOT / "scripts"
 
 from scripts import project_ooda_to_bff_surfaces as projector
-from services.control_plane.bff import main as bff_main
+from services.control_plane.bff.control_loops.router import create_control_loops_router
 from services.control_plane.bff.ports import create_in_memory_read_surface_ports  # noqa: E402
 
 
@@ -45,16 +46,13 @@ def _projected_bff(monkeypatch) -> Iterator[TestClient]:
         monkeypatch.setenv("PANTHEON_BFF_OODA_PACKET_STORE", str(store_path))
         monkeypatch.setenv("PANTHEON_OODA_PACKET_ENABLED", "1")
 
-        original_store = bff_main.read_store
         ports = create_in_memory_read_surface_ports(
             ooda_management_kwargs={"ooda_packets": list(store.values())},
         )
         ports.dataset_source = lambda _dataset: "test_projection"
-        bff_main.read_store = ports
-        try:
-            yield TestClient(bff_main.app)
-        finally:
-            bff_main.read_store = original_store
+        app = FastAPI()
+        app.include_router(create_control_loops_router(read_surface=ports))
+        yield TestClient(app)
 
 
 def test_ooda_packet_projection_populates_bff_list_surface(monkeypatch) -> None:

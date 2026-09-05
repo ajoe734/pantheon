@@ -3,10 +3,12 @@ from __future__ import annotations
 import os
 import sys
 
+from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-
-from services.control_plane.bff import main as bff_main
+from services.control_plane.bff.governance.router import create_governance_router
+from services.control_plane.bff.incidents.router import create_incident_router
+from services.control_plane.bff.models import OperatorIdentity
 from services.control_plane.bff.ports import create_in_memory_read_surface_ports  # noqa: E402
 
 
@@ -59,7 +61,6 @@ def test_incidents_and_reviews_read_live_service_data_without_snapshot_fallback(
         ],
     }
 
-    original_store = bff_main.read_store
     ports = create_in_memory_read_surface_ports(
         lifecycle_telemetry_governance_kwargs={
             "incidents": {
@@ -72,13 +73,36 @@ def test_incidents_and_reviews_read_live_service_data_without_snapshot_fallback(
         },
     )
     ports.dataset_source = lambda _dataset: "service_client"
-    bff_main.read_store = ports
-    try:
-        client = TestClient(bff_main.app)
-        incidents = client.get("/bff/incidents", headers=HEADERS)
-        reviews = client.get("/bff/reviews", headers=HEADERS)
-    finally:
-        bff_main.read_store = original_store
+
+    def _extract_identity(auth):
+        return OperatorIdentity(operator_id="op-dev", roles=["admin", "operator"])
+
+    app = FastAPI()
+    app.include_router(create_incident_router(
+        read_surface=ports,
+        extract_identity=_extract_identity,
+        require_read_role=lambda id: None,
+        require_operator_role=lambda id: None,
+        dataset_surface_status=lambda ds, **kw: {"status": "ok", "source": ports.dataset_source(ds)},
+    ))
+    app.include_router(create_governance_router(
+        read_surface=ports,
+        extract_identity=_extract_identity,
+        require_read_role=lambda id: None,
+        require_operator_role=lambda id: None,
+        utc_now=lambda: "2026-06-15T12:00:00Z",
+        read_surface_meta=lambda dataset, key, *, total=None, snapshot_at=None, **kwargs: {
+            "total": total,
+            "snapshot_at": snapshot_at or "2026-06-15T12:00:00Z",
+            "surfaces": {
+                "review_queue": {"status": "ok", "source": "service_client"},
+                "incidents": {"status": "ok", "source": "service_client"},
+            },
+        },
+    ))
+    client = TestClient(app)
+    incidents = client.get("/bff/incidents", headers=HEADERS)
+    reviews = client.get("/bff/reviews", headers=HEADERS)
 
     assert incidents.status_code == 200, incidents.text
     incident_payload = incidents.json()
