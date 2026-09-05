@@ -978,13 +978,14 @@ def test_db_behavior_concurrent_append_barrier_unblocks_cleanly_on_prune_failure
 
 def _run_deploy_dry_run(env_overrides: dict[str, str] | None = None) -> subprocess.CompletedProcess[str]:
     env = dict(os.environ)
+    env["PANTHEON_DEV_POSTGRES_TELEMETRY_PRUNE"] = "true"
     if env_overrides:
         env.update(env_overrides)
     cmd = [
         str(DEPLOY_SCRIPT),
         "--environment", "dev",
         "--sha", "95a1455e3dc1a275b8d541fd2c432c3971013308",
-        "--project-id", "pantheon-lupin-dev-20260719",
+        "--project-id", "pantheon-dev-20260902",
         "--dry-run",
     ]
     return subprocess.run(cmd, env=env, capture_output=True, text=True, check=False)
@@ -997,7 +998,7 @@ def test_deploy_script_defaults_to_management_ai_when_unset() -> None:
             str(DEPLOY_SCRIPT),
             "--environment", "dev",
             "--sha", "95a1455e3dc1a275b8d541fd2c432c3971013308",
-            "--project-id", "pantheon-lupin-dev-20260719",
+            "--project-id", "pantheon-dev-20260902",
             "--dry-run",
         ],
         env=env,
@@ -1016,7 +1017,10 @@ def test_deploy_script_rejects_empty_schema_in_env() -> None:
 
 
 def test_deploy_script_rejects_empty_dev_schema_in_env() -> None:
-    env_overrides = {"DEV_MANAGEMENT_AI_STORE_SCHEMA": ""}
+    env_overrides = {
+        "DEV_MANAGEMENT_AI_STORE_SCHEMA": "",
+        "PANTHEON_DEV_POSTGRES_TELEMETRY_PRUNE": "true",
+    }
     # Remove MANAGEMENT_AI_STORE_SCHEMA so it inherits from DEV_MANAGEMENT_AI_STORE_SCHEMA
     env = {k: v for k, v in os.environ.items() if k != "MANAGEMENT_AI_STORE_SCHEMA"}
     env.update(env_overrides)
@@ -1025,7 +1029,7 @@ def test_deploy_script_rejects_empty_dev_schema_in_env() -> None:
             str(DEPLOY_SCRIPT),
             "--environment", "dev",
             "--sha", "95a1455e3dc1a275b8d541fd2c432c3971013308",
-            "--project-id", "pantheon-lupin-dev-20260719",
+            "--project-id", "pantheon-dev-20260902",
             "--dry-run",
         ],
         env=env,

@@ -188,3 +188,48 @@ def test_workflow_coordinate_release_passes_predecessor_pair_shas() -> None:
     assert "PREVIOUS_FRONTEND_SHA: ${{ needs.deploy-dev.outputs.previous_frontend_sha }}" in coordinate_job
     assert '--predecessor-fe-sha "${PREVIOUS_FRONTEND_SHA}"' in coordinate_job
     assert '--predecessor-bff-sha "${PREVIOUS_BACKEND_SHA}"' in coordinate_job
+
+
+def test_workflow_bootstrap_requires_dev_variables() -> None:
+    workflow = _workflow_text()
+    dev_job = _extract_job(workflow, "deploy-dev", "coordinate-dev-release")
+    bootstrap_step = dev_job[
+        dev_job.index("- name: Deploy bootstrap predecessor pair in strict live read-only mode under lease") :
+        dev_job.index("- name: Deploy dev VM stack under lease")
+    ]
+
+    assert "for var_name in DEV_VM DEV_ZONE GCP_DEPLOY_PROJECT_ID DEV_BFF_URL DEV_FE_URL DEV_DEPLOY_DEADLINE_SECONDS; do" in bootstrap_step
+    assert 'echo "Required bootstrap variable ${var_name} is unset or empty; refusing to deploy." >&2' in bootstrap_step
+    assert "exit 1" in bootstrap_step
+
+
+def test_workflow_rollback_baseline_requires_dev_urls_when_bootstrapping() -> None:
+    workflow = _workflow_text()
+    dev_job = _extract_job(workflow, "deploy-dev", "coordinate-dev-release")
+    baseline_step = dev_job[
+        dev_job.index("- name: Capture exact hosted FE and BFF rollback baseline") :
+        dev_job.index("- name: Seal exact-pair admission artifact")
+    ]
+
+    assert 'if [[ -z "${DEV_FE_URL:-}" || -z "${DEV_BFF_URL:-}" ]]; then' in baseline_step
+    assert 'Empty-host bootstrap requires DEV_FE_URL and DEV_BFF_URL to be set.' in baseline_step
+
+
+def test_workflow_contains_no_retired_project_or_host_fallbacks_in_bootstrap_or_staging() -> None:
+    workflow = _workflow_text()
+    dev_job = _extract_job(workflow, "deploy-dev", "coordinate-dev-release")
+    staging_job = _extract_job(workflow, "deploy-staging-live")
+
+    # In dev bootstrap steps
+    bootstrap_step = dev_job[
+        dev_job.index("- name: Deploy bootstrap predecessor pair in strict live read-only mode under lease") :
+        dev_job.index("- name: Deploy dev VM stack under lease")
+    ]
+    assert "pantheon-lupin-dev-20260719" not in bootstrap_step
+    assert "sslip.io" not in bootstrap_step
+    assert "35.201.204.12" not in bootstrap_step
+
+    # In staging job
+    assert "pantheon-benjamin-20260528" not in staging_job
+    assert "104.155.223.192" not in staging_job
+    assert "sslip.io" not in staging_job

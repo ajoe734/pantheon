@@ -1296,6 +1296,54 @@ def test_check_empty_host_prerequisite_rejects_transport_or_parse_failure(
         )
 
 
+def test_check_empty_host_prerequisite_rejects_malformed_json() -> None:
+    from scripts.cross_repo_release_controller import check_empty_host_prerequisite
+
+    with pytest.raises(ControllerError, match="could not be verified"):
+        check_empty_host_prerequisite(
+            "https://app.dev.mvl-cap.tw",
+            fetch_fn=lambda url: json.loads("not valid json"),
+        )
+
+
+def test_check_empty_host_prerequisite_rejects_ssl_and_network_failures() -> None:
+    import ssl
+    from scripts.cross_repo_release_controller import check_empty_host_prerequisite
+
+    for err in [
+        ssl.SSLError("certificate verify failed"),
+        urllib.error.URLError("Connection refused"),
+        TimeoutError("connection timed out"),
+    ]:
+        with pytest.raises(ControllerError, match="could not be verified"):
+            check_empty_host_prerequisite(
+                "https://app.dev.mvl-cap.tw",
+                fetch_fn=lambda url, e=err: (_ for _ in ()).throw(e),
+            )
+
+
+@pytest.mark.parametrize(
+    "bad_url",
+    ["", "ftp://app.dev.example.test", "not-a-url", "file:///tmp/deployment.json"],
+)
+def test_check_empty_host_prerequisite_rejects_invalid_url(bad_url: str) -> None:
+    from scripts.cross_repo_release_controller import check_empty_host_prerequisite
+
+    with pytest.raises(ControllerError, match="invalid fe_base_url"):
+        check_empty_host_prerequisite(bad_url)
+
+
+def test_check_empty_host_prerequisite_rejects_non_dict_manifest() -> None:
+    from scripts.cross_repo_release_controller import check_empty_host_prerequisite
+
+    for non_dict in [None, [], "raw string"]:
+        with pytest.raises(ControllerError, match="repeated bootstrap is rejected"):
+            check_empty_host_prerequisite(
+                "https://app.dev.mvl-cap.tw",
+                fetch_fn=lambda url, val=non_dict: val,  # type: ignore[return-value]
+            )
+
+
 def test_verify_bootstrap_served_identity_accepts_valid_pair() -> None:
     from scripts.cross_repo_release_controller import verify_bootstrap_served_identity
 
