@@ -8,17 +8,42 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+from fastapi import FastAPI, HTTPException
 from fastapi.testclient import TestClient
 
-sys.path.insert(0, os.path.dirname(__file__))
-
-import main as bff_main
+from services.control_plane.bff.governance.router import create_governance_router
 
 
 OPERATOR_AUTH = "Bearer test-operator:operator"
 REVIEWER_AUTH = "Bearer test-reviewer:reviewer"
 PUBLISHED_MEMO_ID = "memo-rt-20260419-081"
 DRAFT_MEMO_ID = "memo-rt-20260420-002"
+
+
+def _extract_identity(authorization: Optional[str] = None) -> Any:
+    if not authorization or not authorization.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="Unauthorized")
+    token = authorization[len("Bearer ") :].strip()
+    if ":" in token:
+        operator_id, role_part = token.split(":", 1)
+        roles = set(r.strip() for r in role_part.split(",") if r.strip())
+    else:
+        operator_id = "test-operator"
+        roles = {token} if token else {"operator"}
+
+    class Identity:
+        pass
+
+    ident = Identity()
+    ident.operator_id = operator_id
+    ident.roles = roles
+    return ident
+
+
+def _require_read_role(identity: Any) -> None:
+    if not (getattr(identity, "roles", set()) & {"operator", "viewer", "reviewer", "admin", "approver", "governance_committee"}):
+        raise HTTPException(status_code=403, detail="Forbidden")
+
 
 
 def _default_consult_memos() -> Dict[str, Dict[str, Any]]:
@@ -297,16 +322,22 @@ def _seeded_client(*, service_backed_memo_store: bool = False):
         else:
             os.environ.pop("PANTHEON_BFF_CONSULT_MEMO_STORE", None)
 
-        original_store = bff_main.read_store
-        bff_main.read_store = _MemoReadStore(
+        store = _MemoReadStore(
             os.path.join(td, "read_surfaces.json"),
             allow_local_snapshot_fallback=True,
         )
-        client = TestClient(bff_main.app)
+        app = FastAPI()
+        app.include_router(
+            create_governance_router(
+                get_read_store=lambda: store,
+                extract_identity=_extract_identity,
+                require_read_role=_require_read_role,
+            )
+        )
+        client = TestClient(app)
         try:
             yield client, memo_store_path
         finally:
-            bff_main.read_store = original_store
             for key, value in tracked_env.items():
                 if value is None:
                     os.environ.pop(key, None)

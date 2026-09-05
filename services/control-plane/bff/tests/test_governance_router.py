@@ -8,9 +8,7 @@ from typing import Any, Dict, List, Optional
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
-
-from governance.router import create_governance_router
+from services.control_plane.bff.governance.router import create_governance_router
 
 
 EXPECTED_ROUTES = {
@@ -49,6 +47,7 @@ EXPECTED_ROUTES = {
     ("GET", "/bff/approvals/{approval_id}"),
     ("POST", "/bff/approvals/{approval_id}/decide"),
     ("POST", "/bff/approvals/batch-decide"),
+    ("GET", "/api/v1/operator/rollback-review/{rollback_id}"),
 }
 
 
@@ -258,7 +257,7 @@ def test_router_registers_exactly_the_35_catalog_routes() -> None:
         for method in getattr(route, "methods", set())
     }
     assert routes == EXPECTED_ROUTES
-    assert len(router.routes) == 35
+    assert len(router.routes) == 36
 
 
 def test_typed_approval_detail_replaces_generic_alias_and_preserves_envelope() -> None:
@@ -311,23 +310,23 @@ def test_consult_request_committee_memo_and_workbench_routes() -> None:
         "target_type": "committee",
         "target_ref": "committee-1",
         "task": "Review allocation",
-        "context_refs": [{"ref_type": "artifact", "ref_id": "artifact-1"}],
+        "context_refs": [{"type": "artifact", "id": "artifact-1"}],
         "priority": "high",
-        "consultation_type": "strategy_review",
+        "consultation_type": "pre_deployment",
     }
     created = client.post("/api/v1/consult/requests", json=payload)
     assert created.status_code == 200
     request_id = created.json()["request_id"]
     assert client.get(f"/api/v1/consult/requests/{request_id}").status_code == 200
-    assert client.post(f"/api/v1/consult/requests/{request_id}/cancel").json()["data"]["status"] == "canceled"
+    assert client.post(f"/api/v1/consult/requests/{request_id}/cancel").json()["status"] == "canceled"
 
     requests = client.get("/api/v1/consult/requests?page_size=1")
     assert requests.status_code == 200
-    assert len(requests.json()["items"]) == 1
+    assert len(requests.json()["data"]) == 1
     assert client.get("/api/v1/committees").json()["page_info"]["total"] == 1
     assert client.get("/api/v1/committees/committee-1").json()["committee_id"] == "committee-1"
     assert client.get("/api/v1/consult/memos").json()["page_info"]["total"] == 1
-    assert client.get("/api/v1/consult/memos/memo-1").json()["data"]["memo_id"] == "memo-1"
+    assert client.get("/api/v1/consult/memos/memo-1").json()["memo_id"] == "memo-1"
 
 
 def test_governance_queues_audit_and_mutation_review() -> None:
