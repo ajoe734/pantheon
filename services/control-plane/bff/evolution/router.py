@@ -39,23 +39,7 @@ from typing import Any, Callable, Dict, List, Optional, Sequence, Set, Tuple
 
 from fastapi import APIRouter, Body, Header, HTTPException, Query
 
-try:
-    from services.control_plane.bff.models import ErrorCode, ObjectType
-except ImportError:
-    try:
-        from ..models import ErrorCode, ObjectType  # type: ignore[no-redef]
-    except Exception:
-        class ErrorCode(str, Enum):  # type: ignore[no-redef]
-            RESOURCE_NOT_FOUND = "RESOURCE_NOT_FOUND"
-            VALIDATION_FAILED = "VALIDATION_FAILED"
-            NOT_IMPLEMENTED = "NOT_IMPLEMENTED"
-            DEPENDENCY_UNAVAILABLE = "DEPENDENCY_UNAVAILABLE"
-            IDEMPOTENCY_CONFLICT = "IDEMPOTENCY_CONFLICT"
-            FORBIDDEN = "FORBIDDEN"
-            AUTH_REQUIRED = "AUTH_REQUIRED"
-
-        class ObjectType(str, Enum):  # type: ignore[no-redef]
-            EVOLUTION_PROGRAM = "EvolutionProgram"
+from services.control_plane.bff.models import ErrorCode, ObjectType
 
 from .service import (
     EvolutionService,

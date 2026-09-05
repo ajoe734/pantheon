@@ -12,110 +12,57 @@ from __future__ import annotations
 
 from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence, Tuple, Union
 
-try:
-    from services.control_plane.bff.ports.operations_consultation import (
-        CompositeOperationsConsultationPort,
-        DomainConsultationPort,
-        DomainOpenClawOperationsPort,
-        DomainWorkflowCatalogPort,
-        InMemoryOperationsConsultationPort,
-        OperationsConsultationPort,
-        create_in_memory_operations_consultation_port,
-        create_operations_consultation_port,
-    )
-    from services.control_plane.bff.ports.persona_capital_runtime import (
-        CapitalPoolPort,
-        CompositePersonaCapitalRuntimePort,
-        DeploymentPlanPort,
-        EvolutionProjectionPort,
-        InMemoryPersonaCapitalRuntimePort,
-        PersonaCapitalRuntimeDomainPort,
-        PersonaFleetPort,
-        RankingProjectionPort,
-        RuntimePort,
-        create_in_memory_persona_capital_runtime_port,
-        create_persona_capital_runtime_port,
-    )
-    from services.control_plane.bff.ports.ooda_management import (
-        InterventionsPort,
-        ManagementReviewQueuePort,
-        OodaManagementDomainPort,
-        OodaPacketsPort,
-        SynthesisConflictLogsPort,
-    )
-    from services.control_plane.bff.ports.research_knowledge_source import (
-        DefaultResearchKnowledgeSourcePort,
-        ResearchKnowledgeSourcePort,
-    )
-    from services.control_plane.bff.ports.lifecycle_telemetry_governance import (
-        CompositeLifecycleTelemetryGovernancePort,
-        DomainGovernancePort,
-        DomainIncidentPort,
-        DomainLifecyclePort,
-        DomainLineagePort,
-        DomainTelemetryPort,
-        InMemoryLifecycleTelemetryGovernancePort,
-        create_in_memory_lifecycle_telemetry_governance_port,
-        create_lifecycle_telemetry_governance_port,
-    )
-    from services.control_plane.bff.ports.persona_training import (
-        PersonaRegistryReadsPort,
-        PersonaTrainingDomainPort,
-        RapidEvaluationPort,
-        TrainingSessionTrainerPort,
-    )
-except ImportError:
-    from services.control_plane.bff.ports.operations_consultation import (  # type: ignore[no-redef]
-        CompositeOperationsConsultationPort,
-        DomainConsultationPort,
-        DomainOpenClawOperationsPort,
-        DomainWorkflowCatalogPort,
-        InMemoryOperationsConsultationPort,
-        OperationsConsultationPort,
-        create_in_memory_operations_consultation_port,
-        create_operations_consultation_port,
-    )
-    from services.control_plane.bff.ports.persona_capital_runtime import (  # type: ignore[no-redef]
-        CapitalPoolPort,
-        CompositePersonaCapitalRuntimePort,
-        DeploymentPlanPort,
-        EvolutionProjectionPort,
-        InMemoryPersonaCapitalRuntimePort,
-        PersonaCapitalRuntimeDomainPort,
-        PersonaFleetPort,
-        RankingProjectionPort,
-        RuntimePort,
-        create_in_memory_persona_capital_runtime_port,
-        create_persona_capital_runtime_port,
-    )
-    from services.control_plane.bff.ports.ooda_management import (  # type: ignore[no-redef]
-        InterventionsPort,
-        ManagementReviewQueuePort,
-        OodaManagementDomainPort,
-        OodaPacketsPort,
-        SynthesisConflictLogsPort,
-    )
-    from services.control_plane.bff.ports.research_knowledge_source import (  # type: ignore[no-redef]
-        DefaultResearchKnowledgeSourcePort,
-        ResearchKnowledgeSourcePort,
-    )
-    from services.control_plane.bff.ports.lifecycle_telemetry_governance import (  # type: ignore[no-redef]
-        CompositeLifecycleTelemetryGovernancePort,
-        DomainGovernancePort,
-        DomainIncidentPort,
-        DomainLifecyclePort,
-        DomainLineagePort,
-        DomainTelemetryPort,
-        InMemoryLifecycleTelemetryGovernancePort,
-        create_in_memory_lifecycle_telemetry_governance_port,
-        create_lifecycle_telemetry_governance_port,
-    )
-    from services.control_plane.bff.ports.persona_training import (  # type: ignore[no-redef]
-        PersonaRegistryReadsPort,
-        PersonaTrainingDomainPort,
-        RapidEvaluationPort,
-        TrainingSessionTrainerPort,
-    )
+from services.control_plane.bff.ports.operations_consultation import (
+    CompositeOperationsConsultationPort,
+    DomainConsultationPort,
+    DomainOpenClawOperationsPort,
+    DomainWorkflowCatalogPort,
+    InMemoryOperationsConsultationPort,
+    OperationsConsultationPort,
+    create_in_memory_operations_consultation_port,
+    create_operations_consultation_port,
+)
+from services.control_plane.bff.ports.persona_capital_runtime import (
+    CapitalPoolPort,
+    CompositePersonaCapitalRuntimePort,
+    DeploymentPlanPort,
+    EvolutionProjectionPort,
+    InMemoryPersonaCapitalRuntimePort,
+    PersonaCapitalRuntimeDomainPort,
+    PersonaFleetPort,
+    RankingProjectionPort,
+    RuntimePort,
+    create_in_memory_persona_capital_runtime_port,
+    create_persona_capital_runtime_port,
+)
+from services.control_plane.bff.ports.ooda_management import (
+    InterventionsPort,
+    ManagementReviewQueuePort,
+    OodaManagementDomainPort,
+    OodaPacketsPort,
+    SynthesisConflictLogsPort,
+)
+from services.control_plane.bff.ports.research_knowledge_source import (
+    DefaultResearchKnowledgeSourcePort,
+    ResearchKnowledgeSourcePort,
+)
+from services.control_plane.bff.ports.lifecycle_telemetry_governance import (
+    CompositeLifecycleTelemetryGovernancePort,
+    DomainGovernancePort,
+    DomainIncidentPort,
+    DomainLifecyclePort,
+    DomainLineagePort,
+    DomainTelemetryPort,
+    InMemoryLifecycleTelemetryGovernancePort,
+    create_in_memory_lifecycle_telemetry_governance_port,
+    create_lifecycle_telemetry_governance_port,
+)
+from services.control_plane.bff.ports.persona_training import (
+    PersonaRegistryReadsPort,
+    PersonaTrainingDomainPort,
+    RapidEvaluationPort,
+    TrainingSessionTrainerPort,
+)
 
 
 class ReadSurfacePorts:

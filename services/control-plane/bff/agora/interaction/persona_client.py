@@ -13,13 +13,7 @@ from __future__ import annotations
 import os
 from typing import Any, Dict, List, Optional, Protocol, runtime_checkable
 
-try:
-    from services.control_plane.bff.ports import ReadSurfacePorts, create_read_surface_ports
-except ImportError:
-    from services.control_plane.bff.ports import (  # type: ignore[no-redef]
-        ReadSurfacePorts,
-        create_read_surface_ports,
-    )
+from services.control_plane.bff.ports import ReadSurfacePorts, create_read_surface_ports
 
 
 @runtime_checkable
@@ -47,4 +41,3 @@ def build_canonical_persona_client() -> PersonaReadPort:
     any failure instead of substituting an empty Persona discovery implementation.
     """
     return create_read_surface_ports()
-

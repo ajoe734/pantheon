@@ -11,12 +11,7 @@ from __future__ import annotations
 
 from typing import Any, Dict, Mapping
 
-try:
-    from services.control_plane.bff.ports.persona_capital_runtime import PersonaMutationPort
-except ImportError:
-    from services.control_plane.bff.ports.persona_capital_runtime import (  # type: ignore[no-redef]
-        PersonaMutationPort,
-    )
+from services.control_plane.bff.ports.persona_capital_runtime import PersonaMutationPort
 
 
 _RECONCILABLE_PROVISIONING_STATES = frozenset({

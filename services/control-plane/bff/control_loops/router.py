@@ -14,34 +14,19 @@ from typing import Any, Callable, Dict, Optional
 
 from fastapi import APIRouter, BackgroundTasks, Body, Header, Query, Request
 
-try:
-    from services.control_plane.bff.loop_inventory import (
-        LoopHealthDetailEnvelope,
-        LoopHealthListEnvelope,
-        LoopInventoryDetailEnvelope,
-        LoopInventoryListEnvelope,
-    )
-    from services.control_plane.bff.models import (
-        CommandType,
-        ErrorCode,
-        InterventionListResponse,
-        ObjectType,
-        OperatorIdentity,
-    )
-except ImportError:
-    from ..loop_inventory import (  # type: ignore[no-redef]
-        LoopHealthDetailEnvelope,
-        LoopHealthListEnvelope,
-        LoopInventoryDetailEnvelope,
-        LoopInventoryListEnvelope,
-    )
-    from ..models import (  # type: ignore[no-redef]
-        CommandType,
-        ErrorCode,
-        InterventionListResponse,
-        ObjectType,
-        OperatorIdentity,
-    )
+from services.control_plane.bff.loop_inventory import (
+    LoopHealthDetailEnvelope,
+    LoopHealthListEnvelope,
+    LoopInventoryDetailEnvelope,
+    LoopInventoryListEnvelope,
+)
+from services.control_plane.bff.models import (
+    CommandType,
+    ErrorCode,
+    InterventionListResponse,
+    ObjectType,
+    OperatorIdentity,
+)
 
 from .service import ControlLoopsService, default_bff_error
 

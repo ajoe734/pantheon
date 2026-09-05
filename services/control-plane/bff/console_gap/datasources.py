@@ -14,13 +14,7 @@ except ImportError:  # pragma: no cover
         def calculate_source_allowed_actions(*args: Any, **kwargs: Any) -> Dict[str, Any]:  # type: ignore[misc]
             return {"canValidate": True, "canCanary": True, "canEnable": True, "canDisable": True, "canDegrade": True, "canResume": True, "canChangeSchedule": True, "canReplace": True, "canRetire": True, "blockedReasons": []}
 
-try:
-    from services.control_plane.bff.source_management_client import SourceManagementClient, SourceManagementClientError
-except ImportError:  # pragma: no cover
-    from services.control_plane.bff.source_management_client import (  # type: ignore[no-redef]
-        SourceManagementClient,
-        SourceManagementClientError,
-    )
+from services.control_plane.bff.source_management_client import SourceManagementClient, SourceManagementClientError
 from .contracts import (
     ActionCommandRequest,
     ChangeScheduleRequest,

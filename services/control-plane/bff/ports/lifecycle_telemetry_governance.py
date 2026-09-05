@@ -20,16 +20,9 @@ from pathlib import Path
 import re
 from typing import Any, Dict, List, Optional, Protocol, Tuple, Union, runtime_checkable
 
-try:
-    from services.control_plane.bff.trade_journey_projection_store import (
-        configured_projection_reader,
-    )
-except ImportError:
-    try:
-        from services.control_plane.bff.trade_journey_projection_store import configured_projection_reader
-    except ImportError:
-        def configured_projection_reader():
-            return None
+from services.control_plane.bff.trade_journey_projection_store import (
+    configured_projection_reader,
+)
 
 
 def _utc_now_rfc3339() -> str:

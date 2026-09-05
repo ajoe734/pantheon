@@ -24,41 +24,7 @@ from datetime import datetime, timezone
 from typing import Any, Callable, Dict, List, Mapping, Optional, Protocol, Sequence, Set, Tuple, Union, runtime_checkable
 
 # Typed service client imports with fail-safe fallbacks
-try:
-    from services.control_plane.bff.openclaw_ops_client import OpenClawOpsClient, OpenClawOpsClientError
-except ImportError:  # pragma: no cover
-    try:
-        from services.control_plane.bff.openclaw_ops_client import (  # type: ignore[no-redef]
-            OpenClawOpsClient,
-            OpenClawOpsClientError,
-        )
-    except ImportError:  # pragma: no cover
-        class OpenClawOpsClientError(RuntimeError):  # type: ignore[no-redef]
-            def __init__(self, message: str, *, status_code: Optional[int] = None, error_code: Optional[str] = None, details: Optional[Dict[str, Any]] = None) -> None:
-                super().__init__(message)
-                self.status_code = status_code
-                self.error_code = error_code
-                self.details = details or {}
-
-            def to_surface(self) -> Dict[str, Any]:
-                return {
-                    "status": "unavailable" if self.status_code in (None, 503) else "degraded",
-                    "source": "service_client",
-                    "reason": self.error_code or "openclaw_client_error",
-                    "message": str(self),
-                    "http_status": self.status_code,
-                    "details": self.details,
-                }
-
-        class OpenClawOpsClient:  # type: ignore[no-redef]
-            configured = False
-            def get_capabilities(self) -> Dict[str, Any]: raise OpenClawOpsClientError("OpenClaw client not configured")
-            def get_upstream_status(self) -> Dict[str, Any]: raise OpenClawOpsClientError("OpenClaw client not configured")
-            def list_lifecycle_sessions(self, **kwargs: Any) -> Dict[str, Any]: raise OpenClawOpsClientError("OpenClaw client not configured")
-            def get_tool_policy(self) -> Dict[str, Any]: raise OpenClawOpsClientError("OpenClaw client not configured")
-            def list_invocation_audit(self, **kwargs: Any) -> Dict[str, Any]: raise OpenClawOpsClientError("OpenClaw client not configured")
-            def list_effective_tools(self, **kwargs: Any) -> Dict[str, Any]: raise OpenClawOpsClientError("OpenClaw client not configured")
-            def get_broker_capabilities(self) -> Dict[str, Any]: raise OpenClawOpsClientError("OpenClaw client not configured")
+from services.control_plane.bff.openclaw_ops_client import OpenClawOpsClient, OpenClawOpsClientError
 
 try:
     from services.consultation.client import ConsultationClientError, ConsultationServiceClient

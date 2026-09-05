@@ -48,26 +48,8 @@ from .models import (
 )
 from .service import ManagementService
 
-try:
-    from services.control_plane.bff.operations_read_model import OperationsReadModelEnvelope
-except ImportError:
-    try:
-        from services.control_plane.bff.operations_read_model import OperationsReadModelEnvelope  # type: ignore[no-redef]
-    except ImportError:
-        OperationsReadModelEnvelope = None  # type: ignore[misc,assignment]
-
-try:
-    from services.control_plane.bff.models import ErrorCode
-except ImportError:
-    class ErrorCode:
-        VALIDATION_FAILED = "VALIDATION_FAILED"
-        AUTH_REQUIRED = "AUTH_REQUIRED"
-        FORBIDDEN = "FORBIDDEN"
-        OPERATION_NOT_ALLOWED = "OPERATION_NOT_ALLOWED"
-        RESOURCE_NOT_FOUND = "RESOURCE_NOT_FOUND"
-        RESOURCE_CONFLICT = "RESOURCE_CONFLICT"
-        DEPENDENCY_UNAVAILABLE = "DEPENDENCY_UNAVAILABLE"
-        INTERNAL_ERROR = "INTERNAL_ERROR"
+from services.control_plane.bff.models import ErrorCode
+from services.control_plane.bff.operations_read_model import OperationsReadModelEnvelope
 
 log = logging.getLogger(__name__)
 

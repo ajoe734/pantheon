@@ -17,26 +17,12 @@ from typing import Any, Callable, Dict, List, Optional
 from fastapi import APIRouter, Body, Header, HTTPException, Query, Response
 from ..models import CommandResponse, DecisionJournalEntryDTO
 
-try:
-    from services.control_plane.bff.ports import (
-        ReadSurfacePorts,
-        create_read_surface_ports,
-        OpenClawOpsClient,
-        OpenClawOpsClientError,
-    )
-except ImportError:
-    try:
-        from ..ports import (  # type: ignore[no-redef]
-            ReadSurfacePorts,
-            create_read_surface_ports,
-            OpenClawOpsClient,
-            OpenClawOpsClientError,
-        )
-    except ImportError:
-        ReadSurfacePorts = Any  # type: ignore
-        create_read_surface_ports = None  # type: ignore
-        OpenClawOpsClient = None  # type: ignore
-        OpenClawOpsClientError = Exception  # type: ignore
+from services.control_plane.bff.ports import (
+    OpenClawOpsClient,
+    OpenClawOpsClientError,
+    ReadSurfacePorts,
+    create_read_surface_ports,
+)
 
 from .models import (
     AgoraCapabilityScope,

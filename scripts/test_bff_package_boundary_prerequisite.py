@@ -56,6 +56,61 @@ def test_declared_sources_use_only_canonical_internal_imports() -> None:
     assert violations == []
 
 
+def test_internal_imports_do_not_have_namespace_fallbacks() -> None:
+    violations: list[str] = []
+    for relative in SOURCE_PATHS:
+        tree = ast.parse((ROOT / relative).read_text(), filename=relative)
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Try):
+                continue
+            canonical_import = any(
+                isinstance(child, ast.ImportFrom)
+                and (child.module or "").startswith(CANONICAL)
+                for child in node.body
+            )
+            catches_import_error = any(
+                isinstance(handler.type, ast.Name)
+                and handler.type.id in {"ImportError", "ModuleNotFoundError"}
+                for handler in node.handlers
+            )
+            if canonical_import and catches_import_error:
+                violations.append(f"{relative}:{node.lineno}")
+    assert violations == []
+
+
+def test_management_consumers_share_canonical_model_identity() -> None:
+    payload = _run_fresh("""
+import json, sys
+sys.path.insert(0, '.')
+from services.control_plane.bff.models import ErrorCode
+from services.control_plane.bff.management_read_models import ranking_router, router, service
+print(json.dumps({
+ 'router': router.ErrorCode is ErrorCode,
+ 'ranking': ranking_router.ErrorCode is ErrorCode,
+ 'service': service.ErrorCode is ErrorCode,
+}))
+""")
+    assert payload == {"router": True, "ranking": True, "service": True}
+
+
+def test_missing_internal_dependency_fails_import_instead_of_substituting_models() -> None:
+    payload = _run_fresh("""
+import builtins, json, sys
+sys.path.insert(0, '.')
+real_import = builtins.__import__
+def guarded(name, globals=None, locals=None, fromlist=(), level=0):
+    if name == 'services.control_plane.bff.operations_read_model':
+        raise ModuleNotFoundError(name)
+    return real_import(name, globals, locals, fromlist, level)
+builtins.__import__ = guarded
+try:
+    __import__('services.control_plane.bff.management_read_models.router')
+except ModuleNotFoundError as exc:
+    print(json.dumps({'failed_closed': exc.name == 'services.control_plane.bff.operations_read_model'}))
+""")
+    assert payload == {"failed_closed": True}
+
+
 def test_diagnostic_entrypoints_have_no_path_surgery() -> None:
     for relative in (
         "contract_snapshots/report_execute_plans_bff_coverage.py",

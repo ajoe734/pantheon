@@ -135,43 +135,18 @@ except ImportError:
     foundation_id = lambda: str(uuid.uuid4())
     sha256_checksum = lambda data: hashlib.sha256(data.encode() if isinstance(data, str) else data).hexdigest()
 
-try:
-    from services.control_plane.bff.ports.persona_capital_runtime import (
-        PERSONA_OPERATIONAL_LIFECYCLE_STATES,
-        create_persona_capital_runtime_port,
-        create_in_memory_persona_capital_runtime_port,
-    )
-except ImportError:
-    PERSONA_OPERATIONAL_LIFECYCLE_STATES = frozenset({"paper_trading", "live_canary", "live_active"})
-
-try:
-    from services.control_plane.bff.ports import (
-        ReadSurfacePorts,
-        create_persona_registry_write_owner,
-        create_ranking_write_owner,
-        create_read_surface_ports,
-    )
-except ImportError:
-    try:
-        from services.control_plane.bff.ports import (  # type: ignore[no-redef]
-            ReadSurfacePorts,
-            create_persona_registry_write_owner,
-            create_ranking_write_owner,
-            create_read_surface_ports,
-        )
-    except ImportError:
-        ReadSurfacePorts = Any
-        create_persona_registry_write_owner = None
-        create_ranking_write_owner = None
-        create_read_surface_ports = None
-
-try:
-    from services.control_plane.bff.command_queue import CommandStore
-except ImportError:
-    try:
-        from services.control_plane.bff.command_queue import CommandStore
-    except ImportError:
-        CommandStore = None
+from services.control_plane.bff.command_queue import CommandStore
+from services.control_plane.bff.ports import (
+    ReadSurfacePorts,
+    create_persona_registry_write_owner,
+    create_ranking_write_owner,
+    create_read_surface_ports,
+)
+from services.control_plane.bff.ports.persona_capital_runtime import (
+    PERSONA_OPERATIONAL_LIFECYCLE_STATES,
+    create_in_memory_persona_capital_runtime_port,
+    create_persona_capital_runtime_port,
+)
 
 try:
     from services.control_plane.bff.persona_provisioning import (
@@ -233,16 +208,6 @@ except ImportError:
     StrategySpecSeedStoreError = Exception
     StrategySpecSeedReviewError = Exception
 
-try:
-    # Standalone callers historically imported this module as ``personas``;
-    # keep that compatibility fallback, but prefer the package-local models
-    # contract so the capability-aware three-argument function is never
-    # replaced by an unrelated top-level ``models`` module.
-    from services.control_plane.bff.models import redact_evidence_refs as _standalone_redact_evidence_refs
-except ImportError:
-    _standalone_redact_evidence_refs = None
-if _standalone_redact_evidence_refs is not None and not str(__package__ or "").startswith("services.control_plane"):
-    redact_evidence_refs = _standalone_redact_evidence_refs
 
 try:
     from services.control_plane.persona.persona_strategy_discovery import (

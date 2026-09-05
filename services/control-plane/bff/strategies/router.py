@@ -52,26 +52,7 @@ from services.source_ingestion.strategy_seed_store import (
     StrategySpecSeedStoreError,
 )
 
-try:
-    from services.control_plane.bff.models import CommandType, ErrorCode, ObjectType, OperatorIdentity
-except ImportError:  # pragma: no cover - defensive fallback for isolated unit tests.
-    class ErrorCode:  # type: ignore[no-redef]
-        VALIDATION_FAILED = "VALIDATION_FAILED"
-        AUTH_REQUIRED = "AUTH_REQUIRED"
-        FORBIDDEN = "FORBIDDEN"
-        RESOURCE_NOT_FOUND = "RESOURCE_NOT_FOUND"
-        RESOURCE_CONFLICT = "RESOURCE_CONFLICT"
-        IDEMPOTENCY_CONFLICT = "IDEMPOTENCY_CONFLICT"
-        OPERATION_NOT_ALLOWED = "OPERATION_NOT_ALLOWED"
-        INTERNAL_ERROR = "INTERNAL_ERROR"
-
-    class ObjectType:  # type: ignore[no-redef]
-        STRATEGY = "strategy"
-
-    class CommandType:  # type: ignore[no-redef]
-        STRATEGY_ACTION = "strategy_action"
-
-    OperatorIdentity = Any  # type: ignore[assignment]
+from services.control_plane.bff.models import CommandType, ErrorCode, ObjectType, OperatorIdentity
 
 log = logging.getLogger(__name__)
 

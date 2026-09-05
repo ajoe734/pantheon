@@ -23,17 +23,7 @@ from fastapi import APIRouter, Body, Header, HTTPException, Query, Request, Resp
 from fastapi.encoders import jsonable_encoder
 from starlette.responses import JSONResponse
 
-try:
-    from services.control_plane.bff.models import ErrorCode
-except ImportError:
-    class ErrorCode:
-        VALIDATION_FAILED = "VALIDATION_FAILED"
-        AUTH_REQUIRED = "AUTH_REQUIRED"
-        FORBIDDEN = "FORBIDDEN"
-        RESOURCE_NOT_FOUND = "RESOURCE_NOT_FOUND"
-        RESOURCE_CONFLICT = "RESOURCE_CONFLICT"
-        IDEMPOTENCY_CONFLICT = "IDEMPOTENCY_CONFLICT"
-        INTERNAL_ERROR = "INTERNAL_ERROR"
+from services.control_plane.bff.models import ErrorCode
 
 log = logging.getLogger(__name__)
 
