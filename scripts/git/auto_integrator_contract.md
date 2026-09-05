@@ -97,15 +97,23 @@ review_approved task OR active canonical merge_then_review task
   moved to the outcome-specific durable archive and receives a
   `processed`, `rejected`, or `error` receipt; one malformed request or failed
   materialization/write cannot prevent a later valid request from being tried.
+  Validated `processed` and `rejected` receipts are terminal content-addressed
+  tombstones, so the next identical cron pass does not recreate an archived
+  request. An `error` receipt remains retryable and is not a tombstone.
   Forged, stale, wrong-root, wrong-runtime, wrong-repository, arbitrary-reason,
   and arbitrary-task requests are rejected by an exact finite reason allowlist
-  rather than an extensible regex family. A request publication failure is
-  reported without discarding the candidate result or aborting the pass.
+  rather than an extensible regex family. Execute mode reports an unblock task
+  ID only after publication succeeds (or a terminal tombstone proves the exact
+  request was already consumed); refusal and write failure retain the blocked
+  candidate result but return no phantom ID. Dry-run may report the would-create
+  ID.
 - Publisher and supervisor use one pure request contract for schema, inbox,
   canonical request serialization/filename, and generated task IDs. IDs longer
-  than 96 characters retain a readable prefix plus a deterministic digest
-  suffix, preventing distinct long blocker reasons from truncating to the same
-  task ID.
+  retain a readable prefix plus a deterministic digest suffix within 96
+  characters. The digest covers source generation, canonical repository slug,
+  PR, exact head, source task, and reason, so a new delivery candidate cannot
+  alias a prior generation/head that failed for the same reason. An existing
+  canonical ID is accepted only when its stored request provenance is exact.
 
 ## Merge Flow
 

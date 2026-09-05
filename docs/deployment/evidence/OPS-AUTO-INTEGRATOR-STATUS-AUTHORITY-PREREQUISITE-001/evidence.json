@@ -39,9 +39,9 @@
       "allow-listed reason",
       "exact INTEGRATION-UNBLOCK namespace"
     ],
-    "retry_behavior": "content-addressed publisher and existing-task consumer checks are idempotent",
+    "retry_behavior": "processed/rejected receipts are validated terminal content-addressed tombstones; error remains retryable; publisher-consumer-publisher replay creates no new inbox/archive write",
     "runtime_binding_source": "resolve_execute_authority-proven promoted command root HEAD carried in immutable Settings; no cron environment dependency",
-    "task_id_derivation": "shared producer/consumer contract; values over 96 characters use a deterministic SHA-256 suffix to prevent truncation collisions",
+    "task_id_derivation": "shared producer/consumer contract; bounded readable prefix plus deterministic digest of source task, generation, canonical repository slug, PR, exact head, and reason",
     "consumer_isolation": {
       "reason_authority": "exact finite string allowlist",
       "max_requests_per_cycle": 32,
@@ -49,15 +49,15 @@
       "terminal_receipts": [
         "processed",
         "rejected",
-        "error"
+        "error (retryable, not a publisher tombstone)"
       ],
       "source_finalization": "move each consumed request to its outcome-specific durable archive",
       "failure_semantics": "malformed or failed request does not prevent a later request from being attempted"
     }
   },
   "review_reopen_resolution": {
-    "previous_head": "cf167df567d5a426198aa1593cf43eb6d8bb1c8e",
-    "resolved_defect": "The publisher now receives its runtime SHA from the already-proven execute authority even when cron exports no runtime-SHA environment variable. Publisher and consumer share one pure unblock contract, and long generated task IDs use a deterministic digest suffix instead of colliding raw truncation.",
+    "previous_head": "7b9283123962df73f5a3989c1dea64228ee19848",
+    "resolved_defect": "The shared ID now identifies the exact source generation/repository/PR/head candidate; execute refusal and write failure return no phantom task ID; validated processed/rejected receipts suppress identical cron republication while error remains retryable; existing canonical IDs require exact request provenance.",
     "added_reasons": [
       "dirty-repository-checkout",
       "missing-repository-slug",
@@ -67,20 +67,20 @@
       "canonical-authority-lock-failed"
     ],
     "removed_unused_reason": "final-canonical-state-refresh-failed",
-    "regression_guard": "No-environment execute-authority publication, producer/consumer equality, <=96-character bounds, and explicit distinct-long-reason non-collision are covered alongside the existing authority and materialization suites."
+    "regression_guard": "Same-candidate equality, changed-head/generation inequality, publication-failure None, publisher-consumer-publisher replay, terminal tombstones, and existing-row provenance mismatch are covered alongside the existing authority suites."
   },
   "verification": {
     "focused_supervisor": {
       "command": "python3 .orchestrator/test_supervisor.py AutoIntegratorUnblockAuthorityTests",
-      "result": "7 passed"
+      "result": "10 passed"
     },
     "auto_integrator_suite": {
-      "command": "python3 -m unittest scripts.git.test_auto_integrator",
-      "result": "104 passed"
+      "command": "python3 scripts/git/test_auto_integrator.py",
+      "result": "106 passed"
     },
     "supervisor_suite": {
       "command": "python3 .orchestrator/test_supervisor.py",
-      "result": "pass"
+      "result": "237 passed; 1 pre-existing task archive/status root binding fixture error outside auto-integrator scope"
     },
     "syntax": {
       "command": "python3 -m py_compile .orchestrator/supervisor.py .orchestrator/test_supervisor.py scripts/git/auto_integrator.py",

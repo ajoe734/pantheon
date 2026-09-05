@@ -27,12 +27,14 @@ from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import supervisor
 import runtime_state
 import common
 from adapters.base import DeliveryResult
 from rewrite import worker_workspace
+from scripts.git import auto_integrator
 
 
 _OLD_ENV: dict[str, str] = {}
@@ -2158,6 +2160,59 @@ class AutoIntegratorUnblockAuthorityTests(unittest.TestCase):
         self.assertEqual(decision[0], supervisor.REASON_OWNED_READY)
         self.assertEqual(task_map["ABC-001"]["status"], "review_approved")
         self.assertEqual(snapshot["last_event"]["source"], "supervisor-auto-integrator-unblock")
+        receipts = self.status_root / supervisor.AUTO_INTEGRATOR_UNBLOCK_RECEIPTS / "processed"
+        archives = self.status_root / supervisor.AUTO_INTEGRATOR_UNBLOCK_ARCHIVE / "processed"
+        self.assertEqual(len(list(receipts.glob("*.json"))), 1)
+        self.assertEqual(len(list(archives.glob("*.json"))), 1)
+
+    def test_existing_canonical_id_requires_exact_request_provenance(self) -> None:
+        request = self._publish()
+        task_id = self._task_id()
+        self.status["tasks"].append({
+            "id": task_id,
+            "unblock_request": {"request_sha256": "0" * 64},
+        })
+        supervisor.rewrite_task_state_store.append_state_commit(
+            self.config["task_state_store"]["event_log"], self.status,
+            source="test-collision",
+        )
+        Path(self.config["paths"]["status_file"]).write_text(
+            json.dumps(self.status), encoding="utf-8",
+        )
+
+        self.assertFalse(self._materialize())
+
+        self.assertFalse(request.exists())
+        rejected = self.status_root / supervisor.AUTO_INTEGRATOR_UNBLOCK_RECEIPTS / "rejected"
+        receipt = json.loads(next(rejected.glob("*.json")).read_text(encoding="utf-8"))
+        self.assertIn("provenance mismatch", receipt["detail"])
+
+    def test_publisher_consumer_publisher_replay_uses_terminal_tombstone(self) -> None:
+        candidate = auto_integrator.TaskCandidate(
+            task_id="ABC-001", title="Ready", owner="Codex", reviewer="Claude",
+            branch="task/ABC-001", repository_slug="ajoe734/pantheon",
+            raw_task={"generation": 1, "delivery_binding": {"pr": 44, "head_sha": "a" * 40}},
+        )
+        settings = auto_integrator.Settings(
+            status_identity_sha256=supervisor.canonical_task_state_identity(
+                self.config
+            )["identity_sha256"],
+            command_runtime_sha="b" * 40,
+        )
+        first = auto_integrator.open_unblock_task(
+            candidate, "ci-red", "required CI is red", settings,
+            auto_integrator.CommandRunner(), root=self.status_root, execute=True,
+        )
+        self.assertTrue(self._materialize())
+
+        second = auto_integrator.open_unblock_task(
+            candidate, "ci-red", "required CI is red", settings,
+            auto_integrator.CommandRunner(), root=self.status_root, execute=True,
+        )
+
+        self.assertEqual(second, first)
+        inbox = self.status_root / supervisor.AUTO_INTEGRATOR_UNBLOCK_INBOX
+        self.assertEqual(list(inbox.glob("*.json")), [])
         receipts = self.status_root / supervisor.AUTO_INTEGRATOR_UNBLOCK_RECEIPTS / "processed"
         archives = self.status_root / supervisor.AUTO_INTEGRATOR_UNBLOCK_ARCHIVE / "processed"
         self.assertEqual(len(list(receipts.glob("*.json"))), 1)

@@ -1557,6 +1557,66 @@ class IntegrationPlanTests(unittest.TestCase):
             ),
         )
 
+    def test_unblock_id_is_stable_for_same_candidate_and_changes_with_head_or_generation(self) -> None:
+        def candidate(generation: int, head: str) -> auto_integrator.TaskCandidate:
+            return auto_integrator.TaskCandidate(
+                task_id="ABC-001", title="Ready", owner="Codex", reviewer="Claude",
+                branch="task/ABC-001", repository_slug="ajoe734/pantheon",
+                raw_task={"generation": generation, "delivery_binding": {"pr": 44, "head_sha": head}},
+            )
+
+        original = auto_integrator.unblock_task_id(candidate(7, "a" * 40), "ci-red")
+        self.assertEqual(
+            original,
+            auto_integrator.unblock_task_id(candidate(7, "a" * 40), "ci-red"),
+        )
+        self.assertNotEqual(
+            original,
+            auto_integrator.unblock_task_id(candidate(8, "a" * 40), "ci-red"),
+        )
+        self.assertNotEqual(
+            original,
+            auto_integrator.unblock_task_id(candidate(7, "b" * 40), "ci-red"),
+        )
+
+    def test_terminal_receipt_prevents_identical_cron_request_republication(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            root = Path(tmp_dir)
+            candidate = auto_integrator.TaskCandidate(
+                task_id="ABC-001", title="Ready", owner="Codex", reviewer="Claude",
+                branch="task/ABC-001", repository_slug="ajoe734/pantheon",
+                raw_task={"generation": 7, "delivery_binding": {"pr": 44, "head_sha": APPROVED_HEAD}},
+            )
+            settings = auto_integrator.Settings(
+                status_identity_sha256="d" * 64, command_runtime_sha="b" * 40,
+            )
+            expected = auto_integrator.open_unblock_task(
+                candidate, "ci-red", "CI failed", settings, FakeRunner(),
+                root=root, execute=True,
+            )
+            request = next((root / auto_integrator.UNBLOCK_REQUEST_INBOX).glob("*.json"))
+            request_sha = request.stem
+            request.unlink()
+            receipt_dir = root / auto_integrator.unblock_contract.RECEIPT_ROOT / "processed"
+            receipt_dir.mkdir(parents=True)
+            (receipt_dir / f"{request_sha}.json").write_text(
+                json.dumps({
+                    "schema": auto_integrator.unblock_contract.RECEIPT_SCHEMA,
+                    "request_sha256": request_sha, "outcome": "processed",
+                    "detail": "materialized", "task_id": expected,
+                    "processed_at": "2026-09-05T00:00:00Z",
+                }),
+                encoding="utf-8",
+            )
+
+            replay = auto_integrator.open_unblock_task(
+                candidate, "ci-red", "CI failed", settings, FakeRunner(),
+                root=root, execute=True,
+            )
+
+            self.assertEqual(replay, expected)
+            self.assertEqual(list((root / auto_integrator.UNBLOCK_REQUEST_INBOX).glob("*.json")), [])
+
     def test_clean_disposable_exact_head_merge_uses_scoped_identity_and_lands_head(self) -> None:
         candidate = auto_integrator.TaskCandidate(
             task_id="ABC-001",
