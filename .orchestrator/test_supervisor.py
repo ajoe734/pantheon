@@ -2086,7 +2086,10 @@ class AutoIntegratorUnblockAuthorityTests(unittest.TestCase):
             "command_runtime_sha": "b" * 40,
             "source_task_id": "ABC-001",
             "source_task_generation": 1,
-            "unblock_task_id": "INTEGRATION-UNBLOCK-ABC-001-CI-RED",
+            "unblock_task_id": supervisor.unblock_contract.task_id(
+                "ABC-001", "ci-red", source_task_generation=1,
+                repository_slug="ajoe734/pantheon", pr=44, head_sha="a" * 40,
+            ),
             "reason": "ci-red",
             "detail": "required CI is red",
             "repository_id": "pantheon",
@@ -2105,6 +2108,15 @@ class AutoIntegratorUnblockAuthorityTests(unittest.TestCase):
         path = inbox / f"{supervisor.hashlib.sha256(encoded).hexdigest()}.json"
         path.write_bytes(encoded + b"\n")
         return path
+
+    def _task_id(self, reason: str = "ci-red", **changes: object) -> str:
+        request = {
+            "source_task_id": "ABC-001", "source_task_generation": 1,
+            "repository_slug": "ajoe734/pantheon", "pr": 44,
+            "head_sha": "a" * 40, "reason": reason,
+        }
+        request.update(changes)
+        return supervisor._auto_integrator_unblock_task_id(request)
 
     def _materialize(self) -> bool:
         with (
@@ -2129,7 +2141,7 @@ class AutoIntegratorUnblockAuthorityTests(unittest.TestCase):
         )
         created = [
             task for task in snapshot["state"]["tasks"]
-            if task["id"] == "INTEGRATION-UNBLOCK-ABC-001-CI-RED"
+            if task["id"] == self._task_id()
         ]
         self.assertEqual(len(created), 1)
         self.assertEqual(created[0]["auto_created_by"], "supervisor:auto_integrator_unblock_request")
@@ -2156,10 +2168,21 @@ class AutoIntegratorUnblockAuthorityTests(unittest.TestCase):
         first_reason = "review-gate-approval-head-" + "a" * 80
         second_reason = "review-gate-approval-head-" + "b" * 80
 
-        first = supervisor._auto_integrator_unblock_task_id(source, first_reason)
-        second = supervisor._auto_integrator_unblock_task_id(source, second_reason)
+        base = {
+            "source_task_id": source, "source_task_generation": 1,
+            "repository_slug": "ajoe734/pantheon", "pr": 44,
+            "head_sha": "a" * 40,
+        }
+        first = supervisor._auto_integrator_unblock_task_id(base | {"reason": first_reason})
+        second = supervisor._auto_integrator_unblock_task_id(base | {"reason": second_reason})
 
-        self.assertEqual(first, supervisor.unblock_contract.task_id(source, first_reason))
+        self.assertEqual(
+            first,
+            supervisor.unblock_contract.task_id(
+                source, first_reason, source_task_generation=1,
+                repository_slug="ajoe734/pantheon", pr=44, head_sha="a" * 40,
+            ),
+        )
         self.assertLessEqual(len(first), supervisor.unblock_contract.TASK_ID_LIMIT)
         self.assertNotEqual(first, second)
 
@@ -2201,7 +2224,7 @@ class AutoIntegratorUnblockAuthorityTests(unittest.TestCase):
         snapshot = supervisor.rewrite_task_state_store.load_snapshot(
             self.config["task_state_store"]["event_log"]
         )
-        self.assertTrue(any(task["id"] == "INTEGRATION-UNBLOCK-ABC-001-CI-RED" for task in snapshot["state"]["tasks"]))
+        self.assertTrue(any(task["id"] == self._task_id() for task in snapshot["state"]["tasks"]))
 
     def test_rejection_finalization_failure_preserves_request_and_continues(self) -> None:
         inbox = self.status_root / supervisor.AUTO_INTEGRATOR_UNBLOCK_INBOX
@@ -2226,7 +2249,7 @@ class AutoIntegratorUnblockAuthorityTests(unittest.TestCase):
         )
         self.assertTrue(
             any(
-                task["id"] == "INTEGRATION-UNBLOCK-ABC-001-CI-RED"
+                task["id"] == self._task_id()
                 for task in snapshot["state"]["tasks"]
             )
         )
@@ -2235,7 +2258,7 @@ class AutoIntegratorUnblockAuthorityTests(unittest.TestCase):
         first = self._publish(reason="ci-red")
         second = self._publish(
             reason="smoke-failed",
-            unblock_task_id="INTEGRATION-UNBLOCK-ABC-001-SMOKE-FAILED",
+            unblock_task_id=self._task_id("smoke-failed"),
         )
         ordered = sorted((first, second))
         real_write = supervisor.write_status

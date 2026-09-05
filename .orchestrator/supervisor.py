@@ -343,7 +343,7 @@ REVIEW_REQUEUE_INTENT_KEY = "review_requeue_intent"
 REVIEW_REQUEUE_INTENT_SCHEMA_VERSION = 1
 AUTO_INTEGRATOR_UNBLOCK_REQUEST_SCHEMA = unblock_contract.REQUEST_SCHEMA
 AUTO_INTEGRATOR_UNBLOCK_INBOX = unblock_contract.REQUEST_INBOX
-AUTO_INTEGRATOR_UNBLOCK_RECEIPTS = ".orchestrator/auto-integrator-unblock-receipts"
+AUTO_INTEGRATOR_UNBLOCK_RECEIPTS = unblock_contract.RECEIPT_ROOT
 AUTO_INTEGRATOR_UNBLOCK_ARCHIVE = ".orchestrator/auto-integrator-unblock-archive"
 AUTO_INTEGRATOR_UNBLOCK_DRAIN_MAX = 32
 AUTO_INTEGRATOR_UNBLOCK_REASONS = frozenset(
@@ -2055,8 +2055,15 @@ def record_delivery_health_refresh_authority_consumed(
     return changed
 
 
-def _auto_integrator_unblock_task_id(source_task_id: str, reason: str) -> str:
-    return unblock_contract.task_id(source_task_id, reason)
+def _auto_integrator_unblock_task_id(request: Mapping[str, Any]) -> str:
+    return unblock_contract.task_id(
+        str(request.get("source_task_id") or ""),
+        str(request.get("reason") or ""),
+        source_task_generation=int(request.get("source_task_generation") or 0),
+        repository_slug=str(request.get("repository_slug") or ""),
+        pr=int(request.get("pr") or 0),
+        head_sha=str(request.get("head_sha") or "").lower(),
+    )
 
 
 def _validate_auto_integrator_unblock_request(
@@ -2082,7 +2089,7 @@ def _validate_auto_integrator_unblock_request(
     reason = str(request.get("reason") or "")
     if reason not in AUTO_INTEGRATOR_UNBLOCK_REASONS:
         raise ValueError("unblock request reason is not allowed")
-    if request.get("unblock_task_id") != _auto_integrator_unblock_task_id(source_task_id, reason):
+    if request.get("unblock_task_id") != _auto_integrator_unblock_task_id(request):
         raise ValueError("unblock request task namespace mismatch")
     source = next(
         (item for item in status.get("tasks", []) if item.get("id") == source_task_id), None
@@ -2137,7 +2144,7 @@ def materialize_auto_integrator_unblock_requests(config: dict[str, Any]) -> bool
         destination_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
         receipt_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
         receipt = {
-            "schema": "pantheon-auto-integrator-unblock-receipt/v1",
+            "schema": unblock_contract.RECEIPT_SCHEMA,
             "request_sha256": path.stem,
             "outcome": outcome,
             "detail": detail[:500],
@@ -2171,8 +2178,23 @@ def materialize_auto_integrator_unblock_requests(config: dict[str, Any]) -> bool
                     config, request, path.name, status
                 )
                 task_id = valid["unblock_task_id"]
-                existing_ids = {str(item.get("id") or "") for item in status.get("tasks", [])}
-                if task_id in existing_ids:
+                existing = next(
+                    (item for item in status.get("tasks", []) if item.get("id") == task_id),
+                    None,
+                )
+                if existing is not None:
+                    provenance = existing.get("unblock_request")
+                    expected_provenance = {
+                        "request_sha256": path.stem,
+                        "source_task_id": valid["source_task_id"],
+                        "source_task_generation": valid["source_task_generation"],
+                        "repository_slug": valid["repository_slug"],
+                        "pr": valid["pr"],
+                        "head_sha": valid["head_sha"],
+                        "command_runtime_sha": valid["command_runtime_sha"],
+                    }
+                    if provenance != expected_provenance:
+                        raise ValueError("existing unblock task provenance mismatch")
                     finalize(path, "processed", "already materialized", task_id)
                     continue
                 timestamp = utc_now()

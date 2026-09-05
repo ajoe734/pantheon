@@ -1432,7 +1432,10 @@ class IntegrationPlanTests(unittest.TestCase):
             )
 
             self.assertEqual(result.action, "blocked")
-            self.assertEqual(result.unblock_task_id, "INTEGRATION-UNBLOCK-ABC-001-CI-RED")
+            self.assertEqual(
+                result.unblock_task_id,
+                auto_integrator.unblock_task_id(candidate, "ci-red"),
+            )
             requests = list((status_root / auto_integrator.UNBLOCK_REQUEST_INBOX).glob("*.json"))
             self.assertEqual(len(requests), 1)
             request = json.loads(requests[0].read_text(encoding="utf-8"))
@@ -1494,10 +1497,7 @@ class IntegrationPlanTests(unittest.TestCase):
         )
 
         self.assertEqual(result.action, "blocked")
-        self.assertEqual(
-            result.unblock_task_id,
-            "INTEGRATION-UNBLOCK-ABC-001-EXACT-HEAD-MERGE-CONFLICT",
-        )
+        self.assertIsNone(result.unblock_task_id)
         self.assertFalse(any(command[:3] == ["gh", "pr", "merge"] for command in runner.commands))
 
     def test_unblock_request_write_failure_does_not_abort_candidate_result(self) -> None:
@@ -1529,15 +1529,20 @@ class IntegrationPlanTests(unittest.TestCase):
                 execute=True,
             )
 
-        self.assertEqual(result, "INTEGRATION-UNBLOCK-ABC-001-CI-RED")
+        self.assertIsNone(result)
 
     def test_shared_unblock_ids_are_bounded_and_long_reasons_do_not_collide(self) -> None:
         source = "OPS-AUTO-INTEGRATOR-STATUS-AUTHORITY-PREREQUISITE-001"
+        candidate = auto_integrator.TaskCandidate(
+            task_id=source, title="Ready", owner="Codex", reviewer="Claude",
+            branch=f"task/{source}", repository_slug="ajoe734/pantheon",
+            raw_task={"generation": 3, "delivery_binding": {"pr": 44, "head_sha": "a" * 40}},
+        )
         first = auto_integrator.unblock_task_id(
-            source, "review-gate-approval-head-" + "a" * 80
+            candidate, "review-gate-approval-head-" + "a" * 80
         )
         second = auto_integrator.unblock_task_id(
-            source, "review-gate-approval-head-" + "b" * 80
+            candidate, "review-gate-approval-head-" + "b" * 80
         )
 
         self.assertLessEqual(len(first), 96)
@@ -1546,7 +1551,9 @@ class IntegrationPlanTests(unittest.TestCase):
         self.assertEqual(
             first,
             auto_integrator.unblock_contract.task_id(
-                source, "review-gate-approval-head-" + "a" * 80
+                source, "review-gate-approval-head-" + "a" * 80,
+                source_task_generation=3, repository_slug="ajoe734/pantheon",
+                pr=44, head_sha="a" * 40,
             ),
         )
 
@@ -1939,7 +1946,7 @@ class IntegrationPlanTests(unittest.TestCase):
         )
 
         self.assertEqual(result.action, "blocked")
-        self.assertEqual(result.unblock_task_id, "INTEGRATION-UNBLOCK-ABC-001-MISSING-PR")
+        self.assertIsNone(result.unblock_task_id)
         self.assertIn("No open or merged PR found", result.detail)
 
 
@@ -2482,7 +2489,7 @@ class CrossRepoIntegrationTests(unittest.TestCase):
 
         self.assertEqual(result.action, "blocked")
         self.assertIn("repository_mismatch", result.detail)
-        self.assertEqual(result.unblock_task_id, "INTEGRATION-UNBLOCK-FE-001-REPOSITORY-MISMATCH")
+        self.assertIsNone(result.unblock_task_id)
         self.assertFalse(any(cmd[:3] == ["gh", "pr", "merge"] for cmd in runner.commands))
 
     def test_pantheon_task_rejects_execute_plans_pr(self) -> None:
@@ -2532,7 +2539,7 @@ class CrossRepoIntegrationTests(unittest.TestCase):
         )
         self.assertEqual(result.action, "blocked")
         self.assertIn("unrecognized target_repo", result.detail)
-        self.assertEqual(result.unblock_task_id, "INTEGRATION-UNBLOCK-BAD-001-INVALID-REPOSITORY-SCOPE")
+        self.assertIsNone(result.unblock_task_id)
 
     def test_execute_plans_exact_head_mismatch_fails_closed(self) -> None:
         ep_root = Path("/fake/execute-plans")
@@ -2616,10 +2623,7 @@ class CrossRepoIntegrationTests(unittest.TestCase):
         )
         self.assertEqual(result.action, "blocked")
         self.assertIn("does not exist", result.detail)
-        self.assertEqual(
-            result.unblock_task_id,
-            "INTEGRATION-UNBLOCK-FE-001-MISSING-REPOSITORY-CHECKOUT",
-        )
+        self.assertIsNone(result.unblock_task_id)
 
     def test_invalid_git_repository_fails_closed(self) -> None:
         ep_root = Path("/fake/execute-plans")
@@ -2643,10 +2647,7 @@ class CrossRepoIntegrationTests(unittest.TestCase):
         )
         self.assertEqual(result.action, "blocked")
         self.assertIn("is not a git repository", result.detail)
-        self.assertEqual(
-            result.unblock_task_id,
-            "INTEGRATION-UNBLOCK-FE-001-INVALID-GIT-REPOSITORY",
-        )
+        self.assertIsNone(result.unblock_task_id)
 
     def test_missing_git_common_dir_fails_closed(self) -> None:
         candidate = auto_integrator.TaskCandidate(
@@ -2758,10 +2759,7 @@ class CrossRepoIntegrationTests(unittest.TestCase):
         )
         self.assertEqual(result.action, "blocked")
         self.assertIn("repository origin remote mismatch", result.detail)
-        self.assertEqual(
-            result.unblock_task_id,
-            "INTEGRATION-UNBLOCK-FE-001-REPOSITORY-ORIGIN-MISMATCH",
-        )
+        self.assertIsNone(result.unblock_task_id)
 
     def test_command_runner_handles_oserror_cleanly(self) -> None:
         runner = auto_integrator.CommandRunner()
@@ -2832,10 +2830,7 @@ class CrossRepoIntegrationTests(unittest.TestCase):
         )
         self.assertEqual(result.action, "blocked")
         self.assertIn("must be an absolute path", result.detail)
-        self.assertEqual(
-            result.unblock_task_id,
-            "INTEGRATION-UNBLOCK-FE-001-INVALID-REPOSITORY-ROOT",
-        )
+        self.assertIsNone(result.unblock_task_id)
 
     def test_missing_repository_slug_fails_closed(self) -> None:
         ep_root = Path("/fake/execute-plans")
@@ -2859,10 +2854,7 @@ class CrossRepoIntegrationTests(unittest.TestCase):
         )
         self.assertEqual(result.action, "blocked")
         self.assertIn("has no configured GitHub slug", result.detail)
-        self.assertEqual(
-            result.unblock_task_id,
-            "INTEGRATION-UNBLOCK-FE-001-MISSING-REPOSITORY-SLUG",
-        )
+        self.assertIsNone(result.unblock_task_id)
 
     def test_origin_remote_command_failure_fails_closed(self) -> None:
         ep_root = Path("/fake/execute-plans")
@@ -2886,10 +2878,7 @@ class CrossRepoIntegrationTests(unittest.TestCase):
         )
         self.assertEqual(result.action, "blocked")
         self.assertIn("origin remote is unavailable", result.detail)
-        self.assertEqual(
-            result.unblock_task_id,
-            "INTEGRATION-UNBLOCK-FE-001-MISSING-ORIGIN-REMOTE",
-        )
+        self.assertIsNone(result.unblock_task_id)
 
     def test_pr_lookup_failure_fails_closed_without_crashing(self) -> None:
         ep_root = Path("/fake/execute-plans")
@@ -2918,10 +2907,7 @@ class CrossRepoIntegrationTests(unittest.TestCase):
             )
         self.assertEqual(result.action, "blocked")
         self.assertIn("Failed to inspect PR", result.detail)
-        self.assertEqual(
-            result.unblock_task_id,
-            "INTEGRATION-UNBLOCK-FE-001-PR-LOOKUP-FAILED",
-        )
+        self.assertIsNone(result.unblock_task_id)
 
 
 class AutoIntegratorProcessE2ETests(unittest.TestCase):

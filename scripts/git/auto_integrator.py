@@ -1847,8 +1847,17 @@ def final_authority_read_locks(
         ) from exc
 
 
-def unblock_task_id(task_id: str, reason: str) -> str:
-    return unblock_contract.task_id(task_id, reason)
+def unblock_task_id(candidate: TaskCandidate, reason: str) -> str:
+    binding = candidate.raw_task.get("delivery_binding")
+    binding = binding if isinstance(binding, Mapping) else {}
+    return unblock_contract.task_id(
+        candidate.task_id,
+        reason,
+        source_task_generation=int(candidate.raw_task.get("generation") or 1),
+        repository_slug=candidate.repository_slug,
+        pr=int(binding.get("pr") or binding.get("pr_number") or 0),
+        head_sha=str(binding.get("head_sha") or "").lower(),
+    )
 
 
 def _write_unblock_request(root: Path, payload: Mapping[str, Any]) -> None:
@@ -1859,6 +1868,21 @@ def _write_unblock_request(root: Path, payload: Mapping[str, Any]) -> None:
     inbox = root / UNBLOCK_REQUEST_INBOX
     inbox.mkdir(mode=0o700, parents=True, exist_ok=True)
     destination = inbox / f"{request_id}.json"
+    for outcome in ("processed", "rejected"):
+        receipt_path = root / unblock_contract.RECEIPT_ROOT / outcome / destination.name
+        if not receipt_path.is_file() or receipt_path.is_symlink():
+            continue
+        try:
+            receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        if (
+            isinstance(receipt, Mapping)
+            and receipt.get("schema") == unblock_contract.RECEIPT_SCHEMA
+            and receipt.get("request_sha256") == request_id
+            and receipt.get("outcome") == outcome
+        ):
+            return
     if destination.exists():
         if destination.read_bytes() != encoded + b"\n":
             raise AutoIntegratorError("content-addressed unblock request collision")
@@ -1893,8 +1917,8 @@ def open_unblock_task(
     *,
     root: Path,
     execute: bool,
-) -> str:
-    task_id = unblock_task_id(candidate.task_id, reason)
+) -> str | None:
+    task_id = unblock_task_id(candidate, reason)
     if not execute:
         return task_id
     owner = settings.unblock_owner or candidate.owner
@@ -1906,14 +1930,14 @@ def open_unblock_task(
             "execute authority did not provide an immutable runtime binding",
             file=sys.stderr,
         )
-        return task_id
+        return None
     status_identity_sha256 = str(settings.status_identity_sha256 or "").lower()
     if not re.fullmatch(r"[0-9a-f]{64}", status_identity_sha256):
         print(
             "auto-integrator: unblock request not published: canonical status identity is missing",
             file=sys.stderr,
         )
-        return task_id
+        return None
     binding = candidate.raw_task.get("delivery_binding")
     binding = binding if isinstance(binding, Mapping) else {}
     pr_number = binding.get("pr") or binding.get("pr_number")
@@ -1924,7 +1948,7 @@ def open_unblock_task(
             "canonical delivery binding lacks exact PR/head",
             file=sys.stderr,
         )
-        return task_id
+        return None
     try:
         _write_unblock_request(
             root,
@@ -1951,6 +1975,7 @@ def open_unblock_task(
             f"auto-integrator: unblock request publication failed for {candidate.task_id}: {exc}",
             file=sys.stderr,
         )
+        return None
     return task_id
 
 
