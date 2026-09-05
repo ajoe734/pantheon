@@ -483,10 +483,6 @@ class ReadSurfacePorts:
         return self.research_knowledge_source.list_strategy_specs(**kwargs)
 
     def list_strategy_summaries(self, **kwargs: Any) -> List[Dict[str, Any]]:
-        import sys
-        mod = sys.modules.get("services.control_plane.bff.main") or sys.modules.get("main")
-        if mod and hasattr(mod, "_list_strategy_summaries"):
-            return mod._list_strategy_summaries()
         return self.list_strategy_specs(**kwargs)
 
     def list_strategies(self, **kwargs: Any) -> List[Dict[str, Any]]:

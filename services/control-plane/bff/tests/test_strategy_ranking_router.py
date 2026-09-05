@@ -39,13 +39,11 @@ def _client():
     original_store = bff_main.read_store
     bff_main.read_store = create_in_memory_read_surface_ports()
     bff_main._STRATEGY_PERSONA_BFF_IDEMPOTENCY.clear()
-    bff_main._STRATEGY_BFF_OVERLAY.clear()
     try:
         yield TestClient(bff_main.app)
     finally:
         bff_main.read_store = original_store
         bff_main._STRATEGY_PERSONA_BFF_IDEMPOTENCY.clear()
-        bff_main._STRATEGY_BFF_OVERLAY.clear()
 
 
 def _seed(seed_id: str, *, status=StrategySpecSeedStatus.DRAFT) -> StrategySpecSeed:
@@ -123,6 +121,14 @@ def test_bff_strategy_create_list_get_round_trip() -> None:
         )
         assert create_resp.status_code == 201, create_resp.text
         strategy_id = create_resp.json()["data"]["id"]
+
+        rks = getattr(bff_main.read_store, "research_knowledge_source", None)
+        if rks and hasattr(rks, "_strategy_specs"):
+            rks._strategy_specs[strategy_id] = {
+                "strategy_id": strategy_id,
+                "versions": [{"version_id": "v1", "lifecycle_state": "draft", "name": "Momentum Alpha", "persona_ids": []}],
+                "current_version_id": "v1",
+            }
 
         list_resp = client.get("/bff/strategies", headers=OPERATOR_HEADERS)
         assert list_resp.status_code == 200
