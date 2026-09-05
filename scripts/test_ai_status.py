@@ -5914,6 +5914,114 @@ class ReviewApprovedWorkflowTests(unittest.TestCase):
             },
         )
 
+    def test_reconcile_merged_done_reuses_matching_immutable_archive(self) -> None:
+        active = self.state["tasks"][0]
+        active["status"] = "blocked"
+        active["generation"] = 1
+        delivery = {
+            "reconciled_from_merged_evidence": True,
+            "repository_id": "pantheon",
+            "repository_slug": "ajoe734/pantheon",
+            "commit": "a" * 40,
+            "review_evidence": {"owner": "Codex", "reviewer": "Claude"},
+        }
+        archived_task = deepcopy(active)
+        archived_task.update(
+            {
+                "status": "done",
+                "terminal_outcome": "completed",
+                "reviewer": "Claude2",
+                "delivery": {
+                    **deepcopy(delivery),
+                    "review_evidence": {
+                        "owner": "Codex",
+                        "reviewer": "Claude",
+                        "canonical_reviewer": "Claude2",
+                    },
+                },
+            }
+        )
+        snapshot = {
+            "version": 1,
+            "task_id": "REG-002",
+            "archived_at": "2026-07-20T09:57:01Z",
+            "terminal_status": "done",
+            "terminal_outcome": "completed",
+            "task": archived_task,
+            "handoffs": [],
+            "blockers": [],
+        }
+        original = ai_status._canonical_json_sha256(snapshot)
+        with (
+            mock.patch.dict(os.environ, {"AI_NAME": "Human/Ops"}, clear=False),
+            mock.patch.object(ai_status, "validate_merged_done_evidence", return_value=delivery),
+            mock.patch.object(ai_status, "validate_protected_closeout_transition", return_value=None),
+            mock.patch.object(ai_status, "load_archived_snapshot", return_value=snapshot),
+            mock.patch.object(ai_status, "_verified_reviewer_reassignment") as reassignment,
+            ai_status.buffer_activity_events() as events,
+        ):
+            _command_reconcile_merged_done(
+                self.state,
+                ["REG-002", "Recover stale active row."],
+            )
+
+        pending = self.state[ai_status.STATUS_ARCHIVE_OUTBOX_KEY]
+        self.assertEqual(pending["snapshots"], [snapshot])
+        self.assertEqual(ai_status._canonical_json_sha256(pending["snapshots"][0]), original)
+        self.assertEqual(
+            self.state[ai_status.TERMINAL_FACTS_KEY]["REG-002"]["recorded_at"],
+            "2026-07-20T09:57:01Z",
+        )
+        reassignment.assert_called_once()
+        self.assertEqual(
+            events[-1]["recovered_immutable_archive"]["snapshot_sha256"],
+            original,
+        )
+
+    def test_reconcile_merged_done_rejects_changed_scope_against_archive(self) -> None:
+        active = self.state["tasks"][0]
+        active.update({"status": "blocked", "generation": 1})
+        archived_task = deepcopy(active)
+        archived_task.update(
+            {
+                "title": "Different original scope",
+                "status": "done",
+                "terminal_outcome": "completed",
+                "delivery": {
+                    "repository_id": "pantheon",
+                    "repository_slug": "ajoe734/pantheon",
+                    "commit": "a" * 40,
+                    "review_evidence": {"owner": "Codex", "reviewer": "Claude"},
+                },
+            }
+        )
+        snapshot = {
+            "version": 1,
+            "task_id": "REG-002",
+            "archived_at": "2026-07-20T09:57:01Z",
+            "terminal_status": "done",
+            "terminal_outcome": "completed",
+            "task": archived_task,
+            "handoffs": [],
+            "blockers": [],
+        }
+        before = deepcopy(self.state)
+        delivery = {
+            "repository_id": "pantheon",
+            "repository_slug": "ajoe734/pantheon",
+            "commit": "a" * 40,
+            "review_evidence": {"owner": "Codex", "reviewer": "Claude"},
+        }
+        with (
+            mock.patch.dict(os.environ, {"AI_NAME": "Human/Ops"}, clear=False),
+            mock.patch.object(ai_status, "validate_merged_done_evidence", return_value=delivery),
+            mock.patch.object(ai_status, "validate_protected_closeout_transition", return_value=None),
+            mock.patch.object(ai_status, "load_archived_snapshot", return_value=snapshot),
+            self.assertRaisesRegex(RuntimeError, "existing archive snapshot conflicts"),
+        ):
+            _command_reconcile_merged_done(self.state, ["REG-002", "Must fail."])
+        self.assertEqual(self.state, before)
+
     def test_reconcile_merged_done_protected_failure_is_non_mutating(self) -> None:
         task = self.state["tasks"][0]
         task["status"] = "review_approved"

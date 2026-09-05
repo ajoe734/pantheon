@@ -6353,6 +6353,133 @@ def validate_merged_done_evidence(task: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _validated_same_delivery_archive_recovery(
+    active_task: Mapping[str, Any],
+    *,
+    delivery: Mapping[str, Any],
+    snapshot: Mapping[str, Any],
+) -> dict[str, Any]:
+    """Admit one stale resurrection without changing its completed archive.
+
+    Merged-evidence validation has already proved ``delivery``.  This helper
+    only answers whether an existing completed snapshot is the same original
+    task generation, scope and delivery.  Any uncertainty remains the ordinary
+    archive conflict handled by ``archive_terminal_task_from_state``.
+    """
+
+    task_id = str(active_task.get("id") or "").strip()
+    try:
+        archived = _validate_status_archive_snapshot(deepcopy(dict(snapshot)))
+    except RuntimeError as exc:
+        raise RuntimeError(
+            f"existing archive snapshot conflicts with terminal task: {task_id}"
+        ) from exc
+    archived_task = archived["task"]
+    if (
+        archived.get("terminal_outcome") != "completed"
+        or str(archived.get("task_id") or "") != task_id
+        or task_assignment_generation(active_task)
+        != task_assignment_generation(archived_task)
+    ):
+        raise RuntimeError(
+            f"existing archive snapshot conflicts with terminal task: {task_id}"
+        )
+
+    scope_fields = (
+        "title",
+        "phase",
+        "depends_on",
+        "dependency_tracks",
+        "artifacts",
+        "acceptance",
+        "target_repo",
+        "task_class",
+    )
+    if any(
+        deepcopy(active_task.get(field)) != deepcopy(archived_task.get(field))
+        for field in scope_fields
+    ):
+        raise RuntimeError(
+            f"existing archive snapshot conflicts with terminal task: {task_id}"
+        )
+
+    archived_delivery = archived_task.get("delivery")
+    if not isinstance(archived_delivery, Mapping) or any(
+        str(archived_delivery.get(field) or "").strip()
+        != str(delivery.get(field) or "").strip()
+        for field in ("repository_id", "repository_slug", "commit")
+    ):
+        raise RuntimeError(
+            f"existing archive snapshot conflicts with terminal task: {task_id}"
+        )
+
+    review_evidence = archived_delivery.get("review_evidence")
+    current_review = delivery.get("review_evidence")
+    if not isinstance(review_evidence, Mapping) or not isinstance(current_review, Mapping):
+        raise RuntimeError(
+            f"existing archive snapshot conflicts with terminal task: {task_id}"
+        )
+    evidence_owner = canonical_agent_name(current_review.get("owner"))
+    evidence_reviewer = canonical_agent_name(current_review.get("reviewer"))
+    if (
+        canonical_agent_name(review_evidence.get("owner")) != evidence_owner
+        or canonical_agent_name(review_evidence.get("reviewer")) != evidence_reviewer
+    ):
+        raise RuntimeError(
+            f"existing archive snapshot conflicts with terminal task: {task_id}"
+        )
+
+    archive_owner = canonical_agent_name(archived_task.get("owner"))
+    archive_reviewer = canonical_agent_name(archived_task.get("reviewer"))
+    if evidence_owner != archive_owner:
+        _verified_owner_reassignment(
+            dict(active_task),
+            evidence_owner=evidence_owner,
+            current_owner=archive_owner,
+        )
+    if evidence_reviewer != archive_reviewer:
+        _verified_reviewer_reassignment(
+            dict(active_task),
+            evidence_reviewer=evidence_reviewer,
+            current_reviewer=archive_reviewer,
+        )
+    return deepcopy(dict(archived))
+
+
+def _queue_existing_archive_snapshot(
+    state: dict[str, Any], snapshot: Mapping[str, Any]
+) -> None:
+    """Queue an already-validated immutable snapshot for normal readback."""
+
+    archived = deepcopy(dict(snapshot))
+    record_terminal_fact(
+        state,
+        archived["task"],
+        recorded_at=str(archived["archived_at"]),
+    )
+    pending = state.get(STATUS_ARCHIVE_OUTBOX_KEY)
+    snapshots: list[dict[str, Any]] = []
+    if pending not in (None, {}, []):
+        snapshots = list(
+            task_archive_module.validate_status_archive_outbox(
+                pending,
+                expected_archive_root=_archive_root_identity(),
+            )["snapshots"]
+        )
+    same_task = [item for item in snapshots if item["task_id"] == archived["task_id"]]
+    if same_task and any(
+        _canonical_json_sha256(item) != _canonical_json_sha256(archived)
+        for item in same_task
+    ):
+        raise RuntimeError(f"archive outbox payload conflict: {archived['task_id']}")
+    if not same_task:
+        snapshots.append(archived)
+    state[STATUS_ARCHIVE_OUTBOX_KEY] = task_archive_module.status_archive_outbox_payload(
+        snapshots,
+        archive_root=_archive_root_identity(),
+    )
+
+
 def command_reconcile_merged_done(state: dict[str, Any], args: list[str]) -> None:
     if len(args) < 2:
         raise SystemExit("Usage: reconcile_merged_done <task-id> <message>")
@@ -6375,6 +6502,14 @@ def command_reconcile_merged_done(state: dict[str, Any], args: list[str]) -> Non
         "reconcile_merged_done", task
     )
     delivery = deepcopy(preflight["delivery"])
+    existing_archive = load_archived_snapshot(task_id)
+    recovered_archive = None
+    if existing_archive is not None:
+        recovered_archive = _validated_same_delivery_archive_recovery(
+            task,
+            delivery=delivery,
+            snapshot=existing_archive,
+        )
     timestamp = iso_now()
     delivery["recorded_at"] = timestamp
     verdict_ref = deepcopy(preflight.get("protected_closeout_verdict"))
@@ -6388,7 +6523,17 @@ def command_reconcile_merged_done(state: dict[str, Any], args: list[str]) -> Non
     task.pop("waiting_for", None)
     mark_blockers_resolved(state, task_id)
     mark_handoffs_done(state, task_id)
-    archive_terminal_task_from_state(state, task, archived_at=timestamp)
+    if recovered_archive is not None:
+        # The historical snapshot is the durable terminal row.  Put that exact
+        # task back into the normal archive outbox path so readback, receipt,
+        # active-row removal and the authoritative state commit retain their
+        # existing ordering.  Fresh reconciliation evidence belongs in the
+        # append-only activity audit, never in the immutable archive bytes.
+        task.clear()
+        task.update(deepcopy(recovered_archive["task"]))
+        _queue_existing_archive_snapshot(state, recovered_archive)
+    else:
+        archive_terminal_task_from_state(state, task, archived_at=timestamp)
     append_log(
         {
             "ts": timestamp,
@@ -6397,6 +6542,16 @@ def command_reconcile_merged_done(state: dict[str, Any], args: list[str]) -> Non
             "task_id": task_id,
             "message": message,
             "delivery": delivery,
+            **(
+                {
+                    "recovered_immutable_archive": {
+                        "archived_at": str(recovered_archive["archived_at"]),
+                        "snapshot_sha256": _canonical_json_sha256(recovered_archive),
+                    }
+                }
+                if recovered_archive is not None
+                else {}
+            ),
         }
     )
 
