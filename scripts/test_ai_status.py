@@ -5914,6 +5914,210 @@ class ReviewApprovedWorkflowTests(unittest.TestCase):
             },
         )
 
+    def test_reconcile_merged_done_reuses_matching_immutable_archive(self) -> None:
+        active = self.state["tasks"][0]
+        active["status"] = "blocked"
+        active["generation"] = 1
+        delivery = {
+            "reconciled_from_merged_evidence": True,
+            "repository_id": "pantheon",
+            "repository_slug": "ajoe734/pantheon",
+            "commit": "a" * 40,
+            "review_evidence": {"owner": "Codex", "reviewer": "Claude"},
+        }
+        archived_task = deepcopy(active)
+        archived_task.update(
+            {
+                "status": "done",
+                "terminal_outcome": "completed",
+                "reviewer": "Claude2",
+                "delivery": {
+                    **deepcopy(delivery),
+                    "review_evidence": {
+                        "owner": "Codex",
+                        "reviewer": "Claude",
+                        "canonical_reviewer": "Claude2",
+                    },
+                },
+            }
+        )
+        snapshot = {
+            "version": 1,
+            "task_id": "REG-002",
+            "archived_at": "2026-07-20T09:57:01Z",
+            "terminal_status": "done",
+            "terminal_outcome": "completed",
+            "task": archived_task,
+            "handoffs": [],
+            "blockers": [],
+        }
+        original = ai_status._canonical_json_sha256(snapshot)
+        with (
+            mock.patch.dict(os.environ, {"AI_NAME": "Human/Ops"}, clear=False),
+            mock.patch.object(ai_status, "validate_merged_done_evidence", return_value=delivery),
+            mock.patch.object(
+                ai_status, "validate_protected_closeout_transition", return_value=None
+            ) as protected,
+            mock.patch.object(ai_status, "load_archived_snapshot", return_value=snapshot),
+            mock.patch.object(ai_status, "_verified_reviewer_reassignment") as reassignment,
+            ai_status.buffer_activity_events() as events,
+        ):
+            _command_reconcile_merged_done(
+                self.state,
+                ["REG-002", "Recover stale active row."],
+            )
+
+        pending = self.state[ai_status.STATUS_ARCHIVE_OUTBOX_KEY]
+        self.assertEqual(pending["snapshots"], [snapshot])
+        self.assertEqual(ai_status._canonical_json_sha256(pending["snapshots"][0]), original)
+        self.assertEqual(
+            self.state[ai_status.TERMINAL_FACTS_KEY]["REG-002"]["recorded_at"],
+            "2026-07-20T09:57:01Z",
+        )
+        reassignment.assert_called_once()
+        self.assertEqual(
+            events[-1]["recovered_immutable_archive"]["snapshot_sha256"],
+            original,
+        )
+
+    def test_reconcile_merged_done_rejects_changed_scope_against_archive(self) -> None:
+        active = self.state["tasks"][0]
+        active.update({"status": "blocked", "generation": 1})
+        archived_task = deepcopy(active)
+        archived_task.update(
+            {
+                "title": "Different original scope",
+                "status": "done",
+                "terminal_outcome": "completed",
+                "delivery": {
+                    "repository_id": "pantheon",
+                    "repository_slug": "ajoe734/pantheon",
+                    "commit": "a" * 40,
+                    "review_evidence": {"owner": "Codex", "reviewer": "Claude"},
+                },
+            }
+        )
+        snapshot = {
+            "version": 1,
+            "task_id": "REG-002",
+            "archived_at": "2026-07-20T09:57:01Z",
+            "terminal_status": "done",
+            "terminal_outcome": "completed",
+            "task": archived_task,
+            "handoffs": [],
+            "blockers": [],
+        }
+        before = deepcopy(self.state)
+        delivery = {
+            "repository_id": "pantheon",
+            "repository_slug": "ajoe734/pantheon",
+            "commit": "a" * 40,
+            "review_evidence": {"owner": "Codex", "reviewer": "Claude"},
+        }
+        with (
+            mock.patch.dict(os.environ, {"AI_NAME": "Human/Ops"}, clear=False),
+            mock.patch.object(ai_status, "validate_merged_done_evidence", return_value=delivery),
+            mock.patch.object(
+                ai_status,
+                "validate_protected_closeout_transition",
+                return_value=None,
+            ) as protected,
+            mock.patch.object(ai_status, "load_archived_snapshot", return_value=snapshot),
+            self.assertRaisesRegex(RuntimeError, "existing archive snapshot conflicts"),
+        ):
+            _command_reconcile_merged_done(self.state, ["REG-002", "Must fail."])
+        self.assertEqual(self.state, before)
+        protected.assert_not_called()
+
+    def test_same_delivery_archive_recovery_rejects_identity_mismatches(self) -> None:
+        active = deepcopy(self.state["tasks"][0])
+        active["generation"] = 1
+        delivery = {
+            "repository_id": "pantheon",
+            "repository_slug": "ajoe734/pantheon",
+            "commit": "a" * 40,
+            "review_evidence": {"owner": "Codex", "reviewer": "Claude"},
+        }
+        terminal = deepcopy(active)
+        terminal.update(
+            {
+                "status": "done",
+                "terminal_outcome": "completed",
+                "delivery": deepcopy(delivery),
+            }
+        )
+
+        def snapshot(task: Mapping[str, Any]) -> dict[str, Any]:
+            return {
+                "version": 1,
+                "task_id": "REG-002",
+                "archived_at": "2026-07-20T09:57:01Z",
+                "terminal_status": "done",
+                "terminal_outcome": "completed",
+                "task": deepcopy(dict(task)),
+                "handoffs": [],
+                "blockers": [],
+            }
+
+        cases = {
+            "generation": lambda task: task.update(generation=2),
+            "repository": lambda task: task["delivery"].update(repository_slug="other/repo"),
+            "commit": lambda task: task["delivery"].update(commit="b" * 40),
+            "review evidence": lambda task: task["delivery"].update(
+                review_evidence={"owner": "Codex", "reviewer": "Claude2"}
+            ),
+        }
+        for label, mutate in cases.items():
+            with self.subTest(label=label):
+                candidate = deepcopy(terminal)
+                mutate(candidate)
+                with self.assertRaisesRegex(RuntimeError, "existing archive snapshot conflicts"):
+                    ai_status._validated_same_delivery_archive_recovery(
+                        active,
+                        delivery=delivery,
+                        snapshot=snapshot(candidate),
+                    )
+
+    def test_same_delivery_archive_recovery_rejects_unaudited_reviewer_drift(self) -> None:
+        active = deepcopy(self.state["tasks"][0])
+        delivery = {
+            "repository_id": "pantheon",
+            "repository_slug": "ajoe734/pantheon",
+            "commit": "a" * 40,
+            "review_evidence": {"owner": "Codex", "reviewer": "Claude"},
+        }
+        terminal = {
+            **deepcopy(active),
+            "status": "done",
+            "terminal_outcome": "completed",
+            "reviewer": "Claude2",
+            "delivery": {
+                **deepcopy(delivery),
+                "review_evidence": {"owner": "Codex", "reviewer": "Claude"},
+            },
+        }
+        snapshot = {
+            "version": 1,
+            "task_id": "REG-002",
+            "archived_at": "2026-07-20T09:57:01Z",
+            "terminal_status": "done",
+            "terminal_outcome": "completed",
+            "task": terminal,
+            "handoffs": [],
+            "blockers": [],
+        }
+        with mock.patch.object(
+            ai_status,
+            "_verified_reviewer_reassignment",
+            side_effect=SystemExit("Cannot verify reviewer reassignment"),
+        ):
+            with self.assertRaisesRegex(SystemExit, "Cannot verify reviewer reassignment"):
+                ai_status._validated_same_delivery_archive_recovery(
+                    active,
+                    delivery=delivery,
+                    snapshot=snapshot,
+                )
+
     def test_reconcile_merged_done_protected_failure_is_non_mutating(self) -> None:
         task = self.state["tasks"][0]
         task["status"] = "review_approved"
@@ -13837,6 +14041,83 @@ class CanonicalTaskStateAndActivityRecoveryTests(unittest.TestCase):
             receipt["index_sha256"],
             ai_status._canonical_json_sha256(index),
         )
+
+    def test_existing_archive_recovery_preserves_bytes_and_emits_receipt(self) -> None:
+        state = self._fixture_state()
+        active = state["tasks"][0]
+        terminal = {
+            **deepcopy(active),
+            "status": "done",
+            "terminal_outcome": "completed",
+        }
+        snapshot = {
+            "version": 1,
+            "task_id": "LOCK-ONE",
+            "archived_at": "2026-07-14T00:03:00Z",
+            "terminal_status": "done",
+            "terminal_outcome": "completed",
+            "task": terminal,
+            "handoffs": [],
+            "blockers": [],
+        }
+        archive_path = self.root / "ai-task-archive/tasks/LOCK-ONE.json"
+        archive_path.parent.mkdir(parents=True, exist_ok=True)
+        archive_path.write_text(
+            json.dumps(snapshot, indent=2, ensure_ascii=False) + "\n",
+            encoding="utf-8",
+        )
+        original_bytes = archive_path.read_bytes()
+        active.clear()
+        active.update(deepcopy(terminal))
+        ai_status._queue_existing_archive_snapshot(state, snapshot)
+        self._write_state(state)
+
+        self.assertTrue(ai_status.recover_status_archive_outbox(state))
+        self.assertEqual(archive_path.read_bytes(), original_bytes)
+        self.assertIsNone(ai_status.get_task(state, "LOCK-ONE"))
+        self.assertIn("LOCK-ONE", state[ai_status.TERMINAL_FACTS_KEY])
+        receipt = state[ai_status.ARCHIVE_RECEIPTS_KEY]["LOCK-ONE"]
+        self.assertEqual(
+            receipt["snapshot_sha256"],
+            ai_status._canonical_json_sha256(snapshot),
+        )
+        self.assertFalse(ai_status.recover_status_archive_outbox(state))
+
+    def test_existing_archive_recovery_rejects_mutated_readback_atomically(self) -> None:
+        state = self._fixture_state()
+        terminal = {
+            **deepcopy(state["tasks"][0]),
+            "status": "done",
+            "terminal_outcome": "completed",
+        }
+        snapshot = {
+            "version": 1,
+            "task_id": "LOCK-ONE",
+            "archived_at": "2026-07-14T00:03:00Z",
+            "terminal_status": "done",
+            "terminal_outcome": "completed",
+            "task": terminal,
+            "handoffs": [],
+            "blockers": [],
+        }
+        archive_path = self.root / "ai-task-archive/tasks/LOCK-ONE.json"
+        archive_path.parent.mkdir(parents=True, exist_ok=True)
+        archive_path.write_text(
+            json.dumps(snapshot, indent=2) + "\n",
+            encoding="utf-8",
+        )
+        state["tasks"][0] = deepcopy(terminal)
+        ai_status._queue_existing_archive_snapshot(state, snapshot)
+        before = deepcopy(state)
+        mutated = deepcopy(snapshot)
+        mutated["task"]["title"] = "mutated after validation"
+        archive_path.write_text(json.dumps(mutated, indent=2) + "\n", encoding="utf-8")
+
+        with self.assertRaisesRegex(RuntimeError, "outbox readback mismatch"):
+            ai_status.recover_status_archive_outbox(state)
+        self.assertEqual(state, before)
+        self.assertIsNotNone(ai_status.get_task(state, "LOCK-ONE"))
+        self.assertNotIn("LOCK-ONE", state.get(ai_status.ARCHIVE_RECEIPTS_KEY, {}))
 
     def test_archive_reconcile_imports_only_matching_terminal_fact(self) -> None:
         state = self._fixture_state()

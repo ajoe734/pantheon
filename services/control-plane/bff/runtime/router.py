@@ -1181,28 +1181,7 @@ def create_runtime_router(
             route="/bff/runtimes/{runtime_id}/actions/{action_id}",
             replacement="/bff/actions/runtime/{runtime_id}/{action_id}",
         )
-        identity = _extract_identity(authorization)
-        _require_operator_role(identity)
-        resolved_key = _resolve_final_idempotency_key(idempotency_key, x_idempotency_key)
-        payload: Dict[str, Any] = {}
-        try:
-            payload = await request.json()
-        except Exception:
-            pass
-        clean_id = runtime_id.strip()
-        binding = read_store.get_runtime_binding_by_runtime_id(clean_id)
-        if not binding:
-            binding = read_store.get_runtime_binding(clean_id)
-        if not binding:
-            raise _bff_error(
-                404,
-                ErrorCode.RESOURCE_NOT_FOUND,
-                "Runtime not found",
-                f"Runtime {runtime_id} does not exist",
-            )
-        return _gov_bff_action_command(
-            ObjectType.RUNTIME_BINDING, clean_id, action_id, resolved_key, identity, payload, CommandType.RUNTIME_ACTION
-        )
+
 
     @router.get("/bff/v5/execution/persona-health")
     async def bff_v5_execution_persona_health(

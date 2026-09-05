@@ -1,0 +1,43 @@
+{
+  "schema_version": 1,
+  "task_id": "OPS-MERGED-ARCHIVE-RECONCILIATION-PREREQUISITE-001",
+  "owner": "Codex",
+  "reviewer": "Claude",
+  "delivery_class": "development_tooling_functional_source",
+  "scope": {
+    "ingress": "reconcile_merged_done",
+    "new_cli": false,
+    "new_task_authority": false,
+    "archive_rewrite": false,
+    "live_recovery_performed": false
+  },
+  "verified_behavior": [
+    "matching immutable completed archive is reused byte-for-byte",
+    "normalized generation, scope, repository and exact commit are matched",
+    "owner and reviewer drift require canonical audited reassignment evidence",
+    "existing archive outbox produces terminal fact and readback receipt",
+    "active row is removed only after snapshot and index readback",
+    "retry is idempotent and archive mutation fails atomically",
+    "nonmatching archive collisions remain fail-closed"
+  ],
+  "validation": [
+    {
+      "command": "python3 -m unittest scripts.test_ai_status.ReviewApprovedWorkflowTests scripts.test_ai_status.CanonicalTaskStateAndActivityRecoveryTests",
+      "result": "passed",
+      "tests": 153
+    },
+    {
+      "command": "python3 scripts/test_ai_status.py",
+      "result": "passed",
+      "tests": 393
+    },
+    {
+      "command": "python -m pytest -q .orchestrator/rewrite/test_task_state_store.py",
+      "result": "passed",
+      "tests": 24,
+      "environment": "task-local temporary virtualenv with pytest 9.1.1"
+    }
+  ],
+  "promotion_boundary": "Source delivery alone does not repair PPL-ALLOC-007. Human/Ops must promote the exact reviewed command runtime, rerun governed reconcile_merged_done, and verify immutable archive bytes, terminal fact, receipt, dependency readiness, and active-queue absence.",
+  "excluded_incident": "TJ-E2E-012 active generation 2 does not match its older archive and remains rejected."
+}

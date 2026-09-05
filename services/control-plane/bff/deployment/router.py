@@ -740,26 +740,7 @@ def create_deployment_router(
             route="/bff/deployments/{deployment_id}/actions/{action_id}",
             replacement="/bff/actions/deployment/{deployment_id}/{action_id}",
         )
-        identity = extract_identity(authorization)
-        require_operator_role(identity)
-        resolved_key = resolve_final_idempotency_key(idempotency_key, x_idempotency_key)
-        payload: Dict[str, Any] = {}
-        try:
-            payload = await request.json()
-        except Exception:
-            pass
-        clean_id = deployment_id.strip()
-        plan = service.queries.get_deployment_plan(clean_id)
-        if not plan:
-            raise bff_error(
-                404,
-                ErrorCode.RESOURCE_NOT_FOUND,
-                "Deployment not found",
-                f"Deployment plan {deployment_id} does not exist",
-            )
-        return gov_bff_action_command(
-            ObjectType.DEPLOYMENT, clean_id, action_id, resolved_key, identity, payload, CommandType.DEPLOYMENT_ACTION
-        )
+
 
     @router.post("/bff/deployments", status_code=201)
     async def sem_create_deployment_command(
