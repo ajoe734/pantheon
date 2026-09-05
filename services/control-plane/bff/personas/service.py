@@ -222,12 +222,43 @@ read_store = None
 # missing required configuration fails startup closed, never deferred to first write.
 _ranking_write_owner: Optional[Any] = None
 
+_current_persona_service: ContextVar[Optional[Any]] = ContextVar(
+    "_current_persona_service", default=None
+)
+
+
+def _get_active_read_store(explicit: Optional[Any] = None) -> Any:
+    if explicit is not None:
+        return explicit
+    svc = _current_persona_service.get()
+    if svc is not None:
+        return svc.get_read_store()
+    return read_store
+
+
+def _get_active_command_store(explicit: Optional[Any] = None) -> Any:
+    if explicit is not None:
+        return explicit
+    svc = _current_persona_service.get()
+    if svc is not None:
+        return svc.get_command_store()
+    return command_store
+
+
+def _get_active_ranking_write_owner(explicit: Optional[Any] = None) -> Any:
+    if explicit is not None:
+        return explicit
+    svc = _current_persona_service.get()
+    if svc is not None:
+        return svc.get_ranking_write_owner()
+    return _ranking_write_owner
+
 
 def _get_ranking_write_owner() -> Any:
-    global _ranking_write_owner
-    if _ranking_write_owner is None:
+    owner = _get_active_ranking_write_owner()
+    if owner is None:
         raise RuntimeError("Rankings write-owner port is not configured at startup")
-    return _ranking_write_owner
+    return owner
 
 class _DefaultCommandStore:
     def _get_all_commands(self) -> List[Dict[str, Any]]:
@@ -395,7 +426,7 @@ def _ppl_alloc_009_paper_eligibility_context(
         metadata.get("runtime_binding_id") or ""
     ).strip()
     runtime_matches = []
-    for runtime in read_store.list_runtime_bindings():
+    for runtime in _get_active_read_store().list_runtime_bindings():
         if not isinstance(runtime, dict):
             continue
         runtime_binding_id = str(
@@ -463,7 +494,7 @@ def _ppl_alloc_009_paper_eligibility_context(
     ).strip()
     if not plan_id:
         missing.append("plan_id")
-    plan = read_store.get_deployment_plan(plan_id) if plan_id else None
+    plan = _get_active_read_store().get_deployment_plan(plan_id) if plan_id else None
     if not isinstance(plan, dict):
         missing.append("deployment_plan")
     strategy_id = str(
@@ -811,7 +842,7 @@ def _strategy_persona_action_command(
         "audit_action": audit_action.to_dict(),
     }
     audit_record["foundation"] = foundation_ctx
-    command_store.submit_command(
+    _get_active_command_store().submit_command(
         command_id=command_id,
         command_type=command_type,
         target=target,
@@ -1138,7 +1169,7 @@ def _materialize_terminal_persona_provisioning_ledger(
         _append_persona_reconcile_diagnostic(diagnostics, "provisioning_ledger")
         return "provisioning"
 
-    read_store.update_persona(
+    _get_active_read_store().update_persona(
         persona_id,
         lifecycle_state=new_state,
         metadata=metadata_updates,
@@ -1234,7 +1265,7 @@ def _evaluate_persona_provisioning_status(
             if metadata.get(key) != value
         }
         if changed_updates:
-            read_store.update_persona(
+            _get_active_read_store().update_persona(
                 persona_id,
                 lifecycle_state="provisioning_failed",
                 metadata=changed_updates,
@@ -1434,7 +1465,7 @@ def _evaluate_persona_provisioning_status(
             owner_sessions = (
                 all_monitoring_sessions
                 if all_monitoring_sessions is not None
-                else read_store.list_authoritative_paper_runtime_monitoring_sessions()
+                else _get_active_read_store().list_authoritative_paper_runtime_monitoring_sessions()
             )
         except Exception as exc:
             log.warning(
@@ -1757,7 +1788,7 @@ def _evaluate_persona_provisioning_status(
                     )
 
     if new_state != current_state or metadata_updates:
-        read_store.update_persona(
+        _get_active_read_store().update_persona(
             persona_id,
             lifecycle_state=new_state,
             metadata=metadata_updates,
@@ -1930,7 +1961,7 @@ def _project_persona_dto(
 
 # --- _strategy_routed_persona_count ---
 def _strategy_routed_persona_count(strategy_id: str) -> int:
-    detail = read_store.get_strategy_spec_detail(strategy_id, version_selector="current")
+    detail = _get_active_read_store().get_strategy_spec_detail(strategy_id, version_selector="current")
     if not detail:
         return 0
     persona_ids = detail.get("persona_ids") or []
@@ -1941,14 +1972,14 @@ def _strategy_routed_persona_count(strategy_id: str) -> int:
 
 # --- _routed_strategies_for_persona ---
 def _routed_strategies_for_persona(persona_id: str) -> int:
-    items = read_store.list_strategy_specs(persona_id=persona_id) or []
+    items = _get_active_read_store().list_strategy_specs(persona_id=persona_id) or []
     return len(items)
 
 
 # --- _list_persona_records ---
 def _list_persona_records(tenant_id: Optional[str] = None) -> List[Dict[str, Any]]:
     """Combine canonical personas with durable store and overlay records created via /bff."""
-    items = list(read_store.list_personas() or [])
+    items = list(_get_active_read_store().list_personas() or [])
     records_by_id: Dict[str, Dict[str, Any]] = {}
     for item in items:
         if not isinstance(item, dict):
@@ -2059,7 +2090,7 @@ def _get_persona_directory_snapshot(
             records_by_id[pid] = raw
 
     try:
-        defaults = read_store.list_personas(include_market_persona_defaults=True) or []
+        defaults = _get_active_read_store().list_personas(include_market_persona_defaults=True) or []
     except Exception:
         defaults = []
 
@@ -2139,7 +2170,7 @@ def _list_strategy_spec_match_candidates(
 ) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
     items: List[Dict[str, Any]] = []
     try:
-        summaries = read_store.list_strategy_specs(
+        summaries = _get_active_read_store().list_strategy_specs(
             include_retired=include_retired,
             include_fixture_pack=False,
         ) or []
@@ -2147,14 +2178,14 @@ def _list_strategy_spec_match_candidates(
             strategy_id = str(summary.get("strategy_id") or summary.get("id") or "").strip()
             if not strategy_id:
                 continue
-            detail = read_store.get_strategy_spec_detail(strategy_id, version_selector="current")
+            detail = _get_active_read_store().get_strategy_spec_detail(strategy_id, version_selector="current")
             if detail:
                 items.append(detail)
     except Exception as exc:  # pragma: no cover - defensive read composition.
         log.warning("StrategySpec read surface unavailable for persona discovery: %s", exc)
         return [], {
             "status": "unavailable",
-            "source": read_store.dataset_source("strategy_specs"),
+            "source": _get_active_read_store().dataset_source("strategy_specs"),
             "message": str(exc),
             "staleness": {"served_from": "unverifiable", "last_known_at": snapshot_at},
         }
@@ -2162,7 +2193,7 @@ def _list_strategy_spec_match_candidates(
     surface = _dataset_surface_status(
         "strategy_specs",
         snapshot_at=snapshot_at,
-        has_data=read_store.dataset_source("strategy_specs") != "missing",
+        has_data=_get_active_read_store().dataset_source("strategy_specs") != "missing",
     )
     return items, surface
 
@@ -2177,7 +2208,7 @@ def _persona_strategy_discovery_payload(
     discovery_session_id: Optional[str] = None,
 ) -> Dict[str, Any]:
     _ensure_persona_exists(persona_id)
-    persona = read_store.get_persona(persona_id)
+    persona = _get_active_read_store().get_persona(persona_id)
     if persona is None:
         overlay = _PERSONA_BFF_OVERLAY.get(persona_id) or {}
         persona = {
@@ -2195,8 +2226,8 @@ def _persona_strategy_discovery_payload(
                 "asset_classes": overlay.get("assetClasses"),
             },
         }
-    route_policy = read_store.get_route_policy_for_persona(persona_id) or {}
-    capability_snapshot = read_store.get_capability_snapshot_for_persona(persona_id) or {}
+    route_policy = _get_active_read_store().get_route_policy_for_persona(persona_id) or {}
+    capability_snapshot = _get_active_read_store().get_capability_snapshot_for_persona(persona_id) or {}
     profile = extract_persona_strategy_profile(
         persona,
         route_policy=route_policy,
@@ -2396,7 +2427,7 @@ def _persona_strategy_match_action_response(
         )
 
     if action == "create_research_ticket":
-        ticket = read_store.create_research_ticket(
+        ticket = _get_active_read_store().create_research_ticket(
             title=str(payload.get("title") or f"Research persona strategy match {match_id}"),
             description=str(
                 payload.get("description")
@@ -2527,7 +2558,7 @@ def _project_persona_fleet_item(
     routed = _routed_strategies_for_persona(persona_id)
     persona_dto = _project_persona_dto(raw_persona, overlay=overlay, routed_strategies=routed)
 
-    bindings = list(read_store.get_bindings_for_persona(persona_id) or [])
+    bindings = list(_get_active_read_store().get_bindings_for_persona(persona_id) or [])
     binding_ids = {
         str(binding.get("id") or binding.get("binding_id") or "").strip()
         for binding in bindings
@@ -2539,7 +2570,7 @@ def _project_persona_fleet_item(
         if str(binding.get("capital_pool_id") or "").strip()
     }
 
-    sessions = list(read_store.get_sessions_for_persona(persona_id) or [])
+    sessions = list(_get_active_read_store().get_sessions_for_persona(persona_id) or [])
     runtime_refs = {
         str(session.get("runtime_binding_id") or session.get("runtime_id") or "").strip()
         for session in sessions
@@ -2569,14 +2600,14 @@ def _project_persona_fleet_item(
     telemetry_summaries = [
         summary
         for runtime_id in sorted(runtime_ids)
-        for summary in [read_store.get_telemetry_summary(runtime_id)]
+        for summary in [_get_active_read_store().get_telemetry_summary(runtime_id)]
         if summary
     ]
     telemetry_summaries = _sort_records_latest_first(telemetry_summaries, ("collected_at", "updated_at", "created_at"))
     latest_telemetry = telemetry_summaries[0] if telemetry_summaries else None
 
     teaching_sessions = _sort_records_latest_first(
-        list(read_store.get_teaching_sessions_for_persona(persona_id) or []),
+        list(_get_active_read_store().get_teaching_sessions_for_persona(persona_id) or []),
         ("started_at", "created_at", "updated_at"),
     )
     latest_training = teaching_sessions[0] if teaching_sessions else None
@@ -2615,13 +2646,13 @@ def _project_persona_fleet_item(
     capital_pools = [
         pool
         for pool_id in sorted(capital_pool_ids)
-        for pool in [read_store.get_capital_pool(pool_id)]
+        for pool in [_get_active_read_store().get_capital_pool(pool_id)]
         if pool
     ]
     enriched_bindings = [
         {
             **binding,
-            "capital_pool": read_store.get_capital_pool(str(binding.get("capital_pool_id") or "")),
+            "capital_pool": _get_active_read_store().get_capital_pool(str(binding.get("capital_pool_id") or "")),
         }
         for binding in bindings
     ]
@@ -2631,7 +2662,7 @@ def _project_persona_fleet_item(
         telemetry_summaries=telemetry_summaries,
         active_incidents=active_incidents,
     )
-    allowed_actions = read_store.get_persona_allowed_actions(persona_id) or {}
+    allowed_actions = _get_active_read_store().get_persona_allowed_actions(persona_id) or {}
 
     telemetry_summary = {
         "latest": latest_telemetry,
@@ -2744,7 +2775,7 @@ def _persona_intent_timestamp(record: Dict[str, Any]) -> str:
 
 # --- _persona_intent_persona_label ---
 def _persona_intent_persona_label(persona_id: str) -> Optional[str]:
-    persona = read_store.get_persona(persona_id)
+    persona = _get_active_read_store().get_persona(persona_id)
     if not persona:
         return None
     return persona.get("name") or persona.get("display_name") or persona_id
@@ -2753,10 +2784,10 @@ def _persona_intent_persona_label(persona_id: str) -> Optional[str]:
 # --- _persona_intent_capability_summary ---
 def _persona_intent_capability_summary(session: Dict[str, Any]) -> Dict[str, Any]:
     snapshot_id = _persona_intent_text(session.get("capability_snapshot_id"))
-    snapshot = read_store.get_capability_snapshot(snapshot_id) if snapshot_id else None
+    snapshot = _get_active_read_store().get_capability_snapshot(snapshot_id) if snapshot_id else None
     if not snapshot:
         persona_id = _persona_intent_text(session.get("persona_id"))
-        snapshot = read_store.get_capability_snapshot_for_persona(persona_id)
+        snapshot = _get_active_read_store().get_capability_snapshot_for_persona(persona_id)
         snapshot_id = _persona_intent_text((snapshot or {}).get("snapshot_id") or snapshot_id)
     if not snapshot:
         return {
@@ -2989,12 +3020,12 @@ def _persona_intent_all_items(tenant_id: Optional[str] = None) -> tuple[
     trainer_sessions: List[Dict[str, Any]] = []
     for persona in personas:
         persona_id = _persona_intent_text(persona.get("persona_id") or persona.get("id"))
-        for session in read_store.get_sessions_for_persona(persona_id) or []:
+        for session in _get_active_read_store().get_sessions_for_persona(persona_id) or []:
             persona_sessions.append(session)
             item = _persona_intent_trace_item(session)
             if item is not None:
                 items.append(item)
-        for session in read_store.get_teaching_sessions_for_persona(persona_id) or []:
+        for session in _get_active_read_store().get_teaching_sessions_for_persona(persona_id) or []:
             trainer_sessions.append(session)
             item = _persona_intent_trainer_item(session)
             if item is not None:
@@ -3005,7 +3036,7 @@ def _persona_intent_all_items(tenant_id: Optional[str] = None) -> tuple[
         for persona in personas
         if _persona_intent_text(persona.get("persona_id") or persona.get("id"))
     }
-    agora_sessions = list(read_store.list_agora_sessions() or [])
+    agora_sessions = list(_get_active_read_store().list_agora_sessions() or [])
     for session in agora_sessions:
         referenced_persona_ids = _persona_intent_agora_persona_ids(session)
         if referenced_persona_ids and not all(
@@ -3314,7 +3345,7 @@ def _persona_readback_snapshot() -> Tuple[
     monitoring_sessions: List[Dict[str, Any]] = []
     try:
         monitoring_sessions = (
-            read_store.list_authoritative_paper_runtime_monitoring_sessions()
+            _get_active_read_store().list_authoritative_paper_runtime_monitoring_sessions()
         )
     except Exception as exc:
         log.warning("Failed to batch list paper worker sessions: %s", exc)
@@ -3635,9 +3666,9 @@ def _persona_record_for_provisioning(
         traits=traits,
         lifecycle_state=lifecycle_state,
     )
-    creator = getattr(read_store, "create_persona", None)
-    updater = getattr(read_store, "update_persona", None)
-    existing = read_store.get_persona(record.persona_id)
+    creator = getattr(_get_active_read_store(), "create_persona", None)
+    updater = getattr(_get_active_read_store(), "update_persona", None)
+    existing = _get_active_read_store().get_persona(record.persona_id)
     if existing is None:
         if mutate_store and callable(creator):
             persona = creator(
@@ -3780,7 +3811,7 @@ def _persona_create_response(
 # --- _ensure_persona_ooda_packet ---
 def _ensure_persona_ooda_packet(persona_id: str, capital_pool_id: str) -> Optional[Dict[str, Any]]:
     try:
-        for packet in read_store.list_ooda_packets():
+        for packet in _get_active_read_store().list_ooda_packets():
             if persona_id in [str(value) for value in (packet.get("persona_ids") or [])]:
                 return packet
         from persona_ooda_bootstrap import bootstrap_persona_ooda_packet  # type: ignore[import]
@@ -4006,7 +4037,7 @@ def _retrieve_canonical_persona_memory(
 
 # --- _pm12_persona_route_summary ---
 def _pm12_persona_route_summary(persona_id: str) -> Dict[str, Any]:
-    policy = read_store.get_route_policy_for_persona(persona_id) or {}
+    policy = _get_active_read_store().get_route_policy_for_persona(persona_id) or {}
     rules = policy.get("rules") if isinstance(policy.get("rules"), list) else []
     consult_policy = policy.get("consult_policy") if isinstance(policy.get("consult_policy"), dict) else {}
     trigger_rules = (
@@ -4032,7 +4063,7 @@ def _pm12_persona_route_summary(persona_id: str) -> Dict[str, Any]:
 
 # --- _pm12_persona_capability_summary ---
 def _pm12_persona_capability_summary(persona_id: str) -> Dict[str, Any]:
-    snapshot = read_store.get_capability_snapshot_for_persona(persona_id) or {}
+    snapshot = _get_active_read_store().get_capability_snapshot_for_persona(persona_id) or {}
     skills = list(snapshot.get("effective_skills") or [])
     tools = list(snapshot.get("effective_tools") or [])
     workflows = list(snapshot.get("effective_workflows") or [])
@@ -4055,7 +4086,7 @@ def _pm12_persona_binding_summary(
     *,
     runtime_bindings: Optional[Sequence[Dict[str, Any]]] = None,
 ) -> Dict[str, Any]:
-    bindings = read_store.get_bindings_for_persona(persona_id) or []
+    bindings = _get_active_read_store().get_bindings_for_persona(persona_id) or []
     binding_ids = _pm12_compact_ids(
         bindings,
         ("persona_capital_binding_id", "binding_id", "id"),
@@ -4066,7 +4097,7 @@ def _pm12_persona_binding_summary(
         for runtime in (
             runtime_bindings
             if runtime_bindings is not None
-            else (read_store.list_runtime_bindings() or [])
+            else (_get_active_read_store().list_runtime_bindings() or [])
         )
         if str(runtime.get("persona_id") or "").strip() == persona_id
         or str(runtime.get("persona_capital_binding_id") or "").strip() in binding_id_set
@@ -4074,7 +4105,7 @@ def _pm12_persona_binding_summary(
     pool_ids = _pm12_compact_ids(bindings, ("capital_pool_id", "pool_id"))
     pool_refs: List[Dict[str, Any]] = []
     for pool_id in pool_ids:
-        pool = read_store.get_capital_pool(pool_id) or {}
+        pool = _get_active_read_store().get_capital_pool(pool_id) or {}
         pool_refs.append({
             "id": pool_id,
             "name": pool.get("name") or pool_id,
@@ -4107,7 +4138,7 @@ def _pm12_persona_binding_summary(
 
 # --- _pm12_persona_evaluation_summary ---
 def _pm12_persona_evaluation_summary(persona_id: str) -> Dict[str, Any]:
-    teaching = read_store.get_teaching_sessions_for_persona(persona_id) or []
+    teaching = _get_active_read_store().get_teaching_sessions_for_persona(persona_id) or []
     completed = [
         item for item in teaching
         if str(item.get("status") or "").lower() in {"completed", "complete", "passed"}
@@ -4395,8 +4426,8 @@ def _pm12_public_quarter_evidence_refs(
     identity: OperatorIdentity,
     quarter_window: Dict[str, Any],
 ) -> tuple[List[Dict[str, Any]], List[Dict[str, Any]], int, bool]:
-    raw_evidence_refs = read_store.list_evidence_refs()
-    evidence_dataset_available = read_store.dataset_source("evidence_refs") != "missing"
+    raw_evidence_refs = _get_active_read_store().list_evidence_refs()
+    evidence_dataset_available = _get_active_read_store().dataset_source("evidence_refs") != "missing"
     quarter_evidence_refs = (
         _pm12_quarter_evidence_refs(raw_evidence_refs, quarter_window)
         if evidence_dataset_available
@@ -4437,7 +4468,7 @@ def _pm12_quarterly_ranking_governance_state(persona_id: str, quarter: str) -> s
     blocked = False
     expired = False
 
-    for record in command_store._get_all_commands():
+    for record in _get_active_command_store()._get_all_commands():
         target = record.get("target") if isinstance(record.get("target"), dict) else {}
         params = record.get("params") if isinstance(record.get("params"), dict) else {}
         cmd_type = record.get("type")
@@ -4798,22 +4829,22 @@ def _enrich_persona_item_with_bindings(
     enriched = dict(item)
     if bindings is None:
         try:
-            bindings = read_store.list_bindings(persona_id=persona_id) or []
+            bindings = _get_active_read_store().list_bindings(persona_id=persona_id) or []
         except Exception:
             bindings = []
     if runtimes is None:
         try:
-            runtimes = read_store.list_runtime_bindings() or []
+            runtimes = _get_active_read_store().list_runtime_bindings() or []
         except Exception:
             runtimes = []
     if persona is None:
         try:
-            persona = read_store.get_persona(persona_id) or {}
+            persona = _get_active_read_store().get_persona(persona_id) or {}
         except Exception:
             persona = {}
     if league_entry is None:
         try:
-            league_entry = read_store.get_persona_league_entry(persona_id) or {}
+            league_entry = _get_active_read_store().get_persona_league_entry(persona_id) or {}
         except Exception:
             league_entry = {}
 
@@ -5704,7 +5735,7 @@ def _project_persona_league_row(
     evaluations = _pm12_persona_evaluation_summary(persona_id)
     memory = _pm12_persona_memory_summary(persona_id)
     health = _pm12_persona_health_summary(raw, sessions, capabilities)
-    allowed_actions = read_store.get_persona_allowed_actions(persona_id) or {}
+    allowed_actions = _get_active_read_store().get_persona_allowed_actions(persona_id) or {}
     enabled_actions = sorted(
         str(action_id)
         for action_id, enabled in allowed_actions.items()
@@ -5794,7 +5825,7 @@ def _pm12_persona_league_rows(
     try:
         all_bindings = [
             record
-            for record in (read_store.list_bindings() or [])
+            for record in (_get_active_read_store().list_bindings() or [])
             if isinstance(record, dict)
         ]
     except Exception:
@@ -5802,7 +5833,7 @@ def _pm12_persona_league_rows(
     try:
         all_runtimes = [
             record
-            for record in (read_store.list_runtime_bindings() or [])
+            for record in (_get_active_read_store().list_runtime_bindings() or [])
             if isinstance(record, dict)
         ]
     except Exception:
@@ -5810,7 +5841,7 @@ def _pm12_persona_league_rows(
     try:
         all_league_entries = [
             record
-            for record in (read_store.list_persona_league() or [])
+            for record in (_get_active_read_store().list_persona_league() or [])
             if isinstance(record, dict)
         ]
     except Exception:
@@ -6580,7 +6611,7 @@ def _persona_fleet_context_defaults_by_market(
     persona_candidates = (
         candidates
         if candidates is not None
-        else read_store.list_personas(include_market_persona_defaults=True)
+        else _get_active_read_store().list_personas(include_market_persona_defaults=True)
     )
     for candidate in persona_candidates:
         if not isinstance(candidate, dict):
@@ -7599,7 +7630,7 @@ def _project_persona_fleet_list_row(
         evolution_decisions=(
             evolution_decisions
             if evolution_decisions is not None
-            else list(read_store.list_evolution_decisions() or [])
+            else list(_get_active_read_store().list_evolution_decisions() or [])
         ),
         artifact_ids=artifact_ids,
         incident_ids=incident_ids,
@@ -7763,7 +7794,7 @@ def _persona_fleet_slim_list_payload(
     quarter_window = _pm12_quarter_window(None, snapshot_at)
     telemetry_cache: Dict[str, Optional[Dict[str, Any]]] = {}
     try:
-        for telemetry in read_store.list_telemetry_summaries() or []:
+        for telemetry in _get_active_read_store().list_telemetry_summaries() or []:
             if not isinstance(telemetry, dict):
                 continue
             runtime_id = _management_record_id(
@@ -7790,12 +7821,12 @@ def _persona_fleet_slim_list_payload(
     personas = list(directory.records_by_id.values())
     canonical_total = len(directory.records_by_id)
     catalog_default_total = len(directory.catalog_defaults_by_id)
-    league = read_store.list_persona_league(include_market_persona_defaults=True)
-    bindings = read_store.list_bindings(include_market_persona_defaults=True)
-    runtimes = read_store.list_runtime_bindings(include_market_persona_defaults=True)
-    pools = read_store.list_capital_pools(include_market_persona_defaults=True)
-    incidents = read_store.list_incidents()
-    evolution_decisions = list(read_store.list_evolution_decisions() or [])
+    league = _get_active_read_store().list_persona_league(include_market_persona_defaults=True)
+    bindings = _get_active_read_store().list_bindings(include_market_persona_defaults=True)
+    runtimes = _get_active_read_store().list_runtime_bindings(include_market_persona_defaults=True)
+    pools = _get_active_read_store().list_capital_pools(include_market_persona_defaults=True)
+    incidents = _get_active_read_store().list_incidents()
+    evolution_decisions = list(_get_active_read_store().list_evolution_decisions() or [])
     context_defaults = _persona_fleet_context_defaults_by_market(personas)
 
     league_by_persona = {
@@ -7937,7 +7968,7 @@ def _persona_fleet_slim_list_payload(
         telemetry_summaries = []
         for runtime_id in sorted(runtime_ids):
             if runtime_id not in telemetry_cache:
-                telemetry_cache[runtime_id] = read_store.get_telemetry_summary(runtime_id)
+                telemetry_cache[runtime_id] = _get_active_read_store().get_telemetry_summary(runtime_id)
             summary = telemetry_cache.get(runtime_id)
             if summary:
                 telemetry_summaries.append(summary)
@@ -8175,7 +8206,7 @@ def _persona_league_payload(
     page_token: Optional[str] = None,
     page_size: int = 20,
 ) -> Dict[str, Any]:
-    items = read_store.list_persona_league(market_scope=market_scope, status=status)
+    items = _get_active_read_store().list_persona_league(market_scope=market_scope, status=status)
     total = len(items)
     page_items, next_page_token = _page_slice(items, page_token, page_size)
     return {
@@ -8795,7 +8826,7 @@ def _list_governance_audit_events(
     include_command_store: bool = True,
     include_fixture_pack: bool = True,
 ) -> List[Dict[str, Any]]:
-    events = read_store.list_governance_audit_events(
+    events = _get_active_read_store().list_governance_audit_events(
         actor=actor,
         action_types=action_types,
         target_type=target_type,
@@ -8808,7 +8839,7 @@ def _list_governance_audit_events(
         for index, event in enumerate(events)
     }
     if include_command_store:
-        for record in command_store._get_all_commands():
+        for record in _get_active_command_store()._get_all_commands():
             event = _project_command_record_audit_event(record)
             if not event or not _audit_event_matches(
                 event,
@@ -9484,7 +9515,7 @@ def _epoch_to_iso(value: Any) -> Optional[str]:
 def _parse_rfc3339(value: Any) -> Optional[datetime]:
     """Best-effort RFC3339/ISO-8601 parse; None on empty or unparseable input.
 
-    Mirrors read_store._parse_rfc3339 so callers in this module resolve a defined
+    Mirrors _get_active_read_store()._parse_rfc3339 so callers in this module resolve a defined
     symbol. Returning None (rather than raising) keeps malformed optional time
     filters from surfacing as 500s — an unparseable bound is simply not applied.
     """
@@ -9668,17 +9699,17 @@ _LOOP_RUN_PROJECTION_SCHEMA = "pantheon.loop-run-projection.v1"
 
 def _loop_run_truth_source(available: bool) -> tuple[str, str]:
     """Resolve loop-run provenance without letting incidents shadow truth."""
-    canonical_source = read_store.dataset_source("loop_runs")
+    canonical_source = _get_active_read_store().dataset_source("loop_runs")
     if canonical_source != "missing":
         return "loop_runs", canonical_source
-    incident_source = read_store.dataset_source("incidents")
+    incident_source = _get_active_read_store().dataset_source("incidents")
     if available and incident_source != "missing":
         return "incidents", _LEGACY_LOOP_RUN_SOURCE
     return "loop_runs", "missing"
 
 
 def _loop_run_projection_metadata() -> Dict[str, Any]:
-    getter = getattr(read_store, "loop_run_projection_metadata", None)
+    getter = getattr(_get_active_read_store(), "loop_run_projection_metadata", None)
     if not callable(getter):
         return {}
     try:
@@ -9705,13 +9736,22 @@ def _loop_run_controller_is_formal(metadata: Mapping[str, Any]) -> bool:
 def _dataset_surface_status(
     dataset: str,
     *,
+    read_store: Optional[Any] = None,
     snapshot_at: Optional[str] = None,
     has_data: Optional[bool] = None,
     missing_message: Optional[str] = None,
     source: Optional[str] = None,
 ) -> Dict[str, Any]:
     surface = dict(_surface_status())
-    source = source or read_store.dataset_source(dataset)
+    store = _get_active_read_store(read_store)
+    if source is None:
+        if store is not None:
+            if hasattr(store, "dataset_source") and callable(store.dataset_source):
+                source = store.dataset_source(dataset)
+            else:
+                source = getattr(store, "source", "missing")
+        else:
+            source = "missing" 
     surface["source"] = source
 
     if source == "local_snapshot":
@@ -9799,25 +9839,30 @@ def _loop_run_surface_status(
     return dataset, source, surface
 
 
-def _dataset_source_after_read(dataset: str) -> str:
+def _dataset_source_after_read(dataset: str, *, read_store: Optional[Any] = None) -> str:
     """Return source provenance without repeating a completed backend read."""
-    cached_source = getattr(read_store, "dataset_source_cached", None)
+    store = _get_active_read_store(read_store)
+    if store is None:
+        return "missing"
+    cached_source = getattr(store, "dataset_source_cached", None)
     if callable(cached_source):
         return str(cached_source(dataset) or "missing")
-    return str(read_store.dataset_source(dataset) or "missing")
+    return str(store.dataset_source(dataset) or "missing")
 
 
 def _composed_dataset_surface_status(
     dataset: str,
     records: Sequence[Any],
     *,
+    read_store: Optional[Any] = None,
     snapshot_at: str,
     source: str,
 ) -> Dict[str, Any]:
     surface = _dataset_surface_status(
         dataset,
+        read_store=read_store,
         snapshot_at=snapshot_at,
-        source=_dataset_source_after_read(dataset),
+        source=_dataset_source_after_read(dataset, read_store=read_store),
     )
     if records and surface.get("source") == "missing":
         return {
@@ -9832,6 +9877,7 @@ def _read_surface_meta(
     dataset: str,
     surface_key: str,
     *,
+    read_store: Optional[Any] = None,
     snapshot_at: Optional[str] = None,
     total: Optional[int] = None,
     surface: Optional[Dict[str, Any]] = None,
@@ -9843,6 +9889,7 @@ def _read_surface_meta(
     snapshot_at = snapshot_at or utc_now()
     surface = surface or _dataset_surface_status(
         dataset,
+        read_store=read_store,
         snapshot_at=snapshot_at,
         has_data=has_data,
         missing_message=missing_message,
@@ -10166,7 +10213,7 @@ def _project_affected_bindings(
 
     affected_bindings: List[Dict[str, Any]] = []
     for binding_id in candidate_ids:
-        binding = read_store.get_binding(binding_id)
+        binding = _get_active_read_store().get_binding(binding_id)
         if not binding:
             continue
         affected_bindings.append(
@@ -10614,7 +10661,7 @@ def _ppl_alloc_009_paper_capital_context(
     }
     bindings = [
         binding
-        for binding in read_store.list_bindings(
+        for binding in _get_active_read_store().list_bindings(
             persona_id=persona_id,
             role="paper_owner",
         )
@@ -10643,7 +10690,7 @@ def _ppl_alloc_009_paper_capital_context(
     binding = bindings[0]
     binding_id = str(binding.get("binding_id") or binding.get("id") or "").strip()
     pool_id = str(binding.get("capital_pool_id") or "").strip()
-    pool = read_store.get_capital_pool(pool_id)
+    pool = _get_active_read_store().get_capital_pool(pool_id)
     metadata = (
         pool.get("metadata")
         if isinstance(pool, dict) and isinstance(pool.get("metadata"), dict)
@@ -10667,7 +10714,7 @@ def _ppl_alloc_009_paper_capital_context(
             precondition_failed="paper_capital_pool",
         )
 
-    allocations = read_store.list_capital_allocations(
+    allocations = _get_active_read_store().list_capital_allocations(
         capital_pool_id=pool_id,
         persona_id=persona_id,
     )
@@ -10943,7 +10990,7 @@ def _persona_fleet_runtime_matches(
 
     plan_id = str(runtime_binding.get("plan_id") or runtime_binding.get("deployment_plan_id") or "").strip()
     if plan_id:
-        plan = read_store.get_deployment_plan(plan_id) or {}
+        plan = _get_active_read_store().get_deployment_plan(plan_id) or {}
         plan_binding_ids = {
             str(value).strip()
             for value in (plan.get("binding_ids") or [])
@@ -11232,7 +11279,7 @@ def _submitted_promotion_review_records(
     submissions: Dict[str, Dict[str, Any]] = {}
     decisions: Dict[str, Dict[str, Any]] = {}
     # One command-log read per aggregate, regardless of submitted row count.
-    for command in command_store._get_all_commands():
+    for command in _get_active_command_store()._get_all_commands():
         if command.get("type") == CommandType.QUARTERLY_RANKING_RECOMMENDATION_SUBMIT.value:
             recommendation = _human_inbox_sanitize_promotion_snapshot(command)
             if recommendation is not None:
@@ -11628,7 +11675,7 @@ def _pm12_compact_ids(items: List[Dict[str, Any]], keys: tuple[str, ...]) -> Lis
 
 # --- _pm12_memory_items_for_persona ---
 def _pm12_memory_items_for_persona(persona_id: str) -> List[Dict[str, Any]]:
-    fetcher = getattr(read_store, "list_memory_updates_for_persona", None)
+    fetcher = getattr(_get_active_read_store(), "list_memory_updates_for_persona", None)
     if not callable(fetcher):
         return []
     items = fetcher(persona_id) or []
@@ -11749,7 +11796,7 @@ def _pm12_authoritative_paper_monitoring_sessions(
         authoritative_sessions
         if authoritative_sessions is not None
         else (
-            read_store.list_authoritative_paper_runtime_monitoring_sessions()
+            _get_active_read_store().list_authoritative_paper_runtime_monitoring_sessions()
             or []
         )
     ):
@@ -11790,7 +11837,7 @@ def _pm12_runtime_session_resolution(
         # but it cannot prove that the canonical paper worker joined this exact
         # RuntimeBinding.
         authoritative_sessions = (
-            read_store.list_authoritative_paper_runtime_monitoring_sessions() or []
+            _get_active_read_store().list_authoritative_paper_runtime_monitoring_sessions() or []
         )
         sessions = _pm12_authoritative_paper_monitoring_sessions(
             runtime_aliases,
@@ -11798,7 +11845,7 @@ def _pm12_runtime_session_resolution(
         )
         if not sessions and not authoritative_sessions:
             sessions = []
-            for raw_session in read_store.get_sessions_for_persona(persona_id) or []:
+            for raw_session in _get_active_read_store().get_sessions_for_persona(persona_id) or []:
                 if not isinstance(raw_session, dict):
                     continue
                 session = dict(raw_session)
@@ -11812,7 +11859,7 @@ def _pm12_runtime_session_resolution(
             return None, "identity_mismatch"
     else:
         sessions = []
-        for raw_session in read_store.get_sessions_for_persona(persona_id) or []:
+        for raw_session in _get_active_read_store().get_sessions_for_persona(persona_id) or []:
             if not isinstance(raw_session, dict):
                 continue
             session = dict(raw_session)
@@ -11860,20 +11907,20 @@ def _pm12_runtime_session_resolution(
 def _pm12_persona_session_summary(persona_id: str) -> Dict[str, Any]:
     sessions = [
         dict(session)
-        for session in (read_store.get_sessions_for_persona(persona_id) or [])
+        for session in (_get_active_read_store().get_sessions_for_persona(persona_id) or [])
         if isinstance(session, dict)
     ]
     for session in sessions:
         session.setdefault("session_authority", "persona_session_store")
     persona_binding_ids = set(
         _pm12_compact_ids(
-            read_store.get_bindings_for_persona(persona_id) or [],
+            _get_active_read_store().get_bindings_for_persona(persona_id) or [],
             ("persona_capital_binding_id", "binding_id", "id"),
         )
     )
     paper_runtimes = [
         runtime
-        for runtime in (read_store.list_runtime_bindings() or [])
+        for runtime in (_get_active_read_store().list_runtime_bindings() or [])
         if _pm12_runtime_deployment_mode(runtime) == "paper"
         and (
             str(runtime.get("persona_id") or "").strip() == persona_id
@@ -11988,7 +12035,7 @@ def _pm12_persona_runtime_ids(
             if telemetry_cache is not None and runtime_id in telemetry_cache:
                 telemetry = telemetry_cache[runtime_id]
             else:
-                telemetry = read_store.get_telemetry_summary(runtime_id)
+                telemetry = _get_active_read_store().get_telemetry_summary(runtime_id)
                 if telemetry_cache is not None:
                     telemetry_cache[runtime_id] = telemetry
             if isinstance(telemetry, dict):
@@ -12176,7 +12223,7 @@ def _pm12_persona_telemetry_records(
         if telemetry_cache is not None and runtime_id in telemetry_cache:
             summary = telemetry_cache[runtime_id]
         else:
-            summary = read_store.get_telemetry_summary(runtime_id)
+            summary = _get_active_read_store().get_telemetry_summary(runtime_id)
             if telemetry_cache is not None:
                 telemetry_cache[runtime_id] = summary
         if not isinstance(summary, dict):
@@ -13129,7 +13176,7 @@ def _promotion_review_stage_path(recommendation: Dict[str, Any]) -> Dict[str, An
 # --- _latest_promotion_review_submission ---
 def _latest_promotion_review_submission(review_id: Any) -> Optional[Dict[str, Any]]:
     clean_id = _promotion_review_clean_id(review_id)
-    for record in reversed(command_store._get_all_commands()):
+    for record in reversed(_get_active_command_store()._get_all_commands()):
         if not _human_inbox_trusted_promotion_submission(record):
             continue
         if _promotion_review_record_revision_id(record) == clean_id:
@@ -13181,7 +13228,7 @@ def _promotion_review_submission_projection(
 # --- _latest_promotion_review_command ---
 def _latest_promotion_review_command(review_id: Any) -> Optional[Dict[str, Any]]:
     clean_id = _promotion_review_clean_id(review_id)
-    for record in reversed(command_store._get_all_commands()):
+    for record in reversed(_get_active_command_store()._get_all_commands()):
         if (
             _human_inbox_decision_recommendation_id(record) == clean_id
             and _human_inbox_decision_projection_from_record(record) is not None
@@ -13236,7 +13283,7 @@ def _pm12_normalize_mover_direction(direction: Optional[str]) -> str:
 
 # --- _read_store_fixture_records ---
 def _read_store_fixture_records(dataset: str) -> List[Dict[str, Any]]:
-    data = getattr(read_store, "_data", {})
+    data = getattr(_get_active_read_store(), "_data", {})
     raw = data.get(dataset) if isinstance(data, dict) else None
     if isinstance(raw, dict):
         return [dict(record) for record in raw.values() if isinstance(record, dict)]
@@ -13266,7 +13313,7 @@ def _merge_registry_records(
 
 # --- _tool_fixture_records ---
 def _tool_fixture_records() -> List[Dict[str, Any]]:
-    store_records = read_store.list_tools()
+    store_records = _get_active_read_store().list_tools()
     if store_records:
         return store_records
     return _read_store_fixture_records("tools")
@@ -13274,7 +13321,7 @@ def _tool_fixture_records() -> List[Dict[str, Any]]:
 
 # --- _skill_fixture_records ---
 def _skill_fixture_records() -> List[Dict[str, Any]]:
-    store_records = read_store.list_skills()
+    store_records = _get_active_read_store().list_skills()
     if store_records:
         return store_records
     return _read_store_fixture_records("skills")
@@ -13335,7 +13382,7 @@ def _sem_command_response(
         replay = dict(existing["result"])
         replay.setdefault("meta", {}).setdefault("idempotency", {})["replayed"] = True
         return JSONResponse(status_code=status_code, content=replay)
-    existing_record = command_store.get_command_by_idempotency_key(
+    existing_record = _get_active_command_store().get_command_by_idempotency_key(
         clean_key,
         operator_id=identity.operator_id,
     )
@@ -13395,7 +13442,7 @@ def _sem_command_response(
         audit_context["trusted_evidence_producer"] = trusted_evidence_producer
     if terminal_on_persist:
         audit_context["execution_completed_at"] = now
-        record, active = command_store.submit_terminal_command_if_no_active_target(
+        record, active = _get_active_command_store().submit_terminal_command_if_no_active_target(
             command_id,
             command_type,
             TargetObject(type=target_type, id=target_id),
@@ -13410,7 +13457,7 @@ def _sem_command_response(
             },
         )
     else:
-        record, active = command_store.submit_command_if_no_active_target(
+        record, active = _get_active_command_store().submit_command_if_no_active_target(
             command_id,
             command_type,
             TargetObject(type=target_type, id=target_id),
@@ -13511,7 +13558,7 @@ def _source_ingest_truth_by_connector() -> Dict[str, Dict[str, Any]]:
 
     truth: Dict[str, Dict[str, Any]] = {}
     try:
-        registry = read_store.get_source_connector_registry()
+        registry = _get_active_read_store().get_source_connector_registry()
         for connector in (registry.get("connectors") or []):
             if not isinstance(connector, dict):
                 continue
@@ -13522,7 +13569,7 @@ def _source_ingest_truth_by_connector() -> Dict[str, Dict[str, Any]]:
         pass
 
     try:
-        snapshot = read_store.get_source_health_usage_snapshot()
+        snapshot = _get_active_read_store().get_source_health_usage_snapshot()
         for source in (snapshot.get("sources") or []):
             if not isinstance(source, dict):
                 continue
@@ -13841,7 +13888,6 @@ class PersonaService:
         dataset_surface_status_fn: Optional[Callable[..., Dict[str, Any]]] = None,
         raise_if_read_surface_unavailable_fn: Optional[Callable[..., None]] = None,
     ) -> None:
-        global _ranking_write_owner
         resolved_write_owner = write_owner
         if resolved_write_owner is None:
             raise RuntimeError("Required persona write_owner is absent; failing startup closed.")
@@ -13870,10 +13916,7 @@ class PersonaService:
         self._write_owner = resolved_write_owner
         self._read_store = resolved_read_store
         self._ranking_write_owner = resolved_ranking_write_owner
-        _ranking_write_owner = resolved_ranking_write_owner
-        globals()["read_store"] = resolved_read_store
         self._command_store = resolved_command_store
-        globals()["command_store"] = resolved_command_store
         self._provisioning_store = provisioning_store
         self._get_read_store = lambda: self._read_store
         self._get_command_store = lambda: self._command_store
@@ -13898,3 +13941,58 @@ class PersonaService:
 
     def get_ranking_write_owner(self) -> Any:
         return self._get_ranking_write_owner()
+
+    def get_write_owner(self) -> Any:
+        return self._write_owner
+
+    def read_surface_meta(
+        self,
+        dataset: str,
+        surface_key: str,
+        *,
+        snapshot_at: Optional[str] = None,
+        total: Optional[int] = None,
+        surface: Optional[Dict[str, Any]] = None,
+        has_data: Optional[bool] = None,
+        missing_message: Optional[str] = None,
+        degraded_reason: Optional[str] = None,
+        unavailable_reason: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        token = _current_persona_service.set(self)
+        try:
+            return _read_surface_meta(
+                dataset,
+                surface_key,
+                read_store=self._read_store,
+                snapshot_at=snapshot_at,
+                total=total,
+                surface=surface,
+                has_data=has_data,
+                missing_message=missing_message,
+                degraded_reason=degraded_reason,
+                unavailable_reason=unavailable_reason,
+            )
+        finally:
+            _current_persona_service.reset(token)
+
+    def dataset_surface_status(
+        self,
+        dataset: str,
+        *,
+        snapshot_at: Optional[str] = None,
+        has_data: Optional[bool] = None,
+        missing_message: Optional[str] = None,
+        source: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        token = _current_persona_service.set(self)
+        try:
+            return _dataset_surface_status(
+                dataset,
+                read_store=self._read_store,
+                snapshot_at=snapshot_at,
+                has_data=has_data,
+                missing_message=missing_message,
+                source=source,
+            )
+        finally:
+            _current_persona_service.reset(token)

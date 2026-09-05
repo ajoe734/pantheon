@@ -1,0 +1,152 @@
+{
+  "task_id": "BFF-ROUTER-STRUCT-001",
+  "owner": "Antigravity",
+  "reviewer": "Codex",
+  "title": "Split giant BFF router closures by cohesive use case",
+  "timestamp": "2026-09-05T18:25:00Z",
+  "summary": "Decomposed the monolithic 3420-line Persona Management router into 5 cohesive resource/use-case subrouters (collection, detail, lifecycle, provisioning, ranking) sharing a strongly-typed PersonaRouteContext. Eliminated module-level globals() mutations in PersonaService.__init__, dynamic namespace forwarding loops, and wildcard imports. Bound read_surface_meta and dataset_surface_status to instance methods and request-scoped ContextVar to eliminate cross-instance metadata contamination. Added two-instance real-router data and metadata isolation regression test.",
+  "structural_refactor": {
+    "parent_factory": {
+      "file": "services/control-plane/bff/personas/router.py",
+      "line_count": 106,
+      "line_guardrail_satisfied": true,
+      "max_line_target": 300,
+      "description": "Thin parent factory creating PersonaRouteContext, building 5 subrouters, and extending router.routes. No closures over module globals; no wildcard imports."
+    },
+    "subrouters": [
+      {
+        "file": "services/control-plane/bff/personas/routes/collection.py",
+        "line_count": 435,
+        "route_count": 6,
+        "handlers": [
+          "list_personas",
+          "bff_management_persona_intent",
+          "bff_list_personas",
+          "bff_create_persona",
+          "bff_create_paper_persona_bundle",
+          "bff_management_persona_fleet"
+        ],
+        "scope": "Persona collection, fleet catalog, intent listing, and creation"
+      },
+      {
+        "file": "services/control-plane/bff/personas/routes/detail.py",
+        "line_count": 834,
+        "route_count": 14,
+        "handlers": [
+          "get_persona_detail",
+          "get_persona_capabilities",
+          "get_persona_management",
+          "bff_get_persona",
+          "bff_patch_persona",
+          "bff_get_persona_route_policy",
+          "bff_get_persona_runtime_profile",
+          "bff_get_persona_activity",
+          "bff_get_persona_evaluations",
+          "bff_get_persona_memory",
+          "bff_get_persona_audit",
+          "bff_get_persona_skills",
+          "bff_get_persona_tools",
+          "bff_get_persona_capabilities_surface"
+        ],
+        "scope": "Persona instance details, patching, runtime profile, capabilities, skills, tools, activity, memory, audit"
+      },
+      {
+        "file": "services/control-plane/bff/personas/routes/lifecycle.py",
+        "line_count": 594,
+        "route_count": 12,
+        "handlers": [
+          "list_persona_sessions",
+          "get_session_detail",
+          "list_persona_teaching_sessions",
+          "bff_ppl_alloc_009_paper_eligibility_proof",
+          "bff_get_persona_strategy_matches",
+          "bff_start_persona_strategy_discovery",
+          "bff_persona_strategy_match_action",
+          "bff_persona_action",
+          "bff_persona_test_prompt"
+        ],
+        "scope": "Persona lifecycle transitions, sessions, strategy discovery, actions, and paper eligibility proof"
+      },
+      {
+        "file": "services/control-plane/bff/personas/routes/provisioning.py",
+        "line_count": 93,
+        "route_count": 1,
+        "handlers": [
+          "bff_reconcile_persona_provisioning"
+        ],
+        "scope": "Persona provisioning state reconciliation"
+      },
+      {
+        "file": "services/control-plane/bff/personas/routes/ranking.py",
+        "line_count": 1694,
+        "route_count": 16,
+        "handlers": [
+          "bff_management_quarterly_ranking_recommendation_submit",
+          "bff_management_promotion_reviews",
+          "bff_management_promotion_review_detail",
+          "bff_management_promotion_review_decision",
+          "bff_management_persona_league",
+          "bff_management_persona_league_rankings",
+          "bff_management_persona_league_movers",
+          "bff_management_persona_league_tiers",
+          "bff_management_persona_league_heatmap",
+          "bff_management_quarterly_ranking_formula",
+          "bff_management_quarterly_ranking",
+          "bff_management_quarterly_ranking_drilldown",
+          "bff_management_quarterly_ranking_recommendations",
+          "bff_persona_league",
+          "bff_persona_league_detail"
+        ],
+        "scope": "Persona league, quarterly ranking, recommendations, movers, heatmap, and promotion reviews"
+      }
+    ],
+    "context_model": {
+      "file": "services/control-plane/bff/personas/routes/common.py",
+      "class": "PersonaRouteContext",
+      "description": "Dataclass holding explicitly injected typed ports and helpers. make_context_dependency attaches async generator dependency setting _current_persona_service ContextVar per request."
+    }
+  },
+  "metadata_isolation_fix": {
+    "root_cause": "PersonaService.__init__ previously mutated module globals (globals()[\"read_store\"], globals()[\"command_store\"], _ranking_write_owner). Helper functions _read_surface_meta and _dataset_surface_status read module-level store globals, causing any newly created PersonaService instance to contaminate the response metadata of older instances.",
+    "resolution": "Removed all globals() mutations from PersonaService.__init__. Bound read_surface_meta and dataset_surface_status as instance methods on PersonaService. Introduced _current_persona_service ContextVar for request-scoped access in helper functions with active getters (_get_active_read_store, _get_active_command_store, _get_active_ranking_write_owner).",
+    "regression_test": {
+      "file": "services/control-plane/bff/personas/test_router_isolation.py",
+      "test_name": "test_persona_router_two_instance_isolation",
+      "verification": "Instantiates Client 1 with seeded store and Client 2 with missing store. Confirms Client 1 returns status=ok, source=typed_store, Client 2 returns status=unavailable, source=missing, and subsequent queries to Client 1 remain clean and uncontaminated with status=ok, source=typed_store."
+    }
+  },
+  "acceptance_criteria_verification": {
+    "total_routes_registered": 49,
+    "unique_handlers": 45,
+    "normalized_route_contracts_preserved": true,
+    "zero_reverse_imports": true,
+    "zero_globals_setdefault": true,
+    "zero_globals_mutation_in_service_init": true,
+    "zero_wildcard_imports": true,
+    "parent_router_line_count": 106
+  },
+  "verification": {
+    "commands": [
+      {
+        "command": "pytest -q services/control-plane/bff/tests/test_persona_router.py",
+        "result": "41 passed in 22.47s"
+      },
+      {
+        "command": "pytest -q services/control-plane/bff/tests/test_bff_main_composition.py",
+        "result": "17 passed in 14.12s"
+      },
+      {
+        "command": "pytest -q services/control-plane/bff/tests/test_persona_owner_packaged_transport.py",
+        "result": "3 passed in 7.37s"
+      },
+      {
+        "command": "pytest -q services/control-plane/bff/personas/test_router_isolation.py",
+        "result": "1 passed in 3.08s"
+      }
+    ]
+  },
+  "review": {
+    "reviewer": "Codex",
+    "decision": "pending independent exact-head review"
+  }
+}
