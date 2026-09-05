@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import ast
 import io
 import json
 import os
@@ -754,6 +755,83 @@ class GitHubJsonCommandRunnerTests(unittest.TestCase):
 
 
 class IntegrationPlanTests(unittest.TestCase):
+
+    def test_validate_pr_literal_reasons_are_the_shared_canonical_registry_values(self) -> None:
+        tree = ast.parse(
+            Path(auto_integrator.__file__).read_text(encoding="utf-8")
+        )
+        function = next(
+            node
+            for node in tree.body
+            if isinstance(node, ast.FunctionDef) and node.name == "validate_pr"
+        )
+        literal_reasons = {
+            node.value.value
+            for node in ast.walk(function)
+            if isinstance(node, ast.Return)
+            and isinstance(node.value, ast.Constant)
+            and isinstance(node.value.value, str)
+        }
+
+        self.assertEqual(
+            literal_reasons,
+            {
+                "pr-is-draft",
+                "head-branch-mismatch",
+                "base-branch-mismatch",
+                "repository-mismatch",
+            },
+        )
+        self.assertLessEqual(literal_reasons, auto_integrator.unblock_contract.REASONS)
+
+    def test_validate_pr_blockers_publish_canonical_durable_unblock_requests(self) -> None:
+        cases = {
+            "pr-is-draft": {"isDraft": True},
+            "head-branch-mismatch": {"headRefName": "task/WRONG-001"},
+            "base-branch-mismatch": {"baseRefName": "main"},
+            "repository-mismatch": {
+                "url": "https://github.com/ajoe734/execute-plans/pull/44"
+            },
+        }
+        for reason, changes in cases.items():
+            with self.subTest(reason=reason), tempfile.TemporaryDirectory() as tmp_dir:
+                status_root = Path(tmp_dir)
+                candidate = auto_integrator.TaskCandidate(
+                    task_id="ABC-001",
+                    title="Ready",
+                    owner="Codex",
+                    reviewer="Claude",
+                    branch="task/ABC-001",
+                    raw_task={
+                        "generation": 7,
+                        "delivery_binding": {"pr": 44, "head_sha": APPROVED_HEAD},
+                    },
+                )
+                pr = green_pr()
+                pr.update(changes)
+
+                result = auto_integrator.integrate_candidate(
+                    candidate,
+                    auto_integrator.Settings(
+                        status_identity_sha256="d" * 64,
+                        command_runtime_sha="b" * 40,
+                    ),
+                    FakeRunner(pr=pr),
+                    status_root=status_root,
+                    execute=True,
+                    gate=approved_gate(),
+                )
+
+                expected_id = auto_integrator.unblock_task_id(candidate, reason)
+                self.assertEqual(result.action, "blocked")
+                self.assertEqual(result.unblock_task_id, expected_id)
+                requests = list(
+                    (status_root / auto_integrator.UNBLOCK_REQUEST_INBOX).glob("*.json")
+                )
+                self.assertEqual(len(requests), 1)
+                request = json.loads(requests[0].read_text(encoding="utf-8"))
+                self.assertEqual(request["reason"], reason)
+                self.assertEqual(request["unblock_task_id"], expected_id)
 
     def test_merge_owner_contract_is_task_dev_not_release_promotion(self) -> None:
         contract = (REPO_ROOT / "scripts/git/auto_integrator_contract.md").read_text(
@@ -2689,8 +2767,7 @@ class CrossRepoIntegrationTests(unittest.TestCase):
         )
 
         self.assertEqual(result.action, "blocked")
-        self.assertIn("repository_mismatch", result.detail)
-        self.assertIsNone(result.unblock_task_id)
+        self.assertIn("repository-mismatch", result.detail)
         self.assertFalse(any(cmd[:3] == ["gh", "pr", "merge"] for cmd in runner.commands))
 
     def test_pantheon_task_rejects_execute_plans_pr(self) -> None:
@@ -2719,7 +2796,7 @@ class CrossRepoIntegrationTests(unittest.TestCase):
         )
 
         self.assertEqual(result.action, "blocked")
-        self.assertIn("repository_mismatch", result.detail)
+        self.assertIn("repository-mismatch", result.detail)
         self.assertFalse(any(cmd[:3] == ["gh", "pr", "merge"] for cmd in runner.commands))
 
     def test_invalid_scope_error_blocks_and_opens_unblock_task(self) -> None:

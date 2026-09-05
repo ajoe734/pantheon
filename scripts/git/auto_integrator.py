@@ -1138,15 +1138,15 @@ def fetch_pr_for_task(
 
 def validate_pr(candidate: TaskCandidate, pr: Mapping[str, Any], settings: Settings) -> str | None:
     if bool(pr.get("isDraft")):
-        return "pr_is_draft"
+        return "pr-is-draft"
     if str(pr.get("headRefName") or "") != candidate.branch:
-        return "head_branch_mismatch"
+        return "head-branch-mismatch"
     if str(pr.get("baseRefName") or "") != candidate.target_branch:
-        return "base_branch_mismatch"
+        return "base-branch-mismatch"
     pr_repo = github_review_bridge.repository_from_pull_request_url(pr.get("url"))
     if pr_repo and candidate.repository_slug:
         if pr_repo.strip().casefold() != candidate.repository_slug.strip().casefold():
-            return "repository_mismatch"
+            return "repository-mismatch"
     return None
 
 
