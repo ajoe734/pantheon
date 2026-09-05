@@ -1,0 +1,19 @@
+# Minimal dependency contract for the promoted supervisor Python runtime.
+#
+# This is intentionally not the product/BFF requirements file: the supervisor
+# only needs enough to validate its own bridge payloads and signed packets.
+# Install into a dedicated interpreter (see
+# scripts/bootstrap-orchestrator-runtime.sh and scripts/sync-dev-root.sh),
+# never into the host's ambient /usr/bin/python3.
+#
+# scripts/provision_live_supervisor_config.py and
+# scripts/promote_supervisor_runtime.py read this file to preflight-check a
+# candidate interpreter before it may replace a healthy incumbent supervisor.
+#
+# packaging is the standard PEP 440 version/specifier authority; the
+# dependency preflight probe in provision_live_supervisor_config.py imports
+# it inside the candidate interpreter to enforce every specifier below
+# instead of a hand-rolled comparator.
+pydantic>=2.9,<3
+cryptography>=42,<51
+packaging>=23,<27
