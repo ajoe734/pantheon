@@ -6502,14 +6502,17 @@ def command_reconcile_merged_done(state: dict[str, Any], args: list[str]) -> Non
         "reconcile_merged_done", task
     )
     delivery = deepcopy(preflight["delivery"])
-    existing_archive = load_archived_snapshot(task_id)
-    recovered_archive = None
-    if existing_archive is not None:
-        recovered_archive = _validated_same_delivery_archive_recovery(
-            task,
-            delivery=delivery,
-            snapshot=existing_archive,
-        )
+    recovered_archive = deepcopy(preflight.get("recovered_immutable_archive"))
+    if recovered_archive is not None:
+        current_archive = load_archived_snapshot(task_id)
+        if (
+            current_archive is None
+            or _canonical_json_sha256(current_archive)
+            != _canonical_json_sha256(recovered_archive)
+        ):
+            raise RuntimeError(
+                f"existing archive snapshot changed during reconciliation: {task_id}"
+            )
     timestamp = iso_now()
     delivery["recorded_at"] = timestamp
     verdict_ref = deepcopy(preflight.get("protected_closeout_verdict"))
@@ -7272,6 +7275,7 @@ def prepare_external_mutation_preflight(
 
     if command == "reconcile_merged_done":
         current_reviewer = canonical_agent_name(task.get("reviewer"))
+        recovered_archive = None
         operator_accepted = operator_acceptance_evidence_matches(task)
         if operator_accepted and (
             actor != "Human/Ops" or not local_human_ops_requested()
@@ -7309,6 +7313,16 @@ def prepare_external_mutation_preflight(
             verdict_ref = None
         else:
             delivery = validate_merged_done_evidence(task)
+            existing_archive = load_archived_snapshot(task_id)
+            recovered_archive = (
+                _validated_same_delivery_archive_recovery(
+                    task,
+                    delivery=delivery,
+                    snapshot=existing_archive,
+                )
+                if existing_archive is not None
+                else None
+            )
             verdict_ref = validate_protected_closeout_transition(
                 task,
                 transition="done",
@@ -7319,6 +7333,11 @@ def prepare_external_mutation_preflight(
             {
                 "delivery": deepcopy(delivery),
                 "protected_closeout_verdict": deepcopy(verdict_ref),
+                **(
+                    {"recovered_immutable_archive": recovered_archive}
+                    if recovered_archive is not None
+                    else {}
+                ),
             }
         )
         return payload
