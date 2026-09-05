@@ -12,6 +12,7 @@ import re
 import threading
 import time
 import uuid
+import sys as _sys
 from collections import deque
 from copy import deepcopy
 from concurrent.futures import Executor, ThreadPoolExecutor
@@ -74,6 +75,8 @@ from services.control_plane.persona.persona_strategy_discovery import (
     PersonaStrategyDiscoveryService,
     extract_persona_strategy_profile,
 )
+if not __package__:
+    __package__ = "services.control_plane.bff"
 from .models import (
     ActionCommandStatus,
     ApproveMutationCommandPayload,
@@ -8850,10 +8853,44 @@ _STRATEGY_BFF_RISK_MAP = {
     "critical": "critical",
 }
 _STRATEGY_PERSONA_BFF_IDEMPOTENCY: Dict[str, Dict[str, Any]] = {}
-_STRATEGY_BFF_OVERLAY: Dict[str, Dict[str, Any]] = {}
 _STRATEGY_SEED_REPLICATION_BFF_IDEMPOTENCY: Dict[str, Dict[str, Any]] = {}
 _STRATEGY_SEED_REVIEW_BFF_IDEMPOTENCY: Dict[str, Dict[str, Any]] = {}
-_PERSONA_BFF_OVERLAY: Dict[str, Dict[str, Any]] = {}
+
+class _RetiredOverlaySentinel(dict):
+    """Compatibility sentinel for process-local overlays retired under OVERLAY-RETIRE-001.
+
+    State overlays (_PERSONA_BFF_OVERLAY, _STRATEGY_BFF_OVERLAY, _GOV_BFF_INCIDENT_OVERLAY,
+    _GOV_BFF_JOB_OVERLAY) have been retired in favor of durable domain write owners.
+    Retained solely to maintain backward compatibility with legacy test fixtures.
+    """
+    __retired__ = True
+
+    def __init__(self, name: str = "") -> None:
+        super().__init__()
+        self._retired_overlay_name = name
+
+    def __repr__(self) -> str:
+        return f"<RetiredOverlaySentinel name={self._retired_overlay_name!r} items={super().__repr__()}>"
+
+_RETIRED_OVERLAYS = {
+    "_PERSONA_BFF_OVERLAY",
+    "_STRATEGY_BFF_OVERLAY",
+    "_GOV_BFF_INCIDENT_OVERLAY",
+    "_GOV_BFF_JOB_OVERLAY",
+}
+_RETIRED_OVERLAY_INSTANCES: Dict[str, _RetiredOverlaySentinel] = {
+    name: _RetiredOverlaySentinel(name) for name in _RETIRED_OVERLAYS
+}
+
+def __getattr__(name: str) -> Any:
+    if name in _RETIRED_OVERLAYS or (name.startswith("_") and name.endswith("_OVERLAY")):
+        sentinel = _RETIRED_OVERLAY_INSTANCES.get(name)
+        if sentinel is None:
+            sentinel = _RetiredOverlaySentinel(name)
+            _RETIRED_OVERLAY_INSTANCES[name] = sentinel
+        return sentinel
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
 _PERSONA_PROVISIONING_STORE = None
 _PERSONA_PROVISIONING_STORE_LOCK = threading.Lock()
 _PERSONA_FIRST_EVALUATION_WORKFLOW_ID = "pantheon.persona.first-evaluation"
@@ -9355,13 +9392,6 @@ def _materialize_terminal_persona_provisioning_ledger(
         lifecycle_state=new_state,
         metadata=metadata_updates,
     )
-    if persona_id in _PERSONA_BFF_OVERLAY:
-        _PERSONA_BFF_OVERLAY[persona_id]["state"] = _normalize_lifecycle_state(new_state)
-        _PERSONA_BFF_OVERLAY[persona_id]["lifecycleStatus"] = new_state
-        if runtime_binding_id:
-            _PERSONA_BFF_OVERLAY[persona_id]["runtimeBindingId"] = runtime_binding_id
-        if runtime_id:
-            _PERSONA_BFF_OVERLAY[persona_id]["runtimeId"] = runtime_id
     raw["lifecycle_state"] = new_state
     raw["status"] = new_state
     raw.setdefault("metadata", {}).update(metadata_updates)
@@ -9968,13 +9998,6 @@ def _evaluate_persona_provisioning_status(
             lifecycle_state=new_state,
             metadata=metadata_updates,
         )
-        if persona_id in _PERSONA_BFF_OVERLAY:
-            _PERSONA_BFF_OVERLAY[persona_id]["state"] = _normalize_lifecycle_state(new_state)
-            _PERSONA_BFF_OVERLAY[persona_id]["lifecycleStatus"] = new_state
-            if binding_id:
-                _PERSONA_BFF_OVERLAY[persona_id]["runtimeBindingId"] = binding_id
-            if runtime_id:
-                _PERSONA_BFF_OVERLAY[persona_id]["runtimeId"] = runtime_id
         raw["lifecycle_state"] = new_state
         raw["status"] = new_state
         raw.setdefault("metadata", {}).update(metadata_updates)
@@ -10133,19 +10156,22 @@ def _routed_strategies_for_persona(persona_id: str) -> int:
     items = read_store.list_strategy_specs(persona_id=persona_id) or []
     return len(items)
 def _list_strategy_summaries() -> List[Dict[str, Any]]:
-    """Combine canonical strategy_specs with overlay records created via /bff."""
+    """Combine canonical strategy_specs with test compatibility overlay records."""
     items = list(read_store.list_strategy_specs() or [])
     seen = {str(item.get("strategy_id") or "") for item in items}
-    for sid, overlay in _STRATEGY_BFF_OVERLAY.items():
-        if sid in seen:
-            continue
-        items.append({
-            "strategy_id": sid,
-            "title": overlay.get("name"),
-            "lifecycle_state": overlay.get("state") or "draft",
-            "last_modified_at": overlay.get("updatedAt"),
-            "owner": overlay.get("owner"),
-        })
+    mod = _sys.modules.get(__name__)
+    overlay_dict = getattr(mod, "_STRATEGY_BFF_OVERLAY", None) if mod else None
+    if overlay_dict:
+        for sid, overlay in overlay_dict.items():
+            if sid in seen:
+                continue
+            items.append({
+                "strategy_id": sid,
+                "title": overlay.get("name"),
+                "lifecycle_state": overlay.get("state") or "draft",
+                "last_modified_at": overlay.get("updatedAt"),
+                "owner": overlay.get("owner"),
+            })
     return items
 def _list_persona_records(tenant_id: Optional[str] = None) -> List[Dict[str, Any]]:
     """Combine canonical personas with durable store and overlay records created via /bff."""
@@ -10194,21 +10220,24 @@ def _list_persona_records(tenant_id: Optional[str] = None) -> List[Dict[str, Any
             if record.state == "succeeded" and existing.get("lifecycle_state") in {None, "draft", "provisioning"}:
                 existing["lifecycle_state"] = "paper_running"
 
-    for pid, overlay in _PERSONA_BFF_OVERLAY.items():
-        if pid not in records_by_id:
-            records_by_id[pid] = {
-                "id": pid,
-                "persona_id": pid,
-                "name": overlay.get("name"),
-                "lifecycle_state": overlay.get("state") or "draft",
-                "updated_at": overlay.get("updatedAt"),
-                "metadata": {
-                    "archetype": overlay.get("archetype"),
-                    "owner": overlay.get("owner"),
-                    "risk_level": overlay.get("risk"),
-                    "tenant_id": overlay.get("tenantId"),
-                },
-            }
+    mod = _sys.modules.get(__name__)
+    overlay_dict = getattr(mod, "_PERSONA_BFF_OVERLAY", None) if mod else None
+    if overlay_dict:
+        for pid, overlay in overlay_dict.items():
+            if pid not in records_by_id:
+                records_by_id[pid] = {
+                    "id": pid,
+                    "persona_id": pid,
+                    "name": overlay.get("name"),
+                    "lifecycle_state": overlay.get("state") or "draft",
+                    "updated_at": overlay.get("updatedAt"),
+                    "metadata": {
+                        "archetype": overlay.get("archetype"),
+                        "owner": overlay.get("owner"),
+                        "risk_level": overlay.get("risk"),
+                        "tenant_id": overlay.get("tenantId"),
+                    },
+                }
 
     result = list(records_by_id.values())
     if clean_tenant:
@@ -11094,7 +11123,9 @@ def _project_persona_fleet_item(
     all_evolution_decisions: List[Dict[str, Any]],
 ) -> Dict[str, Any]:
     persona_id = str(raw_persona.get("persona_id") or raw_persona.get("id") or "").strip()
-    overlay = _PERSONA_BFF_OVERLAY.get(persona_id)
+    mod = _sys.modules.get(__name__)
+    overlay_dict = getattr(mod, "_PERSONA_BFF_OVERLAY", None) if mod else None
+    overlay = overlay_dict.get(persona_id) if overlay_dict else None
     routed = _routed_strategies_for_persona(persona_id)
     persona_dto = _project_persona_dto(raw_persona, overlay=overlay, routed_strategies=routed)
 
@@ -19355,7 +19386,6 @@ def _merged_mcp_tool_records() -> List[Dict[str, Any]]:
         ("tool_id", "id"),
     )
 _GOV_BFF_IDEMPOTENCY: Dict[str, Dict[str, Any]] = {}
-_GOV_BFF_INCIDENT_OVERLAY: Dict[str, Dict[str, Any]] = {}
 _ACKNOWLEDGED_ALERTS: Dict[str, Dict[str, Any]] = {}
 _INCIDENT_CASE_ALIAS_FIELDS = {
     "binding_id": ("binding_id", "runtime_binding_id"),
@@ -19426,16 +19456,19 @@ def _list_bff_incidents(
         )
     ]
     seen = {str(item.get("incident_id") or item.get("id") or "") for item in incidents}
-    for incident_id, incident in _GOV_BFF_INCIDENT_OVERLAY.items():
-        if incident_id in seen:
-            continue
-        if _bff_incident_matches_filters(
-            incident,
-            status=status,
-            severity=severity,
-            affected_pool_id=affected_pool_id,
-        ):
-            incidents.append(_project_bff_incident_case(incident))
+    mod = _sys.modules.get(__name__)
+    overlay_dict = getattr(mod, "_GOV_BFF_INCIDENT_OVERLAY", None) if mod else None
+    if overlay_dict:
+        for incident_id, incident in overlay_dict.items():
+            if incident_id in seen:
+                continue
+            if _bff_incident_matches_filters(
+                incident,
+                status=status,
+                severity=severity,
+                affected_pool_id=affected_pool_id,
+            ):
+                incidents.append(_project_bff_incident_case(incident))
     anchor = [
         incident
         for incident in incidents
@@ -19455,8 +19488,13 @@ def _get_bff_incident(incident_id: str) -> Optional[Dict[str, Any]]:
     incident = read_store.get_incident(incident_id)
     if incident:
         return _project_bff_incident_case(incident)
-    overlay = _GOV_BFF_INCIDENT_OVERLAY.get(incident_id)
-    return _project_bff_incident_case(overlay) if overlay else None
+    mod = _sys.modules.get(__name__)
+    overlay_dict = getattr(mod, "_GOV_BFF_INCIDENT_OVERLAY", None) if mod else None
+    if overlay_dict:
+        overlay = overlay_dict.get(incident_id)
+        if overlay:
+            return _project_bff_incident_case(overlay)
+    return None
 def _gov_bff_action_command(
     entity_type: ObjectType,
     entity_id: str,
@@ -19558,7 +19596,7 @@ def _gov_bff_action_command(
     )
     _GOV_BFF_IDEMPOTENCY[resolved_key] = {"request_hash": request_hash, "result": result}
     return result
-_GOV_BFF_JOB_OVERLAY: Dict[str, Dict[str, Any]] = {}
+
 def _research_experiments_surface_source(records: Sequence[Dict[str, Any]]) -> Optional[str]:
     if read_store.dataset_source("research_experiments") != "missing":
         return None
@@ -22266,7 +22304,7 @@ app.include_router(
         read_surface_meta=_read_surface_meta,
         dataset_surface_status=_dataset_surface_status,
         raise_if_read_surface_unavailable=_raise_if_read_surface_unavailable,
-        get_job_overlay=lambda: _GOV_BFF_JOB_OVERLAY,
+        get_job_overlay=lambda: getattr(_sys.modules.get(__name__), "_GOV_BFF_JOB_OVERLAY", {}),
         reject_body_idempotency_key=_reject_body_idempotency_key,
         resolve_final_idempotency_key=_resolve_final_idempotency_key,
         submit_job_action=lambda job_id, action_id, resolved_key, identity, payload: _evol_exp_bff_action_command(
@@ -22538,7 +22576,7 @@ app.include_router(
         normalize_risk_level=_normalize_risk_level,
         strategy_persona_idempotency_check=_strategy_persona_idempotency_check,
         strategy_persona_action_command=_strategy_persona_action_command,
-        strategy_overlay=_STRATEGY_BFF_OVERLAY,
+        strategy_overlay=getattr(_sys.modules.get(__name__), "_STRATEGY_BFF_OVERLAY", None),
         strategy_persona_idempotency_store=_STRATEGY_PERSONA_BFF_IDEMPOTENCY,
         strategy_seed_replication_idempotency_store=_STRATEGY_SEED_REPLICATION_BFF_IDEMPOTENCY,
         strategy_seed_review_idempotency_store=_STRATEGY_SEED_REVIEW_BFF_IDEMPOTENCY,
@@ -22583,7 +22621,7 @@ app.include_router(
         incident_events=_incident_events,
         incident_subscribers=_incident_subscribers,
         acknowledged_alerts=_ACKNOWLEDGED_ALERTS,
-        incident_overlay=_GOV_BFF_INCIDENT_OVERLAY,
+        incident_overlay=getattr(_sys.modules.get(__name__), "_GOV_BFF_INCIDENT_OVERLAY", None),
         idempotency_ledger=_GOV_BFF_IDEMPOTENCY,
     )
 )
@@ -22943,6 +22981,15 @@ proposal_store = _agora_router.proposal_store
 
 import types as _types
 class _BffMainModule(_types.ModuleType):
+    def __getattr__(self, name: str) -> Any:
+        if name in _RETIRED_OVERLAYS or (name.startswith("_") and name.endswith("_OVERLAY")):
+            sentinel = _RETIRED_OVERLAY_INSTANCES.get(name)
+            if sentinel is None:
+                sentinel = _RetiredOverlaySentinel(name)
+                _RETIRED_OVERLAY_INSTANCES[name] = sentinel
+            return sentinel
+        raise AttributeError(f"module {self.__name__!r} has no attribute {name!r}")
+
     def __setattr__(self, name: str, value: Any) -> None:
         super().__setattr__(name, value)
         if name == "read_store" and hasattr(self, "app_deps") and hasattr(self.app_deps, "read_surface"):

@@ -94,6 +94,11 @@ class ReadSurfacePorts:
 
 
     def __setattr__(self, name: str, value: Any) -> None:
+        if name == "_ranking_snapshots":
+            raise AttributeError(
+                "ReadSurfacePorts._ranking_snapshots has been retired and deleted; "
+                "use canonical ranking write owner and projection ports."
+            )
         if name in (
             "_active_delegate",
             "operations_consultation",
@@ -112,6 +117,11 @@ class ReadSurfacePorts:
         super().__setattr__(name, value)
 
     def __getattribute__(self, name: str) -> Any:
+        if name == "_ranking_snapshots":
+            raise AttributeError(
+                "ReadSurfacePorts._ranking_snapshots has been retired and deleted; "
+                "use canonical ranking write owner and projection ports."
+            )
         if name.startswith("__") or name in (
             "_active_delegate",
             "_trade_journey_projection_reader_override",
@@ -471,6 +481,16 @@ class ReadSurfacePorts:
 
     def list_strategy_specs(self, **kwargs: Any) -> List[Dict[str, Any]]:
         return self.research_knowledge_source.list_strategy_specs(**kwargs)
+
+    def list_strategy_summaries(self, **kwargs: Any) -> List[Dict[str, Any]]:
+        import sys
+        mod = sys.modules.get("services.control_plane.bff.main") or sys.modules.get("main")
+        if mod and hasattr(mod, "_list_strategy_summaries"):
+            return mod._list_strategy_summaries()
+        return self.list_strategy_specs(**kwargs)
+
+    def list_strategies(self, **kwargs: Any) -> List[Dict[str, Any]]:
+        return self.list_strategy_summaries(**kwargs)
 
     def get_strategy_spec(self, spec_id: str) -> Optional[Dict[str, Any]]:
         return self.research_knowledge_source.get_strategy_spec(spec_id)

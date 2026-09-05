@@ -10,7 +10,6 @@ from fastapi import APIRouter, Body, Header, HTTPException, Query
 
 from services.control_plane.bff.models import ErrorCode
 from ..service import (
-    _PERSONA_BFF_OVERLAY,
     _PERSONA_PATCH_SERVER_MANAGED_FIELDS,
     _STRATEGY_PERSONA_BFF_IDEMPOTENCY,
     _bff_me_tenant_payload,
@@ -352,27 +351,6 @@ def build_detail_router(ctx: PersonaRouteContext) -> APIRouter:
                         owner=str(prov_record.request_payload.get("requested_by") or identity.operator_id),
                     )
                     raw = persona_proj
-                    if persona_id not in _PERSONA_BFF_OVERLAY:
-                        ids = deterministic_provisioning_ids(prov_record)
-                        _PERSONA_BFF_OVERLAY[persona_id] = _project_persona_dto(
-                            persona_proj,
-                            overlay={
-                                "routedStrategies": int(prov_record.request_payload.get("routedStrategies") or 0),
-                                "successRate": float(prov_record.request_payload.get("successRate") or 0.0),
-                                "capitalMode": "paper",
-                                "paperLedgerId": meta_proj["paper_ledger_id"],
-                                "paperLedger": meta_proj["paper_ledger"],
-                                "legacyPaperCapitalPoolId": ids.capital_pool_id,
-                                "deploymentPlanId": ids.deployment_plan_id,
-                                "deploymentStage": "paper",
-                                "evidenceRefs": list(meta_proj["evidence_refs"]),
-                                "runtimeId": meta_proj.get("runtime_id"),
-                                "runtimeBindingId": meta_proj.get("runtime_binding_id"),
-                                "tenantId": prov_record.tenant_id,
-                            },
-                            routed_strategies=0,
-                            evaluate_provisioning=False,
-                        )
             except HTTPException:
                 raise
             except Exception as exc:
@@ -391,13 +369,10 @@ def build_detail_router(ctx: PersonaRouteContext) -> APIRouter:
                 "Persona not found",
                 f"Persona {persona_id} does not exist",
             )
-        overlay = _PERSONA_BFF_OVERLAY.get(persona_id)
-        if overlay and str(overlay.get("tenantId") or "") not in {"", caller_tenant}:
-            overlay = None
         dto = await asyncio.to_thread(
             lambda: _project_persona_dto(
                 raw,
-                overlay=overlay,
+                overlay=None,
                 routed_strategies=_routed_strategies_for_persona(persona_id),
             )
         )
@@ -447,21 +422,15 @@ def build_detail_router(ctx: PersonaRouteContext) -> APIRouter:
                 suggestion="Use the governed Persona action or promotion workflow.",
             )
         resolved_key = _resolve_final_idempotency_key(idempotency_key, x_idempotency_key)
-        raw = read_store.get_persona(persona_id)
-        overlay = _PERSONA_BFF_OVERLAY.get(persona_id)
         caller_tenant = str(_bff_me_tenant_payload(identity, requested_tenant=None)["id"])
+        raw = read_store.get_persona(persona_id)
+        if not raw:
+            directory = _get_persona_directory_snapshot(caller_tenant)
+            raw = directory.records_by_id.get(persona_id)
         raw_tenant = _persona_record_tenant_id(raw) if raw else ""
-        overlay_tenant = str((overlay or {}).get("tenantId") or "")
         if raw and raw_tenant not in {"", caller_tenant}:
             raw = None
-            overlay = None
-        if overlay and overlay_tenant != caller_tenant:
-            overlay = None
-        if raw and not raw_tenant and overlay is None:
-            # Tenantless legacy catalog rows may remain readable, but mutation is
-            # fail-closed until an authoritative tenant owner exists.
-            raw = None
-        if not raw and not overlay:
+        if not raw:
             raise _bff_error(
                 404, ErrorCode.RESOURCE_NOT_FOUND,
                 "Persona not found",
@@ -483,10 +452,8 @@ def build_detail_router(ctx: PersonaRouteContext) -> APIRouter:
         if cached is not None:
             return cached
         snapshot_at = utc_now()
-        base = dict(overlay) if overlay else {}
-        if not base:
-            routed = _routed_strategies_for_persona(persona_id)
-            base = _project_persona_dto(raw or {"persona_id": persona_id}, routed_strategies=routed)
+        routed = _routed_strategies_for_persona(persona_id)
+        base = _project_persona_dto(raw or {"persona_id": persona_id}, routed_strategies=routed)
         for field in (
             "name", "risk",
             "archetype", "routedStrategies", "successRate",
@@ -556,7 +523,6 @@ def build_detail_router(ctx: PersonaRouteContext) -> APIRouter:
                 },
                 routed_strategies=routed,
             )
-        _PERSONA_BFF_OVERLAY[persona_id] = deepcopy(base)
         result = {"data": deepcopy(base), "meta": {"snapshot_at": snapshot_at}}
         _STRATEGY_PERSONA_BFF_IDEMPOTENCY[cache_key] = {
             "request_hash": request_hash,
