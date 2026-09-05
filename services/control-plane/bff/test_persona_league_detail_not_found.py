@@ -19,13 +19,55 @@ from pathlib import Path
 BFF_DIR = Path(__file__).resolve().parent
 
 
-def _client():
-    os.environ["PANTHEON_BFF_AUTH_STUB"] = "true"
-    os.environ["PANTHEON_BFF_AUTH_MODE"] = "permissive"
-    from services.control_plane.bff import main as bff_main  # imported after env is set
-    from fastapi.testclient import TestClient
+from fastapi import FastAPI, HTTPException
+from fastapi.testclient import TestClient
+from starlette.responses import JSONResponse
 
-    return TestClient(bff_main.app)
+from services.control_plane.bff.models import OperatorIdentity
+from services.control_plane.bff.personas import PersonaService, create_personas_router
+from services.control_plane.bff.ports import (
+    create_in_memory_read_surface_ports,
+    create_persona_registry_write_owner,
+)
+
+
+class _FakeRankingWriteOwner:
+    def put_ranking_snapshot(self, snapshot: dict) -> dict:
+        return {"status": "created"}
+
+    def get_ranking_snapshot(self, snapshot_id: str) -> None:
+        return None
+
+
+class _FakeCommandStore:
+    pass
+
+
+def _client() -> TestClient:
+    read_store = create_in_memory_read_surface_ports()
+    service = PersonaService(
+        write_owner=create_persona_registry_write_owner(),
+        ranking_write_owner=_FakeRankingWriteOwner(),
+        read_store=read_store,
+        command_store=_FakeCommandStore(),
+    )
+    router = create_personas_router(
+        service=service,
+        extract_identity_fn=lambda auth: OperatorIdentity(
+            operator_id="op-verify", roles=["reader", "operator", "admin"], mfa_verified=True
+        ),
+        require_read_role_fn=lambda identity: None,
+    )
+    app = FastAPI()
+
+    async def _http_exc_handler(request, exc: HTTPException):
+        if isinstance(exc.detail, dict):
+            return JSONResponse(status_code=exc.status_code, content=exc.detail)
+        return JSONResponse(status_code=exc.status_code, content={"detail": exc.detail})
+
+    app.add_exception_handler(HTTPException, _http_exc_handler)
+    app.include_router(router)
+    return TestClient(app)
 
 
 HEADERS = {"Authorization": "Bearer op-verify:reader,operator,admin:mfa"}

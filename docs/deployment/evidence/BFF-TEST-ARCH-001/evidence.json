@@ -35,7 +35,7 @@
       "conftest.py",
       "knowledge_read_port_fixtures.py"
     ],
-    "reconciled_direct_main_imports": 179,
+    "reconciled_direct_main_imports": 174,
     "reconciled_migrated_tests": [
       "services/control-plane/bff/test_mgmt_load_002_shell_summary.py",
       "services/control-plane/bff/tests/test_bff_management_cockpit.py",
@@ -69,7 +69,12 @@
       "services/control-plane/bff/test_agora_journal_merge_patch.py",
       "services/control-plane/bff/test_bff_runtimes_contract.py",
       "services/control-plane/bff/test_bff_read_cutoff_wave4_contract.py",
-      "services/control-plane/bff/test_bff_consol_013_cookie_session_write_gate.py"
+      "services/control-plane/bff/test_bff_consol_013_cookie_session_write_gate.py",
+      "services/control-plane/bff/test_persona_league_detail_not_found.py",
+      "services/control-plane/bff/test_incident_stream_route_order.py",
+      "services/control-plane/bff/test_pkt004_capital_binding_drilldowns_contract.py",
+      "services/control-plane/bff/test_pkt004_deployment_approval_drilldowns_contract.py",
+      "services/control-plane/bff/test_pkt007_deployment_diff_contract.py"
     ],
     "test_layer_classification_summary": {
       "composition": 11,

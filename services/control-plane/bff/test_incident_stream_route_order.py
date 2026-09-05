@@ -13,7 +13,37 @@ from pathlib import Path
 
 BFF_DIR = Path(__file__).resolve().parent
 
-from services.control_plane.bff import main as bff_main
+from fastapi import FastAPI
+
+from services.control_plane.bff.incidents.router import create_incident_router
+from services.control_plane.bff.incidents.service import IncidentService
+from services.control_plane.bff.models import OperatorIdentity
+
+
+class _MockReadStore:
+    pass
+
+
+class _MockCommandStore:
+    pass
+
+
+def _build_app() -> FastAPI:
+    read_store = _MockReadStore()
+    command_store = _MockCommandStore()
+    service = IncidentService(
+        get_read_store=lambda: read_store,
+        get_command_store=lambda: command_store,
+    )
+    router = create_incident_router(
+        service=service,
+        get_read_store=lambda: read_store,
+        get_command_store=lambda: command_store,
+        extract_identity=lambda auth: OperatorIdentity(operator_id="test-op", roles=["operator"]),
+    )
+    app = FastAPI()
+    app.include_router(router)
+    return app
 
 
 def _iter_routes(routes):
@@ -26,8 +56,9 @@ def _iter_routes(routes):
             yield r
 
 
-def _first_matching_endpoint(path: str):
-    for route in _iter_routes(bff_main.app.routes):
+def _first_matching_endpoint(path: str, app: FastAPI | None = None):
+    target_app = app if app is not None else _build_app()
+    for route in _iter_routes(target_app.routes):
         regex = getattr(route, "path_regex", None)
         if regex is not None and regex.match(path):
             return route
