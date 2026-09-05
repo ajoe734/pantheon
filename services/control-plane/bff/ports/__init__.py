@@ -89,6 +89,10 @@ try:
         PersonaWriteOwnerUnavailable,
         create_persona_registry_write_owner,
     )
+    from ports.rankings import (
+        RankingSnapshotWriteOwnerPort,
+        create_ranking_write_owner,
+    )
 except ImportError:
     from services.control_plane.bff.ports.operations_consultation import (  # type: ignore[no-redef]
         WorkflowHookCatalogReaderPort,
@@ -164,6 +168,10 @@ except ImportError:
         PersonaWriteOwnerUnavailable,
         create_persona_registry_write_owner,
     )
+    from services.control_plane.bff.ports.rankings import (  # type: ignore[no-redef]
+        RankingSnapshotWriteOwnerPort,
+        create_ranking_write_owner,
+    )
 
 __all__ = [
     # Operations & Consultation
@@ -232,4 +240,7 @@ __all__ = [
     "PersonaWriteConflict",
     "PersonaWriteOwnerUnavailable",
     "create_persona_registry_write_owner",
+    # Ranking snapshot write owner (deliberately outside ReadSurfacePorts)
+    "RankingSnapshotWriteOwnerPort",
+    "create_ranking_write_owner",
 ]

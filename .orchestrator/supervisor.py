@@ -31,6 +31,7 @@ if str(THIS_DIR) not in sys.path:
     sys.path.insert(0, str(THIS_DIR))
 
 import model_rotation
+import auto_integrator_unblock_contract as unblock_contract
 from approval_queue import prune_stale_approvals
 from adapters import ADAPTERS, build_adapter
 from adapters.base import DeliveryRequest
@@ -38,6 +39,7 @@ from common import (
     agent_config_for,
     bound_commit_subject,
     canonical_task_state_lock_file,
+    canonical_task_state_identity,
     config_path,
     display_name_for,
     load_config,
@@ -339,6 +341,11 @@ RUNTIME_PHASE_LAUNCH_INTENT_STALE_DEFAULT_SECONDS = 30.0
 RUNTIME_PHASE_LAUNCH_INTENT_STALE_MAX_SECONDS = 300.0
 REVIEW_REQUEUE_INTENT_KEY = "review_requeue_intent"
 REVIEW_REQUEUE_INTENT_SCHEMA_VERSION = 1
+AUTO_INTEGRATOR_UNBLOCK_REQUEST_SCHEMA = unblock_contract.REQUEST_SCHEMA
+AUTO_INTEGRATOR_UNBLOCK_INBOX = unblock_contract.REQUEST_INBOX
+AUTO_INTEGRATOR_UNBLOCK_RECEIPTS = unblock_contract.RECEIPT_ROOT
+AUTO_INTEGRATOR_UNBLOCK_ARCHIVE = ".orchestrator/auto-integrator-unblock-archive"
+AUTO_INTEGRATOR_UNBLOCK_DRAIN_MAX = 32
 
 
 def write_activity_log(config: dict[str, Any], entry: dict[str, Any]) -> None:
@@ -2009,6 +2016,203 @@ def record_delivery_health_refresh_authority_consumed(
     if authority.get("human_ops_refresh_requested_at"):
         authority["human_ops_refresh_requested_at"] = None
         changed = True
+    return changed
+
+
+def _auto_integrator_unblock_task_id(request: Mapping[str, Any]) -> str:
+    return unblock_contract.task_id_from_identity(request)
+
+
+def _validate_auto_integrator_unblock_request(
+    config: dict[str, Any], request: Mapping[str, Any], filename: str, status: Mapping[str, Any]
+) -> tuple[dict[str, Any], Mapping[str, Any]]:
+    """Validate every authority binding without granting publisher identity."""
+
+    required = unblock_contract.REQUEST_FIELDS
+    if set(request) != required or request.get("schema") != AUTO_INTEGRATOR_UNBLOCK_REQUEST_SCHEMA:
+        raise ValueError("unblock request schema or fields are invalid")
+    if filename != unblock_contract.request_filename(request):
+        raise ValueError("unblock request filename is not its canonical digest")
+    status_root = config_path(config, "status_file").parent.resolve()
+    if request.get("status_root") != str(status_root):
+        raise ValueError("unblock request status identity mismatch")
+    canonical_identity = canonical_task_state_identity(config)
+    if request.get("status_identity_sha256") != canonical_identity.get("identity_sha256"):
+        raise ValueError("unblock request canonical task-state identity mismatch")
+    issued_runtime = status_command_runtime_record_from_env(status_command_runtime_env(config))
+    if request.get("command_runtime_sha") != issued_runtime.get("source_sha"):
+        raise ValueError("unblock request command runtime is stale or unpromoted")
+    source_task_id = str(request.get("source_task_id") or "")
+    reason = unblock_contract.validate_reason(request.get("reason"))
+    if request.get("unblock_task_id") != _auto_integrator_unblock_task_id(request):
+        raise ValueError("unblock request task namespace mismatch")
+    source = next(
+        (item for item in status.get("tasks", []) if item.get("id") == source_task_id), None
+    )
+    if not isinstance(source, Mapping):
+        raise ValueError("unblock request source task is not active")
+    if str(source.get("status") or "") not in {"in_progress", "review", "review_approved"}:
+        raise ValueError("unblock request source task is not integration-active")
+    if task_generation(source) != request.get("source_task_generation"):
+        raise ValueError("unblock request source generation is stale")
+    binding = source.get("delivery_binding")
+    if not isinstance(binding, Mapping):
+        raise ValueError("unblock request source lacks canonical delivery binding")
+    if request.get("pr") != (binding.get("pr") or binding.get("pr_number")):
+        raise ValueError("unblock request PR differs from canonical delivery binding")
+    if request.get("head_sha") != str(binding.get("head_sha") or "").lower():
+        raise ValueError("unblock request head differs from canonical delivery binding")
+    repository_id = str(source.get("target_repo") or "pantheon")
+    if request.get("repository_id") != repository_id:
+        raise ValueError("unblock request repository differs from canonical task")
+    resolve_repository(config, repository_id)
+    if request.get("repository_slug") != repository_slug(config, repository_id):
+        raise ValueError("unblock request repository slug is not canonical")
+    workflow = config.get("branch_workflow") or config.get("wave_workflow") or {}
+    workflow = workflow if isinstance(workflow, Mapping) else {}
+    auto = workflow.get("auto_integrator") or config.get("auto_integrator") or {}
+    auto = auto if isinstance(auto, Mapping) else {}
+    expected_owner = str(auto.get("unblock_owner") or source.get("owner") or "")
+    expected_reviewer = str(auto.get("unblock_reviewer") or source.get("reviewer") or "")
+    if request.get("owner") != expected_owner or request.get("reviewer") != expected_reviewer:
+        raise ValueError("unblock request owner/reviewer differs from canonical task")
+    return dict(request), source
+
+
+def materialize_auto_integrator_unblock_requests(config: dict[str, Any]) -> bool:
+    """Supervisor-only, authoritative and idempotent unblock materialization."""
+
+    inbox = config_path(config, "status_file").parent / AUTO_INTEGRATOR_UNBLOCK_INBOX
+    if not inbox.exists():
+        return False
+    if inbox.is_symlink() or not inbox.is_dir():
+        raise RuntimeError(f"auto-integrator unblock inbox is unsafe: {inbox}")
+    changed = False
+    status_path = config_path(config, "status_file")
+    status_root = status_path.parent
+    receipt_root = status_root / AUTO_INTEGRATOR_UNBLOCK_RECEIPTS
+    archive_root = status_root / AUTO_INTEGRATOR_UNBLOCK_ARCHIVE
+
+    def finalize(path: Path, outcome: str, detail: str, task_id: str = "") -> None:
+        destination_dir = archive_root / outcome
+        receipt_dir = receipt_root / outcome
+        destination_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
+        receipt_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
+        receipt = {
+            "schema": unblock_contract.RECEIPT_SCHEMA,
+            "request_sha256": path.stem,
+            "outcome": outcome,
+            "detail": detail[:500],
+            "task_id": task_id,
+            "processed_at": utc_now(),
+        }
+        write_json(receipt_dir / f"{path.stem}.json", receipt)
+        os.replace(path, destination_dir / path.name)
+
+    def finalize_safely(
+        path: Path, outcome: str, detail: str, task_id: str = ""
+    ) -> bool:
+        """Keep a request retryable when receipt or archive finalization fails."""
+
+        try:
+            finalize(path, outcome, detail, task_id)
+        except Exception:
+            return False
+        return True
+
+    for path in sorted(inbox.glob("*.json"))[:AUTO_INTEGRATOR_UNBLOCK_DRAIN_MAX]:
+        if path.is_symlink() or not path.is_file():
+            continue
+        try:
+            request = load_json(path, default={})
+            if not isinstance(request, Mapping):
+                raise ValueError("unblock request is not a JSON object")
+            with canonical_task_state_lock_file(status_path, shared=False, nonblocking=False):
+                status = load_status(config)
+                valid, source = _validate_auto_integrator_unblock_request(
+                    config, request, path.name, status
+                )
+                task_id = valid["unblock_task_id"]
+                existing = next(
+                    (item for item in status.get("tasks", []) if item.get("id") == task_id),
+                    None,
+                )
+                if existing is not None:
+                    provenance = existing.get("unblock_request")
+                    expected_provenance = {
+                        "request_sha256": path.stem,
+                        "source_task_id": valid["source_task_id"],
+                        "source_task_generation": valid["source_task_generation"],
+                        "repository_slug": valid["repository_slug"],
+                        "pr": valid["pr"],
+                        "head_sha": valid["head_sha"],
+                        "command_runtime_sha": valid["command_runtime_sha"],
+                    }
+                    if provenance != expected_provenance:
+                        raise ValueError("existing unblock task provenance mismatch")
+                    finalize(path, "processed", "already materialized", task_id)
+                    continue
+                timestamp = utc_now()
+                detail = str(valid["detail"])
+                status.setdefault("tasks", []).append(
+                {
+                    "id": task_id,
+                    "title": f"Unblock integration for {valid['source_task_id']}: {valid['reason']}",
+                    "phase": "Auto-integrator unblock",
+                    "owner": valid["owner"],
+                    "reviewer": valid["reviewer"],
+                    "status": "todo",
+                    "generation": 1,
+                    "depends_on": [],
+                    "target_repo": valid["repository_id"],
+                    "summary_zh": (
+                        f"auto-integrator 無法安全整合 {valid['source_task_id']}: "
+                        f"{valid['reason']}. 請修正 PR/rebase/CI 後交回整合。"
+                    ),
+                    "acceptance": [
+                        f"Root cause for {valid['source_task_id']} integration blocker is documented",
+                        "Original PR is updated or superseded and no longer stranded",
+                    ],
+                    "artifacts": [
+                        "scripts/git/auto_integrator.py",
+                        f"docs/deployment/evidence/{task_id}/evidence.json",
+                    ],
+                    "next": detail,
+                    "last_update": timestamp,
+                    "auto_created_by": "supervisor:auto_integrator_unblock_request",
+                    "auto_generated": True,
+                    "unblock_request": {
+                        "request_sha256": path.stem,
+                        "source_task_id": valid["source_task_id"],
+                        "source_task_generation": valid["source_task_generation"],
+                        "repository_slug": valid["repository_slug"],
+                        "pr": valid["pr"],
+                        "head_sha": valid["head_sha"],
+                        "command_runtime_sha": valid["command_runtime_sha"],
+                    },
+                }
+                )
+                event = {
+                "event_id": f"auto-integrator-unblock-{path.stem}",
+                "ts": timestamp,
+                "agent": "Orchestrator",
+                "type": "auto_integrator_unblock_materialized",
+                "task_id": task_id,
+                "source_task_id": valid["source_task_id"],
+                "message": detail,
+                }
+                status["status_activity_outbox"] = _compose_status_activity_outbox(
+                    status.get("status_activity_outbox"), event
+                )
+                write_status(config, status, source="supervisor-auto-integrator-unblock")
+            finalize(path, "processed", "materialized", task_id)
+            changed = True
+        except (KeyError, ValueError) as exc:
+            finalize_safely(path, "rejected", str(exc))
+        except Exception as exc:
+            finalize_safely(path, "error", f"{type(exc).__name__}: {exc}")
+    if changed:
+        sync_status_pipeline(config)
     return changed
 
 
@@ -14306,6 +14510,15 @@ def run_once(
         initial_runtime_snapshot = {}
     try:
         write_supervisor_pid(config)
+        unblock_materialized = bool(
+            _safe_phase(
+                "materialize_auto_integrator_unblock_requests",
+                materialize_auto_integrator_unblock_requests,
+                config,
+                quiet=quiet,
+                critical=True,
+            )
+        )
         # Stamp identity in one short transaction, then plan/queue outside the
         # exclusive lock against immutable local snapshots.
         changed = _run_with_deferred_dispatch_status_syncs(
@@ -14315,6 +14528,7 @@ def run_once(
                 quiet=quiet,
             )
         )
+        changed = unblock_materialized or changed
         pruned_approvals = _safe_phase(
             "prune_stale_approvals",
             prune_stale_approvals,

@@ -10,6 +10,10 @@ from __future__ import annotations
 import os
 import pytest
 
+if not os.environ.get("RANKING_STORE_DSN") and not os.environ.get("DATABASE_URL"):
+    os.environ.setdefault("RANKING_STORE_DSN", "postgresql://test:test@localhost:5432/test")
+    os.environ.setdefault("RANKING_STORE_BOOTSTRAP", "0")
+
 
 @pytest.fixture(autouse=True)
 def _bff_stub_auth_default(monkeypatch):

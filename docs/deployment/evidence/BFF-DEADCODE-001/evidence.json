@@ -1,0 +1,74 @@
+{
+  "schema_version": "pantheon.review-evidence.v1",
+  "task_id": "BFF-DEADCODE-001",
+  "title": "Delete confirmed unreachable BFF code tails",
+  "owner": "Antigravity",
+  "reviewer": "Codex",
+  "target_repo": "pantheon",
+  "task_class": "functional",
+  "delivery_state": "ready_for_independent_review",
+  "source_base_sha": "8a798bbae82f4e374be04a59db92e1c7b109b722",
+  "scope": {
+    "owned": [
+      "Delete 17 audited unreachable tails across 6 BFF files: 8 in management_ai_store.py, 1 in deployment/router.py, 1 in personas/router.py, 1 in strategies/router.py, 1 in runtime/router.py, and 5 in management_read_models/ranking_router.py",
+      "Preserve minimal 410 GONE deprecation responses with standard headers (Deprecation: true, X-Deprecated: true, Sunset, Link, X-Pantheon-Replacement-Route) for deprecated routes"
+    ],
+    "not_changing": [
+      "Route signatures, URL contracts, and response envelopes",
+      "Active domain stores, ports, and business models",
+      "Composition root wiring in main.py"
+    ],
+    "composes_with": [
+      "BFF-COMPOSITION-001"
+    ]
+  },
+  "mandatory_deletions": [
+    "all 17 audited unreachable tails: 8 compatibility functions in management_ai_store.py (get_session, list_sessions, upsert_session, append_turn, list_turns, upsert_assistant_session, get_assistant_session, find_attachment)",
+    "1 deprecated action tail in deployment/router.py (bff_deprecated_deployment_action)",
+    "1 deprecated action tail in personas/router.py (bff_deprecated_persona_action)",
+    "1 deprecated action tail in strategies/router.py (bff_deprecated_strategy_action)",
+    "1 deprecated action tail in runtime/router.py (bff_deprecated_runtime_action)",
+    "5 deprecated ranking tails in management_read_models/ranking_router.py (bff_deprecated_list_ranking_formulas, bff_deprecated_create_ranking_formula, bff_deprecated_get_ranking_formula, bff_deprecated_patch_ranking_formula, bff_deprecated_ranking_formula_action)"
+  ],
+  "acceptance_matrix": [
+    {
+      "criterion": "Control-flow scan reports no audited statement after an unconditional terminal branch.",
+      "evidence": "AST control-flow scan across all python files in services/control-plane/bff confirmed 0 statements after unconditional return or raise.",
+      "status": "passed"
+    },
+    {
+      "criterion": "Deprecated public routes retain only their intended minimal response and tests no longer exercise dead bodies.",
+      "evidence": "FastAPI TestClient verified 410 GONE, Deprecation: true, X-Deprecated: true, and X-Pantheon-Replacement-Route on all 9 deprecated routes.",
+      "status": "passed"
+    },
+    {
+      "criterion": "All 17 audited unreachable tails are completely deleted.",
+      "evidence": "Deleted all 17 dead bodies following unconditional returns in management_ai_store.py (8 methods) and the 5 router modules (9 route handlers).",
+      "status": "passed"
+    }
+  ],
+  "verification": {
+    "status": "passed",
+    "commands": [
+      "python3 AST control flow scan: 0 findings across services/control-plane/bff",
+      ".venv-pantheon/bin/python3 -m pytest -q services/rankings/test_store.py tests/test_pytest_import_isolation.py services/control-plane/bff/tests/test_tools_integrations_router.py services/control-plane/bff/tests/test_bff_main_composition.py services/control-plane/bff/tests/test_bff_auth_facade.py services/control-plane/bff/test_normalized_route_uniqueness.py services/control-plane/bff/tests/test_deployment_router.py services/control-plane/bff/tests/test_read_surface_caller_migration.py services/control-plane/bff/tests/test_persona_router.py (184 passed, 3 warnings in 93.47s)",
+      "PYTHONPATH=. .venv-pantheon/bin/python3 services/control-plane/bff/smoke_test.py (26 passed in 2.50s)",
+      "PYTHONPATH=. .venv-pantheon/bin/python3 services/control-plane/bff/smoke_test_incident.py (21 passed in 2.05s)",
+      "ManagementAiConversationStore all 8 compatibility methods tested and verified",
+      "9 deprecated route endpoints verified via TestClient for 410 status and deprecation headers",
+      "git diff --check origin/dev: passed with 0 errors"
+    ]
+  },
+  "delivery": {
+    "pr": null,
+    "exact_head_sha": null,
+    "merge_method_required": "MERGE",
+    "merge_sha": null,
+    "note": "PR number and exact head are frozen by canonical handoff after this manifest is committed."
+  },
+  "non_actions": [
+    "No production or dev deployment was performed.",
+    "No live trading, broker, order, capital, or execution setting was enabled.",
+    "No reviewer approval or merge evidence is claimed by this owner manifest."
+  ]
+}

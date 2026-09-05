@@ -492,6 +492,8 @@ def create_action_command_router(
 
 def create_command_adapters_router(
     *,
+    command_store: Optional[Any] = None,
+    read_surface: Optional[Any] = None,
     get_command_store: Optional[Callable[[], Any]] = None,
     get_read_store: Optional[Callable[[], Any]] = None,
     extract_identity: Optional[Callable[..., OperatorIdentity]] = None,
@@ -509,6 +511,8 @@ def create_command_adapters_router(
     """Create the full command adapters router with all 11 command endpoints."""
     router = APIRouter()
     svc = service or CommandAdapterService(
+        command_store=command_store,
+        read_surface=read_surface,
         get_command_store=get_command_store,
         get_read_store=get_read_store,
         extract_identity=extract_identity,

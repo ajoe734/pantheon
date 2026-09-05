@@ -1,0 +1,75 @@
+{
+  "schema_version": "pantheon.review-evidence.v1",
+  "task_id": "OPS-HOST-REBUILD-RUNTIME-BOOTSTRAP-20260902",
+  "title": "Make the supervisor runtime and dev stack rebuildable on a fresh host",
+  "recorded_at": "2026-09-02T14:18:00Z",
+  "owner": "Codex",
+  "reviewer": "Claude",
+  "target_repo": "pantheon",
+  "task_class": "operations_evidence",
+  "source_head": "f73704e5a7b7bc78c959d7396f4e10b7e0623c26",
+  "scope": {
+    "owned": [
+      "A task-scoped, immutable review manifest for the fresh-host rebuild contract",
+      "Focused validation of supervisor config provisioning, immutable runtime promotion, watchdog installation and health evaluation",
+      "Focused validation of the non-production dev deployment script and shell entrypoints"
+    ],
+    "not_changing": [
+      "Production or dev host state",
+      "Secrets, credentials, systemd units, crontab or cloud resources",
+      "Supervisor, deployment or product runtime implementation"
+    ],
+    "composes_with": [
+      "scripts/sync-dev-root.sh split-root materialization and promotion",
+      "scripts/provision_live_supervisor_config.py live configuration provisioning",
+      "scripts/supervisor_watchdog_install.py persistent watchdog installation",
+      "scripts/deploy_nonprod_vm.sh and scripts/bootstrap.sh dev stack bring-up"
+    ]
+  },
+  "rebuild_contract": {
+    "supervisor": [
+      "Create the stable coordination worktree outside the mutable product checkout",
+      "Run scripts/sync-dev-root.sh with explicit dev-root, live-config and coordination-root paths",
+      "Materialize and seal command-runtimes/<exact-sha>, provision the live config and promote that exact runtime",
+      "Install the persistent watchdog from the exact command runtime with --method auto --start-now",
+      "Require scripts/supervisor_runtime_health.py --require-watchdog --json to report healthy"
+    ],
+    "dev_stack": [
+      "Supply the deployment environment and secret material outside Git",
+      "Use scripts/deploy_nonprod_vm.sh for exact-version non-production delivery",
+      "Use scripts/bootstrap.sh for idempotent local/single-VM infrastructure, migration and application bring-up",
+      "Accept a deployment only after the deployment script's readiness and exact-SHA gates pass"
+    ],
+    "authority_boundary": "Command code is immutable, canonical task state lives in the coordination root, mutable source staging lives in dev-root, and product deployment truth remains separate from supervisor health."
+  },
+  "verification": {
+    "result": "PASS",
+    "commands": [
+      "/tmp/ops-host-rebuild-pytest-venv/bin/python -m pytest -q scripts/test_supervisor_watchdog_install.py scripts/test_provision_live_supervisor_config.py scripts/test_promote_supervisor_runtime.py scripts/test_supervisor_runtime_health.py scripts/test_deploy_nonprod_vm.py",
+      "bash -n scripts/bootstrap.sh scripts/sync-dev-root.sh scripts/deploy_nonprod_vm.sh scripts/run-supervisor-watchdog.sh scripts/run-supervisor.sh",
+      "git diff --check"
+    ],
+    "results": [
+      "81 passed, 2 skipped in 10.30s",
+      "All five shell entrypoints passed bash syntax validation",
+      "No whitespace errors before manifest creation"
+    ],
+    "environment_note": "The worker image did not include pytest or PyYAML. A disposable /tmp virtual environment was created and those test-only packages were installed; no repository dependency or host runtime was changed."
+  },
+  "acceptance_statement": "At source head f73704e5a7b7bc78c959d7396f4e10b7e0623c26, the repository contains a coherent and focused-test-covered path to reconstruct the split-root supervisor runtime and dev stack on a newly provisioned host.",
+  "residual_risks": [
+    "This task did not provision or destroy a real host, install OS packages, alter systemd/crontab, or deploy the dev stack; it proves the checked-in rebuild contract, not a fresh-host hosted exercise.",
+    "A real rebuild still requires operator-provided cloud access, external secret material, Docker, Git, bubblewrap with user namespaces, and either user systemd with linger or cron.",
+    "The two skipped tests are environment-dependent cases reported by the focused suite; independent review should inspect their skip reasons before treating a particular target host as ready."
+  ],
+  "review_handoff": {
+    "status": "ready_for_independent_review",
+    "reviewer": "Claude",
+    "checks": [
+      "Confirm the task changes only this declared evidence artifact",
+      "Confirm the rebuild sequence matches the split-root and watchdog persistence runbook",
+      "Confirm the verification result is reproducible",
+      "Confirm the residual risks do not overstate source-contract evidence as hosted proof"
+    ]
+  }
+}

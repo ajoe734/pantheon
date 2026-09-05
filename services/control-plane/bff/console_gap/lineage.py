@@ -9,7 +9,8 @@ from .contracts import LineageEnvelope
 
 def create_lineage_router(
     *,
-    get_read_store: Callable,
+    read_surface: Optional[Any] = None,
+    get_read_store: Optional[Callable] = None,
     extract_identity: Callable,
     require_read_role: Callable,
     snapshot_meta: Callable,
@@ -43,7 +44,9 @@ def create_lineage_router(
         require_read_role(identity)
 
         snapshot_at = utc_now()
-        store = get_read_store()
+        store = read_surface if read_surface is not None else (get_read_store() if get_read_store is not None else None)
+        if store is None:
+            raise RuntimeError("Required read_surface is absent; failing startup closed.")
 
         effective_root_id = root_id or artifact_id
         edges: List[Dict[str, Any]] = store.get_lineage_graph(

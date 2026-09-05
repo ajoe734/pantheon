@@ -96,3 +96,23 @@ passes canonical status/config paths. `scripts/auto_integrator_install.py`
 installs it every five minutes with tag `# pantheon-auto-integrator`; runtime
 promotion repoints that entry. Workers and PR helpers do not invoke the
 executing wrapper themselves.
+
+## Recovery Verification
+
+After changing the scheduled runtime, publish a task-scoped redacted evidence
+manifest. Keep the operator-owned host assertion separate from checks that an
+isolated worker can reproduce. At minimum, record:
+
+- the immutable command-runtime SHA and the live config's matching Pantheon
+  `integration_path`;
+- the single tagged cron assertion and two serialized execute-tick outcomes;
+- the exact PR head, merge commit, and canonical `integration_receipt` for any
+  merge performed during recovery;
+- merged ancestry and archived `done` state for all recovery targets; and
+- an explicit check that an overlapping tick reports
+  `integration_lock_held`, rather than starting a second merge path.
+
+Do not copy credentials, environment contents, full process command lines, or
+unredacted host configuration into repository evidence. A worker that cannot
+read the host crontab must label the single-entry binding as Human/Ops-attested
+and independently verify the runtime paths, receipts, ancestry, and lock log.

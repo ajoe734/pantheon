@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import ast
 import io
 import json
 import os
@@ -755,6 +756,83 @@ class GitHubJsonCommandRunnerTests(unittest.TestCase):
 
 class IntegrationPlanTests(unittest.TestCase):
 
+    def test_validate_pr_literal_reasons_are_the_shared_canonical_registry_values(self) -> None:
+        tree = ast.parse(
+            Path(auto_integrator.__file__).read_text(encoding="utf-8")
+        )
+        function = next(
+            node
+            for node in tree.body
+            if isinstance(node, ast.FunctionDef) and node.name == "validate_pr"
+        )
+        literal_reasons = {
+            node.value.value
+            for node in ast.walk(function)
+            if isinstance(node, ast.Return)
+            and isinstance(node.value, ast.Constant)
+            and isinstance(node.value.value, str)
+        }
+
+        self.assertEqual(
+            literal_reasons,
+            {
+                "pr-is-draft",
+                "head-branch-mismatch",
+                "base-branch-mismatch",
+                "repository-mismatch",
+            },
+        )
+        self.assertLessEqual(literal_reasons, auto_integrator.unblock_contract.REASONS)
+
+    def test_validate_pr_blockers_publish_canonical_durable_unblock_requests(self) -> None:
+        cases = {
+            "pr-is-draft": {"isDraft": True},
+            "head-branch-mismatch": {"headRefName": "task/WRONG-001"},
+            "base-branch-mismatch": {"baseRefName": "main"},
+            "repository-mismatch": {
+                "url": "https://github.com/ajoe734/execute-plans/pull/44"
+            },
+        }
+        for reason, changes in cases.items():
+            with self.subTest(reason=reason), tempfile.TemporaryDirectory() as tmp_dir:
+                status_root = Path(tmp_dir)
+                candidate = auto_integrator.TaskCandidate(
+                    task_id="ABC-001",
+                    title="Ready",
+                    owner="Codex",
+                    reviewer="Claude",
+                    branch="task/ABC-001",
+                    raw_task={
+                        "generation": 7,
+                        "delivery_binding": {"pr": 44, "head_sha": APPROVED_HEAD},
+                    },
+                )
+                pr = green_pr()
+                pr.update(changes)
+
+                result = auto_integrator.integrate_candidate(
+                    candidate,
+                    auto_integrator.Settings(
+                        status_identity_sha256="d" * 64,
+                        command_runtime_sha="b" * 40,
+                    ),
+                    FakeRunner(pr=pr),
+                    status_root=status_root,
+                    execute=True,
+                    gate=approved_gate(),
+                )
+
+                expected_id = auto_integrator.unblock_task_id(candidate, reason)
+                self.assertEqual(result.action, "blocked")
+                self.assertEqual(result.unblock_task_id, expected_id)
+                requests = list(
+                    (status_root / auto_integrator.UNBLOCK_REQUEST_INBOX).glob("*.json")
+                )
+                self.assertEqual(len(requests), 1)
+                request = json.loads(requests[0].read_text(encoding="utf-8"))
+                self.assertEqual(request["reason"], reason)
+                self.assertEqual(request["unblock_task_id"], expected_id)
+
     def test_merge_owner_contract_is_task_dev_not_release_promotion(self) -> None:
         contract = (REPO_ROOT / "scripts/git/auto_integrator_contract.md").read_text(
             encoding="utf-8"
@@ -817,6 +895,7 @@ class IntegrationPlanTests(unittest.TestCase):
                 resolved[2].lock_path.resolve(),
                 (status_root / auto_integrator.DEFAULT_LOCK).resolve(),
             )
+            self.assertEqual(resolved[2].command_runtime_sha, head)
 
             forged = json.loads(json.dumps(payload))
             forged["branch_workflow"]["auto_integrator"]["lock_file"] = str(
@@ -1399,29 +1478,65 @@ class IntegrationPlanTests(unittest.TestCase):
         self.assertNotIn("approved by Claude", result.detail)
 
     def test_red_checks_open_unblock_in_execute_mode(self) -> None:
-        candidate = auto_integrator.TaskCandidate(
-            task_id="ABC-001",
-            title="Ready",
-            owner="Codex",
-            reviewer="Claude",
-            branch="task/ABC-001",
-        )
-        pr = green_pr()
-        pr["statusCheckRollup"] = [{"name": "ci", "conclusion": "FAILURE"}]
-        runner = FakeRunner(pr=pr)
+        with tempfile.TemporaryDirectory() as tmp_dir, mock.patch.dict(
+            os.environ, {}, clear=True
+        ):
+            status_root = Path(tmp_dir)
+            candidate = auto_integrator.TaskCandidate(
+                task_id="ABC-001",
+                title="Ready",
+                owner="Codex",
+                reviewer="Claude",
+                branch="task/ABC-001",
+                raw_task={
+                    "generation": 7,
+                    "delivery_binding": {"pr": 44, "head_sha": APPROVED_HEAD},
+                },
+            )
+            pr = green_pr()
+            pr["statusCheckRollup"] = [{"name": "ci", "conclusion": "FAILURE"}]
+            runner = FakeRunner(pr=pr)
 
-        result = auto_integrator.integrate_candidate(
-            candidate,
-            auto_integrator.Settings(),
-            runner,
-            execute=True,
-            gate=approved_gate(),
-        )
+            result = auto_integrator.integrate_candidate(
+                candidate,
+                auto_integrator.Settings(
+                    status_identity_sha256="d" * 64,
+                    command_runtime_sha="b" * 40,
+                ),
+                runner,
+                status_root=status_root,
+                execute=True,
+                gate=approved_gate(),
+            )
 
-        self.assertEqual(result.action, "blocked")
-        self.assertEqual(result.unblock_task_id, "INTEGRATION-UNBLOCK-ABC-001-CI-RED")
-        self.assertTrue(any("scripts/ai_status.py" in " ".join(command) and "assign" in command for command in runner.commands))
-        self.assertFalse(any(command[:3] == ["gh", "pr", "merge"] for command in runner.commands))
+            self.assertEqual(result.action, "blocked")
+            self.assertEqual(
+                result.unblock_task_id,
+                auto_integrator.unblock_task_id(candidate, "ci-red"),
+            )
+            requests = list((status_root / auto_integrator.UNBLOCK_REQUEST_INBOX).glob("*.json"))
+            self.assertEqual(len(requests), 1)
+            request = json.loads(requests[0].read_text(encoding="utf-8"))
+            self.assertEqual(request["command_runtime_sha"], "b" * 40)
+            self.assertEqual(request["pr"], 44)
+            self.assertEqual(request["head_sha"], APPROVED_HEAD)
+            self.assertEqual(request["source_task_generation"], 7)
+            self.assertFalse(any("scripts/ai_status.py" in " ".join(command) for command in runner.commands))
+            self.assertFalse(any(command[:3] == ["gh", "pr", "merge"] for command in runner.commands))
+
+            auto_integrator.open_unblock_task(
+                candidate,
+                "ci-red",
+                result.detail,
+                auto_integrator.Settings(
+                    status_identity_sha256="d" * 64,
+                    command_runtime_sha="b" * 40,
+                ),
+                runner,
+                root=status_root,
+                execute=True,
+            )
+            self.assertEqual(len(list((status_root / auto_integrator.UNBLOCK_REQUEST_INBOX).glob("*.json"))), 1)
 
     def test_merge_then_review_exact_head_conflict_opens_unblock_without_merge(self) -> None:
         candidate = auto_integrator.TaskCandidate(
@@ -1460,11 +1575,266 @@ class IntegrationPlanTests(unittest.TestCase):
         )
 
         self.assertEqual(result.action, "blocked")
-        self.assertEqual(
-            result.unblock_task_id,
-            "INTEGRATION-UNBLOCK-ABC-001-EXACT-HEAD-MERGE-CONFLICT",
-        )
+        self.assertIsNone(result.unblock_task_id)
         self.assertFalse(any(command[:3] == ["gh", "pr", "merge"] for command in runner.commands))
+
+    def test_unblock_request_write_failure_does_not_abort_candidate_result(self) -> None:
+        candidate = auto_integrator.TaskCandidate(
+            task_id="ABC-001",
+            title="Ready",
+            owner="Codex",
+            reviewer="Claude",
+            branch="task/ABC-001",
+            raw_task={
+                "generation": 1,
+                "delivery_binding": {"pr": 44, "head_sha": APPROVED_HEAD},
+            },
+        )
+        with (
+            mock.patch.dict(os.environ, {}, clear=True),
+            mock.patch.object(auto_integrator, "_write_unblock_request", side_effect=OSError("disk full")),
+        ):
+            result = auto_integrator.open_unblock_task(
+                candidate,
+                "ci-red",
+                "CI failed",
+                auto_integrator.Settings(
+                    status_identity_sha256="d" * 64,
+                    command_runtime_sha="b" * 40,
+                ),
+                FakeRunner(),
+                root=REPO_ROOT,
+                execute=True,
+            )
+
+        self.assertIsNone(result)
+
+    def test_unknown_unblock_reason_is_rejected_without_writing_inbox(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            root = Path(tmp_dir)
+            candidate = auto_integrator.TaskCandidate(
+                task_id="ABC-001", title="Ready", owner="Codex", reviewer="Claude",
+                branch="task/ABC-001", repository_slug="ajoe734/pantheon",
+                raw_task={
+                    "generation": 7,
+                    "delivery_binding": {"pr": 44, "head_sha": APPROVED_HEAD},
+                },
+            )
+
+            result = auto_integrator.open_unblock_task(
+                candidate, "producer-invented-reason", "not in the finite contract",
+                auto_integrator.Settings(
+                    status_identity_sha256="d" * 64,
+                    command_runtime_sha="b" * 40,
+                ),
+                FakeRunner(), root=root, execute=True,
+            )
+
+            self.assertIsNone(result)
+            self.assertFalse((root / auto_integrator.UNBLOCK_REQUEST_INBOX).exists())
+
+    def test_shared_unblock_ids_are_bounded_and_long_reasons_do_not_collide(self) -> None:
+        source = "OPS-AUTO-INTEGRATOR-STATUS-AUTHORITY-PREREQUISITE-001"
+        candidate = auto_integrator.TaskCandidate(
+            task_id=source, title="Ready", owner="Codex", reviewer="Claude",
+            branch=f"task/{source}", repository_slug="ajoe734/pantheon",
+            raw_task={"generation": 3, "delivery_binding": {"pr": 44, "head_sha": "a" * 40}},
+        )
+        first = auto_integrator.unblock_task_id(
+            candidate, "review-gate-approval-head-" + "a" * 80
+        )
+        second = auto_integrator.unblock_task_id(
+            candidate, "review-gate-approval-head-" + "b" * 80
+        )
+
+        self.assertLessEqual(len(first), 96)
+        self.assertLessEqual(len(second), 96)
+        self.assertNotEqual(first, second)
+        self.assertEqual(
+            first,
+            auto_integrator.unblock_contract.task_id(
+                source, "review-gate-approval-head-" + "a" * 80,
+                source_task_generation=3, repository_slug="ajoe734/pantheon",
+                pr=44, head_sha="a" * 40,
+            ),
+        )
+
+    def test_unblock_id_is_stable_for_same_candidate_and_changes_with_head_or_generation(self) -> None:
+        def candidate(generation: int, head: str) -> auto_integrator.TaskCandidate:
+            return auto_integrator.TaskCandidate(
+                task_id="ABC-001", title="Ready", owner="Codex", reviewer="Claude",
+                branch="task/ABC-001", repository_slug="ajoe734/pantheon",
+                raw_task={"generation": generation, "delivery_binding": {"pr": 44, "head_sha": head}},
+            )
+
+        original = auto_integrator.unblock_task_id(candidate(7, "a" * 40), "ci-red")
+        self.assertEqual(
+            original,
+            auto_integrator.unblock_task_id(candidate(7, "a" * 40), "ci-red"),
+        )
+        self.assertNotEqual(
+            original,
+            auto_integrator.unblock_task_id(candidate(8, "a" * 40), "ci-red"),
+        )
+        self.assertNotEqual(
+            original,
+            auto_integrator.unblock_task_id(candidate(7, "b" * 40), "ci-red"),
+        )
+
+    def test_unblock_identity_rejects_non_integer_generation_and_pr_at_producer(self) -> None:
+        malformed = (True, 1.0, "1")
+        for field in ("generation", "pr"):
+            for value in malformed:
+                with self.subTest(field=field, value=value):
+                    raw_task = {
+                        "generation": 7,
+                        "delivery_binding": {"pr": 44, "head_sha": APPROVED_HEAD},
+                    }
+                    if field == "generation":
+                        raw_task["generation"] = value
+                    else:
+                        raw_task["delivery_binding"]["pr"] = value
+                    candidate = auto_integrator.TaskCandidate(
+                        task_id="ABC-001", title="Ready", owner="Codex",
+                        reviewer="Claude", branch="task/ABC-001",
+                        repository_slug="ajoe734/pantheon", raw_task=raw_task,
+                    )
+
+                    with self.assertRaisesRegex(ValueError, field):
+                        auto_integrator.unblock_task_id(candidate, "ci-red")
+                    self.assertIsNone(auto_integrator.open_unblock_task(
+                        candidate, "ci-red", "CI failed",
+                        auto_integrator.Settings(
+                            status_identity_sha256="d" * 64,
+                            command_runtime_sha="b" * 40,
+                        ),
+                        FakeRunner(), root=REPO_ROOT, execute=True,
+                    ))
+
+    def test_terminal_receipt_prevents_identical_cron_request_republication(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            root = Path(tmp_dir)
+            candidate = auto_integrator.TaskCandidate(
+                task_id="ABC-001", title="Ready", owner="Codex", reviewer="Claude",
+                branch="task/ABC-001", repository_slug="ajoe734/pantheon",
+                raw_task={"generation": 7, "delivery_binding": {"pr": 44, "head_sha": APPROVED_HEAD}},
+            )
+            settings = auto_integrator.Settings(
+                status_identity_sha256="d" * 64, command_runtime_sha="b" * 40,
+            )
+            expected = auto_integrator.open_unblock_task(
+                candidate, "ci-red", "CI failed", settings, FakeRunner(),
+                root=root, execute=True,
+            )
+            request = next((root / auto_integrator.UNBLOCK_REQUEST_INBOX).glob("*.json"))
+            request_sha = request.stem
+            request.unlink()
+            receipt_dir = root / auto_integrator.unblock_contract.RECEIPT_ROOT / "processed"
+            receipt_dir.mkdir(parents=True)
+            (receipt_dir / f"{request_sha}.json").write_text(
+                json.dumps({
+                    "schema": auto_integrator.unblock_contract.RECEIPT_SCHEMA,
+                    "request_sha256": request_sha, "outcome": "processed",
+                    "detail": "materialized", "task_id": expected,
+                    "processed_at": "2026-09-05T00:00:00Z",
+                }),
+                encoding="utf-8",
+            )
+
+            replay = auto_integrator.open_unblock_task(
+                candidate, "ci-red", "CI failed", settings, FakeRunner(),
+                root=root, execute=True,
+            )
+
+            self.assertEqual(replay, expected)
+            self.assertEqual(list((root / auto_integrator.UNBLOCK_REQUEST_INBOX).glob("*.json")), [])
+
+    def test_rejected_terminal_receipt_returns_no_task_id(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            root = Path(tmp_dir)
+            candidate = auto_integrator.TaskCandidate(
+                task_id="ABC-001", title="Ready", owner="Codex", reviewer="Claude",
+                branch="task/ABC-001", repository_slug="ajoe734/pantheon",
+                raw_task={"generation": 7, "delivery_binding": {"pr": 44, "head_sha": APPROVED_HEAD}},
+            )
+            settings = auto_integrator.Settings(
+                status_identity_sha256="d" * 64, command_runtime_sha="b" * 40,
+            )
+            expected = auto_integrator.open_unblock_task(
+                candidate, "ci-red", "CI failed", settings, FakeRunner(),
+                root=root, execute=True,
+            )
+            request = next((root / auto_integrator.UNBLOCK_REQUEST_INBOX).glob("*.json"))
+            request_sha = request.stem
+            request.unlink()
+            receipt_dir = root / auto_integrator.unblock_contract.RECEIPT_ROOT / "rejected"
+            receipt_dir.mkdir(parents=True)
+            (receipt_dir / f"{request_sha}.json").write_text(
+                json.dumps({
+                    "schema": auto_integrator.unblock_contract.RECEIPT_SCHEMA,
+                    "request_sha256": request_sha, "outcome": "rejected",
+                    "detail": "stale generation", "task_id": "",
+                    "processed_at": "2026-09-05T00:00:00Z",
+                }), encoding="utf-8",
+            )
+
+            replay = auto_integrator.open_unblock_task(
+                candidate, "ci-red", "CI failed", settings, FakeRunner(),
+                root=root, execute=True,
+            )
+
+            self.assertIsNotNone(expected)
+            self.assertIsNone(replay)
+            self.assertEqual(list((root / auto_integrator.UNBLOCK_REQUEST_INBOX).glob("*.json")), [])
+
+    def test_processed_terminal_receipt_requires_exact_task_id(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            root = Path(tmp_dir)
+            candidate = auto_integrator.TaskCandidate(
+                task_id="ABC-001", title="Ready", owner="Codex", reviewer="Claude",
+                branch="task/ABC-001", repository_slug="ajoe734/pantheon",
+                raw_task={"generation": 7, "delivery_binding": {"pr": 44, "head_sha": APPROVED_HEAD}},
+            )
+            settings = auto_integrator.Settings(
+                status_identity_sha256="d" * 64, command_runtime_sha="b" * 40,
+            )
+            auto_integrator.open_unblock_task(
+                candidate, "ci-red", "CI failed", settings, FakeRunner(),
+                root=root, execute=True,
+            )
+            request = next((root / auto_integrator.UNBLOCK_REQUEST_INBOX).glob("*.json"))
+            request_sha = request.stem
+            request.unlink()
+            receipt_dir = root / auto_integrator.unblock_contract.RECEIPT_ROOT / "processed"
+            receipt_dir.mkdir(parents=True)
+            (receipt_dir / f"{request_sha}.json").write_text(
+                json.dumps({
+                    "schema": auto_integrator.unblock_contract.RECEIPT_SCHEMA,
+                    "request_sha256": request_sha, "outcome": "processed",
+                    "detail": "materialized", "task_id": "INTEGRATION-UNBLOCK-FORGED",
+                    "processed_at": "2026-09-05T00:00:00Z",
+                }), encoding="utf-8",
+            )
+
+            self.assertIsNone(auto_integrator.open_unblock_task(
+                candidate, "ci-red", "CI failed", settings, FakeRunner(),
+                root=root, execute=True,
+            ))
+
+    def test_invalid_generation_and_boolean_pr_fail_before_id_conversion(self) -> None:
+        for generation, pr in (("7", 44), (7, True)):
+            with self.subTest(generation=generation, pr=pr):
+                candidate = auto_integrator.TaskCandidate(
+                    task_id="ABC-001", title="Ready", owner="Codex", reviewer="Claude",
+                    branch="task/ABC-001", repository_slug="ajoe734/pantheon",
+                    raw_task={"generation": generation, "delivery_binding": {"pr": pr, "head_sha": APPROVED_HEAD}},
+                )
+                self.assertIsNone(auto_integrator.open_unblock_task(
+                    candidate, "ci-red", "CI failed",
+                    auto_integrator.Settings(
+                        status_identity_sha256="d" * 64, command_runtime_sha="b" * 40,
+                    ), FakeRunner(), root=REPO_ROOT, execute=True,
+                ))
 
     def test_clean_disposable_exact_head_merge_uses_scoped_identity_and_lands_head(self) -> None:
         candidate = auto_integrator.TaskCandidate(
@@ -1855,7 +2225,7 @@ class IntegrationPlanTests(unittest.TestCase):
         )
 
         self.assertEqual(result.action, "blocked")
-        self.assertEqual(result.unblock_task_id, "INTEGRATION-UNBLOCK-ABC-001-MISSING-PR")
+        self.assertIsNone(result.unblock_task_id)
         self.assertIn("No open or merged PR found", result.detail)
 
 
@@ -2397,8 +2767,7 @@ class CrossRepoIntegrationTests(unittest.TestCase):
         )
 
         self.assertEqual(result.action, "blocked")
-        self.assertIn("repository_mismatch", result.detail)
-        self.assertEqual(result.unblock_task_id, "INTEGRATION-UNBLOCK-FE-001-REPOSITORY-MISMATCH")
+        self.assertIn("repository-mismatch", result.detail)
         self.assertFalse(any(cmd[:3] == ["gh", "pr", "merge"] for cmd in runner.commands))
 
     def test_pantheon_task_rejects_execute_plans_pr(self) -> None:
@@ -2427,7 +2796,7 @@ class CrossRepoIntegrationTests(unittest.TestCase):
         )
 
         self.assertEqual(result.action, "blocked")
-        self.assertIn("repository_mismatch", result.detail)
+        self.assertIn("repository-mismatch", result.detail)
         self.assertFalse(any(cmd[:3] == ["gh", "pr", "merge"] for cmd in runner.commands))
 
     def test_invalid_scope_error_blocks_and_opens_unblock_task(self) -> None:
@@ -2448,7 +2817,7 @@ class CrossRepoIntegrationTests(unittest.TestCase):
         )
         self.assertEqual(result.action, "blocked")
         self.assertIn("unrecognized target_repo", result.detail)
-        self.assertEqual(result.unblock_task_id, "INTEGRATION-UNBLOCK-BAD-001-INVALID-REPOSITORY-SCOPE")
+        self.assertIsNone(result.unblock_task_id)
 
     def test_execute_plans_exact_head_mismatch_fails_closed(self) -> None:
         ep_root = Path("/fake/execute-plans")
@@ -2532,10 +2901,7 @@ class CrossRepoIntegrationTests(unittest.TestCase):
         )
         self.assertEqual(result.action, "blocked")
         self.assertIn("does not exist", result.detail)
-        self.assertEqual(
-            result.unblock_task_id,
-            "INTEGRATION-UNBLOCK-FE-001-MISSING-REPOSITORY-CHECKOUT",
-        )
+        self.assertIsNone(result.unblock_task_id)
 
     def test_invalid_git_repository_fails_closed(self) -> None:
         ep_root = Path("/fake/execute-plans")
@@ -2559,10 +2925,7 @@ class CrossRepoIntegrationTests(unittest.TestCase):
         )
         self.assertEqual(result.action, "blocked")
         self.assertIn("is not a git repository", result.detail)
-        self.assertEqual(
-            result.unblock_task_id,
-            "INTEGRATION-UNBLOCK-FE-001-INVALID-GIT-REPOSITORY",
-        )
+        self.assertIsNone(result.unblock_task_id)
 
     def test_missing_git_common_dir_fails_closed(self) -> None:
         candidate = auto_integrator.TaskCandidate(
@@ -2674,10 +3037,7 @@ class CrossRepoIntegrationTests(unittest.TestCase):
         )
         self.assertEqual(result.action, "blocked")
         self.assertIn("repository origin remote mismatch", result.detail)
-        self.assertEqual(
-            result.unblock_task_id,
-            "INTEGRATION-UNBLOCK-FE-001-REPOSITORY-ORIGIN-MISMATCH",
-        )
+        self.assertIsNone(result.unblock_task_id)
 
     def test_command_runner_handles_oserror_cleanly(self) -> None:
         runner = auto_integrator.CommandRunner()
@@ -2748,10 +3108,7 @@ class CrossRepoIntegrationTests(unittest.TestCase):
         )
         self.assertEqual(result.action, "blocked")
         self.assertIn("must be an absolute path", result.detail)
-        self.assertEqual(
-            result.unblock_task_id,
-            "INTEGRATION-UNBLOCK-FE-001-INVALID-REPOSITORY-ROOT",
-        )
+        self.assertIsNone(result.unblock_task_id)
 
     def test_missing_repository_slug_fails_closed(self) -> None:
         ep_root = Path("/fake/execute-plans")
@@ -2775,10 +3132,7 @@ class CrossRepoIntegrationTests(unittest.TestCase):
         )
         self.assertEqual(result.action, "blocked")
         self.assertIn("has no configured GitHub slug", result.detail)
-        self.assertEqual(
-            result.unblock_task_id,
-            "INTEGRATION-UNBLOCK-FE-001-MISSING-REPOSITORY-SLUG",
-        )
+        self.assertIsNone(result.unblock_task_id)
 
     def test_origin_remote_command_failure_fails_closed(self) -> None:
         ep_root = Path("/fake/execute-plans")
@@ -2802,10 +3156,7 @@ class CrossRepoIntegrationTests(unittest.TestCase):
         )
         self.assertEqual(result.action, "blocked")
         self.assertIn("origin remote is unavailable", result.detail)
-        self.assertEqual(
-            result.unblock_task_id,
-            "INTEGRATION-UNBLOCK-FE-001-MISSING-ORIGIN-REMOTE",
-        )
+        self.assertIsNone(result.unblock_task_id)
 
     def test_pr_lookup_failure_fails_closed_without_crashing(self) -> None:
         ep_root = Path("/fake/execute-plans")
@@ -2834,10 +3185,7 @@ class CrossRepoIntegrationTests(unittest.TestCase):
             )
         self.assertEqual(result.action, "blocked")
         self.assertIn("Failed to inspect PR", result.detail)
-        self.assertEqual(
-            result.unblock_task_id,
-            "INTEGRATION-UNBLOCK-FE-001-PR-LOOKUP-FAILED",
-        )
+        self.assertIsNone(result.unblock_task_id)
 
 
 class AutoIntegratorProcessE2ETests(unittest.TestCase):

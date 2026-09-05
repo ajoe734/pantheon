@@ -15,11 +15,18 @@ from pathlib import Path
 from typing import Any
 
 import httpx
+from fastapi import FastAPI
 from fastapi.routing import APIRoute
 
-from auth.service import AuthFacadeService, ProviderReadinessCache
-from core.app_factory import ROUTE_ASSIGNMENTS, create_app
-from core.lifespan import create_lifespan
+from services.control_plane.bff.auth.service import AuthFacadeService, ProviderReadinessCache
+from services.control_plane.bff.auth.router import create_auth_router
+from services.control_plane.bff.core.app_factory import (
+    ROUTE_ASSIGNMENTS,
+    create_settings_router,
+    create_assistant_management_router,
+    create_core_router,
+)
+from services.control_plane.bff.core.lifespan import create_lifespan
 
 
 TASK_DELIVERY_EVIDENCE = {
@@ -88,14 +95,19 @@ def _auth_service(cache: ProviderReadinessCache) -> AuthFacadeService:
     )
 
 
-def _app(cache: ProviderReadinessCache):
-    return create_app(
-        auth_service=_auth_service(cache),
-        settings_store=_MemorySettingsStore(),
-        extract_identity=lambda _authorization, **_kwargs: object(),
-        require_admin_mfa=lambda _identity, _action: None,
-        enable_provider_refresh=False,
+def _app(cache: ProviderReadinessCache) -> FastAPI:
+    app = FastAPI(title="Pantheon Operator BFF Core Test", version="0.2.0")
+    app.include_router(create_auth_router(service=_auth_service(cache)))
+    app.include_router(
+        create_settings_router(
+            settings_store=_MemorySettingsStore(),
+            extract_identity=lambda _authorization, **_kwargs: object(),
+            require_admin_mfa=lambda _identity, _action: None,
+        )
     )
+    app.include_router(create_assistant_management_router({}))
+    app.include_router(create_core_router({}))
+    return app
 
 
 def test_core_factory_matches_exact_30_route_assignment() -> None:

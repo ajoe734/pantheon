@@ -12,14 +12,32 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-# Ensure bff is in path
 BFF_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
-if BFF_DIR not in sys.path:
-    sys.path.insert(0, BFF_DIR)
 
-from personas import PersonaService, create_personas_router, router
+from services.control_plane.bff.personas import PersonaService, create_personas_router
+from services.control_plane.bff.ports import (
+    create_persona_registry_write_owner,
+    create_read_surface_ports,
+)
+from services.control_plane.bff.command_queue import CommandStore
 
 AUTH_HEADERS = {"Authorization": "Bearer test-operator:operator,reviewer,admin"}
+
+
+class FakeRankingWriteOwner:
+    def __init__(self):
+        self.snapshots = {}
+
+    def put_ranking_snapshot(self, snapshot: Dict[str, Any]) -> Dict[str, Any]:
+        sid = snapshot.get("snapshot_id") or "snap-1"
+        self.snapshots[sid] = snapshot
+        return {"status": "created", "snapshot_id": sid, "snapshot": snapshot}
+
+    def get_ranking_snapshot(self, snapshot_id: str) -> Optional[Dict[str, Any]]:
+        return self.snapshots.get(snapshot_id)
+
+    def list_ranking_snapshots(self) -> List[Dict[str, Any]]:
+        return list(self.snapshots.values())
 
 
 @pytest.fixture(autouse=True)
@@ -29,9 +47,24 @@ def enable_auth_stub(monkeypatch: pytest.MonkeyPatch):
 
 
 @pytest.fixture
-def client() -> TestClient:
+def persona_router(tmp_path) -> Any:
+    write_owner = create_persona_registry_write_owner()
+    ranking_write_owner = FakeRankingWriteOwner()
+    read_store = create_read_surface_ports(persona_registry_store=write_owner)
+    command_store = CommandStore(str(tmp_path / "commands.jsonl"))
+    service = PersonaService(
+        write_owner=write_owner,
+        ranking_write_owner=ranking_write_owner,
+        read_store=read_store,
+        command_store=command_store,
+    )
+    return create_personas_router(service=service)
+
+
+@pytest.fixture
+def client(persona_router) -> TestClient:
     app = FastAPI(title="Persona Test App")
-    app.include_router(router)
+    app.include_router(persona_router)
     return TestClient(app)
 
 
@@ -53,9 +86,9 @@ def test_zero_reverse_imports():
                     )
 
 
-def test_route_inventory_count():
+def test_route_inventory_count(persona_router):
     """Verify that the router registers all 49 route decorators."""
-    assert len(router.routes) == 49
+    assert len(persona_router.routes) == 49
 
 
 def test_list_personas_api_v1(client: TestClient):
@@ -322,8 +355,23 @@ def test_bff_management_persona_fleet(client: TestClient):
     assert "data" in data
 
 
-def test_custom_router_factory():
-    """Verify that create_personas_router allows injecting custom callables."""
-    custom_service = PersonaService()
+def test_custom_router_factory(tmp_path):
+    """Verify that create_personas_router requires explicit PersonaService and fails closed."""
+    write_owner = create_persona_registry_write_owner()
+    ranking_write_owner = FakeRankingWriteOwner()
+    read_store = create_read_surface_ports(persona_registry_store=write_owner)
+    command_store = CommandStore(str(tmp_path / "custom_commands.jsonl"))
+    custom_service = PersonaService(
+        write_owner=write_owner,
+        ranking_write_owner=ranking_write_owner,
+        read_store=read_store,
+        command_store=command_store,
+    )
     custom_router = create_personas_router(service=custom_service)
     assert len(custom_router.routes) == 49
+
+    with pytest.raises(RuntimeError):
+        create_personas_router()
+
+    with pytest.raises(RuntimeError):
+        PersonaService()

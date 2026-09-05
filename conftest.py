@@ -18,6 +18,7 @@ import pytest
 ROOT = Path(__file__).resolve().parent
 SERVICES_DIR = ROOT / "services"
 SCRIPTS_DIR = ROOT / "scripts"
+TESTS_DIR = ROOT / "tests"
 # A worker shell and a task worktree inherit the provisioned live task-state
 # journal binding. A test run must never reach it: an inherited event log turns
 # any fixture board into a real authoritative commit.
@@ -49,14 +50,35 @@ def _module_file(module: ModuleType) -> Path | None:
 
 def _is_transient_local_module(name: str, module: ModuleType) -> bool:
     root_name = name.partition(".")[0]
-    if root_name in _STABLE_REPO_PACKAGES:
-        return False
-
     path = _module_file(module)
+
+    if root_name in _STABLE_REPO_PACKAGES:
+        if path is None:
+            return False
+        # A stable package name is only genuinely stable when it actually
+        # resolves under its canonical repo-root package directory. A stray
+        # module cached under a stable name but resolved from a service-local
+        # or test-local directory (for example a wrong-sys.path collision
+        # between the root ``integrations`` package and a same-named
+        # service-local subpackage) is a poisoned cache entry, not a stable
+        # package: treat it as transient so it gets cleared and re-resolved.
+        canonical_root = ROOT / root_name
+        if path == canonical_root or _is_relative_to(path, canonical_root):
+            return False
+        return (
+            _is_relative_to(path, SERVICES_DIR)
+            or _is_relative_to(path, SCRIPTS_DIR)
+            or _is_relative_to(path, TESTS_DIR)
+        )
+
     if path is None:
         return False
 
-    return _is_relative_to(path, SERVICES_DIR) or _is_relative_to(path, SCRIPTS_DIR)
+    return (
+        _is_relative_to(path, SERVICES_DIR)
+        or _is_relative_to(path, SCRIPTS_DIR)
+        or _is_relative_to(path, TESTS_DIR)
+    )
 
 
 def _clear_transient_local_modules() -> None:
@@ -79,7 +101,11 @@ def _remove_service_import_roots() -> None:
         if path == ROOT:
             retained.append(entry)
             continue
-        if _is_relative_to(path, SERVICES_DIR) or _is_relative_to(path, SCRIPTS_DIR):
+        if (
+            _is_relative_to(path, SERVICES_DIR)
+            or _is_relative_to(path, SCRIPTS_DIR)
+            or _is_relative_to(path, TESTS_DIR)
+        ):
             continue
         retained.append(entry)
     sys.path[:] = retained
@@ -89,14 +115,21 @@ def _import_roots_for(module_path: Path) -> list[Path]:
     path = module_path.resolve()
     roots: list[Path] = []
 
+    # 1. Test directory first
+    test_dir = path.parent
+    roots.append(test_dir)
+
+    # 2. Repository root before service-local root
+    roots.append(ROOT)
+
+    # 3. Service-local root
     if _is_relative_to(path, SCRIPTS_DIR):
         roots.append(SCRIPTS_DIR)
     elif _is_relative_to(path, SERVICES_DIR):
-        roots.append(path.parent)
         if path.parent.name == "tests":
             roots.append(path.parent.parent)
-
-    roots.append(ROOT)
+        else:
+            roots.append(path.parent)
 
     unique_roots: list[Path] = []
     seen: set[str] = set()

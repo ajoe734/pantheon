@@ -1,0 +1,104 @@
+{
+  "schema_version": "pantheon.development-tooling-review-evidence.v1",
+  "task": {
+    "id": "OPS-AUTO-INTEGRATOR-STATUS-AUTHORITY-PREREQUISITE-001",
+    "title": "Add least-privilege supervisor-bound auto-integrator unblock authority",
+    "owner": "Codex",
+    "reviewer": "Claude",
+    "status": "in_progress",
+    "base_branch": "dev",
+    "task_branch": "task/OPS-AUTO-INTEGRATOR-STATUS-AUTHORITY-PREREQUISITE-001",
+    "review_decision": "ready_for_review"
+  },
+  "scope": {
+    "owned": [
+      "scripts/git/auto_integrator.py request publisher",
+      ".orchestrator/auto_integrator_unblock_contract.py shared pure contract",
+      ".orchestrator/supervisor.py request validation and TaskStore materialization",
+      "focused publisher and supervisor contract tests",
+      "scripts/git/auto_integrator_contract.md"
+    ],
+    "not_changing": [
+      "generic scripts/ai_status.py mutation authority",
+      "worker lease admission or local Human/Ops authority",
+      "review decision lifecycle and GitHub merge gate"
+    ]
+  },
+  "authority": {
+    "publisher_can_mutate_task_state": false,
+    "publisher_output": "content-addressed durable unblock intent only",
+    "consumer": "supervisor",
+    "canonical_write": "authoritative TaskStore transaction",
+    "request_bindings": [
+      "canonical status root",
+      "promoted immutable command-runtime SHA",
+      "source task generation",
+      "repository ID and slug",
+      "canonical PR and exact head SHA",
+      "owner and reviewer",
+      "allow-listed reason",
+      "exact INTEGRATION-UNBLOCK namespace"
+    ],
+    "retry_behavior": "processed/rejected receipts are validated terminal content-addressed tombstones; a processed receipt returns only its exact validated task ID, while rejected or failed publication returns no task ID; error remains retryable; publisher-consumer-publisher replay creates no new inbox/archive write",
+    "runtime_binding_source": "resolve_execute_authority-proven promoted command root HEAD carried in immutable Settings; no cron environment dependency",
+    "task_id_derivation": "one shared fail-closed producer/consumer builder over raw identity scalars; generation and PR reject bool, float, and numeric-string values before bounded readable-prefix plus deterministic-digest derivation",
+    "consumer_isolation": {
+      "reason_authority": "one exact finite registry and validator in the shared pure contract; producer rejects unknown values before creating the inbox and supervisor independently validates the same registry",
+      "max_requests_per_cycle": 32,
+      "transaction_scope": "one authoritative TaskStore transaction per request",
+      "terminal_receipts": [
+        "processed",
+        "rejected",
+        "error (retryable, not a publisher tombstone)"
+      ],
+      "source_finalization": "move each consumed request to its outcome-specific durable archive",
+      "failure_semantics": "malformed or failed request does not prevent a later request from being attempted"
+    }
+  },
+  "review_reopen_resolution": {
+    "previous_head": "c0c393af209d164e3985d986292a1495f46781b2",
+    "resolved_defect": "Moved the finite unblock reason registry and validator out of supervisor into the shared pure contract. The publisher now rejects arbitrary reasons and returns None before any inbox creation, while the supervisor independently invokes the same validator for forged consumer input. Strict raw identity types, typed terminal receipts, exact processed task-ID validation, and publisher-consumer-publisher replay remain intact.",
+    "added_reasons": [
+      "dirty-repository-checkout",
+      "missing-repository-slug",
+      "missing-origin-remote",
+      "repository-origin-mismatch",
+      "canonical-state-refresh-failed",
+      "canonical-authority-lock-failed"
+    ],
+    "removed_unused_reason": "final-canonical-state-refresh-failed",
+    "regression_guard": "AST coverage proves all current literal producer reasons and dynamically prefixed review-gate reasons are registered; the finite rejected merge-state values are registered; arbitrary producer reason creates no inbox; forged consumer reasons are rejected. Direct bool/float/numeric-string generation and PR rejection, terminal receipt replay, and exact processed task-ID validation remain covered."
+  },
+  "latest_reopen_resolution": {
+    "previous_head": "eb4920a9e674842d9f809d2ce424f81831989927",
+    "resolved_defect": "validate_pr now emits the shared registry's canonical hyphenated values for pr-is-draft, head-branch-mismatch, base-branch-mismatch, and repository-mismatch. These real eligibility failures therefore reach the existing fail-closed durable publisher instead of being rejected as unknown producer reasons.",
+    "authority_boundary": "No alias, compatibility normalizer, registry expansion, supervisor authority change, generic task mutation, or worker lease bypass was added.",
+    "regression_guard": "An AST test freezes validate_pr's complete literal return set against the single shared REASONS registry. Four execute-mode integrate_candidate cases inspect the durable inbox payload and deterministic unblock task ID for every corrected path."
+  },
+  "verification": {
+    "focused_supervisor": {
+      "command": "python3 .orchestrator/test_supervisor.py AutoIntegratorUnblockAuthorityTests",
+      "result": "12 passed"
+    },
+    "auto_integrator_suite": {
+      "command": "python3 scripts/git/test_auto_integrator.py",
+      "result": "113 passed"
+    },
+    "supervisor_suite": {
+      "command": "python3 .orchestrator/test_supervisor.py",
+      "result": "239 passed; 1 pre-existing task archive/status root binding fixture error outside auto-integrator scope (240 run)"
+    },
+    "status_authority_suite": {
+      "command": "python3 scripts/test_ai_status.py",
+      "result": "387 passed"
+    },
+    "syntax": {
+      "command": "python3 -m py_compile .orchestrator/auto_integrator_unblock_contract.py .orchestrator/supervisor.py .orchestrator/test_supervisor.py scripts/ai_status.py scripts/test_ai_status.py scripts/git/auto_integrator.py scripts/git/test_auto_integrator.py",
+      "result": "pass"
+    },
+    "diff_integrity": {
+      "command": "git diff --check",
+      "result": "pass"
+    }
+  }
+}

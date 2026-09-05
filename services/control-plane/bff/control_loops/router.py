@@ -131,6 +131,7 @@ def _identity_tenant(identity: Any) -> Optional[str]:
 def create_control_loops_router(
     *,
     service: Optional[ControlLoopsService] = None,
+    read_surface: Optional[Any] = None,
     get_read_store: Optional[Callable[[], Any]] = None,
     loop_truth_adapter: Optional[Any] = None,
     downstream_health_monitor: Optional[Any] = None,
@@ -155,7 +156,12 @@ def create_control_loops_router(
     _err = bff_error or default_bff_error
 
     if service is None:
-        read_store = get_read_store() if get_read_store else None
+        if read_surface is not None:
+            read_store = read_surface() if callable(read_surface) else read_surface
+        elif get_read_store:
+            read_store = get_read_store()
+        else:
+            read_store = None
         service = ControlLoopsService(
             read_store=read_store,
             loop_truth_adapter=loop_truth_adapter,

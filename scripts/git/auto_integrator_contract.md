@@ -81,8 +81,42 @@ review_approved task OR active canonical merge_then_review task
   and reports `already_merged`, preserving canonical task status without
   opening spurious unblock tasks or mutating task status to `done`.
 - The integrator never resolves conflicts and never bypasses branch protection.
-- Blockers create an `INTEGRATION-UNBLOCK-*` task in the canonical status store
-  instead of leaving the parent stranded.
+- Blockers publish a content-addressed request under the canonical status
+  root's `.orchestrator/auto-integrator-unblock-inbox/`. The publisher has no
+  generic status-command identity and never calls `assign` or `progress`.
+  The request binds the canonical status-root identity and the promoted
+  immutable command-runtime SHA already proven by live execute-authority
+  resolution (it does not depend on cron exporting that SHA), source task
+  generation, repository ID/slug, frozen PR
+  and head, owner/reviewer, allow-listed reason, and exact generated
+  `INTEGRATION-UNBLOCK-*` namespace.
+- Only the supervisor consumes that inbox. It revalidates every binding against
+  current canonical task truth and its own promoted runtime, then creates the
+  unblock row idempotently through an isolated authoritative TaskStore
+  transaction. Each cycle drains at most 32 requests. Every consumed source is
+  moved to the outcome-specific durable archive and receives a
+  `processed`, `rejected`, or `error` receipt; one malformed request or failed
+  materialization/write cannot prevent a later valid request from being tried.
+  Validated `processed` and `rejected` receipts are terminal content-addressed
+  tombstones, so the next identical cron pass does not recreate an archived
+  request. An `error` receipt remains retryable and is not a tombstone.
+  Forged, stale, wrong-root, wrong-runtime, wrong-repository, arbitrary-reason,
+  and arbitrary-task requests are rejected by an exact finite reason allowlist
+  rather than an extensible regex family. Execute mode reports an unblock task
+  ID only after publication succeeds, or when a validated `processed` tombstone
+  carries that exact task ID. A `rejected` tombstone, mismatched processed task
+  ID, refusal, or write failure retains the blocked candidate result but returns
+  no phantom ID. One shared fail-closed builder derives IDs from the raw
+  producer/consumer identity; generation and PR must be positive JSON integers
+  (never booleans, floats, or numeric strings) before derivation. Dry-run may
+  report the would-create ID.
+- Publisher and supervisor use one pure request contract for schema, inbox,
+  canonical request serialization/filename, and generated task IDs. IDs longer
+  retain a readable prefix plus a deterministic digest suffix within 96
+  characters. The digest covers source generation, canonical repository slug,
+  PR, exact head, source task, and reason, so a new delivery candidate cannot
+  alias a prior generation/head that failed for the same reason. An existing
+  canonical ID is accepted only when its stored request provenance is exact.
 
 ## Merge Flow
 
