@@ -1,0 +1,65 @@
+{
+  "schema_version": "pantheon.task-evidence.v1",
+  "task_id": "JOURNAL-OWNER-001",
+  "base_ref": "dev@1db964e248e850c735ad6f7cc5d99e76284b66cc",
+  "depends_on": "BFF-TEST-ARCH-001 (done), STRUCT-OWNERSHIP-001 (done)",
+  "normative_plan": "SA ADR-04; SD §5.3 Decision Journal convergence (packet pkt-pantheon-structural-closure-functional-v2-20260903); REPORT.md GAP-AGORA-04 / DUP-01",
+  "owner_selection": {
+    "selected_owner": "services/governance/decision_journal.py (DecisionJournalStores / create_entry / patch_entry / list_entries / list_audit_events)",
+    "rationale": "Already satisfies the SD §5.3 scorecard: transactional compare-and-set writes, append-only audit trail, idempotent patch with request-hash conflict detection, actor/tenant-scoped fields, and a restart-safe JSON/Postgres-backed store (GOVERNANCE_STORE_BACKEND) shared with the governance service's freeze-order/rollback posture. Had zero production callers before this task, exactly as REPORT.md GAP-AGORA-04 documented.",
+    "unselected_path_found": "services/control-plane/bff/agora/service.py's create_journal_entry/patch_journal_entry called store.create_decision_journal_entry/patch_decision_journal_entry on the shared ReadSurfacePorts read_store, which never implemented those methods in production. create_journal_entry silently fabricated an unpersisted success dict when the method was absent (fake durability, no real writer); patch_journal_entry always returned 404 in production because the missing method left `result` as None. Both were already effectively dead/broken code paths, not a competing durable store -- there was nothing to migrate rows from.",
+    "out_of_scope_note": "services/agora/store.py + services/agora/service.py (AgoraStore/AgoraWriteService, commit 4dbbf7711) is a separate, still fully unwired Agora write-owner covering many domains beyond the journal. It is not composed into the BFF anywhere and is outside this task's declared artifact contract (services/agora/** is not listed); left untouched for a future Agora-domain-writer task to resolve."
+  },
+  "implementation": {
+    "new_file": "services/control-plane/bff/governance/decision_journal_write_owner.py",
+    "description": "Typed adapter (DecisionJournalOwnerAdapter) that proxies an existing read-store object unchanged via __getattr__ and implements list_decision_journal_entries/create_decision_journal_entry/patch_decision_journal_entry by delegating directly to services.governance.decision_journal. wrap_get_read_store_with_decision_journal_owner() builds the durable DecisionJournalStores once and composes the adapter onto a get_read_store callable.",
+    "composition_point": "services/control-plane/bff/agora/router.py: create_agora_router() wraps its single get_read_store closure with wrap_get_read_store_with_decision_journal_owner() immediately after resolving it, before any sub-router (agora_service, operational_readiness, interaction router, servant router, candidate_service, governance sub-router) is constructed -- so every Agora journal read and write in the whole sub-tree shares one event path against the same canonical owner.",
+    "read_surface_untouched": "services/control-plane/bff/ports/read_surface_ports.py was deliberately not modified. create_decision_journal_entry/patch_decision_journal_entry remain excluded from ReadSurfacePorts per RETAINED_WRITES_DEFERRED_FROM_READ_SURFACE (tests/test_read_surface_caller_migration.py) -- canonical journal write ownership lives outside the BFF, in services/governance/decision_journal.py.",
+    "fail_closed_change": "services/control-plane/bff/agora/service.py create_journal_entry/patch_journal_entry now raise 503 DEPENDENCY_UNAVAILABLE if the composed read_store lacks the Decision Journal owner methods, instead of create_journal_entry fabricating an unpersisted fake-success record or patch_journal_entry masking the same gap as a plain 404. Response meta canonicalWriteAuthority/persistenceMode are now read back from the real persisted record instead of the hardcoded agora_journal_service/bff_local_dev_store/degraded=true markers.",
+    "entry_id_fix": "create_journal_entry previously computed entry_id locally for the dry-run preview but never passed it to the (already broken) store call, so a real write could not have matched its own dry-run preview id. journal_payload now carries id/entryId through to the owner adapter so the persisted row uses the same id the dry-run response already showed the caller."
+  },
+  "verification": {
+    "note": "services/control-plane/bff's ~200 legacy 'sys.path.insert + import main as bff_main' test files (test_bff_agora_core_contract.py, test_agora_journal_merge_patch.py, test_bff_dry_run_rbac_contract.py, test_bff_b2_005_agora_canonical_aliases.py, tests/test_console_data_agora_projection.py among them) are pre-existing PLANNED-disposition suites per BFF-TEST-ARCH-001's inventory and fail to import standalone in this sandbox for a reason unrelated to this change (main.py's relative imports require the services.control_plane.bff.main package path, not a bare top-level 'main' module). Verification here uses the same package-qualified composition pattern BFF-TEST-ARCH-001 already established for its allowlisted suites, plus a direct full-app TestClient smoke run.",
+    "commands": [
+      {
+        "command": "python3 -m pytest -q services/control-plane/bff/governance/test_decision_journal_write_owner.py",
+        "result": "7 passed in 3.00s",
+        "executed": 7,
+        "collected": 7
+      },
+      {
+        "command": "python3 -m pytest -q services/control-plane/bff/tests/test_read_surface_caller_migration.py services/control-plane/bff/tests/test_bff_test_architecture.py services/control-plane/bff/test_cw01_consult_request_contract.py services/control-plane/bff/test_cw02_debate_transcript_contract.py services/control-plane/bff/test_cw03_committee_board_contract.py services/control-plane/bff/test_cw04_redteam_memo_contract.py services/control-plane/bff/tests/test_governance_router.py services/control-plane/bff/tests/test_operations_consultation_ports.py services/control-plane/bff/tests/test_agora_servant_production_write_owner.py services/control-plane/bff/governance/test_decision_journal_write_owner.py",
+        "result": "117 passed, 3 warnings in 54.52s",
+        "executed": 117,
+        "collected": 117,
+        "note": "Re-runs BFF-TEST-ARCH-001's full composition allowlist alongside the new suite to confirm no regression to the narrow read-surface architecture it locked in."
+      },
+      {
+        "command": "python3 -c \"import services.control_plane.bff.main as m\" (package-qualified import, not the legacy bare 'main' pattern)",
+        "result": "imports cleanly; FastAPI app object constructed"
+      }
+    ],
+    "manual_end_to_end_smoke": {
+      "description": "Full FastAPI app (services.control_plane.bff.main:app) driven with fastapi.testclient.TestClient against a temp PANTHEON_DECISION_JOURNAL_DATA_DIR.",
+      "steps": [
+        "POST /bff/agora/journal -> 201, data.canonicalWriteAuthority=governance-decision-journal-svc, data.persistenceMode=governance_json_store (dev JSON backend)",
+        "GET /bff/agora/journal -> 200, items[0] matches the created row exactly",
+        "PATCH /bff/agora/journal/{id} (application/merge-patch+json) -> 200, data.title updated, data.version=2, meta.audit records the governance CAS diff, no degraded/bff_local_dev_store markers in the response"
+      ]
+    },
+    "restart_fresh_reader_parity": {
+      "description": "Simulated process restart: after the create+list+patch smoke above, services.control_plane.bff.main was removed from sys.modules and re-imported fresh (new FastAPI app instance, new TestClient), pointed at the same PANTHEON_DECISION_JOURNAL_DATA_DIR.",
+      "result": "GET /bff/agora/journal on the freshly re-imported app returned the same entry id with the patched title and version=1 create -> version incremented only by the actual patch, proving the owner state lives on disk (governance_json_store), not in any process-local dict."
+    }
+  },
+  "acceptance_check": {
+    "one_schema_one_write_owner": true,
+    "parity_and_restart_tests_pass": true,
+    "zero_old_callers_or_table_writes": "true -- the only prior 'implementation' on the Agora BFF side never had a real table/file writer to begin with; it is now a thin delegate to the single governance owner, and it fails closed instead of fabricating success when that owner is not composed",
+    "no_replication_bridge_or_dual_write": true
+  },
+  "review": {
+    "reviewer": "Antigravity",
+    "decision": "pending independent exact-head review"
+  }
+}

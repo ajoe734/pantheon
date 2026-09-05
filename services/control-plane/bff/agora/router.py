@@ -23,6 +23,9 @@ from services.control_plane.bff.ports import (
     ReadSurfacePorts,
     create_read_surface_ports,
 )
+from services.control_plane.bff.governance.decision_journal_write_owner import (
+    wrap_get_read_store_with_decision_journal_owner,
+)
 
 from .models import (
     AgoraCapabilityScope,
@@ -133,6 +136,12 @@ def create_agora_router(
         get_read_store = (lambda: read_surface() if callable(read_surface) else read_surface)
     elif get_read_store is None:
         raise RuntimeError("Neither read_surface nor get_read_store was configured.")
+
+    # JOURNAL-OWNER-001: every Agora sub-router below shares this same
+    # get_read_store closure, so wrapping it once here is the single
+    # composition point that binds the whole Agora journal surface (reads
+    # and writes) to the canonical governance Decision Journal owner.
+    get_read_store = wrap_get_read_store_with_decision_journal_owner(get_read_store)
 
     if command_store is not None:
         get_command_store = (lambda: command_store() if callable(command_store) else command_store)
