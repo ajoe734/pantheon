@@ -748,6 +748,9 @@ services:
       # Claude CLI. Takes precedence over the CLAUDE_CONFIG_DIR session above
       # when set, so it does not depend on anything periodically exercising
       # the CLI to keep a short-lived OAuth session's access token refreshed.
+      # openclaw-configure-shared-model-pool.sh binds this explicit product
+      # credential to the Claude backend with a reference-only env override;
+      # ambient presence alone is cleared by OpenClaw before CLI execution.
       # Empty is a no-op: the CLI falls back to the CLAUDE_CONFIG_DIR session.
       CLAUDE_CODE_OAUTH_TOKEN: ${PANTHEON_OPENCLAW_CLAUDE_CODE_OAUTH_TOKEN:-}
       PANTHEON_ASSISTANT_CODEX_HOST_HOME: ${PANTHEON_ASSISTANT_CODEX_HOST_HOME:-/srv/pantheon-assistant/.codex}
