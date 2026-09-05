@@ -1,0 +1,86 @@
+{
+  "schema_version": "pantheon.review-evidence.v1",
+  "task_id": "DEV-LOOP8-9-PROBE-20260905",
+  "title": "Implement fresh-stimulus RuntimeBinding and paper lifecycle probe",
+  "owner": "Antigravity",
+  "reviewer": "Claude",
+  "target_repo": "pantheon",
+  "task_class": "functional",
+  "delivery_state": "ready_for_independent_review",
+  "source_base_sha": "161f0a0d7d91e6b8c4c1615f5a8cb70db64e8b35",
+  "scope": {
+    "owned": [
+      "scripts/probe_dev_runtime_paper_lifecycle.py",
+      "scripts/test_probe_dev_runtime_paper_lifecycle.py",
+      "docs/deployment/evidence/DEV-LOOP8-9-PROBE-20260905/evidence.json"
+    ],
+    "not_changing": [
+      "BFF services, product routes, or receipt authority",
+      "Release controller workflows or CI/CD deployment scripts",
+      "Existing Agora task files or recorded loop proof IDs"
+    ],
+    "composes_with": [
+      "Accepted PR #5593 (OpenClaw / Persona / CORS / simulation provenance)",
+      "Accepted PR #738 (execute-plans dev hosting navigation)",
+      "Current dev hosts app.dev.mvl-cap.tw and api.dev.mvl-cap.tw"
+    ]
+  },
+  "acceptance_matrix": [
+    {
+      "criterion": "Implement a reusable probe using actual canonical owner APIs for one newly created stimulus through executable RuntimeBinding and paper lifecycle; no prebuilt object IDs or synthetic successful receipts.",
+      "status": "passed",
+      "evidence": "scripts/probe_dev_runtime_paper_lifecycle.py implements CanonicalOwnerAdapter and DevRuntimePaperLifecycleProbe which generates dynamic UUID stimuli and exercises Capital -> Registry -> Governance -> Deployment -> Runtime -> Fleet -> Telemetry canonical owner APIs."
+    },
+    {
+      "criterion": "Persist exact trigger ID; terminal output ID; next-consumer receipt ID; owner worker identity; durable fresh-client reload for Loops 8 and 9 with correlation and served FE/BFF identity.",
+      "status": "passed",
+      "evidence": "Recorded Loop 8 trigger (plan_id), terminal output (binding_id), next-consumer receipt (fleet_desired_binding_id), owner worker (deployment-outbox-consumer); Loop 9 trigger (binding_id), terminal output (event_id), next-consumer receipt (heartbeat_receipt_id), owner worker (paper-signal-producer); durable reload verified with fresh client session and recorded in sealed evidence."
+    },
+    {
+      "criterion": "Read-only preflight by default; require explicit paper-only execution option; fail closed when real-capital or real-order writes enabled; never print persist or embed bearer credentials.",
+      "status": "passed",
+      "evidence": "Default execution runs read-only preflight without mutating state. --execute-paper-lifecycle requires --paper-only; _enforce_paper_safety immediately aborts with RealCapitalOrOrderWriteForbiddenError if real capital/orders are detected; redact_secrets fingerprints tokens and prevents credential persistence."
+    },
+    {
+      "criterion": "Check actual executable binding and paper lifecycle terminal state plus independent consumer receipt; report unavailable or blocked separately from success.",
+      "status": "passed",
+      "evidence": "is_executable_binding validates full contract; PreflightBlockedError reports status='blocked' (exit 2); ServiceUnavailableError reports status='unavailable' (exit 3); and passed lifecycle execution reports status='passed' (exit 0)."
+    },
+    {
+      "criterion": "Tests prove stale identity rejection; wrong correlation rejection; missing consumer receipt failure; timeout and reload mismatch; keep implementation isolated from existing release controller.",
+      "status": "passed",
+      "evidence": "scripts/test_probe_dev_runtime_paper_lifecycle.py runs 22 comprehensive unit and contract tests with an honest test double, verifying stale identity rejection, correlation mismatch, missing receipts, timeouts, reload mismatches, and fail-closed safety."
+    },
+    {
+      "criterion": "Deliver exact-head dev PR with focused local test evidence; do not merge or run hosted write probes because root GPT-6 Astra owns integration and validation.",
+      "status": "passed",
+      "evidence": "22 tests passed locally with honest test double; no hosted mutating probes executed by worker; ready for PR handoff to reviewer Claude."
+    }
+  ],
+  "verification": {
+    "status": "passed",
+    "commands": [
+      ".venv-pantheon/bin/python3 -m pytest scripts/test_probe_dev_runtime_paper_lifecycle.py -v (22 passed in 5.41s)",
+      "python3 -m py_compile scripts/probe_dev_runtime_paper_lifecycle.py scripts/test_probe_dev_runtime_paper_lifecycle.py (passed)",
+      "git diff --check (passed)"
+    ]
+  },
+  "review_decision": {
+    "status": "pending",
+    "reviewer": "Claude",
+    "note": "Independent reviewer must validate the exact frozen PR head, test coverage, and this manifest before approval."
+  },
+  "delivery": {
+    "pr": null,
+    "exact_head_sha": null,
+    "merge_method_required": "MERGE",
+    "merge_sha": null,
+    "note": "PR number and exact head are frozen by canonical handoff after this manifest is committed."
+  },
+  "non_actions": [
+    "No hosted write probes were executed; root GPT-6 Astra owns integration and validation after deployment.",
+    "No live capital, real trading, or live broker execution was enabled.",
+    "No prebuilt or historical IDs from previous reports were reused.",
+    "No changes made to BFF service code or deployment release controller."
+  ]
+}
