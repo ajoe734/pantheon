@@ -1,0 +1,129 @@
+{
+  "schema_version": "pantheon.review-evidence.v1",
+  "task_id": "OPS-SUPERVISOR-PYTHON-RUNTIME-PREREQUISITE-001",
+  "title": "Bind supervisor intake to verified Python dependencies through existing bootstrap and promotion flow",
+  "owner": "Antigravity",
+  "reviewer": "Codex",
+  "target_repo": "ajoe734/pantheon",
+  "task_class": "development_tooling",
+  "delivery_state": "ready_for_independent_review",
+  "base_sha": "161f0a0d7c179fb5d5299dc9d4bdcaa2f5b11926",
+  "source_ref": "/tmp/pantheon-archive-reconcile-prerequisite-20260905.PrI7ms/PYTHON_RUNTIME_SA_SD.md",
+  "rework_note": "Fourth rework, after Human/Ops rejected the third rework's exact published PR #5599 head 06671fb888b2cb8d41c104b466d4f73c878be8a0 (same helper bytes as the second rework's head 42b525f6103a6ce769e47127b5039361186969d8; finding reproduced at PR comment 5548998952 and /tmp/pantheon-python-provisioning-owner-review-20260905.md). That rejection kept every fix from the second and third reworks (packaging.specifiers.SpecifierSet, read-only same-SHA reuse, isolated-then-publish, single policy owner in ensure_supervisor_python_environment) and found one more real defect: (8) ensure_supervisor_python_environment validated only the isolated temporary candidate before publish; once _publish_directory_no_clobber accepted an EEXIST racing-publisher win as success, the function cleaned up its own staging directory and returned that candidate's preflight proof for python_dir without ever validating the selected final python_executable. A synthetic competing-publisher probe showed this returns success even when the final bin/python3 does not exist -- no final-path validator call occurred. Fixed by adding one more validate_python_dependencies() call against the exact final python_executable after _publish_directory_no_clobber returns (covering both the normal case where this call's own candidate won the publish and the racing case where a concurrent publisher won), binding the returned proof to that final path, and raising (rejecting the invalid winner) if it fails -- before returning, so no supervisor/config/lease state is touched either way. No new mechanism, dispatcher, or cron was added, and live promotion remains out of scope for this source-only fix, per the reviewer's constraint.",
+  "artifact_contract_note": "Fifth increment, after Human/Ops's 2026-09-05T04:11:28Z artifact-contract revision formally declared .orchestrator/development_bridge/tests/test_dev_bridge_inbox_bootstrap_python_runtime.py as a required artifact of this same delivery (not a new task or broader implementation authority). The file already existed from the fourth rework but its bootstrap_style_venv_python fixture hand-rolled a venv+pip-install stand-in instead of calling the shared policy owner. Refactored the fixture to call provision_live_supervisor_config.ensure_supervisor_python_environment() directly against the current git HEAD SHA and .orchestrator/requirements.txt, and to use the python_executable it returns -- so the positive test now genuinely proves the exact shared function scripts/bootstrap-orchestrator-runtime.sh and scripts/sync-dev-root.sh call, not a parallel provisioning implementation. test_bare_venv_without_the_dependency_contract_fails_closed (the bare-venv negative test) is untouched. No signature-check bypass, no dependency-install failure treated as passing evidence, and no live promotion performed. Sixth increment addresses reviewer findings on error handling in the test fixture: eliminated broad try/except ValueError pytest.skip and nonexistent-binary skip in bootstrap_style_venv_python so mandatory provisioning failures fail closed rather than masquerading as environment skips. Added two regression tests proving simulated provisioning failure and missing executable raise exceptions as expected.",
+  "scope": {
+    "owned": [
+      "supervisor Python interpreter selection and dependency preflight (provision_live_supervisor_config.py, promote_supervisor_runtime.py)",
+      "scoped .orchestrator/requirements.txt dependency contract for the supervisor runtime only",
+      "single-owner environment provisioning/reuse/publication policy (ensure_supervisor_python_environment in provision_live_supervisor_config.py), consumed as thin callers by scripts/bootstrap-orchestrator-runtime.sh and scripts/sync-dev-root.sh, now per-candidate-SHA rather than one fixed path",
+      "a real subprocess signed dev-bridge packet intake test under a bootstrap-style venv (.orchestrator/development_bridge/tests/test_dev_bridge_inbox_bootstrap_python_runtime.py)",
+      "runbook docs/operations/supervisor-python-runtime.md"
+    ],
+    "not_changing": [
+      "scripts/ai_status.py, task archive, and TaskStore (owned by the separate archive-reconciliation prerequisite)",
+      "signed packet validation, bridge signing keys, or dev-bridge intake logic itself",
+      "supervisor tick-level imports or a second dispatcher/cron/launcher",
+      "scripts/supervisor_watchdog_install.py (already restarts from the recorded watchdog.supervisor_command, requires no interpreter-selection change)"
+    ],
+    "composes_with": [
+      "root-coordinated exact-version governed promotion on the live host after merge",
+      "the separate archive-reconciliation prerequisite"
+    ]
+  },
+  "failure_reproduction": {
+    "case": "On 2026-09-05 the live promoted supervisor (PID 96329, source 20282eba2ce2304560ab7eab0cd27af824a22b8b) launched with /usr/bin/python3 -- which has cryptography but not pydantic -- so the main loop stayed healthy while every dev-bridge packet drain failed with ModuleNotFoundError: No module named 'pydantic'.",
+    "root_causes": [
+      "scripts/bootstrap-orchestrator-runtime.sh and scripts/sync-dev-root.sh never passed --python to promote_supervisor_runtime.py, so it defaulted to sys.executable (the ambient interpreter running the bootstrap/sync script itself)",
+      "scripts/provision_live_supervisor_config.py resolved --python with Path(...).resolve(), which fully dereferences a venv's bin/python symlink chain back to the base interpreter before CPython's own pyvenv.cfg lookup can run, silently losing every venv-provided package even when a venv path was explicitly passed",
+      "(found in review, fixed in rework) scripts/bootstrap-orchestrator-runtime.sh generated the dev-bridge Ed25519 keypair -- which imports cryptography -- using the ambient python3 before the supervisor venv was ever created, so a fresh host with no ambient cryptography could not bootstrap at all",
+      "(found in review, fixed in rework) validate_python_dependencies() called importlib.metadata.version() only: it never parsed or enforced the requirements.txt version specifier and never imported the module, so a wrong-version or broken-native-extension install could report a passing preflight",
+      "(found in review, fixed in rework) scripts/sync-dev-root.sh pip-installed every promotion into one fixed $PANTHEON_DEPLOY_ROOT/runtime/supervisor-python directory -- the same directory a currently running incumbent supervisor had already launched from -- before any preflight ran, so a partial or failed install could break the live incumbent regardless of whether the candidate was ever accepted"
+    ],
+    "reproduction": "test_cli_preserves_a_venv_symlink_path_instead_of_resolving_it (scripts/test_provision_live_supervisor_config.py) builds a real filesystem symlink to sys.executable and proves the pre-fix .resolve() call would have collapsed it; test_validate_python_dependencies_rejects_a_de_virtualized_interpreter proves the base /usr/bin/python3 on this host fails the same pydantic-dependency preflight that was silently bypassed live; test_bare_venv_without_the_dependency_contract_fails_closed (new, see below) proves a venv built the same way as bootstrap/sync but never given .orchestrator/requirements.txt fails the real signed-packet drain instead of looking healthy."
+  },
+  "implementation": {
+    "dependency_contract": ".orchestrator/requirements.txt pins pydantic>=2.9,<3, cryptography>=42,<51, and (new in this rework) packaging>=23,<27 -- the supervisor's own bridge/task-store imports plus the PEP 440 specifier authority the preflight probe itself now needs, not the product BFF's full dependency set.",
+    "interpreter_selection_fix": "provision_live_supervisor_config.py stores Path(args.python).expanduser().absolute() instead of .resolve(), preserving a venv invocation path so CPython's own symlink-chasing pyvenv.cfg lookup still runs at supervisor launch. (Unchanged this rework.)",
+    "dependency_preflight": "validate_python_dependencies() in provision_live_supervisor_config.py parses each requirements.txt line into (distribution_name, specifier), then runs a probe entirely inside the exact candidate interpreter that (a) calls importlib.metadata.version() for the real installed version, (b) enforces the declared specifier with packaging.specifiers.SpecifierSet -- the standard PEP 440 authority (new in this rework: the prior self-contained numeric-prefix comparator silently accepted 2.9rc1 against >=2.9,<3, accepted 2.9 against >=2.9.post1, and accepted the invalid specifier >=not-a-version by comparing against 0), and (c) calls importlib.import_module() on the package -- so a wrong version or a broken native extension (e.g. an unloadable pydantic_core) fails the preflight instead of passing on metadata alone. The --validate-python-dependencies-only CLI mode runs just this check without requiring --repo-config/--live-config/--status-root. Wired into provision's CLI (_main_locked) before any config write, and into promote's render_v2_config() before _replace_supervisor_locked's try block, so a failed preflight raises before the incumbent supervisor, live config, leases, or watchdog/cron binding are touched.",
+    "same_sha_reentry_preservation": "New in this rework, moved from two independent implementations into one: ensure_supervisor_python_environment() in provision_live_supervisor_config.py validates an existing per-SHA supervisor Python environment read-only (validate_python_dependencies()) before touching it. Only a missing or failing environment is (re)provisioned, and it is provisioned into an isolated, never-before-published directory (python3 -m venv + pip install + preflight, all against the isolated path, via subprocess.run inside the function) and published into the per-SHA path with a create-only (no-clobber) renameat2 rename -- the same atomic-publish pattern already used for command/integration runtime materialization in sync-dev-root.sh. The per-SHA path itself is therefore never opened for writing once it is healthy. Both scripts/sync-dev-root.sh and scripts/bootstrap-orchestrator-runtime.sh now call this one function through the new `--ensure-python-environment` CLI mode instead of each independently implementing the same reuse/install/preflight/publish decision loop -- closing both the same-SHA re-entry gap (config-drift re-promotion for sync-dev-root.sh, or a plain re-invocation for bootstrap-orchestrator-runtime.sh) and the drift risk of maintaining that mechanism twice.",
+    "fresh_host_provisioning": "scripts/bootstrap-orchestrator-runtime.sh materializes the immutable command root first, then calls `provision_live_supervisor_config.py --ensure-python-environment --command-root \"$COMMAND_ROOT\" --python-parent \"$SUPERVISOR_PYTHON_PARENT\" --requirements \"$SUPERVISOR_REQUIREMENTS\" --json` to provision $PANTHEON_DEPLOY_ROOT/runtime/supervisor-python/<exact-command-SHA> BEFORE generating the dev-bridge Ed25519 keypair -- which runs under the returned python_executable, never the ambient one, so a fresh host with no ambient cryptography can still bootstrap. scripts/sync-dev-root.sh calls the same CLI mode against the exact candidate being promoted (`--command-root \"$candidate_root\" --python-parent \"$SUPERVISOR_PYTHON_PARENT\"`, versioned per exact candidate SHA), parses the JSON python_executable/reused fields, and logs the untouched incumbent root on failure via the wrapping shell `||` handler. Neither script performs venv creation, pip install, dependency preflight, or the atomic publish itself any longer.",
+    "watchdog_restart_preservation": "No change was needed in scripts/supervisor_watchdog_install.py or .orchestrator/supervisor_watchdog.py: both already restart the supervisor by re-executing the recorded watchdog.supervisor_command from the live config, so the accepted --python path survives every subsequent restart once promotion renders it correctly.",
+    "final_path_publish_validation": "New in this rework: ensure_supervisor_python_environment() in provision_live_supervisor_config.py now calls validate_python_dependencies() a second time against the exact final python_executable (python_dir/bin/python3) immediately after _publish_directory_no_clobber() returns, in addition to the existing pre-publish validation of the isolated candidate. This covers both outcomes _publish_directory_no_clobber can produce: the normal case where this call's own candidate won the create-only rename, and the EEXIST racing case where a concurrent publisher's directory is what actually ended up at python_dir. If the final-path validation fails, the function raises (wrapping the underlying ValueError with an explicit 'invalid winner' message) instead of returning the discarded candidate's proof; the isolated candidate directory is still removed in the existing finally block, and python_dir itself -- whether it is our own successful publish or a concurrent publisher's directory -- is never opened for writing by this rejection path, so no incumbent supervisor, config, or lease state is touched.",
+    "new_dispatcher_added": false,
+    "new_cron_or_launcher_added": false,
+    "canonical_state_json_altered": false
+  },
+  "verification": {
+    "passed": [
+      {
+        "command": ".venv-pantheon/bin/python3 -m pytest -q scripts/test_provision_live_supervisor_config.py scripts/test_promote_supervisor_runtime.py scripts/test_bootstrap_orchestrator_runtime.py scripts/test_sync_dev_root.py scripts/test_supervisor_watchdog_install.py .orchestrator/development_bridge/tests/test_dev_bridge_inbox_bootstrap_python_runtime.py",
+        "result": "97 passed, 1 skipped"
+      },
+      {
+        "command": "regression check: git stash push -u -- scripts/provision_live_supervisor_config.py (reverting only the final-path validation fix, keeping the new test), then re-ran the new test alone, then restored the fix with git stash apply and dropped the stash entry",
+        "result": "test_ensure_supervisor_python_environment_rejects_invalid_publish_race_winner fails with 'DID NOT RAISE ValueError' against the reverted (pre-fix) function and passes once the fix is restored, confirming the test actually exercises the final-path validation rather than passing vacuously"
+      },
+      {
+        "command": ".venv-pantheon/bin/python3 -m py_compile scripts/promote_supervisor_runtime.py scripts/provision_live_supervisor_config.py scripts/test_promote_supervisor_runtime.py scripts/test_provision_live_supervisor_config.py scripts/test_sync_dev_root.py scripts/test_bootstrap_orchestrator_runtime.py",
+        "result": "passed"
+      },
+      {
+        "command": "bash -n scripts/bootstrap-orchestrator-runtime.sh && bash -n scripts/sync-dev-root.sh",
+        "result": "passed"
+      },
+      {
+        "command": "PYTHONPATH=.orchestrator .venv-pantheon/bin/python3 -m pytest -q .orchestrator/development_bridge/tests/test_dev_bridge_inbox_bootstrap_python_runtime.py",
+        "result": "4 passed -- test_bootstrap_style_venv_drains_a_real_signed_packet's fixture calls provision_live_supervisor_config.ensure_supervisor_python_environment() directly (the exact shared function scripts/bootstrap-orchestrator-runtime.sh and scripts/sync-dev-root.sh both call) and fails on provisioning error rather than skipping; genuinely queues and drains a real Ed25519-signed DevTaskPacket through the final published python_executable; test_bare_venv_without_the_dependency_contract_fails_closed is unchanged; and two regression tests verify that simulated provisioning failure and missing published python executable fail closed rather than skipping"
+      },
+      {
+        "command": "regression check: reverted scripts/sync-dev-root.sh and scripts/bootstrap-orchestrator-runtime.sh to their prior (rejected) content one at a time and re-ran the two new same-SHA-reentry tests below against each reverted file",
+        "result": "both new tests fail against the reverted (pre-fix) script and pass against the fixed one, confirming each test actually exercises the fix rather than passing vacuously"
+      },
+      {
+        "command": "grep -n 'supervisor_python_verified|candidate_python_dir|python -m venv|pip install' scripts/bootstrap-orchestrator-runtime.sh scripts/sync-dev-root.sh (structural proof the duplicated reuse/venv/pip/preflight/publish decision loop was removed from both entrypoints, not merely relabeled -- sync-dev-root.sh's other, unrelated renameat2 uses for git worktree materialization are untouched and out of scope for this defect)",
+        "result": "no matches in either shell entrypoint; the sole remaining implementation of that decision loop, including its renameat2 publish call, lives in provision_live_supervisor_config.py's ensure_supervisor_python_environment()/_publish_directory_no_clobber()"
+      }
+    ],
+    "new_tests_added": [
+      "test_validate_python_dependencies_rejects_a_prerelease_against_a_release_specifier",
+      "test_validate_python_dependencies_rejects_a_release_before_a_required_post_release",
+      "test_validate_python_dependencies_rejects_an_invalid_specifier",
+      "test_sync_reuses_a_verified_supervisor_python_env_on_same_sha_config_drift",
+      "test_second_real_run_on_same_sha_reuses_verified_supervisor_python",
+      "test_ensure_supervisor_python_environment_provisions_and_reuses",
+      "test_ensure_supervisor_python_environment_rejects_invalid_sha",
+      "test_ensure_supervisor_python_environment_preserves_incumbent_on_failed_preflight",
+      "test_ensure_supervisor_python_environment_requires_existing_requirements_file",
+      "test_cli_ensure_python_environment_prints_python_executable_as_json",
+      "test_cli_ensure_python_environment_requires_python_parent",
+      "test_ensure_supervisor_python_environment_rejects_invalid_publish_race_winner",
+      "test_forced_provisioning_failure_fails_rather_than_skips",
+      "test_missing_final_python_executable_fails_rather_than_skips"
+    ],
+    "runner": {
+      "python": "3.12.3",
+      "pytest": "9.1.1",
+      "interpreter": "checkout-scoped .venv-pantheon provisioned via scripts/dev/provision_python_distribution.py (PANTHEON_DEPENDENCY_PYTHON=/home/chloe_ong_dev_cctech_support_com/code/pantheon/.venv/bin/python3, which already carries pytest/pydantic/cryptography/packaging) for the shell-wiring suites; the signed-intake test was additionally verified under a disposable `python3 -m venv` + `pip install -r .orchestrator/requirements.txt pytest` interpreter (pydantic 2.13.5, cryptography 50.0.1, packaging 26.3) matching the bootstrap/sync build recipe exactly"
+    },
+    "checksums": {
+      "scripts/promote_supervisor_runtime.py": "f305eacf2c24ae7b70286a40b661538845beccc47fde3cc0f4b8c776257b98b7",
+      "scripts/provision_live_supervisor_config.py": "29817409b094e434c8573cc09474db2258ef77aeaa827b0dd1999e133d14092d",
+      "scripts/bootstrap-orchestrator-runtime.sh": "3a203561e80a18cab278fb229fa1a5d19ad383ec7e6353d0fdb43bbe98dae088",
+      "scripts/sync-dev-root.sh": "1d583b6e1b5d80f12483b45da05e15f9e14389fd9359e19374c5de6a6a3c3101",
+      ".orchestrator/requirements.txt": "c9652ea486a93e34dd52a5e4f7ea218c15cc0a22bb879129852df23704d0f0b3",
+      ".orchestrator/development_bridge/tests/test_dev_bridge_inbox_bootstrap_python_runtime.py": "79f43a5d47298c818fd848e99f9d325fd256af3619ce4c0f40a6eb54556c01c5",
+      "scripts/test_provision_live_supervisor_config.py": "2202fae325fb393f3d607860c9466a7a6043ebd8077a34d223d97a595cf88b84",
+      "scripts/test_sync_dev_root.py": "70af9a8128ae0838f505e3be6961cba6df8a39c1bd86148a8aa660b7ae0292ad",
+      "scripts/test_bootstrap_orchestrator_runtime.py": "ba1730f8bed5bd15c92d94e8c6a672215800ef6d70cb2905b1ab8c2ac7935544"
+    }
+  },
+  "root_coordination_note": "This delivery is source-only, per the SA/SD: exact-version governed promotion after merge, confirming the launched interpreter, automatic pending -> processed admission and canonical readback, a fresh heartbeat, and worker-lease preservation are coordinated by root and are not claimed here.",
+  "residual_notes": [
+    "The .orchestrator/development_bridge/tests/test_dev_bridge_inbox_bootstrap_python_runtime.py real subprocess test is not yet wired into .github/workflows/branch-ci.yml's tooling smoke gate; it does a real `pip install` and is slower than the existing sys.executable-based CLI tests, so wiring it into CI is left as a follow-up decision for whoever owns that workflow rather than bundled into this source-only fix."
+  ],
+  "review_decision": {
+    "status": "pending",
+    "reviewer": "Codex",
+    "note": "Independently verify against this exact head: (1) ensure_supervisor_python_environment() in scripts/provision_live_supervisor_config.py calls validate_python_dependencies() against the exact final python_executable; (2) returned python_dependencies proof is bound to that final-path validation call's result; (3) final-path validation failure raises instead of returning success; (4) test_ensure_supervisor_python_environment_rejects_invalid_publish_race_winner exercises this directly; (5) bootstrap_style_venv_python fixture in .orchestrator/development_bridge/tests/test_dev_bridge_inbox_bootstrap_python_runtime.py calls ensure_supervisor_python_environment() and asserts published binary exists without masking errors via pytest.skip; (6) two regression tests verify forced provisioning failure and missing binary raise rather than skip; (7) all fixes from previous reworks remain intact; (8) no new dispatcher, launcher, or cron added, and no live promotion performed."
+  }
+}

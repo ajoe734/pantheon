@@ -22719,8 +22719,8 @@ def _resolve_agora_interaction_context_ref(
         return {"row": event, "audience_verified": audience_verified}
 
     if kind == "journal_entry":
-        from trade_journal import _allowed as _trade_journal_allowed
-        from trade_journal import _load as _load_trade_journal
+        from services.control_plane.bff.trade_journal import _allowed as _trade_journal_allowed
+        from services.control_plane.bff.trade_journal import _load as _load_trade_journal
 
         episodes = _load_trade_journal("PANTHEON_BFF_TRADE_EPISODES_STORE")
         matches = [

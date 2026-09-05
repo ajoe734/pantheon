@@ -95,7 +95,7 @@ def build_session_router(
                     scope=scope,
                 )
             except CanonicalOperationError as exc:
-                from models import ErrorCode
+                from services.control_plane.bff.models import ErrorCode
 
                 if exc.status_code == 404:
                     status_code = 404
@@ -114,7 +114,7 @@ def build_session_router(
                     precondition_failed="strategy_spec_ref",
                 ) from exc
             except _StrategyVersionProjectionError as exc:
-                from models import ErrorCode
+                from services.control_plane.bff.models import ErrorCode
 
                 code = (
                     ErrorCode.FORBIDDEN
@@ -132,7 +132,7 @@ def build_session_router(
                 ) from exc
         # Idempotency-Key is mandatory for all write operations on this endpoint.
         if idempotency_key is None:
-            from models import ErrorCode
+            from services.control_plane.bff.models import ErrorCode
             raise bff_error(
                 400, ErrorCode.VALIDATION_FAILED,
                 "Idempotency-Key header is required",
@@ -143,7 +143,7 @@ def build_session_router(
         idem_scope = f"{scope.user_id}:{scope.tenant_id}:POST:/bff/agora/workshops"
         if hasattr(store, "check_and_record_idempotency_key"):
             if store.check_and_record_idempotency_key(idem_scope, idempotency_key):
-                from models import ErrorCode
+                from services.control_plane.bff.models import ErrorCode
                 raise bff_error(
                     409, ErrorCode.IDEMPOTENCY_CONFLICT,
                     "Duplicate Idempotency-Key", idempotency_key,
@@ -213,7 +213,7 @@ def build_session_router(
         scope = _scope(authorization, x_tenant_id)
         session = store.get_session(workshop_id)
         if session is None:
-            from models import ErrorCode
+            from services.control_plane.bff.models import ErrorCode
             raise bff_error(404, ErrorCode.RESOURCE_NOT_FOUND, "Workshop not found", workshop_id)
         # Verify ownership
         if session["user_id"] != scope.user_id or session["tenant_id"] != scope.tenant_id:
@@ -251,7 +251,7 @@ def build_session_router(
         scope = _scope(authorization, x_tenant_id, write=True)
         # If-Match is mandatory: mutations without a precondition are rejected (RFC 6585 §428).
         if if_match is None:
-            from models import ErrorCode
+            from services.control_plane.bff.models import ErrorCode
             raise bff_error(
                 428, ErrorCode.PRECONDITION_FAILED,
                 "If-Match header is required for workshop mutations",
@@ -260,7 +260,7 @@ def build_session_router(
             )
         # Idempotency-Key is mandatory for all write operations on this endpoint.
         if idempotency_key is None:
-            from models import ErrorCode
+            from services.control_plane.bff.models import ErrorCode
             raise bff_error(
                 400, ErrorCode.VALIDATION_FAILED,
                 "Idempotency-Key header is required",
@@ -269,7 +269,7 @@ def build_session_router(
             )
         session = store.get_session(workshop_id)
         if session is None:
-            from models import ErrorCode
+            from services.control_plane.bff.models import ErrorCode
             raise bff_error(404, ErrorCode.RESOURCE_NOT_FOUND, "Workshop not found", workshop_id)
         if session["user_id"] != scope.user_id or session["tenant_id"] != scope.tenant_id:
             _raise_cross_user_forbidden(
@@ -284,7 +284,7 @@ def build_session_router(
                 f":POST:/bff/agora/workshops/messages"
             )
             if store.check_and_record_idempotency_key(idem_scope, idempotency_key):
-                from models import ErrorCode
+                from services.control_plane.bff.models import ErrorCode
                 raise bff_error(
                     409, ErrorCode.IDEMPOTENCY_CONFLICT,
                     "Duplicate Idempotency-Key", idempotency_key,
@@ -312,7 +312,7 @@ def build_session_router(
             "payload_refs_json": body.attachment_refs or None,
         })
         if event is None:
-            from models import ErrorCode
+            from services.control_plane.bff.models import ErrorCode
             private_content_store.discard_failed_write(
                 private_content_ref=private.private_content_ref,
                 tenant_id=scope.tenant_id,
@@ -378,7 +378,7 @@ def build_session_router(
         scope = _scope(authorization, x_tenant_id)
         session = store.get_session(workshop_id)
         if session is None:
-            from models import ErrorCode
+            from services.control_plane.bff.models import ErrorCode
             raise bff_error(404, ErrorCode.RESOURCE_NOT_FOUND, "Workshop not found", workshop_id)
         if session["user_id"] != scope.user_id or session["tenant_id"] != scope.tenant_id:
             _raise_cross_user_forbidden(
@@ -408,7 +408,7 @@ def build_session_router(
         scope = _scope(authorization, x_tenant_id)
         session = store.get_session(workshop_id)
         if session is None:
-            from models import ErrorCode
+            from services.control_plane.bff.models import ErrorCode
             raise bff_error(404, ErrorCode.RESOURCE_NOT_FOUND, "Workshop not found", workshop_id)
         if session["user_id"] != scope.user_id or session["tenant_id"] != scope.tenant_id:
             _raise_cross_user_forbidden(
@@ -442,7 +442,7 @@ def build_session_router(
         scope = _scope(authorization, x_tenant_id, write=True)
         session = _scoped_session(workshop_id, scope)
         if if_match is None:
-            from models import ErrorCode
+            from services.control_plane.bff.models import ErrorCode
             raise bff_error(
                 428,
                 ErrorCode.PRECONDITION_FAILED,
@@ -451,7 +451,7 @@ def build_session_router(
                 suggestion="GET the workshop first and supply the returned ETag in If-Match",
             )
         if idempotency_key is None:
-            from models import ErrorCode
+            from services.control_plane.bff.models import ErrorCode
             raise bff_error(
                 400,
                 ErrorCode.VALIDATION_FAILED,
@@ -462,7 +462,7 @@ def build_session_router(
         expected_version = _parse_etag_lock_version(if_match, workshop_id)
         current_version = int(session.get("lock_version", 1))
         if expected_version != current_version:
-            from models import ErrorCode
+            from services.control_plane.bff.models import ErrorCode
             current_etag = f'W/"workshop:{workshop_id}:v{current_version}"'
             raise bff_error(
                 409,
@@ -480,7 +480,7 @@ def build_session_router(
                 f":POST:/bff/agora/workshops/completeness"
             )
             if store.check_and_record_idempotency_key(idem_scope, idempotency_key):
-                from models import ErrorCode
+                from services.control_plane.bff.models import ErrorCode
                 raise bff_error(
                     409,
                     ErrorCode.IDEMPOTENCY_CONFLICT,
@@ -488,7 +488,7 @@ def build_session_router(
                     idempotency_key,
                 )
         if not hasattr(store, "create_completeness_snapshot"):
-            from models import ErrorCode
+            from services.control_plane.bff.models import ErrorCode
             raise bff_error(
                 501,
                 ErrorCode.NOT_IMPLEMENTED,
@@ -641,7 +641,7 @@ def build_session_router(
         scope = _scope(authorization, x_tenant_id, write=True)
         session = _scoped_session(workshop_id, scope)
         if if_match is None:
-            from models import ErrorCode
+            from services.control_plane.bff.models import ErrorCode
             raise bff_error(
                 428,
                 ErrorCode.PRECONDITION_FAILED,
@@ -650,7 +650,7 @@ def build_session_router(
                 suggestion="GET the workshop first and supply the returned ETag in If-Match",
             )
         if idempotency_key is None:
-            from models import ErrorCode
+            from services.control_plane.bff.models import ErrorCode
             raise bff_error(
                 400,
                 ErrorCode.VALIDATION_FAILED,
@@ -661,7 +661,7 @@ def build_session_router(
         expected_version = _parse_etag_lock_version(if_match, workshop_id)
         current_version = int(session.get("lock_version", 1))
         if expected_version != current_version:
-            from models import ErrorCode
+            from services.control_plane.bff.models import ErrorCode
             current_etag = f'W/"workshop:{workshop_id}:v{current_version}"'
             raise bff_error(
                 409,
@@ -679,7 +679,7 @@ def build_session_router(
                 f":POST:/bff/agora/workshops/readiness/reassess"
             )
             if store.check_and_record_idempotency_key(idem_scope, idempotency_key):
-                from models import ErrorCode
+                from services.control_plane.bff.models import ErrorCode
                 raise bff_error(
                     409,
                     ErrorCode.IDEMPOTENCY_CONFLICT,

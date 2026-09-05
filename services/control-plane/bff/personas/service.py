@@ -135,91 +135,46 @@ except ImportError:
     foundation_id = lambda: str(uuid.uuid4())
     sha256_checksum = lambda data: hashlib.sha256(data.encode() if isinstance(data, str) else data).hexdigest()
 
-try:
-    from ports.persona_capital_runtime import (
-        PERSONA_OPERATIONAL_LIFECYCLE_STATES,
-        create_persona_capital_runtime_port,
-        create_in_memory_persona_capital_runtime_port,
-    )
-except ImportError:
-    PERSONA_OPERATIONAL_LIFECYCLE_STATES = frozenset({"paper_trading", "live_canary", "live_active"})
+from services.control_plane.bff.command_queue import CommandStore
+from services.control_plane.bff.ports import (
+    ReadSurfacePorts,
+    create_persona_registry_write_owner,
+    create_ranking_write_owner,
+    create_read_surface_ports,
+)
+from services.control_plane.bff.ports.persona_capital_runtime import (
+    PERSONA_OPERATIONAL_LIFECYCLE_STATES,
+    create_in_memory_persona_capital_runtime_port,
+    create_persona_capital_runtime_port,
+)
 
-try:
-    from ports import (
-        ReadSurfacePorts,
-        create_persona_registry_write_owner,
-        create_ranking_write_owner,
-        create_read_surface_ports,
-    )
-except ImportError:
-    try:
-        from services.control_plane.bff.ports import (  # type: ignore[no-redef]
-            ReadSurfacePorts,
-            create_persona_registry_write_owner,
-            create_ranking_write_owner,
-            create_read_surface_ports,
-        )
-    except ImportError:
-        ReadSurfacePorts = Any
-        create_persona_registry_write_owner = None
-        create_ranking_write_owner = None
-        create_read_surface_ports = None
+from services.control_plane.bff.persona_provisioning import (
+    MemoryPersonaProvisioningStore,
+    ProvisioningConflict,
+    ProvisioningRecord,
+    TERMINAL_STATES,
+    make_persona_provisioning_store,
+)
 
-try:
-    from command_queue import CommandStore
-except ImportError:
-    try:
-        from services.control_plane.bff.command_queue import CommandStore
-    except ImportError:
-        CommandStore = None
+from services.control_plane.bff.persona_provisioning_coordinator import (
+    PersonaProvisioningCoordinator,
+    deterministic_provisioning_ids,
+)
 
-try:
-    from persona_provisioning import (
-        MemoryPersonaProvisioningStore,
-        ProvisioningConflict,
-        ProvisioningRecord,
-        TERMINAL_STATES,
-        make_persona_provisioning_store,
-    )
-except ImportError:
-    class ProvisioningConflict(ValueError):
-        pass
-    class MemoryPersonaProvisioningStore:
-        pass
-    make_persona_provisioning_store = None
-
-try:
-    from persona_provisioning_coordinator import (
-        PersonaCronRegistrar,
-        PersonaProvisioningCoordinator,
-        deterministic_provisioning_ids,
-    )
-except ImportError:
-    PersonaCronRegistrar = None
-    PersonaProvisioningCoordinator = None
-    deterministic_provisioning_ids = None
-
-try:
-    from action_catalog import get_catalog_entry
-except ImportError:
-    get_catalog_entry = None
+from services.control_plane.bff.action_catalog import get_catalog_entry
 
 from ..command_executor import _get_json, _post_json, _runtime_manager_client
 
 from ..persona_allocation_policy import build_pm12_allocation_policy_input
 
-try:
-    from paper_eligibility_proof import (
-        BENCHMARK_VERSION as _PPL_ALLOC_009_ELIGIBILITY_BENCHMARK_VERSION,
-        EXPECTED_IDEMPOTENCY_KEY as _PPL_ALLOC_009_ELIGIBILITY_IDEMPOTENCY_KEY,
-        RUN_KEY as _PPL_ALLOC_009_ELIGIBILITY_RUN_KEY,
-        TASK_ID as _PPL_ALLOC_009_ELIGIBILITY_TASK_ID,
-        PaperEligibilityObservationStore,
-        build_telemetry_event as _ppl_alloc_009_build_telemetry_event,
-    )
-except ImportError:
-    PaperEligibilityObservationStore = None
-    _ppl_alloc_009_build_telemetry_event = None
+from services.control_plane.bff.paper_eligibility_proof import (
+    BENCHMARK_VERSION as _PPL_ALLOC_009_ELIGIBILITY_BENCHMARK_VERSION,
+    EXPECTED_IDEMPOTENCY_KEY as _PPL_ALLOC_009_ELIGIBILITY_IDEMPOTENCY_KEY,
+    RUN_KEY as _PPL_ALLOC_009_ELIGIBILITY_RUN_KEY,
+    TASK_ID as _PPL_ALLOC_009_ELIGIBILITY_TASK_ID,
+    PaperEligibilityObservationStore,
+    build_telemetry_event as _ppl_alloc_009_build_telemetry_event,
+)
 
 try:
     from services.source_ingestion.strategy_seed_store import (
@@ -233,16 +188,6 @@ except ImportError:
     StrategySpecSeedStoreError = Exception
     StrategySpecSeedReviewError = Exception
 
-try:
-    # Standalone callers historically imported this module as ``personas``;
-    # keep that compatibility fallback, but prefer the package-local models
-    # contract so the capability-aware three-argument function is never
-    # replaced by an unrelated top-level ``models`` module.
-    from models import redact_evidence_refs as _standalone_redact_evidence_refs
-except ImportError:
-    _standalone_redact_evidence_refs = None
-if _standalone_redact_evidence_refs is not None and not str(__package__ or "").startswith("services.control_plane"):
-    redact_evidence_refs = _standalone_redact_evidence_refs
 
 try:
     from services.control_plane.persona.persona_strategy_discovery import (

@@ -13,18 +13,7 @@ from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence, Tuple
 
 from fastapi import APIRouter, Body, Header, HTTPException, Query
 
-try:
-    from models import ErrorCode
-except ImportError:
-    try:
-        from ..models import ErrorCode  # type: ignore[no-redef]
-    except Exception:
-        class ErrorCode(str, Enum):  # type: ignore[no-redef]
-            RESOURCE_NOT_FOUND = "RESOURCE_NOT_FOUND"
-            VALIDATION_FAILED = "VALIDATION_FAILED"
-            DEPENDENCY_UNAVAILABLE = "DEPENDENCY_UNAVAILABLE"
-            IDEMPOTENCY_CONFLICT = "IDEMPOTENCY_CONFLICT"
-            FORBIDDEN = "FORBIDDEN"
+from services.control_plane.bff.models import ErrorCode
 
 from .service import (
     CapitalAuthorityUnavailable,

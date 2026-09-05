@@ -1,0 +1,106 @@
+{
+  "schema_version": "pantheon.review-evidence.v1",
+  "task_id": "DEV-LOOP8-9-PROBE-20260905",
+  "title": "Implement fresh-stimulus RuntimeBinding and paper lifecycle probe",
+  "owner": "Antigravity",
+  "reviewer": "Claude",
+  "target_repo": "pantheon",
+  "task_class": "functional",
+  "delivery_state": "ready_for_independent_review",
+  "source_base_sha": "67a99c8a665fa102d7773c77dcf0807505e281c1",
+  "scope": {
+    "owned": [
+      "scripts/probe_dev_runtime_paper_lifecycle.py",
+      "scripts/test_probe_dev_runtime_paper_lifecycle.py",
+      "docs/deployment/evidence/DEV-LOOP8-9-PROBE-20260905/evidence.json"
+    ],
+    "not_changing": [
+      "BFF services, product routes, or receipt authority",
+      "Release controller workflows or CI/CD deployment scripts",
+      "Existing Agora task files or recorded loop proof IDs"
+    ],
+    "composes_with": [
+      "Accepted PR #5593 (OpenClaw / Persona / CORS / simulation provenance)",
+      "Accepted PR #738 (execute-plans dev hosting navigation)",
+      "Current dev hosts app.dev.mvl-cap.tw and api.dev.mvl-cap.tw"
+    ]
+  },
+  "acceptance_matrix": [
+    {
+      "criterion": "Finding 1: Affirmative causal and paper-safety telemetry assertions; fail-closed when stripped or real writes present; adversarial test.",
+      "status": "passed",
+      "evidence": "scripts/probe_dev_runtime_paper_lifecycle.py enforces affirmative assertions that is_real_capital is False, is_real_order is False, broker_submission_status == 'filled', artifact_signal_not_smoke is True, source_snapshot_driven is True, with exact binding_id, artifact_id, runtime_id, and correlation_id checks. Stripped events fail closed. test_adversarial_stripped_telemetry_fails_closed verifies rejection."
+    },
+    {
+      "criterion": "Finding 2: Authoritative Loop 8 saga readback without invented fallback; inbox receipt applied by deployment-outbox-consumer; DEP-003 projection validation.",
+      "status": "passed",
+      "evidence": "GET /api/deployment/sagas/{saga_id} polls terminal status without invented saga ID fallback. Loop 8 next-consumer receipt is retrieved from GET /api/deployment/inbox with aggregate_id and consumer_name=deployment-outbox-consumer, validating receipt_id != binding_id and status='applied'. DEP-003 projection read from /api/deployment/projections/{plan_id} is verified."
+    },
+    {
+      "criterion": "Finding 3: Authenticated hosted contract with Bearer and tenant headers; canonical joined routes; honest double 401/404 fail-closed behavior.",
+      "status": "passed",
+      "evidence": "CanonicalOwnerAdapter injects Authorization: Bearer and X-Tenant-Id headers across all requests. Dummy credential fallback ('devprobe:operator') is completely removed. join_url() prevents duplicate '/api/...' segments. HonestCanonicalOwnerDouble rejects missing auth with HTTP 401 and unmapped routes with HTTP 404 instead of defaulting to HTTP 200."
+    },
+    {
+      "criterion": "Finding 4: Strict durable reload comparing full identity, checksum, safety flags, and DEP-003 projection; honest fresh_client_isolated reporting; independent trade episode consumer receipt separated from liveness heartbeat.",
+      "status": "passed",
+      "evidence": "_verify_durable_reload compares plan_id, runtime_id, artifact_id, artifact_version, capital_pool_id, symbol, checksum, and DEP-003 projection contract. fresh_client_isolated is True only when fresh_transport_factory is supplied. Liveness heartbeat and independent trade episode consumer receipt (GET /api/telemetry/trade-episodes) are queried and validated as separate distinct receipts."
+    },
+    {
+      "criterion": "Finding 5: Preflight fails closed on missing/invalid 40-hex SHAs, FE manifest bffCommit/backendSha mismatch with BFF, malformed buildMode, unverified config_posture, missing environment, and pairId mismatch; authoritative parent artifact discovery.",
+      "status": "passed",
+      "evidence": "run_preflight() strictly validates 40-hex SHAs, requires FE manifest's bffCommit/backendSha to match the running BFF commit, verifies buildMode (live, strict, no real writes) and config_posture (strict auth mode, no auth_stub), requires environment, and validates pair linkage. Approved parent strategy artifact is authoritatively discovered from /api/registry/strategies/tw_session_momentum/strategy-artifacts for rollback target lineage."
+    },
+    {
+      "criterion": "Root Review R2: Loop 8 inbox receipt affirmative response assertion; authoritative consumer worker identity; fail closed on query mismatch.",
+      "status": "passed",
+      "evidence": "_check_inbox_receipt enforces explicit response assertions that item['aggregate_id'] == saga_id, item['consumer_name'] == 'deployment-outbox-consumer', item['status'] == 'applied', and sequence_no is a positive integer. Unrelated items are rejected with MissingConsumerReceiptError. loop8_evidence['owner_worker_identity'] extracts authoritative identity directly from receipt without fallback."
+    },
+    {
+      "criterion": "Root Review R2: Loop 9 trade episode causal fill membership and terminal status; open zero-fill rejection; authoritative worker identity.",
+      "status": "passed",
+      "evidence": "_check_trade_episode enforces causal fill membership (event_id in fill_ids or episode event_id == event_id), exact binding/runtime identity, and terminal lifecycle status with non-zero fills (rejecting open zero-fill episodes sharing runtime_id). loop9_evidence['owner_worker_identity'] extracts worker_id, service, and runtime_worker from the active fleet worker receipt."
+    },
+    {
+      "criterion": "Root Review R2: Durable reload independently reloads both consumer receipts; fresh_client_isolated truth; main() provides factory.",
+      "status": "passed",
+      "evidence": "_verify_durable_reload independently reloads Loop 8 outbox consumer receipt and Loop 9 trade episode receipt on fresh_adapter, asserting consistency. When fresh_transport_factory is omitted, verified is False and incomplete_reason is recorded. CLI main() supplies an isolated transport factory lambda."
+    },
+    {
+      "criterion": "Root Review R2: Auth token scoping to authorized origins; static FE manifest receives no Authorization header; public BFF version pair linkage.",
+      "status": "passed",
+      "evidence": "CanonicalOwnerAdapter validates that credentials are only sent to explicitly authorized API origins and excludes static FE manifest (/deployment.json) from receiving Authorization headers. Missing auth token fails closed immediately without dummy fallback. Preflight permits public BFF /bff/version without pair_id while asserting exact consistency when present."
+    },
+    {
+      "criterion": "Deliver exact-head dev PR with focused local test evidence; do not merge or run hosted write probes because root GPT-6 Astra owns integration and validation.",
+      "status": "passed",
+      "evidence": "All 42 contract, regression, and adversarial unit tests pass locally with honest test double; py_compile and git diff --check pass cleanly; ready for review handoff to Claude."
+    }
+  ],
+  "verification": {
+    "status": "passed",
+    "commands": [
+      ".venv-pantheon/bin/python3 -m pytest scripts/test_probe_dev_runtime_paper_lifecycle.py -v (42 passed in 14.62s)",
+      "python3 -m py_compile scripts/probe_dev_runtime_paper_lifecycle.py scripts/test_probe_dev_runtime_paper_lifecycle.py (passed)",
+      "git diff --check (passed)"
+    ]
+  },
+  "review_decision": {
+    "status": "pending",
+    "reviewer": "Claude",
+    "note": "Independent reviewer must validate the exact frozen PR head, test coverage, and this manifest before approval."
+  },
+  "delivery": {
+    "pr": 5602,
+    "exact_head_sha": null,
+    "merge_method_required": "MERGE",
+    "merge_sha": null,
+    "note": "PR #5602 updated with Root R2 remediation; exact head to be frozen upon commit."
+  },
+  "non_actions": [
+    "No hosted write probes were executed; root GPT-6 Astra owns integration and validation after deployment.",
+    "No live capital, real trading, or live broker execution was enabled.",
+    "No prebuilt or historical IDs from previous reports were reused.",
+    "No changes made to BFF service code or deployment release controller."
+  ]
+}

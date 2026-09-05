@@ -38,11 +38,11 @@ def create_candidate_decision_router(
                 identity, utc_now=utc_now, requested_tenant_id=tenant
             )
         except AgoraScopeResolutionError as exc:
-            from models import ErrorCode
+            from services.control_plane.bff.models import ErrorCode
             code = ErrorCode.AUTH_REQUIRED if exc.status_code == 401 else ErrorCode.FORBIDDEN
             raise bff_error(exc.status_code, code, exc.message, exc.reason) from exc
         if "agora.workshop.v1" not in resolved.granted_capabilities:
-            from models import ErrorCode
+            from services.control_plane.bff.models import ErrorCode
             raise bff_error(
                 403, ErrorCode.FORBIDDEN,
                 "Agora candidate decision capability denied", "capability_missing",

@@ -128,6 +128,107 @@ def test_render_v2_config_projects_deployment_repository_roots(tmp_path: Path) -
     assert repositories["execute_plans"]["local_path"] == str(execute_root.resolve())
 
 
+def test_render_v2_config_accepts_a_candidate_with_required_dependencies(
+    tmp_path: Path,
+) -> None:
+    candidate, status_root = _candidate(tmp_path)
+    requirements = tmp_path / "requirements.txt"
+    requirements.write_text("pytest\n", encoding="utf-8")
+
+    rendered, _identity = promotion.render_v2_config(
+        candidate,
+        status_root=status_root,
+        live_config_path=tmp_path / "runtime" / "live.json",
+        python_executable=Path(sys.executable),
+        requirements_path=requirements,
+    )
+
+    assert rendered["task_state_store"]["mode"] == "authoritative"
+
+
+def test_render_v2_config_dependency_preflight_fails_closed(tmp_path: Path) -> None:
+    candidate, status_root = _candidate(tmp_path)
+    requirements = tmp_path / "requirements.txt"
+    requirements.write_text("definitely-not-a-real-package-xyz\n", encoding="utf-8")
+
+    with pytest.raises(ValueError, match="python dependency preflight failed"):
+        promotion.render_v2_config(
+            candidate,
+            status_root=status_root,
+            live_config_path=tmp_path / "runtime" / "live.json",
+            python_executable=Path(sys.executable),
+            requirements_path=requirements,
+        )
+
+
+def test_replace_supervisor_preserves_incumbent_on_dependency_preflight_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A failed dependency preflight must leave the incumbent PID, live
+    config, and launch path completely untouched -- it must fail before the
+    stop/write/launch sequence even begins."""
+
+    candidate, status_root = _candidate(tmp_path)
+    live_config = tmp_path / "runtime" / "live.json"
+    requirements = tmp_path / "requirements.txt"
+    requirements.write_text("definitely-not-a-real-package-xyz\n", encoding="utf-8")
+    stopped: list[bool] = []
+    launched: list[bool] = []
+    monkeypatch.setattr(
+        promotion, "stop_existing_supervisor", lambda *_a, **_k: stopped.append(True)
+    )
+    monkeypatch.setattr(
+        promotion, "launch_v2_supervisor", lambda *_a, **_k: launched.append(True)
+    )
+
+    with pytest.raises(ValueError, match="python dependency preflight failed"):
+        promotion.replace_supervisor(
+            candidate,
+            status_root=status_root,
+            live_config_path=live_config,
+            python_executable=Path(sys.executable),
+            termination_timeout=1,
+            requirements_path=requirements,
+        )
+
+    assert stopped == []
+    assert launched == []
+    assert not live_config.exists()
+
+
+def test_cli_promote_dependency_preflight_failure_never_stops_incumbent(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    candidate, status_root = _candidate(tmp_path)
+    live_config = tmp_path / "runtime" / "live.json"
+    requirements = tmp_path / "requirements.txt"
+    requirements.write_text("definitely-not-a-real-package-xyz\n", encoding="utf-8")
+    stopped: list[bool] = []
+    monkeypatch.setattr(
+        promotion, "stop_existing_supervisor", lambda *_a, **_k: stopped.append(True)
+    )
+
+    code = promotion.main(
+        [
+            "--promote",
+            "--repo",
+            str(candidate),
+            "--status-root",
+            str(status_root),
+            "--live-config",
+            str(live_config),
+            "--python",
+            sys.executable,
+            "--requirements",
+            str(requirements),
+        ]
+    )
+
+    assert code == 1
+    assert stopped == []
+    assert not live_config.exists()
+
+
 def test_seal_command_runtime_removes_write_bits_and_preserves_execute_bits(
     tmp_path: Path,
 ) -> None:

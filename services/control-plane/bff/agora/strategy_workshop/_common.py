@@ -43,7 +43,7 @@ def _raise_cross_user_forbidden(
     resource: str,
     resource_id: str,
 ) -> None:
-    from models import ErrorCode
+    from services.control_plane.bff.models import ErrorCode
 
     raise bff_error(
         403,
