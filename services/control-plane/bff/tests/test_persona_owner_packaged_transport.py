@@ -87,3 +87,310 @@ assert transport.get('capital', '/binding')['status'] == 'suspended'
         server.shutdown()
         server.server_close()
         thread.join(timeout=5)
+
+
+def test_packaged_route_safe_early_name_error_replay_fresh_process() -> None:
+    """Reproduce actual governed bootstrap terminal-failure replay with durable store
+    and packaged BFF routing in a fresh process.
+
+    Proves that a historical NameError failed record (with empty references and null
+    compensation) safely replays through forward coordination to schedule_registered,
+    and fresh process durable readback confirms persistence.
+    """
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            """
+import os, sys, tempfile
+from fastapi import FastAPI
+from fastapi.testclient import TestClient
+
+os.environ['PANTHEON_ENV'] = 'dev'
+os.environ['PANTHEON_BFF_AUTH_MODE'] = 'permissive'
+os.environ['PANTHEON_BFF_AUTH_STUB'] = 'true'
+
+from services.control_plane.bff.personas import PersonaService, create_personas_router
+from services.control_plane.bff.personas import service as personas_service
+from services.control_plane.bff.personas.service import (
+    _persona_create_canonical_payload,
+    _stable_json_hash,
+    _normalize_persona_create_name,
+    _persona_create_identity,
+)
+from services.control_plane.bff.ports import create_persona_registry_write_owner, create_read_surface_ports
+from services.control_plane.bff.command_queue import CommandStore
+from services.control_plane.bff.persona_provisioning import (
+    MemoryPersonaProvisioningStore,
+    MemoryProvisioningBackend,
+    ProvisioningRecord,
+)
+from services.control_plane.bff.test_persona_provisioning_coordinator import (
+    FakeOwnerTransport,
+    _schedule_receipt,
+)
+
+class FakeRankingWriteOwner:
+    def put_ranking_snapshot(self, snapshot):
+        return {'status': 'created', 'snapshot_id': 's-1', 'snapshot': snapshot}
+    def get_ranking_snapshot(self, sid):
+        return None
+    def list_ranking_snapshots(self):
+        return []
+
+backend = MemoryProvisioningBackend()
+store = MemoryPersonaProvisioningStore(backend=backend)
+
+payload = {
+    'name': 'Pantheon Dev Paper Baseline 3',
+    'archetype': 'momentum',
+    'risk': 'low',
+    'mandate': 'Paper-only lifecycle verification in dev',
+    'market': 'US',
+    'strategy_family': 'dev_paper_baseline',
+}
+canonical_payload = _persona_create_canonical_payload(
+    payload,
+    name=payload['name'],
+    tenant_id='tenant-dev',
+    requested_by='op-2',
+)
+request_hash = _stable_json_hash({
+    'route': 'POST /bff/personas',
+    'tenant_id': 'tenant-dev',
+    'payload': canonical_payload,
+})
+normalized_name = _normalize_persona_create_name(payload['name'])
+persona_id = _persona_create_identity('tenant-dev', normalized_name)
+
+# Seed historical failure: current_step=capital_pool_failed, error has NameError,
+# references is empty, compensation is None, attempt_count is 4
+record, _ = store.reserve(
+    tenant_id='tenant-dev',
+    idempotency_key='dev-paper-bootstrap-20260720-operator-a-v3',
+    request_hash=request_hash,
+    normalized_name=normalized_name,
+    persona_id=persona_id,
+    request_payload=canonical_payload,
+)
+failed = store.acquire('tenant-dev', 'dev-paper-bootstrap-20260720-operator-a-v3', lease_owner='prior-worker', lease_seconds=60)
+failed.state = 'failed'
+failed.current_step = 'capital_pool_failed'
+failed.error = {
+    'failed_at': '2026-09-04T11:52:48Z',
+    'error_type': 'NameError',
+    'failed_step': 'capital_pool',
+    'terminal_reason': "name 'urllib_error' is not defined",
+    'compensation_error': "name 'urllib_error' is not defined",
+}
+failed.references = {}
+failed.compensation = None
+failed.attempt_count = 4
+failed = store.checkpoint(failed, lease_owner='prior-worker', lease_seconds=60)
+store.release(failed, lease_owner='prior-worker', lease_seconds=60)
+
+# Wire second store instance into personas service to prove shared durable backing
+transport = FakeOwnerTransport()
+store2 = MemoryPersonaProvisioningStore(backend=backend)
+personas_service._PERSONA_PROVISIONING_STORE = store2
+personas_service._PersonaOwnerHttpTransport = lambda: transport
+personas_service._register_persona_cron_required = _schedule_receipt
+
+with tempfile.TemporaryDirectory() as td:
+    write_owner = create_persona_registry_write_owner()
+    read_store = create_read_surface_ports(persona_registry_store=write_owner)
+    command_store = CommandStore(os.path.join(td, 'commands.jsonl'))
+    service = PersonaService(
+        write_owner=write_owner,
+        ranking_write_owner=FakeRankingWriteOwner(),
+        read_store=read_store,
+        command_store=command_store,
+    )
+    router = create_personas_router(service=service)
+    app = FastAPI(title='Persona Test App')
+    app.include_router(router)
+    client = TestClient(app)
+
+    # Replay through the public packaged route
+    resp = client.post(
+        '/bff/management/personas/create-paper-bundle',
+        json=payload,
+        headers={
+            'Authorization': 'Bearer op-2:operator:tenant-dev',
+            'Idempotency-Key': 'dev-paper-bootstrap-20260720-operator-a-v3',
+        },
+    )
+    assert resp.status_code == 201, resp.text
+    data = resp.json()['data']
+    meta = resp.json()['meta']
+    assert data['state'] == 'provisioning'
+    assert data['capitalMode'] == 'paper'
+    assert meta['provisioning_state'] == 'provisioning'
+    assert meta['provisioning_step'] == 'schedule_registered'
+    assert meta['live_capital_side_effects'] is False
+
+    # Fresh process durable readback from third store instance
+    store3 = MemoryPersonaProvisioningStore(backend=backend)
+    rec = store3.get('tenant-dev', 'dev-paper-bootstrap-20260720-operator-a-v3')
+    assert rec is not None
+    assert rec.state == 'provisioning'
+    assert rec.current_step == 'schedule_registered'
+    assert rec.attempt_count == 5
+    assert rec.error is None
+    assert rec.compensation is None
+    assert 'capital_pool' in rec.references
+    assert 'persona_capital_binding_created' in rec.references
+    assert 'deployment_dispatch' in rec.references
+    assert 'first_evaluation_schedule' in rec.references
+""",
+        ],
+        cwd=Path(__file__).resolve().parents[4],
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+    assert result.returncode == 0, result.stderr
+
+
+def test_packaged_route_rejects_unsafe_binding_side_effects_fresh_process() -> None:
+    """Fail-closed boundary: an existing failed record with committed binding references
+    must return 502 UPSTREAM_ERROR and NEVER forward retry.
+    """
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            """
+import os, sys, tempfile
+from fastapi import FastAPI
+from fastapi.testclient import TestClient
+
+os.environ['PANTHEON_ENV'] = 'dev'
+os.environ['PANTHEON_BFF_AUTH_MODE'] = 'permissive'
+os.environ['PANTHEON_BFF_AUTH_STUB'] = 'true'
+
+from services.control_plane.bff.personas import PersonaService, create_personas_router
+from services.control_plane.bff.personas import service as personas_service
+from services.control_plane.bff.personas.service import (
+    _persona_create_canonical_payload,
+    _stable_json_hash,
+    _normalize_persona_create_name,
+    _persona_create_identity,
+)
+from services.control_plane.bff.ports import create_persona_registry_write_owner, create_read_surface_ports
+from services.control_plane.bff.command_queue import CommandStore
+from services.control_plane.bff.persona_provisioning import (
+    MemoryPersonaProvisioningStore,
+    MemoryProvisioningBackend,
+)
+from services.control_plane.bff.test_persona_provisioning_coordinator import (
+    FakeOwnerTransport,
+    _schedule_receipt,
+)
+
+class FakeRankingWriteOwner:
+    def put_ranking_snapshot(self, snapshot):
+        return {'status': 'created', 'snapshot_id': 's-1', 'snapshot': snapshot}
+    def get_ranking_snapshot(self, sid):
+        return None
+    def list_ranking_snapshots(self):
+        return []
+
+backend = MemoryProvisioningBackend()
+store = MemoryPersonaProvisioningStore(backend=backend)
+
+payload = {
+    'name': 'Pantheon Dev Paper Baseline Unsafe',
+    'archetype': 'momentum',
+    'risk': 'low',
+    'mandate': 'Paper-only lifecycle verification in dev',
+    'market': 'US',
+    'strategy_family': 'dev_paper_baseline',
+}
+canonical_payload = _persona_create_canonical_payload(
+    payload,
+    name=payload['name'],
+    tenant_id='tenant-dev',
+    requested_by='op-2',
+)
+request_hash = _stable_json_hash({
+    'route': 'POST /bff/personas',
+    'tenant_id': 'tenant-dev',
+    'payload': canonical_payload,
+})
+normalized_name = _normalize_persona_create_name(payload['name'])
+persona_id = _persona_create_identity('tenant-dev', normalized_name)
+
+# Seed failure with committed binding references
+record, _ = store.reserve(
+    tenant_id='tenant-dev',
+    idempotency_key='dev-paper-bootstrap-unsafe-v1',
+    request_hash=request_hash,
+    normalized_name=normalized_name,
+    persona_id=persona_id,
+    request_payload=canonical_payload,
+)
+failed = store.acquire('tenant-dev', 'dev-paper-bootstrap-unsafe-v1', lease_owner='prior-worker', lease_seconds=60)
+failed.state = 'failed'
+failed.current_step = 'persona_capital_binding_created_failed'
+failed.error = {
+    'failed_step': 'persona_capital_binding_created',
+    'terminal_reason': 'binding write error',
+}
+failed.references = {
+    'capital_pool': {'pool_id': 'pool-1', 'status': 'active'},
+    'persona_capital_binding_created': {'binding_id': 'pcb-1', 'status': 'pending'},
+}
+failed.compensation = None
+failed = store.checkpoint(failed, lease_owner='prior-worker', lease_seconds=60)
+store.release(failed, lease_owner='prior-worker', lease_seconds=60)
+
+transport = FakeOwnerTransport()
+store2 = MemoryPersonaProvisioningStore(backend=backend)
+personas_service._PERSONA_PROVISIONING_STORE = store2
+personas_service._PersonaOwnerHttpTransport = lambda: transport
+personas_service._register_persona_cron_required = _schedule_receipt
+
+with tempfile.TemporaryDirectory() as td:
+    write_owner = create_persona_registry_write_owner()
+    read_store = create_read_surface_ports(persona_registry_store=write_owner)
+    command_store = CommandStore(os.path.join(td, 'commands.jsonl'))
+    service = PersonaService(
+        write_owner=write_owner,
+        ranking_write_owner=FakeRankingWriteOwner(),
+        read_store=read_store,
+        command_store=command_store,
+    )
+    router = create_personas_router(service=service)
+    app = FastAPI(title='Persona Test App')
+    app.include_router(router)
+    client = TestClient(app)
+
+    resp = client.post(
+        '/bff/management/personas/create-paper-bundle',
+        json=payload,
+        headers={
+            'Authorization': 'Bearer op-2:operator:tenant-dev',
+            'Idempotency-Key': 'dev-paper-bootstrap-unsafe-v1',
+        },
+    )
+    # Must fail closed with 502 UPSTREAM_ERROR
+    assert resp.status_code == 502, f"Expected 502, got {resp.status_code}: {resp.text}"
+    body = resp.json()
+    err = body.get('error') or body.get('detail', {}).get('error', {})
+    assert err['code'] == 'UPSTREAM_ERROR'
+    assert err['details']['provisioningState'] in {'failed', 'compensated'}
+
+    # Verify durable store is still terminal
+    store3 = MemoryPersonaProvisioningStore(backend=backend)
+    rec = store3.get('tenant-dev', 'dev-paper-bootstrap-unsafe-v1')
+    assert rec.state in {'failed', 'compensated'}
+    assert 'deployment_dispatch' not in rec.references
+""",
+        ],
+        cwd=Path(__file__).resolve().parents[4],
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+    assert result.returncode == 0, result.stderr

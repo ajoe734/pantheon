@@ -147,9 +147,7 @@ class GovernanceService:
         self.publish_event = publish_event
         self.get_interventions = get_interventions or (lambda: [])
         self.dataset_surface_status = dataset_surface_status or self._default_dataset_surface_status
-        self.redact_evidence_refs = redact_evidence_refs or (
-            lambda identity, refs, *, capabilities=None: (list(refs), 0)
-        )
+        self.redact_evidence_refs = redact_evidence_refs or self._fail_closed_redact_evidence_refs
         self.capabilities_for_identity = capabilities_for_identity or (lambda identity: None)
         self._created_approvals: Dict[str, Dict[str, Any]] = {}
         self._idempotency: Dict[str, Dict[str, Any]] = {}
@@ -166,6 +164,30 @@ class GovernanceService:
         else:
             status = "ok"
         return {"status": status, "source": source, "dataset": dataset, "snapshot_at": snapshot_at}
+
+    @staticmethod
+    def _fail_closed_redact_evidence_refs(
+        identity: Any, refs: List[Dict[str, Any]], *, capabilities: Any = None
+    ) -> Tuple[List[Dict[str, Any]], int]:
+        """Default used only when no canonical redaction policy is wired.
+
+        Without the canonical evidence-kind/capability mapping owner, this
+        default cannot verify that any individual evidence ref is safe to
+        disclose, so it withholds all evidence rather than defaulting to
+        open disclosure.
+        """
+        del identity, capabilities
+        redacted: List[Dict[str, Any]] = []
+        for ref in refs:
+            ref_id = str(ref.get("ref_id") or ref.get("id") or "") if isinstance(ref, dict) else ""
+            redacted.append(
+                {
+                    "ref_id": ref_id,
+                    "redacted": True,
+                    "reason": "redaction_policy_unavailable",
+                }
+            )
+        return redacted, len(redacted)
 
     def _call(self, name: str, *args: Any, default: Any = None, **kwargs: Any) -> Any:
         method = getattr(self.read_store, name, None)
@@ -431,7 +453,10 @@ class GovernanceService:
         )
         if surface.get("status") == "unavailable" or committee is None:
             return "unavailable"
-        if committee.get("surface_state") == "degraded":
+        explicit_state = str(committee.get("surface_state") or "").strip().lower()
+        if explicit_state == "unavailable":
+            return "unavailable"
+        if explicit_state == "degraded":
             return "degraded"
         return str(surface.get("status") or "ok")
 
@@ -589,6 +614,12 @@ class GovernanceService:
             capabilities = self.capabilities_for_identity(identity)
         except Exception:
             capabilities = None
+        if capabilities is None:
+            # A missing or failed capability lookup must fail closed: pass an
+            # explicit empty capability set so the canonical redactor gates
+            # every capability-required evidence ref, instead of silently
+            # letting an unknown capability set through unredacted.
+            capabilities = []
         evidence_refs, redacted_count = self.redact_evidence_refs(identity, evidence_refs, capabilities=capabilities)
         meta = {
             "snapshot_at": snap,

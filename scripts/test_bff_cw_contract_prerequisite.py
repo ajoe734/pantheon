@@ -30,8 +30,14 @@ os.environ.setdefault("PANTHEON_BFF_AUTH_MODE", "permissive")
 
 from services.control_plane.bff import main as bff_main  # noqa: E402
 from services.control_plane.bff.governance.service import GovernanceService  # noqa: E402
+from services.control_plane.bff.models import redact_evidence_refs as _canonical_redact_evidence_refs  # noqa: E402
 from services.control_plane.bff.ports.operations_consultation import (  # noqa: E402
     DomainConsultationPort,
+    create_in_memory_operations_consultation_port,
+    create_operations_consultation_port,
+)
+from services.control_plane.bff.ports.read_surface_ports import (  # noqa: E402
+    create_read_surface_ports,
 )
 from services.consultation.models import (  # noqa: E402
     ActorRef,
@@ -626,6 +632,228 @@ def test_composition_committee_route_has_single_owner_and_no_reverse_import() ->
     assert seen, "expected CW01/03/04 routes to be mounted"
     duplicated = {key: count for key, count in seen.items() if count > 1}
     assert not duplicated, f"duplicate route registrations: {duplicated}"
+
+
+# ---------------------------------------------------------------------------
+# BFF-CW-READ-POLICY-CLOSURE-PREREQUISITE-001: read-port empty/missing truth,
+# availability precedence, and redaction fail-closed regressions.
+# ---------------------------------------------------------------------------
+
+
+def test_read_surface_ports_committee_reads_do_not_fall_back_cross_domain() -> None:
+    """ReadSurfacePorts.list_committees/get_committee must never substitute an
+    unrelated domain's records (workflow templates, consult requests) for an
+    authoritative empty/missing committee result."""
+    ops_port = create_in_memory_operations_consultation_port(
+        workflow_templates=[{"workflow_id": "wf-should-not-leak"}],
+        consult_requests=[{"request_id": "shared-id", "status": "created"}],
+    )
+    ports = create_read_surface_ports(operations_consultation=ops_port)
+
+    # No committee data seeded: an empty/None result is authoritative, not a
+    # cue to fall back to a different domain's records.
+    assert ports.list_committees() == []
+    assert ports.get_committee("shared-id") is None
+    assert ports.get_committee(None) is None
+
+
+def test_read_surface_ports_committee_reads_delegate_to_real_committee_data() -> None:
+    """When committee data does exist, ReadSurfacePorts must return it as-is
+    (same board row shape as the domain port), not a workflow/consult-request
+    substitute."""
+    consult_sessions = [
+        {
+            "session_id": "cs-1",
+            "session_type": "consult",
+            "persona_id": "persona-alpha",
+            "status": "active",
+            "started_at": "2026-09-05T00:00:00Z",
+            "request_id": "cr-1",
+            "metadata": {
+                "consultation": {
+                    "committee_ref": "committee-42",
+                    "committee_session_ids": ["cs-1"],
+                    "quorum_state": "quorum_met",
+                    "consensus_state": "sponsor_required",
+                }
+            },
+        }
+    ]
+    ops_port = create_in_memory_operations_consultation_port(consult_sessions=consult_sessions)
+    ports = create_read_surface_ports(operations_consultation=ops_port)
+
+    rows = ports.list_committees()
+    assert len(rows) == 1
+    assert rows[0]["committee_id"] == "committee-42"
+
+    detail = ports.get_committee("committee-42")
+    assert detail is not None
+    assert detail["committee_id"] == "committee-42"
+    assert detail["quorum_state"] == "quorum_met"
+
+
+def test_read_surface_ports_dataset_source_routes_consult_datasets_to_owning_port() -> None:
+    """dataset_source for operations-consultation-owned datasets must reflect
+    the actual client/store/missing truth of the owning port instead of a
+    blanket 'typed_store' default that hides a genuinely unavailable backend."""
+    for env_name in (
+        "PANTHEON_BFF_CONSULTATION_DATA_DIR",
+        "PANTHEON_CONSULTATION_DATA_DIR",
+        "CONSULTATION_DATA_DIR",
+    ):
+        os.environ.pop(env_name, None)
+    ops_port = create_operations_consultation_port()
+    ports = create_read_surface_ports(operations_consultation=ops_port)
+
+    assert ports.dataset_source("consult_requests") == "missing"
+    assert ports.dataset_source("consult_memos") == "missing"
+
+    with tempfile.TemporaryDirectory() as tmp:
+        ops_port_with_store = create_operations_consultation_port(consultation_data_dir=tmp)
+        ports_with_store = create_read_surface_ports(operations_consultation=ops_port_with_store)
+        assert ports_with_store.dataset_source("consult_requests") == "service_store"
+        assert ports_with_store.dataset_source("consult_memos") == "service_store"
+
+
+def test_cw03_committee_surface_state_explicit_unavailable_dominates_dataset_ok() -> None:
+    """A committee record's own explicit unavailable state must dominate an
+    'ok' dataset source, not be silently overwritten into a healthy
+    projection with a writable sponsor-decision CTA."""
+
+    class _Store:
+        def dataset_source(self, dataset: str) -> str:
+            return "typed_store"
+
+        def get_committee(self, committee_id: str) -> Optional[Dict[str, Any]]:
+            return {
+                "committee_id": "committee-x",
+                "surface_state": "unavailable",
+                "quorum_state": "quorum_met",
+                "consensus_state": "sponsor_required",
+                "sponsor_assignment": {"participant_id": "p-1"},
+                "sponsor_decision": None,
+            }
+
+    identity = type("Identity", (), {"operator_id": "op-1", "roles": {"operator"}})()
+    service = GovernanceService(_Store())
+    projection = service.committee_projection(
+        "committee-x", identity=identity, snapshot_at="2026-09-05T00:00:00Z"
+    )
+    assert projection is not None
+    assert projection["meta"]["surfaces"]["committee_board"] == "unavailable"
+    assert projection["allowedActions"] == {"canRecordSponsorDecision": False}
+
+
+def test_cw04_capability_lookup_failure_fails_closed_not_passthrough() -> None:
+    """A failed/absent capability lookup must fail closed through the
+    canonical redactor (empty capability set), never fall back to an
+    unredacted evidence passthrough."""
+    reviewer_identity = type("Identity", (), {"operator_id": "op-1", "roles": {"reviewer"}})()
+    memo = {
+        "memo_id": "mem-y",
+        "lifecycle_state": "published",
+        "status": "published",
+        "governance_target": {"target_type": "deployment_plan", "target_id": "plan-1"},
+        "active_governance_review_id": None,
+        "suppressed": False,
+        "withdrawn": False,
+        "surface_state": "ok",
+        "evidence_refs": [{"ref_id": "ev-1", "evidence_type": "strategy"}],
+    }
+
+    class _StaticStore:
+        def get_consult_memo(self, memo_id: str) -> Optional[Dict[str, Any]]:
+            return memo if memo_id == memo["memo_id"] else None
+
+        def dataset_source(self, dataset: str) -> str:
+            return "typed_store"
+
+    def _raising_capabilities(identity: Any) -> Any:
+        raise RuntimeError("capability lookup failed")
+
+    service = GovernanceService(
+        _StaticStore(),
+        redact_evidence_refs=_canonical_redact_evidence_refs,
+        capabilities_for_identity=_raising_capabilities,
+    )
+    projection = service.consult_memo_projection(
+        "mem-y", identity=reviewer_identity, snapshot_at="2026-09-05T00:00:00Z"
+    )
+    assert projection is not None
+    assert projection["evidence_refs"][0]["redacted"] is True
+    assert projection["evidence_refs"][0]["required_capability"] == "strategy.view"
+    assert projection["meta"]["supporting_counts"]["redacted_evidence_count"] == 1
+
+
+def test_cw04_default_redactor_fails_closed_without_wired_policy() -> None:
+    """GovernanceService constructed without an injected redaction policy must
+    withhold evidence by default, never silently disclose it."""
+    memo = {
+        "memo_id": "mem-z",
+        "lifecycle_state": "published",
+        "status": "published",
+        "governance_target": {"target_type": "deployment_plan", "target_id": "plan-1"},
+        "active_governance_review_id": None,
+        "suppressed": False,
+        "withdrawn": False,
+        "surface_state": "ok",
+        "evidence_refs": [{"ref_id": "ev-1", "evidence_type": "strategy"}],
+    }
+
+    class _StaticStore:
+        def get_consult_memo(self, memo_id: str) -> Optional[Dict[str, Any]]:
+            return memo if memo_id == memo["memo_id"] else None
+
+        def dataset_source(self, dataset: str) -> str:
+            return "typed_store"
+
+    identity = type("Identity", (), {"operator_id": "op-1", "roles": {"reviewer"}})()
+    service = GovernanceService(_StaticStore())
+    projection = service.consult_memo_projection(
+        "mem-z", identity=identity, snapshot_at="2026-09-05T00:00:00Z"
+    )
+    assert projection is not None
+    assert projection["evidence_refs"] == [
+        {"ref_id": "ev-1", "redacted": True, "reason": "redaction_policy_unavailable"}
+    ]
+    assert projection["meta"]["supporting_counts"]["redacted_evidence_count"] == 1
+
+
+def test_cw04_authorized_capabilities_still_disclose_evidence() -> None:
+    """Positive counterpart: an identity whose derived capabilities actually
+    cover the evidence kind must still see it (redaction is capability-gated,
+    not an unconditional black hole)."""
+    reviewer_identity = type("Identity", (), {"operator_id": "op-1", "roles": {"reviewer"}})()
+    memo = {
+        "memo_id": "mem-w",
+        "lifecycle_state": "published",
+        "status": "published",
+        "governance_target": {"target_type": "deployment_plan", "target_id": "plan-1"},
+        "active_governance_review_id": None,
+        "suppressed": False,
+        "withdrawn": False,
+        "surface_state": "ok",
+        "evidence_refs": [{"ref_id": "ev-1", "evidence_type": "strategy"}],
+    }
+
+    class _StaticStore:
+        def get_consult_memo(self, memo_id: str) -> Optional[Dict[str, Any]]:
+            return memo if memo_id == memo["memo_id"] else None
+
+        def dataset_source(self, dataset: str) -> str:
+            return "typed_store"
+
+    service = GovernanceService(
+        _StaticStore(),
+        redact_evidence_refs=_canonical_redact_evidence_refs,
+        capabilities_for_identity=lambda identity: ["strategy.view"],
+    )
+    projection = service.consult_memo_projection(
+        "mem-w", identity=reviewer_identity, snapshot_at="2026-09-05T00:00:00Z"
+    )
+    assert projection is not None
+    assert projection["evidence_refs"] == [{"ref_id": "ev-1", "evidence_type": "strategy"}]
+    assert projection["meta"]["supporting_counts"]["redacted_evidence_count"] == 0
 
 
 if __name__ == "__main__":
