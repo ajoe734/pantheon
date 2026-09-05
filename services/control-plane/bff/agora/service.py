@@ -766,17 +766,23 @@ class AgoraService:
                 self.raise_cross_user_forbidden(resource="decision_journal_entry", resource_id=entry_id)
 
         now = self.utc_now()
-        result = None
-        if store is not None and hasattr(store, "patch_decision_journal_entry"):
-            result = store.patch_decision_journal_entry(
-                entry_id,
-                patch=patch,
-                actor_id=identity.operator_id,
-                correlation_id=correlation_id,
-                idempotency_key=resolved_key,
-                request_hash=request_hash,
-                patched_at=now,
+        if store is None or not hasattr(store, "patch_decision_journal_entry"):
+            raise self.bff_error(
+                503,
+                ErrorCode.DEPENDENCY_UNAVAILABLE,
+                "Decision Journal write owner is not configured",
+                "The canonical Decision Journal owner adapter was not composed onto this read store",
+                precondition_failed="decision_journal_write_owner",
             )
+        result = store.patch_decision_journal_entry(
+            entry_id,
+            patch=patch,
+            actor_id=identity.operator_id,
+            correlation_id=correlation_id,
+            idempotency_key=resolved_key,
+            request_hash=request_hash,
+            patched_at=now,
+        )
 
         if result is None:
             raise self.bff_error(
@@ -811,9 +817,8 @@ class AgoraService:
                     "idempotencyKey": resolved_key,
                     "replayed": result.get("status") == "replayed",
                 },
-                "canonicalWriteAuthority": "agora_journal_service",
-                "persistenceMode": "bff_local_dev_store",
-                "degraded": True,
+                "canonicalWriteAuthority": entry_dict.get("canonicalWriteAuthority"),
+                "persistenceMode": entry_dict.get("persistenceMode"),
                 "audit": audit,
             },
         )
@@ -1452,6 +1457,7 @@ class AgoraService:
 
         snapshot_at = self.utc_now()
         entry_id = str(payload.get("id") or payload.get("entryId") or f"dje-{uuid.uuid4().hex[:10]}")
+        journal_payload = {**journal_payload, "id": entry_id, "entryId": entry_id}
         if dry_run:
             return self.dry_run_success_response(
                 {
@@ -1469,25 +1475,21 @@ class AgoraService:
             )
 
         store = self.read_store
-        created = None
-        if store is not None and hasattr(store, "create_decision_journal_entry"):
-            created = store.create_decision_journal_entry(
-                title=title,
-                body=body_text,
-                actor_id=identity.operator_id,
-                payload=journal_payload,
-                created_at=snapshot_at,
+        if store is None or not hasattr(store, "create_decision_journal_entry"):
+            raise self.bff_error(
+                503,
+                ErrorCode.DEPENDENCY_UNAVAILABLE,
+                "Decision Journal write owner is not configured",
+                "The canonical Decision Journal owner adapter was not composed onto this read store",
+                precondition_failed="decision_journal_write_owner",
             )
-        if not created:
-            created = {
-                "id": entry_id,
-                "entryId": entry_id,
-                **journal_payload,
-                "createdBy": identity.operator_id,
-                "author": identity.operator_id,
-                "createdAt": snapshot_at,
-                "canonicalWriteAuthority": "agora_journal_service",
-            }
+        created = store.create_decision_journal_entry(
+            title=title,
+            body=body_text,
+            actor_id=identity.operator_id,
+            payload=journal_payload,
+            created_at=snapshot_at,
+        )
 
         result = {
             "data": created,

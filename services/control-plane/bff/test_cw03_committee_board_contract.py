@@ -13,11 +13,9 @@ from unittest.mock import patch
 
 from fastapi.testclient import TestClient
 
-sys.path.insert(0, os.path.dirname(__file__))
-
-import main as bff_main
-from command_queue import CommandStore
-from ports.operations_consultation import DomainConsultationPort, _model_to_data
+from services.control_plane.bff import main as bff_main
+from services.control_plane.bff.command_queue import CommandStore
+from services.control_plane.bff.ports.operations_consultation import DomainConsultationPort, _model_to_data
 from services.consultation.models import (
     ActorRef,
     ConsultAuditEvent,
@@ -362,7 +360,7 @@ class _CommitteeReadStore:
         return _get_persona(persona_id)
 
     def dataset_source(self, dataset: str) -> str:
-        if dataset != "consultation_sessions":
+        if dataset not in ("consultation_sessions", "consult_requests"):
             return "missing"
         return "local_snapshot"
 
@@ -542,19 +540,32 @@ class _CommitteeReadStore:
 @contextmanager
 def _seeded_client():
     with tempfile.TemporaryDirectory() as td:
+        commands_file = os.path.join(td, "commands.jsonl")
         original_store = bff_main.read_store
         original_command_store = bff_main.command_store
+        target_cs = getattr(getattr(bff_main, "app_deps", None), "command_store", None)
+        orig_file_path = getattr(target_cs, "file_path", None)
+        orig_cache = getattr(target_cs, "_cache", None)
+
+        cs = CommandStore(commands_file)
         bff_main.read_store = _CommitteeReadStore(
             os.path.join(td, "read_surfaces.json"),
             allow_local_snapshot_fallback=True,
         )
-        bff_main.command_store = CommandStore(os.path.join(td, "commands.jsonl"))
+        bff_main.command_store = cs
+        if target_cs is not None:
+            target_cs.file_path = commands_file
+            target_cs._cache = None
+
         client = TestClient(bff_main.app)
         try:
             yield client
         finally:
             bff_main.read_store = original_store
             bff_main.command_store = original_command_store
+            if target_cs is not None:
+                target_cs.file_path = orig_file_path
+                target_cs._cache = orig_cache
 
 
 def test_cw03_list_contract_returns_committee_projection() -> None:
