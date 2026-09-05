@@ -29,7 +29,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Sequence
 
-TASK_ID = "DEV-LOOP8-9-PROBE-20260905"
+TASK_ID = "DEV-PROBE-TENANT-PREFLIGHT-20260905"
 SCHEMA_VERSION = "pantheon.dev-runtime-paper-lifecycle-evidence.v1"
 DEFAULT_BFF_BASE_URL = "https://api.dev.mvl-cap.tw"
 DEFAULT_FE_BASE_URL = "https://app.dev.mvl-cap.tw"
@@ -97,6 +97,18 @@ class ProbeTimeoutError(ProbeError):
 
 class PreflightBlockedError(ProbeError):
     """Raised when preflight discovers a blocking governance or dependency state."""
+
+
+class TenantAccessDeniedError(PreflightBlockedError):
+    """Raised when an authenticated request is rejected with HTTP 403 (e.g. Tenant access denied)."""
+
+
+class MissingTenantError(PreflightBlockedError):
+    """Raised when tenant ID is missing for authenticated owner API requests."""
+
+
+class AuthenticationError(PreflightBlockedError):
+    """Raised when authentication credentials are missing or rejected with HTTP 401."""
 
 
 class ServiceUnavailableError(ProbeError):
@@ -330,7 +342,7 @@ class ProbeConfig:
     registry_url: str | None = None
     source_ingest_url: str | None = None
     auth_token: str | None = None
-    tenant_id: str = "default"
+    tenant_id: str | None = None
     mfa_token: str | None = None
     parent_artifact_id: str | None = None
     execute_paper_lifecycle: bool = False
@@ -361,10 +373,16 @@ class CanonicalOwnerAdapter:
             or os.getenv("PANTHEON_SERVICE_TOKEN")
             or None
         )
-        self.tenant_id = (
+        if self.auth_token is not None:
+            self.auth_token = str(self.auth_token).strip() or None
+
+        raw_tenant = (
             config.tenant_id
-            or os.getenv("PANTHEON_TENANT_ID")
-            or "default"
+            if config.tenant_id is not None
+            else os.getenv("PANTHEON_TENANT_ID")
+        )
+        self.tenant_id: str | None = (
+            str(raw_tenant).strip() if raw_tenant is not None and str(raw_tenant).strip() else None
         )
         self.mfa_token = (
             config.mfa_token
@@ -463,6 +481,10 @@ class CanonicalOwnerAdapter:
                 raise ProbeError(
                     "Authentication token is required for canonical owner API requests; dummy fallback is removed."
                 )
+            if not self.tenant_id or not str(self.tenant_id).strip():
+                raise MissingTenantError(
+                    "Tenant ID is required for authenticated owner API requests (specify --tenant-id or PANTHEON_TENANT_ID); missing tenant is rejected."
+                )
             req_headers["Authorization"] = (
                 f"Bearer {self.auth_token}"
                 if not str(self.auth_token).startswith("Bearer ")
@@ -482,6 +504,16 @@ class CanonicalOwnerAdapter:
         if resp.status in {502, 503, 504}:
             raise ServiceUnavailableError(f"Service at {url} returned unavailable {resp.status}")
         if resp.status not in expected:
+            if resp.status == 403:
+                raise TenantAccessDeniedError(
+                    f"{method} {url} returned status 403 (Tenant access denied); "
+                    f"payload={redact_secrets(resp.payload)}"
+                )
+            if resp.status == 401:
+                raise AuthenticationError(
+                    f"{method} {url} returned status 401 (Unauthorized); "
+                    f"payload={redact_secrets(resp.payload)}"
+                )
             raise ProbeError(
                 f"{method} {url} returned status {resp.status} (expected {expected}); "
                 f"payload={redact_secrets(resp.payload)}"
@@ -528,6 +560,11 @@ class DevRuntimePaperLifecycleProbe:
     def run_preflight(self) -> dict[str, Any]:
         """Verify served FE/BFF identities, readiness, and safe read-only posture."""
         self._enforce_paper_safety()
+
+        if self.adapter.auth_token and not self.adapter.tenant_id:
+            raise MissingTenantError(
+                "Tenant ID is required for authenticated owner API requests (specify --tenant-id or PANTHEON_TENANT_ID); missing tenant is rejected."
+            )
 
         # Fail closed if expected commit SHAs are missing or malformed (Finding 5)
         if not self.config.expected_fe_sha or not SHA40_RE.fullmatch(self.config.expected_fe_sha.strip().lower()):
@@ -1837,13 +1874,16 @@ class DevRuntimePaperLifecycleProbe:
             evidence["status"] = "blocked"
             evidence["error"] = str(exc)
             evidence["blocked_reason"] = str(exc)
+            evidence["failure_type"] = type(exc).__name__
         except ServiceUnavailableError as exc:
             evidence["status"] = "unavailable"
             evidence["error"] = str(exc)
             evidence["unavailable_reason"] = str(exc)
+            evidence["failure_type"] = type(exc).__name__
         except Exception as exc:
             evidence["status"] = "failed"
             evidence["error"] = f"{type(exc).__name__}: {exc}"
+            evidence["failure_type"] = type(exc).__name__
             raise
         finally:
             now_dt = datetime.now(timezone.utc)
@@ -1853,15 +1893,15 @@ class DevRuntimePaperLifecycleProbe:
             evidence["probes_executed"] = self.probes_executed
             evidence["audit"]["probes_executed"] = self.probes_executed
 
-        sealed = seal_evidence(evidence)
+            sealed = seal_evidence(evidence)
 
-        # Write evidence output if requested
-        if self.config.output_path:
-            out_path = Path(self.config.output_path)
-            out_path.parent.mkdir(parents=True, exist_ok=True)
-            with open(out_path, "w", encoding="utf-8") as f:
-                json.dump(sealed, f, indent=2, ensure_ascii=False)
-                f.write("\n")
+            # Write evidence output if requested (always guaranteed by finally)
+            if self.config.output_path:
+                out_path = Path(self.config.output_path)
+                out_path.parent.mkdir(parents=True, exist_ok=True)
+                with open(out_path, "w", encoding="utf-8") as f:
+                    json.dump(sealed, f, indent=2, ensure_ascii=False)
+                    f.write("\n")
 
         return sealed
 
@@ -1889,6 +1929,16 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         "--expected-bff-sha",
         default=os.getenv("DEV_EXPECTED_BFF_SHA"),
         help="Expected 40-hex source commit SHA of the served BFF.",
+    )
+    parser.add_argument(
+        "--auth-token",
+        default=os.getenv("PANTHEON_AUTH_TOKEN"),
+        help="Bearer authentication token for canonical owner API requests (default: $PANTHEON_AUTH_TOKEN).",
+    )
+    parser.add_argument(
+        "--tenant-id",
+        default=os.getenv("PANTHEON_TENANT_ID"),
+        help="Tenant ID for authenticated owner API requests (default: $PANTHEON_TENANT_ID).",
     )
     parser.add_argument(
         "--execute-paper-lifecycle",
@@ -1924,7 +1974,10 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     return parser.parse_args(argv)
 
 
-def main(argv: Sequence[str] | None = None) -> int:
+def main(
+    argv: Sequence[str] | None = None,
+    transport: Transport | None = None,
+) -> int:
     args = parse_args(argv)
     config = ProbeConfig(
         bff_base_url=args.bff_base_url,
@@ -1933,14 +1986,16 @@ def main(argv: Sequence[str] | None = None) -> int:
         expected_bff_sha=args.expected_bff_sha,
         execute_paper_lifecycle=args.execute_paper_lifecycle,
         paper_only=args.paper_only,
+        auth_token=args.auth_token,
+        tenant_id=args.tenant_id,
         output_path=Path(args.output_path),
         request_timeout_seconds=args.timeout,
         poll_timeout_seconds=args.poll_timeout,
     )
 
-    probe = DevRuntimePaperLifecycleProbe(config)
-    fresh_factory = (lambda: default_http_transport) if config.execute_paper_lifecycle else None
     try:
+        probe = DevRuntimePaperLifecycleProbe(config, transport=transport)
+        fresh_factory = (lambda: transport or default_http_transport) if config.execute_paper_lifecycle else None
         evidence = probe.run(fresh_transport_factory=fresh_factory)
         status = evidence.get("status")
         print(
@@ -1949,6 +2004,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                     "task_id": TASK_ID,
                     "status": status,
                     "mode": evidence.get("mode"),
+                    "failure_type": evidence.get("failure_type"),
                     "artifact_digest_sha256": evidence.get("artifact_digest_sha256"),
                     "output_path": str(config.output_path),
                 },
@@ -1982,6 +2038,12 @@ def main(argv: Sequence[str] | None = None) -> int:
         return 1
     except ProbeTimeoutError as exc:
         print(f"ERROR: Probe timeout: {exc}", file=sys.stderr)
+        return 1
+    except PreflightBlockedError as exc:
+        print(f"ERROR: Preflight blocked: {exc}", file=sys.stderr)
+        return 2
+    except ProbeError as exc:
+        print(f"ERROR: Probe error: {exc}", file=sys.stderr)
         return 1
     except Exception as exc:
         print(f"ERROR: Unexpected probe error: {exc}", file=sys.stderr)

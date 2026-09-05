@@ -9,14 +9,24 @@ from typing import Any, Mapping
 
 import pytest
 
-sys.path.insert(0, os.path.dirname(__file__))
-
-from persona_provisioning import MemoryPersonaProvisioningStore, ProvisioningRecord
-from persona_provisioning_coordinator import (
-    FIRST_EVALUATION_WORKFLOW_ID,
-    PersonaProvisioningCoordinator,
-    deterministic_provisioning_ids,
-)
+try:
+    from services.control_plane.bff.persona_provisioning import (
+        MemoryPersonaProvisioningStore,
+        ProvisioningRecord,
+    )
+    from services.control_plane.bff.persona_provisioning_coordinator import (
+        FIRST_EVALUATION_WORKFLOW_ID,
+        PersonaProvisioningCoordinator,
+        deterministic_provisioning_ids,
+    )
+except ImportError:
+    sys.path.insert(0, os.path.dirname(__file__))
+    from persona_provisioning import MemoryPersonaProvisioningStore, ProvisioningRecord  # type: ignore[no-redef]
+    from persona_provisioning_coordinator import (  # type: ignore[no-redef]
+        FIRST_EVALUATION_WORKFLOW_ID,
+        PersonaProvisioningCoordinator,
+        deterministic_provisioning_ids,
+    )
 from services.registry.strategy_artifact import (
     strategy_artifact_checksum,
     validate_strategy_artifact,
@@ -1038,3 +1048,137 @@ def test_schedule_exact_authoritative_readback_accepts_job_name_only_skips() -> 
 
     assert result.state == "provisioning"
     assert result.current_step == "schedule_registered"
+
+
+def test_safe_early_failure_name_error_capital_pool_replays_successfully() -> None:
+    """Verify exact historical failure (NameError at capital_pool with failed_step present,
+    empty references, null compensation) safely replays through forward coordination.
+    """
+    store, record = _record_and_store()
+    ids = deterministic_provisioning_ids(record)
+
+    # Seed the exact historical failure structure:
+    # error dict has error_type=NameError, terminal_reason, and failed_step=capital_pool
+    failed = store.acquire(
+        record.tenant_id,
+        record.idempotency_key,
+        lease_owner="prior-failed-run",
+        lease_seconds=60,
+    )
+    assert failed is not None
+    failed.state = "failed"
+    failed.current_step = "capital_pool_failed"
+    failed.error = {
+        "failed_at": "2026-09-04T11:52:48Z",
+        "error_type": "NameError",
+        "failed_step": "capital_pool",
+        "terminal_reason": "name 'urllib_error' is not defined",
+        "compensation_error": "name 'urllib_error' is not defined",
+    }
+    failed.references = {}
+    failed.compensation = None
+    failed.attempt_count = 4
+    failed = store.checkpoint(failed, lease_owner="prior-failed-run", lease_seconds=60)
+    store.release(failed, lease_owner="prior-failed-run", lease_seconds=60)
+
+    transport = FakeOwnerTransport()
+    schedule_calls: list[tuple[str, str, str]] = []
+
+    def registrar(persona_id: str, pool_id: str, binding_id: str):
+        schedule_calls.append((persona_id, pool_id, binding_id))
+        return _schedule_receipt(persona_id, pool_id, binding_id)
+
+    coordinator = PersonaProvisioningCoordinator(
+        store=store,
+        transport=transport,
+        schedule_registrar=registrar,
+        lease_owner="replay-coordinator-1",
+    )
+
+    replayed = coordinator.coordinate(store.get(record.tenant_id, record.idempotency_key))
+
+    assert replayed.state == "provisioning"
+    assert replayed.current_step == "schedule_registered"
+    assert replayed.error is None
+    assert replayed.compensation is None
+    assert replayed.attempt_count == 5
+    assert len(schedule_calls) == 1
+    assert "capital_pool" in replayed.references
+    assert "persona_capital_binding_created" in replayed.references
+    assert "deployment_dispatch" in replayed.references
+    assert "first_evaluation_schedule" in replayed.references
+
+
+def test_safe_early_failure_rejects_unsafe_binding_side_effects() -> None:
+    """Fail-closed: records with committed binding references must NEVER forward replay."""
+    store, record = _record_and_store()
+    failed = store.acquire(
+        record.tenant_id,
+        record.idempotency_key,
+        lease_owner="unsafe-record-writer",
+        lease_seconds=60,
+    )
+    assert failed is not None
+    failed.state = "failed"
+    failed.current_step = "persona_capital_binding_created_failed"
+    failed.error = {
+        "failed_step": "persona_capital_binding_created",
+        "terminal_reason": "connection timeout during binding creation",
+    }
+    failed.references = {
+        "capital_pool": {"pool_id": "pool-1", "status": "active"},
+        "persona_capital_binding_created": {"binding_id": "pcb-1", "status": "pending"},
+    }
+    failed.compensation = None
+    failed = store.checkpoint(failed, lease_owner="unsafe-record-writer", lease_seconds=60)
+    store.release(failed, lease_owner="unsafe-record-writer", lease_seconds=60)
+
+    transport = FakeOwnerTransport()
+    coordinator = PersonaProvisioningCoordinator(
+        store=store,
+        transport=transport,
+        schedule_registrar=lambda *_args: pytest.fail("Must not schedule"),
+        lease_owner="replay-attempt",
+    )
+
+    result = coordinator.coordinate(store.get(record.tenant_id, record.idempotency_key))
+
+    # Must remain terminal and NOT perform forward provisioning
+    assert result.state in {"failed", "compensated"}
+    assert "deployment_dispatch" not in result.references
+    assert "schedule_registration" not in result.references
+
+
+def test_safe_early_failure_rejects_non_null_compensation() -> None:
+    """Fail-closed: records with existing compensation must NOT forward replay."""
+    store, record = _record_and_store()
+    failed = store.acquire(
+        record.tenant_id,
+        record.idempotency_key,
+        lease_owner="compensated-writer",
+        lease_seconds=60,
+    )
+    assert failed is not None
+    failed.state = "failed"
+    failed.current_step = "capital_pool_failed"
+    failed.error = {
+        "failed_step": "capital_pool",
+        "terminal_reason": "explicit rejection",
+    }
+    failed.references = {}
+    failed.compensation = {"status": "completed", "action": "noop"}
+    failed = store.checkpoint(failed, lease_owner="compensated-writer", lease_seconds=60)
+    store.release(failed, lease_owner="compensated-writer", lease_seconds=60)
+
+    transport = FakeOwnerTransport()
+    coordinator = PersonaProvisioningCoordinator(
+        store=store,
+        transport=transport,
+        schedule_registrar=lambda *_args: pytest.fail("Must not schedule"),
+        lease_owner="replay-attempt",
+    )
+
+    result = coordinator.coordinate(store.get(record.tenant_id, record.idempotency_key))
+    assert result.state == "failed"
+    assert result.compensation == {"status": "completed", "action": "noop"}
+    assert "capital_pool" not in result.references

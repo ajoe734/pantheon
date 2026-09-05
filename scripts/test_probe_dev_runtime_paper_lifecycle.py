@@ -28,11 +28,13 @@ from scripts.probe_dev_runtime_paper_lifecycle import (
     HISTORICAL_FORBIDDEN_IDS,
     SCHEMA_VERSION,
     TASK_ID,
+    AuthenticationError,
     CanonicalOwnerAdapter,
     CorrelationMismatchError,
     DevRuntimePaperLifecycleProbe,
     HttpResponse,
     MissingConsumerReceiptError,
+    MissingTenantError,
     PreflightBlockedError,
     ProbeConfig,
     ProbeError,
@@ -41,8 +43,11 @@ from scripts.probe_dev_runtime_paper_lifecycle import (
     ReloadMismatchError,
     RetiredDeployTargetError,
     StaleIdentityError,
+    TenantAccessDeniedError,
     is_executable_binding,
     join_url,
+    main,
+    parse_args,
     redact_secrets,
     seal_evidence,
     validate_host_not_retired,
@@ -97,6 +102,8 @@ class HonestCanonicalOwnerDouble:
         reload_trade_episode_differs: bool = False,
         simulate_timeout_on: set[str] | None = None,
         simulate_unavailable_on: set[str] | None = None,
+        required_tenant: str | None = None,
+        loop_health_status: int = 200,
     ) -> None:
         self.fe_commit = fe_commit
         self.bff_commit = bff_commit
@@ -142,6 +149,8 @@ class HonestCanonicalOwnerDouble:
         self.trade_episodes_read_count = 0
         self.simulate_timeout_on = simulate_timeout_on or set()
         self.simulate_unavailable_on = simulate_unavailable_on or set()
+        self.required_tenant = required_tenant
+        self.loop_health_status = loop_health_status
 
         self.recorded_requests: list[dict[str, Any]] = []
         self.created_plans: dict[str, Any] = {}
@@ -209,6 +218,14 @@ class HonestCanonicalOwnerDouble:
             return HttpResponse(401, {"error": "Unauthorized: missing Authorization header"}, {}, url, method)
         if not tenant or not tenant.strip():
             return HttpResponse(400, {"error": "Bad Request: missing X-Tenant-Id header"}, {}, url, method)
+        if self.required_tenant is not None and tenant != self.required_tenant:
+            return HttpResponse(
+                403,
+                {"error": "Tenant access denied", "detail": f"Tenant {tenant!r} access denied"},
+                {},
+                url,
+                method,
+            )
 
         # BFF version (public BFF has no pair_id unless explicitly configured, Finding 4)
         if path == "/bff/version":
@@ -245,6 +262,14 @@ class HonestCanonicalOwnerDouble:
 
         # Loop health
         if path == "/bff/v5/loop-health":
+            if self.loop_health_status != 200:
+                return HttpResponse(
+                    self.loop_health_status,
+                    {"error": "Tenant access denied", "detail": "Tenant access denied"},
+                    {},
+                    url,
+                    method,
+                )
             return HttpResponse(200, {"status": "ok"}, {}, url, method)
 
         # Registry strategy artifacts query (authoritative parent discovery)
@@ -1406,3 +1431,224 @@ def test_preflight_bff_version_without_pair_id_accepts_release_manifest() -> Non
     assert evidence["served_identity"]["pair_consistent"] is True
     assert evidence["served_identity"]["fe"]["pairId"] == PAIR_ID_VALID
     assert evidence["served_identity"]["bff"]["pair_id"] == PAIR_ID_VALID
+
+
+def test_cli_tenant_id_argument_propagation() -> None:
+    """Verifies that --tenant-id CLI argument binds to ProbeConfig and propagates X-Tenant-Id."""
+    args = parse_args(["--tenant-id", "tenant-dev-explicit", "--auth-token", "tok-123"])
+    assert args.tenant_id == "tenant-dev-explicit"
+
+    double = HonestCanonicalOwnerDouble()
+    config = _default_test_config(tenant_id=args.tenant_id, auth_token=args.auth_token)
+    probe = DevRuntimePaperLifecycleProbe(config, transport=double)
+    probe.run()
+
+    auth_requests = [r for r in double.recorded_requests if r["url"].endswith("/bff/version")]
+    assert len(auth_requests) >= 1
+    assert auth_requests[0]["headers"]["X-Tenant-Id"] == "tenant-dev-explicit"
+
+
+def test_cli_tenant_id_env_var_propagation(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Verifies that PANTHEON_TENANT_ID binds when CLI argument is omitted."""
+    monkeypatch.setenv("PANTHEON_TENANT_ID", "tenant-from-env")
+    args = parse_args([])
+    assert args.tenant_id == "tenant-from-env"
+
+    double = HonestCanonicalOwnerDouble()
+    config = _default_test_config(tenant_id=args.tenant_id)
+    probe = DevRuntimePaperLifecycleProbe(config, transport=double)
+    probe.run()
+
+    auth_requests = [r for r in double.recorded_requests if r["url"].endswith("/bff/version")]
+    assert len(auth_requests) >= 1
+    assert auth_requests[0]["headers"]["X-Tenant-Id"] == "tenant-from-env"
+
+
+def test_cli_tenant_id_argument_overrides_env_var(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Verifies that explicit --tenant-id overrides PANTHEON_TENANT_ID env var."""
+    monkeypatch.setenv("PANTHEON_TENANT_ID", "tenant-from-env")
+    args = parse_args(["--tenant-id", "tenant-cli-override"])
+    assert args.tenant_id == "tenant-cli-override"
+
+    double = HonestCanonicalOwnerDouble()
+    config = _default_test_config(tenant_id=args.tenant_id)
+    probe = DevRuntimePaperLifecycleProbe(config, transport=double)
+    probe.run()
+
+    auth_requests = [r for r in double.recorded_requests if r["url"].endswith("/bff/version")]
+    assert len(auth_requests) >= 1
+    assert auth_requests[0]["headers"]["X-Tenant-Id"] == "tenant-cli-override"
+
+
+def test_probe_config_no_truthy_default_tenant(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Verifies ProbeConfig().tenant_id is None and does not shadow environment PANTHEON_TENANT_ID."""
+    monkeypatch.delenv("PANTHEON_TENANT_ID", raising=False)
+    cfg = ProbeConfig()
+    assert cfg.tenant_id is None
+
+    # Verify that CanonicalOwnerAdapter correctly uses env when config.tenant_id is None
+    monkeypatch.setenv("PANTHEON_TENANT_ID", "tenant-env-unshadowed")
+    monkeypatch.setenv("PANTHEON_AUTH_TOKEN", "test-auth-token")
+    double = HonestCanonicalOwnerDouble()
+    adapter = CanonicalOwnerAdapter(cfg, double)
+    assert adapter.tenant_id == "tenant-env-unshadowed"
+
+
+def test_authenticated_probe_rejects_missing_tenant_id(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Verifies that authenticated probe fails closed when tenant ID is missing from both CLI and env."""
+    monkeypatch.delenv("PANTHEON_TENANT_ID", raising=False)
+    double = HonestCanonicalOwnerDouble()
+    config = _default_test_config(tenant_id=None, auth_token="test-auth-token")
+    probe = DevRuntimePaperLifecycleProbe(config, transport=double)
+
+    with pytest.raises(MissingTenantError, match="Tenant ID is required for authenticated owner API requests"):
+        probe.run_preflight()
+
+    evidence = probe.run()
+    assert evidence["status"] == "blocked"
+    assert evidence["failure_type"] == "MissingTenantError"
+
+
+def test_preflight_403_access_denied_produces_sealed_blocked_evidence_and_file(tmp_path: Path) -> None:
+    """Verifies that 403 on loop-health produces sealed blocked evidence and writes file without uncaught exception."""
+    out_file = tmp_path / "evidence_403.json"
+    double = HonestCanonicalOwnerDouble(loop_health_status=403)
+    config = _default_test_config(output_path=out_file)
+    probe = DevRuntimePaperLifecycleProbe(config, transport=double)
+
+    evidence = probe.run()
+    assert evidence["status"] == "blocked"
+    assert evidence["failure_type"] == "TenantAccessDeniedError"
+    assert "Tenant access denied" in evidence["blocked_reason"]
+    assert "artifact_digest_sha256" in evidence
+
+    # Verify the sealed file exists on disk and matches evidence
+    assert out_file.exists()
+    with open(out_file, "r", encoding="utf-8") as f:
+        loaded = json.load(f)
+    assert loaded["status"] == "blocked"
+    assert loaded["failure_type"] == "TenantAccessDeniedError"
+    assert loaded["artifact_digest_sha256"] == evidence["artifact_digest_sha256"]
+
+
+def test_main_function_pipeline_success(tmp_path: Path) -> None:
+    """End-to-end function pipeline test: CLI args -> parse_args -> ProbeConfig -> main -> sealed evidence -> exit 0."""
+    out_file = tmp_path / "evidence_pipeline_success.json"
+    double = HonestCanonicalOwnerDouble(required_tenant="tenant-dev")
+
+    exit_code = main(
+        [
+            "--expected-fe-sha",
+            FE_SHA_VALID,
+            "--expected-bff-sha",
+            BFF_SHA_VALID,
+            "--tenant-id",
+            "tenant-dev",
+            "--auth-token",
+            "token-pipeline-test",
+            "-o",
+            str(out_file),
+        ],
+        transport=double,
+    )
+    assert exit_code == 0
+    assert out_file.exists()
+    with open(out_file, "r", encoding="utf-8") as f:
+        loaded = json.load(f)
+    assert loaded["status"] == "preflight_passed"
+    assert loaded["task_id"] == TASK_ID
+    assert "artifact_digest_sha256" in loaded
+
+    # Verify double received the propagated headers
+    auth_requests = [r for r in double.recorded_requests if "/bff/" in r["url"]]
+    assert len(auth_requests) >= 1
+    assert auth_requests[0]["headers"]["X-Tenant-Id"] == "tenant-dev"
+    assert auth_requests[0]["headers"]["Authorization"] == "Bearer token-pipeline-test"
+
+
+def test_main_function_pipeline_403_access_denied_exit_code_2_and_sealed_file(tmp_path: Path) -> None:
+    """End-to-end function pipeline test: tenant mismatch triggers 403, exits 2 with sealed blocked evidence."""
+    out_file = tmp_path / "evidence_pipeline_403.json"
+    double = HonestCanonicalOwnerDouble(required_tenant="tenant-dev")
+
+    exit_code = main(
+        [
+            "--expected-fe-sha",
+            FE_SHA_VALID,
+            "--expected-bff-sha",
+            BFF_SHA_VALID,
+            "--tenant-id",
+            "wrong-tenant",
+            "--auth-token",
+            "token-pipeline-test",
+            "-o",
+            str(out_file),
+        ],
+        transport=double,
+    )
+    assert exit_code == 2
+    assert out_file.exists()
+    with open(out_file, "r", encoding="utf-8") as f:
+        loaded = json.load(f)
+    assert loaded["status"] == "blocked"
+    assert loaded["failure_type"] == "TenantAccessDeniedError"
+    assert "Tenant access denied" in loaded["blocked_reason"]
+    assert "artifact_digest_sha256" in loaded
+
+
+def test_main_function_pipeline_missing_tenant_exit_code_2(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """End-to-end function pipeline test: missing tenant when authenticated exits 2 with sealed blocked evidence."""
+    monkeypatch.delenv("PANTHEON_TENANT_ID", raising=False)
+    out_file = tmp_path / "evidence_pipeline_missing_tenant.json"
+    double = HonestCanonicalOwnerDouble()
+
+    exit_code = main(
+        [
+            "--expected-fe-sha",
+            FE_SHA_VALID,
+            "--expected-bff-sha",
+            BFF_SHA_VALID,
+            "--auth-token",
+            "token-pipeline-test",
+            "-o",
+            str(out_file),
+        ],
+        transport=double,
+    )
+    assert exit_code == 2
+    assert out_file.exists()
+    with open(out_file, "r", encoding="utf-8") as f:
+        loaded = json.load(f)
+    assert loaded["status"] == "blocked"
+    assert loaded["failure_type"] == "MissingTenantError"
+    assert "Tenant ID is required" in loaded["blocked_reason"]
+
+
+def test_read_only_preflight_executes_only_get_requests_no_mutations() -> None:
+    """Verifies that preflight strictly executes only read-only GET requests with zero POST/PUT/DELETE mutations."""
+    double = HonestCanonicalOwnerDouble()
+    config = _default_test_config(execute_paper_lifecycle=False)
+    probe = DevRuntimePaperLifecycleProbe(config, transport=double)
+
+    evidence = probe.run()
+    assert evidence["status"] == "preflight_passed"
+
+    assert len(double.recorded_requests) >= 4
+    for req in double.recorded_requests:
+        assert req["method"] == "GET", f"Mutating method {req['method']!r} detected on {req['url']}"
+        assert req["payload"] is None, f"Unexpected payload in read-only preflight request to {req['url']}"
+
+
+def test_cli_auth_token_argument_propagation() -> None:
+    """Verifies that --auth-token CLI argument propagates to request Authorization header."""
+    args = parse_args(["--auth-token", "custom-secret-key", "--tenant-id", "tenant-dev"])
+    assert args.auth_token == "custom-secret-key"
+
+    double = HonestCanonicalOwnerDouble()
+    config = _default_test_config(auth_token=args.auth_token, tenant_id=args.tenant_id)
+    probe = DevRuntimePaperLifecycleProbe(config, transport=double)
+    probe.run()
+
+    auth_requests = [r for r in double.recorded_requests if r["url"].endswith("/bff/version")]
+    assert len(auth_requests) >= 1
+    assert auth_requests[0]["headers"]["Authorization"] == "Bearer custom-secret-key"

@@ -1,0 +1,49 @@
+{
+  "schema_version": "pantheon.review-evidence.v1",
+  "task_id": "DEV-PAPER-BASELINE-RETRY-20260905",
+  "title": "Repair governed dev paper baseline safe early-failure replay",
+  "recorded_at": "2026-09-05T05:20:00Z",
+  "owner": "Antigravity2",
+  "reviewer": "Claude",
+  "target_repo": "pantheon",
+  "task_class": "functional",
+  "summary_zh": "依 Root 早期審查回饋（ai-status.json next 04:52 UTC）嚴格修訂：撤銷先前試圖由 current_step 截取 failed_step 之相容性 fallback，避免放寬未知／缺失 error 之 retry 分類而削弱 fail-closed 邊界；唯讀 Postgres 鑑識 readback（prior-bootstrap-forensic-readback.json）證實 live 資料庫記錄之 error.failed_step 確實為 capital_pool，且既有 PersonaProvisioningCoordinator._is_safe_early_failure 謂詞於該記錄直接求值為 True。在 test_persona_provisioning_coordinator.py 與 test_persona_owner_packaged_transport.py 建立完整回歸測試，以完全相同的歷史失敗 ledger（error.failed_step='capital_pool'、references={}、compensation=None、attempt_count=4）重現真實 packaged route /bff/management/personas/create-paper-bundle，證明 safe early failure 順利安全重播至 schedule_registered（HTTP 201 Created，attempt_count 推進至 5，references 寫入完整 binding/deployment/schedule），並於獨立新 process durable readback 驗證持久化；同時新增 fail-closed 邊界測試，證明包含已提交 binding side effects（如 persona_capital_binding_created）或非空 compensation 之記錄必定嚴格拒絕重播（502 UPSTREAM_ERROR）。針對 run 33943312084 於部署 candidate image d86886… 時為何回傳 502，因該 image 於失敗補償後未保留於 VM image store 無法進行逐 byte 容器鑑識，本報告如實陳述該不確定性（可能因背景 reconciler 短暫持有 lease 或容器環境特定差異），不捏造無根據的相容層修補。以 DRAFT PR 交付，不自行 merge 或修改 hosted 狀態。",
+  "artifacts": {
+    "implementation_paths": [
+      "services/control-plane/bff/test_persona_provisioning_coordinator.py",
+      "services/control-plane/bff/tests/test_persona_owner_packaged_transport.py"
+    ],
+    "test_paths": [
+      "services/control-plane/bff/test_persona_provisioning_coordinator.py",
+      "services/control-plane/bff/tests/test_persona_owner_packaged_transport.py",
+      "scripts/test_bootstrap_dev_paper_baseline.py"
+    ],
+    "evidence_manifest": "docs/deployment/evidence/DEV-PAPER-BASELINE-RETRY-20260905/evidence.json"
+  },
+  "scope": {
+    "owned": [
+      "Strict fail-closed preservation: reverted speculative current_step[:-len(\"_failed\")] fallback in coordinator and router to prevent broadening safe retry classification to unclassified or missing-error records.",
+      "Exact ledger reproduction regression: added test_safe_early_failure_name_error_capital_pool_replays_successfully in test_persona_provisioning_coordinator.py and test_packaged_route_safe_early_name_error_replay_fresh_process in test_persona_owner_packaged_transport.py, reproducing the exact historical failed ledger (error.failed_step=\"capital_pool\", error_type=\"NameError\", terminal_reason=\"name 'urllib_error' is not defined\", references={}, compensation=None, attempt_count=4) through the packaged route to prove safe early replay completes to schedule_registered (201 Created) with durable multi-store readback.",
+      "Fail-closed boundary enforcement: added test_safe_early_failure_rejects_unsafe_binding_side_effects and test_safe_early_failure_rejects_non_null_compensation in coordinator tests, and test_packaged_route_rejects_unsafe_binding_side_effects_fresh_process in transport tests, proving that any committed binding side effects (persona_capital_binding_created) or non-null compensation are strictly rejected with 502 UPSTREAM_ERROR and never forward retried.",
+      "Package import alignment: updated test_persona_provisioning_coordinator.py to import services.control_plane.bff.persona_provisioning* via package root, resolving standalone collection failures while preserving package boundaries."
+    ],
+    "not_changing": [
+      "No hosted mutations or database edits to tenant-dev or persona-d57f6d76254c20418a9e.",
+      "No alteration of fixed bootstrap IDs (dev-paper-bootstrap-20260720-operator-a-v3) or parameters.",
+      "No modification of services/persona (owned by Claude under DEV-PERSONA-AUTHORITY-20260905).",
+      "No auto-merge request or ready-for-review conversion; deliver strictly as DRAFT PR for root GPT-6 Astra integration ownership."
+    ],
+    "known_gap": [
+      "Forensic certainty on historical record: readback prior-bootstrap-forensic-readback.json shows the actual Postgres row has error.failed_step=\"capital_pool\", references={}, compensation=null, and pure PersonaProvisioningCoordinator._is_safe_early_failure evaluates to True.",
+      "Forensic uncertainty on run 33943312084: in run 33943312084, deployed candidate image d86886… returned 502 with precondition_failed=\"capital_pool\" without advancing failed_at (remained 2026-09-04T11:52:48Z). Because candidate image d86886… was discarded during deploy compensation and not preserved in the VM image store, byte-level container execution cannot be forensically replayed. Hypotheses include transient lease acquisition contention with the periodic _persona_provisioning_reconciler_loop (which increments attempt_count and updates updated_at) or container package resolution. We report this uncertainty directly rather than claiming generic workarounds fix the run."
+    ]
+  },
+  "acceptance_mapping": {
+    "reproduce_governed_bootstrap_terminal_failure_replay": "test_packaged_route_safe_early_name_error_replay_fresh_process reproduces the exact failed ledger through the public packaged route /bff/management/personas/create-paper-bundle with multi-instance durable store readback.",
+    "repair_only_proven_safe_early_failure_retry": "Verified that _is_safe_early_failure strictly permits safe steps ({\"capital_pool\", \"baseline_strategy_spec_candidate\", ...}) only when references lack unsafe side effects and compensation is None. Removed ungrounded current_step fallback to avoid synthetic expansion.",
+    "preserve_terminal_rejection_and_compensation": "test_safe_early_failure_rejects_unsafe_binding_side_effects, test_safe_early_failure_rejects_non_null_compensation, and test_packaged_route_rejects_unsafe_binding_side_effects_fresh_process prove terminal rejection (502 UPSTREAM_ERROR) when unsafe binding side effects exist.",
+    "focused_regression_for_name_error_capital_pool_failed_record": "test_safe_early_failure_name_error_capital_pool_replays_successfully and test_packaged_route_safe_early_name_error_replay_fresh_process test the exact NameError capital_pool failed record with fresh process durable readback.",
+    "deliver_exact_validated_dev_pr_draft_only": "PR delivered as DRAFT PR without auto-merge or hosted writes, reserving integration and deployment to root GPT-6 Astra."
+  },
+  "verified": "pytest services/control-plane/bff/test_persona_provisioning_coordinator.py (15 passed); pytest services/control-plane/bff/tests/test_persona_owner_packaged_transport.py (3 passed); pytest scripts/test_bootstrap_dev_paper_baseline.py (11 passed)"
+}
