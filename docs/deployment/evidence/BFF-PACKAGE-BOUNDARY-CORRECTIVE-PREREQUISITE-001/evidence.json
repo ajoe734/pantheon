@@ -7,6 +7,9 @@
     "sha256": "235db51a1e5ced009ffaee503e8cbc0ce166bad584f06d945bd393dcb06e3db1",
     "original_unqualified_internal_imports": 197,
     "original_finding_files": 52,
+    "actual_base_unqualified_internal_imports": 195,
+    "actual_base_finding_files": 51,
+    "reconciliation": "The signed inventory records 197 findings in 52 files; direct AST evaluation of the immutable base found 195 in the 51 declared production source artifacts. The repaired head has 0 in those fixed 51 sources. These are separate observations, not interchangeable totals.",
     "parse_errors": 0
   },
   "results": {
@@ -17,6 +20,12 @@
     "canonical_management_model_identity": true,
     "missing_internal_dependency_fails_closed": true,
     "cross_user_contract": "HTTP 403 CROSS_USER_ACCESS_FORBIDDEN",
+    "representative_negative_contracts": {
+      "capability_denied": "HTTP 403 FORBIDDEN capability_missing",
+      "validation_error": "HTTP 400 VALIDATION_FAILED missing_field",
+      "assistant_disabled": "HTTP 503 PRECONDITION_FAILED OpenClaw adapter provider readiness is not configured for this BFF.",
+      "provider_unavailable": "HTTP 503 OPENCLAW_ADAPTER_URL_NOT_CONFIGURED"
+    },
     "bare_models_alias_loaded": false,
     "business_rules_changed": false,
     "hosted_deployment_performed": false
@@ -24,9 +33,9 @@
   "verification": [
     {
       "command": "uv run --with-requirements services/control-plane/bff/requirements.txt python -m pytest -q scripts/test_bff_package_boundary_prerequisite.py",
-      "result": "7 passed",
-      "executed": 7,
-      "collected": 7
+      "result": "8 passed",
+      "executed": 8,
+      "collected": 8
     },
     {
       "command": "uv run --with-requirements services/control-plane/bff/requirements.txt python -m compileall -q services/control-plane/bff",
