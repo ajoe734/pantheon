@@ -32,6 +32,12 @@
   },
   "verification": [
     {
+      "command": "uv run --with-requirements services/control-plane/bff/requirements.txt python services/control-plane/bff/smoke_test.py",
+      "result": "26 passed",
+      "executed": 26,
+      "collected": 26
+    },
+    {
       "command": "uv run --with-requirements services/control-plane/bff/requirements.txt python -m pytest -q scripts/test_bff_package_boundary_prerequisite.py",
       "result": "8 passed",
       "executed": 8,

@@ -157,7 +157,6 @@ from services.control_plane.bff.persona_provisioning import (
 )
 
 from services.control_plane.bff.persona_provisioning_coordinator import (
-    PersonaCronRegistrar,
     PersonaProvisioningCoordinator,
     deterministic_provisioning_ids,
 )
