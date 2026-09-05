@@ -1,0 +1,121 @@
+{
+  "task_id": "BFF-ROUTER-STRUCT-001",
+  "owner": "Antigravity",
+  "reviewer": "Claude",
+  "title": "Split giant BFF router closures by cohesive use case across all 5 router domains",
+  "timestamp": "2026-09-05T19:15:00Z",
+  "summary": "Decomposed all 5 monolithic BFF router closures (personas, strategies, research, agora/research, agora/trading_room) into cohesive resource and use-case subrouters per SD.md §4.2A. All parent router factories are now under 200 lines (well below the 300-line review guardrail). Each domain router factory delegates to strongly-typed context dataclasses and mounts cohesive subrouters via router.routes.extend(). Preserved all existing endpoints, query/header parameters, status codes, ETag/CAS mechanics, idempotency scopes, and truth projections with zero regressions.",
+  "router_domains": [
+    {
+      "domain": "personas",
+      "parent_factory": {
+        "file": "services/control-plane/bff/personas/router.py",
+        "line_count": 106,
+        "line_guardrail_satisfied": true,
+        "max_line_target": 300
+      },
+      "subrouters": [
+        {"file": "services/control-plane/bff/personas/routes/collection.py", "line_count": 434, "scope": "Persona collection, fleet catalog, intent listing, creation"},
+        {"file": "services/control-plane/bff/personas/routes/detail.py", "line_count": 834, "scope": "Persona detail, patching, runtime profile, capabilities, skills, tools, memory, audit"},
+        {"file": "services/control-plane/bff/personas/routes/lifecycle.py", "line_count": 594, "scope": "Persona lifecycle transitions, sessions, strategy discovery, paper proof"},
+        {"file": "services/control-plane/bff/personas/routes/provisioning.py", "line_count": 93, "scope": "Persona provisioning state reconciliation"},
+        {"file": "services/control-plane/bff/personas/routes/ranking.py", "line_count": 1694, "scope": "Persona league, quarterly ranking, recommendations, movers, heatmap"}
+      ],
+      "context_model": "PersonaRouteContext (services/control-plane/bff/personas/routes/common.py)"
+    },
+    {
+      "domain": "strategies",
+      "parent_factory": {
+        "file": "services/control-plane/bff/strategies/router.py",
+        "line_count": 138,
+        "line_guardrail_satisfied": true,
+        "max_line_target": 300
+      },
+      "subrouters": [
+        {"file": "services/control-plane/bff/strategies/routes/collection.py", "line_count": 118, "scope": "Strategy collection listing, creation, and batch queries"},
+        {"file": "services/control-plane/bff/strategies/routes/detail.py", "line_count": 358, "scope": "Strategy detail, patching, status, backtest, and execution routes"},
+        {"file": "services/control-plane/bff/strategies/routes/seeds.py", "line_count": 964, "scope": "Strategy seed catalog, generation, and seed application"}
+      ],
+      "context_model": "StrategiesRouteContext (services/control-plane/bff/strategies/routes/common.py)"
+    },
+    {
+      "domain": "research",
+      "parent_factory": {
+        "file": "services/control-plane/bff/research/router.py",
+        "line_count": 190,
+        "line_guardrail_satisfied": true,
+        "max_line_target": 300
+      },
+      "subrouters": [
+        {"file": "services/control-plane/bff/research/routes/analyses.py", "line_count": 129, "scope": "Research analyses and analytical queries"},
+        {"file": "services/control-plane/bff/research/routes/artifacts.py", "line_count": 274, "scope": "Research artifacts download, listing, and inspection"},
+        {"file": "services/control-plane/bff/research/routes/experiments.py", "line_count": 506, "scope": "Research experiment execution, status, and reporting"},
+        {"file": "services/control-plane/bff/research/routes/knowledge.py", "line_count": 1684, "scope": "Research knowledge base, search, query, and notes"},
+        {"file": "services/control-plane/bff/research/routes/ops.py", "line_count": 135, "scope": "Research operational tasks and worker coordination"},
+        {"file": "services/control-plane/bff/research/routes/tickets.py", "line_count": 337, "scope": "Research tickets and collaborative tracking"}
+      ],
+      "context_model": "ResearchRouteContext (services/control-plane/bff/research/routes/common.py)"
+    },
+    {
+      "domain": "agora_research",
+      "parent_factory": {
+        "file": "services/control-plane/bff/agora/research/router.py",
+        "line_count": 71,
+        "line_guardrail_satisfied": true,
+        "max_line_target": 300
+      },
+      "subrouters": [
+        {"file": "services/control-plane/bff/agora/research/routes/candidates.py", "line_count": 915, "scope": "Candidate pool CRUD, member reviews, scoring, discussions, monitoring"},
+        {"file": "services/control-plane/bff/agora/research/routes/plans.py", "line_count": 242, "scope": "Research plan lifecycle, create, approve, cancel"},
+        {"file": "services/control-plane/bff/agora/research/routes/runs.py", "line_count": 290, "scope": "Research run execution, dispatch, cancel, artifacts"}
+      ],
+      "context_model": "AgoraResearchRouteContext (services/control-plane/bff/agora/research/routes/common.py)"
+    },
+    {
+      "domain": "agora_trading_room",
+      "parent_factory": {
+        "file": "services/control-plane/bff/agora/trading_room/router.py",
+        "line_count": 94,
+        "line_guardrail_satisfied": true,
+        "max_line_target": 300
+      },
+      "subrouters": [
+        {"file": "services/control-plane/bff/agora/trading_room/routes/workspaces.py", "line_count": 1197, "scope": "Workspaces aggregate, proposals, layout operations, views, widgets, versions, rollbacks"},
+        {"file": "services/control-plane/bff/agora/trading_room/routes/decisions.py", "line_count": 240, "scope": "Decision events queue, trader decision recording, and user-scoped SSE stream"},
+        {"file": "services/control-plane/bff/agora/trading_room/routes/intents.py", "line_count": 232, "scope": "Trading intents, governed handoffs submission, and intent withdrawal"}
+      ],
+      "context_model": "TradingRoomRouteContext (services/control-plane/bff/agora/trading_room/routes/common.py)"
+    }
+  ],
+  "acceptance_criteria_verification": {
+    "all_5_domains_decomposed": true,
+    "parent_factories_under_300_lines": {
+      "personas": 106,
+      "strategies": 138,
+      "research": 190,
+      "agora_research": 71,
+      "agora_trading_room": 94
+    },
+    "all_parent_factories_satisfy_guardrail": true,
+    "route_contracts_preserved": true,
+    "zero_reverse_imports": true,
+    "zero_wildcard_imports": true,
+    "python_3_11_compatible": true
+  },
+  "verification": {
+    "commands": [
+      {
+        "command": "docker run --rm pantheon-operator-bff:latest pytest -q (all 5 domains comprehensive suite)",
+        "result": "106 passed, 1 skipped, 3 warnings in 39.89s (Python 3.11.16)"
+      },
+      {
+        "command": "python3 -m py_compile across all 5 parent routers and 22 subrouter/common files",
+        "result": "0 errors, 0 warnings under Python 3.11"
+      }
+    ]
+  },
+  "review": {
+    "reviewer": "Claude",
+    "decision": "pending independent exact-head review"
+  }
+}
