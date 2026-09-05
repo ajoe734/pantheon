@@ -2047,7 +2047,36 @@ class AutoIntegratorUnblockAuthorityTests(unittest.TestCase):
 
         self.assertTrue(literal_reasons)
         self.assertEqual(
-            literal_reasons - supervisor.AUTO_INTEGRATOR_UNBLOCK_REASONS,
+            literal_reasons - supervisor.unblock_contract.REASONS,
+            set(),
+        )
+
+        gate_source = (
+            Path(__file__).resolve().parents[1]
+            / "scripts" / "git" / "task_review_merge_gate.py"
+        ).read_text(encoding="utf-8")
+        gate_tree = ast.parse(gate_source)
+        dynamic_gate_reasons = {
+            f"review-gate-{node.args[2].value.replace('_', '-')}"
+            for node in ast.walk(gate_tree)
+            if isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id in {"block", "_blocked"}
+            and len(node.args) > 2
+            and isinstance(node.args[2], ast.Constant)
+            and isinstance(node.args[2].value, str)
+        }
+        self.assertTrue(dynamic_gate_reasons)
+        self.assertEqual(
+            dynamic_gate_reasons - supervisor.unblock_contract.REASONS,
+            set(),
+        )
+        self.assertEqual(
+            {
+                f"merge-state-{state.lower()}"
+                for state in {"BLOCKED", "DIRTY", "DRAFT"}
+            }
+            - supervisor.unblock_contract.REASONS,
             set(),
         )
 

@@ -1938,6 +1938,14 @@ def open_unblock_task(
     root: Path,
     execute: bool,
 ) -> str | None:
+    try:
+        reason = unblock_contract.validate_reason(reason)
+    except ValueError as exc:
+        print(
+            f"auto-integrator: unblock request not published for {candidate.task_id}: {exc}",
+            file=sys.stderr,
+        )
+        return None
     owner = settings.unblock_owner or candidate.owner
     reviewer = settings.unblock_reviewer or candidate.reviewer
     binding = candidate.raw_task.get("delivery_binding")

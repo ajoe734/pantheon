@@ -1531,6 +1531,30 @@ class IntegrationPlanTests(unittest.TestCase):
 
         self.assertIsNone(result)
 
+    def test_unknown_unblock_reason_is_rejected_without_writing_inbox(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            root = Path(tmp_dir)
+            candidate = auto_integrator.TaskCandidate(
+                task_id="ABC-001", title="Ready", owner="Codex", reviewer="Claude",
+                branch="task/ABC-001", repository_slug="ajoe734/pantheon",
+                raw_task={
+                    "generation": 7,
+                    "delivery_binding": {"pr": 44, "head_sha": APPROVED_HEAD},
+                },
+            )
+
+            result = auto_integrator.open_unblock_task(
+                candidate, "producer-invented-reason", "not in the finite contract",
+                auto_integrator.Settings(
+                    status_identity_sha256="d" * 64,
+                    command_runtime_sha="b" * 40,
+                ),
+                FakeRunner(), root=root, execute=True,
+            )
+
+            self.assertIsNone(result)
+            self.assertFalse((root / auto_integrator.UNBLOCK_REQUEST_INBOX).exists())
+
     def test_shared_unblock_ids_are_bounded_and_long_reasons_do_not_collide(self) -> None:
         source = "OPS-AUTO-INTEGRATOR-STATUS-AUTHORITY-PREREQUISITE-001"
         candidate = auto_integrator.TaskCandidate(

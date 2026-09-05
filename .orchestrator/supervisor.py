@@ -346,42 +346,6 @@ AUTO_INTEGRATOR_UNBLOCK_INBOX = unblock_contract.REQUEST_INBOX
 AUTO_INTEGRATOR_UNBLOCK_RECEIPTS = unblock_contract.RECEIPT_ROOT
 AUTO_INTEGRATOR_UNBLOCK_ARCHIVE = ".orchestrator/auto-integrator-unblock-archive"
 AUTO_INTEGRATOR_UNBLOCK_DRAIN_MAX = 32
-AUTO_INTEGRATOR_UNBLOCK_REASONS = frozenset(
-    {
-        "ambiguous-open-prs", "auto-merge-revocation-failed", "base-branch-mismatch",
-        "canonical-authority-lock-failed", "canonical-state-refresh-failed", "ci-red",
-        "dirty-repository-checkout", "exact-head-merge-conflict", "exact-head-missing",
-        "final-auto-merge-armed", "final-base-branch-mismatch",
-        "final-ci-not-green", "final-ci-red", "final-head-branch-mismatch",
-        "final-head-changed", "final-pr-changed", "final-pr-is-draft", "final-pr-missing",
-        "final-pr-refresh-failed", "final-repository-mismatch",
-        "final-review-contract-changed", "final-review-gate-changed", "final-merge-state-not-direct",
-        "final-authority-timeout", "head-branch-mismatch", "integration-checkout-identity-mismatch",
-        "integration-checkout-not-detached", "integration-checkout-not-standalone",
-        "git-common-dir-not-writable", "invalid-git-common-dir", "invalid-git-repository",
-        "invalid-repository-root", "invalid-repository-scope", "merge-state-blocked", "merge-state-dirty",
-        "merge-state-draft", "missing-dedicated-integration-path", "missing-origin-remote",
-        "missing-pr", "merged-pr-no-merge-commit", "missing-repository-checkout",
-        "missing-repository-slug", "pr-is-draft", "pr-lookup-failed",
-        "rebase-conflict", "repository-checkout-not-writable", "repository-mismatch",
-        "repository-origin-mismatch", "repository-status-unavailable", "smoke-failed",
-        "task-brief-carry-forward-publication-failed",
-    }
-    | {
-        "review-gate-" + reason.replace("_", "-")
-        for reason in {
-            "approval_audit_unreadable", "approval_base_mismatch", "approval_binding_unusable",
-            "approval_head_binding_missing", "approval_head_branch_mismatch", "approval_head_mismatch",
-            "approval_pr_mismatch", "approval_record_missing", "approval_reviewer_mismatch",
-            "approval_revoked", "approval_timestamp_not_credible", "auto_merge_request_outlived_head",
-            "base_branch_mismatch", "declared_head_branch_mismatch", "declared_head_sha_mismatch",
-            "head_branch_mismatch", "head_changed_after_approval", "merged_before_approval",
-            "merge_timestamp_unknown", "no_independent_reviewer", "pr_head_timestamp_unknown",
-            "pr_head_unknown", "pr_is_draft", "pr_missing", "review_not_approved",
-            "task_state_unavailable",
-        }
-    }
-)
 
 
 def write_activity_log(config: dict[str, Any], entry: dict[str, Any]) -> None:
@@ -2079,9 +2043,7 @@ def _validate_auto_integrator_unblock_request(
     if request.get("command_runtime_sha") != issued_runtime.get("source_sha"):
         raise ValueError("unblock request command runtime is stale or unpromoted")
     source_task_id = str(request.get("source_task_id") or "")
-    reason = str(request.get("reason") or "")
-    if reason not in AUTO_INTEGRATOR_UNBLOCK_REASONS:
-        raise ValueError("unblock request reason is not allowed")
+    reason = unblock_contract.validate_reason(request.get("reason"))
     if request.get("unblock_task_id") != _auto_integrator_unblock_task_id(request):
         raise ValueError("unblock request task namespace mismatch")
     source = next(

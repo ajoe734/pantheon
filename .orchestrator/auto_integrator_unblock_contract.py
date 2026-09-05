@@ -20,6 +20,52 @@ REQUEST_FIELDS = frozenset(
         "reviewer",
     }
 )
+REASONS = frozenset(
+    {
+        "ambiguous-open-prs", "auto-merge-revocation-failed", "base-branch-mismatch",
+        "canonical-authority-lock-failed", "canonical-state-refresh-failed", "ci-red",
+        "dirty-repository-checkout", "exact-head-merge-conflict", "exact-head-missing",
+        "final-auto-merge-armed", "final-base-branch-mismatch", "final-ci-not-green",
+        "final-ci-red", "final-head-branch-mismatch", "final-head-changed",
+        "final-pr-changed", "final-pr-is-draft", "final-pr-missing",
+        "final-pr-refresh-failed", "final-repository-mismatch",
+        "final-review-contract-changed", "final-review-gate-changed",
+        "final-merge-state-not-direct", "final-authority-timeout", "head-branch-mismatch",
+        "integration-checkout-identity-mismatch", "integration-checkout-not-detached",
+        "integration-checkout-not-standalone", "git-common-dir-not-writable",
+        "invalid-git-common-dir", "invalid-git-repository", "invalid-repository-root",
+        "invalid-repository-scope", "merge-state-blocked", "merge-state-dirty",
+        "merge-state-draft", "missing-dedicated-integration-path", "missing-origin-remote",
+        "missing-pr", "merged-pr-no-merge-commit", "missing-repository-checkout",
+        "missing-repository-slug", "pr-is-draft", "pr-lookup-failed", "rebase-conflict",
+        "repository-checkout-not-writable", "repository-mismatch",
+        "repository-origin-mismatch", "repository-status-unavailable", "smoke-failed",
+        "task-brief-carry-forward-publication-failed",
+    }
+    | {
+        "review-gate-" + reason.replace("_", "-")
+        for reason in {
+            "approval_audit_unreadable", "approval_base_mismatch", "approval_binding_unusable",
+            "approval_head_binding_missing", "approval_head_branch_mismatch",
+            "approval_head_mismatch", "approval_pr_mismatch", "approval_record_missing",
+            "approval_reviewer_mismatch", "approval_revoked",
+            "approval_timestamp_not_credible", "auto_merge_request_outlived_head",
+            "base_branch_mismatch", "declared_head_branch_mismatch",
+            "declared_head_sha_mismatch", "head_branch_mismatch",
+            "head_changed_after_approval", "merged_before_approval", "merge_timestamp_unknown",
+            "no_independent_reviewer", "pr_head_timestamp_unknown", "pr_head_unknown",
+            "pr_is_draft", "pr_missing", "review_not_approved", "task_state_unavailable",
+        }
+    }
+)
+
+
+def validate_reason(reason: Any) -> str:
+    """Return a known finite producer reason, rejecting all other values."""
+
+    if not isinstance(reason, str) or reason not in REASONS:
+        raise ValueError("unblock request reason is not allowed")
+    return reason
 
 
 def task_id(
