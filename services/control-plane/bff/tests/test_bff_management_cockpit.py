@@ -1,20 +1,29 @@
 from __future__ import annotations
 
 import os
-import sys
-import tempfile
 
+from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 
-from services.control_plane.bff import main as bff_main
+from services.control_plane.bff.management_read_models.router import create_management_router
 from services.control_plane.bff.ports import create_in_memory_read_surface_ports
 
 
 OPERATOR_HEADERS = {"Authorization": "Bearer op-b3:operator,reviewer"}
 
 
-def _seeded_client(td: str) -> TestClient:
+def _router_client(store=None) -> TestClient:
+    app = FastAPI()
+    app.include_router(
+        create_management_router(
+            read_surface=store or create_in_memory_read_surface_ports()
+        )
+    )
+    return TestClient(app, raise_server_exceptions=False)
+
+
+def _seeded_client() -> TestClient:
     store = create_in_memory_read_surface_ports()
     store.list_incidents = lambda **kwargs: [
         {
@@ -187,58 +196,49 @@ def _seeded_client(td: str) -> TestClient:
         "v5_interventions": "service_store",
         "sentinel_findings": "service_store",
     }.get(dataset, "missing")
-    bff_main.read_store = store
-    return TestClient(bff_main.app)
+    return _router_client(store)
 
 
 def test_bff_management_cockpit_composes_required_sections() -> None:
-    with tempfile.TemporaryDirectory() as td:
-        original_store = bff_main.read_store
-        try:
-            client = _seeded_client(td)
-            response = client.get("/bff/management/cockpit", headers=OPERATOR_HEADERS)
-            assert response.status_code == 200, response.text
-            payload = response.json()
-            data = payload["data"]
+    client = _seeded_client()
+    response = client.get("/bff/management/cockpit", headers=OPERATOR_HEADERS)
+    assert response.status_code == 200, response.text
+    payload = response.json()
+    data = payload["data"]
 
-            assert data["id"] == "management-cockpit"
-            assert set(payload) == {"data", "meta"}
-            assert "operator_home" not in payload
-            assert "runtime_health" not in payload
-            assert "operatorHome" not in data
-            assert "runtimeHealth" not in data
-            assert data["alerts"]["summary"]["total_active"] >= 1
-            inbox_summary = data["human_inbox"]["data"]["summary"]
-            assert inbox_summary["total"] >= 4
-            assert inbox_summary["governance_review_count"] == 1
-            assert inbox_summary["approval_count"] == 1
-            assert inbox_summary["intervention_count"] == 1
-            assert inbox_summary["sentinel_finding_count"] == 1
-            assert data["trading_pulse"]["summary"]["runtime_count"] == 1
-            assert data["trading_pulse"]["summary"]["total_pnl"] == 0.42
-            assert data["trading_pulse"]["summary"]["baseline_comparison_count"] == 1
-            assert data["trading_pulse"]["rankings"][0]["runtime_id"] == "runtime-b3-001"
-            assert (
-                data["trading_pulse"]["baseline_comparisons"][0]["status"]
-                == "watch"
-            )
-            assert data["anomalies"]["summary"]["total"] >= 2
-            assert payload["meta"]["surfaces"]["management_cockpit"]["status"] in {
-                "ok",
-                "degraded",
-            }
-            assert "management_human_inbox" not in payload["meta"]["surfaces"]
-            assert payload["meta"]["surfaces"]["human_inbox"]["status"] in {
-                "ok",
-                "degraded",
-            }
-            assert payload["meta"]["surfaces"]["trading_pulse"]["status"] == "ok"
-        finally:
-            bff_main.read_store = original_store
+    assert data["id"] == "management-cockpit"
+    assert set(payload) == {"data", "meta"}
+    assert "operator_home" not in payload
+    assert "runtime_health" not in payload
+    assert "operatorHome" not in data
+    assert "runtimeHealth" not in data
+    assert data["alerts"]["summary"]["total_active"] >= 1
+    inbox_summary = data["human_inbox"]["data"]["summary"]
+    assert inbox_summary["total"] >= 4
+    assert inbox_summary["governance_review_count"] == 1
+    assert inbox_summary["approval_count"] == 1
+    assert inbox_summary["intervention_count"] == 1
+    assert inbox_summary["sentinel_finding_count"] == 1
+    assert data["trading_pulse"]["summary"]["runtime_count"] == 1
+    assert data["trading_pulse"]["summary"]["total_pnl"] == 0.42
+    assert data["trading_pulse"]["summary"]["baseline_comparison_count"] == 1
+    assert data["trading_pulse"]["rankings"][0]["runtime_id"] == "runtime-b3-001"
+    assert data["trading_pulse"]["baseline_comparisons"][0]["status"] == "watch"
+    assert data["anomalies"]["summary"]["total"] >= 2
+    assert payload["meta"]["surfaces"]["management_cockpit"]["status"] in {
+        "ok",
+        "degraded",
+    }
+    assert "management_human_inbox" not in payload["meta"]["surfaces"]
+    assert payload["meta"]["surfaces"]["human_inbox"]["status"] in {
+        "ok",
+        "degraded",
+    }
+    assert payload["meta"]["surfaces"]["trading_pulse"]["status"] == "ok"
 
 
 def test_bff_management_cockpit_requires_read_auth() -> None:
-    client = TestClient(bff_main.app, raise_server_exceptions=False)
+    client = _router_client()
     response = client.get("/bff/management/cockpit")
 
     assert response.status_code == 401
