@@ -411,6 +411,10 @@ def check_empty_host_prerequisite(
     Authentication failures, server errors, malformed JSON, TLS failures and
     timeouts are not evidence that a host is empty and therefore fail closed.
     """
+    if not fe_base_url or not (fe_base_url.startswith("https://") or fe_base_url.startswith("http://")):
+        raise ControllerError(
+            f"empty-host bootstrap prerequisite failed closed: invalid fe_base_url: {fe_base_url!r}"
+        )
     fetcher = fetch_fn or fetch_url_json
     fe_deployment_url = f"{fe_base_url.rstrip('/')}/deployment.json"
     try:

@@ -188,7 +188,7 @@ def test_deploy_nonprod_vm_dry_run_execution() -> None:
             str(DEPLOY_SCRIPT),
             "--environment", "dev",
             "--sha", "95a1455e3dc1a275b8d541fd2c432c3971013308",
-            "--project-id", "pantheon-lupin-dev-20260719",
+            "--project-id", "pantheon-dev-20260902",
             "--dry-run",
         ],
         capture_output=True,
@@ -424,8 +424,8 @@ error() {{ echo "[error] $*" >&2; exit 1; }}
 export PATH="{bin_dir}:$PATH"
 export PANTHEON_BACKEND_COMPONENTS_RECEIPT_PATH="{receipt_path}"
 export PANTHEON_DEV_FRONTEND_SHA="8337b19a0cf6ac41aa2a4c2fa3950f6af3a87abf"
-export PANTHEON_BFF_BASE_URL="https://pantheon-lupin-dev-bff.35.201.204.12.sslip.io"
-export PANTHEON_FE_BASE_URL="https://pantheon-lupin-dev-fe.35.201.204.12.sslip.io"
+export PANTHEON_BFF_BASE_URL="https://bff.example.test"
+export PANTHEON_FE_BASE_URL="https://fe.example.test"
 export PANTHEON_DEPLOY_ENV="dev"
 export PANTHEON_DEPLOY_COMPONENT="bff"
 export GIT_SHA="7a9674ea259bbac883e42f3ee217b3e8f68170fe"
