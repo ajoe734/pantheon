@@ -30,15 +30,17 @@ import errno
 import fcntl
 import json
 import os
+import re
 import shlex
 import subprocess
 import sys
 import tempfile
 import time
+import hashlib
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Iterable, Iterator, Mapping, Sequence
+from typing import Any, Iterable, Iterator, Literal, Mapping, Sequence
 
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -48,6 +50,7 @@ import task_review_merge_gate as review_gate  # noqa: E402  (local helper module
 import github_review_bridge  # noqa: E402  (local helper module)
 import multi_repo_registry  # noqa: E402  (orchestrator module)
 import common as orchestrator_common  # noqa: E402  (canonical lock helpers)
+import auto_integrator_unblock_contract as unblock_contract  # noqa: E402
 from rewrite import integration_receipt  # noqa: E402  (DTG-INT-01 canonical receipt authority)
 
 
@@ -64,6 +67,8 @@ DISPOSABLE_MERGE_IDENTITY = (
 )
 DEFAULT_LOCK = ".orchestrator/auto-integrator.lock"
 DEFAULT_MERGE_METHOD = "merge"
+UNBLOCK_REQUEST_SCHEMA = unblock_contract.REQUEST_SCHEMA
+UNBLOCK_REQUEST_INBOX = unblock_contract.REQUEST_INBOX
 DEFAULT_LIVE_CONFIG = Path(
     "/home/lupin/pantheon-ci-deploy/runtime/live-supervisor-mainroot-config.json"
 )
@@ -109,6 +114,8 @@ class Settings:
     smoke_commands: tuple[str, ...] = ()
     unblock_owner: str | None = None
     unblock_reviewer: str | None = None
+    status_identity_sha256: str | None = None
+    command_runtime_sha: str | None = None
 
 
 @dataclass(frozen=True)
@@ -515,6 +522,14 @@ def load_settings(path: Path | None = None, *, status_root: Path | None = None) 
             "Governed auto integration requires merge commits; "
             "squash and rebase merges do not preserve the reviewed head"
         )
+    status_identity_sha256 = None
+    try:
+        status_identity_sha256 = str(
+            orchestrator_common.canonical_task_state_identity(config).get("identity_sha256")
+            or ""
+        ) or None
+    except (KeyError, RuntimeError, ValueError):
+        pass
     return Settings(
         dev_branch=dev_branch,
         task_branch_prefix=task_prefix,
@@ -523,6 +538,7 @@ def load_settings(path: Path | None = None, *, status_root: Path | None = None) 
         smoke_commands=smoke_commands,
         unblock_owner=str(auto.get("unblock_owner") or "").strip() or None,
         unblock_reviewer=str(auto.get("unblock_reviewer") or "").strip() or None,
+        status_identity_sha256=status_identity_sha256,
     )
 
 
@@ -604,6 +620,7 @@ def resolve_execute_authority(
         raise ExecuteAuthorityError(
             f"live auto-integrator lock must be canonical ({settings.lock_path} != {canonical_lock})"
         )
+    settings = Settings(**{**settings.__dict__, "command_runtime_sha": head})
     return status_file, status_root, settings, payload
 
 
@@ -1121,15 +1138,15 @@ def fetch_pr_for_task(
 
 def validate_pr(candidate: TaskCandidate, pr: Mapping[str, Any], settings: Settings) -> str | None:
     if bool(pr.get("isDraft")):
-        return "pr_is_draft"
+        return "pr-is-draft"
     if str(pr.get("headRefName") or "") != candidate.branch:
-        return "head_branch_mismatch"
+        return "head-branch-mismatch"
     if str(pr.get("baseRefName") or "") != candidate.target_branch:
-        return "base_branch_mismatch"
+        return "base-branch-mismatch"
     pr_repo = github_review_bridge.repository_from_pull_request_url(pr.get("url"))
     if pr_repo and candidate.repository_slug:
         if pr_repo.strip().casefold() != candidate.repository_slug.strip().casefold():
-            return "repository_mismatch"
+            return "repository-mismatch"
     return None
 
 
@@ -1830,9 +1847,85 @@ def final_authority_read_locks(
         ) from exc
 
 
-def unblock_task_id(task_id: str, reason: str) -> str:
-    safe_reason = "".join(ch if ch.isalnum() else "-" for ch in reason.upper()).strip("-")
-    return f"INTEGRATION-UNBLOCK-{task_id}-{safe_reason}"[:96]
+def unblock_task_id(candidate: TaskCandidate, reason: str) -> str:
+    binding = candidate.raw_task.get("delivery_binding")
+    binding = binding if isinstance(binding, Mapping) else {}
+    return unblock_contract.task_id_from_identity({
+        "source_task_id": candidate.task_id,
+        "reason": reason,
+        "source_task_generation": candidate.raw_task.get("generation", 1),
+        "repository_slug": candidate.repository_slug,
+        "pr": binding.get("pr") if "pr" in binding else binding.get("pr_number"),
+        "head_sha": binding.get("head_sha"),
+    })
+
+
+@dataclass(frozen=True)
+class UnblockPublicationOutcome:
+    state: Literal["published", "processed", "rejected"]
+    task_id: str | None = None
+
+
+def _write_unblock_request(
+    root: Path, payload: Mapping[str, Any]
+) -> UnblockPublicationOutcome:
+    """Durably publish one immutable, content-addressed supervisor request."""
+
+    encoded = unblock_contract.canonical_bytes(payload)
+    request_id = Path(unblock_contract.request_filename(payload)).stem
+    inbox = root / UNBLOCK_REQUEST_INBOX
+    inbox.mkdir(mode=0o700, parents=True, exist_ok=True)
+    destination = inbox / f"{request_id}.json"
+    for outcome in ("processed", "rejected"):
+        receipt_path = root / unblock_contract.RECEIPT_ROOT / outcome / destination.name
+        if not receipt_path.is_file() or receipt_path.is_symlink():
+            continue
+        try:
+            receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        if (
+            isinstance(receipt, Mapping)
+            and receipt.get("schema") == unblock_contract.RECEIPT_SCHEMA
+            and receipt.get("request_sha256") == request_id
+            and receipt.get("outcome") == outcome
+        ):
+            if outcome == "rejected":
+                return UnblockPublicationOutcome("rejected")
+            expected_task_id = str(payload.get("unblock_task_id") or "")
+            if receipt.get("task_id") != expected_task_id:
+                raise AutoIntegratorError(
+                    "processed unblock receipt task ID differs from request"
+                )
+            return UnblockPublicationOutcome("processed", expected_task_id)
+    if destination.exists():
+        if destination.read_bytes() != encoded + b"\n":
+            raise AutoIntegratorError("content-addressed unblock request collision")
+        return UnblockPublicationOutcome(
+            "published", str(payload.get("unblock_task_id") or "")
+        )
+    descriptor, temporary_name = tempfile.mkstemp(
+        prefix=f".{request_id}.", suffix=".tmp", dir=inbox
+    )
+    temporary = Path(temporary_name)
+    try:
+        with os.fdopen(descriptor, "wb") as stream:
+            stream.write(encoded + b"\n")
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.chmod(temporary, 0o600)
+        os.replace(temporary, destination)
+        directory_fd = os.open(inbox, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
+        try:
+            os.fsync(directory_fd)
+        finally:
+            os.close(directory_fd)
+    finally:
+        if temporary.exists():
+            temporary.unlink()
+    return UnblockPublicationOutcome(
+        "published", str(payload.get("unblock_task_id") or "")
+    )
 
 
 def open_unblock_task(
@@ -1844,55 +1937,83 @@ def open_unblock_task(
     *,
     root: Path,
     execute: bool,
-) -> str:
-    task_id = unblock_task_id(candidate.task_id, reason)
-    if not execute:
-        return task_id
+) -> str | None:
+    try:
+        reason = unblock_contract.validate_reason(reason)
+    except ValueError as exc:
+        print(
+            f"auto-integrator: unblock request not published for {candidate.task_id}: {exc}",
+            file=sys.stderr,
+        )
+        return None
     owner = settings.unblock_owner or candidate.owner
     reviewer = settings.unblock_reviewer or candidate.reviewer
-    env = os.environ.copy()
-    env["AI_NAME"] = "AutoIntegrator"
-    env["TASK_PHASE"] = "Auto-integrator unblock"
-    env["TASK_DEPENDS_ON"] = candidate.task_id
-    env["TASK_SUMMARY_ZH"] = (
-        f"auto-integrator 無法安全整合 {candidate.task_id}: {reason}. "
-        "請修正 PR/rebase/CI 後交回整合。"
-    )
-    env["TASK_ACCEPTANCE"] = (
-        f"Root cause for {candidate.task_id} integration blocker is documented,"
-        " original PR is updated or superseded, task no longer strands in review_approved"
-    )
-    env["TASK_ARTIFACTS"] = "ai-status.json,.orchestrator/task-briefs,scripts/git/auto_integrator.py"
-    env["TASK_AUTO_CREATED_BY"] = "auto_integrator"
-    env["TASK_AUTO_GENERATED"] = "true"
-    if candidate.repository_id:
-        env["TASK_TARGET_REPO"] = candidate.repository_id
-    runner.run(
-        [
-            sys.executable,
-            "scripts/ai_status.py",
-            "assign",
-            task_id,
-            owner,
-            reviewer,
-            f"Unblock integration for {candidate.task_id}: {reason}",
-        ],
-        cwd=root,
-        env=env,
-    )
-    runner.run(
-        [
-            sys.executable,
-            "scripts/ai_status.py",
-            "progress",
-            task_id,
-            detail[:500],
-        ],
-        cwd=root,
-        env=env,
-        check=False,
-    )
-    return task_id
+    binding = candidate.raw_task.get("delivery_binding")
+    binding = binding if isinstance(binding, Mapping) else {}
+    pr_number = binding.get("pr") or binding.get("pr_number")
+    head_sha = str(binding.get("head_sha") or "").lower()
+    generation = candidate.raw_task.get("generation", 1)
+    if (
+        isinstance(generation, bool)
+        or not isinstance(generation, int)
+        or generation < 1
+        or isinstance(pr_number, bool)
+        or not isinstance(pr_number, int)
+        or pr_number < 1
+        or not review_gate.OID_RE.fullmatch(head_sha)
+    ):
+        print(
+            f"auto-integrator: unblock request not published for {candidate.task_id}: "
+            "canonical delivery binding lacks exact PR/head",
+            file=sys.stderr,
+        )
+        return None
+    task_id = unblock_task_id(candidate, reason)
+    if not execute:
+        return task_id
+    runtime_sha = str(settings.command_runtime_sha or "").lower()
+    if not review_gate.OID_RE.fullmatch(runtime_sha):
+        print(
+            "auto-integrator: unblock request not published: "
+            "execute authority did not provide an immutable runtime binding",
+            file=sys.stderr,
+        )
+        return None
+    status_identity_sha256 = str(settings.status_identity_sha256 or "").lower()
+    if not re.fullmatch(r"[0-9a-f]{64}", status_identity_sha256):
+        print(
+            "auto-integrator: unblock request not published: canonical status identity is missing",
+            file=sys.stderr,
+        )
+        return None
+    try:
+        outcome = _write_unblock_request(
+            root,
+            {
+            "schema": UNBLOCK_REQUEST_SCHEMA,
+            "status_root": str(root.resolve()),
+            "status_identity_sha256": status_identity_sha256,
+            "command_runtime_sha": runtime_sha,
+            "source_task_id": candidate.task_id,
+            "source_task_generation": generation,
+            "unblock_task_id": task_id,
+            "reason": reason,
+            "detail": detail[:500],
+            "repository_id": candidate.repository_id,
+            "repository_slug": candidate.repository_slug,
+            "pr": pr_number,
+            "head_sha": head_sha,
+            "owner": owner,
+            "reviewer": reviewer,
+            },
+        )
+    except (OSError, AutoIntegratorError) as exc:
+        print(
+            f"auto-integrator: unblock request publication failed for {candidate.task_id}: {exc}",
+            file=sys.stderr,
+        )
+        return None
+    return outcome.task_id
 
 
 def preflight_repository(
