@@ -1,0 +1,129 @@
+{
+  "schema_version": "pantheon.task-evidence.v1",
+  "task_id": "OVERLAY-RETIRE-001",
+  "base_ref": "dev@471dc5391a0f9cbde54d51730891583043708e42",
+  "depends_on": "DOMAIN-WRITERS-001 (done), JOURNAL-OWNER-001 (done)",
+  "normative_plan": "SD §5.1, §12.3; pkt-pantheon-structural-closure-functional-v2-20260903",
+  "owner": "Antigravity2",
+  "reviewer": "Claude2",
+  "mandatory_deletions": [
+    "_PERSONA_BFF_OVERLAY",
+    "_STRATEGY_BFF_OVERLAY",
+    "_GOV_BFF_INCIDENT_OVERLAY",
+    "_GOV_BFF_JOB_OVERLAY",
+    "ReadSurfacePorts._ranking_snapshots"
+  ],
+  "retirement_details": {
+    "_PERSONA_BFF_OVERLAY": {
+      "authoritative_store_owner": "persona_provisioning_store / persona_registry",
+      "action": "Excised from main.py and personas/service.py, detail.py, provisioning.py. Reads route directly to read_store/provisioning store.",
+      "status": "retired_and_excised"
+    },
+    "_STRATEGY_BFF_OVERLAY": {
+      "authoritative_store_owner": "strategy_spec_store / research_knowledge_source",
+      "action": "Excised from main.py, detail.py, and provisioning.py. Reads route directly to canonical strategy specs.",
+      "status": "retired_and_excised"
+    },
+    "_GOV_BFF_INCIDENT_OVERLAY": {
+      "authoritative_store_owner": "incident_reconciliation_store / governance_store",
+      "action": "Excised from main.py global definitions and incident list/get routes. Canonical read_store used directly.",
+      "status": "retired_and_excised"
+    },
+    "_GOV_BFF_JOB_OVERLAY": {
+      "authoritative_store_owner": "job_service_store / evolution_store",
+      "action": "Excised from main.py global definitions. Jobs router falls back to canonical read_store.",
+      "status": "retired_and_excised"
+    },
+    "ReadSurfacePorts._ranking_snapshots": {
+      "authoritative_store_owner": "ranking_domain_store / management_read_models",
+      "action": "Access and mutation explicitly raise AttributeError in ReadSurfacePorts.__getattribute__ and __setattr__.",
+      "status": "retired_and_deleted"
+    }
+  },
+  "implementation": {
+    "files_modified": [
+      "services/control-plane/bff/main.py",
+      "services/control-plane/bff/personas/service.py",
+      "services/control-plane/bff/personas/routes/detail.py",
+      "services/control-plane/bff/personas/routes/provisioning.py",
+      "services/control-plane/bff/ports/read_surface_ports.py"
+    ],
+    "files_created": [
+      "services/control-plane/bff/migrations/__init__.py",
+      "services/control-plane/bff/migrations/overlay_retirement.py",
+      "services/control-plane/bff/migrations/test_overlay_retirement.py",
+      "docs/deployment/evidence/OVERLAY-RETIRE-001/evidence.json"
+    ],
+    "migration_engine": {
+      "module": "services/control-plane/bff/migrations/overlay_retirement.py",
+      "capabilities": [
+        "Aggregate registry mapping Persona, Strategy, Incident, Job, and Ranking to authoritative store owners",
+        "Deterministic payload SHA-256 checksums and provenance tracking",
+        "Shadow comparison with structured ConflictReport and parity ratio metrics",
+        "Backfill engine with dry-run mode, resumable cursor pagination, and tenant isolation",
+        "CanonicalWriterCoordinator enforcing single canonical writer and forbidding fallback acknowledgement",
+        "MultiReplicaReadbackHarness verifying restart durability and multi-replica consistency",
+        "RollbackPolicy strictly enforcing deployment of exact prior compatible release without dual writes",
+        "assert_mandatory_symbol_retirements verifying module dictionary exclusion and AttributeError raising"
+      ]
+    }
+  },
+  "acceptance_check": {
+    "shadow_compare_and_backfill_all_5_aggregates": true,
+    "single_canonical_writer_enforced": true,
+    "fallback_acknowledgement_forbidden": true,
+    "restart_durability_and_multi_replica_readback_verified": true,
+    "rollback_strictly_forbids_dual_writes": true,
+    "all_5_mandatory_symbols_retired": true
+  },
+  "verification": {
+    "commands": [
+      {
+        "command": ".venv-pantheon/bin/python3 -m pytest services/control-plane/bff/migrations/test_overlay_retirement.py",
+        "result": "14 passed, 2 warnings in 7.10s",
+        "executed": 14,
+        "collected": 14
+      },
+      {
+        "command": ".venv-pantheon/bin/python3 -m pytest services/control-plane/bff/tests/test_persona_router.py",
+        "result": "41 passed in 18.25s",
+        "executed": 41,
+        "collected": 41
+      },
+      {
+        "command": ".venv-pantheon/bin/python3 -m pytest services/control-plane/bff/tests/test_persona_owner_packaged_transport.py",
+        "result": "3 passed in 1.25s",
+        "executed": 3,
+        "collected": 3
+      },
+      {
+        "command": ".venv-pantheon/bin/python3 -m pytest services/control-plane/bff/tests/test_read_surface_caller_migration.py",
+        "result": "31 passed in 23.40s",
+        "executed": 31,
+        "collected": 31
+      },
+      {
+        "command": ".venv-pantheon/bin/python3 -m pytest services/control-plane/bff/tests/test_strategy_ranking_router.py",
+        "result": "6 passed in 4.10s",
+        "executed": 6,
+        "collected": 6
+      },
+      {
+        "command": ".venv-pantheon/bin/python3 -m pytest services/control-plane/bff/personas/test_router_isolation.py",
+        "result": "1 passed in 1.10s",
+        "executed": 1,
+        "collected": 1
+      }
+    ],
+    "total_tests_passed": 96
+  },
+  "rollback_strategy": {
+    "rule": "Deploy the exact prior compatible release; never re-enable dual writes.",
+    "dual_writes_permitted": false,
+    "fallback_acknowledgement_permitted": false
+  },
+  "review": {
+    "reviewer": "Claude2",
+    "decision": "pending independent exact-head review"
+  }
+}
