@@ -7,7 +7,7 @@
   "target_repo": "pantheon",
   "task_class": "functional",
   "delivery_state": "ready_for_independent_review",
-  "source_base_sha": "161f0a0d7d91e6b8c4c1615f5a8cb70db64e8b35",
+  "source_base_sha": "4804b6d863e68dc65ab8a923ebc93eeef7923cec",
   "scope": {
     "owned": [
       "scripts/probe_dev_runtime_paper_lifecycle.py",
