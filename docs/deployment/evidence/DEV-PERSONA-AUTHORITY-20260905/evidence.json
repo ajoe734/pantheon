@@ -1,0 +1,49 @@
+{
+  "schema_version": "pantheon.review-evidence.v1",
+  "task_id": "DEV-PERSONA-AUTHORITY-20260905",
+  "title": "Implement tenant-bound authoritative Persona training targets",
+  "recorded_at": "2026-09-05T00:00:00Z",
+  "owner": "Claude",
+  "reviewer": "Antigravity",
+  "target_repo": "pantheon",
+  "task_class": "functional",
+  "summary_zh": "training-authority-contract-audit.json 與 report.md 3.1 節指出：services/training-session/persona_target.py 的凍結 validator 要求 Persona owner 提供 tenant_id/generation/authority_status/controller_record_ref/recorded_at 的 precondition readback、接受 generation/precondition-digest/approved-teaching-proof 綁定的 target writer，以及該 generation 的 terminal target readback，但既有 services/persona/write_owner.py 只有一般 create/patch/lifecycle/capability-snapshot 端點，完全沒有這三個介面。此任務只在 services/persona/write_owner.py 新增一個獨立、持久化、tenant 綁定的 training-target 資源（GET+POST /api/personas/{persona_id}/training-target），滿足凍結 validator 的每一個必填欄位與 CAS/idempotency 語意，不修改 persona_target.py 本身、不碰 Governance owner（DOMAIN-WRITERS-001 範圍），也不改動既有 PersonaBody 的一般欄位語意。",
+  "artifacts": {
+    "implementation_paths": [
+      "services/persona/write_owner.py"
+    ],
+    "test_paths": [
+      "services/persona/test_training_target_owner.py"
+    ],
+    "evidence_manifest": "docs/deployment/evidence/DEV-PERSONA-AUTHORITY-20260905/evidence.json"
+  },
+  "scope": {
+    "owned": [
+      "New PersistentPersonaTrainingTargetOwner: a durable, tenant-bound, generation-versioned record per persona_id, backed by the same AtomicJsonRecordStore/PostgresJsonOwnerStore pattern already used by PersistentPersonaOwner and PersistentCapabilitySnapshotOwner",
+      "GET /api/personas/{persona_id}/training-target (X-Tenant-Id header): serves as the frozen contract's persona precondition readback both for a standalone pre-evaluation read and for commit_persona_target's internal pre-readback, and as the terminal readback after a commit -- one durable resource read at every stage, no in-process cache or fixture fallback",
+      "POST /api/personas/{persona_id}/training-target (X-Tenant-Id, Idempotency-Key headers): commits one approved teaching target via compare-and-set on generation; enforces tenant isolation (403 TRAINING_TARGET_TENANT_MISMATCH via first-writer-wins tenant binding), stale-generation rejection (409), and idempotent-replay-vs-conflict semantics at the already-committed generation (identical binding replays 200 with replayed=true, differing binding is a 409 semantic idempotency conflict)",
+      "Reuses the existing service-token / JWT persona.admin authentication path (_authenticate_persona_mutation, _require_persona_plane_owner) for both new endpoints; requires the persona_id to already exist in the real PersistentPersonaOwner store before any training-target read or write is served"
+    ],
+    "not_changing": [
+      "services/training-session/persona_target.py -- the frozen client validator (PR #5593 head 48e32ff7427294be633b05bff66a110f91592c96) is exercised as-is via its public read_persona_target_precondition/commit_persona_target functions, loaded standalone exactly as its own test suite does; not one line of it is edited",
+      "The Governance owner service and its approval-decision contract (DOMAIN-WRITERS-001 scope) -- the approval readback the frozen validator performs is out of this task and is served from a fixed in-memory fake in the new focused tests",
+      "The existing generic Persona lifecycle/CRUD fields (PersonaBody.status/lifecycle_state and friends) -- the new training-target authority projection is a separate resource so the admin status vocabulary ({active, suspended, archived}) is never overloaded with the validator's distinct {active, committed} vocabulary",
+      "execute-plans FE PR #738 (head dbdb2f4ac621075e47f67f9b567b94f0cb06e6e2) -- untouched, no frontend files in this diff",
+      "No live credentials, no dev/prod deployment or mutation -- everything below runs against a temporary AtomicJsonRecordStore under pytest's tmp_path"
+    ],
+    "known_gap": [
+      "Deployment wiring (TRAINING_SESSION_PERSONA_READBACK_URL_TEMPLATE / _TARGET_WRITE_URL_TEMPLATE / _TARGET_READBACK_URL_TEMPLATE all pointing at this new resource path on the live persona-svc host, plus a real Governance approval readback) and hosted/dev acceptance are explicitly out of scope per the task brief -- root GPT-6 Astra owns integration validation and dev deployment. This delivery only proves the Persona-owner contract itself, end to end, against the exact frozen validator."
+    ]
+  },
+  "acceptance_mapping": {
+    "training_authority_readback_write_readback_without_weakening_validator": "test_precondition_read_commit_and_restart_readback exercises the real frozen persona_target.read_persona_target_precondition and commit_persona_target functions (unmodified) against the new owner endpoints end to end, including the terminal-readback digest/generation/controller_record_ref checks the validator itself enforces",
+    "tenant_isolation_generation_cas_idempotency_conflict": "PersistentPersonaTrainingTargetOwner.commit(): first-writer-wins tenant binding + compare_and_set on generation + binding-equality check at the already-committed generation",
+    "cross_tenant_denial": "test_cross_tenant_read_and_write_are_denied (GET and POST both return 403 for a second tenant against an already-tenant-bound persona)",
+    "stale_generation": "test_stale_generation_commit_is_rejected (a commit attempt whose expected_previous_generation no longer matches the current stored generation after two real commits returns 409)",
+    "mismatched_or_expired_approval": "already covered by the untouched frozen suite services/training-session/tests/test_persona_target.py (test_future_or_expired_approval_fails_closed, test_approval_identity_must_match_expected_proof_policy_authority) -- this task does not weaken or duplicate that boundary",
+    "semantic_idempotency_conflict": "test_semantic_idempotency_conflict_rejects_reused_generation_new_payload (same generation, different session/binding, returns 409)",
+    "actual_policy_control_change_and_restart_readback": "test_precondition_read_commit_and_restart_readback re-instantiates PersistentPersonaOwner/PersistentPersonaTrainingTargetOwner from the same on-disk JSON path in a fresh FastAPI app + TestClient and confirms the exact committed generation/digests/controller_record_ref read back identically",
+    "no_fabricated_controller_receipts_or_safety_default_changes": "controller_record_ref values are generated server-side per commit (uuid4-based, generation-scoped) only inside the real compare-and-set write path; no test or implementation code short-circuits the validator's authority_status/controller_record_ref/recorded_at/digest checks"
+  },
+  "verified": "PANTHEON_DEPENDENCY_PYTHON=/home/chloe_ong_dev_cctech_support_com/code/pantheon/.venv/bin/python3 python3 scripts/dev/provision_python_distribution.py; then .venv-pantheon/bin/python3 -m pytest -q services/persona --ignore=services/persona/test_cron_ooda_closure.py --ignore=services/persona/test_cron_ooda_closure_live_smoke.py services/training-session/tests/test_persona_target.py services/control-plane/persona/test_main.py -- 87 passed (32 pre-existing services/persona tests unchanged, 5 new services/persona/test_training_target_owner.py tests, 42 pre-existing frozen services/training-session/tests/test_persona_target.py tests unchanged, 8 pre-existing services/control-plane/persona/test_main.py tests confirming the composed control-plane Persona app -- which mounts services.persona.write_owner.create_app() -- still boots and serves with the new routes present). services/persona/test_cron_ooda_closure.py and its live-smoke counterpart were excluded because they fail to collect for a reason entirely unrelated to this diff (services/control-plane/cron/workflows.py using a relative `from .models import` outside its package context); this task does not touch cron_ooda_closure.py, workflows.py, or any of their import paths."
+}

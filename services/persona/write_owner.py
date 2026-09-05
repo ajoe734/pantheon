@@ -106,6 +106,25 @@ class PersonaAuthorityError(PersonaOwnerError):
         self.status_code = status_code
 
 
+class TrainingTargetTenantMismatch(PersonaAuthorityError):
+    """Raised when a caller's tenant does not own the Persona training target."""
+
+    def __init__(self) -> None:
+        super().__init__(
+            "TRAINING_TARGET_TENANT_MISMATCH",
+            "Persona training target tenant_id does not match its bound tenant",
+            403,
+        )
+
+
+class TrainingTargetGenerationConflict(PersonaOwnerError):
+    """Raised when a training-target commit's generation is not the exact CAS successor."""
+
+
+class TrainingTargetIdempotencyConflict(PersonaOwnerError):
+    """Raised when a replayed idempotency key targets a different committed payload."""
+
+
 @dataclass(frozen=True)
 class PersonaInboundAuthority:
     """Authenticated identity used for Persona mutation policy decisions."""
@@ -701,6 +720,210 @@ class PersistentCapabilitySnapshotOwner:
         )[0]
 
 
+_TRAINING_TARGET_DIGEST_PATTERN = r"^[0-9a-f]{64}$"
+_TRAINING_TARGET_BINDING_FIELDS = (
+    "persona_id",
+    "tenant_id",
+    "session_id",
+    "candidate_digest",
+    "control_digest",
+    "proof_digest",
+    "approval_digest",
+    "generation",
+)
+
+
+class CommitPersonaTrainingTargetRequest(BaseModel):
+    """Authoritative teaching-target commit accepted by the Persona write owner.
+
+    Field shape mirrors the frozen write body built by
+    ``services/training-session/persona_target.py::commit_persona_target`` so this
+    owner can be the exact-head authority that validator reads back.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    persona_id: str = Field(min_length=1)
+    tenant_id: str = Field(min_length=1)
+    session_id: str = Field(min_length=1)
+    candidate_digest: str = Field(pattern=_TRAINING_TARGET_DIGEST_PATTERN)
+    control_digest: str = Field(pattern=_TRAINING_TARGET_DIGEST_PATTERN)
+    proof_digest: str = Field(pattern=_TRAINING_TARGET_DIGEST_PATTERN)
+    approval_digest: str = Field(pattern=_TRAINING_TARGET_DIGEST_PATTERN)
+    generation: int = Field(ge=1)
+    expected_previous_generation: int = Field(ge=0)
+    expected_precondition_digest: str = Field(pattern=_TRAINING_TARGET_DIGEST_PATTERN)
+    expected_precondition_record_ref: str = Field(min_length=1)
+    approval_decision_id: str = Field(min_length=1)
+    approval_decision_ref: str = Field(min_length=1)
+    candidate: Any = None
+    control_state: Any = None
+    evaluation_proof: Any = None
+
+    @model_validator(mode="after")
+    def validate_generation_successor(self) -> "CommitPersonaTrainingTargetRequest":
+        if self.generation != self.expected_previous_generation + 1:
+            raise ValueError(
+                "generation must be exactly expected_previous_generation + 1"
+            )
+        return self
+
+
+class PersistentPersonaTrainingTargetOwner:
+    """Persistent, tenant-bound owner for one Persona's training-target authority.
+
+    Serves the frozen ``persona_target.py`` contract: the same durable record is
+    read as the pre-commit precondition, re-read as the in-commit pre-readback,
+    and read again as the post-commit terminal readback. Compare-and-set on
+    ``generation`` is the only accepted write path; a repeated commit at the
+    already-committed generation with an identical binding is an idempotent
+    replay, and one with a different binding is a hard idempotency conflict.
+    There is no in-process cache or fixture fallback -- every read goes back to
+    the durable store so a restarted owner process reads back the same truth.
+    """
+
+    def __init__(
+        self,
+        records: _OwnerRecordStore,
+        *,
+        persona_owner: PersistentPersonaOwner,
+    ) -> None:
+        self._records = records
+        self._persona_owner = persona_owner
+
+    @classmethod
+    def from_json_path(
+        cls, path: str | Path, *, persona_owner: PersistentPersonaOwner
+    ) -> "PersistentPersonaTrainingTargetOwner":
+        return cls(AtomicJsonRecordStore(path), persona_owner=persona_owner)
+
+    def _load_or_init(self, persona_id: str, tenant_id: str) -> dict[str, Any]:
+        # Fail closed against a training-target authority for a Persona that the
+        # actual owner store does not know about; never fabricate one.
+        self._persona_owner.get(persona_id)
+        current = self._records.get(persona_id)
+        if current is None:
+            initial = {
+                "persona_id": persona_id,
+                "tenant_id": tenant_id,
+                "status": "active",
+                "generation": 0,
+                "authority_status": "authoritative",
+                "controller_record_ref": (
+                    f"persona-training-target:{persona_id}:0:{uuid.uuid4().hex}"
+                ),
+                "recorded_at": _utc_now(),
+            }
+            _committed, canonical = self._records.compare_and_set(
+                persona_id, None, initial
+            )
+            current = canonical or initial
+        if current.get("tenant_id") != tenant_id:
+            raise TrainingTargetTenantMismatch()
+        return current
+
+    def read(self, *, persona_id: str, tenant_id: str) -> dict[str, Any]:
+        return dict(self._load_or_init(persona_id, tenant_id))
+
+    def commit(
+        self,
+        *,
+        persona_id: str,
+        tenant_id: str,
+        request: CommitPersonaTrainingTargetRequest,
+        idempotency_key: str,
+    ) -> dict[str, Any]:
+        if request.persona_id != persona_id or request.tenant_id != tenant_id:
+            raise PersonaOwnerError(
+                "training target commit identity does not match request path/headers"
+            )
+        clean_key = str(idempotency_key or "").strip()
+        if not clean_key:
+            raise PersonaOwnerError("Idempotency-Key header is required")
+        binding = {
+            field: getattr(request, field) for field in _TRAINING_TARGET_BINDING_FIELDS
+        }
+        for _attempt in range(4):
+            current = self._load_or_init(persona_id, tenant_id)
+            current_generation = int(current.get("generation") or 0)
+            if current_generation == request.generation:
+                if current.get("status") != "committed":
+                    raise TrainingTargetGenerationConflict(
+                        "persona training target generation is stale"
+                    )
+                stored_binding = {
+                    field: current.get(field) for field in _TRAINING_TARGET_BINDING_FIELDS
+                }
+                if stored_binding != binding:
+                    raise TrainingTargetIdempotencyConflict(
+                        "persona training target idempotency key was reused for a "
+                        "different payload"
+                    )
+                replayed = dict(current)
+                replayed["replayed"] = True
+                return replayed
+            if current_generation != request.expected_previous_generation:
+                raise TrainingTargetGenerationConflict(
+                    "persona training target generation is stale"
+                )
+            updated = {
+                **binding,
+                "status": "committed",
+                "authority_status": "authoritative",
+                "controller_record_ref": (
+                    f"persona-training-target:{persona_id}:{request.generation}:"
+                    f"{uuid.uuid4().hex}"
+                ),
+                "recorded_at": _utc_now(),
+                "approval_decision_id": request.approval_decision_id,
+                "approval_decision_ref": request.approval_decision_ref,
+                "expected_precondition_digest": request.expected_precondition_digest,
+                "expected_precondition_record_ref": (
+                    request.expected_precondition_record_ref
+                ),
+                "idempotency_key": clean_key,
+                "replayed": False,
+            }
+            committed, canonical = self._records.compare_and_set(
+                persona_id, current, updated
+            )
+            if committed:
+                return canonical or updated
+        raise PersonaConcurrentUpdate(
+            f"Persona training target {persona_id!r} changed concurrently; "
+            "retry against a fresh read"
+        )
+
+
+def build_persona_training_target_owner(
+    persona_owner: PersistentPersonaOwner,
+) -> PersistentPersonaTrainingTargetOwner:
+    backend = os.getenv(
+        "PERSONA_TRAINING_TARGET_STORE_BACKEND",
+        os.getenv("PERSONA_STORE_BACKEND", "json"),
+    )
+    dsn = (
+        os.getenv("PERSONA_TRAINING_TARGET_STORE_DSN")
+        or os.getenv("PERSONA_STORE_DSN")
+        or os.getenv("DATABASE_URL")
+    )
+    path = os.getenv(
+        "PERSONA_TRAINING_TARGET_STORE_PATH",
+        "/tmp/pantheon/persona/training_targets.json",
+    )
+    records = build_record_store(
+        backend=backend,
+        dsn=dsn,
+        table_name=os.getenv(
+            "PERSONA_TRAINING_TARGET_STORE_TABLE",
+            "persona.training_targets",
+        ),
+        json_path=path,
+        owner_service="persona-svc",
+    )
+    return PersistentPersonaTrainingTargetOwner(records, persona_owner=persona_owner)
+
+
 def build_persona_owner() -> PersistentPersonaOwner:
     backend = os.getenv("PERSONA_STORE_BACKEND", "json")
     dsn = os.getenv("PERSONA_STORE_DSN") or os.getenv("DATABASE_URL")
@@ -749,10 +972,15 @@ def create_app(
     owner: PersistentPersonaOwner | None = None,
     *,
     capability_owner: PersistentCapabilitySnapshotOwner | None = None,
+    training_target_owner: PersistentPersonaTrainingTargetOwner | None = None,
     governance_decision_verifier: GovernanceDecisionVerifier | None = None,
 ) -> FastAPI:
     persistent_owner = owner or build_persona_owner()
     persistent_capability_owner = capability_owner or build_capability_snapshot_owner()
+    persistent_training_target_owner = (
+        training_target_owner
+        or build_persona_training_target_owner(persistent_owner)
+    )
     app = FastAPI(
         title="Pantheon Persona Registry Owner",
         version="1.0.0",
@@ -902,6 +1130,53 @@ def create_app(
         except (PersonaNotFound, CapabilitySnapshotNotFound) as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
 
+    @app.get("/api/personas/{persona_id}/training-target")
+    def get_persona_training_target(
+        persona_id: str,
+        tenant_id: str = Header(alias="X-Tenant-Id"),
+        authorization: str | None = Header(default=None),
+    ) -> dict[str, Any]:
+        try:
+            authority = _authenticate_persona_mutation(authorization)
+            _require_persona_plane_owner(authority)
+            return persistent_training_target_owner.read(
+                persona_id=persona_id, tenant_id=tenant_id
+            )
+        except PersonaAuthorityError as exc:
+            raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
+        except PersonaNotFound as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+    @app.post("/api/personas/{persona_id}/training-target")
+    def commit_persona_training_target(
+        persona_id: str,
+        body: CommitPersonaTrainingTargetRequest,
+        tenant_id: str = Header(alias="X-Tenant-Id"),
+        idempotency_key: str = Header(alias="Idempotency-Key"),
+        authorization: str | None = Header(default=None),
+    ) -> dict[str, Any]:
+        try:
+            authority = _authenticate_persona_mutation(authorization)
+            _require_persona_plane_owner(authority)
+            return persistent_training_target_owner.commit(
+                persona_id=persona_id,
+                tenant_id=tenant_id,
+                request=body,
+                idempotency_key=idempotency_key,
+            )
+        except PersonaAuthorityError as exc:
+            raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
+        except PersonaNotFound as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except (
+            TrainingTargetGenerationConflict,
+            TrainingTargetIdempotencyConflict,
+            PersonaConcurrentUpdate,
+        ) as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        except PersonaOwnerError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+
     @app.get("/health")
     def health() -> dict[str, Any]:
         return {
@@ -921,10 +1196,12 @@ __all__ = [
     "CapabilitySnapshotBody",
     "CapabilitySnapshotConflict",
     "CapabilitySnapshotNotFound",
+    "CommitPersonaTrainingTargetRequest",
     "CreatePersonaRequest",
     "PatchPersonaRequest",
     "PersistentCapabilitySnapshotOwner",
     "PersistentPersonaOwner",
+    "PersistentPersonaTrainingTargetOwner",
     "PersonaAlreadyExists",
     "PersonaAuthorityError",
     "PersonaBody",
@@ -934,9 +1211,13 @@ __all__ = [
     "PersonaOwnerError",
     "GovernanceDecisionVerifier",
     "RequiredDataSourceBody",
+    "TrainingTargetGenerationConflict",
+    "TrainingTargetIdempotencyConflict",
+    "TrainingTargetTenantMismatch",
     "UpsertCapabilitySnapshotRequest",
     "app",
     "build_capability_snapshot_owner",
     "build_persona_owner",
+    "build_persona_training_target_owner",
     "create_app",
 ]
