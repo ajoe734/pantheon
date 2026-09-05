@@ -406,7 +406,8 @@
         "mcp_config": ".orchestrator/claude-approval-broker.mcp.json",
         "permission_prompt_tool": "mcp__orchestrator_approval_broker__approval_prompt",
         "env": {
-          "CLAUDE_CONFIG_DIR": "~/.claude"
+          "CLAUDE_CONFIG_DIR": "~/.claude",
+          "CLAUDE_CODE_DISABLE_BACKGROUND_TASKS": "1"
         },
         "model": "sonnet",
         "effort": "medium"
@@ -442,7 +443,8 @@
         "permission_prompt_tool": "mcp__orchestrator_approval_broker__approval_prompt",
         "home": "~/.claude2",
         "env": {
-          "CLAUDE_CONFIG_DIR": "~/.claude2"
+          "CLAUDE_CONFIG_DIR": "~/.claude2",
+          "CLAUDE_CODE_DISABLE_BACKGROUND_TASKS": "1"
         },
         "model": "sonnet",
         "effort": "medium"
