@@ -442,6 +442,15 @@ class ConsultationReaderPort(Protocol):
 
     def get_consult_memo(self, memo_id: Optional[str]) -> Optional[Dict[str, Any]]: ...
 
+    def list_committees(
+        self,
+        *,
+        quorum_states: Optional[List[str]] = None,
+        consensus_states: Optional[List[str]] = None,
+    ) -> List[Dict[str, Any]]: ...
+
+    def get_committee(self, committee_id: Optional[str]) -> Optional[Dict[str, Any]]: ...
+
     def dataset_source(self, dataset: str) -> str: ...
 
 
@@ -2999,6 +3008,93 @@ class InMemoryOperationsConsultationPort:
         if not memo_id:
             return None
         return self.consult_memos.get(memo_id)
+
+    @staticmethod
+    def _committee_board_row(root_session: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        return DomainConsultationPort._committee_board_row(root_session)
+
+    def list_committees(
+        self,
+        *,
+        quorum_states: Optional[List[str]] = None,
+        consensus_states: Optional[List[str]] = None,
+    ) -> List[Dict[str, Any]]:
+        rows: List[Dict[str, Any]] = []
+        for session in self.consult_sessions.values():
+            if session.get("session_type") != "consult":
+                continue
+            row = self._committee_board_row(session)
+            if row is None:
+                continue
+            rows.append(row)
+        if quorum_states:
+            requested = {str(v).strip().lower() for v in quorum_states if str(v).strip()}
+            rows = [r for r in rows if str(r.get("quorum_state") or "").strip().lower() in requested]
+        if consensus_states:
+            requested = {str(v).strip().lower() for v in consensus_states if str(v).strip()}
+            rows = [r for r in rows if str(r.get("consensus_state") or "").strip().lower() in requested]
+        return rows
+
+    def get_committee(self, committee_id: Optional[str]) -> Optional[Dict[str, Any]]:
+        if not committee_id:
+            return None
+        root_session: Optional[Dict[str, Any]] = None
+        for session in self.consult_sessions.values():
+            if session.get("session_type") != "consult":
+                continue
+            consult = (session.get("metadata") or {}).get("consultation", {})
+            if str(consult.get("committee_ref") or "") == str(committee_id):
+                root_session = session
+                break
+        if root_session is None:
+            return None
+
+        consult = (root_session.get("metadata") or {}).get("consultation", {})
+        committee_session_ids = list(consult.get("committee_session_ids") or [])
+        sponsor_session_id = str(consult.get("sponsor_session_id") or "").strip()
+
+        participant_roster: List[Dict[str, Any]] = []
+        for session_id in committee_session_ids:
+            participant = self.consult_sessions.get(session_id)
+            if not participant:
+                continue
+            participant_consult = (participant.get("metadata") or {}).get("consultation", {})
+            participant_roster.append(
+                {
+                    "participant_id": participant.get("session_id"),
+                    "persona_id": participant.get("persona_id"),
+                    "persona_label": None,
+                    "role": (
+                        "sponsor"
+                        if participant.get("session_id") == sponsor_session_id
+                        else (participant_consult.get("role") or "committee_participant")
+                    ),
+                    "status": participant_consult.get("participant_status") or participant.get("status"),
+                    "outcome_signal": participant_consult.get("outcome_signal"),
+                    "rationale_ref": participant_consult.get("rationale_ref"),
+                }
+            )
+
+        sponsor_assignment = next(
+            (row for row in participant_roster if str(row.get("participant_id") or "") == sponsor_session_id),
+            None,
+        )
+        board_row = self._committee_board_row(root_session)
+        if board_row is None:
+            return None
+
+        return {
+            **board_row,
+            "linked_session_id": root_session.get("session_id"),
+            "participant_roster": participant_roster,
+            "sponsor_assignment": sponsor_assignment,
+            "sponsor_decision": consult.get("sponsor_decision"),
+            "sponsor_decided_at": consult.get("sponsor_decided_at"),
+            "sponsor_decided_by": consult.get("sponsor_decided_by"),
+            "synthesis_summary": json.loads(json.dumps(consult.get("synthesis_summary") or {})),
+            "linked_evidence": json.loads(json.dumps(consult.get("evidence_refs") or [])),
+            "service_handoff": json.loads(json.dumps(consult.get("service_handoff") or {})),
+        }
 
 
 def create_operations_consultation_port(
