@@ -1617,6 +1617,93 @@ class IntegrationPlanTests(unittest.TestCase):
             self.assertEqual(replay, expected)
             self.assertEqual(list((root / auto_integrator.UNBLOCK_REQUEST_INBOX).glob("*.json")), [])
 
+    def test_rejected_terminal_receipt_returns_no_task_id(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            root = Path(tmp_dir)
+            candidate = auto_integrator.TaskCandidate(
+                task_id="ABC-001", title="Ready", owner="Codex", reviewer="Claude",
+                branch="task/ABC-001", repository_slug="ajoe734/pantheon",
+                raw_task={"generation": 7, "delivery_binding": {"pr": 44, "head_sha": APPROVED_HEAD}},
+            )
+            settings = auto_integrator.Settings(
+                status_identity_sha256="d" * 64, command_runtime_sha="b" * 40,
+            )
+            expected = auto_integrator.open_unblock_task(
+                candidate, "ci-red", "CI failed", settings, FakeRunner(),
+                root=root, execute=True,
+            )
+            request = next((root / auto_integrator.UNBLOCK_REQUEST_INBOX).glob("*.json"))
+            request_sha = request.stem
+            request.unlink()
+            receipt_dir = root / auto_integrator.unblock_contract.RECEIPT_ROOT / "rejected"
+            receipt_dir.mkdir(parents=True)
+            (receipt_dir / f"{request_sha}.json").write_text(
+                json.dumps({
+                    "schema": auto_integrator.unblock_contract.RECEIPT_SCHEMA,
+                    "request_sha256": request_sha, "outcome": "rejected",
+                    "detail": "stale generation", "task_id": "",
+                    "processed_at": "2026-09-05T00:00:00Z",
+                }), encoding="utf-8",
+            )
+
+            replay = auto_integrator.open_unblock_task(
+                candidate, "ci-red", "CI failed", settings, FakeRunner(),
+                root=root, execute=True,
+            )
+
+            self.assertIsNotNone(expected)
+            self.assertIsNone(replay)
+            self.assertEqual(list((root / auto_integrator.UNBLOCK_REQUEST_INBOX).glob("*.json")), [])
+
+    def test_processed_terminal_receipt_requires_exact_task_id(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            root = Path(tmp_dir)
+            candidate = auto_integrator.TaskCandidate(
+                task_id="ABC-001", title="Ready", owner="Codex", reviewer="Claude",
+                branch="task/ABC-001", repository_slug="ajoe734/pantheon",
+                raw_task={"generation": 7, "delivery_binding": {"pr": 44, "head_sha": APPROVED_HEAD}},
+            )
+            settings = auto_integrator.Settings(
+                status_identity_sha256="d" * 64, command_runtime_sha="b" * 40,
+            )
+            auto_integrator.open_unblock_task(
+                candidate, "ci-red", "CI failed", settings, FakeRunner(),
+                root=root, execute=True,
+            )
+            request = next((root / auto_integrator.UNBLOCK_REQUEST_INBOX).glob("*.json"))
+            request_sha = request.stem
+            request.unlink()
+            receipt_dir = root / auto_integrator.unblock_contract.RECEIPT_ROOT / "processed"
+            receipt_dir.mkdir(parents=True)
+            (receipt_dir / f"{request_sha}.json").write_text(
+                json.dumps({
+                    "schema": auto_integrator.unblock_contract.RECEIPT_SCHEMA,
+                    "request_sha256": request_sha, "outcome": "processed",
+                    "detail": "materialized", "task_id": "INTEGRATION-UNBLOCK-FORGED",
+                    "processed_at": "2026-09-05T00:00:00Z",
+                }), encoding="utf-8",
+            )
+
+            self.assertIsNone(auto_integrator.open_unblock_task(
+                candidate, "ci-red", "CI failed", settings, FakeRunner(),
+                root=root, execute=True,
+            ))
+
+    def test_invalid_generation_and_boolean_pr_fail_before_id_conversion(self) -> None:
+        for generation, pr in (("7", 44), (7, True)):
+            with self.subTest(generation=generation, pr=pr):
+                candidate = auto_integrator.TaskCandidate(
+                    task_id="ABC-001", title="Ready", owner="Codex", reviewer="Claude",
+                    branch="task/ABC-001", repository_slug="ajoe734/pantheon",
+                    raw_task={"generation": generation, "delivery_binding": {"pr": pr, "head_sha": APPROVED_HEAD}},
+                )
+                self.assertIsNone(auto_integrator.open_unblock_task(
+                    candidate, "ci-red", "CI failed",
+                    auto_integrator.Settings(
+                        status_identity_sha256="d" * 64, command_runtime_sha="b" * 40,
+                    ), FakeRunner(), root=REPO_ROOT, execute=True,
+                ))
+
     def test_clean_disposable_exact_head_merge_uses_scoped_identity_and_lands_head(self) -> None:
         candidate = auto_integrator.TaskCandidate(
             task_id="ABC-001",

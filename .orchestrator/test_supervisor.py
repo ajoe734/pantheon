@@ -2218,6 +2218,48 @@ class AutoIntegratorUnblockAuthorityTests(unittest.TestCase):
         self.assertEqual(len(list(receipts.glob("*.json"))), 1)
         self.assertEqual(len(list(archives.glob("*.json"))), 1)
 
+    def test_publisher_consumer_rejection_replay_returns_no_task_id(self) -> None:
+        candidate = auto_integrator.TaskCandidate(
+            task_id="ABC-001", title="Ready", owner="Codex", reviewer="Claude",
+            branch="task/ABC-001", repository_slug="ajoe734/pantheon",
+            raw_task={"generation": 1, "delivery_binding": {"pr": 44, "head_sha": "a" * 40}},
+        )
+        settings = auto_integrator.Settings(
+            status_identity_sha256=supervisor.canonical_task_state_identity(
+                self.config
+            )["identity_sha256"],
+            command_runtime_sha="b" * 40,
+        )
+        first = auto_integrator.open_unblock_task(
+            candidate, "ci-red", "required CI is red", settings,
+            auto_integrator.CommandRunner(), root=self.status_root, execute=True,
+        )
+        self.assertIsNotNone(first)
+
+        stale_status = json.loads(
+            Path(self.config["paths"]["status_file"]).read_text(encoding="utf-8")
+        )
+        stale_status["tasks"][0]["generation"] = 2
+        supervisor.rewrite_task_state_store.append_state_commit(
+            self.config["task_state_store"]["event_log"], stale_status,
+            source="test-generation-advance",
+        )
+        Path(self.config["paths"]["status_file"]).write_text(
+            json.dumps(stale_status), encoding="utf-8",
+        )
+        self.assertFalse(self._materialize())
+
+        replay = auto_integrator.open_unblock_task(
+            candidate, "ci-red", "required CI is red", settings,
+            auto_integrator.CommandRunner(), root=self.status_root, execute=True,
+        )
+
+        self.assertIsNone(replay)
+        inbox = self.status_root / supervisor.AUTO_INTEGRATOR_UNBLOCK_INBOX
+        self.assertEqual(list(inbox.glob("*.json")), [])
+        rejected = self.status_root / supervisor.AUTO_INTEGRATOR_UNBLOCK_RECEIPTS / "rejected"
+        self.assertEqual(len(list(rejected.glob("*.json"))), 1)
+
     def test_consumer_uses_shared_bounded_noncolliding_task_id_contract(self) -> None:
         source = "OPS-AUTO-INTEGRATOR-STATUS-AUTHORITY-PREREQUISITE-001"
         first_reason = "review-gate-approval-head-" + "a" * 80

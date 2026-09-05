@@ -40,7 +40,7 @@ import hashlib
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Iterable, Iterator, Mapping, Sequence
+from typing import Any, Iterable, Iterator, Literal, Mapping, Sequence
 
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -1860,7 +1860,15 @@ def unblock_task_id(candidate: TaskCandidate, reason: str) -> str:
     )
 
 
-def _write_unblock_request(root: Path, payload: Mapping[str, Any]) -> None:
+@dataclass(frozen=True)
+class UnblockPublicationOutcome:
+    state: Literal["published", "processed", "rejected"]
+    task_id: str | None = None
+
+
+def _write_unblock_request(
+    root: Path, payload: Mapping[str, Any]
+) -> UnblockPublicationOutcome:
     """Durably publish one immutable, content-addressed supervisor request."""
 
     encoded = unblock_contract.canonical_bytes(payload)
@@ -1882,11 +1890,20 @@ def _write_unblock_request(root: Path, payload: Mapping[str, Any]) -> None:
             and receipt.get("request_sha256") == request_id
             and receipt.get("outcome") == outcome
         ):
-            return
+            if outcome == "rejected":
+                return UnblockPublicationOutcome("rejected")
+            expected_task_id = str(payload.get("unblock_task_id") or "")
+            if receipt.get("task_id") != expected_task_id:
+                raise AutoIntegratorError(
+                    "processed unblock receipt task ID differs from request"
+                )
+            return UnblockPublicationOutcome("processed", expected_task_id)
     if destination.exists():
         if destination.read_bytes() != encoded + b"\n":
             raise AutoIntegratorError("content-addressed unblock request collision")
-        return
+        return UnblockPublicationOutcome(
+            "published", str(payload.get("unblock_task_id") or "")
+        )
     descriptor, temporary_name = tempfile.mkstemp(
         prefix=f".{request_id}.", suffix=".tmp", dir=inbox
     )
@@ -1906,6 +1923,9 @@ def _write_unblock_request(root: Path, payload: Mapping[str, Any]) -> None:
     finally:
         if temporary.exists():
             temporary.unlink()
+    return UnblockPublicationOutcome(
+        "published", str(payload.get("unblock_task_id") or "")
+    )
 
 
 def open_unblock_task(
@@ -1918,11 +1938,38 @@ def open_unblock_task(
     root: Path,
     execute: bool,
 ) -> str | None:
-    task_id = unblock_task_id(candidate, reason)
-    if not execute:
-        return task_id
     owner = settings.unblock_owner or candidate.owner
     reviewer = settings.unblock_reviewer or candidate.reviewer
+    binding = candidate.raw_task.get("delivery_binding")
+    binding = binding if isinstance(binding, Mapping) else {}
+    pr_number = binding.get("pr") or binding.get("pr_number")
+    head_sha = str(binding.get("head_sha") or "").lower()
+    generation = candidate.raw_task.get("generation", 1)
+    if (
+        isinstance(generation, bool)
+        or not isinstance(generation, int)
+        or generation < 1
+        or isinstance(pr_number, bool)
+        or not isinstance(pr_number, int)
+        or pr_number < 1
+        or not review_gate.OID_RE.fullmatch(head_sha)
+    ):
+        print(
+            f"auto-integrator: unblock request not published for {candidate.task_id}: "
+            "canonical delivery binding lacks exact PR/head",
+            file=sys.stderr,
+        )
+        return None
+    task_id = unblock_contract.task_id(
+        candidate.task_id,
+        reason,
+        source_task_generation=generation,
+        repository_slug=candidate.repository_slug,
+        pr=pr_number,
+        head_sha=head_sha,
+    )
+    if not execute:
+        return task_id
     runtime_sha = str(settings.command_runtime_sha or "").lower()
     if not review_gate.OID_RE.fullmatch(runtime_sha):
         print(
@@ -1938,19 +1985,8 @@ def open_unblock_task(
             file=sys.stderr,
         )
         return None
-    binding = candidate.raw_task.get("delivery_binding")
-    binding = binding if isinstance(binding, Mapping) else {}
-    pr_number = binding.get("pr") or binding.get("pr_number")
-    head_sha = str(binding.get("head_sha") or "").lower()
-    if not isinstance(pr_number, int) or pr_number < 1 or not review_gate.OID_RE.fullmatch(head_sha):
-        print(
-            f"auto-integrator: unblock request not published for {candidate.task_id}: "
-            "canonical delivery binding lacks exact PR/head",
-            file=sys.stderr,
-        )
-        return None
     try:
-        _write_unblock_request(
+        outcome = _write_unblock_request(
             root,
             {
             "schema": UNBLOCK_REQUEST_SCHEMA,
@@ -1958,7 +1994,7 @@ def open_unblock_task(
             "status_identity_sha256": status_identity_sha256,
             "command_runtime_sha": runtime_sha,
             "source_task_id": candidate.task_id,
-            "source_task_generation": int(candidate.raw_task.get("generation") or 1),
+            "source_task_generation": generation,
             "unblock_task_id": task_id,
             "reason": reason,
             "detail": detail[:500],
@@ -1976,7 +2012,7 @@ def open_unblock_task(
             file=sys.stderr,
         )
         return None
-    return task_id
+    return outcome.task_id
 
 
 def preflight_repository(

@@ -103,10 +103,11 @@ review_approved task OR active canonical merge_then_review task
   Forged, stale, wrong-root, wrong-runtime, wrong-repository, arbitrary-reason,
   and arbitrary-task requests are rejected by an exact finite reason allowlist
   rather than an extensible regex family. Execute mode reports an unblock task
-  ID only after publication succeeds (or a terminal tombstone proves the exact
-  request was already consumed); refusal and write failure retain the blocked
-  candidate result but return no phantom ID. Dry-run may report the would-create
-  ID.
+  ID only after publication succeeds, or when a validated `processed` tombstone
+  carries that exact task ID. A `rejected` tombstone, mismatched processed task
+  ID, refusal, or write failure retains the blocked candidate result but returns
+  no phantom ID. Generation and PR types are validated before task-ID conversion.
+  Dry-run may report the would-create ID.
 - Publisher and supervisor use one pure request contract for schema, inbox,
   canonical request serialization/filename, and generated task IDs. IDs longer
   retain a readable prefix plus a deterministic digest suffix within 96
