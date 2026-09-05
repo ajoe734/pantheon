@@ -404,6 +404,21 @@ def _command_env(name: str, default: str = "") -> str:
 def validate_status_command_runtime_binding() -> None:
     """Ensure auto-worker status commands run from the installed command root."""
 
+    store_mode = _command_env(TASK_STATE_STORE_MODE_ENV).lower()
+    if store_mode != "authoritative":
+        raise RuntimeError(
+            f"{TASK_STATE_STORE_MODE_ENV}=authoritative is required for status commands"
+        )
+    raw_event_log = _command_env(TASK_STATE_EVENT_LOG_ENV)
+    if not raw_event_log or not Path(os.path.expanduser(raw_event_log)).is_absolute():
+        raise RuntimeError(
+            f"{TASK_STATE_EVENT_LOG_ENV} must be an absolute path in authoritative mode"
+        )
+    if not _command_env(CANONICAL_TASK_STATE_IDENTITY_ENV):
+        raise RuntimeError(
+            f"{CANONICAL_TASK_STATE_IDENTITY_ENV} is required in authoritative mode"
+        )
+
     raw_root = _command_env(STATUS_COMMAND_ROOT_ENV)
     if not raw_root:
         if _auto_worker_requires_explicit_status_root():
@@ -3123,28 +3138,61 @@ def _done_delivery_repository_root(
     task: dict[str, Any],
     repository_id: str,
 ) -> tuple[Path, dict[str, Any]]:
-    configured_root = repository_configured_local_path(config, repository_id)
-    if configured_root is None:
-        raise SystemExit(
-            f"Cannot finalize task: repository `{repository_id}` has no local_path configured."
-        )
-    configured_symlink = first_symlink_component(configured_root)
-    if configured_symlink is not None:
-        raise SystemExit(
-            "Cannot finalize task: registered repository local_path cannot include a "
-            f"symlink component: {configured_symlink}."
-        )
-    registered_root = repository_local_path(config, repository_id)
-    if registered_root is None:
-        raise SystemExit(
-            f"Cannot finalize task: repository `{repository_id}` has no local_path configured."
-        )
-    registered_root = registered_root.resolve(strict=False)
     try:
         workspace_root = _worker_workspace_root()
     except RuntimeError as exc:
         raise SystemExit(f"Cannot finalize task: {exc}.") from exc
+    run_id = str(os.environ.get("ORCH_RUN_ID") or "").strip()
+    binding = getattr(_STATUS_COMMAND_LEASE_LOCAL, "binding", None)
+    if run_id:
+        if not isinstance(binding, Mapping):
+            raise SystemExit(
+                "Cannot finalize task: active worker delivery workspace has no validated lease binding."
+            )
+        lease_repository_id = str(
+            binding.get("workspace_repository_id") or ""
+        ).strip()
+        if lease_repository_id != repository_id:
+            raise SystemExit(
+                "Cannot finalize task: worker lease repository does not match task artifacts "
+                f"({lease_repository_id or 'missing'} != {repository_id})."
+            )
+        binding_task_id = str(binding.get("task_id") or "").strip()
+        if binding_task_id != str(task.get("id") or "").strip():
+            raise SystemExit(
+                "Cannot finalize task: worker lease task does not match closeout task."
+            )
+        try:
+            registered_root = _metadata_path(
+                binding.get("workspace_source_root"),
+                label="worker lease workspace_source_root",
+            )
+        except RuntimeError as exc:
+            raise SystemExit(f"Cannot finalize task: {exc}.") from exc
+    else:
+        configured_root = repository_configured_local_path(config, repository_id)
+        if configured_root is None:
+            raise SystemExit(
+                f"Cannot finalize task: repository `{repository_id}` has no local_path configured."
+            )
+        configured_symlink = first_symlink_component(configured_root)
+        if configured_symlink is not None:
+            raise SystemExit(
+                "Cannot finalize task: registered repository local_path cannot include a "
+                f"symlink component: {configured_symlink}."
+            )
+        resolved_registered_root = repository_local_path(config, repository_id)
+        if resolved_registered_root is None:
+            raise SystemExit(
+                f"Cannot finalize task: repository `{repository_id}` has no local_path configured."
+            )
+        registered_root = resolved_registered_root.resolve(strict=False)
     if workspace_root is None:
+        if run_id:
+            raise SystemExit(
+                "Cannot finalize task: active worker delivery workspace requires both "
+                "PANTHEON_WORKTREE_ROOT and ORCH_WORKSPACE_PATH."
+            )
         if not registered_root.is_dir():
             raise SystemExit(
                 "Cannot finalize task: registered delivery repository does not exist: "
@@ -3169,28 +3217,9 @@ def _done_delivery_repository_root(
         registered_root=registered_root,
     )
 
-    run_id = str(os.environ.get("ORCH_RUN_ID") or "").strip()
     source = "explicit_workspace_env"
     lease_validated = False
     if run_id:
-        binding = getattr(_STATUS_COMMAND_LEASE_LOCAL, "binding", None)
-        if not isinstance(binding, Mapping):
-            raise SystemExit(
-                "Cannot finalize task: active worker delivery workspace has no validated lease binding."
-            )
-        lease_repository_id = str(
-            binding.get("workspace_repository_id") or ""
-        ).strip()
-        if lease_repository_id != repository_id:
-            raise SystemExit(
-                "Cannot finalize task: worker lease repository does not match task artifacts "
-                f"({lease_repository_id or 'missing'} != {repository_id})."
-            )
-        binding_task_id = str(binding.get("task_id") or "").strip()
-        if binding_task_id != str(task.get("id") or "").strip():
-            raise SystemExit(
-                "Cannot finalize task: worker lease task does not match closeout task."
-            )
         source = "worker_lease"
         lease_validated = True
 

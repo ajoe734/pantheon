@@ -22,8 +22,11 @@ from approval_queue import (
     validated_approval_binding,
 )
 from common import (
+    TASK_STATE_EVENT_LOG_ENV,
+    TASK_STATE_STORE_MODE_ENV,
     ROOT,
     approval_tool_input_signature,
+    canonical_task_state_identity_from_environment,
     load_config,
     load_json,
     load_status,
@@ -145,6 +148,23 @@ def load_broker_runtime_config() -> dict[str, Any]:
             f"PANTHEON_STATUS_ROOT does not exist for permission broker state: {status_root}"
         )
 
+    store_mode = str(os.environ.get(TASK_STATE_STORE_MODE_ENV) or "").strip().lower()
+    if store_mode != "authoritative":
+        raise RuntimeError(
+            f"{TASK_STATE_STORE_MODE_ENV}=authoritative is required for permission broker state"
+        )
+    raw_event_log = str(os.environ.get(TASK_STATE_EVENT_LOG_ENV) or "").strip()
+    event_log = Path(os.path.expanduser(raw_event_log))
+    if not raw_event_log or not event_log.is_absolute():
+        raise RuntimeError(
+            f"{TASK_STATE_EVENT_LOG_ENV} must be an absolute path for permission broker state"
+        )
+    event_log = event_log.absolute()
+    canonical_task_state_identity_from_environment(
+        status_root=status_root,
+        event_log=event_log,
+    )
+
     rebound = dict(config)
     paths = dict(config.get("paths") or {})
     paths.update(
@@ -164,6 +184,10 @@ def load_broker_runtime_config() -> dict[str, Any]:
         }
     )
     rebound["paths"] = paths
+    rebound["task_state_store"] = {
+        "mode": "authoritative",
+        "event_log": str(event_log),
+    }
     return rebound
 DEFER_BASH_PATTERNS = [
     # Cloudflared tunnel: PSD-03 closes the standing worker grant here.

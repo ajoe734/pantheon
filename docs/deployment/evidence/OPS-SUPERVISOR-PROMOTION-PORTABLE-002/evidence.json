@@ -1,0 +1,95 @@
+{
+  "schema_version": 1,
+  "task_id": "OPS-SUPERVISOR-PROMOTION-PORTABLE-002",
+  "kind": "supervisor_promotion_portability_review_evidence",
+  "owner": "Codex",
+  "reviewer": "Claude",
+  "delivery_state": "ready_for_independent_review",
+  "scope": {
+    "owned": [
+      "scripts/sync-dev-root.sh deployment-layout derivation",
+      "scripts/promote_supervisor_runtime.py coordination-root preservation",
+      "focused promotion and sync regression tests"
+    ],
+    "not_changed": [
+      "canonical task authority",
+      "supervisor launch and replacement ordering",
+      "auto-integrator merge ownership",
+      "product runtime"
+    ]
+  },
+  "acceptance_mapping": {
+    "portable_layout": "sync-dev-root derives command-runtimes, integration-runtimes, authority file, and defaults from PANTHEON_DEPLOY_ROOT; when it is absent an explicit live-config derives the deployment root, otherwise HOME/pantheon-ci-deploy is used. No /home/lupin literal remains in the script.",
+    "coordination_safety": "promotion records coordination_code_sync=preserved and performs no copy, deletion, chmod, or mirror operation in the shared status checkout; supervisor execution remains pinned to the validated immutable command-runtimes/<SHA> candidate.",
+    "single_authority": "the existing promote-supervisor-runtime lane remains the only live-config writer and supervisor replacement entry point; no fallback loader or parallel promotion mechanism was added.",
+    "regression": "focused tests cover portable deployment roots, immutable exact-SHA identity and ancestry, dirty/shared coordination preservation, replacement failure behavior, watchdog repoint, and cron auto-integrator repoint.",
+    "post_merge_live_gate": "Satisfied by the Human/Ops promotion attestation and live runtime records below: the merged dev SHA is the active immutable command runtime, the shared coordination checkout hashes were preserved, and more than three successful supervisor cycles completed without a dashboard missing-canonical-identity error."
+  },
+  "post_merge_live_proof": {
+    "merge": {
+      "pull_request": 5586,
+      "approved_head_sha": "b8ca4dde17cac077a42372f601a31c837c235c1b",
+      "merge_commit_sha": "4d7f440c29d8f9057641b680f31e4ecd012f7558"
+    },
+    "promotion": {
+      "performed_by": "Human/Ops",
+      "canonical_attestation_at": "2026-09-04T20:20:39Z",
+      "canonical_attestation_event_id": "ai-status-event-87df79e8c1647f38014ed06dfe3860d2a930ced7802efa37e4c7ee3694dccd9a",
+      "lane": "scripts/sync-dev-root.sh -> scripts/promote_supervisor_runtime.py",
+      "command_runtime_sha": "4d7f440c29d8f9057641b680f31e4ecd012f7558",
+      "command_runtime_path": "/home/chloe_ong_dev_cctech_support_com/pantheon-ci-deploy/command-runtimes/4d7f440c29d8f9057641b680f31e4ecd012f7558",
+      "integration_runtime_path": "/home/chloe_ong_dev_cctech_support_com/pantheon-ci-deploy/integration-runtimes/pantheon/4d7f440c29d8f9057641b680f31e4ecd012f7558",
+      "coordination_checkout_code_diff_hash_before_equals_after": true,
+      "coordination_checkout_status_hash_before_equals_after": true,
+      "coordination_checkout_outcome": "preserved"
+    },
+    "runtime_observation": {
+      "supervisor_started_at": "2026-09-04T20:15:57Z",
+      "supervisor_pid": 2544728,
+      "health": {
+        "healthy": true,
+        "watchdog_decision": "observe_only",
+        "watchdog_reason": "supervisor_healthy",
+        "expected_root_equals_active_root": true
+      },
+      "successful_cycle_samples": [
+        "2026-09-04T20:16:12Z",
+        "2026-09-04T20:16:45Z",
+        "2026-09-04T20:17:02Z",
+        "2026-09-04T20:17:36Z",
+        "2026-09-04T20:18:02Z"
+      ],
+      "dashboard_missing_canonical_identity_errors": 0,
+      "observation_end": "2026-09-04T20:20:39Z"
+    },
+    "sources": [
+      "/home/chloe_ong_dev_cctech_support_com/pantheon-ci-deploy/runtime/live-supervisor-mainroot-config.json",
+      "/home/chloe_ong_dev_cctech_support_com/code/pantheon/.orchestrator/logs/supervisor.log",
+      "/home/chloe_ong_dev_cctech_support_com/code/pantheon/.orchestrator/metrics/supervisor-watchdog.jsonl",
+      "/home/chloe_ong_dev_cctech_support_com/code/pantheon/ai-activity-log.jsonl"
+    ]
+  },
+  "verification": [
+    {
+      "command": "bash -n scripts/sync-dev-root.sh",
+      "result": "passed"
+    },
+    {
+      "command": "/tmp/ops-supervisor-promotion-portable-002-venv/bin/python -m pytest -q scripts/test_sync_dev_root.py scripts/test_promote_supervisor_runtime.py",
+      "result": "34 passed"
+    },
+    {
+      "command": "python3 -m py_compile scripts/promote_supervisor_runtime.py scripts/test_sync_dev_root.py scripts/test_promote_supervisor_runtime.py",
+      "result": "passed"
+    },
+    {
+      "command": "git diff --check",
+      "result": "passed"
+    }
+  ],
+  "review_decision": {
+    "status": "pending",
+    "reviewer": "Claude",
+    "note": "Independent reviewer must validate the frozen PR head and this manifest before approval."
+  }
+}
