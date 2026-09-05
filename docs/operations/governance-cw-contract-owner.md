@@ -1,6 +1,8 @@
 # Governance CW01/CW03/CW04 Contract Owner
 
-Status: corrective restoration complete (BFF-GOVERNANCE-CW-CONTRACT-CORRECTIVE-PREREQUISITE-001)
+Status: corrective restoration complete (BFF-GOVERNANCE-CW-CONTRACT-CORRECTIVE-PREREQUISITE-001);
+read-port empty/missing-truth and fail-closed policy gaps closed
+(BFF-CW-READ-POLICY-CLOSURE-PREREQUISITE-001)
 
 ## Single owner
 
@@ -64,6 +66,66 @@ projection/action-policy implementation.
   `redact_evidence_refs`/`capabilities_for_identity` callables the router
   already injected for other surfaces. This field previously did not exist
   anywhere in the response.
+
+## BFF-CW-READ-POLICY-CLOSURE-PREREQUISITE-001: what this follow-up closed
+
+The predecessor corrective above added real `list_committees`/`get_committee`
+methods to `DomainConsultationPort`, but left the composed
+`ReadSurfacePorts.list_committees`/`get_committee` wrapper's older
+cross-domain fallback in place, and left the shared `ReadSurfacePorts.dataset_source`
+default at a blanket `"typed_store"` for every consultation-owned dataset.
+This follow-up closes those gaps without introducing a second implementation:
+
+- **Read-port empty/missing truth**: `ReadSurfacePorts.list_committees`/
+  `get_committee` (`ports/read_surface_ports.py`) now delegate directly to
+  `operations_consultation.list_committees`/`get_committee` with no fallback.
+  Previously, an empty `[]` from the real committee port was replaced with
+  `list_workflow_templates()` (raising `TypeError` downstream on filter
+  kwargs it doesn't accept), and a `None` from `get_committee` was replaced
+  with an unrelated `get_consult_request` lookup by the same id — silently
+  aliasing a committee to an unrelated consult request that happened to
+  share an identifier. `InMemoryOperationsConsultationPort` (the typed
+  local-store test double) gained the same committee-board projection
+  methods so both the `service_client`/`service_store` branch and the
+  in-memory typed-double branch expose real committee reads, not an
+  absent-attribute gap that used to trigger the fallback.
+- **Single availability policy, unavailable dominates**: `ReadSurfacePorts.dataset_source`
+  routed every operations-consultation-owned dataset (`consult_requests`,
+  `consult_memos`, `consult_rules`, `route_policies`, `workflow_templates`,
+  and sibling catalog datasets) to a hardcoded `"typed_store"` default
+  whenever `research_knowledge_source` didn't recognize the dataset name —
+  even when the consultation client/store was genuinely absent. It now
+  delegates those datasets to `operations_consultation.dataset_source(...)`,
+  which truthfully reports `service_client`/`service_store`/`missing`.
+  `GovernanceService._committee_surface_state` (`governance/service.py`)
+  also only checked a committee record's own `surface_state` for
+  `"degraded"`, silently ignoring an explicit `"unavailable"` record state
+  whenever the dataset itself reported `"ok"`; it now checks `"unavailable"`
+  first, so an explicit unavailable committee record always dominates a
+  healthy dataset source (matching the CW04 memo path, which already did
+  this correctly).
+- **Redaction/capability fail-closed default**: `GovernanceService`'s
+  built-in default `redact_evidence_refs` (used only when the router/main
+  composition root does not inject the real
+  `models.redact_evidence_refs`/`_capabilities_for_identity` pair — e.g. a
+  bare `GovernanceService(store)` in a probe or future caller) unconditionally
+  returned evidence unredacted. It is now a fail-closed default that
+  withholds every evidence ref with `reason: "redaction_policy_unavailable"`
+  rather than defaulting to open disclosure.
+  `consult_memo_projection` also normalizes a `None`/failed
+  `capabilities_for_identity` result to an explicit empty capability list
+  before calling the real redactor, so a capability-lookup exception is
+  gated the same as an authenticated identity with zero capabilities,
+  instead of being treated as "capability policy not applicable" and
+  passed through unredacted. Production wiring in `main.py`
+  (`redact_evidence_refs=redact_evidence_refs`,
+  `capabilities_for_identity=_capabilities_for_identity`) already supplies
+  the real canonical policy and is unchanged; these fixes only close the
+  fail-open default path.
+
+Regression coverage for all three gaps lives in
+`scripts/test_bff_cw_contract_prerequisite.py` alongside the predecessor's
+CW01/CW03/CW04 tests.
 
 ## Known gap intentionally left untouched (not this corrective's scope)
 

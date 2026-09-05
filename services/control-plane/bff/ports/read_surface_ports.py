@@ -390,10 +390,34 @@ class ReadSurfacePorts:
     # -------------------------------------------------------------------------
     # Research, Knowledge, and Source Delegates
     # -------------------------------------------------------------------------
+    _OPERATIONS_CONSULTATION_OWNED_DATASETS = frozenset(
+        (
+            "consult_requests",
+            "consult_memos",
+            "consult_rules",
+            "route_policies",
+            "workflow_templates",
+            "hook_registry",
+            "governance_permissions",
+            "memory_governance_rules",
+            "alpha_factory_cards",
+            "skills",
+            "tools",
+            "mcp_servers",
+            "mcp_tools",
+        )
+    )
+
     def dataset_source(self, dataset: str) -> str:
         res = self.research_knowledge_source.dataset_source(dataset)
         if res != "missing":
             return res
+        if dataset in self._OPERATIONS_CONSULTATION_OWNED_DATASETS:
+            # Route to the actual owning port's truthful client/store/missing
+            # state instead of a blanket "typed_store" default, so a missing
+            # consultation client/store or catalog backend surfaces as
+            # unavailable rather than a false healthy default.
+            return self.operations_consultation.dataset_source(dataset)
         if dataset in (
             "deployment_plans",
             "personas",
@@ -416,11 +440,6 @@ class ReadSurfacePorts:
             "synthesis_conflict_logs",
             "approval_queue_items",
             "governance_review_queue_items",
-            "consult_requests",
-            "consult_rules",
-            "consult_memos",
-            "route_policies",
-            "workflow_templates",
             "trainer_sessions",
             "persona_sessions",
             "teaching_sessions",
@@ -1001,18 +1020,10 @@ class ReadSurfacePorts:
         return self.research_knowledge_source.list_data_sources(**kwargs)
 
     def list_committees(self, **kwargs: Any) -> List[Dict[str, Any]]:
-        if hasattr(self.operations_consultation, "list_committees"):
-            res = self.operations_consultation.list_committees(**kwargs)
-            if res:
-                return res
-        return self.operations_consultation.list_workflow_templates(**kwargs)
+        return self.operations_consultation.list_committees(**kwargs)
 
     def get_committee(self, committee_id: Optional[str]) -> Optional[Dict[str, Any]]:
-        if hasattr(self.operations_consultation, "get_committee"):
-            res = self.operations_consultation.get_committee(committee_id or "")
-            if res is not None:
-                return res
-        return self.operations_consultation.get_consult_request(committee_id or "")
+        return self.operations_consultation.get_committee(committee_id or "")
 
     def list_committee_session_memos(
         self,
