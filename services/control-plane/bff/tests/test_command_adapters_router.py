@@ -13,17 +13,16 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
-from command_adapters import (
+from services.control_plane.bff.command_adapters import (
     CommandAdapterService,
     create_action_command_router,
     create_command_adapters_router,
     dispatch_domain_command,
     find_adapter,
 )
-from command_queue import CommandStore
-from models import CommandStatus, CommandType, ObjectType, OperatorIdentity, TargetObject
+from services.control_plane.bff.command_queue import CommandStore
+from services.control_plane.bff.models import CommandStatus, CommandType, ObjectType, OperatorIdentity, TargetObject
 
 
 TASK_REVIEW_MANIFEST = {
@@ -419,7 +418,7 @@ def test_typed_domain_command_dispatch_and_receipt() -> None:
 
 def test_main_app_operator_command_submission_regression() -> None:
     """Regression test: verify POST /api/v1/operator/commands works in full main app with idempotency keys."""
-    from main import app as main_app, command_store as main_command_store
+    from services.control_plane.bff.main import app as main_app, command_store as main_command_store
 
     with tempfile.TemporaryDirectory() as td:
         main_command_store.file_path = os.path.join(td, "main_commands.jsonl")
@@ -594,7 +593,7 @@ def test_confirm_command_by_token_contract_and_regressions() -> None:
 
 def test_command_confirmation_degraded_read_surface() -> None:
     """Test POST /bff/command-confirmations projects staleness_warning when read surface is degraded."""
-    from models import StalenessWarning
+    from services.control_plane.bff.models import StalenessWarning
 
     # 1. Custom check_read_surface_state injected
     custom_warning = StalenessWarning(
@@ -661,7 +660,7 @@ def test_command_confirmation_degraded_read_surface() -> None:
 
 def test_main_app_command_confirmation_degraded_read_surface_regression() -> None:
     """Regression test: verify POST /bff/command-confirmations in full main app projects staleness_warning when BFF_READ_SURFACE_STATE is degraded."""
-    from main import app as main_app
+    from services.control_plane.bff.main import app as main_app
 
     orig_env = os.environ.get("BFF_READ_SURFACE_STATE")
     try:

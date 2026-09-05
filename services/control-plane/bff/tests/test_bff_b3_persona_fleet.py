@@ -14,12 +14,11 @@ import tempfile
 
 from fastapi.testclient import TestClient
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
 from services.control_plane.bff import main as bff_main
 from typing import Any
 from pathlib import Path
-from ports import create_in_memory_read_surface_ports
+from services.control_plane.bff.ports import create_in_memory_read_surface_ports
 
 # Local re-implementation of read_store._load_default_fixture_pack_datasets:
 # merges the same static, committed fixture-pack JSON files directly off
@@ -241,7 +240,7 @@ class _PersonaFleetTestStore:
             def get_capability_snapshot_for_persona(outer_self, pid):
                 return outer_self.outer.get_capability_snapshot_for_persona(pid)
 
-        from ports.persona_training import PersonaTrainingDomainPort
+        from services.control_plane.bff.ports.persona_training import PersonaTrainingDomainPort
         training_port = PersonaTrainingDomainPort(persona_port=_PersonaShim())
 
         self.ports = create_in_memory_read_surface_ports(
@@ -990,7 +989,7 @@ def test_sd_agc_03_foreign_identities_and_unadmitted_catalog_defaults_return_404
 
 def test_persona_fleet_returns_200_for_operator_and_viewer_with_read_surface_ports() -> None:
     """Acceptance criterion 4: GET management persona-fleet returns 200 for authenticated operator and viewer cases used by the hosted journey."""
-    from ports.read_surface_ports import create_read_surface_ports
+    from services.control_plane.bff.ports.read_surface_ports import create_read_surface_ports
 
     with tempfile.TemporaryDirectory() as td:
         original = bff_main.read_store

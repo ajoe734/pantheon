@@ -8,10 +8,9 @@ from unittest import mock
 
 from fastapi.testclient import TestClient
 
-sys.path.insert(0, os.path.dirname(__file__))
 
 from services.control_plane.bff import main as bff_main
-from openclaw_ops_client import OpenClawOpsClient
+from services.control_plane.bff.openclaw_ops_client import OpenClawOpsClient
 
 
 OPERATOR_AUTH = "Bearer op-2:operator"

@@ -20,8 +20,6 @@ _EXEC_RUNTIME_MANAGER_DIR = _REPO_ROOT / "services" / "execution" / "runtime-man
 
 for _path in (_REPO_ROOT, _GOVERNANCE_DIR, _BFF_DIR):
     _path_str = str(_path)
-    if _path_str not in sys.path:
-        sys.path.insert(0, _path_str)
 
 os.environ.setdefault("PANTHEON_EXEC_RUNTIME_MANAGER_DIR", str(_EXEC_RUNTIME_MANAGER_DIR))
 

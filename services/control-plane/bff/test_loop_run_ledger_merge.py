@@ -10,9 +10,8 @@ import json
 import sys
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from ports.lifecycle_telemetry_governance import DomainLifecyclePort
+from services.control_plane.bff.ports.lifecycle_telemetry_governance import DomainLifecyclePort
 
 
 class _LoopLedgerFixturePort(DomainLifecyclePort):

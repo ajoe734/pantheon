@@ -19,11 +19,10 @@ from typing import Any, Dict, List, Optional
 from fastapi import FastAPI, HTTPException
 from fastapi.testclient import TestClient
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
-from incidents.router import create_incident_router
-from incidents.service import IncidentService
-from models import ErrorCode, OperatorIdentity
+from services.control_plane.bff.incidents.router import create_incident_router
+from services.control_plane.bff.incidents.service import IncidentService
+from services.control_plane.bff.models import ErrorCode, OperatorIdentity
 
 
 class MockReadStore:
@@ -603,7 +602,7 @@ def test_fast_path_semantic_commands() -> None:
 
 def test_production_app_incident_routes_wiring() -> None:
     """Verify that all 27 incident/alert routes are wired into the production app (main:app)."""
-    import main as bff_main
+    from services.control_plane.bff import main as bff_main
 
     def _iter_routes(routes):
         for r in routes:

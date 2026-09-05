@@ -21,8 +21,6 @@ from fastapi import APIRouter
 
 BFF_DIR = Path(__file__).resolve().parent
 REPO_ROOT = BFF_DIR.parents[2]
-if str(BFF_DIR) not in sys.path:
-    sys.path.insert(0, str(BFF_DIR))
 
 
 def _find_bff_product_files() -> List[Path]:
@@ -43,19 +41,19 @@ def _find_bff_store_files() -> List[Path]:
 
 def test_domain_router_factory_contracts() -> None:
     """Verify that domain routers expose factory functions with dependency injection."""
-    from agora.router import create_agora_router
-    from console_gap.alpha_factory import create_alpha_factory_router
-    from console_gap.consult_rules import create_consult_rules_router
-    from console_gap.datasources import create_datasources_router
-    from console_gap.knowledge import create_knowledge_router
-    from console_gap.lineage import create_lineage_router
-    from console_gap.memory_governance import create_memory_governance_router
-    from console_gap.permissions import create_permissions_router
-    from console_gap.route_policies import create_route_policies_router
-    from console_gap.workflows_hooks import create_workflows_hooks_router
-    from management_read_models import create_management_read_models_router
-    from trade_journal import create_trade_journal_router
-    from trade_journeys import create_trade_journeys_router
+    from services.control_plane.bff.agora.router import create_agora_router
+    from services.control_plane.bff.console_gap.alpha_factory import create_alpha_factory_router
+    from services.control_plane.bff.console_gap.consult_rules import create_consult_rules_router
+    from services.control_plane.bff.console_gap.datasources import create_datasources_router
+    from services.control_plane.bff.console_gap.knowledge import create_knowledge_router
+    from services.control_plane.bff.console_gap.lineage import create_lineage_router
+    from services.control_plane.bff.console_gap.memory_governance import create_memory_governance_router
+    from services.control_plane.bff.console_gap.permissions import create_permissions_router
+    from services.control_plane.bff.console_gap.route_policies import create_route_policies_router
+    from services.control_plane.bff.console_gap.workflows_hooks import create_workflows_hooks_router
+    from services.control_plane.bff.management_read_models import create_management_read_models_router
+    from services.control_plane.bff.trade_journal import create_trade_journal_router
+    from services.control_plane.bff.trade_journeys import create_trade_journeys_router
 
     router_factories: List[Tuple[str, Callable[..., APIRouter]]] = [
         ("create_permissions_router", create_permissions_router),
@@ -168,8 +166,8 @@ def test_no_direct_route_pruning_in_domain_routers() -> None:
 
 def test_composition_boundary_contract_invariants() -> None:
     """Verify that domain router packages are decoupled and independently constructible."""
-    from console_gap.permissions import create_permissions_router
-    from console_gap.memory_governance import create_memory_governance_router
+    from services.control_plane.bff.console_gap.permissions import create_permissions_router
+    from services.control_plane.bff.console_gap.memory_governance import create_memory_governance_router
 
     mock_store = lambda: None
     mock_identity = lambda auth: None

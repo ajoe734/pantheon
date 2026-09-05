@@ -4,7 +4,7 @@ from __future__ import annotations
 import json
 from unittest import mock
 
-from openclaw_ops_client import OpenClawOpsClient, OpenClawOpsClientError
+from services.control_plane.bff.openclaw_ops_client import OpenClawOpsClient, OpenClawOpsClientError
 
 
 def _client():

@@ -10,10 +10,9 @@ from typing import Any, Iterator
 
 from fastapi.testclient import TestClient
 
-sys.path.insert(0, os.path.dirname(__file__))
 
 from services.control_plane.bff import main as bff_main
-from ports import ReadSurfacePorts  # noqa: E402
+from services.control_plane.bff.ports import ReadSurfacePorts  # noqa: E402
 
 
 HEADERS = {"Authorization": "Bearer rt-003-operator:operator"}

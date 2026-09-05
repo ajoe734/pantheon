@@ -9,22 +9,22 @@ from fastapi import FastAPI, HTTPException
 from fastapi.testclient import TestClient
 from pydantic import ValidationError
 
-from agora.candidate_decisions.models import (
+from services.control_plane.bff.agora.candidate_decisions.models import (
     CandidateDecisionCommand,
     CandidateFromMeasureCommand,
     canonical_sha256,
 )
-from agora.candidate_decisions.service import CandidateDecisionService
-from agora.candidate_decisions.store import CandidateDecisionConflict, CandidateDecisionStore
-from agora.candidate_decisions.adapters import (
+from services.control_plane.bff.agora.candidate_decisions.service import CandidateDecisionService
+from services.control_plane.bff.agora.candidate_decisions.store import CandidateDecisionConflict, CandidateDecisionStore
+from services.control_plane.bff.agora.candidate_decisions.adapters import (
     CANONICAL_VALIDATOR_ID,
     CandidateBindingValidationAdapter,
     ReadStoreApprovalAdapter,
 )
-from agora.candidate_decisions.router import create_candidate_decision_router
-from agora.interaction.provider import RecommendedMeasure, authority_boundary
-from agora.interaction.provider import recommended_measure_sha256
-from agora.interaction.store import InteractionLifecycleStore
+from services.control_plane.bff.agora.candidate_decisions.router import create_candidate_decision_router
+from services.control_plane.bff.agora.interaction.provider import RecommendedMeasure, authority_boundary
+from services.control_plane.bff.agora.interaction.provider import recommended_measure_sha256
+from services.control_plane.bff.agora.interaction.store import InteractionLifecycleStore
 
 
 NOW = datetime(2026, 7, 17, 12, 0, tzinfo=timezone.utc)
@@ -639,7 +639,7 @@ def test_approval_adapter_rejects_local_fallback_and_preserves_exact_canonical_r
 
 
 def test_candidate_routes_return_reload_arrays_and_rotate_full_record_etag(monkeypatch) -> None:
-    from models import OperatorIdentity
+    from services.control_plane.bff.models import OperatorIdentity
 
     service = _service()
     candidate = _create(service)
@@ -689,7 +689,7 @@ def test_candidate_routes_return_reload_arrays_and_rotate_full_record_etag(monke
 
 
 def test_candidate_create_route_replays_when_server_expiry_clock_advances(monkeypatch) -> None:
-    from models import OperatorIdentity
+    from services.control_plane.bff.models import OperatorIdentity
 
     service = _service()
     _create(service)

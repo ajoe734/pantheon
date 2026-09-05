@@ -15,10 +15,8 @@ import sys
 from pathlib import Path
 
 BFF_DIR = Path(__file__).resolve().parent.parent
-if str(BFF_DIR) not in sys.path:
-    sys.path.insert(0, str(BFF_DIR))
 
-from ports.persona_capital_runtime import (
+from services.control_plane.bff.ports.persona_capital_runtime import (
     EvolutionProjectionPort,
     PersonaCapitalRuntimeDomainPort,
     RankingProjectionPort,

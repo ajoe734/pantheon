@@ -5,9 +5,8 @@ from __future__ import annotations
 import os
 import sys
 
-sys.path.insert(0, os.path.dirname(__file__))
 
-from ports import (
+from services.control_plane.bff.ports import (
     PersonaRegistryReadsPort,
     TrainingSessionTrainerPort,
     create_in_memory_persona_capital_runtime_port,

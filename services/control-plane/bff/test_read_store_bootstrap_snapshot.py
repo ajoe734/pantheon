@@ -3,9 +3,8 @@ from __future__ import annotations
 import os
 import sys
 
-sys.path.insert(0, os.path.dirname(__file__))
 
-from ports import create_in_memory_read_surface_ports
+from services.control_plane.bff.ports import create_in_memory_read_surface_ports
 
 
 def test_unseeded_ports_do_not_invent_snapshot_records() -> None:

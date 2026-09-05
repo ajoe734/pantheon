@@ -5,9 +5,8 @@ from __future__ import annotations
 import os
 import sys
 
-sys.path.insert(0, os.path.dirname(__file__))
 
-from ports import create_in_memory_read_surface_ports
+from services.control_plane.bff.ports import create_in_memory_read_surface_ports
 
 
 PLAN = {

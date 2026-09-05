@@ -17,9 +17,8 @@ from unittest.mock import patch
 
 import pytest
 
-sys.path.insert(0, os.path.dirname(__file__))
 
-from downstream_health_monitor import (
+from services.control_plane.bff.downstream_health_monitor import (
     DownstreamHealthMonitor,
     DownstreamProbeResult,
     DownstreamTarget,

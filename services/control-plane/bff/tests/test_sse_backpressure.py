@@ -10,8 +10,6 @@ import pytest
 
 BFF_DIR = Path(__file__).resolve().parents[1]
 REPO_ROOT = Path(__file__).resolve().parents[4]
-sys.path.insert(0, str(BFF_DIR))
-sys.path.insert(0, str(REPO_ROOT))
 
 from services.control_plane.bff import main as bff_main
 

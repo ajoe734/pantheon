@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
-from agora_audit_store import AgoraAuditStore
+from services.control_plane.bff.agora_audit_store import AgoraAuditStore
 
 
 def test_agora_audit_store_round_trips_after_reconstruction(tmp_path) -> None:

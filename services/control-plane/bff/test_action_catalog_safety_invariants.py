@@ -14,7 +14,7 @@ Invariants (all currently hold):
 """
 import unittest
 
-from action_catalog import _CATALOG_ENTRIES
+from services.control_plane.bff.action_catalog import _CATALOG_ENTRIES
 
 # Capital-affecting / trading-halting commands whose safety gates must not regress.
 DESTRUCTIVE_ACTIONS = {

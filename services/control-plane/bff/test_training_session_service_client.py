@@ -7,9 +7,8 @@ import sys
 from pathlib import Path
 from typing import Any
 
-sys.path.insert(0, os.path.dirname(__file__))
 
-from ports import ReadSurfacePorts, TrainingSessionTrainerPort, create_in_memory_read_surface_ports
+from services.control_plane.bff.ports import ReadSurfacePorts, TrainingSessionTrainerPort, create_in_memory_read_surface_ports
 
 
 _ACTIVE_SESSION = "trn-20260419-001"

@@ -12,16 +12,14 @@ from fastapi.testclient import TestClient
 
 
 BFF_DIR = os.path.dirname(os.path.dirname(__file__))
-if BFF_DIR not in sys.path:
-    sys.path.insert(0, BFF_DIR)
 
 from services.control_plane.bff import main as bff_main
-from ports import create_in_memory_read_surface_ports  # noqa: E402
-import assistant.control_mode as control_mode_module  # noqa: E402
-from assistant.control_mode import ControlModeStore  # noqa: E402
-from assistant.command_idempotency import CommandIdempotencyStore  # noqa: E402
-from assistant.routes import create_assistant_router  # noqa: E402
-from assistant.tool_contracts import (  # noqa: E402
+from services.control_plane.bff.ports import create_in_memory_read_surface_ports  # noqa: E402
+from services.control_plane.bff.assistant import control_mode as control_mode_module  # noqa: E402
+from services.control_plane.bff.assistant.control_mode import ControlModeStore  # noqa: E402
+from services.control_plane.bff.assistant.command_idempotency import CommandIdempotencyStore  # noqa: E402
+from services.control_plane.bff.assistant.routes import create_assistant_router  # noqa: E402
+from services.control_plane.bff.assistant.tool_contracts import (  # noqa: E402
     ASSISTANT_TOOL_ALLOWLIST,
     ToolNotAllowedError,
     ToolRbacError,
@@ -1151,8 +1149,8 @@ def test_execute_medium_risk_requires_confirmation() -> None:
 
 def test_execute_medium_risk_persona_action_with_confirmation_returns_admitted_receipt(monkeypatch) -> None:
     """PersonaAction with reason and confirmed=True produces an admitted receipt with confirmation_marker."""
-    from models import CommandStatus
-    import command_executor
+    from services.control_plane.bff.models import CommandStatus
+    from services.control_plane.bff import command_executor as command_executor
     monkeypatch.setattr(
         command_executor,
         "execute_command_with_status",
@@ -1449,7 +1447,7 @@ def test_epic_one_audit_entry_per_execute_invoke() -> None:
     assert receipt.receipt_id.startswith("asst-receipt-")
     assert receipt.executed_at
 
-    from assistant.tool_contracts import tool_receipt_to_dict
+    from services.control_plane.bff.assistant.tool_contracts import tool_receipt_to_dict
     d = tool_receipt_to_dict(receipt)
     assert d["source"] == "assistant_tool_contract"
     assert d["trace_id"] == "epic-audit-trace-001"
@@ -1464,7 +1462,7 @@ def test_epic_provider_credentials_not_in_receipt(monkeypatch) -> None:
         actor_id="op-001",
         actor_roles=["operator"],
     )
-    from assistant.tool_contracts import tool_receipt_to_dict
+    from services.control_plane.bff.assistant.tool_contracts import tool_receipt_to_dict
     rendered = repr(tool_receipt_to_dict(receipt))
     for forbidden in (
         "access_token",

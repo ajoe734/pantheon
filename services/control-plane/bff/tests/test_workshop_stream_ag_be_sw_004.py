@@ -21,9 +21,8 @@ from typing import Optional
 import pytest
 
 BFF_DIR = os.path.dirname(os.path.dirname(__file__))
-sys.path.insert(0, BFF_DIR)
 
-from agora.strategy_workshop.router import (
+from services.control_plane.bff.agora.strategy_workshop.router import (
     _WS_SSE_BUFFER_SIZE,
     _workshop_sse_buffers,
     _workshop_sse_subscribers,
@@ -46,13 +45,13 @@ _OPERATOR_AUTH = "Bearer agora-test-user:operator"
 def _workshop_client(monkeypatch):
     monkeypatch.setenv("PANTHEON_BFF_AUTH_STUB", "true")
     monkeypatch.setenv("PANTHEON_BFF_AUTH_MODE", "permissive")
-    import main as bff_main
+    from services.control_plane.bff import main as bff_main
     return bff_main
 
 
 def _create_workshop(client_app, workshop_id: str = "ws-stream-001") -> str:
     """Create a workshop session in the in-memory store used by the BFF."""
-    from agora.strategy_workshop import MemoryWorkshopStore
+    from services.control_plane.bff.agora.strategy_workshop import MemoryWorkshopStore
     store: Optional[MemoryWorkshopStore] = None
     # Find the store through the app's state (injected by the router factory).
     # Fall back to creating one directly for unit tests that bypass the app.
@@ -207,8 +206,8 @@ class TestWorkshopStreamRoute:
     """Tests calling the async stream handler directly (avoids TestClient SSE limits)."""
 
     def _make_router_and_store(self):
-        from agora.strategy_workshop import MemoryWorkshopStore
-        from agora.strategy_workshop.router import create_strategy_workshop_router
+        from services.control_plane.bff.agora.strategy_workshop import MemoryWorkshopStore
+        from services.control_plane.bff.agora.strategy_workshop.router import create_strategy_workshop_router
         from fastapi import HTTPException
 
         store = MemoryWorkshopStore()
@@ -387,8 +386,8 @@ class TestWorkshopMessageSseIntegration:
     """Verify that POST /messages publishes workshop.message.ack to the SSE stream."""
 
     def _make_router_and_deps(self):
-        from agora.strategy_workshop import MemoryWorkshopStore
-        from agora.strategy_workshop.router import create_strategy_workshop_router
+        from services.control_plane.bff.agora.strategy_workshop import MemoryWorkshopStore
+        from services.control_plane.bff.agora.strategy_workshop.router import create_strategy_workshop_router
         from fastapi import HTTPException
 
         store = MemoryWorkshopStore()
@@ -426,7 +425,7 @@ class TestWorkshopMessageSseIntegration:
         return post_msg_fn, store, wid
 
     def test_post_message_publishes_ack_to_buffer(self):
-        from agora.strategy_workshop.router import WorkshopMessageRequest
+        from services.control_plane.bff.agora.strategy_workshop.router import WorkshopMessageRequest
 
         post_msg_fn, store, wid = self._make_router_and_deps()
         # Get current ETag (version 1)
@@ -450,7 +449,7 @@ class TestWorkshopMessageSseIntegration:
         assert ack_events[0]["data"]["sequence_no"] is not None
 
     def test_post_message_delivers_ack_to_live_subscriber(self):
-        from agora.strategy_workshop.router import WorkshopMessageRequest
+        from services.control_plane.bff.agora.strategy_workshop.router import WorkshopMessageRequest
 
         post_msg_fn, store, wid = self._make_router_and_deps()
         # Attach a subscriber
@@ -479,7 +478,7 @@ class TestWorkshopMessageSseIntegration:
 
 class TestOpenClawDegradedEvent:
     def test_publish_openclaw_degraded_puts_event_in_buffer(self):
-        from agora.research.router import publish_openclaw_degraded
+        from services.control_plane.bff.agora.research.router import publish_openclaw_degraded
 
         wid = "ws-openclaw-001"
         event_id = publish_openclaw_degraded(wid)
@@ -492,7 +491,7 @@ class TestOpenClawDegradedEvent:
         assert evt["data"]["workshop_id"] == wid
 
     def test_publish_research_progress_puts_event_in_buffer(self):
-        from agora.research.router import publish_research_progress
+        from services.control_plane.bff.agora.research.router import publish_research_progress
 
         wid = "ws-research-001"
         event_id = publish_research_progress(wid, "run-abc", 42.5, "Backtesting...")
@@ -512,8 +511,8 @@ class TestOpenClawDegradedEvent:
 
 class TestWorkshopStreamEndpointRegistration:
     def test_stream_route_registered(self):
-        from agora.strategy_workshop import MemoryWorkshopStore
-        from agora.strategy_workshop.router import create_strategy_workshop_router
+        from services.control_plane.bff.agora.strategy_workshop import MemoryWorkshopStore
+        from services.control_plane.bff.agora.strategy_workshop.router import create_strategy_workshop_router
         from fastapi import HTTPException
 
         router = create_strategy_workshop_router(
@@ -528,7 +527,7 @@ class TestWorkshopStreamEndpointRegistration:
 
     def test_stream_route_is_async(self):
         import asyncio
-        from agora.strategy_workshop.router import create_strategy_workshop_router
+        from services.control_plane.bff.agora.strategy_workshop.router import create_strategy_workshop_router
         from fastapi import HTTPException
 
         router = create_strategy_workshop_router(
@@ -550,7 +549,7 @@ class TestWorkshopStreamEndpointRegistration:
         monkeypatch.setenv("PANTHEON_BFF_AUTH_STUB", "true")
         monkeypatch.setenv("PANTHEON_BFF_AUTH_MODE", "permissive")
         from fastapi.testclient import TestClient
-        import main as bff_main
+        from services.control_plane.bff import main as bff_main
         client = TestClient(bff_main.app, raise_server_exceptions=False)
 
         # Create a workshop to get a valid workshop_id

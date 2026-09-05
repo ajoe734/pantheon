@@ -17,11 +17,10 @@ import sys
 import pytest
 from fastapi.testclient import TestClient
 
-sys.path.insert(0, os.path.dirname(__file__))
 
 from services.control_plane.bff import main as bff_main
-from action_catalog import catalog_action_ids, get_action_catalog, get_catalog_entry
-from models import ActionCommandStatus, BffActionCatalogEntry, CommandType, RiskLevel
+from services.control_plane.bff.action_catalog import catalog_action_ids, get_action_catalog, get_catalog_entry
+from services.control_plane.bff.models import ActionCommandStatus, BffActionCatalogEntry, CommandType, RiskLevel
 
 OPERATOR_TOKEN = "Bearer op-2:operator"
 APPROVER_TOKEN = "Bearer op-6:approver"

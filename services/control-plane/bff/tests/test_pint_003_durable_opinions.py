@@ -7,12 +7,11 @@ import uuid
 import pytest
 from fastapi.testclient import TestClient
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 from services.control_plane.bff import main as bff_main
-import agora.interaction.runner as interaction_runner
-from agora.interaction.worker import AgoraInteractionWorker
-from openclaw_ops_client import OpenClawOpsClientError
-from agora.strategy_workshop.router import _ws_replay_after
+from services.control_plane.bff.agora.interaction import runner as interaction_runner
+from services.control_plane.bff.agora.interaction.worker import AgoraInteractionWorker
+from services.control_plane.bff.openclaw_ops_client import OpenClawOpsClientError
+from services.control_plane.bff.agora.strategy_workshop.router import _ws_replay_after
 
 AUTH = {"Authorization": "Bearer interaction-user:operator", "Idempotency-Key": "idem-context-p3"}
 
@@ -374,7 +373,7 @@ def test_durable_opinions_degraded_path_flow(monkeypatch):
 
 
 def test_sse_replay_database_fallback(monkeypatch):
-    from agora.router import make_workshop_store
+    from services.control_plane.bff.agora.router import make_workshop_store
     store = make_workshop_store()
 
     # 1. Create a dummy workshop and events directly in store

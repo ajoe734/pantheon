@@ -10,7 +10,7 @@ from typing import Any, Iterator
 
 import pytest
 
-from agora.interaction.store import InteractionLifecycleStore
+from services.control_plane.bff.agora.interaction.store import InteractionLifecycleStore
 
 
 def _now() -> str:

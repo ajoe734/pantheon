@@ -7,10 +7,9 @@ from typing import Any, Dict
 
 import pytest
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
-import command_executor as bff_executor
-from models import CommandType
+from services.control_plane.bff import command_executor as bff_executor
+from services.control_plane.bff.models import CommandType
 
 
 GOVERNANCE_URL = "http://governance-approval-test:8082"
@@ -181,7 +180,7 @@ def test_bff_command_to_governance_to_journal_composition(configure_urls, monkey
     from fastapi.testclient import TestClient
     from services.governance import main as gov_main
     from services.governance.record_store import JsonGovernanceRecordStore
-    import main as bff_main
+    from services.control_plane.bff import main as bff_main
     import tempfile
     from pathlib import Path
 

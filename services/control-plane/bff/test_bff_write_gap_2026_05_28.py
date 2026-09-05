@@ -25,13 +25,12 @@ from typing import Any, Generator, Iterator
 import pytest
 from fastapi.testclient import TestClient
 
-sys.path.insert(0, os.path.dirname(__file__))
 
 os.environ.setdefault("PANTHEON_BFF_AUTH_STUB", "true")
 
 from services.control_plane.bff import main as bff_main
-from command_queue import CommandStore  # noqa: E402
-from ports import ReadSurfacePorts  # noqa: E402
+from services.control_plane.bff.command_queue import CommandStore  # noqa: E402
+from services.control_plane.bff.ports import ReadSurfacePorts  # noqa: E402
 
 
 # ---------------------------------------------------------------------------
@@ -1679,9 +1678,9 @@ def _assert_error_code(body: dict, expected_code: str) -> None:
 import unittest
 from unittest.mock import patch
 
-from models import CommandType, RiskLevel
-from action_catalog import get_catalog_entry, catalog_action_ids
-from command_executor import _execute_start_runtime, execute_command
+from services.control_plane.bff.models import CommandType, RiskLevel
+from services.control_plane.bff.action_catalog import get_catalog_entry, catalog_action_ids
+from services.control_plane.bff.command_executor import _execute_start_runtime, execute_command
 
 class TestStartRuntimeCommandType(unittest.TestCase):
     """CommandType enum registration."""
@@ -1868,7 +1867,7 @@ class TestExecuteCommandDispatchesStartRuntime(unittest.TestCase):
         self.assertEqual(result["state"], "starting")
 
     def test_no_executor_error_for_start_runtime(self) -> None:
-        from command_executor import _EXECUTORS
+        from services.control_plane.bff.command_executor import _EXECUTORS
         self.assertIn(CommandType.START_RUNTIME, _EXECUTORS)
 
 

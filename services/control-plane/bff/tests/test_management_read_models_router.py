@@ -26,21 +26,19 @@ from fastapi.testclient import TestClient
 from starlette.responses import JSONResponse
 
 # Ensure bff root is on sys.path
-sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 # Main Assembly imports repository-level integration packages (for example
 # Agora's OpenClaw adapters).  Keep the repository root importable when this
 # file is run directly from a clean task worktree rather than relying on the
 # caller's PYTHONPATH.
 REPO_ROOT = str(Path(__file__).resolve().parents[4])
-sys.path.insert(0, REPO_ROOT)
 
-from management_read_models.router import (
+from services.control_plane.bff.management_read_models.router import (
     create_management_read_models_router,
     create_management_router,
     _default_extract_identity,
 )
-from management_read_models.service import ManagementService
-from ports import create_in_memory_read_surface_ports
+from services.control_plane.bff.management_read_models.service import ManagementService
+from services.control_plane.bff.ports import create_in_memory_read_surface_ports
 
 
 EXPECTED_17_ROUTES = {
@@ -262,7 +260,6 @@ def _import_main_for_inventory() -> Any:
         for name in list(sys.modules):
             if name == "integrations" or name.startswith("integrations."):
                 sys.modules.pop(name, None)
-        sys.path.insert(0, REPO_ROOT)
         importlib.import_module("integrations")
     return importlib.import_module("services.control_plane.bff.main")
 
@@ -339,8 +336,8 @@ def test_review_evidence_manifest_matches_task_acceptance() -> None:
 
 def test_router_has_no_reverse_dependency_on_main() -> None:
     """Verify router and service modules do not import main."""
-    import management_read_models.router as router_module
-    import management_read_models.service as service_module
+    from services.control_plane.bff.management_read_models import router as router_module
+    from services.control_plane.bff.management_read_models import service as service_module
 
     for module in (router_module, service_module):
         source = inspect.getsource(module)
@@ -350,7 +347,7 @@ def test_router_has_no_reverse_dependency_on_main() -> None:
 
 def test_service_has_no_shadow_command_authority() -> None:
     """Verify service has no shadow command submission or execution authority."""
-    import management_read_models.service as service_module
+    from services.control_plane.bff.management_read_models import service as service_module
 
     source = inspect.getsource(service_module)
     for forbidden in (
@@ -364,8 +361,8 @@ def test_service_has_no_shadow_command_authority() -> None:
 
 def test_no_duplicate_nl_implementation() -> None:
     """Verify NL ask and stream routes remain owned by main.py and are not duplicated here."""
-    import management_read_models.router as router_module
-    import management_read_models.service as service_module
+    from services.control_plane.bff.management_read_models import router as router_module
+    from services.control_plane.bff.management_read_models import service as service_module
 
     router = create_management_router()
     routes = {route.path for route in router.routes}
@@ -706,7 +703,7 @@ def test_operations_read_model_custom_injected_fn() -> None:
     def custom_ops_entry(persona_id: str, period: str = "latest", tenant_id: Optional[str] = None):
         custom_called["persona_id"] = persona_id
         custom_called["period"] = period
-        from operations_read_model import OperationsIdentity, OperationsPerformance, OperationsReadModelEntry, DataConfidence
+        from services.control_plane.bff.operations_read_model import OperationsIdentity, OperationsPerformance, OperationsReadModelEntry, DataConfidence
         return OperationsReadModelEntry(
             identity=OperationsIdentity(persona_id=persona_id, period=period, as_of="2026-08-31T00:00:00Z"),
             data_confidence=DataConfidence.FALLBACK,

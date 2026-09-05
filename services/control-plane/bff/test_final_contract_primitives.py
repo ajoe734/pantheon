@@ -8,11 +8,10 @@ import pytest
 from fastapi.testclient import TestClient
 from pydantic import ValidationError
 
-sys.path.insert(0, os.path.dirname(__file__))
 
 from services.control_plane.bff import main as bff_main
-from command_queue import CommandStore
-from models import (
+from services.control_plane.bff.command_queue import CommandStore
+from services.control_plane.bff.models import (
     ActionCommandStatus,
     BffErrorEnvelope,
     BffErrorPayload,

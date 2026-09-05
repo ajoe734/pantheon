@@ -14,9 +14,8 @@ import os
 import sys
 from decimal import Decimal
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
-import main  # noqa: E402
+import services.control_plane.bff.main as main  # noqa: E402
 
 
 def test_float_int_roundtrip_matches():

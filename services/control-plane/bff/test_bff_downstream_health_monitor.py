@@ -23,7 +23,6 @@ from unittest.mock import MagicMock, patch, AsyncMock
 
 import pytest
 
-sys.path.insert(0, os.path.dirname(__file__))
 
 
 def _run(coro):
@@ -34,7 +33,7 @@ def _run(coro):
     finally:
         loop.close()
 
-from downstream_health_monitor import (
+from services.control_plane.bff.downstream_health_monitor import (
     DownstreamHealthMonitor,
     DownstreamProbeResult,
     _DurableHealthStore,
@@ -567,7 +566,7 @@ class TestRecoveryTracking:
 class TestBffDownstreamHealthRoute:
     def _make_client(self):
         from fastapi.testclient import TestClient
-        import main as bff_main
+        from services.control_plane.bff import main as bff_main
         bff_main.downstream_health_monitor = DownstreamHealthMonitor(
             telemetry_url="",
             incidents_url="",
@@ -599,7 +598,7 @@ class TestBffDownstreamHealthRoute:
 
     def test_downstream_health_route_empty_before_probes(self):
         from fastapi.testclient import TestClient
-        import main as bff_main
+        from services.control_plane.bff import main as bff_main
 
         bff_main.downstream_health_monitor = DownstreamHealthMonitor(
             telemetry_url="",
@@ -619,7 +618,7 @@ class TestBffDownstreamHealthRoute:
 
     def test_downstream_health_route_shows_degraded_targets(self):
         from fastapi.testclient import TestClient
-        import main as bff_main
+        from services.control_plane.bff import main as bff_main
 
         bff_main.downstream_health_monitor = DownstreamHealthMonitor(
             telemetry_url="",
@@ -649,7 +648,7 @@ class TestBffDownstreamHealthRoute:
 
     def test_downstream_health_route_requires_auth(self):
         from fastapi.testclient import TestClient
-        import main as bff_main
+        from services.control_plane.bff import main as bff_main
 
         client = TestClient(bff_main.app)
         response = client.get("/bff/v5/downstream-health")
@@ -694,7 +693,7 @@ class TestDegradedModeIsolation:
     def test_bff_health_route_works_even_when_monitor_has_errors(self):
         """Verify other BFF routes continue to work when monitor state is degraded."""
         from fastapi.testclient import TestClient
-        import main as bff_main
+        from services.control_plane.bff import main as bff_main
 
         # Seed degraded state
         bff_main.downstream_health_monitor = DownstreamHealthMonitor(

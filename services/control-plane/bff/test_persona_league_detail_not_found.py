@@ -17,13 +17,12 @@ import sys
 from pathlib import Path
 
 BFF_DIR = Path(__file__).resolve().parent
-sys.path.insert(0, str(BFF_DIR))
 
 
 def _client():
     os.environ["PANTHEON_BFF_AUTH_STUB"] = "true"
     os.environ["PANTHEON_BFF_AUTH_MODE"] = "permissive"
-    import main as bff_main  # imported after env is set
+    from services.control_plane.bff import main as bff_main  # imported after env is set
     from fastapi.testclient import TestClient
 
     return TestClient(bff_main.app)
@@ -44,7 +43,7 @@ def test_persona_league_detail_unknown_id_returns_404() -> None:
 
 
 def test_no_invalid_errorcode_references_in_main() -> None:
-    from models import ErrorCode
+    from services.control_plane.bff.models import ErrorCode
 
     valid = set(ErrorCode.__members__.keys())
     text = (BFF_DIR / "main.py").read_text()

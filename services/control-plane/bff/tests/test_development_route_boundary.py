@@ -12,10 +12,8 @@ from typing import Any
 
 BFF_DIR = Path(__file__).resolve().parents[1]
 REPO_ROOT = BFF_DIR.parents[2]
-if str(BFF_DIR) not in sys.path:
-    sys.path.insert(0, str(BFF_DIR))
 
-from assistant.routes import create_assistant_router  # noqa: E402
+from services.control_plane.bff.assistant.routes import create_assistant_router  # noqa: E402
 
 
 RETIRED_PRODUCT_PATHS = {
@@ -87,7 +85,7 @@ def test_product_bff_starts_without_development_tooling_source() -> None:
     command = """
 import json
 import sys
-import main
+import services.control_plane.bff.main as main
 
 development_modules = sorted(
     name for name in sys.modules

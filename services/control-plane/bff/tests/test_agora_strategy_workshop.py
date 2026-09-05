@@ -18,7 +18,6 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
 _REPO_ROOT = Path(__file__).resolve().parents[4]
 _AGORA_SCHEMA_ROOT = _REPO_ROOT / "services" / "control-plane" / "specs" / "agora"
@@ -30,7 +29,7 @@ _AGORA_SCHEMA_ROOT = _REPO_ROOT / "services" / "control-plane" / "specs" / "agor
 
 class TestMemoryWorkshopStoreSession:
     def _store(self):
-        from agora.strategy_workshop import MemoryWorkshopStore
+        from services.control_plane.bff.agora.strategy_workshop import MemoryWorkshopStore
         return MemoryWorkshopStore()
 
     def test_create_and_get_session(self):
@@ -108,7 +107,7 @@ class TestMemoryWorkshopStoreSession:
 
 class TestMemoryWorkshopStoreEvent:
     def _store(self):
-        from agora.strategy_workshop import MemoryWorkshopStore
+        from services.control_plane.bff.agora.strategy_workshop import MemoryWorkshopStore
         return MemoryWorkshopStore()
 
     def test_create_event_assigns_sequence(self):
@@ -181,7 +180,7 @@ class TestMemoryWorkshopStoreEvent:
 
 class TestMemoryWorkshopStoreCompleteness:
     def _store(self):
-        from agora.strategy_workshop import MemoryWorkshopStore
+        from services.control_plane.bff.agora.strategy_workshop import MemoryWorkshopStore
         return MemoryWorkshopStore()
 
     def test_create_and_get_snapshot(self):
@@ -236,7 +235,7 @@ class TestMemoryWorkshopStoreCompleteness:
 
 class TestMemoryWorkshopStoreReadinessAndCards:
     def _store(self):
-        from agora.strategy_workshop import MemoryWorkshopStore
+        from services.control_plane.bff.agora.strategy_workshop import MemoryWorkshopStore
         return MemoryWorkshopStore()
 
     def test_create_and_get_readiness_assessment(self):
@@ -305,7 +304,7 @@ class TestMemoryWorkshopStoreReadinessAndCards:
 
 class TestWorkshopStoreFactory:
     def test_make_workshop_store_logs_postgres_backend_without_dsn(self, monkeypatch, caplog):
-        from agora.strategy_workshop import store as store_module
+        from services.control_plane.bff.agora.strategy_workshop import store as store_module
 
         class FakePostgresStore:
             def __init__(self, *, dsn, schema):
@@ -328,29 +327,29 @@ class TestWorkshopStoreFactory:
         assert "secret-password" not in caplog.text
 
     def test_make_workshop_store_off_returns_memory(self):
-        from agora.strategy_workshop import make_workshop_store, MemoryWorkshopStore
+        from services.control_plane.bff.agora.strategy_workshop import make_workshop_store, MemoryWorkshopStore
         store = make_workshop_store(backend="off")
         assert isinstance(store, MemoryWorkshopStore)
 
     def test_make_workshop_store_default_is_off(self, monkeypatch):
         monkeypatch.delenv("AGORA_WORKSHOP_STORE_BACKEND", raising=False)
-        from agora.strategy_workshop import make_workshop_store, MemoryWorkshopStore
+        from services.control_plane.bff.agora.strategy_workshop import make_workshop_store, MemoryWorkshopStore
         store = make_workshop_store()
         assert isinstance(store, MemoryWorkshopStore)
 
     def test_make_workshop_store_postgres_requires_dsn(self, monkeypatch):
         monkeypatch.delenv("AGORA_WORKSHOP_STORE_DSN", raising=False)
-        from agora.strategy_workshop import make_workshop_store
+        from services.control_plane.bff.agora.strategy_workshop import make_workshop_store
         with pytest.raises(RuntimeError, match="DSN"):
             make_workshop_store(backend="postgres")
 
     def test_make_workshop_store_unknown_raises(self):
-        from agora.strategy_workshop import make_workshop_store
+        from services.control_plane.bff.agora.strategy_workshop import make_workshop_store
         with pytest.raises(RuntimeError, match="Unknown"):
             make_workshop_store(backend="sqlite")
 
     def test_module_importable(self):
-        from agora.strategy_workshop import (
+        from services.control_plane.bff.agora.strategy_workshop import (
             MemoryWorkshopStore,
             PostgresWorkshopStore,
             make_workshop_store,
@@ -366,7 +365,7 @@ class TestWorkshopStoreFactory:
         dsn = os.getenv("TEST_DATABASE_URL")
         if not dsn:
             pytest.skip("TEST_DATABASE_URL is not set")
-        from agora.strategy_workshop import PostgresWorkshopStore
+        from services.control_plane.bff.agora.strategy_workshop import PostgresWorkshopStore
 
         store = PostgresWorkshopStore(dsn=dsn, schema=f"agora_ws_{uuid.uuid4().hex[:12]}")
         workshop_id = f"ws-{uuid.uuid4().hex}"
@@ -397,7 +396,7 @@ _OPERATOR_AUTH = "Bearer agora-test-user:operator"
 def _workshop_client(monkeypatch):
     monkeypatch.setenv("PANTHEON_BFF_AUTH_STUB", "true")
     monkeypatch.setenv("PANTHEON_BFF_AUTH_MODE", "permissive")
-    from agora.strategy_workshop.operations import WorkshopCanonicalOperations
+    from services.control_plane.bff.agora.strategy_workshop.operations import WorkshopCanonicalOperations
 
     def get_strategy_spec(_self, registry_id):
         return {
@@ -422,7 +421,7 @@ def _workshop_client(monkeypatch):
         "get_strategy_spec",
         get_strategy_spec,
     )
-    import main as bff_main
+    from services.control_plane.bff import main as bff_main
     return TestClient(bff_main.app, raise_server_exceptions=False)
 
 
@@ -973,13 +972,13 @@ class TestWorkshopRouterEndpoints:
         assert resp.headers["etag"].startswith('W/"workshop:')
 
     def test_workshop_router_importable(self):
-        from agora.strategy_workshop.router import create_strategy_workshop_router
+        from services.control_plane.bff.agora.strategy_workshop.router import create_strategy_workshop_router
         assert callable(create_strategy_workshop_router)
 
     def test_workshop_router_accepts_injected_store(self):
         """Router factory must accept an injected workshop_store for testability."""
-        from agora.strategy_workshop import MemoryWorkshopStore
-        from agora.strategy_workshop.router import create_strategy_workshop_router
+        from services.control_plane.bff.agora.strategy_workshop import MemoryWorkshopStore
+        from services.control_plane.bff.agora.strategy_workshop.router import create_strategy_workshop_router
         from fastapi import HTTPException
 
         store = MemoryWorkshopStore()
@@ -994,8 +993,8 @@ class TestWorkshopRouterEndpoints:
         assert router is not None
 
     def test_readiness_route_accepts_injected_dict_identity(self):
-        from agora.strategy_workshop import MemoryWorkshopStore
-        from agora.strategy_workshop.router import create_strategy_workshop_router
+        from services.control_plane.bff.agora.strategy_workshop import MemoryWorkshopStore
+        from services.control_plane.bff.agora.strategy_workshop.router import create_strategy_workshop_router
         from fastapi import FastAPI, HTTPException
 
         store = MemoryWorkshopStore()
@@ -1058,10 +1057,10 @@ class TestWorkshopRouterEndpoints:
         assert readiness["workshop_version_id"] == "wv-dict-1"
 
     def test_cards_route_accepts_injected_operator_identity(self):
-        from agora.strategy_workshop import MemoryWorkshopStore
-        from agora.strategy_workshop.router import create_strategy_workshop_router
+        from services.control_plane.bff.agora.strategy_workshop import MemoryWorkshopStore
+        from services.control_plane.bff.agora.strategy_workshop.router import create_strategy_workshop_router
         from fastapi import FastAPI, HTTPException
-        from models import OperatorIdentity
+        from services.control_plane.bff.models import OperatorIdentity
 
         store = MemoryWorkshopStore()
         store.create_session({
@@ -1199,8 +1198,8 @@ class TestWorkshopConcurrencyContract:
         )
 
     def test_stale_if_match_discards_private_content_orphan(self, monkeypatch):
-        from agora.strategy_workshop import MemoryWorkshopStore
-        from agora.strategy_workshop.router import create_strategy_workshop_router
+        from services.control_plane.bff.agora.strategy_workshop import MemoryWorkshopStore
+        from services.control_plane.bff.agora.strategy_workshop.router import create_strategy_workshop_router
         from fastapi import FastAPI, HTTPException
         from privacy.private_content_models import PrivateContentAccessDenied
         from privacy.private_content_store import EphemeralKeyProvider, MemoryPrivateContentStore
@@ -1368,8 +1367,8 @@ class TestWorkshopPrivacyContract:
     """
 
     def test_create_private_store_failure_leaves_no_partial_session(self):
-        from agora.strategy_workshop import MemoryWorkshopStore
-        from agora.strategy_workshop.router import create_strategy_workshop_router
+        from services.control_plane.bff.agora.strategy_workshop import MemoryWorkshopStore
+        from services.control_plane.bff.agora.strategy_workshop.router import create_strategy_workshop_router
         from fastapi import FastAPI, HTTPException
 
         class FailingPrivateStore:
@@ -1401,8 +1400,8 @@ class TestWorkshopPrivacyContract:
         assert sessions == []
 
     def test_create_event_failure_discards_private_object_and_session(self):
-        from agora.strategy_workshop import MemoryWorkshopStore
-        from agora.strategy_workshop.router import create_strategy_workshop_router
+        from services.control_plane.bff.agora.strategy_workshop import MemoryWorkshopStore
+        from services.control_plane.bff.agora.strategy_workshop.router import create_strategy_workshop_router
         from fastapi import FastAPI, HTTPException
         from privacy.private_content_models import PrivateContentAccessDenied
         from privacy.private_content_store import EphemeralKeyProvider, MemoryPrivateContentStore
@@ -1560,7 +1559,7 @@ class TestMemoryWorkshopStoreConcurrencyHelpers:
     """Unit tests for the new store helpers added in AG-BE-SW-001 review pass."""
 
     def _store(self):
-        from agora.strategy_workshop import MemoryWorkshopStore
+        from services.control_plane.bff.agora.strategy_workshop import MemoryWorkshopStore
         return MemoryWorkshopStore()
 
     def test_update_session_lock_version_increments(self):
@@ -1791,7 +1790,7 @@ class _PublicApiCanonicalOperations:
 
     @staticmethod
     def _require_success(response, authority: str) -> dict:
-        from agora.strategy_workshop.operations import CanonicalOperationError
+        from services.control_plane.bff.agora.strategy_workshop.operations import CanonicalOperationError
 
         if response.status_code >= 400:
             raise CanonicalOperationError(
@@ -1963,7 +1962,7 @@ def _public_contract_bff_error(
 
 def _public_workshop_client(workshop_store, canonical_operations):
     from fastapi import FastAPI
-    from agora.strategy_workshop.router import create_strategy_workshop_router
+    from services.control_plane.bff.agora.strategy_workshop.router import create_strategy_workshop_router
 
     identity = {
         "operator_id": _PUBLIC_USER_ID,
@@ -2066,7 +2065,7 @@ def test_public_workshop_operations_fail_closed_on_noncanonical_approval(
 ):
     """Research and conclude reject invalid approvals before durable effects."""
 
-    from agora.strategy_workshop import MemoryWorkshopStore
+    from services.control_plane.bff.agora.strategy_workshop import MemoryWorkshopStore
 
     workshop_id = "ws-approval-gate-contract"
     version_id = "wsv-approval-gate-contract"
@@ -2170,7 +2169,7 @@ def test_public_exact_identity_approval_flow_survives_restart(
 ):
     """Real public APIs compose when Registry and strategy identities differ."""
 
-    from agora.strategy_workshop import MemoryWorkshopStore
+    from services.control_plane.bff.agora.strategy_workshop import MemoryWorkshopStore
     from services.governance import main as governance_main
     from services.registry.service import app as registry_app
     from services.registry.storage import reset_store

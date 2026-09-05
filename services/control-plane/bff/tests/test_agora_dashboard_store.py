@@ -7,7 +7,7 @@ import uuid
 
 import pytest
 
-from agora.dashboard import store as store_module
+from services.control_plane.bff.agora.dashboard import store as store_module
 
 
 def _identity() -> dict:

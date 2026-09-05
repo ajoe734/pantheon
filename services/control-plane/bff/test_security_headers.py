@@ -17,7 +17,6 @@ from starlette.routing import Route
 from starlette.testclient import TestClient as StarletteTestClient
 
 BFF_DIR = Path(__file__).resolve().parent
-sys.path.insert(0, str(BFF_DIR))
 
 os.environ.setdefault("PANTHEON_BFF_AUTH_STUB", "true")
 os.environ.setdefault("PANTHEON_BFF_AUTH_MODE", "permissive")

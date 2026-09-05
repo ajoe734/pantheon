@@ -14,12 +14,11 @@ import tempfile
 
 from fastapi.testclient import TestClient
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
 from services.control_plane.bff import main as bff_main
 from typing import Any
 from pathlib import Path
-from ports import create_in_memory_read_surface_ports
+from services.control_plane.bff.ports import create_in_memory_read_surface_ports
 
 # Local re-implementation of read_store._load_default_fixture_pack_datasets:
 # merges the same static, committed fixture-pack JSON files directly off

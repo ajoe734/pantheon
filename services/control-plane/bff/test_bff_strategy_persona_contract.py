@@ -21,13 +21,12 @@ import tempfile
 import pytest
 from fastapi.testclient import TestClient
 
-sys.path.insert(0, os.path.dirname(__file__))
 
 from services.control_plane.bff import main as bff_main
-from action_catalog import get_catalog_entry
-from models import CommandType
-from persona_provisioning import MemoryPersonaProvisioningStore
-from ports import ReadSurfacePorts
+from services.control_plane.bff.action_catalog import get_catalog_entry
+from services.control_plane.bff.models import CommandType
+from services.control_plane.bff.persona_provisioning import MemoryPersonaProvisioningStore
+from services.control_plane.bff.ports import ReadSurfacePorts
 from test_persona_provisioning_coordinator import FakeOwnerTransport, _schedule_receipt
 
 OPERATOR_TOKEN = "Bearer op-2:operator"

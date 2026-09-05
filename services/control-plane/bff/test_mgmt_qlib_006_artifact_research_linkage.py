@@ -18,11 +18,10 @@ LINKAGE_PACKET_PATH = (
     REPO_ROOT / "support" / "evidence" / "MGMT-QLIB-006" / "management_linkage_packet.json"
 )
 
-sys.path.insert(0, str(BFF_DIR))
 
 from services.control_plane.bff import main as bff_main
-from ports.research_knowledge_source import DefaultResearchKnowledgeSourcePort  # noqa: E402
-from ports import create_read_surface_ports  # noqa: E402
+from services.control_plane.bff.ports.research_knowledge_source import DefaultResearchKnowledgeSourcePort  # noqa: E402
+from services.control_plane.bff.ports import create_read_surface_ports  # noqa: E402
 
 
 HEADERS = {"Authorization": "Bearer op-mgmt-qlib:operator,reviewer"}

@@ -13,14 +13,11 @@ from unittest.mock import patch
 
 from fastapi.testclient import TestClient
 
-sys.path.insert(0, os.path.dirname(__file__))
 _REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
-if _REPO_ROOT not in sys.path:
-    sys.path.insert(0, _REPO_ROOT)
 
 from services.control_plane.bff import main as bff_main
-from command_queue import CommandStore
-from ports import ReadSurfacePorts
+from services.control_plane.bff.command_queue import CommandStore
+from services.control_plane.bff.ports import ReadSurfacePorts
 from services.runtime_auth_inbound import encode_jwt_hs256
 
 

@@ -9,9 +9,8 @@ from fastapi import FastAPI, HTTPException
 from fastapi.testclient import TestClient
 
 BFF_DIR = os.path.dirname(os.path.abspath(__file__))
-sys.path.insert(0, BFF_DIR)
 
-import trade_journeys as tj  # noqa: E402
+from services.control_plane.bff import trade_journeys as tj  # noqa: E402
 from test_tj_e2e_005_trade_journeys_read_api import InMemoryPostgresProjectionReader  # noqa: E402
 from services.trade_journey.materializer import JourneyMaterializer  # noqa: E402
 

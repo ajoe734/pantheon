@@ -2,14 +2,14 @@ from concurrent.futures import ThreadPoolExecutor
 
 import pytest
 
-import command_executor
+import services.control_plane.bff.command_executor as command_executor
 from services.control_plane.bff import main as bff_main
-from command_executor import (
+from services.control_plane.bff.command_executor import (
     _execute_bff_action_adapter,
     _execute_emergency_containment_authority,
 )
-from emergency_containment_policy import ALLOWED_TRIGGERS, validate_emergency_containment
-from rebalance_authority_test_support import (
+from services.control_plane.bff.emergency_containment_policy import ALLOWED_TRIGGERS, validate_emergency_containment
+from services.control_plane.bff.tests.rebalance_authority_test_support import (
     HEADERS,
     CapitalBffAuthorityHarness,
     rebalance_payload,

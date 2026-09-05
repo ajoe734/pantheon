@@ -22,10 +22,9 @@ from pathlib import Path
 
 from fastapi.testclient import TestClient
 
-sys.path.insert(0, os.path.dirname(__file__))
 
 from services.control_plane.bff import main as bff_main
-from ports import ReadSurfacePorts, create_read_surface_ports
+from services.control_plane.bff.ports import ReadSurfacePorts, create_read_surface_ports
 
 OPERATOR_TOKEN = "Bearer op-2:operator"
 HEADERS = {"Authorization": OPERATOR_TOKEN}

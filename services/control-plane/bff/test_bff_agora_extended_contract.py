@@ -10,12 +10,11 @@ from typing import Iterator
 
 from fastapi.testclient import TestClient
 
-sys.path.insert(0, os.path.dirname(__file__))
 
 from services.control_plane.bff import main as bff_main
-from command_queue import CommandStore
-from models import CommandType
-from ports import ReadSurfacePorts, create_in_memory_read_surface_ports
+from services.control_plane.bff.command_queue import CommandStore
+from services.control_plane.bff.models import CommandType
+from services.control_plane.bff.ports import ReadSurfacePorts, create_in_memory_read_surface_ports
 
 
 OPERATOR_TOKEN = "Bearer op-agora-extended:operator"

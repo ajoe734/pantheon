@@ -16,18 +16,17 @@ from typing import Iterator
 
 from fastapi.testclient import TestClient
 
-sys.path.insert(0, os.path.dirname(__file__))
 
 from services.control_plane.bff import main as bff_main
-from command_queue import CommandStore
-from models import (
+from services.control_plane.bff.command_queue import CommandStore
+from services.control_plane.bff.models import (
     CommandType,
     InterventionKind,
     InterventionRecord,
     InterventionStatus,
     ObjectType,
 )
-from ports import ReadSurfacePorts, create_in_memory_read_surface_ports
+from services.control_plane.bff.ports import ReadSurfacePorts, create_in_memory_read_surface_ports
 
 
 OPERATOR_TOKEN = "Bearer op-v5:operator"
@@ -567,7 +566,7 @@ def test_v5_interventions_listed_in_approval_sse_resync_routes() -> None:
 
 def test_remediate_sentinel_intervention_in_action_catalog() -> None:
     """RemediateSentinelIntervention must be in the action catalog with two-man gate."""
-    from action_catalog import get_catalog_entry
+    from services.control_plane.bff.action_catalog import get_catalog_entry
     entry = get_catalog_entry("RemediateSentinelIntervention")
     assert entry is not None, "RemediateSentinelIntervention missing from action catalog"
     assert entry.requires_two_man is True, "RemediateSentinelIntervention must require two-man"
@@ -577,7 +576,7 @@ def test_remediate_sentinel_intervention_in_action_catalog() -> None:
 
 
 def test_decide_v5_intervention_in_action_catalog() -> None:
-    from action_catalog import get_catalog_entry
+    from services.control_plane.bff.action_catalog import get_catalog_entry
     entry = get_catalog_entry("DecideV5Intervention")
     assert entry is not None, "DecideV5Intervention missing from action catalog"
     assert entry.endpoint == "/bff/v5/interventions/{intervention_id}/decide"
@@ -613,12 +612,12 @@ def test_sentinel_intervention_object_type_present() -> None:
 
 def test_remediate_sentinel_intervention_command_type_present() -> None:
     """CommandType must include RemediateSentinelIntervention."""
-    from models import CommandType
+    from services.control_plane.bff.models import CommandType
     assert CommandType.REMEDIATE_SENTINEL_INTERVENTION.value == "RemediateSentinelIntervention"
 
 
 def test_decide_v5_intervention_command_type_present() -> None:
-    from models import CommandType
+    from services.control_plane.bff.models import CommandType
     assert CommandType.DECIDE_V5_INTERVENTION.value == "DecideV5Intervention"
 
 

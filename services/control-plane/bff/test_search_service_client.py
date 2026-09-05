@@ -3,9 +3,8 @@ from __future__ import annotations
 import os
 import sys
 
-sys.path.insert(0, os.path.dirname(__file__))
 
-from ports import DefaultResearchKnowledgeSourcePort
+from services.control_plane.bff.ports import DefaultResearchKnowledgeSourcePort
 
 
 def test_rw02_search_projects_governed_result_through_research_port() -> None:

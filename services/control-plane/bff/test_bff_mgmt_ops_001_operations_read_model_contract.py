@@ -21,7 +21,6 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Iterator
 
-sys.path.insert(0, os.path.dirname(__file__))
 
 os.environ.setdefault("PANTHEON_BFF_AUTH_STUB", "true")
 os.environ.setdefault("PANTHEON_BFF_AUTH_MODE", "permissive")
@@ -29,8 +28,8 @@ os.environ.setdefault("PANTHEON_BFF_AUTH_MODE", "permissive")
 import json
 from services.control_plane.bff import main as bff_main
 from fastapi.testclient import TestClient  # noqa: E402
-from ports import ReadSurfacePorts  # noqa: E402
-from operations_read_model import (  # noqa: E402
+from services.control_plane.bff.ports import ReadSurfacePorts  # noqa: E402
+from services.control_plane.bff.operations_read_model import (  # noqa: E402
     DataConfidence,
     SourceState,
     build_operations_identity,

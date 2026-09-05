@@ -22,16 +22,15 @@ from fastapi.testclient import TestClient
 
 BFF_DIR = Path(__file__).resolve().parents[1]
 REPO_ROOT = Path(__file__).resolve().parents[4]
-sys.path.insert(0, str(BFF_DIR))
 
 from services.control_plane.bff import main as bff_main
-from agora.research.dispatcher import (  # noqa: E402
+from services.control_plane.bff.agora.research.dispatcher import (  # noqa: E402
     AdapterRegistry,
     ALLOWLISTED_STAGE_BACKENDS,
     compute_artifact_checksum,
     ResearchDispatcher,
 )
-from agora.research.store import MemoryResearchPlanStore, PostgresResearchPlanStore  # noqa: E402
+from services.control_plane.bff.agora.research.store import MemoryResearchPlanStore, PostgresResearchPlanStore  # noqa: E402
 
 
 _OPERATOR_AUTH_A = "Bearer agora-user-a:operator"

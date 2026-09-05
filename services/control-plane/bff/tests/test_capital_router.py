@@ -9,9 +9,8 @@ from typing import Any, Dict, List, Optional
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
-from capital.router import create_capital_router
+from services.control_plane.bff.capital.router import create_capital_router
 
 
 TASK_REVIEW_MANIFEST = {

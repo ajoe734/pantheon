@@ -9,7 +9,6 @@ from pathlib import Path
 
 from fastapi.testclient import TestClient
 
-sys.path.insert(0, os.path.dirname(__file__))
 
 from services.control_plane.bff import main as bff_main
 from test_training_session_service_client import create_training_read_surface_double

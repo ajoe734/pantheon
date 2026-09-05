@@ -9,10 +9,9 @@ from typing import Any, Mapping
 
 import pytest
 
-sys.path.insert(0, os.path.dirname(__file__))
 
-from persona_provisioning import MemoryPersonaProvisioningStore, ProvisioningRecord
-from persona_provisioning_coordinator import (
+from services.control_plane.bff.persona_provisioning import MemoryPersonaProvisioningStore, ProvisioningRecord
+from services.control_plane.bff.persona_provisioning_coordinator import (
     FIRST_EVALUATION_WORKFLOW_ID,
     PersonaProvisioningCoordinator,
     deterministic_provisioning_ids,
@@ -691,7 +690,6 @@ def test_mutation_payloads_parse_with_authoritative_owner_wire_models() -> None:
     assert dispatch.saga_id == ids.deployment_saga_id
 
     governance_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "governance"))
-    sys.path.insert(0, governance_dir)
     from deployment_plan import DeploymentScale, RollbackRef, StagePlanner
 
     domain_plan = StagePlanner().create_plan(

@@ -24,11 +24,10 @@ from unittest.mock import MagicMock, patch
 import pytest
 from fastapi.testclient import TestClient
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
 from services.control_plane.bff import main as bff_main
-from openclaw_ops_client import OpenClawOpsClientError
-from ports import create_in_memory_read_surface_ports
+from services.control_plane.bff.openclaw_ops_client import OpenClawOpsClientError
+from services.control_plane.bff.ports import create_in_memory_read_surface_ports
 
 OPERATOR_HEADERS = {"Authorization": "Bearer op-ask:operator"}
 
@@ -115,7 +114,7 @@ def _fresh_client(td: str) -> TestClient:
     bff_main.read_store = store
     bff_main._AGORA_CORE_BFF_IDEMPOTENCY.clear()
     # Reset transcript store so turns don't bleed between tests
-    from assistant.transcript_store import InMemorySessionStore, InMemoryTranscriptStore
+    from services.control_plane.bff.assistant.transcript_store import InMemorySessionStore, InMemoryTranscriptStore
     bff_main._ASSISTANT_SESSION_STORE = InMemorySessionStore()
     bff_main._ASSISTANT_TRANSCRIPT_STORE = InMemoryTranscriptStore()
     return TestClient(bff_main.app, raise_server_exceptions=True)
@@ -415,7 +414,7 @@ def test_ask_enabled_session_lifecycle_created_and_context_updated() -> None:
             # Session store must contain a session for the agora session_id
             session_store = bff_main._ASSISTANT_SESSION_STORE
             assert session_store is not None, "Session store not initialised"
-            from assistant.transcript_store import SessionNotFoundError
+            from services.control_plane.bff.assistant.transcript_store import SessionNotFoundError
             try:
                 session = session_store.get(sid)
             except SessionNotFoundError:

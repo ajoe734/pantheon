@@ -17,7 +17,7 @@ _BFF_DIR = Path(__file__).resolve().parent.parent
 if str(_BFF_DIR) not in sys.path:
     sys.path.insert(0, str(_BFF_DIR))
 
-from ports import (  # noqa: E402
+from services.control_plane.bff.ports import (  # noqa: E402
     DefaultResearchKnowledgeSourcePort,
     ReadSurfacePorts,
     create_in_memory_persona_capital_runtime_port,

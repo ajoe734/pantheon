@@ -9,7 +9,6 @@ from fastapi.testclient import TestClient
 
 BFF_DIR = Path(__file__).resolve().parents[1]
 REPO_ROOT = Path(__file__).resolve().parents[4]
-sys.path.insert(0, str(BFF_DIR))
 
 from services.control_plane.bff import main as bff_main
 
@@ -143,7 +142,7 @@ def test_research_run_detail_returns_schema_projection(monkeypatch: pytest.Monke
 def test_research_run_list_artifacts_and_sse_are_canonical(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from agora.strategy_workshop.router import _workshop_sse_buffers
+    from services.control_plane.bff.agora.strategy_workshop.router import _workshop_sse_buffers
 
     _workshop_sse_buffers.clear()
     client = _client(monkeypatch)

@@ -1,6 +1,6 @@
 import pytest
 
-from persona_allocation_policy import (
+from services.control_plane.bff.persona_allocation_policy import (
     build_pm12_allocation_policy_input,
     calculate_paper_simulation_allocations,
     calculate_target_allocations,

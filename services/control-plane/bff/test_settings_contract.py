@@ -8,10 +8,9 @@ from unittest.mock import patch
 
 from fastapi.testclient import TestClient
 
-sys.path.insert(0, os.path.dirname(__file__))
 
 from services.control_plane.bff import main as bff_main
-from settings_store import SettingsStore
+from services.control_plane.bff.settings_store import SettingsStore
 
 
 ADMIN_TOKEN = "Bearer op-admin:admin:mfa"

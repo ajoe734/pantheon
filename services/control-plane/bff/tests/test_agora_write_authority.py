@@ -9,7 +9,6 @@ from datetime import datetime, timedelta, timezone
 import pytest
 from fastapi.testclient import TestClient
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 from services.control_plane.bff import main as bff_main
 from services.runtime_auth_inbound import encode_jwt_hs256
 

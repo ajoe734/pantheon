@@ -9,7 +9,7 @@ from typing import Any
 
 import pytest
 
-from persona_provisioning import (
+from services.control_plane.bff.persona_provisioning import (
     MemoryPersonaProvisioningStore,
     PostgresPersonaProvisioningStore,
     ProvisioningConflict,

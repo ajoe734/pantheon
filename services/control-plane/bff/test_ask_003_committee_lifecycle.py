@@ -24,10 +24,9 @@ from typing import Any, Dict, Iterator, List, Optional
 
 from fastapi.testclient import TestClient
 
-sys.path.insert(0, os.path.dirname(__file__))
 
 from services.control_plane.bff import main as bff_main
-from command_queue import CommandStore
+from services.control_plane.bff.command_queue import CommandStore
 
 AUTH = {"Authorization": "Bearer ask-test-op:operator"}
 

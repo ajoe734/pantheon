@@ -13,11 +13,10 @@ from unittest.mock import patch
 
 from fastapi.testclient import TestClient
 
-sys.path.insert(0, os.path.dirname(__file__))
 
 from services.control_plane.bff import main as bff_main
-from command_queue import CommandStore
-from ports.operations_consultation import DomainConsultationPort, _model_to_data
+from services.control_plane.bff.command_queue import CommandStore
+from services.control_plane.bff.ports.operations_consultation import DomainConsultationPort, _model_to_data
 from services.consultation.models import (
     ActorRef,
     ConsultAuditEvent,

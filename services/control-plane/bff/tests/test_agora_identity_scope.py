@@ -8,10 +8,9 @@ from pathlib import Path
 
 import pytest
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
-from models import OperatorIdentity
-from agora.identity.scope import (
+from services.control_plane.bff.models import OperatorIdentity
+from services.control_plane.bff.agora.identity.scope import (
     AgoraScopeResolutionError,
     filter_agora_user_records,
     resolve_agora_user_scope,

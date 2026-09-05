@@ -8,8 +8,6 @@ from fastapi.testclient import TestClient
 
 BFF_DIR = Path(__file__).resolve().parent
 SNAPSHOT_DIR = BFF_DIR / "contract_snapshots"
-sys.path.insert(0, str(BFF_DIR))
-sys.path.insert(0, str(SNAPSHOT_DIR))
 
 from services.control_plane.bff import main as bff_main
 from execute_plans_bff_contract import (  # noqa: E402

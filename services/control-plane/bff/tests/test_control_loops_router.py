@@ -12,12 +12,11 @@ from typing import Any, Dict, List, Optional
 from fastapi import FastAPI, HTTPException
 from fastapi.testclient import TestClient
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
-from control_loops.router import create_control_loops_router
-from control_loops.service import ControlLoopsService
-from management_read_models import loop_truth as loop_truth_projection
-from models import CommandType, OperatorIdentity
+from services.control_plane.bff.control_loops.router import create_control_loops_router
+from services.control_plane.bff.control_loops.service import ControlLoopsService
+from services.control_plane.bff.management_read_models import loop_truth as loop_truth_projection
+from services.control_plane.bff.models import CommandType, OperatorIdentity
 
 
 EXPECTED_ROUTES = {
@@ -420,8 +419,8 @@ def test_review_evidence_manifest_matches_task_acceptance() -> None:
 
 
 def test_router_has_no_reverse_dependency_on_main() -> None:
-    import control_loops.router as router_module
-    import control_loops.service as service_module
+    from services.control_plane.bff.control_loops import router as router_module
+    from services.control_plane.bff.control_loops import service as service_module
 
     for module in (router_module, service_module):
         source = inspect.getsource(module)
@@ -430,7 +429,7 @@ def test_router_has_no_reverse_dependency_on_main() -> None:
 
 
 def test_service_has_no_shadow_command_authority() -> None:
-    import control_loops.service as service_module
+    from services.control_plane.bff.control_loops import service as service_module
 
     source = inspect.getsource(service_module)
     for forbidden in (

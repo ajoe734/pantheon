@@ -20,10 +20,9 @@ from pathlib import Path
 
 from fastapi.testclient import TestClient
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
 from services.control_plane.bff import main as bff_main
-from ports import create_in_memory_read_surface_ports  # noqa: E402
+from services.control_plane.bff.ports import create_in_memory_read_surface_ports  # noqa: E402
 from services.source_ingestion.strategy_seed_builder import (  # noqa: E402
     StrategySpecSeed,
     StrategySpecSeedStatus,

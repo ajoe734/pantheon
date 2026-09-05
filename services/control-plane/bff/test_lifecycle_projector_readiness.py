@@ -8,7 +8,6 @@ from fastapi.testclient import TestClient
 
 
 BFF_DIR = Path(__file__).resolve().parent
-sys.path.insert(0, str(BFF_DIR))
 
 from services.control_plane.bff import main as bff_main
 

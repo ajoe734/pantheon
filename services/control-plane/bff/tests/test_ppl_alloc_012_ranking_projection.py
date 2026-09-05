@@ -10,11 +10,10 @@ from typing import Any
 
 from fastapi.testclient import TestClient
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
 from services.control_plane.bff import main as bff_main
-from command_queue import CommandStore
-from rebalance_authority_test_support import (
+from services.control_plane.bff.command_queue import CommandStore
+from services.control_plane.bff.tests.rebalance_authority_test_support import (
     CapitalBffAuthorityHarness,
     PplProjectionTestDouble,
 )
@@ -3036,7 +3035,7 @@ def test_binding_runtime_and_stage_mismatches_fail_closed() -> None:
 
 
 def test_pm12_quarterly_rows_allocation_policy_compatibility() -> None:
-    from persona_allocation_policy import calculate_target_allocations
+    from services.control_plane.bff.persona_allocation_policy import calculate_target_allocations
     row = {
         "persona_id": "persona-ppl-alloc-012-compat",
         "stage": "live_running",

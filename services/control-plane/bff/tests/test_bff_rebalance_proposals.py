@@ -11,9 +11,9 @@ from urllib.error import HTTPError, URLError
 import pytest
 from fastapi.testclient import TestClient
 
-import command_executor
+import services.control_plane.bff.command_executor as command_executor
 from services.control_plane.bff import main as bff_main
-from rebalance_authority_test_support import (
+from services.control_plane.bff.tests.rebalance_authority_test_support import (
     APPROVER_HEADERS,
     HEADERS,
     CapitalBffAuthorityHarness,

@@ -4,7 +4,7 @@ from __future__ import annotations
 import inspect
 import re
 
-from agora.trading_room import router
+from services.control_plane.bff.agora.trading_room import router
 
 
 def test_workspace_proposal_emits_stable_i18n_keys_and_codes() -> None:

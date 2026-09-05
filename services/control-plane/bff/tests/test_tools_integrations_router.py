@@ -775,7 +775,7 @@ def test_openclaw_session_validation_failures(client: TestClient):
 
 def test_openclaw_production_client_signature_contract():
     import inspect
-    from openclaw_ops_client import OpenClawOpsClient
+    from services.control_plane.bff.openclaw_ops_client import OpenClawOpsClient
 
     sig_create = inspect.signature(OpenClawOpsClient.create_session)
     create_params = list(sig_create.parameters.keys())

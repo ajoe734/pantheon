@@ -7,17 +7,16 @@ from pathlib import Path
 
 import pytest
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
-from agora.interaction.runner import run_selected_persona_interaction
-from agora.interaction.provider import (
+from services.control_plane.bff.agora.interaction.runner import run_selected_persona_interaction
+from services.control_plane.bff.agora.interaction.provider import (
     RecommendedMeasure,
     authority_boundary,
     build_participant_admission,
     build_provider_prompt,
 )
-from agora.interaction.router import SubmitInteractionRequest
-from openclaw_ops_client import OpenClawOpsClientError
+from services.control_plane.bff.agora.interaction.router import SubmitInteractionRequest
+from services.control_plane.bff.openclaw_ops_client import OpenClawOpsClientError
 
 
 AUTHORITY_KEYS = {

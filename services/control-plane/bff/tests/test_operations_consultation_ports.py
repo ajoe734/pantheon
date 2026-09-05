@@ -20,10 +20,9 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
-from console_gap.workflows_hooks import create_workflows_hooks_router
-from ports.operations_consultation import (
+from services.control_plane.bff.console_gap.workflows_hooks import create_workflows_hooks_router
+from services.control_plane.bff.ports.operations_consultation import (
     CompositeOperationsConsultationPort,
     ConsultationReaderPort,
     DomainConsultationPort,
@@ -37,7 +36,7 @@ from ports.operations_consultation import (
     create_in_memory_operations_consultation_port,
     create_operations_consultation_port,
 )
-from openclaw_ops_client import OpenClawOpsClient, OpenClawOpsClientError
+from services.control_plane.bff.openclaw_ops_client import OpenClawOpsClient, OpenClawOpsClientError
 from services.consultation.models import (
     ConsultAuditEvent,
     ConsultEvidenceAttachment,

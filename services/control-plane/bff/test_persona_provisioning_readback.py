@@ -12,8 +12,8 @@ from typing import Any
 import pytest
 
 from services.control_plane.bff import main as bff_main
-from personas.reconciliation import PersonaProvisioningReconciliationMutationPort
-from ports import ReadSurfacePorts, create_read_surface_ports
+from services.control_plane.bff.personas.reconciliation import PersonaProvisioningReconciliationMutationPort
+from services.control_plane.bff.ports import ReadSurfacePorts, create_read_surface_ports
 
 
 PERSONA_ID = "persona-dynamic-alpha"

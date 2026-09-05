@@ -20,19 +20,15 @@ from pathlib import Path
 
 BFF_DIR = Path(__file__).resolve().parent.parent
 OODA_DIR = BFF_DIR.parent / "ooda"
-if str(BFF_DIR) not in sys.path:
-    sys.path.insert(0, str(BFF_DIR))
-if str(OODA_DIR) not in sys.path:
-    sys.path.insert(0, str(OODA_DIR))
 
-from ports.ooda_management import (
+from services.control_plane.bff.ports.ooda_management import (
     InterventionsPort,
     ManagementReviewQueuePort,
     OodaManagementDomainPort,
     OodaPacketsPort,
     SynthesisConflictLogsPort,
 )
-from management_read_models.router import (
+from services.control_plane.bff.management_read_models.router import (
     create_management_read_models_router,
     get_activity_read_model,
     get_formula_jobs_read_model,
@@ -40,7 +36,7 @@ from management_read_models.router import (
     get_postmortem_detail_read_model,
     get_postmortems_read_model,
 )
-from ooda_loop_packet import (
+from services.control_plane.ooda.ooda_loop_packet import (
     LoopEnvironment,
     LoopStatus,
     LoopType,

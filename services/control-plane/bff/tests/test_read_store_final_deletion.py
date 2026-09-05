@@ -12,14 +12,13 @@ BFF_DIR = TESTS_DIR.parent
 REPO_ROOT = TESTS_DIR.parents[3]
 READ_STORE_PATH = BFF_DIR / "read_store.py"
 
-sys.path.insert(0, str(BFF_DIR))
 
-from models import (  # noqa: E402
+from services.control_plane.bff.models import (  # noqa: E402
     EVIDENCE_CAPABILITY_MAP,
     OperatorIdentity,
     redact_evidence_refs,
 )
-from personas.service import _market_persona_required_data_sources  # noqa: E402
+from services.control_plane.bff.personas.service import _market_persona_required_data_sources  # noqa: E402
 
 
 TASK_REVIEW_EVIDENCE = {

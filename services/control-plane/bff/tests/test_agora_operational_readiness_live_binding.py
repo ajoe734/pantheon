@@ -11,9 +11,8 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 BFF_ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(BFF_ROOT))
 
-from agora.operational_readiness import (
+from services.control_plane.bff.agora.operational_readiness import (
     AgoraOperationalReadinessService,
     EnvironmentAgoraOperationalReadinessProvider,
     ReadStoreAgoraOperationalReadinessProvider,

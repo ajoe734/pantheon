@@ -13,8 +13,8 @@ from contextlib import contextmanager
 import pytest
 from fastapi.testclient import TestClient
 
-from assistant_conversation_store import AssistantConversationStore, PostgresAssistantConversationStore
-from ports import ReadSurfacePorts
+from services.control_plane.bff.assistant_conversation_store import AssistantConversationStore, PostgresAssistantConversationStore
+from services.control_plane.bff.ports import ReadSurfacePorts
 from services.control_plane.bff import main as bff_main
 
 
@@ -87,8 +87,6 @@ def test_management_ai_attachment_store_uses_gcs_bucket_metadata(monkeypatch) ->
 # do not require a fully-configured BFF environment.
 # ---------------------------------------------------------------------------
 _BFF_DIR = os.path.dirname(os.path.abspath(__file__))
-if _BFF_DIR not in sys.path:
-    sys.path.insert(0, _BFF_DIR)
 
 
 def _append_60_turns(store: object, *, session_id: str) -> str:
@@ -477,8 +475,8 @@ def _persist_client(tmp_path: Path, store_path: Path) -> Iterator[object]:
     Yield a TestClient wired to a file-backed ManagementAiConversationStore.
     Restores bff_main state on exit so tests are isolated.
     """
-    import main as bff_main
-    from management_ai_store import ManagementAiConversationStore, ManagementAiAttachmentStore
+    from services.control_plane.bff import main as bff_main
+    from services.control_plane.bff.management_ai_store import ManagementAiConversationStore, ManagementAiAttachmentStore
     from fastapi.testclient import TestClient
 
     saved_store = bff_main._MGMT_AI_CONVERSATION_STORE
@@ -511,7 +509,7 @@ def test_attachment_storage_base64_proxy_url_and_size_rejections(
     object store, turn rows keep metadata/storageUrl only, conversation GET
     returns a proxy URL, and oversize payloads are rejected with 413.
     """
-    from management_ai_store import ManagementAiConversationStore
+    from services.control_plane.bff.management_ai_store import ManagementAiConversationStore
 
     monkeypatch.setenv("PANTHEON_ASSISTANT_PROVIDER", "deterministic")
     monkeypatch.setenv("PANTHEON_MANAGEMENT_NL_ASSISTANT_PROVIDER_ENABLED", "false")
@@ -766,9 +764,9 @@ def test_persist_turns(tmp_path: Path) -> None:
     - Restart durability: turns survive creating a new store from the same file
     - Idempotency replay does not create duplicate turns
     """
-    import main as bff_main
-    from management_ai_store import ManagementAiConversationStore
-    from assistant_conversation_store import AssistantConversationStore
+    from services.control_plane.bff import main as bff_main
+    from services.control_plane.bff.management_ai_store import ManagementAiConversationStore
+    from services.control_plane.bff.assistant_conversation_store import AssistantConversationStore
 
     store_path = tmp_path / "mgmt-ai-persist-write-002.json"
     # Text longer than the 400-char _management_ai_summary_value cap used in audit events.

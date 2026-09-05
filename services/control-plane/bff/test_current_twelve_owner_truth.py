@@ -16,11 +16,10 @@ import pytest
 
 
 BFF_DIR = Path(__file__).resolve().parent
-sys.path.insert(0, str(BFF_DIR))
 
 from services.control_plane.bff import main as bff_main
-import loop_inventory as loop_inventory_model  # noqa: E402
-from downstream_health_monitor import _probe_http  # noqa: E402
+from services.control_plane.bff import loop_inventory as loop_inventory_model  # noqa: E402
+from services.control_plane.bff.downstream_health_monitor import _probe_http  # noqa: E402
 
 
 REPO_ROOT = BFF_DIR.parents[2]

@@ -20,8 +20,8 @@ import urllib.error
 
 import pytest
 
-from models import CommandStatus, CommandType
-from command_adapters import (
+from services.control_plane.bff.models import CommandStatus, CommandType
+from services.control_plane.bff.command_adapters import (
     ActionUnavailableError,
     CapitalCommandAdapter,
     DeploymentCommandAdapter,
@@ -37,7 +37,7 @@ from command_adapters import (
     dispatch_domain_command,
     find_adapter,
 )
-from command_executor import execute_command, execute_command_with_status
+from services.control_plane.bff.command_executor import execute_command, execute_command_with_status
 
 
 class TestActionToOwnerMatrix(unittest.TestCase):

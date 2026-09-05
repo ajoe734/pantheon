@@ -13,11 +13,11 @@ from urllib.parse import urlsplit
 
 from fastapi.testclient import TestClient
 
-import command_executor
-import main as bff_main
-from command_queue import CommandStore
-from management_projection_test_doubles import PplFixtureBuilder
-from ports import ReadSurfacePorts, create_in_memory_read_surface_ports
+from services.control_plane.bff import command_executor
+from services.control_plane.bff import main as bff_main
+from services.control_plane.bff.command_queue import CommandStore
+from services.control_plane.bff.ports import ReadSurfacePorts, create_in_memory_read_surface_ports
+from services.control_plane.bff.tests.management_projection_test_doubles import PplFixtureBuilder
 
 
 AUTHORITY_URL = "http://capital-authority.test"

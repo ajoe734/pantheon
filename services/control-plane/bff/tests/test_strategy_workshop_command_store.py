@@ -7,7 +7,7 @@ from unittest import mock
 
 import pytest
 
-from agora.strategy_workshop.store import MemoryWorkshopStore, PostgresWorkshopStore
+from services.control_plane.bff.agora.strategy_workshop.store import MemoryWorkshopStore, PostgresWorkshopStore
 
 
 def _store(*, status: str = "open") -> MemoryWorkshopStore:

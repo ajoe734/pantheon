@@ -36,8 +36,7 @@ import sys
 from contextlib import contextmanager
 from typing import Any, Dict, List, Optional
 
-sys.path.insert(0, os.path.dirname(__file__))
-from ports import create_in_memory_read_surface_ports
+from services.control_plane.bff.ports import create_in_memory_read_surface_ports
 from fastapi.testclient import TestClient
 from services.control_plane.bff import main as bff_main
 from services.control_plane.bff.main import app

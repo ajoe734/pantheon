@@ -24,9 +24,8 @@ import pytest
 
 # conftest.py adds the BFF dir to sys.path for all tests in this tree,
 # but we also add it explicitly for editors that run the file standalone.
-sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
-from assistant_conversation_store import PostgresAssistantConversationStore  # noqa: E402
+from services.control_plane.bff.assistant_conversation_store import PostgresAssistantConversationStore  # noqa: E402
 
 
 # ---------------------------------------------------------------------------

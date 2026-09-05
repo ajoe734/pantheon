@@ -37,8 +37,6 @@ _INCIDENTS_DIR = _REPO_ROOT / "services" / "incidents"
 
 for _p in (_REPO_ROOT, _BFF_DIR, _CP_GOV):
     _p_str = str(_p)
-    if _p_str not in sys.path:
-        sys.path.insert(0, _p_str)
 
 from services.control_plane.bff import main as bff_main
 from fastapi.testclient import TestClient  # noqa: E402
@@ -55,8 +53,6 @@ from services.postmortems.consumer import ResolvedIncidentPostmortemDraftConsume
 # front of sys.path and clear the cached BFF models module so the loader picks up
 # services/evolution/models.py instead.
 _saved_bff_models = sys.modules.pop("models", None)
-if str(_EVO_DIR) not in sys.path:
-    sys.path.insert(0, str(_EVO_DIR))
 
 import services.evolution.main as evo_main  # noqa: E402
 

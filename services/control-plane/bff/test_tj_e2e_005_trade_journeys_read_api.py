@@ -17,11 +17,10 @@ import sys
 import time
 
 BFF_DIR = os.path.dirname(os.path.abspath(__file__))
-sys.path.insert(0, BFF_DIR)
 
 from services.control_plane.bff import main as bff_main
-import trade_journeys as tj  # noqa: E402
-from trade_journey_projection_store import (  # noqa: E402
+from services.control_plane.bff import trade_journeys as tj  # noqa: E402
+from services.control_plane.bff.trade_journey_projection_store import (  # noqa: E402
     InvalidPageToken,
     PageTokenCodec,
     ProjectionPage,
@@ -251,7 +250,7 @@ class InMemoryPostgresProjectionReader:
                     ],
                 }
             )
-        from trade_journey_projection_store import TimelinePage
+        from services.control_plane.bff.trade_journey_projection_store import TimelinePage
         return TimelinePage(items=page, next_page_token=next_page_token, total=total)
 
     def resolve(
@@ -319,7 +318,7 @@ def _direct_client(events, *, projection_reader=None):
     test-double identity extractor.
     """
     from fastapi import FastAPI, HTTPException
-    from models import OperatorIdentity
+    from services.control_plane.bff.models import OperatorIdentity
 
     if projection_reader is None:
         projection_reader = InMemoryPostgresProjectionReader(events)

@@ -5,8 +5,7 @@ import os
 import sys
 import tempfile
 
-sys.path.insert(0, os.path.dirname(__file__))
-from ports import create_in_memory_read_surface_ports
+from services.control_plane.bff.ports import create_in_memory_read_surface_ports
 
 
 def test_pkt008_rollback_review_seed_contract() -> None:

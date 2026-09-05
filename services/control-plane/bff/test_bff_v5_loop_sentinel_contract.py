@@ -18,15 +18,14 @@ import pytest
 from fastapi.testclient import TestClient
 
 BFF_DIR = Path(__file__).resolve().parent
-sys.path.insert(0, str(BFF_DIR))
 
 from services.control_plane.bff import main as bff_main
-import downstream_health_monitor as health_module  # noqa: E402
-from downstream_health_monitor import (  # noqa: E402
+from services.control_plane.bff import downstream_health_monitor as health_module  # noqa: E402
+from services.control_plane.bff.downstream_health_monitor import (  # noqa: E402
     DownstreamHealthMonitor,
     DownstreamProbeResult,
 )
-from ports import ReadSurfacePorts  # noqa: E402
+from services.control_plane.bff.ports import ReadSurfacePorts  # noqa: E402
 from services.runtime_auth_inbound import encode_jwt_hs256  # noqa: E402
 import services.telemetry.main as telemetry_main  # noqa: E402
 from services.telemetry.ingest_svc import TelemetryIngestService  # noqa: E402
@@ -1285,7 +1284,7 @@ def test_l12_bff_recovery_survives_delivered_history_retention(
 
 
 def test_command_executor_post_and_get_json_integration_with_downstream_monitor(tmp_path, monkeypatch):
-    import command_executor
+    from services.control_plane.bff import command_executor as command_executor
     target_url = "http://127.0.0.1:28097"
     monkeypatch.setenv("PANTHEON_SOURCE_INGEST_API_URL", target_url)
     monitor = DownstreamHealthMonitor(

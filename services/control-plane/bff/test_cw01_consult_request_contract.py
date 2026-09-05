@@ -11,10 +11,9 @@ from typing import Any, Dict, List, Optional
 
 from fastapi.testclient import TestClient
 
-sys.path.insert(0, os.path.dirname(__file__))
 
 from services.control_plane.bff import main as bff_main
-from ports.operations_consultation import DomainConsultationPort
+from services.control_plane.bff.ports.operations_consultation import DomainConsultationPort
 from services.consultation.store import ConsultationStore
 
 OPERATOR_AUTH = "Bearer test-operator:operator"

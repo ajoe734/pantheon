@@ -7,7 +7,6 @@ from contextlib import contextmanager
 
 from fastapi.testclient import TestClient
 
-sys.path.insert(0, os.path.dirname(__file__))
 
 from services.control_plane.bff import main as bff_main
 from services.source_ingestion.strategy_seed_store import StrategySpecSeedStore

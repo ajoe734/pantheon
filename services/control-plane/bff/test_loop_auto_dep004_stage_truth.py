@@ -10,10 +10,9 @@ from typing import Iterator
 
 from fastapi.testclient import TestClient
 
-sys.path.insert(0, os.path.dirname(__file__))
 
 from services.control_plane.bff import main as bff_main
-from ports import create_read_surface_ports
+from services.control_plane.bff.ports import create_read_surface_ports
 
 
 HEADERS = {"Authorization": "Bearer dep004-operator:operator"}
@@ -281,7 +280,7 @@ def _isolated_dep004_bff(
                 ],
             )
 
-        from ports import create_in_memory_read_surface_ports
+        from services.control_plane.bff.ports import create_in_memory_read_surface_ports
 
         plan_list = list(deployment_plans.values())
         monitoring_session = (

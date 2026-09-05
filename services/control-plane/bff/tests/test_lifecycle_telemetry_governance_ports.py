@@ -16,9 +16,8 @@ from typing import Any, Dict, List
 
 import pytest
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
-from ports.lifecycle_telemetry_governance import (
+from services.control_plane.bff.ports.lifecycle_telemetry_governance import (
     IncidentReaderPort,
     LifecycleReaderPort,
     GovernanceReaderPort,

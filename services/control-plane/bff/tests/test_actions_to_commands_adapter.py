@@ -8,10 +8,9 @@ from typing import Iterator
 
 from fastapi.testclient import TestClient
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
 from services.control_plane.bff import main as bff_main
-from command_queue import CommandStore
+from services.control_plane.bff.command_queue import CommandStore
 
 
 OPERATOR_HEADERS = {
@@ -193,7 +192,7 @@ def test_bff_actions_adapter_policy_denial_records_foundation_error() -> None:
 
 
 def test_command_adapters_router_single_route_uniqueness() -> None:
-    from command_adapters.router import create_action_command_router
+    from services.control_plane.bff.command_adapters.router import create_action_command_router
     from fastapi import FastAPI
 
     router = create_action_command_router()
@@ -211,7 +210,7 @@ def test_command_adapters_router_single_route_uniqueness() -> None:
 
 
 def test_command_adapters_router_standalone_execution() -> None:
-    from command_adapters.router import create_action_command_router
+    from services.control_plane.bff.command_adapters.router import create_action_command_router
     from fastapi import FastAPI
 
     with tempfile.TemporaryDirectory() as td:
@@ -241,7 +240,7 @@ def test_command_adapters_router_standalone_execution() -> None:
 
 
 def test_command_adapters_router_validations() -> None:
-    from command_adapters.router import create_action_command_router
+    from services.control_plane.bff.command_adapters.router import create_action_command_router
     from fastapi import FastAPI
 
     router = create_action_command_router()

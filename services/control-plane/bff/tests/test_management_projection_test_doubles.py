@@ -19,12 +19,8 @@ import sys
 import unittest
 
 BFF_DIR = Path(__file__).resolve().parent.parent
-if str(BFF_DIR) not in sys.path:
-    sys.path.insert(0, str(BFF_DIR))
 
 TESTS_DIR = Path(__file__).resolve().parent
-if str(TESTS_DIR) not in sys.path:
-    sys.path.insert(0, str(TESTS_DIR))
 
 from management_projection_test_doubles import (
     KNOWN_SEM_DATASETS,
@@ -32,7 +28,7 @@ from management_projection_test_doubles import (
     PplFixtureBuilder,
     SemDatasetReaderTestDouble,
 )
-from ports import create_in_memory_read_surface_ports
+from services.control_plane.bff.ports import create_in_memory_read_surface_ports
 
 
 class TestManagementFixtureBuilder(unittest.TestCase):

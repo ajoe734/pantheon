@@ -10,15 +10,14 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
-from ports.research_knowledge_source import (
+from services.control_plane.bff.ports.research_knowledge_source import (
     DefaultResearchKnowledgeSourcePort,
     ResearchKnowledgeSourcePort,
     _parse_rfc3339,
     _utc_now_rfc3339,
 )
-from console_gap.knowledge import create_knowledge_router
+from services.control_plane.bff.console_gap.knowledge import create_knowledge_router
 from services.memory.institutional_memory_store import (
     InstitutionalMemoryEntry,
     InstitutionalMemoryStore,

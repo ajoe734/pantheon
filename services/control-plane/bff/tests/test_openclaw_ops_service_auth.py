@@ -5,7 +5,7 @@ from unittest import mock
 
 import pytest
 
-from openclaw_ops_client import OpenClawOpsClient, OpenClawOpsClientError
+from services.control_plane.bff.openclaw_ops_client import OpenClawOpsClient, OpenClawOpsClientError
 
 
 class _JsonResponse:

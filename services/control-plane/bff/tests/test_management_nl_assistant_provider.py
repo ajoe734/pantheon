@@ -15,21 +15,20 @@ import pytest
 from fastapi import HTTPException
 from fastapi.testclient import TestClient
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
 from services.control_plane.bff import main as bff_main
-from assistant.control_mode import ControlModeStore
-from assistant.models import AssistantMode
-from management_nl_command_idempotency import (
+from services.control_plane.bff.assistant.control_mode import ControlModeStore
+from services.control_plane.bff.assistant.models import AssistantMode
+from services.control_plane.bff.management_nl_command_idempotency import (
     ManagementNlCommandIdempotencyStore,
     ManagementNlCommandPayloadConflict,
     ManagementNlCommandRecoveryRequired,
     ManagementNlCommandScope,
     ManagementNlCommandStorageError,
 )
-from models import OperatorIdentity
-from openclaw_ops_client import OpenClawOpsClient, OpenClawOpsClientError
-from rebalance_authority_test_support import create_market_persona_projection_test_double
+from services.control_plane.bff.models import OperatorIdentity
+from services.control_plane.bff.openclaw_ops_client import OpenClawOpsClient, OpenClawOpsClientError
+from services.control_plane.bff.tests.rebalance_authority_test_support import create_market_persona_projection_test_double
 
 
 OPERATOR_HEADERS = {"Authorization": "Bearer asst-bff-002:operator"}

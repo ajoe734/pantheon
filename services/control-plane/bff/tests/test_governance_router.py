@@ -8,9 +8,8 @@ from typing import Any, Dict, List, Optional
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
-from governance.router import create_governance_router
+from services.control_plane.bff.governance.router import create_governance_router
 
 
 EXPECTED_ROUTES = {

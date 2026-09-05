@@ -21,17 +21,16 @@ from pathlib import Path
 
 import pytest
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
-from agora.strategy_workshop.router import create_strategy_workshop_router
-from agora.strategy_workshop.routes.execution import build_execution_router
-from agora.strategy_workshop.routes.session import build_session_router
-from agora.strategy_workshop.routes.stream import build_stream_router
-from agora.strategy_workshop.routes.versions import build_versions_router
-from agora.strategy_workshop.store import MemoryWorkshopStore, PostgresWorkshopStore
-from agora.strategy_workshop._admission import build_admission_context
-from agora.strategy_workshop.readiness import build_readiness_assessment
-from agora.strategy_workshop.operations import WorkshopCanonicalOperations
+from services.control_plane.bff.agora.strategy_workshop.router import create_strategy_workshop_router
+from services.control_plane.bff.agora.strategy_workshop.routes.execution import build_execution_router
+from services.control_plane.bff.agora.strategy_workshop.routes.session import build_session_router
+from services.control_plane.bff.agora.strategy_workshop.routes.stream import build_stream_router
+from services.control_plane.bff.agora.strategy_workshop.routes.versions import build_versions_router
+from services.control_plane.bff.agora.strategy_workshop.store import MemoryWorkshopStore, PostgresWorkshopStore
+from services.control_plane.bff.agora.strategy_workshop._admission import build_admission_context
+from services.control_plane.bff.agora.strategy_workshop.readiness import build_readiness_assessment
+from services.control_plane.bff.agora.strategy_workshop.operations import WorkshopCanonicalOperations
 
 _BFF_DIR = Path(os.path.dirname(os.path.dirname(__file__)))
 
@@ -129,7 +128,6 @@ def test_session_versions_execution_stream_subrouters_are_disjoint():
         bff_error=bff_error,
         utc_now=utc_now,
     )
-    sys.path.insert(0, str(_BFF_DIR.parent))
     from privacy.private_content_store import EphemeralKeyProvider, MemoryPrivateContentStore
 
     private_content_store = MemoryPrivateContentStore(key_provider=EphemeralKeyProvider())
@@ -180,7 +178,7 @@ def test_agora_routers_do_not_import_workshop_router_privates(relative_path: str
 
 
 def test_workshop_events_module_is_the_public_sse_owner():
-    from agora.strategy_workshop import events as workshop_events
+    from services.control_plane.bff.agora.strategy_workshop import events as workshop_events
 
     # Interaction/Research import these two names from the public module.
     assert callable(workshop_events._ws_publish)
@@ -188,7 +186,7 @@ def test_workshop_events_module_is_the_public_sse_owner():
 
 
 def test_readiness_has_a_public_non_underscore_entry_point():
-    from agora.strategy_workshop import readiness as workshop_readiness
+    from services.control_plane.bff.agora.strategy_workshop import readiness as workshop_readiness
 
     assert callable(build_readiness_assessment)
     assert workshop_readiness.build_readiness_assessment is build_readiness_assessment

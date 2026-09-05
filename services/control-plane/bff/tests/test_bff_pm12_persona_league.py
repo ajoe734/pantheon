@@ -7,10 +7,9 @@ import tempfile
 import pytest
 from fastapi.testclient import TestClient
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
 from services.control_plane.bff import main as bff_main
-from persona_provisioning import MemoryPersonaProvisioningStore
+from services.control_plane.bff.persona_provisioning import MemoryPersonaProvisioningStore
 from test_persona_provisioning_coordinator import FakeOwnerTransport, _schedule_receipt
 
 

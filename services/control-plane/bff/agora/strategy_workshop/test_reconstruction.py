@@ -6,10 +6,8 @@ from pathlib import Path
 import pytest
 
 _CONTROL_PLANE_DIR = Path(__file__).resolve().parents[3]
-if str(_CONTROL_PLANE_DIR) not in sys.path:
-    sys.path.insert(0, str(_CONTROL_PLANE_DIR))
 
-from agora.strategy_workshop.reconstruction import (
+from services.control_plane.bff.agora.strategy_workshop.reconstruction import (
     StrategyReconstructionResult,
     reconstruct_strategy_from_events,
 )
@@ -72,8 +70,8 @@ def test_strategy_reconstruction_nbq_uniqueness_and_completeness_derivation() ->
 def test_reconstruct_endpoint_integration(monkeypatch: pytest.MonkeyPatch) -> None:
     from fastapi.testclient import TestClient
     from fastapi import FastAPI, HTTPException
-    from agora.strategy_workshop.router import create_strategy_workshop_router
-    from agora.strategy_workshop.store import MemoryWorkshopStore
+    from services.control_plane.bff.agora.strategy_workshop.router import create_strategy_workshop_router
+    from services.control_plane.bff.agora.strategy_workshop.store import MemoryWorkshopStore
     from types import SimpleNamespace
 
     store = MemoryWorkshopStore()
@@ -97,7 +95,7 @@ def test_reconstruct_endpoint_integration(monkeypatch: pytest.MonkeyPatch) -> No
         return "2026-08-13T12:00:00Z"
 
     # Patch scope resolution to avoid top-level models import dependency in unit test
-    import agora.identity.scope as scope_module
+    from services.control_plane.bff.agora.identity import scope as scope_module
     monkeypatch.setattr(
         scope_module,
         "resolve_agora_user_scope",

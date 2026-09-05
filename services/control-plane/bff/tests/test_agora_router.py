@@ -18,10 +18,9 @@ import uuid
 import pytest
 from fastapi.testclient import TestClient
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
 from services.control_plane.bff import main as bff_main
-from ports import create_in_memory_read_surface_ports
+from services.control_plane.bff.ports import create_in_memory_read_surface_ports
 
 _OPERATOR_AUTH = "Bearer agora-test-user:operator"
 _NO_AUTH = None
@@ -192,7 +191,7 @@ def _install_agora_store(monkeypatch, store) -> None:
 # --------------------------------------------------------------------------- #
 
 def test_agora_models_importable():
-    from agora.models import (
+    from services.control_plane.bff.agora.models import (
         AgoraReadPredicate,
         AgoraServantPolicy,
         AgoraCapabilityScope,
@@ -220,27 +219,27 @@ def test_agora_models_importable():
 
 
 def test_agora_error_code_typed():
-    from agora.models import AgoraErrorCode, AgoraError
+    from services.control_plane.bff.agora.models import AgoraErrorCode, AgoraError
     err = AgoraError(AgoraErrorCode.NOT_IMPLEMENTED, "stub", status_code=501)
     assert err.code == AgoraErrorCode.NOT_IMPLEMENTED
     assert err.status_code == 501
 
 
 def test_agora_router_factory_importable():
-    from agora.router import create_agora_router
+    from services.control_plane.bff.agora.router import create_agora_router
     assert callable(create_agora_router)
 
 
 def test_agora_sub_router_factories_importable():
-    from agora.identity.router import create_identity_router
-    from agora.servant.router import create_servant_router
-    from agora.strategy_workshop.router import create_strategy_workshop_router
-    from agora.research.router import create_research_router
-    from agora.trading_room.router import create_trading_room_router
-    from agora.dashboard.router import create_dashboard_router
-    from agora.shadow.router import create_shadow_router
-    from agora.personalization.router import create_personalization_router
-    from agora.management_projection.router import create_management_projection_router
+    from services.control_plane.bff.agora.identity.router import create_identity_router
+    from services.control_plane.bff.agora.servant.router import create_servant_router
+    from services.control_plane.bff.agora.strategy_workshop.router import create_strategy_workshop_router
+    from services.control_plane.bff.agora.research.router import create_research_router
+    from services.control_plane.bff.agora.trading_room.router import create_trading_room_router
+    from services.control_plane.bff.agora.dashboard.router import create_dashboard_router
+    from services.control_plane.bff.agora.shadow.router import create_shadow_router
+    from services.control_plane.bff.agora.personalization.router import create_personalization_router
+    from services.control_plane.bff.agora.management_projection.router import create_management_projection_router
     for factory in (
         create_identity_router, create_servant_router, create_strategy_workshop_router,
         create_research_router, create_trading_room_router, create_dashboard_router,
@@ -650,7 +649,7 @@ def test_servant_ensure_and_eligibility_with_read_surface_ports_and_explicit_wri
 
     and eligibility returns 200 with the freshly ensured servant when write owner is explicit.
     """
-    from ports.read_surface_ports import create_read_surface_ports
+    from services.control_plane.bff.ports.read_surface_ports import create_read_surface_ports
 
     write_owner = _create_test_agora_store(allow_fallback=False)
     read_surface = create_read_surface_ports(persona_registry_store=write_owner)
@@ -711,7 +710,7 @@ def test_servant_ensure_and_eligibility_with_read_surface_ports_and_explicit_wri
 
 def test_servant_ensure_fails_if_read_surface_ports_is_used_as_write_owner(monkeypatch):
     """Verifies that servant ensure requires an explicit command-capable write owner and never treats ReadSurfacePorts as a writer."""
-    from ports.read_surface_ports import create_in_memory_read_surface_ports
+    from services.control_plane.bff.ports.read_surface_ports import create_in_memory_read_surface_ports
 
     read_surface = create_in_memory_read_surface_ports()
     monkeypatch.setattr(bff_main, "read_store", read_surface)
@@ -733,9 +732,9 @@ def test_servant_ensure_fails_if_read_surface_ports_is_used_as_write_owner(monke
 
 def test_agora_routers_have_zero_reverse_imports_of_main():
     """Verify that agora identity and personalization routers do not import main.py."""
-    import agora.identity.router as id_router
-    import agora.personalization.router as pers_router
-    import agora.service as agora_service
+    from services.control_plane.bff.agora.identity import router as id_router
+    from services.control_plane.bff.agora.personalization import router as pers_router
+    from services.control_plane.bff.agora import service as agora_service
     import inspect
 
     id_src = inspect.getsource(id_router)
@@ -752,7 +751,7 @@ def test_agora_routers_have_zero_reverse_imports_of_main():
 
 def test_default_allowlisted_adapter_emits_simulation_provenance_by_default():
     """OP-G01: DefaultAllowlistedAdapter must emit simulation provenance unless real backend receipt exists."""
-    from agora.research.dispatcher import DefaultAllowlistedAdapter
+    from services.control_plane.bff.agora.research.dispatcher import DefaultAllowlistedAdapter
 
     adapter = DefaultAllowlistedAdapter("backtest", "vectorbt_runner")
     assert adapter.default_provenance == "simulation"
@@ -788,7 +787,7 @@ def test_default_allowlisted_adapter_emits_simulation_provenance_by_default():
 
 def test_agora_service_session_and_insight_lifecycle():
     """Verify AgoraService session creation, message append, and insight creation."""
-    from agora.service import AgoraService
+    from services.control_plane.bff.agora.service import AgoraService
 
     store = _create_test_agora_store()
     svc = AgoraService(get_read_store=lambda: store)
@@ -828,8 +827,8 @@ def test_agora_service_session_and_insight_lifecycle():
 
 def test_agora_service_session_status_uses_canonical_consultation_port():
     """The HTTP singular status filter must not leak into the plural port API."""
-    from agora.service import AgoraService
-    from ports import ReadSurfacePorts
+    from services.control_plane.bff.agora.service import AgoraService
+    from services.control_plane.bff.ports import ReadSurfacePorts
 
     class _ConsultationReads:
         def list_consult_requests(
@@ -855,7 +854,7 @@ def test_main_py_has_zero_legacy_agora_route_decorators():
     """Acceptance: main.py must have 0 legacy @app Agora route decorators remaining."""
     import inspect
     import re
-    import main as bff_main
+    from services.control_plane.bff import main as bff_main
 
     main_src = inspect.getsource(bff_main)
     pattern = re.compile(r'@app\.(get|post|put|patch|delete)\(\s*["\'](/bff/agora|/api/v1/agora|/bff/sse/agora|/bff/research/tasks)')
@@ -1025,8 +1024,8 @@ def test_migrated_agora_committee_posts_accept_optional_bodies(monkeypatch):
 
 def test_agora_service_imports_ports_package_interfaces():
     """Acceptance: agora/service.py must import canonical ports interfaces from ports package."""
-    import agora.service as agora_service
-    from ports import ReadSurfacePorts
+    from services.control_plane.bff.agora import service as agora_service
+    from services.control_plane.bff.ports import ReadSurfacePorts
 
     assert hasattr(agora_service, "ReadSurfacePorts")
     assert agora_service.ReadSurfacePorts is ReadSurfacePorts

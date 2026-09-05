@@ -9,9 +9,8 @@ from typing import Any, Dict, List, Optional
 from fastapi import FastAPI, HTTPException
 from fastapi.testclient import TestClient
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
-from research.router import RESEARCH_ROUTE_INVENTORY, create_research_router  # noqa: E402
+from services.control_plane.bff.research.router import RESEARCH_ROUTE_INVENTORY, create_research_router  # noqa: E402
 
 
 # Copied from the audited migration assignment, not derived from router.py.

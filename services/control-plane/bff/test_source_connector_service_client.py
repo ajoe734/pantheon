@@ -3,9 +3,8 @@ from __future__ import annotations
 import os
 import sys
 
-sys.path.insert(0, os.path.dirname(__file__))
 
-from ports import DefaultResearchKnowledgeSourcePort
+from services.control_plane.bff.ports import DefaultResearchKnowledgeSourcePort
 
 
 def test_bff_reads_source_connector_registry_through_typed_source_port() -> None:

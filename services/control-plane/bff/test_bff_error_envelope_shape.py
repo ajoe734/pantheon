@@ -6,10 +6,9 @@ from uuid import UUID
 
 from fastapi.testclient import TestClient
 
-sys.path.insert(0, os.path.dirname(__file__))
 
 from services.control_plane.bff import main as bff_main
-from models import ErrorCode
+from services.control_plane.bff.models import ErrorCode
 
 
 PACK_D_D21_ERROR_CODES = [

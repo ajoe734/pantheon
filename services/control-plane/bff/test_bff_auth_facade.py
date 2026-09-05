@@ -22,14 +22,11 @@ from unittest.mock import patch
 import pytest
 from fastapi.testclient import TestClient
 
-sys.path.insert(0, os.path.dirname(__file__))
 _REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
-if _REPO_ROOT not in sys.path:
-    sys.path.insert(0, _REPO_ROOT)
 
 from services.control_plane.bff import main as bff_main
 from services.control_plane.bff.main import _extract_identity, _extract_identity_jwt, _extract_identity_stub
-from models import ErrorCode, OperatorIdentity
+from services.control_plane.bff.models import ErrorCode, OperatorIdentity
 from services.runtime_auth_inbound import encode_jwt_hs256
 
 _SECRET = "test-bff-secret-1234"
@@ -424,7 +421,7 @@ class TestSettingsAuthIntegration:
         with patch.dict(os.environ, env, clear=False):
             with tempfile.TemporaryDirectory() as td:
                 original = bff_main.settings_store
-                from settings_store import SettingsStore
+                from services.control_plane.bff.settings_store import SettingsStore
                 bff_main.settings_store = SettingsStore(os.path.join(td, "settings.json"))
                 c = TestClient(bff_main.app)
                 yield c
@@ -443,7 +440,7 @@ class TestSettingsAuthIntegration:
         with patch.dict(os.environ, env, clear=False):
             with tempfile.TemporaryDirectory() as td:
                 original = bff_main.settings_store
-                from settings_store import SettingsStore
+                from services.control_plane.bff.settings_store import SettingsStore
                 bff_main.settings_store = SettingsStore(os.path.join(td, "settings.json"))
                 c = TestClient(bff_main.app)
                 yield c
@@ -881,7 +878,7 @@ class TestExtractIdentityJwks:
             with patch.dict(os.environ, env, clear=False):
                 with tempfile.TemporaryDirectory() as td:
                     original = bff_main.settings_store
-                    from settings_store import SettingsStore
+                    from services.control_plane.bff.settings_store import SettingsStore
 
                     bff_main.settings_store = SettingsStore(os.path.join(td, "settings.json"))
                     try:

@@ -12,7 +12,7 @@ from threading import Barrier
 
 import pytest
 
-from persona_provisioning import (
+from services.control_plane.bff.persona_provisioning import (
     PostgresPersonaProvisioningStore,
     ProvisioningLeaseLost,
 )

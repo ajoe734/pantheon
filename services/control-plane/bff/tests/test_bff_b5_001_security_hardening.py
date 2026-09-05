@@ -8,14 +8,13 @@ from typing import Iterator
 
 from fastapi.testclient import TestClient
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
 from services.control_plane.bff import main as bff_main
-from action_catalog import get_catalog_entry
-from command_executor import execute_command_with_status
-from command_queue import CommandStore
-from models import CommandStatus, CommandType, RiskLevel
-from ports import create_in_memory_read_surface_ports
+from services.control_plane.bff.action_catalog import get_catalog_entry
+from services.control_plane.bff.command_executor import execute_command_with_status
+from services.control_plane.bff.command_queue import CommandStore
+from services.control_plane.bff.models import CommandStatus, CommandType, RiskLevel
+from services.control_plane.bff.ports import create_in_memory_read_surface_ports
 
 
 HEADERS = {
@@ -243,7 +242,7 @@ def test_human_gate_revoke_fails_closed_after_downstream_execution() -> None:
 
 
 def test_human_gate_catalog_and_executor_surface_two_man_evidence(monkeypatch) -> None:
-    import command_executor
+    from services.control_plane.bff import command_executor as command_executor
     monkeypatch.setitem(command_executor._EXECUTORS, CommandType.HUMAN_GATE_APPROVE, command_executor._execute_bff_action_adapter)
     for command in ("HumanGateApprove", "HumanGateReject", "HumanGateRevoke"):
         entry = get_catalog_entry(command)

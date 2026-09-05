@@ -6,10 +6,9 @@ import uuid
 
 from fastapi.testclient import TestClient
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 from services.control_plane.bff import main as bff_main
-from agora.interaction.worker import AgoraInteractionWorker
-from agora.strategy_workshop.store import MemoryWorkshopStore
+from services.control_plane.bff.agora.interaction.worker import AgoraInteractionWorker
+from services.control_plane.bff.agora.strategy_workshop.store import MemoryWorkshopStore
 
 AUTH = {"Authorization": "Bearer interaction-user:operator", "Idempotency-Key": "idem-context-1"}
 

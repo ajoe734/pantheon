@@ -8,7 +8,6 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Iterator
 
-sys.path.insert(0, os.path.dirname(__file__))
 
 os.environ.setdefault("PANTHEON_BFF_AUTH_STUB", "true")
 os.environ.setdefault("PANTHEON_BFF_AUTH_MODE", "permissive")
@@ -16,8 +15,8 @@ os.environ.setdefault("PANTHEON_BFF_AUTH_MODE", "permissive")
 import json
 from services.control_plane.bff import main as bff_main
 from fastapi.testclient import TestClient
-from ports import ReadSurfacePorts
-from models import CommandType, RiskLevel
+from services.control_plane.bff.ports import ReadSurfacePorts
+from services.control_plane.bff.models import CommandType, RiskLevel
 
 OPERATOR_TOKEN = "Bearer op-mgmt-ops-006:operator"
 ADMIN_TOKEN = "Bearer op-mgmt-ops-006:admin"
@@ -149,7 +148,7 @@ def test_rejected_preconditions_unverifiable_source_confidence() -> None:
 
     original_ops_model = bff_main._ops_read_model_entry_for_persona
 
-    from operations_read_model import OperationsReadModelEntry, OperationsIdentity, DataConfidence as OpsDataConfidence, OperationsPerformance
+    from services.control_plane.bff.operations_read_model import OperationsReadModelEntry, OperationsIdentity, DataConfidence as OpsDataConfidence, OperationsPerformance
 
     def mock_ops_model(persona_id, period="latest"):
         return OperationsReadModelEntry(
@@ -233,7 +232,7 @@ def test_command_idempotency() -> None:
 
     original_ops_model = bff_main._ops_read_model_entry_for_persona
 
-    from operations_read_model import OperationsReadModelEntry, OperationsIdentity, DataConfidence as OpsDataConfidence, OperationsPerformance
+    from services.control_plane.bff.operations_read_model import OperationsReadModelEntry, OperationsIdentity, DataConfidence as OpsDataConfidence, OperationsPerformance
 
     def mock_ops_model(persona_id, period="latest"):
         return OperationsReadModelEntry(

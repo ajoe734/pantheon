@@ -11,18 +11,17 @@ from pathlib import Path
 import jsonschema
 import pytest
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 from services.control_plane.bff import main as bff_main
 
-from agora.interaction.router import SubmitInteractionRequest
-from agora.interaction.store import InteractionLifecycleStore
-from agora.interaction.worker import AgoraInteractionWorker
+from services.control_plane.bff.agora.interaction.router import SubmitInteractionRequest
+from services.control_plane.bff.agora.interaction.store import InteractionLifecycleStore
+from services.control_plane.bff.agora.interaction.worker import AgoraInteractionWorker
 from test_agora_persona_interactions import AUTH, client
 
 
 def _v19_request(c, monkeypatch, *, mode="challenge", persona_ids=("ready",), request_text="Challenge this thesis",
                  resolve_key=None, double_resolve=False):
-    from agora.trading_room.router import _get_store
+    from services.control_plane.bff.agora.trading_room.router import _get_store
 
     _get_store().upsert_decision_event({
         "decision_event_id": "decision-1", "tenant_id": "pantheon-dev",
@@ -259,7 +258,7 @@ def test_same_key_double_resolve_replays_exact_receipt_then_submits(monkeypatch)
 
 def test_replay_persists_only_returned_receipt_and_eligibility_uses_it(monkeypatch):
     """A replay candidate from a later clock tick must never become canonical."""
-    import main as bff_main
+    from services.control_plane.bff import main as bff_main
 
     c = client(monkeypatch)
     real_datetime = datetime
@@ -378,7 +377,7 @@ def test_future_human_time_is_rejected_before_provider_timestamps(monkeypatch):
 
 
 def test_retry_uses_frozen_persona_snapshot_and_new_invocation_identity(monkeypatch):
-    import main as bff_main
+    from services.control_plane.bff import main as bff_main
 
     c = client(monkeypatch)
     submitted = _submit(c, _v19_request(c, monkeypatch)).json()["data"]
@@ -640,7 +639,7 @@ def test_daily_resolver_fails_closed_for_frontend_refs_without_scoped_canonical_
 
 
 def test_daily_resolver_fails_closed_for_focused_decision_without_canonical_source_route(monkeypatch):
-    from agora.trading_room.router import _get_store
+    from services.control_plane.bff.agora.trading_room.router import _get_store
 
     _get_store().upsert_decision_event({
         "decision_event_id": "focused-decision-1",

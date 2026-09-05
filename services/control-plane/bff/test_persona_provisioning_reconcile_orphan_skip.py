@@ -14,7 +14,7 @@ from __future__ import annotations
 import pytest
 
 from services.control_plane.bff import main as bff_main
-from personas.reconciliation import PersonaReconciliationMutationError
+from services.control_plane.bff.personas.reconciliation import PersonaReconciliationMutationError
 
 
 @pytest.fixture(autouse=True)

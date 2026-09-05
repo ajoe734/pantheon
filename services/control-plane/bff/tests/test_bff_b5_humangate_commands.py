@@ -8,14 +8,13 @@ from typing import Iterator
 
 from fastapi.testclient import TestClient
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
 from services.control_plane.bff import main as bff_main
-from action_catalog import get_catalog_entry
-from command_executor import execute_command_with_status
-from command_queue import CommandStore
-from models import CommandStatus, CommandType
-from ports import create_in_memory_read_surface_ports
+from services.control_plane.bff.action_catalog import get_catalog_entry
+from services.control_plane.bff.command_executor import execute_command_with_status
+from services.control_plane.bff.command_queue import CommandStore
+from services.control_plane.bff.models import CommandStatus, CommandType
+from services.control_plane.bff.ports import create_in_memory_read_surface_ports
 
 
 HEADERS = {
@@ -257,7 +256,7 @@ def test_quarterly_ranking_recommendation_submit_uses_command_response_without_l
 
 
 def test_b5_commands_are_in_action_catalog_and_executor_dispatch(monkeypatch) -> None:
-    import command_executor
+    from services.control_plane.bff import command_executor as command_executor
     monkeypatch.setitem(command_executor._EXECUTORS, CommandType.HUMAN_GATE_APPROVE, command_executor._execute_bff_action_adapter)
     expected = {
         "HumanGateApprove": "HumanGateItem",

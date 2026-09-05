@@ -15,7 +15,6 @@ from pathlib import Path
 
 TESTS_DIR = Path(__file__).resolve().parent
 BFF_DIR = TESTS_DIR.parent
-sys.path.insert(0, str(BFF_DIR))
 
 import read_store_fixtures as fixtures  # noqa: E402
 

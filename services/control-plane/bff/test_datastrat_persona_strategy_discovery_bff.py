@@ -8,10 +8,9 @@ from pathlib import Path
 
 from fastapi.testclient import TestClient
 
-sys.path.insert(0, os.path.dirname(__file__))
 
 from services.control_plane.bff import main as bff_main
-from ports import PersonaRegistryReadsPort, create_in_memory_read_surface_ports
+from services.control_plane.bff.ports import PersonaRegistryReadsPort, create_in_memory_read_surface_ports
 from services.source_ingestion.strategy_seed_builder import StrategySpecSeed
 from services.source_ingestion.strategy_seed_store import StrategySpecSeedStore
 

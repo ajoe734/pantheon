@@ -13,9 +13,8 @@ from typing import Any, Callable
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
-from management_read_models.router import (  # noqa: E402
+from services.control_plane.bff.management_read_models.router import (  # noqa: E402
     create_management_read_models_router,
     get_activity_read_model,
     get_formula_jobs_read_model,

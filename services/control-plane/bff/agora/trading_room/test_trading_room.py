@@ -16,7 +16,6 @@ import os
 import sys
 import uuid
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", ".."))
 
 from fastapi import FastAPI, HTTPException
 from fastapi.testclient import TestClient
@@ -2280,8 +2279,6 @@ def test_decide_trading_event_returns_201_for_object_identity_not_just_dict():
 if __name__ == "__main__":
     # Direct-run mode: insert service root so relative package imports resolve
     _svc_root = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "..")
-    if _svc_root not in sys.path:
-        sys.path.insert(0, _svc_root)
 
     test_store_upsert_and_get()
     test_store_list_empty()

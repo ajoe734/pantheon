@@ -8,8 +8,8 @@ import pytest
 from fastapi.testclient import TestClient
 
 from services.control_plane.bff import main as bff_main
-from persona_provisioning import MemoryPersonaProvisioningStore
-from ports import ReadSurfacePorts
+from services.control_plane.bff.persona_provisioning import MemoryPersonaProvisioningStore
+from services.control_plane.bff.ports import ReadSurfacePorts
 from test_loop_prod_per_001_provisioning import _provisioning_read_surface_double
 from test_persona_provisioning_coordinator import FakeOwnerTransport, _schedule_receipt
 

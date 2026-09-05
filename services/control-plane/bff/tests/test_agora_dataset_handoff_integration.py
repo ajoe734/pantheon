@@ -14,17 +14,15 @@ import os
 import sys
 import uuid
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
 
 import pytest
 from fastapi import FastAPI, HTTPException
 from fastapi.testclient import TestClient
 
-from agora.dataset_extraction.extractor import AgoraDatasetStore
-from agora.dataset_extraction.router import create_dataset_extraction_router
+from services.control_plane.bff.agora.dataset_extraction.extractor import AgoraDatasetStore
+from services.control_plane.bff.agora.dataset_extraction.router import create_dataset_extraction_router
 try:
-    from models import OperatorIdentity
+    from services.control_plane.bff.models import OperatorIdentity
 except ImportError:
     from bff.models import OperatorIdentity
 

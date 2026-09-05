@@ -8,11 +8,10 @@ from typing import Iterator
 
 from fastapi.testclient import TestClient
 
-sys.path.insert(0, os.path.dirname(__file__))
 
 from services.control_plane.bff import main as bff_main
-from command_queue import CommandStore
-from ports.read_surface_ports import create_in_memory_read_surface_ports
+from services.control_plane.bff.command_queue import CommandStore
+from services.control_plane.bff.ports.read_surface_ports import create_in_memory_read_surface_ports
 
 
 HEADERS = {"Authorization": "Bearer op-aud-002:operator,reviewer,approver"}

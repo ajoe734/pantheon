@@ -23,13 +23,10 @@ from fastapi.testclient import TestClient
 REPO_ROOT = Path(__file__).resolve().parents[4]
 BFF_ROOT = Path(__file__).resolve().parents[1]
 SCRIPTS_ROOT = REPO_ROOT / "scripts"
-sys.path.insert(0, str(REPO_ROOT))
-sys.path.insert(0, str(BFF_ROOT))
-sys.path.insert(0, str(SCRIPTS_ROOT))
 
-import project_ooda_to_bff_surfaces as projector  # noqa: E402
+from scripts import project_ooda_to_bff_surfaces as projector
 from services.control_plane.bff import main as bff_main
-from ports import create_in_memory_read_surface_ports  # noqa: E402
+from services.control_plane.bff.ports import create_in_memory_read_surface_ports  # noqa: E402
 
 
 HEADERS = {"Authorization": "Bearer op-dev:admin:mfa"}

@@ -17,11 +17,10 @@ import pytest
 from fastapi import FastAPI, HTTPException
 from fastapi.testclient import TestClient
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
-from agora.strategy_workshop import MemoryWorkshopStore  # noqa: E402
-from agora.strategy_workshop.operations import CanonicalOperationError  # noqa: E402
-from agora.strategy_workshop.router import create_strategy_workshop_router  # noqa: E402
+from services.control_plane.bff.agora.strategy_workshop import MemoryWorkshopStore  # noqa: E402
+from services.control_plane.bff.agora.strategy_workshop.operations import CanonicalOperationError  # noqa: E402
+from services.control_plane.bff.agora.strategy_workshop.router import create_strategy_workshop_router  # noqa: E402
 from services.research.strategy_spec.models import (  # noqa: E402
     validate_strategy_spec_payload,
 )
@@ -1638,7 +1637,7 @@ def lineage_store(request: pytest.FixtureRequest):
     dsn = os.environ.get("AGORA_WORKSHOP_TEST_POSTGRES_DSN")
     if not dsn:
         pytest.skip("set AGORA_WORKSHOP_TEST_POSTGRES_DSN for real Postgres coverage")
-    from agora.strategy_workshop.store import PostgresWorkshopStore
+    from services.control_plane.bff.agora.strategy_workshop.store import PostgresWorkshopStore
 
     schema = f"test_agora_ws_lineage_{uuid.uuid4().hex[:12]}"
     store = PostgresWorkshopStore(dsn=dsn, schema=schema)

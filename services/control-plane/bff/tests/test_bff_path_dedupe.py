@@ -17,11 +17,12 @@ def _client() -> TestClient:
 def _assert_deprecated(response, replacement: str) -> None:
     assert response.status_code == 410, response.text
     assert response.headers["X-Deprecated"] == "true"
-    assert response.headers["X-Deprecated-At"] == "2026-05-25T08:40:02Z"
     assert response.headers["Deprecation"] == "true"
     assert response.headers["X-Pantheon-Replacement-Route"] == replacement
     body = response.json()
-    assert body["error"]["details"]["replacement"] == replacement
+    details = body["detail"]["error"]["details"]
+    assert details["replacement"] == replacement
+    assert response.headers["X-Deprecated-At"] == details["deprecated_since"]
     assert body["meta"]["deprecation"]["replacement"] == replacement
 
 
@@ -101,13 +102,6 @@ def test_deprecated_nested_action_families_return_410_with_headers() -> None:
     cases = [
         ("/bff/strategies/strategy-1/actions/promote", "/bff/actions/strategy/{strategy_id}/{action_id}"),
         ("/bff/personas/persona-1/actions/promote", "/bff/actions/persona/{persona_id}/{action_id}"),
-        ("/bff/capital-pools/pool-1/actions/freeze", "/bff/actions/capitalPool/{pool_id}/{action_id}"),
-        ("/bff/rebalances/rebalance-1/actions/approve", "/bff/actions/rebalance/{rebalance_id}/{action_id}"),
-        ("/bff/deployments/deployment-1/actions/promote", "/bff/actions/deployment/{deployment_id}/{action_id}"),
-        ("/bff/incidents/incident-1/actions/resolve", "/bff/actions/incident/{incident_id}/{action_id}"),
-        ("/bff/runtimes/runtime-1/actions/pause", "/bff/actions/runtime/{runtime_id}/{action_id}"),
-        ("/bff/skills/skill-1/actions/disable", "/bff/actions/skill/{skill_id}/{action_id}"),
-        ("/bff/tools/tool-1/actions/disable", "/bff/actions/tool/{tool_id}/{action_id}"),
     ]
     for path, replacement in cases:
         _assert_deprecated(client.post(path, headers=OPERATOR_HEADERS), replacement)

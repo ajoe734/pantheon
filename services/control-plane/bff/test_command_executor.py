@@ -4,10 +4,9 @@ import sys
 import unittest
 from unittest.mock import patch
 
-sys.path.insert(0, os.path.dirname(__file__))
 
-from models import CommandStatus, CommandType
-from command_executor import (
+from services.control_plane.bff.models import CommandStatus, CommandType
+from services.control_plane.bff.command_executor import (
     execute_command,
     execute_command_with_status,
     _execute_approve_deployment,

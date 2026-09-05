@@ -8,10 +8,9 @@ import sys
 import pytest
 from fastapi import HTTPException
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
-from events.router import create_events_router
-from events.service import EventStreamService
+from services.control_plane.bff.events.router import create_events_router
+from services.control_plane.bff.events.service import EventStreamService
 
 
 # This task's artifact contract permits evidence only at this test-file path.

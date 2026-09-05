@@ -23,8 +23,6 @@ import unittest
 
 BFF_DIR = Path(__file__).resolve().parent.parent
 REPO_ROOT = BFF_DIR.parents[2]
-if str(BFF_DIR) not in sys.path:
-    sys.path.insert(0, str(BFF_DIR))
 
 DOMAIN_PORT_MODULES = (
     "lifecycle_telemetry_governance",
@@ -119,7 +117,7 @@ class PortsNamespaceConsolidationTests(unittest.TestCase):
             module = importlib.import_module(f"ports.{name}")
             self.assertIsNotNone(module)
 
-        from ports import ReadSurfacePorts, create_in_memory_read_surface_ports
+        from services.control_plane.bff.ports import ReadSurfacePorts, create_in_memory_read_surface_ports
 
         instance = create_in_memory_read_surface_ports()
         self.assertIsInstance(instance, ReadSurfacePorts)

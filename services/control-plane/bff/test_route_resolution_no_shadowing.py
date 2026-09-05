@@ -11,8 +11,6 @@ import sys
 from pathlib import Path
 
 BFF_DIR = Path(__file__).resolve().parent
-if str(BFF_DIR) not in sys.path:
-    sys.path.insert(0, str(BFF_DIR))
 
 from services.control_plane.bff import main as bff_main
 from test_normalized_route_uniqueness import (  # noqa: E402
