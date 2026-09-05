@@ -90,13 +90,18 @@ class HonestCanonicalOwnerDouble:
         reload_summary_differs: bool = False,
         reload_dep003_differs: bool = False,
         reload_checksum_differs: bool = False,
+        inbox_override_items: list[dict[str, Any]] | None = None,
+        trade_episodes_override: list[dict[str, Any]] | None = None,
+        fleet_workers_override: list[dict[str, Any]] | None = None,
+        reload_inbox_differs: bool = False,
+        reload_trade_episode_differs: bool = False,
         simulate_timeout_on: set[str] | None = None,
         simulate_unavailable_on: set[str] | None = None,
     ) -> None:
         self.fe_commit = fe_commit
         self.bff_commit = bff_commit
         self.pair_id = pair_id
-        self.bff_pair_id = bff_pair_id if bff_pair_id is not None else pair_id
+        self.bff_pair_id = bff_pair_id
         self.fe_real_writes = fe_real_writes
         self.fe_build_mode_valid = fe_build_mode_valid
         self.fe_manifest_bff_sha = fe_manifest_bff_sha if fe_manifest_bff_sha is not None else bff_commit
@@ -124,10 +129,17 @@ class HonestCanonicalOwnerDouble:
         self.reload_summary_differs = reload_summary_differs
         self.reload_dep003_differs = reload_dep003_differs
         self.reload_checksum_differs = reload_checksum_differs
+        self.inbox_override_items = inbox_override_items
+        self.trade_episodes_override = trade_episodes_override
+        self.fleet_workers_override = fleet_workers_override
+        self.reload_inbox_differs = reload_inbox_differs
+        self.reload_trade_episode_differs = reload_trade_episode_differs
         self.is_reloading = False
         self.event_read_count = 0
         self.summary_read_count = 0
         self.dep003_read_count = 0
+        self.inbox_read_count = 0
+        self.trade_episodes_read_count = 0
         self.simulate_timeout_on = simulate_timeout_on or set()
         self.simulate_unavailable_on = simulate_unavailable_on or set()
 
@@ -158,8 +170,16 @@ class HonestCanonicalOwnerDouble:
             if unavailable_path in url:
                 return HttpResponse(502, {"error": "Simulated upstream 502"}, {}, url, method)
 
-        # Static FE manifest does not require API Authorization
+        # Static FE manifest does not require API Authorization; sending it is forbidden (Finding 4)
         if path == "/deployment.json":
+            if "Authorization" in headers:
+                return HttpResponse(
+                    400,
+                    {"error": "Security violation: Authorization header sent to static FE manifest host"},
+                    {},
+                    url,
+                    method,
+                )
             build_mode = {
                 "VITE_BFF_MODE": "live",
                 "VITE_BFF_FALLBACK": "strict",
@@ -190,17 +210,19 @@ class HonestCanonicalOwnerDouble:
         if not tenant or not tenant.strip():
             return HttpResponse(400, {"error": "Bad Request: missing X-Tenant-Id header"}, {}, url, method)
 
-        # BFF version
+        # BFF version (public BFF has no pair_id unless explicitly configured, Finding 4)
         if path == "/bff/version":
+            bff_payload = {
+                "source_commit_sha": self.bff_commit,
+                "commit": self.bff_commit,
+                "environment": self.bff_environment,
+                "config_posture": {"auth_stub": self.bff_auth_stub, "auth_mode": self.bff_auth_mode},
+            }
+            if self.bff_pair_id is not None:
+                bff_payload["pair_id"] = self.bff_pair_id
             return HttpResponse(
                 200,
-                {
-                    "source_commit_sha": self.bff_commit,
-                    "commit": self.bff_commit,
-                    "pair_id": self.bff_pair_id,
-                    "environment": self.bff_environment,
-                    "config_posture": {"auth_stub": self.bff_auth_stub, "auth_mode": self.bff_auth_mode},
-                },
+                bff_payload,
                 {},
                 url,
                 method,
@@ -400,6 +422,16 @@ class HonestCanonicalOwnerDouble:
 
         # Deployment inbox query (applied receipt)
         if path == "/api/deployment/inbox":
+            self.inbox_read_count += 1
+            if (self.is_reloading or self.inbox_read_count > 1) and self.reload_inbox_differs:
+                return HttpResponse(200, [], {}, url, method)
+            if self.inbox_override_items is not None:
+                agg_id = urllib.parse.parse_qs(parsed.query).get("aggregate_id", [""])[0]
+                items = copy.deepcopy(self.inbox_override_items)
+                for it in items:
+                    if it.get("aggregate_id") == "{saga_id}":
+                        it["aggregate_id"] = agg_id
+                return HttpResponse(200, items, {}, url, method)
             if not self.inbox_receipt_applied:
                 return HttpResponse(200, [], {}, url, method)
             agg_id = urllib.parse.parse_qs(parsed.query).get("aggregate_id", [""])[0]
@@ -414,6 +446,8 @@ class HonestCanonicalOwnerDouble:
                         "idempotency_key": f"{agg_id}:2:runtime.load.requested",
                         "sequence_no": 2,
                         "status": "applied",
+                        "trace_id": "trace-inbox-001",
+                        "processed_at": "2026-09-05T00:00:00Z",
                     }
                 ],
                 {},
@@ -560,10 +594,14 @@ class HonestCanonicalOwnerDouble:
 
         # Fleet state
         if path == "/api/fleet/state":
+            if self.fleet_workers_override is not None:
+                return HttpResponse(200, {"workers": self.fleet_workers_override}, {}, url, method)
             workers = []
             for b_id in self.created_bindings:
                 workers.append({
                     "binding_id": b_id,
+                    "worker_id": f"worker-{b_id}",
+                    "service": "paper-runtime-worker",
                     "status": "running" if self.fleet_worker_running else "stopped",
                     "pid": 1234,
                 })
@@ -641,25 +679,74 @@ class HonestCanonicalOwnerDouble:
             self.created_events[event_id] = ev
             return HttpResponse(200, ev, {}, url, method)
 
-        # Trade episodes query (independent causal consumer receipt for fill)
+        # Trade episodes query (independent causal consumer receipt for fill, Findings 2 & 4)
         if path == "/api/telemetry/trade-episodes":
+            self.trade_episodes_read_count += 1
+            if (self.is_reloading or self.trade_episodes_read_count > 1) and self.reload_trade_episode_differs:
+                return HttpResponse(200, {"projections": []}, {}, url, method)
+            qs = urllib.parse.parse_qs(parsed.query)
+            runtime_id = qs.get("runtime_id", ["rt-unknown"])[0]
+            binding_id = runtime_id.removeprefix("rt-")
+            if self.trade_episodes_override is not None:
+                projs = copy.deepcopy(self.trade_episodes_override)
+                for pr in projs:
+                    if pr.get("runtime_id") == "{runtime_id}":
+                        pr["runtime_id"] = runtime_id
+                    if pr.get("binding_id") == "{binding_id}":
+                        pr["binding_id"] = binding_id
+                    if pr.get("event_id") == "{event_id}":
+                        pr["event_id"] = f"ev-{runtime_id}"
+                    if pr.get("fill_ids") == ["{event_id}"]:
+                        pr["fill_ids"] = [f"ev-{runtime_id}"]
+                return HttpResponse(200, {"projections": projs}, {}, url, method)
             if not self.trade_episode_produced:
-                return HttpResponse(200, [], {}, url, method)
-            runtime_id = urllib.parse.parse_qs(parsed.query).get("runtime_id", ["rt-unknown"])[0]
+                return HttpResponse(200, {"projections": []}, {}, url, method)
+            return HttpResponse(
+                200,
+                {
+                    "projections": [
+                        {
+                            "episode_id": f"ep-{runtime_id}",
+                            "trade_episode_id": f"ep-{runtime_id}",
+                            "runtime_id": runtime_id,
+                            "binding_id": binding_id,
+                            "runtime_binding_id": binding_id,
+                            "event_id": f"ev-{runtime_id}",
+                            "fill_ids": [f"ev-{runtime_id}"],
+                            "status": "closed",
+                            "fill_count": 1,
+                            "filled_quantity": 10.0,
+                        }
+                    ]
+                },
+                {},
+                url,
+                method,
+            )
+
+        # Trade episode detail query
+        if path.startswith("/api/telemetry/trade-episodes/"):
+            ep_id = path.split("/")[-1]
+            if (self.is_reloading or getattr(self, "trade_episodes_read_count", 0) >= 1) and self.reload_trade_episode_differs:
+                return HttpResponse(404, {"error": "not found"}, {}, url, method)
+            if not self.trade_episode_produced:
+                return HttpResponse(404, {"error": "not found"}, {}, url, method)
+            runtime_id = ep_id.removeprefix("ep-")
             binding_id = runtime_id.removeprefix("rt-")
             return HttpResponse(
                 200,
-                [
-                    {
-                        "episode_id": f"ep-{runtime_id}",
-                        "trade_episode_id": f"ep-{runtime_id}",
-                        "runtime_id": runtime_id,
-                        "binding_id": binding_id,
-                        "event_id": f"ev-{runtime_id}",
-                        "status": "closed",
-                        "fill_count": 1,
-                    }
-                ],
+                {
+                    "episode_id": ep_id,
+                    "trade_episode_id": ep_id,
+                    "runtime_id": runtime_id,
+                    "binding_id": binding_id,
+                    "runtime_binding_id": binding_id,
+                    "event_id": f"ev-{runtime_id}",
+                    "fill_ids": [f"ev-{runtime_id}"],
+                    "status": "closed",
+                    "fill_count": 1,
+                    "filled_quantity": 10.0,
+                },
                 {},
                 url,
                 method,
@@ -671,6 +758,8 @@ class HonestCanonicalOwnerDouble:
 
 def _default_test_config(**kwargs: Any) -> ProbeConfig:
     defaults: dict[str, Any] = {
+        "auth_token": "test-secret-token",
+        "tenant_id": "default",
         "bff_base_url": DEFAULT_BFF_BASE_URL,
         "fe_base_url": DEFAULT_FE_BASE_URL,
         "expected_fe_sha": FE_SHA_VALID,
@@ -1029,6 +1118,8 @@ def test_fresh_client_isolated_flag_truth() -> None:
     probe1 = DevRuntimePaperLifecycleProbe(config, transport=double)
     evidence1 = probe1.run()
     assert evidence1["durable_fresh_client_reload"]["fresh_client_isolated"] is False
+    assert evidence1["durable_fresh_client_reload"]["verified"] is False
+    assert "incomplete_reason" in evidence1["durable_fresh_client_reload"]
 
     # 2. Run with fresh_transport_factory
     def transport_factory() -> HonestCanonicalOwnerDouble:
@@ -1040,6 +1131,8 @@ def test_fresh_client_isolated_flag_truth() -> None:
     probe2 = DevRuntimePaperLifecycleProbe(config, transport=double)
     evidence2 = probe2.run(fresh_transport_factory=transport_factory)
     assert evidence2["durable_fresh_client_reload"]["fresh_client_isolated"] is True
+    assert evidence2["durable_fresh_client_reload"]["verified"] is True
+    assert "incomplete_reason" not in evidence2["durable_fresh_client_reload"]
 
 
 def test_full_successful_paper_lifecycle_run() -> None:
@@ -1077,7 +1170,7 @@ def test_full_successful_paper_lifecycle_run() -> None:
     assert loop9["terminal_output_id"].startswith("ev-rt-rb-")
     assert loop9["next_consumer_receipt_id"].startswith("ep-rt-rb-")
     assert loop9["next_consumer_receipt_id"] != loop9["terminal_output_id"]
-    assert loop9["owner_worker_identity"]["service"] == "paper-signal-producer"
+    assert loop9["owner_worker_identity"]["service"] == "paper-runtime-worker"
     assert loop9["assertions"]["is_real_capital"] is False
     assert loop9["assertions"]["is_real_order"] is False
     assert loop9["assertions"]["broker_submission_status"] == "filled"
@@ -1090,10 +1183,226 @@ def test_full_successful_paper_lifecycle_run() -> None:
     assert reload_sec["verified"] is True
     assert reload_sec["fresh_client_isolated"] is True
     assert reload_sec["loop_08_dep003_projection"]["projection_contract"] == "DEP-003"
+    assert reload_sec["loop_08_inbox_receipt"]["aggregate_id"] == f"deployment-saga-{loop8['trigger_id']}"
+    assert reload_sec["loop_08_inbox_receipt"]["consumer_name"] == "deployment-outbox-consumer"
     assert reload_sec["loop_09_heartbeat_id"].startswith("hb-rt-rb-")
+    assert reload_sec["loop_09_trade_episode_receipt"]["episode_id"] == f"ep-rt-{loop8['terminal_output_id']}"
 
     # Verify that stimulus IDs were fresh and did not use historical forbidden IDs
     for hist_id in HISTORICAL_FORBIDDEN_IDS:
         assert hist_id != loop8["trigger_id"]
         assert hist_id != loop8["terminal_output_id"]
         assert hist_id != loop9["terminal_output_id"]
+
+
+def test_missing_auth_token_fails_closed() -> None:
+    """Verifies that missing auth token fails closed and does not use dummy fallback (Finding 3)."""
+    double = HonestCanonicalOwnerDouble()
+    config = _default_test_config(auth_token="")
+    probe = DevRuntimePaperLifecycleProbe(config, transport=double)
+
+    with pytest.raises(ProbeError, match="Authentication token is required"):
+        probe.run()
+
+
+def test_cross_origin_credential_transmission_blocked() -> None:
+    """Verifies that sending credentials to unauthorized origins is blocked (Finding 4)."""
+    double = HonestCanonicalOwnerDouble()
+    config = _default_test_config()
+    probe = DevRuntimePaperLifecycleProbe(config, transport=double)
+
+    with pytest.raises(ProbeError, match="Cross-origin credential transmission blocked"):
+        probe.adapter.request(
+            "GET",
+            "https://unauthorized-attacker.example.com",
+            "/api/deployment/plans",
+        )
+
+
+def test_static_fe_manifest_receives_no_auth_header() -> None:
+    """Verifies that static FE manifest request never receives Authorization header (Finding 4)."""
+    double = HonestCanonicalOwnerDouble()
+    config = _default_test_config(auth_token="super-secret-token")
+    probe = DevRuntimePaperLifecycleProbe(config, transport=double)
+
+    probe.run()
+
+    fe_reqs = [r for r in double.recorded_requests if "/deployment.json" in r["url"]]
+    assert len(fe_reqs) == 1
+    assert "Authorization" not in fe_reqs[0]["headers"]
+
+
+def test_loop8_inbox_receipt_wrong_aggregate_id_fails_closed() -> None:
+    """Loop 8 query filter is not assertion: aggregate_id mismatch must fail closed (Finding 1)."""
+    double = HonestCanonicalOwnerDouble(
+        inbox_override_items=[
+            {
+                "aggregate_id": "deployment-saga-wrong-id",
+                "aggregate_type": "deployment_saga",
+                "consumer_name": "deployment-outbox-consumer",
+                "event_id": "evt-001",
+                "sequence_no": 1,
+                "status": "applied",
+            }
+        ]
+    )
+    config = _default_test_config(execute_paper_lifecycle=True)
+    probe = DevRuntimePaperLifecycleProbe(config, transport=double)
+
+    with pytest.raises(MissingConsumerReceiptError, match="aggregate_id mismatch"):
+        probe.run()
+
+
+def test_loop8_inbox_receipt_wrong_consumer_name_fails_closed() -> None:
+    """Loop 8 inbox receipt consumer_name must strictly match deployment-outbox-consumer (Finding 1)."""
+    double = HonestCanonicalOwnerDouble(
+        inbox_override_items=[
+            {
+                "aggregate_id": "{saga_id}",
+                "aggregate_type": "deployment_saga",
+                "consumer_name": "unauthorized-consumer",
+                "event_id": "evt-001",
+                "sequence_no": 1,
+                "status": "applied",
+            }
+        ]
+    )
+    config = _default_test_config(execute_paper_lifecycle=True)
+    probe = DevRuntimePaperLifecycleProbe(config, transport=double)
+
+    with pytest.raises(MissingConsumerReceiptError, match="consumer_name mismatch"):
+        probe.run()
+
+
+def test_loop8_inbox_receipt_not_applied_fails_closed() -> None:
+    """Loop 8 inbox receipt status must be 'applied' (Finding 1)."""
+    double = HonestCanonicalOwnerDouble(
+        inbox_override_items=[
+            {
+                "aggregate_id": "{saga_id}",
+                "aggregate_type": "deployment_saga",
+                "consumer_name": "deployment-outbox-consumer",
+                "event_id": "evt-001",
+                "sequence_no": 1,
+                "status": "pending",
+            }
+        ]
+    )
+    config = _default_test_config(execute_paper_lifecycle=True)
+    probe = DevRuntimePaperLifecycleProbe(config, transport=double)
+
+    with pytest.raises(MissingConsumerReceiptError, match="status is 'pending', expected 'applied'"):
+        probe.run()
+
+
+def test_loop8_inbox_receipt_missing_sequence_no_fails_closed() -> None:
+    """Loop 8 inbox receipt must contain a valid sequence_no (Finding 1)."""
+    double = HonestCanonicalOwnerDouble(
+        inbox_override_items=[
+            {
+                "aggregate_id": "{saga_id}",
+                "aggregate_type": "deployment_saga",
+                "consumer_name": "deployment-outbox-consumer",
+                "event_id": "evt-001",
+                "status": "applied",
+            }
+        ]
+    )
+    config = _default_test_config(execute_paper_lifecycle=True)
+    probe = DevRuntimePaperLifecycleProbe(config, transport=double)
+
+    with pytest.raises(MissingConsumerReceiptError, match="missing sequence_no"):
+        probe.run()
+
+
+def test_loop9_trade_episode_open_zero_fill_fails_closed() -> None:
+    """Loop 9 open zero-fill episodes sharing runtime_id must never be accepted as fill receipt (Finding 2)."""
+    double = HonestCanonicalOwnerDouble(
+        trade_episodes_override=[
+            {
+                "episode_id": "ep-open-zero",
+                "trade_episode_id": "ep-open-zero",
+                "runtime_id": "{runtime_id}",
+                "binding_id": "{binding_id}",
+                "runtime_binding_id": "{binding_id}",
+                "event_id": "{event_id}",
+                "fill_ids": ["{event_id}"],
+                "status": "open",
+                "fill_count": 0,
+                "filled_quantity": 0.0,
+            }
+        ]
+    )
+    config = _default_test_config(execute_paper_lifecycle=True)
+    probe = DevRuntimePaperLifecycleProbe(config, transport=double)
+
+    with pytest.raises(MissingConsumerReceiptError, match="Independent trade episode consumer receipt"):
+        probe.run()
+
+
+def test_loop9_trade_episode_wrong_fill_id_fails_closed() -> None:
+    """Loop 9 episode not linked to the stimulus event_id must fail closed (Finding 2)."""
+    double = HonestCanonicalOwnerDouble(
+        trade_episodes_override=[
+            {
+                "episode_id": "ep-unrelated",
+                "trade_episode_id": "ep-unrelated",
+                "runtime_id": "{runtime_id}",
+                "binding_id": "{binding_id}",
+                "runtime_binding_id": "{binding_id}",
+                "event_id": "ev-unrelated-fill",
+                "fill_ids": ["ev-unrelated-fill"],
+                "status": "closed",
+                "fill_count": 1,
+                "filled_quantity": 10.0,
+            }
+        ]
+    )
+    config = _default_test_config(execute_paper_lifecycle=True)
+    probe = DevRuntimePaperLifecycleProbe(config, transport=double)
+
+    with pytest.raises(MissingConsumerReceiptError, match="Independent trade episode consumer receipt"):
+        probe.run()
+
+
+def test_loop9_missing_worker_identity_fails_closed() -> None:
+    """Loop 9 must extract actual worker identity and fail closed if absent (Finding 2)."""
+    double = HonestCanonicalOwnerDouble(fleet_workers_override=[])
+    config = _default_test_config(execute_paper_lifecycle=True)
+    probe = DevRuntimePaperLifecycleProbe(config, transport=double)
+
+    with pytest.raises(MissingConsumerReceiptError, match="Loop 9 missing authoritative worker identity"):
+        probe.run()
+
+
+def test_reload_mismatch_inbox_receipt() -> None:
+    """Verifies that missing or altered inbox receipt on reload raises ReloadMismatchError (Finding 4)."""
+    double = HonestCanonicalOwnerDouble(reload_inbox_differs=True)
+    config = _default_test_config(execute_paper_lifecycle=True)
+    probe = DevRuntimePaperLifecycleProbe(config, transport=double)
+
+    with pytest.raises(ReloadMismatchError, match="missing or mutated on fresh readback"):
+        probe.run()
+
+
+def test_reload_mismatch_trade_episode() -> None:
+    """Verifies that missing or altered trade episode receipt on reload raises ReloadMismatchError (Finding 4)."""
+    double = HonestCanonicalOwnerDouble(reload_trade_episode_differs=True)
+    config = _default_test_config(execute_paper_lifecycle=True)
+    probe = DevRuntimePaperLifecycleProbe(config, transport=double)
+
+    with pytest.raises(ReloadMismatchError, match="Reloaded Loop 9 trade episode .* missing on fresh readback"):
+        probe.run()
+
+
+def test_preflight_bff_version_without_pair_id_accepts_release_manifest() -> None:
+    """Verifies that preflight passes when public BFF omits pair_id but FE release manifest specifies it (Finding 4)."""
+    double = HonestCanonicalOwnerDouble(bff_pair_id=None)
+    config = _default_test_config()
+    probe = DevRuntimePaperLifecycleProbe(config, transport=double)
+
+    evidence = probe.run()
+    assert evidence["status"] == "preflight_passed"
+    assert evidence["served_identity"]["pair_consistent"] is True
+    assert evidence["served_identity"]["fe"]["pairId"] == PAIR_ID_VALID
+    assert evidence["served_identity"]["bff"]["pair_id"] == PAIR_ID_VALID

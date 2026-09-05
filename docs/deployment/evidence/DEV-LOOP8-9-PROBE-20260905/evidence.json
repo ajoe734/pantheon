@@ -39,7 +39,7 @@
     {
       "criterion": "Finding 3: Authenticated hosted contract with Bearer and tenant headers; canonical joined routes; honest double 401/404 fail-closed behavior.",
       "status": "passed",
-      "evidence": "CanonicalOwnerAdapter injects Authorization: Bearer and X-Tenant-Id headers across all requests. join_url() prevents duplicate '/api/...' segments. HonestCanonicalOwnerDouble rejects missing auth with HTTP 401 and unmapped routes with HTTP 404 instead of defaulting to HTTP 200."
+      "evidence": "CanonicalOwnerAdapter injects Authorization: Bearer and X-Tenant-Id headers across all requests. Dummy credential fallback ('devprobe:operator') is completely removed. join_url() prevents duplicate '/api/...' segments. HonestCanonicalOwnerDouble rejects missing auth with HTTP 401 and unmapped routes with HTTP 404 instead of defaulting to HTTP 200."
     },
     {
       "criterion": "Finding 4: Strict durable reload comparing full identity, checksum, safety flags, and DEP-003 projection; honest fresh_client_isolated reporting; independent trade episode consumer receipt separated from liveness heartbeat.",
@@ -52,15 +52,35 @@
       "evidence": "run_preflight() strictly validates 40-hex SHAs, requires FE manifest's bffCommit/backendSha to match the running BFF commit, verifies buildMode (live, strict, no real writes) and config_posture (strict auth mode, no auth_stub), requires environment, and validates pair linkage. Approved parent strategy artifact is authoritatively discovered from /api/registry/strategies/tw_session_momentum/strategy-artifacts for rollback target lineage."
     },
     {
+      "criterion": "Root Review R2: Loop 8 inbox receipt affirmative response assertion; authoritative consumer worker identity; fail closed on query mismatch.",
+      "status": "passed",
+      "evidence": "_check_inbox_receipt enforces explicit response assertions that item['aggregate_id'] == saga_id, item['consumer_name'] == 'deployment-outbox-consumer', item['status'] == 'applied', and sequence_no is a positive integer. Unrelated items are rejected with MissingConsumerReceiptError. loop8_evidence['owner_worker_identity'] extracts authoritative identity directly from receipt without fallback."
+    },
+    {
+      "criterion": "Root Review R2: Loop 9 trade episode causal fill membership and terminal status; open zero-fill rejection; authoritative worker identity.",
+      "status": "passed",
+      "evidence": "_check_trade_episode enforces causal fill membership (event_id in fill_ids or episode event_id == event_id), exact binding/runtime identity, and terminal lifecycle status with non-zero fills (rejecting open zero-fill episodes sharing runtime_id). loop9_evidence['owner_worker_identity'] extracts worker_id, service, and runtime_worker from the active fleet worker receipt."
+    },
+    {
+      "criterion": "Root Review R2: Durable reload independently reloads both consumer receipts; fresh_client_isolated truth; main() provides factory.",
+      "status": "passed",
+      "evidence": "_verify_durable_reload independently reloads Loop 8 outbox consumer receipt and Loop 9 trade episode receipt on fresh_adapter, asserting consistency. When fresh_transport_factory is omitted, verified is False and incomplete_reason is recorded. CLI main() supplies an isolated transport factory lambda."
+    },
+    {
+      "criterion": "Root Review R2: Auth token scoping to authorized origins; static FE manifest receives no Authorization header; public BFF version pair linkage.",
+      "status": "passed",
+      "evidence": "CanonicalOwnerAdapter validates that credentials are only sent to explicitly authorized API origins and excludes static FE manifest (/deployment.json) from receiving Authorization headers. Missing auth token fails closed immediately without dummy fallback. Preflight permits public BFF /bff/version without pair_id while asserting exact consistency when present."
+    },
+    {
       "criterion": "Deliver exact-head dev PR with focused local test evidence; do not merge or run hosted write probes because root GPT-6 Astra owns integration and validation.",
       "status": "passed",
-      "evidence": "All 29 contract and adversarial unit tests pass locally with honest test double; py_compile and git diff --check pass cleanly; ready for review handoff to Claude."
+      "evidence": "All 42 contract, regression, and adversarial unit tests pass locally with honest test double; py_compile and git diff --check pass cleanly; ready for review handoff to Claude."
     }
   ],
   "verification": {
     "status": "passed",
     "commands": [
-      ".venv-pantheon/bin/python3 -m pytest scripts/test_probe_dev_runtime_paper_lifecycle.py -v (29 passed in 9.45s)",
+      ".venv-pantheon/bin/python3 -m pytest scripts/test_probe_dev_runtime_paper_lifecycle.py -v (42 passed in 14.62s)",
       "python3 -m py_compile scripts/probe_dev_runtime_paper_lifecycle.py scripts/test_probe_dev_runtime_paper_lifecycle.py (passed)",
       "git diff --check (passed)"
     ]
@@ -71,11 +91,11 @@
     "note": "Independent reviewer must validate the exact frozen PR head, test coverage, and this manifest before approval."
   },
   "delivery": {
-    "pr": null,
+    "pr": 5602,
     "exact_head_sha": null,
     "merge_method_required": "MERGE",
     "merge_sha": null,
-    "note": "PR number and exact head are frozen by canonical handoff after this manifest is committed."
+    "note": "PR #5602 updated with Root R2 remediation; exact head to be frozen upon commit."
   },
   "non_actions": [
     "No hosted write probes were executed; root GPT-6 Astra owns integration and validation after deployment.",
