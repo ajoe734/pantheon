@@ -8,14 +8,26 @@
 # exact command-runtimes/<SHA> checkout.
 set -euo pipefail
 
-DEV_ROOT="${1:-/home/lupin/pantheon-ci-deploy/dev-root}"
-LIVE_CONFIG="${2:-/home/lupin/pantheon-ci-deploy/runtime/live-supervisor-mainroot-config.json}"
-COORDINATION_ROOT="${3:-${PANTHEON_COORDINATION_ROOT:-/home/lupin/pantheon-ci-deploy/coordination-root}}"
-AUTHORITY_ENV_FILE="${4:-${PANTHEON_SUPERVISOR_VERIFIER_ENV_FILE:-/home/lupin/pantheon-ci-deploy/runtime/supervisor-authority-public.env}}"
+DEPLOY_ROOT="${PANTHEON_DEPLOY_ROOT:-}"
+if [[ -z "$DEPLOY_ROOT" && -n "${2:-}" ]]; then
+  DEPLOY_ROOT="$(dirname "$(dirname "$2")")"
+fi
+DEPLOY_ROOT="${DEPLOY_ROOT:-${HOME:?HOME is required}/pantheon-ci-deploy}"
+DEPLOY_ROOT="$(python3 - "$DEPLOY_ROOT" <<'PY'
+import sys
+from pathlib import Path
+
+print(Path(sys.argv[1]).expanduser().absolute())
+PY
+)"
+DEV_ROOT="${1:-${DEPLOY_ROOT}/dev-root}"
+LIVE_CONFIG="${2:-${DEPLOY_ROOT}/runtime/live-supervisor-mainroot-config.json}"
+COORDINATION_ROOT="${3:-${PANTHEON_COORDINATION_ROOT:-${DEPLOY_ROOT}/coordination-root}}"
+AUTHORITY_ENV_FILE="${4:-${PANTHEON_SUPERVISOR_VERIFIER_ENV_FILE:-${DEPLOY_ROOT}/runtime/supervisor-authority-public.env}}"
 REF="${SYNC_REF:-origin/dev}"
-COMMAND_RUNTIME_PARENT="/home/lupin/pantheon-ci-deploy/command-runtimes"
-INTEGRATION_RUNTIME_PARENT="${PANTHEON_INTEGRATION_RUNTIME_PARENT:-/home/lupin/pantheon-ci-deploy/integration-runtimes}"
-EXECUTE_PLANS_SOURCE_ROOT="${PANTHEON_EXECUTE_PLANS_SOURCE_ROOT:-/home/lupin/code/execute-plans}"
+COMMAND_RUNTIME_PARENT="${DEPLOY_ROOT}/command-runtimes"
+INTEGRATION_RUNTIME_PARENT="${PANTHEON_INTEGRATION_RUNTIME_PARENT:-${DEPLOY_ROOT}/integration-runtimes}"
+EXECUTE_PLANS_SOURCE_ROOT="${PANTHEON_EXECUTE_PLANS_SOURCE_ROOT:-${HOME}/code/execute-plans}"
 COMMAND_RUNTIME_KEEP="${COMMAND_RUNTIME_KEEP:-5}"
 
 stamp() { date -u +%Y-%m-%dT%H:%M:%SZ; }

@@ -14,9 +14,26 @@ import common
 import permission_broker
 import provider_permissions
 from provider_permissions import ROOT, _verified_claude_hooks
+from rewrite import task_state_store
 
 
 class ProviderPermissionsTest(unittest.TestCase):
+    @staticmethod
+    def _authoritative_broker_env(status_root: Path, event_log: Path) -> dict[str, str]:
+        return {
+            "PANTHEON_STATUS_ROOT": str(status_root),
+            common.TASK_STATE_STORE_MODE_ENV: "authoritative",
+            common.TASK_STATE_EVENT_LOG_ENV: str(event_log),
+            common.CANONICAL_TASK_STATE_IDENTITY_ENV: json.dumps(
+                common.canonical_task_state_identity_for_paths(
+                    status_root=status_root,
+                    event_log=event_log,
+                ),
+                sort_keys=True,
+                separators=(",", ":"),
+            ),
+        }
+
     def test_verified_claude_hooks_follow_promoted_command_runtime(self) -> None:
         hooks = _verified_claude_hooks()
         for entries in hooks.values():
@@ -28,6 +45,7 @@ class ProviderPermissionsTest(unittest.TestCase):
     def test_broker_runtime_config_separates_code_and_governance_roots(self) -> None:
         with tempfile.TemporaryDirectory(prefix="permission-broker-status-") as temp_dir:
             status_root = Path(temp_dir).resolve()
+            event_log = status_root.parent / f"{status_root.name}-events.jsonl"
             immutable_config = {
                 "paths": {
                     "status_file": "ai-status.json",
@@ -40,7 +58,7 @@ class ProviderPermissionsTest(unittest.TestCase):
                 mock.patch.object(permission_broker, "load_config", return_value=immutable_config),
                 mock.patch.dict(
                     os.environ,
-                    {"PANTHEON_STATUS_ROOT": str(status_root)},
+                    self._authoritative_broker_env(status_root, event_log),
                     clear=False,
                 ),
             ):
@@ -53,6 +71,10 @@ class ProviderPermissionsTest(unittest.TestCase):
             self.assertEqual(
                 config["paths"]["approval_queue"],
                 str(status_root / ".orchestrator" / "approval-queue.json"),
+            )
+            self.assertEqual(
+                config["task_state_store"],
+                {"mode": "authoritative", "event_log": str(event_log)},
             )
             self.assertEqual(
                 config["permission_broker"],
@@ -71,6 +93,168 @@ class ProviderPermissionsTest(unittest.TestCase):
         ):
             with self.assertRaisesRegex(RuntimeError, "must be absolute"):
                 permission_broker.load_broker_runtime_config()
+
+    def test_broker_runtime_config_rejects_forged_task_state_identity(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="permission-broker-status-") as temp_dir:
+            status_root = Path(temp_dir).resolve()
+            event_log = status_root.parent / f"{status_root.name}-events.jsonl"
+            env = self._authoritative_broker_env(status_root, event_log)
+            env[common.CANONICAL_TASK_STATE_IDENTITY_ENV] = json.dumps(
+                {"status_root": str(status_root)}
+            )
+            with (
+                mock.patch.object(permission_broker, "load_config", return_value={"paths": {}}),
+                mock.patch.dict(os.environ, env, clear=True),
+            ):
+                with self.assertRaisesRegex(RuntimeError, "identity mismatch"):
+                    permission_broker.load_broker_runtime_config()
+
+    def _evaluate_promoted_broker_process(
+        self,
+        *,
+        canonical_generation: int = 7,
+        target_kind: str = "exact",
+    ) -> dict:
+        with tempfile.TemporaryDirectory(prefix="permission-broker-process-") as temp_dir:
+            temp_root = Path(temp_dir).resolve()
+            status_root = temp_root / "coordination"
+            workspace_root = temp_root / "worktrees" / "task-123"
+            (status_root / ".orchestrator").mkdir(parents=True)
+            workspace_root.mkdir(parents=True)
+            event_log = temp_root / "runtime" / "task-state-events-v2.jsonl"
+            event_log.parent.mkdir()
+            canonical_status = {
+                "tasks": [
+                    {
+                        "id": "TASK-123",
+                        "generation": canonical_generation,
+                        "owner": "Claude",
+                    }
+                ]
+            }
+            (status_root / "ai-status.json").write_text(
+                # This mutable projection is deliberately stale. An allow result
+                # therefore proves the child loaded the authoritative journal.
+                json.dumps(
+                    {
+                        "tasks": [
+                            {"id": "TASK-123", "generation": 99, "owner": "Nobody"}
+                        ]
+                    }
+                ),
+                encoding="utf-8",
+            )
+            task_state_store.append_state_commit(
+                event_log, canonical_status, source="permission-broker-process-test"
+            )
+            runtime_worker = {
+                "run_id": "run-123",
+                "task_id": "TASK-123",
+                "task_generation": 7,
+                "agent_id": "claude",
+                "status": "running",
+                "lease_expires_at": (
+                    datetime.now(timezone.utc) + timedelta(days=1)
+                ).isoformat(),
+                "workspace_mode": "isolated_worktree",
+                "workspace_path": str(workspace_root),
+                "queue_event_id": "evt-run-123",
+            }
+            (status_root / ".orchestrator" / "state.json").write_text(
+                json.dumps(
+                    {
+                        "version": 2,
+                        "queue": {
+                            "version": 2,
+                            "events": {
+                                "evt-run-123": {
+                                    "status": "started",
+                                    "intent": {
+                                        "event_id": "evt-run-123",
+                                        "task_id": "TASK-123",
+                                    },
+                                }
+                            },
+                        },
+                        "workers": {"run-123": runtime_worker},
+                    }
+                ),
+                encoding="utf-8",
+            )
+            if target_kind == "exact":
+                target_path = workspace_root / "result.txt"
+            elif target_kind == "sibling":
+                target_path = workspace_root.parent / "task-456" / "result.txt"
+            elif target_kind == "parent":
+                target_path = workspace_root.parent / "result.txt"
+            else:
+                raise ValueError(f"unsupported target kind: {target_kind}")
+            env = {
+                **os.environ,
+                **self._authoritative_broker_env(status_root, event_log),
+                "ORCH_RUN_ID": "run-123",
+                "ORCH_TASK_ID": "TASK-123",
+                "ORCH_TASK_GENERATION": "7",
+                "ORCH_AGENT_ID": "claude",
+                "PANTHEON_WORKTREE_ROOT": str(workspace_root),
+                "ORCH_WORKSPACE_PATH": str(workspace_root),
+                "PYTHONDONTWRITEBYTECODE": "1",
+            }
+            completed = subprocess.run(
+                [
+                    "python3",
+                    "-c",
+                    (
+                        "import json,permission_broker,sys;"
+                        "config=permission_broker.load_broker_runtime_config();"
+                        "assert config['paths']['status_file']==sys.argv[1];"
+                        "assert config['task_state_store']=="
+                        "{'mode':'authoritative','event_log':sys.argv[2]};"
+                        "assert permission_broker.load_runtime_state(config)"
+                        "['workers']['run-123']['task_generation']==7;"
+                        "assert permission_broker.load_status(config)"
+                        "['tasks'][0]['generation']==int(sys.argv[4]);"
+                        "print(json.dumps(permission_broker.evaluate_tool_request("
+                        "'Write',{'file_path':sys.argv[3]},config)))"
+                    ),
+                    str(status_root / "ai-status.json"),
+                    str(event_log),
+                    str(target_path),
+                    str(canonical_generation),
+                ],
+                cwd=Path(permission_broker.__file__).resolve().parent,
+                env=env,
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+
+            self.assertEqual(completed.returncode, 0, completed.stderr)
+            return json.loads(completed.stdout)
+
+    def test_promoted_broker_process_allows_exact_authoritative_lease(self) -> None:
+        evaluation = self._evaluate_promoted_broker_process()
+
+        self.assertEqual(evaluation["decision"], "allow", evaluation)
+        self.assertEqual(evaluation["risk_class"], "repo_write")
+
+    def test_promoted_broker_process_denies_stale_authoritative_generation(self) -> None:
+        evaluation = self._evaluate_promoted_broker_process(canonical_generation=8)
+
+        self.assertEqual(evaluation["decision"], "deny", evaluation)
+        self.assertEqual(evaluation["risk_class"], "out_of_workspace")
+
+    def test_promoted_broker_process_denies_sibling_of_authoritative_lease(self) -> None:
+        evaluation = self._evaluate_promoted_broker_process(target_kind="sibling")
+
+        self.assertEqual(evaluation["decision"], "deny", evaluation)
+        self.assertEqual(evaluation["risk_class"], "out_of_workspace")
+
+    def test_promoted_broker_process_denies_parent_of_authoritative_lease(self) -> None:
+        evaluation = self._evaluate_promoted_broker_process(target_kind="parent")
+
+        self.assertEqual(evaluation["decision"], "deny", evaluation)
+        self.assertEqual(evaluation["risk_class"], "out_of_workspace")
 
     def test_toolsearch_is_auto_allowed(self) -> None:
         evaluation = permission_broker.evaluate_tool_request("ToolSearch", {}, {})
@@ -425,11 +609,12 @@ class ProviderPermissionsTest(unittest.TestCase):
                     }
                 ]
             }
+            event_log = status_root.parent / f"{status_root.name}-events.jsonl"
             env = {
+                **self._authoritative_broker_env(status_root, event_log),
                 "ORCH_RUN_ID": "run-123",
                 "ORCH_TASK_ID": "TASK-123",
                 "ORCH_AGENT_ID": "claude",
-                "PANTHEON_STATUS_ROOT": str(status_root),
                 "PANTHEON_WORKTREE_ROOT": str(workspace_root),
                 "ORCH_WORKSPACE_PATH": str(workspace_root),
             }

@@ -1,0 +1,99 @@
+{
+  "schema_version": "pantheon.review-evidence.v1",
+  "task_id": "OPS-WORKTREE-DELIVERY-CONTEXT-CORRECTIVE-001",
+  "title": "Unify worker delivery workspace identity",
+  "owner": "Codex",
+  "reviewer": "Antigravity",
+  "target_repo": "ajoe734/pantheon",
+  "task_class": "development_tooling",
+  "delivery_state": "ready_for_independent_review",
+  "base_sha": "555b6f662548a24bec29058f2cf6f59a19b480a4",
+  "scope": {
+    "owned": [
+      "ai-status worker-lease delivery repository registry selection",
+      "installed-command versus status-root versus live-source regression coverage"
+    ],
+    "not_changing": [
+      "supervisor runtime promotion and command leases",
+      "task lifecycle and canonical state authority",
+      "product runtime and postmerge replay"
+    ],
+    "composes_with": [
+      "OPS-INTEGRATION-FINALIZE-PREREQUISITE-001",
+      "the installed command runtime and central coordination config"
+    ]
+  },
+  "failure_reproduction": {
+    "case": "The installed command checkout, canonical status root, live supervisor source checkout, and task worktree can be distinct; only the validated worker lease identifies the source checkout whose worktree registry owns the task worktree.",
+    "prior_outcome": "The first candidate overlaid coordination.repositories from PANTHEON_STATUS_ROOT, which still rejected a legitimate worktree when the status root was not the supervisor source checkout.",
+    "regression": "test_pantheon_workspace_registration_uses_live_root_across_installed_runtime constructs four distinct paths and proves the validated lease workspace_source_root, rather than command or status config, anchors common-dir and worktree-registration validation."
+  },
+  "implementation": {
+    "config_boundary": "load_config retains its existing installed-runtime configuration behavior and does not overlay repository configuration from PANTHEON_STATUS_ROOT.",
+    "path_authority": "For an ORCH_RUN_ID command, _done_delivery_repository_root uses the already validated lease workspace_source_root and workspace_repository_id as the registered source checkout; commands without a worker run retain the existing repository registry fallback.",
+    "existing_gates_preserved": "The existing absolute/no-symlink, git top-level, common-dir, worktree registration, origin slug, workspace-env, lease, branch, commit, clean, remote, merge, and ancestry checks are unchanged.",
+    "new_loader_added": false,
+    "new_registry_added": false,
+    "new_closeout_path_added": false
+  },
+  "verification": {
+    "passed": [
+      {
+        "command": "python3 scripts/test_ai_status.py",
+        "result": "387 tests passed"
+      },
+      {
+        "command": "python3 .orchestrator/test_multi_repo_registry.py",
+        "result": "17 tests passed"
+      },
+      {
+        "command": "env -u PANTHEON_TASK_STATE_STORE_MODE -u PANTHEON_TASK_STATE_EVENT_LOG -u PANTHEON_CANONICAL_TASK_STATE_IDENTITY_JSON python3 .orchestrator/test_common.py",
+        "result": "97 tests passed"
+      },
+      {
+        "command": "python3 -m py_compile scripts/ai_status.py scripts/test_ai_status.py .orchestrator/multi_repo_registry.py",
+        "result": "passed"
+      },
+      {
+        "command": "git diff --check",
+        "result": "passed"
+      }
+    ],
+    "broader_nonpassing_observations": [
+      {
+        "command": "PYTHONPATH=. python3 .orchestrator/test_supervisor.py",
+        "result": "227 passed; 1 existing error",
+        "detail": "ReviewDecisionIntentLeaseRecoveryTests legacy-collision fixture leaves task_archive globals bound to another status root; the failing path does not exercise repository registry selection."
+      },
+      {
+        "command": "python3 .orchestrator/test_worker_runner_heartbeat.py",
+        "result": "36 passed; 4 existing permission-fixture failures",
+        "detail": "The current container/root execution profile returns the tests' custom 41-44 codes for chmod, cross-repo mutation, and traversal probes; no worker-runner file changed in this task."
+      },
+      {
+        "command": "PYTHONPATH=.orchestrator /home/chloe_ong_dev_cctech_support_com/code/pantheon/.venv/bin/python -m pytest .orchestrator/test_auto_commit_archive.py",
+        "result": "2 passed; 1 environment failure",
+        "detail": "The fixture tries to create a sibling worktree below the read-only /tmp/pantheon-worker-worktrees/pantheon parent."
+      },
+      {
+        "command": "PYTHONPATH=.orchestrator /home/chloe_ong_dev_cctech_support_com/code/pantheon/.venv/bin/python -m pytest .orchestrator/test_task_archive_index_legacy_id.py",
+        "result": "3 passed; 1 pre-existing assertion mismatch",
+        "detail": "The implementation raises the narrower snapshot is missing archived_at error while the test expects only two wrapper messages; no archive module changed in this task."
+      }
+    ],
+    "runner": {
+      "python": "3.12.3",
+      "pytest": "9.1.1"
+    },
+    "checksums": {
+      "scripts/ai_status.py": "19255205e062e450842dda4a46e6fb17c347a6f636fdc93e06b602386ef5a1be",
+      "scripts/test_ai_status.py": "d506101ea6f9a6ac96469b203d2b9cdd6e7ca18147542fa318aaff87c342a526",
+      ".orchestrator/multi_repo_registry.py": "a451848de5202a39f497f8887f248c60f01f492adc4c73931d96b2d92078bf50"
+    }
+  },
+  "review_decision": {
+    "status": "pending",
+    "reviewer": "Antigravity",
+    "note": "Independently verify the refreshed frozen PR head, validated lease source-root authority, four-root regression, changed-file allowlist, and classified broader-suite observations."
+  }
+}

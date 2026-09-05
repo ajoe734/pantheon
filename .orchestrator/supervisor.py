@@ -169,6 +169,7 @@ from watch_events import (
 # Supervisor Authority V2 modules.
 from rewrite import concurrency as rewrite_concurrency
 from rewrite import dispatch_admission as rewrite_dispatch_admission
+from rewrite import integration_receipt
 from rewrite import provider_health as rewrite_provider_health
 from rewrite import task_machine as rewrite_task_machine
 from rewrite import task_state_store as rewrite_task_state_store
@@ -860,10 +861,20 @@ def refresh_dashboard_runtime_artifacts(config: dict[str, Any]) -> None:
     if scripts_path not in sys.path:
         sys.path.insert(0, scripts_path)
     try:
-        ai_status = importlib.import_module("ai_status")
-        status_state = ai_status.load_state()
-        ai_status.write_dashboard_bundle(status_state)
-        ai_status.sync_docs_site(status_state)
+        runtime_env = task_state_store_runtime_env(config)
+        previous_env = {name: os.environ.get(name) for name in runtime_env}
+        os.environ.update(runtime_env)
+        try:
+            ai_status = importlib.import_module("ai_status")
+            status_state = ai_status.load_state()
+            ai_status.write_dashboard_bundle(status_state)
+            ai_status.sync_docs_site(status_state)
+        finally:
+            for name, previous_value in previous_env.items():
+                if previous_value is None:
+                    os.environ.pop(name, None)
+                else:
+                    os.environ[name] = previous_value
     except Exception as exc:
         console_log(
             f"dashboard bundle refresh failed: {type(exc).__name__}: {exc}",
@@ -12613,6 +12624,13 @@ def task_execution_dispatch_candidate(
         ),
     )
     if decision is None:
+        return None
+    if (
+        decision is rewrite_task_machine.DispatchReason.OWNED_FINALIZE
+        and not integration_receipt.integration_receipt_consumes_candidate(task)
+    ):
+        # Approval and cron integration are separate transactions. Closeout
+        # starts only after the canonical integrator records this exact landing.
         return None
     if (
         decision is rewrite_task_machine.DispatchReason.REVIEW_READY

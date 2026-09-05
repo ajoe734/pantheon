@@ -1,0 +1,65 @@
+{
+  "schema_version": "pantheon.review-evidence.v1",
+  "task_id": "OPS-INTEGRATION-FINALIZE-PREREQUISITE-001",
+  "title": "Gate owner finalization on exact integration receipt",
+  "owner": "Codex",
+  "reviewer": "Claude",
+  "target_repo": "pantheon",
+  "task_class": "development_tooling",
+  "scope": {
+    "owned": [
+      "Pantheon integration receipt repository identity normalization",
+      "Supervisor owner-finalize dispatch admission",
+      "Receipt and dispatch regression coverage"
+    ],
+    "not_changing": [
+      "Auto-integrator cron cadence or scheduler",
+      "Merge execution or reconciliation paths",
+      "TaskStore authority, fallback loaders, or lifecycle transitions"
+    ],
+    "composes_with": [
+      "OPS-AUTO-INTEGRATOR-CRON-BINDING-001 canonical cron integration"
+    ]
+  },
+  "failure_reproduction": {
+    "repository_identity": "A receipt on a task declaring target_repo=ajoe734/pantheon was not consumable because the pure binding accepted only the repository id pantheon.",
+    "cron_race": "A review_approved row was eligible for owned_finalize_dispatch before the cron integrator attached its exact integration_receipt."
+  },
+  "implementation": {
+    "repository_identity": "The existing pure receipt binding recognizes pantheon and ajoe734/pantheon as aliases for the same compiled-in canonical repository slug.",
+    "dispatch_prerequisite": "OWNED_FINALIZE is admitted only when integration_receipt_consumes_candidate validates the current generation, repository, target branch, PR, and approved head.",
+    "single_contract": "Both auto-integrator consumption and supervisor finalize admission call the same integration_receipt predicate.",
+    "new_scheduler_added": false,
+    "new_merge_path_added": false,
+    "fallback_loader_added": false,
+    "second_task_authority_added": false
+  },
+  "verification": {
+    "status": "passed",
+    "commands": [
+      "/home/chloe_ong_dev_cctech_support_com/code/pantheon/.venv/bin/python -m pytest -q .orchestrator/rewrite/test_integration_receipt.py scripts/git/test_auto_integrator.py",
+      "/home/chloe_ong_dev_cctech_support_com/code/pantheon/.venv/bin/python -m pytest -q .orchestrator/test_supervisor.py -k 'review_approved_waits_for_exact_integration_receipt or operator_exact_head_acceptance_never_dispatches_owner_finalize'",
+      "python3 -m py_compile .orchestrator/rewrite/integration_receipt.py .orchestrator/supervisor.py",
+      "git diff --check"
+    ],
+    "results": [
+      "155 tests passed and 5 subtests passed",
+      "2 focused supervisor tests passed",
+      "modified runtime modules compiled",
+      "no whitespace errors"
+    ],
+    "broader_suite_attempt": {
+      "result": "382 tests passed and 39 subtests passed; 1 unrelated existing test failed",
+      "unrelated_failure": "ReviewDecisionIntentLeaseRecoveryTests.test_reconcile_migrates_legacy_collision_from_journal_and_replays_intent retained a task archive/status root binding mismatch after a late scripts.ai_status import. The failing path does not exercise integration receipts or finalize dispatch admission."
+    }
+  },
+  "review_handoff": {
+    "status": "ready_for_independent_review_after_commit",
+    "required_checks": [
+      "Confirm target_repo pantheon and ajoe734/pantheon bind to the same exact receipt repository slug",
+      "Confirm review_approved without a matching receipt cannot produce owned_finalize_dispatch",
+      "Confirm a matching receipt restores owner finalize eligibility",
+      "Confirm no scheduler, merge, loader, or task-authority path was added"
+    ]
+  }
+}
