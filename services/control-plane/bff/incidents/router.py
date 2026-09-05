@@ -324,6 +324,8 @@ def _default_handle_sse_stream(
 def create_incident_router(
     *,
     service: Optional[IncidentService] = None,
+    read_surface: Optional[Any] = None,
+    command_store: Optional[Any] = None,
     get_read_store: Optional[Callable[[], Any]] = None,
     get_command_store: Optional[Callable[[], Any]] = None,
     extract_identity: Optional[Callable[..., Any]] = None,
@@ -380,6 +382,8 @@ def create_incident_router(
     _handle_sse = handle_sse_stream or _default_handle_sse_stream
 
     _service = service or IncidentService(
+        read_surface=read_surface,
+        command_store=command_store,
         get_read_store=get_read_store,
         get_command_store=get_command_store,
         incident_overlay=incident_overlay,

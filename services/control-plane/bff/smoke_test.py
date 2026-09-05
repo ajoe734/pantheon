@@ -31,6 +31,8 @@ os.environ["BFF_DATA_DIR"] = "/tmp/pantheon/bff_test"
 os.environ.setdefault("BFF_READ_SURFACE_STATE", "fresh")
 os.environ.setdefault("PANTHEON_BFF_AUTH_STUB", "true")
 os.environ.setdefault("PANTHEON_BFF_AUTH_MODE", "permissive")
+os.environ.setdefault("RANKING_STORE_DSN", "postgresql://test:test@localhost:5432/test")
+os.environ.setdefault("RANKING_STORE_BOOTSTRAP", "0")
 from fastapi import HTTPException
 from fastapi.testclient import TestClient
 from services.control_plane.bff import main as bff_main
@@ -170,15 +172,43 @@ class TestOperatorBFF(unittest.TestCase):
     # Read surfaces (Wave 1)
     # ---------------------------------------------------------------------- #
     def test_deployment_review_composed_view(self):
-        original_read_store = bff_main.read_store
-        bff_main.read_store = self._seeded_read_store
-        try:
-            r = self.client.get(
-                "/api/v1/operator/deployment-review/plan-F-042",
-                headers={"Authorization": OPERATOR_TOKEN},
-            )
-        finally:
-            bff_main.read_store = original_read_store
+        dep_router = bff_main._create_deployment_router(
+            queries=self._seeded_read_store,
+            extract_identity=bff_main._extract_identity,
+            require_read_role=bff_main._require_read_role,
+            require_operator_role=bff_main._require_operator_role,
+            bff_error=bff_main._bff_error,
+            utc_now=bff_main.utc_now,
+            page_slice=bff_main._page_slice,
+            snapshot_meta=bff_main._snapshot_meta,
+            dataset_surface_status=bff_main._dataset_surface_status,
+            composed_surface_status=bff_main._composed_surface_status,
+            read_surface_meta=bff_main._read_surface_meta,
+            raise_if_read_surface_unavailable=bff_main._raise_if_read_surface_unavailable,
+            aggregate_group_surface=bff_main._aggregate_group_surface,
+            split_csv_query=bff_main._split_csv_query,
+            meta_staleness=bff_main._meta_staleness,
+            stable_json_hash=bff_main._stable_json_hash,
+            resolve_final_idempotency_key=bff_main._resolve_final_idempotency_key,
+            reject_body_idempotency_key=bff_main._reject_body_idempotency_key,
+            request_dry_run_requested=bff_main._request_dry_run_requested,
+            gov_bff_idempotency=bff_main._GOV_BFF_IDEMPOTENCY,
+            publish_event=bff_main._publish_event,
+            sse_buffers=bff_main._sse_buffers,
+            sse_subscribers=bff_main._sse_subscribers,
+            gov_bff_action_command=bff_main._gov_bff_action_command,
+            deprecated_bff_path_response=bff_main._deprecated_bff_path_response,
+            sem_command_response=bff_main._sem_command_response,
+            stream_generic_events=bff_main.stream_generic_events,
+            surface_degradation_reason=bff_main._surface_degradation_reason,
+        )
+        test_app = bff_main._build_bff_app()
+        test_app.include_router(dep_router)
+        client = TestClient(test_app)
+        r = client.get(
+            "/api/v1/operator/deployment-review/plan-F-042",
+            headers={"Authorization": OPERATOR_TOKEN},
+        )
         self.assertEqual(r.status_code, 200, r.text)
         payload = r.json()
         data = payload.get("data", {})

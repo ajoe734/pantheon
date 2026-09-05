@@ -120,6 +120,7 @@ def _stable_json_hash(payload: Any) -> str:
 
 def create_ranking_formulas_router(
     *,
+    read_surface: Optional[Any] = None,
     get_read_store: Optional[Callable[[], Any]] = None,
     extract_identity: Optional[Callable[..., Any]] = None,
     require_read_role: Optional[Callable[..., None]] = None,
@@ -138,6 +139,9 @@ def create_ranking_formulas_router(
       POST   /bff/ranking-formulas
       PATCH  /bff/ranking-formulas/{formula_id}
     """
+    if read_surface is not None:
+        get_read_store = (lambda: read_surface() if callable(read_surface) else read_surface)
+
     router = APIRouter()
 
     _extract_ident = extract_identity or _default_extract_identity
@@ -392,6 +396,7 @@ from fastapi import Response
 
 def create_rankings_long_tail_router(
     *,
+    read_surface: Optional[Any] = None,
     get_read_store: Optional[Callable[[], Any]] = None,
     extract_identity: Optional[Callable[..., Any]] = None,
     require_read_role: Optional[Callable[..., None]] = None,
@@ -421,6 +426,9 @@ def create_rankings_long_tail_router(
       GET    /bff/rankings/{ranking_id}
       POST   /bff/rankings/{ranking_id}/actions/{action_id}
     """
+    if read_surface is not None:
+        get_read_store = (lambda: read_surface() if callable(read_surface) else read_surface)
+
     router = APIRouter()
 
     _extract_identity = extract_identity or _default_extract_identity
@@ -445,21 +453,7 @@ def create_rankings_long_tail_router(
             route="/bff/ranking/formulas",
             replacement="/bff/ranking-formulas",
         )
-        identity = _extract_identity(authorization)
-        _require_read_role(identity)
-        snapshot_at = _utc_now()
-        read_store = _get_read_store()
-        items = read_store.list_ranking_formulas(status=status)
-        total = len(items)
-        page_items, next_page_token = page_slice(items, page_token, page_size)
-        return {
-            "data": page_items,
-            "page_info": {"next_page_token": next_page_token, "total": total},
-            "meta": read_surface_meta(
-                "ranking_formulas", "ranking_formula_list",
-                snapshot_at=snapshot_at, total=total,
-            ),
-        }
+
 
     @router.post("/bff/ranking/formulas", status_code=201)
     async def bff_deprecated_create_ranking_formula(
@@ -473,35 +467,7 @@ def create_rankings_long_tail_router(
             route="/bff/ranking/formulas",
             replacement="/bff/ranking-formulas",
         )
-        identity = _extract_identity(authorization)
-        _require_read_role(identity)
-        reject_body_idempotency_key(payload)
-        resolved_key = resolve_final_idempotency_key(idempotency_key, x_idempotency_key)
-        request_hash = _stable_json_hash({"route": "POST /bff/ranking/formulas", "payload": payload})
-        cached = capital_bff_idempotency_check(
-            identity.operator_id, resolved_key, request_hash
-        )
-        if cached is not None:
-            return cached
-        name = str(payload.get("name") or "").strip()
-        if not name:
-            raise _err(
-                422, ErrorCode.VALIDATION_FAILED, "name is required",
-                "Ranking formula name must be a non-empty string",
-                precondition_failed="name",
-            )
-        description = str(payload.get("description") or "").strip()
-        read_store = _get_read_store()
-        result = read_store.create_ranking_formula(
-            name=name,
-            description=description,
-            actor_id=identity.operator_id,
-            params=payload.get("params"),
-        )
-        capital_bff_idempotency_store(
-            identity.operator_id, resolved_key, request_hash, result
-        )
-        return result
+
 
     @router.get("/bff/ranking/formulas/{formula_id}")
     async def bff_deprecated_get_ranking_formula(
@@ -513,24 +479,7 @@ def create_rankings_long_tail_router(
             route="/bff/ranking/formulas/{formula_id}",
             replacement="/bff/ranking-formulas/{formula_id}",
         )
-        identity = _extract_identity(authorization)
-        _require_read_role(identity)
-        snapshot_at = _utc_now()
-        read_store = _get_read_store()
-        formula = read_store.get_ranking_formula(formula_id)
-        if not formula:
-            raise _err(
-                404, ErrorCode.RESOURCE_NOT_FOUND,
-                "Ranking formula not found",
-                f"Ranking formula {formula_id} does not exist",
-            )
-        return {
-            "data": formula,
-            "meta": read_surface_meta(
-                "ranking_formulas", "ranking_formula_detail",
-                snapshot_at=snapshot_at,
-            ),
-        }
+
 
     @router.patch("/bff/ranking/formulas/{formula_id}")
     async def bff_deprecated_patch_ranking_formula(
@@ -545,41 +494,7 @@ def create_rankings_long_tail_router(
             route="/bff/ranking/formulas/{formula_id}",
             replacement="/bff/ranking-formulas/{formula_id}",
         )
-        identity = _extract_identity(authorization)
-        _require_read_role(identity)
-        reject_body_idempotency_key(payload)
-        resolved_key = resolve_final_idempotency_key(idempotency_key, x_idempotency_key)
-        request_hash = _stable_json_hash(
-            {"route": "PATCH /bff/ranking/formulas/{formula_id}", "formula_id": formula_id, "payload": payload}
-        )
-        cached = capital_bff_idempotency_check(
-            identity.operator_id, resolved_key, request_hash
-        )
-        if cached is not None:
-            return cached
-        read_store = _get_read_store()
-        formula = read_store.get_ranking_formula(formula_id)
-        if not formula:
-            raise _err(
-                404, ErrorCode.RESOURCE_NOT_FOUND,
-                "Ranking formula not found",
-                f"Ranking formula {formula_id} does not exist",
-            )
-        updated = read_store.patch_ranking_formula(
-            formula_id, patch=payload, actor_id=identity.operator_id,
-        )
-        if not updated:
-            raise _err(
-                503, ErrorCode.DEPENDENCY_UNAVAILABLE,
-                "Ranking formula store unavailable",
-                "Unable to patch ranking formula at this time",
-            )
-        snapshot_at = _utc_now()
-        result = {"data": updated, "meta": {"snapshot_at": snapshot_at}}
-        capital_bff_idempotency_store(
-            identity.operator_id, resolved_key, request_hash, result
-        )
-        return result
+
 
     @router.post("/bff/ranking/formulas/{formula_id}/actions/{action_id}", status_code=202)
     async def bff_deprecated_ranking_formula_action(
@@ -595,27 +510,7 @@ def create_rankings_long_tail_router(
             route="/bff/ranking/formulas/{formula_id}/actions/{action_id}",
             replacement="/bff/actions/rankingFormula/{formula_id}/{action_id}",
         )
-        identity = _extract_identity(authorization)
-        _require_read_role(identity)
-        reject_body_idempotency_key(payload)
-        resolved_key = resolve_final_idempotency_key(idempotency_key, x_idempotency_key)
-        read_store = _get_read_store()
-        formula = read_store.get_ranking_formula(formula_id)
-        if not formula:
-            raise _err(
-                404, ErrorCode.RESOURCE_NOT_FOUND,
-                "Ranking formula not found",
-                f"Ranking formula {formula_id} does not exist",
-            )
-        return capital_bff_action_command(
-            entity_type=object_type.RANKING_FORMULA,
-            entity_id=formula_id,
-            action_id=action_id,
-            resolved_key=resolved_key,
-            identity=identity,
-            payload=payload,
-            command_type=command_type.RANKING_FORMULA_ACTION,
-        )
+
 
     @router.get("/bff/rankings")
     async def bff_list_rankings(

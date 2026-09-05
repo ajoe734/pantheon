@@ -19,17 +19,15 @@ import unittest
 from unittest.mock import MagicMock, patch
 
 BFF_DIR = Path(__file__).resolve().parent.parent
-if str(BFF_DIR) not in sys.path:
-    sys.path.insert(0, str(BFF_DIR))
 
 from fastapi.testclient import TestClient
 
-from ports import (
+from services.control_plane.bff.ports import (
     ReadSurfacePorts,
     create_read_surface_ports,
     create_in_memory_read_surface_ports,
 )
-from agora.interaction.persona_client import (
+from services.control_plane.bff.agora.interaction.persona_client import (
     PersonaReadPort,
     build_canonical_persona_client,
 )
@@ -207,7 +205,7 @@ class TestStaticRegressionReadSurfacePorts(unittest.TestCase):
                 )
 
     def test_main_py_all_read_store_attributes_are_inventoried_and_mapped(self) -> None:
-        """Prove that all 202 read_store attributes in main.py are inventoried and mapped or isolated."""
+        """Prove that all 56 read_store attributes in main.py are inventoried and mapped or isolated."""
         main_py = BFF_DIR / "main.py"
         self.assertTrue(main_py.exists(), f"main.py not found at {main_py}")
         tree = ast.parse(main_py.read_text(encoding="utf-8"), filename=str(main_py))
@@ -218,7 +216,7 @@ class TestStaticRegressionReadSurfacePorts(unittest.TestCase):
                 if isinstance(node.value, ast.Name) and node.value.id == "read_store":
                     read_store_attrs.add(node.attr)
 
-        self.assertEqual(len(read_store_attrs), 202, "Expected exactly 202 read_store attributes in main.py")
+        self.assertEqual(len(read_store_attrs), 56, "Expected exactly 56 read_store attributes in main.py")
 
         ports_instance = create_read_surface_ports()
 
@@ -239,9 +237,9 @@ class TestStaticRegressionReadSurfacePorts(unittest.TestCase):
             [],
             f"Found uninventoried read_store attributes in main.py: {uninventoried}",
         )
-        self.assertEqual(len(mapped_reads), 171)
-        self.assertEqual(len(deferred_writes), 31)
-        self.assertEqual(len(mapped_reads) + len(deferred_writes), 202)
+        self.assertEqual(len(mapped_reads), 55)
+        self.assertEqual(len(deferred_writes), 1)
+        self.assertEqual(len(mapped_reads) + len(deferred_writes), 56)
 
 
 class TestAgoraPersonaClientMigration(unittest.TestCase):
@@ -395,7 +393,7 @@ class TestBffMainDecoupledStartup(unittest.TestCase):
     """Verifies that BFF main module imports and initializes cleanly with ReadSurfacePorts."""
 
     def test_main_module_read_store_is_read_surface_ports(self) -> None:
-        import main as bff_main
+        from services.control_plane.bff import main as bff_main
 
         self.assertIsInstance(
             bff_main.read_store,
@@ -404,7 +402,7 @@ class TestBffMainDecoupledStartup(unittest.TestCase):
         )
 
     def test_main_module_app_initialization(self) -> None:
-        import main as bff_main
+        from services.control_plane.bff import main as bff_main
 
         self.assertIsNotNone(bff_main.app)
         self.assertEqual(bff_main.app.title, "Pantheon Operator BFF")
@@ -605,9 +603,11 @@ class TestEndpointLevelRetainedCallers(unittest.TestCase):
     """Endpoint-level regressions proving main.py retained callers execute cleanly through ReadSurfacePorts."""
 
     def setUp(self) -> None:
-        import main as bff_main
+        from services.control_plane.bff import main as bff_main
+        from services.control_plane.bff.deployment.router import create_deployment_router
+        from services.control_plane.bff.governance.router import create_governance_router
+        from services.control_plane.bff.agora.router import create_agora_router
 
-        self.original_read_store = bff_main.read_store
         self.ports = create_in_memory_read_surface_ports(
             operations_consultation_kwargs={
                 "consult_requests": [
@@ -681,13 +681,110 @@ class TestEndpointLevelRetainedCallers(unittest.TestCase):
                 ],
             },
         )
-        bff_main.read_store = self.ports
-        self.client = TestClient(bff_main.app, raise_server_exceptions=False)
+        from services.control_plane.bff.bootstrap import AppDependencies
+        from services.control_plane.bff.deployment.adapters import (
+            DefaultDeploymentCommands,
+            DeploymentReadSurfaceAdapter,
+        )
+
+        self.deps = AppDependencies(
+            deployment_queries=DeploymentReadSurfaceAdapter(self.ports),
+            deployment_commands=DefaultDeploymentCommands(),
+            read_surface=self.ports,
+            command_store=bff_main.command_store,
+            persona_write_owner=bff_main.persona_write_owner,
+            ranking_write_owner=bff_main.ranking_write_owner,
+            settings_store=bff_main.settings_store,
+        )
+        test_app = bff_main._build_bff_app()
+        test_app.include_router(
+            create_deployment_router(
+                queries=self.deps.deployment_queries,
+                commands=self.deps.deployment_commands,
+                extract_identity=bff_main._extract_identity,
+                require_read_role=bff_main._require_read_role,
+                require_operator_role=bff_main._require_operator_role,
+                bff_error=bff_main._bff_error,
+                utc_now=bff_main.utc_now,
+                page_slice=bff_main._page_slice,
+                snapshot_meta=bff_main._snapshot_meta,
+                dataset_surface_status=bff_main._dataset_surface_status,
+                composed_surface_status=bff_main._composed_surface_status,
+                read_surface_meta=bff_main._read_surface_meta,
+                raise_if_read_surface_unavailable=bff_main._raise_if_read_surface_unavailable,
+                aggregate_group_surface=bff_main._aggregate_group_surface,
+                split_csv_query=bff_main._split_csv_query,
+                meta_staleness=bff_main._meta_staleness,
+                stable_json_hash=bff_main._stable_json_hash,
+                resolve_final_idempotency_key=bff_main._resolve_final_idempotency_key,
+                reject_body_idempotency_key=bff_main._reject_body_idempotency_key,
+                request_dry_run_requested=bff_main._request_dry_run_requested,
+                gov_bff_idempotency=bff_main._GOV_BFF_IDEMPOTENCY,
+                publish_event=bff_main._publish_event,
+                sse_buffers=bff_main._sse_buffers,
+                sse_subscribers=bff_main._sse_subscribers,
+                gov_bff_action_command=bff_main._gov_bff_action_command,
+                deprecated_bff_path_response=bff_main._deprecated_bff_path_response,
+                sem_command_response=bff_main._sem_command_response,
+                stream_generic_events=bff_main.stream_generic_events,
+                surface_degradation_reason=bff_main._surface_degradation_reason,
+            )
+        )
+        test_app.include_router(
+            create_agora_router(
+                extract_identity=bff_main._extract_identity,
+                require_read_role=bff_main._require_read_role,
+                require_write_role=bff_main._require_operator_role,
+                require_operator_role=bff_main._require_operator_role,
+                require_journal_write_role=bff_main._require_journal_write_role,
+                require_agora_signal_write_role=bff_main._require_agora_signal_write_role,
+                require_agora_bulk_feedback_role=bff_main._require_agora_bulk_feedback_role,
+                bff_error=bff_main._bff_error,
+                utc_now=bff_main.utc_now,
+                get_read_store=lambda: self.ports,
+                get_audit_store=lambda: bff_main.agora_audit_store,
+                get_command_store=lambda: bff_main.command_store,
+                get_persona_write_owner=lambda: bff_main.persona_write_owner,
+                get_trade_journey_store=lambda: bff_main._trade_journeys.EVENT_STORE,
+                sync_servant_agent=lambda p: bff_main._ensure_agora_servant_openclaw_agent(dict(p)),
+                canonical_context_ref_resolver=bff_main._resolve_agora_interaction_context_ref,
+                idempotency_store=bff_main._AGORA_CORE_BFF_IDEMPOTENCY,
+                sse_buffers=bff_main._sse_buffers,
+                sse_subscribers=bff_main._sse_subscribers,
+                assistant_ask_enabled=bff_main._assistant_ask_enabled,
+                assistant_build_context_pack=bff_main._assistant_build_context_pack,
+                get_assistant_session_store=lambda: bff_main._ASSISTANT_SESSION_STORE,
+                get_assistant_transcript_store=lambda: bff_main._ASSISTANT_TRANSCRIPT_STORE,
+                openclaw_ops_client_factory=lambda: bff_main.OpenClawOpsClient(),
+                handle_sse_stream=bff_main._handle_sse_stream,
+                publish_event_fn=bff_main._publish_event,
+            )
+        )
+        test_app.include_router(
+            create_governance_router(
+                get_read_store=lambda: self.ports,
+                extract_identity=bff_main._extract_identity,
+                require_read_role=bff_main._require_read_role,
+                require_operator_role=bff_main._require_operator_role,
+                bff_error=bff_main._bff_error,
+                utc_now=bff_main.utc_now,
+                page_slice_fn=bff_main._page_slice,
+                snapshot_meta=bff_main._snapshot_meta,
+                dataset_surface_status=bff_main._dataset_surface_status,
+                read_surface_meta=bff_main._read_surface_meta,
+                meta_staleness=bff_main._meta_staleness,
+                redact_evidence_refs=bff_main.redact_evidence_refs,
+                capabilities_for_identity=bff_main._capabilities_for_identity,
+                submit_action=lambda e_type, e_id, a_id, r_key, ident, p: {},
+                publish_event=lambda e_type, data: None,
+            )
+        )
+        self.client = TestClient(test_app, raise_server_exceptions=False)
         self.auth_headers = {"Authorization": "Bearer admin:admin"}
 
     def tearDown(self) -> None:
-        import main as bff_main
-        bff_main.read_store = self.original_read_store
+        pass
+
 
     def test_endpoint_list_committee_session_memos(self) -> None:
         response = self.client.get(

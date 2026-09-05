@@ -27,12 +27,14 @@ from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import supervisor
 import runtime_state
 import common
 from adapters.base import DeliveryResult
 from rewrite import worker_workspace
+from scripts.git import auto_integrator
 
 
 _OLD_ENV: dict[str, str] = {}
@@ -1998,6 +2000,440 @@ class RuntimeConfigurationContractTests(unittest.TestCase):
             state=with_healthy_delivery_health(config, {"workers": {}, "queue": {"events": {}}}),
         )
         self.assertEqual(decision["first_blocking_gate"], "account_capacity_reached")
+
+
+class AutoIntegratorUnblockAuthorityTests(unittest.TestCase):
+    def test_consumer_allowlist_covers_literal_auto_integrator_reason_producers(self) -> None:
+        source = (
+            Path(__file__).resolve().parents[1] / "scripts" / "git" / "auto_integrator.py"
+        ).read_text(encoding="utf-8")
+        tree = ast.parse(source)
+        literal_reasons: set[str] = set()
+
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Call):
+                function_name = (
+                    node.func.id if isinstance(node.func, ast.Name) else ""
+                )
+                if (
+                    function_name == "open_unblock_task"
+                    and len(node.args) > 1
+                    and isinstance(node.args[1], ast.Constant)
+                    and isinstance(node.args[1].value, str)
+                ):
+                    literal_reasons.add(node.args[1].value)
+                if (
+                    function_name == "FinalMergeRevalidationError"
+                    and node.args
+                    and isinstance(node.args[0], ast.Constant)
+                    and isinstance(node.args[0].value, str)
+                ):
+                    literal_reasons.add(node.args[0].value)
+
+        preflight = next(
+            node
+            for node in tree.body
+            if isinstance(node, ast.FunctionDef) and node.name == "preflight_repository"
+        )
+        for node in ast.walk(preflight):
+            if (
+                isinstance(node, ast.Return)
+                and isinstance(node.value, ast.Tuple)
+                and node.value.elts
+                and isinstance(node.value.elts[0], ast.Constant)
+                and isinstance(node.value.elts[0].value, str)
+            ):
+                literal_reasons.add(node.value.elts[0].value)
+
+        self.assertTrue(literal_reasons)
+        self.assertEqual(
+            literal_reasons - supervisor.unblock_contract.REASONS,
+            set(),
+        )
+
+        gate_source = (
+            Path(__file__).resolve().parents[1]
+            / "scripts" / "git" / "task_review_merge_gate.py"
+        ).read_text(encoding="utf-8")
+        gate_tree = ast.parse(gate_source)
+        dynamic_gate_reasons = {
+            f"review-gate-{node.args[2].value.replace('_', '-')}"
+            for node in ast.walk(gate_tree)
+            if isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id in {"block", "_blocked"}
+            and len(node.args) > 2
+            and isinstance(node.args[2], ast.Constant)
+            and isinstance(node.args[2].value, str)
+        }
+        self.assertTrue(dynamic_gate_reasons)
+        self.assertEqual(
+            dynamic_gate_reasons - supervisor.unblock_contract.REASONS,
+            set(),
+        )
+        self.assertEqual(
+            {
+                f"merge-state-{state.lower()}"
+                for state in {"BLOCKED", "DIRTY", "DRAFT"}
+            }
+            - supervisor.unblock_contract.REASONS,
+            set(),
+        )
+
+    def setUp(self) -> None:
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        root = Path(self.temp.name)
+        self.status_root = root / "status"
+        (self.status_root / ".orchestrator").mkdir(parents=True)
+        runtime = root / "runtime"
+        runtime.mkdir()
+        self.config = config_fixture(self.status_root)
+        self.config["task_state_store"] = {
+            "mode": "authoritative",
+            "event_log": str(runtime / "tasks.jsonl"),
+        }
+        self.source = task_fixture(
+            "ABC-001", status="review_approved", owner="Codex", reviewer="Claude"
+        ) | {
+            "target_repo": "pantheon",
+            "delivery_binding": {"pr": 44, "head_sha": "a" * 40},
+        }
+        self.status = {"tasks": [self.source], "blockers": [], "handoffs": []}
+        supervisor.rewrite_task_state_store.append_state_commit(
+            self.config["task_state_store"]["event_log"], self.status, source="test-seed"
+        )
+        Path(self.config["paths"]["status_file"]).write_text(
+            json.dumps(self.status), encoding="utf-8"
+        )
+
+    def _publish(self, **changes: object) -> Path:
+        payload: dict[str, object] = {
+            "schema": supervisor.AUTO_INTEGRATOR_UNBLOCK_REQUEST_SCHEMA,
+            "status_root": str(self.status_root.resolve()),
+            "status_identity_sha256": supervisor.canonical_task_state_identity(
+                self.config
+            )["identity_sha256"],
+            "command_runtime_sha": "b" * 40,
+            "source_task_id": "ABC-001",
+            "source_task_generation": 1,
+            "unblock_task_id": supervisor.unblock_contract.task_id_from_identity({
+                "source_task_id": "ABC-001", "reason": "ci-red",
+                "source_task_generation": 1,
+                "repository_slug": "ajoe734/pantheon", "pr": 44,
+                "head_sha": "a" * 40,
+            }),
+            "reason": "ci-red",
+            "detail": "required CI is red",
+            "repository_id": "pantheon",
+            "repository_slug": "ajoe734/pantheon",
+            "pr": 44,
+            "head_sha": "a" * 40,
+            "owner": "Codex",
+            "reviewer": "Claude",
+        }
+        payload.update(changes)
+        encoded = json.dumps(
+            payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+        ).encode("utf-8")
+        inbox = self.status_root / supervisor.AUTO_INTEGRATOR_UNBLOCK_INBOX
+        inbox.mkdir(exist_ok=True)
+        path = inbox / f"{supervisor.hashlib.sha256(encoded).hexdigest()}.json"
+        path.write_bytes(encoded + b"\n")
+        return path
+
+    def _task_id(self, reason: str = "ci-red", **changes: object) -> str:
+        request = {
+            "source_task_id": "ABC-001", "source_task_generation": 1,
+            "repository_slug": "ajoe734/pantheon", "pr": 44,
+            "head_sha": "a" * 40, "reason": reason,
+        }
+        request.update(changes)
+        return supervisor._auto_integrator_unblock_task_id(request)
+
+    def _materialize(self) -> bool:
+        with (
+            mock.patch.object(
+                supervisor,
+                "status_command_runtime_env",
+                return_value={
+                    "PANTHEON_COMMAND_ROOT": "/runtime/" + "b" * 40,
+                    "PANTHEON_COMMAND_RUNTIME_SHA": "b" * 40,
+                },
+            ),
+            mock.patch.object(supervisor, "sync_status_pipeline", return_value=True),
+        ):
+            return supervisor.materialize_auto_integrator_unblock_requests(self.config)
+
+    def test_supervisor_materializes_exact_bound_request_once_through_task_store(self) -> None:
+        self._publish()
+        self.assertTrue(self._materialize())
+        self.assertFalse(self._materialize())
+        snapshot = supervisor.rewrite_task_state_store.load_snapshot(
+            self.config["task_state_store"]["event_log"]
+        )
+        created = [
+            task for task in snapshot["state"]["tasks"]
+            if task["id"] == self._task_id()
+        ]
+        self.assertEqual(len(created), 1)
+        self.assertEqual(created[0]["auto_created_by"], "supervisor:auto_integrator_unblock_request")
+        self.assertEqual(created[0]["depends_on"], [])
+        self.assertEqual(created[0]["unblock_request"]["source_task_id"], "ABC-001")
+        task_map = supervisor.task_index_from_status(self.config, snapshot["state"])
+        decision = supervisor.task_execution_dispatch_candidate(
+            self.config,
+            created[0],
+            "Codex",
+            supervisor.task_resolver_for_config(self.config, task_map),
+        )
+        self.assertIsNotNone(decision)
+        self.assertEqual(decision[0], supervisor.REASON_OWNED_READY)
+        self.assertEqual(task_map["ABC-001"]["status"], "review_approved")
+        self.assertEqual(snapshot["last_event"]["source"], "supervisor-auto-integrator-unblock")
+        receipts = self.status_root / supervisor.AUTO_INTEGRATOR_UNBLOCK_RECEIPTS / "processed"
+        archives = self.status_root / supervisor.AUTO_INTEGRATOR_UNBLOCK_ARCHIVE / "processed"
+        self.assertEqual(len(list(receipts.glob("*.json"))), 1)
+        self.assertEqual(len(list(archives.glob("*.json"))), 1)
+
+    def test_existing_canonical_id_requires_exact_request_provenance(self) -> None:
+        request = self._publish()
+        task_id = self._task_id()
+        self.status["tasks"].append({
+            "id": task_id,
+            "unblock_request": {"request_sha256": "0" * 64},
+        })
+        supervisor.rewrite_task_state_store.append_state_commit(
+            self.config["task_state_store"]["event_log"], self.status,
+            source="test-collision",
+        )
+        Path(self.config["paths"]["status_file"]).write_text(
+            json.dumps(self.status), encoding="utf-8",
+        )
+
+        self.assertFalse(self._materialize())
+
+        self.assertFalse(request.exists())
+        rejected = self.status_root / supervisor.AUTO_INTEGRATOR_UNBLOCK_RECEIPTS / "rejected"
+        receipt = json.loads(next(rejected.glob("*.json")).read_text(encoding="utf-8"))
+        self.assertIn("provenance mismatch", receipt["detail"])
+
+    def test_publisher_consumer_publisher_replay_uses_terminal_tombstone(self) -> None:
+        candidate = auto_integrator.TaskCandidate(
+            task_id="ABC-001", title="Ready", owner="Codex", reviewer="Claude",
+            branch="task/ABC-001", repository_slug="ajoe734/pantheon",
+            raw_task={"generation": 1, "delivery_binding": {"pr": 44, "head_sha": "a" * 40}},
+        )
+        settings = auto_integrator.Settings(
+            status_identity_sha256=supervisor.canonical_task_state_identity(
+                self.config
+            )["identity_sha256"],
+            command_runtime_sha="b" * 40,
+        )
+        first = auto_integrator.open_unblock_task(
+            candidate, "ci-red", "required CI is red", settings,
+            auto_integrator.CommandRunner(), root=self.status_root, execute=True,
+        )
+        self.assertTrue(self._materialize())
+
+        second = auto_integrator.open_unblock_task(
+            candidate, "ci-red", "required CI is red", settings,
+            auto_integrator.CommandRunner(), root=self.status_root, execute=True,
+        )
+
+        self.assertEqual(second, first)
+        inbox = self.status_root / supervisor.AUTO_INTEGRATOR_UNBLOCK_INBOX
+        self.assertEqual(list(inbox.glob("*.json")), [])
+        receipts = self.status_root / supervisor.AUTO_INTEGRATOR_UNBLOCK_RECEIPTS / "processed"
+        archives = self.status_root / supervisor.AUTO_INTEGRATOR_UNBLOCK_ARCHIVE / "processed"
+        self.assertEqual(len(list(receipts.glob("*.json"))), 1)
+        self.assertEqual(len(list(archives.glob("*.json"))), 1)
+
+    def test_publisher_consumer_rejection_replay_returns_no_task_id(self) -> None:
+        candidate = auto_integrator.TaskCandidate(
+            task_id="ABC-001", title="Ready", owner="Codex", reviewer="Claude",
+            branch="task/ABC-001", repository_slug="ajoe734/pantheon",
+            raw_task={"generation": 1, "delivery_binding": {"pr": 44, "head_sha": "a" * 40}},
+        )
+        settings = auto_integrator.Settings(
+            status_identity_sha256=supervisor.canonical_task_state_identity(
+                self.config
+            )["identity_sha256"],
+            command_runtime_sha="b" * 40,
+        )
+        first = auto_integrator.open_unblock_task(
+            candidate, "ci-red", "required CI is red", settings,
+            auto_integrator.CommandRunner(), root=self.status_root, execute=True,
+        )
+        self.assertIsNotNone(first)
+
+        stale_status = json.loads(
+            Path(self.config["paths"]["status_file"]).read_text(encoding="utf-8")
+        )
+        stale_status["tasks"][0]["generation"] = 2
+        supervisor.rewrite_task_state_store.append_state_commit(
+            self.config["task_state_store"]["event_log"], stale_status,
+            source="test-generation-advance",
+        )
+        Path(self.config["paths"]["status_file"]).write_text(
+            json.dumps(stale_status), encoding="utf-8",
+        )
+        self.assertFalse(self._materialize())
+
+        replay = auto_integrator.open_unblock_task(
+            candidate, "ci-red", "required CI is red", settings,
+            auto_integrator.CommandRunner(), root=self.status_root, execute=True,
+        )
+
+        self.assertIsNone(replay)
+        inbox = self.status_root / supervisor.AUTO_INTEGRATOR_UNBLOCK_INBOX
+        self.assertEqual(list(inbox.glob("*.json")), [])
+        rejected = self.status_root / supervisor.AUTO_INTEGRATOR_UNBLOCK_RECEIPTS / "rejected"
+        self.assertEqual(len(list(rejected.glob("*.json"))), 1)
+
+    def test_consumer_uses_shared_bounded_noncolliding_task_id_contract(self) -> None:
+        source = "OPS-AUTO-INTEGRATOR-STATUS-AUTHORITY-PREREQUISITE-001"
+        first_reason = "review-gate-approval-head-" + "a" * 80
+        second_reason = "review-gate-approval-head-" + "b" * 80
+
+        base = {
+            "source_task_id": source, "source_task_generation": 1,
+            "repository_slug": "ajoe734/pantheon", "pr": 44,
+            "head_sha": "a" * 40,
+        }
+        first = supervisor._auto_integrator_unblock_task_id(base | {"reason": first_reason})
+        second = supervisor._auto_integrator_unblock_task_id(base | {"reason": second_reason})
+
+        self.assertEqual(
+            first,
+            supervisor.unblock_contract.task_id(
+                source, first_reason, source_task_generation=1,
+                repository_slug="ajoe734/pantheon", pr=44, head_sha="a" * 40,
+            ),
+        )
+        self.assertLessEqual(len(first), supervisor.unblock_contract.TASK_ID_LIMIT)
+        self.assertNotEqual(first, second)
+
+    def test_forged_stale_wrong_root_runtime_pr_head_and_namespace_are_rejected(self) -> None:
+        mutations = (
+            {"status_root": str(self.status_root / "other")},
+            {"status_identity_sha256": "0" * 64},
+            {"command_runtime_sha": "c" * 40},
+            {"source_task_generation": 2},
+            {"pr": 45},
+            {"head_sha": "c" * 40},
+            {"reason": "arbitrary-mutation"},
+            {"reason": "review-gate-invented", "unblock_task_id": "INTEGRATION-UNBLOCK-ABC-001-REVIEW-GATE-INVENTED"},
+            {"reason": "merge-state-invented", "unblock_task_id": "INTEGRATION-UNBLOCK-ABC-001-MERGE-STATE-INVENTED"},
+            {"reason": "final-invented", "unblock_task_id": "INTEGRATION-UNBLOCK-ABC-001-FINAL-INVENTED"},
+            {"unblock_task_id": "EVIL-001"},
+            {"repository_slug": "attacker/repo"},
+        )
+        for mutation in mutations:
+            with self.subTest(mutation=mutation):
+                path = self._publish(**mutation)
+                self.assertFalse(self._materialize())
+                self.assertFalse(path.exists())
+        projected = json.loads(Path(self.config["paths"]["status_file"]).read_text())
+        self.assertEqual([task["id"] for task in projected["tasks"]], ["ABC-001"])
+
+    def test_consumer_rejects_non_integer_generation_and_pr_without_coercion(self) -> None:
+        for field in ("source_task_generation", "pr"):
+            for value in (True, 1.0, "1"):
+                with self.subTest(field=field, value=value):
+                    path = self._publish(
+                        **{field: value},
+                        unblock_task_id="INTEGRATION-UNBLOCK-FORGED",
+                    )
+
+                    self.assertFalse(self._materialize())
+                    self.assertFalse(path.exists())
+
+        projected = json.loads(Path(self.config["paths"]["status_file"]).read_text())
+        self.assertEqual([task["id"] for task in projected["tasks"]], ["ABC-001"])
+
+    def test_malformed_request_is_rejected_without_hiding_later_valid_request(self) -> None:
+        inbox = self.status_root / supervisor.AUTO_INTEGRATOR_UNBLOCK_INBOX
+        inbox.mkdir(exist_ok=True)
+        (inbox / ("0" * 64 + ".json")).write_text("not-json\n", encoding="utf-8")
+        self._publish()
+
+        self.assertTrue(self._materialize())
+
+        self.assertEqual(
+            len(list((self.status_root / supervisor.AUTO_INTEGRATOR_UNBLOCK_RECEIPTS / "rejected").glob("*.json"))),
+            1,
+        )
+        snapshot = supervisor.rewrite_task_state_store.load_snapshot(
+            self.config["task_state_store"]["event_log"]
+        )
+        self.assertTrue(any(task["id"] == self._task_id() for task in snapshot["state"]["tasks"]))
+
+    def test_rejection_finalization_failure_preserves_request_and_continues(self) -> None:
+        inbox = self.status_root / supervisor.AUTO_INTEGRATOR_UNBLOCK_INBOX
+        inbox.mkdir(exist_ok=True)
+        malformed = inbox / ("0" * 64 + ".json")
+        malformed.write_text("not-json\n", encoding="utf-8")
+        valid = self._publish()
+        real_replace = supervisor.os.replace
+
+        def fail_malformed_archive(source: object, destination: object) -> None:
+            if Path(source) == malformed:
+                raise OSError("injected archive failure")
+            real_replace(source, destination)
+
+        with mock.patch.object(supervisor.os, "replace", side_effect=fail_malformed_archive):
+            self.assertTrue(self._materialize())
+
+        self.assertTrue(malformed.is_file())
+        self.assertFalse(valid.exists())
+        snapshot = supervisor.rewrite_task_state_store.load_snapshot(
+            self.config["task_state_store"]["event_log"]
+        )
+        self.assertTrue(
+            any(
+                task["id"] == self._task_id()
+                for task in snapshot["state"]["tasks"]
+            )
+        )
+
+    def test_write_failure_is_receipted_and_does_not_hide_later_valid_request(self) -> None:
+        first = self._publish(reason="ci-red")
+        second = self._publish(
+            reason="smoke-failed",
+            unblock_task_id=self._task_id("smoke-failed"),
+        )
+        ordered = sorted((first, second))
+        real_write = supervisor.write_status
+        calls = 0
+
+        def fail_once(*args: object, **kwargs: object) -> object:
+            nonlocal calls
+            calls += 1
+            if calls == 1:
+                raise OSError("injected write failure")
+            return real_write(*args, **kwargs)
+
+        with mock.patch.object(supervisor, "write_status", side_effect=fail_once):
+            self.assertTrue(self._materialize())
+
+        error_receipts = self.status_root / supervisor.AUTO_INTEGRATOR_UNBLOCK_RECEIPTS / "error"
+        processed_receipts = self.status_root / supervisor.AUTO_INTEGRATOR_UNBLOCK_RECEIPTS / "processed"
+        self.assertTrue((error_receipts / ordered[0].name).is_file())
+        self.assertTrue((processed_receipts / ordered[1].name).is_file())
+        snapshot = supervisor.rewrite_task_state_store.load_snapshot(
+            self.config["task_state_store"]["event_log"]
+        )
+        created = [task["id"] for task in snapshot["state"]["tasks"] if task["id"].startswith("INTEGRATION-UNBLOCK-")]
+        self.assertEqual(len(created), 1)
+
+    def test_drain_is_bounded(self) -> None:
+        inbox = self.status_root / supervisor.AUTO_INTEGRATOR_UNBLOCK_INBOX
+        inbox.mkdir(exist_ok=True)
+        for index in range(supervisor.AUTO_INTEGRATOR_UNBLOCK_DRAIN_MAX + 1):
+            (inbox / f"{index:064x}.json").write_text("{}\n", encoding="utf-8")
+        self.assertFalse(self._materialize())
+        self.assertEqual(len(list(inbox.glob("*.json"))), 1)
 
 
 class SharedPlannerContractTests(unittest.TestCase):

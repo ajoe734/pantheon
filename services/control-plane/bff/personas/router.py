@@ -70,16 +70,9 @@ def create_personas_router(
     """
     router = APIRouter(tags=["personas"])
 
-    _service = service or PersonaService(
-        get_read_store=get_read_store,
-        get_command_store=get_command_store,
-        get_provisioning_store=get_provisioning_store,
-        utc_now_fn=utc_now_fn,
-        bff_error_fn=bff_error_fn,
-        snapshot_meta_fn=snapshot_meta_fn,
-        dataset_surface_status_fn=dataset_surface_status_fn,
-        raise_if_read_surface_unavailable_fn=raise_if_read_surface_unavailable_fn,
-    )
+    if service is None:
+        raise RuntimeError("PersonaService must be explicitly provided; router cannot self-create defaults.")
+    _service = service
 
     read_store = _service.get_read_store()
     command_store = _service.get_command_store()
@@ -3293,20 +3286,7 @@ def create_personas_router(
             route="/bff/personas/{persona_id}/actions/{action_id}",
             replacement="/bff/actions/persona/{persona_id}/{action_id}",
         )
-        identity = _extract_identity(authorization)  # noqa: F841 — unreachable; preserved for future de-deprecation
-        _require_read_role(identity)
-        _reject_body_idempotency_key(payload)
-        resolved_key = _resolve_final_idempotency_key(idempotency_key, x_idempotency_key)
-        _ensure_persona_exists(persona_id)
-        return _strategy_persona_action_command(
-            entity_type=ObjectType.PERSONA,
-            entity_id=persona_id,
-            action_id=action_id,
-            resolved_key=resolved_key,
-            identity=identity,
-            payload=payload,
-            command_type=CommandType.PERSONA_ACTION,
-        )
+
 
     # --- bff_persona_test_prompt ---
     @router.post("/bff/personas/{persona_id}/test-prompt", status_code=202)
@@ -3428,7 +3408,3 @@ def create_personas_router(
         )
 
     return router
-
-
-# Canonical default router instance
-router = create_personas_router()

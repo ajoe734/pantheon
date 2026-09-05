@@ -513,6 +513,8 @@ class IncidentService:
     def __init__(
         self,
         *,
+        read_surface: Optional[Any] = None,
+        command_store: Optional[Any] = None,
         get_read_store: Optional[Callable[[], Any]] = None,
         get_command_store: Optional[Callable[[], Any]] = None,
         incident_overlay: Optional[Dict[str, Dict[str, Any]]] = None,
@@ -525,8 +527,14 @@ class IncidentService:
         meta_staleness: Optional[Callable[[], Optional[Dict[str, Any]]]] = None,
         surface_degradation_reason: Optional[Callable[..., Optional[str]]] = None,
     ) -> None:
-        self._get_read_store = get_read_store or (lambda: None)
-        self._get_command_store = get_command_store or (lambda: None)
+        if read_surface is not None:
+            self._get_read_store = (lambda: read_surface() if callable(read_surface) else read_surface)
+        else:
+            self._get_read_store = get_read_store or (lambda: None)
+        if command_store is not None:
+            self._get_command_store = (lambda: command_store() if callable(command_store) else command_store)
+        else:
+            self._get_command_store = get_command_store or (lambda: None)
         self._incident_overlay: Dict[str, Dict[str, Any]] = (
             incident_overlay if incident_overlay is not None else {}
         )

@@ -12,7 +12,8 @@ from .service import TrainingSessionService
 
 def create_training_router(
     *,
-    get_read_store: Callable[[], Any],
+    read_surface: Optional[Any] = None,
+    get_read_store: Optional[Callable[[], Any]] = None,
     extract_identity: Callable[[Optional[str]], Any],
     require_read_role: Callable[[Any], None],
     bff_error: Callable[..., Exception],
@@ -23,6 +24,7 @@ def create_training_router(
     """Build the dedicated Training domain router with injected BFF ports."""
     router = APIRouter()
     service = TrainingSessionService(
+        read_surface=read_surface,
         get_read_store=get_read_store,
         bff_error=bff_error,
         utc_now=utc_now,

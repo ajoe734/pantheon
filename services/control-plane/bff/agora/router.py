@@ -113,7 +113,10 @@ def create_agora_router(
     require_write_role: Callable[..., None],
     bff_error: Callable[..., HTTPException],
     utc_now: Callable[[], str],
-    get_read_store: Callable[[], Any],
+    read_surface: Optional[Any] = None,
+    command_store: Optional[Any] = None,
+    persona_write_owner: Optional[Any] = None,
+    get_read_store: Optional[Callable[[], Any]] = None,
     sync_servant_agent: Callable[[Dict[str, Any]], Dict[str, Any]],
     get_audit_store: Optional[Callable[[], Any]] = None,
     canonical_context_ref_resolver: Optional[Callable[..., Any]] = None,
@@ -140,6 +143,17 @@ def create_agora_router(
 
     Mount with:  app.include_router(create_agora_router(...))
     """
+    if read_surface is not None:
+        get_read_store = (lambda: read_surface() if callable(read_surface) else read_surface)
+    elif get_read_store is None:
+        raise RuntimeError("Neither read_surface nor get_read_store was configured.")
+
+    if command_store is not None:
+        get_command_store = (lambda: command_store() if callable(command_store) else command_store)
+
+    if persona_write_owner is not None:
+        get_persona_write_owner = (lambda: persona_write_owner() if callable(persona_write_owner) else persona_write_owner)
+
     router = APIRouter(tags=["agora"])
     workshop_store = make_workshop_store()
     workshop_canonical_operations = WorkshopCanonicalOperations(

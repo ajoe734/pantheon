@@ -134,7 +134,8 @@ def _default_bff_error(
 
 def create_datasources_router(
     *,
-    get_read_store: Callable,
+    read_surface: Optional[Any] = None,
+    get_read_store: Optional[Callable] = None,
     extract_identity: Callable,
     require_read_role: Callable,
     snapshot_meta: Callable,
@@ -147,6 +148,7 @@ def create_datasources_router(
     """Factory for BFF data-source management routes (SD-SRCM-03)."""
     router = APIRouter()
 
+    _resolve_store = (lambda: read_surface) if read_surface is not None else (get_read_store or (lambda: None))
     _client_getter = get_source_management_client or (lambda: SourceManagementClient())
     _operator_role_check = require_operator_role or _default_require_operator_role
     _error_handler = bff_error or _default_bff_error
@@ -325,7 +327,7 @@ def create_datasources_router(
             }
 
         # Fallback to legacy read store registry during migration
-        store = get_read_store()
+        store = _resolve_store()
         if read_source_connector_registry is None:
             registry = store.get_source_connector_registry()
         else:
@@ -447,7 +449,7 @@ def create_datasources_router(
 
         snapshot_at = utc_now()
         client = _client_getter()
-        store = get_read_store()
+        store = _resolve_store()
 
         try:
             defs_resp = client.list_connector_definitions()

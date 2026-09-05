@@ -56,6 +56,7 @@ def _default_bff_error(
 
 def create_postmortem_router(
     *,
+    read_surface: Optional[Any] = None,
     get_read_store: Optional[Callable[[], Any]] = None,
     extract_identity: Optional[Callable[[Optional[str]], Any]] = None,
     require_read_role: Optional[Callable[[Any], None]] = None,
@@ -66,7 +67,11 @@ def create_postmortem_router(
     """Build the canonical two-route Postmortem read router."""
 
     router = APIRouter()
-    _get_store = get_read_store or (lambda: getattr(postmortem_service, "read_store", None))
+    _get_store = (
+        (lambda: read_surface() if callable(read_surface) else read_surface)
+        if read_surface is not None
+        else (get_read_store or (lambda: getattr(postmortem_service, "read_store", None)))
+    )
     _extract_identity = extract_identity or _default_extract_identity
     _require_read_role = require_read_role or _default_require_read_role
     _bff_error = bff_error or _default_bff_error
