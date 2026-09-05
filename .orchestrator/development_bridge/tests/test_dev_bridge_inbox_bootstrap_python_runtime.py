@@ -36,6 +36,29 @@ import provision_live_supervisor_config as provision  # noqa: E402
 REQUIREMENTS = REPO_ROOT / ".orchestrator" / "requirements.txt"
 
 
+def _provision_bootstrap_style_venv_python(
+    python_parent: Path, sha: str, requirements_path: Path
+) -> Path:
+    # OPS-SUPERVISOR-PYTHON-RUNTIME-PREREQUISITE-001: a failed mandatory
+    # provisioning step must fail this fixture, not skip it -- a silent skip
+    # here would suppress the only positive real-intake proof this task has.
+    # There is deliberately no broad except/skip around this call: an
+    # explicit, pre-declared offline opt-out (checked before the helper runs)
+    # is the only legitimate way to bypass it, and none is required in the
+    # supported CI/dev-worker environment this test targets.
+    result = provision.ensure_supervisor_python_environment(
+        python_parent=python_parent,
+        sha=sha,
+        requirements_path=requirements_path,
+    )
+    python_path = Path(result["python_executable"])
+    assert python_path.is_file(), (
+        "ensure_supervisor_python_environment reported success but the "
+        f"published python_executable does not exist: {python_path}"
+    )
+    return python_path
+
+
 @pytest.fixture(scope="module")
 def bootstrap_style_venv_python(tmp_path_factory: pytest.TempPathFactory) -> Path:
     python_parent = tmp_path_factory.mktemp("supervisor-python-runtime")
@@ -47,23 +70,7 @@ def bootstrap_style_venv_python(tmp_path_factory: pytest.TempPathFactory) -> Pat
         check=True,
     ).stdout.strip()
 
-    try:
-        result = provision.ensure_supervisor_python_environment(
-            python_parent=python_parent,
-            sha=sha,
-            requirements_path=REQUIREMENTS,
-        )
-    except ValueError as exc:
-        pytest.skip(
-            "could not provision the supervisor Python environment via "
-            f"ensure_supervisor_python_environment (likely no package-index "
-            f"access in this environment): {exc}"
-        )
-
-    python_path = Path(result["python_executable"])
-    if not python_path.is_file():
-        pytest.skip("python3 -m venv did not produce a usable interpreter on this host")
-    return python_path
+    return _provision_bootstrap_style_venv_python(python_parent, sha, REQUIREMENTS)
 
 
 def test_bootstrap_style_venv_drains_a_real_signed_packet(
@@ -158,3 +165,41 @@ def test_bare_venv_without_the_dependency_contract_fails_closed(tmp_path: Path) 
 
     assert drain_result.returncode != 0
     assert "pydantic" in (drain_result.stderr + drain_result.stdout)
+
+
+def test_forced_provisioning_failure_fails_rather_than_skips(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Regression for the fixture flaw this task's review flagged: every
+    ``ensure_supervisor_python_environment`` ``ValueError`` used to be caught
+    and turned into ``pytest.skip``, which would let a genuinely broken
+    mandatory provisioning step masquerade as an environment limitation
+    instead of failing the only positive real-intake test."""
+
+    def _boom(**_kwargs: object) -> dict[str, object]:
+        raise ValueError("simulated mandatory provisioning failure")
+
+    monkeypatch.setattr(provision, "ensure_supervisor_python_environment", _boom)
+
+    with pytest.raises(ValueError, match="simulated mandatory provisioning failure"):
+        _provision_bootstrap_style_venv_python(tmp_path, "0" * 40, REQUIREMENTS)
+
+
+def test_missing_final_python_executable_fails_rather_than_skips(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Regression for the second half of the same fixture flaw: a
+    ``python_executable`` reported as published but not actually present on
+    disk used to be silently skipped instead of failing the test."""
+
+    def _fake_success(**_kwargs: object) -> dict[str, object]:
+        return {
+            "python_executable": str(tmp_path / "nonexistent-sha" / "bin" / "python3"),
+            "reused": False,
+            "python_dependencies": {},
+        }
+
+    monkeypatch.setattr(provision, "ensure_supervisor_python_environment", _fake_success)
+
+    with pytest.raises(AssertionError):
+        _provision_bootstrap_style_venv_python(tmp_path, "0" * 40, REQUIREMENTS)
