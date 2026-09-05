@@ -715,10 +715,10 @@ ssh_bash() {
   command_prefix+=" PANTHEON_GITHUB_TOKEN=$(shell_quote "${GITHUB_TOKEN:-}")"
   command_prefix+=" PANTHEON_ALLOW_DIRTY_DEPLOY=$(shell_quote "$ALLOW_DIRTY")"
   command_prefix+=" PANTHEON_ALLOW_EXAMPLE_ENV=$(shell_quote "$ALLOW_EXAMPLE_ENV")"
-  command_prefix+=" PANTHEON_DEV_BFF_CORS_ORIGINS=$(shell_quote "$DEV_BFF_CORS_ORIGINS")"
-  command_prefix+=" PANTHEON_DEV_BFF_PUBLIC_HOST=$(shell_quote "$DEV_BFF_PUBLIC_HOST")"
-  command_prefix+=" PANTHEON_DEV_FE_PUBLIC_HOST=$(shell_quote "$DEV_FE_PUBLIC_HOST")"
-  command_prefix+=" PANTHEON_DEV_FE_STATIC_ROOT=$(shell_quote "$DEV_FE_STATIC_ROOT")"
+  command_prefix+=" PANTHEON_DEV_BFF_CORS_ORIGINS=$(shell_quote "${DEV_BFF_CORS_ORIGINS:-}")"
+  command_prefix+=" PANTHEON_DEV_BFF_PUBLIC_HOST=$(shell_quote "${DEV_BFF_PUBLIC_HOST:-}")"
+  command_prefix+=" PANTHEON_DEV_FE_PUBLIC_HOST=$(shell_quote "${DEV_FE_PUBLIC_HOST:-}")"
+  command_prefix+=" PANTHEON_DEV_FE_STATIC_ROOT=$(shell_quote "${DEV_FE_STATIC_ROOT:-}")"
   command_prefix+=" PANTHEON_DEV_LIFECYCLE_PROJECTOR_HEALTH_MAX_AGE_SECONDS=$(shell_quote "$DEV_LIFECYCLE_PROJECTOR_HEALTH_MAX_AGE_SECONDS")"
   command_prefix+=" PANTHEON_DEV_BFF_AUTH_STUB=$(shell_quote "$DEV_BFF_AUTH_STUB")"
   command_prefix+=" PANTHEON_DEV_BFF_AUTH_MODE=$(shell_quote "$DEV_BFF_AUTH_MODE")"
@@ -791,14 +791,15 @@ ssh_bash() {
   command_prefix+=" PANTHEON_MANAGEMENT_AI_DB_PASSWORD=$(shell_quote "${DEV_MANAGEMENT_AI_DB_PASSWORD:-}")"
   command_prefix+=" PANTHEON_MANAGEMENT_AI_DB_NAME=$(shell_quote "${DEV_MANAGEMENT_AI_DB_NAME:-}")"
   command_prefix+=" PANTHEON_MANAGEMENT_AI_APP_DB_USER=$(shell_quote "${DEV_APP_DB_USER:-pantheon_app}")"
-  command_prefix+=" PANTHEON_STAGING_EXEC_HEALTH_URL=$(shell_quote "$STAGING_EXEC_HEALTH_URL")"
-  command_prefix+=" PANTHEON_STAGING_BFF_CORS_ORIGINS=$(shell_quote "$STAGING_BFF_CORS_ORIGINS")"
+  command_prefix+=" PANTHEON_STAGING_EXEC_HEALTH_URL=$(shell_quote "${STAGING_EXEC_HEALTH_URL:-}")"
+  command_prefix+=" PANTHEON_STAGING_BFF_CORS_ORIGINS=$(shell_quote "${STAGING_BFF_CORS_ORIGINS:-}")"
   command_prefix+=" bash -s"
 
   local deadline_seconds="${DEV_DEPLOY_DEADLINE_SECONDS:-7200}"
   local -a remote_command
   if [[ "$DEPLOY_ENV" == "dev" ]]; then
     info "direct ssh ${REMOTE_USER}@${DEV_DEPLOY_SSH_HOST} component=${remote_component} sha=${DEPLOY_SHA} (deadline=${deadline_seconds}s)"
+    export DEV_DEPLOY_SSH_HOST REMOTE_USER
     remote_command=("$SCRIPT_DIR/dev_vm_ssh.sh" exec "$command_prefix")
   else
     info "gcloud ssh ${vm} (${zone}) component=${remote_component} sha=${DEPLOY_SHA} (deadline=${deadline_seconds}s)"
