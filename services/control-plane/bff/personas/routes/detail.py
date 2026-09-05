@@ -525,7 +525,14 @@ def build_detail_router(ctx: PersonaRouteContext) -> APIRouter:
             },
             reason="persona_updated",
         )
-        persona_record = read_store.update_persona(
+        updater = (
+            getattr(ctx.write_owner, "update_persona", None)
+            if hasattr(ctx, "write_owner") and ctx.write_owner is not None
+            else getattr(read_store, "update_persona", None)
+        )
+        if updater is None:
+            updater = getattr(read_store, "update_persona", None)
+        persona_record = updater(
             persona_id,
             name=str(base.get("name") or persona_id),
             actor_id=str(existing_metadata.get("owner") or identity.operator_id),
@@ -537,7 +544,7 @@ def build_detail_router(ctx: PersonaRouteContext) -> APIRouter:
             lifecycle_state=None,
             risk_level=str(base.get("risk") or "low"),
             metadata=update_metadata,
-        )
+        ) if updater is not None else None
         if persona_record is not None:
             routed = _routed_strategies_for_persona(persona_id)
             base = _project_persona_dto(
