@@ -42,7 +42,7 @@ except ImportError:
             self.detail = detail
 
 try:
-    from operations_read_model import (
+    from services.control_plane.bff.operations_read_model import (
         DataConfidence,
         SourceState,
         SourceStatus,
@@ -77,7 +77,7 @@ except ImportError:
 from pathlib import Path
 
 try:
-    from models import (
+    from services.control_plane.bff.models import (
         redact_evidence_refs,
         EVIDENCE_CAPABILITY_MAP,
         SOURCE_TYPE_TO_EVIDENCE_KIND,
@@ -95,7 +95,7 @@ except ImportError:
         SOURCE_TYPE_TO_EVIDENCE_KIND = {}
 
 try:
-    from models import (
+    from services.control_plane.bff.models import (
         ErrorCode,
         OperatorIdentity,
         EvidenceKind,

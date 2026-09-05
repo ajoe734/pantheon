@@ -18,18 +18,18 @@ from typing import Any, Callable, Dict, Iterable, List, Optional, Tuple
 from fastapi import HTTPException
 
 try:
-    from management_read_models import loop_truth as default_loop_truth
+    from services.control_plane.bff.management_read_models import loop_truth as default_loop_truth
 except ImportError:
     from ..management_read_models import loop_truth as default_loop_truth  # type: ignore[no-redef]
 
 try:
-    from loop_inventory import (
+    from services.control_plane.bff.loop_inventory import (
         get_loop_inventory_entry,
         list_loop_inventory_entries,
         loop_inventory_meta,
         truth_label_payload,
     )
-    from trade_journey_projection_store import InvalidPageToken, ProjectionReadUnavailable
+    from services.control_plane.bff.trade_journey_projection_store import InvalidPageToken, ProjectionReadUnavailable
 except ImportError:
     from ..loop_inventory import (  # type: ignore[no-redef]
         get_loop_inventory_entry,
@@ -43,7 +43,7 @@ except ImportError:
     )
 
 try:
-    from models import ErrorCode
+    from services.control_plane.bff.models import ErrorCode
 except ImportError:
     from ..models import ErrorCode  # type: ignore[no-redef]
 

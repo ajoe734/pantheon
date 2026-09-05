@@ -136,7 +136,7 @@ except ImportError:
     sha256_checksum = lambda data: hashlib.sha256(data.encode() if isinstance(data, str) else data).hexdigest()
 
 try:
-    from ports.persona_capital_runtime import (
+    from services.control_plane.bff.ports.persona_capital_runtime import (
         PERSONA_OPERATIONAL_LIFECYCLE_STATES,
         create_persona_capital_runtime_port,
         create_in_memory_persona_capital_runtime_port,
@@ -145,7 +145,7 @@ except ImportError:
     PERSONA_OPERATIONAL_LIFECYCLE_STATES = frozenset({"paper_trading", "live_canary", "live_active"})
 
 try:
-    from ports import (
+    from services.control_plane.bff.ports import (
         ReadSurfacePorts,
         create_persona_registry_write_owner,
         create_ranking_write_owner,
@@ -166,7 +166,7 @@ except ImportError:
         create_read_surface_ports = None
 
 try:
-    from command_queue import CommandStore
+    from services.control_plane.bff.command_queue import CommandStore
 except ImportError:
     try:
         from services.control_plane.bff.command_queue import CommandStore
@@ -174,7 +174,7 @@ except ImportError:
         CommandStore = None
 
 try:
-    from persona_provisioning import (
+    from services.control_plane.bff.persona_provisioning import (
         MemoryPersonaProvisioningStore,
         ProvisioningConflict,
         ProvisioningRecord,
@@ -189,7 +189,7 @@ except ImportError:
     make_persona_provisioning_store = None
 
 try:
-    from persona_provisioning_coordinator import (
+    from services.control_plane.bff.persona_provisioning_coordinator import (
         PersonaCronRegistrar,
         PersonaProvisioningCoordinator,
         deterministic_provisioning_ids,
@@ -200,7 +200,7 @@ except ImportError:
     deterministic_provisioning_ids = None
 
 try:
-    from action_catalog import get_catalog_entry
+    from services.control_plane.bff.action_catalog import get_catalog_entry
 except ImportError:
     get_catalog_entry = None
 
@@ -209,7 +209,7 @@ from ..command_executor import _get_json, _post_json, _runtime_manager_client
 from ..persona_allocation_policy import build_pm12_allocation_policy_input
 
 try:
-    from paper_eligibility_proof import (
+    from services.control_plane.bff.paper_eligibility_proof import (
         BENCHMARK_VERSION as _PPL_ALLOC_009_ELIGIBILITY_BENCHMARK_VERSION,
         EXPECTED_IDEMPOTENCY_KEY as _PPL_ALLOC_009_ELIGIBILITY_IDEMPOTENCY_KEY,
         RUN_KEY as _PPL_ALLOC_009_ELIGIBILITY_RUN_KEY,
@@ -238,7 +238,7 @@ try:
     # keep that compatibility fallback, but prefer the package-local models
     # contract so the capability-aware three-argument function is never
     # replaced by an unrelated top-level ``models`` module.
-    from models import redact_evidence_refs as _standalone_redact_evidence_refs
+    from services.control_plane.bff.models import redact_evidence_refs as _standalone_redact_evidence_refs
 except ImportError:
     _standalone_redact_evidence_refs = None
 if _standalone_redact_evidence_refs is not None and not str(__package__ or "").startswith("services.control_plane"):

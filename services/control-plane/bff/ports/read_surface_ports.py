@@ -13,7 +13,7 @@ from __future__ import annotations
 from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence, Tuple, Union
 
 try:
-    from ports.operations_consultation import (
+    from services.control_plane.bff.ports.operations_consultation import (
         CompositeOperationsConsultationPort,
         DomainConsultationPort,
         DomainOpenClawOperationsPort,
@@ -23,7 +23,7 @@ try:
         create_in_memory_operations_consultation_port,
         create_operations_consultation_port,
     )
-    from ports.persona_capital_runtime import (
+    from services.control_plane.bff.ports.persona_capital_runtime import (
         CapitalPoolPort,
         CompositePersonaCapitalRuntimePort,
         DeploymentPlanPort,
@@ -36,18 +36,18 @@ try:
         create_in_memory_persona_capital_runtime_port,
         create_persona_capital_runtime_port,
     )
-    from ports.ooda_management import (
+    from services.control_plane.bff.ports.ooda_management import (
         InterventionsPort,
         ManagementReviewQueuePort,
         OodaManagementDomainPort,
         OodaPacketsPort,
         SynthesisConflictLogsPort,
     )
-    from ports.research_knowledge_source import (
+    from services.control_plane.bff.ports.research_knowledge_source import (
         DefaultResearchKnowledgeSourcePort,
         ResearchKnowledgeSourcePort,
     )
-    from ports.lifecycle_telemetry_governance import (
+    from services.control_plane.bff.ports.lifecycle_telemetry_governance import (
         CompositeLifecycleTelemetryGovernancePort,
         DomainGovernancePort,
         DomainIncidentPort,
@@ -58,7 +58,7 @@ try:
         create_in_memory_lifecycle_telemetry_governance_port,
         create_lifecycle_telemetry_governance_port,
     )
-    from ports.persona_training import (
+    from services.control_plane.bff.ports.persona_training import (
         PersonaRegistryReadsPort,
         PersonaTrainingDomainPort,
         RapidEvaluationPort,

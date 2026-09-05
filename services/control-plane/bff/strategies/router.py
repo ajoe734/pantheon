@@ -53,7 +53,7 @@ from services.source_ingestion.strategy_seed_store import (
 )
 
 try:
-    from models import CommandType, ErrorCode, ObjectType, OperatorIdentity
+    from services.control_plane.bff.models import CommandType, ErrorCode, ObjectType, OperatorIdentity
 except ImportError:  # pragma: no cover - defensive fallback for isolated unit tests.
     class ErrorCode:  # type: ignore[no-redef]
         VALIDATION_FAILED = "VALIDATION_FAILED"

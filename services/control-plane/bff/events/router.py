@@ -31,7 +31,7 @@ from starlette.responses import JSONResponse, StreamingResponse
 from .service import EventStreamService
 
 try:
-    from models import ErrorCode
+    from services.control_plane.bff.models import ErrorCode
 except ImportError:
     class ErrorCode:
         VALIDATION_FAILED = "VALIDATION_FAILED"

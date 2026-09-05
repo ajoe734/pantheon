@@ -26,7 +26,7 @@ try:
     )
 except ImportError:
     try:
-        from trade_journey_projection_store import configured_projection_reader
+        from services.control_plane.bff.trade_journey_projection_store import configured_projection_reader
     except ImportError:
         def configured_projection_reader():
             return None

@@ -12,7 +12,7 @@ from __future__ import annotations
 from typing import Any, Dict, Mapping
 
 try:
-    from ports.persona_capital_runtime import PersonaMutationPort
+    from services.control_plane.bff.ports.persona_capital_runtime import PersonaMutationPort
 except ImportError:
     from services.control_plane.bff.ports.persona_capital_runtime import (  # type: ignore[no-redef]
         PersonaMutationPort,

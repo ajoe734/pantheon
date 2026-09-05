@@ -25,7 +25,7 @@ from typing import Any, Callable, Dict, List, Mapping, Optional, Protocol, Seque
 
 # Typed service client imports with fail-safe fallbacks
 try:
-    from openclaw_ops_client import OpenClawOpsClient, OpenClawOpsClientError
+    from services.control_plane.bff.openclaw_ops_client import OpenClawOpsClient, OpenClawOpsClientError
 except ImportError:  # pragma: no cover
     try:
         from services.control_plane.bff.openclaw_ops_client import (  # type: ignore[no-redef]

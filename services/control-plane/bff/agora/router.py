@@ -18,7 +18,7 @@ from fastapi import APIRouter, Body, Header, HTTPException, Query, Response
 from ..models import CommandResponse, DecisionJournalEntryDTO
 
 try:
-    from ports import (
+    from services.control_plane.bff.ports import (
         ReadSurfacePorts,
         create_read_surface_ports,
         OpenClawOpsClient,

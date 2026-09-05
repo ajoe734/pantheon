@@ -28,7 +28,7 @@ from fastapi.encoders import jsonable_encoder
 from starlette.responses import JSONResponse
 
 try:
-    from models import (
+    from services.control_plane.bff.models import (
         ActionCommandStatus,
         BffActionCatalogEntry,
         CommandResponse,
@@ -132,7 +132,7 @@ except ImportError:
             TESTED = "tested"
 
 try:
-    from openclaw_ops_client import OpenClawOpsClient, OpenClawOpsClientError
+    from services.control_plane.bff.openclaw_ops_client import OpenClawOpsClient, OpenClawOpsClientError
 except ImportError:
     try:
         from ..openclaw_ops_client import OpenClawOpsClient, OpenClawOpsClientError  # type: ignore[no-redef]

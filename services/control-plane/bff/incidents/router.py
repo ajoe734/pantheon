@@ -65,7 +65,7 @@ from .service import (
 )
 
 try:
-    from models import (
+    from services.control_plane.bff.models import (
         CommandStatus,
         CommandType,
         ErrorCode,

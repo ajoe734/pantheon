@@ -15,13 +15,13 @@ from typing import Any, Callable, Dict, Optional
 from fastapi import APIRouter, BackgroundTasks, Body, Header, Query, Request
 
 try:
-    from loop_inventory import (
+    from services.control_plane.bff.loop_inventory import (
         LoopHealthDetailEnvelope,
         LoopHealthListEnvelope,
         LoopInventoryDetailEnvelope,
         LoopInventoryListEnvelope,
     )
-    from models import (
+    from services.control_plane.bff.models import (
         CommandType,
         ErrorCode,
         InterventionListResponse,

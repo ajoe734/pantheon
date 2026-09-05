@@ -40,7 +40,7 @@ from typing import Any, Callable, Dict, List, Optional, Sequence, Set, Tuple
 from fastapi import APIRouter, Body, Header, HTTPException, Query
 
 try:
-    from models import ErrorCode, ObjectType
+    from services.control_plane.bff.models import ErrorCode, ObjectType
 except ImportError:
     try:
         from ..models import ErrorCode, ObjectType  # type: ignore[no-redef]

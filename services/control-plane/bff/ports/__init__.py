@@ -15,7 +15,7 @@ stores and service clients without importing or delegating to ReadSurfaceStore.
 from __future__ import annotations
 
 try:
-    from ports.operations_consultation import (
+    from services.control_plane.bff.ports.operations_consultation import (
         WorkflowHookCatalogReaderPort,
         DomainWorkflowCatalogPort,
         OpenClawOperationsReaderPort,
@@ -30,7 +30,7 @@ try:
         OpenClawOpsClient,
         OpenClawOpsClientError,
     )
-    from ports.persona_capital_runtime import (
+    from services.control_plane.bff.ports.persona_capital_runtime import (
         PersonaFleetPort,
         CapitalPoolPort,
         DeploymentPlanPort,
@@ -44,18 +44,18 @@ try:
         create_in_memory_persona_capital_runtime_port,
         PERSONA_OPERATIONAL_LIFECYCLE_STATES,
     )
-    from ports.ooda_management import (
+    from services.control_plane.bff.ports.ooda_management import (
         OodaPacketsPort,
         InterventionsPort,
         SynthesisConflictLogsPort,
         ManagementReviewQueuePort,
         OodaManagementDomainPort,
     )
-    from ports.research_knowledge_source import (
+    from services.control_plane.bff.ports.research_knowledge_source import (
         ResearchKnowledgeSourcePort,
         DefaultResearchKnowledgeSourcePort,
     )
-    from ports.lifecycle_telemetry_governance import (
+    from services.control_plane.bff.ports.lifecycle_telemetry_governance import (
         IncidentReaderPort,
         DomainIncidentPort,
         LifecycleReaderPort,
@@ -71,25 +71,25 @@ try:
         create_lifecycle_telemetry_governance_port,
         create_in_memory_lifecycle_telemetry_governance_port,
     )
-    from ports.persona_training import (
+    from services.control_plane.bff.ports.persona_training import (
         PersonaRegistryReadsPort,
         TrainingSessionTrainerPort,
         RapidEvaluationPort,
         RapidEvaluationOwnership,
         PersonaTrainingDomainPort,
     )
-    from ports.read_surface_ports import (
+    from services.control_plane.bff.ports.read_surface_ports import (
         ReadSurfacePorts,
         create_read_surface_ports,
         create_in_memory_read_surface_ports,
     )
-    from ports.persona_write_owner import (
+    from services.control_plane.bff.ports.persona_write_owner import (
         PersonaRegistryHttpWritePort,
         PersonaWriteConflict,
         PersonaWriteOwnerUnavailable,
         create_persona_registry_write_owner,
     )
-    from ports.rankings import (
+    from services.control_plane.bff.ports.rankings import (
         RankingSnapshotWriteOwnerPort,
         create_ranking_write_owner,
     )

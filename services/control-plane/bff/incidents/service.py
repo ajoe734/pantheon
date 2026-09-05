@@ -18,7 +18,7 @@ import logging
 from typing import Any, Callable, Dict, List, Optional, Sequence, Set, Tuple, Union
 
 try:
-    from models import (
+    from services.control_plane.bff.models import (
         CommandStatus,
         CommandType,
         ErrorCode,

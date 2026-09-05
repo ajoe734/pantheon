@@ -557,7 +557,7 @@ def create_identity_router(
             _context_pack_dict: Dict[str, Any] = {}
             if svc._assistant_build_context_pack is not None:
                 try:
-                    from assistant.models import AssistantContextPackRequest as _CPRequest, AssistantMode as _AMode
+                    from services.control_plane.bff.assistant.models import AssistantContextPackRequest as _CPRequest, AssistantMode as _AMode
                     _cp_req = _CPRequest(
                         mode=_AMode.USER,
                         question=prompt or None,
@@ -572,12 +572,12 @@ def create_identity_router(
 
             asst_store = svc._get_assistant_session_store()
             if asst_store is not None:
-                from assistant.transcript_store import (
+                from services.control_plane.bff.assistant.transcript_store import (
                     AssistantSession as _ASession,
                     SessionNotFoundError as _SNFError,
                     build_session as _build_session,
                 )
-                from assistant.models import AssistantMode as _AMode2
+                from services.control_plane.bff.assistant.models import AssistantMode as _AMode2
                 try:
                     asst_store.get(session_id)
                 except _SNFError:
@@ -637,7 +637,7 @@ def create_identity_router(
 
             asst_tx_store = svc._get_assistant_transcript_store()
             if asst_tx_store is not None:
-                from assistant.transcript_store import TurnRole, build_turn
+                from services.control_plane.bff.assistant.transcript_store import TurnRole, build_turn
                 asst_tx_store.append(
                     build_turn(
                         session_id=session_id,

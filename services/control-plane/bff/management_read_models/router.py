@@ -49,7 +49,7 @@ from .models import (
 from .service import ManagementService
 
 try:
-    from operations_read_model import OperationsReadModelEnvelope
+    from services.control_plane.bff.operations_read_model import OperationsReadModelEnvelope
 except ImportError:
     try:
         from services.control_plane.bff.operations_read_model import OperationsReadModelEnvelope  # type: ignore[no-redef]
@@ -57,7 +57,7 @@ except ImportError:
         OperationsReadModelEnvelope = None  # type: ignore[misc,assignment]
 
 try:
-    from models import ErrorCode
+    from services.control_plane.bff.models import ErrorCode
 except ImportError:
     class ErrorCode:
         VALIDATION_FAILED = "VALIDATION_FAILED"

@@ -16,7 +16,7 @@ from fastapi import APIRouter, Body, Header, HTTPException, Query
 from starlette.responses import JSONResponse
 
 try:
-    from models import (
+    from services.control_plane.bff.models import (
         ActionCommandStatus,
         CommandResponse,
         CommandType,
@@ -73,7 +73,7 @@ except ImportError:
             INTERNAL_ERROR = "INTERNAL_ERROR"
 
 try:
-    from openclaw_ops_client import OpenClawOpsClient, OpenClawOpsClientError
+    from services.control_plane.bff.openclaw_ops_client import OpenClawOpsClient, OpenClawOpsClientError
 except ImportError:
     try:
         from ..openclaw_ops_client import OpenClawOpsClient, OpenClawOpsClientError  # type: ignore[no-redef]

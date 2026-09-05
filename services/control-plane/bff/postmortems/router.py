@@ -13,7 +13,7 @@ from typing import Any, Callable, Dict, Optional
 from fastapi import APIRouter, Header, HTTPException
 
 try:
-    from models import ErrorCode
+    from services.control_plane.bff.models import ErrorCode
 except ImportError:
     try:
         from ..models import ErrorCode  # type: ignore[no-redef]
