@@ -353,6 +353,10 @@ jobs:
           version_json="${EVIDENCE_DIR}/bff-version-before.json"
           deployment_json="${EVIDENCE_DIR}/frontend-deployment-before.json"
           if [[ "${BOOTSTRAP_EMPTY_HOST:-false}" == "true" ]]; then
+            if [[ -z "${DEV_FE_URL:-}" || -z "${DEV_BFF_URL:-}" ]]; then
+              echo "Empty-host bootstrap requires DEV_FE_URL and DEV_BFF_URL to be set." >&2
+              exit 1
+            fi
             manifest_status="$(curl --silent --show-error \
               --connect-timeout 10 --max-time 30 \
               --output "${deployment_json}" --write-out '%{http_code}' \
@@ -978,6 +982,13 @@ jobs:
               exit 1
               ;;
           esac
+          # Require current DEV_* variables and fail closed if any is missing
+          for var_name in DEV_VM DEV_ZONE GCP_DEPLOY_PROJECT_ID DEV_BFF_URL DEV_FE_URL DEV_DEPLOY_DEADLINE_SECONDS; do
+            if [[ -z "${!var_name:-}" ]]; then
+              echo "Required bootstrap variable ${var_name} is unset or empty; refusing to deploy." >&2
+              exit 1
+            fi
+          done
           # 1. Deploy predecessor backend to empty host
           args=(
             bash "${GITHUB_WORKSPACE}/.agora-gate-controller/scripts/deploy_nonprod_vm.sh"
@@ -2504,21 +2515,21 @@ jobs:
       - name: Deploy staging VM stack
         env:
           GITHUB_TOKEN: ${{ github.token }}
-          REMOTE_USER: ${{ vars.NONPROD_REMOTE_USER || 'lupin' }}
-          STAGING_CONTROL_VM: ${{ vars.STAGING_CONTROL_VM || 'pantheon-lupin-staging-control' }}
+          REMOTE_USER: ${{ vars.NONPROD_REMOTE_USER }}
+          STAGING_CONTROL_VM: ${{ vars.STAGING_CONTROL_VM }}
           STAGING_CONTROL_ZONE: ${{ vars.STAGING_CONTROL_ZONE || 'asia-east1-b' }}
-          STAGING_CONTROL_REMOTE_DIR: ${{ vars.STAGING_CONTROL_REMOTE_DIR || '/home/lupin/code/pantheon' }}
-          STAGING_EXEC_VM: ${{ vars.STAGING_EXEC_VM || 'pantheon-lupin-staging-exec' }}
+          STAGING_CONTROL_REMOTE_DIR: ${{ vars.STAGING_CONTROL_REMOTE_DIR }}
+          STAGING_EXEC_VM: ${{ vars.STAGING_EXEC_VM }}
           STAGING_EXEC_ZONE: ${{ vars.STAGING_EXEC_ZONE || 'asia-east1-b' }}
-          STAGING_EXEC_REMOTE_DIR: ${{ vars.STAGING_EXEC_REMOTE_DIR || '/home/lupin/code/pantheon' }}
-          STAGING_EXEC_HEALTH_URL: ${{ vars.STAGING_EXEC_HEALTH_URL || 'http://10.50.0.21:28081' }}
+          STAGING_EXEC_REMOTE_DIR: ${{ vars.STAGING_EXEC_REMOTE_DIR }}
+          STAGING_EXEC_HEALTH_URL: ${{ vars.STAGING_EXEC_HEALTH_URL }}
         shell: /bin/bash --noprofile --norc -euo pipefail {0}
         run: |
           args=(
             --environment staging-live
             --component "${TARGET_COMPONENT}"
             --sha "${{ steps.target.outputs.sha }}"
-            --project-id "${{ vars.GCP_DEPLOY_PROJECT_ID || 'pantheon-benjamin-20260528' }}"
+            --project-id "${{ vars.GCP_DEPLOY_PROJECT_ID }}"
           )
           [[ "${ALLOW_DIRTY}" == "true" ]] && args+=(--allow-dirty)
           [[ "${ALLOW_EXAMPLE_ENV}" == "true" ]] && args+=(--allow-example-env)
@@ -2527,8 +2538,8 @@ jobs:
       - name: Public staging BFF smoke
         if: ${{ env.TARGET_COMPONENT == 'auto' || env.TARGET_COMPONENT == 'control' || env.TARGET_COMPONENT == 'all' }}
         env:
-          STAGING_BFF_URL: ${{ vars.STAGING_BFF_URL || 'https://pantheon-lupin-staging-bff.104.155.223.192.sslip.io' }}
-          STAGING_BFF_CORS_ORIGIN: ${{ vars.STAGING_BFF_CORS_ORIGIN || 'https://pantheon-ai-system-front-staging-live.lovable.app' }}
+          STAGING_BFF_URL: ${{ vars.STAGING_BFF_URL }}
+          STAGING_BFF_CORS_ORIGIN: ${{ vars.STAGING_BFF_CORS_ORIGIN }}
           TARGET_SHA: ${{ steps.target.outputs.sha }}
         shell: /bin/bash --noprofile --norc -euo pipefail {0}
         run: |
