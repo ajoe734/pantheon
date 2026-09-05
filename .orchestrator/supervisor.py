@@ -2056,14 +2056,7 @@ def record_delivery_health_refresh_authority_consumed(
 
 
 def _auto_integrator_unblock_task_id(request: Mapping[str, Any]) -> str:
-    return unblock_contract.task_id(
-        str(request.get("source_task_id") or ""),
-        str(request.get("reason") or ""),
-        source_task_generation=int(request.get("source_task_generation") or 0),
-        repository_slug=str(request.get("repository_slug") or ""),
-        pr=int(request.get("pr") or 0),
-        head_sha=str(request.get("head_sha") or "").lower(),
-    )
+    return unblock_contract.task_id_from_identity(request)
 
 
 def _validate_auto_integrator_unblock_request(

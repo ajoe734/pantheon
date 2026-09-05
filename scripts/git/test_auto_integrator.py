@@ -1579,6 +1579,36 @@ class IntegrationPlanTests(unittest.TestCase):
             auto_integrator.unblock_task_id(candidate(7, "b" * 40), "ci-red"),
         )
 
+    def test_unblock_identity_rejects_non_integer_generation_and_pr_at_producer(self) -> None:
+        malformed = (True, 1.0, "1")
+        for field in ("generation", "pr"):
+            for value in malformed:
+                with self.subTest(field=field, value=value):
+                    raw_task = {
+                        "generation": 7,
+                        "delivery_binding": {"pr": 44, "head_sha": APPROVED_HEAD},
+                    }
+                    if field == "generation":
+                        raw_task["generation"] = value
+                    else:
+                        raw_task["delivery_binding"]["pr"] = value
+                    candidate = auto_integrator.TaskCandidate(
+                        task_id="ABC-001", title="Ready", owner="Codex",
+                        reviewer="Claude", branch="task/ABC-001",
+                        repository_slug="ajoe734/pantheon", raw_task=raw_task,
+                    )
+
+                    with self.assertRaisesRegex(ValueError, field):
+                        auto_integrator.unblock_task_id(candidate, "ci-red")
+                    self.assertIsNone(auto_integrator.open_unblock_task(
+                        candidate, "ci-red", "CI failed",
+                        auto_integrator.Settings(
+                            status_identity_sha256="d" * 64,
+                            command_runtime_sha="b" * 40,
+                        ),
+                        FakeRunner(), root=REPO_ROOT, execute=True,
+                    ))
+
     def test_terminal_receipt_prevents_identical_cron_request_republication(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:
             root = Path(tmp_dir)

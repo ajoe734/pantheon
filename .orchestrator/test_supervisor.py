@@ -2088,10 +2088,12 @@ class AutoIntegratorUnblockAuthorityTests(unittest.TestCase):
             "command_runtime_sha": "b" * 40,
             "source_task_id": "ABC-001",
             "source_task_generation": 1,
-            "unblock_task_id": supervisor.unblock_contract.task_id(
-                "ABC-001", "ci-red", source_task_generation=1,
-                repository_slug="ajoe734/pantheon", pr=44, head_sha="a" * 40,
-            ),
+            "unblock_task_id": supervisor.unblock_contract.task_id_from_identity({
+                "source_task_id": "ABC-001", "reason": "ci-red",
+                "source_task_generation": 1,
+                "repository_slug": "ajoe734/pantheon", "pr": 44,
+                "head_sha": "a" * 40,
+            }),
             "reason": "ci-red",
             "detail": "required CI is red",
             "repository_id": "pantheon",
@@ -2303,6 +2305,21 @@ class AutoIntegratorUnblockAuthorityTests(unittest.TestCase):
                 path = self._publish(**mutation)
                 self.assertFalse(self._materialize())
                 self.assertFalse(path.exists())
+        projected = json.loads(Path(self.config["paths"]["status_file"]).read_text())
+        self.assertEqual([task["id"] for task in projected["tasks"]], ["ABC-001"])
+
+    def test_consumer_rejects_non_integer_generation_and_pr_without_coercion(self) -> None:
+        for field in ("source_task_generation", "pr"):
+            for value in (True, 1.0, "1"):
+                with self.subTest(field=field, value=value):
+                    path = self._publish(
+                        **{field: value},
+                        unblock_task_id="INTEGRATION-UNBLOCK-FORGED",
+                    )
+
+                    self.assertFalse(self._materialize())
+                    self.assertFalse(path.exists())
+
         projected = json.loads(Path(self.config["paths"]["status_file"]).read_text())
         self.assertEqual([task["id"] for task in projected["tasks"]], ["ABC-001"])
 

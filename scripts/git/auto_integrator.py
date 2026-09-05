@@ -1850,14 +1850,14 @@ def final_authority_read_locks(
 def unblock_task_id(candidate: TaskCandidate, reason: str) -> str:
     binding = candidate.raw_task.get("delivery_binding")
     binding = binding if isinstance(binding, Mapping) else {}
-    return unblock_contract.task_id(
-        candidate.task_id,
-        reason,
-        source_task_generation=int(candidate.raw_task.get("generation") or 1),
-        repository_slug=candidate.repository_slug,
-        pr=int(binding.get("pr") or binding.get("pr_number") or 0),
-        head_sha=str(binding.get("head_sha") or "").lower(),
-    )
+    return unblock_contract.task_id_from_identity({
+        "source_task_id": candidate.task_id,
+        "reason": reason,
+        "source_task_generation": candidate.raw_task.get("generation", 1),
+        "repository_slug": candidate.repository_slug,
+        "pr": binding.get("pr") if "pr" in binding else binding.get("pr_number"),
+        "head_sha": binding.get("head_sha"),
+    })
 
 
 @dataclass(frozen=True)
@@ -1960,14 +1960,7 @@ def open_unblock_task(
             file=sys.stderr,
         )
         return None
-    task_id = unblock_contract.task_id(
-        candidate.task_id,
-        reason,
-        source_task_generation=generation,
-        repository_slug=candidate.repository_slug,
-        pr=pr_number,
-        head_sha=head_sha,
-    )
+    task_id = unblock_task_id(candidate, reason)
     if not execute:
         return task_id
     runtime_sha = str(settings.command_runtime_sha or "").lower()

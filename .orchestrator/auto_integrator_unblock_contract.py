@@ -31,6 +31,21 @@ def task_id(
     pr: int,
     head_sha: str,
 ) -> str:
+    scalar_strings = {
+        "source_task_id": source_task_id,
+        "reason": reason,
+        "repository_slug": repository_slug,
+        "head_sha": head_sha,
+    }
+    for name, value in scalar_strings.items():
+        if not isinstance(value, str) or not value:
+            raise ValueError(f"unblock identity {name} must be a non-empty string")
+    for name, value in {
+        "source_task_generation": source_task_generation,
+        "pr": pr,
+    }.items():
+        if isinstance(value, bool) or not isinstance(value, int) or value < 1:
+            raise ValueError(f"unblock identity {name} must be a positive integer")
     safe_reason = "".join(
         character if character.isalnum() else "-" for character in reason.upper()
     ).strip("-")
@@ -45,6 +60,19 @@ def task_id(
     }
     suffix = hashlib.sha256(canonical_bytes(candidate)).hexdigest()[:12].upper()
     return f"{readable[: TASK_ID_LIMIT - len(suffix) - 1].rstrip('-')}-{suffix}"
+
+
+def task_id_from_identity(identity: Mapping[str, Any]) -> str:
+    """Derive an ID from raw request identity without scalar coercion."""
+
+    return task_id(
+        identity.get("source_task_id"),
+        identity.get("reason"),
+        source_task_generation=identity.get("source_task_generation"),
+        repository_slug=identity.get("repository_slug"),
+        pr=identity.get("pr"),
+        head_sha=identity.get("head_sha"),
+    )
 
 
 def canonical_bytes(request: Mapping[str, Any]) -> bytes:
