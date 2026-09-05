@@ -1,49 +1,40 @@
 #!/usr/bin/env python3
 """Fresh-stimulus RuntimeBinding and paper lifecycle probe for Loops 8 and 9.
 
-Task: DEV-LOOP8-9-PROBE-20260905
-
-This probe coordinates and verifies:
-1. Served FE and BFF identity readback against current dev hosts
-   (app.dev.mvl-cap.tw and api.dev.mvl-cap.tw), rejecting retired targets.
-2. Read-only preflight by default; requires explicit paper-only execution option.
-3. Fail-closed protection against real-capital or real-order write flags.
-4. Loop 8 (Promotion / Deployment): One newly created stimulus through canonical
-   owner APIs into an executable RuntimeBinding with next-consumer receipt
-   (fleet desired state) and owner worker identity.
-5. Loop 9 (Paper Lifecycle & Execution): Verifies paper runtime worker,
-   telemetry event (simulated fill with is_real_capital=false, is_real_order=false),
-   and next-consumer heartbeat receipt.
-6. Durable fresh-client reload for Loops 8 and 9.
-7. Separate classification for success, blocked, unavailable, and failed states.
-8. Complete credential redaction; bearer tokens or secrets are never printed or saved.
+DEV-LOOP8-9-PROBE-20260905
+Tightened integration probe adhering to:
+1. P1: Affirmative authoritative exact bindings and paper-safety evidence (fails closed on absent or stripped telemetry).
+2. P1: Loop 8 read evidence from terminal saga and applied deployment inbox consumer receipt (no synthesized fallback IDs or receipts).
+3. P1: Authenticated hosted contract with Bearer tokens and X-Tenant-Id headers; deduplicated route joins without duplicate /api segments.
+4. P1: Durable reload comparing full identity, checksum, safety flags, DEP-003 projection, and distinguishing liveness heartbeat from independent trade episode consumer receipt.
+5. P1: Preflight fail-closed checks on 40-hex commit SHAs, FE buildMode, BFF config_posture, environment, pair linkage, and authoritative parent artifact discovery.
 """
-
 from __future__ import annotations
 
 import argparse
 import copy
-from dataclasses import dataclass, field
-from datetime import datetime, timezone
 import hashlib
 import json
 import os
-from pathlib import Path
 import re
 import sys
 import time
-from typing import Any, Callable, Mapping, Sequence
 import urllib.error
 import urllib.parse
 import urllib.request
 import uuid
+from collections.abc import Mapping
+from dataclasses import dataclass, field
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Any, Callable, Sequence
 
 TASK_ID = "DEV-LOOP8-9-PROBE-20260905"
 SCHEMA_VERSION = "pantheon.dev-runtime-paper-lifecycle-evidence.v1"
-PARENT_STRATEGY_ARTIFACT_ID = "artifact-tw-session-momentum-v1"
-
 DEFAULT_BFF_BASE_URL = "https://api.dev.mvl-cap.tw"
 DEFAULT_FE_BASE_URL = "https://app.dev.mvl-cap.tw"
+
+SHA40_RE = re.compile(r"^[0-9a-f]{40}$")
 
 RETIRED_TARGET_PATTERNS = (
     re.compile(r"35\.201\.204\.12"),
@@ -153,7 +144,7 @@ def seal_evidence(payload: dict[str, Any]) -> dict[str, Any]:
 
 def validate_host_not_retired(url: str) -> None:
     """Validate that the target URL does not use any retired deploy target."""
-    parsed = urllib.parse.urlparse(url)
+    parsed = urllib.parse.urlsplit(url)
     hostname = (parsed.hostname or "").strip().lower()
     netloc = (parsed.netloc or "").strip().lower()
 
@@ -163,6 +154,39 @@ def validate_host_not_retired(url: str) -> None:
                 f"URL {url!r} targets retired deploy host or project ({pattern.pattern}). "
                 f"Target current dev hosts: {DEFAULT_FE_BASE_URL} / {DEFAULT_BFF_BASE_URL}."
             )
+
+
+def join_url(base_url: str, path: str) -> str:
+    """Join base_url and path without duplicating overlapping path segments or dropping query parameters."""
+    parsed_base = urllib.parse.urlsplit(base_url)
+    parsed_path = urllib.parse.urlsplit(path)
+
+    base_path = parsed_base.path.rstrip("/")
+    rel_path = parsed_path.path if parsed_path.path.startswith("/") else f"/{parsed_path.path}"
+
+    if base_path:
+        base_segments = [s for s in base_path.split("/") if s]
+        rel_segments = [s for s in rel_path.split("/") if s]
+        overlap = 0
+        for i in range(1, min(len(base_segments), len(rel_segments)) + 1):
+            if base_segments[-i:] == rel_segments[:i]:
+                overlap = i
+        if overlap > 0:
+            combined_segments = base_segments + rel_segments[overlap:]
+        else:
+            combined_segments = base_segments + rel_segments
+        final_path = "/" + "/".join(combined_segments)
+    else:
+        final_path = rel_path
+
+    query = parsed_path.query or parsed_base.query
+    return urllib.parse.urlunsplit((
+        parsed_base.scheme,
+        parsed_base.netloc,
+        final_path,
+        query,
+        parsed_path.fragment or parsed_base.fragment,
+    ))
 
 
 def is_executable_binding(binding: Mapping[str, Any]) -> bool:
@@ -295,6 +319,8 @@ def default_http_transport(
 class ProbeConfig:
     bff_base_url: str = DEFAULT_BFF_BASE_URL
     fe_base_url: str = DEFAULT_FE_BASE_URL
+    expected_fe_sha: str | None = None
+    expected_bff_sha: str | None = None
     deployment_url: str | None = None
     runtime_url: str | None = None
     fleet_url: str | None = None
@@ -303,8 +329,10 @@ class ProbeConfig:
     governance_url: str | None = None
     registry_url: str | None = None
     source_ingest_url: str | None = None
-    expected_fe_sha: str | None = None
-    expected_bff_sha: str | None = None
+    auth_token: str | None = None
+    tenant_id: str = "default"
+    mfa_token: str | None = None
+    parent_artifact_id: str | None = None
     execute_paper_lifecycle: bool = False
     paper_only: bool = True
     output_path: Path = field(
@@ -326,29 +354,47 @@ class CanonicalOwnerAdapter:
     def __init__(self, config: ProbeConfig, transport: Transport) -> None:
         self.config = config
         self.transport = transport
+        self.auth_token = (
+            config.auth_token
+            or os.getenv("PANTHEON_AUTH_TOKEN")
+            or os.getenv("PANTHEON_DEPLOYMENT_SERVICE_TOKEN")
+            or os.getenv("PANTHEON_SERVICE_TOKEN")
+            or "devprobe:operator"
+        )
+        self.tenant_id = (
+            config.tenant_id
+            or os.getenv("PANTHEON_TENANT_ID")
+            or "default"
+        )
+        self.mfa_token = (
+            config.mfa_token
+            or os.getenv("PANTHEON_MFA_TOKEN")
+            or os.getenv("PANTHEON_DEPLOYMENT_MFA_TOKEN")
+            or None
+        )
         self.deployment_url = (
-            config.deployment_url or os.getenv("PANTHEON_DEPLOYMENT_URL") or f"{config.bff_base_url}/api/deployment"
+            config.deployment_url or os.getenv("PANTHEON_DEPLOYMENT_URL") or config.bff_base_url
         ).rstrip("/")
         self.runtime_url = (
-            config.runtime_url or os.getenv("PANTHEON_RUNTIME_URL") or f"{config.bff_base_url}/api/runtime"
+            config.runtime_url or os.getenv("PANTHEON_RUNTIME_URL") or config.bff_base_url
         ).rstrip("/")
         self.fleet_url = (
-            config.fleet_url or os.getenv("PANTHEON_FLEET_URL") or f"{config.bff_base_url}/api/fleet"
+            config.fleet_url or os.getenv("PANTHEON_FLEET_URL") or config.bff_base_url
         ).rstrip("/")
         self.telemetry_url = (
-            config.telemetry_url or os.getenv("PANTHEON_TELEMETRY_URL") or f"{config.bff_base_url}/api/telemetry"
+            config.telemetry_url or os.getenv("PANTHEON_TELEMETRY_URL") or config.bff_base_url
         ).rstrip("/")
         self.capital_url = (
-            config.capital_url or os.getenv("PANTHEON_CAPITAL_URL") or f"{config.bff_base_url}/api/capital"
+            config.capital_url or os.getenv("PANTHEON_CAPITAL_URL") or config.bff_base_url
         ).rstrip("/")
         self.governance_url = (
-            config.governance_url or os.getenv("PANTHEON_GOVERNANCE_URL") or f"{config.bff_base_url}/api/governance"
+            config.governance_url or os.getenv("PANTHEON_GOVERNANCE_URL") or config.bff_base_url
         ).rstrip("/")
         self.registry_url = (
-            config.registry_url or os.getenv("PANTHEON_REGISTRY_URL") or f"{config.bff_base_url}/api/registry"
+            config.registry_url or os.getenv("PANTHEON_REGISTRY_URL") or config.bff_base_url
         ).rstrip("/")
         self.source_ingest_url = (
-            config.source_ingest_url or os.getenv("PANTHEON_SOURCE_INGEST_URL") or f"{config.bff_base_url}/api/source-ingest"
+            config.source_ingest_url or os.getenv("PANTHEON_SOURCE_INGEST_URL") or config.bff_base_url
         ).rstrip("/")
 
         # Validate all service URLs are not retired targets
@@ -376,12 +422,22 @@ class CanonicalOwnerAdapter:
         expected_status: set[int] | None = None,
     ) -> HttpResponse:
         expected = expected_status or {200, 201, 202}
-        url = f"{base_url}{path}" if path.startswith("/") else f"{base_url}/{path}"
+        url = join_url(base_url, path)
         validate_host_not_retired(url)
+
+        req_headers: dict[str, str] = {
+            "Authorization": f"Bearer {self.auth_token}" if not str(self.auth_token).startswith("Bearer ") else str(self.auth_token),
+            "X-Tenant-Id": self.tenant_id,
+        }
+        if self.mfa_token:
+            req_headers["X-MFA-Token"] = self.mfa_token
+        if headers:
+            req_headers.update(headers)
+
         resp = self.transport(
             method,
             url,
-            headers or {},
+            req_headers,
             payload,
             self.config.request_timeout_seconds,
         )
@@ -435,29 +491,73 @@ class DevRuntimePaperLifecycleProbe:
         """Verify served FE/BFF identities, readiness, and safe read-only posture."""
         self._enforce_paper_safety()
 
+        # Fail closed if expected commit SHAs are missing or malformed (Finding 5)
+        if not self.config.expected_fe_sha or not SHA40_RE.fullmatch(self.config.expected_fe_sha.strip().lower()):
+            raise PreflightBlockedError(
+                f"expected_fe_sha must be a valid lowercase 40-hex commit SHA, got {self.config.expected_fe_sha!r}"
+            )
+        expected_fe_sha = self.config.expected_fe_sha.strip().lower()
+
+        if not self.config.expected_bff_sha or not SHA40_RE.fullmatch(self.config.expected_bff_sha.strip().lower()):
+            raise PreflightBlockedError(
+                f"expected_bff_sha must be a valid lowercase 40-hex commit SHA, got {self.config.expected_bff_sha!r}"
+            )
+        expected_bff_sha = self.config.expected_bff_sha.strip().lower()
+
         # 1. Fetch FE deployment.json
         fe_resp = self.adapter.request(
             "GET", self.config.fe_base_url, "/deployment.json", expected_status={200}
         )
         self.probes_executed += 1
         fe_data = fe_resp.payload
+        if not isinstance(fe_data, Mapping):
+            raise PreflightBlockedError(f"FE deployment.json returned non-mapping payload: {fe_data}")
 
-        fe_commit = str(fe_data.get("commit") or fe_data.get("frontendSha") or "").strip()
+        fe_commit = str(
+            fe_data.get("commit")
+            or fe_data.get("frontendSha")
+            or (fe_data.get("frontend") if isinstance(fe_data.get("frontend"), Mapping) else {}).get("commitSha")
+            or ""
+        ).strip().lower()
+
+        manifest_bff_sha = str(
+            fe_data.get("bffCommit")
+            or fe_data.get("bffSourceCommitSha")
+            or fe_data.get("backendSha")
+            or (fe_data.get("bff") if isinstance(fe_data.get("bff"), Mapping) else {}).get("sourceCommitSha")
+            or ""
+        ).strip().lower()
+
         fe_pair_id = str(fe_data.get("pairId") or "").strip()
-        fe_profile = str(fe_data.get("profile") or fe_data.get("deploymentProfile") or "").strip()
-        build_mode = fe_data.get("buildMode") or {}
-        if isinstance(build_mode, Mapping):
-            fe_real_writes = str(build_mode.get("VITE_BFF_REAL_WRITES") or "false").lower()
-            if fe_real_writes in ("true", "1"):
-                raise RealCapitalOrOrderWriteForbiddenError(
-                    f"FE served bundle has VITE_BFF_REAL_WRITES={fe_real_writes!r}"
-                )
+        if not fe_pair_id:
+            raise PreflightBlockedError("FE deployment.json is missing required pairId")
 
-        if self.config.expected_fe_sha:
-            if fe_commit != self.config.expected_fe_sha:
-                raise StaleIdentityError(
-                    f"Served FE commit {fe_commit!r} != expected {self.config.expected_fe_sha!r}"
-                )
+        fe_profile = str(fe_data.get("profile") or fe_data.get("deploymentProfile") or "").strip()
+
+        build_mode = fe_data.get("buildMode")
+        if not isinstance(build_mode, Mapping):
+            raise PreflightBlockedError("FE deployment.json is missing or has malformed buildMode mapping")
+
+        if build_mode.get("VITE_BFF_MODE") != "live":
+            raise PreflightBlockedError(f"FE buildMode VITE_BFF_MODE must be 'live', got {build_mode.get('VITE_BFF_MODE')!r}")
+        if build_mode.get("VITE_BFF_FALLBACK") != "strict":
+            raise PreflightBlockedError(f"FE buildMode VITE_BFF_FALLBACK must be 'strict', got {build_mode.get('VITE_BFF_FALLBACK')!r}")
+
+        fe_real_writes = str(build_mode.get("VITE_BFF_REAL_WRITES", "false")).lower()
+        if fe_real_writes in ("true", "1"):
+            raise RealCapitalOrOrderWriteForbiddenError(
+                f"FE served bundle has VITE_BFF_REAL_WRITES={fe_real_writes!r}"
+            )
+
+        if fe_commit != expected_fe_sha:
+            raise StaleIdentityError(
+                f"Served FE commit {fe_commit!r} != expected {expected_fe_sha!r}"
+            )
+
+        if manifest_bff_sha != expected_bff_sha:
+            raise StaleIdentityError(
+                f"FE manifest BFF SHA {manifest_bff_sha!r} != expected {expected_bff_sha!r}"
+            )
 
         # 2. Fetch BFF version
         bff_version_resp = self.adapter.request(
@@ -465,23 +565,47 @@ class DevRuntimePaperLifecycleProbe:
         )
         self.probes_executed += 1
         bff_version_data = bff_version_resp.payload
+        if not isinstance(bff_version_data, Mapping):
+            raise PreflightBlockedError(f"BFF /bff/version returned non-mapping payload: {bff_version_data}")
+
         bff_commit = str(
             bff_version_data.get("source_commit_sha") or bff_version_data.get("commit") or ""
-        ).strip()
+        ).strip().lower()
+
+        if bff_commit != expected_bff_sha:
+            raise StaleIdentityError(
+                f"Served BFF commit {bff_commit!r} != expected {expected_bff_sha!r}"
+            )
+
+        if manifest_bff_sha != bff_commit:
+            raise StaleIdentityError(
+                f"FE manifest BFF SHA {manifest_bff_sha!r} != runtime BFF SHA {bff_commit!r}"
+            )
+
         bff_pair_id = str(bff_version_data.get("pair_id") or "").strip()
-        config_posture = bff_version_data.get("config_posture") or {}
+        if not bff_pair_id:
+            raise PreflightBlockedError("BFF /bff/version is missing required pair_id")
 
-        if self.config.expected_bff_sha:
-            if bff_commit != self.config.expected_bff_sha:
-                raise StaleIdentityError(
-                    f"Served BFF commit {bff_commit!r} != expected {self.config.expected_bff_sha!r}"
-                )
-
-        # Pair ID consistency check
-        pair_consistent = True
-        if fe_pair_id and bff_pair_id and fe_pair_id != bff_pair_id:
+        if fe_pair_id != bff_pair_id:
             raise CorrelationMismatchError(
                 f"FE pairId {fe_pair_id!r} does not match BFF pair_id {bff_pair_id!r}"
+            )
+
+        environment = str(bff_version_data.get("environment") or "").strip()
+        if not environment:
+            raise PreflightBlockedError("BFF /bff/version is missing environment")
+
+        config_posture = bff_version_data.get("config_posture")
+        if not isinstance(config_posture, Mapping):
+            raise PreflightBlockedError("BFF /bff/version is missing config_posture mapping")
+
+        if config_posture.get("auth_mode") != "strict":
+            raise PreflightBlockedError(
+                f"BFF config_posture.auth_mode must be 'strict', got {config_posture.get('auth_mode')!r}"
+            )
+        if config_posture.get("auth_stub") is not False:
+            raise PreflightBlockedError(
+                f"BFF config_posture.auth_stub must be False, got {config_posture.get('auth_stub')!r}"
             )
 
         # 3. Check BFF health
@@ -490,9 +614,9 @@ class DevRuntimePaperLifecycleProbe:
         )
         self.probes_executed += 1
         readyz_data = readyz_resp.payload
-        if readyz_data.get("ready") is False:
+        if not isinstance(readyz_data, Mapping) or readyz_data.get("ready") is not True:
             raise PreflightBlockedError(
-                f"BFF /readyz reported unready: {readyz_data.get('dependencies')}"
+                f"BFF /readyz reported unready: {readyz_data.get('dependencies') if isinstance(readyz_data, Mapping) else readyz_data}"
             )
 
         # 4. Check Loop health
@@ -510,14 +634,15 @@ class DevRuntimePaperLifecycleProbe:
                     "pairId": fe_pair_id,
                     "profile": fe_profile,
                     "buildMode": build_mode,
+                    "manifest_bff_sha": manifest_bff_sha,
                 },
                 "bff": {
                     "source_commit_sha": bff_commit,
                     "pair_id": bff_pair_id,
-                    "environment": bff_version_data.get("environment"),
+                    "environment": environment,
                     "config_posture": config_posture,
                 },
-                "pair_consistent": pair_consistent,
+                "pair_consistent": True,
             },
             "readyz": readyz_data,
             "loop_health_status": loop_health_resp.status,
@@ -551,6 +676,66 @@ class DevRuntimePaperLifecycleProbe:
     ) -> dict[str, Any]:
         """Execute fresh stimulus through Loop 8 (Deployment) and Loop 9 (Execution)."""
         self._enforce_paper_safety()
+
+        # Authoritative parent strategy artifact discovery (Finding 5)
+        parent_id: str | None = None
+        parent_version: str | None = None
+        parent_checksum: str | None = None
+
+        if self.config.parent_artifact_id:
+            direct_resp = self.adapter.request(
+                "GET",
+                self.adapter.registry_url,
+                f"/api/registry/strategy-artifacts/{self.config.parent_artifact_id}",
+                expected_status={200, 404},
+            )
+            self.probes_executed += 1
+            if direct_resp.status == 200:
+                ent = direct_resp.payload.get("entry") if isinstance(direct_resp.payload.get("entry"), Mapping) else direct_resp.payload
+                if ent.get("artifact_state") == "approved":
+                    parent_id = ent.get("registry_id") or (ent.get("metadata", {}).get("strategy_artifact", {}).get("artifact_id"))
+                    parent_version = ent.get("version")
+                    parent_checksum = ent.get("checksum")
+
+        if not parent_id:
+            reg_resp = self.adapter.request(
+                "GET",
+                self.adapter.registry_url,
+                "/api/registry/strategies/tw_session_momentum/strategy-artifacts?artifact_state=approved",
+                expected_status={200, 404},
+            )
+            self.probes_executed += 1
+            if reg_resp.status == 200:
+                raw_entries = reg_resp.payload if isinstance(reg_resp.payload, list) else reg_resp.payload.get("entries", [])
+                if isinstance(raw_entries, list):
+                    for item in raw_entries:
+                        ent = item.get("entry") if isinstance(item.get("entry"), Mapping) else item
+                        if isinstance(ent, Mapping) and ent.get("artifact_state") == "approved":
+                            parent_id = ent.get("registry_id") or (ent.get("metadata", {}).get("strategy_artifact", {}).get("artifact_id"))
+                            parent_version = ent.get("version")
+                            parent_checksum = ent.get("checksum")
+                            break
+
+        if not parent_id:
+            # Direct query to standard parent artifact
+            baseline_resp = self.adapter.request(
+                "GET",
+                self.adapter.registry_url,
+                "/api/registry/strategy-artifacts/artifact-tw-session-momentum-v1",
+                expected_status={200, 404},
+            )
+            self.probes_executed += 1
+            if baseline_resp.status == 200:
+                ent = baseline_resp.payload.get("entry") if isinstance(baseline_resp.payload.get("entry"), Mapping) else baseline_resp.payload
+                if isinstance(ent, Mapping) and ent.get("artifact_state") == "approved":
+                    parent_id = ent.get("registry_id") or (ent.get("metadata", {}).get("strategy_artifact", {}).get("artifact_id"))
+                    parent_version = ent.get("version")
+                    parent_checksum = ent.get("checksum")
+
+        if not parent_id or not parent_version:
+            raise PreflightBlockedError(
+                "Failed authoritative discovery of an approved parent strategy artifact in registry for lineage"
+            )
 
         # Generate completely fresh unique IDs for this stimulus
         suffix = uuid.uuid4().hex[:10]
@@ -614,11 +799,11 @@ class DevRuntimePaperLifecycleProbe:
         )
         self.probes_executed += 1
 
-        # Step 2: Mutate strategy artifact
+        # Step 2: Mutate strategy artifact using authoritative parent_id
         mutate_resp = self.adapter.request(
             "POST",
             self.adapter.registry_url,
-            f"/api/registry/strategy-artifacts/{PARENT_STRATEGY_ARTIFACT_ID}/mutate",
+            f"/api/registry/strategy-artifacts/{parent_id}/mutate",
             payload={
                 "new_artifact_id": artifact_id,
                 "new_version": "2.1.0",
@@ -647,7 +832,7 @@ class DevRuntimePaperLifecycleProbe:
                 "target_type": "registry_entry",
                 "target_version": "2.1.0",
                 "risk_level": "medium",
-                "tenant_id": "default",
+                "tenant_id": self.adapter.tenant_id,
             },
             expected_status={200, 201},
         )
@@ -693,7 +878,7 @@ class DevRuntimePaperLifecycleProbe:
             "created_at": utc_now(),
         }
         runtime_metadata = {
-            "tenant_id": "default",
+            "tenant_id": self.adapter.tenant_id,
             "environment": "paper",
             "paper_only": True,
             "source_task_id": TASK_ID,
@@ -723,8 +908,8 @@ class DevRuntimePaperLifecycleProbe:
             "registry_entry": registry_entry,
             "metadata": runtime_metadata,
             "rollback": {
-                "target_artifact_id": PARENT_STRATEGY_ARTIFACT_ID,
-                "target_version": "1.0.0",
+                "target_artifact_id": parent_id,
+                "target_version": parent_version,
                 "action_type": "replace",
                 "reason": "Probe paper proof rollback target",
             },
@@ -748,6 +933,7 @@ class DevRuntimePaperLifecycleProbe:
         )
         self.probes_executed += 1
 
+        # Dispatch deployment plan
         dispatch_resp = self.adapter.request(
             "POST",
             self.adapter.deployment_url,
@@ -760,25 +946,54 @@ class DevRuntimePaperLifecycleProbe:
             expected_status={200, 201, 202},
         )
         self.probes_executed += 1
+
+        # Authoritatively extract saga_id (Finding 2: no invented fallback)
         saga_id = (
             (dispatch_resp.payload.get("deployment_saga") or {}).get("saga", {}).get("saga_id")
-            or f"saga-{plan_id}"
+            or (dispatch_resp.payload.get("deployment_saga") or {}).get("saga_id")
+            or dispatch_resp.payload.get("saga_id")
         )
+        if not saga_id:
+            plan_resp = self.adapter.request(
+                "GET", self.adapter.deployment_url, f"/api/deployment/plans/{plan_id}"
+            )
+            self.probes_executed += 1
+            saga_id = plan_resp.payload.get("deployment_saga_id") or plan_resp.payload.get("saga_id")
 
-        # Wait for deployment plan executed and saga completed
+        if not saga_id:
+            raise MissingConsumerReceiptError(
+                f"Deployment dispatch did not return authoritative saga_id for plan {plan_id}"
+            )
+
+        # Wait for terminal saga: completed (Finding 2)
+        def _check_saga_terminal() -> dict[str, Any] | None:
+            saga_resp = self.adapter.request(
+                "GET", self.adapter.deployment_url, f"/api/deployment/sagas/{saga_id}"
+            )
+            self.probes_executed += 1
+            s_status = saga_resp.payload.get("status")
+            if s_status == "completed":
+                return saga_resp.payload
+            if s_status in ("failed", "aborted"):
+                raise PreflightBlockedError(f"Deployment saga {saga_id} reached terminal failure status: {s_status}")
+            return None
+
+        terminal_saga = self._wait_until(f"DeploymentSaga {saga_id} terminal status", _check_saga_terminal)
+
+        # Wait for deployment plan executed
         def _check_deployment_terminal() -> dict[str, Any] | None:
             plan_resp = self.adapter.request(
                 "GET", self.adapter.deployment_url, f"/api/deployment/plans/{plan_id}"
             )
             self.probes_executed += 1
-            status = plan_resp.payload.get("status")
-            if status == "executed":
+            p_status = plan_resp.payload.get("status")
+            if p_status == "executed":
                 return plan_resp.payload
-            if status in ("failed", "aborted"):
-                raise PreflightBlockedError(f"DeploymentPlan failed terminal status: {status}")
+            if p_status in ("failed", "aborted"):
+                raise PreflightBlockedError(f"DeploymentPlan {plan_id} reached terminal failure status: {p_status}")
             return None
 
-        self._wait_until(f"DeploymentPlan {plan_id} terminal status", _check_deployment_terminal)
+        terminal_plan = self._wait_until(f"DeploymentPlan {plan_id} terminal status", _check_deployment_terminal)
 
         # Query RuntimeBinding
         def _check_binding_created() -> dict[str, Any] | None:
@@ -802,7 +1017,53 @@ class DevRuntimePaperLifecycleProbe:
         if not is_executable_binding(binding):
             raise ProbeError(f"RuntimeBinding {binding_id} failed executable contract check: {binding}")
 
-        # Check Loop 8 next-consumer receipt: Fleet desired state
+        # Retrieve Loop 8 next-consumer receipt from deployment inbox applied by deployment-outbox-consumer (Finding 2)
+        def _check_inbox_receipt() -> dict[str, Any] | None:
+            inbox_resp = self.adapter.request(
+                "GET",
+                self.adapter.deployment_url,
+                f"/api/deployment/inbox?aggregate_id={urllib.parse.quote(saga_id, safe='')}&consumer_name=deployment-outbox-consumer",
+                expected_status={200},
+            )
+            self.probes_executed += 1
+            items = inbox_resp.payload if isinstance(inbox_resp.payload, list) else []
+            for item in items:
+                if isinstance(item, Mapping) and item.get("status") == "applied":
+                    return dict(item)
+            return None
+
+        try:
+            inbox_receipt = self._wait_until(f"inbox receipt for saga {saga_id}", _check_inbox_receipt)
+        except ProbeTimeoutError as exc:
+            raise MissingConsumerReceiptError(
+                f"Deployment outbox consumer inbox receipt for saga {saga_id} missing or not applied"
+            ) from exc
+
+        inbox_receipt_id = str(inbox_receipt.get("event_id") or inbox_receipt.get("idempotency_key") or "")
+        if not inbox_receipt_id or inbox_receipt_id == binding_id:
+            raise MissingConsumerReceiptError(
+                f"Invalid or fabricated inbox receipt id: {inbox_receipt_id!r}"
+            )
+
+        # Retrieve and verify DEP-003 deployment projection (Finding 2)
+        proj_resp = self.adapter.request(
+            "GET",
+            self.adapter.deployment_url,
+            f"/api/deployment/projections/{plan_id}",
+            expected_status={200},
+        )
+        self.probes_executed += 1
+        dep003_projection = proj_resp.payload
+        if (
+            not isinstance(dep003_projection, Mapping)
+            or dep003_projection.get("projection_contract") != "DEP-003"
+            or dep003_projection.get("lifecycle_state") != "active"
+            or dep003_projection.get("plan_status") != "executed"
+            or dep003_projection.get("runtime_binding_id") != binding_id
+        ):
+            raise ProbeError(f"DEP-003 projection validation failed: {dep003_projection}")
+
+        # Check fleet desired state membership
         def _check_fleet_desired_receipt() -> str | None:
             fleet_resp = self.adapter.request(
                 "GET",
@@ -826,26 +1087,28 @@ class DevRuntimePaperLifecycleProbe:
                 f"Fleet desired state did not accept binding {binding_id} within timeout"
             ) from exc
 
-        if not fleet_desired_id:
-            raise MissingConsumerReceiptError(
-                f"Fleet desired state did not accept binding {binding_id}"
-            )
+        owner_actor = (
+            terminal_saga.get("metadata", {}).get("foundation", {}).get("command_envelope", {}).get("actor_ref")
+            or terminal_saga.get("metadata", {}).get("foundation", {}).get("audit_action", {}).get("actor_ref")
+            or {"service": inbox_receipt.get("consumer_name", "deployment-outbox-consumer")}
+        )
 
         loop8_evidence = {
             "trigger_id": plan_id,
             "terminal_output_id": binding_id,
-            "next_consumer_receipt_id": fleet_desired_id,
+            "next_consumer_receipt_id": inbox_receipt_id,
             "owner_worker_identity": {
-                "service": "deployment-outbox-consumer",
-                "role": "deployment_executor",
-                "plan_id": plan_id,
-                "status": "completed",
+                "service": inbox_receipt.get("consumer_name", "deployment-outbox-consumer"),
+                "actor_ref": owner_actor,
+                "saga_id": saga_id,
+                "sequence_no": inbox_receipt.get("sequence_no"),
+                "status": inbox_receipt.get("status"),
             },
             "authority_readback": redact_secrets(binding),
             "next_consumer_readback": {
-                "fleet_desired_binding_id": fleet_desired_id,
-                "saga_id": saga_id,
-                "saga_status": "completed",
+                "inbox_receipt": redact_secrets(inbox_receipt),
+                "terminal_saga": redact_secrets(terminal_saga),
+                "dep003_projection": redact_secrets(dep003_projection),
             },
             "assertions": {
                 "executable_runtime_binding": True,
@@ -853,33 +1116,32 @@ class DevRuntimePaperLifecycleProbe:
                 "market_data_policy_bound": True,
                 "paper_only": True,
                 "runtime_binding_active": True,
+                "saga_completed": terminal_saga.get("status") == "completed",
+                "dep003_active": dep003_projection.get("lifecycle_state") == "active",
             },
             "started_at": loop8_started,
             "ended_at": utc_now(),
         }
 
-        # Step 6: Loop 9 (Paper execution & Telemetry)
+        # Step 6: Fleet runtime worker active & telemetry emission (Loop 9)
         loop9_started = utc_now()
 
-        # Check fleet worker
-        def _check_fleet_worker() -> dict[str, Any] | None:
+        def _check_fleet_worker_active() -> dict[str, Any] | None:
             fleet_state_resp = self.adapter.request(
                 "GET", self.adapter.fleet_url, "/api/fleet/state", expected_status={200}
             )
             self.probes_executed += 1
-            workers = fleet_state_resp.payload.get("workers") or {}
-            worker = None
-            if isinstance(workers, list):
-                worker = next((w for w in workers if w.get("binding_id") == binding_id), None)
-            elif isinstance(workers, dict):
-                worker = workers.get(binding_id)
-            if isinstance(worker, dict) and worker.get("status") == "running":
-                return worker
+            workers = fleet_state_resp.payload.get("workers", [])
+            for w in workers:
+                if isinstance(w, Mapping) and w.get("binding_id") == binding_id and w.get("status") == "running":
+                    return w
             return None
 
-        fleet_worker = self._wait_until(f"paper fleet worker for {binding_id}", _check_fleet_worker)
+        fleet_worker = self._wait_until(
+            f"fleet worker running for {binding_id}", _check_fleet_worker_active
+        )
 
-        # Check telemetry event
+        # Wait for telemetry fill event and summary
         def _check_telemetry_event() -> dict[str, Any] | None:
             summary_resp = self.adapter.request(
                 "GET",
@@ -888,25 +1150,24 @@ class DevRuntimePaperLifecycleProbe:
                 expected_status={200, 404},
             )
             self.probes_executed += 1
-            if summary_resp.status != 200:
+            if summary_resp.status == 404:
                 return None
             summary = summary_resp.payload
-            event_ids = list(summary.get("recent_lifecycle_event_ids") or [])
-            for ev_id in reversed(event_ids):
-                ev_resp = self.adapter.request(
-                    "GET",
-                    self.adapter.telemetry_url,
-                    f"/api/telemetry/events/{ev_id}",
-                    expected_status={200, 404},
-                )
-                self.probes_executed += 1
-                if ev_resp.status == 200:
-                    ev = ev_resp.payload
-                    if (
-                        ev.get("event_type") == "paper_fill_simulated"
-                        or (ev.get("metadata") or {}).get("sim_fill_flag") is True
-                    ):
-                        return {"event": ev, "summary": summary}
+            event_ids = summary.get("recent_lifecycle_event_ids") or []
+            if not isinstance(event_ids, list) or len(event_ids) == 0:
+                return None
+            latest_event_id = event_ids[-1]
+
+            ev_resp = self.adapter.request(
+                "GET",
+                self.adapter.telemetry_url,
+                f"/api/telemetry/events/{latest_event_id}",
+                expected_status={200},
+            )
+            self.probes_executed += 1
+            event = ev_resp.payload
+            if event.get("event_type") in ("paper_fill_simulated", "order_fill"):
+                return {"event": event, "summary": summary}
             return None
 
         telemetry_result = self._wait_until(
@@ -915,34 +1176,118 @@ class DevRuntimePaperLifecycleProbe:
         runtime_event = telemetry_result["event"]
         runtime_summary = telemetry_result["summary"]
         event_id = str(runtime_event.get("event_id") or "")
-        heartbeat_receipt_id = str(runtime_summary.get("last_heartbeat_event_id") or "")
 
-        # Validate event contract
-        if not heartbeat_receipt_id:
-            raise MissingConsumerReceiptError(
-                f"Loop 9 next-consumer heartbeat receipt missing for runtime {runtime_id}"
+        # Strict affirmative checks on runtime_event (Finding 1: fail closed on missing/stripped fields)
+        if not event_id:
+            raise ProbeError("Telemetry fill event is missing event_id")
+
+        if runtime_event.get("binding_id") != binding_id:
+            raise ProbeError(
+                f"Telemetry event binding_id {runtime_event.get('binding_id')!r} != stimulus binding_id {binding_id!r}"
+            )
+        if runtime_event.get("artifact_id") != artifact_id:
+            raise ProbeError(
+                f"Telemetry event artifact_id {runtime_event.get('artifact_id')!r} != stimulus artifact_id {artifact_id!r}"
+            )
+        if runtime_event.get("runtime_id") != runtime_id:
+            raise ProbeError(
+                f"Telemetry event runtime_id {runtime_event.get('runtime_id')!r} != stimulus runtime_id {runtime_id!r}"
             )
 
-        event_metadata = runtime_event.get("metadata") or {}
-        if event_metadata.get("is_real_capital") is True:
-            raise RealCapitalOrOrderWriteForbiddenError("Telemetry event reported is_real_capital=True")
-        if event_metadata.get("is_real_order") is True:
-            raise RealCapitalOrOrderWriteForbiddenError("Telemetry event reported is_real_order=True")
-
-        # Correlation check: verify correlation_id matches if present
-        event_corr = (
-            runtime_event.get("correlation_envelope", {}).get("correlation_id")
-            or event_metadata.get("correlation_envelope", {}).get("correlation_id")
-        )
-        if event_corr and event_corr != correlation_id:
+        corr_env = runtime_event.get("correlation_envelope")
+        if not isinstance(corr_env, Mapping) or corr_env.get("correlation_id") != correlation_id:
             raise CorrelationMismatchError(
-                f"Telemetry event correlation_id {event_corr!r} != expected {correlation_id!r}"
+                f"Telemetry event missing or mismatched correlation envelope: {corr_env!r} (expected correlation_id {correlation_id!r})"
+            )
+
+        event_metadata = runtime_event.get("metadata")
+        if not isinstance(event_metadata, Mapping):
+            raise ProbeError("Telemetry event is missing required metadata mapping")
+
+        # Explicitly require boolean False; missing, None, True, or truthy fail closed
+        if event_metadata.get("is_real_capital") is not False:
+            raise RealCapitalOrOrderWriteForbiddenError(
+                f"Telemetry event metadata.is_real_capital must be explicitly False, got {event_metadata.get('is_real_capital')!r}"
+            )
+        if event_metadata.get("is_real_order") is not False:
+            raise RealCapitalOrOrderWriteForbiddenError(
+                f"Telemetry event metadata.is_real_order must be explicitly False, got {event_metadata.get('is_real_order')!r}"
+            )
+
+        if event_metadata.get("broker_submission_status") != "filled":
+            raise ProbeError(
+                f"Telemetry event broker_submission_status must be 'filled', got {event_metadata.get('broker_submission_status')!r}"
+            )
+        if event_metadata.get("artifact_signal_not_smoke") is not True:
+            raise ProbeError(
+                f"Telemetry event artifact_signal_not_smoke must be explicitly True, got {event_metadata.get('artifact_signal_not_smoke')!r}"
+            )
+        if event_metadata.get("source_snapshot_driven") is not True:
+            raise ProbeError(
+                f"Telemetry event source_snapshot_driven must be explicitly True, got {event_metadata.get('source_snapshot_driven')!r}"
+            )
+
+        # Liveness Heartbeat check (Finding 4: fetched and recorded separately from fill receipt)
+        heartbeat_id = str(runtime_summary.get("last_heartbeat_event_id") or "")
+        if not heartbeat_id:
+            raise MissingConsumerReceiptError(
+                f"Loop 9 liveness heartbeat ID missing from runtime summary for {runtime_id}"
+            )
+
+        hb_resp = self.adapter.request(
+            "GET", self.adapter.telemetry_url, f"/api/telemetry/events/{heartbeat_id}", expected_status={200}
+        )
+        self.probes_executed += 1
+        liveness_heartbeat = hb_resp.payload
+        if str(liveness_heartbeat.get("event_id") or "") != heartbeat_id:
+            raise ProbeError(f"Fetched heartbeat event_id {liveness_heartbeat.get('event_id')!r} != {heartbeat_id!r}")
+
+        # Independent causal consumer receipt for the fill: trade episode projection (Finding 4)
+        def _check_trade_episode() -> dict[str, Any] | None:
+            episodes_resp = self.adapter.request(
+                "GET",
+                self.adapter.telemetry_url,
+                f"/api/telemetry/trade-episodes?runtime_id={urllib.parse.quote(runtime_id, safe='')}",
+                expected_status={200},
+            )
+            self.probes_executed += 1
+            ep_list = (
+                episodes_resp.payload if isinstance(episodes_resp.payload, list)
+                else episodes_resp.payload.get("episodes") or episodes_resp.payload.get("items") or []
+            )
+            for ep in ep_list:
+                if isinstance(ep, Mapping) and (
+                    ep.get("event_id") == event_id
+                    or ep.get("runtime_id") == runtime_id
+                    or ep.get("binding_id") == binding_id
+                ):
+                    return dict(ep)
+            return None
+
+        try:
+            trade_episode_receipt = self._wait_until(
+                f"trade episode consumer receipt for {event_id}", _check_trade_episode
+            )
+        except ProbeTimeoutError as exc:
+            raise MissingConsumerReceiptError(
+                f"Independent trade episode consumer receipt for fill {event_id} missing or not produced"
+            ) from exc
+
+        episode_receipt_id = str(
+            trade_episode_receipt.get("episode_id")
+            or trade_episode_receipt.get("trade_episode_id")
+            or trade_episode_receipt.get("id")
+            or ""
+        )
+        if not episode_receipt_id or episode_receipt_id == event_id or episode_receipt_id == heartbeat_id:
+            raise MissingConsumerReceiptError(
+                f"Trade episode consumer receipt must have distinct ID, got {episode_receipt_id!r}"
             )
 
         loop9_evidence = {
             "trigger_id": binding_id,
             "terminal_output_id": event_id,
-            "next_consumer_receipt_id": heartbeat_receipt_id,
+            "next_consumer_receipt_id": episode_receipt_id,
             "owner_worker_identity": {
                 "service": "paper-signal-producer",
                 "role": "paper_runtime_worker",
@@ -951,9 +1296,13 @@ class DevRuntimePaperLifecycleProbe:
             },
             "authority_readback": redact_secrets(runtime_event),
             "next_consumer_readback": {
-                "last_heartbeat_event_id": heartbeat_receipt_id,
-                "runtime_id": runtime_id,
-                "state": runtime_summary.get("state"),
+                "trade_episode": redact_secrets(trade_episode_receipt),
+                "liveness_heartbeat": redact_secrets(liveness_heartbeat),
+                "runtime_summary": {
+                    "runtime_id": runtime_id,
+                    "state": runtime_summary.get("state"),
+                    "last_heartbeat_event_id": heartbeat_id,
+                },
             },
             "assertions": {
                 "artifact_signal_not_smoke": True,
@@ -961,17 +1310,19 @@ class DevRuntimePaperLifecycleProbe:
                 "is_real_order": False,
                 "broker_submission_status": "filled",
                 "source_snapshot_driven": True,
+                "liveness_heartbeat_verified": True,
+                "trade_episode_consumer_verified": True,
             },
             "started_at": loop9_started,
             "ended_at": utc_now(),
         }
 
-        # Step 7: Durable fresh-client reload verification
-        # Instantiate a completely fresh transport / client
-        fresh_transport = fresh_transport_factory() if fresh_transport_factory else self.transport
+        # Step 7: Durable fresh-client reload verification (Finding 4)
+        is_isolated = fresh_transport_factory is not None
+        fresh_transport = fresh_transport_factory() if is_isolated else self.transport
         fresh_adapter = CanonicalOwnerAdapter(self.config, fresh_transport)
 
-        # Fresh reload Loop 8
+        # Fresh reload Loop 8 binding
         reloaded_binding_resp = fresh_adapter.request(
             "GET", fresh_adapter.runtime_url, f"/api/runtime-bindings/{binding_id}"
         )
@@ -985,8 +1336,63 @@ class DevRuntimePaperLifecycleProbe:
             raise ReloadMismatchError(
                 f"Reloaded binding status {reloaded_binding.get('status')!r} is not active"
             )
+        if str(reloaded_binding.get("plan_id") or "") != plan_id:
+            raise ReloadMismatchError(
+                f"Reloaded binding plan_id {reloaded_binding.get('plan_id')!r} != {plan_id!r}"
+            )
+        if str(reloaded_binding.get("runtime_id") or "") != runtime_id:
+            raise ReloadMismatchError(
+                f"Reloaded binding runtime_id {reloaded_binding.get('runtime_id')!r} != {runtime_id!r}"
+            )
+        if str(reloaded_binding.get("artifact_id") or "") != artifact_id:
+            raise ReloadMismatchError(
+                f"Reloaded binding artifact_id {reloaded_binding.get('artifact_id')!r} != {artifact_id!r}"
+            )
+        if str(reloaded_binding.get("artifact_version") or "") != "2.1.0":
+            raise ReloadMismatchError(
+                f"Reloaded binding artifact_version {reloaded_binding.get('artifact_version')!r} != '2.1.0'"
+            )
+        if str(reloaded_binding.get("capital_pool_id") or "") != pool_id:
+            raise ReloadMismatchError(
+                f"Reloaded binding capital_pool_id {reloaded_binding.get('capital_pool_id')!r} != {pool_id!r}"
+            )
+        if str(reloaded_binding.get("symbol") or "") != "2330.TW":
+            raise ReloadMismatchError(
+                f"Reloaded binding symbol {reloaded_binding.get('symbol')!r} != '2330.TW'"
+            )
+        if not is_executable_binding(reloaded_binding):
+            raise ReloadMismatchError("Reloaded binding failed is_executable_binding check")
 
-        # Fresh reload Loop 9
+        obj_store = reloaded_binding.get("object_store") or reloaded_binding.get("metadata", {}).get("object_store") or {}
+        proj_val = obj_store.get(f"openclaw/registry/tw_session_momentum/2.1.0/metadata.json")
+        if isinstance(proj_val, str):
+            try:
+                proj_val = json.loads(proj_val)
+            except json.JSONDecodeError:
+                pass
+        rel_checksum = (proj_val or {}).get("checksum") if isinstance(proj_val, Mapping) else None
+        if rel_checksum != checksum:
+            raise ReloadMismatchError(
+                f"Reloaded binding projection checksum {rel_checksum!r} != expected {checksum!r}"
+            )
+
+        # Fresh reload Loop 8 DEP-003 projection
+        reloaded_dep003_resp = fresh_adapter.request(
+            "GET", fresh_adapter.deployment_url, f"/api/deployment/projections/{plan_id}"
+        )
+        self.probes_executed += 1
+        reloaded_dep003 = reloaded_dep003_resp.payload
+        if (
+            not isinstance(reloaded_dep003, Mapping)
+            or reloaded_dep003.get("projection_contract") != "DEP-003"
+            or reloaded_dep003.get("lifecycle_state") != "active"
+            or reloaded_dep003.get("plan_status") != "executed"
+            or reloaded_dep003.get("runtime_binding_id") != binding_id
+            or reloaded_dep003.get("deployment_saga_status") != "completed"
+        ):
+            raise ReloadMismatchError(f"Reloaded DEP-003 projection failed verification: {reloaded_dep003}")
+
+        # Fresh reload Loop 9 telemetry fill event
         reloaded_event_resp = fresh_adapter.request(
             "GET", fresh_adapter.telemetry_url, f"/api/telemetry/events/{event_id}"
         )
@@ -996,7 +1402,61 @@ class DevRuntimePaperLifecycleProbe:
             raise ReloadMismatchError(
                 f"Reloaded event ID {reloaded_event.get('event_id')!r} != {event_id!r}"
             )
+        if str(reloaded_event.get("binding_id") or "") != binding_id:
+            raise ReloadMismatchError(
+                f"Reloaded event binding_id {reloaded_event.get('binding_id')!r} != {binding_id!r}"
+            )
+        if str(reloaded_event.get("artifact_id") or "") != artifact_id:
+            raise ReloadMismatchError(
+                f"Reloaded event artifact_id {reloaded_event.get('artifact_id')!r} != {artifact_id!r}"
+            )
+        if str(reloaded_event.get("runtime_id") or "") != runtime_id:
+            raise ReloadMismatchError(
+                f"Reloaded event runtime_id {reloaded_event.get('runtime_id')!r} != {runtime_id!r}"
+            )
 
+        rel_corr_env = reloaded_event.get("correlation_envelope")
+        if not isinstance(rel_corr_env, Mapping) or rel_corr_env.get("correlation_id") != correlation_id:
+            raise ReloadMismatchError(
+                f"Reloaded event correlation envelope mismatch: {rel_corr_env}"
+            )
+
+        rel_meta = reloaded_event.get("metadata")
+        if not isinstance(rel_meta, Mapping):
+            raise ReloadMismatchError("Reloaded event missing metadata envelope")
+
+        if rel_meta.get("is_real_capital") is not False:
+            raise ReloadMismatchError(
+                f"Reloaded event is_real_capital must be False, got {rel_meta.get('is_real_capital')!r}"
+            )
+        if rel_meta.get("is_real_order") is not False:
+            raise ReloadMismatchError(
+                f"Reloaded event is_real_order must be False, got {rel_meta.get('is_real_order')!r}"
+            )
+        if rel_meta.get("broker_submission_status") != "filled":
+            raise ReloadMismatchError(
+                f"Reloaded event broker_submission_status must be 'filled', got {rel_meta.get('broker_submission_status')!r}"
+            )
+        if rel_meta.get("artifact_signal_not_smoke") is not True:
+            raise ReloadMismatchError(
+                f"Reloaded event artifact_signal_not_smoke must be True, got {rel_meta.get('artifact_signal_not_smoke')!r}"
+            )
+        if rel_meta.get("source_snapshot_driven") is not True:
+            raise ReloadMismatchError(
+                f"Reloaded event source_snapshot_driven must be True, got {rel_meta.get('source_snapshot_driven')!r}"
+            )
+
+        # Fresh reload Loop 9 heartbeat event
+        reloaded_hb_resp = fresh_adapter.request(
+            "GET", fresh_adapter.telemetry_url, f"/api/telemetry/events/{heartbeat_id}"
+        )
+        self.probes_executed += 1
+        if str(reloaded_hb_resp.payload.get("event_id") or "") != heartbeat_id:
+            raise ReloadMismatchError(
+                f"Reloaded heartbeat ID {reloaded_hb_resp.payload.get('event_id')!r} != {heartbeat_id!r}"
+            )
+
+        # Fresh reload Loop 9 runtime summary
         reloaded_summary_resp = fresh_adapter.request(
             "GET", fresh_adapter.telemetry_url, f"/api/telemetry/runtime-summaries/{runtime_id}"
         )
@@ -1006,26 +1466,38 @@ class DevRuntimePaperLifecycleProbe:
             raise ReloadMismatchError(
                 f"Reloaded summary runtime_id {reloaded_summary.get('runtime_id')!r} != {runtime_id!r}"
             )
+        if str(reloaded_summary.get("last_heartbeat_event_id") or "") != heartbeat_id:
+            raise ReloadMismatchError(
+                f"Reloaded summary last_heartbeat_event_id {reloaded_summary.get('last_heartbeat_event_id')!r} != {heartbeat_id!r}"
+            )
 
         reload_evidence = {
             "verified": True,
             "reloaded_at": utc_now(),
             "loop_08_binding_id": binding_id,
             "loop_08_status": reloaded_binding.get("status"),
+            "loop_08_plan_id": plan_id,
+            "loop_08_checksum": rel_checksum,
+            "loop_08_dep003_projection": redact_secrets(reloaded_dep003),
             "loop_09_event_id": event_id,
             "loop_09_runtime_id": runtime_id,
-            "fresh_client_isolated": True,
+            "loop_09_heartbeat_id": heartbeat_id,
+            "fresh_client_isolated": is_isolated,
         }
 
         loop8_evidence["durable_reload"] = {
             "verified": True,
             "binding_id": binding_id,
+            "plan_id": plan_id,
             "status": reloaded_binding.get("status"),
+            "checksum": rel_checksum,
+            "dep003_verified": True,
         }
         loop9_evidence["durable_reload"] = {
             "verified": True,
             "event_id": event_id,
             "runtime_id": runtime_id,
+            "heartbeat_id": heartbeat_id,
         }
 
         return {
@@ -1040,13 +1512,8 @@ class DevRuntimePaperLifecycleProbe:
         evidence: dict[str, Any] = {
             "schema_version": SCHEMA_VERSION,
             "task_id": TASK_ID,
-            "title": "Implement fresh-stimulus RuntimeBinding and paper lifecycle probe",
-            "status": "pending",
+            "status": "in_progress",
             "mode": "paper_lifecycle" if self.config.execute_paper_lifecycle else "read_only_preflight",
-            "target_hosts": {
-                "bff": self.config.bff_base_url,
-                "fe": self.config.fe_base_url,
-            },
             "started_at": self.started_at,
             "completed_at": None,
             "duration_seconds": None,

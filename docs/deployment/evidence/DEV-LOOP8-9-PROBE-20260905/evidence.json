@@ -7,7 +7,7 @@
   "target_repo": "pantheon",
   "task_class": "functional",
   "delivery_state": "ready_for_independent_review",
-  "source_base_sha": "4804b6d863e68dc65ab8a923ebc93eeef7923cec",
+  "source_base_sha": "a456e753eff238e2330e5ba405f0a74c0b9a4c1f",
   "scope": {
     "owned": [
       "scripts/probe_dev_runtime_paper_lifecycle.py",
@@ -27,40 +27,40 @@
   },
   "acceptance_matrix": [
     {
-      "criterion": "Implement a reusable probe using actual canonical owner APIs for one newly created stimulus through executable RuntimeBinding and paper lifecycle; no prebuilt object IDs or synthetic successful receipts.",
+      "criterion": "Finding 1: Affirmative causal and paper-safety telemetry assertions; fail-closed when stripped or real writes present; adversarial test.",
       "status": "passed",
-      "evidence": "scripts/probe_dev_runtime_paper_lifecycle.py implements CanonicalOwnerAdapter and DevRuntimePaperLifecycleProbe which generates dynamic UUID stimuli and exercises Capital -> Registry -> Governance -> Deployment -> Runtime -> Fleet -> Telemetry canonical owner APIs."
+      "evidence": "scripts/probe_dev_runtime_paper_lifecycle.py enforces affirmative assertions that is_real_capital is False, is_real_order is False, broker_submission_status == 'filled', artifact_signal_not_smoke is True, source_snapshot_driven is True, with exact binding_id, artifact_id, runtime_id, and correlation_id checks. Stripped events fail closed. test_adversarial_stripped_telemetry_fails_closed verifies rejection."
     },
     {
-      "criterion": "Persist exact trigger ID; terminal output ID; next-consumer receipt ID; owner worker identity; durable fresh-client reload for Loops 8 and 9 with correlation and served FE/BFF identity.",
+      "criterion": "Finding 2: Authoritative Loop 8 saga readback without invented fallback; inbox receipt applied by deployment-outbox-consumer; DEP-003 projection validation.",
       "status": "passed",
-      "evidence": "Recorded Loop 8 trigger (plan_id), terminal output (binding_id), next-consumer receipt (fleet_desired_binding_id), owner worker (deployment-outbox-consumer); Loop 9 trigger (binding_id), terminal output (event_id), next-consumer receipt (heartbeat_receipt_id), owner worker (paper-signal-producer); durable reload verified with fresh client session and recorded in sealed evidence."
+      "evidence": "GET /api/deployment/sagas/{saga_id} polls terminal status without invented saga ID fallback. Loop 8 next-consumer receipt is retrieved from GET /api/deployment/inbox with aggregate_id and consumer_name=deployment-outbox-consumer, validating receipt_id != binding_id and status='applied'. DEP-003 projection read from /api/deployment/projections/{plan_id} is verified."
     },
     {
-      "criterion": "Read-only preflight by default; require explicit paper-only execution option; fail closed when real-capital or real-order writes enabled; never print persist or embed bearer credentials.",
+      "criterion": "Finding 3: Authenticated hosted contract with Bearer and tenant headers; canonical joined routes; honest double 401/404 fail-closed behavior.",
       "status": "passed",
-      "evidence": "Default execution runs read-only preflight without mutating state. --execute-paper-lifecycle requires --paper-only; _enforce_paper_safety immediately aborts with RealCapitalOrOrderWriteForbiddenError if real capital/orders are detected; redact_secrets fingerprints tokens and prevents credential persistence."
+      "evidence": "CanonicalOwnerAdapter injects Authorization: Bearer and X-Tenant-Id headers across all requests. join_url() prevents duplicate '/api/...' segments. HonestCanonicalOwnerDouble rejects missing auth with HTTP 401 and unmapped routes with HTTP 404 instead of defaulting to HTTP 200."
     },
     {
-      "criterion": "Check actual executable binding and paper lifecycle terminal state plus independent consumer receipt; report unavailable or blocked separately from success.",
+      "criterion": "Finding 4: Strict durable reload comparing full identity, checksum, safety flags, and DEP-003 projection; honest fresh_client_isolated reporting; independent trade episode consumer receipt separated from liveness heartbeat.",
       "status": "passed",
-      "evidence": "is_executable_binding validates full contract; PreflightBlockedError reports status='blocked' (exit 2); ServiceUnavailableError reports status='unavailable' (exit 3); and passed lifecycle execution reports status='passed' (exit 0)."
+      "evidence": "_verify_durable_reload compares plan_id, runtime_id, artifact_id, artifact_version, capital_pool_id, symbol, checksum, and DEP-003 projection contract. fresh_client_isolated is True only when fresh_transport_factory is supplied. Liveness heartbeat and independent trade episode consumer receipt (GET /api/telemetry/trade-episodes) are queried and validated as separate distinct receipts."
     },
     {
-      "criterion": "Tests prove stale identity rejection; wrong correlation rejection; missing consumer receipt failure; timeout and reload mismatch; keep implementation isolated from existing release controller.",
+      "criterion": "Finding 5: Preflight fails closed on missing/invalid 40-hex SHAs, FE manifest bffCommit/backendSha mismatch with BFF, malformed buildMode, unverified config_posture, missing environment, and pairId mismatch; authoritative parent artifact discovery.",
       "status": "passed",
-      "evidence": "scripts/test_probe_dev_runtime_paper_lifecycle.py runs 22 comprehensive unit and contract tests with an honest test double, verifying stale identity rejection, correlation mismatch, missing receipts, timeouts, reload mismatches, and fail-closed safety."
+      "evidence": "run_preflight() strictly validates 40-hex SHAs, requires FE manifest's bffCommit/backendSha to match the running BFF commit, verifies buildMode (live, strict, no real writes) and config_posture (strict auth mode, no auth_stub), requires environment, and validates pair linkage. Approved parent strategy artifact is authoritatively discovered from /api/registry/strategies/tw_session_momentum/strategy-artifacts for rollback target lineage."
     },
     {
       "criterion": "Deliver exact-head dev PR with focused local test evidence; do not merge or run hosted write probes because root GPT-6 Astra owns integration and validation.",
       "status": "passed",
-      "evidence": "22 tests passed locally with honest test double; no hosted mutating probes executed by worker; ready for PR handoff to reviewer Claude."
+      "evidence": "All 29 contract and adversarial unit tests pass locally with honest test double; py_compile and git diff --check pass cleanly; ready for review handoff to Claude."
     }
   ],
   "verification": {
     "status": "passed",
     "commands": [
-      ".venv-pantheon/bin/python3 -m pytest scripts/test_probe_dev_runtime_paper_lifecycle.py -v (22 passed in 5.41s)",
+      ".venv-pantheon/bin/python3 -m pytest scripts/test_probe_dev_runtime_paper_lifecycle.py -v (29 passed in 9.45s)",
       "python3 -m py_compile scripts/probe_dev_runtime_paper_lifecycle.py scripts/test_probe_dev_runtime_paper_lifecycle.py (passed)",
       "git diff --check (passed)"
     ]

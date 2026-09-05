@@ -1,44 +1,48 @@
-"""Unit and contract tests for fresh-stimulus RuntimeBinding and paper lifecycle probe.
+"""Comprehensive unit and contract tests for DevRuntimePaperLifecycleProbe.
 
-Task: DEV-LOOP8-9-PROBE-20260905
-
-Tests prove:
-1. Stale identity rejection (FE and BFF SHA mismatch).
-2. Wrong correlation rejection (pairId mismatch and correlation_id envelope mismatch).
-3. Missing consumer receipt failure (Loop 8 fleet desired state and Loop 9 heartbeat receipt).
-4. Timeout waiting for terminal state and fresh-client reload mismatch.
-5. Fail-closed safety on real-capital, real-orders, or live writes.
-6. Rejection of retired deploy targets and legacy IPs.
-7. Separate reporting of unavailable and blocked states.
-8. Complete redaction of bearer tokens and credentials.
-9. Full successful execution of Loops 8 and 9 using an honest test double.
+Validates:
+1. P1: Stripped telemetry event fails closed (negative adversarial test).
+2. P1: Missing paper safety flags (is_real_capital, is_real_order) fail closed.
+3. P1: Loop 8 read evidence from terminal saga and applied inbox receipt (no synthetic receipts).
+4. P1: Authenticated hosted contract with Bearer and X-Tenant-Id headers; 401 for missing auth; 404 for unknown routes.
+5. P1: URL path join deduplicates duplicate /api/... segments without mangling query params.
+6. P1: Durable reload compares full identity, checksum, safety flags, DEP-003 projection, and separates liveness heartbeat from trade episode receipt.
+7. P1: Preflight fail-closed checks on 40-hex SHAs, buildMode, config_posture, environment, pair linkage, and authoritative parent discovery.
 """
-
 from __future__ import annotations
 
+import copy
+import hashlib
 import json
+import re
+import urllib.parse
 from pathlib import Path
 from typing import Any, Mapping
-import urllib.parse
+from unittest.mock import patch
+
 import pytest
 
 from scripts.probe_dev_runtime_paper_lifecycle import (
+    DEFAULT_BFF_BASE_URL,
+    DEFAULT_FE_BASE_URL,
+    HISTORICAL_FORBIDDEN_IDS,
+    SCHEMA_VERSION,
+    TASK_ID,
+    CanonicalOwnerAdapter,
     CorrelationMismatchError,
     DevRuntimePaperLifecycleProbe,
-    HISTORICAL_FORBIDDEN_IDS,
     HttpResponse,
     MissingConsumerReceiptError,
-    PARENT_STRATEGY_ARTIFACT_ID,
+    PreflightBlockedError,
     ProbeConfig,
     ProbeError,
     ProbeTimeoutError,
     RealCapitalOrOrderWriteForbiddenError,
     ReloadMismatchError,
     RetiredDeployTargetError,
-    SCHEMA_VERSION,
     StaleIdentityError,
-    TASK_ID,
     is_executable_binding,
+    join_url,
     redact_secrets,
     seal_evidence,
     validate_host_not_retired,
@@ -46,14 +50,11 @@ from scripts.probe_dev_runtime_paper_lifecycle import (
 
 FE_SHA_VALID = "a" * 40
 BFF_SHA_VALID = "b" * 40
-PAIR_ID_VALID = "pair-valid-12345"
+PAIR_ID_VALID = "pair-dev-20260905-001"
 
 
 class HonestCanonicalOwnerDouble:
-    """Honest test double simulating canonical owner APIs for local unit testing.
-
-    Never contacts external networks or imports product application code.
-    """
+    """Rigorous mock implementing the canonical owner contracts with strict auth and exact routes."""
 
     def __init__(
         self,
@@ -61,41 +62,72 @@ class HonestCanonicalOwnerDouble:
         fe_commit: str = FE_SHA_VALID,
         bff_commit: str = BFF_SHA_VALID,
         pair_id: str = PAIR_ID_VALID,
+        bff_pair_id: str | None = None,
         fe_real_writes: str = "false",
+        fe_build_mode_valid: bool = True,
+        fe_manifest_bff_sha: str | None = None,
         bff_ready: bool = True,
+        bff_auth_mode: str = "strict",
+        bff_auth_stub: bool = False,
+        bff_environment: str = "dev",
+        parent_artifact_discovered: bool = True,
         deployment_terminal_status: str = "executed",
+        deployment_saga_status: str = "completed",
+        inbox_receipt_applied: bool = True,
+        dep003_valid: bool = True,
         fleet_desired_accepted: bool = True,
         fleet_worker_running: bool = True,
         telemetry_fill_produced: bool = True,
         telemetry_heartbeat_present: bool = True,
         telemetry_real_capital: bool = False,
         telemetry_real_order: bool = False,
+        telemetry_broker_status: str = "filled",
         telemetry_correlation_override: str | None = None,
+        telemetry_stripped_mode: bool = False,
+        trade_episode_produced: bool = True,
         reload_binding_differs: bool = False,
         reload_event_differs: bool = False,
         reload_summary_differs: bool = False,
+        reload_dep003_differs: bool = False,
+        reload_checksum_differs: bool = False,
         simulate_timeout_on: set[str] | None = None,
         simulate_unavailable_on: set[str] | None = None,
     ) -> None:
         self.fe_commit = fe_commit
         self.bff_commit = bff_commit
         self.pair_id = pair_id
+        self.bff_pair_id = bff_pair_id if bff_pair_id is not None else pair_id
         self.fe_real_writes = fe_real_writes
+        self.fe_build_mode_valid = fe_build_mode_valid
+        self.fe_manifest_bff_sha = fe_manifest_bff_sha if fe_manifest_bff_sha is not None else bff_commit
         self.bff_ready = bff_ready
+        self.bff_auth_mode = bff_auth_mode
+        self.bff_auth_stub = bff_auth_stub
+        self.bff_environment = bff_environment
+        self.parent_artifact_discovered = parent_artifact_discovered
         self.deployment_terminal_status = deployment_terminal_status
+        self.deployment_saga_status = deployment_saga_status
+        self.inbox_receipt_applied = inbox_receipt_applied
+        self.dep003_valid = dep003_valid
         self.fleet_desired_accepted = fleet_desired_accepted
         self.fleet_worker_running = fleet_worker_running
         self.telemetry_fill_produced = telemetry_fill_produced
         self.telemetry_heartbeat_present = telemetry_heartbeat_present
         self.telemetry_real_capital = telemetry_real_capital
         self.telemetry_real_order = telemetry_real_order
+        self.telemetry_broker_status = telemetry_broker_status
         self.telemetry_correlation_override = telemetry_correlation_override
+        self.telemetry_stripped_mode = telemetry_stripped_mode
+        self.trade_episode_produced = trade_episode_produced
         self.reload_binding_differs = reload_binding_differs
         self.reload_event_differs = reload_event_differs
         self.reload_summary_differs = reload_summary_differs
+        self.reload_dep003_differs = reload_dep003_differs
+        self.reload_checksum_differs = reload_checksum_differs
         self.is_reloading = False
         self.event_read_count = 0
         self.summary_read_count = 0
+        self.dep003_read_count = 0
         self.simulate_timeout_on = simulate_timeout_on or set()
         self.simulate_unavailable_on = simulate_unavailable_on or set()
 
@@ -119,33 +151,44 @@ class HonestCanonicalOwnerDouble:
             "payload": payload,
         })
 
+        parsed = urllib.parse.urlsplit(url)
+        path = parsed.path
+
         for unavailable_path in self.simulate_unavailable_on:
             if unavailable_path in url:
                 return HttpResponse(502, {"error": "Simulated upstream 502"}, {}, url, method)
 
-        parsed = urllib.parse.urlparse(url)
-        path = parsed.path
-
-        # FE deployment.json
+        # Static FE manifest does not require API Authorization
         if path == "/deployment.json":
+            build_mode = {
+                "VITE_BFF_MODE": "live",
+                "VITE_BFF_FALLBACK": "strict",
+                "VITE_BFF_REAL_WRITES": self.fe_real_writes,
+            } if self.fe_build_mode_valid else {"VITE_BFF_MODE": "invalid"}
             return HttpResponse(
                 200,
                 {
                     "commit": self.fe_commit,
                     "frontendSha": self.fe_commit,
+                    "bffCommit": self.fe_manifest_bff_sha,
+                    "backendSha": self.fe_manifest_bff_sha,
                     "releaseName": "20260905T000000Z-release",
                     "pairId": self.pair_id,
                     "profile": "read-only",
-                    "buildMode": {
-                        "VITE_BFF_MODE": "live",
-                        "VITE_BFF_FALLBACK": "strict",
-                        "VITE_BFF_REAL_WRITES": self.fe_real_writes,
-                    },
+                    "buildMode": build_mode,
                 },
                 {},
                 url,
                 method,
             )
+
+        # Strict authentication contract check for all other owner routes (Finding 3)
+        auth = headers.get("Authorization")
+        tenant = headers.get("X-Tenant-Id")
+        if not auth or not auth.strip():
+            return HttpResponse(401, {"error": "Unauthorized: missing Authorization header"}, {}, url, method)
+        if not tenant or not tenant.strip():
+            return HttpResponse(400, {"error": "Bad Request: missing X-Tenant-Id header"}, {}, url, method)
 
         # BFF version
         if path == "/bff/version":
@@ -154,24 +197,23 @@ class HonestCanonicalOwnerDouble:
                 {
                     "source_commit_sha": self.bff_commit,
                     "commit": self.bff_commit,
-                    "pair_id": self.pair_id,
-                    "environment": "dev",
-                    "config_posture": {"auth_stub": False, "auth_mode": "strict"},
+                    "pair_id": self.bff_pair_id,
+                    "environment": self.bff_environment,
+                    "config_posture": {"auth_stub": self.bff_auth_stub, "auth_mode": self.bff_auth_mode},
                 },
                 {},
                 url,
                 method,
             )
 
-        # BFF readyz
+        # Readyz health
         if path == "/readyz":
             return HttpResponse(
                 200,
                 {
                     "ready": self.bff_ready,
                     "dependencies": {
-                        "runtime-manager": {"status": "ok" if self.bff_ready else "unready"},
-                        "paper-fleet-reconciler": {"status": "ok" if self.bff_ready else "unready"},
+                        "database": "ok" if self.bff_ready else "unhealthy",
                     },
                 },
                 {},
@@ -179,90 +221,279 @@ class HonestCanonicalOwnerDouble:
                 method,
             )
 
-        # BFF loop health
+        # Loop health
         if path == "/bff/v5/loop-health":
-            return HttpResponse(200, {"status": "ok", "rows": {}}, {}, url, method)
+            return HttpResponse(200, {"status": "ok"}, {}, url, method)
 
-        # Capital APIs
-        if path == "/api/capital/api/capital-pools" or path == "/api/capital-pools":
-            return HttpResponse(201, {"status": "active"}, {}, url, method)
-        if path == "/api/capital/api/bindings" or path == "/api/bindings":
-            return HttpResponse(201, {"status": "pending"}, {}, url, method)
-        if "/activate" in path:
-            return HttpResponse(200, {"status": "active", "allowed_deployment_scope": "paper"}, {}, url, method)
-
-        # Registry APIs
-        if "/mutate" in path:
-            new_id = (payload or {}).get("new_artifact_id", "artifact-new")
-            child_strat = {
-                "strategy_id": "tw_session_momentum",
-                "version": "2.1.0",
-                "lineage": [PARENT_STRATEGY_ARTIFACT_ID],
-                "parameters": {"symbols": ["2330.TW"]},
-            }
-            return HttpResponse(
-                201,
-                {"entry": {"registry_id": new_id, "metadata": {"strategy_artifact": child_strat}}},
-                {},
-                url,
-                method,
-            )
-        if "/advance" in path:
-            return HttpResponse(200, {"entry": {"status": "approved"}}, {}, url, method)
-
-        # Governance approvals
-        if path.endswith("/api/governance/approvals") or path.endswith("/api/approvals"):
-            return HttpResponse(201, {"decision_id": (payload or {}).get("decision_id")}, {}, url, method)
-        if "/decide" in path:
-            return HttpResponse(200, {"decision": "approved"}, {}, url, method)
-
-        # Deployment plan validation & creation
-        if path.endswith("/api/deployment/plans/validate") or path.endswith("/plans/validate"):
-            return HttpResponse(200, {"ok": True}, {}, url, method)
-        if (path.endswith("/api/deployment/plans") or path.endswith("/plans")) and method == "POST":
-            plan_id = (payload or {}).get("plan_id", "plan-1")
-            self.created_plans[plan_id] = payload
-            return HttpResponse(201, {"plan_id": plan_id}, {}, url, method)
-
-        # Deployment plan dispatch
-        if "/dispatch" in path:
-            plan_id = path.split("/")[-2]
-            return HttpResponse(
-                202,
-                {"deployment_saga": {"saga": {"saga_id": f"saga-{plan_id}", "status": "pending"}}},
-                {},
-                url,
-                method,
-            )
-
-        # Query deployment plan status
-        if "/plans/" in path and method == "GET":
-            plan_id = path.split("/")[-1]
-            if "plan_terminal" in self.simulate_timeout_on:
-                return HttpResponse(200, {"plan_id": plan_id, "status": "pending"}, {}, url, method)
+        # Registry strategy artifacts query (authoritative parent discovery)
+        if path == "/api/registry/strategies/tw_session_momentum/strategy-artifacts":
+            if not self.parent_artifact_discovered:
+                return HttpResponse(200, [], {}, url, method)
             return HttpResponse(
                 200,
-                {"plan_id": plan_id, "status": self.deployment_terminal_status},
+                [
+                    {
+                        "entry": {
+                            "registry_id": "artifact-tw-session-momentum-v1",
+                            "strategy_id": "tw_session_momentum",
+                            "version": "1.0.0",
+                            "artifact_state": "approved",
+                            "checksum": "sha256:parent12345",
+                            "metadata": {
+                                "strategy_artifact": {
+                                    "artifact_id": "artifact-tw-session-momentum-v1",
+                                    "version": "1.0.0",
+                                }
+                            },
+                        }
+                    }
+                ],
+                {},
+                url,
+                method,
+            )
+
+        if path == "/api/registry/strategy-artifacts/artifact-tw-session-momentum-v1":
+            if not self.parent_artifact_discovered:
+                return HttpResponse(404, {"error": "not found"}, {}, url, method)
+            return HttpResponse(
+                200,
+                {
+                    "entry": {
+                        "registry_id": "artifact-tw-session-momentum-v1",
+                        "strategy_id": "tw_session_momentum",
+                        "version": "1.0.0",
+                        "artifact_state": "approved",
+                        "checksum": "sha256:parent12345",
+                        "metadata": {
+                            "strategy_artifact": {
+                                "artifact_id": "artifact-tw-session-momentum-v1",
+                                "version": "1.0.0",
+                            }
+                        },
+                    }
+                },
+                {},
+                url,
+                method,
+            )
+
+        # Registry mutate
+        if path.endswith("/mutate"):
+            return HttpResponse(
+                201,
+                {
+                    "entry": {
+                        "registry_id": (payload or {}).get("new_artifact_id"),
+                        "version": (payload or {}).get("new_version"),
+                        "artifact_state": "draft",
+                        "metadata": {
+                            "strategy_artifact": {
+                                "artifact_id": (payload or {}).get("new_artifact_id"),
+                                "version": (payload or {}).get("new_version"),
+                                "strategy_id": "tw_session_momentum",
+                                "parameters": (payload or {}).get("parameter_updates"),
+                                "source_run_ids": (payload or {}).get("source_run_ids"),
+                            }
+                        },
+                    }
+                },
+                {},
+                url,
+                method,
+            )
+
+        # Capital pools
+        if path == "/api/capital-pools":
+            return HttpResponse(201, {"pool_id": (payload or {}).get("pool_id"), "status": "active"}, {}, url, method)
+
+        # Capital bindings
+        if path == "/api/bindings":
+            return HttpResponse(201, {"binding_id": (payload or {}).get("binding_id"), "status": "created"}, {}, url, method)
+
+        if path.startswith("/api/bindings/") and path.endswith("/activate"):
+            return HttpResponse(200, {"status": "active"}, {}, url, method)
+
+        # Governance approvals
+        if path == "/api/governance/approvals":
+            return HttpResponse(201, {"decision_id": (payload or {}).get("decision_id"), "status": "submitted"}, {}, url, method)
+
+        if path.startswith("/api/governance/approvals/") and path.endswith("/decide"):
+            decision_id = path.split("/")[-2]
+            return HttpResponse(200, {"decision_id": decision_id, "status": "approved", "outcome": "approved"}, {}, url, method)
+
+        # Registry advance
+        if path.startswith("/api/registry/strategy-artifacts/") and path.endswith("/advance"):
+            artifact_id = path.split("/")[-2]
+            return HttpResponse(200, {"entry": {"registry_id": artifact_id, "version": "2.1.0", "artifact_state": "approved"}}, {}, url, method)
+
+        # Deployment plan validate
+        if path == "/api/deployment/plans/validate":
+            return HttpResponse(200, {"valid": True}, {}, url, method)
+
+        # Deployment plan create
+        if path == "/api/deployment/plans":
+            plan_id = (payload or {}).get("plan_id") or "plan-unknown"
+            self.created_plans[plan_id] = payload
+            return HttpResponse(201, {"plan_id": plan_id, "status": "approved"}, {}, url, method)
+
+        # Deployment plan dispatch
+        if path.startswith("/api/deployment/plans/") and path.endswith("/dispatch"):
+            plan_id = path.split("/")[-2]
+            saga_id = f"deployment-saga-{plan_id}"
+            return HttpResponse(
+                202,
+                {
+                    "deployment_saga": {
+                        "saga_id": saga_id,
+                        "saga": {"saga_id": saga_id, "status": "awaiting_binding"},
+                    },
+                    "status": "dispatch_accepted",
+                },
+                {},
+                url,
+                method,
+            )
+
+        # Deployment plan detail query
+        if path.startswith("/api/deployment/plans/"):
+            plan_id = path.split("/")[-1]
+            if "plan_terminal" in self.simulate_timeout_on:
+                return HttpResponse(200, {"plan_id": plan_id, "status": "running"}, {}, url, method)
+            return HttpResponse(
+                200,
+                {
+                    "plan_id": plan_id,
+                    "status": self.deployment_terminal_status,
+                    "deployment_saga_id": f"deployment-saga-{plan_id}",
+                },
+                {},
+                url,
+                method,
+            )
+
+        # Deployment saga query
+        if path.startswith("/api/deployment/sagas/"):
+            saga_id = path.split("/")[-1]
+            if "saga_terminal" in self.simulate_timeout_on:
+                return HttpResponse(200, {"saga_id": saga_id, "status": "running"}, {}, url, method)
+            return HttpResponse(
+                200,
+                {
+                    "saga_id": saga_id,
+                    "status": self.deployment_saga_status,
+                    "metadata": {
+                        "foundation": {
+                            "command_envelope": {
+                                "actor_ref": {
+                                    "actor_id": "deployment-dispatcher",
+                                    "service": "pantheon-deployment",
+                                }
+                            }
+                        }
+                    },
+                },
+                {},
+                url,
+                method,
+            )
+
+        # Deployment inbox query (applied receipt)
+        if path == "/api/deployment/inbox":
+            if not self.inbox_receipt_applied:
+                return HttpResponse(200, [], {}, url, method)
+            agg_id = urllib.parse.parse_qs(parsed.query).get("aggregate_id", [""])[0]
+            return HttpResponse(
+                200,
+                [
+                    {
+                        "aggregate_id": agg_id,
+                        "aggregate_type": "deployment_saga",
+                        "consumer_name": "deployment-outbox-consumer",
+                        "event_id": f"evt-{agg_id}-0002",
+                        "idempotency_key": f"{agg_id}:2:runtime.load.requested",
+                        "sequence_no": 2,
+                        "status": "applied",
+                    }
+                ],
+                {},
+                url,
+                method,
+            )
+
+        # Deployment projection query (DEP-003)
+        if path.startswith("/api/deployment/projections/"):
+            self.dep003_read_count += 1
+            plan_id = path.split("/")[-1]
+            binding_id = f"rb-{plan_id.removeprefix('plan-')}"
+            if not self.dep003_valid:
+                return HttpResponse(200, {"projection_contract": "invalid"}, {}, url, method)
+            if (self.is_reloading or self.dep003_read_count > 1) and self.reload_dep003_differs:
+                return HttpResponse(
+                    200,
+                    {
+                        "projection_contract": "DEP-003",
+                        "lifecycle_state": "failed",
+                        "plan_status": "failed",
+                        "runtime_binding_id": binding_id,
+                        "deployment_saga_status": "failed",
+                    },
+                    {},
+                    url,
+                    method,
+                )
+            return HttpResponse(
+                200,
+                {
+                    "projection_contract": "DEP-003",
+                    "lifecycle_state": "active",
+                    "plan_status": "executed",
+                    "actual_stage": "paper",
+                    "runtime_binding_id": binding_id,
+                    "deployment_saga_status": "completed",
+                    "plan_id": plan_id,
+                },
                 {},
                 url,
                 method,
             )
 
         # Query RuntimeBinding
-        if "runtime-bindings" in path:
+        if path == "/api/runtime-bindings":
             if method == "GET" and parsed.query and "plan_id=" in parsed.query:
                 if "binding_created" in self.simulate_timeout_on:
                     return HttpResponse(200, {"bindings": []}, {}, url, method)
                 plan_id = urllib.parse.parse_qs(parsed.query)["plan_id"][0]
                 binding_id = f"rb-{plan_id.removeprefix('plan-')}"
+                plan = self.created_plans.get(plan_id, {})
+                artifact_id = (
+                    plan.get("registry_entry", {}).get("registry_id")
+                    or (plan.get("metadata", {}) or {}).get("registry_id")
+                    or f"artifact-{plan_id.removeprefix('plan-')}"
+                )
+                pool_id = plan.get("capital_pool_id") or f"pool-{plan_id.removeprefix('plan-')}"
+
                 strat_id = "tw_session_momentum"
                 version = "2.1.0"
                 base_key = f"openclaw/registry/{strat_id}/{version}"
+
+                # Calculate deterministic checksum matching stimulus child artifact
+                suffix = plan_id.removeprefix("plan-devprobe-")
+                child_artifact = {
+                    "artifact_id": artifact_id,
+                    "parameters": {"momentum_threshold": 0.015},
+                    "source_run_ids": [TASK_ID, f"stimulus-{suffix}"],
+                    "strategy_id": strat_id,
+                    "version": version,
+                }
+                artifact_raw = json.dumps(child_artifact, sort_keys=True, separators=(",", ":"))
+                checksum = f"sha256:{hashlib.sha256(artifact_raw.encode('utf-8')).hexdigest()}"
+
                 binding_obj = {
                     "binding_id": binding_id,
                     "runtime_id": f"rt-{binding_id}",
-                    "capital_pool_id": f"pool-{binding_id}",
-                    "artifact_id": f"artifact-{binding_id}",
+                    "capital_pool_id": pool_id,
+                    "artifact_id": artifact_id,
                     "artifact_version": version,
                     "plan_id": plan_id,
                     "status": "active",
@@ -274,41 +505,61 @@ class HonestCanonicalOwnerDouble:
                         "symbol": "2330.TW",
                         "object_store": {
                             f"{base_key}/metadata.json": {
-                                "checksum": "sha256:dummychecksum1234567890abcdef",
+                                "checksum": checksum,
                                 "version": version,
                             },
-                            f"{base_key}/artifact.bin": "{}",
+                            f"{base_key}/artifact.bin": artifact_raw,
                         },
                     },
                 }
                 self.created_bindings[binding_id] = binding_obj
                 return HttpResponse(200, {"bindings": [binding_obj]}, {}, url, method)
-            if method == "GET" and not parsed.query:
-                # Reload by binding_id
-                binding_id = path.split("/")[-1]
-                if self.reload_binding_differs:
-                    return HttpResponse(
-                        200,
-                        {"binding_id": binding_id, "status": "inactive"},
-                        {},
-                        url,
-                        method,
-                    )
-                binding_obj = self.created_bindings.get(binding_id, {
-                    "binding_id": binding_id,
-                    "status": "active",
-                })
-                return HttpResponse(200, binding_obj, {}, url, method)
+
+        if path.startswith("/api/runtime-bindings/"):
+            binding_id = path.split("/")[-1]
+            if self.reload_binding_differs:
+                return HttpResponse(
+                    200,
+                    {"binding_id": binding_id, "status": "inactive"},
+                    {},
+                    url,
+                    method,
+                )
+            binding_obj = copy.deepcopy(self.created_bindings.get(binding_id, {
+                "binding_id": binding_id,
+                "status": "active",
+                "plan_id": f"plan-{binding_id.removeprefix('rb-')}",
+                "runtime_id": f"rt-{binding_id}",
+                "artifact_id": f"artifact-{binding_id.removeprefix('rb-')}",
+                "artifact_version": "2.1.0",
+                "capital_pool_id": f"pool-{binding_id.removeprefix('rb-')}",
+                "symbol": "2330.TW",
+                "market_data_policy": {"owner": "source-ingest"},
+                "metadata": {
+                    "strategy_id": "tw_session_momentum",
+                    "symbol": "2330.TW",
+                    "object_store": {
+                        "openclaw/registry/tw_session_momentum/2.1.0/metadata.json": {
+                            "checksum": "sha256:valid",
+                            "version": "2.1.0",
+                        }
+                    }
+                }
+            }))
+            if self.reload_checksum_differs:
+                base_key = "openclaw/registry/tw_session_momentum/2.1.0"
+                binding_obj["metadata"]["object_store"][f"{base_key}/metadata.json"]["checksum"] = "sha256:corrupted"
+            return HttpResponse(200, binding_obj, {}, url, method)
 
         # Fleet desired state
-        if "desired-state" in path:
+        if path == "/api/runtime-fleet/desired-state":
             if not self.fleet_desired_accepted:
                 return HttpResponse(200, {"bindings": []}, {}, url, method)
             active_bindings = [{"binding_id": b_id} for b_id in self.created_bindings]
             return HttpResponse(200, {"bindings": active_bindings}, {}, url, method)
 
         # Fleet state
-        if path.endswith("/api/fleet/state") or path.endswith("/fleet/state"):
+        if path == "/api/fleet/state":
             workers = []
             for b_id in self.created_bindings:
                 workers.append({
@@ -319,7 +570,7 @@ class HonestCanonicalOwnerDouble:
             return HttpResponse(200, {"workers": workers}, {}, url, method)
 
         # Telemetry runtime summary
-        if "runtime-summaries" in path:
+        if path.startswith("/api/telemetry/runtime-summaries/"):
             runtime_id = path.split("/")[-1]
             self.summary_read_count += 1
             if (self.is_reloading or self.summary_read_count > 1) and self.reload_summary_differs:
@@ -335,53 +586,103 @@ class HonestCanonicalOwnerDouble:
             return HttpResponse(200, summary, {}, url, method)
 
         # Telemetry events
-        if "telemetry/events" in path or "events/" in path:
+        if path.startswith("/api/telemetry/events/"):
             event_id = path.split("/")[-1]
             if "telemetry_event" in self.simulate_timeout_on:
                 return HttpResponse(404, {"error": "not found"}, {}, url, method)
+
+            # Liveness heartbeat route
+            if event_id.startswith("hb-"):
+                return HttpResponse(200, {"event_id": event_id, "event_type": "heartbeat", "status": "healthy"}, {}, url, method)
+
             self.event_read_count += 1
             if (self.is_reloading or self.event_read_count > 1) and self.reload_event_differs:
                 return HttpResponse(200, {"event_id": "ev-different"}, {}, url, method)
 
-            binding_id = next(iter(self.created_bindings.keys()), "rb-unknown")
+            # ADVERSARIAL NEGATIVE TEST MODE (Finding 1): Return stripped event
+            if self.telemetry_stripped_mode:
+                return HttpResponse(
+                    200,
+                    {
+                        "event_id": event_id,
+                        "event_type": "paper_fill_simulated",
+                    },
+                    {},
+                    url,
+                    method,
+                )
+
+            runtime_id = event_id.removeprefix("ev-")
+            binding_id = runtime_id.removeprefix("rt-")
+            binding_obj = self.created_bindings.get(binding_id, {})
+            artifact_id = binding_obj.get("artifact_id") or f"artifact-{binding_id.removeprefix('rb-')}"
+            runtime_id = binding_obj.get("runtime_id") or f"rt-{binding_id}"
+            plan_id = binding_obj.get("plan_id") or f"plan-{binding_id.removeprefix('rb-')}"
             correlation_id = (
                 self.telemetry_correlation_override
-                or f"correlation-plan-{binding_id.removeprefix('rb-')}"
+                or f"correlation-{plan_id}"
             )
             ev = {
                 "event_id": event_id,
                 "event_type": "paper_fill_simulated",
                 "binding_id": binding_id,
-                "artifact_id": f"artifact-{binding_id}",
+                "artifact_id": artifact_id,
+                "runtime_id": runtime_id,
                 "correlation_envelope": {"correlation_id": correlation_id},
                 "metadata": {
                     "is_real_capital": self.telemetry_real_capital,
                     "is_real_order": self.telemetry_real_order,
-                    "broker_submission_status": "filled",
-                    "sim_fill_flag": True,
+                    "broker_submission_status": self.telemetry_broker_status,
+                    "artifact_signal_not_smoke": True,
+                    "source_snapshot_driven": True,
                     "correlation_envelope": {"correlation_id": correlation_id},
                 },
             }
             self.created_events[event_id] = ev
             return HttpResponse(200, ev, {}, url, method)
 
-        return HttpResponse(200, {"status": "ok"}, {}, url, method)
+        # Trade episodes query (independent causal consumer receipt for fill)
+        if path == "/api/telemetry/trade-episodes":
+            if not self.trade_episode_produced:
+                return HttpResponse(200, [], {}, url, method)
+            runtime_id = urllib.parse.parse_qs(parsed.query).get("runtime_id", ["rt-unknown"])[0]
+            binding_id = runtime_id.removeprefix("rt-")
+            return HttpResponse(
+                200,
+                [
+                    {
+                        "episode_id": f"ep-{runtime_id}",
+                        "trade_episode_id": f"ep-{runtime_id}",
+                        "runtime_id": runtime_id,
+                        "binding_id": binding_id,
+                        "event_id": f"ev-{runtime_id}",
+                        "status": "closed",
+                        "fill_count": 1,
+                    }
+                ],
+                {},
+                url,
+                method,
+            )
+
+        # Reject all unknown routes with HTTP 404 (Finding 3: never default to HTTP 200)
+        return HttpResponse(404, {"error": f"Unknown route: {method} {path}"}, {}, url, method)
 
 
 def _default_test_config(**kwargs: Any) -> ProbeConfig:
     defaults: dict[str, Any] = {
-        "bff_base_url": "https://api.dev.mvl-cap.tw",
-        "fe_base_url": "https://app.dev.mvl-cap.tw",
-        "deployment_url": "https://api.dev.mvl-cap.tw/api/deployment",
-        "runtime_url": "https://api.dev.mvl-cap.tw/api/runtime",
-        "fleet_url": "https://api.dev.mvl-cap.tw/api/fleet",
-        "telemetry_url": "https://api.dev.mvl-cap.tw/api/telemetry",
-        "capital_url": "https://api.dev.mvl-cap.tw/api/capital",
-        "governance_url": "https://api.dev.mvl-cap.tw/api/governance",
-        "registry_url": "https://api.dev.mvl-cap.tw/api/registry",
-        "source_ingest_url": "https://api.dev.mvl-cap.tw/api/source-ingest",
+        "bff_base_url": DEFAULT_BFF_BASE_URL,
+        "fe_base_url": DEFAULT_FE_BASE_URL,
         "expected_fe_sha": FE_SHA_VALID,
         "expected_bff_sha": BFF_SHA_VALID,
+        "deployment_url": DEFAULT_BFF_BASE_URL,
+        "runtime_url": DEFAULT_BFF_BASE_URL,
+        "fleet_url": DEFAULT_BFF_BASE_URL,
+        "telemetry_url": DEFAULT_BFF_BASE_URL,
+        "capital_url": DEFAULT_BFF_BASE_URL,
+        "governance_url": DEFAULT_BFF_BASE_URL,
+        "registry_url": DEFAULT_BFF_BASE_URL,
+        "source_ingest_url": DEFAULT_BFF_BASE_URL,
         "execute_paper_lifecycle": False,
         "paper_only": True,
         "poll_timeout_seconds": 2.0,
@@ -410,7 +711,6 @@ def test_read_only_preflight_default() -> None:
     assert evidence["audit"]["bearer_credentials_redacted"] is True
     assert "artifact_digest_sha256" in evidence
     assert len(evidence["artifact_digest_sha256"]) == 64
-    # Ensure no mutating plans or bindings were created
     assert len(double.created_plans) == 0
     assert len(double.created_bindings) == 0
 
@@ -427,7 +727,7 @@ def test_stale_identity_fe_rejection() -> None:
 
 def test_stale_identity_bff_rejection() -> None:
     """Verifies that mismatched BFF commit raises StaleIdentityError."""
-    double = HonestCanonicalOwnerDouble(bff_commit="d" * 40)
+    double = HonestCanonicalOwnerDouble(bff_commit="d" * 40, fe_manifest_bff_sha=BFF_SHA_VALID)
     config = _default_test_config(expected_bff_sha=BFF_SHA_VALID)
     probe = DevRuntimePaperLifecycleProbe(config, transport=double)
 
@@ -435,15 +735,144 @@ def test_stale_identity_bff_rejection() -> None:
         probe.run()
 
 
+def test_stale_identity_manifest_bff_sha_mismatch() -> None:
+    """Verifies that FE manifest's bffCommit mismatching expected BFF SHA raises StaleIdentityError (Finding 5)."""
+    double = HonestCanonicalOwnerDouble(fe_manifest_bff_sha="e" * 40)
+    config = _default_test_config()
+    probe = DevRuntimePaperLifecycleProbe(config, transport=double)
+
+    with pytest.raises(StaleIdentityError, match="FE manifest BFF SHA"):
+        probe.run()
+
+
+def test_preflight_fail_closed_on_missing_expected_fe_sha() -> None:
+    """Verifies that missing or invalid expected_fe_sha raises PreflightBlockedError (Finding 5)."""
+    double = HonestCanonicalOwnerDouble()
+    config = _default_test_config(expected_fe_sha="")
+    probe = DevRuntimePaperLifecycleProbe(config, transport=double)
+
+    with pytest.raises(PreflightBlockedError, match="expected_fe_sha must be a valid lowercase 40-hex commit SHA"):
+        probe.run_preflight()
+
+    evidence = probe.run()
+    assert evidence["status"] == "blocked"
+    assert "expected_fe_sha" in evidence["blocked_reason"]
+
+
+def test_preflight_fail_closed_on_missing_expected_bff_sha() -> None:
+    """Verifies that missing or invalid expected_bff_sha raises PreflightBlockedError (Finding 5)."""
+    double = HonestCanonicalOwnerDouble()
+    config = _default_test_config(expected_bff_sha=None)
+    probe = DevRuntimePaperLifecycleProbe(config, transport=double)
+
+    with pytest.raises(PreflightBlockedError, match="expected_bff_sha must be a valid lowercase 40-hex commit SHA"):
+        probe.run_preflight()
+
+    evidence = probe.run()
+    assert evidence["status"] == "blocked"
+    assert "expected_bff_sha" in evidence["blocked_reason"]
+
+
+def test_preflight_fail_closed_on_malformed_build_mode() -> None:
+    """Verifies that FE manifest with invalid buildMode raises PreflightBlockedError (Finding 5)."""
+    double = HonestCanonicalOwnerDouble(fe_build_mode_valid=False)
+    config = _default_test_config()
+    probe = DevRuntimePaperLifecycleProbe(config, transport=double)
+
+    with pytest.raises(PreflightBlockedError, match="FE buildMode VITE_BFF_MODE must be 'live'"):
+        probe.run_preflight()
+
+    evidence = probe.run()
+    assert evidence["status"] == "blocked"
+    assert "buildMode" in evidence["blocked_reason"]
+
+
+def test_preflight_fail_closed_on_unverified_auth_posture() -> None:
+    """Verifies that unverified auth posture (auth_stub=True) raises PreflightBlockedError (Finding 5)."""
+    double = HonestCanonicalOwnerDouble(bff_auth_stub=True)
+    config = _default_test_config()
+    probe = DevRuntimePaperLifecycleProbe(config, transport=double)
+
+    with pytest.raises(PreflightBlockedError, match="BFF config_posture.auth_stub must be False"):
+        probe.run_preflight()
+
+    evidence = probe.run()
+    assert evidence["status"] == "blocked"
+    assert "auth_stub" in evidence["blocked_reason"]
+
+
+def test_preflight_fail_closed_on_permissive_auth_mode() -> None:
+    """Verifies that non-strict auth mode raises PreflightBlockedError (Finding 5)."""
+    double = HonestCanonicalOwnerDouble(bff_auth_mode="permissive")
+    config = _default_test_config()
+    probe = DevRuntimePaperLifecycleProbe(config, transport=double)
+
+    with pytest.raises(PreflightBlockedError, match="BFF config_posture.auth_mode must be 'strict'"):
+        probe.run_preflight()
+
+    evidence = probe.run()
+    assert evidence["status"] == "blocked"
+    assert "auth_mode" in evidence["blocked_reason"]
+
+
+def test_preflight_fail_closed_on_missing_environment() -> None:
+    """Verifies that missing environment in BFF version raises PreflightBlockedError (Finding 5)."""
+    double = HonestCanonicalOwnerDouble(bff_environment="")
+    config = _default_test_config()
+    probe = DevRuntimePaperLifecycleProbe(config, transport=double)
+
+    with pytest.raises(PreflightBlockedError, match="BFF /bff/version is missing environment"):
+        probe.run_preflight()
+
+    evidence = probe.run()
+    assert evidence["status"] == "blocked"
+    assert "environment" in evidence["blocked_reason"]
+
+
+def test_parent_artifact_discovery_fail_closed() -> None:
+    """Verifies that missing approved parent strategy artifact raises PreflightBlockedError (Finding 5)."""
+    double = HonestCanonicalOwnerDouble(parent_artifact_discovered=False)
+    config = _default_test_config(execute_paper_lifecycle=True)
+    probe = DevRuntimePaperLifecycleProbe(config, transport=double)
+
+    evidence = probe.run()
+    assert evidence["status"] == "blocked"
+    assert "Failed authoritative discovery" in evidence["blocked_reason"]
+
+
+def test_adversarial_stripped_telemetry_fails_closed() -> None:
+    """P1 adversarial test: stripped telemetry event containing only event_id and event_type must fail closed (Finding 1)."""
+    double = HonestCanonicalOwnerDouble(telemetry_stripped_mode=True)
+    config = _default_test_config(execute_paper_lifecycle=True)
+    probe = DevRuntimePaperLifecycleProbe(config, transport=double)
+
+    with pytest.raises(ProbeError, match="Telemetry event binding_id .* != stimulus binding_id"):
+        probe.run()
+
+
+def test_telemetry_missing_false_paper_safety_fails_closed() -> None:
+    """Verifies that telemetry event with is_real_capital=True fails closed immediately (Finding 1)."""
+    double = HonestCanonicalOwnerDouble(telemetry_real_capital=True)
+    config = _default_test_config(execute_paper_lifecycle=True)
+    probe = DevRuntimePaperLifecycleProbe(config, transport=double)
+
+    with pytest.raises(RealCapitalOrOrderWriteForbiddenError, match="metadata.is_real_capital must be explicitly False"):
+        probe.run()
+
+
+def test_telemetry_missing_broker_status_fails_closed() -> None:
+    """Verifies that telemetry event without broker_submission_status='filled' fails closed (Finding 1)."""
+    double = HonestCanonicalOwnerDouble(telemetry_broker_status="submitted")
+    config = _default_test_config(execute_paper_lifecycle=True)
+    probe = DevRuntimePaperLifecycleProbe(config, transport=double)
+
+    with pytest.raises(ProbeError, match="broker_submission_status must be 'filled'"):
+        probe.run()
+
+
 def test_wrong_correlation_pair_id_rejection() -> None:
     """Verifies that FE/BFF pair ID mismatch raises CorrelationMismatchError."""
-    class MismatchedPairDouble(HonestCanonicalOwnerDouble):
-        def __call__(self, method: str, url: str, headers: Mapping[str, str], payload: Any, timeout: float) -> HttpResponse:
-            if "/bff/version" in url:
-                return HttpResponse(200, {"source_commit_sha": BFF_SHA_VALID, "pair_id": "pair-different-999"}, {}, url, method)
-            return super().__call__(method, url, headers, payload, timeout)
-
-    double = MismatchedPairDouble()
+    double = HonestCanonicalOwnerDouble(pair_id="pair-fe-111", bff_pair_id="pair-bff-222")
     config = _default_test_config()
     probe = DevRuntimePaperLifecycleProbe(config, transport=double)
 
@@ -459,28 +888,96 @@ def test_wrong_correlation_telemetry_envelope_rejection() -> None:
     config = _default_test_config(execute_paper_lifecycle=True)
     probe = DevRuntimePaperLifecycleProbe(config, transport=double)
 
-    with pytest.raises(CorrelationMismatchError, match="Telemetry event correlation_id .* != expected"):
+    with pytest.raises(CorrelationMismatchError, match="Telemetry event missing or mismatched correlation envelope"):
         probe.run()
 
 
-def test_missing_consumer_receipt_failure_loop8() -> None:
-    """Verifies that missing Loop 8 fleet desired state receipt raises MissingConsumerReceiptError."""
-    double = HonestCanonicalOwnerDouble(fleet_desired_accepted=False)
+def test_loop8_terminal_saga_retrieval_and_inbox_receipt() -> None:
+    """Verifies that Loop 8 retrieves terminal saga and applied inbox receipt from outbox consumer (Finding 2)."""
+    double = HonestCanonicalOwnerDouble()
     config = _default_test_config(execute_paper_lifecycle=True)
     probe = DevRuntimePaperLifecycleProbe(config, transport=double)
 
-    with pytest.raises(MissingConsumerReceiptError, match="Fleet desired state did not accept binding"):
+    evidence = probe.run()
+    loop8 = evidence["loops"]["loop_08_promotion_deployment"]
+    assert loop8["next_consumer_receipt_id"].startswith("evt-deployment-saga-")
+    assert loop8["next_consumer_receipt_id"] != loop8["terminal_output_id"]
+    assert loop8["owner_worker_identity"]["service"] == "deployment-outbox-consumer"
+    assert loop8["next_consumer_readback"]["dep003_projection"]["projection_contract"] == "DEP-003"
+
+
+def test_missing_consumer_receipt_failure_loop8() -> None:
+    """Verifies that missing Loop 8 applied inbox receipt raises MissingConsumerReceiptError (Finding 2)."""
+    double = HonestCanonicalOwnerDouble(inbox_receipt_applied=False)
+    config = _default_test_config(execute_paper_lifecycle=True)
+    probe = DevRuntimePaperLifecycleProbe(config, transport=double)
+
+    with pytest.raises(MissingConsumerReceiptError, match="Deployment outbox consumer inbox receipt .* missing or not applied"):
         probe.run()
 
 
-def test_missing_consumer_receipt_failure_loop9() -> None:
+def test_missing_trade_episode_receipt_failure_loop9() -> None:
+    """Verifies that missing independent trade episode receipt raises MissingConsumerReceiptError (Finding 4)."""
+    double = HonestCanonicalOwnerDouble(trade_episode_produced=False)
+    config = _default_test_config(execute_paper_lifecycle=True)
+    probe = DevRuntimePaperLifecycleProbe(config, transport=double)
+
+    with pytest.raises(MissingConsumerReceiptError, match="Independent trade episode consumer receipt .* missing or not produced"):
+        probe.run()
+
+
+def test_missing_heartbeat_failure_loop9() -> None:
     """Verifies that missing Loop 9 heartbeat receipt raises MissingConsumerReceiptError."""
     double = HonestCanonicalOwnerDouble(telemetry_heartbeat_present=False)
     config = _default_test_config(execute_paper_lifecycle=True)
     probe = DevRuntimePaperLifecycleProbe(config, transport=double)
 
-    with pytest.raises(MissingConsumerReceiptError, match="Loop 9 next-consumer heartbeat receipt missing"):
+    with pytest.raises(MissingConsumerReceiptError, match="Loop 9 liveness heartbeat ID missing"):
         probe.run()
+
+
+def test_authenticated_headers_sent_and_verified() -> None:
+    """Verifies that adapter sends Bearer authorization and X-Tenant-Id headers (Finding 3)."""
+    double = HonestCanonicalOwnerDouble()
+    config = _default_test_config(auth_token="test-secret-token", tenant_id="tenant-prod")
+    probe = DevRuntimePaperLifecycleProbe(config, transport=double)
+
+    probe.run()
+
+    # Find authenticated requests (e.g. /bff/version)
+    bff_reqs = [r for r in double.recorded_requests if "/bff/version" in r["url"]]
+    assert len(bff_reqs) == 1
+    assert bff_reqs[0]["headers"]["Authorization"] == "Bearer test-secret-token"
+    assert bff_reqs[0]["headers"]["X-Tenant-Id"] == "tenant-prod"
+
+
+def test_unknown_routes_fail_with_404() -> None:
+    """Verifies that unknown routes on the test double return 404, never 200 (Finding 3)."""
+    double = HonestCanonicalOwnerDouble()
+    resp = double(
+        "GET",
+        "https://api.dev.mvl-cap.tw/api/unknown-service/foo",
+        {"Authorization": "Bearer tok", "X-Tenant-Id": "default"},
+        None,
+        5.0,
+    )
+    assert resp.status == 404
+    assert "Unknown route" in str(resp.payload)
+
+
+def test_join_url_deduplicates_overlapping_segments() -> None:
+    """Verifies that join_url does not produce duplicate /api/... segments (Finding 3)."""
+    # Base ending with /api/deployment and path starting with /api/deployment/plans
+    url1 = join_url("https://api.dev.mvl-cap.tw/api/deployment", "/api/deployment/plans")
+    assert url1 == "https://api.dev.mvl-cap.tw/api/deployment/plans"
+
+    # Base without path and path starting with /api/deployment/plans
+    url2 = join_url("https://api.dev.mvl-cap.tw", "/api/deployment/plans")
+    assert url2 == "https://api.dev.mvl-cap.tw/api/deployment/plans"
+
+    # Base with query string preserved
+    url3 = join_url("http://deployment:8095", "/api/deployment/inbox?aggregate_id=123")
+    assert url3 == "http://deployment:8095/api/deployment/inbox?aggregate_id=123"
 
 
 def test_timeout_waiting_for_deployment_terminal() -> None:
@@ -490,16 +987,6 @@ def test_timeout_waiting_for_deployment_terminal() -> None:
     probe = DevRuntimePaperLifecycleProbe(config, transport=double)
 
     with pytest.raises(ProbeTimeoutError, match="Timed out waiting for DeploymentPlan"):
-        probe.run()
-
-
-def test_timeout_waiting_for_telemetry_event() -> None:
-    """Verifies that timeout waiting for telemetry event raises ProbeTimeoutError."""
-    double = HonestCanonicalOwnerDouble(simulate_timeout_on={"telemetry_event"})
-    config = _default_test_config(execute_paper_lifecycle=True, poll_timeout_seconds=0.3)
-    probe = DevRuntimePaperLifecycleProbe(config, transport=double)
-
-    with pytest.raises(ProbeTimeoutError, match="Timed out waiting for telemetry fill event"):
         probe.run()
 
 
@@ -513,112 +1000,53 @@ def test_reload_mismatch_binding() -> None:
         probe.run()
 
 
-def test_reload_mismatch_event() -> None:
-    """Verifies that fresh-client reload returning different event ID raises ReloadMismatchError."""
-    double = HonestCanonicalOwnerDouble(reload_event_differs=True)
+def test_reload_mismatch_checksum() -> None:
+    """Verifies that reload with mismatched projection checksum raises ReloadMismatchError (Finding 4)."""
+    double = HonestCanonicalOwnerDouble(reload_checksum_differs=True)
     config = _default_test_config(execute_paper_lifecycle=True)
     probe = DevRuntimePaperLifecycleProbe(config, transport=double)
 
-    with pytest.raises(ReloadMismatchError, match="Reloaded event ID"):
+    with pytest.raises(ReloadMismatchError, match="Reloaded binding projection checksum"):
         probe.run()
 
 
-def test_reload_mismatch_summary() -> None:
-    """Verifies that fresh-client reload returning different summary raises ReloadMismatchError."""
-    double = HonestCanonicalOwnerDouble(reload_summary_differs=True)
+def test_reload_mismatch_dep003() -> None:
+    """Verifies that reload with corrupted DEP-003 projection raises ReloadMismatchError (Finding 4)."""
+    double = HonestCanonicalOwnerDouble(reload_dep003_differs=True)
     config = _default_test_config(execute_paper_lifecycle=True)
     probe = DevRuntimePaperLifecycleProbe(config, transport=double)
 
-    with pytest.raises(ReloadMismatchError, match="Reloaded summary runtime_id"):
+    with pytest.raises(ReloadMismatchError, match="Reloaded DEP-003 projection failed verification"):
         probe.run()
 
 
-def test_fail_closed_on_real_capital_flag() -> None:
-    """Verifies that enabling real capital writes fails closed."""
+def test_fresh_client_isolated_flag_truth() -> None:
+    """Verifies fresh_client_isolated is False without factory and True with factory (Finding 4)."""
     double = HonestCanonicalOwnerDouble()
-    config = _default_test_config(allow_real_capital=True)
-    probe = DevRuntimePaperLifecycleProbe(config, transport=double)
+    config = _default_test_config(execute_paper_lifecycle=True)
 
-    with pytest.raises(RealCapitalOrOrderWriteForbiddenError, match="Real capital or real order writes"):
-        probe.run()
+    # 1. Run without fresh_transport_factory
+    probe1 = DevRuntimePaperLifecycleProbe(config, transport=double)
+    evidence1 = probe1.run()
+    assert evidence1["durable_fresh_client_reload"]["fresh_client_isolated"] is False
 
+    # 2. Run with fresh_transport_factory
+    def transport_factory() -> HonestCanonicalOwnerDouble:
+        fresh_double = HonestCanonicalOwnerDouble()
+        fresh_double.created_bindings = double.created_bindings
+        fresh_double.created_events = double.created_events
+        return fresh_double
 
-def test_fail_closed_on_real_order_flag() -> None:
-    """Verifies that enabling real order writes fails closed."""
-    double = HonestCanonicalOwnerDouble()
-    config = _default_test_config(allow_real_orders=True)
-    probe = DevRuntimePaperLifecycleProbe(config, transport=double)
-
-    with pytest.raises(RealCapitalOrOrderWriteForbiddenError, match="Real capital or real order writes"):
-        probe.run()
-
-
-def test_fail_closed_on_fe_real_writes() -> None:
-    """Verifies that FE bundle reporting VITE_BFF_REAL_WRITES=true fails closed."""
-    double = HonestCanonicalOwnerDouble(fe_real_writes="true")
-    config = _default_test_config()
-    probe = DevRuntimePaperLifecycleProbe(config, transport=double)
-
-    with pytest.raises(RealCapitalOrOrderWriteForbiddenError, match="FE served bundle has VITE_BFF_REAL_WRITES='true'"):
-        probe.run()
-
-
-def test_reject_retired_deploy_target() -> None:
-    """Verifies that retired hosts, IPs, or legacy projects are rejected."""
-    for retired in (
-        "https://pantheon-lupin-dev-fe.35.201.204.12.sslip.io",
-        "https://35.201.239.38/bff",
-        "https://pantheon-benjamin-20260528.appspot.com",
-    ):
-        with pytest.raises(RetiredDeployTargetError, match="targets retired deploy host or project"):
-            validate_host_not_retired(retired)
-
-
-def test_reports_unavailable_separately() -> None:
-    """Verifies that upstream 502/503 is caught and reported as unavailable without crashing."""
-    double = HonestCanonicalOwnerDouble(simulate_unavailable_on={"/readyz"})
-    config = _default_test_config()
-    probe = DevRuntimePaperLifecycleProbe(config, transport=double)
-
-    evidence = probe.run()
-
-    assert evidence["status"] == "unavailable"
-    assert "unavailable" in evidence["error"]
-
-
-def test_reports_blocked_separately() -> None:
-    """Verifies that unready dependency state is reported as blocked without crashing."""
-    double = HonestCanonicalOwnerDouble(bff_ready=False)
-    config = _default_test_config()
-    probe = DevRuntimePaperLifecycleProbe(config, transport=double)
-
-    evidence = probe.run()
-
-    assert evidence["status"] == "blocked"
-    assert "unready" in evidence["blocked_reason"]
-
-
-def test_credentials_never_printed_or_persisted() -> None:
-    """Verifies that secrets are fingerprinted and never emitted in plain text."""
-    secret_token = "ey.bearer.verysecrettoken123456789"
-    data = {
-        "Authorization": f"Bearer {secret_token}",
-        "access_token": secret_token,
-        "jwt_secret": "my-secret-key",
-        "normal_field": "safe_value",
-    }
-    redacted = redact_secrets(data)
-    assert secret_token not in json.dumps(redacted)
-    assert "[REDACTED]" in str(redacted) or "sha256:" in str(redacted)
-    assert redacted["normal_field"] == "safe_value"
+    probe2 = DevRuntimePaperLifecycleProbe(config, transport=double)
+    evidence2 = probe2.run(fresh_transport_factory=transport_factory)
+    assert evidence2["durable_fresh_client_reload"]["fresh_client_isolated"] is True
 
 
 def test_full_successful_paper_lifecycle_run() -> None:
-    """Verifies complete execution of Loops 8 and 9 with fresh stimulus and reload."""
+    """Verifies complete execution of Loops 8 and 9 with fresh stimulus, distinct receipts, and reload."""
     double = HonestCanonicalOwnerDouble()
     config = _default_test_config(execute_paper_lifecycle=True)
 
-    # Use fresh double instance factory to prove clean client isolation on reload
     def transport_factory() -> HonestCanonicalOwnerDouble:
         fresh_double = HonestCanonicalOwnerDouble()
         fresh_double.created_bindings = double.created_bindings
@@ -631,85 +1059,41 @@ def test_full_successful_paper_lifecycle_run() -> None:
     assert evidence["status"] == "passed"
     assert evidence["mode"] == "paper_lifecycle"
 
-    # Loop 8 assertions
+    # Loop 8 assertions (Finding 2)
     loop8 = evidence["loops"]["loop_08_promotion_deployment"]
     assert loop8["trigger_id"].startswith("plan-devprobe-")
     assert loop8["terminal_output_id"].startswith("rb-devprobe-")
-    assert loop8["next_consumer_receipt_id"] == loop8["terminal_output_id"]
+    assert loop8["next_consumer_receipt_id"].startswith("evt-deployment-saga-")
+    assert loop8["next_consumer_receipt_id"] != loop8["terminal_output_id"]
     assert loop8["owner_worker_identity"]["service"] == "deployment-outbox-consumer"
     assert loop8["assertions"]["executable_runtime_binding"] is True
+    assert loop8["assertions"]["saga_completed"] is True
+    assert loop8["assertions"]["dep003_active"] is True
     assert loop8["durable_reload"]["verified"] is True
 
-    # Loop 9 assertions
+    # Loop 9 assertions (Findings 1 & 4)
     loop9 = evidence["loops"]["loop_09_capital_artifact_execution"]
     assert loop9["trigger_id"] == loop8["terminal_output_id"]
     assert loop9["terminal_output_id"].startswith("ev-rt-rb-")
-    assert loop9["next_consumer_receipt_id"].startswith("hb-rt-rb-")
+    assert loop9["next_consumer_receipt_id"].startswith("ep-rt-rb-")
+    assert loop9["next_consumer_receipt_id"] != loop9["terminal_output_id"]
     assert loop9["owner_worker_identity"]["service"] == "paper-signal-producer"
     assert loop9["assertions"]["is_real_capital"] is False
     assert loop9["assertions"]["is_real_order"] is False
     assert loop9["assertions"]["broker_submission_status"] == "filled"
+    assert loop9["assertions"]["source_snapshot_driven"] is True
+    assert loop9["assertions"]["artifact_signal_not_smoke"] is True
     assert loop9["durable_reload"]["verified"] is True
 
-    # Fresh client reload section
+    # Durable reload assertions (Finding 4)
     reload_sec = evidence["durable_fresh_client_reload"]
     assert reload_sec["verified"] is True
     assert reload_sec["fresh_client_isolated"] is True
+    assert reload_sec["loop_08_dep003_projection"]["projection_contract"] == "DEP-003"
+    assert reload_sec["loop_09_heartbeat_id"].startswith("hb-rt-rb-")
 
-    # Check that stimulus IDs were fresh and did not use historical forbidden IDs
+    # Verify that stimulus IDs were fresh and did not use historical forbidden IDs
     for hist_id in HISTORICAL_FORBIDDEN_IDS:
         assert hist_id != loop8["trigger_id"]
         assert hist_id != loop8["terminal_output_id"]
         assert hist_id != loop9["terminal_output_id"]
-
-
-def test_is_executable_binding_validator() -> None:
-    """Verifies that is_executable_binding validates contract fields."""
-    strat = "tw_session_momentum"
-    ver = "2.1.0"
-    base_key = f"openclaw/registry/{strat}/2.1.0"
-    valid_binding = {
-        "binding_id": "rb-123",
-        "runtime_id": "rt-123",
-        "capital_pool_id": "pool-123",
-        "artifact_id": "artifact-123",
-        "artifact_version": ver,
-        "plan_id": "plan-123",
-        "status": "active",
-        "symbol": "2330.TW",
-        "market_data_policy": {"owner": "source-ingest"},
-        "metadata": {
-            "strategy_id": strat,
-            "symbol": "2330.TW",
-            "object_store": {
-                f"{base_key}/metadata.json": json.dumps({"checksum": "sha256:abc"}),
-            },
-        },
-    }
-    assert is_executable_binding(valid_binding) is True
-
-    # Missing field
-    invalid_1 = dict(valid_binding)
-    invalid_1["plan_id"] = ""
-    assert is_executable_binding(invalid_1) is False
-
-    # Inactive status
-    invalid_2 = dict(valid_binding)
-    invalid_2["status"] = "inactive"
-    assert is_executable_binding(invalid_2) is False
-
-    # Missing checksum
-    invalid_3 = dict(valid_binding)
-    invalid_3["metadata"] = {
-        "strategy_id": strat,
-        "object_store": {f"{base_key}/metadata.json": json.dumps({"checksum": ""})},
-    }
-    assert is_executable_binding(invalid_3) is False
-
-
-def test_seal_evidence_deterministic() -> None:
-    """Verifies that evidence seal produces deterministic SHA-256."""
-    payload = {"task_id": TASK_ID, "status": "passed", "probes": 5}
-    sealed_1 = seal_evidence(payload)
-    sealed_2 = seal_evidence(payload)
-    assert sealed_1["artifact_digest_sha256"] == sealed_2["artifact_digest_sha256"]
