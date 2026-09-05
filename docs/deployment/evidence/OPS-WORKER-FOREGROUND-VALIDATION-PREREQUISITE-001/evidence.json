@@ -1,0 +1,75 @@
+{
+  "schema_version": "pantheon.review-evidence.v1",
+  "task_id": "OPS-WORKER-FOREGROUND-VALIDATION-PREREQUISITE-001",
+  "title": "Require bounded foreground validation and terminal evidence before one-shot worker completion",
+  "owner": "Codex",
+  "reviewer": "Claude",
+  "target_repo": "ajoe734/pantheon",
+  "task_class": "development_tooling",
+  "delivery_state": "ready_for_independent_review_after_commit",
+  "source_anchor": "b48a9f95076ecf6726fd404c8430677f426988fa",
+  "scope": {
+    "owned": [
+      "Provider-neutral one-shot wakeup completion guidance",
+      "Claude and Claude2 one-shot runtime environment policy",
+      "Repository config, adapter child environment, wakeup rendering, and live-config projection regressions"
+    ],
+    "not_changing": [
+      "Claude adapter implementation or provider identity, authentication, and quota boundaries",
+      "Worker runner cleanup, process groups, leases, or canonical completion authority",
+      "Supervisor, runtime JSON, product code, BFF tests, live promotion, cron, or launchers"
+    ],
+    "composes_with": [
+      "OPS-SUPERVISOR-PYTHON-RUNTIME-PREREQUISITE-001",
+      "Existing repository-config to live-config projection and exact-runtime promotion"
+    ]
+  },
+  "implementation": {
+    "wakeup_contract": "Requires bounded foreground batches and terminal output plus exit status before final, handoff, or task transition; background handles require blocking collection; timeout, killed, and collection states do not pass.",
+    "provider_policy": "Both repository Claude provider runtime.env maps set CLAUDE_CODE_DISABLE_BACKGROUND_TASKS to string value 1 while retaining distinct config directories and accounts.",
+    "single_policy_path": "The unchanged Claude adapter _spawn_env consumes runtime.env, and unchanged build_live_config deep-copies repository config without incumbent overlay fallback.",
+    "new_launcher_or_daemon_added": false,
+    "live_promotion_performed": false
+  },
+  "verification": {
+    "status": "passed",
+    "environment": {
+      "python": "/tmp/ops-host-rebuild-pytest-venv/bin/python",
+      "pytest": "9.1.1"
+    },
+    "commands": [
+      {
+        "command": "/tmp/ops-host-rebuild-pytest-venv/bin/python -m pytest -q .orchestrator/test_watch_events.py .orchestrator/test_adapter_delivery_policy.py scripts/test_provision_live_supervisor_config.py",
+        "exit_code": 0,
+        "result": "66 passed, 2 subtests passed in 35.88s",
+        "failed": 0,
+        "skipped": 0,
+        "timed_out": 0
+      },
+      {
+        "command": "/tmp/ops-host-rebuild-pytest-venv/bin/python -m pytest -q .orchestrator/test_worker_runner_heartbeat.py::TestCoordinationRootValidation::test_child_cleanup_on_exception .orchestrator/test_worker_runner_heartbeat.py::TestCoordinationRootValidation::test_sigterm_deadline_force_kills_group .orchestrator/test_worker_runner_heartbeat.py::TestCoordinationRootValidation::test_sigterm_grandchild_cleanup_when_direct_child_exits_first",
+        "exit_code": 0,
+        "result": "3 passed in 0.94s",
+        "failed": 0,
+        "skipped": 0,
+        "timed_out": 0
+      }
+    ],
+    "non_passing_environment_attempt": {
+      "command": "/usr/bin/python3 -m pytest -q .orchestrator/test_watch_events.py .orchestrator/test_adapter_delivery_policy.py scripts/test_provision_live_supervisor_config.py",
+      "exit_code": 1,
+      "result": "Interpreter lacked pytest; not counted as executed or passed tests. The repository's existing pytest venv was then used for the terminal runs above."
+    }
+  },
+  "review_handoff": {
+    "status": "pending",
+    "required_checks": [
+      "Confirm actual repository config sets the vendor variable for exactly claude and claude2 without merging identities",
+      "Confirm mocked adapter launches override a contradictory ambient value through existing runtime.env propagation",
+      "Confirm rendered wakeups require terminal output and exit status for owner, reviewer, and closeout dispatches",
+      "Confirm live-config projection retains candidate policy and ignores an incumbent contradictory overlay",
+      "Confirm no adapter, runner, supervisor, runtime state, product, BFF, launcher, daemon, cron, or live promotion change is present"
+    ]
+  },
+  "promotion_boundary": "Source delivery is not live policy acceptance. After merge, the existing exact-runtime promotion must pass preflight and a later real one-shot dispatch must provide live spawned-env and bounded terminal-result evidence."
+}

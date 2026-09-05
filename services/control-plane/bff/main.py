@@ -4428,83 +4428,9 @@ def _mutation_review_inputs(
         else None
     )
     return decision, approval_decision, linked_incident, linked_postmortem
-def _cw03_committee_surface_state(
-    committee: Dict[str, Any],
-    *,
-    snapshot_at: str,
-) -> str:
-    committee_surface = _dataset_surface_status(
-        "consultation_sessions",
-        snapshot_at=snapshot_at,
-        has_data=bool(committee),
-        missing_message="Committee board state is unavailable.",
-    )
-    if committee_surface.get("status") == "unavailable":
-        return "unavailable"
-    if committee.get("surface_state") == "degraded":
-        return "degraded"
-    if committee_surface.get("source") == "local_snapshot":
-        return "degraded"
-    if committee_surface.get("status") == "degraded":
-        return "stale"
-    return "ok"
-def _cw03_allowed_actions(
-    committee: Dict[str, Any],
-    *,
-    identity: OperatorIdentity,
-    surface_state: str,
-) -> Dict[str, bool]:
-    if surface_state == "unavailable":
-        return {
-            "canRecordSponsorDecision": False,
-        }
-    sponsor_decision = committee.get("sponsor_decision")
-    consensus_state = str(committee.get("consensus_state") or "").strip().lower()
-    roles = set(identity.roles)
-    sponsor_assignment = committee.get("sponsor_assignment") or {}
-    sponsor_participant_id = str(sponsor_assignment.get("participant_id") or "").strip()
-    return {
-        "canRecordSponsorDecision": (
-            sponsor_decision in (None, "")
-            and consensus_state == "sponsor_required"
-            and bool(sponsor_participant_id)
-            and bool(roles.intersection({"operator", "approver", "admin"}))
-        )
-    }
-def _cw03_committee_projection(
-    committee: Dict[str, Any],
-    *,
-    identity: OperatorIdentity,
-    snapshot_at: str,
-) -> Dict[str, Any]:
-    surface_state = _cw03_committee_surface_state(committee, snapshot_at=snapshot_at)
-    allowed_actions = _cw03_allowed_actions(committee, identity=identity, surface_state=surface_state)
-    return {
-        "committee_id": committee.get("committee_id"),
-        "committee_ref": committee.get("committee_ref"),
-        "linked_request_id": committee.get("linked_request_id"),
-        "linked_session_id": committee.get("linked_session_id"),
-        "started_at": committee.get("started_at"),
-        "escalation_reason": json.loads(json.dumps(committee.get("escalation_reason") or {})),
-        "quorum_state": committee.get("quorum_state"),
-        "consensus_state": committee.get("consensus_state"),
-        "participant_roster": json.loads(json.dumps(committee.get("participant_roster") or [])),
-        "sponsor_assignment": json.loads(json.dumps(committee.get("sponsor_assignment") or {})),
-        "sponsor_decision": committee.get("sponsor_decision"),
-        "sponsor_decided_at": committee.get("sponsor_decided_at"),
-        "sponsor_decided_by": committee.get("sponsor_decided_by"),
-        "synthesis_summary": json.loads(json.dumps(committee.get("synthesis_summary") or {})),
-        "linked_evidence": json.loads(json.dumps(committee.get("linked_evidence") or [])),
-        "service_handoff": json.loads(json.dumps(committee.get("service_handoff") or {})),
-        "allowedActions": allowed_actions,
-        "meta": {
-            **_snapshot_meta(snapshot_at),
-            "surfaces": {
-                "committee_board": surface_state,
-            },
-        },
-    }
 def _validate_record_sponsor_decision(params: Dict[str, Any], identity: OperatorIdentity) -> None:
+    from .governance.service import GovernanceService
+
     missing = _RECORD_SPONSOR_DECISION_REQUIRED - params.keys()
     if missing:
         raise _bff_error(
@@ -4530,19 +4456,23 @@ def _validate_record_sponsor_decision(params: Dict[str, Any], identity: Operator
             "rationale_ref must be a non-empty string",
         )
     committee_id = str(params.get("committee_id") or "").strip()
-    committee = read_store.get_committee(committee_id)
-    if committee is None:
+    governance_service = GovernanceService(
+        read_store,
+        utc_now=utc_now,
+        dataset_surface_status=_dataset_surface_status,
+    )
+    projection = governance_service.committee_projection(
+        committee_id,
+        identity=identity,
+        snapshot_at=utc_now(),
+    )
+    if projection is None:
         raise _bff_error(
             404,
             ErrorCode.RESOURCE_NOT_FOUND,
             "Committee board not found",
             f"Committee {committee_id} does not exist",
         )
-    projection = _cw03_committee_projection(
-        committee,
-        identity=identity,
-        snapshot_at=utc_now(),
-    )
     if projection["meta"]["surfaces"]["committee_board"] == "unavailable":
         raise _bff_error(
             409,
