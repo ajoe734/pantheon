@@ -232,13 +232,27 @@
       "command": "timeout 60 python3 \"$PANTHEON_COMMAND_ROOT/scripts/git/auto_integrator.py\" --task-id GOV-APPROVAL-AUTHORITY-PREREQUISITE-001 --no-lock --no-open-unblock --json",
       "exit_code": 2,
       "result": "Dry-run-only no-lock mode still fails supervisor repository preflight: git common dir is not writable. No execute mode, permission changes, or bypass attempted."
+    },
+    {
+      "command": "git merge-base --is-ancestor fcefcea8465e2ac4e1b585f39fdc85384fcdccff origin/dev && git show -s --format=\"%H%n%P%n%s\" 27fa03b087132c9aa45a223885f6f5ab4db89b62",
+      "exit_code": 0,
+      "result": "Exact approved head is a direct parent of source merge commit 27fa03b087132c9aa45a223885f6f5ab4db89b62 and an ancestor of dev."
     }
   ],
   "resolution": {
-    "state": "original_blocker_cleared_ready_for_supervisor_retry",
+    "state": "source_pr_merged_original_blocker_resolved",
     "original_head_changed_by_this_task": false,
     "integrator_code_change_required": false,
-    "remaining_action": "Existing supervisor integration runner must re-evaluate and merge the immutable approved source head using MERGE, then the source owner finalizes through governed done. This evidence task requires its own independent review and merge.",
-    "limitations": "PR #5636 was still OPEN at observation. Merge and hosted acceptance are not claimed. No approval evidence was fabricated or replaced; no branch protection or runtime permissions were changed."
+    "remaining_action": "Source owner finalizes its accepted delivery through governed closeout. This evidence PR still needs Codex2 independent review, supervisor merge and owner done.",
+    "limitations": "The live_pr field is the initial OPEN snapshot; final_source_delivery records the later observed merge. Hosted acceptance is not claimed. No approval evidence was fabricated or replaced; no branch protection or runtime permissions were changed."
+  },
+  "final_source_delivery": {
+    "headRefOid": "fcefcea8465e2ac4e1b585f39fdc85384fcdccff",
+    "mergeCommit": {
+      "oid": "27fa03b087132c9aa45a223885f6f5ab4db89b62"
+    },
+    "mergedAt": "2026-09-06T17:55:28Z",
+    "state": "MERGED",
+    "url": "https://github.com/ajoe734/pantheon/pull/5636"
   }
 }
