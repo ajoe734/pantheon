@@ -1,0 +1,95 @@
+package,declared,locked,latest_tag,status,engines,source,checked_date,dev_sha
+@ai-sdk/react,^3.0.193,3.0.199,4.0.96,differs-from-latest,"{""node"": "">=22""}",https://registry.npmjs.org/%40ai-sdk%2Freact/latest,2026-09-06,5d4f385284b44a30e10764426a47fd808a7ae3cb
+@axe-core/playwright,^4.11.3,4.11.3,4.13.0,differs-from-latest,{},https://registry.npmjs.org/%40axe-core%2Fplaywright/latest,2026-09-06,5d4f385284b44a30e10764426a47fd808a7ae3cb
+@eslint/js,^9.32.0,9.32.0,10.0.1,differs-from-latest,"{""node"": ""^20.19.0 || ^22.13.0 || >=24""}",https://registry.npmjs.org/%40eslint%2Fjs/latest,2026-09-06,5d4f385284b44a30e10764426a47fd808a7ae3cb
+@hookform/resolvers,^3.10.0,3.10.0,5.9.1,differs-from-latest,{},https://registry.npmjs.org/%40hookform%2Fresolvers/latest,2026-09-06,5d4f385284b44a30e10764426a47fd808a7ae3cb
+@playwright/test,^1.60.0,1.60.0,1.63.0,differs-from-latest,"{""node"": "">=20""}",https://registry.npmjs.org/%40playwright%2Ftest/latest,2026-09-06,5d4f385284b44a30e10764426a47fd808a7ae3cb
+@radix-ui/react-accordion,^1.2.11,1.2.11,1.2.20,differs-from-latest,{},https://registry.npmjs.org/%40radix-ui%2Freact-accordion/latest,2026-09-06,5d4f385284b44a30e10764426a47fd808a7ae3cb
+@radix-ui/react-alert-dialog,^1.1.14,1.1.14,1.1.23,differs-from-latest,{},https://registry.npmjs.org/%40radix-ui%2Freact-alert-dialog/latest,2026-09-06,5d4f385284b44a30e10764426a47fd808a7ae3cb
+@radix-ui/react-aspect-ratio,^1.1.7,1.1.7,1.1.15,differs-from-latest,{},https://registry.npmjs.org/%40radix-ui%2Freact-aspect-ratio/latest,2026-09-06,5d4f385284b44a30e10764426a47fd808a7ae3cb
+@radix-ui/react-avatar,^1.1.10,1.1.10,1.2.6,differs-from-latest,{},https://registry.npmjs.org/%40radix-ui%2Freact-avatar/latest,2026-09-06,5d4f385284b44a30e10764426a47fd808a7ae3cb
+@radix-ui/react-checkbox,^1.3.2,1.3.2,1.3.11,differs-from-latest,{},https://registry.npmjs.org/%40radix-ui%2Freact-checkbox/latest,2026-09-06,5d4f385284b44a30e10764426a47fd808a7ae3cb
+@radix-ui/react-collapsible,^1.1.12,1.1.13,1.1.20,differs-from-latest,{},https://registry.npmjs.org/%40radix-ui%2Freact-collapsible/latest,2026-09-06,5d4f385284b44a30e10764426a47fd808a7ae3cb
+@radix-ui/react-context-menu,^2.2.15,2.2.15,2.3.7,differs-from-latest,{},https://registry.npmjs.org/%40radix-ui%2Freact-context-menu/latest,2026-09-06,5d4f385284b44a30e10764426a47fd808a7ae3cb
+@radix-ui/react-dialog,^1.1.15,1.1.16,1.1.23,differs-from-latest,{},https://registry.npmjs.org/%40radix-ui%2Freact-dialog/latest,2026-09-06,5d4f385284b44a30e10764426a47fd808a7ae3cb
+@radix-ui/react-dropdown-menu,^2.1.16,2.1.17,2.1.24,differs-from-latest,{},https://registry.npmjs.org/%40radix-ui%2Freact-dropdown-menu/latest,2026-09-06,5d4f385284b44a30e10764426a47fd808a7ae3cb
+@radix-ui/react-hover-card,^1.1.15,1.1.16,1.1.23,differs-from-latest,{},https://registry.npmjs.org/%40radix-ui%2Freact-hover-card/latest,2026-09-06,5d4f385284b44a30e10764426a47fd808a7ae3cb
+@radix-ui/react-label,^2.1.7,2.1.7,2.1.15,differs-from-latest,{},https://registry.npmjs.org/%40radix-ui%2Freact-label/latest,2026-09-06,5d4f385284b44a30e10764426a47fd808a7ae3cb
+@radix-ui/react-menubar,^1.1.15,1.1.15,1.1.24,differs-from-latest,{},https://registry.npmjs.org/%40radix-ui%2Freact-menubar/latest,2026-09-06,5d4f385284b44a30e10764426a47fd808a7ae3cb
+@radix-ui/react-navigation-menu,^1.2.13,1.2.13,1.2.22,differs-from-latest,{},https://registry.npmjs.org/%40radix-ui%2Freact-navigation-menu/latest,2026-09-06,5d4f385284b44a30e10764426a47fd808a7ae3cb
+@radix-ui/react-popover,^1.1.14,1.1.14,1.1.23,differs-from-latest,{},https://registry.npmjs.org/%40radix-ui%2Freact-popover/latest,2026-09-06,5d4f385284b44a30e10764426a47fd808a7ae3cb
+@radix-ui/react-progress,^1.1.7,1.1.7,1.1.16,differs-from-latest,{},https://registry.npmjs.org/%40radix-ui%2Freact-progress/latest,2026-09-06,5d4f385284b44a30e10764426a47fd808a7ae3cb
+@radix-ui/react-radio-group,^1.3.7,1.3.7,1.4.7,differs-from-latest,{},https://registry.npmjs.org/%40radix-ui%2Freact-radio-group/latest,2026-09-06,5d4f385284b44a30e10764426a47fd808a7ae3cb
+@radix-ui/react-scroll-area,^1.2.9,1.2.9,1.2.18,differs-from-latest,{},https://registry.npmjs.org/%40radix-ui%2Freact-scroll-area/latest,2026-09-06,5d4f385284b44a30e10764426a47fd808a7ae3cb
+@radix-ui/react-select,^2.2.6,2.3.0,2.3.7,differs-from-latest,{},https://registry.npmjs.org/%40radix-ui%2Freact-select/latest,2026-09-06,5d4f385284b44a30e10764426a47fd808a7ae3cb
+@radix-ui/react-separator,^1.1.8,1.1.9,1.1.15,differs-from-latest,{},https://registry.npmjs.org/%40radix-ui%2Freact-separator/latest,2026-09-06,5d4f385284b44a30e10764426a47fd808a7ae3cb
+@radix-ui/react-slider,^1.3.5,1.3.5,1.4.7,differs-from-latest,{},https://registry.npmjs.org/%40radix-ui%2Freact-slider/latest,2026-09-06,5d4f385284b44a30e10764426a47fd808a7ae3cb
+@radix-ui/react-slot,^1.2.4,1.2.5,1.3.3,differs-from-latest,{},https://registry.npmjs.org/%40radix-ui%2Freact-slot/latest,2026-09-06,5d4f385284b44a30e10764426a47fd808a7ae3cb
+@radix-ui/react-switch,^1.2.5,1.2.5,1.3.7,differs-from-latest,{},https://registry.npmjs.org/%40radix-ui%2Freact-switch/latest,2026-09-06,5d4f385284b44a30e10764426a47fd808a7ae3cb
+@radix-ui/react-tabs,^1.1.12,1.1.12,1.1.21,differs-from-latest,{},https://registry.npmjs.org/%40radix-ui%2Freact-tabs/latest,2026-09-06,5d4f385284b44a30e10764426a47fd808a7ae3cb
+@radix-ui/react-toast,^1.2.14,1.2.14,1.2.23,differs-from-latest,{},https://registry.npmjs.org/%40radix-ui%2Freact-toast/latest,2026-09-06,5d4f385284b44a30e10764426a47fd808a7ae3cb
+@radix-ui/react-toggle,^1.1.9,1.1.9,1.1.18,differs-from-latest,{},https://registry.npmjs.org/%40radix-ui%2Freact-toggle/latest,2026-09-06,5d4f385284b44a30e10764426a47fd808a7ae3cb
+@radix-ui/react-toggle-group,^1.1.10,1.1.10,1.1.19,differs-from-latest,{},https://registry.npmjs.org/%40radix-ui%2Freact-toggle-group/latest,2026-09-06,5d4f385284b44a30e10764426a47fd808a7ae3cb
+@radix-ui/react-tooltip,^1.2.8,1.2.9,1.2.16,differs-from-latest,{},https://registry.npmjs.org/%40radix-ui%2Freact-tooltip/latest,2026-09-06,5d4f385284b44a30e10764426a47fd808a7ae3cb
+@streamdown/cjk,^1.0.3,1.0.3,1.0.3,matches-latest,{},https://registry.npmjs.org/%40streamdown%2Fcjk/latest,2026-09-06,5d4f385284b44a30e10764426a47fd808a7ae3cb
+@streamdown/code,^1.1.1,1.1.1,1.1.1,matches-latest,{},https://registry.npmjs.org/%40streamdown%2Fcode/latest,2026-09-06,5d4f385284b44a30e10764426a47fd808a7ae3cb
+@streamdown/math,^1.0.2,1.0.2,1.0.2,matches-latest,{},https://registry.npmjs.org/%40streamdown%2Fmath/latest,2026-09-06,5d4f385284b44a30e10764426a47fd808a7ae3cb
+@streamdown/mermaid,^1.0.2,1.0.2,1.0.2,matches-latest,{},https://registry.npmjs.org/%40streamdown%2Fmermaid/latest,2026-09-06,5d4f385284b44a30e10764426a47fd808a7ae3cb
+@tailwindcss/typography,^0.5.16,0.5.16,0.5.20,differs-from-latest,{},https://registry.npmjs.org/%40tailwindcss%2Ftypography/latest,2026-09-06,5d4f385284b44a30e10764426a47fd808a7ae3cb
+@tanstack/react-query,^5.83.0,5.83.0,5.102.8,differs-from-latest,{},https://registry.npmjs.org/%40tanstack%2Freact-query/latest,2026-09-06,5d4f385284b44a30e10764426a47fd808a7ae3cb
+@testing-library/jest-dom,^6.6.0,6.9.1,7.0.1,differs-from-latest,"{""node"": "">=22"", ""npm"": "">=6"", ""yarn"": "">=1""}",https://registry.npmjs.org/%40testing-library%2Fjest-dom/latest,2026-09-06,5d4f385284b44a30e10764426a47fd808a7ae3cb
+@testing-library/react,^16.0.0,16.3.2,16.3.3,differs-from-latest,"{""node"": "">=18""}",https://registry.npmjs.org/%40testing-library%2Freact/latest,2026-09-06,5d4f385284b44a30e10764426a47fd808a7ae3cb
+@types/node,^22.16.5,22.16.5,26.4.1,differs-from-latest,{},https://registry.npmjs.org/%40types%2Fnode/latest,2026-09-06,5d4f385284b44a30e10764426a47fd808a7ae3cb
+@types/react,^18.3.23,18.3.23,19.2.18,differs-from-latest,{},https://registry.npmjs.org/%40types%2Freact/latest,2026-09-06,5d4f385284b44a30e10764426a47fd808a7ae3cb
+@types/react-dom,^18.3.7,18.3.7,19.2.7,differs-from-latest,{},https://registry.npmjs.org/%40types%2Freact-dom/latest,2026-09-06,5d4f385284b44a30e10764426a47fd808a7ae3cb
+@types/react-grid-layout,^1.3.5,1.3.6,2.1.0,differs-from-latest,{},https://registry.npmjs.org/%40types%2Freact-grid-layout/latest,2026-09-06,5d4f385284b44a30e10764426a47fd808a7ae3cb
+@vitejs/plugin-react-swc,^3.11.0,3.11.0,4.3.3,differs-from-latest,"{""node"": ""^20.19.0 || >=22.12.0""}",https://registry.npmjs.org/%40vitejs%2Fplugin-react-swc/latest,2026-09-06,5d4f385284b44a30e10764426a47fd808a7ae3cb
+ai,^6.0.191,6.0.197,7.0.93,differs-from-latest,"{""node"": "">=22""}",https://registry.npmjs.org/ai/latest,2026-09-06,5d4f385284b44a30e10764426a47fd808a7ae3cb
+autoprefixer,^10.4.21,10.4.21,10.5.5,differs-from-latest,"{""node"": ""^10 || ^12 || >=14""}",https://registry.npmjs.org/autoprefixer/latest,2026-09-06,5d4f385284b44a30e10764426a47fd808a7ae3cb
+axe-core,^4.11.4,4.11.4,4.13.0,differs-from-latest,"{""node"": "">=4""}",https://registry.npmjs.org/axe-core/latest,2026-09-06,5d4f385284b44a30e10764426a47fd808a7ae3cb
+class-variance-authority,^0.7.1,0.7.1,0.7.1,matches-latest,{},https://registry.npmjs.org/class-variance-authority/latest,2026-09-06,5d4f385284b44a30e10764426a47fd808a7ae3cb
+clsx,^2.1.1,2.1.1,2.1.1,matches-latest,"{""node"": "">=6""}",https://registry.npmjs.org/clsx/latest,2026-09-06,5d4f385284b44a30e10764426a47fd808a7ae3cb
+cmdk,^1.1.1,1.1.1,1.1.1,matches-latest,{},https://registry.npmjs.org/cmdk/latest,2026-09-06,5d4f385284b44a30e10764426a47fd808a7ae3cb
+date-fns,^3.6.0,3.6.0,4.4.0,differs-from-latest,{},https://registry.npmjs.org/date-fns/latest,2026-09-06,5d4f385284b44a30e10764426a47fd808a7ae3cb
+echarts,^6.1.0,6.1.0,6.1.0,matches-latest,{},https://registry.npmjs.org/echarts/latest,2026-09-06,5d4f385284b44a30e10764426a47fd808a7ae3cb
+echarts-for-react,^3.0.2,3.0.6,3.0.6,matches-latest,{},https://registry.npmjs.org/echarts-for-react/latest,2026-09-06,5d4f385284b44a30e10764426a47fd808a7ae3cb
+embla-carousel-react,^8.6.0,8.6.0,8.6.0,matches-latest,{},https://registry.npmjs.org/embla-carousel-react/latest,2026-09-06,5d4f385284b44a30e10764426a47fd808a7ae3cb
+eslint,^9.32.0,9.32.0,10.10.0,differs-from-latest,"{""node"": ""^20.19.0 || ^22.13.0 || >=24""}",https://registry.npmjs.org/eslint/latest,2026-09-06,5d4f385284b44a30e10764426a47fd808a7ae3cb
+eslint-plugin-react-hooks,^5.2.0,5.2.0,7.1.1,differs-from-latest,"{""node"": "">=18""}",https://registry.npmjs.org/eslint-plugin-react-hooks/latest,2026-09-06,5d4f385284b44a30e10764426a47fd808a7ae3cb
+eslint-plugin-react-refresh,^0.4.20,0.4.20,0.5.6,differs-from-latest,{},https://registry.npmjs.org/eslint-plugin-react-refresh/latest,2026-09-06,5d4f385284b44a30e10764426a47fd808a7ae3cb
+firebase,^12.16.0,12.16.0,12.18.0,differs-from-latest,{},https://registry.npmjs.org/firebase/latest,2026-09-06,5d4f385284b44a30e10764426a47fd808a7ae3cb
+globals,^15.15.0,15.15.0,17.12.0,differs-from-latest,"{""node"": "">=18""}",https://registry.npmjs.org/globals/latest,2026-09-06,5d4f385284b44a30e10764426a47fd808a7ae3cb
+i18next,^26.0.8,26.0.10,26.4.2,differs-from-latest,{},https://registry.npmjs.org/i18next/latest,2026-09-06,5d4f385284b44a30e10764426a47fd808a7ae3cb
+input-otp,^1.4.2,1.4.2,1.5.0,differs-from-latest,{},https://registry.npmjs.org/input-otp/latest,2026-09-06,5d4f385284b44a30e10764426a47fd808a7ae3cb
+jsdom,^20.0.3,20.0.3,30.0.1,differs-from-latest,"{""node"": ""^22.22.2 || ^24.15.0 || >=26.0.0""}",https://registry.npmjs.org/jsdom/latest,2026-09-06,5d4f385284b44a30e10764426a47fd808a7ae3cb
+lovable-tagger,^1.1.13,1.1.13,1.3.3,differs-from-latest,{},https://registry.npmjs.org/lovable-tagger/latest,2026-09-06,5d4f385284b44a30e10764426a47fd808a7ae3cb
+lucide-react,^1.16.0,1.17.0,1.41.0,differs-from-latest,{},https://registry.npmjs.org/lucide-react/latest,2026-09-06,5d4f385284b44a30e10764426a47fd808a7ae3cb
+motion,^12.40.0,12.40.0,13.2.0,differs-from-latest,{},https://registry.npmjs.org/motion/latest,2026-09-06,5d4f385284b44a30e10764426a47fd808a7ae3cb
+nanoid,^5.1.11,5.1.11,6.0.1,differs-from-latest,"{""node"": ""^22 || ^24 || >=26""}",https://registry.npmjs.org/nanoid/latest,2026-09-06,5d4f385284b44a30e10764426a47fd808a7ae3cb
+next-themes,^0.3.0,0.3.0,0.4.6,differs-from-latest,{},https://registry.npmjs.org/next-themes/latest,2026-09-06,5d4f385284b44a30e10764426a47fd808a7ae3cb
+postcss,^8.5.6,8.5.19,8.5.28,differs-from-latest,"{""node"": ""^10 || ^12 || >=14""}",https://registry.npmjs.org/postcss/latest,2026-09-06,5d4f385284b44a30e10764426a47fd808a7ae3cb
+react,^18.3.1,18.3.1,19.2.8,differs-from-latest,"{""node"": "">=0.10.0""}",https://registry.npmjs.org/react/latest,2026-09-06,5d4f385284b44a30e10764426a47fd808a7ae3cb
+react-day-picker,^8.10.1,8.10.1,10.0.1,differs-from-latest,"{""node"": "">=18""}",https://registry.npmjs.org/react-day-picker/latest,2026-09-06,5d4f385284b44a30e10764426a47fd808a7ae3cb
+react-dom,^18.3.1,18.3.1,19.2.8,differs-from-latest,{},https://registry.npmjs.org/react-dom/latest,2026-09-06,5d4f385284b44a30e10764426a47fd808a7ae3cb
+react-grid-layout,^1.5.0,1.5.3,2.2.4,differs-from-latest,{},https://registry.npmjs.org/react-grid-layout/latest,2026-09-06,5d4f385284b44a30e10764426a47fd808a7ae3cb
+react-hook-form,^7.61.1,7.61.1,7.87.0,differs-from-latest,"{""node"": "">=18.0.0""}",https://registry.npmjs.org/react-hook-form/latest,2026-09-06,5d4f385284b44a30e10764426a47fd808a7ae3cb
+react-i18next,^17.0.6,17.0.7,17.0.13,differs-from-latest,{},https://registry.npmjs.org/react-i18next/latest,2026-09-06,5d4f385284b44a30e10764426a47fd808a7ae3cb
+react-markdown,^10.1.0,10.1.0,10.1.0,matches-latest,{},https://registry.npmjs.org/react-markdown/latest,2026-09-06,5d4f385284b44a30e10764426a47fd808a7ae3cb
+react-resizable-panels,^2.1.9,2.1.9,4.12.3,differs-from-latest,{},https://registry.npmjs.org/react-resizable-panels/latest,2026-09-06,5d4f385284b44a30e10764426a47fd808a7ae3cb
+react-router-dom,^6.30.1,6.30.4,7.18.3,differs-from-latest,"{""node"": "">=20.0.0""}",https://registry.npmjs.org/react-router-dom/latest,2026-09-06,5d4f385284b44a30e10764426a47fd808a7ae3cb
+recharts,^2.15.4,2.15.4,3.10.1,differs-from-latest,"{""node"": "">=18""}",https://registry.npmjs.org/recharts/latest,2026-09-06,5d4f385284b44a30e10764426a47fd808a7ae3cb
+shiki,^4.1.0,4.2.0,4.4.3,differs-from-latest,"{""node"": "">=20""}",https://registry.npmjs.org/shiki/latest,2026-09-06,5d4f385284b44a30e10764426a47fd808a7ae3cb
+sonner,^1.7.4,1.7.4,2.0.8,differs-from-latest,{},https://registry.npmjs.org/sonner/latest,2026-09-06,5d4f385284b44a30e10764426a47fd808a7ae3cb
+streamdown,^2.5.0,2.5.0,2.6.0,differs-from-latest,{},https://registry.npmjs.org/streamdown/latest,2026-09-06,5d4f385284b44a30e10764426a47fd808a7ae3cb
+tailwind-merge,^2.6.0,2.6.0,3.6.0,differs-from-latest,{},https://registry.npmjs.org/tailwind-merge/latest,2026-09-06,5d4f385284b44a30e10764426a47fd808a7ae3cb
+tailwindcss,^3.4.17,3.4.17,4.3.3,differs-from-latest,{},https://registry.npmjs.org/tailwindcss/latest,2026-09-06,5d4f385284b44a30e10764426a47fd808a7ae3cb
+tailwindcss-animate,^1.0.7,1.0.7,1.0.7,matches-latest,{},https://registry.npmjs.org/tailwindcss-animate/latest,2026-09-06,5d4f385284b44a30e10764426a47fd808a7ae3cb
+tsx,^4.21.0,4.21.0,4.23.13,differs-from-latest,"{""node"": "">=18.0.0""}",https://registry.npmjs.org/tsx/latest,2026-09-06,5d4f385284b44a30e10764426a47fd808a7ae3cb
+typescript,^5.8.3,5.8.3,7.0.2,differs-from-latest,"{""node"": "">=16.20.0""}",https://registry.npmjs.org/typescript/latest,2026-09-06,5d4f385284b44a30e10764426a47fd808a7ae3cb
+typescript-eslint,^8.38.0,8.38.0,8.69.0,differs-from-latest,"{""node"": ""^18.18.0 || ^20.9.0 || >=21.1.0""}",https://registry.npmjs.org/typescript-eslint/latest,2026-09-06,5d4f385284b44a30e10764426a47fd808a7ae3cb
+use-stick-to-bottom,^1.1.4,1.1.6,1.1.6,matches-latest,{},https://registry.npmjs.org/use-stick-to-bottom/latest,2026-09-06,5d4f385284b44a30e10764426a47fd808a7ae3cb
+vaul,^0.9.9,0.9.9,1.1.2,differs-from-latest,{},https://registry.npmjs.org/vaul/latest,2026-09-06,5d4f385284b44a30e10764426a47fd808a7ae3cb
+vite,^5.4.19,5.4.19,8.2.2,differs-from-latest,"{""node"": ""^20.19.0 || >=22.12.0""}",https://registry.npmjs.org/vite/latest,2026-09-06,5d4f385284b44a30e10764426a47fd808a7ae3cb
+vitest,^3.2.4,3.2.4,5.0.0,differs-from-latest,"{""node"": ""^22.12.0 || ^24.0.0 || >=26.0.0""}",https://registry.npmjs.org/vitest/latest,2026-09-06,5d4f385284b44a30e10764426a47fd808a7ae3cb
+zod,^3.25.76,3.25.76,4.5.4,differs-from-latest,{},https://registry.npmjs.org/zod/latest,2026-09-06,5d4f385284b44a30e10764426a47fd808a7ae3cb
+zustand,^5.0.12,5.0.13,5.0.15,differs-from-latest,"{""node"": "">=12.20.0""}",https://registry.npmjs.org/zustand/latest,2026-09-06,5d4f385284b44a30e10764426a47fd808a7ae3cb

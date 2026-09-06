@@ -1,0 +1,86 @@
+{
+  "schema_version": 1,
+  "task_id": "SYS-SIMPLIFY-AUDIT-20260906",
+  "scope": "documentation-only publication of the dated audit; not implementation, runtime acceptance, or reviewer approval",
+  "source_baselines": {
+    "pantheon": "471dc5391a0f9cbde54d51730891583043708e42",
+    "execute-plans": "5d4f385284b44a30e10764426a47fd808a7ae3cb"
+  },
+  "validation": {
+    "relative_links_checked": 27,
+    "csv_rows": {
+      "oss-images-current-dev.csv": 63,
+      "oss-pypi-latest-current-dev.csv": 44,
+      "frontend-dependencies.csv": 94,
+      "oss-inline-installs-current-dev.csv": 51,
+      "oss-requirements-current-dev.csv": 195
+    },
+    "json_validated": 4,
+    "files_validated": 14,
+    "source_baselines_validated": true,
+    "portable_document_links": true,
+    "whitespace_clean": true,
+    "unexpected_payloads": false,
+    "secret_pattern_matches": 0,
+    "runtime_tests": "not run: documentation-only publication; no implementation changes"
+  },
+  "files": [
+    {
+      "path": "docs/reviews/2026-09-06-system-simplification/README.md",
+      "sha256": "e1d6d19a32c601870b06dc8bdaa21b647e9a882f200c4b4da9c8daae1db6ee9c"
+    },
+    {
+      "path": "docs/reviews/2026-09-06-system-simplification/REPORT.zh-TW.md",
+      "sha256": "289b7d2637fad9a2f4617fd9cae5908f7fc3b448020af44c64f075297dbef8f8"
+    },
+    {
+      "path": "docs/reviews/2026-09-06-system-simplification/architecture-findings.md",
+      "sha256": "d58143f281c6c23b511a3aa701faaf03bd8eceb20cee66a9f7ced30e8aaaadab"
+    },
+    {
+      "path": "docs/reviews/2026-09-06-system-simplification/audit-baseline.json",
+      "sha256": "6072c68f4e7efc1c2da20498ee6569c02a867e8caa91fe289a8af744745360fd"
+    },
+    {
+      "path": "docs/reviews/2026-09-06-system-simplification/bff-exact-duplicates.json",
+      "sha256": "64164b978717d17bb50035eeee608a7b1c9f586b79f6d70c2b01d64b12159baf"
+    },
+    {
+      "path": "docs/reviews/2026-09-06-system-simplification/frontend-dependencies.csv",
+      "sha256": "0ad5448fd6323cd0d869d428f22bca71865f17a408d9e12a59d692c6cc0a6030"
+    },
+    {
+      "path": "docs/reviews/2026-09-06-system-simplification/llm-research-findings.md",
+      "sha256": "3bfdd1f9e1f935f5b758d9ea7efe3c60ffaa64ff6614297c40f2f6829764ff8a"
+    },
+    {
+      "path": "docs/reviews/2026-09-06-system-simplification/oss-findings.md",
+      "sha256": "75a7cd49f3bdf08940c784070e13680a305c17bd6f6d67a3e02b18efbaf94c32"
+    },
+    {
+      "path": "docs/reviews/2026-09-06-system-simplification/oss-images-current-dev.csv",
+      "sha256": "9a58e7da29aa3eda3d98b0be9c19a1a5d6803da26d957b3bcf6778876a6fddf3"
+    },
+    {
+      "path": "docs/reviews/2026-09-06-system-simplification/oss-inline-installs-current-dev.csv",
+      "sha256": "0230e8a4c9b05d53193ddc54d5a42eee89bba1a4306d5d0599d2fc1271bf4424"
+    },
+    {
+      "path": "docs/reviews/2026-09-06-system-simplification/oss-inventory-summary.json",
+      "sha256": "2a13f70420e117f664f58deb84090865ba9a1cd3f82b363e64aa055983c3d440"
+    },
+    {
+      "path": "docs/reviews/2026-09-06-system-simplification/oss-pypi-latest-current-dev.csv",
+      "sha256": "d2d5bb166cc3b224e5b589a4a0c74e866241d847d9e3c0fe8234caa21f7889a4"
+    },
+    {
+      "path": "docs/reviews/2026-09-06-system-simplification/oss-pypi-latest-current-dev.json",
+      "sha256": "ed022e8db734711123a828ce930c15946d4774497238603abaca3845535b5796"
+    },
+    {
+      "path": "docs/reviews/2026-09-06-system-simplification/oss-requirements-current-dev.csv",
+      "sha256": "f8102e67a8fc0301dbe5d9e6da980a1f62822fbc074b08ed5681dd660b0921ca"
+    }
+  ],
+  "path_base": "repository_root"
+}
