@@ -1,0 +1,146 @@
+{
+  "schema_version": "pantheon.ops-archive-resurrection-contract.v1",
+  "task": {
+    "id": "OPS-ARCHIVE-RESURRECTION-CONTRACT-001",
+    "title": "Repair verified role-only archive resurrection in the existing TaskStore contract",
+    "owner": "Antigravity2",
+    "reviewer": "Codex",
+    "base_branch": "dev",
+    "base_sha": "a9557a6002e8170eb92415cc61e9d6a584cc610f",
+    "task_branch": "task/OPS-ARCHIVE-RESURRECTION-CONTRACT-001"
+  },
+  "plan": {
+    "sa_sd_path": "docs/04/pantheon_first_release_closure_2026-09-06/ARCHIVE_RESURRECTION_SA_SD.md",
+    "sa_sd_sha256": "4a6862fd7465896da09381030dc6310d7efaf4468791c3ef55a327ca8453c9d8",
+    "reconciliation_path": "docs/04/pantheon_first_release_closure_2026-09-06/LEGACY_CLOSEOUT_RECONCILIATION.md",
+    "reconciliation_sha256": "75d9435610d38771795c79a1c76a27fff23db96eec029e36ca6cc8bef6f335c3"
+  },
+  "acceptance_clauses_audit": {
+    "clause_1_plan_report_preservation": {
+      "status": "satisfied",
+      "detail": "Copied immutable ARCHIVE_RESURRECTION_SA_SD.md and LEGACY_CLOSEOUT_RECONCILIATION.md into docs/04/pantheon_first_release_closure_2026-09-06/ matching exact SHA256 hashes byte-for-byte. Updated INDEX.md to reference both documents."
+    },
+    "clause_2_single_reconciliation_authority": {
+      "status": "satisfied",
+      "detail": "Extended existing reconcile_merged_done and _validated_same_delivery_archive_recovery in scripts/ai_status.py; did not create any secondary reconciler, store, or queue."
+    },
+    "clause_3_strict_proof_requirements": {
+      "status": "satisfied",
+      "detail": "Enforces exact merged original delivery/review with all 4 required review bindings (file, commit, merge_target_ref, merge_target_sha), byte-preserved archive snapshot with separate raw file SHA256 binding, identical scope contract (spec hash, acceptance, artifacts, dependencies, dev_bridge, execution_authorization), and complete authenticated ordered lineage chain (audit events) proving stale role-only resurrection."
+    },
+    "clause_4_archive_and_generation_preservation": {
+      "status": "satisfied",
+      "detail": "Preserves original archive bytes and terminal fact generation (g1); retires only the proved stale active row (g2); records retired row digest and generation in append-only activity log."
+    },
+    "clause_5_preflight_cas_binding": {
+      "status": "satisfied",
+      "detail": "Preflight CAS binds task, generation, spec hash, task digest, archive digest, raw archive file sha256, delivery, and audit proof range; revalidates inside authoritative transaction; excludes live worker/lease/queue."
+    },
+    "clause_6_idempotent_retirement_and_recurrence_prevention": {
+      "status": "satisfied",
+      "detail": "Uses existing archive outbox/receipt/recovery ordering for idempotent crash-safe retirement across all 4 crash boundaries (before_commit, pending_status, readback, receipt). Blocks recurrence at admission/reassignment boundaries (command_assign, command_reopen, dev_bridge_materialize); preserves existing empty-genesis fail-closed behavior in seed_task_state_v2.py."
+    },
+    "clause_7_execution_auth_boundary_preservation": {
+      "status": "satisfied",
+      "detail": "Preserves accepted execution-authorization and retired-review trust boundaries from predecessors. Archive recovery does not acquire or clear privileged authority, merge packet-source trust into MFA trust, or require product login for local maintenance."
+    },
+    "clause_8_positive_fixtures_and_crash_recovery": {
+      "status": "satisfied",
+      "detail": "Positive fixtures with genuine isolated command runtime and git ancestry, executing real isolated CLI invocations (ai_status.py show, reconcile_merged_done, and recover) without in-process mocks; authenticated import provenance with mandatory exact bindings (generation, archive_generation, owner, reviewer, archive_snapshot_sha256, operator_mode: 'local_human_ops', agent: 'Human/Ops') and authenticated event_id against payload digest; deterministic real-process barriers covering mutation and active worker claim between preflight and commit via production runtime_state_update lock; crash interruption across all four crash boundaries (before_commit, pending_status, readback, receipt), restart recovery, proof-change refusal, outbox receipt convergence, and idempotent recovery with exact byte, generation, and archive checks."
+    },
+    "clause_9_zero_effect_negatives": {
+      "status": "satisfied",
+      "detail": "Zero-effect negatives verified for unauthenticated import (missing event_id, unauthorized actor, missing or invalid operator_mode, missing/mismatched generation, archive_generation, owner, reviewer, archive_snapshot_sha256, unauthenticated event_id digest), corrupt/malformed runtime structures (dict or list workers, queue, leases, supervisor reservations with launch_intent), active review invalidation/rejection, missing review evidence fields (file, commit, merge_target_ref, merge_target_sha), raw archive byte drift, intervening new work, nonoperator invocations, and concurrent CAS/proof forks."
+    },
+    "clause_10_clean_worktree_base": {
+      "status": "satisfied",
+      "detail": "Task worktree based on dev tip e9d1a1e50b4f098db6e62c1c4e247f1f40f36827 with clean scoped artifacts."
+    },
+    "clause_11_governed_delivery": {
+      "status": "pending",
+      "detail": "Commit, push branch task/OPS-ARCHIVE-RESURRECTION-CONTRACT-001, PR #5634, independent review by Codex, required checks, dev merge."
+    },
+    "clause_12_ppl_alloc_007_ground_truth_hold": {
+      "status": "satisfied",
+      "detail": "Live canonical task PPL-ALLOC-007 evaluated against canonical state and archive: reports eligible: false, reason: 'stale resurrection lineage missing authoritative import/re-entry event: PPL-ALLOC-007', perfectly preserving the hold without live mutation."
+    },
+    "clause_13_ppl_alloc_009_hold_preserved": {
+      "status": "satisfied",
+      "detail": "PPL-ALLOC-009 remains an evidence-only hosted hold under genuine temporary authorization hold; original acceptance clauses and dependencies are unchanged. No runnable ownership restored or hosted execution triggered."
+    }
+  },
+  "diagnostics": {
+    "ppl_alloc_007": {
+      "task_id": "PPL-ALLOC-007",
+      "archive_generation": 1,
+      "active_generation": 2,
+      "eligible": false,
+      "reason": "stale resurrection lineage missing authoritative import/re-entry event: PPL-ALLOC-007",
+      "hold_preserved": true
+    }
+  },
+  "verification": {
+    "status": "passed",
+    "commands": [
+      {
+        "name": "archive_resurrection_contract_tests",
+        "command": "AI_NAME=Antigravity2 python3 -m pytest -q scripts/test_ai_status.py -k TestStaleArchiveResurrectionContract",
+        "passed": 26,
+        "subtests_passed": 23,
+        "failed": 0,
+        "exit_code": 0
+      },
+      {
+        "name": "reviewer_probes",
+        "command": "PYTHONPATH=. python3 /tmp/archive_resurrection_review_probes.py",
+        "passed": 4,
+        "subtests_passed": 0,
+        "failed": 0,
+        "exit_code": 0
+      },
+      {
+        "name": "archive_index_and_bridge_materialize_and_seed_tests",
+        "command": "AI_NAME=Antigravity2 python3 -m pytest -q .orchestrator/test_task_archive_index_legacy_id.py .orchestrator/development_bridge/tests/test_dev_bridge_materialize.py scripts/test_seed_task_state_v2.py",
+        "passed": 17,
+        "subtests_passed": 4,
+        "failed": 0,
+        "exit_code": 0
+      },
+      {
+        "name": "store_and_dispatch_policy_tests",
+        "command": "AI_NAME=Antigravity2 python3 -m pytest -q .orchestrator/rewrite/test_task_state_store.py .orchestrator/test_dispatch_policy.py",
+        "passed": 62,
+        "subtests_passed": 0,
+        "failed": 0,
+        "exit_code": 0
+      },
+      {
+        "name": "supervisor_tests",
+        "command": "AI_NAME=Antigravity2 python3 -m pytest -q .orchestrator/test_supervisor.py",
+        "passed": 253,
+        "subtests_passed": 55,
+        "failed": 0,
+        "exit_code": 0
+      },
+      {
+        "name": "focused_ai_status_tests",
+        "command": "AI_NAME=Antigravity2 python3 -m pytest -q scripts/test_ai_status.py -k 'assign or reopen or reconcile or archive'",
+        "passed": 142,
+        "subtests_passed": 56,
+        "failed": 0,
+        "exit_code": 0
+      }
+    ],
+    "totals": {
+      "passed": 504,
+      "subtests_passed": 138,
+      "failed": 0
+    }
+  },
+  "not_claimed": [
+    "PPL-ALLOC-007 retirement or resolution",
+    "PPL-ALLOC-009 execution or resolution",
+    "Product runtime, Management AI, or Agora acceptance",
+    "Privileged execution authorization grant"
+  ]
+}

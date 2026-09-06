@@ -82,6 +82,41 @@ def read_task_archive_file_safe(path: Path) -> str:
         raise e
 
 
+def read_task_archive_file_bytes_safe(path: Path) -> bytes:
+    import stat
+    import errno
+    try:
+        st = os.lstat(path)
+        if stat.S_ISLNK(st.st_mode):
+            raise RuntimeError(f"archive-leaf cannot be a symlink: {path}")
+        if not stat.S_ISREG(st.st_mode):
+            raise RuntimeError(f"archive-leaf must be a regular file: {path}")
+    except FileNotFoundError:
+        raise
+    except OSError as e:
+        raise RuntimeError(f"Failed to lstat archive-leaf {path}: {e}")
+
+    try:
+        fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
+    except OSError as e:
+        if e.errno == errno.ELOOP:
+            raise RuntimeError(f"archive-leaf cannot be a symlink: {path}")
+        raise
+
+    try:
+        fst = os.fstat(fd)
+        if not stat.S_ISREG(fst.st_mode):
+            raise RuntimeError(f"archive-leaf fd must be a regular file: {path}")
+        with open(fd, "rb") as f:
+            return f.read()
+    except Exception as e:
+        try:
+            os.close(fd)
+        except OSError:
+            pass
+        raise e
+
+
 def _archive_fault(point: str) -> None:
     if str(os.environ.get("LOOP_TEST_ARCHIVE_SIGKILL_AFTER") or "").strip() == point:
         os.kill(os.getpid(), 9)
@@ -443,6 +478,25 @@ def load_archived_snapshot(task_id: str | None) -> dict[str, Any] | None:
         except Exception as e:
             raise RuntimeError(f"Failed to load archive snapshot safely: {e}")
     return validate_archive_snapshot(snapshot, filename_task_id=normalized)
+
+
+def load_archived_raw_bytes(task_id: str | None) -> bytes | None:
+    normalized = normalize_task_id(task_id)
+    if not normalized:
+        return None
+    path = archive_task_path(normalized)
+    with canonical_task_state_lock_file(
+        STATUS_FILE,
+        shared=True,
+        nonblocking=False,
+    ):
+        try:
+            return read_task_archive_file_bytes_safe(path)
+        except FileNotFoundError:
+            return None
+        except Exception as e:
+            raise RuntimeError(f"Failed to load archive bytes safely: {e}")
+
 
 
 def correct_archived_task_review_file(
