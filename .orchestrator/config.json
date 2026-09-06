@@ -13,6 +13,9 @@
     "mode": "authoritative",
     "event_log": ".orchestrator/task-state-events-v2.jsonl"
   },
+  "execution_authorization": {
+    "mfa_issuer_public_keys": {}
+  },
   "permission_broker": {
     "allowed_workspace_roots": [
       ".",

@@ -421,6 +421,280 @@ def verify_worker_sandbox(root: Path) -> dict[str, Any]:
     }
 
 
+_EXECUTION_AUTHORIZATION_BARRIER_PROBE = r'''
+import ast
+import base64
+import hashlib
+import json
+import os
+import subprocess
+import sys
+import tempfile
+from datetime import datetime, timezone
+from pathlib import Path
+
+root = Path(sys.argv[1]).resolve()
+sys.path[:0] = [str(root / ".orchestrator"), str(root / "scripts")]
+
+# All authority and writes below belong to this disposable probe. No live
+# verifier keys, worker identity, journal binding, or grants are inherited.
+with tempfile.TemporaryDirectory(prefix="execution-barrier-preflight-") as scratch:
+    status_root = Path(scratch) / "status"
+    status_root.mkdir()
+    event_log = Path(scratch) / "runtime" / "task-state-events.jsonl"
+    os.environ["PANTHEON_STATUS_ROOT"] = str(status_root)
+    os.environ["AI_NAME"] = "Codex2"
+    import ai_status
+    import common
+    import execution_authorization as ea
+    import worker_runner
+    from development_bridge import dev_bridge_materialize as intake
+    from rewrite import dispatch_admission as admission
+    from cryptography.hazmat.primitives import serialization
+    from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+
+    modules = (ai_status, common, ea, worker_runner, intake, admission)
+    provenance = {}
+    for module in modules:
+        path = Path(module.__file__).resolve()
+        assert path.is_relative_to(root), "barrier imported outside candidate: " + str(path)
+        provenance[module.__name__] = {
+            "path": str(path), "sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
+        }
+    assert ea.RUNTIME_CAPABILITY_EXECUTION_AUTHORIZATION in ea.RUNTIME_CAPABILITIES
+    # Behavioral helper checks below also require the real entry points to
+    # call those helpers. Retaining a detached function is not a barrier.
+    worker_tree = ast.parse(Path(worker_runner.__file__).read_text())
+    worker_functions = {
+        node.name: node for node in worker_tree.body if isinstance(node, ast.FunctionDef)
+    }
+    def call_name(node):
+        if not isinstance(node, ast.Call):
+            return ""
+        return ast.unparse(node.func)
+    def direct_call(statement, name):
+        value = getattr(statement, "value", None)
+        return call_name(value) == name
+    binding_function = worker_functions["validate_worker_entry_binding"]
+    assert any(direct_call(node, "ensure_execution_authorized_before_launch")
+               for node in binding_function.body), "worker entry detached from authorization"
+    main_function = worker_functions["main"]
+    binding_positions = [i for i, node in enumerate(main_function.body)
+                         if direct_call(node, "validate_worker_entry_binding")]
+    sandbox_positions = [i for i, node in enumerate(main_function.body)
+                         if direct_call(node, "bind_worker_sandbox")]
+    assert binding_positions and sandbox_positions and min(binding_positions) < min(sandbox_positions), (
+        "worker main must validate canonical receipt before sandbox setup"
+    )
+    guarded_launches = []
+    for node in ast.walk(main_function):
+        if not isinstance(node, ast.With):
+            continue
+        if not any(call_name(item.context_expr) == "canonical_task_state_lock_file"
+                   and any(keyword.arg == "shared" and isinstance(keyword.value, ast.Constant)
+                           and keyword.value.value is True for keyword in item.context_expr.keywords)
+                   for item in node.items):
+            continue
+        validation = [i for i, statement in enumerate(node.body)
+                      if direct_call(statement, "validate_worker_entry_binding")]
+        launch = [i for i, statement in enumerate(node.body)
+                  if direct_call(statement, "subprocess.Popen")]
+        if validation and launch and min(validation) < min(launch):
+            guarded_launches.extend(node.body[i].value for i in launch)
+    all_launches = [node for node in ast.walk(main_function) if call_name(node) == "subprocess.Popen"]
+    assert all_launches and set(all_launches) == set(guarded_launches), (
+        "worker launch lacks canonical lock and final receipt/authorization validation"
+    )
+    os.environ.update({
+        "PANTHEON_TASK_STATE_STORE_MODE": "authoritative",
+        "PANTHEON_TASK_STATE_EVENT_LOG": str(event_log),
+        common.CANONICAL_TASK_STATE_IDENTITY_ENV: json.dumps(
+            common.canonical_task_state_identity_for_paths(
+                status_root=status_root, event_log=event_log,
+            )
+        ),
+    })
+    ai_status.configure_status_root_paths(status_root)
+    source_key = Ed25519PrivateKey.generate()
+    encode = lambda value: base64.urlsafe_b64encode(value).decode().rstrip("=")
+    canonical = lambda value: json.dumps(
+        value, sort_keys=True, separators=(",", ":"), ensure_ascii=True,
+    ).encode()
+    os.environ["BRIDGE_SIGNING_PUBLIC_KEYS_JSON"] = json.dumps({
+        "isolated-preflight-source": encode(source_key.public_key().public_bytes(
+            serialization.Encoding.Raw, serialization.PublicFormat.Raw,
+        )),
+    })
+    state = ai_status.default_state()
+    state["tasks"] = []
+    state["handoffs"] = []
+    state["blockers"] = []
+    state["wave_state"] = {"status": "open"}
+    for work_class in ("hosted", "functional"):
+        task_id = "RUNTIME-PREFLIGHT-" + work_class.upper()
+        packet_id = "isolated-preflight-" + work_class
+        spec = {
+            "id": task_id, "title": "Isolated runtime barrier preflight",
+            "owner": "Codex2", "reviewer": "Codex", "target_repo": "pantheon",
+            "phase": "Runtime preflight", "summary": "Disposable local probe",
+            "depends_on": [], "artifacts": ["docs/deployment/evidence/" + task_id + "/"],
+            "acceptance": ["Verify local runtime barriers without launching work"],
+            "execution_resources": ["pantheon-dev"] if work_class == "hosted" else [],
+        }
+        packet = {
+            "packet_id": packet_id, "work_class": work_class, "tasks": [spec],
+            "actor": {"id": "isolated-preflight-source", "roles": ["source"]},
+        }
+        digest = hashlib.sha256(canonical(packet)).hexdigest()
+        packet["signature"] = {
+            "key_id": "isolated-preflight-source", "algorithm": "Ed25519",
+            "value": encode(source_key.sign(canonical(packet))),
+        }
+        batch = {
+            "packet_id": packet_id, "packet_digest": digest,
+            "actor": ai_status.DEV_BRIDGE_BATCH_ACTOR, "signed_packet": packet,
+            "tasks": [{
+                "task_id": task_id, "owner": spec["owner"], "reviewer": spec["reviewer"],
+                "title": spec["title"], "assignment_next": None,
+                "task_metadata": {"dev_bridge": {
+                    "packet_id": packet_id, "packet_digest": digest,
+                    "task_spec": spec, "task_spec_hash": hashlib.sha256(canonical(spec)).hexdigest(),
+                    "work_class": work_class, "conversation_id": "isolated-runtime-preflight",
+                    "source_turn_ids": [], "documents": [],
+                }},
+            }],
+        }
+        # Verify the actual source signature before invoking the actual
+        # materialization/assignment code. There is deliberately no MFA.
+        intake.verify_signed_dev_bridge_packet(batch, state=state)
+        intake.run_dev_bridge_materialize_batch(state, batch, commands={"assign": ai_status.command_assign})
+    ai_status.save_state(state)
+    state = ai_status.load_state()
+    hosted = ai_status.get_task(state, "RUNTIME-PREFLIGHT-HOSTED")
+    functional = ai_status.get_task(state, "RUNTIME-PREFLIGHT-FUNCTIONAL")
+    assert hosted["execution_authorization"]["state"] == "pending_authorization"
+    assert hosted["execution_authorization"]["old_runtime_hold"] is True
+    assert hosted["waiting_for"] == "Human/Ops"
+    assert hosted["execution_authorization"]["grant"] is None
+    now = datetime.now(timezone.utc)
+    lane = admission.DispatchLane("preflight", "Codex2", 1, (
+        admission.DeliveryEndpoint("preflight-endpoint", "preflight-provider", "preflight-account"),
+    ))
+    snapshot = admission.AdmissionSnapshot(
+        now=now,
+        endpoint_health={"preflight-endpoint": admission.HealthRecord("healthy")},
+        account_health={"preflight-account": admission.HealthRecord("healthy")},
+        account_limits={"preflight-account": 1},
+    )
+    for task, should_run in ((hosted, False), (functional, True)):
+        authorized = ea.is_execution_authorized(task, now=now)
+        assert authorized is should_run
+        # Dependency completion and removal of the compatibility hold must
+        # not bypass the independent planner or late queue-delivery gate.
+        intent = admission.TaskIntent(
+            task["id"], "todo", task["owner"], task["reviewer"], True,
+            execution_authorized=authorized,
+        )
+        for endpoint in (None, "preflight-endpoint"):
+            decision = admission.evaluate_dispatch_intent(
+                intent, lane, snapshot, requested_endpoint_id=endpoint,
+            )
+            assert decision.eligible is should_run, str(decision)
+            if not should_run:
+                assert decision.reason.value == "execution_authorization_required"
+        try:
+            worker_runner.ensure_execution_authorized_before_launch(
+                status_root, task["id"], active_role="owner", run_id="isolated-unreserved-run",
+            )
+        except RuntimeError:
+            assert not should_run, "ordinary execution incorrectly rejected at worker entry"
+        else:
+            assert should_run, "pending privileged task passed worker entry"
+    # Enter the actual runner main with no usable launch receipt. The sole
+    # stub is sandbox construction: if reached, it would use a harmless local
+    # marker command. Runtime/source and receipt validators stay unmodified.
+    subprocess.run(["git", "init", "-q", str(status_root)], check=True, capture_output=True)
+    runner_id = "isolated-runner-entry"
+    for name, value in (("state.json", {"workers": {runner_id: None}}),
+                        ("approval-queue.json", {}), ("config.json", {})):
+        worker_runner.write_json(status_root / ".orchestrator" / name, value)
+    os.environ.update({
+        "PANTHEON_COMMAND_ROOT": str(root),
+        "PANTHEON_COMMAND_RUNTIME_SHA": subprocess.run(
+            ["git", "rev-parse", "HEAD"], cwd=root, check=True,
+            capture_output=True, text=True,
+        ).stdout.strip(),
+        "PANTHEON_COMMAND_REMOTE": "ajoe734/pantheon",
+        "PANTHEON_COMMAND_BASE_REF": "origin/dev",
+    })
+    sandbox_calls = []
+    def isolated_sandbox(command, **kwargs):
+        sandbox_calls.append(True)
+        return command
+    worker_runner.bind_worker_sandbox = isolated_sandbox
+    heartbeat = status_root / ".orchestrator/worker-runtime/heartbeats/preflight.json"
+    runner_status = status_root / ".orchestrator/worker-runtime/status/preflight.json"
+    marker = Path(scratch) / "unauthorized-provider-marker"
+    try:
+        worker_runner.main([
+            "--run-id", runner_id, "--heartbeat-path", str(heartbeat),
+            "--status-path", str(runner_status), "--", sys.executable, "-c",
+            "from pathlib import Path; Path(" + repr(str(marker)) + ").touch()",
+        ])
+    except RuntimeError as exc:
+        assert "canonical worker receipt is malformed" in str(exc), str(exc)
+    else:
+        raise AssertionError("worker main accepted an unusable launch receipt")
+    assert not sandbox_calls and not marker.exists() and not heartbeat.exists() and not runner_status.exists()
+    print(json.dumps({
+        "outcome": "barriers_verified", "command_root": str(root),
+        "capability": "execution_authorization_v1", "python_executable": sys.executable,
+        "python_prefix": sys.prefix, "module_provenance": provenance,
+        "checks": ["signed_no_mfa_pending_intake", "durable_legacy_hold",
+                   "planner_denies_pending", "late_delivery_denies_pending",
+                   "worker_entry_denies_unreserved", "ordinary_functional_dispatch",
+                   "worker_main_denies_invalid_receipt", "worker_launch_guard_wiring"],
+    }, sort_keys=True))
+'''
+
+
+def verify_execution_authorization_barriers(
+    root: Path, *, python_executable: Path
+) -> dict[str, Any]:
+    """Exercise candidate intake and execution gates with its selected Python.
+
+    The isolated subprocess uses only candidate code and disposable TaskStore
+    state. No live authority is inherited and no worker or grant is created.
+    A declaration or an importable no-op hook cannot pass this preflight.
+    """
+
+    runtime_root = root.expanduser().resolve()
+    python_executable = python_executable.expanduser().absolute()
+    try:
+        probe = subprocess.run(
+            [str(python_executable), "-I", "-B", "-c", _EXECUTION_AUTHORIZATION_BARRIER_PROBE, str(runtime_root)],
+            cwd=str(runtime_root),
+            env={"PATH": os.defpath, "LANG": "C.UTF-8"},
+            capture_output=True, text=True, check=False, timeout=30,
+        )
+        if probe.returncode != 0:
+            raise ValueError((probe.stderr or probe.stdout or "probe failed").strip())
+        result = json.loads(probe.stdout)
+        if (
+            not isinstance(result, dict)
+            or result.get("outcome") != "barriers_verified"
+            or result.get("command_root") != str(runtime_root)
+            or result.get("python_executable") != str(python_executable)
+        ):
+            raise ValueError("barrier probe returned mismatched runtime/interpreter provenance")
+    except (OSError, ValueError, subprocess.TimeoutExpired) as exc:
+        raise ValueError(
+            "command runtime is missing the required deferred-intake/late-"
+            f"execution authorization barriers: {exc}"
+        ) from exc
+    return result
+
+
 def sync_coordination_root_code(candidate_root: Path, status_root: Path) -> dict[str, Any]:
     """Preserve the coordination checkout; executable code is immutable.
 
@@ -508,6 +782,11 @@ def _replace_supervisor_locked(
         result["command_runtime_seal"] = seal_command_runtime(Path(identity["root"]))
         result["worker_sandbox_preflight"] = verify_worker_sandbox(
             Path(identity["root"])
+        )
+        result["execution_authorization_barrier_preflight"] = (
+            verify_execution_authorization_barriers(
+                Path(identity["root"]), python_executable=python_executable,
+            )
         )
         ensure_approval_queue_marker(approval_queue_path)
         stopped_pid = stop_existing_supervisor(
@@ -659,6 +938,9 @@ def main(argv: list[str] | None = None) -> int:
                 "live_config": str(live_config_path),
                 "task_state_store": dict(rendered["task_state_store"]),
                 "supervisor_command": rendered["watchdog"]["supervisor_command"],
+                "execution_authorization_barrier_preflight": verify_execution_authorization_barriers(
+                    Path(identity["root"]), python_executable=python_executable,
+                ),
                 "repository_source_roots": {
                     repository_id: str(entry.get("local_path"))
                     for repository_id, entry in (

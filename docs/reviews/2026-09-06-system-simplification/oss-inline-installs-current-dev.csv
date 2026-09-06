@@ -1,0 +1,52 @@
+source_commit,file,line,declared
+471dc5391a0f9cbde54d51730891583043708e42,Dockerfile.smoke,14,"RUN pip install --no-cache-dir fastapi uvicorn pydantic ""jsonschema>=4.0,<5.0"" httpx"
+471dc5391a0f9cbde54d51730891583043708e42,integrations/openclaw/gateway/Dockerfile,21,ARG ANTHROPIC_CLAUDE_CODE_NPM_VERSION=2.1.216
+471dc5391a0f9cbde54d51730891583043708e42,integrations/openclaw/gateway/Dockerfile,22,ARG GOOGLE_GEMINI_CLI_NPM_VERSION=0.51.0
+471dc5391a0f9cbde54d51730891583043708e42,requirements.txt,8,# test suite that are not yet included in the CI baseline pip installs.
+471dc5391a0f9cbde54d51730891583043708e42,services/broker/Dockerfile,4,RUN pip install --no-cache-dir -r requirements.txt
+471dc5391a0f9cbde54d51730891583043708e42,services/capital/Dockerfile,9,RUN pip install --no-cache-dir -r /tmp/requirements.txt
+471dc5391a0f9cbde54d51730891583043708e42,services/channels/web/Dockerfile,10,RUN pip install --no-cache-dir -r /tmp/requirements.txt
+471dc5391a0f9cbde54d51730891583043708e42,services/consultation/Dockerfile,9,RUN pip install --no-cache-dir -r /tmp/requirements.txt
+471dc5391a0f9cbde54d51730891583043708e42,services/control-plane/bff/Dockerfile,9,RUN pip install --no-cache-dir -r /tmp/requirements.txt
+471dc5391a0f9cbde54d51730891583043708e42,services/control-plane/feedback/Dockerfile,10,RUN pip install --no-cache-dir -r /tmp/requirements.txt
+471dc5391a0f9cbde54d51730891583043708e42,services/control-plane/persona/Dockerfile,10,RUN pip install --no-cache-dir -r /tmp/requirements.txt
+471dc5391a0f9cbde54d51730891583043708e42,services/control-plane/router/Dockerfile,9,RUN pip install --no-cache-dir -r requirements.txt
+471dc5391a0f9cbde54d51730891583043708e42,services/deployment/Dockerfile,9,RUN pip install --no-cache-dir -r /tmp/requirements.txt
+471dc5391a0f9cbde54d51730891583043708e42,services/evaluation/Dockerfile,9,RUN pip install --no-cache-dir -r /tmp/requirements.txt
+471dc5391a0f9cbde54d51730891583043708e42,services/evolution/Dockerfile,9,RUN pip install --no-cache-dir -r /tmp/requirements.txt
+471dc5391a0f9cbde54d51730891583043708e42,services/execution/lean_runtime/Dockerfile,9,RUN pip install --no-cache-dir -r /tmp/requirements.txt
+471dc5391a0f9cbde54d51730891583043708e42,services/feedback/Dockerfile,9,RUN pip install --no-cache-dir -r /tmp/requirements.txt
+471dc5391a0f9cbde54d51730891583043708e42,services/governance/Dockerfile,9,RUN pip install --no-cache-dir -r /tmp/requirements.txt
+471dc5391a0f9cbde54d51730891583043708e42,services/incidents/Dockerfile,9,RUN pip install --no-cache-dir -r /tmp/requirements.txt
+471dc5391a0f9cbde54d51730891583043708e42,services/learning/dspy/Dockerfile,8,"RUN if [ ""$PANTHEON_INSTALL_UPSTREAM_DEPS"" = ""true"" ]; then pip install --no-cache-dir -r requirements.txt; fi"
+471dc5391a0f9cbde54d51730891583043708e42,services/learning/imitation/Dockerfile,8,"RUN if [ ""$PANTHEON_INSTALL_UPSTREAM_DEPS"" = ""true"" ]; then pip install --no-cache-dir -r requirements.txt; fi"
+471dc5391a0f9cbde54d51730891583043708e42,services/lineage-read/Dockerfile,9,RUN pip install --no-cache-dir -r /tmp/requirements.txt
+471dc5391a0f9cbde54d51730891583043708e42,services/memory/Dockerfile,9,RUN pip install --no-cache-dir -r /tmp/requirements.txt
+471dc5391a0f9cbde54d51730891583043708e42,services/openclaw-gateway-adapter/Dockerfile,16,ARG OPENAI_CODEX_NPM_VERSION=0.136.0
+471dc5391a0f9cbde54d51730891583043708e42,services/openclaw-gateway-adapter/Dockerfile,19,ARG ANTHROPIC_CLAUDE_CODE_NPM_VERSION=2.1.161
+471dc5391a0f9cbde54d51730891583043708e42,services/openclaw-gateway-adapter/Dockerfile,41,RUN pip install --no-cache-dir -r /tmp/requirements.txt
+471dc5391a0f9cbde54d51730891583043708e42,services/optimizer-svc/Dockerfile,10,RUN pip install --no-cache-dir -r /tmp/requirements.txt
+471dc5391a0f9cbde54d51730891583043708e42,services/paper_fleet_reconciler/Dockerfile,10,RUN pip install --no-cache-dir -r /tmp/requirements.txt
+471dc5391a0f9cbde54d51730891583043708e42,services/policy-learning/Dockerfile,10,RUN pip install --no-cache-dir -r /tmp/requirements.txt
+471dc5391a0f9cbde54d51730891583043708e42,services/postmortems/Dockerfile,9,RUN pip install --no-cache-dir -r /tmp/requirements.txt
+471dc5391a0f9cbde54d51730891583043708e42,services/promotion/Dockerfile,9,RUN pip install --no-cache-dir -r /tmp/requirements.txt
+471dc5391a0f9cbde54d51730891583043708e42,services/reconciliation-drift/Dockerfile,10,RUN pip install --no-cache-dir -r /tmp/requirements.txt
+471dc5391a0f9cbde54d51730891583043708e42,services/registry/Dockerfile,9,RUN pip install --no-cache-dir -r /tmp/requirements.txt
+471dc5391a0f9cbde54d51730891583043708e42,services/registry/Dockerfile.test,8,&& pip install --no-cache-dir \
+471dc5391a0f9cbde54d51730891583043708e42,services/registry/experiments/Dockerfile,8,RUN pip install --no-cache-dir -r requirements.txt
+471dc5391a0f9cbde54d51730891583043708e42,services/research-worker-gateway/Dockerfile,9,"RUN pip install --no-cache-dir fastapi uvicorn pydantic ""psycopg[binary]"""
+471dc5391a0f9cbde54d51730891583043708e42,services/research/Dockerfile,9,"RUN pip install --no-cache-dir fastapi uvicorn pydantic ""psycopg[binary]"" ""jsonschema>=4.0,<5.0"""
+471dc5391a0f9cbde54d51730891583043708e42,services/research/dspy/Dockerfile,5,"RUN if [ ""$PANTHEON_INSTALL_UPSTREAM_DEPS"" = ""true"" ]; then pip install --no-cache-dir -r requirements.txt; fi"
+471dc5391a0f9cbde54d51730891583043708e42,services/research/finrl/Dockerfile,5,"RUN if [ ""$PANTHEON_INSTALL_UPSTREAM_DEPS"" = ""true"" ]; then apt-get update && apt-get install -y build-essential && pip install --no-cache-dir -r requirements.txt && rm -rf /var/lib/apt/lists/*; fi"
+471dc5391a0f9cbde54d51730891583043708e42,services/research/imitation/Dockerfile,5,"RUN if [ ""$PANTHEON_INSTALL_UPSTREAM_DEPS"" = ""true"" ]; then pip install --no-cache-dir -r requirements.txt; fi"
+471dc5391a0f9cbde54d51730891583043708e42,services/research/mlflow/Dockerfile,4,RUN pip install --no-cache-dir -r requirements.txt
+471dc5391a0f9cbde54d51730891583043708e42,services/research/qlib/Dockerfile,9,"RUN if [ ""$PANTHEON_INSTALL_UPSTREAM_DEPS"" = ""true"" ]; then pip install --no-cache-dir -r requirements.txt; fi"
+471dc5391a0f9cbde54d51730891583043708e42,services/research/quantlib/Dockerfile,6,RUN pip install --no-cache-dir -r requirements.txt
+471dc5391a0f9cbde54d51730891583043708e42,services/research/rllib/Dockerfile,11,"RUN if [ ""$PANTHEON_INSTALL_UPSTREAM_DEPS"" = ""true"" ]; then pip install --no-cache-dir -r requirements.txt; fi"
+471dc5391a0f9cbde54d51730891583043708e42,services/research/statsmodels/Dockerfile,6,RUN pip install --no-cache-dir -r requirements.txt
+471dc5391a0f9cbde54d51730891583043708e42,services/research/vectorbt/Dockerfile,6,RUN pip install --no-cache-dir -r requirements.txt
+471dc5391a0f9cbde54d51730891583043708e42,services/runtime-manager/Dockerfile,9,RUN pip install --no-cache-dir -r /tmp/requirements.txt
+471dc5391a0f9cbde54d51730891583043708e42,services/search/Dockerfile,9,RUN pip install --no-cache-dir -r /tmp/requirements.txt
+471dc5391a0f9cbde54d51730891583043708e42,services/source_ingestion/Dockerfile,9,RUN pip install --no-cache-dir -r /tmp/requirements.txt
+471dc5391a0f9cbde54d51730891583043708e42,services/telemetry/Dockerfile,9,RUN pip install --no-cache-dir -r /tmp/requirements.txt
+471dc5391a0f9cbde54d51730891583043708e42,services/training-session/Dockerfile,11,RUN pip install --no-cache-dir \

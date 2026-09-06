@@ -341,142 +341,24 @@ class GitHubReviewBridgeTests(unittest.TestCase):
                 binding=binding(),
             )
 
-    def test_task_brief_only_successor_is_a_narrow_direct_child(self) -> None:
-        successor = "b" * 40
-        runner = FakeRunner()
-        runner.commits[successor] = {
-            "sha": successor,
-            "parents": [{"sha": HEAD}],
-            "files": [
-                {
-                    "filename": ".orchestrator/task-briefs/audit_001.md",
-                    "status": "modified",
-                }
-            ],
-        }
+    def test_task_brief_only_successor_carry_forward_exception_is_retired(self) -> None:
+        """OPS-LEGACY-REVIEW-RETIRE-001: the generated-brief carry-forward
+        exception (task_brief_only_successor / carry_approval_to_task_brief_
+        only_successor / publish_task_brief_only_successor_proof) must not
+        exist. A brief-only successor commit is now just an unreviewed head
+        like any other -- see task_review_merge_gate's
+        ``test_task_brief_only_successor_is_rejected_without_a_fresh_review``
+        for the end-to-end rejection this retirement now requires."""
 
-        carried = bridge.task_brief_only_successor(
-            repository=REPOSITORY,
-            approved_head_sha=HEAD,
-            successor_head_sha=successor,
-            runner=runner,
-        )
-
-        self.assertEqual(
-            carried,
-            {
-                "kind": "task_brief_only_successor",
-                "approved_head_sha": HEAD,
-                "successor_head_sha": successor,
-                "changed_paths": [".orchestrator/task-briefs/audit_001.md"],
-            },
-        )
-        self.assertIn(
-            f"?per_page={bridge.COMMIT_FILES_PAGE_SIZE}&page=1",
-            runner.calls[0][0][-1],
-        )
-
-    def test_task_brief_only_successor_rejects_a_code_change(self) -> None:
-        successor = "b" * 40
-        runner = FakeRunner()
-        runner.commits[successor] = {
-            "sha": successor,
-            "parents": [{"sha": HEAD}],
-            "files": [
-                {"filename": ".orchestrator/task-briefs/audit_001.md"},
-                {"filename": "scripts/ai_status.py"},
-            ],
-        }
-
-        carried = bridge.task_brief_only_successor(
-            repository=REPOSITORY,
-            approved_head_sha=HEAD,
-            successor_head_sha=successor,
-            runner=runner,
-        )
-
-        self.assertIsNone(carried)
-
-    def test_task_brief_only_successor_rejects_a_full_files_page(self) -> None:
-        successor = "b" * 40
-        runner = FakeRunner()
-        runner.commits[successor] = {
-            "sha": successor,
-            "parents": [{"sha": HEAD}],
-            "files": [
-                {
-                    "filename": (
-                        ".orchestrator/task-briefs/"
-                        f"audit_{index:03d}.md"
-                    )
-                }
-                for index in range(bridge.COMMIT_FILES_PAGE_SIZE)
-            ],
-        }
-
-        carried = bridge.task_brief_only_successor(
-            repository=REPOSITORY,
-            approved_head_sha=HEAD,
-            successor_head_sha=successor,
-            runner=runner,
-        )
-
-        self.assertIsNone(carried)
-
-    def test_task_brief_only_successor_publishes_a_carry_forward_proof(self) -> None:
-        successor = "b" * 40
-        runner = FakeRunner()
-        runner.commits[successor] = {
-            "sha": successor,
-            "parents": [{"sha": HEAD}],
-            "files": [{"filename": ".orchestrator/task-briefs/audit_001.md"}],
-        }
-
-        carried = bridge.carry_approval_to_task_brief_only_successor(
-            repository=REPOSITORY,
-            task_id="AUDIT-001",
-            actor="Codex2",
-            approved_head_sha=HEAD,
-            successor_head_sha=successor,
-            pr=4269,
-            head_branch="task/AUDIT-001",
-            base="dev",
-            publish=True,
-            runner=runner,
-        )
-
-        expected_ref = f"refs/tags/pantheon-review/approve/{successor}"
-        self.assertIsNotNone(carried)
-        self.assertEqual(carried["review_proof_ref"], expected_ref)
-        self.assertIn(expected_ref, runner.tag_refs)
-        self.assertEqual(
-            runner.dispatches,
-            [{"ref": "dev", "inputs": {"head_ref": "task/AUDIT-001", "head_sha": successor}}],
-        )
-
-    def test_task_brief_carry_forward_dispatch_failure_is_not_ignored(self) -> None:
-        successor = "b" * 40
-        runner = FakeRunner(dispatch_error="workflow dispatch forbidden")
-        carried = {
-            "kind": "task_brief_only_successor",
-            "approved_head_sha": HEAD,
-            "successor_head_sha": successor,
-            "changed_paths": [".orchestrator/task-briefs/audit_001.md"],
-        }
-
-        with self.assertRaisesRegex(bridge.GitHubReviewBridgeError, "workflow dispatch forbidden"):
-            bridge.publish_task_brief_only_successor_proof(
-                repository=REPOSITORY,
-                task_id="AUDIT-001",
-                actor="Codex2",
-                carried=carried,
-                pr=4269,
-                head_branch="task/AUDIT-001",
-                base="dev",
-                runner=runner,
+        for retired_name in (
+            "task_brief_only_successor",
+            "carry_approval_to_task_brief_only_successor",
+            "publish_task_brief_only_successor_proof",
+        ):
+            self.assertFalse(
+                hasattr(bridge, retired_name),
+                f"{retired_name} must be retired from github_review_bridge",
             )
-
-        self.assertIn(f"refs/tags/pantheon-review/approve/{successor}", runner.tag_refs)
 
     def test_approve_records_real_review_and_required_status(self) -> None:
         runner = FakeRunner()

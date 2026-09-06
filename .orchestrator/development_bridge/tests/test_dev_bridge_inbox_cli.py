@@ -63,6 +63,7 @@ def _write_fake_repo(tmp_path: Path) -> Path:
     )
     for rel in (
         ".orchestrator/dispatch_policy.py",
+        ".orchestrator/execution_authorization.py",
         ".orchestrator/common.py",
         ".orchestrator/task_archive.py",
         ".orchestrator/rewrite/__init__.py",

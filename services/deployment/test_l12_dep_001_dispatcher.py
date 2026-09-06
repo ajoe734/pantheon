@@ -10,6 +10,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 from fastapi.testclient import TestClient
+from services.governance.test_approval_authority_postgres import owner_env, approved_registry_owners
 
 from services.deployment.outbox_lease import (
     DeploymentOutboxLeaseStore,
@@ -258,7 +259,7 @@ def test_crash_after_runtime_binding_side_effect_recovers_without_duplicate(
 
 
 def test_approved_paper_command_reaches_terminal_plan_and_binding(
-    tmp_path, monkeypatch
+    tmp_path, monkeypatch, owner_env
 ) -> None:
     """Run the deployment worker's two-event paper path against real stores.
 
@@ -269,42 +270,7 @@ def test_approved_paper_command_reaches_terminal_plan_and_binding(
     """
     governance_dir = tmp_path / "governance"
     governance_dir.mkdir()
-    registry_path = tmp_path / "registry_entries.json"
     runtime_binding_store = tmp_path / "runtime_bindings.json"
-    (governance_dir / "approval_decisions.json").write_text(
-        json.dumps(
-            {
-                "approval-l12-dep": {
-                    "decision_id": "approval-l12-dep",
-                    "target_id": "artifact-l12-dep",
-                    "target_version": "1.0.0",
-                    "decision_state": "decided",
-                    "decision": "approved",
-                    "capital_pool_id": "pool-l12-dep",
-                    "persona_id": "persona-l12-dep",
-                    "tenant_id": "tenant-l12-dep",
-                }
-            }
-        ),
-        encoding="utf-8",
-    )
-    registry_path.write_text(
-        json.dumps(
-            {
-                "artifact-l12-dep": {
-                    "registry_id": "artifact-l12-dep",
-                    "artifact_type": "model_artifact",
-                    "strategy_id": "strategy-l12-dep",
-                    "version": "1.0.0",
-                    "artifact_state": "approved",
-                    "checksum": "sha256:l12-dep",
-                    "approval_decision_id": "approval-l12-dep",
-                    "deployment_summary": {"current_stage": "none"},
-                }
-            }
-        ),
-        encoding="utf-8",
-    )
     (governance_dir / "capital_pools.json").write_text(
         json.dumps(
             [
@@ -335,19 +301,33 @@ def test_approved_paper_command_reaches_terminal_plan_and_binding(
         encoding="utf-8",
     )
 
-    with monkeypatch.context() as environment:
+    with approved_registry_owners(owner_env, execution_bundle=True) as owners, monkeypatch.context() as environment:
+        registry_id = owners["entry"]["registry_id"]
+        approval_id = owners["decision"]["decision_id"]
+        environment.setenv("DEPLOYMENT_REGISTRY_BASE_URL", owners["registry_url"])
+        environment.setenv("DEPLOYMENT_REGISTRY_SERVICE_TOKEN", owners["registry_token"])
+        environment.setenv("DEPLOYMENT_GOVERNANCE_BASE_URL", owners["governance_url"])
+        environment.setenv("DEPLOYMENT_GOVERNANCE_SERVICE_TOKEN", owners["governance_token"])
+        environment.setenv("RUNTIME_MANAGER_GOVERNANCE_SERVICE_TOKEN", owners["governance_token"])
+        environment.setenv("RUNTIME_MANAGER_REGISTRY_SERVICE_TOKEN", owners["registry_token"])
+        environment.setenv("PANTHEON_GOVERNANCE_APPROVAL_API_URL", owners["governance_url"])
+        environment.setenv("PANTHEON_REGISTRY_API_URL", owners["registry_url"])
+        environment.setenv("PANTHEON_CAPITAL_API_URL", "http://capital.test")
+        from services.governance.test_approval_authority_postgres import token
+        environment.setenv('PANTHEON_DEPLOYMENT_AUTH_MODE', 'strict')
+        environment.setenv('PANTHEON_DEPLOYMENT_JWT_SECRET', owner_env['PANTHEON_GOVERNANCE_JWT_SECRET'])
+        environment.setenv('PANTHEON_DEPLOYMENT_JWT_ISSUER', 'isolated-governance-test')
+        environment.setenv('PANTHEON_DEPLOYMENT_JWT_AUDIENCE', 'isolated-deployment')
+        deployment_token = token(owner_env['PANTHEON_GOVERNANCE_JWT_SECRET'], roles=['operator', 'service'], aud='isolated-deployment')
         environment.setenv("CAPITAL_DATA_DIR", str(governance_dir))
         environment.setenv("DEPLOYMENT_DATA_DIR", str(governance_dir))
         environment.setenv("PANTHEON_GOVERNANCE_DATA_DIR", str(governance_dir))
         environment.setenv(
             "PANTHEON_RUNTIME_BINDING_STORE_PATH", str(runtime_binding_store)
         )
-        environment.setenv(
-            "PANTHEON_DEPLOYMENT_REGISTRY_SNAPSHOT_PATH", str(registry_path)
-        )
         environment.setenv("PANTHEON_DEPLOYMENT_OUTBOX_LEASE_REQUIRED", "false")
-        environment.setenv("PANTHEON_DEPLOYMENT_SERVICE_TOKEN", "l12:service")
-        environment.setenv("PANTHEON_DEPLOYMENT_TENANT_ID", "tenant-l12-dep")
+        environment.setenv("PANTHEON_DEPLOYMENT_SERVICE_TOKEN", deployment_token)
+        environment.setenv("PANTHEON_DEPLOYMENT_TENANT_ID", "synthetic-tenant")
         environment.delenv("PANTHEON_PAPER_FLEET_RECONCILER_URL", raising=False)
         environment.delenv("PANTHEON_RUNTIME_MANAGER_URL", raising=False)
 
@@ -357,8 +337,8 @@ def test_approved_paper_command_reaches_terminal_plan_and_binding(
         client = TestClient(
             deployment_service.app,
             headers={
-                "Authorization": "Bearer l12:operator,service",
-                "X-Tenant-Id": "tenant-l12-dep",
+                "Authorization": "Bearer " + deployment_token,
+                "X-Tenant-Id": "synthetic-tenant",
             },
         )
         try:
@@ -366,8 +346,8 @@ def test_approved_paper_command_reaches_terminal_plan_and_binding(
                 "/api/deployment/plans",
                 json={
                     "plan_id": "plan-l12-dep",
-                    "approval_decision_id": "approval-l12-dep",
-                    "registry_id": "artifact-l12-dep",
+                    "approval_decision_id": approval_id,
+                    "registry_id": registry_id,
                     "capital_pool_id": "pool-l12-dep",
                     "sponsor_persona_id": "persona-l12-dep",
                     "target_stage": "paper",
@@ -395,10 +375,32 @@ def test_approved_paper_command_reaches_terminal_plan_and_binding(
                 "services.deployment.outbox_consumer_worker"
             )
             runtime_service = worker.RuntimeManagerClient(allow_local=True)._local()
+            runtime_main = importlib.import_module('services.runtime-manager.main')
+            environment.setattr(runtime_main, '_svc', runtime_service)
+            from services.governance.test_approval_authority_postgres import token
+            environment.setenv('PANTHEON_RUNTIME_AUTH_MODE', 'strict')
+            environment.setenv('PANTHEON_RUNTIME_JWT_SECRET', owner_env['PANTHEON_GOVERNANCE_JWT_SECRET'])
+            environment.setenv('PANTHEON_RUNTIME_JWT_ISSUER', 'isolated-governance-test')
+            environment.setenv('PANTHEON_RUNTIME_JWT_AUDIENCE', 'isolated-runtime')
+            environment.setenv('PANTHEON_DEPLOYMENT_API_URL', 'http://deployment.test')
+            runtime_headers = {'Authorization': 'Bearer '+token(owner_env['PANTHEON_GOVERNANCE_JWT_SECRET'],
+                               sub='isolated-runtime-operator', roles=['operator'], aud='isolated-runtime',
+                               mfa=True, mfa_verified=True, amr=['mfa'])}
+            runtime_http = runtime_main.app.test_client()
+            runtime_authority = importlib.import_module(runtime_main.verify_deploy_authorities.__module__)
+            original_runtime_read = runtime_authority._fetch_json
+
+            def _runtime_read(url, timeout, *, headers=None):
+                if url.startswith(owners['registry_url']):
+                    return original_runtime_read(url, timeout, headers=headers)
+                return _authority_fetch(url, timeout)
 
             class LocalRuntimeAuthority:
                 def deploy(self, request):
-                    return runtime_service.deploy(request).to_dict()
+                    with patch.object(runtime_authority, '_fetch_json', side_effect=_runtime_read):
+                        response = runtime_http.post('/api/runtimes/deploy', json=request, headers=runtime_headers)
+                    assert response.status_code == 201, response.get_json()
+                    return response.get_json()
 
                 def get(self, binding_id):
                     binding = runtime_service.get(binding_id)
@@ -429,33 +431,32 @@ def test_approved_paper_command_reaches_terminal_plan_and_binding(
                     )
                 )
 
-            def _authority_report(*, saga, plan, **_kwargs):
-                return {
-                    "status": "passed",
-                    "authority": "canonical_deployment_registry_governance_capital",
-                    "plan_id": plan["plan_id"],
-                    "plan_status": plan["status"],
-                    "target_stage": plan["target_stage"],
-                    "artifact_id": plan["artifact_id"],
-                    "artifact_version": plan["artifact_version"],
-                    "strategy_id": plan["strategy_id"],
-                    "approval_decision_id": plan["approval_decision_id"],
-                    "capital_pool_id": plan["capital_pool_id"],
-                    "sponsor_persona_id": plan["sponsor_persona_id"],
-                    "persona_capital_binding_id": "pcb-l12-dep",
-                    "persona_capital_binding_status": "active",
-                    "allowed_deployment_scope": "paper",
-                    "deployment_plan_current_stage": plan["current_stage"],
-                    "deployment_plan_binding_id": plan.get("binding_id"),
-                    "deployment_plan_runtime_lifecycle": {},
-                    "deployment_plan_sha256": "sha256:" + "0" * 64,
-                    "deployment_plan_authority_sha256": "sha256:" + "a" * 64,
-                    "registry_entry_sha256": "sha256:" + "1" * 64,
-                    "approval_decision_sha256": "sha256:" + "2" * 64,
-                    "capital_pool_sha256": "sha256:" + "3" * 64,
-                    "capital_admissibility_sha256": "sha256:" + "4" * 64,
-                    "persona_capital_binding_sha256": "sha256:" + "5" * 64,
-                }
+            def _authority_fetch(url, timeout):
+                # Only lifecycle/capital doubles use the generic callback.
+                # Real worker code must read Registry/Governance independently.
+                from urllib.parse import urlparse
+                path = urlparse(url).path
+                pool = json.loads((governance_dir / 'capital_pools.json').read_text())[0]
+                binding = json.loads((governance_dir / 'persona_capital_bindings.json').read_text())[0]
+                if path.startswith('/api/deployment/plans/'):
+                    return _response(client.get(path))
+                if path.startswith('/api/capital-pools/'):
+                    return pool
+                if path == '/api/bindings/admissibility':
+                    return dict(persona_id=binding['persona_id'], capital_pool_id=binding['capital_pool_id'],
+                                target_stage='paper', permitted=True, pool_status=pool['status'],
+                                single_runtime_enforced=True, binding_id=binding['binding_id'],
+                                binding_status=binding['status'], allowed_deployment_scope='paper')
+                if path.startswith('/api/bindings/'):
+                    return binding
+                raise AssertionError('Owner approval/Registry read escaped its scoped transport: '+url)
+
+            def _authority_report(*, saga, plan):
+                with patch.object(worker, '_fetch_authority_json', side_effect=_authority_fetch):
+                    return worker.verify_binding_deploy_authorities(
+                        saga=saga or plan, plan=plan, persona_capital_binding_id='pcb-l12-dep',
+                        persona_capital_binding_status='active', allowed_deployment_scope='paper',
+                        deployment_base_url='http://deployment.test', timeout_seconds=5)
 
             def _unexpected_urlopen(request, *_args, **_kwargs):
                 raise RuntimeError(f"unexpected outbound request: {request.full_url}")
@@ -499,8 +500,8 @@ def test_approved_paper_command_reaches_terminal_plan_and_binding(
                 ),
                 patch.object(
                     worker,
-                    "verify_binding_deploy_authorities",
-                    side_effect=_authority_report,
+                    "_fetch_authority_json",
+                    side_effect=_authority_fetch,
                 ),
                 patch.object(
                     worker,
@@ -599,5 +600,24 @@ def test_approved_paper_command_reaches_terminal_plan_and_binding(
             assert capital_readback["active_runtime_binding_ids"] == [
                 projection["runtime_binding_id"]
             ]
+            # A historical Registry APPROVED state must not authorize another
+            # plan or dispatch after Governance revokes the cited decision.
+            next_request = json.loads(created.request.content)
+            next_request['plan_id'] = 'plan-l12-revocation'
+            queued = client.post('/api/deployment/plans', json=next_request)
+            assert queued.status_code == 201, queued.text
+            assert _authority_report(saga={}, plan=queued.json())['status'] == 'passed'
+            before_outbox = client.get('/api/deployment/outbox').json()
+            from services.governance.test_approval_authority_postgres import post
+            revoked = post(owners['governance_url'], '/'+approval_id+'/revoke', owner_env,
+                           dict(expected_version=3, actor_id='synthetic-reviewer', actor_role='risk_owner'), roles=['risk_owner'])
+            assert revoked.status_code == 200, revoked.text
+            with pytest.raises(worker.DeployAuthorityError, match='governance authority mismatch'):
+                _authority_report(saga={}, plan=queued.json())
+            rejected = client.post('/api/deployment/plans/plan-l12-revocation/dispatch', json={})
+            assert rejected.status_code == 400, rejected.text
+            assert client.get('/api/deployment/outbox').json() == before_outbox
+            next_request['plan_id'] = 'plan-l12-after-revocation'
+            assert client.post('/api/deployment/plans', json=next_request).status_code == 422
         finally:
             client.close()

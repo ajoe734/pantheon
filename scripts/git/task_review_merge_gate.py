@@ -887,7 +887,6 @@ def evaluate_gate(
     dev_branch: str = DEFAULT_DEV_BRANCH,
     task_branch_prefix: str = DEFAULT_TASK_PREFIX,
     now: datetime | None = None,
-    task_brief_carry_forward: Mapping[str, Any] | None = None,
 ) -> GateDecision:
     """Decide whether this exact PR head may merge under this contract."""
 
@@ -1049,24 +1048,7 @@ def evaluate_gate(
             "an unbound acceptance cannot prove which commit was accepted",
             head_oid=head_oid,
         )
-    carried_task_brief_only = (
-        not approval.is_operator_acceptance
-        and approval.approved_head_sha != head_oid
-        and isinstance(task_brief_carry_forward, Mapping)
-        and task_brief_carry_forward.get("kind") == "task_brief_only_successor"
-        and str(task_brief_carry_forward.get("approved_head_sha") or "").strip().lower()
-        == approval.approved_head_sha
-        and str(task_brief_carry_forward.get("successor_head_sha") or "").strip().lower()
-        == head_oid
-        and isinstance(task_brief_carry_forward.get("changed_paths"), list)
-        and bool(task_brief_carry_forward.get("changed_paths"))
-        and all(
-            str(path or "").startswith(".orchestrator/task-briefs/")
-            and ".." not in str(path or "").split("/")
-            for path in task_brief_carry_forward.get("changed_paths", [])
-        )
-    )
-    if approval.approved_head_sha != head_oid and not carried_task_brief_only:
+    if approval.approved_head_sha != head_oid:
         acceptance_actor = (
             "Human/Ops operator acceptance"
             if approval.is_operator_acceptance
@@ -1141,7 +1123,7 @@ def evaluate_gate(
 
     approved_at = approval.approved_at
     assert approved_at is not None  # guarded by approval.present
-    if head_committed_at > approved_at and not carried_task_brief_only:
+    if head_committed_at > approved_at:
         return block(
             contract,
             approval,
@@ -1181,35 +1163,24 @@ def evaluate_gate(
         allow_merge=True,
         allow_auto_merge=False,
         reason=(
-            "task_brief_only_approval_carried_forward"
-            if carried_task_brief_only
-            else "exact_head_operator_accepted"
+            "exact_head_operator_accepted"
             if approval.is_operator_acceptance
             else "exact_head_approved"
         ),
         detail=(
             (
-                f"reviewer {contract.reviewer} approved {contract.task_id} at "
-                f"{approval.approved_at_text}; the one direct successor "
-                f"{head_oid} changes only generated task-brief paths, so the "
-                "approval is carried forward without a second review"
+                f"Human/Ops recorded a distinct operator exact-head acceptance for "
+                f"{contract.task_id} at {approval.approved_at_text}, bound to "
+                f"PR #{approval.approved_pr_number} head {approval.approved_head_sha} "
+                f"onto {approval.approved_base_branch}; that is exactly the head "
+                "standing now"
             )
-            if carried_task_brief_only
+            if approval.is_operator_acceptance
             else (
-                (
-                    f"Human/Ops recorded a distinct operator exact-head acceptance for "
-                    f"{contract.task_id} at {approval.approved_at_text}, bound to "
-                    f"PR #{approval.approved_pr_number} head {approval.approved_head_sha} "
-                    f"onto {approval.approved_base_branch}; that is exactly the head "
-                    "standing now"
-                )
-                if approval.is_operator_acceptance
-                else (
-                    f"reviewer {contract.reviewer} approved {contract.task_id} at "
-                    f"{approval.approved_at_text}, bound to PR #{approval.approved_pr_number} "
-                    f"head {approval.approved_head_sha} onto {approval.approved_base_branch}; "
-                    "that is exactly the head standing now"
-                )
+                f"reviewer {contract.reviewer} approved {contract.task_id} at "
+                f"{approval.approved_at_text}, bound to PR #{approval.approved_pr_number} "
+                f"head {approval.approved_head_sha} onto {approval.approved_base_branch}; "
+                "that is exactly the head standing now"
             )
         ),
         head_oid=head_oid,
@@ -1234,7 +1205,6 @@ def gate_for_task(
     state: Mapping[str, Any] | None = None,
     events: Iterable[Mapping[str, Any]] | None = None,
     now: datetime | None = None,
-    task_brief_carry_forward: Mapping[str, Any] | None = None,
 ) -> GateDecision:
     contract = load_task_contract(task_id, status_root=status_root, state=state)
     approval = None
@@ -1247,7 +1217,6 @@ def gate_for_task(
         dev_branch=dev_branch,
         task_branch_prefix=task_branch_prefix,
         now=now,
-        task_brief_carry_forward=task_brief_carry_forward,
     )
 
 

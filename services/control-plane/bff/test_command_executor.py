@@ -1,13 +1,22 @@
 """Unit tests for command_executor module."""
 import os
-import sys
 import unittest
 from unittest.mock import patch
 
-sys.path.insert(0, os.path.dirname(__file__))
-
-from models import CommandStatus, CommandType
-from command_executor import (
+# Reviewer finding 6 (gen-10 review): this test previously did
+# ``sys.path.insert(0, os.path.dirname(__file__))`` and imported
+# ``models``/``command_executor`` as bare top-level modules. That collides
+# with services/control_plane/bff/__init__.py's namespace-package extension
+# (which exposes this on-disk ``control-plane`` directory as
+# ``services.control_plane.bff``) — command_executor.py's own
+# ``from .models import ...`` / ``from .command_adapters import ...``
+# relative imports raise ``ImportError: attempted relative import with no
+# known parent package`` when the module is imported without that package
+# context. Importing through the canonical ``services.control_plane.bff``
+# path (as every other passing test in this directory already does) gives
+# ``.models``/``.command_adapters`` a real parent package.
+from services.control_plane.bff.models import CommandStatus, CommandType
+from services.control_plane.bff.command_executor import (
     execute_command,
     execute_command_with_status,
     _execute_approve_deployment,
@@ -40,7 +49,7 @@ class TestApproveDeploymentExecutor(unittest.TestCase):
     def setUp(self):
         os.environ["PANTHEON_INTERNAL_API_URL"] = "http://localhost:5001"
 
-    @patch("command_executor._post_json")
+    @patch("services.control_plane.bff.command_executor._post_json")
     def test_approve_deployment_success(self, mock_post):
         mock_post.return_value = {
             "approval_decision_id": "ad-dp-001-123456",
@@ -63,7 +72,7 @@ class TestPauseRuntimeExecutor(unittest.TestCase):
     def setUp(self):
         os.environ["PANTHEON_INTERNAL_API_URL"] = "http://localhost:5001"
 
-    @patch("command_executor._post_json")
+    @patch("services.control_plane.bff.command_executor._post_json")
     def test_pause_runtime_success(self, mock_post):
         mock_post.return_value = {
             "runtime_binding_id": "rt-001",
@@ -85,7 +94,7 @@ class TestApprovalDecisionExecutors(unittest.TestCase):
     def setUp(self):
         os.environ["PANTHEON_INTERNAL_API_URL"] = "http://localhost:5001"
 
-    @patch("command_executor._post_json")
+    @patch("services.control_plane.bff.command_executor._post_json")
     def test_approve_decision_success(self, mock_post):
         mock_post.return_value = {
             "decision_id": "appr-001",
@@ -102,7 +111,7 @@ class TestApprovalDecisionExecutors(unittest.TestCase):
         self.assertEqual(result["decision_state"], "approved")
         self.assertEqual(result["command_id"], "cmd-approve-decision")
 
-    @patch("command_executor._post_json")
+    @patch("services.control_plane.bff.command_executor._post_json")
     def test_reject_decision_success(self, mock_post):
         mock_post.return_value = {
             "decision_id": "appr-001",
@@ -119,7 +128,7 @@ class TestApprovalDecisionExecutors(unittest.TestCase):
         self.assertEqual(result["decision_state"], "rejected")
         self.assertEqual(result["command_id"], "cmd-reject-decision")
 
-    @patch("command_executor._post_json")
+    @patch("services.control_plane.bff.command_executor._post_json")
     def test_request_revision_success(self, mock_post):
         mock_post.return_value = {
             "decision_id": "appr-001",
@@ -141,7 +150,7 @@ class TestDeploymentDiffExecutor(unittest.TestCase):
     def setUp(self):
         os.environ["PANTHEON_INTERNAL_API_URL"] = "http://localhost:5001"
 
-    @patch("command_executor._post_json")
+    @patch("services.control_plane.bff.command_executor._post_json")
     def test_escalate_diff_success(self, mock_post):
         mock_post.return_value = {
             "plan_id": "plan-dp-001",
@@ -165,7 +174,7 @@ class TestRollbackExecutor(unittest.TestCase):
     def tearDown(self):
         os.environ.pop("PANTHEON_GOVERNANCE_SERVICE_URL", None)
 
-    @patch("command_executor._post_json")
+    @patch("services.control_plane.bff.command_executor._post_json")
     def test_rollback_success(self, mock_post):
         mock_post.return_value = {
             "rollback_id": "rb-dp-001-123456",
@@ -189,7 +198,7 @@ class TestRollbackReviewCommandExecutors(unittest.TestCase):
     def tearDown(self):
         os.environ.pop("PANTHEON_GOVERNANCE_SERVICE_URL", None)
 
-    @patch("command_executor._post_json")
+    @patch("services.control_plane.bff.command_executor._post_json")
     def test_approve_rollback_success(self, mock_post):
         mock_post.return_value = {
             "rollback_id": "rollback-rb-001",
@@ -206,7 +215,7 @@ class TestRollbackReviewCommandExecutors(unittest.TestCase):
         self.assertEqual(result["decision"], "approved")
         self.assertEqual(result["command_id"], "cmd-003a")
 
-    @patch("command_executor._post_json")
+    @patch("services.control_plane.bff.command_executor._post_json")
     def test_reject_rollback_success(self, mock_post):
         mock_post.return_value = {
             "rollback_id": "rollback-rb-001",
@@ -232,7 +241,7 @@ class TestKillSwitchExecutor(unittest.TestCase):
     def tearDown(self):
         os.environ.pop("PANTHEON_GOVERNANCE_SERVICE_URL", None)
 
-    @patch("command_executor._post_json")
+    @patch("services.control_plane.bff.command_executor._post_json")
     def test_kill_switch_success(self, mock_post):
         mock_post.return_value = {
             "kill_switch_order_id": "ks-123456",
@@ -279,7 +288,7 @@ class TestRuntimeRepairExecutors(unittest.TestCase):
         payload.update(extra)
         return payload
 
-    @patch("command_executor._post_json")
+    @patch("services.control_plane.bff.command_executor._post_json")
     def test_restart_paper_runtime_dispatches_to_runtime_manager_with_audit_receipt(self, mock_post):
         mock_post.return_value = self._success_body()
         result = _execute_restart_paper_runtime("cmd-repair-1", self._params())
@@ -296,7 +305,7 @@ class TestRuntimeRepairExecutors(unittest.TestCase):
         self.assertEqual(payload["command_id"], "cmd-repair-1")
         self.assertEqual(payload["confirm_token"], "confirm-runtime-repair")
 
-    @patch("command_executor._post_json")
+    @patch("services.control_plane.bff.command_executor._post_json")
     def test_restart_telemetry_bridge_dispatches_to_bridge_repair_path(self, mock_post):
         mock_post.return_value = self._success_body()
         result = _execute_restart_telemetry_bridge("cmd-repair-bridge", self._params())
@@ -308,7 +317,7 @@ class TestRuntimeRepairExecutors(unittest.TestCase):
             called_url,
         )
 
-    @patch("command_executor._post_json")
+    @patch("services.control_plane.bff.command_executor._post_json")
     def test_terminate_stale_monitoring_session_requires_staleness_evidence(self, mock_post):
         with self.assertRaises(ValueError) as ctx:
             _execute_terminate_stale_paper_monitoring_session(
@@ -318,7 +327,7 @@ class TestRuntimeRepairExecutors(unittest.TestCase):
         self.assertIn("staleness_evidence", str(ctx.exception))
         mock_post.assert_not_called()
 
-    @patch("command_executor._post_json")
+    @patch("services.control_plane.bff.command_executor._post_json")
     def test_terminate_stale_monitoring_session_forwards_staleness_evidence(self, mock_post):
         mock_post.return_value = self._success_body(session_id="session-1")
         result = _execute_terminate_stale_paper_monitoring_session(
@@ -337,7 +346,7 @@ class TestRuntimeRepairExecutors(unittest.TestCase):
         payload = mock_post.call_args[0][1]
         self.assertEqual(payload["staleness_evidence"]["heartbeat_age_seconds"], 600)
 
-    @patch("command_executor._post_json")
+    @patch("services.control_plane.bff.command_executor._post_json")
     def test_start_monitoring_session_and_probe_ingest_are_dispatchable(self, mock_post):
         mock_post.return_value = self._success_body()
         start = _execute_start_paper_monitoring_session("cmd-start-session", self._params())
@@ -347,7 +356,7 @@ class TestRuntimeRepairExecutors(unittest.TestCase):
         self.assertEqual(probe["action_id"], "ProbeTelemetryIngest")
         self.assertEqual(mock_post.call_count, 2)
 
-    @patch("command_executor._post_json")
+    @patch("services.control_plane.bff.command_executor._post_json")
     def test_execute_command_dispatches_runtime_repair_types(self, mock_post):
         mock_post.return_value = self._success_body()
         for command_type in (
@@ -364,7 +373,7 @@ class TestEvolutionDecisionExecutor(unittest.TestCase):
     def setUp(self):
         os.environ["PANTHEON_GOVERNANCE_API_URL"] = "http://localhost:5001"
 
-    @patch("command_executor._post_json")
+    @patch("services.control_plane.bff.command_executor._post_json")
     def test_approve_evolution_decision_governance_api(self, mock_post):
         mock_post.return_value = {
             "decision_id": "evo-001",
@@ -402,7 +411,7 @@ class TestEvolutionActionExecutor(unittest.TestCase):
     def tearDown(self):
         os.environ.pop("PANTHEON_GOVERNANCE_SERVICE_URL", None)
 
-    @patch("command_executor._post_json")
+    @patch("services.control_plane.bff.command_executor._post_json")
     def test_execute_evolution_action_governance_api(self, mock_post):
         mock_post.return_value = {
             "decision_id": "evo-002",
@@ -447,7 +456,7 @@ class TestEvolutionActionExecutor(unittest.TestCase):
             mfa_token=None,
         )
 
-    @patch("command_executor._post_json")
+    @patch("services.control_plane.bff.command_executor._post_json")
     def test_execute_revalidate_action_preserves_research_dispatch_result(self, mock_post):
         mock_post.return_value = {
             "decision_id": "evo-reval-002",
@@ -494,7 +503,7 @@ class TestMutationReviewExecutors(unittest.TestCase):
     def tearDown(self):
         os.environ.pop("PANTHEON_GOVERNANCE_SERVICE_URL", None)
 
-    @patch("command_executor._post_json")
+    @patch("services.control_plane.bff.command_executor._post_json")
     def test_approve_mutation_governance_api(self, mock_post):
         mock_post.return_value = {
             "decision_id": "evo-dec-88f3a2c1",
@@ -526,7 +535,7 @@ class TestMutationReviewExecutors(unittest.TestCase):
             mfa_token=None,
         )
 
-    @patch("command_executor._post_json")
+    @patch("services.control_plane.bff.command_executor._post_json")
     def test_reject_mutation_governance_api(self, mock_post):
         mock_post.return_value = {
             "decision_id": "evo-dec-88f3a2c1",
@@ -558,7 +567,7 @@ class TestMutationReviewExecutors(unittest.TestCase):
             mfa_token=None,
         )
 
-    @patch("command_executor._post_json")
+    @patch("services.control_plane.bff.command_executor._post_json")
     def test_review_mutation_governance_api(self, mock_post):
         mock_post.return_value = {
             "decision_id": "evo-dec-88f3a2c1",
@@ -601,7 +610,7 @@ class TestMutationReviewExecutors(unittest.TestCase):
                 auth_token="op-reviewer:reviewer",
             )
 
-    @patch("command_executor._post_json")
+    @patch("services.control_plane.bff.command_executor._post_json")
     def test_execute_mutation_governance_api(self, mock_post):
         mock_post.return_value = {
             "decision_id": "evo-dec-88f3a2c1",
@@ -646,7 +655,7 @@ class TestExecuteCommandDispatch(unittest.TestCase):
     def setUp(self):
         os.environ["PANTHEON_INTERNAL_API_URL"] = "http://localhost:5001"
 
-    @patch("command_executor._post_json")
+    @patch("services.control_plane.bff.command_executor._post_json")
     def test_dispatch_approve_deployment(self, mock_post):
         mock_post.return_value = {
             "approval_decision_id": "ad-001",
@@ -661,7 +670,7 @@ class TestExecuteCommandDispatch(unittest.TestCase):
         })
         self.assertEqual(result["state_after"], "approved")
 
-    @patch("command_executor._post_json")
+    @patch("services.control_plane.bff.command_executor._post_json")
     def test_dispatch_approve_decision(self, mock_post):
         mock_post.return_value = {
             "decision_id": "appr-001",
@@ -674,7 +683,7 @@ class TestExecuteCommandDispatch(unittest.TestCase):
         })
         self.assertEqual(result["decision_state"], "approved")
 
-    @patch("command_executor._post_json")
+    @patch("services.control_plane.bff.command_executor._post_json")
     def test_dispatch_escalate_diff(self, mock_post):
         mock_post.return_value = {
             "plan_id": "plan-dp-001",
@@ -725,7 +734,7 @@ class TestExecuteCommandWithStatus(unittest.TestCase):
     def setUp(self):
         os.environ["PANTHEON_INTERNAL_API_URL"] = "http://localhost:5001"
 
-    @patch("command_executor._post_json")
+    @patch("services.control_plane.bff.command_executor._post_json")
     def test_success_returns_executed(self, mock_post):
         mock_post.return_value = {
             "approval_decision_id": "ad-001",
@@ -746,7 +755,7 @@ class TestExecuteCommandWithStatus(unittest.TestCase):
         self.assertIn("execution_started_at", result)
         self.assertIn("execution_completed_at", result)
 
-    @patch("command_executor._post_json")
+    @patch("services.control_plane.bff.command_executor._post_json")
     def test_http_error_returns_failed(self, mock_post):
         import urllib.error
         mock_post.side_effect = urllib.error.HTTPError(
@@ -764,7 +773,7 @@ class TestExecuteCommandWithStatus(unittest.TestCase):
         self.assertIsNotNone(error)
         self.assertEqual(error["code"], "DOWNSTREAM_ERROR")
 
-    @patch("command_executor._post_json")
+    @patch("services.control_plane.bff.command_executor._post_json")
     def test_url_error_returns_failed(self, mock_post):
         import urllib.error
         mock_post.side_effect = urllib.error.URLError("Connection refused")
@@ -784,7 +793,7 @@ class TestRemediateSentinelInterventionExecutor(unittest.TestCase):
     def setUp(self):
         os.environ["PANTHEON_INTERNAL_API_URL"] = "http://localhost:5001"
 
-    @patch("command_executor._post_json")
+    @patch("services.control_plane.bff.command_executor._post_json")
     def test_remediate_sentinel_success(self, mock_post):
         """Executor forwards to sentinel endpoint and returns structured result."""
         mock_post.return_value = {
@@ -807,7 +816,7 @@ class TestRemediateSentinelInterventionExecutor(unittest.TestCase):
         self.assertIn("intv-exec-001", call_url)
         self.assertIn("/sentinel/interventions/", call_url)
 
-    @patch("command_executor._post_json")
+    @patch("services.control_plane.bff.command_executor._post_json")
     def test_remediate_sentinel_downstream_failure_propagates(self, mock_post):
         """Downstream failure must propagate — no stub result returned."""
         import urllib.error
@@ -819,7 +828,7 @@ class TestRemediateSentinelInterventionExecutor(unittest.TestCase):
                 "two_man_signature_id": "tms-fail-001",
             })
 
-    @patch("command_executor._post_json")
+    @patch("services.control_plane.bff.command_executor._post_json")
     def test_remediate_sentinel_downstream_failure_returns_failed_status(self, mock_post):
         """execute_command_with_status must return FAILED (not EXECUTED with stub) on downstream error."""
         import urllib.error
@@ -846,7 +855,7 @@ class TestRemediateSentinelInterventionExecutor(unittest.TestCase):
                 "two_man_signature_id": "tms-bad-001",
             })
 
-    @patch("command_executor._post_json")
+    @patch("services.control_plane.bff.command_executor._post_json")
     def test_remediate_sentinel_result_has_no_stub_field(self, mock_post):
         """Successful result must not carry a stub flag."""
         mock_post.return_value = {

@@ -940,6 +940,15 @@ def delivery_runtime_env(config: dict[str, Any], metadata: dict[str, Any] | None
         normalized_generation = 0
     if normalized_generation > 0:
         env["ORCH_TASK_GENERATION"] = str(normalized_generation)
+    # OPS-PRIVILEGED-TASK-EXECUTION-AUTH-001 (SA/SD 4): the exact run id the
+    # canonical claim/lease boundary bound this privileged task's one-shot
+    # grant reservation to. worker_runner.py's direct worker-entry check
+    # requires this to match ``execution_authorization.reserved_run_id``
+    # before it will launch an owner-execution process; absent for every
+    # non-privileged (the overwhelmingly common) dispatch.
+    execution_authorization_run_id = (metadata or {}).get("execution_authorization_run_id")
+    if isinstance(execution_authorization_run_id, str) and execution_authorization_run_id.strip():
+        env["ORCH_EXECUTION_AUTHORIZATION_RUN_ID"] = execution_authorization_run_id.strip()
     raw_resources = (metadata or {}).get("execution_resources", [])
     if not isinstance(raw_resources, list):
         raise ValueError("delivery execution_resources must be a list")

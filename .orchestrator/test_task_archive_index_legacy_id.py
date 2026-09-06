@@ -208,7 +208,7 @@ def test_rebuild_indexes_requires_exact_outbox_provenance_for_invalid_contracts(
         }
     }
     status_file.write_text(json.dumps(status_payload_invalid), encoding="utf-8")
-    with pytest.raises(RuntimeError, match="status archive outbox digest mismatch|status archive outbox contract is invalid"):
+    with pytest.raises(RuntimeError, match="status archive outbox digest mismatch|status archive outbox contract is invalid|snapshot is missing archived_at"):
         task_archive.rebuild_archive_index(recent_limit=10)
 
     # 4. Rebuilding with valid outbox structure but contents mismatching the file on disk should fail

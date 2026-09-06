@@ -19,6 +19,14 @@ from services.foundation.postgres_json_store import PostgresJsonOwnerStore
 _UTC = datetime.timezone.utc
 
 
+class ApprovalCommandConflict(ValueError):
+    pass
+
+
+class ApprovalCommandNotFound(ValueError):
+    pass
+
+
 class PostgresApprovalDecisionStore:
     """Postgres owner store for governance approval decisions."""
 
@@ -34,6 +42,70 @@ class PostgresApprovalDecisionStore:
             owner_service="governance-svc",
             bootstrap=bootstrap,
         )
+
+        self._receipts = PostgresJsonOwnerStore(
+            dsn=dsn, table=table + "_receipts", owner_service="governance-svc", bootstrap=bootstrap,
+        )
+
+    def execute_command(self, *, command: dict, mutate, audit_store) -> dict:
+        """Commit decision CAS, immutable response receipt and audit in one transaction.
+
+        Receipt reservation uses the same foundation CAS as Registry. No
+        independently committed put, and no in-memory result escapes commit.
+        """
+        if not isinstance(audit_store, PostgresGovernanceAuditStore):
+            raise RuntimeError("Approval commands require a PostgreSQL audit owner")
+        if audit_store._records.dsn != self._records.dsn:
+            raise RuntimeError("Approval audit and decision must share one database")
+        import hashlib
+        encoded = json.dumps(command, sort_keys=True, separators=(",", ":"))
+        request_digest = hashlib.sha256(encoded.encode()).hexdigest()
+        scope = [command['tenant_id'], command['actor_id'], command['idempotency_key']]
+        receipt_id = hashlib.sha256(json.dumps(scope).encode()).hexdigest()
+        with self._records.transaction() as conn:
+            reserved, receipt = self._receipts.compare_and_set(
+                receipt_id, None, {"request_digest": request_digest}, conn=conn,
+            )
+            if not reserved:
+                if receipt is None or receipt.get('request_digest') != request_digest:
+                    raise ApprovalCommandConflict('Idempotency key has different command content')
+                return receipt['response']
+            # Use the merged transaction-aware read API, without a second connection.
+            base = next((row for row in self._records.list_all(conn=conn)
+                         if row['decision_id'] == command['decision_id']), None)
+            if base is not None and base.get('tenant_id') != command['tenant_id']:
+                raise ApprovalCommandNotFound('Approval decision not found')
+            if (base.get('version', 0) if base else 0) != command['expected_version']:
+                raise ApprovalCommandConflict('Approval base version is stale')
+            decision = mutate(ApprovalDecision.from_dict(base) if base else None)
+            decision.version = command['expected_version'] + 1
+            decision.event_id = str(uuid.uuid4())
+            payload = decision.to_dict()
+            changed, _ = self._records.compare_and_set(
+                decision.decision_id, base, payload, conn=conn,
+            )
+            if not changed:
+                raise ApprovalCommandConflict('Competing approval command changed the base')
+            event = {
+                'event_id': decision.event_id, 'event_type': {'propose': 'approval_decision_created', 'review': 'approval_decision_state_changed', 'decide': 'approval_decision_decided', 'revoke': 'approval_decision_revoked'}[command['operation']],
+                'decision_id': decision.decision_id, 'tenant_id': command['tenant_id'],
+                'actor_id': command['actor_id'], 'actor_role': command['actor_role'],
+                'version': decision.version, 'request_digest': request_digest,
+                'timestamp': datetime.datetime.now(_UTC).isoformat(),
+            }
+            inserted, _ = audit_store._records.compare_and_set(
+                decision.event_id, None, event, conn=conn,
+            )
+            if not inserted:
+                raise ApprovalCommandConflict('Audit event identity collision')
+            finished, _ = self._receipts.compare_and_set(
+                receipt_id, {'request_digest': request_digest},
+                {'request_digest': request_digest, 'command': command, 'response': payload,
+                 'event': event}, conn=conn,
+            )
+            if not finished:
+                raise ApprovalCommandConflict('Receipt reservation changed')
+        return payload
 
     def put(self, decision: ApprovalDecision) -> None:
         self._records.put(decision.decision_id, decision.to_dict())

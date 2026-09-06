@@ -178,7 +178,6 @@ def decide(
     events: Sequence[Mapping[str, Any]] | None = None,
     pr: Mapping[str, Any] | None = None,
     task_id: str = "ABC-001",
-    task_brief_carry_forward: Mapping[str, Any] | None = None,
 ) -> gate.GateDecision:
     return gate.gate_for_task(
         task_id,
@@ -186,7 +185,6 @@ def decide(
         state={"tasks": list(tasks if tasks is not None else [task_row()])},
         events=list(events if events is not None else [approval_event()]),
         now=NOW,
-        task_brief_carry_forward=task_brief_carry_forward,
     )
 
 
@@ -387,27 +385,28 @@ class ApprovalBindingTests(unittest.TestCase):
         self.assertEqual(decision.head_oid, "c" * 40)
         self.assertTrue(decision.revoke_auto_merge)
 
-    def test_task_brief_only_successor_carries_approval_without_rereview(self) -> None:
+    def test_task_brief_only_successor_is_rejected_without_a_fresh_review(self) -> None:
+        """OPS-LEGACY-REVIEW-RETIRE-001: the generated-brief carry-forward
+        exception is retired. A direct successor that changes only
+        .orchestrator/task-briefs/ paths is still an unreviewed head -- it
+        must be blocked exactly like any other unapproved successor, not
+        silently approved through a task-brief classification.
+        """
+
         successor = "d" * 40
         pr = open_pr(
             headRefOid=successor,
             commits=[{"oid": successor, "committedDate": "2026-07-26T12:05:00Z"}],
         )
 
-        decision = decide(
-            pr=pr,
-            task_brief_carry_forward={
-                "kind": "task_brief_only_successor",
-                "approved_head_sha": "b" * 40,
-                "successor_head_sha": successor,
-                "changed_paths": [".orchestrator/task-briefs/abc_001.md"],
-            },
-        )
+        decision = decide(pr=pr)
 
-        self.assertTrue(decision.allow_merge)
+        self.assertFalse(decision.allow_merge)
         self.assertFalse(decision.allow_auto_merge)
-        self.assertEqual(decision.reason, "task_brief_only_approval_carried_forward")
+        self.assertEqual(decision.reason, "approval_head_mismatch")
+        self.assertEqual(decision.approval["approved_head_sha"], "b" * 40)
         self.assertEqual(decision.head_oid, successor)
+        self.assertTrue(decision.revoke_auto_merge)
 
     def test_pre_dated_head_replacement_survives_a_matching_commit_history(self) -> None:
         """Rewriting the PR's commit list does not rebuild the approval."""

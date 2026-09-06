@@ -17,3 +17,4 @@
 pydantic>=2.9,<3
 cryptography>=42,<51
 packaging>=23,<27
+# Pinned dependency lock: dependencies/locks/orchestrator.txt

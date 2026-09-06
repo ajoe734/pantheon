@@ -185,8 +185,6 @@ class ReviewGate:
         candidate: "TaskCandidate",
         pr: Mapping[str, Any] | None,
         settings: "Settings",
-        *,
-        task_brief_carry_forward: Mapping[str, Any] | None = None,
     ) -> review_gate.GateDecision:
         return review_gate.gate_for_task(
             candidate.task_id,
@@ -196,117 +194,7 @@ class ReviewGate:
             task_branch_prefix=settings.task_branch_prefix,
             state=self.state,
             events=self.events,
-            task_brief_carry_forward=task_brief_carry_forward,
         )
-
-    def task_brief_carry_forward(
-        self,
-        candidate: "TaskCandidate",
-        pr: Mapping[str, Any] | None,
-        runner: "CommandRunner",
-        *,
-        root: Path,
-    ) -> dict[str, Any] | None:
-        """Classify the one generated-brief successor exception without writes."""
-
-        if not isinstance(pr, Mapping):
-            return None
-        head_sha = str(pr.get("headRefOid") or "").strip().lower()
-        repository = (
-            github_review_bridge.repository_from_pull_request_url(pr.get("url"))
-            or candidate.repository_slug
-        )
-        if not repository:
-            return None
-        try:
-            contract = review_gate.load_task_contract(
-                candidate.task_id,
-                status_root=self.status_root,
-                state=self.state,
-            )
-            if contract.policy != review_gate.POLICY_REVIEW_BEFORE_MERGE:
-                return None
-            approval = review_gate.load_approval_record(
-                candidate.task_id,
-                status_root=self.status_root,
-                events=self.events,
-            )
-        except review_gate.TaskReviewGateError:
-            return None
-        if (
-            approval is None
-            or not approval.present
-            or approval.revoked
-            or not approval.binding_present
-            or approval.binding_error
-            or approval.approved_head_sha == head_sha
-            or review_gate.normalize_agent(approval.reviewer)
-            != review_gate.normalize_agent(contract.reviewer)
-            or review_gate.normalize_pr_number(pr.get("number")) != approval.approved_pr_number
-            or str(pr.get("headRefName") or "").strip() != approval.approved_head_branch
-            or str(pr.get("baseRefName") or "").strip() != approval.approved_base_branch
-        ):
-            return None
-        try:
-            return github_review_bridge.task_brief_only_successor(
-                repository=repository,
-                approved_head_sha=approval.approved_head_sha,
-                successor_head_sha=head_sha,
-                runner=GitHubJsonCommandRunner(runner, root=root),
-            )
-        except github_review_bridge.GitHubReviewBridgeError:
-            return None
-
-    def publish_task_brief_carry_forward(
-        self,
-        candidate: "TaskCandidate",
-        pr: Mapping[str, Any],
-        runner: "CommandRunner",
-        *,
-        root: Path,
-        carried: Mapping[str, Any] | None,
-        decision: review_gate.GateDecision,
-        dispatch_if_proof_exists: bool = True,
-    ) -> dict[str, Any] | None:
-        """Publish the proof only after the complete gate allowed this head.
-
-        A prior attempt can leave the proof tag durable while the workflow
-        dispatch has not happened yet.  The caller therefore asks for an
-        existing proof to be dispatched again until the required canonical
-        check has turned green.
-        """
-
-        if (
-            not decision.allow_merge
-            or decision.reason != "task_brief_only_approval_carried_forward"
-            or not isinstance(carried, Mapping)
-        ):
-            return None
-        repository = (
-            github_review_bridge.repository_from_pull_request_url(pr.get("url"))
-            or candidate.repository_slug
-        )
-        actor = str(
-            decision.approval.get("reviewer") or decision.contract.get("reviewer") or ""
-        ).strip()
-        if not repository or not actor:
-            raise AutoIntegratorError(
-                "task-brief carry-forward was gate-approved but lacks a publishable repository or reviewer"
-            )
-        try:
-            return github_review_bridge.publish_task_brief_only_successor_proof(
-                repository=repository,
-                task_id=candidate.task_id,
-                actor=actor,
-                carried=carried,
-                pr=review_gate.normalize_pr_number(pr.get("number")) or 0,
-                head_branch=str(pr.get("headRefName") or "").strip(),
-                base=str(pr.get("baseRefName") or "").strip(),
-                dispatch_if_proof_exists=dispatch_if_proof_exists,
-                runner=GitHubJsonCommandRunner(runner, root=root),
-            )
-        except github_review_bridge.GitHubReviewBridgeError as exc:
-            raise AutoIntegratorError(f"task-brief carry-forward proof publication failed: {exc}") from exc
 
 
 class AutoIntegratorError(RuntimeError):
@@ -896,36 +784,6 @@ def ignored_diagnostic_note(checks: CheckSummary) -> str:
         " Ignored explicitly non-required diagnostics: "
         f"{', '.join(checks.ignored_diagnostic)}."
     )
-
-
-def canonical_review_gate_is_green(rollup: Any) -> bool:
-    """Whether the workflow-owned canonical review check is green.
-
-    This intentionally is not a substitute for ``summarize_status_rollup``:
-    the latter still gates every check before a merge.  It only decides
-    whether a pre-existing carry-forward proof needs the workflow to be
-    dispatched again after a prior interrupted publication attempt.
-    """
-
-    if not isinstance(rollup, list):
-        return False
-    observed = False
-    for item in rollup:
-        if not isinstance(item, Mapping):
-            continue
-        if check_name(item) != github_review_bridge.CANONICAL_REVIEW_CONTEXT:
-            continue
-        values = [
-            normalize_state(item.get("conclusion")),
-            normalize_state(item.get("state")),
-            normalize_state(item.get("status")),
-        ]
-        values = [value for value in values if value]
-        if any(value in FAILURE_VALUES or value in PENDING_VALUES for value in values):
-            return False
-        if any(value in SUCCESS_VALUES for value in values):
-            observed = True
-    return observed
 
 
 def pr_number(pr: Mapping[str, Any]) -> int | None:
@@ -1738,15 +1596,7 @@ def revalidate_before_merge(
             f"PR #{fresh_number} failed final validation: {problem}.",
         )
 
-    fresh_carry_forward = fresh_gate.task_brief_carry_forward(
-        candidate, fresh_pr, runner, root=root
-    )
-    fresh_decision = fresh_gate.decide(
-        candidate,
-        fresh_pr,
-        settings,
-        task_brief_carry_forward=fresh_carry_forward,
-    )
+    fresh_decision = fresh_gate.decide(candidate, fresh_pr, settings)
     if not fresh_decision.allow_merge or not _decision_status_is_eligible(
         fresh_decision
     ):
@@ -2472,18 +2322,7 @@ def integrate_candidate(
                     dry_run=not execute,
                     commands=runner.commands[:],
                 )
-            merged_carry_forward = gate.task_brief_carry_forward(
-                candidate,
-                merged_pr,
-                runner,
-                root=target_root,
-            )
-            merged_decision = gate.decide(
-                candidate,
-                merged_pr,
-                settings,
-                task_brief_carry_forward=merged_carry_forward,
-            )
+            merged_decision = gate.decide(candidate, merged_pr, settings)
             if (
                 merged_decision.policy == review_gate.POLICY_REVIEW_BEFORE_MERGE
                 and not merged_decision.allow_merge
@@ -2529,29 +2368,6 @@ def integrate_candidate(
                     number,
                     url,
                     dry_run=True,
-                    commands=runner.commands[:],
-                )
-            try:
-                gate.publish_task_brief_carry_forward(
-                    candidate,
-                    merged_pr,
-                    runner,
-                    root=target_root,
-                    carried=merged_carry_forward,
-                    decision=merged_decision,
-                )
-            except AutoIntegratorError as exc:
-                detail = (
-                    f"Merged PR #{number} has a gate-approved carry-forward but {exc}; "
-                    "refusing integration."
-                )
-                return IntegrationResult(
-                    candidate.task_id,
-                    "blocked",
-                    detail,
-                    number,
-                    url,
-                    dry_run=False,
                     commands=runner.commands[:],
                 )
             _record_merge_integration_receipt(
@@ -2641,18 +2457,7 @@ def integrate_candidate(
     # Canonical review-before-merge gate. This runs before the CI and merge
     # state probes so a premature auto-merge request is revoked immediately
     # rather than after the checks happen to turn green.
-    carry_forward = gate.task_brief_carry_forward(
-        candidate,
-        pr,
-        runner,
-        root=target_root,
-    )
-    decision = gate.decide(
-        candidate,
-        pr,
-        settings,
-        task_brief_carry_forward=carry_forward,
-    )
+    decision = gate.decide(candidate, pr, settings)
     gated = decision.policy == review_gate.POLICY_REVIEW_BEFORE_MERGE
     if not review_gate.OID_RE.fullmatch(str(decision.head_oid or "").strip()):
         detail = (
@@ -2774,84 +2579,6 @@ def integrate_candidate(
             not execute,
             runner.commands[:],
         )
-
-    # A direct generated-task-brief successor is allowed by the canonical
-    # review gate, but GitHub's workflow-owned required context belongs to the
-    # successor SHA.  Publish its tag/ref and dispatch that workflow *before*
-    # examining the whole CI rollup: the old context is expected to be red
-    # until this dispatch runs.  This pass never merges; the later pass that
-    # observes the refreshed green context can continue through the ordinary
-    # rollup and exact-head merge checks below.
-    if (
-        execute
-        and decision.reason == "task_brief_only_approval_carried_forward"
-        and isinstance(carry_forward, Mapping)
-    ):
-        try:
-            publication = gate.publish_task_brief_carry_forward(
-                candidate,
-                pr,
-                runner,
-                root=target_root,
-                carried=carry_forward,
-                decision=decision,
-                dispatch_if_proof_exists=not canonical_review_gate_is_green(
-                    pr.get("statusCheckRollup")
-                ),
-            )
-        except AutoIntegratorError as exc:
-            detail = f"PR #{number} is gate-approved but {exc}; refusing to merge."
-            unblock = (
-                open_unblock_task(
-                    candidate,
-                    "task-brief-carry-forward-publication-failed",
-                    detail,
-                    settings,
-                    runner,
-                    root=status_root_dir,
-                    execute=execute,
-                )
-                if open_unblock
-                else None
-            )
-            return IntegrationResult(
-                candidate.task_id,
-                "blocked",
-                detail,
-                number,
-                url,
-                unblock,
-                False,
-                runner.commands[:],
-            )
-        if publication is None:
-            detail = (
-                f"PR #{number} has a carry-forward gate decision but no publishable "
-                "task-brief proof; refusing to merge."
-            )
-            return IntegrationResult(
-                candidate.task_id,
-                "blocked",
-                detail,
-                number,
-                url,
-                dry_run=False,
-                commands=runner.commands[:],
-            )
-        if publication.get("proof_published") or publication.get("workflow_dispatched"):
-            detail = (
-                f"PR #{number} published the task-brief carry-forward proof and dispatched "
-                "the canonical review gate; waiting for that successor check to turn green."
-            )
-            return IntegrationResult(
-                candidate.task_id,
-                "waiting",
-                detail,
-                number,
-                url,
-                dry_run=False,
-                commands=runner.commands[:],
-            )
 
     checks = summarize_status_rollup(pr.get("statusCheckRollup"))
     if checks.state == "red":

@@ -1,0 +1,97 @@
+{
+  "schema_version": "pantheon.task-evidence.v1",
+  "task_id": "REGISTRY-STRATEGY-UNIFIED-CONTRACT-001",
+  "normative_plan": "/home/chloe_ong_dev_cctech_support_com/code/pantheon-artifacts/dev-closure-20260906/architecture-resumption-sa-sd.md",
+  "source": {
+    "tested_commit": "3e7ce92f9cc451994324fdde9d57d079612c4fa7",
+    "base_commit": "a9557a6002e8170eb92415cc61e9d6a584cc610f",
+    "sha256_by_path": {
+      "docker-compose.control.yml": "5e6b301491d349ebccce8c0bd965498a6bf5ac42d9e9d339388b52068fdc79f2",
+      "docker-compose.yml": "2bd6c46c39d08efbbb6f7a1959b67ffb20e16eab0a65c37ea22c520f85bc772a",
+      "services/control-plane/bff/command_adapters/base.py": "adab84b6da079353174a31711d7016fc1c644dbf53a35d3f3acab7ece83b1024",
+      "services/control-plane/bff/command_adapters/strategy_adapter.py": "2877f6952ae7a70769cf448a1362b22799c4748bff1a2f4aa90eb0701e7e5f60",
+      "services/control-plane/bff/command_executor.py": "ba5eed7910042e36a1130de76381d53909b298d1dc70db2bcb9c6802b0d2841c",
+      "services/control-plane/bff/test_command_executor.py": "3a77fa72995f2b9fda81624c03ea73f6f9ca21eb8b4559b2162c3c20f591caa8",
+      "services/control-plane/bff/tests/test_command_adapters_router.py": "43944b7ebe5e29042b5bb60256d7ce04d502823b5483873086d0c3cbea68e375",
+      "services/control-plane/bff/tests/test_strategy_registry_owner_prerequisite.py": "83a9d06bd2fb7d0ec0d4ebfeed2886073d2103488c51f8c5e6dd59b76032bc75",
+      "services/foundation/postgres_json_store.py": "6fbcc890f370abf0d8bb05b67757aea4c4a00ae7edc2a4bb21662302896c4be2",
+      "services/foundation/tests/test_registry_owner_transaction.py": "429a69bd2311852075ecb061edf1a8ebac22c1d92574073c4f9df8a81b75b690",
+      "services/registry/command_contract.py": "b596be18af295ed422e86136e02342a13caba041702c2af8d92588634bb7cf3c",
+      "services/registry/conftest.py": "c19e8a13761875a88be15c74a46eaa3c44795074a25e6726ab4decac469ce459",
+      "services/registry/main.py": "bcf58e2b590f8e8a9205ff757671af376141c211f15d193345fb47d18168ffff",
+      "services/registry/models.py": "2872744683f1902c44d9881f5d2884703b392c7ee6f82279cc3e765d70d8d73c",
+      "services/registry/pg_store.py": "abc7adaec6785eb6870ce4366f5e82824e2a1e5396b55124d1e30833735f2c50",
+      "services/registry/requirements.txt": "4c9a764ebaf97c16c66cd835763ededb9f76bf0b9dbd004f448b541360cf67f4",
+      "services/registry/service.py": "1a3e56a337616251f688ed398b0a798616959b8a83f0d9fde05344b5c54c6ef1",
+      "services/registry/split_api.py": "6ce3620fb2613ecde00995c74a8f8dba38788cd20a741349f1d411af15030b5c",
+      "services/registry/storage.py": "6b366c10135697d18ad661d58cff80b8ea467f34f4869dc3e85782f1ba41fb1c",
+      "services/registry/test_allocation_policy_artifact.py": "7032d43e43e64d22247c8ba4ddfa25477c23c2ab1662d1f41fe276c49fafb8bb",
+      "services/registry/test_first_release_contract.py": "39575827078b0920ead14d6b0238fd3dc9130b00902ae2be3507154fc20d4aeb",
+      "services/registry/test_owner_durability.py": "dfb85fb7f21931dc9b90096a0b06475eca3bec5ca70e4e2c3c2b8ceed6861923",
+      "services/registry/test_owner_durability_real_process.py": "71ddc9c61ef1ee961d43d80c901b871e2484995a04de69be9f30df71412544c4",
+      "services/registry/test_registry_auth_wiring.py": "47beccedd415e7f9e2480b1fbc7d13d9561feb781fd5113fa5d6edc4aa8ab550",
+      "services/registry/test_registry_positives.py": "5ec9780fb31129dd0d729c4c364107612c1dc706909e0342fa2f67c6c7c9d18d",
+      "services/registry/test_service.py": "0418dc047a69c3719f3266804694891648a290989c4edc4e5af9c40d8e86f2cc",
+      "services/registry/test_storage_backend_posture.py": "36149bbfaa4464052c55dddd6c637e23a8bc137beef4a59222365fe239f096dd",
+      "services/registry/test_strategy_artifact.py": "7536e88ab3893f2454881dac09c23cecce4b0f3eb18a1ac11289f6536014550c"
+    },
+    "post_validation_changes": "Only first_release_contract.json narrative reconciliation and this evidence manifest; product and test source match the tested commit."
+  },
+  "scope_note": "Registry owns a single PostgreSQL-backed repository with strict scoped identity, immutable version content, original atomic receipts, caller CAS and durable readback. The Strategy HTTP adapter verifies supported Registry mutations and explicitly identifies other-owner actions as unavailable. This owner continuation repairs both findings of the genuine 15:17:07 review of PR 5620 head 3f7e9551; it does not claim reviewer approval or full product/dev acceptance.",
+  "review_findings_addressed": [
+    {
+      "finding": "Generic entries accepted empty typed StrategySpec, with or without Idempotency-Key.",
+      "resolution": "Removed duplicate generic content validation and reuse _strategy_spec_register_payload for every typed StrategySpec. Both routes require lineage and either canonical schema/identity/checksum-valid inline content or an explicit storage reference and checksum. The shared validator rejects malformed/blank references and inline pointers without content. Existing transaction-scoped revision/CAS and receipts remain in force."
+    },
+    {
+      "finding": "Generic allocation_policy creation bypassed the canonical AllocationPolicyArtifact validator and could expose invalid approved content.",
+      "resolution": "Generic creation now rejects the allocation_policy kind regardless of payload validity and key presence. Only POST /api/registry/allocation-policy-artifacts creates that kind through its existing canonical validator. Tests prove invalid creation leaves typed GET/list empty, valid typed creation/approval works and its original receipt and current approved GET survive a fresh OS process."
+    }
+  ],
+  "verification": {
+    "environment": "Checkout-scoped .venv-pantheon provisioned with scripts/dev/provision_python_distribution.py using the existing dependency interpreter. Dedicated local test PostgreSQL on 127.0.0.1:25432, unique disposable schema per test; mounted FastAPI apps and actual HTTP adapter with strict synthetic JWT identities. No hosted/provider/broker/capital changes.",
+    "commands": [
+      {
+        "command": "TEST_DATABASE_URL=<isolated-local-test-postgres> timeout 300 .venv-pantheon/bin/python3 -m pytest services/registry services/foundation/tests/test_registry_owner_transaction.py services/foundation/tests/test_control_plane_postgres_owner_stores.py services/control-plane/bff/tests/test_strategy_registry_owner_prerequisite.py services/control-plane/bff/test_command_executor.py services/control-plane/bff/tests/test_command_adapters_router.py /tmp/test_registry_review_3f7e.py -q --tb=short",
+        "exit_status": 0,
+        "passed": 402,
+        "skipped": 0,
+        "xfailed": 0,
+        "warnings": 3,
+        "elapsed_seconds": 196.06,
+        "log": "/tmp/registry-codex-admission-verified.log",
+        "log_sha256": "f8dbbbd8ea0f4603e3b2c9e7171825f10289a17f8bfeaeccb4bdc1703da1df85",
+        "terminal_output": "........................................................................ [ 17%]\n........................................................................ [ 35%]\n........................................................................ [ 53%]\n........................................................................ [ 71%]\n........................................................................ [ 89%]\n..........................................                               [100%]\n=============================== warnings summary ===============================\n../../../../home/chloe_ong_dev_cctech_support_com/code/pantheon/.venv/lib/python3.12/site-packages/fastapi/testclient.py:1\n  /home/chloe_ong_dev_cctech_support_com/code/pantheon/.venv/lib/python3.12/site-packages/fastapi/testclient.py:1: StarletteDeprecationWarning: Using `httpx` with `starlette.testclient` is deprecated; install `httpx2` instead.\n    from starlette.testclient import TestClient as TestClient  # noqa\n\nservices/control-plane/bff/tests/test_command_adapters_router.py::test_main_app_operator_command_submission_regression\nservices/control-plane/bff/tests/test_command_adapters_router.py::test_main_app_operator_command_submission_regression\n  /tmp/pantheon-worker-worktrees/pantheon/registry-strategy-unified-contract-001/services/research/strategy_spec/normalizer.py:21: DeprecationWarning: jsonschema.RefResolver is deprecated as of v4.18.0, in favor of the https://github.com/python-jsonschema/referencing library, which provides more compliant referencing behavior as well as more flexible APIs for customization. A future release will remove RefResolver. Please file a feature request (on referencing) if you are missing an API for the kind of customization you need.\n    from jsonschema import Draft7Validator, RefResolver\n\n-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html\n402 passed, 3 warnings in 196.06s (0:03:16)\n"
+      }
+    ],
+    "counts": "398 committed tests plus 4 independent reviewer probes; permanent new regression tests cover the rejected typed/generic payloads and valid counterparts.",
+    "new_permanent_proofs": [
+      "services/registry/test_owner_durability_real_process.py::test_generic_typed_admission_and_restart[False/True]",
+      "services/registry/test_owner_durability_real_process.py::test_allocation_typed_admission_and_restart[False/True]"
+    ],
+    "preserved_proofs": "Full Registry/foundation/BFF suites exercised strict auth negatives, explicit backend posture, stale CAS, two-process contention, SIGKILL restart, transaction rollback and response-loss windows, original receipt replay, BFF readback mismatch, genuine drafts/spec/revisions, artifact/allocation behavior and command transport.",
+    "diagnostic_runs_not_acceptance": [
+      "Initial focused batch: 112 passed, 3 failed, exit 1; old empty typed fixtures were corrected without relaxing assertions.",
+      "First full diagnostic batch: 393 passed, 9 failed, exit 1; corrected shared fixture lineage/storage and normalized absent metadata to null in the canonical payload builder. Superseded by fixed-commit full pass above."
+    ]
+  },
+  "consumer_handoffs": [
+    {
+      "task": "DOMAIN-WRITERS-DURABILITY-CORRECTIVE-001",
+      "contract": "AllocationPolicyArtifact uses POST /api/registry/allocation-policy-artifacts with version, allocation_policy_artifact and optional stable registry_id, verified scoped bearer identity. Generic allocation creation is rejected. Current production Python source inventory found no generic allocation writer; HTTP enforcement and canonical positives are tested. Existing research/source/deployment/runtime consumer integration remains that task's scope."
+    },
+    {
+      "task": "OVERLAY-RETIRE-001",
+      "contract": "Generic typed StrategySpec now has identical lineage/content/reference prerequisites to strategy-specs. Genuine name-only draft requests remain supported. Strategy adapter and downstream business-action owner boundaries are unchanged."
+    }
+  ],
+  "not_covered": [
+    "Genuine governance review, paper promotion and runtime business-action integration belong to the existing downstream owners named in immutable plan section 4.",
+    "Source validation and PR delivery do not prove the coordinated FE/BFF hosted release, all twelve loops, Management/Agora/OpenClaw journeys or exact-artifact rollback."
+  ],
+  "review": {
+    "reviewer": "Antigravity2",
+    "decision": "pending independent exact-head review",
+    "owner": "Codex"
+  }
+}

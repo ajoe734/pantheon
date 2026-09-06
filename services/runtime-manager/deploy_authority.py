@@ -22,12 +22,17 @@ from datetime import datetime, timezone
 from typing import Any, Callable, Collection, Mapping
 from urllib.error import HTTPError, URLError
 from urllib.parse import quote, urlencode
-from urllib.request import Request, urlopen
+from urllib.request import Request, build_opener
 
 from services.registry.strategy_artifact import (
     StrategyArtifactValidationError,
     strategy_artifact_checksum,
     validate_strategy_artifact,
+)
+
+
+from services.governance.approval_authority import (
+    ApprovalInvalid, ApprovalUnavailable, configured_approval_reader, NoOwnerRedirect,
 )
 
 
@@ -97,7 +102,7 @@ def _fetch_json(
         method="GET",
     )
     try:
-        with urlopen(request, timeout=timeout_seconds) as response:
+        with build_opener(NoOwnerRedirect()).open(request, timeout=timeout_seconds) as response:
             raw = response.read().decode("utf-8")
     except HTTPError as exc:
         error_type = (
@@ -165,6 +170,8 @@ def verify_deploy_authorities(
     capital_base_url: str,
     timeout_seconds: float = 5.0,
     fetch_json: FetchJson | None = None,
+    approval_reader=None,
+    registry_fetch_json: FetchJson | None = None,
     now: datetime | None = None,
     allowed_plan_statuses: Collection[str] = ("approved", "executing"),
     allowed_target_stages: Collection[str] = ("paper",),
@@ -231,6 +238,15 @@ def verify_deploy_authorities(
     )
 
     fetch = fetch_json or _fetch_json
+    registry_fetch = registry_fetch_json
+    if registry_fetch is None:
+        registry_token = os.getenv('RUNTIME_MANAGER_REGISTRY_SERVICE_TOKEN', '').strip()
+        if not registry_token:
+            raise DeployAuthorityUnavailableError('Registry scoped read principal required')
+
+        def registry_fetch(url: str, timeout: float) -> Mapping[str, Any]:
+            return _fetch_json(url, timeout, headers={'Authorization': 'Bearer ' + registry_token})
+
     deployment_fetch = fetch
     if fetch_json is None:
         deployment_headers = _deployment_request_headers()
@@ -265,8 +281,17 @@ def verify_deploy_authorities(
         f"{capital_url}/api/bindings/{quote(persona_capital_binding_id, safe='')}"
     )
     plan = deployment_fetch(deployment_proof_url, timeout_seconds)
-    registry_payload = fetch(registry_proof_url, timeout_seconds)
-    approval = fetch(approval_proof_url, timeout_seconds)
+    registry_payload = registry_fetch(registry_proof_url, timeout_seconds)
+    # Generic authority transports are also used by Deployment's outbox worker.
+    # They cannot stand in for the authenticated exact-ID approval reader.
+    try:
+        reader = approval_reader or configured_approval_reader('runtime_manager', base_url=governance_url)
+        approval_evidence = reader.get(approval_decision_id)
+        approval = approval_evidence.model_dump()
+    except ApprovalUnavailable as exc:
+        raise DeployAuthorityUnavailableError(str(exc)) from exc
+    except ApprovalInvalid as exc:
+        raise DeployAuthorityError(str(exc)) from exc
     capital_pool = fetch(capital_pool_proof_url, timeout_seconds)
     capital_admissibility = fetch(capital_admissibility_proof_url, timeout_seconds)
     persona_binding = fetch(persona_binding_proof_url, timeout_seconds)
@@ -376,29 +401,19 @@ def verify_deploy_authorities(
         )
 
     expected_approval = {
-        "decision_id": approval_decision_id,
-        "decision_state": "decided",
-        "decision": "approved",
-        "target_type": "registry_entry",
-        "target_id": artifact_id,
-        "target_version": artifact_version,
-        "capital_pool_id": capital_pool_id,
-        "persona_id": sponsor_persona_id,
+        'decision_id': approval_decision_id,
+        'tenant_id': plan_metadata.get('tenant_id'),
+        'target_type': 'registry_entry', 'target_id': artifact_id,
+        'target_version': artifact_version, 'candidate_digest': recorded_checksum,
+        'capital_pool_id': capital_pool_id, 'persona_id': sponsor_persona_id,
     }
-    approval_mismatches = [
-        f"{field} expected {expected!r}, got {approval.get(field)!r}"
-        for field, expected in expected_approval.items()
-        if approval.get(field) != expected
-    ]
-    if approval.get("revoked_at") not in {None, ""}:
-        approval_mismatches.append("approval is revoked")
-    conditions = approval.get("conditions")
-    if conditions not in (None, []):
-        approval_mismatches.append("conditional approval is not admitted as unconditional proof")
-    expiry = str(approval.get("expires_at") or "").strip()
+    approval_mismatches = []
     observed_at = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
-    if expiry and _parse_time(expiry, "ApprovalDecision.expires_at") <= observed_at:
-        approval_mismatches.append("approval is expired")
+    try:
+        approval_evidence.require_valid(expected=expected_approval, now=observed_at)
+    except ApprovalInvalid as exc:
+        approval_mismatches.append(str(exc))
+
     if approval_mismatches:
         raise DeployAuthorityError(
             "governance authority mismatch: " + "; ".join(approval_mismatches)

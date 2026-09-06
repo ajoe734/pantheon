@@ -2,6 +2,9 @@ from __future__ import annotations
 
 import pytest
 import sys
+from copy import deepcopy
+from datetime import datetime, timezone
+from unittest import mock
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -348,3 +351,63 @@ def test_task_review_requeue_is_materialized_fails_closed_on_no_record() -> None
     assert not task_review_requeue_is_materialized(
         {"review_requeue_intent": {"status": "pending"}}
     )
+
+
+@pytest.mark.parametrize("authorization_state", ["pending_authorization", "revoked"])
+@pytest.mark.parametrize("status,role", [("todo", "owner"), ("in_progress", "owner"), ("review", "reviewer"), ("review_approved", "owner")])
+def test_wrapper_normalizes_only_auth_fence_for_canonical_purpose(authorization_state, status, role):
+    import dispatch_policy
+    import execution_authorization as ea
+    from rewrite.dispatch_admission import AdmissionSnapshot, DeliveryEndpoint, DispatchLane, HealthRecord, HealthState
+    from test_execution_authorization import ExecutionAuthorizationTestCase
+
+    fixture = ExecutionAuthorizationTestCase()
+    fixture.setUp()
+    task = deepcopy(fixture._granted_task())
+    task["execution_resources"] = ["pantheon-dev"]
+    task["dev_bridge"]["task_spec"]["execution_resources"] = ["pantheon-dev"]
+    fixture.policy = ea.derive_execution_policy(
+        task_id=task["id"], work_class="security", repository="pantheon",
+        resources=["pantheon-dev"], artifacts=task["artifacts"], task_spec=task["dev_bridge"]["task_spec"],
+    )
+    task["dev_bridge"]["task_spec_hash"] = fixture.policy["task_spec_hash"]
+    task.update(status=status, waiting_for="Human/Ops")
+    task["execution_authorization"] = ea.pending_authorization_hold(fixture.policy)
+    task["execution_authorization"]["state"] = authorization_state
+    original = deepcopy(task)
+    lane = DispatchLane("test-lane", task[role], 1, (DeliveryEndpoint("endpoint", "provider", "account"),))
+    snapshot = AdmissionSnapshot(
+        now=datetime.now(timezone.utc),
+        endpoint_health={"endpoint": HealthRecord(HealthState.HEALTHY)},
+        account_health={"account": HealthRecord(HealthState.HEALTHY)},
+        account_limits={"account": 1},
+    )
+
+    def evaluate():
+        return dispatch_policy.evaluate_task_delivery_admission(
+            {}, {}, task, task[role], {}, active_task_ids=set(), pending_task_ids=set(),
+            agent_loads={}, active_account_loads={}, pending_account_loads={},
+        )
+
+    with (
+        mock.patch.object(dispatch_policy, "delivery_lane_for_agent", return_value=lane),
+        mock.patch.object(dispatch_policy, "build_delivery_admission_snapshot", return_value=snapshot),
+        mock.patch.object(dispatch_policy, "dependencies_satisfied", return_value=True),
+        mock.patch.object(dispatch_policy.rewrite_task_machine, "delivery_binding_is_current", return_value=True),
+        mock.patch.object(dispatch_policy, "review_decision_intent_replay_eligible", return_value=False),
+    ):
+        decision = evaluate()
+        if status in {"review", "review_approved"}:
+            assert decision.eligible
+        else:
+            assert not decision.eligible
+            assert decision.reason.value == "execution_authorization_required"
+        assert task == original
+        task["waiting_for"] = "Claude"
+        assert evaluate().reason.value == "human_hold"
+        task["waiting_for"] = "Human/Ops"
+        task["execution_authorization"]["old_runtime_hold"] = False
+        assert evaluate().reason.value == "human_hold"
+        task["execution_authorization"]["old_runtime_hold"] = True
+        task["review_decision_intent"] = {"nonce": "unresolved-independent-review-decision"}
+        assert evaluate().reason.value == "human_hold"

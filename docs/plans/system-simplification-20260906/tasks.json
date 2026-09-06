@@ -1,0 +1,1232 @@
+{
+  "schema": "pantheon.simplification-execution-plan.v1",
+  "program_id": "llm-oss-simplification-20260906",
+  "scope": "All16 audit candidates and complete OSS inventories; supervisor implementation, independent Codex review, CI and merged dev delivery",
+  "candidate_coverage": {
+    "1": {
+      "title": "BFF/Persona duplicate and divergent provisioning responsibilities",
+      "task_ids": [
+        "OVERLAY-RETIRE-001",
+        "STRUCT-RETIRE-001",
+        "SIMPLIFY-BFF-RESIDUAL-001"
+      ],
+      "state": "planned; canonical admission and implementation tracked separately"
+    },
+    "2": {
+      "title": "Native FastAPI dependencies and obsolete test shims",
+      "task_ids": [
+        "BFF-TEST-FULL-MIGRATION-CORRECTIVE-001",
+        "STRUCT-RETIRE-001",
+        "SIMPLIFY-BFF-RESIDUAL-001"
+      ],
+      "state": "planned; canonical admission and implementation tracked separately"
+    },
+    "3": {
+      "title": "OpenClaw single ordinary-turn HTTP transport",
+      "task_ids": [
+        "SIMPLIFY-OPENCLAW-001",
+        "OSS-CORE-BASELINE-001",
+        "OSS-INFRA-PROFILES-001"
+      ],
+      "state": "planned; canonical admission and implementation tracked separately"
+    },
+    "4": {
+      "title": "Native SSE and one Pydantic-v2 API baseline",
+      "task_ids": [
+        "OSS-CORE-BASELINE-001"
+      ],
+      "state": "planned; canonical admission and implementation tracked separately"
+    },
+    "5": {
+      "title": "TanStack Query replacing handwritten live cache",
+      "task_ids": [
+        "FE-QUERY-CACHE-001"
+      ],
+      "state": "planned; canonical admission and implementation tracked separately"
+    },
+    "6": {
+      "title": "Evaluated typed intent/StrategySpec/lesson extraction",
+      "task_ids": [
+        "SIMPLIFY-EXTRACTION-001"
+      ],
+      "state": "planned; canonical admission and implementation tracked separately"
+    },
+    "7": {
+      "title": "One real local retrieval backend",
+      "task_ids": [
+        "SIMPLIFY-RETRIEVAL-MEMORY-001",
+        "OSS-INFRA-PROFILES-001"
+      ],
+      "state": "planned; canonical admission and implementation tracked separately"
+    },
+    "8": {
+      "title": "Shared governed source and memory retrieval",
+      "task_ids": [
+        "SIMPLIFY-RETRIEVAL-MEMORY-001"
+      ],
+      "state": "planned; canonical admission and implementation tracked separately"
+    },
+    "9": {
+      "title": "Research framework usefulness and product footprint",
+      "task_ids": [
+        "OSS-RESEARCH-FOOTPRINT-001",
+        "OSS-RESEARCH-BASELINE-001"
+      ],
+      "state": "planned; canonical admission and implementation tracked separately"
+    },
+    "10": {
+      "title": "Upstream LEAN plus external Pantheon extensions",
+      "task_ids": [
+        "OSS-EXECUTION-BASELINE-001"
+      ],
+      "state": "planned; canonical admission and implementation tracked separately"
+    },
+    "11": {
+      "title": "Numerical QuantLib and Ray API convergence",
+      "task_ids": [
+        "OSS-RESEARCH-BASELINE-001"
+      ],
+      "state": "planned; canonical admission and implementation tracked separately"
+    },
+    "12": {
+      "title": "Unused dependencies, locks and complete OSS family upgrades",
+      "task_ids": [
+        "OSS-CORE-BASELINE-001",
+        "OSS-TOOLING-BASELINE-001",
+        "FE-DEP-CLOSURE-001",
+        "FE-TOOLCHAIN-BASELINE-001",
+        "FE-UI-DEPS-BASELINE-001"
+      ],
+      "state": "planned; canonical admission and implementation tracked separately"
+    },
+    "13": {
+      "title": "Production fixture/mock/overlay retirement",
+      "task_ids": [
+        "FE-STRICTLIVE-001",
+        "FE-QUERY-CACHE-001"
+      ],
+      "state": "planned; canonical admission and implementation tracked separately"
+    },
+    "14": {
+      "title": "Retired BFF routes and exact cron run identity",
+      "task_ids": [
+        "SIMPLIFY-OPENCLAW-001",
+        "STRUCT-RETIRE-001",
+        "SIMPLIFY-BFF-RESIDUAL-001"
+      ],
+      "state": "planned; canonical admission and implementation tracked separately"
+    },
+    "15": {
+      "title": "Legacy review migration and approval exception retirement",
+      "task_ids": [
+        "OPS-LEGACY-REVIEW-RETIRE-001"
+      ],
+      "state": "planned; canonical admission and implementation tracked separately"
+    },
+    "16": {
+      "title": "Maintained storage, Compose profiles and infrastructure images",
+      "task_ids": [
+        "OSS-INFRA-CHOICE-001",
+        "OSS-INFRA-PROFILES-001",
+        "OSS-OBJECT-STORE-CUTOVER-001"
+      ],
+      "state": "planned; canonical admission and implementation tracked separately"
+    }
+  },
+  "tasks": [
+    {
+      "id": "OSS-COVERAGE-PLAN-001",
+      "title": "Version the complete simplification execution plan and dependency coverage",
+      "target_repo": "pantheon",
+      "owner": "Claude",
+      "reviewer": "Codex",
+      "phase": "System simplification execution",
+      "depends_on": [],
+      "dependency_tracks": {},
+      "execution_resources": [],
+      "summary": "Version the complete simplification execution plan and dependency coverage",
+      "artifacts": [
+        "docs/deployment/evidence/OSS-COVERAGE-PLAN-001/evidence.json",
+        "docs/plans/system-simplification-20260906/COVERAGE.md",
+        "docs/plans/system-simplification-20260906/EXECUTION_PLAN.md",
+        "docs/plans/system-simplification-20260906/oss-source-artifacts.csv",
+        "docs/plans/system-simplification-20260906/oss-version-disposition.csv",
+        "docs/plans/system-simplification-20260906/tasks.json",
+        "docs/plans/system-simplification-20260906/llm-task-design.md"
+      ],
+      "acceptance": [
+        "Copy the exact root-frozen tasks.json, COVERAGE.md and EXECUTION_PLAN.md from the approved immutable delivery package; preserve all sixteen candidates and full task graph. Commit, push, independently review and merge these documents to dev; /tmp files or task assignment alone are not delivery.",
+        "Reconcile source manifests against current backend and execute-plans dev and cover every audit inventory row: 44 PyPI package names/195 declarations/49 requirements files (including three forwarding/comment-only files), 94 npm dependencies, 63 image declarations, 51 inline-install/version declarations. Add new current-dev declarations to the ledger; no unassigned row. Record canonical exact source hashes, official upstream source, chosen family task and installed/deployed identity separately.",
+        "Every retained old version must have a concrete compatibility or acceptance constraint, official evidence, owner and next action; newest stable values must be refreshed by each implementation worker and cannot be blindly copied from the September6 audit. MinIO/object storage and hosting require the separate decision gate.",
+        "Validate graph references, acyclicity and transitive serialization of every overlapping artifact grant against current canonical owners. Draft task specs remain noncanonical files; do not hand-edit canonical tasks/queues or change any credentials/account/quota/model/slot setting.",
+        "Publish the supplied oss-version-task-coverage.csv as the initial oss-version-disposition.csv with status explicitly planned, plus oss-source-artifacts.csv and llm-task-design.md. The supplied catalog is the execution contract; do not rewrite signed task scope/dependencies from draft appendices. Include all family task IDs and current readback, never represent planned rows as implemented."
+      ],
+      "report_candidates": [
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7,
+        8,
+        9,
+        10,
+        11,
+        12,
+        13,
+        14,
+        15,
+        16
+      ],
+      "activation": "immediate; this is the unique executable version-control delivery of the full plan, not implementation completion"
+    },
+    {
+      "id": "OSS-CORE-BASELINE-001",
+      "title": "Lock the core API runtimes and remove obsolete SSE/Pydantic/dependency branches",
+      "target_repo": "pantheon",
+      "owner": "Claude",
+      "reviewer": "Codex2",
+      "phase": "System simplification execution",
+      "depends_on": [
+        "OSS-COVERAGE-PLAN-001",
+        "SIMPLIFY-BFF-RESIDUAL-001",
+        "SIMPLIFY-OPENCLAW-001",
+        "SIMPLIFY-RETRIEVAL-MEMORY-001"
+      ],
+      "dependency_tracks": {},
+      "execution_resources": [],
+      "summary": "Lock the core API runtimes and remove obsolete SSE/Pydantic/dependency branches",
+      "artifacts": [
+        "Dockerfile.smoke",
+        "dependencies/constraints-core.txt",
+        "dependencies/locks/root-tests.txt",
+        "dependencies/locks/services-capital.txt",
+        "dependencies/locks/services-channels-discord.txt",
+        "dependencies/locks/services-channels-telegram.txt",
+        "dependencies/locks/services-channels-web.txt",
+        "dependencies/locks/services-consultation.txt",
+        "dependencies/locks/services-control-plane-bff.txt",
+        "dependencies/locks/services-control-plane-feedback.txt",
+        "dependencies/locks/services-control-plane-persona.txt",
+        "dependencies/locks/services-control-plane-router.txt",
+        "dependencies/locks/services-deployment.txt",
+        "dependencies/locks/services-evaluation.txt",
+        "dependencies/locks/services-evolution.txt",
+        "dependencies/locks/services-feedback.txt",
+        "dependencies/locks/services-governance.txt",
+        "dependencies/locks/services-incidents.txt",
+        "dependencies/locks/services-lineage-read.txt",
+        "dependencies/locks/services-memory.txt",
+        "dependencies/locks/services-openclaw-gateway-adapter.txt",
+        "dependencies/locks/services-optimizer-svc.txt",
+        "dependencies/locks/services-paper_fleet_reconciler.txt",
+        "dependencies/locks/services-postmortems.txt",
+        "dependencies/locks/services-promotion.txt",
+        "dependencies/locks/services-reconciliation-drift.txt",
+        "dependencies/locks/services-registry.txt",
+        "dependencies/locks/services-runtime-manager.txt",
+        "dependencies/locks/services-source_ingestion.txt",
+        "dependencies/locks/services-telemetry.txt",
+        "docs/deployment/evidence/OSS-CORE-BASELINE-001/evidence.json",
+        "requirements.txt",
+        "services/capital/Dockerfile",
+        "services/capital/requirements.txt",
+        "services/channels/discord/requirements.txt",
+        "services/channels/telegram/requirements.txt",
+        "services/channels/web/Dockerfile",
+        "services/channels/web/requirements.txt",
+        "services/consultation/Dockerfile",
+        "services/consultation/main.py",
+        "services/consultation/requirements.txt",
+        "services/consultation/store.py",
+        "services/consultation/test_models.py",
+        "services/consultation/test_postgres_store.py",
+        "services/consultation/test_request_idempotency.py",
+        "services/control-plane/bff/Dockerfile",
+        "services/control-plane/bff/events/router.py",
+        "services/control-plane/bff/events/service.py",
+        "services/control-plane/bff/events/test_router.py",
+        "services/control-plane/bff/requirements.txt",
+        "services/control-plane/bff/test_ask005_sse_event_publishing_contract.py",
+        "services/control-plane/bff/test_bff_auth_facade.py",
+        "services/control-plane/bff/test_bff_evolution_experiment_jobs_events_contract.py",
+        "services/control-plane/bff/test_bff_session_auth_me_contract.py",
+        "services/control-plane/bff/test_pkt005_sse_substrate_contract.py",
+        "services/control-plane/bff/test_tj_e2e_007_sse_attention.py",
+        "services/control-plane/bff/tests/rebalance_authority_test_support.py",
+        "services/control-plane/bff/tests/test_agora_write_authority.py",
+        "services/control-plane/bff/tests/test_auth_jwks_strict.py",
+        "services/control-plane/bff/tests/test_bff_auth_facade.py",
+        "services/control-plane/bff/tests/test_bff_auth_refresh.py",
+        "services/control-plane/bff/tests/test_events_router.py",
+        "services/control-plane/bff/tests/test_openclaw_ops_service_auth.py",
+        "services/control-plane/bff/tests/test_ppl_alloc_009_assertion_semantics.py",
+        "services/control-plane/bff/tests/test_sse_backpressure.py",
+        "services/control-plane/feedback/Dockerfile",
+        "services/control-plane/feedback/requirements.txt",
+        "services/control-plane/persona/Dockerfile",
+        "services/control-plane/persona/requirements.txt",
+        "services/control-plane/router/Dockerfile",
+        "services/control-plane/router/requirements.txt",
+        "services/deployment/Dockerfile",
+        "services/deployment/requirements.txt",
+        "services/evaluation/Dockerfile",
+        "services/evaluation/requirements.txt",
+        "services/evolution/Dockerfile",
+        "services/evolution/requirements.txt",
+        "services/feedback/Dockerfile",
+        "services/feedback/requirements.txt",
+        "services/governance/Dockerfile",
+        "services/governance/requirements.txt",
+        "services/incidents/Dockerfile",
+        "services/incidents/requirements.txt",
+        "services/lineage-read/Dockerfile",
+        "services/lineage-read/requirements.txt",
+        "services/memory/Dockerfile",
+        "services/memory/requirements.txt",
+        "services/openclaw-gateway-adapter/Dockerfile",
+        "services/openclaw-gateway-adapter/consultation_provider.py",
+        "services/openclaw-gateway-adapter/main.py",
+        "services/openclaw-gateway-adapter/requirements.txt",
+        "services/optimizer-svc/Dockerfile",
+        "services/optimizer-svc/requirements.txt",
+        "services/paper_fleet_reconciler/Dockerfile",
+        "services/paper_fleet_reconciler/requirements.txt",
+        "services/postmortems/Dockerfile",
+        "services/postmortems/requirements.txt",
+        "services/promotion/Dockerfile",
+        "services/promotion/requirements.txt",
+        "services/reconciliation-drift/Dockerfile",
+        "services/reconciliation-drift/requirements.txt",
+        "services/registry/Dockerfile",
+        "services/registry/Dockerfile.test",
+        "services/registry/requirements.txt",
+        "services/runtime-manager/Dockerfile",
+        "services/runtime-manager/requirements.txt",
+        "services/search/Dockerfile",
+        "services/search/requirements.lock",
+        "services/search/requirements.txt",
+        "services/source_ingestion/Dockerfile",
+        "services/source_ingestion/requirements.txt",
+        "services/telemetry/Dockerfile",
+        "services/telemetry/requirements.txt"
+      ],
+      "acceptance": [
+        "Refresh all assigned source declarations and official latest stable compatibility; build isolated API/runtime dependency closures with exact resolved versions and image identities. Keep tooling, execution and scientific environments separate; remove duplicated unbounded inline installs only after their lock-backed equivalent builds.",
+        "Use one supported FastAPI/Pydantic-v2/Uvicorn baseline and native SSE; delete superseded format/event/id/heartbeat/header code and the explicit consultation v1 dump/copy/validate/field branches. Do not delete generic dict/dataclass serializers or replace domain event history.",
+        "Prove tenant filtering, bounded queues, Last-Event-ID replay, 409 resync, disconnect cancellation, multiline data, exact event IDs, streaming [DONE] and persisted date/enum/null/idempotency-fingerprint serialization against pre-change fixtures; no permanent alternate dispatcher remains.",
+        "Remove python-jose/passlib only after current import/plugin/CLI/clean-image closure confirms unused. Explicitly declare cryptography still required by JWKS/AESGCM/signatures. Execute auth/privacy/crypto tests with zero missing-dependency skips; preserve verified issuer/audience/expiry/tenant semantics. Move runtime pytest only when runtime starts without it.",
+        "Every core/channel/client declaration including Flask, HTTPX, asyncpg, psycopg, redis client, nats-py, jsonschema, multipart, discord.py, telegram and GCS receives a tested upgrade/remove/justified-retention disposition; do not claim server upgrades eliminate outbox/fencing or auth.",
+        "Consume the accepted Search backend-contract/model/runtime identity; Search-specific backend/vector requirements remain the retrieval owner decision. Refresh its API baseline only after its merged handoff and preserve the chosen single backend; reconcile existing services/search/requirements.lock rather than creating a competing second lock."
+      ],
+      "report_candidates": [
+        4,
+        12
+      ]
+    },
+    {
+      "id": "OSS-TOOLING-BASELINE-001",
+      "title": "Resolve and validate the isolated development-tooling dependency baseline",
+      "target_repo": "pantheon",
+      "owner": "Antigravity",
+      "reviewer": "Codex2",
+      "phase": "System simplification execution",
+      "depends_on": [
+        "OSS-COVERAGE-PLAN-001",
+        "OPS-LEGACY-REVIEW-RETIRE-001",
+        "OPS-PRIVILEGED-TASK-EXECUTION-AUTH-001"
+      ],
+      "dependency_tracks": {},
+      "execution_resources": [],
+      "summary": "Resolve and validate the isolated development-tooling dependency baseline",
+      "artifacts": [
+        ".orchestrator/requirements.txt",
+        "dependencies/locks/orchestrator.txt",
+        "docs/deployment/evidence/OSS-TOOLING-BASELINE-001/evidence.json"
+      ],
+      "acceptance": [
+        "Resolve the three current tooling runtime dependencies and their transitive closure against the approved Python interpreter from official latest stable releases; update only tooling requirements/lock/evidence and run the genuine minimal tooling import/status/task-store contract tests in an isolated interpreter.",
+        "Keep dependency closure separate from product/ML runtime. Do not change or promote live supervisor config, account grouping, quota, leases, credentials, installed CLIs or model/slot settings; latest source dependency does not imply deployed version."
+      ],
+      "report_candidates": [
+        12
+      ]
+    },
+    {
+      "id": "OSS-RESEARCH-FOOTPRINT-001",
+      "title": "Measure and retire unnecessary research framework product entry points",
+      "target_repo": "pantheon",
+      "owner": "Claude",
+      "reviewer": "Codex2",
+      "phase": "System simplification execution",
+      "depends_on": [
+        "OSS-COVERAGE-PLAN-001",
+        "DOMAIN-WRITERS-DURABILITY-CORRECTIVE-001",
+        "SIMPLIFY-EXTRACTION-001"
+      ],
+      "dependency_tracks": {},
+      "execution_resources": [],
+      "summary": "Measure and retire unnecessary research framework product entry points",
+      "artifacts": [
+        "docs/deployment/evidence/OSS-RESEARCH-FOOTPRINT-001/evidence.json",
+        "docs/operations/research-framework-disposition.md",
+        "services/learning/DEFERRED_OSS_ACTIVATION_MAP.md",
+        "services/learning/dspy/adapter.py",
+        "services/learning/dspy/test_adapter.py",
+        "services/learning/dspy/worker.py",
+        "services/learning/imitation/adapter.py",
+        "services/learning/imitation/test_adapter.py",
+        "services/learning/imitation/worker.py",
+        "services/learning/trl/adapter/trl_adapter.py",
+        "services/learning/trl/test_adapter.py",
+        "services/learning/trl/worker.py",
+        "services/persona/oss_runtime.py",
+        "services/policy-learning/main.py",
+        "services/policy-learning/tests/test_policy_learning_shadow_eval_scheduler.py",
+        "services/research-worker-gateway/main.py",
+        "services/research-worker-gateway/tests/test_research_worker_gateway_gate_dispatch.py",
+        "services/research-worker-gateway/tests/test_research_worker_gateway_rejection_policy.py",
+        "services/research/imitation/bc_trainer.py",
+        "services/research/imitation/test_bc_trainer.py",
+        "tests/fixtures/research_framework_holdout.json"
+      ],
+      "acceptance": [
+        "Inventory actual consumers/default profiles/activated jobs for DSPy, TRL, imitation, FinRL, RLlib and QLib; distinguish dormant upstream adapters from the real CPU softmax shadow learner and from numerical research. Freeze source/dataset/time holdout before tuning.",
+        "For intent/tool routing compare current implementation with the already-authorized native typed extraction/tool baseline plus fixed prompt and approved examples. Measure task success, unsafe/wrong-tool rate, confidence calibration, cost per accepted result and p95. Acceptance margins and corpus identity must be frozen before comparison; no tuning on holdout.",
+        "For no-use or no-measurable-lift frameworks, actually remove obsolete product registration/dispatch and stub success paths or make them explicit optional offline research jobs, preserving feedback/evaluation datasets and accepted artifact lineage. If a framework materially wins, keep it with a measured use case rather than force removal. Numeric policy learning is not replaced by language imitation.",
+        "Exercise authentic dispatch denied/approved/failed cases and baseline CPU shadow learning. Exit with actual source deletions/changed entrypoints or measured justified retention for each of the six frameworks; a report alone does not close this task. No Compose edits here; emit the exact profile requirements consumed by the sole later Compose task."
+      ],
+      "report_candidates": [
+        9
+      ]
+    },
+    {
+      "id": "OSS-RESEARCH-BASELINE-001",
+      "title": "Upgrade retained numerical and ML runtimes and delete obsolete numerical/API compatibility",
+      "target_repo": "pantheon",
+      "owner": "Antigravity",
+      "reviewer": "Codex",
+      "phase": "System simplification execution",
+      "depends_on": [
+        "OSS-COVERAGE-PLAN-001",
+        "OSS-RESEARCH-FOOTPRINT-001"
+      ],
+      "dependency_tracks": {},
+      "execution_resources": [],
+      "summary": "Upgrade retained numerical and ML runtimes and delete obsolete numerical/API compatibility",
+      "artifacts": [
+        "dependencies/constraints-research.txt",
+        "dependencies/locks/services-learning-dspy.txt",
+        "dependencies/locks/services-learning-imitation.txt",
+        "dependencies/locks/services-learning-trl.txt",
+        "dependencies/locks/services-policy-learning.txt",
+        "dependencies/locks/services-registry-experiments.txt",
+        "dependencies/locks/services-research-dspy.txt",
+        "dependencies/locks/services-research-finrl.txt",
+        "dependencies/locks/services-research-imitation.txt",
+        "dependencies/locks/services-research-mlflow.txt",
+        "dependencies/locks/services-research-qlib.txt",
+        "dependencies/locks/services-research-quantlib.txt",
+        "dependencies/locks/services-research-rllib.txt",
+        "dependencies/locks/services-research-statsmodels.txt",
+        "dependencies/locks/services-research-vectorbt.txt",
+        "dependencies/locks/services-research.txt",
+        "dependencies/locks/services-training-session.txt",
+        "docs/deployment/evidence/OSS-RESEARCH-BASELINE-001/evidence.json",
+        "services/learning/dspy/Dockerfile",
+        "services/learning/dspy/adapter.py",
+        "services/learning/dspy/requirements.txt",
+        "services/learning/dspy/test_adapter.py",
+        "services/learning/imitation/Dockerfile",
+        "services/learning/imitation/requirements.txt",
+        "services/learning/trl/Dockerfile",
+        "services/learning/trl/adapter/trl_adapter.py",
+        "services/learning/trl/requirements.txt",
+        "services/learning/trl/test_adapter.py",
+        "services/policy-learning/Dockerfile",
+        "services/policy-learning/requirements.txt",
+        "services/registry/experiments/Dockerfile",
+        "services/registry/experiments/requirements.txt",
+        "services/research-worker-gateway/Dockerfile",
+        "services/research/Dockerfile",
+        "services/research/dspy/Dockerfile",
+        "services/research/dspy/requirements.txt",
+        "services/research/finrl/Dockerfile",
+        "services/research/finrl/requirements.txt",
+        "services/research/imitation/Dockerfile",
+        "services/research/imitation/requirements.txt",
+        "services/research/mlflow/Dockerfile",
+        "services/research/mlflow/entrypoint.py",
+        "services/research/mlflow/requirements.txt",
+        "services/research/mlflow/test_security_boundary.py",
+        "services/research/qlib/Dockerfile",
+        "services/research/qlib/requirements.txt",
+        "services/research/quantlib/Dockerfile",
+        "services/research/quantlib/adapter.py",
+        "services/research/quantlib/adapter/quantlib_adapter.py",
+        "services/research/quantlib/production_option_chain.py",
+        "services/research/quantlib/requirements.txt",
+        "services/research/quantlib/test_adapter.py",
+        "services/research/quantlib/test_production_option_chain.py",
+        "services/research/requirements.txt",
+        "services/research/rllib/Dockerfile",
+        "services/research/rllib/adapter/rllib_adapter.py",
+        "services/research/rllib/cartpole_ppo.py",
+        "services/research/rllib/production_ppo_run.py",
+        "services/research/rllib/requirements.txt",
+        "services/research/rllib/test_adapter.py",
+        "services/research/rllib/test_production_ppo_run.py",
+        "services/research/statsmodels/Dockerfile",
+        "services/research/statsmodels/adapter/statsmodels_adapter.py",
+        "services/research/statsmodels/requirements.txt",
+        "services/research/statsmodels/test_adapter.py",
+        "services/research/vectorbt/Dockerfile",
+        "services/research/vectorbt/adapter/vectorbt_adapter.py",
+        "services/research/vectorbt/requirements.txt",
+        "services/research/vectorbt/test_adapter.py",
+        "services/training-session/Dockerfile",
+        "services/training-session/requirements.txt"
+      ],
+      "acceptance": [
+        "For all assigned ML/scientific declarations choose fresh stable compatible Python/wheels/runtime sets from primary sources and produce reproducible per-runtime locks and successful real container imports. Cover DSPy, TRL, Torch, transformers, accelerate, datasets, peft, sentencepiece, FinRL, imitation, stable-baselines3, gymnasium, Ray, QLib, LightGBM, vectorbt, statsmodels, NumPy, pandas, matplotlib, plotly, MLflow and wandb, including already-latest/removed packages.",
+        "Do not force latest NumPy onto Python3.11 or a single shared ML environment. Verify CPU/GPU wheel index and artifact identity. Retained older versions need reproduced incompatibility and next action; remove stale numpy/pandas upper bounds only after numerical regression passes. Remove forwarding/umbrella requirements only after their Docker/CI consumers migrate.",
+        "If QuantLib remains needed, replace QuantLib-Python metapackage with pinned imported QuantLib core, consolidate duplicated BSM/CRR production paths into one numerical backend, retain reference formulas only as test fixtures. Test prices and Greeks across European/American exercise, dividends, rates, calendars, zero/short maturity and edge cases with tolerances fixed before implementation.",
+        "If Ray remains needed, adopt one supported new API stack and delete hasattr/env_runners/legacy rollouts branches; execute a real seeded train/eval/checkpoint restore, not a stub smoke. For retained TRL use a valid generative preference trainer/model, supported API and real tiny optimization; no DistilBERT classifier represented as DPO equivalence.",
+        "Preserve MLflow/Registry/governance boundaries and original raw feedback/eval artifacts. Report actual training/backtest/numerical commands and counts; collection/skips/fake backend success do not establish runtime compatibility."
+      ],
+      "report_candidates": [
+        9,
+        11
+      ]
+    },
+    {
+      "id": "OSS-EXECUTION-BASELINE-001",
+      "title": "Externalize Pantheon LEAN extensions and validate the execution dependency baseline",
+      "target_repo": "pantheon",
+      "owner": "Claude",
+      "reviewer": "Codex2",
+      "phase": "System simplification execution",
+      "depends_on": [
+        "OSS-COVERAGE-PLAN-001",
+        "STRUCT-RETIRE-001"
+      ],
+      "dependency_tracks": {},
+      "execution_resources": [],
+      "summary": "Externalize Pantheon LEAN extensions and validate the execution dependency baseline",
+      "artifacts": [
+        ".gitmodules",
+        "dependencies/locks/services-broker-sinopac.txt",
+        "dependencies/locks/services-broker.txt",
+        "dependencies/locks/services-execution-lean_runtime.txt",
+        "docs/deployment/evidence/OSS-EXECUTION-BASELINE-001/evidence.json",
+        "integrations/lean/pantheon_algo/__init__.py",
+        "integrations/lean/pantheon_algo/base.py",
+        "integrations/lean/pantheon_algo/smoke_loader_test.py",
+        "integrations/lean/pantheon_algo/test_base.py",
+        "lean",
+        "scripts/smoke_test_lean_algo.py",
+        "services/broker/Dockerfile",
+        "services/broker/requirements.txt",
+        "services/broker/sinopac/adapter.py",
+        "services/broker/sinopac/facade.py",
+        "services/broker/sinopac/requirements.txt",
+        "services/broker/sinopac/test_adapter.py",
+        "services/broker/sinopac/test_facade.py",
+        "services/broker/test_broker.py",
+        "services/execution/lean_runtime/Dockerfile",
+        "services/execution/lean_runtime/bootstrap_contract.py",
+        "services/execution/lean_runtime/requirements.txt",
+        "services/execution/lean_runtime/runtime_bootstrap.py",
+        "services/execution/lean_runtime/runtime_context.py",
+        "services/execution/lean_runtime/runtime_identity.py",
+        "services/execution/lean_runtime/smoke_algorithm.py",
+        "services/execution/lean_runtime/test_algorithm_smoke.py",
+        "services/execution/lean_runtime/test_bootstrap_contract.py",
+        "services/execution/lean_runtime/test_runtime_bootstrap.py",
+        "services/execution/lean_runtime/test_runtime_context.py",
+        "services/execution/lean_runtime/test_runtime_identity.py"
+      ],
+      "acceptance": [
+        "Reconcile the four Pantheon-only Algorithm.Python/pantheon_algo files against current upstream and move their supported algorithm/bridge functionality into an external local library/mount. Pin a tested upstream LEAN SHA/image; update or retire the fork gitlink without losing its source history. Do not use the stale latest-release tag as engine evidence.",
+        "Prove imports and actual LEAN engine replay with runtime/model/tenant/strategy/session context, bridge events, execution identity, restart and order/signal replay contracts. Existing memory-only broker smoke alone cannot establish engine compatibility. Record exact upstream/local algorithm and image identities.",
+        "Resolve all execution/broker dependency rows including shioaji from current official stable releases; test adapter facade and broker/signal contracts using isolated simulation. Preserve kill switch/fencing/idempotency/signal-store and paper/live boundaries; no broker login, capital action or real order.",
+        "Exit with upstream engine and one external Pantheon library, or a precisely identified upstream incompatibility with bounded correction attempted; do not preserve a permanent second engine/fork path merely as fallback."
+      ],
+      "report_candidates": [
+        10
+      ]
+    },
+    {
+      "id": "FE-DEP-CLOSURE-001",
+      "title": "Remove unused FE dependencies and converge the package-manager lock",
+      "target_repo": "execute-plans",
+      "owner": "Claude",
+      "reviewer": "Codex2",
+      "phase": "System simplification execution",
+      "depends_on": [
+        "OSS-COVERAGE-PLAN-001",
+        "FE-STRICTLIVE-001",
+        "FE-EXACT-PAIR-PROTOCOL-001"
+      ],
+      "dependency_tracks": {},
+      "execution_resources": [],
+      "summary": "Remove unused FE dependencies and converge the package-manager lock",
+      "artifacts": [
+        "bun.lock",
+        "bun.lockb",
+        "docs/deployment/evidence/FE-DEP-CLOSURE-001/evidence.json",
+        "package-lock.json",
+        "package.json",
+        "vite.config.ts"
+      ],
+      "acceptance": [
+        "On current execute-plans dev prove static/dynamic/plugin/test/build consumers for all94auditpackages. Remove unused @ai-sdk/react/react-markdown only if still unused; keep actual ai types/Streamdown and chart consumers. Remove lovable-tagger only when its editing workflow has explicitly ended.",
+        "Prove no CI/local release consumer requires Bun; retain npm package-lock and delete only obsolete Bun lockfiles after clean npm ci/build/typecheck/tests. If a lock/plugin still has a consumer, publish that concrete consumer and keep it rather than silently break the workflow.",
+        "Preserve strict live mode/auth/session/server-stream contract and existing FE exact-pair release protocol. Final new FE head requires later release requalification; no hosted deployment in this task."
+      ],
+      "report_candidates": [
+        12
+      ]
+    },
+    {
+      "id": "FE-TOOLCHAIN-BASELINE-001",
+      "title": "Migrate the FE Node build/test/CSS toolchain to a tested current baseline",
+      "target_repo": "execute-plans",
+      "owner": "Antigravity",
+      "reviewer": "Codex2",
+      "phase": "System simplification execution",
+      "depends_on": [
+        "FE-DEP-CLOSURE-001",
+        "FE-QUERY-CACHE-001"
+      ],
+      "dependency_tracks": {},
+      "execution_resources": [],
+      "summary": "Migrate the FE Node build/test/CSS toolchain to a tested current baseline",
+      "artifacts": [
+        "docs/deployment/evidence/FE-TOOLCHAIN-BASELINE-001/evidence.json",
+        "eslint.config.js",
+        "package-lock.json",
+        "package.json",
+        "postcss.config.js",
+        "src/App.css",
+        "src/index.css",
+        "tailwind.config.ts",
+        "tsconfig.app.json",
+        "tsconfig.json",
+        "tsconfig.node.json",
+        "vite.config.ts"
+      ],
+      "acceptance": [
+        "Refresh Node/Vite/Vitest/TypeScript/Tailwind and all assigned lint/test/build dependencies from official stable metadata. Pick one compatible Node/engine set and build the actual application; newer versions are not automatically compatible. Migrate configuration and necessary CSS semantics with exact consumer checks.",
+        "After Tailwind v4 migration prove theme/custom utility/browser parity and remove obsolete autoprefixer/PostCSS configuration only when the selected plugin path actually replaces it. A Vite/TypeScript bump alone cannot justify deleting product logic.",
+        "Run clean npm ci, build, typecheck, relevant full Vitest suite and existing accessibility/browser acceptance using local candidate serving. Preserve independent exact-pair protocol and all strict mock-isolation gates; no invented hostnames or release controller.",
+        "All build-family package rows close with actual resolved versions and upgrade/remove/evidence-supported-retention decisions; include peer/engine/transitive compatibility and reproducible lock."
+      ],
+      "report_candidates": [
+        12
+      ]
+    },
+    {
+      "id": "FE-UI-DEPS-BASELINE-001",
+      "title": "Upgrade the retained FE application dependency family with integration regressions",
+      "target_repo": "execute-plans",
+      "owner": "Claude",
+      "reviewer": "Codex2",
+      "phase": "System simplification execution",
+      "depends_on": [
+        "FE-TOOLCHAIN-BASELINE-001"
+      ],
+      "dependency_tracks": {},
+      "execution_resources": [],
+      "summary": "Upgrade the retained FE application dependency family with integration regressions",
+      "artifacts": [
+        "docs/deployment/evidence/FE-UI-DEPS-BASELINE-001/evidence.json",
+        "package-lock.json",
+        "package.json",
+        "src/App.tsx",
+        "src/agora/widgets/ChartSpecRenderer.test.tsx",
+        "src/agora/widgets/ChartSpecRenderer.tsx",
+        "src/components/ui/chart.tsx",
+        "src/components/ui/form.tsx",
+        "src/integrations/gcp/identity.ts",
+        "src/lib/auth/AuthProvider.test.tsx",
+        "src/lib/auth/AuthProvider.tsx",
+        "src/lib/bff-v1/client.ts",
+        "src/lib/bff-v1/types.ts",
+        "src/lib/bff-v1/v5.ts",
+        "src/main.tsx",
+        "src/management/pages/v5/useV5Live.ts"
+      ],
+      "acceptance": [
+        "Close every remaining npm inventory row, not only headline majors: React/DOM/types, Router, Zod/resolvers/forms, Radix/UI, Query, Firebase/auth, charts, markdown/Streamdown/Shiki, state/i18n/date/motion/layout libraries. Fresh latest stable compatibility is verified by official docs/registry and actual clean install.",
+        "Preserve route/navigation/auth, live Query keys and invalidation, forms/schema behavior, Chat/SSE rendering and representative ChartSpec. Do not delete all useMemo/useCallback due to ReactCompiler; Compiler adoption requires separate demonstrated benefit, and do not force one chart library without complete coverage.",
+        "Run clean build/typecheck/full frontend tests and local browser journeys; migrated source must use one supported runtime API per family, with obsolete compatibility branches removed only after their exact contracts pass. If new source caller paths are required, return a precise formal artifact expansion before writing them.",
+        "Provide current94row complete disposition plus any newly discovered direct/transitive packages, lock and actual result evidence. Source merge does not claim final hosted FE/BFF pair acceptance."
+      ],
+      "report_candidates": [
+        12
+      ]
+    },
+    {
+      "id": "OSS-INFRA-CHOICE-001",
+      "title": "Choose maintained object storage and a bounded source-only runtime topology",
+      "target_repo": "pantheon",
+      "owner": "Claude",
+      "reviewer": "Codex2",
+      "phase": "System simplification execution",
+      "depends_on": [
+        "OSS-COVERAGE-PLAN-001"
+      ],
+      "dependency_tracks": {},
+      "execution_resources": [],
+      "summary": "Choose maintained object storage and a bounded source-only runtime topology",
+      "artifacts": [
+        "docs/deployment/evidence/OSS-INFRA-CHOICE-001/evidence.json",
+        "docs/plans/system-simplification-20260906/profile-contract.json",
+        "docs/plans/system-simplification-20260906/storage-consumer-matrix.json",
+        "docs/plans/system-simplification-20260906/storage-topology-decision.md"
+      ],
+      "acceptance": [
+        "Enumerate actual object-store consumers, used S3 semantics, object/metadata identities, retention/legal-hold/versioning/encryption/tenant requirements, existing data volumes, licensing and restore ownership without reading secrets or mutating hosted systems.",
+        "Compare at most three concrete options: maintained local S3-compatible implementation, existing supported managed object store, or documented retirement when no real consumer/data remains. Recheck MinIO upstream maintenance and image/client provenance. Provide a reproducible isolated proof for required S3 semantics and migration/restore feasibility, operational cost assumptions and one recommendation.",
+        "Choose and record one local source-development option and exact consumer/artifact scope, supported by the isolated S3 proof. This operator request authorizes ordinary source implementation and disposable local evaluation, without a second generic approval. If the only viable option requires new paid hosting, real-data migration or another unrequested external action, provide the concrete decision for operator authorization and leave that dependent action pending; do not fabricate approval. The later source cutover consumes this exact accepted choice.",
+        "Design source profiles core/workers/research/management-ai/execution with health/dependency/volume/isolation requirements. Read the current environment-identity plan; do not provision hostnames, migrate data, promote runtime or deploy."
+      ],
+      "report_candidates": [
+        16
+      ],
+      "decision_gate": true
+    },
+    {
+      "id": "OSS-INFRA-PROFILES-001",
+      "title": "Converge Compose profiles and maintained infrastructure image declarations",
+      "target_repo": "pantheon",
+      "owner": "Antigravity",
+      "reviewer": "Codex",
+      "phase": "System simplification execution",
+      "depends_on": [
+        "OSS-CORE-BASELINE-001",
+        "OSS-TOOLING-BASELINE-001",
+        "OSS-RESEARCH-BASELINE-001",
+        "OSS-EXECUTION-BASELINE-001",
+        "OSS-INFRA-CHOICE-001",
+        "DEV-DELIVERY-001",
+        "GOV-APPROVAL-AUTHORITY-PREREQUISITE-001",
+        "SIMPLIFY-RETRIEVAL-MEMORY-001"
+      ],
+      "dependency_tracks": {},
+      "execution_resources": [],
+      "summary": "Converge Compose profiles and maintained infrastructure image declarations",
+      "artifacts": [
+        "docker-compose.control.yml",
+        "docker-compose.exec.yml",
+        "docker-compose.remote-dev.yml",
+        "docker-compose.yml",
+        "docs/deployment/evidence/OSS-INFRA-PROFILES-001/evidence.json",
+        "docs/operations/runtime-profiles.md",
+        "services/policy-learning/tests/test_policy_learning_compose_activation.py",
+        "services/research-worker-gateway/tests/test_research_worker_gateway_compose_activation.py",
+        "services/research/tests/test_research_orchestrator_compose_activation.py",
+        "services/source_ingestion/test_compose_activation.py",
+        "services/training-session/tests/test_compose_activation.py"
+      ],
+      "acceptance": [
+        "As the sole later Compose writer, implement the approved core/workers/research/management-ai/execution profile contract and make unused/dormant research services opt-in. Preserve execution isolation, startup dependencies, durable volumes and safe write defaults; do not create duplicate service controllers.",
+        "Close all63image and51inline-install audit rows through family locks/images plus these Compose declarations. Pin supported tested server images/digests and resolve Python/Node/BusyBox/MinIO-client provenance; current declaration tags do not prove deployed versions. Recheck official releases and choose supported patches before unneeded major migrations.",
+        "Validate Postgres client/server/auth/migration/readback, Redis reconnect/lease/fencing/idempotency and NATS reconnect/redelivery/outbox semantics in disposable local services. Do not delete business reliability code based solely on a server upgrade.",
+        "Run compose config and isolated startup/health/restart probes for every supported profile combination and record actual containers/resources enabled before/after. No hosted deployment/data migration/MFA operation. Storage server/init removal must wait for actual accepted storage cutover proof, not merely this profile switch."
+      ],
+      "report_candidates": [
+        16
+      ]
+    },
+    {
+      "id": "OSS-OBJECT-STORE-CUTOVER-001",
+      "title": "Implement the selected object-store source cutover and retire superseded setup",
+      "target_repo": "pantheon",
+      "owner": "Claude",
+      "reviewer": "Codex2",
+      "phase": "System simplification execution",
+      "depends_on": [
+        "OSS-INFRA-PROFILES-001",
+        "OSS-INFRA-CHOICE-001"
+      ],
+      "dependency_tracks": {},
+      "execution_resources": [],
+      "summary": "Implement the selected object-store source cutover and retire superseded setup",
+      "artifacts": [
+        "docker-compose.control.yml",
+        "docker-compose.yml",
+        "docs/deployment/evidence/OSS-OBJECT-STORE-CUTOVER-001/evidence.json",
+        "docs/plans/system-simplification-20260906/storage-topology-decision.md",
+        "services/foundation/persistence_posture.py",
+        "services/foundation/tests/test_persistence_posture.py",
+        "services/research/main.py",
+        "services/source_search_posture.py",
+        "services/test_source_search_posture.py"
+      ],
+      "acceptance": [
+        "Begin source implementation after the accepted storage-choice and profile predecessors, using the selected local option and these admitted source grants. Reuse existing consumer interfaces. If additional files are actually required, obtain the existing qualified artifact-contract revision before writing them; do not make a new abstract storage layer merely to satisfy this plan. No production data, hosting or budget change is authorized by this functional task.",
+        "Implement the chosen source/config adapter path, then prove object count/size/hash/metadata/retention/tenant semantics and old-reference readback plus interruption/retry/rollback against isolated seeded object-store datasets. Record exact source/image/data identities and no secret values.",
+        "Delete old MinIO server/init/client glue only after zero remaining source consumers and an executed reversible local migration/readback proof, or prove there are no consumers/data and retire unused source setup. Keep durable artifact references and source authorization.",
+        "If hosted migration is required for actual retirement, stop at tested source tooling and explicit unresolved hosted acceptance; do not mark full storage retirement complete or infer MFA/cost/capital authorization."
+      ],
+      "report_candidates": [
+        16
+      ],
+      "activation": "Canonical task now; implementation waits for accepted choice and profiles. Source/local fixture changes only; real data or paid/hosted changes require actual authorization."
+    },
+    {
+      "id": "SIMPLIFY-OPENCLAW-001",
+      "title": "Unify OpenClaw normal turns on HTTP and correlate cron completion to the exact run",
+      "target_repo": "pantheon",
+      "owner": "Claude2",
+      "reviewer": "Codex",
+      "phase": "simplification-llm-transport",
+      "depends_on": [],
+      "dependency_tracks": {},
+      "execution_resources": [],
+      "summary": "Audit #3 plus cron slice of #14. One adapter transport; existing BFF/domain owners retained. Immediate functional task, no STRUCT dependency.",
+      "artifacts": [
+        "services/openclaw-gateway-adapter/assistant_openclaw_provider.py",
+        "services/openclaw-gateway-adapter/main.py",
+        "services/openclaw-gateway-adapter/test_main.py",
+        "services/openclaw-gateway-adapter/test_assistant_openclaw_provider_live.py",
+        "services/openclaw-gateway-adapter/tests/test_assistant_provider_runtime.py",
+        "services/openclaw-gateway-adapter/tests/test_prompt_injection.py",
+        "services/control-plane/cron/openclaw_client.py",
+        "services/control-plane/cron/test_cron.py",
+        "services/control-plane/cron/test_service.py",
+        "integrations/openclaw/integration.md",
+        "services/openclaw-gateway-adapter/tests/test_openresponses_transport_contract.py",
+        "services/openclaw-gateway-adapter/tests/test_structured_data_tool_contract.py",
+        "services/control-plane/cron/test_exact_run_wait.py",
+        "docs/deployment/evidence/SIMPLIFY-OPENCLAW-001/evidence.json"
+      ],
+      "acceptance": [
+        "Follow EXECUTION_PLAN.md and llm-task-design.md in the immutable signed task documents. Clean current-dev worktree, only declared files, real executed local functional checks, genuine author/task/reviewer trailers, commit/push/PR, independent assigned exact-head review, required checks and integrator merge. No hosted/prod mutation, canonical task edits, credential/account changes, new external corpus upload, fake approvals, skip-only acceptance or source-merge-as-hosted claims.",
+        "One HTTP request builder and normalization for ordinary invoke, stream and readiness answer probes. Preserve admitted agent/explicit model, authenticated tenant/actor/conversation session, messages/context/attachments, trace, total deadline, cancellation, errors and usage. Remove ordinary-turn subprocess/CLI decoding and 96 KiB argv branch; preserve administrative cron/auth CLI and existing read-only kernel boundary. Keep current product envelopes; no BFF writes or second direct-vendor SDK.",
+        "Provide restricted server-approved pure emit_extraction function-tool schema on the same HTTP path and retain structured call/status/usage output for the downstream extraction task. Verify actual pinned Gateway and auth-route support; no assumption that Responses implies text.format/json_schema support. Wrong/missing tool, invalid arguments, refusal/incomplete and unsupported capabilities fail explicitly; no domain actions or arbitrary caller tool definitions.",
+        "Cron accepts terminal completion only for exact job_id plus run_id. Delete entries[0] fallback; use pinned native exact-run lookup/wait if available, otherwise bounded same-run observation that times out without false success. Missing run ID yields in-doubt/error, never blind cron.run replay. Bound RPC and wait inside one deadline. Test interleaved runs, target outside recent five, late arrival, failure/cancel, RPC hang and timeout; zero wrong-run completion or duplicate dispatch.",
+        "Run mounted HTTP regressions for small/large/multiturn/attachments and cross-tenant same-named sessions; cover all auth/error/disabled/429/5xx/connectivity and malformed/multiline/partial SSE cancellation/failure cases with exactly one truthful terminal result. Prove normal turn/readiness/stream spawn no CLI; no automatic model or CLI fallback.",
+        "Controlled 100-request base-SHA versus candidate replay using same permitted model/auth path and fixed prompts records cold/warm TTFT/full p50/p95, token usage, errors and subprocess counts. Preserve authority/tool/terminal semantics with no new errors; full p95 <=1.10x baseline and mean tokens <=1.05x baseline. Missing usage is unknown, not zero. Capability-dependent pin updates belong to sole OSS owner after documented gap, not duplicate Dockerfile edits."
+      ],
+      "report_candidates": [
+        3,
+        14
+      ]
+    },
+    {
+      "id": "SIMPLIFY-EXTRACTION-001",
+      "title": "Replace duplicated intent and StrategySpec semantic rules with one evaluated typed extractor",
+      "target_repo": "pantheon",
+      "owner": "Antigravity",
+      "reviewer": "Codex2",
+      "phase": "simplification-typed-extraction",
+      "depends_on": [
+        "SIMPLIFY-OPENCLAW-001",
+        "AGORA-CHAIN-001",
+        "DOMAIN-WRITERS-DURABILITY-CORRECTIVE-001"
+      ],
+      "dependency_tracks": {},
+      "execution_resources": [],
+      "summary": "Audit #6; wait only for actual overlapping Agora bridge/research owners and shared transport. No new Registry/Management/BFF/approval owner.",
+      "artifacts": [
+        "services/source_ingestion/interaction_intent_classifier.py",
+        "services/source_ingestion/strategy_seed_builder.py",
+        "services/source_ingestion/agora_seed_bridge.py",
+        "services/source_ingestion/trainer_seed_bridge.py",
+        "services/source_ingestion/tests/test_interaction_intent_classifier.py",
+        "services/source_ingestion/tests/test_strategy_seed_builder.py",
+        "services/source_ingestion/tests/test_agora_seed_bridge.py",
+        "services/source_ingestion/tests/test_trainer_seed_bridge.py",
+        "services/research/strategy_spec/normalizer.py",
+        "services/research/strategy_spec/production_distillation.py",
+        "services/research/strategy_spec/test_normalizer.py",
+        "services/research/strategy_spec/test_production_distillation.py",
+        "services/source_ingestion/semantic_extraction.py",
+        "services/source_ingestion/semantic_extraction_client.py",
+        "services/source_ingestion/tests/test_semantic_extraction.py",
+        "services/source_ingestion/tests/test_semantic_extraction_admission.py",
+        "services/source_ingestion/evaluation/semantic_extraction_manifest.schema.json",
+        "services/source_ingestion/evaluation/run_semantic_extraction_eval.py",
+        "services/source_ingestion/evaluation/README.md",
+        "docs/deployment/evidence/SIMPLIFY-EXTRACTION-001/evidence.json"
+      ],
+      "acceptance": [
+        "Follow EXECUTION_PLAN.md and llm-task-design.md in the immutable signed task documents. Clean current-dev worktree, only declared files, real executed local functional checks, genuine author/task/reviewer trailers, commit/push/PR, independent assigned exact-head review, required checks and integrator merge. No hosted/prod mutation, canonical task edits, credential/account changes, new external corpus upload, fake approvals, skip-only acceptance or source-merge-as-hosted claims.",
+        "One source_ingestion typed extraction contract/client consumes the existing restricted OpenClaw HTTP transport. Reuse existing intent/seed/lesson enums and data contracts; emit supported fields, source spans, missing fields, uncertainty/abstain and schema/model/prompt identity. Exact structured input mapping stays deterministic. No new Registry model/store/writer, no direct approval/register/advance, no web/shell/execution tools. Existing source/redaction/tenant/license/as-of gates precede any model call.",
+        "Consume merged AGORA-CHAIN-001 and DOMAIN-WRITERS-DURABILITY-CORRECTIVE-001 contracts before changing their listed bridge/research files. Migrate classifier, StrategySpec seed builder semantic _infer helpers, trainer lessons, normalizer and production distillation to this single interface; preserve lineage/rejected-source/draft/domain validation. No BFF, Registry, Governance, strategy_seed_store or distillation_controller mutation rewrite.",
+        "Freeze source-family/deduplicated train/validation/holdout splits before tuning, targeting >=200 cases with >=80 Traditional Chinese and >=80 English across intent/seed/lesson positives, negatives, ambiguity and refusal. Prefer existing permissioned labels; if insufficient construct versioned deterministic source-derived fixtures from known owner/source contracts and obtain independent reviewer adjudication of key/ambiguous cases. Label existing-labelled/source-derived/AI-assisted provenance; no invented human labels or request for the operator to label200 examples. Real temporal holdout applies only to observed operational timestamps. Record dataset/split/model/auth/prompt/schema/base-SHA/config digests; keep private data in approved storage and run old base versus candidate three times. Missing real operational corpus is an explicit external-validity limitation, not a license to claim production effectiveness from fixtures.",
+        "Pre-registered quality gate: intent macro-F1 >=0.95 and >=baseline-0.01; supported seed/lesson field F1 >=0.95 and >=baseline; abstention recall >=0.95; critical-field support and source identity/span validity 100%; zero tenant/permission/rejected-source breach or hidden domain action. Report per-language/task metrics and independent adjudication; no same-model self-grade-only proof. Invalid schema/wrong tool/refusal/incomplete/missing evidence/timeout/cost cap are typed failure or abstention, never accepted output.",
+        "For <=8k-input/<=1k-output-token bucket, p95 complete extraction <=10s, total deadline <=15s including at most one bounded retry. Record token and real cost per correct completed case including failures/retries; mean <=USD0.05 and p95 <=USD0.10 per completed case using actual official/billing rate at execution, unknown subscription cost never zero. Report baseline near-zero-rule cost honestly and manual completion/abstention tradeoff.",
+        "Attempt at most two bounded candidate correction rounds without reusing exposed holdout as training. Once gates pass remove duplicated keyword/Markdown semantic fallbacks and keep one production path; baseline runs only in isolated old worktree. If gates still fail retain the old sole production path and report specific blocker plus reviewable outcome; no decision-only self-close, permanent feature-flag duality or claim replacement completed. Run actual existing Agora/Registry consumer positives against merged contracts without writing those owners."
+      ],
+      "report_candidates": [
+        6
+      ]
+    },
+    {
+      "id": "SIMPLIFY-RETRIEVAL-MEMORY-001",
+      "title": "Select and implement one local search backend for governed source and memory retrieval",
+      "target_repo": "pantheon",
+      "owner": "Antigravity",
+      "reviewer": "Codex",
+      "phase": "simplification-local-retrieval-memory",
+      "depends_on": [],
+      "dependency_tracks": {},
+      "execution_resources": [],
+      "summary": "Audit #7/#8. Immediate Search/Memory functional source task. Compare existing PG FTS/pgvector with local Qdrant, select then implement one; infrastructure task owns shared Compose integration.",
+      "artifacts": [
+        "services/search/retriever.py",
+        "services/search/hybrid_retriever.py",
+        "services/search/gateway.py",
+        "services/search/main.py",
+        "services/search/filters.py",
+        "services/search/index_pipeline.py",
+        "services/search/index_adapter.py",
+        "services/search/requirements.txt",
+        "services/search/Dockerfile",
+        "services/search/tests/test_governed_search.py",
+        "services/search/tests/test_governed_search_v2.py",
+        "services/search/tests/test_retrieval_rank_filter_cutoff_contract.py",
+        "services/search/tests/test_service_activation_contract.py",
+        "services/search/test_index_pipeline.py",
+        "services/memory/main.py",
+        "services/memory/institutional_memory_store.py",
+        "services/memory/persona_memory_store.py",
+        "services/memory/test_main.py",
+        "services/memory/test_institutional_memory_store.py",
+        "services/memory/test_persona_memory_store.py",
+        "services/source_ingestion/negative_memory.py",
+        "services/source_ingestion/tests/test_negative_memory_matcher.py",
+        "integrations/openclaw/search_gateway.py",
+        "integrations/openclaw/persona_memory_bridge.py",
+        "integrations/openclaw/test_persona_memory_bridge.py",
+        "services/search/pg_retrieval.py",
+        "services/search/qdrant_backend.py",
+        "services/search/local_embeddings.py",
+        "services/search/model-manifest.json",
+        "services/search/backend-contract.json",
+        "services/search/requirements.lock",
+        "services/search/sql/retrieval_index.sql",
+        "services/search/tests/test_pg_retrieval.py",
+        "services/search/tests/test_qdrant_backend.py",
+        "services/search/tests/test_local_retrieval_isolation.py",
+        "services/search/evaluation/run_retrieval_eval.py",
+        "services/search/evaluation/retrieval_manifest.schema.json",
+        "services/search/evaluation/README.md",
+        "services/memory/search_retrieval.py",
+        "services/memory/test_search_retrieval.py",
+        "docker-compose.search.yml",
+        "docs/deployment/evidence/SIMPLIFY-RETRIEVAL-MEMORY-001/evidence.json"
+      ],
+      "acceptance": [
+        "Follow EXECUTION_PLAN.md and llm-task-design.md in the immutable signed task documents. Clean current-dev worktree, only declared files, real executed local functional checks, genuine author/task/reviewer trailers, commit/push/PR, independent assigned exact-head review, required checks and integrator merge. No hosted/prod mutation, canonical task edits, credential/account changes, new external corpus upload, fake approvals, skip-only acceptance or source-merge-as-hosted claims.",
+        "Use existing Postgres native FTS plus necessary pgvector and local embeddings as executable default; benchmark against local Qdrant dense/sparse/native-RRF on identical frozen data, auth/as-of rules and hardware budget. Choose existing PG when both pass without justified operational gain. Select Qdrant only if PG cannot pass after bounded correction or >=30% CPU/p95 benefit at equivalent quality with no greater total operational cost including new service/backup/patch/RAM. Selection AND implementation/consumer migration are required in this same task; a decision document alone is not completion. Merge one production backend only.",
+        "Keep services/search/gateway.py as unique governed facade and source-ingest/Memory as canonical write owners. Index only approved versioned projections, preserving existing scheduler/pipeline watermark/receipts and durable owner identity. Local FastEmbed/ONNX only, pin one evaluated multilingual model/artifact digest and exact latest-compatible chosen OSS dependencies; no corpus/query/memory/embedding upload, cloud inference or external fallback. Compare validation models before freezing holdout.",
+        "Build tenant/persona/workspace/role/license/capital/environment/as-of/available_time filters from authenticated server context; body only narrows permissions. Apply all scope restrictions inside SQL or every dense/sparse prefetch and revalidate current owner ACL/expiry/version before returning. PG RLS/nonbypass role or appropriately scoped Qdrant collection is mandatory; shared statistics/public data cannot disclose another tenant. Cover forged body context, same-named IDs, stale ACL/retention and result/count/citation/snippet nonleakage.",
+        "Unify institutional/persona semantic retrieval and negative-memory similarity through the selected Search backend while retaining exact rejected/retired source/strategy matches, scope/expiry/supersession, canonical memory stores, reviewed writeback and reuse accounting. Persona bridge only projects authorized memory; no second memory index/ranker owner, provider memory ledger, changed Management server history or new BFF endpoint. Remove custom BM25/token-hash mock/full-scan cosine/Python-RRF and redundant alias/substring ranking only after gates pass.",
+        "Freeze versioned source/memory held-out relevance data targeting >=200 queries (>=50 each Traditional Chinese, English, cross-language) against >=10k fixed documents for load, with source-family split and actual time split where valid. Prefer existing permissioned labels; otherwise create deterministic source-derived relevance fixtures with independent reviewer adjudication of critical/ambiguous cases. Record source-derived/AI-assisted/synthetic-distractor provenance and model/chunk/preprocessing/config/image/hardware digests; never call AI fixtures human labelled or production effectiveness evidence. Missing real operational corpus is an explicit extrapolation limitation. Recall@10 >=0.90 and >=baseline, nDCG@10 >=baseline-0.01, citation identity100%; exact negative-memory recall100%, semantic-warning recall>=0.95 without increased false positives, with per-language/memory slices. Zero isolation/expiry/as-of leakage; fake vectors cannot pass real backend gates.",
+        "Run actual selected isolated PG/pgvector or Qdrant service with local embedding: restart/rebuild, versioned deterministic IDs, replay/idempotency, delete/revoke tombstones, partial indexing failure and checkpoint recovery. Backend/model/cache/dimension/digest mismatch, stale index, owner failure and timeout return explicit unavailable/degraded; never mock fallback or empty-results-as-success. Existing Search/Memory/source regressions must execute with dependencies, no skip-only completion.",
+        "At fixed 10k corpus and concurrency4, warm full embedding+search+authorized-hydrate p95 <=1s over >=1000 replays; report cold-start separately, throughput/rebuild/disk/RSS/CPU-seconds/query and operations cost assumptions. External inference calls =0. Compare or correct at most two validation candidates; do not tune exposed holdout or retain both backends. Failed gates leave old sole runtime and exact unresolved blocker, not decision-only close.",
+        "Only task-owned docker-compose.search.yml provides isolated functional environment; do not modify shared root Compose, existing production schemas/data or hosted deployment. Publish services/search/backend-contract.json identifying chosen backend, exact dependency/image/model identities, required env/schema/readiness/rebuild/rollback and real test results. The sole OSS profiles/images task depends on this accepted contract and owns final root Compose wiring; final closure runs the integrated selected topology."
+      ],
+      "report_candidates": [
+        7,
+        8
+      ]
+    },
+    {
+      "id": "SIMPLIFY-BFF-RESIDUAL-001",
+      "title": "Close audit BFF duplicate, native dependency and retired-route residuals after structural delivery",
+      "target_repo": "pantheon",
+      "owner": "Antigravity",
+      "reviewer": "Codex2",
+      "phase": "simplification-bff-residual",
+      "depends_on": [
+        "STRUCT-RETIRE-001"
+      ],
+      "dependency_tracks": {},
+      "execution_resources": [],
+      "summary": "Audit candidates 1,2 and BFF half of14. Sole successor for actual uncovered residuals after the existing first-release structural join; never a second concurrent BFF structural owner.",
+      "artifacts": [
+        "services/control-plane/bff/main.py",
+        "services/control-plane/bff/personas/service.py",
+        "services/control-plane/bff/persona_provisioning.py",
+        "services/control-plane/bff/persona_provisioning_coordinator.py",
+        "services/control-plane/bff/core/app_factory.py",
+        "services/control-plane/bff/bootstrap/dependencies.py",
+        "services/control-plane/bff/auth/handlers.py",
+        "services/control-plane/bff/ports/read_surface_ports.py",
+        "services/control-plane/bff/*/router.py",
+        "services/control-plane/bff/test_normalized_route_uniqueness.py",
+        "services/control-plane/bff/test_route_resolution_no_shadowing.py",
+        "services/control-plane/bff/test_persona_provisioning_readback.py",
+        "services/control-plane/bff/tests/test_bff_main_composition.py",
+        "services/control-plane/bff/tests/test_bff_test_architecture.py",
+        "services/control-plane/bff/tests/test_bff_auth_facade.py",
+        "services/control-plane/bff/tests/read_store_fixtures.py",
+        "services/control-plane/bff/tests/read_store_migration_inventory.json",
+        "services/control-plane/bff/tests/test_read_store_fixture_boundaries.py",
+        "services/control-plane/bff/tests/test_read_store_final_deletion.py",
+        "services/control-plane/bff/tests/test_persona_router.py",
+        "services/control-plane/bff/tests/test_management_read_models_router.py",
+        "services/control-plane/bff/tests/test_runtime_router.py",
+        "services/control-plane/bff/tests/test_deployment_router.py",
+        "services/control-plane/bff/tests/test_tools_integrations_router.py",
+        "docs/deployment/evidence/SIMPLIFY-BFF-RESIDUAL-001/evidence.json",
+        "docs/deployment/evidence/SIMPLIFY-BFF-RESIDUAL-001/residual-ledger.json"
+      ],
+      "acceptance": [
+        "Execute only this task's declared source delta from a clean current-dev worktree after its real predecessors merge/archive. Preserve every existing first-release structural requirement and accepted domain behavior; record exact upstream identities and actual source/caller evidence before deciding what still needs implementation. An upstream already-completed item is discharged by verified evidence, not reimplemented.",
+        "Use the assigned implementation owner and independent assigned reviewer of the exact final head; preserve task/generation, authorship, required CI and existing integrator branch/PR/merge/archive flow. Record bounded foreground command exits/counts and task evidence. Source delivery is not hosted deployment or acceptance. No canonical task/queue JSON edits, credentials, capital actions, new parallel authority, or undeclared source scope.",
+        "Reconcile the immutable audit corpus docs/reviews/2026-09-06-system-simplification/bff-exact-duplicates.json at 70e7abadaa4800f6d58acbbe3189a76c932d149d against the actual merged STRUCT source and its original208-group/17-tail ledger. Account for each of the audit136 identical main/personas functions and two divergent _evaluate_persona_provisioning_status definitions. Record already-retired/reused canonical owner/distinct justified behavior/remaining delta with symbols, callers and exact commits; do not add together incompatible line-count metrics or promise unconditional3515-line deletion.",
+        "Implement only residual duplicate responsibilities left after original owners deliver. Use the genuinely accepted Overlay provisioning state/ordering/compensation/readback contract, and existing auth/query/command/audit owners. Remove redundant bodies/callers and verify both former entry paths agree on identity/tenant/authorization, provisioning state and DTO, retries/replay and unavailable-owner behavior. Do not change writer selection or invent common policy/framework abstractions to meet size targets.",
+        "Where still present after structural delivery, replace core/app_factory's manual inspect.signature/Header/Query/Body coercion and legacy handler dispatcher with native typed APIRouter and Depends/Security using existing AppDependencies. Remove only now-unnecessary module-class/read_store monkeypatch forwarding and fake-store-driven audit writer fallback. Native dependency overrides must preserve OpenAPI, aliases/defaults/body validation, prior400/422 semantics, authentication ordering, tenant isolation and independent/nested app clients; retain one genuine audit writer.",
+        "Enumerate the audit12 sunset410 routes (ranking5, tools5, runtime1, deployment1) against the current mounted graph and accepted FE/BFF caller contract. First release has no backward compatibility: retire remaining replaced endpoints and their exclusive wiring after verified caller migration; do not introduce a new permanent tombstone or alias merely because the audit previously offered one. Any necessary live-consumer exception is an explicit unresolved acceptance finding, not an invisible fallback.",
+        "Run existing actual mounted-route, auth, provisioning/readback and test-isolation checks with all retained assertions; prove no retired routes, old dispatcher, duplicate implementation owner or old write fallback is reachable. A symbol/import/source check alone does not replace behavioral tests. Where an upstream item is fully gone, cite its exact merged evidence and skip duplicate edits. Publish final deletion/retention ledger and invalidate stale pair acceptance for changed BFF identity."
+      ],
+      "report_candidates": [
+        1,
+        2,
+        14
+      ]
+    },
+    {
+      "id": "FE-QUERY-CACHE-001",
+      "title": "Use TanStack Query for scoped live reads and close remaining production fixture plumbing",
+      "target_repo": "execute-plans",
+      "owner": "Antigravity",
+      "reviewer": "Codex2",
+      "phase": "simplification-fe-cache",
+      "depends_on": [
+        "FE-STRICTLIVE-001",
+        "FE-EXACT-PAIR-PROTOCOL-001",
+        "FE-DEP-CLOSURE-001"
+      ],
+      "dependency_tracks": {},
+      "execution_resources": [],
+      "summary": "Audit5 plus only audit13 residuals not genuinely retired by FE-STRICTLIVE. Use current Queryv5 capability; no dependency upgrade, release-controller change or broadsrc/** grant.",
+      "artifacts": [
+        "src/management/pages/centers/GovernanceDecisionQueue.tsx",
+        "src/management/pages/centers/GovernanceDecisionsPage.test.tsx",
+        "src/management/pages/oversight/DataSourceManagement.test.tsx",
+        "src/management/pages/oversight/EmergencyActionsPanel.tsx",
+        "src/management/pages/oversight/EvidenceExplorerPage.test.tsx",
+        "src/management/pages/oversight/EvolutionJournalPage.test.tsx",
+        "src/management/pages/oversight/HumanGateDetail.test.tsx",
+        "src/management/pages/oversight/HumanGateDetail.tsx",
+        "src/management/pages/oversight/HumanInboxPage.test.tsx",
+        "src/management/pages/oversight/LiveOnlyFallbacks.test.tsx",
+        "src/management/pages/oversight/LiveReadinessPage.tsx",
+        "src/management/pages/oversight/PerformanceAttribution.test.tsx",
+        "src/management/pages/oversight/PerformanceAttribution.tsx",
+        "src/management/pages/oversight/PersonaFleetPage.test.tsx",
+        "src/management/pages/oversight/PersonaIntentTraces.tsx",
+        "src/management/pages/oversight/PersonaLeague.tsx",
+        "src/management/pages/oversight/PortfolioBook.test.tsx",
+        "src/management/pages/oversight/PortfolioBook.tsx",
+        "src/management/pages/oversight/PortfolioExposure.test.tsx",
+        "src/management/pages/oversight/PortfolioExposure.tsx",
+        "src/management/pages/oversight/PromotionAllocation.test.tsx",
+        "src/management/pages/oversight/QuarterlyRanking.tsx",
+        "src/management/pages/oversight/RankingRecommendationPages.test.tsx",
+        "src/management/pages/oversight/_core.tsx",
+        "src/management/pages/oversight/dataSources/DataSourceControlCenter.tsx",
+        "src/management/pages/phase2/HookCronManager.tsx",
+        "src/management/pages/phase2/KnowledgeInbox.tsx",
+        "src/management/pages/phase2/LineageExplorer.tsx",
+        "src/management/pages/phase2/WorkflowTemplates.tsx",
+        "src/management/pages/v5/ExecutionLoop.tsx",
+        "src/management/pages/v5/Interventions.test.tsx",
+        "src/management/pages/v5/Interventions.tsx",
+        "src/management/pages/v5/OptimizationLoop.tsx",
+        "src/management/pages/v5/ResearchLoop.tsx",
+        "src/management/pages/v5/Sentinel.test.tsx",
+        "src/management/pages/v5/Sentinel.tsx",
+        "src/management/pages/v5/V5Pages.tsx",
+        "src/management/pages/v5/useV5Live.test.tsx",
+        "src/management/pages/v5/useV5Live.ts",
+        "src/App.tsx",
+        "src/main.tsx",
+        "src/lib/auth/AuthProvider.tsx",
+        "src/lib/auth/AuthProvider.test.tsx",
+        "src/lib/auth/bffBrowserSession.ts",
+        "src/lib/auth/bffBrowserSession.test.ts",
+        "src/lib/bff-v1/queryKeys.ts",
+        "src/lib/bff-v1/client.ts",
+        "src/lib/bff-v1/headers.ts",
+        "src/lib/bff-v1/liveStatus.ts",
+        "src/lib/bff-v1/management.ts",
+        "src/lib/bff-v1/managementConsoleReads.ts",
+        "src/lib/bff-v1/managementDataSources.ts",
+        "src/lib/bff-v1/v5.ts",
+        "src/lib/bff-v1/v5Client.ts",
+        "src/lib/bff-v1/sse/bridge.ts",
+        "src/lib/bff-v1/sse/liveSse.ts",
+        "src/lib/bff-v1/__tests__/management.test.ts",
+        "src/lib/bff-v1/__tests__/sse.test.ts",
+        "src/lib/bff-v1/__tests__/liveAdapters.test.ts",
+        "vite.config.ts",
+        "src/mocks/**",
+        "src/lib/bff-v1/mocks/**",
+        "src/lib/bff-v1/writeOverlay.ts",
+        "src/lib/bff-v1/seed-taxonomy.json",
+        "src/lib/v5/overlay.ts",
+        "src/lib/v5/loopOverlay.ts",
+        "src/test/setup.ts",
+        "src/test/bootstrapMockOrdering.test.tsx",
+        "docs/deployment/evidence/FE-QUERY-CACHE-001/evidence.json",
+        "docs/deployment/evidence/FE-QUERY-CACHE-001/cache-fixture-retirement.json"
+      ],
+      "acceptance": [
+        "Execute only this task's declared source delta from a clean current-dev worktree after its real predecessors merge/archive. Preserve every existing first-release structural requirement and accepted domain behavior; record exact upstream identities and actual source/caller evidence before deciding what still needs implementation. An upstream already-completed item is discharged by verified evidence, not reimplemented.",
+        "Use the assigned implementation owner and independent assigned reviewer of the exact final head; preserve task/generation, authorship, required CI and existing integrator branch/PR/merge/archive flow. Record bounded foreground command exits/counts and task evidence. Source delivery is not hosted deployment or acceptance. No canonical task/queue JSON edits, credentials, capital actions, new parallel authority, or undeclared source scope.",
+        "Freeze the actual post-predecessor source inventory before edits. The audited baseline5d4f385 has39 files mentioning useV5Live, including its tests; reconcile each moved/deleted/new caller into an exact current inventory. If predecessor source introduces necessary caller paths not in this grant, obtain the ordinary formal artifact addition before edits, never expand to src/** or edit the five release-protocol test files owned by the accepted predecessor.",
+        "Replace the useV5Live globalMap/TTL, handwritten promise lifecycle/alive guards and duplicated loading/error state with the already installed TanStack Query client. Retain only a thin domain-specific query/event helper if useful; migrate every actual caller to explicit stable resource/arguments keys. Keys and invalidation scope include verified tenant/operator and selected environment/BFF identity; never use tokens as keys. Unknown or changing identity cannot reuse another principal's data, and logout/session/environment changes cancel and clear affected cached reads.",
+        "Preserve existing SSE event and confirmed-command invalidation semantics, refresh behavior, freshness/degraded/error presentation and safe write rules. Pass AbortSignal through the existing BFF read transport where cancellation is claimed. Prove concurrent consumers deduplicate the same read, events invalidate appropriate keys, old responses cannot overwrite new scope, unmount/reconnect does not leak listeners and refreshing stale data cannot fabricate live truth. No generic event bus or second server-state cache.",
+        "For audit13, consume FE-STRICTLIVE's real bundle/caller/deletion evidence; only implement remaining product-reachable fixture/mode/overlay plumbing. Separate product entry graph from existing test/demo fixtures, then remove unused strict-live resolver aliases/stub imports and obsolete runtime mock/write-overlay branches whose absence is proved. Preserve functioning fixture tests and a real negative product-bundle/import guard; do not delete all mocks, weaken forbidden-fixture checks, or call guard deletion proof of isolation. Keep unrelated intentional domain-local state.",
+        "Run focused existing hook/AuthProvider/page/SSE tests with real QueryClient behavior plus production build and actual strict-live unavailable/degraded flow checks. Record request/invalidation behavior, cache-isolation negatives and actual removed branches/files; no skipped replacement assertions or cached mock data relabelled live. Do not change package versions here. Use existing immutable FE release protocol and hand off the final source/artifact identity for requalification; predecessor prepared receipts cannot accept this changed bundle."
+      ],
+      "report_candidates": [
+        5,
+        13
+      ]
+    },
+    {
+      "id": "OPS-LEGACY-REVIEW-RETIRE-001",
+      "title": "Retire obsolete review migration and generated-brief approval exceptions",
+      "target_repo": "pantheon",
+      "owner": "Claude2",
+      "reviewer": "Codex2",
+      "phase": "simplification-development-tooling",
+      "depends_on": [
+        "SYS-SIMPLIFY-AUDIT-20260906",
+        "OPS-PRIVILEGED-TASK-EXECUTION-AUTH-001"
+      ],
+      "dependency_tracks": {},
+      "execution_resources": [],
+      "summary": "Audit15 only. Preserve the existing V2 task authority, identities and exact-head independent review. Inventory actual legacy consumers first; do not recreate generated-context isolation that already exists.",
+      "artifacts": [
+        ".orchestrator/supervisor.py",
+        ".orchestrator/test_supervisor.py",
+        ".orchestrator/common.py",
+        ".orchestrator/test_common.py",
+        "scripts/git/github_review_bridge.py",
+        "scripts/git/test_github_review_bridge.py",
+        "scripts/git/task_review_merge_gate.py",
+        "scripts/git/test_task_review_merge_gate.py",
+        "scripts/git/auto_integrator.py",
+        "scripts/git/test_auto_integrator.py",
+        "docs/02-architecture/development-tooling-product-boundary.md",
+        "docs/deployment/evidence/OPS-LEGACY-REVIEW-RETIRE-001/evidence.json",
+        "docs/deployment/evidence/OPS-LEGACY-REVIEW-RETIRE-001/legacy-consumers.json"
+      ],
+      "acceptance": [
+        "Execute only this task's declared source delta from a clean current-dev worktree after its real predecessors merge/archive. Preserve every existing first-release structural requirement and accepted domain behavior; record exact upstream identities and actual source/caller evidence before deciding what still needs implementation. An upstream already-completed item is discharged by verified evidence, not reimplemented.",
+        "Use the assigned implementation owner and independent assigned reviewer of the exact final head; preserve task/generation, authorship, required CI and existing integrator branch/PR/merge/archive flow. Record bounded foreground command exits/counts and task evidence. Source delivery is not hosted deployment or acceptance. No canonical task/queue JSON edits, credentials, capital actions, new parallel authority, or undeclared source scope.",
+        "Read the real current V2 tasks, pending review PR bindings, queue intents and leases through existing supported APIs to enumerate users of legacy review-intent collision migration and task-brief-only approval carry-forward. Archive a redacted task/format/head inventory with current observation time. Do not clear quota/auth, modify canonical JSON, fabricate review proofs or claim zero consumers from active task names alone.",
+        "Verify current worker materialization already places generated task context outside tracked source and preserves clean reviewed heads; retain its accepted behavior. Fix only an actually reproduced remaining producer of approval-after-brief source commits through existing context/materialization code, then show normal implementation/review/finalize cannot create an unnecessary source successor. No new task bridge, context store or repair daemon.",
+        "After exact affected legacy tasks/PRs are genuinely drained or migrated by existing governed recovery, remove reconcile_legacy_review_decision_intent_collision from normal recovery and its now-unused migration implementation. Remove task_brief_only_successor/carry_approval/publish carry-forward helpers and corresponding integrator/merge-gate branches only when no live task depends on them. If a genuine legacy consumer remains, report its exact prerequisite/hold and do not mark retirement complete; no broad offline migration tool is authorized.",
+        "Retain independent reviewer eligibility, approved-head identity, current-head/code-change invalidation, task-scoped evidence, review decision/audit order, leases/CAS/replay and safe interrupted recovery. Update tests to assert an unreviewed successor is rejected instead of approving it through retired exceptions; retain positive exact-head integration and negative forged/stale/mixed-code successor cases. Run focused existing supervisor/materialization/integrator/review-gate tests with terminal evidence.",
+        "Deliver and then render/preflight/promote the validated immutable development-tooling runtime via the existing supported flow. Preserve running work and canonical migration/replay correctness; show active runtime source identity and new dispatch/review health. A local restart or test pass alone is not completion, and tooling health is not product readiness."
+      ],
+      "report_candidates": [
+        15
+      ]
+    },
+    {
+      "id": "SYS-SIMPLIFY-IMPLEMENTATION-CLOSURE-001",
+      "title": "Verify all LLM and OSS simplification outcomes on integrated dev and close the full ledger",
+      "target_repo": "pantheon",
+      "owner": "Claude",
+      "reviewer": "Codex",
+      "phase": "simplification-implementation-closure",
+      "depends_on": [
+        "OSS-OBJECT-STORE-CUTOVER-001",
+        "OSS-TOOLING-BASELINE-001",
+        "FE-UI-DEPS-BASELINE-001",
+        "SIMPLIFY-BFF-RESIDUAL-001",
+        "SIMPLIFY-EXTRACTION-001",
+        "SIMPLIFY-RETRIEVAL-MEMORY-001",
+        "SIMPLIFY-OPENCLAW-001",
+        "OPS-LEGACY-REVIEW-RETIRE-001"
+      ],
+      "dependency_tracks": {},
+      "execution_resources": [],
+      "summary": "Join all16 audit candidates and full dependency declarations using actual merged sources and independent evidence. This is the final acceptance ledger, not another implementation owner or deployment controller.",
+      "artifacts": [
+        "docs/plans/system-simplification-20260906/CLOSURE.md",
+        "docs/plans/system-simplification-20260906/oss-version-disposition.csv",
+        "docs/plans/system-simplification-20260906/candidate-outcomes.json",
+        "docs/deployment/evidence/SYS-SIMPLIFY-IMPLEMENTATION-CLOSURE-001/evidence.json"
+      ],
+      "acceptance": [
+        "Read actual current dev of both repositories, all accepted predecessor PRs/review receipts and task-scoped evidence. Every candidate1..16 has exact before/after source identities, implementation/deletion or a reviewed evidence-supported retention outcome, executed contract/quality checks, owner and any unresolved next action. Report actual removed files/functions/branches/dependencies/deployment units without double-counting upstream structural work. A plan/task catalog alone cannot close this task.",
+        "Reconcile every audit inventory row and new current-dev declaration with actual resolved versions and official upstream source at execution. No unassigned/unexplained old version, guessed installed/deployed version, skipped crypto tests or numerical mock acceptance. Preserve truthful failed quality gates and external-validity limits; a retained old runtime is not described as an implemented LLM replacement.",
+        "Run existing integrated local source validation against the final selected backend and profile combinations and accepted FE source: genuine authenticated owner/consumer contracts, SSE reconnect/history, source-to-extraction-to-draft and governed search/memory, numeric/LEAN replay and strict-live local FE journeys. Record commands/exits/executed counts and exact model/image/index/FE/BFF identities. Reuse existing test and release tools; no parallel controller/checker/task authority.",
+        "Any regression returns to its existing implementation owner with precise source and failed behavior; do not quietly edit undeclared product source, erase old obligations, mark queued/open PRs done or weaken tests. Completion requires all in-scope source outcomes accepted and merged, with actual functional integration evidence.",
+        "Publish the final ledger through independent exact-head review, required CI and current-dev merge. Subsequent source changes invalidate older prepared release evidence; provide exact final pair/source handoff to the existing release lane. Hosted/data migration/capital changes remain separately authorized and must be reported explicitly if pending, never claimed by source completion."
+      ],
+      "report_candidates": [
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7,
+        8,
+        9,
+        10,
+        11,
+        12,
+        13,
+        14,
+        15,
+        16
+      ]
+    }
+  ],
+  "existing_task_notes": [
+    {
+      "task_id": "OVERLAY-RETIRE-001",
+      "candidate": 1,
+      "note": "Within existing Persona provisioning scope, inspect the two _evaluate_persona_provisioning_status definitions in main.py/personas/service.py from auditbaseline471dc539 and publish the genuinely accepted canonical ordering/state/readback behavior. Preserve current blocked capability hold and full original acceptance. Residual deletion belongs only to later SIMPLIFY-BFF-RESIDUAL-001 if not already delivered; this note does not amend acceptance or duplicate ownership."
+    },
+    {
+      "task_id": "BFF-TEST-FULL-MIGRATION-CORRECTIVE-001",
+      "candidate": 2,
+      "note": "Within existing complete-test-migration acceptance, use actual AppDependencies/native FastAPI overrides for the main.read_store/module-shim consumers identified by the audit. Preserve all216-file/actual-import/nested-client obligations. No runtime source change is granted by this note. If a real production seam blocks the original task, report a genuine checkpoint for formal handling."
+    },
+    {
+      "task_id": "STRUCT-RETIRE-001",
+      "candidate": [
+        1,
+        2,
+        14
+      ],
+      "note": "Use the136 main/Persona AST corpus, two provisioning evaluator differences, manual app_factory dispatcher/module-shim and12 sunset410 routes as additional inspection evidence within the already admitted structural scope. Preserve original208groups/17tails/full216tests and all release/domain acceptance. Do not promise that this note expands immutable acceptance; later SIMPLIFY-BFF-RESIDUAL-001 closes any actually uncovered delta after this original task completes."
+    },
+    {
+      "task_id": "FE-STRICTLIVE-001",
+      "candidate": 13,
+      "note": "Within existing production-unreachable fixture/mock/overlay acceptance, record current source/bundle paths for strictLive Vite aliases/stubs, mock resolver and writeOverlay callers; preserve fixture tests/negative guards and current exact grants. Do not broaden this task into Query or all94 dependency upgrades. Post-task FE-QUERY-CACHE-001 closes formally declared remaining audit13 delta."
+    }
+  ],
+  "inventory_counts": {
+    "pypi_packages": 44,
+    "pypi_declaration_rows": 195,
+    "requirements_files": 49,
+    "npm_packages": 94,
+    "image_rows": 63,
+    "inline_rows": 51
+  },
+  "coordination_caveats": [
+    "OPS-LEGACY-REVIEW-RETIRE-001 waits for the concurrently admitted OPS-PRIVILEGED-TASK-EXECUTION-AUTH-001; no concurrent edits to common/supervisor/review authority.",
+    "Historical PPL-ALLOC-007/009 retain broad FE/BFF grants with unresolved old dependencies. They are not superseded by this plan. Recheck actual leases/readiness before edits; any simultaneously active overlapping writer requires a qualified precise source handoff. Do not fabricate completion or add unrelated missing-dependency chains to this program.",
+    "The final catalog/task acceptance governs; draft design appendices are supporting detail and cannot change admitted scope or infer external authorization."
+  ]
+}

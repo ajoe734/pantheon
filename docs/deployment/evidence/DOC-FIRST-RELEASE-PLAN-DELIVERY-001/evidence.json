@@ -1,0 +1,97 @@
+{
+  "schema_version": 1,
+  "task_id": "DOC-FIRST-RELEASE-PLAN-DELIVERY-001",
+  "scope": "documentation-only delivery of previously-uncommitted planning/audit/registry sources named in the operator-approved plan APPROVAL_RELEASE_SA_SD.md section 5; not implementation, not hosted acceptance, not a canonical task materializer",
+  "source_baselines": {
+    "pantheon": "471dc5391a0f9cbde54d51730891583043708e42",
+    "execute-plans": "5d4f385284b44a30e10764426a47fd808a7ae3cb"
+  },
+  "approved_plan": {
+    "path": "docs/04/pantheon_first_release_closure_2026-09-06/archive/APPROVAL_RELEASE_SA_SD.md",
+    "sha256": "6a6bbd28f45b7b052b19d09b2f0bc5b20e0e37ca2620f722e1a40cbbc9fa7157",
+    "packet_id": "pkt-approval-release-doc-delivery-20260906-v1",
+    "packet_digest": "920d842f73ec992a1dbd39324e226b5fd0f3b731eb16bfef8c1d0e682be3453c"
+  },
+  "already_merged_source_reused": {
+    "path": "docs/04/pantheon_current_full_gap_audit_2026-09-03/",
+    "merged_by": "PLAN-ADMIT-001",
+    "pr": 5551,
+    "source_head": "7a741afd811ba8cd31885a07bc783d32d5353161",
+    "merge_commit": "87134886b7438e2db4b698cedfa0eb4eff9cb202",
+    "merged_at": "2026-09-04T00:47:22Z",
+    "note": "original six audit Markdown files + historical tasks.json; not duplicated by this task, referenced only. 6 of 7 files (REPORT/SA/SD/TRACEABILITY/EXECUTION_TASKS/tasks.json) are byte-identical to the pre-merge workstation original; INDEX.md diverges by 3 dropped task-packet.*.json links (excluded-from-delivery reason, not rejection) — see SOURCE_MANIFEST.json group original_gap_audit_2026-09-03."
+  },
+  "erratum": {
+    "path": "docs/04/pantheon_first_release_closure_2026-09-06/archive/PLAN_ADMISSION_ERRATUM.md",
+    "sha256": "43635b209d4704d03058a13fa40955ae576754f97ae37e46dfec55904dd6b549",
+    "note": "2026-09-06 correction retracting an earlier, incorrect in-conversation claim that the original six audit Markdown files were never committed; does not change APPROVAL_RELEASE_SA_SD.md's immutable acceptance, lifecycle, role, or dependency contract"
+  },
+  "canonical_dependency_state_cross_checked": {
+    "GOV-APPROVAL-AUTHORITY-PREREQUISITE-001": {"status": "todo", "owner": "Antigravity2", "reviewer": "Codex2", "depends_on": ["DOC-FIRST-RELEASE-PLAN-DELIVERY-001", "REGISTRY-STRATEGY-UNIFIED-CONTRACT-001", "DOMAIN-WRITERS-001"]},
+    "STRUCT-RETIRE-001": {"status": "todo", "owner": "Antigravity", "reviewer": "Codex2", "depends_on": ["DOC-FIRST-RELEASE-PLAN-DELIVERY-001", "GOV-APPROVAL-AUTHORITY-PREREQUISITE-001", "REGISTRY-STRATEGY-UNIFIED-CONTRACT-001", "DOMAIN-WRITERS-DURABILITY-CORRECTIVE-001", "DEV-DELIVERY-001"]},
+    "checked_via": "$PANTHEON_COMMAND_ROOT/scripts/ai-status.sh show <task-id>, 2026-09-06"
+  },
+  "validation": {
+    "byte_identical_source_copies_verified": 27,
+    "relative_links_checked_current_entrypoint": 19,
+    "relative_links_broken_current_entrypoint": 0,
+    "relative_links_broken_in_frozen_archive_snapshots": 15,
+    "relative_links_broken_in_frozen_archive_snapshots_note": "expected: point at operational/runtime evidence files intentionally excluded from delivery per SOURCE_MANIFEST.json excluded_from_delivery; not rewritten since these are byte-identical preserved originals",
+    "manifest_sha256_entries_checked": 35,
+    "manifest_sha256_mismatches": 0,
+    "json_validated": 2,
+    "files_delivered": 33,
+    "secret_pattern_matches": 0,
+    "trailing_whitespace_matches": 0,
+    "unexpected_payloads": false,
+    "excluded_non_documentation_sources": [
+      "queue_*.py dispatch scripts under the archive-reconcile-prerequisite bundle",
+      "signed executable task packets under docs/04/pantheon_current_full_gap_audit_2026-09-03/ (task-packet.*.json)",
+      "runtime/promotion JSON payloads and operational evidence files under the archive-reconcile-prerequisite and dev-closure bundles"
+    ],
+    "runtime_tests": "not run: documentation-only delivery; no product/runtime code changed"
+  },
+  "files": [
+    {"path": "docs/04/pantheon_first_release_closure_2026-09-06/INDEX.md", "sha256": "62abf766032126dd071bbdf25a3e8a98452a4a3aaa4d4864cf3250ee25d16655"},
+    {"path": "docs/04/pantheon_first_release_closure_2026-09-06/SA_SD.md", "sha256": "ed5b4b617a5a828b260cc42d1c030c2adcdd03b13b58aa3a65d18814cf3f73bc"},
+    {"path": "docs/04/pantheon_first_release_closure_2026-09-06/EXECUTION_ORDER.md", "sha256": "a0eb4cf61e0a5a4e9bd7c5a1599ca52cb99bfb789bfee13c6a7c151526f6bcba"},
+    {"path": "docs/04/pantheon_first_release_closure_2026-09-06/TRACEABILITY.md", "sha256": "296fe5d5a2a9da408e84cc3cddd410a68d0e7e05673d970547544f7a069aef2a"},
+    {"path": "docs/04/pantheon_first_release_closure_2026-09-06/STATUS.md", "sha256": "c4c9e722648868940ecad019b58f22ef2891f8995a29d18106f1f0dc845b20d1"},
+    {"path": "docs/04/pantheon_first_release_closure_2026-09-06/SOURCE_MANIFEST.json", "sha256": "582f6b226010b7d4df35b899fc2071e30394d5fb030588daa95cb6b79fbd9f41"},
+    {"path": "docs/04/pantheon_first_release_closure_2026-09-06/archive/APPROVAL_RELEASE_SA_SD.md", "sha256": "6a6bbd28f45b7b052b19d09b2f0bc5b20e0e37ca2620f722e1a40cbbc9fa7157"},
+    {"path": "docs/04/pantheon_first_release_closure_2026-09-06/archive/PLAN_ADMISSION_ERRATUM.md", "sha256": "43635b209d4704d03058a13fa40955ae576754f97ae37e46dfec55904dd6b549"},
+    {"path": "docs/04/pantheon_first_release_closure_2026-09-06/archive/registry-resumption-20260906/architecture-resumption-sa-sd.md", "sha256": "b7fbb1189cc963b2bee58f52c1f267b4e85e6782381685735db9c4dbc4677790"},
+    {"path": "docs/04/pantheon_first_release_closure_2026-09-06/archive/registry-resumption-20260906/operator-architecture-confirmation.md", "sha256": "32055cbdce999b41c956d2851316c93c043d6ba8f58728040d74e989cc6681b5"},
+    {"path": "docs/04/pantheon_first_release_closure_2026-09-06/archive/registry-resumption-20260906/operator-worker-role-preference.md", "sha256": "31d8c9367fb388d04f6facb06b72bef540ff11f76a487c0ac4b825b08d4bad6d"},
+    {"path": "docs/04/pantheon_first_release_closure_2026-09-06/archive/registry-resumption-20260906/overlap-audit.md", "sha256": "8583cee8554f5be6bd37d84ec44851821a8bbe40a06ce64f7cf469bd258d6b95"},
+    {"path": "docs/04/pantheon_first_release_closure_2026-09-06/archive/registry-resumption-20260906/report.md", "sha256": "d6ea8b80e279c40043cf36d5f9a65fb0aa43a05b075b359433a73c07f301cf62"},
+    {"path": "docs/04/pantheon_first_release_closure_2026-09-06/archive/supplemental-reconcile-20260905/API_CONVERGENCE_RETIREMENT_DISCUSSION_20260906.md", "sha256": "2e860b4611939ad3ca740f2a1dd6d933d043de1a68945873e2cb0832289e331b"},
+    {"path": "docs/04/pantheon_first_release_closure_2026-09-06/archive/supplemental-reconcile-20260905/ARCHITECTURE_DISCUSSION_HOLD_20260906.md", "sha256": "d7f89dac3e9929b1340be1c29de727869050a557af6c03bab998eed4c1d1ec5f"},
+    {"path": "docs/04/pantheon_first_release_closure_2026-09-06/archive/supplemental-reconcile-20260905/BFF_PACKAGE_BOUNDARY_SA_SD.md", "sha256": "589575432d0895e5600e9ca52374e08552db6e62754ae4809c70d07d0878701e"},
+    {"path": "docs/04/pantheon_first_release_closure_2026-09-06/archive/supplemental-reconcile-20260905/CURRENT_SOURCE_REAUDIT_20260906.md", "sha256": "7d2bf351dd52d0e30c249da80f1ff7a3e0fa0437ba80d2b172e70ce7189ad163"},
+    {"path": "docs/04/pantheon_first_release_closure_2026-09-06/archive/supplemental-reconcile-20260905/CW_READ_POLICY_CLOSURE_SA_SD.md", "sha256": "812d2ef8df25ab6646148313e99f58622f019c19b070ce2721b9675b1c03e192"},
+    {"path": "docs/04/pantheon_first_release_closure_2026-09-06/archive/supplemental-reconcile-20260905/EXECUTION_HANDOFF_STATUS.md", "sha256": "faaaef723183a48ceccebce4fb65a94d57c020879c0bb881fb428d00ef6ae7f2"},
+    {"path": "docs/04/pantheon_first_release_closure_2026-09-06/archive/supplemental-reconcile-20260905/FIRST_RELEASE_CANONICAL_RECONCILIATION_20260906.md", "sha256": "c029dd66d7a50b3b177ef4be83974e809dfc239c02f26d98bd63bd12cdd245fe"},
+    {"path": "docs/04/pantheon_first_release_closure_2026-09-06/archive/supplemental-reconcile-20260905/FIRST_RELEASE_UNIFIED_ARCHITECTURE_SA_SD_20260906.md", "sha256": "b264f269ef07245a698868e70bc8a3ce140c30d7a918ac2394cb63ace7e72ed0"},
+    {"path": "docs/04/pantheon_first_release_closure_2026-09-06/archive/supplemental-reconcile-20260905/GOVERNANCE_CW_CONTRACT_SA_SD.md", "sha256": "00e36a3742b5fdf8dd331988d92044c6600f860e880160062fc7f0ecc8c2d1b3"},
+    {"path": "docs/04/pantheon_first_release_closure_2026-09-06/archive/supplemental-reconcile-20260905/ONESHOT_VALIDATION_SA_SD.md", "sha256": "f3583333813e230e566a7d2438a66ee663885388dad0f9f24413d5ef84a32779"},
+    {"path": "docs/04/pantheon_first_release_closure_2026-09-06/archive/supplemental-reconcile-20260905/OVERLAY_CHECKPOINT_REVIEW_20260906.md", "sha256": "72ad597eb9206beede491c70093d714e7004e5380e7068e356db50c4f391c3fc"},
+    {"path": "docs/04/pantheon_first_release_closure_2026-09-06/archive/supplemental-reconcile-20260905/OVERLAY_SCOPE_REVALIDATION_20260906.md", "sha256": "d775aa1a6f0bfef576250b3f078204b6f7347baeaab5260e65296cdf5ddc942c"},
+    {"path": "docs/04/pantheon_first_release_closure_2026-09-06/archive/supplemental-reconcile-20260905/PROMOTION_PREFLIGHT_NOTES.md", "sha256": "62c1028296da9d8fa3b0c14dca798c214ab2d1cb6a3b6cfdd762dd9b998a033b"},
+    {"path": "docs/04/pantheon_first_release_closure_2026-09-06/archive/supplemental-reconcile-20260905/PYTHON_RUNTIME_SA_SD.md", "sha256": "56780d70141c27f5bddf434d354b3afb08bbc4e287f741d82348113c21694227"},
+    {"path": "docs/04/pantheon_first_release_closure_2026-09-06/archive/supplemental-reconcile-20260905/REGISTRY_AUTH_BOUNDARY_PREFLIGHT_20260906.md", "sha256": "fff648be99b5ad7b1b6da4a1352f72503de843e5d3c28b76ba24baab5e109ee2"},
+    {"path": "docs/04/pantheon_first_release_closure_2026-09-06/archive/supplemental-reconcile-20260905/REGISTRY_STRATEGY_PREREQUISITE_SA_SD_20260906.md", "sha256": "1fae1dc08121ef81e158d41f45cb9e7b7ddfec6100f01583c2ab62effeb0fea4"},
+    {"path": "docs/04/pantheon_first_release_closure_2026-09-06/archive/supplemental-reconcile-20260905/REGISTRY_STRATEGY_PREREQUISITE_SA_SD_20260906_V2.md", "sha256": "a028f255638346bdeb050d46d3daf7fdc86c141cb7405ea222342f446dde6a3f"},
+    {"path": "docs/04/pantheon_first_release_closure_2026-09-06/archive/supplemental-reconcile-20260905/SA_SD.md", "sha256": "cad49a5f1c1a819bb12b717933f68c8d2313c0a3c95c46590a411a6f01b4f9af"},
+    {"path": "docs/04/pantheon_first_release_closure_2026-09-06/archive/supplemental-reconcile-20260905/STRATEGY_REGISTRY_OWNER_REAUDIT_20260906.md", "sha256": "f8692baaef54aea3545edb1549312670835881dbcdd276dc4349197ea65c4999"},
+    {"path": "docs/04/pantheon_first_release_closure_2026-09-06/archive/supplemental-reconcile-20260905/STRUCTURAL_RESIDUAL_SA_SD_20260906.md", "sha256": "6ec3b02f78435f26e48f491f8f86d593771cab9c115e7fb5745d94930bd064aa"}
+  ],
+  "path_base": "repository_root",
+  "delivery": {
+    "commit": null,
+    "pr": null,
+    "head_sha": null,
+    "merge_commit": null,
+    "note": "populated at owner handoff and updated at closeout; not filled by the initial task-scoped commit"
+  }
+}
