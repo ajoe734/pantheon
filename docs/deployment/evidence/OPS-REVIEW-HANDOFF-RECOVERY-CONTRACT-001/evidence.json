@@ -1,5 +1,5 @@
 {
-  "schema_version": "pantheon.ops-review-handoff-recovery-contract.v1",
+  "schema_version": "pantheon.ops-review-handoff-recovery-contract.v2",
   "task": {
     "id": "OPS-REVIEW-HANDOFF-RECOVERY-CONTRACT-001",
     "title": "Unify exact reviewer-to-owner handoff and worker recovery classification",
@@ -17,62 +17,95 @@
     "recheck_path": "docs/04/pantheon_first_release_closure_2026-09-06/REVIEW_HANDOFF_RECOVERY_RECHECK.md",
     "recheck_sha256": "3711b0820dbee4e88d7036a4ddc0da0b85674c7ac36d79b0882c39a603a0ffc0"
   },
+  "prior_review_verdict": {
+    "pr": 5637,
+    "head_sha_rejected": "7041e1d517053eba727c32b310e1f15246f3276d",
+    "reviewer": "Codex2",
+    "reopened_at": "2026-09-06T16:45:14Z",
+    "summary": "Reject. The first delivery only added \"reopen\" recognition to canonical_worker_terminal_status without: (1) authenticating the reopen event itself (a missing actor silently passed the truthy-and actor check; a forged/hand-edited event_id was never checked; a worker bound to a stale/superseded task generation still matched on process identity alone), (2) converging worker_completed_after_responsibility_transition -- a status-only shortcut that runs ahead of canonical_worker_terminal_status at both call sites -- onto the same validated proof, and (3)/(4) full real-process race and infra-promotion acceptance. Reproduced with independent in-memory probes; existing green unit suite did not discharge these findings.",
+    "response": "This delivery fixes (1) and (2) with concrete code changes and new strict-negative/regression tests below, using the reviewer's own probe descriptions as the test list. (3) and (4) remain partially open; see acceptance_matrix_audit for what is and is not covered and why the remainder was not attempted here."
+  },
   "defect_reproduced": {
     "description": "canonical_worker_terminal_status (the one classifier both poll_workers and boot reconciliation call before recover_lost_worker_lease) only recognized handoff/review_approved/done event types. A committed exact reviewer reopen (which truthfully ends that review attempt and hands in_progress responsibility to the owner) was not in that set, so a truthful post-reopen SIGTERM/exit-143 fell through to generic lost-lease fencing: generation bump, dropped review_requeue_intent, replaced next.",
-    "reference_example": "Registry reviewer run codex-20260906T151222Z-c4a97359 rejected PR5620 head 3f7e9551 at 15:17:07 UTC, generation 19; exact reopen termination at 15:17:18 was followed by lost-lease-bd992815... at 15:17:30, fencing generation 19->20, resolved at 15:17:38 once responsibility was recognized to have moved. See REVIEW_HANDOFF_RECOVERY_RECHECK.md."
+    "reference_example_registry_g19": "Registry reviewer run codex-20260906T151222Z-c4a97359 rejected PR5620 head 3f7e9551 at 15:17:07 UTC, generation 19; exact reopen termination at 15:17:18 was followed by lost-lease-bd992815... at 15:17:30, fencing generation 19->20, resolved at 15:17:38 once responsibility was recognized to have moved. See REVIEW_HANDOFF_RECOVERY_RECHECK.md.",
+    "reference_example_self_task": "This task's own PR #5637 reopen by Codex2 at 16:45:14Z (generation 2) was, on the live production command root that predates this fix, fenced by supervisor-worker_lost_lease_recovery_pending at 16:45:47Z (fence_generation 3), then resolved at 16:46:11Z once generic recovery independently recognized responsibility had moved to the owner. Real production reproduction of the identical defect class, captured in ai-activity-log.jsonl."
   },
   "fix": {
     "file": ".orchestrator/supervisor.py",
-    "function": "canonical_worker_terminal_status",
-    "change": "Added \"reopen\" to terminal_event_types and to the event-type -> valid task-status map (reopen -> {\"in_progress\"}), with a role guard requiring expected_role == \"reviewer\" for a reopen event (mirroring the existing review_approved/handoff/done role guards). All other identity/actor/process-generation/run/queue matching in this function -- already shared by every caller -- applies unchanged.",
-    "single_authoritative_classifier": "This is the only source change. Both existing call sites in poll_workers (missing_process/lease_expired branch, ~line 10677) and supervisor boot reconciliation (~line 12337) already called canonical_worker_terminal_status before recover_lost_worker_lease, so both now recognize an exact reopen without any call-site-specific policy duplication. owner_worker_canonical_handoff_status (required_role=\"owner\") and active_worker_governance_lease_decision (already reopen-aware for a still-alive worker) are unaffected.",
+    "changes": [
+      {
+        "function": "canonical_worker_terminal_status",
+        "change": "Added \"reopen\" to the recognized event-type set (now the shared RESPONSIBILITY_TRANSFER_EVENT_TYPES constant) and to the event-type -> valid task-status map (reopen -> {\"in_progress\"}), gated on expected_role == \"reviewer\". Fixed the shared actor check so a missing event actor fails closed instead of silently passing (`if event_actor and ...` -> `if not event_actor or ...`). Added, specifically for the reopen path (matching the reviewer's cited lines): a self-consistent event_id check via the existing _ai_status_activity_event_id_matches helper (forged/hand-edited events now rejected); a worker_matches_current_task_generation(worker, task) check (a worker bound to a superseded task generation can no longer pass on process-identity match alone); and a review_requeue_intent cross-check requiring the task's current pending intent to exist, still be status=pending, match the current task_generation, and name the same reviewer/reopened_by as the worker's own identity (a later handoff/reassign/reopen that already cleared or replaced the intent now fails closed)."
+      },
+      {
+        "function": "worker_completed_after_responsibility_transition",
+        "change": "Converged with canonical_worker_terminal_status instead of remaining a second, weaker classifier. Still accepts a bare lane mismatch (current task status differs from the dispatched role) with zero matching lifecycle events at all, preserving the original historical-dead-PID fallback for a bounded activity-log window. But once a RESPONSIBILITY_TRANSFER_EVENT_TYPES event bound to this exact worker process exists, that event must independently pass canonical_worker_terminal_status's full proof; an event that the strict classifier would reject (forged, unauthenticated, stale-generation, or stale-intent) can no longer still complete the worker through this earlier, weaker call site.",
+        "call_sites_updated": [
+          ".orchestrator/supervisor.py poll_workers (missing_process branch)",
+          ".orchestrator/supervisor.py reconcile_runtime_on_boot (boot reconciliation missing_process branch)"
+        ]
+      }
+    ],
     "not_changed": [
       "_persist_worker_recovery_receipt_locked / _resolve_obsolete_worker_recovery_receipt_locked (generic lost-lease CAS/receipt machinery; still used for genuine crash/expiry/no-transfer cases)",
       ".orchestrator/rewrite/worker_recovery.py typed receipt validation/shape",
       "review_decision_intent / review_requeue_intent construction in scripts/ai_status.py command_reopen",
-      "recover_lost_worker_lease itself"
+      "recover_lost_worker_lease itself",
+      "active_worker_governance_lease_decision (already reopen-aware for a still-alive worker; unaffected by this change)"
     ]
   },
   "acceptance_matrix_audit": {
+    "reopen_strict_authentication": {
+      "status": "fixed_and_regression_tested",
+      "detail": "test_canonical_worker_terminal_status_reopen_strict_negatives (.orchestrator/test_supervisor.py) independently reproduces every probe the reviewer listed against the *previous* delivery and asserts each now returns None: (1) worker bound to task generation 1 replayed against a task already at generation 2; (2) an event missing its actor; (3) a forged event_id (payload changed without recomputing the digest); (4a) task with no review_requeue_intent at all; (4b) a resolved (non-pending) review_requeue_intent; (4c) a review_requeue_intent whose own task_generation no longer matches canonical truth; (4d) a review_requeue_intent naming a different reviewer than the worker's own identity. A baseline fully-authentic case in the same test confirms the positive path still succeeds."
+    },
+    "classifier_convergence": {
+      "status": "fixed_and_regression_tested",
+      "detail": "worker_completed_after_responsibility_transition no longer accepts a lane mismatch as sufficient proof whenever a matching lifecycle event exists; it now requires that event to pass canonical_worker_terminal_status. test_missing_process_reviewer_with_stale_reopen_still_uses_lost_lease_recovery proves the negative at the poll_workers integration level: a stale-generation reopen event that canonical_worker_terminal_status would reject no longer lets the worker be silently reaped -- recover_lost_worker_lease is called instead. Pre-existing tests test_boot_reconciliation_completes_successful_owner_after_review_handoff and test_successful_dead_owner_after_handoff_reaps_without_lost_lease (no matching event at all, empty activity window) confirm the historical no-event fallback this call site was originally added for still works unchanged."
+    },
     "reproduced_reopen_sequences": {
-      "status": "satisfied_by_unit_reproduction",
-      "detail": "test_missing_process_reviewer_after_exact_reopen_reaps_without_lost_lease (.orchestrator/test_supervisor.py) reproduces the Registry g19-shaped sequence at the poll_workers level: a reviewer worker with a committed exact reopen event, runner_status=failed/exit_code=143/runner_signal=15, missing_process=True. Asserts recover_lost_worker_lease is never called, the worker is marked completed, the queue event is finalized completed, and task.generation is untouched. test_canonical_worker_terminal_status_recognizes_exact_reviewer_reopen exercises the classifier directly, including negative cases: wrong actor, owner-dispatched worker, and required_role=\"owner\" callers must not be satisfied by a reviewer's reopen."
+      "status": "fixed_and_regression_tested_with_real_recorded_data",
+      "detail": "test_canonical_worker_terminal_status_recognizes_two_real_recorded_reopens replays two byte-identical rows copied out of the live ai-activity-log.jsonl (not reconstructed/synthetic): REGISTRY-STRATEGY-UNIFIED-CONTRACT-001 generation 19 (event_id ai-status-event-a2440076fb2e5850b45b7dec1d507f3c45af0b3404ae9d619fad005532aa1874, 2026-09-06T15:17:07Z -- Registry g19) and this task's own reopen (event_id ai-status-event-4f20032ba9002383713700fcaa6704e8348a57bda5620bb9deb31073a34b081b, 2026-09-06T16:45:14Z). Each is run twice against the exact real worker/task identity: once through the candidate classifier unmodified (recognizes the reopen, returns in_progress), and once with RESPONSIBILITY_TRANSFER_EVENT_TYPES patched back to the pre-fix set excluding \"reopen\" (returns None, reproducing the real defect on the same real data). test_missing_process_reviewer_after_exact_reopen_reaps_without_lost_lease additionally reproduces the Registry g19 shape end-to-end through poll_workers with a synthetic-but-fully-authenticated worker/event/intent triple: recover_lost_worker_lease is never called, the worker completes, and task.generation is untouched."
     },
     "real_two_process_cli_taskstore_outbox_flow": {
-      "status": "not_claimed",
-      "detail": "Not implemented in this delivery. The fix and its tests are unit-level (in-process, mocked poll_workers collaborators), matching the existing style of the surrounding suite (e.g. test_live_expired_lease_uses_shared_typed_recovery, test_successful_dead_owner_after_handoff_reaps_without_lost_lease). A real isolated two-process reviewer-runner-exits-after-committed-reopen fixture, and the broader real-process race matrix (reopen/finalize vs recovery/claim/reassign, crash windows around canonical commit/outbox/runner-stop/queue-receipt), were not built. This is the primary residual gap against the full acceptance matrix."
+      "status": "partially_open",
+      "detail": "Still not built in this delivery: a genuinely concurrent (separate OS process) reviewer-runner-exits-after-committed-reopen race, and the broader real-process race matrix (reopen/finalize vs recovery/claim/reassign, crash windows around canonical commit/outbox/runner-stop/queue-receipt). What is now covered instead: (a) the classifier fix is proven correct against byte-identical real production activity-log rows (see reproduced_reopen_sequences above), which is real recorded evidence rather than a hand-authored fixture; (b) scripts/test_ai_status.py already exercises command_reopen's two-phase intent protocol, nonce replay, and CLI/git-backed TaskStore commit path extensively (e.g. test_reviewer_reopen_uses_the_same_two_phase_intent_protocol, test_same_second_reopens_receive_distinct_nonce_intents) and is unchanged/reverified by this delivery. Building a new real dual-OS-process race harness spanning both ai_status.py's CLI and supervisor.py's polling loop was judged out of scope for a single classifier-correctness fix given its size and the risk of an unreliable/flaky addition; it should be tracked as explicit follow-up scope (or its own task) rather than attempted piecemeal here."
     },
     "owner_handoff_approve_reject_done_blocker_reassignment_negatives": {
       "status": "covered_by_preexisting_and_new_unit_tests",
-      "detail": "Existing supervisor/ai_status suites already cover owner handoff, approve, reopen/reject, done, blocker, and reassignment transitions with strict actor/generation/run/queue/PID-ticks/digest/head negatives (unchanged by this fix; full suite reruns below confirm no regression). This delivery adds the reopen-classification-specific positive/negative cases described above; it does not add new coverage for the other listed transitions because their classification paths were not touched."
+      "detail": "Existing supervisor/ai_status suites already cover owner handoff, approve, reopen/reject, done, blocker, and reassignment transitions with strict actor/generation/run/queue/PID-ticks/digest/head negatives (unchanged by this fix; full suite reruns below confirm no regression). This delivery's new coverage is scoped to the reopen-classification path described above; it does not add new coverage for the other listed transitions because their classification paths were not touched."
     },
     "true_crash_progress_timeout_lease_expiry_pending_intent": {
       "status": "unchanged_and_reverified",
-      "detail": "recover_lost_worker_lease, review_decision_intent lease-loss handling, and the generic receipt CAS path are untouched by this fix. Full existing regression suites (below) confirm they still fence and recover correctly when no committed reopen/handoff/done/review_approved event matches the worker's exact process identity."
+      "detail": "recover_lost_worker_lease, review_decision_intent lease-loss handling, and the generic receipt CAS path are untouched by this fix. Full existing regression suites (below) confirm they still fence and recover correctly when no committed reopen/handoff/done/review_approved event matches the worker's exact process identity, and now also when a matching event exists but fails the strict reopen checks (test_missing_process_reviewer_with_stale_reopen_still_uses_lost_lease_recovery)."
     },
     "retirement_of_conflicting_classifiers": {
-      "status": "satisfied",
-      "detail": "There was exactly one narrow gap (missing reopen recognition in canonical_worker_terminal_status); no parallel classifier existed to retire. active_worker_governance_lease_decision already handled reopen correctly for a live worker and is unchanged; no old/new dual policy was introduced."
+      "status": "corrected_from_prior_delivery",
+      "detail": "The prior delivery's manifest claim that no parallel classifier existed was wrong: worker_completed_after_responsibility_transition ran ahead of canonical_worker_terminal_status at both call sites and could independently complete a worker on lane-mismatch alone, with no event authentication at all. This delivery converges it (see classifier_convergence above) rather than repeating the incorrect claim. active_worker_governance_lease_decision (for a still-alive worker) is a distinct, already-reopen-aware policy for a different question (may this active lease be ended) and remains intentionally separate."
+    },
+    "qualification_handoff": {
+      "status": "deferred_to_operator",
+      "detail": "Acceptance clause 12 (coordinator-owned qualified runtime promotion and postflight handoff: immutable command/Python identities, unchanged canonical/auth roots and barriers, existing watchdog and one integrator cron, preserved live workers, isolated post-promotion replay and actual dispatch evidence) was not performed. Promoting a new qualified command-root SHA and restarting/replaying against the live supervisor is a high-blast-radius production infrastructure action affecting the shared runtime and all in-flight workers, not a source-review change; it should be executed by Human/Ops (or the existing promotion tooling) after this PR merges, not unilaterally by the implementing worker. The live command root observed at dispatch/review time (65469bc843cab134599995ef7093fe2cf3516af4, then e9d1a1e50b4f098db6e62c1c4e247f1f40f36827 at PR review time) does not yet include this fix; the real self_task defect reproduction above was captured running that pre-fix runtime, which is itself evidence the fix has not yet been activated in production."
     },
     "governed_delivery": {
       "status": "pending",
-      "detail": "Commit, push branch task/OPS-REVIEW-HANDOFF-RECOVERY-CONTRACT-001, open PR, independent review by Codex2, required checks, dev merge."
+      "detail": "Commit, push branch task/OPS-REVIEW-HANDOFF-RECOVERY-CONTRACT-001, open a fresh PR with this exact head, independent review by Codex2, required checks, dev merge."
     }
   },
   "verification": {
     "status": "passed",
-    "preparation": "Provisioned .venv-pantheon with scripts/dev/provision_python_distribution.py using PANTHEON_DEPENDENCY_PYTHON=/home/chloe_ong_dev_cctech_support_com/code/pantheon/.venv/bin/python3 (bare system python3 lacks pytest; the main-worktree fallback .venv did not exist on this host).",
+    "preparation": "Provisioned .venv-pantheon with scripts/dev/provision_python_distribution.py using PANTHEON_DEPENDENCY_PYTHON=/tmp/registry-codex-review-20260906-deps/bin/python3 (bare system python3 lacks pytest; no main-worktree .venv existed on this host).",
     "commands": [
       {
         "name": "supervisor_full_suite",
         "command": ".venv-pantheon/bin/python3 -m pytest -q .orchestrator/test_supervisor.py",
-        "passed": 255,
+        "passed": 258,
         "subtests_passed": 55,
         "failed": 0,
         "skipped": 0,
         "exit_code": 0,
-        "terminal_output": "255 passed, 55 subtests passed in 81.26s (0:01:21)",
-        "output_sha256": "e931586db4ec68728fe287d380e19c00a9a894bf0e385dc7996afc9bba5b019a"
+        "terminal_output": "258 passed, 55 subtests passed in 82.75s (0:01:22)",
+        "output_sha256": "5c267393db4a7833d060c6f42e01d8831f16560e4376460a86b94bfccacc3cd1"
       },
       {
         "name": "worker_recovery_and_runner_heartbeat",
@@ -82,8 +115,8 @@
         "failed": 0,
         "skipped": 0,
         "exit_code": 0,
-        "terminal_output": "70 passed in 70.29s (0:01:10)",
-        "output_sha256": "00fc2608923a0da22b197d7f3cae34eeb0ce74e246effba4d2538750bf93e5e7"
+        "terminal_output": "70 passed in 56.33s",
+        "output_sha256": "e3f8507783b50b2c461eb9bb8528b53ca824e4f4f1aaf76608bc17409a2e2d17"
       },
       {
         "name": "ai_status_full_suite",
@@ -93,43 +126,44 @@
         "failed": 0,
         "skipped": 0,
         "exit_code": 0,
-        "terminal_output": "437 passed, 156 subtests passed in 236.14s (0:03:56)",
-        "output_sha256": "dbf6a38494160e4c2e11b8b4241aa97340152679b38cdfa737d3a5f8d56207bf"
+        "terminal_output": "437 passed, 156 subtests passed in 233.72s (0:03:53)",
+        "output_sha256": "56047998721304471aba6ddc261e1758c8dabfd161dd8ef9dfa9b5302c9eb1e1"
       },
       {
         "name": "reopen_and_classifier_targeted",
-        "command": ".venv-pantheon/bin/python3 -m pytest -q .orchestrator/test_supervisor.py -k \"reopen or canonical_worker_terminal_status\"",
-        "passed": 10,
+        "command": ".venv-pantheon/bin/python3 -m pytest -q .orchestrator/test_supervisor.py -k \"reopen or canonical_worker_terminal_status or responsibility_transition\"",
+        "passed": 13,
         "subtests_passed": 0,
         "failed": 0,
         "skipped": 0,
         "exit_code": 0,
-        "terminal_output": "10 passed, 245 deselected in 2.50s"
+        "terminal_output": "13 passed, 245 deselected in 3.34s",
+        "output_sha256": "f0b5d1cc05b5ab398f5f5a36b477030b8acbfa37f75eb24f66096f2bbb07ede4"
       }
     ],
     "totals": {
-      "passed": 762,
+      "passed": 778,
       "subtests_passed": 211,
       "failed": 0,
       "skipped": 0
     },
     "collection": "Every foreground batch reached a collected terminal exit; no batch was killed or timed out.",
-    "development_failures": "Two new tests initially failed with recover_lost_worker_lease called / classifier returning None, because the test fixtures (built by mutating a copy of the shared _owner_worker helper's run_id/queue_event_id) left worker[\"process_generation\"] stale relative to the new identity, so worker_process_identity(worker) returned None and status_event_matches_worker_process failed closed. Fixed by recomputing worker[\"process_generation\"] via worker_process_generation_id(...) after the identity fields were overridden, matching the existing test_reviewer_reopen_ends_the_exact_worker_that_emitted_it pattern. Reran green; failed attempts are not counted in accepted totals."
+    "development_failures": "Fixing the reopen strict-negative checks and classifier convergence initially broke six pre-existing tests that used non-authenticated fixture events (no agent, non-hash event_id, no review_requeue_intent) or relied on worker_completed_after_responsibility_transition's old unconditional lane-mismatch shortcut. Resolved by: (a) making the shared _exact_lifecycle_event test helper stamp a genuine self-consistent event_id and accept an explicit agent, matching ai_status.py's real digest scheme; (b) adding a _pending_review_requeue_intent test helper and wiring it into the affected task fixtures; (c) narrowing worker_completed_after_responsibility_transition's convergence to only require full proof when a matching lifecycle event actually exists, preserving the original no-event historical-dead-PID fallback the two boot-reconciliation tests exercise. All six were reran green; failed attempts are not counted in accepted totals."
   },
   "not_claimed": [
-    "Real two-process (isolated CLI/runner) reproduction of the SIGTERM-after-reopen race; this delivery is unit-level only",
-    "The broader real-process race matrix (reopen/finalize vs recovery/claim/reassign; crash windows around canonical commit/outbox/runner-stop/queue-receipt)",
+    "Real two-process (separate OS process) reproduction of the SIGTERM-after-reopen race or the broader crash/retry/restart race matrix (see real_two_process_cli_taskstore_outbox_flow above)",
     "Any change to the generic lost-lease receipt/CAS machinery, review_decision_intent handling, or worker_recovery.py typed receipts",
+    "The coordinator-owned qualified runtime promotion and postflight handoff (acceptance clause 12); deferred to Human/Ops as a high-blast-radius production action, see qualification_handoff above",
     "Product runtime, Management AI, Agora, or hosted/coordinator promotion acceptance",
     "Resolution of PPL-ALLOC-007, PPL-ALLOC-009, or any unrelated open task"
   ],
   "source_git_blobs": {
-    ".orchestrator/supervisor.py": "22b9b93d14c2cd21cabc1a404a69a378c58b7ca4",
-    ".orchestrator/test_supervisor.py": "8443dbeac39811a49221f3fe92fc9df07b41b039"
+    ".orchestrator/supervisor.py": "36ccc92659560cc6f621c36ba6ce72dcf9311219",
+    ".orchestrator/test_supervisor.py": "e66f0eaa0da1bb941dc933870e01cf6a693c0700"
   },
   "qualification_handoff": {
     "source_acceptance": "pending independent exact-head review by Codex2, required checks and dev merge",
-    "qualified_tooling_runtime": "not applicable; this is a source-only classifier fix inside the existing supervisor.py, no runtime promotion is requested by this delivery",
-    "coordinator_next": "After merge, no separate promotion action is required beyond the existing qualified-runtime source-adoption path; report this evidence to the existing SYS-SIMPLIFY-IMPLEMENTATION-CLOSURE-001 owner without a second global join or fake dependency."
+    "qualified_tooling_runtime": "not performed by this delivery; see acceptance_matrix_audit.qualification_handoff above for why this is deferred to Human/Ops after merge",
+    "coordinator_next": "After merge, report this evidence to the existing SYS-SIMPLIFY-IMPLEMENTATION-CLOSURE-001 owner without a second global join or fake dependency; flag acceptance clause 12 (runtime promotion) as an explicit open follow-up for Human/Ops rather than claiming it complete."
   }
 }

@@ -4984,14 +4984,34 @@ def worker_completed_after_responsibility_transition(
     config: dict[str, Any],
     worker: Mapping[str, Any],
     task: Mapping[str, Any] | None,
+    *,
+    activity_events: list[dict[str, Any]] | None = None,
 ) -> bool:
     """Whether a successful exited worker already handed responsibility onward.
 
     This is intentionally narrower than a task completion proof.  It does
-    not approve product delivery or infer a lifecycle event.  It only prevents
-    a dead worker that reported success from creating a lost-lease recovery
-    fence after canonical task state has already moved to another lane (or a
-    terminal state).
+    not approve product delivery.  It only prevents a dead worker that
+    reported success from creating a lost-lease recovery fence after
+    canonical task state has already moved to another lane (or a terminal
+    state).
+
+    A bare lane mismatch (current task status differs from the dispatched
+    role) is deliberately still accepted with no matching activity event at
+    all: a supervisor restart can observe the exact-worker event only inside
+    a bounded activity window, and by design this predicate infers nothing
+    beyond "the runner reported success and canonical truth already moved
+    on" for that historical-dead-PID case.
+
+    But once a ``RESPONSIBILITY_TRANSFER_EVENT_TYPES`` event bound to this
+    exact worker process does exist, the lane mismatch is no longer the only
+    available evidence, so it is no longer enough by itself: that event must
+    independently pass ``canonical_worker_terminal_status``'s exact-event
+    proof (self-consistent event_id, authenticated actor, matching
+    generation/pending-intent binding for a reopen).  Otherwise this call
+    site -- which sits ahead of ``canonical_worker_terminal_status`` at every
+    caller -- would let an unauthenticated, forged, or stale event that the
+    strict classifier already rejects still complete the worker through a
+    second, weaker path for the same question.
     """
 
     if not isinstance(task, Mapping) or not worker_runner_succeeded(dict(worker)):
@@ -4999,7 +5019,24 @@ def worker_completed_after_responsibility_transition(
     dispatched_role = worker_dispatch_responsibility(worker)
     if dispatched_role is None:
         return False
-    return task_current_dispatch_responsibility(config, task) != dispatched_role
+    if task_current_dispatch_responsibility(config, task) == dispatched_role:
+        return False
+    candidate_event = _latest_task_governance_event(
+        worker,
+        activity_events,
+        event_types=RESPONSIBILITY_TRANSFER_EVENT_TYPES,
+    )
+    if candidate_event is None or not status_event_matches_worker_process(candidate_event, worker):
+        return True
+    return (
+        canonical_worker_terminal_status(
+            config,
+            worker,
+            task,
+            activity_events=activity_events,
+        )
+        is not None
+    )
 
 
 def complete_worker_after_responsibility_transition(
@@ -7506,6 +7543,14 @@ GOVERNANCE_TERMINAL_EVENT_TYPES = frozenset(
 GOVERNANCE_TERMINAL_TASK_STATUSES = frozenset(
     {"done", "superseded", "cancelled", "canceled"}
 )
+# The one set of exact-worker events that can prove a dispatched attempt's
+# responsibility already transferred to another lane. Both
+# canonical_worker_terminal_status and worker_completed_after_responsibility_
+# transition key off this same set so an event that would fail the strict
+# classifier's checks cannot still slip through the narrower helper.
+RESPONSIBILITY_TRANSFER_EVENT_TYPES = frozenset(
+    {"handoff", "review_approved", "done", "reopen"}
+)
 
 
 def _ai_status_activity_event_id_matches(event: Mapping[str, Any]) -> bool:
@@ -7644,11 +7689,10 @@ def canonical_worker_terminal_status(
     # here -- the one shared classifier -- and not re-derived per call site.
     reopen_statuses = frozenset({"in_progress"})
     task_status = str(task.get("status") or "").strip().lower()
-    terminal_event_types = frozenset({"handoff", "review_approved", "done", "reopen"})
     latest_terminal = _latest_task_governance_event(
         worker,
         activity_events,
-        event_types=terminal_event_types,
+        event_types=RESPONSIBILITY_TRANSFER_EVENT_TYPES,
     )
     if latest_terminal is None or not status_event_matches_worker_process(latest_terminal, worker):
         return None
@@ -7658,7 +7702,10 @@ def canonical_worker_terminal_status(
         or latest_terminal.get("author")
         or ""
     ).strip()
-    if event_actor and canonical_agent_name(config, event_actor).casefold() != worker_actor.casefold():
+    # A missing actor is not an unauthenticated-but-otherwise-fine event: it is
+    # the one case the truthy "and" below used to silently skip, letting an
+    # actor-less event stand in for anyone. Fail closed instead.
+    if not event_actor or canonical_agent_name(config, event_actor).casefold() != worker_actor.casefold():
         return None
     event_type = str(latest_terminal.get("type") or "").strip().lower()
     valid_statuses = {
@@ -7673,8 +7720,35 @@ def canonical_worker_terminal_status(
         return None
     if event_type in {"handoff", "done"} and expected_role != "owner":
         return None
-    if event_type == "reopen" and expected_role != "reviewer":
-        return None
+    if event_type == "reopen":
+        # The reopen path is the one newly trusted here to end a dispatched
+        # attempt without the runner's own exit proving it, so it carries
+        # strictly more authentication than the shared checks above: a
+        # self-consistent (non-forged) event_id, a worker bound to the exact
+        # current task generation (not a stale earlier dispatch that happens
+        # to still match on process identity alone), and the still-pending
+        # review_requeue_intent that ``command_reopen`` committed atomically
+        # with this same event -- proving no later handoff/reassign/reopen
+        # has already superseded it.
+        if expected_role != "reviewer":
+            return None
+        if not _ai_status_activity_event_id_matches(latest_terminal):
+            return None
+        if not worker_matches_current_task_generation(worker, task):
+            return None
+        requeue_intent = task.get(REVIEW_REQUEUE_INTENT_KEY)
+        if not isinstance(requeue_intent, Mapping):
+            return None
+        if str(requeue_intent.get("status") or "").strip().lower() != "pending":
+            return None
+        if int(requeue_intent.get("task_generation") or 0) != task_generation(task):
+            return None
+        requeue_reviewer = canonical_agent_name(config, str(requeue_intent.get("reviewer") or ""))
+        requeue_actor = canonical_agent_name(config, str(requeue_intent.get("reopened_by") or ""))
+        if requeue_reviewer.casefold() != worker_actor.casefold():
+            return None
+        if requeue_actor.casefold() != worker_actor.casefold():
+            return None
     return task_status
 
 
@@ -10679,7 +10753,7 @@ def poll_workers(
         if lease_expired or missing_process:
             task = task_map.get(str(worker.get("task_id") or ""))
             if missing_process and worker_completed_after_responsibility_transition(
-                config, worker, task
+                config, worker, task, activity_events=governance_activity_events
             ):
                 complete_worker_after_responsibility_transition(
                     config,
@@ -12337,7 +12411,7 @@ def reconcile_runtime_on_boot(config: dict[str, Any], state: dict[str, Any]) -> 
         # receipt, otherwise every restart briefly fences an already-valid
         # handoff and wastes a recovery cycle.
         if missing_process and worker_completed_after_responsibility_transition(
-            config, worker, task
+            config, worker, task, activity_events=governance_activity_events
         ):
             complete_worker_after_responsibility_transition(
                 config,
