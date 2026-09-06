@@ -48,6 +48,36 @@ still required by the hosted controller and is not bypassed by this feature.
 There is no file-inbox/manual-pending fallback, chair lane, discussion-planning
 lane, helper claim, priority preemption, or direct retry launch.
 
+## Execution authorization (OPS-PRIVILEGED-TASK-EXECUTION-AUTH-001)
+
+`evaluate_task_delivery_admission` also computes
+`execution_authorization.is_execution_authorized(task, now=...)` and feeds it
+into `TaskIntent.execution_authorized`. `evaluate_dispatch_intent` only
+consults that verdict for the two *owner-execution* dispatch reasons,
+`OWNED_IN_PROGRESS` and `OWNED_READY`: a privileged (`security`/`hosted`/
+`live`) task whose `execution_authorization` subrecord is not currently
+`STATE_GRANTED` and current is denied there with
+`DispatchBlockReason.EXECUTION_AUTHORIZATION_REQUIRED`, before any capacity,
+health, or endpoint check. `REVIEW_READY` and `OWNED_FINALIZE` dispatch are
+read-only/closeout-bookkeeping purposes and are never denied on this
+verdict -- a pending, expired, or revoked privileged task can still be
+reviewed and finalized. Only a non-privileged task with no authorization requirement is unaffected. `is_execution_authorized` derives privileged
+classification from the task's durable `dev_bridge.work_class`, not from
+whether the subrecord happens to be present, so a dropped or downgraded
+subrecord on a privileged task fails closed instead of falling back to
+authorized. `supervisor.start_worker_for_request` spends the one-shot grant
+under the canonical task-state lock immediately before launch (also scoped
+to `OWNED_IN_PROGRESS`/`OWNED_READY`), and `worker_runner.py` independently
+revalidates the exact reservation against the authoritative journal at actual
+process-launch time. The durable runtime receipt binds the PID/start ticks,
+command, task generation, role, workspace and journal identity; caller-provided
+role or task labels cannot exempt a launch. Reservation uses a unique event
+attempt and cannot be reused after process loss. Full signed spec/contract
+changes, reassignment and revocation invalidate the binding. See
+`.orchestrator/execution_authorization.py`'s module docstring and
+`docs/04/pantheon_first_release_closure_2026-09-06/EXECUTION_AUTHORIZATION_SA_SD.md`
+for the full policy/grant/one-shot-consume contract.
+
 ## Verification
 
 Focused verification for this contract is:
