@@ -505,6 +505,12 @@ def _strategy_spec_register_payload(body: StrategySpecRegisterRequest) -> Regist
     if not strategy_id:
         raise RegistryError("strategy_id is required")
 
+    if "draft_kind" in (body.metadata or {}):
+        raise RegistryError(
+            "Reserved metadata field 'draft_kind' cannot be specified on StrategySpec submissions; "
+            "name-only draft entries must be created via POST /api/registry/entries using the un-typed {'name': '...'} request."
+        )
+
     strategy_spec = body.strategy_spec
     if strategy_spec is None:
         # Reviewer finding 2: a caller could previously pass
@@ -1007,6 +1013,17 @@ def _resolve_entry_or_draft_payload(
         )
         return create_payload, registry_id
 
+    if name:
+        raise RegistryError(
+            "POST /api/registry/entries cannot mix a name-only draft with typed fields; "
+            "supply 'name' alone or all of artifact_type/strategy_id/version."
+        )
+    if "draft_kind" in (payload.metadata or {}):
+        raise RegistryError(
+            "Reserved metadata field 'draft_kind' cannot be specified on typed submissions; "
+            "name-only draft entries must be created using the un-typed {'name': '...'} request."
+        )
+
     # Reviewer finding 2: the generic route stores a caller-supplied
     # checksum verbatim without checking it against any actual content. A
     # bare artifact_type=strategy_spec reference entry (checksum only, no
@@ -1102,6 +1119,10 @@ async def register_entry(
     ctx = _authenticate_registry_write(authorization)
     registry_service = get_registry_service()
 
+    # Derive draft classification strictly from server-side request structure,
+    # never from caller-controlled metadata:
+    is_name_only_draft = not bool(payload.artifact_type and payload.strategy_id and payload.version)
+
     def _build_payload() -> tuple[RegistryEntryCreate, str]:
         create_payload, registry_id = _resolve_entry_or_draft_payload(payload)
         # Reviewer finding 2: a full StrategySpec (embedded metadata.
@@ -1115,7 +1136,7 @@ async def register_entry(
         base_checksum = payload.base_checksum or (payload.metadata or {}).get("base_checksum")
         if (
             create_payload.artifact_type == ArtifactType.STRATEGY_SPEC
-            and (create_payload.metadata or {}).get("draft_kind") != "name_only"
+            and not is_name_only_draft
         ):
             precheck_kwargs = {"base_checksum": base_checksum} if base_checksum is not None else {}
             _validate_strategy_spec_version_lineage(
@@ -1135,7 +1156,7 @@ async def register_entry(
             validate_lineage = None
             if (
                 payload.artifact_type == ArtifactType.STRATEGY_SPEC
-                and (payload.metadata or {}).get("draft_kind") != "name_only"
+                and not is_name_only_draft
                 and target_strategy_id
                 and payload.version
             ):
@@ -1166,7 +1187,7 @@ async def register_entry(
         create_payload, registry_id = _build_payload()
         if (
             create_payload.artifact_type == ArtifactType.STRATEGY_SPEC
-            and (create_payload.metadata or {}).get("draft_kind") != "name_only"
+            and not is_name_only_draft
         ):
             # Reviewer finding 2 (gen-8/gen-19 review): every StrategySpec
             # representation (embedded metadata.strategy_spec content or

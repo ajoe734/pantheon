@@ -2,8 +2,8 @@
   "schema_version": "pantheon.task-evidence.v1",
   "task_id": "REGISTRY-STRATEGY-UNIFIED-CONTRACT-001",
   "normative_plan": "/home/chloe_ong_dev_cctech_support_com/code/pantheon-artifacts/dev-closure-20260906/architecture-resumption-sa-sd.md, /home/chloe_ong_dev_cctech_support_com/code/pantheon-artifacts/dev-closure-20260906/operator-architecture-confirmation.md",
-  "predecessor": "head 20743e80617abfa86cf120e03e23b31199fad23f on PR #5620, which reviewer Codex rejected with findings: [P1] services/registry/service.py:684-704 accepted a checksum-only caller base by comparing against the freshly selected latest entry, without binding its immutable registry_id/version; [P1] services/registry/service.py:1139-1142,1159-1167,1193-1196 only enabled lineage validation for inline strategy_spec metadata, allowing noninitial object_store StrategySpec references with version 9.9.9 to bypass caller base on generic /entries; [P1] /tmp/test_registry_review_20743.py failed 4 probes.",
-  "scope_note": "This is the generation-20 corrective pass resolving all review reject findings from PR #5620 frozen head 20743e80617abfa86cf120e03e23b31199fad23f: (1) Eliminated checksum-only caller base in services/registry/service.py: noninitial StrategySpec revisions must declare explicit caller parent identity (lineage.parent_registry_ids) linking to an existing entry; content checksum alone is not revision CAS and cannot adopt intervening same-content revisions. Stale parent or mismatched base_checksum is rejected (409 Conflict), omitted parent_registry_ids is rejected (400). (2) Enforced identical atomic revision invariants and caller parent lineage across ALL StrategySpec representations (inline metadata.strategy_spec and storage_ref/object_store references) under the per-strategy advisory transaction lock on both typed POST /api/registry/strategy-specs and generic POST /api/registry/entries (both keyed and unkeyed), while preserving distinct artifacts and name-only drafts. (3) Added permanent committed regression tests test_stale_digest_cannot_bind_a_different_revision and test_generic_reference_revision_cannot_skip_caller_base in services/registry/test_owner_durability_real_process.py. (4) Reconciled first_release_contract.json and contract.md. All 385 tests in the full suite and all 4 reviewer probes pass against live PostgreSQL.",
+  "predecessor": "head f08d2f256ae1acca3e6596f160dc18f50eaccce4 on PR #5620, which reviewer Codex rejected with findings: [P1] services/registry/service.py:1118,1138,1169 trusts caller-controlled metadata.draft_kind == name_only to skip both revision precheck and transaction-scoped lineage validation; [P1] /tmp/test_registry_review_f08d.py failed 4 probes across keyed/unkeyed and inline/storage_ref combinations.",
+  "scope_note": "This is the generation-21 corrective pass resolving all review reject findings from PR #5620 frozen head f08d2f256ae1acca3e6596f160dc18f50eaccce4: (1) Derived draft classification strictly server-side from request structure (is_name_only_draft = not bool(payload.artifact_type and payload.strategy_id and payload.version)), never arbitrary caller-controlled metadata. Typed submissions and StrategySpec submissions reject reserved metadata field 'draft_kind' (400), and mixing name with typed fields is rejected (400). (2) Enforced atomic revision invariants and caller parent lineage without exemption across all StrategySpec representations (inline metadata.strategy_spec and storage_ref references) on generic POST /api/registry/entries (both keyed and unkeyed), while preserving genuine name-only drafts and distinct artifacts. (3) Added permanent committed regression tests test_typed_revision_cannot_claim_name_only_to_skip_base and test_name_only_draft_real_process_positive_and_durable_readback in services/registry/test_owner_durability_real_process.py, as well as unit tests in test_service.py. (4) Reconciled first_release_contract.json and contract.md. All 394 tests in the full suite and all 4 reviewer probes pass against live PostgreSQL.",
   "implementation": {
     "files_added": [],
     "files_modified": [
@@ -16,6 +16,7 @@
       "services/registry/test_owner_durability.py",
       "services/registry/test_owner_durability_real_process.py",
       "services/registry/test_registry_positives.py",
+      "services/registry/test_service.py",
       "docs/deployment/evidence/REGISTRY-STRATEGY-UNIFIED-CONTRACT-001/evidence.json"
     ],
     "summary": [
@@ -24,9 +25,11 @@
       "test_command_adapters_router.py: Configured strict auth and passed signed JWT token.",
       "service.py: Eliminated checksum-only caller base fallback (lines 684-704), requiring unambiguous caller-observed parent_registry_ids in lineage for all noninitial StrategySpec revisions (400 if omitted, 409 if stale parent or mismatched base_checksum).",
       "service.py: Extended atomic revision sequencing invariants, pre-check, and advisory lock validation to ALL StrategySpec representations (inline metadata.strategy_spec, object_store/storage_ref references) on generic POST /api/registry/entries (both keyed and unkeyed), while preserving name-only drafts and distinct non-strategy_spec artifacts.",
-      "test_owner_durability_real_process.py: Added committed regression tests test_stale_digest_cannot_bind_a_different_revision (proving content checksum alone cannot adopt an intervening same-content revision) and test_generic_reference_revision_cannot_skip_caller_base (proving noninitial object_store StrategySpec references cannot bypass caller base on generic /entries).",
-      "first_release_contract.json: Reconciled create_next_revision and generic_route_typed_content_validation contract entries to require explicit parent_registry_ids and document parity across all StrategySpec representations.",
-      "contract.md: Updated lineage requirements and StrategySpec facade documentation to mandate caller parent_registry_ids for noninitial revisions and reflect generic route parity."
+      "service.py: Derived draft classification server-side from request structure, rejected reserved draft_kind metadata markers on typed and StrategySpec submissions (400), and rejected mixing name with typed fields (400).",
+      "test_owner_durability_real_process.py: Added committed regression tests test_stale_digest_cannot_bind_a_different_revision, test_generic_reference_revision_cannot_skip_caller_base, test_typed_revision_cannot_claim_name_only_to_skip_base (4 parameterized variants), and test_name_only_draft_real_process_positive_and_durable_readback (2 parameterized variants).",
+      "test_service.py: Added unit tests test_typed_submission_cannot_mix_name, test_typed_submission_rejects_reserved_draft_kind, and test_strategy_spec_facade_rejects_reserved_draft_kind.",
+      "first_release_contract.json: Reconciled create_next_revision and generic_route_typed_content_validation contract entries to require explicit parent_registry_ids, document parity across all StrategySpec representations, and document draft classification invariants.",
+      "contract.md: Updated lineage requirements and StrategySpec facade documentation to mandate caller parent_registry_ids for noninitial revisions and reflect generic route parity and draft classification."
     ]
   },
   "verification": {
@@ -34,30 +37,30 @@
     "commands": [
       {
         "command": "TEST_DATABASE_URL=postgresql://postgres:postgres@127.0.0.1:25432/postgres .venv-pantheon/bin/python3 -m pytest services/registry services/foundation/tests/test_registry_owner_transaction.py services/foundation/tests/test_control_plane_postgres_owner_stores.py services/control-plane/bff/tests/test_strategy_registry_owner_prerequisite.py services/control-plane/bff/test_command_executor.py services/control-plane/bff/tests/test_command_adapters_router.py -q",
-        "result": "385 passed, 3 warnings in 158.87s against live PostgreSQL container"
+        "result": "394 passed, 3 warnings in 157.89s against live PostgreSQL container"
       },
       {
         "command": "TEST_DATABASE_URL=postgresql://postgres:postgres@127.0.0.1:25432/postgres .venv-pantheon/bin/python3 -m pytest -v services/registry/test_owner_durability_real_process.py",
-        "result": "14 passed, 1 warning in 47.26s against live PostgreSQL -- real process SIGKILL, crash window, rapid same-second mutation/replay without sleep, parent lineage base_checksum 409, concurrent parent-linked writers, mandatory caller base identity verification, stale digest intervening revision CAS rejection, and generic reference revision base binding"
+        "result": "20 passed, 1 warning in 47.05s against live PostgreSQL -- real process SIGKILL, crash window, rapid same-second mutation/replay without sleep, parent lineage base_checksum 409, concurrent parent-linked writers, mandatory caller base identity verification, stale digest intervening revision CAS rejection, generic reference revision base binding, draft_kind bypass rejection across all 4 keyed/unkeyed inline/reference combinations with durable readback, and genuine name-only draft positive capability with durable readback across restart"
       },
       {
         "command": ".venv-pantheon/bin/python3 -m pytest -v services/control-plane/bff/tests/test_strategy_registry_owner_prerequisite.py",
-        "result": "54 passed in 18.56s -- caller strict auth before owner I/O, claims validation, zero owner I/O on permissive/unsigned tokens, scoped receipt validation, transport recovery, and adversarial tests"
+        "result": "54 passed in 17.33s -- caller strict auth before owner I/O, claims validation, zero owner I/O on permissive/unsigned tokens, scoped receipt validation, transport recovery, and adversarial tests"
       },
       {
-        "command": "TEST_DATABASE_URL=postgresql://postgres:postgres@127.0.0.1:25432/postgres .venv-pantheon/bin/python3 -m pytest /tmp/test_registry_review_20743.py -q --tb=short",
-        "result": "4 passed, 1 warning in 8.88s -- reviewer probe asserting stale digest rejection and generic reference revision base binding"
+        "command": "TEST_DATABASE_URL=postgresql://postgres:postgres@127.0.0.1:25432/postgres .venv-pantheon/bin/python3 -m pytest /tmp/test_registry_review_f08d.py -q --tb=short",
+        "result": "4 passed, 1 warning in 8.44s -- reviewer probe asserting draft_kind cannot bypass revision base across all 4 keyed/unkeyed inline/reference combinations"
       },
       {
         "command": "TEST_DATABASE_URL=postgresql://postgres:postgres@127.0.0.1:25432/postgres .venv-pantheon/bin/python3 -m pytest services/registry/test_owner_durability.py",
-        "result": "16 passed in 9.77s against live PostgreSQL"
+        "result": "16 passed in 8.38s against live PostgreSQL"
       },
       {
         "command": ".venv-pantheon/bin/python3 -m pytest services/registry/test_first_release_contract.py",
-        "result": "13 passed in 3.22s"
+        "result": "13 passed in 2.99s"
       },
       {
-        "command": "python3 -m py_compile services/control-plane/bff/command_adapters/strategy_adapter.py services/control-plane/bff/tests/test_strategy_registry_owner_prerequisite.py services/control-plane/bff/tests/test_command_adapters_router.py services/foundation/tests/test_registry_owner_transaction.py services/registry/pg_store.py services/registry/service.py services/registry/split_api.py services/registry/storage.py services/registry/test_owner_durability_real_process.py services/registry/test_owner_durability.py services/registry/test_registry_positives.py",
+        "command": "python3 -m py_compile services/control-plane/bff/command_adapters/strategy_adapter.py services/control-plane/bff/tests/test_strategy_registry_owner_prerequisite.py services/control-plane/bff/tests/test_command_adapters_router.py services/foundation/tests/test_registry_owner_transaction.py services/registry/pg_store.py services/registry/service.py services/registry/split_api.py services/registry/storage.py services/registry/test_owner_durability_real_process.py services/registry/test_owner_durability.py services/registry/test_registry_positives.py services/registry/test_service.py",
         "result": "clean compile, no syntax errors"
       }
     ],
@@ -80,6 +83,8 @@
     "strategy_spec_generic_and_typed_all_representations_share_invariants": true,
     "strategy_spec_stale_parent_rejected_409": true,
     "strategy_spec_unbound_revision_rejected_400": true,
+    "typed_submissions_reject_reserved_draft_kind": true,
+    "draft_classification_derived_server_side_from_request_structure": true,
     "create_with_receipt_lock_ordering_consistent": true,
     "real_postgres_adversarial_crash_and_response_loss_tested": true,
     "sigkill_process_durability_tested": true,
@@ -93,6 +98,6 @@
   },
   "review": {
     "reviewer": "Codex",
-    "decision": "Resolved all review reject findings from PR #5620 (frozen head 20743e80617abfa86cf120e03e23b31199fad23f): (1) Enforced mandatory caller parent_registry_ids for every noninitial StrategySpec revision, eliminating checksum-only caller base and preventing silent adoption of intervening same-content revisions; (2) Applied identical atomic revision sequencing and caller parent invariants to all StrategySpec representations (inline and storage_ref references) on generic /entries (both keyed and unkeyed); (3) Reconciled contracts and committed regression suites in test_owner_durability_real_process.py. All 385 suite tests and 4 reviewer probes pass against live PostgreSQL."
+    "decision": "Resolved all review reject findings from PR #5620 (frozen head f08d2f256ae1acca3e6596f160dc18f50eaccce4): (1) Derived draft classification server-side from request structure rather than arbitrary metadata; (2) Rejected reserved draft_kind metadata markers on typed and StrategySpec submissions (400) and rejected mixing name with typed fields (400); (3) Added committed real-process regressions for all four combinations (keyed/unkeyed, inline/storage_ref) with durable readback and verified genuine name-only draft positive capability across fresh OS processes. All 4 reviewer probes and full suite pass against live PostgreSQL."
   }
 }

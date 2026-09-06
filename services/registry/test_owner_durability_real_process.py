@@ -1392,3 +1392,149 @@ def test_generic_reference_revision_cannot_skip_caller_base(pg_schema, keyed):
         _stop(proc)
 
 
+@pytest.mark.parametrize("keyed", [False, True])
+@pytest.mark.parametrize("inline", [False, True])
+def test_typed_revision_cannot_claim_name_only_to_skip_base(pg_schema, keyed, inline):
+    """Reviewer probe regression: prove that a caller cannot pass
+    metadata.draft_kind = 'name_only' on a typed StrategySpec revision
+    (keyed/unkeyed, inline/storage_ref) to bypass parent/base validation."""
+    from services.registry.test_service import _valid_spec
+
+    dsn, schema = pg_schema
+    port = _free_port()
+    proc = _spawn_registry_process(port=port, dsn=dsn, schema=schema)
+    try:
+        _wait_for_health(port)
+        token = _strict_jwt()
+        sid = f"review-marker-{uuid4().hex[:8]}"
+        content = _valid_spec(sid)
+        status, first = _http(
+            "POST",
+            port,
+            "/api/registry/strategy-specs",
+            token=token,
+            payload={
+                "strategy_id": sid,
+                "version": "1.0.0",
+                "lineage": {"source_run_ids": ["review-run"]},
+                "strategy_spec": content,
+            },
+        )
+        assert status == 200, first
+        payload = {
+            "artifact_type": "strategy_spec",
+            "strategy_id": sid,
+            "version": "9.9.9",
+            "lineage": {"source_run_ids": ["review-run"]},
+            "metadata": {"draft_kind": "name_only"},
+        }
+        if inline:
+            payload["strategy_spec"] = content
+        else:
+            payload["checksum"] = first["entry"]["checksum"]
+            payload["storage_ref"] = {"backend": "object_store", "path": "review/spec.json"}
+        status, result = _http(
+            "POST",
+            port,
+            "/api/registry/entries",
+            token=token,
+            payload=payload,
+            headers={"Idempotency-Key": sid} if keyed else {},
+        )
+        if status == 200:
+            read_status, persisted = _http(
+                "GET",
+                port,
+                "/api/registry/entries/" + result["entry"]["registry_id"],
+                token=token,
+            )
+            assert read_status == 200
+            assert persisted["entry"]["version"] == "9.9.9"
+        assert status in (400, 409, 422), (
+            f"caller-controlled draft_kind bypassed revision base: HTTP {status}; "
+            f'durably stored version={result.get("entry", {}).get("version")}; '
+            f"inline={inline}, keyed={keyed}"
+        )
+
+        # Durable readback check: verify that version 9.9.9 was NOT durably written
+        read_status, versions = _http(
+            "GET",
+            port,
+            f"/api/registry/strategies/{sid}/strategy-specs",
+            token=token,
+        )
+        assert read_status == 200, versions
+        stored_versions = [v["entry"]["version"] for v in versions]
+        assert "9.9.9" not in stored_versions
+    finally:
+        _stop(proc)
+
+
+@pytest.mark.parametrize("keyed", [False, True])
+def test_name_only_draft_real_process_positive_and_durable_readback(pg_schema, keyed):
+    """Positive capability counterpart: prove genuine name-only draft creation
+    (name alone, un-typed) succeeds with stable identity, sets draft_kind='name_only'
+    server-side, and reads back durably across a brand-new OS process."""
+    dsn, schema = pg_schema
+    port_a = _free_port()
+    proc_a = _spawn_registry_process(port=port_a, dsn=dsn, schema=schema)
+    try:
+        _wait_for_health(port_a)
+        token = _strict_jwt()
+        draft_name = f"My Durable Idea {uuid4().hex[:6]}"
+        headers = {"Idempotency-Key": f"draft-key-{uuid4().hex[:8]}"} if keyed else {}
+        status, created = _http(
+            "POST",
+            port_a,
+            "/api/registry/entries",
+            token=token,
+            payload={"name": draft_name},
+            headers=headers,
+        )
+        assert status == 200, created
+        entry = created["entry"]
+        reg_id = entry["registry_id"]
+        sid = entry["strategy_id"]
+        assert sid.startswith("draft-")
+        assert entry["version"] == "0.0.1"
+        assert entry["artifact_state"] == "draft"
+        assert entry["metadata"]["name"] == draft_name
+        assert entry["metadata"]["draft_kind"] == "name_only"
+
+        # If keyed, verify replay idempotency returns identical registry_id
+        if keyed:
+            status_rep, replayed = _http(
+                "POST",
+                port_a,
+                "/api/registry/entries",
+                token=token,
+                payload={"name": draft_name},
+                headers=headers,
+            )
+            assert status_rep == 200, replayed
+            assert replayed["entry"]["registry_id"] == reg_id
+    finally:
+        _stop(proc_a)
+
+    # Spawn fresh process and prove durable readback
+    port_b = _free_port()
+    proc_b = _spawn_registry_process(port=port_b, dsn=dsn, schema=schema)
+    try:
+        _wait_for_health(port_b)
+        token = _strict_jwt()
+        status, readback = _http(
+            "GET",
+            port_b,
+            f"/api/registry/entries/{reg_id}",
+            token=token,
+        )
+        assert status == 200, readback
+        rb_entry = readback["entry"]
+        assert rb_entry["registry_id"] == reg_id
+        assert rb_entry["strategy_id"] == sid
+        assert rb_entry["metadata"]["draft_kind"] == "name_only"
+        assert rb_entry["metadata"]["name"] == draft_name
+    finally:
+        _stop(proc_b)
+
+

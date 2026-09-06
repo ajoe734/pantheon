@@ -337,7 +337,7 @@ supplying or trusting `artifact_type` themselves. It must still preserve:
 - lineage from source seed, source run, parent registry entry, dataset, or source StrategySpec
 - `storage_ref` and `checksum` on every registered StrategySpec artifact
 - mandatory caller parent identity (`parent_registry_ids`) on all noninitial revisions; checksum alone cannot identify parent revisions
-- identical atomic revision sequencing invariants across both the dedicated `/api/registry/strategy-specs` facade and the generic `/api/registry/entries` endpoint for all StrategySpec representations (inline or storage reference)
+- identical atomic revision sequencing invariants across both the dedicated `/api/registry/strategy-specs` facade and the generic `/api/registry/entries` endpoint for all StrategySpec representations (inline or storage reference); draft classification is strictly derived server-side from request structure, and reserved `draft_kind` metadata markers on typed or StrategySpec submissions are rejected (400)
 - the same `artifact_state` / `deployment_stage` split as the generic registry entry API
 
 ### Evolvable StrategyArtifact facade

@@ -1208,6 +1208,55 @@ def test_neither_name_nor_full_fields_is_rejected(strict_client):
     assert resp.status_code == 400, resp.text
 
 
+def test_typed_submission_cannot_mix_name(strict_client):
+    token = _jwt(subject="drafter-4", tenant="tenant-a")
+    resp = strict_client.post(
+        "/api/registry/entries",
+        json={
+            "name": "Mixed Full",
+            "artifact_type": "strategy_spec",
+            "strategy_id": "test-strat",
+            "version": "1.0.0",
+        },
+        headers=_bearer(token),
+    )
+    assert resp.status_code == 400, resp.text
+    assert "mix" in resp.json()["detail"].lower()
+
+
+def test_typed_submission_rejects_reserved_draft_kind(strict_client):
+    token = _jwt(subject="drafter-5", tenant="tenant-a")
+    resp = strict_client.post(
+        "/api/registry/entries",
+        json={
+            "artifact_type": "strategy_spec",
+            "strategy_id": "test-strat",
+            "version": "1.0.0",
+            "metadata": {"draft_kind": "name_only"},
+        },
+        headers=_bearer(token),
+    )
+    assert resp.status_code == 400, resp.text
+    assert "draft_kind" in resp.json()["detail"].lower()
+
+
+def test_strategy_spec_facade_rejects_reserved_draft_kind(strict_client):
+    token = _jwt(subject="drafter-6", tenant="tenant-a")
+    resp = strict_client.post(
+        "/api/registry/strategy-specs",
+        json={
+            "strategy_id": "test-strat-facade",
+            "version": "1.0.0",
+            "lineage": {"source_run_ids": ["run-1"]},
+            "strategy_spec": _valid_spec("test-strat-facade"),
+            "metadata": {"draft_kind": "name_only"},
+        },
+        headers=_bearer(token),
+    )
+    assert resp.status_code == 400, resp.text
+    assert "draft_kind" in resp.json()["detail"].lower()
+
+
 def test_metadata_patch_cannot_introduce_reserved_key_that_never_existed(strict_client):
     """A generic metadata PATCH must not be able to smuggle in a fresh
     strategy_spec (or other reserved key) on an entry that never had one —
