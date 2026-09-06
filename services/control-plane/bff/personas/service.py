@@ -722,11 +722,16 @@ class _PersonaOwnerHttpTransport:
             or "default"
         ).strip()
 
-    def _service_jwt(self) -> str:
-        """Mint a short-lived, tenant-bound service JWT for strict Capital."""
+    def _service_jwt(self, owner: str) -> str:
+        """Mint a short-lived, tenant-bound service JWT for strict owners."""
 
+        secret_env = {
+            "capital": "PANTHEON_CAPITAL_JWT_SECRET",
+            "registry": "PANTHEON_REGISTRY_JWT_SECRET",
+            "governance": "PANTHEON_GOVERNANCE_JWT_SECRET",
+        }.get(owner, "PANTHEON_BFF_JWT_SECRET")
         secret = str(
-            os.getenv("PANTHEON_CAPITAL_JWT_SECRET")
+            os.getenv(secret_env)
             or os.getenv("PANTHEON_BFF_JWT_SECRET")
             or ""
         ).strip()
@@ -778,8 +783,8 @@ class _PersonaOwnerHttpTransport:
             "X-Tenant-Id": tenant_id,
             "X-Pantheon-Service": "control-plane-bff",
         }
-        if owner == "capital":
-            headers["Authorization"] = f"Bearer {self._service_jwt()}"
+        if owner in {"capital", "registry", "governance"}:
+            headers["Authorization"] = f"Bearer {self._service_jwt(owner)}"
         else:
             # Deployment and the other dev owner APIs use the repository's
             # bounded structured token in permissive dev mode.  Capital is the
