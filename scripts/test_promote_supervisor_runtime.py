@@ -40,10 +40,11 @@ def _command_runtime_parent(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setattr(
         promotion,
         "verify_execution_authorization_barriers",
-        lambda root: {
-            "outcome": "barriers_present",
+        lambda root, *, python_executable: {
+            "outcome": "barriers_verified",
             "command_root": str(Path(root).resolve()),
             "capability": "execution_authorization_v1",
+            "python_executable": str(python_executable),
         },
     )
     monkeypatch.setenv(
@@ -798,27 +799,22 @@ def test_deploy_root_honors_env_override_and_expands_user(tmp_path: Path) -> Non
 
 
 def _write_real_orchestrator_modules(orchestrator_dir: Path) -> None:
-    """Copy the actual barrier-bearing modules into a candidate root.
+    """Copy actual intake, TaskStore, admission and runner code plus imports."""
 
-    Unlike ``_candidate()``'s minimal stub, this is what a genuine promotion
-    candidate looks like: the real ``execution_authorization.py``,
-    ``worker_runner.py``, and ``rewrite/dispatch_admission.py`` this
-    repository ships, on the module search path
-    ``verify_execution_authorization_barriers`` actually probes.
-    """
-
-    repo_orchestrator = Path(__file__).resolve().parents[1] / ".orchestrator"
-    for name in ("execution_authorization.py", "worker_runner.py", "common.py"):
-        (orchestrator_dir / name).write_bytes((repo_orchestrator / name).read_bytes())
-    rewrite_dir = orchestrator_dir / "rewrite"
-    rewrite_dir.mkdir(exist_ok=True)
-    (rewrite_dir / "__init__.py").write_bytes(
-        (repo_orchestrator / "rewrite" / "__init__.py").read_bytes()
-    )
-    for name in ("dispatch_admission.py", "task_machine.py", "provider_health.py"):
-        (rewrite_dir / name).write_bytes(
-            (repo_orchestrator / "rewrite" / name).read_bytes()
-        )
+    repo = Path(__file__).resolve().parents[1]
+    for directory in (".orchestrator", "scripts"):
+        for source in (repo / directory).rglob("*.py"):
+            if "tests" in source.parts or source.name.startswith("test_"):
+                continue
+            destination = orchestrator_dir.parent / source.relative_to(repo)
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            destination.write_bytes(source.read_bytes())
+    # The actual runner preflight validates immutable merged command source;
+    # publish this test-only source snapshot to its own local dev tracking ref.
+    candidate = orchestrator_dir.parent
+    _git(candidate, "add", ".orchestrator", "scripts")
+    _git(candidate, "commit", "-m", "isolated complete candidate runtime")
+    _git(candidate, "update-ref", "refs/remotes/origin/dev", "HEAD")
 
 
 def test_verify_execution_authorization_barriers_accepts_current_source(
@@ -827,10 +823,23 @@ def test_verify_execution_authorization_barriers_accepts_current_source(
     candidate, _status_root = _candidate(tmp_path)
     _write_real_orchestrator_modules(candidate / ".orchestrator")
 
-    result = _REAL_VERIFY_EXECUTION_AUTHORIZATION_BARRIERS(candidate)
+    result = _REAL_VERIFY_EXECUTION_AUTHORIZATION_BARRIERS(
+        candidate, python_executable=Path(sys.executable),
+    )
 
-    assert result["outcome"] == "barriers_present"
+    assert result["outcome"] == "barriers_verified"
     assert result["capability"] == "execution_authorization_v1"
+    assert result["python_executable"] == sys.executable
+    assert set(result["checks"]) == {
+        "signed_no_mfa_pending_intake", "durable_legacy_hold",
+        "planner_denies_pending", "late_delivery_denies_pending",
+        "worker_entry_denies_unreserved", "ordinary_functional_dispatch",
+        "worker_main_denies_invalid_receipt", "worker_launch_guard_wiring",
+    }
+    assert all(
+        Path(item["path"]).is_relative_to(candidate) and len(item["sha256"]) == 64
+        for item in result["module_provenance"].values()
+    )
 
 
 def test_verify_execution_authorization_barriers_rejects_old_runtime(
@@ -842,7 +851,130 @@ def test_verify_execution_authorization_barriers_rejects_old_runtime(
     candidate, _status_root = _candidate(tmp_path)
 
     with pytest.raises(ValueError, match="authorization barriers"):
-        _REAL_VERIFY_EXECUTION_AUTHORIZATION_BARRIERS(candidate)
+        _REAL_VERIFY_EXECUTION_AUTHORIZATION_BARRIERS(
+            candidate, python_executable=Path(sys.executable),
+        )
+
+
+def test_barrier_probe_uses_selected_venv_and_ignores_ambient_authority(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    candidate, _ = _candidate(tmp_path)
+    _write_real_orchestrator_modules(candidate / ".orchestrator")
+    # Preserve a distinct venv executable spelling even when bin/python is
+    # a symlink. Resolving it would quietly run the base Python environment.
+    venv = tmp_path / "candidate-python"
+    subprocess.run(
+        [sys.executable, "-m", "venv", "--without-pip", "--system-site-packages", str(venv)],
+        check=True, capture_output=True, text=True, timeout=30,
+    )
+    # The test runner may itself be in a venv; make its installed dependency
+    # directories available to the new isolated candidate venv via a .pth,
+    # while PYTHONPATH and Python caller state remain deliberately ignored.
+    site_dir = next((venv / "lib").glob("python*/site-packages"))
+    source_sites = [path for path in sys.path if path.endswith("site-packages")]
+    (site_dir / "preflight-test-dependencies.pth").write_text(
+        "\n".join(source_sites) + "\n", encoding="utf-8",
+    )
+    python = venv / "bin" / "python3"
+    monkeypatch.setenv("PYTHONPATH", "/untrusted/caller/code")
+    monkeypatch.setenv("BRIDGE_SIGNING_PUBLIC_KEYS_JSON", "invalid ambient authority")
+    monkeypatch.setenv("PANTHEON_STATUS_ROOT", "/untrusted/live/status")
+    monkeypatch.setenv("PANTHEON_TASK_STATE_EVENT_LOG", "/untrusted/live/journal")
+
+    result = _REAL_VERIFY_EXECUTION_AUTHORIZATION_BARRIERS(
+        candidate, python_executable=python,
+    )
+
+    assert result["python_executable"] == str(python)
+    assert result["python_prefix"] == str(venv)
+
+
+def test_barrier_probe_does_not_fall_back_from_broken_selected_python(tmp_path: Path) -> None:
+    candidate, _ = _candidate(tmp_path)
+    _write_real_orchestrator_modules(candidate / ".orchestrator")
+    python = tmp_path / "broken-candidate-python"
+    python.write_text("#!/bin/sh\necho selected-interpreter-failed >&2\nexit 27\n", encoding="utf-8")
+    python.chmod(0o755)
+
+    with pytest.raises(ValueError, match="selected-interpreter-failed"):
+        _REAL_VERIFY_EXECUTION_AUTHORIZATION_BARRIERS(candidate, python_executable=python)
+
+
+@pytest.mark.parametrize("missing_barrier", [
+    "deferred_intake", "pending_hold", "dispatch_gate", "worker_entry",
+    "detached_helper", "detached_main", "unlocked_launch",
+])
+def test_barrier_probe_rejects_declarations_without_behavior(
+    tmp_path: Path, missing_barrier: str,
+) -> None:
+    candidate, _ = _candidate(tmp_path)
+    _write_real_orchestrator_modules(candidate / ".orchestrator")
+    if missing_barrier == "deferred_intake":
+        path = candidate / ".orchestrator/development_bridge/dev_bridge_materialize.py"
+        with path.open("a", encoding="utf-8") as handle:
+            handle.write("\ndef verify_signed_dev_bridge_packet(*args, **kwargs):\n    raise SystemExit('MFA still required at intake')\n")
+    elif missing_barrier == "pending_hold":
+        path = candidate / "scripts/ai_status.py"
+        with path.open("a", encoding="utf-8") as handle:
+            handle.write("\n_real_assign = command_assign\ndef command_assign(state, args):\n    result = _real_assign(state, args)\n    get_task(state, args[0]).pop('execution_authorization', None)\n    return result\n")
+    elif missing_barrier == "dispatch_gate":
+        path = candidate / ".orchestrator/rewrite/dispatch_admission.py"
+        source = path.read_text(encoding="utf-8")
+        changed = source.replace("if not intent.execution_authorized and task_reason in (", "if False and task_reason in (")
+        assert changed != source
+        path.write_text(changed, encoding="utf-8")
+    elif missing_barrier == "worker_entry":
+        path = candidate / ".orchestrator/worker_runner.py"
+        with path.open("a", encoding="utf-8") as handle:
+            handle.write("\ndef ensure_execution_authorized_before_launch(*args, **kwargs):\n    return None\n")
+    else:
+        path = candidate / ".orchestrator/worker_runner.py"
+        source = path.read_text(encoding="utf-8")
+        if missing_barrier == "detached_helper":
+            changed = source.replace(
+                "    ensure_execution_authorized_before_launch(\n        coordination_root, task_id, active_role=role, run_id=authorization_run_id\n    )",
+                "    pass  # detached authorization helper",
+            )
+        elif missing_barrier == "detached_main":
+            changed = source.replace(
+                "binding = validate_worker_entry_binding(\n        coordination_root, **entry_arguments, wait_seconds=10.0\n    )",
+                "binding = {}  # detached canonical entry check",
+            )
+        else:
+            changed = source.replace(
+                "with canonical_task_state_lock_file(coordination_root / \"ai-status.json\", shared=True):",
+                "if True:  # launch lock removed",
+            )
+        assert changed != source
+        path.write_text(changed, encoding="utf-8")
+
+    with pytest.raises(ValueError, match="authorization barriers"):
+        _REAL_VERIFY_EXECUTION_AUTHORIZATION_BARRIERS(
+            candidate, python_executable=Path(sys.executable),
+        )
+
+
+def test_discover_only_refuses_old_runtime_and_never_stops_incumbent(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str],
+) -> None:
+    candidate, status_root = _candidate(tmp_path)
+    live_config = tmp_path / "runtime/live.json"
+    monkeypatch.setattr(promotion, "verify_execution_authorization_barriers", _REAL_VERIFY_EXECUTION_AUTHORIZATION_BARRIERS)
+    stopped = []
+    monkeypatch.setattr(promotion, "stop_existing_supervisor", lambda *args, **kwargs: stopped.append(True))
+
+    code = promotion.main([
+        "--discover-only", "--json", "--repo", str(candidate),
+        "--status-root", str(status_root), "--live-config", str(live_config),
+        "--python", sys.executable,
+    ])
+
+    result = json.loads(capsys.readouterr().out)
+    assert code == 1
+    assert "authorization barriers" in result["error"]
+    assert stopped == []
+    assert not live_config.exists()
 
 
 def test_verify_execution_authorization_barriers_rejects_missing_worker_runner_hook(
@@ -859,7 +991,9 @@ def test_verify_execution_authorization_barriers_rejects_missing_worker_runner_h
     worker_runner_path.write_text(stripped, encoding="utf-8")
 
     with pytest.raises(ValueError, match="authorization barriers"):
-        _REAL_VERIFY_EXECUTION_AUTHORIZATION_BARRIERS(candidate)
+        _REAL_VERIFY_EXECUTION_AUTHORIZATION_BARRIERS(
+            candidate, python_executable=Path(sys.executable),
+        )
 
 
 def test_replace_supervisor_refuses_old_runtime_rollback_without_barriers(

@@ -16,7 +16,7 @@ This module has no filesystem, subprocess, or supervisor dependency and does
 not read wall-clock time itself (callers pass ``now``); it is intentionally as
 hermetic as ``rewrite/dispatch_admission.py``, which is the sole consumer of
 :func:`is_execution_authorized` on the planner/delivery side. Canonical state
-mutation (holding the task-state lock, committing to ``ai-status.json``)
+mutation (holding the task-state lock, committing to the authoritative journal)
 stays with the imperative callers in ``scripts/ai_status.py`` and
 ``supervisor.py``, exactly as ``rewrite/dispatch_admission.py``'s own
 docstring describes for that module's boundary.

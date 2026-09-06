@@ -38,8 +38,9 @@ every file enumerated by plan section 5.
 - [EXECUTION_AUTHORIZATION_SA_SD.md](EXECUTION_AUTHORIZATION_SA_SD.md) — added
   by task `OPS-PRIVILEGED-TASK-EXECUTION-AUTH-001` (not this document's own
   task): the repository-readable copy of the separately operator-approved
-  privileged-intake/execution-authorization plan, with provenance and the
-  operational grant command/receipt contract. This addition does not modify
+  privileged-intake/execution-authorization plan, preserved byte-identically.
+  The [local tooling runbook](../../operations/management-ai-openclaw-dev-bridge.md)
+  records its provenance and operational grant command/receipt contract. This addition does not modify
   `SOURCE_MANIFEST.json`'s existing frozen hashes or this task's own
   evidence.
 

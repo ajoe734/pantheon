@@ -3162,6 +3162,14 @@ def start_worker_for_request(
     issued_command_env = status_command_runtime_env(config)
     issued_command_runtime = status_command_runtime_record_from_env(issued_command_env)
     request.metadata["status_command_runtime"] = issued_command_runtime
+    request.metadata["task_state_identity"] = json.loads(
+        issued_command_env.get("PANTHEON_CANONICAL_TASK_STATE_IDENTITY_JSON", "{}")
+    )
+    if request.reason in (REASON_OWNED_IN_PROGRESS, REASON_OWNED_READY):
+        request.metadata["execution_authorization_run_id"] = (
+            f"{event_id_for_log or queue_event_id or ''}"
+            f"-attempt-{max(1, int(attempt_count))}"
+        )
     _persist_runtime_phase_launch_intent(
         config,
         state,
@@ -3177,10 +3185,7 @@ def start_worker_for_request(
     # Always reload at the spend boundary. A stale/corrupted queue snapshot
     # cannot classify privileged work as ordinary to skip this check.
     if request.reason in (REASON_OWNED_IN_PROGRESS, REASON_OWNED_READY):
-        execution_authorization_run_id = (
-            f"{event_id_for_log or queue_event_id or ''}"
-            f"-attempt-{max(1, int(attempt_count))}"
-        )
+        execution_authorization_run_id = request.metadata["execution_authorization_run_id"]
         try:
             reserve_execution_authorization_for_launch(
                 config, str(request.task_id or ""),
@@ -6809,7 +6814,7 @@ def _proc_worker_runner_launch_marker(
                 datetime.fromtimestamp(process_started_epoch, tz=timezone.utc)
             ),
             "process_started_epoch_seconds": process_started_epoch,
-            "command": [],
+            "command": argv[argv.index("--") + 1:] if "--" in argv else [],
             "launch_recovered_from": "proc_environ",
         },
         status_path,
@@ -6961,6 +6966,7 @@ def _worker_record_from_runtime_launch_marker(
         "commit_progress_count": 0,
         "status_root": metadata.get("status_root"),
         "status_command_runtime": metadata.get("status_command_runtime"),
+        "task_state_identity": deepcopy(metadata.get("task_state_identity")),
         "pid": pid,
         "pid_start_ticks": pid_start_ticks,
         "process_generation": process_generation,

@@ -3627,6 +3627,65 @@ class ExecutionAuthorizationProcessTests(unittest.TestCase):
         supervisor.write_status(self.config, {"tasks": [task_fixture()]}, source="isolated-functional")
         self.assertEqual(self._run([("functional", None)]), [0])
 
+    def test_recovery_preserves_exact_journal_and_attempt_identity(self):
+        identity = common.canonical_task_state_identity(self.config)
+        snapshot = {
+            "task_id": "TASK-1", "task_generation": 1,
+            "agent_id": "codex", "provider": "codex", "delivery_mode": "codex",
+            "reason": supervisor.REASON_OWNED_READY,
+            "metadata": {"task_generation": 1, "task_state_identity": identity,
+                         "execution_authorization_run_id": "event-attempt-1"},
+        }
+        intent = {"task_id": "TASK-1", "queue_event_id": "event", "agent_id": "codex",
+                  "provider": "codex", "request_snapshot": snapshot}
+        command = [sys.executable, "-c", "pass"]
+        marker = {"run_id": "actual-run", "pid": os.getpid(), "status": "running", "command": command}
+        worker = supervisor._worker_record_from_runtime_launch_marker(
+            self.config, intent, marker,
+            Path(self.config["paths"]["status_file"]).parent / ".orchestrator" / "worker-runtime" / "status" / "actual-run.json",
+        )
+        self.assertIsNotNone(worker)
+        self.assertEqual(worker["task_state_identity"], identity)
+        self.assertEqual(worker["command"], command)
+        self.assertEqual(worker["request_snapshot"]["metadata"]["execution_authorization_run_id"], "event-attempt-1")
+        self.assertEqual(worker["pid_start_ticks"], int(Path("/proc/self/stat").read_text().rsplit(")", 1)[1].split()[19]))
+
+    def test_revocation_between_spend_and_adapter_launch_has_zero_effects(self):
+        event = supervisor.build_dispatch_event(
+            self.task, "Codex", supervisor.REASON_OWNED_READY, {"TASK-1": self.task},
+        )
+        event.update({"event_id": "revocation-race", "target_agent": "codex", "message": "local probe"})
+        request = supervisor.build_request(self.config, event)
+        original_reserve = supervisor.reserve_execution_authorization_for_launch
+
+        def revoke_after_reservation(*args, **kwargs):
+            original_reserve(*args, **kwargs)
+            with supervisor.canonical_task_state_lock_file(Path(self.config["paths"]["status_file"]), shared=False, nonblocking=False):
+                status = supervisor.load_status(self.config)
+                task = status["tasks"][0]
+                task["execution_authorization"] = execution_authorization.revoked_execution_authorization(
+                    task, actor="synthetic-local-operator", now=datetime.now(timezone.utc),
+                )
+                supervisor.write_status(self.config, status, source="isolated-between-spend-and-launch")
+
+        def effect(_request):
+            subprocess.run([sys.executable, "-c", "from pathlib import Path; import sys; Path(sys.argv[1]).touch()", str(self.marker)], check=True, timeout=10)
+            return DeliveryResult(ok=False, adapter="local-probe", mode="local", target="Codex")
+
+        with (
+            mock.patch.object(supervisor, "reserve_execution_authorization_for_launch", side_effect=revoke_after_reservation),
+            mock.patch.object(supervisor, "build_adapter", return_value=mock.Mock(deliver=effect)),
+            mock.patch.object(supervisor, "status_command_runtime_env", return_value={}),
+            mock.patch.object(supervisor, "status_command_runtime_record_from_env", return_value={}),
+        ):
+            with self.assertRaises(supervisor.ExecutionAuthorizationSpendFailed):
+                supervisor.start_worker_for_request(
+                    self.config, runtime_state.default_state(), request, dispatch_event=event,
+                    queue_event_id="revocation-race", attempt_count=1, event_id_for_log="revocation-race",
+                    latest_task_map={"TASK-1": task_fixture()},
+                )
+        self.assertFalse(self.marker.exists())
+
     def test_revoked_and_reassigned_grants_have_zero_process_effects(self):
         for field, value in (("generation", 2), ("owner", "Codex2"), ("acceptance", ["Changed action"])):
             with self.subTest(field=field):
@@ -4392,6 +4451,7 @@ class DurableQueueContractTests(unittest.TestCase):
                             {"tasks": [self.task]},
                             {"tasks": [self.task]},
                             {"tasks": [stale_task]},
+                            {"tasks": [stale_task]},
                         ],
                     ),
                     mock.patch.object(
@@ -4486,12 +4546,7 @@ class DurableQueueContractTests(unittest.TestCase):
                 mock.patch.object(
                     supervisor,
                     "load_status",
-                    side_effect=[
-                        {"tasks": [self.task]},
-                        {"tasks": [self.task]},
-                        {"tasks": [self.task]},
-                        {"tasks": [self.task]},
-                    ],
+                    return_value={"tasks": [self.task]},
                 ),
                 mock.patch.object(
                     supervisor, "build_adapter", return_value=adapter
@@ -10233,8 +10288,11 @@ class ReviewDecisionIntentLeaseRecoveryTests(unittest.TestCase):
             "intent_nonce": intent["nonce"],
             ai_status.REVIEW_BINDING_MISMATCH_PREFLIGHT_KEY: "binding mismatch",
         }
+        original_status_root = ai_status.STATUS_ROOT
+        self.addCleanup(ai_status.configure_status_root_paths, original_status_root)
         ai_status.configure_status_root_paths(self.root)
-        with mock.patch.dict(
+        # All lazy entrypoint imports must use this same isolated CLI module.
+        with mock.patch.dict(sys.modules, {"ai_status": ai_status}), mock.patch.dict(
             os.environ,
             {
                 "AI_NAME": "Codex2",
