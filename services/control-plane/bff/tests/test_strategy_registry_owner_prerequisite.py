@@ -92,12 +92,18 @@ def test_update_params_preserves_callers_precondition_and_uses_patch_response_as
     assert result["domain_receipt"]["checksum"] == "sha256:abc"
     assert result["idempotent_replay"] is False
 
-    # Exactly one HTTP call: the PATCH itself, carrying the caller's own
-    # expected_metadata unchanged — no preceding "refresh to latest" GET.
-    assert mock_http.call_count == 1
+    # Exactly two HTTP calls: the PATCH itself (carrying the caller's own
+    # expected_metadata unchanged — no preceding "refresh to latest" GET),
+    # followed by a genuine owner GET readback that verifies what the PATCH
+    # response claimed (reviewer finding 5 — never trust the mutation
+    # response alone as proof of what committed).
+    assert mock_http.call_count == 2
     patch_call = mock_http.call_args_list[0]
     assert patch_call.kwargs["method"] == "PATCH"
     assert patch_call.kwargs["payload"]["expected_metadata"] == {"note": "old"}
+    readback_call = mock_http.call_args_list[1]
+    assert readback_call.kwargs["method"] == "GET"
+    assert readback_call.args[0] == "http://registry-svc.internal/api/registry/entries/reg-001"
     assert patch_call.kwargs["payload"]["metadata"] == {"note": "new"}
     assert patch_call.kwargs["payload"]["command_key"] == "cmd-strat-001"
 
@@ -231,15 +237,18 @@ class _CapturingHandler(BaseHTTPRequestHandler):
     response_status = 200
     response_body: Dict[str, Any] = {"ok": True}
     received: Optional[Dict[str, Any]] = None
+    received_log: list = []
 
     def _handle(self) -> None:
         length = int(self.headers.get("Content-Length") or 0)
         raw_body = self.rfile.read(length) if length else b""
-        type(self).received = {
+        record = {
             "method": self.command,
             "headers": dict(self.headers.items()),
             "body": json.loads(raw_body.decode("utf-8")) if raw_body else None,
         }
+        type(self).received = record
+        type(self).received_log = type(self).received_log + [record]
         payload = json.dumps(type(self).response_body).encode("utf-8")
         self.send_response(type(self).response_status)
         self.send_header("Content-Type", "application/json")
@@ -279,6 +288,7 @@ class TestHttpRequestJsonMethodDispatch:
     @pytest.fixture(autouse=True)
     def _server(self):
         _CapturingHandler.received = None
+        _CapturingHandler.received_log = []
         _CapturingHandler.response_status = 200
         _CapturingHandler.response_body = {"ok": True}
         server = HTTPServer(("127.0.0.1", 0), _CapturingHandler)
@@ -386,6 +396,7 @@ class TestUpdateParamsOverRealSocket:
     @pytest.fixture(autouse=True)
     def _server(self, monkeypatch):
         _CapturingHandler.received = None
+        _CapturingHandler.received_log = []
         _CapturingHandler.response_status = 200
         _CapturingHandler.response_body = {"ok": True}
         server = HTTPServer(("127.0.0.1", 0), _CapturingHandler)
@@ -418,8 +429,13 @@ class TestUpdateParamsOverRealSocket:
                 "metadata": {"note": "new"},
             },
         )
-        assert _CapturingHandler.received["method"] == "PATCH"
-        assert _CapturingHandler.received["body"]["expected_metadata"] == {"note": "callers-own-base"}
+        # The adapter now performs a PATCH followed by a genuine owner GET
+        # readback (reviewer finding 5); ``received`` reflects the *last*
+        # request (the GET), so assert the PATCH specifically against the
+        # first entry in the request log.
+        assert _CapturingHandler.received_log[0]["method"] == "PATCH"
+        assert _CapturingHandler.received_log[0]["body"]["expected_metadata"] == {"note": "callers-own-base"}
+        assert _CapturingHandler.received["method"] == "GET"
 
     def test_correct_patch_result_produces_receipt_bound_to_that_exact_response(self, adapter):
         _CapturingHandler.response_body = {

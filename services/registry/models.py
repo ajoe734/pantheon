@@ -71,6 +71,15 @@ ALLOWED_ARTIFACT_TRANSITIONS: dict[ArtifactState, list[ArtifactState]] = {
     ArtifactState.RETIRED: [],
 }
 
+# Reserved tenant identity for checked-in bootstrap builtins (e.g. built-in
+# StrategyArtifacts registered at service startup) — architecture-resumption-
+# sa-sd.md §3.1/§3.3. No caller-supplied JWT/structured-token tenant claim may
+# ever resolve to this value; it is assigned only by the registry's own
+# bootstrap code path (services/registry/strategy_artifact.py) so a builtin's
+# owner identity can never be forged by a caller and a builtin can never be
+# mutated through a caller-facing route.
+BUILTIN_TENANT = "__builtin__"
+
 # ---------------------------------------------------------------------------
 # Sub-models
 # ---------------------------------------------------------------------------
@@ -238,6 +247,14 @@ class RegistryEntry:
     immutable payload; purely an audit projection of who last mutated this
     row, so it is exempt from the reserved-key immutability check in
     RegistryService.update_metadata."""
+    owner_tenant: Optional[str] = None
+    """Immutable owner-tenant identity bound at creation time from the
+    verified creating caller's tenant claim (never from a caller-supplied
+    body/header value — see services.runtime_auth_inbound.AuthContext).
+    Reads/writes are scoped against this field (see services/registry/service.py
+    ``_authorize_read``/``_authorize_write``); it is never reassigned by a
+    later mutation, unlike ``last_actor``. ``BUILTIN_TENANT`` marks a
+    checked-in bootstrap artifact — see that constant's docstring."""
 
     def to_dict(self) -> dict:
         """Durable JSONB payload for a Postgres owner store row.
@@ -266,6 +283,7 @@ class RegistryEntry:
             "created_at": self.created_at,
             "updated_at": self.updated_at,
             "last_actor": self.last_actor,
+            "owner_tenant": self.owner_tenant,
         }
 
     @classmethod
@@ -291,6 +309,7 @@ class RegistryEntry:
             created_at=d.get("created_at"),
             updated_at=d.get("updated_at"),
             last_actor=d.get("last_actor"),
+            owner_tenant=d.get("owner_tenant"),
         )
 
 

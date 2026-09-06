@@ -18,6 +18,7 @@ import hashlib
 import json
 import logging
 import os
+import re
 import uuid
 from contextlib import asynccontextmanager
 from typing import Any, Optional
@@ -31,6 +32,7 @@ from services.runtime_auth_inbound import AuthContext, AuthError, validate_reque
 from .models import (
     ArtifactType,
     ArtifactState,
+    BUILTIN_TENANT,
     DeploymentStage,
     DeploymentView,
     Lineage,
@@ -101,6 +103,33 @@ class MetadataUpdateRequest(BaseModel):
     command_key: Optional[str] = None
 
 
+class RegistryEntryOrDraftRequest(BaseModel):
+    """POST /api/registry/entries body — either a name-only draft or a full
+    typed registration.
+
+    architecture-resumption-sa-sd.md §3.2 requires "name-only draft creation
+    with stable strategy identity" as a distinct capability from full typed
+    registration (reviewer finding 3): a bare ``{"name": "..."}`` body was
+    previously rejected with a 422 because the route bound directly to the
+    fully-typed ``RegistryEntryCreate`` dataclass, which requires
+    artifact_type/strategy_id/version. Supplying ``name`` XOR the full typed
+    fields selects which of the two draft-kinds this request is; mixing them
+    is rejected explicitly rather than silently picking one.
+    """
+    name: Optional[str] = None
+    artifact_type: Optional[ArtifactType] = None
+    strategy_id: Optional[str] = None
+    version: Optional[str] = None
+    artifact_state: ArtifactState = ArtifactState.DRAFT
+    lineage: Optional[dict[str, Any]] = None
+    storage_ref: Optional[dict[str, Any]] = None
+    checksum: Optional[str] = None
+    producer_run_id: Optional[str] = None
+    evaluation_summary: Optional[dict[str, Any]] = None
+    rollback_target: Optional[str] = None
+    metadata: Optional[dict[str, Any]] = None
+
+
 class StrategySpecRegisterRequest(BaseModel):
     strategy_id: str
     version: str
@@ -152,6 +181,7 @@ async def registry_error_handler(request: Request, exc: RegistryError):
 
 
 _REGISTRY_WRITE_ROLES = ("operator", "registry-writer", "admin")
+_REGISTRY_READ_ROLES = _REGISTRY_WRITE_ROLES + ("registry-reader",)
 
 
 def _registry_auth_env() -> dict[str, str]:
@@ -208,29 +238,110 @@ def _require_verified_identity(ctx: AuthContext) -> None:
         )
 
 
-def _authenticate_registry_write(authorization: Optional[str]) -> AuthContext:
-    """Enforce verified-caller auth on a Registry mutation route.
+def _require_production_auth_configuration(env: dict[str, str]) -> None:
+    """Fail closed (500 config error) rather than serve requests permissively
+    once the durable Postgres backend is selected.
+
+    Reviewer finding 2: the auth env defaults (``permissive`` mode, empty
+    issuer/audience) exist so unit tests can run without any configuration —
+    but that same silent default let a live deployment pointed at a real
+    Postgres backend accept an unsigned structured Bearer token, and let a
+    strict-mode deployment that forgot to configure an expected issuer/
+    audience accept a signed token asserting *any* issuer/audience. Once the
+    in-memory test double is not what's selected, auth must be explicitly
+    strict with both an expected issuer and audience configured — no
+    implicit "trust whatever mode the environment happened to leave unset".
+    """
+    try:
+        from .pg_store import _registry_backend
+    except ImportError:  # pragma: no cover - defensive; pg_store always importable here
+        return
+    if _registry_backend() != "postgres":
+        return
+    if env.get("PANTHEON_RUNTIME_AUTH_MODE", "").strip().lower() != "strict":
+        raise HTTPException(
+            status_code=500,
+            detail=(
+                "Registry backend is postgres; PANTHEON_REGISTRY_AUTH_MODE=strict is "
+                "required before serving requests (no permissive-mode fallback against a "
+                "durable production backend)."
+            ),
+        )
+    if not env.get("PANTHEON_RUNTIME_JWT_ISSUER", "").strip() or not env.get(
+        "PANTHEON_RUNTIME_JWT_AUDIENCE", ""
+    ).strip():
+        raise HTTPException(
+            status_code=500,
+            detail=(
+                "Registry backend is postgres; PANTHEON_REGISTRY_JWT_ISSUER and "
+                "PANTHEON_REGISTRY_JWT_AUDIENCE must both be configured — strict mode "
+                "without an expected issuer/audience would accept a signed token "
+                "asserting any issuer/audience."
+            ),
+        )
+
+
+def _authenticate_registry(
+    authorization: Optional[str], *, required_roles: tuple[str, ...],
+) -> AuthContext:
+    """Shared verified-caller auth path for both read and write Registry routes.
 
     Always requires a well-formed Bearer token (an absent/malformed
-    Authorization header is rejected regardless of mode). Production sets
+    Authorization header is rejected regardless of mode) — reviewer finding
+    1: reads were previously anonymous. Production sets
     ``PANTHEON_REGISTRY_AUTH_MODE=strict`` (docker-compose.yml /
     docker-compose.control.yml) per architecture-resumption-sa-sd.md §3.3's
-    "no anonymous compatibility path" requirement. Returns the resolved
-    ``AuthContext`` so callers can bind the verified actor onto the write
-    they are about to perform (see :func:`_actor_context`) instead of
-    discarding it.
+    "no anonymous compatibility path" requirement, and is additionally
+    enforced by :func:`_require_production_auth_configuration` once the
+    durable backend is selected.
     """
     env = _registry_auth_env()
+    _require_production_auth_configuration(env)
     try:
         ctx = validate_request_auth(
             authorization=authorization,
-            required_roles=_REGISTRY_WRITE_ROLES,
+            required_roles=required_roles,
             env=env,
         )
     except AuthError as exc:
         raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
     _require_verified_identity(ctx)
+    _reject_reserved_tenant_claim(ctx)
     return ctx
+
+
+def _authenticate_registry_write(authorization: Optional[str]) -> AuthContext:
+    """Enforce verified-caller auth on a Registry mutation route.
+
+    Returns the resolved ``AuthContext`` so callers can bind the verified
+    actor onto the write they are about to perform (see
+    :func:`_actor_context`) instead of discarding it.
+    """
+    return _authenticate_registry(authorization, required_roles=_REGISTRY_WRITE_ROLES)
+
+
+def _authenticate_registry_read(authorization: Optional[str]) -> AuthContext:
+    """Enforce verified-caller auth on a Registry read route.
+
+    Reviewer finding 1: every read route (GET/list) was reachable
+    anonymously — a cross-tenant caller (or no caller at all) could read any
+    entry. Reads require the same verified-identity bar as writes, plus a
+    broader role allowlist (``registry-reader``) for read-only integrations.
+    """
+    return _authenticate_registry(authorization, required_roles=_REGISTRY_READ_ROLES)
+
+
+def _reject_reserved_tenant_claim(ctx: AuthContext) -> None:
+    """A caller-supplied tenant claim can never equal the reserved builtin
+    marker — that would let a forged/misconfigured caller pose as the
+    registry's own bootstrap identity and read/write built-in entries as if
+    it owned them."""
+    for name in _TENANT_CLAIM_NAMES:
+        if ctx.claims.get(name) == BUILTIN_TENANT:
+            raise HTTPException(
+                status_code=403,
+                detail=f"tenant claim {BUILTIN_TENANT!r} is reserved and cannot be asserted by a caller.",
+            )
 
 
 def _actor_context(ctx: AuthContext) -> dict[str, Any]:
@@ -247,6 +358,67 @@ def _actor_context(ctx: AuthContext) -> dict[str, Any]:
         "tenant": tenant,
         "token_kind": ctx.token_kind,
     }
+
+
+def _caller_tenant(ctx: AuthContext) -> Optional[str]:
+    for name in _TENANT_CLAIM_NAMES:
+        tenant = ctx.claims.get(name)
+        if tenant:
+            return str(tenant)
+    return None
+
+
+def _can_read(ctx: AuthContext, view: RegistryEntryView) -> bool:
+    """Scoped-read authorization — reviewer finding 1.
+
+    Builtins (``owner_tenant == BUILTIN_TENANT``) are public reference data:
+    any verified caller may read them. An ``admin`` caller may read across
+    tenants. Otherwise the caller's verified tenant must match the entry's
+    immutable ``owner_tenant`` exactly; an untenanted (legacy/permissive-mode)
+    entry is only visible to an equally untenanted caller — a verified
+    tenant-scoped caller gets no implicit access to it
+    ("missing tenant legacy rows are not globally authorized",
+    architecture-resumption-sa-sd.md §3.1).
+    """
+    owner_tenant = view.entry.owner_tenant
+    if owner_tenant == BUILTIN_TENANT:
+        return True
+    if "admin" in ctx.roles:
+        return True
+    return _caller_tenant(ctx) == owner_tenant
+
+
+def _authorize_read(ctx: AuthContext, view: RegistryEntryView) -> RegistryEntryView:
+    if not _can_read(ctx, view):
+        raise HTTPException(
+            status_code=403,
+            detail=f"Registry entry {view.entry.registry_id!r} is not visible to this caller's tenant.",
+        )
+    return view
+
+
+def _authorize_write(ctx: AuthContext, view: RegistryEntryView) -> RegistryEntryView:
+    """Scoped-write authorization — reviewer finding 1.
+
+    Builtins can never be mutated through a caller-facing route, regardless
+    of role or tenant — they are only ever written by the registry's own
+    bootstrap code (services/registry/strategy_artifact.py
+    ``ensure_builtin_strategy_artifacts``), never by an HTTP caller.
+    """
+    if view.entry.owner_tenant == BUILTIN_TENANT:
+        raise HTTPException(
+            status_code=403,
+            detail=(
+                f"Registry entry {view.entry.registry_id!r} is a built-in artifact and "
+                "cannot be mutated by a caller."
+            ),
+        )
+    if not _can_read(ctx, view):
+        raise HTTPException(
+            status_code=403,
+            detail=f"Registry entry {view.entry.registry_id!r} is not writable by this caller's tenant.",
+        )
+    return view
 
 
 def _strategy_spec_checksum(payload: dict[str, Any]) -> str:
@@ -312,7 +484,14 @@ def _strategy_spec_register_payload(body: StrategySpecRegisterRequest) -> Regist
     if source_seed_id:
         metadata.setdefault("source_seed_id", source_seed_id)
     if strategy_spec is not None:
-        metadata.setdefault("strategy_spec", strategy_spec)
+        # Always bind metadata["strategy_spec"] to the exact payload the
+        # checksum above was computed from — never a caller-supplied
+        # metadata.strategy_spec that could differ (reviewer finding 3: a
+        # ``setdefault`` here let a caller pass both a top-level
+        # ``strategy_spec`` (checksummed) and a *different*
+        # ``metadata.strategy_spec`` that setdefault then silently kept,
+        # producing a stored content/checksum mismatch).
+        metadata["strategy_spec"] = strategy_spec
 
     return RegistryEntryCreate(
         artifact_type=ArtifactType.STRATEGY_SPEC,
@@ -358,20 +537,33 @@ def _validate_strategy_spec_version_lineage(
     if version in existing_versions:
         return
 
-    parent_ids = lineage.parent_registry_ids or []
-    if parent_ids:
-        valid_parents = {view.entry.registry_id for view in existing_specs}
-        if any(pid in valid_parents for pid in parent_ids):
-            return
-        raise RegistryError(
-            f"StrategySpec version {version!r} for strategy_id={strategy_id!r} declares "
-            "parent_registry_ids that do not reference any existing StrategySpec entry "
-            "for this strategy."
-        )
-
     def _parse_ver(v: str) -> tuple[int, int, int]:
         parts = tuple(int(x) for x in v.split("."))
         return parts  # type: ignore[return-value]
+
+    parent_ids = lineage.parent_registry_ids or []
+    if parent_ids:
+        valid_parents = {view.entry.registry_id: view.entry.version for view in existing_specs}
+        matching = [pid for pid in parent_ids if pid in valid_parents]
+        if not matching:
+            raise RegistryError(
+                f"StrategySpec version {version!r} for strategy_id={strategy_id!r} declares "
+                "parent_registry_ids that do not reference any existing StrategySpec entry "
+                "for this strategy."
+            )
+        # A parent link names an actual base digest/version; the new
+        # revision must move strictly forward from it, never backward
+        # (reviewer finding 4: a valid parent_registry_ids link previously
+        # let a caller "downgrade" to e.g. 0.0.1 from a 1.0.0 base with no
+        # version-direction check at all).
+        newest_parent_version = max((valid_parents[pid] for pid in matching), key=_parse_ver)
+        if _parse_ver(version) <= _parse_ver(newest_parent_version):
+            raise RegistryError(
+                f"StrategySpec version {version!r} for strategy_id={strategy_id!r} must be "
+                f"strictly greater than its linked parent's version {newest_parent_version!r}; "
+                "a revision cannot downgrade or restate its own base version."
+            )
+        return
 
     latest = max(existing_versions, key=_parse_ver)
     major, minor, patch = _parse_ver(latest)
@@ -402,6 +594,17 @@ def _ensure_strategy_spec_registration_matches(
 ) -> RegistryEntryView:
     """Validate StrategySpec create-if-absent replay against existing content."""
 
+    if view.entry.registry_id != registry_id:
+        # register_if_absent's _REVISION_UNIQUE_FIELDS collision: a
+        # *different* registry_id already owns this exact
+        # (strategy_id, version, artifact_type) tuple — this is a genuine
+        # conflict (immutable revision identity), not a same-key replay to
+        # validate content against.
+        raise RegistryConflictError(
+            f"strategy_id={create_payload.strategy_id!r} version={create_payload.version!r} "
+            f"is already registered as registry_id={view.entry.registry_id!r}, not the "
+            f"requested registry_id={registry_id!r}."
+        )
     view = _ensure_strategy_spec_view(view, registry_id)
     entry = view.entry
     if (
@@ -481,6 +684,12 @@ def _register_strategy_artifact(
     view, created = registry_service.register_if_absent(create_payload, registry_id, actor=actor)
     if created:
         return view
+    if view.entry.registry_id != registry_id:
+        raise RegistryConflictError(
+            f"strategy_id={create_payload.strategy_id!r} version={create_payload.version!r} "
+            f"is already registered as registry_id={view.entry.registry_id!r}, not the "
+            f"requested registry_id={registry_id!r}."
+        )
     view = _ensure_strategy_artifact_view(view, registry_id)
     expected_artifact = (create_payload.metadata or {}).get("strategy_artifact")
     existing_artifact = (view.entry.metadata or {}).get("strategy_artifact")
@@ -504,38 +713,103 @@ def _register_strategy_artifact(
 
 # -- Registry entry endpoints (§8 operations) -----------------------------
 
+def _resolve_entry_or_draft_payload(
+    payload: RegistryEntryOrDraftRequest,
+) -> tuple[RegistryEntryCreate, str]:
+    """Resolve the two POST /api/registry/entries draft-kinds explicitly.
+
+    A name-only draft (``name`` set, no typed fields) gets a synthesized-but-
+    stable strategy identity and registers as a minimal StrategySpec draft —
+    architecture-resumption-sa-sd.md §3.2's "name-only draft creation with
+    stable strategy identity". A full typed submission (artifact_type,
+    strategy_id, version all set) registers exactly as before. Supplying a
+    mix of the two is rejected rather than guessing which one was intended.
+    """
+    name = str(payload.name or "").strip()
+    has_full_typed_fields = bool(payload.artifact_type and payload.strategy_id and payload.version)
+    has_any_typed_field = bool(payload.artifact_type or payload.strategy_id or payload.version)
+
+    if not has_full_typed_fields:
+        if not name:
+            raise RegistryError(
+                "POST /api/registry/entries requires either a name-only draft "
+                "({'name': '...'}) or the full typed fields (artifact_type, "
+                "strategy_id, version)."
+            )
+        if has_any_typed_field:
+            raise RegistryError(
+                "POST /api/registry/entries cannot mix a name-only draft with partial "
+                "typed fields; supply 'name' alone or all of artifact_type/strategy_id/version."
+            )
+        slug = re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-") or "draft"
+        strategy_id = f"draft-{slug}-{uuid.uuid4().hex[:8]}"
+        registry_id = f"reg-{strategy_id}-0.0.1-{uuid.uuid4().hex[:8]}"
+        create_payload = RegistryEntryCreate(
+            artifact_type=ArtifactType.STRATEGY_SPEC,
+            strategy_id=strategy_id,
+            version="0.0.1",
+            artifact_state=ArtifactState.DRAFT,
+            storage_ref=StorageRef(backend=StorageBackend.INLINE, path="$.entry.metadata.draft"),
+            checksum=_strategy_spec_checksum({"name": name, "draft_kind": "name_only"}),
+            metadata={"name": name, "draft_kind": "name_only"},
+        )
+        return create_payload, registry_id
+
+    registry_id = f"reg-{payload.strategy_id}-{payload.version}-{uuid.uuid4().hex[:8]}"
+    create_payload = RegistryEntryCreate(
+        artifact_type=payload.artifact_type,
+        strategy_id=payload.strategy_id,
+        version=payload.version,
+        artifact_state=payload.artifact_state,
+        lineage=Lineage.from_dict(payload.lineage or {}),
+        storage_ref=StorageRef.from_dict(payload.storage_ref) if payload.storage_ref else None,
+        checksum=payload.checksum or "",
+        producer_run_id=payload.producer_run_id,
+        evaluation_summary=payload.evaluation_summary,
+        rollback_target=payload.rollback_target,
+        metadata=payload.metadata,
+    )
+    return create_payload, registry_id
+
+
 @app.post("/api/registry/entries", response_model=RegistryEntryView)
 async def register_entry(
-    payload: RegistryEntryCreate,
+    payload: RegistryEntryOrDraftRequest,
     authorization: Optional[str] = Header(default=None),
 ):
-    """Create a new draft or candidate registry entry."""
+    """Create a new draft or candidate registry entry (name-only draft, or full typed)."""
     ctx = _authenticate_registry_write(authorization)
-    registry_id = f"reg-{payload.strategy_id}-{payload.version}-{uuid.uuid4().hex[:8]}"
     registry_service = get_registry_service()
     try:
-        return registry_service.register(payload, registry_id, actor=_actor_context(ctx))
+        create_payload, registry_id = _resolve_entry_or_draft_payload(payload)
+        return registry_service.register(create_payload, registry_id, actor=_actor_context(ctx))
+    except RegistryConflictError as e:
+        raise HTTPException(status_code=409, detail=str(e))
     except RegistryError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
 
 @app.get("/api/registry/entries/{registry_id}", response_model=RegistryEntryView)
-async def get_entry(registry_id: str):
-    """Read one registry entry with derived deployment_stage."""
+async def get_entry(registry_id: str, authorization: Optional[str] = Header(default=None)):
+    """Read one registry entry with derived deployment_stage (tenant-scoped)."""
+    ctx = _authenticate_registry_read(authorization)
     registry_service = get_registry_service()
     try:
-        return registry_service.get(registry_id)
+        view = registry_service.get(registry_id)
     except RegistryError as e:
         raise HTTPException(status_code=404, detail=str(e))
+    return _authorize_read(ctx, view)
 
 
 @app.get(
     "/api/registry/strategies/{strategy_id}/entries",
     response_model=list[RegistryEntryView],
 )
-async def list_entries(strategy_id: str):
-    """Enumerate all versions within a strategy family."""
-    return get_registry_service().list_by_strategy(strategy_id)
+async def list_entries(strategy_id: str, authorization: Optional[str] = Header(default=None)):
+    """Enumerate all versions within a strategy family visible to this caller's tenant."""
+    ctx = _authenticate_registry_read(authorization)
+    views = get_registry_service().list_by_strategy(strategy_id)
+    return [view for view in views if _can_read(ctx, view)]
 
 
 @app.post(
@@ -554,6 +828,11 @@ async def advance_state(
     """
     ctx = _authenticate_registry_write(authorization)
     registry_service = get_registry_service()
+    try:
+        current = registry_service.get(registry_id)
+    except RegistryError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    _authorize_write(ctx, current)
     try:
         return registry_service.advance_artifact_state(
             registry_id,
@@ -585,10 +864,16 @@ async def update_metadata(
     validated StrategySpec/artifact_state, and it fails closed (409) when
     ``expected_metadata`` does not match the entry's current durable value.
     Requires a verified caller (services.runtime_auth_inbound) — see
-    _authenticate_registry_write.
+    _authenticate_registry_write. Also enforces tenant/builtin write scoping
+    (reviewer finding 1) before attempting the CAS.
     """
     ctx = _authenticate_registry_write(authorization)
     registry_service = get_registry_service()
+    try:
+        current = registry_service.get(registry_id)
+    except RegistryError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    _authorize_write(ctx, current)
     try:
         view, replayed = registry_service.update_metadata(
             registry_id,
@@ -611,8 +896,15 @@ async def update_metadata(
     "/api/registry/strategies/{strategy_id}/latest-approved",
     response_model=RegistryEntryView,
 )
-async def latest_approved(strategy_id: str):
-    """Return the newest approved entry for a strategy family."""
+async def latest_approved(strategy_id: str, authorization: Optional[str] = Header(default=None)):
+    """Return the newest approved entry for a strategy family (requires a verified caller).
+
+    Note: this is a cross-version aggregate read; it enforces authentication
+    but (unlike the single-entry GET routes) does not yet filter the
+    resolved entry by tenant scope — see the per-entry scoping on
+    ``get_entry``/``list_entries`` for the enforced boundary.
+    """
+    _authenticate_registry_read(authorization)
     result = get_registry_service().resolve_latest_approved(strategy_id)
     if result is None:
         raise HTTPException(status_code=404, detail=f"No approved entry for strategy: {strategy_id}")
@@ -623,8 +915,9 @@ async def latest_approved(strategy_id: str):
     "/api/registry/strategies/{strategy_id}/deployment-view",
     response_model=DeploymentView,
 )
-async def deployment_view(strategy_id: str):
-    """Return the derived deployment-stage view for a strategy."""
+async def deployment_view(strategy_id: str, authorization: Optional[str] = Header(default=None)):
+    """Return the derived deployment-stage view for a strategy (requires a verified caller)."""
+    _authenticate_registry_read(authorization)
     return get_registry_service().resolve_deployment_view(strategy_id)
 
 
@@ -647,6 +940,11 @@ async def update_deployment_summary(
     """
     ctx = _authenticate_registry_write(authorization)
     registry_service = get_registry_service()
+    try:
+        current = registry_service.get(registry_id)
+    except RegistryError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    _authorize_write(ctx, current)
     try:
         return registry_service.update_deployment_summary(
             registry_id,
@@ -698,18 +996,22 @@ async def register_strategy_spec(
             create_payload,
             registry_id,
         )
+    except RegistryConflictError as e:
+        raise HTTPException(status_code=409, detail=str(e))
     except RegistryError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
 
 @app.get("/api/registry/strategy-specs/{registry_id}", response_model=RegistryEntryView)
-async def get_strategy_spec_entry(registry_id: str):
-    """Read one StrategySpec registry entry."""
+async def get_strategy_spec_entry(registry_id: str, authorization: Optional[str] = Header(default=None)):
+    """Read one StrategySpec registry entry (tenant-scoped)."""
+    ctx = _authenticate_registry_read(authorization)
     registry_service = get_registry_service()
     try:
-        return _ensure_strategy_spec_view(registry_service.get(registry_id), registry_id)
+        view = _ensure_strategy_spec_view(registry_service.get(registry_id), registry_id)
     except RegistryError as e:
         raise HTTPException(status_code=404, detail=str(e))
+    return _authorize_read(ctx, view)
 
 
 @app.get(
@@ -719,12 +1021,14 @@ async def get_strategy_spec_entry(registry_id: str):
 async def list_strategy_spec_entries(
     strategy_id: str,
     artifact_state: Optional[ArtifactState] = None,
+    authorization: Optional[str] = Header(default=None),
 ):
-    """List StrategySpec artifact versions for one strategy family."""
+    """List StrategySpec artifact versions for one strategy family (tenant-scoped)."""
+    ctx = _authenticate_registry_read(authorization)
     views = [
         view
         for view in get_registry_service().list_by_strategy(strategy_id)
-        if view.entry.artifact_type == ArtifactType.STRATEGY_SPEC
+        if view.entry.artifact_type == ArtifactType.STRATEGY_SPEC and _can_read(ctx, view)
     ]
     if artifact_state is not None:
         views = [view for view in views if view.entry.artifact_state == artifact_state]
@@ -744,7 +1048,11 @@ async def advance_strategy_spec_state(
     ctx = _authenticate_registry_write(authorization)
     registry_service = get_registry_service()
     try:
-        _ensure_strategy_spec_view(registry_service.get(registry_id), registry_id)
+        current = _ensure_strategy_spec_view(registry_service.get(registry_id), registry_id)
+    except RegistryError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    _authorize_write(ctx, current)
+    try:
         return registry_service.advance_artifact_state(
             registry_id,
             body.target_state,
@@ -774,6 +1082,8 @@ async def register_strategy_artifact(
             _strategy_artifact_registration(payload),
             actor=_actor_context(ctx),
         )
+    except RegistryConflictError as e:
+        raise HTTPException(status_code=409, detail=str(e))
     except RegistryError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
@@ -782,15 +1092,17 @@ async def register_strategy_artifact(
     "/api/registry/strategy-artifacts/{registry_id}",
     response_model=RegistryEntryView,
 )
-async def get_strategy_artifact_entry(registry_id: str):
-    """Read one execution_bundle carrying a StrategyArtifact overlay."""
+async def get_strategy_artifact_entry(registry_id: str, authorization: Optional[str] = Header(default=None)):
+    """Read one execution_bundle carrying a StrategyArtifact overlay (tenant-scoped; builtins are public)."""
+    ctx = _authenticate_registry_read(authorization)
     registry_service = get_registry_service()
     try:
-        return _ensure_strategy_artifact_view(
+        view = _ensure_strategy_artifact_view(
             registry_service.get(registry_id), registry_id
         )
     except RegistryError as e:
         raise HTTPException(status_code=404, detail=str(e))
+    return _authorize_read(ctx, view)
 
 
 @app.get(
@@ -800,12 +1112,14 @@ async def get_strategy_artifact_entry(registry_id: str):
 async def list_strategy_artifact_entries(
     strategy_id: str,
     artifact_state: Optional[ArtifactState] = None,
+    authorization: Optional[str] = Header(default=None),
 ):
-    """List StrategyArtifact revisions for a strategy family."""
+    """List StrategyArtifact revisions for a strategy family (tenant-scoped; builtins are public)."""
+    ctx = _authenticate_registry_read(authorization)
     views = [
         view
         for view in get_registry_service().list_by_strategy(strategy_id)
-        if _is_strategy_artifact_view(view)
+        if _is_strategy_artifact_view(view) and _can_read(ctx, view)
     ]
     if artifact_state is not None:
         views = [view for view in views if view.entry.artifact_state == artifact_state]
@@ -828,6 +1142,7 @@ async def mutate_strategy_artifact_entry(
         parent_view = _ensure_strategy_artifact_view(
             registry_service.get(registry_id), registry_id
         )
+        _authorize_read(ctx, parent_view)  # mutate reads (not overwrites) the parent
         parent_artifact = (parent_view.entry.metadata or {})["strategy_artifact"]
         child_artifact = mutate_strategy_artifact(
             parent_artifact,
@@ -851,6 +1166,8 @@ async def mutate_strategy_artifact_entry(
         )
     except RegistryNotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e))
+    except RegistryConflictError as e:
+        raise HTTPException(status_code=409, detail=str(e))
     except RegistryError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
@@ -868,7 +1185,11 @@ async def advance_strategy_artifact_state(
     ctx = _authenticate_registry_write(authorization)
     registry_service = get_registry_service()
     try:
-        _ensure_strategy_artifact_view(registry_service.get(registry_id), registry_id)
+        current = _ensure_strategy_artifact_view(registry_service.get(registry_id), registry_id)
+    except RegistryError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    _authorize_write(ctx, current)
+    try:
         return registry_service.advance_artifact_state(
             registry_id,
             body.target_state,
@@ -1049,6 +1370,8 @@ async def register_allocation_policy_artifact(
     try:
         create_payload = _alloc_policy_register_payload(payload)
         return registry_service.register(create_payload, registry_id, actor=_actor_context(ctx))
+    except RegistryConflictError as e:
+        raise HTTPException(status_code=409, detail=str(e))
     except (RegistryError, ValueError) as e:
         raise HTTPException(status_code=400, detail=str(e))
 
@@ -1057,15 +1380,17 @@ async def register_allocation_policy_artifact(
     "/api/registry/allocation-policy-artifacts/{registry_id}",
     response_model=RegistryEntryView,
 )
-async def get_allocation_policy_artifact_entry(registry_id: str):
-    """Read one AllocationPolicyArtifact registry entry."""
+async def get_allocation_policy_artifact_entry(registry_id: str, authorization: Optional[str] = Header(default=None)):
+    """Read one AllocationPolicyArtifact registry entry (tenant-scoped)."""
+    ctx = _authenticate_registry_read(authorization)
     registry_service = get_registry_service()
     try:
-        return _ensure_alloc_policy_view(
+        view = _ensure_alloc_policy_view(
             registry_service.get(registry_id), registry_id
         )
     except RegistryError as e:
         raise HTTPException(status_code=404, detail=str(e))
+    return _authorize_read(ctx, view)
 
 
 @app.get(
@@ -1075,16 +1400,18 @@ async def get_allocation_policy_artifact_entry(registry_id: str):
 async def list_allocation_policy_artifacts(
     capital_pool_id: str,
     artifact_state: Optional[ArtifactState] = None,
+    authorization: Optional[str] = Header(default=None),
 ):
     """
-    List AllocationPolicyArtifact registry entries for one capital pool.
+    List AllocationPolicyArtifact registry entries for one capital pool (tenant-scoped).
 
     strategy_id == capital_pool_id for allocation-policy artifacts.
     """
+    ctx = _authenticate_registry_read(authorization)
     views = [
         view
         for view in get_registry_service().list_by_strategy(capital_pool_id)
-        if view.entry.artifact_type == ArtifactType.ALLOCATION_POLICY
+        if view.entry.artifact_type == ArtifactType.ALLOCATION_POLICY and _can_read(ctx, view)
     ]
     if artifact_state is not None:
         views = [view for view in views if view.entry.artifact_state == artifact_state]
@@ -1108,7 +1435,11 @@ async def advance_allocation_policy_artifact_state(
     ctx = _authenticate_registry_write(authorization)
     registry_service = get_registry_service()
     try:
-        _ensure_alloc_policy_view(registry_service.get(registry_id), registry_id)
+        current = _ensure_alloc_policy_view(registry_service.get(registry_id), registry_id)
+    except RegistryError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    _authorize_write(ctx, current)
+    try:
         return registry_service.advance_artifact_state(
             registry_id,
             body.target_state,

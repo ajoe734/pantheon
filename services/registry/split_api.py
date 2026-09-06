@@ -16,6 +16,7 @@ from typing import Optional
 
 from .models import (
     ALLOWED_ARTIFACT_TRANSITIONS,
+    BUILTIN_TENANT,
     ArtifactState,
     DeploymentStage,
     DeploymentView,
@@ -24,7 +25,30 @@ from .models import (
     RegistryEntryView,
     utc_now_iso,
 )
+from .pg_store import DivergentCommandReplayError
 from .storage import RegistryConcurrentUpdateError, RegistryStore
+
+# ``register_if_absent`` is called from two kinds of places: real API routes
+# (service.py), which always pass a verified caller's ``actor`` explicitly,
+# and the registry's own checked-in bootstrap code
+# (strategy_artifact.py ``ensure_builtin_strategy_artifacts``), which never
+# has a caller to authenticate and does not pass ``actor`` at all. An absent
+# actor here can therefore only mean "the registry's own bootstrap is
+# registering a built-in", so it is bound to the reserved ``BUILTIN_TENANT``
+# identity rather than left untenanted — architecture-resumption-sa-sd.md
+# §3.1/§3.3. No HTTP-reachable caller can trigger this default: every route
+# that calls into RegistryService constructs and passes a real ``actor``.
+_BOOTSTRAP_ACTOR: dict[str, object] = {
+    "actor_id": "registry-bootstrap",
+    "roles": ["system"],
+    "tenant": BUILTIN_TENANT,
+    "token_kind": "system",
+}
+
+# Composite identity a "next revision" create-if-absent call must not
+# collide on across two different caller-supplied registry_ids — see
+# architecture-resumption-sa-sd.md §3.2 "immutable revision identity".
+_REVISION_UNIQUE_FIELDS: tuple[str, ...] = ("strategy_id", "version", "artifact_type")
 
 logger = logging.getLogger(__name__)
 
@@ -61,23 +85,26 @@ def _reject_immutable_metadata_mutation(
     current_metadata: Optional[dict],
     new_metadata: Optional[dict],
 ) -> None:
-    """Fail closed if a metadata PATCH would change/remove a reserved key.
+    """Fail closed if a metadata PATCH would set, change, or remove a reserved key.
 
-    ``current_metadata`` already having the key set is what makes it
-    immutable here; a fresh entry that has never carried a
-    strategy_spec/strategy_artifact/allocation_policy_artifact still goes
-    through the generic path unaffected.
+    Prior defect (reviewer finding 3): this only rejected *changing* or
+    *removing* a reserved key that was already present, so an entry that had
+    never carried e.g. ``strategy_spec`` could have one smuggled in for the
+    first time through this generic operator-metadata path — bypassing the
+    dedicated ``POST /api/registry/strategy-specs`` schema/checksum
+    validation entirely while keeping the entry's original (now-stale)
+    checksum. Any value change for a reserved key — including introducing it
+    where none existed — is rejected; these keys are only ever set through
+    their dedicated registration path.
     """
     current = current_metadata or {}
+    new = new_metadata or {}
     for key in _IMMUTABLE_METADATA_KEYS:
-        if key not in current or current[key] is None:
-            continue
-        new_value = (new_metadata or {}).get(key)
-        if new_value != current[key]:
+        if new.get(key) != current.get(key):
             raise RegistryConflictError(
                 f"Registry entry {registry_id!r} metadata key {key!r} carries an immutable "
-                "artifact payload/identity link and cannot be changed or removed via the "
-                "generic metadata PATCH."
+                "artifact payload/identity link and can only be set through its dedicated "
+                "registration path, never via the generic metadata PATCH."
             )
 
 
@@ -96,6 +123,7 @@ class RegistryService:
     ) -> RegistryEntryView:
         """Create a new draft or candidate entry."""
         self._validate_registration_state(payload)
+        self._reject_version_collision(payload, exclude_registry_id=registry_id)
         entry = self.store.create(payload, registry_id, actor=actor)
         logger.info("Registered %s (state=%s)", entry.registry_id, entry.artifact_state.value)
         return self._to_view(entry)
@@ -107,9 +135,24 @@ class RegistryService:
         *,
         actor: Optional[dict] = None,
     ) -> tuple[RegistryEntryView, bool]:
-        """Atomically register an id, returning the existing view on collision."""
+        """Atomically register an id, returning the existing view on collision.
+
+        ``store.create_if_absent`` is called with ``_REVISION_UNIQUE_FIELDS``
+        so a *different* caller-supplied ``registry_id`` at the same
+        (strategy_id, version, artifact_type) atomically loses the race
+        instead of both committing divergent content under the same version
+        — architecture-resumption-sa-sd.md §3.2. The returned ``created=False``
+        view may therefore have a different ``registry_id`` than requested;
+        callers (see service.py's strategy-spec/strategy-artifact facades)
+        must check that before treating it as an exact-key replay.
+        """
         self._validate_registration_state(payload)
-        entry, created = self.store.create_if_absent(payload, registry_id, actor=actor)
+        entry, created = self.store.create_if_absent(
+            payload,
+            registry_id,
+            actor=actor or _BOOTSTRAP_ACTOR,
+            unique_fields=_REVISION_UNIQUE_FIELDS,
+        )
         if created:
             logger.info(
                 "Registered %s (state=%s)",
@@ -117,6 +160,35 @@ class RegistryService:
                 entry.artifact_state.value,
             )
         return self._to_view(entry), created
+
+    def _reject_version_collision(
+        self, payload: RegistryEntryCreate, *, exclude_registry_id: str,
+    ) -> None:
+        """Best-effort (non-atomic) guard for the plain ``register()`` path.
+
+        ``register()`` always creates a fresh, randomly-suffixed
+        ``registry_id`` (see service.py's ``register_entry``/
+        ``register_allocation_policy_artifact`` routes), so it has no natural
+        create-if-absent identity to CAS against. This check narrows — but,
+        under true concurrent races, does not fully close — the same
+        (strategy_id, version, artifact_type) collision window that
+        ``register_if_absent``'s ``unique_fields`` closes atomically at the
+        store layer.
+        """
+        for view in self.list_by_strategy(payload.strategy_id):
+            entry = view.entry
+            if (
+                entry.registry_id != exclude_registry_id
+                and entry.artifact_type == payload.artifact_type
+                and entry.version == payload.version
+            ):
+                raise RegistryConflictError(
+                    f"strategy_id={payload.strategy_id!r} version={payload.version!r} "
+                    f"artifact_type={payload.artifact_type.value!r} is already registered "
+                    f"as registry_id={entry.registry_id!r}; immutable revision identity "
+                    "forbids a second registry_id at the same (strategy_id, version, "
+                    "artifact_type)."
+                )
 
     @staticmethod
     def _validate_registration_state(payload: RegistryEntryCreate) -> None:
@@ -243,6 +315,12 @@ class RegistryService:
                 actor=actor,
             )
         except RegistryConcurrentUpdateError as exc:
+            raise RegistryConflictError(str(exc)) from exc
+        except DivergentCommandReplayError as exc:
+            # A same command_key reused with a genuinely different request
+            # (different precondition and/or target metadata) is a caller
+            # bug, not a 500 — map it to the same 409 conflict semantics as a
+            # stale CAS (reviewer finding 6).
             raise RegistryConflictError(str(exc)) from exc
         return self._to_view(updated), replayed
 

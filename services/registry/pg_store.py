@@ -78,6 +78,7 @@ def _new_entry(
         created_at=now,
         updated_at=now,
         last_actor=actor,
+        owner_tenant=str((actor or {}).get("tenant") or "").strip() or None,
     )
 
 
@@ -119,16 +120,25 @@ class PostgresRegistryStore:
         registry_id: str,
         *,
         actor: Optional[dict[str, Any]] = None,
+        unique_fields: tuple[str, ...] = (),
     ) -> tuple[RegistryEntry, bool]:
         """Atomically create an entry, or return the durable existing entry unchanged.
 
         Uses ``insert_if_absent`` so two processes racing on the same
         ``registry_id`` (a same-key divergent-or-duplicate create request)
         commit exactly one row; the loser gets back the winner's durable
-        entry instead of silently overwriting it.
+        entry instead of silently overwriting it. ``unique_fields`` (e.g.
+        ``("strategy_id", "version", "artifact_type")``) additionally
+        reserves a composite identity under a table-level lock held for the
+        whole read/decide/write sequence, so two *different* registry_ids
+        racing on the same (strategy_id, version, artifact_type) tuple also
+        commit exactly one winner — architecture-resumption-sa-sd.md §3.2's
+        "immutable revision identity" requirement.
         """
         entry = _new_entry(payload, registry_id, actor=actor)
-        created, canonical = self._entries.insert_if_absent(registry_id, entry.to_dict())
+        created, canonical = self._entries.insert_if_absent(
+            registry_id, entry.to_dict(), unique_fields=unique_fields,
+        )
         if created:
             return entry, True
         return RegistryEntry.from_dict(canonical), False
@@ -180,10 +190,20 @@ class PostgresRegistryStore:
         against two different registry_ids and collide on one receipt row.
         Scoping by tenant + actor + registry_id (the aggregate) + command_key
         makes the receipt identity unambiguous.
+
+        Prior defect (reviewer finding 6): a plain ``f"{tenant}:{actor_id}:..."``
+        colon-join let ``tenant="a:b", actor="c"`` collide with
+        ``tenant="a", actor="b:c"`` — the delimiter can appear inside either
+        field. Each component is now length-prefixed before joining (an
+        unambiguous framing regardless of what characters the field
+        contains) and the whole framed string is hashed to keep the key a
+        fixed, storage-friendly size.
         """
         tenant = str((actor or {}).get("tenant") or "unscoped").strip() or "unscoped"
         actor_id = str((actor or {}).get("actor_id") or "unscoped").strip() or "unscoped"
-        return f"{tenant}:{actor_id}:{registry_id}:{command_key}"
+        parts = [tenant, actor_id, registry_id, command_key]
+        framed = "|".join(f"{len(part)}:{part}" for part in parts)
+        return hashlib.sha256(framed.encode("utf-8")).hexdigest()
 
     def commit_metadata_cas(
         self,
@@ -224,7 +244,17 @@ class PostgresRegistryStore:
         if actor is not None:
             entry.last_actor = actor
         new_payload = entry.to_dict()
-        request_digest = _request_digest({"registry_id": registry_id, "metadata": new_metadata})
+        # The digest must cover the caller's precondition (expected_metadata,
+        # carried in base_snapshot["metadata"]) as well as the target
+        # metadata — reviewer finding 6: a same-key request with a *changed*
+        # precondition but identical target metadata must not silently
+        # report replay=true, since the caller's compare-and-swap intent
+        # differs even though the end state looks the same.
+        request_digest = _request_digest({
+            "registry_id": registry_id,
+            "expected_metadata": base_snapshot.get("metadata"),
+            "metadata": new_metadata,
+        })
         scoped_key = self.receipt_key(command_key, registry_id, actor=actor) if command_key else None
 
         with self._entries.transaction() as conn:

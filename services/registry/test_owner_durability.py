@@ -12,6 +12,7 @@ and rejection of a stale CAS request over HTTP (409).
 from __future__ import annotations
 
 import os
+import time
 from uuid import uuid4
 
 import pytest
@@ -20,14 +21,39 @@ pytest.importorskip("psycopg")
 
 from fastapi.testclient import TestClient
 
+from services.runtime_auth_inbound import encode_jwt_hs256
+
 from . import service as service_module
 from .storage import reset_store
 
-# services/runtime_auth_inbound.py's permissive-mode structured-token form:
-# "actor_id:role1,role2". This is a placeholder test caller identity, never a
-# real credential — production sets PANTHEON_REGISTRY_AUTH_MODE=strict, which
-# only accepts a verified JWT (see docker-compose.yml/control.yml).
-_AUTH_HEADERS = {"Authorization": "Bearer test-operator:operator"}
+# Reviewer finding 2: once the durable Postgres backend is selected, the
+# service now fails closed (500) unless auth is explicitly strict with a
+# configured issuer/audience — a permissive-mode structured stub token
+# ("actor_id:role1,role2") is no longer accepted against this backend. These
+# HTTP-surface durability proofs therefore authenticate with a real,
+# strictly-verified HS256 JWT (mirrors test_owner_durability_real_process.py),
+# not the permissive stub used by the in-memory-backed unit tests elsewhere
+# in this package.
+_JWT_SECRET = "registry-owner-durability-secret"
+_JWT_ISSUER = "registry-durability-tests"
+_JWT_AUDIENCE = "registry-svc"
+
+
+def _strict_jwt(*, subject: str = "durability-operator", tenant: str = "durability-tenant") -> str:
+    return encode_jwt_hs256(
+        {
+            "sub": subject,
+            "tenant": tenant,
+            "roles": ["operator"],
+            "iss": _JWT_ISSUER,
+            "aud": _JWT_AUDIENCE,
+            "exp": time.time() + 3600,
+        },
+        secret=_JWT_SECRET,
+    )
+
+
+_AUTH_HEADERS = {"Authorization": f"Bearer {_strict_jwt()}"}
 
 
 @pytest.fixture
@@ -46,12 +72,20 @@ def pg_app():
             "REGISTRY_STORE_DSN",
             "REGISTRY_ENTRIES_TABLE",
             "REGISTRY_RECEIPTS_TABLE",
+            "PANTHEON_REGISTRY_AUTH_MODE",
+            "PANTHEON_REGISTRY_JWT_SECRET",
+            "PANTHEON_REGISTRY_JWT_ISSUER",
+            "PANTHEON_REGISTRY_JWT_AUDIENCE",
         )
     }
     os.environ["REGISTRY_STORE_BACKEND"] = "postgres"
     os.environ["REGISTRY_STORE_DSN"] = dsn
     os.environ["REGISTRY_ENTRIES_TABLE"] = f"{schema}.entries"
     os.environ["REGISTRY_RECEIPTS_TABLE"] = f"{schema}.command_receipts"
+    os.environ["PANTHEON_REGISTRY_AUTH_MODE"] = "strict"
+    os.environ["PANTHEON_REGISTRY_JWT_SECRET"] = _JWT_SECRET
+    os.environ["PANTHEON_REGISTRY_JWT_ISSUER"] = _JWT_ISSUER
+    os.environ["PANTHEON_REGISTRY_JWT_AUDIENCE"] = _JWT_AUDIENCE
     reset_store()
     try:
         yield TestClient(service_module.app, headers=_AUTH_HEADERS)

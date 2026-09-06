@@ -12,12 +12,12 @@
     {
       "capability": "create_draft",
       "route": "POST /api/registry/entries",
-      "principal_scope": "enforced by validate_request_auth via _authenticate_registry_write on every mutation route, including this one; the verified actor is recorded on the RegistryEntry as last_actor",
-      "request_identity": "generated server-side (reg-{strategy_id}-{version}-{uuid8})",
+      "principal_scope": "enforced by validate_request_auth via _authenticate_registry_write on every mutation route, including this one; the verified actor's tenant is recorded as the entry's immutable owner_tenant (see models.RegistryEntry.owner_tenant) and every subsequent read/write is scoped against it (_authorize_read/_authorize_write)",
+      "request_identity": "generated server-side (reg-{strategy_id}-{version}-{uuid8}); accepts either a name-only draft body ({\"name\": \"...\"}, synthesized strategy_id/version 0.0.1) or the full typed body (artifact_type/strategy_id/version) per the 2026-09-06 REGISTRY-STRATEGY-UNIFIED-CONTRACT-001 draft-kind fix — see _resolve_entry_or_draft_payload",
       "sole_writer": "registry-svc",
-      "legal_transition": "creates artifact_state=draft or candidate",
+      "legal_transition": "creates artifact_state=draft or candidate; rejects (409) a second registry_id at an already-registered (strategy_id, version, artifact_type) via a non-atomic best-effort collision guard (see create_next_revision for the atomic version of this check)",
       "durable_receipt": "RegistryEntry row (registry.entries), no separate command receipt on this route yet",
-      "exact_version_read": "GET /api/registry/entries/{registry_id}",
+      "exact_version_read": "GET /api/registry/entries/{registry_id} (tenant-scoped read; builtins are publicly readable)",
       "status": "implemented",
       "proof": "services/registry/test_owner_durability.py::test_register_and_readback_survive_fresh_process_restart"
     },
@@ -60,11 +60,11 @@
       "principal_scope": "enforced by validate_request_auth via _authenticate_registry_write on every mutation route, including this one; the verified actor is recorded on the RegistryEntry as last_actor",
       "request_identity": "registry_id + parent/base digest + semver",
       "sole_writer": "registry-svc",
-      "legal_transition": "a new version for a strategy_id that already has registered StrategySpec entries must be either an idempotent replay of an existing version, a legitimate immediate-next semver bump (major+1.0.0, major.minor+1.0, or major.minor.patch+1) from the current latest known version, or declare lineage.parent_registry_ids naming an existing StrategySpec entry for that strategy_id; an arbitrary/out-of-sequence version with neither is rejected (400)",
+      "legal_transition": "a new version for a strategy_id that already has registered StrategySpec entries must be either an idempotent replay of an existing (strategy_id, version) at the *same* registry_id, a legitimate immediate-next semver bump (major+1.0.0, major.minor+1.0, or major.minor.patch+1) from the current latest known version, or declare lineage.parent_registry_ids naming an existing StrategySpec entry for that strategy_id AND be a strictly greater version than that parent's (no downgrade); an arbitrary/out-of-sequence version, a downgrade below a linked parent's version, or a *different* registry_id claiming an already-registered (strategy_id, version, artifact_type) is rejected (400/409). The (strategy_id, version, artifact_type) tuple is enforced as a real atomic unique identity at the store layer (register_if_absent's unique_fields, backed by PostgresJsonOwnerStore.insert_if_absent's table lock / RegistryStore's single process lock) — two different caller-supplied registry_ids racing the same tuple commit exactly one winner.",
       "durable_receipt": "RegistryEntry row (registry.entries)",
       "exact_version_read": "GET /api/registry/strategies/{strategy_id}/strategy-specs",
-      "status": "implemented; real version/parent-linkage validation added by the 2026-09-06 corrective pass (an arbitrary version like \"9.9.9\" with no parent link previously returned 200)",
-      "proof": "services/registry/test_service.py, services/registry/test_paper_strategy_spec.py, services/registry/test_registry_positives.py::test_register_strategy_spec_rejects_out_of_sequence_version_without_parent_link"
+      "status": "implemented; real version/parent-linkage validation added by the 2026-09-06 corrective pass (an arbitrary version like \"9.9.9\" with no parent link previously returned 200); atomic (strategy_id, version, artifact_type) uniqueness and parent-downgrade rejection added by the follow-up 2026-09-06 REGISTRY-STRATEGY-UNIFIED-CONTRACT-001 rejection-fix pass (two different registry_ids at the same version, and a parent-linked downgrade, both previously returned 200)",
+      "proof": "services/registry/test_service.py, services/registry/test_paper_strategy_spec.py, services/registry/test_registry_positives.py::test_register_strategy_spec_rejects_out_of_sequence_version_without_parent_link, services/registry/test_service.py::test_two_registry_ids_cannot_both_win_the_same_strategy_version, services/registry/test_service.py::test_parent_linked_revision_cannot_downgrade_version"
     },
     {
       "capability": "advance_artifact_state",

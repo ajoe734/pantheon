@@ -203,21 +203,59 @@ class StrategyCommandAdapter(DomainCommandAdapter):
         )
 
         entry = body.get("entry") if isinstance(body, dict) else None
+        idempotent_replay = str(header_value(headers, "X-Idempotent-Replay") or "").strip().lower() == "true"
+
+        # Never trust the PATCH response alone as proof of what committed —
+        # architecture-resumption-sa-sd.md §3.3 / reviewer finding 5. Always
+        # perform a genuine scoped owner GET keyed by the same registry_id
+        # and verify it against what was requested; "POST/PATCH accepted"
+        # does not constitute owner GET/reload proof.
+        readback_entry = self._readback_entry(registry_id, auth_token=auth_token, mfa_token=mfa_token)
+        response_lost = False
+
         if not isinstance(entry, dict) or not entry.get("registry_id"):
             # The PATCH nominally succeeded (no HTTPError was raised) but its
-            # body does not carry a confirmable entry snapshot — never
-            # fabricate a "metadata_updated" success from an ambiguous
-            # response; surface it explicitly instead.
-            raise ActionUnavailableError(
-                f"Registry metadata PATCH for registry_id={registry_id!r} returned an "
-                "ambiguous response with no entry payload; the write's outcome cannot be "
-                "confirmed from this response.",
-                action_id=action_id,
-                entity_type="Strategy",
-                error_code="AMBIGUOUS_REGISTRY_RESPONSE",
-            )
-
-        idempotent_replay = str(header_value(headers, "X-Idempotent-Replay") or "").strip().lower() == "true"
+            # body carries no confirmable entry snapshot (e.g. 200 {}).
+            # Rather than immediately reporting failure, attempt the
+            # readback to distinguish "committed but response lost" from
+            # "not committed" — a hard FAILED here would fabricate a
+            # downstream error for a write that actually succeeded.
+            if readback_entry is None or readback_entry.get("metadata") != new_metadata:
+                raise ActionUnavailableError(
+                    f"Registry metadata PATCH for registry_id={registry_id!r} returned an "
+                    "ambiguous response with no entry payload, and a follow-up owner GET "
+                    "readback does not confirm the requested metadata was committed.",
+                    action_id=action_id,
+                    entity_type="Strategy",
+                    error_code="AMBIGUOUS_REGISTRY_RESPONSE",
+                )
+            entry = readback_entry
+            response_lost = True
+        else:
+            # The PATCH response claimed a specific committed snapshot;
+            # verify it against an independent owner read rather than taking
+            # the mutation response's own word for it.
+            if readback_entry is None:
+                raise ActionUnavailableError(
+                    f"Registry metadata PATCH for registry_id={registry_id!r} could not be "
+                    "confirmed by a follow-up owner GET readback.",
+                    action_id=action_id,
+                    entity_type="Strategy",
+                    error_code="READBACK_UNAVAILABLE",
+                )
+            if (
+                readback_entry.get("checksum") != entry.get("checksum")
+                or readback_entry.get("updated_at") != entry.get("updated_at")
+                or readback_entry.get("metadata") != entry.get("metadata")
+            ):
+                raise ActionUnavailableError(
+                    f"Registry metadata PATCH response for registry_id={registry_id!r} does not "
+                    "match a follow-up owner GET readback; refusing to report success on a "
+                    "discrepant state.",
+                    action_id=action_id,
+                    entity_type="Strategy",
+                    error_code="READBACK_MISMATCH",
+                )
 
         return build_domain_receipt(
             command_id=command_id,
@@ -238,8 +276,41 @@ class StrategyCommandAdapter(DomainCommandAdapter):
             },
             authoritative_readback=entry,
             idempotent_replay=idempotent_replay,
-            extra={"strategy_id": strategy_id, "registry_id": registry_id, "action_id": action_id},
+            extra={
+                "strategy_id": strategy_id,
+                "registry_id": registry_id,
+                "action_id": action_id,
+                "response_lost": response_lost,
+            },
         )
+
+    @staticmethod
+    def _readback_entry(
+        registry_id: str,
+        *,
+        auth_token: Optional[str] = None,
+        mfa_token: Optional[str] = None,
+    ) -> Optional[Dict[str, Any]]:
+        """Perform a genuine scoped owner GET and return the durable entry snapshot.
+
+        Returns ``None`` on any failure (network error, 404, malformed body)
+        rather than raising — callers decide whether the absence of a
+        confirmable readback means "not committed" or "unconfirmed", since
+        those are different outcomes (architecture-resumption-sa-sd.md §3.3).
+        """
+        try:
+            _, _, body = http_request_json_with_headers(
+                registry_url(f"/api/registry/entries/{registry_id}"),
+                method="GET",
+                auth_token=auth_token,
+                mfa_token=mfa_token,
+            )
+        except Exception:
+            return None
+        entry = body.get("entry") if isinstance(body, dict) else None
+        if isinstance(entry, dict) and entry.get("registry_id") == registry_id:
+            return entry
+        return None
 
     def _execute_formula_action(
         self,

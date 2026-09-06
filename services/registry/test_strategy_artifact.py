@@ -486,8 +486,20 @@ def test_fastapi_startup_registers_builtin_before_health_only_request():
 
 
 def test_strategy_artifact_advance_preserves_deployment_split():
+    """Checked-in built-ins are immutable via caller routes (reviewer finding
+    1: "deny unauthorized builtin mutation") — this proof registers a fresh,
+    non-builtin StrategyArtifact (a caller-owned entry, not a bootstrap
+    artifact) and advances *that* instead of the shared built-in fixture."""
     client = TestClient(app, headers={"Authorization": "Bearer test-operator:operator"})
-    registry_id = "artifact-tw-session-momentum-v1"
+    artifact = copy.deepcopy(_artifact())
+    artifact["artifact_id"] = "artifact-advance-split-test-v1"
+    artifact["strategy_id"] = "advance-split-test"
+    registered = client.post(
+        "/api/registry/strategy-artifacts",
+        json={"strategy_artifact": artifact},
+    )
+    assert registered.status_code == 200, registered.text
+    registry_id = registered.json()["entry"]["registry_id"]
 
     approved = client.post(
         f"/api/registry/strategy-artifacts/{registry_id}/advance",

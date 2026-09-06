@@ -81,6 +81,7 @@ class RegistryStore:
             created_at=now,
             updated_at=now,
             last_actor=actor,
+            owner_tenant=str((actor or {}).get("tenant") or "").strip() or None,
         )
 
     def put(self, entry: RegistryEntry) -> None:
@@ -104,12 +105,30 @@ class RegistryStore:
         registry_id: str,
         *,
         actor: Optional[dict] = None,
+        unique_fields: tuple[str, ...] = (),
     ) -> tuple[RegistryEntry, bool]:
-        """Atomically create an entry, or return the existing entry unchanged."""
+        """Atomically create an entry, or return the existing entry unchanged.
+
+        ``unique_fields`` (e.g. ``("strategy_id", "version", "artifact_type")``)
+        reserves a composite identity in addition to ``registry_id`` — see
+        architecture-resumption-sa-sd.md §3.2's "immutable revision identity"
+        requirement: two different caller-supplied ``registry_id``s must not
+        both succeed at the same (strategy_id, version, artifact_type) tuple.
+        The whole scan-then-insert sequence runs under ``self._lock`` so this
+        mirrors the table-locked semantics of
+        ``PostgresJsonOwnerStore.insert_if_absent``.
+        """
         with self._lock:
             existing = self._entries.get(registry_id)
             if existing is not None:
                 return RegistryEntry.from_dict(existing.to_dict()), False
+            if unique_fields:
+                for other in self._entries.values():
+                    if all(
+                        getattr(payload, field, None) == getattr(other, field, None)
+                        for field in unique_fields
+                    ):
+                        return RegistryEntry.from_dict(other.to_dict()), False
             entry = self._new_entry(payload, registry_id, actor=actor)
             self._put_unlocked(entry)
             return RegistryEntry.from_dict(entry.to_dict()), True
@@ -285,7 +304,16 @@ class RegistryStore:
             if scoped_key:
                 receipt = self._command_receipts.get(scoped_key)
                 if receipt is not None:
-                    if receipt["new_metadata"] != new_metadata:
+                    # Compare the full normalized request — including the
+                    # caller's precondition (expected_metadata) — not just
+                    # the target metadata, so a same-key retry with a
+                    # *changed* precondition is treated as divergent even
+                    # when the target metadata happens to match (reviewer
+                    # finding 6; mirrors PostgresRegistryStore).
+                    if (
+                        receipt["new_metadata"] != new_metadata
+                        or receipt.get("expected_metadata") != base_snapshot.get("metadata")
+                    ):
                         from .pg_store import DivergentCommandReplayError
 
                         raise DivergentCommandReplayError(command_key)
@@ -307,6 +335,7 @@ class RegistryStore:
             if scoped_key:
                 self._command_receipts[scoped_key] = {
                     "new_metadata": new_metadata,
+                    "expected_metadata": base_snapshot.get("metadata"),
                     "committed_entry": committed,
                 }
             return RegistryEntry.from_dict(committed), False
@@ -345,6 +374,17 @@ def build_registry_store():
 
     backend = os.getenv("REGISTRY_STORE_BACKEND", "memory").strip().lower()
     if backend in ("", "memory"):
+        # A configured Postgres DSN is a strong signal the deployer intended
+        # the durable backend; silently returning the in-memory test double
+        # in that case would mean every write vanishes on process exit while
+        # looking identical to a working deployment. Fail closed instead of
+        # guessing (architecture-resumption-sa-sd.md §3.1).
+        if os.getenv("REGISTRY_STORE_DSN") or os.getenv("DATABASE_URL"):
+            raise RuntimeError(
+                "REGISTRY_STORE_DSN/DATABASE_URL is configured but REGISTRY_STORE_BACKEND "
+                "is unset or 'memory'; refusing to silently select the in-memory test double "
+                "over an apparently-intended Postgres connection. Set REGISTRY_STORE_BACKEND=postgres."
+            )
         return RegistryStore()
     if backend != "postgres":
         raise ValueError("REGISTRY_STORE_BACKEND must be memory or postgres")

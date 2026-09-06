@@ -11,8 +11,13 @@ Covers:
 """
 from __future__ import annotations
 
+import time
+
 import pytest
+from fastapi import HTTPException
 from fastapi.testclient import TestClient
+
+from services.runtime_auth_inbound import encode_jwt_hs256
 
 from .models import (
     ArtifactType,
@@ -24,7 +29,7 @@ from .models import (
     StorageBackend,
     StorageRef,
 )
-from .service import app
+from .service import _require_production_auth_configuration, app
 from .split_api import RegistryError, RegistryNotFoundError, RegistryService
 from .storage import RegistryStore, reset_store
 
@@ -856,3 +861,456 @@ class TestFastAPIEndpoints:
         )
         assert resp.status_code == 400
         assert "not approved" in resp.json()["detail"].lower()
+
+
+# ===========================================================================
+# Regression proofs for PR #5620 generation-4 rejection findings
+# (REGISTRY-STRATEGY-UNIFIED-CONTRACT-001) — reproduced against the
+# in-memory backend so they run without a live database. Each test would
+# have failed against the pre-fix code and passes now.
+#
+# Postgres-specific proofs (real concurrent unique_fields collision, real
+# fail-closed auth-config gate against a live durable backend) are gated on
+# TEST_DATABASE_URL in test_owner_durability.py /
+# services/foundation/tests/test_registry_owner_transaction.py, consistent
+# with the rest of this package's Postgres-backed suites.
+# ===========================================================================
+
+_JWT_SECRET = "unified-contract-fixes-secret"
+
+
+def _jwt(*, subject: str, tenant: str, roles=("operator",), **overrides) -> str:
+    claims = {
+        "sub": subject,
+        "tenant": tenant,
+        "roles": list(roles),
+        "exp": time.time() + 3600,
+    }
+    claims.update(overrides)
+    return encode_jwt_hs256(claims, secret=_JWT_SECRET)
+
+
+def _bearer(token: str) -> dict:
+    return {"Authorization": f"Bearer {token}"}
+
+
+@pytest.fixture
+def strict_client(monkeypatch):
+    monkeypatch.setenv("PANTHEON_REGISTRY_AUTH_MODE", "strict")
+    monkeypatch.setenv("PANTHEON_REGISTRY_JWT_SECRET", _JWT_SECRET)
+    monkeypatch.setenv("PANTHEON_REGISTRY_JWT_ISSUER", "")
+    monkeypatch.setenv("PANTHEON_REGISTRY_JWT_AUDIENCE", "")
+    return TestClient(app)
+
+
+def _create_entry(client: TestClient, token: str, *, strategy_id: str, version: str = "1.0.0") -> dict:
+    resp = client.post(
+        "/api/registry/entries",
+        json={
+            "artifact_type": "model_artifact",
+            "strategy_id": strategy_id,
+            "version": version,
+            "storage_ref": {"backend": "object_store", "path": "s3://bucket/a.bin"},
+            "checksum": "sha256:deadbeef",
+            "lineage": {"source_run_ids": ["run-1"]},
+        },
+        headers=_bearer(token),
+    )
+    assert resp.status_code == 200, resp.text
+    return resp.json()
+
+
+# -- Finding 1: target authorization / system scope -----------------------
+
+
+def test_cross_tenant_patch_is_denied_not_200(strict_client):
+    """A verified tenant-B caller must not be able to PATCH tenant-A's entry
+    (previously 200 with last_actor silently reassigned to B)."""
+    owner_token = _jwt(subject="owner-1", tenant="tenant-a")
+    other_token = _jwt(subject="intruder-1", tenant="tenant-b")
+
+    created = _create_entry(strict_client, owner_token, strategy_id="cross-tenant-strat")
+    registry_id = created["entry"]["registry_id"]
+
+    resp = strict_client.patch(
+        f"/api/registry/entries/{registry_id}/metadata",
+        json={"expected_metadata": None, "metadata": {"note": "hijacked"}},
+        headers=_bearer(other_token),
+    )
+    assert resp.status_code == 403, resp.text
+
+    # The entry's last_actor must not have been reassigned to the intruder.
+    unchanged = strict_client.get(f"/api/registry/entries/{registry_id}", headers=_bearer(owner_token))
+    assert unchanged.json()["entry"]["last_actor"]["actor_id"] == "owner-1"
+
+
+def test_anonymous_get_is_denied(strict_client):
+    owner_token = _jwt(subject="owner-2", tenant="tenant-a")
+    created = _create_entry(strict_client, owner_token, strategy_id="anon-get-strat")
+    registry_id = created["entry"]["registry_id"]
+
+    resp = strict_client.get(f"/api/registry/entries/{registry_id}")
+    assert resp.status_code == 401, resp.text
+
+
+def test_cross_tenant_get_is_denied(strict_client):
+    owner_token = _jwt(subject="owner-3", tenant="tenant-a")
+    other_token = _jwt(subject="reader-1", tenant="tenant-b")
+    created = _create_entry(strict_client, owner_token, strategy_id="cross-tenant-get-strat")
+    registry_id = created["entry"]["registry_id"]
+
+    resp = strict_client.get(f"/api/registry/entries/{registry_id}", headers=_bearer(other_token))
+    assert resp.status_code == 403, resp.text
+
+
+def test_same_tenant_read_and_write_still_succeed(strict_client):
+    """The scoping fix must not become a blanket deny — same-tenant access
+    (including a second caller within that tenant) still works."""
+    token_a = _jwt(subject="owner-4", tenant="tenant-a")
+    token_a2 = _jwt(subject="colleague-4", tenant="tenant-a")
+    created = _create_entry(strict_client, token_a, strategy_id="same-tenant-strat")
+    registry_id = created["entry"]["registry_id"]
+
+    resp = strict_client.get(f"/api/registry/entries/{registry_id}", headers=_bearer(token_a2))
+    assert resp.status_code == 200, resp.text
+
+    patched = strict_client.patch(
+        f"/api/registry/entries/{registry_id}/metadata",
+        json={"expected_metadata": None, "metadata": {"note": "same tenant ok"}},
+        headers=_bearer(token_a2),
+    )
+    assert patched.status_code == 200, patched.text
+
+
+def test_builtin_artifact_mutation_is_denied_and_survives_restart(strict_client):
+    """A builtin StrategyArtifact must reject any caller PATCH (even an
+    unchanged reserved payload plus a harmless extra note), and re-running
+    the bootstrap idempotent registration must still succeed cleanly
+    afterwards (restart invariant)."""
+    registry_id = "artifact-tw-session-momentum-v1"
+    token = _jwt(subject="operator-x", tenant="tenant-a")
+
+    resp = strict_client.patch(
+        f"/api/registry/entries/{registry_id}/metadata",
+        json={"expected_metadata": None, "metadata": {"note": "should not apply"}},
+        headers=_bearer(token),
+    )
+    assert resp.status_code == 403, resp.text
+
+    # Restart invariant: a fresh service/store must still register builtins
+    # cleanly (the denied PATCH above must not have partially mutated it).
+    reset_store()
+    fresh = TestClient(app)
+    health = fresh.get("/health")
+    assert health.status_code == 200, health.text
+    readback = fresh.get(
+        f"/api/registry/strategy-artifacts/{registry_id}", headers=_bearer(token)
+    )
+    assert readback.status_code == 200, readback.text
+
+
+def test_builtin_artifact_is_publicly_readable_across_tenants(strict_client):
+    """Builtins remain readable reference data for any verified caller —
+    the scoping fix must not accidentally lock them to one tenant."""
+    registry_id = "artifact-tw-session-momentum-v1"
+    token = _jwt(subject="any-reader", tenant="some-other-tenant")
+    resp = strict_client.get(
+        f"/api/registry/strategy-artifacts/{registry_id}", headers=_bearer(token)
+    )
+    assert resp.status_code == 200, resp.text
+
+
+def test_caller_cannot_assert_reserved_builtin_tenant_claim(strict_client):
+    forged_token = _jwt(subject="forger", tenant="__builtin__")
+    resp = strict_client.post(
+        "/api/registry/entries",
+        json={
+            "artifact_type": "model_artifact",
+            "strategy_id": "forged-tenant-strat",
+            "version": "1.0.0",
+            "storage_ref": {"backend": "object_store", "path": "s3://bucket/a.bin"},
+            "checksum": "sha256:deadbeef",
+        },
+        headers=_bearer(forged_token),
+    )
+    assert resp.status_code == 403, resp.text
+
+
+# -- Finding 2: fail-closed configuration ----------------------------------
+
+
+def test_production_auth_config_required_once_postgres_backend_selected(monkeypatch):
+    """Once the durable backend is selected, permissive/unconfigured auth
+    must fail closed (500) rather than silently accepting an unsigned
+    structured Bearer token or a strict token with no expected issuer/
+    audience configured."""
+    monkeypatch.setattr("services.registry.pg_store._registry_backend", lambda: "postgres")
+
+    # Permissive mode (or unset) with the durable backend selected: reject.
+    with pytest.raises(HTTPException) as excinfo:
+        _require_production_auth_configuration({"PANTHEON_RUNTIME_AUTH_MODE": "permissive"})
+    assert excinfo.value.status_code == 500
+
+    # Strict mode declared but no issuer/audience configured: still reject —
+    # a signed token asserting *any* issuer/audience would otherwise pass.
+    with pytest.raises(HTTPException) as excinfo:
+        _require_production_auth_configuration({
+            "PANTHEON_RUNTIME_AUTH_MODE": "strict",
+            "PANTHEON_RUNTIME_JWT_ISSUER": "",
+            "PANTHEON_RUNTIME_JWT_AUDIENCE": "",
+        })
+    assert excinfo.value.status_code == 500
+
+    # Fully configured: passes through without raising.
+    _require_production_auth_configuration({
+        "PANTHEON_RUNTIME_AUTH_MODE": "strict",
+        "PANTHEON_RUNTIME_JWT_ISSUER": "iss",
+        "PANTHEON_RUNTIME_JWT_AUDIENCE": "aud",
+    })
+
+
+def test_memory_backend_is_unaffected_by_production_auth_gate(monkeypatch):
+    """The in-memory test double is explicitly exempt — this is what keeps
+    the rest of this package's unit tests running without strict JWT setup."""
+    monkeypatch.setattr("services.registry.pg_store._registry_backend", lambda: "memory")
+    _require_production_auth_configuration({"PANTHEON_RUNTIME_AUTH_MODE": "permissive"})
+
+
+def test_dsn_configured_without_explicit_postgres_backend_fails_closed(monkeypatch):
+    """architecture-resumption-sa-sd.md §3.1: a configured DSN with an unset/
+    memory backend must not silently select the in-memory store — that would
+    look like a working deployment while every write vanished on exit."""
+    from .storage import build_registry_store
+
+    monkeypatch.delenv("REGISTRY_STORE_BACKEND", raising=False)
+    monkeypatch.setenv("DATABASE_URL", "postgresql://example/registry")
+    monkeypatch.delenv("PANTHEON_ENV", raising=False)
+    monkeypatch.delenv("PANTHEON_PERSISTENCE_POSTURE", raising=False)
+    with pytest.raises(RuntimeError):
+        build_registry_store()
+
+
+# -- Finding 3: genuine positive capabilities ------------------------------
+
+
+def test_name_only_draft_creation_succeeds(strict_client):
+    token = _jwt(subject="drafter", tenant="tenant-a")
+    resp = strict_client.post(
+        "/api/registry/entries",
+        json={"name": "My Draft Strategy Idea"},
+        headers=_bearer(token),
+    )
+    assert resp.status_code == 200, resp.text
+    entry = resp.json()["entry"]
+    assert entry["metadata"]["name"] == "My Draft Strategy Idea"
+    assert entry["artifact_state"] == "draft"
+    assert entry["strategy_id"]  # stable synthesized identity assigned
+
+    # Stable identity: fetching it back returns the same registry_id/content.
+    readback = strict_client.get(
+        f"/api/registry/entries/{entry['registry_id']}", headers=_bearer(token)
+    )
+    assert readback.status_code == 200, readback.text
+    assert readback.json()["entry"]["strategy_id"] == entry["strategy_id"]
+
+
+def test_mixed_name_and_partial_typed_fields_is_rejected(strict_client):
+    token = _jwt(subject="drafter-2", tenant="tenant-a")
+    resp = strict_client.post(
+        "/api/registry/entries",
+        json={"name": "Mixed", "strategy_id": "should-not-mix"},
+        headers=_bearer(token),
+    )
+    assert resp.status_code == 400, resp.text
+
+
+def test_neither_name_nor_full_fields_is_rejected(strict_client):
+    token = _jwt(subject="drafter-3", tenant="tenant-a")
+    resp = strict_client.post("/api/registry/entries", json={}, headers=_bearer(token))
+    assert resp.status_code == 400, resp.text
+
+
+def test_metadata_patch_cannot_introduce_reserved_key_that_never_existed(strict_client):
+    """A generic metadata PATCH must not be able to smuggle in a fresh
+    strategy_spec (or other reserved key) on an entry that never had one —
+    that would bypass the dedicated schema/checksum-validated registration
+    path entirely."""
+    token = _jwt(subject="smuggler", tenant="tenant-a")
+    created = _create_entry(strict_client, token, strategy_id="smuggle-strat")
+    registry_id = created["entry"]["registry_id"]
+    assert created["entry"]["metadata"] is None
+
+    resp = strict_client.patch(
+        f"/api/registry/entries/{registry_id}/metadata",
+        json={
+            "expected_metadata": None,
+            "metadata": {"strategy_spec": {"strategy_id": "smuggle-strat", "spec_version": "1.0"}},
+        },
+        headers=_bearer(token),
+    )
+    assert resp.status_code == 409, resp.text
+
+
+# -- Finding 4: immutable revision identity --------------------------------
+
+
+def test_two_registry_ids_cannot_both_win_the_same_strategy_version(strict_client):
+    """register_if_absent must enforce a real unique (strategy_id, version,
+    artifact_type) tuple — two different caller-supplied registry_ids at the
+    same version must not both succeed with divergent content."""
+    token = _jwt(subject="revision-writer", tenant="tenant-a")
+    strategy_id = "revision-identity-strat"
+    lineage = {"source_run_ids": ["run-1"]}
+
+    first = strict_client.post(
+        "/api/registry/strategy-specs",
+        json={
+            "strategy_id": strategy_id,
+            "version": "1.0.0",
+            "lineage": lineage,
+            "strategy_spec": {"strategy_id": strategy_id, "spec_version": "1.0"},
+        },
+        headers=_bearer(token),
+    )
+    assert first.status_code == 200, first.text
+
+    second = strict_client.post(
+        "/api/registry/strategy-specs",
+        json={
+            "strategy_id": strategy_id,
+            "version": "1.0.0",
+            "registry_id": "reg-a-different-supplied-id",
+            "lineage": lineage,
+            "strategy_spec": {"strategy_id": strategy_id, "spec_version": "1.0", "diverged": True},
+        },
+        headers=_bearer(token),
+    )
+    assert second.status_code == 409, second.text
+
+    listed = strict_client.get(
+        f"/api/registry/strategies/{strategy_id}/entries", headers=_bearer(token)
+    )
+    versions_at_1_0_0 = [
+        e["entry"]["registry_id"] for e in listed.json() if e["entry"]["version"] == "1.0.0"
+    ]
+    assert len(versions_at_1_0_0) == 1
+
+
+def test_parent_linked_revision_cannot_downgrade_version(strict_client):
+    token = _jwt(subject="downgrade-writer", tenant="tenant-a")
+    strategy_id = "downgrade-strat"
+    base = strict_client.post(
+        "/api/registry/strategy-specs",
+        json={
+            "strategy_id": strategy_id,
+            "version": "1.0.0",
+            "lineage": {"source_run_ids": ["run-1"]},
+            "strategy_spec": {"strategy_id": strategy_id, "spec_version": "1.0"},
+        },
+        headers=_bearer(token),
+    )
+    assert base.status_code == 200, base.text
+    parent_id = base.json()["entry"]["registry_id"]
+
+    downgrade = strict_client.post(
+        "/api/registry/strategy-specs",
+        json={
+            "strategy_id": strategy_id,
+            "version": "0.0.1",
+            "lineage": {"source_run_ids": ["run-1"], "parent_registry_ids": [parent_id]},
+            "strategy_spec": {"strategy_id": strategy_id, "spec_version": "1.0", "v": 2},
+        },
+        headers=_bearer(token),
+    )
+    assert downgrade.status_code == 400, downgrade.text
+    assert "greater" in downgrade.json()["detail"].lower()
+
+
+def test_register_if_absent_unique_fields_enforced_at_store_layer():
+    """Direct store-level proof (no HTTP), matching the atomic
+    create_if_absent contract used by register_if_absent."""
+    from .models import ArtifactType, Lineage, RegistryEntryCreate, StorageBackend, StorageRef
+
+    service = RegistryService(RegistryStore())
+    payload = RegistryEntryCreate(
+        artifact_type=ArtifactType.STRATEGY_SPEC,
+        strategy_id="direct-strat",
+        version="1.0.0",
+        lineage=Lineage(source_run_ids=["run-1"]),
+        storage_ref=StorageRef(backend=StorageBackend.INLINE, path="x"),
+        checksum="sha256:aaa",
+    )
+    view1, created1 = service.register_if_absent(payload, "reg-one")
+    assert created1 is True
+
+    view2, created2 = service.register_if_absent(payload, "reg-two")
+    assert created2 is False
+    assert view2.entry.registry_id == view1.entry.registry_id == "reg-one"
+
+
+# -- Finding 6: replay semantics -------------------------------------------
+
+
+def test_replay_with_changed_precondition_is_not_treated_as_replay(strict_client):
+    """A same-key request with a *changed* expected_metadata precondition
+    but identical target metadata must not be silently accepted as
+    replay=true — the whole precondition is part of the normalized request."""
+    token = _jwt(subject="replay-writer", tenant="tenant-a")
+    created = _create_entry(strict_client, token, strategy_id="replay-precondition-strat")
+    registry_id = created["entry"]["registry_id"]
+
+    first = strict_client.patch(
+        f"/api/registry/entries/{registry_id}/metadata",
+        json={"expected_metadata": None, "metadata": {"note": "same-target"}, "command_key": "cmd-1"},
+        headers=_bearer(token),
+    )
+    assert first.status_code == 200, first.text
+
+    # Same command_key, *different* claimed precondition, identical target
+    # metadata as the (now-current) value — must be a divergent-replay
+    # conflict (409), not a false "replay=true" no-op.
+    second = strict_client.patch(
+        f"/api/registry/entries/{registry_id}/metadata",
+        json={
+            "expected_metadata": {"note": "some-other-base"},
+            "metadata": {"note": "same-target"},
+            "command_key": "cmd-1",
+        },
+        headers=_bearer(token),
+    )
+    assert second.status_code == 409, second.text
+
+
+def test_divergent_replay_maps_to_409_not_500(strict_client):
+    token = _jwt(subject="divergent-writer", tenant="tenant-a")
+    created = _create_entry(strict_client, token, strategy_id="divergent-replay-strat")
+    registry_id = created["entry"]["registry_id"]
+
+    first = strict_client.patch(
+        f"/api/registry/entries/{registry_id}/metadata",
+        json={"expected_metadata": None, "metadata": {"note": "v1"}, "command_key": "cmd-div-1"},
+        headers=_bearer(token),
+    )
+    assert first.status_code == 200, first.text
+
+    divergent = strict_client.patch(
+        f"/api/registry/entries/{registry_id}/metadata",
+        json={"expected_metadata": None, "metadata": {"note": "v2-different"}, "command_key": "cmd-div-1"},
+        headers=_bearer(token),
+    )
+    assert divergent.status_code == 409, divergent.text
+
+
+def test_receipt_key_does_not_collide_across_ambiguous_tenant_actor_boundary():
+    """``tenant="a:b", actor="c"`` must not collide with ``tenant="a",
+    actor="b:c"`` — the delimiter used to join the components must not be
+    forgeable by either field's content."""
+    from .pg_store import PostgresRegistryStore
+
+    key_1 = PostgresRegistryStore.receipt_key(
+        "cmd-1", "reg-1", actor={"tenant": "a:b", "actor_id": "c"}
+    )
+    key_2 = PostgresRegistryStore.receipt_key(
+        "cmd-1", "reg-1", actor={"tenant": "a", "actor_id": "b:c"}
+    )
+    assert key_1 != key_2
