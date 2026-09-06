@@ -120,6 +120,28 @@ class DispatchAdmissionTests(unittest.TestCase):
         self.assertEqual(decision.endpoint_id, "codex-1")
         self.assertEqual(decision.account_id, "codex-account")
 
+    def test_unauthorized_privileged_task_is_denied_before_capacity(self) -> None:
+        decision = evaluate_dispatch_intent(
+            intent(execution_authorized=False),
+            lane(endpoint()),
+            healthy_snapshot(global_reserved=0),
+        )
+
+        self.assertFalse(decision.eligible)
+        self.assertEqual(
+            decision.reason, DispatchBlockReason.EXECUTION_AUTHORIZATION_REQUIRED
+        )
+        self.assertEqual(decision.task_reason, DispatchReason.OWNED_READY)
+
+    def test_authorized_privileged_task_dispatches_normally(self) -> None:
+        decision = evaluate_dispatch_intent(
+            intent(execution_authorized=True),
+            lane(endpoint()),
+            healthy_snapshot(),
+        )
+
+        self.assertTrue(decision.eligible)
+
     def test_review_uses_reviewer_assignment_identity(self) -> None:
         decision = evaluate_dispatch_intent(
             intent(status="review", owner="Codex", reviewer="Claude"),

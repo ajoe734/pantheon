@@ -34,6 +34,7 @@ class DispatchBlockReason(str, Enum):
     TASK_PENDING = "task_pending"
     GLOBAL_CAPACITY_REACHED = "global_capacity_reached"
     LANE_CAPACITY_REACHED = "lane_capacity_reached"
+    EXECUTION_AUTHORIZATION_REQUIRED = "execution_authorization_required"
     NO_DELIVERY_ENDPOINT = "no_delivery_endpoint"
     ENDPOINT_STATIC_UNAVAILABLE = "endpoint_static_unavailable"
     ENDPOINT_BUSY = "endpoint_busy"
@@ -58,6 +59,14 @@ class TaskIntent:
     human_ops_hold: bool = False
     review_binding_current: bool = True
     execution_resources: tuple[str, ...] = ()
+    # OPS-PRIVILEGED-TASK-EXECUTION-AUTH-001: the sole normalized
+    # authorization verdict for a privileged (security/hosted/live) task,
+    # computed by execution_authorization.is_execution_authorized() and fed
+    # into this one shared predicate for both planning and late delivery
+    # (SA/SD 4). Defaults to True so an ordinary functional/paper/read_only/
+    # ci/reconcile_only task, or any caller that has not yet adopted this
+    # field, is completely unaffected.
+    execution_authorized: bool = True
 
 
 @dataclass(frozen=True)
@@ -356,6 +365,16 @@ def evaluate_dispatch_intent(
             False,
             DispatchBlockReason.TASK_NOT_DISPATCHABLE,
             None,
+            lane_id,
+        )
+    if not intent.execution_authorized:
+        # Deny privileged owner execution before capacity/worktree/provider
+        # launch when authorization is absent, invalid, stale, expired,
+        # revoked, or already consumed by a different attempt (SA/SD 4).
+        return DispatchDecision(
+            False,
+            DispatchBlockReason.EXECUTION_AUTHORIZATION_REQUIRED,
+            task_reason,
             lane_id,
         )
     if _contains(snapshot.leased_task_ids, intent.task_id):

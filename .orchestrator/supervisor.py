@@ -170,6 +170,7 @@ from watch_events import (
 
 # Supervisor Authority V2 modules.
 from rewrite import concurrency as rewrite_concurrency
+import execution_authorization
 from rewrite import dispatch_admission as rewrite_dispatch_admission
 from rewrite import integration_receipt
 from rewrite import provider_health as rewrite_provider_health
@@ -3062,6 +3063,57 @@ class StaleDispatchBeforeLaunch(RuntimeError):
     """The canonical task assignment changed before adapter process spawn."""
 
 
+class ExecutionAuthorizationSpendFailed(RuntimeError):
+    """A privileged task's grant could not be reserved for this exact launch."""
+
+
+def reserve_execution_authorization_for_launch(
+    config: dict[str, Any],
+    task_id: str,
+    *,
+    run_id: str,
+) -> None:
+    """Atomically spend one privileged task's execution grant for one launch.
+
+    OPS-PRIVILEGED-TASK-EXECUTION-AUTH-001 (SA/SD 4): dispatch admission
+    already refused to build a launch request unless
+    ``execution_authorization.is_execution_authorized`` was ``True`` at
+    snapshot time, but that snapshot is not the authoritative claim/lease
+    boundary -- two concurrent launch attempts could otherwise both observe
+    ``STATE_GRANTED`` and both proceed. This function is that boundary: it
+    reloads canonical state under the same exclusive task-state lock every
+    other canonical mutation uses, re-verifies authorization against the
+    freshly loaded task, and -- only if it is still ``STATE_GRANTED`` --
+    commits the transition to ``STATE_RESERVED`` bound to this exact
+    ``run_id`` in the same write. A task with no execution-authorization
+    subrecord (the overwhelmingly common, non-privileged case) is a no-op:
+    ordinary functional/paper/read_only/ci/reconcile_only dispatch never
+    takes this lock path at all costs beyond one dict lookup.
+    """
+
+    status_path = config_path(config, "status_file")
+    with canonical_task_state_lock_file(status_path, shared=False, nonblocking=False):
+        status = load_status(config)
+        task = task_index_from_status(config, status).get(task_id)
+        if task is None:
+            return
+        record = task.get("execution_authorization")
+        if not isinstance(record, dict):
+            return
+        policy = record.get("policy")
+        if not isinstance(policy, dict) or not policy.get("requires_execution_authorization"):
+            return
+        now = datetime.now(timezone.utc)
+        try:
+            updated = execution_authorization.reserve_execution_authorization(
+                task, run_id=run_id, now=now
+            )
+        except execution_authorization.ExecutionAuthorizationError as exc:
+            raise ExecutionAuthorizationSpendFailed(str(exc)) from exc
+        task["execution_authorization"] = updated
+        write_status(config, status, source="supervisor-execution-authorization-reserve")
+
+
 def start_worker_for_request(
     config: dict[str, Any],
     state: dict[str, Any],
@@ -3103,6 +3155,32 @@ def start_worker_for_request(
         activity_type=activity_type,
         activity_message=activity_message,
     )
+    # OPS-PRIVILEGED-TASK-EXECUTION-AUTH-001 (SA/SD 4): spend a privileged
+    # task's one-shot execution grant, under its own exclusive critical
+    # section, before ever entering the shared read-lock section below that
+    # actually launches the adapter process. This must not nest inside the
+    # shared lock acquired next: a second exclusive acquisition on the same
+    # lock file from this same process while the shared lock is already held
+    # is a self-deadlock risk, not a safe upgrade. The cheap in-memory
+    # pre-check against the already-loaded dispatch-loop ``state`` (no extra
+    # lock or disk read) means an ordinary functional/paper/read_only/ci/
+    # reconcile_only task -- the overwhelmingly common case -- never takes
+    # the lock path at all; only a task carrying a privileged
+    # execution-authorization subrecord pays for the authoritative reload.
+    in_memory_task = task_index_from_status(config, state).get(str(request.task_id or ""))
+    if isinstance(in_memory_task, dict):
+        in_memory_record = in_memory_task.get("execution_authorization")
+        in_memory_policy = (
+            in_memory_record.get("policy") if isinstance(in_memory_record, dict) else None
+        )
+        if isinstance(in_memory_policy, dict) and in_memory_policy.get(
+            "requires_execution_authorization"
+        ):
+            reserve_execution_authorization_for_launch(
+                config,
+                str(request.task_id or ""),
+                run_id=str(event_id_for_log or queue_event_id or ""),
+            )
     delivery_invoked = False
     try:
         # Keep the canonical assignment read lock through process creation.
@@ -3657,6 +3735,30 @@ def process_queue(
             record["status"] = "completed"
             record["processed_at"] = utc_now()
             record["skip_reason"] = "task_generation_changed_before_launch"
+            record["error"] = str(exc)
+            write_activity_log(
+                config,
+                {
+                    "type": "wake_skipped",
+                    "task_id": event.get("task_id"),
+                    "target_agent": event.get("target_display_name")
+                    or event.get("target_agent"),
+                    "message": str(exc),
+                    "queue_event_id": event_id,
+                    "dispatch_reason": event.get("reason"),
+                },
+            )
+            changed = True
+            continue
+        except ExecutionAuthorizationSpendFailed as exc:
+            # The admission snapshot said this privileged task was granted,
+            # but the exact claim/lease boundary found it already reserved,
+            # expired, revoked, or reassigned since that snapshot was taken.
+            # Skip like any other late-eligibility change; a future cycle
+            # re-evaluates admission from fresh canonical state.
+            record["status"] = "completed"
+            record["processed_at"] = utc_now()
+            record["skip_reason"] = "execution_authorization_required"
             record["error"] = str(exc)
             write_activity_log(
                 config,

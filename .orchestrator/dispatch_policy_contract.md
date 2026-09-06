@@ -48,6 +48,21 @@ still required by the hosted controller and is not bypassed by this feature.
 There is no file-inbox/manual-pending fallback, chair lane, discussion-planning
 lane, helper claim, priority preemption, or direct retry launch.
 
+## Execution authorization (OPS-PRIVILEGED-TASK-EXECUTION-AUTH-001)
+
+`evaluate_task_delivery_admission` also computes
+`execution_authorization.is_execution_authorized(task, now=...)` and feeds it
+into `TaskIntent.execution_authorized`. A privileged (`security`/`hosted`/
+`live`) task whose `execution_authorization` subrecord is not currently
+`STATE_GRANTED` and current is denied with
+`DispatchBlockReason.EXECUTION_AUTHORIZATION_REQUIRED`, before any capacity,
+health, or endpoint check. A non-privileged task, or any task with no
+`execution_authorization` subrecord, is unaffected (`execution_authorized`
+defaults to `True`). See `.orchestrator/execution_authorization.py`'s module
+docstring and
+`docs/04/pantheon_first_release_closure_2026-09-06/EXECUTION_AUTHORIZATION_SA_SD.md`
+for the full policy/grant/one-shot-consume contract.
+
 ## Verification
 
 Focused verification for this contract is:

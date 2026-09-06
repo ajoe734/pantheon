@@ -32,6 +32,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import supervisor
 import runtime_state
 import common
+import execution_authorization
 from adapters.base import DeliveryResult
 from rewrite import worker_workspace
 from scripts.git import auto_integrator
@@ -3491,6 +3492,81 @@ class SharedPlannerContractTests(unittest.TestCase):
             explanation_after["agents"]["Codex"]["candidate_reason"],
             supervisor.REASON_OWNED_IN_PROGRESS,
         )
+
+
+class ExecutionAuthorizationLaunchReserveTests(unittest.TestCase):
+    """OPS-PRIVILEGED-TASK-EXECUTION-AUTH-001: the claim/lease boundary spend."""
+
+    @contextmanager
+    def _locked(self, status: dict[str, object]):
+        with (
+            mock.patch.object(supervisor, "config_path", return_value=Path("/runtime/ai-status.json")),
+            mock.patch.object(supervisor, "canonical_task_state_lock_file") as lock,
+            mock.patch.object(supervisor, "load_status", return_value=status),
+            mock.patch.object(supervisor, "write_status") as write,
+        ):
+            lock.return_value.__enter__.return_value = None
+            lock.return_value.__exit__.return_value = False
+            yield write
+
+    def test_non_privileged_task_is_a_no_op(self) -> None:
+        status = {"tasks": [task_fixture()]}
+        with self._locked(status) as write:
+            supervisor.reserve_execution_authorization_for_launch(
+                config_fixture(), "TASK-1", run_id="run-1"
+            )
+            write.assert_not_called()
+
+    def test_granted_task_reserves_and_commits(self) -> None:
+        policy = execution_authorization.derive_execution_policy(
+            task_id="TASK-1", work_class="security", repository="pantheon"
+        )
+        grant = {
+            "task_id": "TASK-1",
+            "generation": 1,
+            "policy_digest": policy["policy_digest"],
+            "repository": "pantheon",
+            "environment": policy["environment"],
+            "resources": [],
+            "action_scope": "execute",
+        }
+        task = task_fixture()
+        task["execution_authorization"] = execution_authorization.build_granted_authorization(
+            policy=policy, grant=grant
+        )
+        task["execution_authorization"]["grant"]["expires_at"] = (
+            datetime.now(timezone.utc) + timedelta(minutes=5)
+        ).isoformat().replace("+00:00", "Z")
+        status = {"tasks": [task]}
+        with self._locked(status) as write:
+            supervisor.reserve_execution_authorization_for_launch(
+                config_fixture(), "TASK-1", run_id="run-1"
+            )
+            write.assert_called_once()
+            committed = write.call_args[0][1]
+        committed_task = supervisor.task_index_from_status(config_fixture(), committed)["TASK-1"]
+        self.assertEqual(
+            committed_task["execution_authorization"]["state"],
+            execution_authorization.STATE_RESERVED,
+        )
+        self.assertEqual(
+            committed_task["execution_authorization"]["reserved_run_id"], "run-1"
+        )
+
+    def test_already_reserved_task_raises_spend_failed(self) -> None:
+        policy = execution_authorization.derive_execution_policy(
+            task_id="TASK-1", work_class="security", repository="pantheon"
+        )
+        task = task_fixture()
+        task["execution_authorization"] = execution_authorization.pending_authorization_hold(policy)
+        task["execution_authorization"]["state"] = execution_authorization.STATE_RESERVED
+        status = {"tasks": [task]}
+        with self._locked(status) as write:
+            with self.assertRaises(supervisor.ExecutionAuthorizationSpendFailed):
+                supervisor.reserve_execution_authorization_for_launch(
+                    config_fixture(), "TASK-1", run_id="run-2"
+                )
+            write.assert_not_called()
 
 
 class DurableQueueContractTests(unittest.TestCase):

@@ -70,6 +70,7 @@ from dispatch_policy import (
     normalize_execution_resources,
     task_execution_resources,
 )
+import execution_authorization
 import task_archive as task_archive_module
 from task_archive import (
     ARCHIVE_TASKS_DIR,
@@ -273,6 +274,8 @@ LOCAL_HUMAN_OPS_ACTIONS = frozenset(
         "archive_reconcile",
         "record_terminal_fact",
         "operator_accept",
+        "execution-grant-submit",
+        "execution-grant-revoke",
     }
 )
 DEV_BRIDGE_CONSUMED_KEY = "consumed_dev_bridge_packets"
@@ -611,6 +614,8 @@ TASK_ID_COMMAND_ARG_INDEX: dict[str, int] = {
     "retire_archive_collision": 0,
     "approve": 0,
     "archive_correct_review_file": 0,
+    "execution-grant-submit": 0,
+    "execution-grant-revoke": 0,
 }
 ACTIVE_WORKER_LEASE_STATUSES = {
     "running",
@@ -4413,6 +4418,26 @@ def command_assign(state: dict[str, Any], args: list[str]) -> bool | None:
         artifacts = list(spec.get("artifacts") or [])
         acceptance = list(spec.get("acceptance") or [])
         target_repo = spec.get("target_repo")
+        # OPS-PRIVILEGED-TASK-EXECUTION-AUTH-001: a signed security/hosted/
+        # live packet materializes without an operator grant (the former
+        # MFA-at-intake rule is retired, see dev_bridge_materialize.py), but
+        # it must atomically become a canonical non-executable
+        # pending-authorization record. This only ever attaches metadata for
+        # a brand-new task -- the existing-bridge-row path below
+        # (``elif bridge is not None: pass``) never merges ``metadata`` into
+        # an already-materialized task, so a reassignment or replay can
+        # never re-derive or overwrite the frozen policy/hold.
+        bridge_work_class = str(bridge.get("work_class") or "").strip().lower()
+        if execution_authorization.is_privileged_work_class(bridge_work_class):
+            execution_policy = execution_authorization.derive_execution_policy(
+                task_id=task_id,
+                work_class=bridge_work_class,
+                repository=target_repo,
+                resources=execution_resources,
+            )
+            metadata["execution_authorization"] = (
+                execution_authorization.pending_authorization_hold(execution_policy)
+            )
     else:
         phase = os.environ.get("TASK_PHASE", "Unassigned")
         depends_on = parse_csv_env("TASK_DEPENDS_ON")
@@ -5497,6 +5522,133 @@ def command_blocker(state: dict[str, Any], args: list[str]) -> None:
     }
     state.setdefault("blockers", []).append(blocker)
     append_log({"ts": timestamp, "agent": actor, "type": "blocker", "task_id": task_id, "message": f"Blocked on {waiting_for}: {message}"})
+
+
+def _execution_authorization_record(task: Mapping[str, Any]) -> dict[str, Any]:
+    record = task.get("execution_authorization")
+    if not isinstance(record, dict):
+        raise SystemExit(
+            f"Task {task.get('id')} has no privileged execution-authorization "
+            "policy; this task does not require an execution grant"
+        )
+    policy = record.get("policy")
+    if not isinstance(policy, dict) or not policy.get("requires_execution_authorization"):
+        raise SystemExit(
+            f"Task {task.get('id')} execution policy does not require authorization"
+        )
+    return record
+
+
+def command_execution_grant_submit(state: dict[str, Any], args: list[str]) -> None:
+    """Human/Ops CLI: submit one independently verified MFA-bound execution grant.
+
+    OPS-PRIVILEGED-TASK-EXECUTION-AUTH-001. The signed grant travels through
+    ``EXECUTION_GRANT_JSON`` and is verified against a trusted MFA-issuer
+    public-key set in ``EXECUTION_MFA_ISSUER_PUBLIC_KEYS_JSON`` -- a distinct
+    trust root from the dev-bridge packet-source keys
+    (``BRIDGE_SIGNING_PUBLIC_KEYS_JSON``). A source-only signing key, an
+    unsigned ``mfaVerified`` boolean, or a claimed operator id is never
+    accepted here; only a signature verified against the configured issuer
+    trust root counts. Never issues real keys or a signing service.
+    """
+
+    if len(args) < 1:
+        raise SystemExit("Usage: execution-grant-submit <task-id>")
+    task_id = args[0]
+    actor = current_actor()
+    if actor != "Human/Ops":
+        raise SystemExit("Only Human/Ops may submit an execution-authorization grant")
+    task = get_task(state, task_id)
+    if task is None:
+        raise SystemExit(f"Unknown task: {task_id}")
+    record = _execution_authorization_record(task)
+    policy = record["policy"]
+
+    grant = parse_json_env("EXECUTION_GRANT_JSON")
+    if not grant:
+        raise SystemExit("EXECUTION_GRANT_JSON is required")
+    trusted_issuers = parse_json_env("EXECUTION_MFA_ISSUER_PUBLIC_KEYS_JSON")
+    if not trusted_issuers:
+        raise SystemExit(
+            "EXECUTION_MFA_ISSUER_PUBLIC_KEYS_JSON is required; no dev fallback "
+            "may authorize privileged execution"
+        )
+
+    now = datetime.now(timezone.utc)
+    try:
+        execution_authorization.verify_execution_grant(
+            grant,
+            policy=policy,
+            task_id=task_id,
+            generation=task.get("generation", 0),
+            trusted_issuers=trusted_issuers,
+            now=now,
+        )
+        ledger = state.setdefault("execution_authorization_consumed_grants", {})
+        if not isinstance(ledger, dict):
+            raise execution_authorization.ExecutionAuthorizationError(
+                "execution grant replay ledger is invalid"
+            )
+        execution_authorization.consume_grant_nonce(ledger, grant, task_id=task_id, now=now)
+    except execution_authorization.ExecutionAuthorizationError as exc:
+        raise SystemExit(str(exc)) from exc
+
+    task["execution_authorization"] = execution_authorization.build_granted_authorization(
+        policy=policy, grant=grant
+    )
+    timestamp = iso_now()
+    task["last_update"] = timestamp
+    append_log(
+        {
+            "ts": timestamp,
+            "agent": actor,
+            "type": "execution_grant_submitted",
+            "task_id": task_id,
+            "message": (
+                f"Execution-authorization grant verified and bound for {task_id}; "
+                f"mfa_actor={grant.get('mfa_actor')!r} expires_at={grant.get('expires_at')!r}"
+            ),
+        }
+    )
+
+
+def command_execution_grant_revoke(state: dict[str, Any], args: list[str]) -> None:
+    """Human/Ops CLI: revoke a task's execution-authorization grant.
+
+    Only stops *new* unauthorized effects (dispatch admission will refuse the
+    task again immediately); it never declares an already-running attempt's
+    compensation confirmed on its own (SA/SD 4).
+    """
+
+    if len(args) < 1:
+        raise SystemExit("Usage: execution-grant-revoke <task-id> [reason]")
+    task_id = args[0]
+    reason = args[1] if len(args) > 1 else None
+    actor = current_actor()
+    if actor != "Human/Ops":
+        raise SystemExit("Only Human/Ops may revoke an execution-authorization grant")
+    task = get_task(state, task_id)
+    if task is None:
+        raise SystemExit(f"Unknown task: {task_id}")
+    _execution_authorization_record(task)
+    now = datetime.now(timezone.utc)
+    try:
+        task["execution_authorization"] = execution_authorization.revoked_execution_authorization(
+            task, actor=actor, now=now, reason=reason
+        )
+    except execution_authorization.ExecutionAuthorizationError as exc:
+        raise SystemExit(str(exc)) from exc
+    timestamp = iso_now()
+    task["last_update"] = timestamp
+    append_log(
+        {
+            "ts": timestamp,
+            "agent": actor,
+            "type": "execution_grant_revoked",
+            "task_id": task_id,
+            "message": f"Execution-authorization grant revoked for {task_id}" + (f": {reason}" if reason else ""),
+        }
+    )
 
 
 def _required_reconcile_env(name: str) -> str:
@@ -9044,6 +9196,8 @@ def main(argv: list[str]) -> int:
         "archive_reconcile": command_archive_reconcile,
         "archive_correct_review_file": command_archive_correct_review_file,
         "attach_proof_ownership": command_attach_proof_ownership,
+        "execution-grant-submit": command_execution_grant_submit,
+        "execution-grant-revoke": command_execution_grant_revoke,
         "sync": command_sync,
     }
 

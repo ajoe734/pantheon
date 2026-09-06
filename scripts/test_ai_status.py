@@ -27,6 +27,7 @@ import sys
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import ai_status
+import execution_authorization
 import task_archive
 import common
 from common import rotate_activity_log_unlocked
@@ -1668,8 +1669,12 @@ class DevBridgeMaterializeBatchTests(unittest.TestCase):
         self.assertEqual(task["dev_bridge"]["work_class"], "functional")
         self.assertFalse(task["dev_bridge"]["operator_authorization_required"])
 
-    def test_security_packet_without_operator_authorization_remains_blocked(self) -> None:
-        packet_id = "pkt-security-without-auth-20260825T000000Z"
+    def test_security_packet_without_operator_authorization_materializes_pending(self) -> None:
+        # OPS-PRIVILEGED-TASK-EXECUTION-AUTH-001 retired the former
+        # MFA-at-intake rule: a signed security/hosted/live packet without an
+        # operator grant now materializes as a durable, non-executable
+        # pending-authorization record instead of being rejected at intake.
+        packet_id = "pkt-security-without-auth-20260906T000000Z"
         row = self._task_row("SECURITY-WITHOUT-AUTH", packet_id=packet_id)
         payload = self._payload_path(
             [row],
@@ -1679,11 +1684,19 @@ class DevBridgeMaterializeBatchTests(unittest.TestCase):
             include_authorization=False,
         )
 
-        with self.assertRaisesRegex(
-            SystemExit, "source and operator authorization must be separate"
-        ):
-            self._run_main(payload)
-        self.assertEqual(len(load_events(self.journal)), 1)
+        self.assertEqual(self._run_main(payload), 0)
+        task = ai_status.get_task(ai_status.load_state(), "SECURITY-WITHOUT-AUTH")
+        self.assertEqual(task["dev_bridge"]["work_class"], "security")
+        self.assertTrue(task["dev_bridge"]["operator_authorization_required"])
+        auth = task["execution_authorization"]
+        self.assertEqual(auth["state"], execution_authorization.STATE_PENDING)
+        self.assertIsNone(auth["grant"])
+        self.assertTrue(auth["policy"]["requires_execution_authorization"])
+        self.assertFalse(
+            execution_authorization.is_execution_authorized(
+                task, now=datetime.now(timezone.utc)
+            )
+        )
 
     def test_batch_commits_every_task_in_exactly_one_journal_event(self) -> None:
         packet_id = "pkt-batch-ok-20260811T000000Z"
@@ -2396,6 +2409,7 @@ class StatusRootRoutingTests(unittest.TestCase):
             "scripts/loop_done_guardrail.py",
             ".orchestrator/common.py",
             ".orchestrator/dispatch_policy.py",
+            ".orchestrator/execution_authorization.py",
             ".orchestrator/runtime_state.py",
             ".orchestrator/task_archive.py",
             ".orchestrator/multi_repo_registry.py",

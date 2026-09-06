@@ -16,6 +16,10 @@ weight to every consumer, including dev_bridge_models.py: common,
 rewrite.dispatch_admission, rewrite.task_machine, and task_archive are
 now required at import time, not just supervisor.py. Any isolated-copy
 test fixture that copies this file must also copy those four.
+
+OPS-PRIVILEGED-TASK-EXECUTION-AUTH-001 added a fifth: execution_authorization,
+imported so evaluate_task_delivery_admission can feed the one normalized
+execution-authorization verdict into TaskIntent (see that module's docstring).
 """
 from __future__ import annotations
 
@@ -25,6 +29,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Mapping
 
+import execution_authorization
 from common import display_name_for, normalize_agent_id, utc_now
 from rewrite import dispatch_admission as rewrite_dispatch_admission
 from rewrite import task_machine as rewrite_task_machine
@@ -455,6 +460,9 @@ def evaluate_task_delivery_admission(
         ),
         review_binding_current=rewrite_task_machine.delivery_binding_is_current(task),
         execution_resources=tuple(task_execution_resources(task)),
+        execution_authorized=execution_authorization.is_execution_authorized(
+            task, now=datetime.now(timezone.utc)
+        ),
     )
     return rewrite_dispatch_admission.evaluate_dispatch_intent(
         task_intent,
