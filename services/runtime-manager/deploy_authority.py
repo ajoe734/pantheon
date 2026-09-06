@@ -237,9 +237,16 @@ def verify_deploy_authorities(
     )
 
     fetch = fetch_json or _fetch_json
+    registry_fetch = fetch
     deployment_fetch = fetch
     if fetch_json is None:
         deployment_headers = _deployment_request_headers()
+        registry_token = os.getenv('RUNTIME_MANAGER_REGISTRY_SERVICE_TOKEN', '').strip()
+        if not registry_token:
+            raise DeployAuthorityUnavailableError('Registry scoped read principal required')
+
+        def registry_fetch(url: str, timeout: float) -> Mapping[str, Any]:
+            return _fetch_json(url, timeout, headers={'Authorization': 'Bearer ' + registry_token})
 
         def deployment_fetch(url: str, timeout: float) -> Mapping[str, Any]:
             return _fetch_json(url, timeout, headers=deployment_headers)
@@ -271,7 +278,7 @@ def verify_deploy_authorities(
         f"{capital_url}/api/bindings/{quote(persona_capital_binding_id, safe='')}"
     )
     plan = deployment_fetch(deployment_proof_url, timeout_seconds)
-    registry_payload = fetch(registry_proof_url, timeout_seconds)
+    registry_payload = registry_fetch(registry_proof_url, timeout_seconds)
     # Generic authority transports are also used by Deployment's outbox worker.
     # They cannot stand in for the authenticated exact-ID approval reader.
     try:

@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 import pytest
+from services.governance.test_approval_authority import approval_snapshot, SnapshotApprovalReader
 
 from services.governance.human_gate.decision_model import stable_hash
 from services.governance.promotion_readiness.signoff_api import SignoffAPI
@@ -93,6 +94,8 @@ def _facts(*, requesting_actor_id: str = "operator-b"):
         "conditions": [],
         "revoked_at": None,
     }
+    plan.setdefault("metadata", {})["tenant_id"] = "tenant-unit"
+    approval = approval_snapshot(candidate_digest=registry["entry"]["checksum"], **approval)
     pool = {
         "pool_id": request["capital_pool_id"],
         "status": "active",
@@ -211,6 +214,7 @@ def _verify(request, fetch, actor_id):
         governance_base_url="http://governance:8082",
         capital_base_url="http://capital:8092",
         fetch_json=fetch,
+        approval_reader=SnapshotApprovalReader(lambda: fetch("http://governance/api/governance/approvals/" + request["approval_decision_id"], 5)),
         now=datetime(2026, 7, 20, 12, 0, tzinfo=timezone.utc),
     )
 

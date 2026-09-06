@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 import pytest
+from services.governance.test_approval_authority import approval_snapshot, SnapshotApprovalReader
 
 from services.registry.strategy_artifact import (
     BUILTIN_STRATEGY_ARTIFACT_PATHS,
@@ -81,6 +82,8 @@ def _facts():
         "expires_at": "2026-07-15T00:00:00Z",
         "revoked_at": None,
     }
+    plan["metadata"] = {"tenant_id": "tenant-unit"}
+    approval = approval_snapshot(candidate_digest=registry["entry"]["checksum"], **approval)
     capital_pool = {
         "pool_id": request["capital_pool_id"],
         "status": "active",
@@ -159,6 +162,7 @@ def _verify(
         registry_base_url="http://registry:8087",
         governance_base_url="http://governance:8082",
         capital_base_url="http://capital:8092",
+        approval_reader=SnapshotApprovalReader(approval),
         fetch_json=_fetcher(
             registry,
             approval,

@@ -1302,7 +1302,8 @@ def record_rollback(
 def _approval_principal(authorization: Optional[str]) -> AuthContext:
     """Strict approval admission; no synthesized actor, tenant or role."""
     import math
-    env = _governance_auth_env()
+    env = {key: os.getenv(key.replace('PANTHEON_RUNTIME_', 'PANTHEON_GOVERNANCE_'), '')
+           for key in _governance_auth_env()}
     env['PANTHEON_RUNTIME_AUTH_MODE'] = 'strict'
     env['PANTHEON_RUNTIME_DEFAULT_ROLE'] = '__missing_approval_role__'
     issuer = env.get('PANTHEON_RUNTIME_OIDC_ISSUER') or env.get('PANTHEON_RUNTIME_JWT_ISSUER')

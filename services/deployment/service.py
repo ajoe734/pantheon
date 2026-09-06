@@ -393,7 +393,7 @@ class DeploymentPlannerService:
         if registry_entry.get('owner_tenant') != tenant_id:
             raise DeploymentPlanError('Registry artifact belongs to a different tenant')
         if registry_entry.get('artifact_state') != 'approved' or registry_entry.get('approval_decision_id') != request.approval_decision_id:
-            raise DeploymentPlanError('Registry artifact must cite this approved decision')
+            raise DeploymentPlanError('Registry requires artifact_state=approved and matching approval decision reference')
         approval_tenant_id = str(approval_decision.get("tenant_id") or "").strip()
         if not approval_tenant_id:
             raise DeploymentPlanError(
