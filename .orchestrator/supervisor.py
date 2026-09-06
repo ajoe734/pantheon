@@ -4995,23 +4995,12 @@ def worker_completed_after_responsibility_transition(
     canonical task state has already moved to another lane (or a terminal
     state).
 
-    A bare lane mismatch (current task status differs from the dispatched
-    role) is deliberately still accepted with no matching activity event at
-    all: a supervisor restart can observe the exact-worker event only inside
-    a bounded activity window, and by design this predicate infers nothing
-    beyond "the runner reported success and canonical truth already moved
-    on" for that historical-dead-PID case.
-
-    But once a ``RESPONSIBILITY_TRANSFER_EVENT_TYPES`` event bound to this
-    exact worker process does exist, the lane mismatch is no longer the only
-    available evidence, so it is no longer enough by itself: that event must
-    independently pass ``canonical_worker_terminal_status``'s exact-event
-    proof (self-consistent event_id, authenticated actor, matching
-    generation/pending-intent binding for a reopen).  Otherwise this call
-    site -- which sits ahead of ``canonical_worker_terminal_status`` at every
-    caller -- would let an unauthenticated, forged, or stale event that the
-    strict classifier already rejects still complete the worker through a
-    second, weaker path for the same question.
+    A validated ``RESPONSIBILITY_TRANSFER_EVENT_TYPES`` event bound to this
+    exact worker process must exist and independently pass
+    ``canonical_worker_terminal_status``'s exact-event proof (self-consistent
+    event_id, authenticated actor, matching generation/pending-intent binding
+    for a reopen, and no pending review-decision fence).  Unknown or absent
+    evidence fails closed to strict recovery.
     """
 
     if not isinstance(task, Mapping) or not worker_runner_succeeded(dict(worker)):
@@ -5027,7 +5016,7 @@ def worker_completed_after_responsibility_transition(
         event_types=RESPONSIBILITY_TRANSFER_EVENT_TYPES,
     )
     if candidate_event is None or not status_event_matches_worker_process(candidate_event, worker):
-        return True
+        return False
     return (
         canonical_worker_terminal_status(
             config,
@@ -7652,6 +7641,10 @@ def canonical_worker_terminal_status(
 
     if not isinstance(task, Mapping):
         return None
+    if task.get("review_decision_intent") not in (None, {}, []):
+        # A pending review decision intent has its own two-phase recovery mechanism.
+        # Responsibility transfer cannot be recognized while the intent fence is pending.
+        return None
     dispatch_reason = str((worker.get("request_snapshot") or {}).get("reason") or "").strip()
     if dispatch_reason in {REASON_REVIEW_READY}:
         expected_role = "reviewer"
@@ -7767,6 +7760,15 @@ def active_worker_governance_lease_decision(
     responsibility transfer here.
     """
 
+    if isinstance(task, Mapping) and task.get("review_decision_intent") not in (None, {}, []):
+        intent = task.get("review_decision_intent") or {}
+        return {
+            "action": "preserve",
+            "reason_code": "pending_review_decision_intent",
+            "source_event_id": intent.get("intent_id"),
+            "source_event_type": "review_decision_intent",
+        }
+
     settings = ready_dispatch_settings(config)
     done_statuses = normalized_status_set(
         settings.get("dependency_done_statuses"),
@@ -7785,18 +7787,55 @@ def active_worker_governance_lease_decision(
         activity_events,
         event_types=GOVERNANCE_LIFECYCLE_EVENT_TYPES,
     )
-    if status_event_matches_worker_process(latest_lifecycle, worker):
-        return {
-            "action": "terminate",
-            "reason_code": "exact_worker_lifecycle_transition",
-            "source_event_id": latest_lifecycle.get("event_id"),
-            "source_event_type": latest_lifecycle.get("type"),
-        }
-    if task is None:
+    if latest_lifecycle is not None and str(latest_lifecycle.get("type") or "") in RESPONSIBILITY_TRANSFER_EVENT_TYPES:
+        if task is not None:
+            terminal_status = canonical_worker_terminal_status(
+                config,
+                worker,
+                task,
+                activity_events=activity_events,
+            )
+            if terminal_status is not None:
+                return {
+                    "action": "terminate",
+                    "reason_code": "exact_worker_lifecycle_transition",
+                    "source_event_id": latest_lifecycle.get("event_id"),
+                    "source_event_type": latest_lifecycle.get("type"),
+                }
+            return {
+                "action": "preserve",
+                "reason_code": "unvalidated_lifecycle_transition",
+                "source_event_id": latest_lifecycle.get("event_id"),
+                "source_event_type": latest_lifecycle.get("type"),
+                "producer_event_matches_process": status_event_matches_worker_process(
+                    latest_lifecycle,
+                    worker,
+                ),
+            }
+    if latest_lifecycle is not None and str(latest_lifecycle.get("type") or "") in GOVERNANCE_TERMINAL_EVENT_TYPES:
+        worker_actor = canonical_agent_name(
+            config,
+            display_name_for(
+                config,
+                str(
+                    worker.get("logical_agent_id")
+                    or worker.get("agent_id")
+                    or worker.get("provider")
+                    or ""
+                ),
+            ),
+        )
+        event_actor = str(
+            latest_lifecycle.get("agent")
+            or latest_lifecycle.get("actor")
+            or latest_lifecycle.get("author")
+            or ""
+        ).strip()
         if (
-            latest_lifecycle is not None
-            and str(latest_lifecycle.get("type") or "") in GOVERNANCE_TERMINAL_EVENT_TYPES
+            status_event_matches_worker_process(latest_lifecycle, worker)
             and _ai_status_activity_event_id_matches(latest_lifecycle)
+            and event_actor
+            and canonical_agent_name(config, event_actor).casefold() == worker_actor.casefold()
         ):
             return {
                 "action": "terminate",
@@ -7804,6 +7843,7 @@ def active_worker_governance_lease_decision(
                 "source_event_id": latest_lifecycle.get("event_id"),
                 "source_event_type": latest_lifecycle.get("type"),
             }
+    if task is None:
         return {
             "action": "preserve",
             "reason_code": "missing_or_ambiguous_task_truth",
@@ -10510,7 +10550,7 @@ def poll_worker_assignment_stage(
                 producer_event = _latest_task_governance_event(
                     worker,
                     governance_activity_events,
-                    event_types=GOVERNANCE_LIFECYCLE_EVENT_TYPES,
+                    event_types=RESPONSIBILITY_TRANSFER_EVENT_TYPES,
                 )
                 producer_event_matches_process = status_event_matches_worker_process(
                     producer_event,
