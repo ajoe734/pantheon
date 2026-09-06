@@ -13,9 +13,10 @@ exact choice).
 
 Full enumeration: [`storage-consumer-matrix.json`](storage-consumer-matrix.json).
 
-Two independent findings, both read-only, both reproducible from this repo:
+Findings, all read-only, all reproducible from this repo:
 
-1. **MinIO/S3 has zero real code consumers.** `docker-compose.yml` and
+1. **MinIO/S3 has zero real *source-code* consumers; its hosted content is
+   unknown, not proven empty.** `docker-compose.yml` and
    `docker-compose.control.yml` each declare a `minio` server + `minio-init`
    bootstrap and wire `PANTHEON_S3_ENDPOINT` / `PANTHEON_S3_ACCESS_KEY` /
    `PANTHEON_S3_SECRET_KEY` / `PANTHEON_ARTIFACT_BUCKET` into 17 (main stack)
@@ -26,9 +27,14 @@ Two independent findings, both read-only, both reproducible from this repo:
    `services/source_search_posture.py` — check only that the strings are
    non-empty when the staging/prod posture is enforced; by their own
    docstrings, "It does not open database or object-store connections."
-   No object has ever been written to or read from MinIO by product code.
-2. **The one real object-store consumer already uses a managed backend, not
-   MinIO.** `services/control-plane/bff/management_ai_store.py`
+   No application code path writes to or reads from MinIO. This task did
+   **not** connect to a hosted MinIO instance or list its objects, so
+   whether any hosted `minio-data` volume already holds real objects
+   (written by hand, by `mc`, or by a since-removed code path) is unknown,
+   not established as empty — retirement below is conditioned on that
+   inventory being confirmed later, not on this source-only finding alone.
+2. **The one in-request-path object-store consumer already uses a managed
+   backend, not MinIO.** `services/control-plane/bff/management_ai_store.py`
    (`ManagementAiAttachmentStore`) uploads/downloads management-AI chat
    attachments through `google-cloud-storage` (`storage.Client().bucket(...)
    .blob(...)`), gated by `PANTHEON_MGMT_AI_ATTACH_BUCKET`. When that bucket
@@ -37,14 +43,34 @@ Two independent findings, both read-only, both reproducible from this repo:
    an isolated round-trip proof:
    `services/control-plane/bff/test_bff_mgmt_ai_persistence_2026_06_03.py::
    test_management_ai_attachment_store_uses_gcs_bucket_metadata`.
+3. **Two more real GCS consumers exist outside the request path, both
+   already GCS, neither MinIO.** `scripts/capture_canonical_telemetry_baseline.py`
+   (lines ~159-183) resolves a `gcs_object` recovery source via
+   `gcloud storage objects describe` and hard-fails unless the object
+   returns a `generation`, a `metageneration`, and a valid hex
+   `pantheon_sha256`/`sha256` metadata value — a real reliance on GCS's
+   built-in per-write version identity. `scripts/deploy_nonprod_vm.sh`
+   (lines ~2020-2058) performs a real PUT/GET/DELETE probe against the
+   hosted `PANTHEON_MGMT_AI_ATTACH_BUCKET` bucket at deploy time via the
+   GCS JSON API. Both already target GCS, so neither motivates keeping or
+   replacing MinIO; both do mean "the one real consumer" understates the
+   estate — see `storage-consumer-matrix.json`'s `real_object_store_consumers`
+   array for the full, corrected list of three.
 
-No service declares retention, legal-hold, versioning, server-side
-encryption, or per-tenant bucket/prefix isolation for either backend; the
-existing partition scheme is a `session_id/turn_id` path prefix inside one
-shared bucket. There is no MinIO-specific backup/restore runbook — MinIO
-objects fall under the same generic VM-disk-snapshot policy as every other
-stateful backend (`docs/deployment/vm-dev-staging-prod-management-plan.md`
-§11.3), not a bucket-level restore procedure.
+No service declares a bucket-level retention policy, legal-hold flag,
+bucket versioning flag, server-side-encryption key, or per-tenant
+bucket/prefix partition for either backend; the existing partition scheme
+is a `session_id/turn_id` path prefix inside one shared bucket. Tenant
+isolation for attachment reads *is* enforced, just above the storage layer:
+`services/control-plane/bff/main.py`'s `bff_management_ai_attachment`
+handler (lines ~17354-17383) resolves the caller's tenant identity and
+404s before reading the object if the attachment's owning session does not
+match that tenant — any cutover must keep routing reads through that same
+check, not merely preserve object bytes. There is no MinIO-specific
+backup/restore runbook — MinIO objects fall under the same generic
+VM-disk-snapshot policy as every other stateful backend
+(`docs/deployment/vm-dev-staging-prod-management-plan.md` §11.3), not a
+bucket-level restore procedure.
 
 ## 2. Upstream maintenance re-check
 
@@ -70,10 +96,9 @@ maintained and speak the S3 API. This would preserve the current
 `PANTHEON_S3_*` shape and require no code change in the two posture files.
 **Rejected**: it would spend real engineering effort (new server image,
 new health checks, new backup story) standing up a maintained replacement
-for an S3 API that literally nothing in this codebase calls. There is no
-S3 semantics to prove for a consumer that does not exist, and it does
-nothing to help the one real object-store consumer, which already uses
-GCS.
+for an S3 API that no application source code calls. There is no S3
+semantics to prove for a consumer that does not exist in source, and it
+does nothing to help any of the three real GCS consumers in §1.
 
 ### Option B — Standardize on the already-adopted managed object store (GCS)
 
@@ -92,13 +117,18 @@ instead of introducing a second backend.
 ### Option C — Documented retirement (no real consumer/data remains)
 
 Applies cleanly to the **MinIO/S3 layer specifically**, not to "object
-storage" as a concept: zero services perform S3 I/O against it, and the
-declared `minio-data` volume holds nothing but the empty bucket
-`minio-init` creates at boot. Retirement here is not "delete object
-storage" — the one real workload (BFF attachments) keeps its already-chosen
-GCS/local-fallback path unchanged. This option is folded into the chosen
-disposition below rather than treated as a separate branch, since it only
-concerns a component that already has zero consumers.
+storage" as a concept: zero application services perform S3 I/O against
+it. Whether the hosted `minio-data` volume currently holds anything beyond
+the bucket `minio-init` creates at boot is unknown per §1 — this task did
+not inspect it — so retirement here is conditional: the later cutover task
+must confirm (by its own reversible local migration/readback check) that
+no populated hosted content needs inventory or restore before deleting the
+server/volume. Retirement is not "delete object storage" — the three real
+GCS workloads in §1 keep their already-chosen paths unchanged. This option
+is folded into the chosen disposition below rather than treated as a
+separate branch, since it only concerns a source-code layer that already
+has zero source-code consumers, conditioned on that hosted-content
+confirmation.
 
 ## 4. Reproducible isolated proof
 
@@ -141,10 +171,8 @@ ISOLATED_GCS_OBJECT_STORE_PROOF: PASS management-ai-attachments/mgmt-gcs-session
 
 This proves object put-by-key, get-by-key, size, content-type, and
 filename round-trip through the exact adapter code that would run in
-production, satisfying every S3-shaped semantic that any current consumer
-actually needs (there is no consumer needing multipart upload, versioning,
-or legal-hold today per §1). The repository also carries a pre-existing
-equivalent test,
+production against a GCS bucket. The repository also carries a
+pre-existing equivalent test,
 `services/control-plane/bff/test_bff_mgmt_ai_persistence_2026_06_03.py::
 test_management_ai_attachment_store_uses_gcs_bucket_metadata`, asserting
 the same contract; collecting that file standalone via `pytest` currently
@@ -156,11 +184,66 @@ touched by this decision-only task. The equivalent logic was proven
 directly against `management_ai_store.py` above without going through
 `main.py`.
 
-Migration/restore feasibility: there is no data to migrate (§1 — the MinIO
-bucket is empty of real objects), and restore feasibility for the chosen
-GCS path is inherited from GCS's own managed durability/versioning
-features, which the cutover task can enable per-bucket if a future
-consumer needs it.
+A second, independent proof exercises the adapter's *real* local-disk
+fallback path (no mock objects at all) to prove genuine durable
+restore/readback, seeded and read back across two separate store
+instances so no in-process cache can mask a fake pass:
+
+```
+$ .venv-pantheon/bin/python3 - <<'PY'
+import sys, base64, tempfile, hashlib, os
+sys.path.insert(0, "services/control-plane")
+import bff.management_ai_store as mas
+
+tmp_dir = tempfile.mkdtemp(prefix="pantheon-storage-restore-proof-")
+writer = mas.ManagementAiAttachmentStore(storage_path=tmp_dir, bucket_name=None)
+image_bytes = b"\x89PNG\r\n\x1a\nstored-on-real-local-disk-durable-restore-proof"
+expected_sha256 = hashlib.sha256(image_bytes).hexdigest()
+metadata = writer.store_inline_attachment(
+    {"kind": "image", "mimeType": "image/png", "filename": "seeded.png",
+     "dataBase64": base64.b64encode(image_bytes).decode("ascii")},
+    session_id="restore-proof-session", turn_id="restore-proof-turn",
+)
+on_disk_path = tmp_dir + "/" + metadata["id"] + ".bin"
+assert os.path.isfile(on_disk_path)
+with open(on_disk_path, "rb") as fh:
+    assert hashlib.sha256(fh.read()).hexdigest() == expected_sha256
+
+# Fresh, independent store instance -- proves genuine restore/readback of
+# already-persisted bytes, not an in-process cache hit.
+reader = mas.ManagementAiAttachmentStore(storage_path=tmp_dir, bucket_name=None)
+content, mime_type, filename = reader.read(metadata["id"], metadata)
+assert content == image_bytes
+assert hashlib.sha256(content).hexdigest() == expected_sha256
+assert mime_type == "image/png" and filename == "seeded.png"
+print("ISOLATED_LOCAL_DURABLE_RESTORE_PROOF: PASS", metadata["id"], expected_sha256)
+PY
+ISOLATED_LOCAL_DURABLE_RESTORE_PROOF: PASS att_7c36d41b401f4422 be0795f6644bbf97091b21f7456335fb9181473d1795c92f719c9192c9cd961e
+```
+
+Together the two proofs cover every S3-shaped semantic that the
+in-request-path attachment consumer actually needs today: put-by-key,
+get-by-key, size, content-type, filename, and durable restore across a
+fresh process. They do **not** cover the GCS `generation`/`metageneration`/
+`pantheon_sha256`-metadata identity contract required by
+`scripts/capture_canonical_telemetry_baseline.py` (§1 finding 3): that
+contract is GCS's own built-in per-write versioning feature, so it needs
+no new server-side capability, but exercising it against a *real* bucket
+requires hosted `gcloud`/network credentials this read-only task does not
+have. That feasibility is left as an explicit open item for
+`OSS-OBJECT-STORE-CUTOVER-001` — it is not fabricated as already-proven
+here, and it is not a reason to prefer MinIO, since MinIO does not supply
+this GCS-specific identity contract either.
+
+Migration/restore feasibility: no application source code writes to the
+MinIO layer, so no *known* data needs migrating out of it, but whether the
+hosted `minio-data` volume itself is empty is unverified (§1) — the
+cutover task's own inventory/readback check must confirm that before any
+deletion. Restore feasibility for the chosen GCS path (both the
+in-request-path attachment store and the two out-of-band consumers in §1
+finding 3) is inherited from GCS's own managed durability/versioning
+features; the local-disk-fallback proof above additionally shows the
+non-GCS fallback path is independently durable on its own terms.
 
 Operational cost: GCS is already inside the accepted cost model
 (~$6/month, §3 Option B); no new spend is introduced by this choice.
@@ -175,15 +258,31 @@ this task.
 
 **Adopt Option B + fold in Option C:** Google Cloud Storage (already
 integrated via `ManagementAiAttachmentStore`, already budgeted, already
-proven in isolation) is the one accepted object-store backend for Pantheon
-going forward. The self-hosted MinIO/S3 layer is accepted for retirement
-because it has zero real consumers and zero real data today — not because
-object storage in general is being removed.
+proven in isolation, and already the target of the two out-of-band
+consumers in §1 finding 3) is the one accepted object-store backend for
+Pantheon going forward. The self-hosted MinIO/S3 layer is accepted for
+retirement because it has zero real source-code consumers today — not
+because object storage in general is being removed, and not because its
+hosted content is confirmed empty (that remains conditional per §1/§3).
 
 **Exact scope for the later cutover task (`OSS-OBJECT-STORE-CUTOVER-001`):**
 - Reuse `ManagementAiAttachmentStore` / the `google-cloud-storage` client
-  as the sole object-store adapter path; do not introduce a second storage
-  abstraction.
+  as the sole in-request-path object-store adapter; do not introduce a
+  second storage abstraction. `scripts/capture_canonical_telemetry_baseline.py`
+  and `scripts/deploy_nonprod_vm.sh` keep their existing direct
+  `gcloud`/GCS-JSON-API calls unchanged — they are out-of-band tooling, not
+  part of the adapter this task is scoping.
+- Preserve the `bff_management_ai_attachment` tenant/session authorization
+  check (`services/control-plane/bff/main.py:17354-17383`) and the
+  `generation`/`metageneration`/`pantheon_sha256` identity contract read by
+  `scripts/capture_canonical_telemetry_baseline.py`; neither is a bucket
+  configuration change, both are call-site contracts that must keep working
+  unchanged.
+- Before deleting anything, run a hosted inventory check confirming the
+  `minio-data` volume and any `PANTHEON_MGMT_AI_ATTACH_BUCKET`-configured
+  hosted bucket hold no data that still needs a restore/backfill path; this
+  task explicitly leaves that inventory as a pending, un-fabricated
+  dependent action, not a claimed-done result.
 - Remove the `PANTHEON_S3_ENDPOINT` / `PANTHEON_S3_ACCESS_KEY` /
   `PANTHEON_S3_SECRET_KEY` / `PANTHEON_ARTIFACT_BUCKET` posture requirement
   from `services/foundation/persistence_posture.py` and
@@ -195,16 +294,19 @@ object storage in general is being removed.
   dependency edge, not a capability.
 - Delete the `minio` and `minio-init` service declarations and the
   `minio-data` volume from `docker-compose.yml` and
-  `docker-compose.control.yml` only after this proof stands and after the
+  `docker-compose.control.yml` only after this proof stands, after the
+  hosted inventory check above finds nothing to preserve, and after the
   cutover task's own reversible local migration/readback check (per its
-  acceptance criteria) confirms zero remaining consumers — this task does
-  not perform that deletion.
+  acceptance criteria) confirms zero remaining source-code consumers — this
+  task does not perform that deletion or that inventory check.
 - If any later consumer genuinely needs true S3-only semantics (multipart
   upload from an external tool that cannot speak the GCS API, for example),
   that is a new decision with its own consumer/data enumeration, not a
   reason to keep an unmaintained, unused MinIO instance running today.
 
 No paid hosting change, no real-data migration, and no MFA/capital
-authorization is implied or requested by this choice; none is required,
-since GCS is already the running managed backend for the one real
-consumer.
+authorization is implied or requested by this choice; none is required for
+the decision itself, since GCS is already the running managed backend for
+all three real consumers. The hosted MinIO/GCS inventory check called out
+above is a genuinely pending dependent action left for the cutover task,
+not something this task fabricates as already cleared.

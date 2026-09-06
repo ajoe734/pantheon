@@ -2,10 +2,33 @@
   "task_id": "OSS-INFRA-CHOICE-001",
   "owner": "Claude",
   "reviewer": "Codex2",
-  "summary": "Enumerated every declared object-store consumer across docker-compose.yml/docker-compose.control.yml and services/**/*.py, found zero real S3/MinIO I/O consumers and one real consumer already on Google Cloud Storage, compared local-S3-replacement vs managed-store vs retirement, produced a reproducible isolated round-trip proof against the real adapter, recorded the accepted choice, and designed the core/workers/research/management-ai/execution source-profile contract per the accepted environment-identity plan.",
+  "summary": "Enumerated every declared object-store consumer across docker-compose.yml/docker-compose.control.yml/docker-compose.exec.yml and services/**/*.py plus deploy/evidence tooling under scripts/, found zero real S3/MinIO source-code consumers and three real GCS consumers (one in-request-path, two out-of-band), compared local-S3-replacement vs managed-store vs conditional retirement, produced two reproducible isolated proofs (a mocked-bucket round trip and a real local-disk durable restore/readback) against the real adapter, recorded the accepted choice with hosted-content and identity-preservation caveats made explicit, and corrected the core/workers/research/management-ai/execution source-profile contract to match actual docker-compose.yml/docker-compose.exec.yml dependency and Compose-profile-opt-in evidence.",
   "depends_on": ["OSS-COVERAGE-PLAN-001"],
-  "task_branch_head": "ec47156479e6d51fe1e03056d9060cbc8893d739",
   "task_branch_base_dev": "ec47156479e6d51fe1e03056d9060cbc8893d739",
+  "prior_review": {
+    "pr": 5628,
+    "rejected_head_sha": "c42eebd9fa02eddec058aaeb63a24679d270106d",
+    "reviewer": "Codex2",
+    "verdict": "reject",
+    "required_corrections_and_disposition": [
+      {
+        "finding": "storage-consumer-matrix.json:85,101 and storage-topology-decision.md contradicted each other on hosted content: absence of source-code I/O was wrongly presented as proof of an empty/unpopulated hosted MinIO volume or GCS bucket.",
+        "fix": "Reworded the matrix conclusion, existing_data_volumes block, and every corresponding topology-decision passage to say hosted content is unknown (this task did not inspect it), and made MinIO retirement explicitly conditional on a later hosted inventory/readback check by OSS-OBJECT-STORE-CUTOVER-001, not on this source-only finding."
+      },
+      {
+        "finding": "Incomplete consumer/preserved-contract inventory: scripts/capture_canonical_telemetry_baseline.py:159-183 requires GCS generation/metageneration/pantheon_sha256 metadata; scripts/deploy_nonprod_vm.sh:2038-2051 performs a real GCS PUT/GET/DELETE probe; matrix:98 wrongly dismissed tenant isolation despite services/control-plane/bff/main.py:17354-17383 enforcing session/tenant-scoped attachment-read authorization.",
+        "fix": "Added both scripts as real_object_store_consumers entries (with exact behavior, identity semantics required, and line refs) in storage-consumer-matrix.json and storage-topology-decision.md §1 finding 3; corrected the retention/tenant block to document the BFF-layer tenant/session authorization contract and require its preservation; corrected the decision's §5 cutover scope to require preserving both the authorization check and the generation/metageneration/pantheon_sha256 identity contract."
+      },
+      {
+        "finding": "The only proof (FakeBucket, in-memory dict) did not establish durable/restore feasibility and conflated it with unknown hosted state.",
+        "fix": "Added a second, independent isolated proof that exercises the adapter's real local-filesystem fallback path (genuine disk write via os.replace, then read back through a brand-new store instance to rule out an in-process cache hit), seeded with a known SHA-256 and verified byte-for-byte. Documented explicitly that the GCS generation/metageneration/pantheon_sha256 identity contract is NOT proven in isolation (no hosted gcloud credentials available) and left that as an open item for the cutover task rather than fabricating it as proven."
+      },
+      {
+        "finding": "profile-contract.json defects: :25 promoted the explicitly opt-in lifecycle-projector-capacity-benchmark (docker-compose.yml:1519-1528, `profiles: [\"lifecycle-capacity-benchmark\"]`) into core; :91 defaulted opt-in smoke/e2e harness containers to core; workers (:35-47) activated three research-owned workers (alpha-replication-worker, training-session-preview-worker, policy-learning-shadow-eval-scheduler) as Prod Control singletons even though their hard depends_on targets (research-orchestrator-svc, training-session-svc, policy-learning-svc; docker-compose.yml:381-385,561-563,666-670) are disabled in Prod Control; execution (:80-86) plus the core fallback (:91) omitted broker-adapter/exchange-adapter/pantheon-lean-live and placed signal-store under core even though docker-compose.exec.yml:173-181 requires signal-store+runtime-manager+broker-adapter+exchange-adapter for Prod Execution while Prod Execution disables core.",
+        "fix": "Moved lifecycle-projector-capacity-benchmark out of core.services into an opt_in_never_default note citing its Compose profile; added an explicit compose-profile carve-out to unclassified_services_default_rule so opt-in harness containers are never implicitly defaulted to core; split workers into core-owned (Prod Control singleton, unchanged) vs a new research_owned_workers_conditional_on_research_profile block for the three affected services, with their own dev/ephemeral_staging/prod_control/prod_execution row matching the research profile; rewrote execution.services as two explicit per-Compose-file lists (dev/ephemeral-staging docker-compose.yml topology vs the isolated Prod Execution docker-compose.exec.yml stack), moved signal-store into execution (it has zero core consumers in docker-compose.yml), added broker-adapter/exchange-adapter to the Prod Execution list and pantheon-lean-live as an explicit opt-in service, corrected dependency_requirements to state docker-compose.exec.yml declares no postgres/nats at all (its own header: excludes control-plane services), and split volume_requirements per compose file (runtime-data only on docker-compose.exec.yml; runtime-data/broker-data/capital-data on the dev/staging docker-compose.yml topology)."
+      }
+    ]
+  },
   "source_documents_read": [
     "docs/reviews/2026-09-06-system-simplification/oss-findings.md",
     "docs/plans/system-simplification-20260906/tasks.json",
@@ -13,83 +36,127 @@
     "docs/04/pantheon_environment_closure_sa_sd_2026-09/SA.md",
     "docs/04/pantheon_environment_closure_sa_sd_2026-09/RESOURCE_AND_COST_MODEL.md",
     "docs/deployment/vm-dev-staging-prod-management-plan.md",
-    "docs/deployment/evidence/ops-vm-env-phase0-20260825/service-inventory.md"
+    "docs/deployment/evidence/ops-vm-env-phase0-20260825/service-inventory.md",
+    "docker-compose.yml",
+    "docker-compose.control.yml",
+    "docker-compose.exec.yml",
+    "services/control-plane/bff/management_ai_store.py",
+    "services/control-plane/bff/main.py",
+    "scripts/capture_canonical_telemetry_baseline.py",
+    "scripts/deploy_nonprod_vm.sh"
   ],
   "artifacts_produced": [
     {
       "file": "docs/plans/system-simplification-20260906/storage-consumer-matrix.json",
-      "purpose": "Full read-only enumeration of every docker-compose service declaring PANTHEON_S3_* env vars or depends_on minio, plus the repo-wide non-test search for boto3/botocore/S3-client usage (zero hits), and the one real object-store consumer (management_ai_store.py on GCS).",
-      "sha256": "89ce2ee278b1ec1029b3ad12ec375bdebfd098aec847a6ad48d6611da1378d90"
+      "purpose": "Full read-only enumeration of every docker-compose service declaring PANTHEON_S3_* env vars or depends_on minio, the repo-wide non-test search for boto3/botocore/S3-client usage (zero hits), all three real object-store consumers (attachment store, telemetry-baseline recovery-source identity, deploy-time bucket probe), and the corrected hosted-content-unknown / tenant-authorization findings.",
+      "sha256": "ec62ac78fbe0a36a992a3c361b78e13aca1ec28ab0acd4efbb7a007faf2c4a6f"
     },
     {
       "file": "docs/plans/system-simplification-20260906/storage-topology-decision.md",
-      "purpose": "Compares the 3 acceptance-bounded options (maintained local S3-compatible replacement, existing managed object store, documented retirement), records the accepted decision (GCS as sole backend; retire the unused MinIO layer), and carries the reproducible isolated proof.",
-      "sha256": "40e5ded0ab3d81348757e57dbf5fb7d48861527ff3f5ad88c4d8f81758d4cfba"
+      "purpose": "Compares the 3 acceptance-bounded options, records the accepted decision (GCS as sole backend; conditionally retire the unused-in-source-code MinIO layer pending hosted inventory), and carries both reproducible isolated proofs (mocked-bucket round trip and real local-disk durable restore/readback).",
+      "sha256": "414befdd23808453a58a409c5482060923223da58e21e0adf0d73d64b023c6b1"
     },
     {
       "file": "docs/plans/system-simplification-20260906/profile-contract.json",
-      "purpose": "Design-only core/workers/research/management-ai/execution profile contract with health/dependency/volume/isolation requirements, aligned to SA.md's accepted environment-identity plan and to the storage decision (no profile's health depends on MinIO).",
-      "sha256": "d18090ffe222b8a8dd8720e96dc4a6c219f1ec9e39d2c206167e01f1b192f56b"
+      "purpose": "Design-only core/workers/research/management-ai/execution profile contract with health/dependency/volume/isolation requirements, corrected against actual docker-compose.yml/docker-compose.exec.yml Compose-profile-opt-in and depends_on evidence, aligned to SA.md's accepted environment-identity plan and to the corrected storage decision.",
+      "sha256": "0d02341e30385f6c3f3dceff28aecf0402e3e621729fe064dea6202852f9295b"
     }
   ],
   "consumer_enumeration": {
-    "method": "grep across docker-compose.yml, docker-compose.control.yml, docker-compose.remote-dev.yml, docker-compose.exec.yml for PANTHEON_S3_ENDPOINT/PANTHEON_ARTIFACT_BUCKET/minio, and a repo-wide non-test grep for boto3/botocore/S3 client construction under services/ and scripts/",
+    "method": "grep across docker-compose.yml, docker-compose.control.yml, docker-compose.remote-dev.yml, docker-compose.exec.yml for PANTHEON_S3_ENDPOINT/PANTHEON_ARTIFACT_BUCKET/minio; a repo-wide non-test grep for boto3/botocore/S3 client construction under services/ and scripts/; and a direct read of the three files a prior reviewer identified as additional real GCS consumers.",
     "result": "17 services (main stack) / 12 services (control stack) declare the four PANTHEON_S3_* env vars; only 8/9 of those add a depends_on: minio: condition: service_healthy edge. Zero non-test source files construct an S3 client. The two files that read the env vars (services/foundation/persistence_posture.py, services/source_search_posture.py) only check presence for a staging/prod posture gate and explicitly document that they never open a connection.",
-    "real_consumer": "services/control-plane/bff/management_ai_store.py already uses google-cloud-storage (Apache-2.0), gated by PANTHEON_MGMT_AI_ATTACH_BUCKET, with a local-filesystem fallback when unset; unrelated to PANTHEON_S3_*."
+    "real_consumers": [
+      "services/control-plane/bff/management_ai_store.py: google-cloud-storage (Apache-2.0), gated by PANTHEON_MGMT_AI_ATTACH_BUCKET, with a local-filesystem fallback when unset; in-request-path.",
+      "scripts/capture_canonical_telemetry_baseline.py:159-183: gcloud storage objects describe on a gcs_object recovery source; requires generation, metageneration, and pantheon_sha256/sha256 metadata; out-of-band release-evidence tooling.",
+      "scripts/deploy_nonprod_vm.sh:2020-2058: real PUT/GET/DELETE probe against the hosted PANTHEON_MGMT_AI_ATTACH_BUCKET bucket via the GCS JSON API; out-of-band deploy-time tooling."
+    ],
+    "tenant_isolation": "Not bucket/prefix-level, but enforced at services/control-plane/bff/main.py:17354-17383's bff_management_ai_attachment handler via session/tenant identity resolution before any object read; must be preserved by any cutover."
   },
   "upstream_recheck": {
     "minio_server": "minio/minio@sha256:14cea493d9a34af32f524e538b8346cf79f3321eff8e708c1e2960462bd8936e; upstream community repo archived 2026-04-25, no longer maintained, source-only distribution going forward (per docs/reviews/2026-09-06-system-simplification/oss-findings.md line 34, produced under OSS-COVERAGE-PLAN-001).",
     "minio_client_divergence": "docker-compose.yml pins minio/mc:RELEASE.2024-01-16T16-06-34Z; docker-compose.control.yml floats minio/mc:latest. Neither can be refreshed against a maintained upstream release channel.",
-    "gcs_client": "google-cloud-storage>=2.16,<3.0 (Apache-2.0), pinned in services/control-plane/bff/requirements.txt:11; already the production adapter for the one real consumer."
+    "gcs_client": "google-cloud-storage>=2.16,<3.0 (Apache-2.0), pinned in services/control-plane/bff/requirements.txt:11; already the production adapter for the in-request-path consumer, and already the target backend for the two out-of-band script consumers."
   },
   "options_compared": [
     {
       "option": "A: replace MinIO with another maintained local S3-compatible server",
-      "disposition": "rejected — no S3-API consumer exists to justify standing up a replacement server; would not help the one real consumer, which already uses GCS"
+      "disposition": "rejected — no S3-API consumer exists in application source to justify standing up a replacement server; would not help any of the three real GCS consumers"
     },
     {
       "option": "B: standardize on the existing supported managed object store (Google Cloud Storage)",
-      "disposition": "accepted — already integrated, already budgeted in RESOURCE_AND_COST_MODEL.md (~$6/month), already proven in isolation, matches the all-GCP environment-identity plan"
+      "disposition": "accepted — already integrated for all three real consumers, already budgeted in RESOURCE_AND_COST_MODEL.md (~$6/month), already proven in isolation (two independent proofs), matches the all-GCP environment-identity plan"
     },
     {
       "option": "C: documented retirement (no real consumer/data remains)",
-      "disposition": "folded into the accepted decision, scoped to the MinIO/S3 layer only — object storage itself is not retired, the redundant self-hosted layer with zero consumers is"
+      "disposition": "folded into the accepted decision, scoped to the MinIO/S3 source-code layer only, and made conditional on a later hosted-content inventory confirming nothing populated needs migration/restore before deletion — object storage itself is not retired"
     }
   ],
-  "isolated_proof": {
-    "target": "services/control-plane/bff/management_ai_store.py::ManagementAiAttachmentStore (production adapter, no network, no hosted credentials)",
-    "command": "sys.path.insert(0, 'services/control-plane'); import bff.management_ai_store as mas — full script in storage-topology-decision.md §4",
-    "result": "PASS — ISOLATED_GCS_OBJECT_STORE_PROOF: PASS management-ai-attachments/mgmt-gcs-session/turn-gcs/att_48f3e55c76604878-screen.png",
-    "asserted": [
-      "storageUrl starts with gs://<bucket>/management-ai-attachments/...",
-      "sizeBytes matches the uploaded byte length",
-      "read() returns byte-identical content, matching mimeType, and matching filename after a round trip through the fake bucket"
-    ],
-    "pre_existing_equivalent_test": {
-      "file": "services/control-plane/bff/test_bff_mgmt_ai_persistence_2026_06_03.py",
-      "test": "test_management_ai_attachment_store_uses_gcs_bucket_metadata",
-      "status_in_this_worktree": "collection currently fails standalone with 'ImportError: attempted relative import with no known parent package' inside main.py's own `.models` import — a pre-existing BFF pytest import-mode issue unrelated to storage and not introduced or touched by this task. The equivalent assertions were proven directly against management_ai_store.py without importing main.py, per the isolated_proof command above."
+  "isolated_proofs": [
+    {
+      "target": "services/control-plane/bff/management_ai_store.py::ManagementAiAttachmentStore (production adapter, no network, no hosted credentials, mocked GCS bucket)",
+      "command": "sys.path.insert(0, 'services/control-plane'); import bff.management_ai_store as mas — full script in storage-topology-decision.md §4",
+      "result": "PASS — ISOLATED_GCS_OBJECT_STORE_PROOF: PASS management-ai-attachments/mgmt-gcs-session/turn-gcs/att_a3059cf19fb54928-screen.png",
+      "asserted": [
+        "storageUrl starts with gs://<bucket>/management-ai-attachments/...",
+        "sizeBytes matches the uploaded byte length",
+        "read() returns byte-identical content, matching mimeType, and matching filename after a round trip through the fake bucket"
+      ]
+    },
+    {
+      "target": "services/control-plane/bff/management_ai_store.py::ManagementAiAttachmentStore, real local-filesystem fallback path (no mocks; genuine disk write via os.replace, no PANTHEON_MGMT_AI_ATTACH_BUCKET)",
+      "command": "seeded write via one store instance to a temp dir, byte-for-byte disk verification via SHA-256, then read back via a second, independent store instance — full script in storage-topology-decision.md §4",
+      "result": "PASS — ISOLATED_LOCAL_DURABLE_RESTORE_PROOF: PASS att_7c36d41b401f4422 be0795f6644bbf97091b21f7456335fb9181473d1795c92f719c9192c9cd961e",
+      "asserted": [
+        "a real file exists on disk at the adapter's own path convention immediately after store_inline_attachment()",
+        "the on-disk bytes' SHA-256 matches the seeded content's SHA-256",
+        "a brand-new store instance (no shared Python object/memory dict) reads back byte-identical content, mimeType, and filename"
+      ],
+      "not_covered": "The GCS generation/metageneration/pantheon_sha256 identity contract required by scripts/capture_canonical_telemetry_baseline.py is GCS's own built-in feature and was not exercised against a real hosted bucket (no gcloud/network credentials available in this read-only task); left as an explicit open item for OSS-OBJECT-STORE-CUTOVER-001, not fabricated as proven."
+    },
+    {
+      "target": "services/control-plane/bff/test_bff_mgmt_ai_persistence_2026_06_03.py::test_management_ai_attachment_store_uses_gcs_bucket_metadata",
+      "status_in_this_worktree": "collection currently fails standalone with 'ImportError: attempted relative import with no known parent package' inside main.py's own `.models` import — a pre-existing BFF pytest import-mode issue unrelated to storage and not introduced or touched by this task. The equivalent assertions were proven directly against management_ai_store.py without importing main.py, per the two isolated proofs above."
     }
-  },
+  ],
   "profile_contract_design": {
     "profiles": ["core", "workers", "research", "management-ai", "execution"],
-    "cross_cutting_rule": "no profile's startup health may depend on minio; the accepted GCS path stays env-gated/optional for every profile",
-    "scope_boundary": "design/document only; no docker-compose.yml/docker-compose.control.yml edit was made, no hostname was provisioned, no data was migrated, no runtime was promoted or deployed by this task"
+    "cross_cutting_rule": "no profile's startup health may depend on minio; the accepted GCS path stays env-gated/optional for every profile; deploy-time/release-evidence GCS tooling (scripts/deploy_nonprod_vm.sh, scripts/capture_canonical_telemetry_baseline.py) is out-of-band and does not become a new profile startup dependency",
+    "corrections_from_reviewer_reject": "opt-in lifecycle-capacity-benchmark and smoke/e2e harness containers no longer default to core; signal-store moved from core to execution (its only real docker-compose.yml consumers); three research-owned workers split out of the blanket Prod Control singleton row; execution profile now lists dev/ephemeral-staging (docker-compose.yml) and Prod Execution (docker-compose.exec.yml) services separately, including broker-adapter/exchange-adapter/pantheon-lean-live and a corrected dependency/volume closure with no fabricated postgres/nats dependency on the isolated Prod Execution stack",
+    "scope_boundary": "design/document only; no docker-compose.yml/docker-compose.control.yml/docker-compose.exec.yml edit was made, no hostname was provisioned, no data was migrated, no runtime was promoted or deployed by this task"
   },
   "decision_recorded": {
-    "chosen_backend": "Google Cloud Storage, via the existing ManagementAiAttachmentStore adapter",
-    "minio_disposition": "accepted for retirement by OSS-OBJECT-STORE-CUTOVER-001 after that task's own reversible local migration/readback proof confirms zero remaining consumers; this task performs no deletion",
+    "chosen_backend": "Google Cloud Storage, via the existing ManagementAiAttachmentStore adapter for the in-request-path consumer; scripts/capture_canonical_telemetry_baseline.py and scripts/deploy_nonprod_vm.sh keep their existing direct GCS access unchanged",
+    "minio_disposition": "accepted for conditional retirement by OSS-OBJECT-STORE-CUTOVER-001 after (a) a hosted inventory check confirms no populated hosted MinIO/GCS content needs migration/restore and (b) that task's own reversible local migration/readback proof confirms zero remaining source-code consumers; this task performs no deletion and no hosted inventory check",
     "posture_files_to_update_later": [
       "services/foundation/persistence_posture.py (OBJECT_STORE_KEYS enforcement)",
       "services/source_search_posture.py (object_store_keys enforcement)"
     ],
-    "no_new_authorization_required": "GCS is already the running managed backend for the one real consumer; no paid hosting change, real-data migration, or MFA/capital authorization is implied or requested by this choice"
+    "preserved_contracts_for_cutover": [
+      "bff_management_ai_attachment tenant/session authorization check (services/control-plane/bff/main.py:17354-17383)",
+      "GCS generation/metageneration/pantheon_sha256 identity contract read by scripts/capture_canonical_telemetry_baseline.py"
+    ],
+    "no_new_authorization_required": "GCS is already the running managed backend for all three real consumers; no paid hosting change, real-data migration, or MFA/capital authorization is implied or requested by this choice. The hosted inventory check is a genuinely pending dependent action left for the cutover task, not claimed as already cleared."
   },
   "not_performed": [
-    "no docker-compose.yml or docker-compose.control.yml edit",
+    "no docker-compose.yml, docker-compose.control.yml, or docker-compose.exec.yml edit",
     "no hostname/DNS provisioning",
     "no data migration against any hosted MinIO or GCS bucket",
+    "no hosted MinIO/GCS content inventory or listing",
     "no runtime promotion or deployment",
     "no secret values were read"
-  ]
+  ],
+  "verification": {
+    "commands_run": [
+      "python3 -m json.tool docs/plans/system-simplification-20260906/storage-consumer-matrix.json (parses)",
+      "python3 -m json.tool docs/plans/system-simplification-20260906/profile-contract.json (parses)",
+      "python3 -m json.tool docs/deployment/evidence/OSS-INFRA-CHOICE-001/evidence.json (parses)",
+      "sed -n '140,195p' scripts/capture_canonical_telemetry_baseline.py; sed -n '2020,2060p' scripts/deploy_nonprod_vm.sh; sed -n '17330,17395p' services/control-plane/bff/main.py — confirmed each cited reviewer defect against the actual file content",
+      "grep -n 'profiles: \\[' docker-compose.yml docker-compose.exec.yml — confirmed lifecycle-projector-capacity-benchmark, dormant-smoke set, openclaw-activation-ready-e2e, and pantheon-lean-live are Compose-profile opt-in",
+      "sed -n '370-390,555-570,660-675' docker-compose.yml — confirmed alpha-replication-worker/training-session-preview-worker/policy-learning-shadow-eval-scheduler depend on research-profile services",
+      "grep -n depends_on docker-compose.exec.yml — confirmed pantheon-paper-runtime's hard dependency on signal-store/runtime-manager/broker-adapter/exchange-adapter and the absence of any postgres/nats declaration in docker-compose.exec.yml",
+      ".venv-pantheon/bin/python3 <mocked-bucket proof> — exit 0, ISOLATED_GCS_OBJECT_STORE_PROOF: PASS",
+      ".venv-pantheon/bin/python3 <real local-disk restore proof> — exit 0, ISOLATED_LOCAL_DURABLE_RESTORE_PROOF: PASS"
+    ],
+    "not_run": "No pytest suite was run (no dependency interpreter with pytest verified in this pass); no claim of a passing pytest suite is made. Only the two direct-script isolated proofs above are claimed as run and passing."
+  }
 }

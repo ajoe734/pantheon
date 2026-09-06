@@ -82,24 +82,46 @@
         "behavior": "validate_source_search_posture() performs the same presence-only check for source-ingest/search staging/prod posture; no object I/O."
       }
     ],
-    "conclusion": "Every one of the 17 (main) / 12 (control) declared 'consumers' above only forwards or requires the four PANTHEON_S3_* env vars for a staging/prod posture gate. No service in services/**/*.py constructs a boto3/S3 client or performs an S3 GET/PUT against MinIO. The MinIO server + minio-init glue in both Compose files currently has zero real object read/write consumers and holds zero real objects beyond the empty 'pantheon-artifacts' bucket minio-init creates at boot."
+    "conclusion": "Every one of the 17 (main) / 12 (control) declared 'consumers' above only forwards or requires the four PANTHEON_S3_* env vars for a staging/prod posture gate. No service in services/**/*.py constructs a boto3/S3 client or performs an S3 GET/PUT against MinIO from application code. This proves no *source-code* consumer of the MinIO/S3 layer exists; it does not prove the hosted MinIO volume itself is empty (see existing_data_volumes below — hosted content was not inspected by this task)."
   },
-  "real_object_store_consumer": {
-    "file": "services/control-plane/bff/management_ai_store.py",
-    "class": "ManagementAiAttachmentStore",
-    "backend": "Google Cloud Storage (google-cloud-storage>=2.16,<3.0, services/control-plane/bff/requirements.txt:11)",
-    "env_key": "PANTHEON_MGMT_AI_ATTACH_BUCKET",
-    "behavior": "prepare_inline_attachment()/store_inline_attachment() upload management-AI chat attachments to `gs://<bucket>/management-ai-attachments/<session>/<turn>/<id>-<filename>` via storage.Client().bucket(...).blob(...).upload_from_string(...); read() downloads the same object by its recorded storageUrl/objectName. When PANTHEON_MGMT_AI_ATTACH_BUCKET is unset it falls back to a local filesystem path (dev/local), never to MinIO/S3.",
-    "existing_isolated_proof": "services/control-plane/bff/test_bff_mgmt_ai_persistence_2026_06_03.py::test_management_ai_attachment_store_uses_gcs_bucket_metadata (fake-bucket round trip of content, size, content-type, filename)",
-    "note": "This is the only place in the repository where real object bytes are written to and read back from an external object-store API. It already uses GCS, not MinIO/S3, and it is unrelated to the PANTHEON_S3_* variables above."
-  },
+  "real_object_store_consumers": [
+    {
+      "file": "services/control-plane/bff/management_ai_store.py",
+      "class": "ManagementAiAttachmentStore",
+      "kind": "application service code (runs inside the BFF, on every environment)",
+      "backend": "Google Cloud Storage (google-cloud-storage>=2.16,<3.0, services/control-plane/bff/requirements.txt:11)",
+      "env_key": "PANTHEON_MGMT_AI_ATTACH_BUCKET",
+      "behavior": "prepare_inline_attachment()/store_inline_attachment() upload management-AI chat attachments to `gs://<bucket>/management-ai-attachments/<session>/<turn>/<id>-<filename>` via storage.Client().bucket(...).blob(...).upload_from_string(...); read() downloads the same object by its recorded storageUrl/objectName. When PANTHEON_MGMT_AI_ATTACH_BUCKET is unset it falls back to a local filesystem path (dev/local), never to MinIO/S3.",
+      "existing_isolated_proof": "services/control-plane/bff/test_bff_mgmt_ai_persistence_2026_06_03.py::test_management_ai_attachment_store_uses_gcs_bucket_metadata (fake-bucket round trip of content, size, content-type, filename)",
+      "identity_semantics_required": "opaque id + storageUrl/objectName path lookup only; no version/generation identity is read back by this consumer.",
+      "note": "This is the only place in the repository where a running service writes and reads real object bytes through an external object-store API as part of its own request path. It already uses GCS, not MinIO/S3, and it is unrelated to the PANTHEON_S3_* variables above."
+    },
+    {
+      "file": "scripts/capture_canonical_telemetry_baseline.py",
+      "function": "recovery source identity resolution (gcs_object branch, lines ~159-183)",
+      "kind": "release-evidence / recovery-source-identity tooling (invoked out-of-band, not a running service)",
+      "backend": "Google Cloud Storage, via `gcloud storage objects describe gs://<bucket>/<name> --format=json`",
+      "behavior": "For a `recovery_source` of kind `gcs_object`, this reads the object's `bucket`, `name`, `generation`, `metageneration`, and a `metadata.pantheon_sha256`/`metadata.sha256` field, and fails closed (raises ValueError) if generation, metageneration, or a valid hex sha256 metadata value is missing.",
+      "identity_semantics_required": "GCS-native object generation + metageneration (an immutable per-write version identity) plus a custom `pantheon_sha256`/`sha256` object-metadata field. This is a real reliance on GCS's built-in versioning-like identity, not MinIO/S3 versioning, and it contradicts a 'no consumer needs versioning' claim about the object-store estate as a whole (it only holds for the MinIO/S3 layer, which is unused).",
+      "note": "This identity contract is satisfied by GCS's own platform feature today (no extra bucket configuration is required to get generation/metageneration); it was not exercised against a real hosted bucket by this task (no gcloud credentials/network available in this read-only task), so its feasibility against an actual bucket remains unverified-in-isolation, not proven."
+    },
+    {
+      "file": "scripts/deploy_nonprod_vm.sh",
+      "function": "management AI attachment bucket ensure/probe (lines ~2020-2058)",
+      "kind": "deploy-time tooling (invoked out-of-band during VM deploy, not a running service)",
+      "backend": "Google Cloud Storage JSON API via `curl` + a GCE metadata-service access token (no google-cloud-storage client library, no gcloud CLI)",
+      "behavior": "POSTs a small probe object to `storage.googleapis.com/upload/storage/v1/b/<bucket>/o`, GETs it back with `alt=media`, compares bytes with `cmp -s`, then DELETEs the probe object — a real PUT/GET/DELETE round trip against the hosted `PANTHEON_MGMT_AI_ATTACH_BUCKET` bucket used by the deploy target environment.",
+      "identity_semantics_required": "object PUT-by-name, GET-by-name, DELETE-by-name; no generation/metageneration read.",
+      "note": "This is a real, already-existing PUT/GET/DELETE dependency on a hosted GCS bucket at deploy time; it directly contradicts any characterization of the object-store estate as having a single sole consumer. It is unrelated to MinIO/S3 and requires no MinIO/S3 replacement, since it already targets GCS."
+    }
+  ],
   "retention_legal_hold_versioning_encryption_tenant_requirements": {
-    "finding": "No service (MinIO-wired or GCS-wired) declares a retention policy, legal-hold flag, bucket versioning, server-side-encryption key, or per-tenant bucket/prefix partition anywhere in docker-compose.yml, docker-compose.control.yml, or services/control-plane/bff/management_ai_store.py. The one real consumer partitions objects by session_id/turn_id path prefix only, inside a single shared bucket/prefix.",
-    "implication": "There is no existing retention/legal-hold/versioning/tenant-isolation contract to preserve or migrate; the storage-topology-decision only needs to keep object durability and the existing prefix-based identity scheme."
+    "finding": "No service (MinIO-wired or GCS-wired) declares a bucket-level retention policy, legal-hold flag, bucket versioning flag, server-side-encryption key, or per-tenant bucket/prefix partition anywhere in docker-compose.yml, docker-compose.control.yml, or services/control-plane/bff/management_ai_store.py. The one attachment-store consumer partitions objects by session_id/turn_id path prefix only, inside a single shared bucket/prefix. Separately, `services/control-plane/bff/main.py`'s `bff_management_ai_attachment` handler (lines ~17354-17383) authorizes every attachment read at the application layer: it extracts the caller's tenant identity, resolves the attachment's owning session via `_management_ai_get_session_or_404(..., tenant_id=caller_tenant_id)`, and returns 404 before any object read if that session/tenant check fails.",
+    "implication": "There is no bucket/prefix-level retention, legal-hold, versioning, or tenant-partition contract to preserve or migrate at the storage layer itself. There *is* an existing tenant-isolation contract, enforced above the storage layer at the BFF authorization boundary rather than by bucket/prefix structure; any storage cutover must keep routing every attachment read through that same session/tenant authorization check, not just preserve object bytes. `scripts/capture_canonical_telemetry_baseline.py`'s generation/metageneration/pantheon_sha256 identity requirement (see real_object_store_consumers above) is a second preserved-contract item: it is an immutability/integrity identity requirement, not a retention or tenant requirement."
   },
   "existing_data_volumes": {
-    "minio_data_docker_volume": "declared (minio-data) in both docker-compose.yml and docker-compose.control.yml, but no committed evidence of populated hosted content was found or read; this task did not connect to a hosted MinIO instance or read its data.",
-    "gcs_bucket": "PANTHEON_MGMT_AI_ATTACH_BUCKET is unset by default in both compose files (empty string), so the default posture for both stacks is the local-filesystem fallback, not a populated GCS bucket."
+    "minio_data_docker_volume": "declared (minio-data) in both docker-compose.yml and docker-compose.control.yml. No committed evidence of populated or empty hosted content was found or read; this task did not connect to a hosted MinIO instance, list its objects, or read its data. The volume's actual hosted content is unknown, not established as empty — the source-code finding above only shows that no application code path performs S3 I/O against it, which is a separate fact from what bytes, if any, already exist on a running hosted instance.",
+    "gcs_bucket": "PANTHEON_MGMT_AI_ATTACH_BUCKET is unset by default in both compose files (empty string), so the default posture for both stacks is the local-filesystem fallback, not a populated GCS bucket. This says nothing about whether a non-default hosted deployment has PANTHEON_MGMT_AI_ATTACH_BUCKET set and populated; that hosted state was not inspected by this task."
   },
   "licensing_and_restore_ownership": {
     "minio_server": "AGPLv3 community distribution; per docs/reviews/2026-09-06-system-simplification/oss-findings.md line 34 the upstream community repository was archived 2026-04-25 and is no longer maintained (source-only distribution going forward); the currently pinned digest and the two divergent `mc` client tags (RELEASE.2024-01-16T16-06-34Z vs latest) cannot be refreshed against a maintained upstream release.",
