@@ -6,8 +6,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1
 
 COPY services/search/requirements.txt /tmp/requirements.txt
-COPY services/search/requirements.lock /tmp/requirements.lock
-RUN pip install --no-cache-dir -r /tmp/requirements.lock
+RUN pip install --no-cache-dir -r /tmp/requirements.txt
 
 COPY . /workspace
 

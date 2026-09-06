@@ -34,7 +34,6 @@ from .hybrid_retriever import HybridRetriever
 from .index_adapter import KeywordIndexAdapter
 from .index_pipeline import IncrementalIndexPipeline, JsonlIndexPipelineStore
 from .index_store import JsonlSearchIndexStore
-from .pg_retrieval import PostgresRetrievalBackend
 from .pg_store import build_search_evidence_repository, build_search_index_store
 from .retriever import (
     FullTextRetriever,
@@ -348,24 +347,7 @@ def create_app(
     retention_runs = pipeline_retention_runs if pipeline_retention_runs is not None else PIPELINE_RETENTION_RUNS
     pipeline_store = JsonlIndexPipelineStore(pipeline_store_path or PIPELINE_STORE_PATH, max_retention=retention_runs)
     sla_seconds = freshness_sla_seconds if freshness_sla_seconds is not None else FRESHNESS_SLA_SECONDS
-
-    retrieval_backend = None
-    backend_init_error: str | None = None
-    pg_dsn = os.getenv("PANTHEON_SEARCH_POSTGRES_DSN") or os.getenv("SEARCH_POSTGRES_DSN")
-    if pg_dsn:
-        try:
-            retrieval_backend = PostgresRetrievalBackend(dsn=pg_dsn)
-            retrieval_backend.setup_schema()
-        except Exception as exc:
-            retrieval_backend = None
-            backend_init_error = str(exc)
-
-    pipeline = IncrementalIndexPipeline(
-        durable_repository,
-        pipeline_store,
-        freshness_sla_seconds=sla_seconds,
-        retrieval_backend=retrieval_backend,
-    )
+    pipeline = IncrementalIndexPipeline(durable_repository, pipeline_store, freshness_sla_seconds=sla_seconds)
 
     # Initialize retrievers
     kw_retriever = KeywordRetriever()
@@ -377,17 +359,6 @@ def create_app(
     hyb_retriever = HybridRetriever(lexical_retriever=ft_retriever, semantic_retriever=sem_retriever)
     alpha_eng = alpha_engine or StructuredAlphaEngine()
 
-    def _backend_status() -> dict[str, Any]:
-        if retrieval_backend is not None:
-            return retrieval_backend.check_health()
-        if backend_init_error is not None:
-            return {
-                "status": "degraded",
-                "backend": "postgres_pgvector",
-                "error": backend_init_error,
-            }
-        return {"status": "in_memory"}
-
     def _build_gateway(repository: InMemoryEvidenceRepository, adapter: KeywordIndexAdapter | None = None) -> SearchGateway:
         return SearchGateway(
             repository=repository,
@@ -398,7 +369,6 @@ def create_app(
             alpha_engine=alpha_eng,
             index_store=store,
             index_adapter=adapter,
-            retrieval_backend=retrieval_backend,
         )
 
     def _materialize_index_state(
@@ -462,7 +432,6 @@ def create_app(
         "pantheon-search",
         dependencies=lambda: {
             "source_search_posture": PRODUCTION_POSTURE.to_dict(),
-            "retrieval_backend": _backend_status(),
         },
         metrics=lambda: {
             "snapshot_count": len(store.list_snapshots()),
@@ -484,12 +453,8 @@ def create_app(
     def health() -> dict[str, Any]:
         store.reload()
         durable_repository.reload()
-        backend_health = _backend_status()
-        service_status = "ok"
-        if backend_health.get("status") in ("degraded", "unavailable"):
-            service_status = "degraded"
         return {
-            "status": service_status,
+            "status": "ok",
             "service": "pantheon-search",
             "index_store_path": str(store.path),
             "evidence_store_path": str(durable_repository.path),
@@ -499,7 +464,6 @@ def create_app(
             "pipeline_retention_runs": pipeline_store.max_retention,
             "freshness_sla_seconds": sla_seconds,
             "durable_index_only": durable_only,
-            "retrieval_backend": backend_health,
             "capabilities": _build_gateway(durable_repository).get_capabilities(),
             "source_search_posture": PRODUCTION_POSTURE.to_dict(),
             "posture_alert_count": PRODUCTION_POSTURE.alert_count(),

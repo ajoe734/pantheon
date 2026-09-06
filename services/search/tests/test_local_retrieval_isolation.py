@@ -14,6 +14,46 @@ import os
 import unittest
 from unittest import mock
 import uuid
+import json
+import subprocess
+import sys
+from pathlib import Path
+
+from services.search.evaluation.run_retrieval_eval import admission_report, validate_local_dsn
+
+
+class TestEvaluationAdmission(unittest.TestCase):
+    """Invalid evaluation cannot publish success or touch non-task databases."""
+
+    def test_default_evaluation_is_nonzero_without_backend_access(self):
+        runner = Path(__file__).resolve().parents[1] / "evaluation" / "run_retrieval_eval.py"
+        env = dict(os.environ, PANTHEON_SEARCH_POSTGRES_DSN="postgresql://unreachable.invalid/prod")
+        result = subprocess.run([sys.executable, str(runner)], env=env, capture_output=True, text=True, timeout=15)
+        self.assertEqual(result.returncode, 2, result.stderr)
+        report = json.loads(result.stdout)
+        self.assertFalse(report["accepted"])
+        self.assertIsNone(report["chosen_backend"])
+        self.assertIsNone(report["local_probe"])
+        self.assertFalse(report["legacy_manifest"]["accepted"])
+
+    def test_probe_rejects_external_or_redirected_dsn(self):
+        for dsn in (
+            "postgresql://example.com:25432/pantheon_search",
+            "postgresql://127.0.0.1:5432/pantheon_search",
+            "postgresql://127.0.0.1:25432/production",
+            "postgresql://127.0.0.1:25432/pantheon_search?host=example.com",
+        ):
+            with self.subTest(dsn=dsn), self.assertRaises(ValueError):
+                validate_local_dsn(dsn)
+        validate_local_dsn("postgresql://postgres:postgres@127.0.0.1:25432/pantheon_search")
+
+    def test_schema_accepts_unmeasured_report_and_rejects_old_success(self):
+        import jsonschema
+        root = Path(__file__).resolve().parents[1] / "evaluation"
+        schema = json.loads((root / "retrieval_manifest.schema.json").read_text())
+        jsonschema.validate(admission_report(), schema)
+        with self.assertRaises(jsonschema.ValidationError):
+            jsonschema.validate(json.loads((root / "retrieval_manifest.json").read_text()), schema)
 
 from services.search.filters import SearchAccessContext, SearchFilters, SearchCapabilityUnavailableError
 from services.search.local_embeddings import LocalEmbeddingEngine

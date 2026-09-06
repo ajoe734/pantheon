@@ -1,4 +1,5 @@
-version: "3.8"
+# Unaccepted, isolated comparison services only. No product Search activation.
+# Existing shared/hosted containers are outside this overlay's authority.
 
 services:
   search-postgres:
@@ -29,22 +30,4 @@ services:
       interval: 3s
       timeout: 3s
       retries: 10
-    restart: "no"
-
-  search-svc:
-    build:
-      context: .
-      dockerfile: services/search/Dockerfile
-    container_name: pantheon-search-svc-test
-    environment:
-      PORT: "8098"
-      PANTHEON_SEARCH_BACKEND: "postgres"
-      PANTHEON_SEARCH_POSTGRES_DSN: "postgresql://postgres:postgres@search-postgres:5432/pantheon_search"
-      SEARCH_DATA_DIR: "/tmp/pantheon/search"
-      SEARCH_EMBEDDING_CACHE_DIR: "/tmp/fastembed_cache"
-    ports:
-      - "127.0.0.1:28098:8098"
-    depends_on:
-      search-postgres:
-        condition: service_healthy
     restart: "no"

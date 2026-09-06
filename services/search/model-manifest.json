@@ -8,7 +8,8 @@
   "max_sequence_length": 512,
   "revision": "66076b8dc6e367337e3e90e6fb309fb0f3addaf6",
   "cloud_inference": false,
-  "external_network_calls": 0,
+  "external_network_calls": null,
+  "network_policy": "Local offline inference required; complete transport observation not yet supplied",
   "preprocessing": {
     "query_prefix": "query: ",
     "passage_prefix": "passage: ",
@@ -34,28 +35,5 @@
       "sha256": "f90024142df07163e5e6c5b9a6ad7c8c68b22a9112af11e3db4559a9ff90f737"
     }
   },
-  "validation_cohort_comparison": {
-    "candidates": [
-      {
-        "model_name": "intfloat/multilingual-e5-large",
-        "dimension": 1024,
-        "parameters": "560M",
-        "disk_size_gb": 2.24,
-        "warm_p95_ms": 271,
-        "traditional_chinese_support": "strong",
-        "cross_lingual_retrieval": "strong",
-        "decision": "selected_dense_model"
-      },
-      {
-        "model_name": "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2",
-        "dimension": 384,
-        "parameters": "118M",
-        "disk_size_gb": 0.22,
-        "warm_p95_ms": 85,
-        "traditional_chinese_support": "moderate",
-        "cross_lingual_retrieval": "moderate",
-        "decision": "rejected_lower_chinese_relevance"
-      }
-    ]
-  }
+  "validation_status": "unaccepted; prior model comparison numbers have no reproducible validation evidence"
 }

@@ -38,13 +38,6 @@ from services.persona.lesson_governance import (
     TradeLessonCandidateError,
     is_sensitive_change,
 )
-from .search_retrieval import (
-    get_search_retrieval_backend,
-    project_institutional_entry,
-    project_persona_entry,
-    retrieve_institutional_with_backend,
-    retrieve_persona_with_backend,
-)
 
 
 def _split_csv_values(values: Optional[List[str]]) -> List[str]:
@@ -270,9 +263,6 @@ async def store_entry(payload: Dict[str, Any]):
     try:
         entry = InstitutionalMemoryEntry.from_dict(payload)
         saved = _store().create(entry)
-        backend = get_search_retrieval_backend()
-        if backend is not None:
-            backend.index_documents([project_institutional_entry(saved)])
     except (InstitutionalMemoryError, TypeError) as exc:
         raise HTTPException(status_code=422, detail={"error": "invalid_entry", "message": str(exc)}) from exc
     return {"entry_id": saved.entry_id}
@@ -282,9 +272,6 @@ def _store_persona_payload(payload: Dict[str, Any]) -> Dict[str, str]:
     try:
         entry = PersonaMemoryEntry.from_dict(payload)
         saved = _persona_store().create(entry)
-        backend = get_search_retrieval_backend()
-        if backend is not None:
-            backend.index_documents([project_persona_entry(saved)])
     except (PersonaMemoryError, TypeError) as exc:
         raise HTTPException(status_code=422, detail={"error": "invalid_persona_entry", "message": str(exc)}) from exc
     return {"memory_id": saved.memory_id}
@@ -303,26 +290,11 @@ async def writeback_persona_entry(payload: Dict[str, Any]):
 @app.post("/api/memory/writebacks/learn-feedback", status_code=201)
 async def writeback_learn_feedback(payload: Dict[str, Any], response: Response):
     try:
-        p_store = _persona_store()
-        i_store = _store()
         result = write_learn_feedback(
             payload,
-            persona_store=p_store,
-            institutional_store=i_store,
+            persona_store=_persona_store(),
+            institutional_store=_store(),
         )
-        backend = get_search_retrieval_backend()
-        if backend is not None:
-            records = []
-            for pid in result.get("persona_memory_ids", []):
-                p_entry = p_store.get(pid)
-                if p_entry:
-                    records.append(project_persona_entry(p_entry))
-            for iid in result.get("institutional_entry_ids", []):
-                i_entry = i_store.get(iid)
-                if i_entry:
-                    records.append(project_institutional_entry(i_entry))
-            if records:
-                backend.index_documents(records)
     except LearnFeedbackUnauthorizedError as exc:
         raise HTTPException(
             status_code=403,
@@ -407,20 +379,16 @@ async def retrieve_memory(
             },
         )
 
-    search_backend = get_search_retrieval_backend()
     ranked_hits = []
     if scope in {"institutional", "both"}:
         institutional_store = _store()
-        hits = retrieve_institutional_with_backend(
-            institutional_store,
-            backend=search_backend,
+        for hit in institutional_store.retrieve(
             query=query,
             knowledge_type=knowledge_type,
             scope_filter=scope_filter,
             tags=tag_values,
             limit=limit,
-        )
-        for hit in hits:
+        ):
             ranked_hits.append(
                 ("institutional", hit.relevance_score, hit.entry.written_at, hit.entry.entry_id, hit.entry)
             )
@@ -428,17 +396,14 @@ async def retrieve_memory(
     if scope in {"persona", "both"}:
         try:
             persona_store = _persona_store()
-            hits = retrieve_persona_with_backend(
-                persona_store,
-                backend=search_backend,
+            for hit in persona_store.retrieve(
                 persona_id=persona_id or "",
                 query=query,
                 memory_type=memory_type,
                 relevance_scope=persona_relevance_scope,
                 tags=tag_values,
                 limit=limit,
-            )
-            for hit in hits:
+            ):
                 ranked_hits.append(
                     ("persona", hit.relevance_score, hit.entry.written_at, hit.entry.memory_id, hit.entry)
                 )
@@ -751,14 +716,7 @@ async def merge_trade_lesson(
             )
 
     try:
-        p_store = _persona_store()
-        updated = _governance_service().merge_to_memory(candidate_id, p_store)
-        backend = get_search_retrieval_backend()
-        if backend is not None:
-            memory_id = f"pmem-lesson-{candidate['lesson_candidate_id']}"
-            p_entry = p_store.get(memory_id)
-            if p_entry:
-                backend.index_documents([project_persona_entry(p_entry)])
+        updated = _governance_service().merge_to_memory(candidate_id, _persona_store())
     except TradeLessonCandidateError as exc:
         raise HTTPException(status_code=422, detail={"error": "merge_failed", "message": str(exc)}) from exc
     return updated

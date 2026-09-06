@@ -1,56 +1,52 @@
-# Governed Search & Memory Retrieval Evaluation
+# Retrieval candidate validation — acceptance withdrawn
 
-This directory contains the frozen benchmark suite and evaluation tooling for the Pantheon search backend selection and retrieval unification under task `SIMPLIFY-RETRIEVAL-MEMORY-001`.
+The `aad34700e262211b7de349921421a61961948749` evaluation does not establish
+backend selection or task completion. Its 10,000-record corpus combines
+210 embedded fixtures and 9,790 random-vector distractors. Queries and labels
+come from the same templates, with no independent adjudication, source-family
+holdout or executed prior-runtime baseline. Timings reuse the query embedding
+cache and omit authorized owner hydration. Qdrant was tested dense-only.
+These limitations invalidate the previously reported eight passing gates.
 
-## 1. Objective & Backend Selection
+The historical `retrieval_manifest.json` is not accepted evidence. It was added
+by the earlier delivery outside the task's exact artifact grant; canonical
+scope correction is needed before editing or removing that file. The v2 schema
+and current runner explicitly reject its v1 admission claim. No fixture is
+claimed to be human labelled, operational evidence or a valid held-out set.
 
-The goal of this evaluation is to compare PostgreSQL (native FTS + pgvector) and local Qdrant on identical frozen data, auth/as-of pre-filtering rules, and hardware budgets, and select one sole local backend for production governed retrieval.
+Product Search, Memory and negative-memory consumers retain the prior sole
+ranker. Candidate PG, Qdrant and memory projection modules are disconnected
+prototypes. Existing tenant/as-of checks remain; no new backend is selected.
+Infrastructure must not activate these prototypes from the backend contract.
 
-### Selection Decision: PostgreSQL with pgvector and native FTS
-- **Relevance & Accuracy**: Matches Qdrant on semantic cosine scores identically (e.g. 0.9286 for exact match) while achieving $\ge 0.90$ Recall@10 and nDCG@10 across Traditional Chinese, English, and cross-lingual queries.
-- **Operational Cost**: Uses existing Postgres infrastructure already deployed for core Pantheon databases; requires **zero** additional daemon, zero new backup/restore workflows, and zero extra RAM/disk overhead.
-- **Transactional Integrity**: Pre-retrieval ACL/workspace/tenant filtering executes within the same atomic relational database with row-level security and indexing, eliminating split-brain state between metadata and vectors.
-- **Performance**: Warm p95 retrieval latency is well within the 1-second budget ($< 250$ms) with 0 external API calls.
+The runner's default command is read-only and does not load an embedding
+model or contact a backend:
 
-## 2. Benchmark Corpus & Query Suite
-
-### Fixed Corpus (10,000 Documents)
-The held-out evaluation corpus consists of 10,000 deterministic documents partitioned as:
-- **4,000 Traditional Chinese Documents**: Financial reports, TWSE strategy analyses, order-book incident postmortems, risk reviews.
-- **4,000 English Documents**: Quantitative finance papers, macro signals, execution models, statistical arbitrage notes.
-- **1,000 Governed Memory Entries**: Institutional memory lessons, persona memory reflections, committee consultations.
-- **1,000 Negative Memory Records**: Rejected seeds, retired strategies, failed experiments, incident postmortems.
-
-### Evaluation Queries (210 Queries)
-- **60 Traditional Chinese Queries**: Testing unigram CJK full-text matching, synonym expansion, and semantic understanding.
-- **60 English Queries**: Testing BM25-equivalent lexical matching and vector semantic retrieval.
-- **50 Cross-Language Queries**: Testing multilingual cross-lingual transfer (e.g., Traditional Chinese queries retrieving English academic papers and vice versa via `intfloat/multilingual-e5-large`).
-- **40 Negative Memory Queries**: 20 exact strategy/seed identifier matches (requiring 100% blocking recall) and 20 paraphrased semantic failure warnings (requiring $\ge 0.95$ warning recall).
-
-## 3. Provenance & Reproducibility Notice
-
-All benchmark fixtures are generated deterministically using cryptographically pinned seeds and source-derived templates.
-- **Model**: `intfloat/multilingual-e5-large` (1024-dim, ONNX runtime, FastEmbed local inference).
-- **External Calls**: Strictly 0. All embeddings are generated locally using the weights pinned in `services/search/model-manifest.json`.
-- **Limitation Notice**: Synthetic and source-derived fixtures provide repeatable structural verification and ranking benchmarks under load; they are not labeled human operational data.
-
-## 4. Quality Gates
-
-| Gate Metric | Target | PG Result | Status |
-|---|---|---|---|
-| **Recall@10** | $\ge 0.90$ | **1.000** | PASSED |
-| **nDCG@10** | $\ge 0.85$ | **0.998** | PASSED |
-| **Citation Identity Rate** | $100\%$ | **100%** | PASSED |
-| **Exact Negative Recall** | $100\%$ | **100%** | PASSED |
-| **Semantic Warning Recall** | $\ge 0.95$ | **100%** | PASSED |
-| **Isolation Leakage Rate** | $0\%$ | **0%** | PASSED |
-| **Warm p95 Latency** | $\le 1000$ ms | **258 ms** | PASSED |
-| **External Inference Calls** | $0$ | **0** | PASSED |
-
-## 5. Running the Evaluation
-
-To execute the benchmark against the running Postgres backend:
 ```bash
-python3 services/search/evaluation/run_retrieval_eval.py
+.venv-pantheon/bin/python services/search/evaluation/run_retrieval_eval.py
 ```
-This runs the full 210-query held-out evaluation, benchmarks 1,000 warm queries at concurrency 4, validates quality gates, and outputs `retrieval_manifest.json`.
+
+It reports unresolved acceptance and exits **2**. An optional bounded local
+diagnostic runs 4–24 unique queries at concurrency 4, including actual uncached
+embedding and PG search, against the existing task test database only:
+
+```bash
+timeout 120s .venv-pantheon/bin/python services/search/evaluation/run_retrieval_eval.py \
+  --probe-local --samples 12 --report /tmp/retrieval-local-probe.json
+```
+
+This also exits **2**, even if every diagnostic request succeeds. It performs
+no DDL, corpus reset, indexing or corpus upload. The mixed-vector index and
+missing owner hydration make these timings unsuitable for the acceptance gate.
+A timeout or killed batch is incomplete evidence, never passed evidence.
+
+Before adoption, supply authoritative authenticated scope and owner identity,
+ACL, version and expiry data without inventing defaults; prove nonowner,
+nonbypass database access. Independently adjudicate a new source-derived
+validation/holdout split and execute the old-runtime baseline, a real embedded
+10k corpus, full local PG and Qdrant dense/sparse comparison, negative-memory
+false positives, current owner hydration and 1000 full requests at concurrency
+4. Re-prove replay/tombstones/checkpoints, restart/rebuild, timeouts and zero
+scope/count/citation leakage. Freeze exact model/dependency/image identities
+and operational costs before publishing a selected backend. The task remains
+unfinished pending those requirements and independent review.

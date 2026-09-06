@@ -1,102 +1,35 @@
 {
-  "contract_version": "pantheon.search-backend-contract.v1",
+  "contract_version": "pantheon.search-backend-contract.v2",
   "task_id": "SIMPLIFY-RETRIEVAL-MEMORY-001",
-  "published_at": "2026-09-06T08:09:16Z",
-  "chosen_backend": "postgres_pgvector",
-  "rationale": "PostgreSQL with native FTS (GIN index on simple tsvector) and pgvector (HNSW index on vector(1024)) satisfies all 8 quality gates: Recall@10 = 1.0 (>=0.90), nDCG@10 = 0.9978 (>=0.85), 100% citation identity, 100% exact negative recall, 100% semantic warning recall, 0.0% isolation leakage, warm p95 = 258.09ms (<=1000ms) at 20.68 QPS over 10,000 documents, and 0 external inference calls. Under task rules (\"Choose existing PG when both pass without justified operational gain\"), PostgreSQL is selected as the sole production backend. This eliminates the operational overhead, extra daemon, memory footprint, and separate snapshot/backup lifecycle of Qdrant.",
-  "candidate_comparison": {
-    "postgres_pgvector": {
-      "status": "selected",
-      "image": "pgvector/pgvector:pg16",
-      "features": [
-        "Native PostgreSQL simple FTS with GIN index on spaced CJK / alphanumeric tsvector",
-        "pgvector 0.3.6 with HNSW cosine distance index (embedding vector_cosine_ops, m=16, ef_construction=64)",
-        "Parameterized SQL CTE Reciprocal Rank Fusion (RRF k=60) with pre-retrieval ACL/as-of index filtering",
-        "Row Level Security (RLS) support for strict tenant/persona/workspace isolation"
-      ],
-      "operational_overhead": "Zero additional daemons; runs inside existing PostgreSQL infrastructure.",
-      "gates_passed": "8/8"
-    },
-    "qdrant": {
-      "status": "rejected_for_production",
-      "image": "qdrant/qdrant:v1.13.4",
-      "features": [
-        "Dense vector collection with cosine distance",
-        "Payload index filtering on tenant/persona/workspace/access_scope",
-        "Score fusion over vector search"
-      ],
-      "operational_overhead": "Requires separate daemon, extra TCP port (6333), dedicated memory allocation, and independent volume snapshot/backup regime.",
-      "justification_for_rejection": "PG satisfies all quality and latency gates with 0.0% leakage and 258ms p95. No >=30% CPU/p95 benefit demonstrated that would justify running a secondary database daemon."
-    }
+  "accepted": false,
+  "chosen_backend": null,
+  "delivery_state": "candidate_withdrawn_pending_valid_evaluation",
+  "activation_allowed": false,
+  "reason": "Prior evaluation used random-vector distractors, cached embedding timings and superuser SQL; owner authorization/version and independently adjudicated baseline/holdout were not established.",
+  "product_runtime": {
+    "retained_ranker_base": "5d15c7b821a846d24b76ce4f653f990482da0518",
+    "source": "origin/dev at recovery; exact base verified in task evidence",
+    "search": "Original SearchGateway/KeywordIndexAdapter/retriever pipeline; no candidate import, schema setup or DSN activation.",
+    "memory": "Original canonical institutional/persona retrieval and reviewed writeback paths.",
+    "negative_memory": "Original deterministic matching; candidate cosine/full-scan addition withdrawn.",
+    "retained_additive_checks": [
+      "tenant comparison",
+      "as-of cutoff narrowing"
+    ]
   },
-  "runtime_specification": {
-    "dependencies": {
-      "python_packages": {
-        "fastembed": "0.8.0",
-        "onnxruntime": "1.29.0",
-        "pgvector": "0.5.0",
-        "psycopg": "3.3.5",
-        "psycopg-binary": "3.3.5",
-        "qdrant-client": "1.19.0"
-      }
-    },
-    "embedding_model": {
-      "name": "intfloat/multilingual-e5-large",
-      "dimension": 1024,
-      "manifest_path": "services/search/model-manifest.json",
-      "manifest_sha256": "0aa16d137761145a7d5b0c0f2bee61c4bd0ac6eb0f9d07d221b502c81b6d919e",
-      "model_file_sha256": "1c09780c907c8a91a77a6ab1fd231f79e090d2907ca431223703dfebeed3d36c",
-      "inference_engine": "FastEmbed ONNX local CPU runtime",
-      "external_calls": 0
-    },
-    "schema": {
-      "table_name": "search_retrieval_index",
-      "sql_definition": "services/search/sql/retrieval_index.sql",
-      "indexes": [
-        "search_retrieval_index_pkey (btree on id)",
-        "idx_search_retrieval_tsv (gin on tsv)",
-        "idx_search_retrieval_embedding (hnsw on embedding vector_cosine_ops)",
-        "idx_search_retrieval_kind_active (btree on record_kind, is_active)",
-        "idx_search_retrieval_tenant (btree on tenant_id)",
-        "idx_search_retrieval_persona_workspace (btree on persona_id, workspace_id)",
-        "idx_search_retrieval_event_time (btree on event_time)",
-        "idx_search_retrieval_available_time (btree on available_time)"
-      ]
-    },
-    "environment_variables": {
-      "PANTHEON_SEARCH_BACKEND": "postgres_pgvector",
-      "PANTHEON_SEARCH_POSTGRES_DSN": "postgresql://postgres:postgres@localhost:25432/pantheon_search",
-      "SEARCH_EMBEDDING_CACHE_DIR": "/tmp/fastembed_cache"
-    },
-    "readiness_probe": {
-      "http_endpoint": "GET /health",
-      "db_probe_sql": "SELECT extversion FROM pg_extension WHERE extname=\"vector\""
-    },
-    "rebuild_procedure": {
-      "method": "Execute services/search/sql/retrieval_index.sql against database; re-index versioned projections via SearchIndexPipeline or PostgresRetrievalBackend.index_documents",
-      "idempotency": "CREATE TABLE IF NOT EXISTS and ON CONFLICT (id) DO UPDATE"
-    },
-    "rollback_procedure": {
-      "method": "SearchGateway facade maintains backwards-compatible search(), index_documents(), and delete_document() signatures. If Postgres is unavailable, gateway returns structured degraded/unavailable error."
-    }
+  "candidate_modules": [
+    "services/search/pg_retrieval.py",
+    "services/search/qdrant_backend.py",
+    "services/search/local_embeddings.py",
+    "services/memory/search_retrieval.py"
+  ],
+  "candidate_status": "Disconnected prototypes, not alternative production backends. Preserve for bounded correction only; unselected production code must be removed before accepted final delivery.",
+  "dependencies_and_models": "requirements.lock and model-manifest.json describe unaccepted candidate artifacts; latest-compatible dependency/image selection and validation remain outstanding.",
+  "infrastructure_consumer": {
+    "task": "OSS-INFRA-PROFILES-001",
+    "instruction": "Do not wire PG/Qdrant candidates into root Compose or activate Search/Memory candidate DSNs. Consume only a later independently accepted selected-backend contract."
   },
-  "verified_evaluation_metrics": {
-    "corpus_size": 10000,
-    "corpus_hash": "955897e09da006dbab04682c733071b36a40f3dbff4f6d838ecb0c1086aeb91b",
-    "queries_evaluated": 210,
-    "recall_at_10": 1.0,
-    "ndcg_at_10": 0.9978,
-    "citation_identity": 1.0,
-    "exact_negative_memory_recall": 1.0,
-    "semantic_warning_recall": 1.0,
-    "isolation_leakage_rate": 0.0,
-    "warm_p95_latency_ms": 258.09,
-    "warm_p50_latency_ms": 188.57,
-    "cold_start_latency_ms": 170.85,
-    "throughput_qps": 20.68,
-    "concurrency": 4,
-    "replays": 1000,
-    "external_inference_calls": 0,
-    "evaluation_manifest_path": "services/search/evaluation/retrieval_manifest.json"
-  }
+  "validation_entrypoint": "services/search/evaluation/run_retrieval_eval.py",
+  "validation_exit_status": 2,
+  "rebuild_rollback": "No candidate index migration or production deployment is authorized by this contract. Prior sole runtime remains active; no data-owner changes were made."
 }

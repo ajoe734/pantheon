@@ -101,7 +101,6 @@ class SearchGateway:
         alpha_engine: StructuredAlphaEngine | None = None,
         index_store: JsonlSearchIndexStore | None = None,
         index_adapter: KeywordIndexAdapter | None = None,
-        retrieval_backend: Any | None = None,
     ) -> None:
         self.repository = repository
         self.retriever = retriever or KeywordRetriever()
@@ -114,7 +113,6 @@ class SearchGateway:
         self.alpha_engine = alpha_engine or StructuredAlphaEngine()
         self.index_store = index_store
         self.index_adapter = index_adapter or KeywordIndexAdapter(repository)
-        self.retrieval_backend = retrieval_backend
 
     def get_capabilities(self) -> dict[str, Any]:
         """Report retrieval capability matrix honestly."""
@@ -159,118 +157,6 @@ class SearchGateway:
             if isinstance(request.filters, SearchFilters)
             else SearchFilters.from_dict(request.filters)
         )
-
-        mode = request.retrieval_mode
-        if self.retrieval_backend is not None and mode in ("keyword", "full_text", "semantic", "hybrid"):
-            hits = self.retrieval_backend.search(
-                query=request.query,
-                context=context,
-                filters=filters,
-                top_k=request.top_k,
-                mode=mode,
-            )
-            filters_applied = {
-                **dict(request.filters_applied),
-                "source_types": list(filters.source_types),
-                "environment": context.environment,
-                "access_scopes": list(context.access_scopes),
-                "license_scopes": list(context.license_scopes),
-                "pre_ranking_filter": "acl_license_workspace_environment",
-                "available_time": "not_future",
-            }
-            if filters.event_time_gte:
-                filters_applied["event_time_gte"] = filters.event_time_gte
-            if filters.event_time_lte:
-                filters_applied["event_time_lte"] = filters.event_time_lte
-            if filters.available_time_lte:
-                filters_applied["available_time_lte"] = filters.available_time_lte
-            if filters.sensitivity:
-                filters_applied["sensitivity"] = list(filters.sensitivity)
-            if filters.capital_pool_scope:
-                filters_applied["capital_pool_scope"] = list(filters.capital_pool_scope)
-            if filters.asset_class:
-                filters_applied["asset_class"] = list(filters.asset_class)
-            if filters.strategy_id:
-                filters_applied["strategy_id"] = filters.strategy_id
-
-            query_fp = hashlib.sha256(f"{request.query}:{mode}:{sorted(filters_applied.items())}".encode("utf-8")).hexdigest()[:16]
-            ranker_ver = hits[0].ranker_version if hits else f"postgres-{mode}-v1"
-
-            results: list[RetrievalResult] = []
-            backend_rejected = 0
-            backend_rejected_by_reason: dict[str, int] = {}
-            for hit in hits:
-                ko = self.repository.get_knowledge_object(hit.id)
-                if ko is None:
-                    backend_rejected += 1
-                    backend_rejected_by_reason["missing_owner"] = backend_rejected_by_reason.get("missing_owner", 0) + 1
-                    continue
-
-                evidence_item = self.repository.get_evidence_item(ko.evidence_item_id)
-                bundle = self.repository.get_bundle(ko.evidence_bundle_id)
-                if evidence_item is None or bundle is None:
-                    backend_rejected += 1
-                    backend_rejected_by_reason["missing_evidence"] = backend_rejected_by_reason.get("missing_evidence", 0) + 1
-                    continue
-
-                allowed, reason = context.permits(
-                    ko,
-                    evidence_item=evidence_item,
-                    bundle=bundle,
-                    filters=filters,
-                    now=now,
-                    require_citations=request.require_citations,
-                )
-                if not allowed:
-                    backend_rejected += 1
-                    r_key = reason or "access_scope"
-                    backend_rejected_by_reason[r_key] = backend_rejected_by_reason.get(r_key, 0) + 1
-                    continue
-
-                results.append(
-                    RetrievalResult(
-                        result_id=ko.knowledge_object_id,
-                        request_id=request.request_id,
-                        evidence_bundle_id=bundle.evidence_bundle_id,
-                        matched_items=[
-                            {
-                                "knowledge_object_id": ko.knowledge_object_id,
-                                "source_id": ko.source_id,
-                                "evidence_item_id": evidence_item.evidence_item_id,
-                                "content_ref": evidence_item.content_ref,
-                                "citation_label": evidence_item.citation_label,
-                                "matched_terms": list(hit.matched_terms),
-                            }
-                        ],
-                        answer_context=ko.text,
-                        citations=[evidence_item.citation_label],
-                        filters_applied=filters_applied,
-                        rejected_items_count=backend_rejected,
-                        relevance_score=hit.score,
-                        component_scores=dict(hit.component_scores),
-                        ranker_version=hit.ranker_version,
-                        created_at=created_at,
-                    )
-                )
-
-            response = GovernedSearchResponse(
-                request_id=request.request_id,
-                trace_id=request.trace_id,
-                retrieval_mode=mode,
-                results=results,
-                rejected_items_count=backend_rejected,
-                rejected_by_reason={k: v for k, v in backend_rejected_by_reason.items() if v > 0},
-                filters_applied=filters_applied,
-                capabilities=capabilities,
-                fingerprints={
-                    "query_fingerprint": query_fp,
-                    "ranker_fingerprint": ranker_ver,
-                },
-                created_at=created_at,
-            )
-            if self.index_store is not None:
-                self.index_store.append_snapshot(SearchIndexSnapshot.from_response(response))
-            return response
 
         filtered = []
         rejected = 0
