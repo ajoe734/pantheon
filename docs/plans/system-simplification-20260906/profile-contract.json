@@ -1,0 +1,143 @@
+{
+  "task_id": "OSS-INFRA-CHOICE-001",
+  "status": "design_contract_only",
+  "generated_at": "2026-09-06T00:00:00Z",
+  "note": "This is a design artifact only. No Compose file was edited, no hostname was provisioned, no data was migrated, no runtime was promoted or deployed by this task. OSS-INFRA-PROFILES-001 is the sole later Compose writer that implements this contract; OSS-OBJECT-STORE-CUTOVER-001 consumes the storage disposition below.",
+  "source_of_truth_read": {
+    "environment_identity_plan": "docs/04/pantheon_environment_closure_sa_sd_2026-09/SA.md",
+    "profile_table_cited": "SA.md §5 Component Profiles & Resource Bounds",
+    "cost_model_read": "docs/04/pantheon_environment_closure_sa_sd_2026-09/RESOURCE_AND_COST_MODEL.md",
+    "storage_decision_read": "docs/plans/system-simplification-20260906/storage-topology-decision.md"
+  },
+  "cross_cutting_rules": {
+    "health": "Every profile-scoped service keeps its existing /readyz or /healthz HTTP probe or CMD-SHELL healthcheck unchanged; profile activation only changes which services start, never how an individual service reports health.",
+    "dependency": "No profile's health or startup readiness may depend on MinIO/minio-init. Per storage-topology-decision.md, the accepted object-store backend is Google Cloud Storage. Inside a running service's startup/health path it is reached only by services/control-plane/bff/management_ai_store.py, and that dependency is env-gated/optional (falls back to local filesystem when PANTHEON_MGMT_AI_ATTACH_BUCKET is unset) rather than a startup precondition. `scripts/deploy_nonprod_vm.sh` and `scripts/capture_canonical_telemetry_baseline.py` also read/write GCS objects, but as deploy-time/release-evidence tooling invoked outside any Compose service's own startup or healthcheck, so they do not become a new profile dependency edge. `depends_on: minio: condition: service_healthy` edges enumerated in storage-consumer-matrix.json are scheduled for removal by OSS-OBJECT-STORE-CUTOVER-001, not added to any new profile.",
+    "volume": "A profile only mounts the durable volumes its own services already declare in docker-compose.yml/docker-compose.control.yml today (for example postgres-data, nats-data, *-data per service). No profile may share a volume across environments; this is already Architecture Invariant / Non-Goal #4 in SA.md (\"No Cross-Environment Resource Sharing\"). Within one environment's own Compose project, a small number of pre-existing cross-profile mounts of the same volume already exist (see core.volume_requirements' bff-data note below); this design task documents them rather than removing them, since removing a mount is Compose edit work reserved for OSS-INFRA-PROFILES-001.",
+    "isolation": "Profile activation must preserve SA.md's per-environment activation matrix (Dev/Ephemeral Staging/Prod Control/Prod Execution) and its Architecture Invariant #3 (Control and Execution Plane Segregation): the `execution` profile never runs on Prod Control, and no profile grants public ingress to anything other than the `core` profile's Caddy/Operator BFF edge."
+  },
+  "compose_topology_by_environment": {
+    "note": "Required by reviewer correction 2026-09-06: the four SA.md environments do not all run the same Compose project, so a profile's dependency/volume closure is not uniform across environments. This design task performs no Compose edit; it records which file each environment actually runs today and which dependency edges are retained-as-is, external, or absent per file.",
+    "dev": {
+      "compose_file": "docker-compose.yml",
+      "shape": "single mono-stack Compose project; core/workers/research/management-ai and the dev/ephemeral-staging execution paper topology are all declared in this one file and share one Compose dependency graph.",
+      "consequence": "A profile's services cannot be started in isolation from another profile's services on this file today wherever a hard `depends_on: ...: condition: service_healthy` edge crosses profile lines (enumerated per-profile below); those edges are retained as-is by this design task, not restructured."
+    },
+    "ephemeral_staging": {
+      "compose_file": "docker-compose.yml",
+      "shape": "same single file and dependency graph as dev; only each profile's activation row (Conditional vs YES/NO) differs per SA.md, not the underlying Compose edges.",
+      "consequence": "Inherits the same cross-profile dependency edges as dev listed below."
+    },
+    "prod_control": {
+      "compose_file": "docker-compose.control.yml",
+      "shape": "a separate, VM1-only control-plane Compose project. It declares no research-profile services, no execution-profile services, and no openclaw-gateway-adapter service at all. It reaches the externally-hosted runtime-manager and OpenClaw gateway adapter only through required, non-blank environment variables (`PANTHEON_RUNTIME_MANAGER_URL`, `PANTHEON_OPENCLAW_GATEWAY_ADAPTER_URL`) rather than a Compose `depends_on` edge.",
+      "consequence": "core/workers/management-ai's dependency closure on this file is materially cleaner than on docker-compose.yml: no cross-profile `service_healthy` edges to research, execution, or a colocated OpenClaw adapter exist here. This is the 'distinct control Compose external-runtime wiring' this contract now explicitly selects and describes, rather than silently assuming docker-compose.yml's edges apply to prod_control."
+    },
+    "prod_execution": {
+      "compose_file": "docker-compose.exec.yml",
+      "shape": "a wholly separate, isolated Compose project (see execution.dependency_requirements below); declares no postgres/nats and no control-plane services."
+    }
+  },
+  "profiles": {
+    "core": {
+      "sa_definition": "Postgres, NATS, Caddy, Operator BFF, Projectors, Lifecycle",
+      "activation": {"dev": "YES", "ephemeral_staging": "YES", "prod_control": "YES", "prod_execution": "NO"},
+      "services": [
+        "postgres", "nats", "operator-bff", "router", "telemetry",
+        "governance", "deployment", "incidents", "postmortems",
+        "loop-run-projector-scheduler", "lineage-read", "web-channel"
+      ],
+      "opt_in_never_default": [
+        {
+          "service": "lifecycle-projector-capacity-benchmark",
+          "reason": "docker-compose.yml:1519-1528 declares `profiles: [\"lifecycle-capacity-benchmark\"]`; the file's own comment says it is a run-once harness \"never started with the default stack\". It is a distinct opt-in benchmark job, not part of core's default activation on any environment."
+        }
+      ],
+      "health_requirements": "Postgres/NATS healthchecks gate every dependent service (existing service_healthy conditions retained). Operator BFF /readyz must stay green independent of GCS bucket configuration (attachment store degrades to local-filesystem, never blocks readiness).",
+      "dependency_requirements": "postgres, nats as hard startup dependencies in every environment. No minio dependency in this profile. On docker-compose.yml (dev/ephemeral_staging, per compose_topology_by_environment above), three of this profile's own services carry additional hard `condition: service_healthy` edges outside core that this design task retains as-is rather than restructuring: telemetry (docker-compose.yml:1036-1042) and incidents (docker-compose.yml:1079-1087) each require runtime-manager (execution profile) healthy, and operator-bff (docker-compose.yml:1394-1395) requires four research-profile services, openclaw-gateway-adapter (management-ai profile), paper-fleet-reconciler (execution profile) and runtime-manager (execution profile) healthy. The unclassified-default-core evolution service (docker-compose.yml:1967-1971) also hard-depends on runtime-manager. None of these edges exist on docker-compose.control.yml (prod_control): there, operator-bff/telemetry/incidents reach runtime-manager only through the external `PANTHEON_RUNTIME_MANAGER_URL` env var and openclaw-gateway-adapter is reached only through the external `PANTHEON_OPENCLAW_GATEWAY_ADAPTER_URL` env var, with no compose `depends_on` edge and no colocated adapter service in that file. So core's dependency closure is genuinely different per Compose file today: clean (postgres/nats only) on prod_control, but cross-profile-coupled on the dev/ephemeral_staging mono-stack. Breaking that mono-stack coupling (making telemetry/incidents/operator-bff/evolution startup independent of research/management-ai/execution health) is Compose restructuring work reserved for OSS-INFRA-PROFILES-001; this task documents the gap rather than fabricating an already-clean closure for dev/ephemeral_staging.",
+      "volume_requirements": ["postgres-data", "nats-data", "governance-data", "incident-data", "telemetry-data", "lineage-data", "bff-data"],
+      "volume_requirements_note": "bff-data is operator-bff's own durable volume (docker-compose.yml:1371, docker-compose.control.yml:361), previously omitted here. On the dev/ephemeral_staging mono-stack it is also mounted writable (`bff-data:/data/bff`, not `:ro`) by two workers-profile services outside this profile — agora-interaction-worker (docker-compose.yml:1462) and source-ingest-agora-projector (docker-compose.yml:302) — and source-ingest-agora-projector's own command, scripts/project_market_data_to_bff_agora_surfaces.py:412-440, actually writes its JSON market/signal projections into that mounted path. This is a pre-existing cross-profile writable mount this design task documents and preserves rather than removes or narrows; downstream profile implementation must keep this write access intact so projection output is not broken. Reconciling or splitting that mount is Compose work reserved for OSS-INFRA-PROFILES-001.",
+      "isolation_requirements": "Only this profile's Caddy/Operator BFF edge may accept public ingress; core never carries live broker credentials."
+    },
+    "workers": {
+      "sa_definition": "Scheduler, Outbox consumer, Policy/Audit reconcilers",
+      "activation": {"dev": "YES", "ephemeral_staging": "Conditional", "prod_control": "YES (Singleton), except research-owned workers below", "prod_execution": "NO"},
+      "services": [
+        "deployment-outbox-consumer", "reconciliation-drift-consumer",
+        "reconciliation-drift-scheduler", "reconciliation-drift-incident-listener",
+        "evolution-dispatch-worker", "evolution-daily-sweep-scheduler",
+        "evolution-threshold-sweep-producer",
+        "search-index-scheduler", "source-ingest-scheduler",
+        "source-ingest-agora-projector", "source-ingest-controller-migrate",
+        "agora-interaction-worker", "strategy-distillation-worker"
+      ],
+      "research_owned_workers_conditional_on_research_profile": {
+        "services": ["alpha-replication-worker", "training-session-preview-worker", "policy-learning-shadow-eval-scheduler"],
+        "reason": "Each has a hard `depends_on: ... condition: service_healthy` on a `research`-profile service that is inactive in Prod Control: alpha-replication-worker -> research-orchestrator-svc (docker-compose.yml:381-385), training-session-preview-worker -> training-session-svc (docker-compose.yml:561-563), policy-learning-shadow-eval-scheduler -> policy-learning-svc (docker-compose.yml:666-670). Since `research` activation is `prod_control: NO`, these three workers cannot be started as prod_control singletons like the rest of the workers list; their effective activation follows `research`'s row (dev: YES, ephemeral_staging: NO, prod_control: NO, prod_execution: NO), not the workers-profile default.",
+        "activation": {"dev": "YES", "ephemeral_staging": "NO", "prod_control": "NO", "prod_execution": "NO"}
+      },
+      "health_requirements": "Each scheduler/consumer keeps its own liveness signal (health file or /readyz); prod_control runs each non-research-owned worker as a singleton (no horizontal replicas) per SA.md §5 footnote. The three research-owned workers above are simply not started in prod_control, so no singleton question arises there.",
+      "dependency_requirements": "postgres, nats, and the owning core-or-research service (e.g. reconciliation-drift-svc, evolution, source-ingest for the core-owned workers; research-orchestrator-svc, training-session-svc, policy-learning-svc for the research-owned workers) as declared today. No minio dependency. On docker-compose.yml (dev/ephemeral_staging), deployment-outbox-consumer additionally hard-depends on runtime-manager (execution profile) being healthy (docker-compose.yml:1922-1926); this edge does not exist on docker-compose.control.yml, which reaches runtime-manager only via the external `PANTHEON_RUNTIME_MANAGER_URL` env var (see core.dependency_requirements and compose_topology_by_environment above).",
+      "volume_requirements": ["reconciliation-drift-data", "evolution-data", "policy-learning-data", "search-data", "source-ingest-data", "training-session-data"],
+      "isolation_requirements": "Workers never expose a public port; prod_control singleton constraint prevents duplicate outbox/reconciler consumption among the core-owned workers."
+    },
+    "research": {
+      "sa_definition": "Model engines, MLflow, FinRL, Qlib, Data Scrapers",
+      "activation": {"dev": "YES", "ephemeral_staging": "NO", "prod_control": "NO", "prod_execution": "NO"},
+      "services": [
+        "research-orchestrator-svc", "research-worker-gateway-svc",
+        "training-session-svc", "policy-learning-svc",
+        "finrl-dormant-smoke", "mlflow-dormant-smoke", "qlib-dormant-smoke",
+        "rllib-dormant-smoke", "ray-tune-dormant-smoke", "trl-dormant-smoke",
+        "experiments-dormant-smoke"
+      ],
+      "health_requirements": "Dormant-smoke placeholders stay opt-in/inactive by default per OSS-INFRA-PROFILES-001's acceptance criterion to make unused research services opt-in; only research-orchestrator-svc/research-worker-gateway-svc/training-session-svc/policy-learning-svc are always-on in dev.",
+      "dependency_requirements": "postgres required; nats optional per service. No minio dependency (research-orchestrator-svc currently declares PANTHEON_S3_* env only for posture, not I/O, per storage-consumer-matrix.json).",
+      "volume_requirements": ["research-orchestrator-data", "research-worker-gateway-data", "training-session-data", "policy-learning-data"],
+      "isolation_requirements": "Never activated outside dev; heavy ML dependency images stay isolated from core/workers/management-ai/execution images (separate per-framework containers, no shared requirements file, per AI_COLLABORATION_GUIDE.md OSS framework rule)."
+    },
+    "management-ai": {
+      "sa_definition": "OpenClaw, diagnostic kernel (read-only)",
+      "activation": {"dev": "YES", "ephemeral_staging": "Conditional", "prod_control": "YES (Read-Only)", "prod_execution": "NO"},
+      "services": [
+        "openclaw-gateway", "openclaw-gateway-adapter", "openclaw-data-init",
+        "openclaw-activation-ready-e2e"
+      ],
+      "health_requirements": "Read-only diagnostic posture on prod_control: no durable-write command routes active; existing /readyz probes unchanged.",
+      "dependency_requirements": "No minio dependency. On docker-compose.yml (dev/ephemeral_staging), openclaw-gateway-adapter itself declares no depends_on edge on any core service (docker-compose.yml:861-871 lists only the optional, management-ai-internal openclaw-data-init/openclaw-gateway); the dependency runs the other direction from a prior draft of this contract: operator-bff (docker-compose.yml:1394-1395) and consultation-svc (docker-compose.yml:138-144, unclassified-default-core) each hard-depend on openclaw-gateway-adapter being healthy first. So management-ai's adapter gates part of core startup, not the reverse, and there is no circular wait in the actual Compose graph. On docker-compose.control.yml (prod_control) neither edge exists: operator-bff reaches the adapter only via the external, required-nonblank `PANTHEON_OPENCLAW_GATEWAY_ADAPTER_URL` env var, and no openclaw-gateway-adapter service is declared in that file at all. The BFF's management_ai_store.py attachment path remains the profile's only object-store touchpoint and stays env-gated to GCS/local-fallback per storage-topology-decision.md.",
+      "volume_requirements": ["openclaw-data", "openclaw-adapter-data", "bff-data"],
+      "isolation_requirements": "Prod Control instance is read-only (no SOURCE_MANAGEMENT_COMMANDS_ENABLED / mutation routes armed); dev instance may enable durable-write local testing only."
+    },
+    "execution": {
+      "sa_definition": "Runtime Manager, Broker Adapter, Exchange Adapter, Live LEAN",
+      "activation": {"dev": "NO (Paper)", "ephemeral_staging": "Conditional (Sandbox)", "prod_control": "NO", "prod_execution": "YES (Phase 4)"},
+      "activation_clarification_dev_paper": "'NO (Paper)' does not mean this profile's services are absent from the running dev Compose stack; it means the Live broker capability is disabled (PANTHEON_LIVE_BROKER_ENABLED=false) while the Paper-topology runtime-manager, broker, signal-store, and paper-signal-producer still run and are actually healthy in dev, and paper-fleet-reconciler starts exactly one binding-scoped paper-runtime worker per active paper RuntimeBinding, because core/workers services listed above (telemetry, incidents, evolution, operator-bff, deployment-outbox-consumer) hard-depend on runtime-manager being healthy on docker-compose.yml. So 'execution: dev: NO (Paper)' is best read as 'no Live broker authority', not 'this profile's dev services can be skipped' — SA.md's activation table names the trading-capability posture, not literal container absence, and this contract's per-profile dependency_requirements sections above already reflect that runtime-manager is a real dev startup dependency of several core/workers services.",
+      "note_two_distinct_compose_projects": "This profile spans two separate Compose files with different service sets; they are not the same running stack and must not be merged into one flat service list.",
+      "services": {
+        "dev_and_ephemeral_staging_paper_topology__docker_compose_yml": [
+          "runtime-manager", "broker", "signal-store",
+          "paper-signal-producer", "paper-fleet-reconciler"
+        ],
+        "dev_and_ephemeral_staging_opt_in__docker_compose_yml": {
+          "service": "pantheon-paper-runtime",
+          "reason": "docker-compose.yml:2364-2370 declares `profiles: [\"static-paper-runtime\"]` and its own comment describes it as a compatibility-only static worker: the default root stack is driven by paper-fleet-reconciler, which starts exactly one binding-scoped worker per active paper RuntimeBinding, and starting this unbound fallback in parallel leaves a permanently unhealthy rt-devloop-l0-001 container plus misleading RuntimeBinding-required errors. It is not part of the default dev/ephemeral_staging paper topology and is not claimed as running/healthy by default."
+        },
+        "prod_execution_isolated_vm2_stack__docker_compose_exec_yml": [
+          "signal-store", "runtime-manager", "broker-adapter",
+          "exchange-adapter", "pantheon-paper-runtime"
+        ],
+        "prod_execution_opt_in": {
+          "service": "pantheon-lean-live",
+          "reason": "docker-compose.exec.yml:195 declares `profiles: [\"live\"]`; not started by default even on Prod Execution."
+        }
+      },
+      "health_requirements": "PANTHEON_LIVE_BROKER_ENABLED=false hardcoded outside the isolated Prod Execution VM (SA.md Architecture Invariant #5); readiness gates on paper/broker adapter health only.",
+      "dependency_requirements": "Dev/ephemeral-staging paper topology (docker-compose.yml) shares postgres/nats/signal-store with the `core` profile inside one compose project; signal-store (docker-compose.yml:89) is consumed only by this profile's paper-fleet-reconciler/paper-signal-producer/pantheon-paper-runtime, not by any core service, so it is scoped to `execution` rather than `core`. Prod Execution (docker-compose.exec.yml) is a wholly separate, isolated compose project that its own header comment says \"intentionally excludes control-plane services such as operator-bff ... and telemetry\" — it declares no postgres and no nats at all, so `core` supplies neither postgres nor nats to it. Instead docker-compose.exec.yml declares its own signal-store, and pantheon-paper-runtime has a hard `depends_on: signal-store, runtime-manager, broker-adapter, exchange-adapter (all condition: service_healthy)` (docker-compose.exec.yml:173-181); broker-adapter and exchange-adapter each in turn depend on runtime-manager being service_healthy. No minio dependency in either topology; execution never touches object storage in the current codebase (storage-consumer-matrix.json shows zero boto3/S3 usage repo-wide).",
+      "volume_requirements": {
+        "dev_and_ephemeral_staging__docker_compose_yml": ["runtime-data", "broker-data", "capital-data"],
+        "prod_execution__docker_compose_exec_yml": ["runtime-data"]
+      },
+      "isolation_requirements": "Prod Execution VM has zero public IP / zero public ingress and accepts traffic only from Prod Control over private VPC peering, per SA.md Architecture Invariant #3; this profile must never be co-activated with prod_control."
+    }
+  },
+  "unclassified_services_default_rule": "Any docker-compose service not explicitly listed above and not carrying its own `profiles:` array (for example capital, registry, promotion, evaluation, persona, memory, consultation-svc, feedback, search-svc, source-ingest, evolution) remains scoped to `core` by default until OSS-INFRA-PROFILES-001 assigns it a profile during Compose convergence; this contract intentionally does not force every one of the ~80 declared services into a bucket, since that assignment is that task's implementation work, not this task's choice-and-design scope. Services that already declare their own Compose `profiles:` array (dormant-smoke placeholders at docker-compose.yml:2607,2639,2658,2679,2700,2713,2724; `openclaw-activation-ready-e2e` at :2544; `lifecycle-projector-capacity-benchmark` at :1519; `pantheon-lean-live` in docker-compose.exec.yml:195) are explicitly opt-in and are excluded from this default-to-core rule entirely — they are never started by any of the four environment activations above unless their named Compose profile is passed explicitly, so 'default' does not apply to them at all."
+}
