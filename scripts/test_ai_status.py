@@ -16427,6 +16427,53 @@ class TestStaleArchiveResurrectionContract(unittest.TestCase):
         on_disk_snapshot = ai_status.load_archived_snapshot("REG-002")
         self.assertEqual(ai_status._canonical_json_sha256(on_disk_snapshot), orig_sha)
 
+    def test_concurrency_reconcile_vs_terminal_assign_admission(self) -> None:
+        self._build_fixture()
+        barrier = self.root / "preflight_barrier_assign"
+        ready_file = Path(f"{barrier}.ready")
+        go_file = Path(f"{barrier}.go")
+        before_archive = task_archive.archive_task_path("REG-002").read_bytes()
+        evidence_root = self.root / "pantheon"
+        env = {
+            k: v for k, v in os.environ.items()
+            if not k.startswith("PANTHEON_") and not k.startswith("ORCH_")
+        }
+        env.update(self._current_reconcile_env)
+        env.update({
+            "AI_NAME": "Human/Ops", "PANTHEON_LOCAL_HUMAN_OPS": "1",
+            "PANTHEON_TEST_PREFLIGHT_BARRIER": str(barrier),
+            "PYTHONPATH": f"{evidence_root}:{evidence_root / 'scripts'}:{evidence_root / '.orchestrator'}",
+        })
+        process = subprocess.Popen(
+            [sys.executable, str(evidence_root / "scripts" / "ai_status.py"),
+             "reconcile_merged_done", "REG-002", "Reconcile during assign admission"],
+            cwd=self.root, env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+        )
+        try:
+            deadline = time.monotonic() + 10
+            while time.monotonic() < deadline and not ready_file.exists() and process.poll() is None:
+                time.sleep(0.02)
+            self.assertTrue(ready_file.exists(), "Reconcile preflight did not reach barrier")
+            before_assign = deepcopy(ai_status.load_state())
+            assign = self._run_cli(["assign", "REG-002", "Claude", "Codex2"])
+            self.assertNotEqual(assign.returncode, 0, assign.stdout)
+            self.assertIn("already terminal/archived", assign.stderr)
+            self.assertEqual(ai_status.load_state(), before_assign)
+        finally:
+            go_file.write_text("go", encoding="utf-8")
+            try:
+                stdout, stderr = process.communicate(timeout=30)
+            except subprocess.TimeoutExpired:
+                process.kill()
+                stdout, stderr = process.communicate(timeout=10)
+                self.fail(f"Fixture recovery did not terminate: {stdout} {stderr}")
+        self.assertEqual(process.returncode, 0, stderr)
+        state = ai_status.load_state()
+        self.assertIsNone(ai_status.get_task(state, "REG-002"))
+        self.assertEqual(state[ai_status.TERMINAL_FACTS_KEY]["REG-002"]["generation"], 1)
+        self.assertIn("REG-002", state[ai_status.ARCHIVE_RECEIPTS_KEY])
+        self.assertEqual(task_archive.archive_task_path("REG-002").read_bytes(), before_archive)
+
     def test_concurrency_reconcile_vs_active_execution_claim_race(self) -> None:
         state, snapshot, config, orig_sha, rec_env = self._build_fixture()
         evidence_root = self.root / "pantheon"

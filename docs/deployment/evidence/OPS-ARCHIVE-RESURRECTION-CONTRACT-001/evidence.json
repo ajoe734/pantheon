@@ -3,7 +3,7 @@
   "task": {
     "id": "OPS-ARCHIVE-RESURRECTION-CONTRACT-001",
     "title": "Repair verified role-only archive resurrection in the existing TaskStore contract",
-    "owner": "Antigravity2",
+    "owner": "Codex2",
     "reviewer": "Codex",
     "base_branch": "dev",
     "base_sha": "a9557a6002e8170eb92415cc61e9d6a584cc610f",
@@ -26,7 +26,7 @@
     },
     "clause_3_strict_proof_requirements": {
       "status": "satisfied",
-      "detail": "Enforces exact merged original delivery/review with all 4 required review bindings (file, commit, merge_target_ref, merge_target_sha), byte-preserved archive snapshot with separate raw file SHA256 binding, identical scope contract (spec hash, acceptance, artifacts, dependencies, dev_bridge, execution_authorization), and complete authenticated ordered lineage chain (audit events) proving stale role-only resurrection."
+      "detail": "Enforces exact merged original delivery/review with all 4 required review bindings (file, commit, merge_target_ref, merge_target_sha), byte-preserved archive snapshot with separate raw file SHA256 binding, identical scope contract (spec hash, acceptance, artifacts, dependencies, dev_bridge, execution_authorization), and complete authenticated ordered lineage chain (audit events) proving stale role-only resurrection. Completion tracks must also be identical; a functional/hosted milestone blocks reuse of the original completion."
     },
     "clause_4_archive_and_generation_preservation": {
       "status": "satisfied",
@@ -34,7 +34,7 @@
     },
     "clause_5_preflight_cas_binding": {
       "status": "satisfied",
-      "detail": "Preflight CAS binds task, generation, spec hash, task digest, archive digest, raw archive file sha256, delivery, and audit proof range; revalidates inside authoritative transaction; excludes live worker/lease/queue."
+      "detail": "Preflight CAS binds task, generation, spec hash, task digest, archive digest, raw archive file sha256, delivery, and audit proof range; revalidates inside authoritative transaction; excludes live worker/lease/queue. Audit CAS now binds the complete ordered task history and every event payload, including the historical prefix; timestamps cannot remove events from the binding."
     },
     "clause_6_idempotent_retirement_and_recurrence_prevention": {
       "status": "satisfied",
@@ -46,15 +46,15 @@
     },
     "clause_8_positive_fixtures_and_crash_recovery": {
       "status": "satisfied",
-      "detail": "Positive fixtures with genuine isolated command runtime and git ancestry, executing real isolated CLI invocations (ai_status.py show, reconcile_merged_done, and recover) without in-process mocks; authenticated import provenance with mandatory exact bindings (generation, archive_generation, owner, reviewer, archive_snapshot_sha256, operator_mode: 'local_human_ops', agent: 'Human/Ops') and authenticated event_id against payload digest; deterministic real-process barriers covering mutation and active worker claim between preflight and commit via production runtime_state_update lock; crash interruption across all four crash boundaries (before_commit, pending_status, readback, receipt), restart recovery, proof-change refusal, outbox receipt convergence, and idempotent recovery with exact byte, generation, and archive checks."
+      "detail": "Positive fixtures with genuine isolated command runtime and git ancestry, executing real isolated CLI invocations (ai_status.py show, reconcile_merged_done, and recover) without in-process mocks; authenticated import provenance with mandatory exact bindings (generation, archive_generation, owner, reviewer, archive_snapshot_sha256, operator_mode: 'local_human_ops', agent: 'Human/Ops') and authenticated event_id against payload digest; deterministic real-process barriers covering mutation and active worker claim between preflight and commit via production runtime_state_update lock; crash interruption across all four crash boundaries (before_commit, pending_status, readback, receipt), restart recovery, proof-change refusal, outbox receipt convergence, and idempotent recovery with exact byte, generation, and archive checks. Additional real two-process recovery-versus-assign test proves assign is rejected at terminal admission during the preflight barrier, after which recovery preserves g1 and exact archive bytes. Existing note-mutation CAS and active-execution claim races also pass."
     },
     "clause_9_zero_effect_negatives": {
       "status": "satisfied",
-      "detail": "Zero-effect negatives verified for unauthenticated import (missing event_id, unauthorized actor, missing or invalid operator_mode, missing/mismatched generation, archive_generation, owner, reviewer, archive_snapshot_sha256, unauthenticated event_id digest), corrupt/malformed runtime structures (dict or list workers, queue, leases, supervisor reservations with launch_intent), active review invalidation/rejection, missing review evidence fields (file, commit, merge_target_ref, merge_target_sha), raw archive byte drift, intervening new work, nonoperator invocations, and concurrent CAS/proof forks."
+      "detail": "Zero-effect negatives verified for unauthenticated import (missing event_id, unauthorized actor, missing or invalid operator_mode, missing/mismatched generation, archive_generation, owner, reviewer, archive_snapshot_sha256, unauthenticated event_id digest), corrupt/malformed runtime structures (dict or list workers, queue, leases, supervisor reservations with launch_intent), active review invalidation/rejection, missing review evidence fields (file, commit, merge_target_ref, merge_target_sha), raw archive byte drift, intervening new work, nonoperator invocations, and concurrent CAS/proof forks. Reviewer P1 regressions add actual CLI milestone and non-role lifecycle events, plus backdated/undated/invalid-time events inserted after import and after reassignment. Rejection preserves exact journal, activity, archive, canonical state and runtime bytes. Unknown lifecycle events fail closed; ordered authenticated historical prefixes remain eligible."
     },
     "clause_10_clean_worktree_base": {
       "status": "satisfied",
-      "detail": "Task worktree based on dev tip e9d1a1e50b4f098db6e62c1c4e247f1f40f36827 with clean scoped artifacts."
+      "detail": "Refreshed origin/dev at a9557a6002e8170eb92415cc61e9d6a584cc610f; source includes both accepted predecessor merges. Continued existing clean task branch at reviewed head 84ee8e5969476a680968439f046a42980a0f7826. Codex2 anchor 81e8c99a221c5e76bbead63ffc84278d0dcccfc2 preserves the review repair."
     },
     "clause_11_governed_delivery": {
       "status": "pending",
@@ -62,11 +62,11 @@
     },
     "clause_12_ppl_alloc_007_ground_truth_hold": {
       "status": "satisfied",
-      "detail": "Live canonical task PPL-ALLOC-007 evaluated against canonical state and archive: reports eligible: false, reason: 'stale resurrection lineage missing authoritative import/re-entry event: PPL-ALLOC-007', perfectly preserving the hold without live mutation."
+      "detail": "Governed read-only show confirms PPL-ALLOC-007 remains blocked, owner Codex2, generation 2; original archive byte SHA256 is cf95cc79c44a027f42046f83572029d07563a207fa1cc66a4685b755f7ce4c78. Original report identifies unresolved import/re-entry provenance and historical reviewer drift. No target reconciliation or candidate-runtime command against live state was performed; coordinator must revalidate complete real proof after accepted source and qualified runtime."
     },
     "clause_13_ppl_alloc_009_hold_preserved": {
       "status": "satisfied",
-      "detail": "PPL-ALLOC-009 remains an evidence-only hosted hold under genuine temporary authorization hold; original acceptance clauses and dependencies are unchanged. No runnable ownership restored or hosted execution triggered."
+      "detail": "Governed read-only show confirms PPL-ALLOC-009 remains Human/Ops-owned, todo, generation 4, with the genuine temporary non-executable hosted authorization hold. Original five acceptance clauses and seven dependencies are unchanged. No ownership restoration, grant, or hosted execution was performed."
     }
   },
   "diagnostics": {
@@ -76,71 +76,123 @@
       "active_generation": 2,
       "eligible": false,
       "reason": "stale resurrection lineage missing authoritative import/re-entry event: PPL-ALLOC-007",
-      "hold_preserved": true
+      "hold_preserved": true,
+      "scope": "Prior implementation diagnostic retained as historical evidence, not a fresh candidate-runtime validation of live state."
     }
   },
   "verification": {
     "status": "passed",
     "commands": [
       {
-        "name": "archive_resurrection_contract_tests",
-        "command": "AI_NAME=Antigravity2 python3 -m pytest -q scripts/test_ai_status.py -k TestStaleArchiveResurrectionContract",
-        "passed": 30,
-        "subtests_passed": 23,
+        "name": "ai_status_full_suite",
+        "command": "AI_NAME=Codex2 timeout 600 .venv-pantheon/bin/python3 -m pytest -q scripts/test_ai_status.py",
+        "passed": 436,
+        "subtests_passed": 156,
         "failed": 0,
-        "exit_code": 0
+        "skipped": 0,
+        "exit_code": 0,
+        "terminal_output": "436 passed, 156 subtests passed in 279.88s (0:04:39)",
+        "output_sha256": "f7c2dac8117c0ad458125d3894464a5bec8c1dacf40f2e3e72f4dd0e8cbfbc3b"
       },
       {
-        "name": "same_generation_smoke_tests",
-        "command": "AI_NAME=Antigravity2 python3 -m pytest -q scripts/test_ai_status.py -k 'reconcile_merged_done_reuses_matching_immutable_archive or same_delivery_archive_recovery'",
-        "passed": 3,
-        "subtests_passed": 4,
+        "name": "related_full_suites",
+        "command": "AI_NAME=Codex2 timeout 300 .venv-pantheon/bin/python3 -m pytest -q .orchestrator/test_task_archive_index_legacy_id.py .orchestrator/development_bridge/tests/test_dev_bridge_materialize.py scripts/test_seed_task_state_v2.py .orchestrator/rewrite/test_task_state_store.py .orchestrator/test_dispatch_policy.py .orchestrator/test_supervisor.py",
+        "passed": 332,
+        "subtests_passed": 59,
         "failed": 0,
-        "exit_code": 0
+        "skipped": 0,
+        "exit_code": 0,
+        "terminal_output": "332 passed, 59 subtests passed in 92.90s (0:01:32)",
+        "output_sha256": "83d495c9d7fd7499174fe7178799e0cacd228a5916ce96424825b85caf80d30c"
       },
       {
-        "name": "reviewer_probes",
-        "command": "PYTHONPATH=. python3 /tmp/ops_archive_codex_round2_probes.py",
-        "passed": 4,
+        "name": "real_assign_race",
+        "command": "AI_NAME=Codex2 timeout 120 .venv-pantheon/bin/python3 -m pytest -q scripts/test_ai_status.py -k test_concurrency_reconcile_vs_terminal_assign_admission",
+        "passed": 1,
         "subtests_passed": 0,
         "failed": 0,
-        "exit_code": 0
-      },
-      {
-        "name": "archive_index_and_bridge_materialize_and_seed_tests",
-        "command": "AI_NAME=Antigravity2 python3 -m pytest -q .orchestrator/test_task_archive_index_legacy_id.py .orchestrator/development_bridge/tests/test_dev_bridge_materialize.py scripts/test_seed_task_state_v2.py",
-        "passed": 17,
-        "subtests_passed": 4,
-        "failed": 0,
-        "exit_code": 0
-      },
-      {
-        "name": "store_and_dispatch_policy_tests",
-        "command": "AI_NAME=Antigravity2 python3 -m pytest -q .orchestrator/rewrite/test_task_state_store.py .orchestrator/test_dispatch_policy.py",
-        "passed": 62,
-        "subtests_passed": 0,
-        "failed": 0,
-        "exit_code": 0
-      },
-      {
-        "name": "supervisor_tests",
-        "command": "AI_NAME=Antigravity2 python3 -m pytest -q .orchestrator/test_supervisor.py",
-        "passed": 253,
-        "subtests_passed": 55,
-        "failed": 0,
-        "exit_code": 0
+        "skipped": 0,
+        "exit_code": 0,
+        "terminal_output": "1 passed, 436 deselected in 7.46s",
+        "output_sha256": "0f140e90658123c3da8c419a6247b2ab438cccbbb800cc643175eb94b936d421"
       }
     ],
+    "preparation": "Provisioned .venv-pantheon with scripts/dev/provision_python_distribution.py using /tmp/ops-merged-archive-reconcile-venv/bin/python as dependency interpreter. Bare system Python lacks pytest; its initial invocation exited 1 and was not counted as passed.",
     "totals": {
-      "passed": 369,
-      "subtests_passed": 86,
-      "failed": 0
-    }
+      "passed": 769,
+      "subtests_passed": 215,
+      "failed": 0,
+      "skipped": 0
+    },
+    "collection": "Every foreground batch reached a collected terminal exit. The full 436-test status batch started before adding the independently executed assign-race test; together they cover all 437 current status tests. Related production sources did not change after their batch passed.",
+    "development_failures": "Initial regression fixtures needed optional runtime-file handling and valid positive generation numbering. Full status suite then found five old fixture-order/message assumptions (431 passed, 5 failed, exit 1); preserved each negative evidence assertion, corrected fixture append order and diagnostic text, and reran the complete suite successfully. Failed attempts are not counted in accepted totals."
   },
   "not_claimed": [
     "PPL-ALLOC-007 retirement or resolution",
     "PPL-ALLOC-009 execution or resolution",
     "Product runtime, Management AI, or Agora acceptance",
     "Privileged execution authorization grant"
-  ]
+  ],
+  "review_findings_resolved": {
+    "reviewed_head": "84ee8e5969476a680968439f046a42980a0f7826",
+    "P1-1": "Compare completion_tracks; admit only import/role events and narrative notes after archive, rejecting milestone/operator_accepted/superseded and unknown lifecycle mutations.",
+    "P1-2": "Validate timestamp presence and monotonic source order across all task events before selecting the proof interval; bind full payloads and history for transactional CAS.",
+    "test_environment": "Isolated CLI fixtures explicitly select their synthetic Human/Ops identity, independent of the invoking Codex2 worker; no live identity is changed."
+  },
+  "qualification_handoff": {
+    "source_acceptance": "pending independent exact-head review, required checks and dev merge for PR #5634",
+    "qualified_tooling_runtime": "pending coordinator-owned promotion through existing qualified runtime workflow after source acceptance",
+    "observed_command_runtime_sha": "e9d1a1e50b4f098db6e62c1c4e247f1f40f36827",
+    "actual_target_reconciliation": "not performed; original import/re-entry and reviewer-drift authority remains unproved",
+    "coordinator_next": "Qualify the accepted source via existing promotion path; use only existing Human/Ops reconcile-merged-done if complete real proof and execution-isolation checks pass; preserve PPL-ALLOC-009 authorization hold. Provide this residual evidence to existing SYS-SIMPLIFY-IMPLEMENTATION-CLOSURE-001 owner without a second global join."
+  },
+  "live_readback": {
+    "PPL-ALLOC-007": {
+      "command": "AI_NAME=Codex2 \"$PANTHEON_COMMAND_ROOT/scripts/ai-status.sh\" show PPL-ALLOC-007",
+      "exit_code": 0,
+      "output_sha256": "9bd2588cb8ed0021121d33c51387be4544be6324b8af0eedcb5f752eb46f1843",
+      "status": "blocked",
+      "owner": "Codex2",
+      "generation": 2,
+      "acceptance": [
+        "capital/persona pages show distinct binding identity; legacy routes redirect; ranking/readiness pages are diagnostics/readiness only"
+      ],
+      "depends_on": [
+        "PPL-ALLOC-003",
+        "PPL-ALLOC-006"
+      ]
+    },
+    "PPL-ALLOC-009": {
+      "command": "AI_NAME=Codex2 \"$PANTHEON_COMMAND_ROOT/scripts/ai-status.sh\" show PPL-ALLOC-009",
+      "exit_code": 0,
+      "output_sha256": "9db87e718faf4a91303edf02419f1290b747bb10fc425a2e8fd775a44ef45f0d",
+      "status": "todo",
+      "owner": "Human/Ops",
+      "generation": 4,
+      "acceptance": [
+        "all child tasks done or reviewed superseded; hosted smoke proves full path; closeout records PRs",
+        "SHAs",
+        "deployed commits",
+        "validation",
+        "residual risks"
+      ],
+      "depends_on": [
+        "PPL-ALLOC-002",
+        "PPL-ALLOC-003",
+        "PPL-ALLOC-004",
+        "PPL-ALLOC-005",
+        "PPL-ALLOC-006",
+        "PPL-ALLOC-007",
+        "PPL-ALLOC-008"
+      ]
+    }
+  },
+  "source_git_blobs": {
+    "scripts/ai_status.py": "d937ea2717683f8e39b0234dd7ca66bd3866435e",
+    "scripts/test_ai_status.py": "6fbd2fb12f87a32b219f97ce573c8df0de372ef6",
+    ".orchestrator/task_archive.py": "7fee7b3b35d783652e32e9aa81f004275c738f34",
+    ".orchestrator/development_bridge/dev_bridge_materialize.py": "9167adb143b492933639ae9f29654321a7874c78",
+    "docs/operations/management-ai-openclaw-dev-bridge.md": "4069bfcb846ed6540733fc8f777179ce32ae2d5f"
+  },
+  "delivery_binding_record": "The owner handoff binds the final PR head, exact dev base and committed manifest blob in canonical delivery_binding; manifest does not self-reference its own commit/blob."
 }
