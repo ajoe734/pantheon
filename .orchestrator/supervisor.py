@@ -7,6 +7,7 @@ import fcntl
 import fnmatch
 import hashlib
 import importlib
+import itertools
 import json
 import math
 import os
@@ -5040,24 +5041,17 @@ def complete_worker_after_responsibility_transition(
     *,
     message: str,
     last_event_at: str | None = None,
-) -> None:
+    governance_activity_events: list[dict[str, Any]] | None = None,
+) -> bool:
     """Close a successful run whose canonical responsibility already moved."""
 
-    worker["status"] = "completed"
-    worker["last_event_at"] = last_event_at or utc_now()
-    worker.pop("last_error", None)
-    finalize_queue_event_record(config, state, worker, "completed")
-    write_activity_log(
+    return _revalidate_and_commit_worker_terminal_status(
         config,
-        {
-            "type": "worker_completed",
-            "provider": worker.get("provider"),
-            "task_id": worker.get("task_id"),
-            "message": message,
-            "worker_run_id": worker.get("run_id"),
-            "pr_url": worker.get("pr_url"),
-            "session_url": worker.get("session_url"),
-        },
+        state,
+        worker,
+        message=message,
+        last_event_at=last_event_at,
+        governance_activity_events=governance_activity_events,
     )
 
 
@@ -7289,6 +7283,22 @@ def _terminate_processes_started_by_failed_phase(
             terminate_worker_process_generation(worker)
 
 
+def _safe_load_canonical_task(
+    config: Mapping[str, Any],
+    task_map: Mapping[str, Any],
+    task_id: str,
+) -> Mapping[str, Any] | None:
+    try:
+        st = load_status(dict(config))
+        return task_index_from_status(dict(config), st).get(task_id)
+    except KeyError:
+        if not (config.get("paths") and isinstance(config["paths"], Mapping) and config["paths"].get("status_file")):
+            return task_map.get(task_id)
+        return None
+    except Exception:
+        return None
+
+
 def _run_reserved_runtime_phase(
     config: dict[str, Any],
     phase_name: str,
@@ -7379,6 +7389,119 @@ def _run_reserved_runtime_phase(
             and _runtime_state_cas_digest(current)
             == str(phase_context.get("expected_digest") or "")
         )
+        if phase_error is None and cas_matches:
+            status_file = (
+                config.get("paths", {}).get("status_file")
+                if isinstance(config.get("paths"), Mapping)
+                else None
+            )
+            task_lock = (
+                canonical_task_state_lock_file(status_file, shared=True)
+                if status_file
+                else nullcontext()
+            )
+            with task_lock:
+                has_log_path = (
+                    bool((config.get("paths") or {}).get("activity_log"))
+                    if isinstance(config.get("paths"), Mapping)
+                    else False
+                )
+                disk_events = recent_governance_activity_events(dict(config))
+                fresh_events = disk_events if has_log_path else (disk_events or [])
+
+                if deferred_terminations:
+                    for term_pid, term_ticks in deferred_terminations:
+                        target_worker = None
+                        for candidate_worker in itertools.chain(
+                            (reserved.get("workers") or {}).values(),
+                            (scratch.get("workers") or {}).values(),
+                        ):
+                            if (
+                                isinstance(candidate_worker, Mapping)
+                                and int(candidate_worker.get("pid") or 0) == term_pid
+                            ):
+                                target_worker = candidate_worker
+                                break
+                        if target_worker is not None:
+                            t_id = str(target_worker.get("task_id") or "")
+                            if t_id:
+                                fresh_task = _safe_load_canonical_task(config, {}, t_id)
+                                if fresh_task is None:
+                                    cas_matches = False
+                                    break
+                                fresh_decision = active_worker_governance_lease_decision(
+                                    config,
+                                    target_worker,
+                                    fresh_task,
+                                    activity_events=fresh_events,
+                                )
+                                if fresh_decision.get("action") != "terminate":
+                                    cas_matches = False
+                                    break
+
+                if cas_matches:
+                    res_workers = reserved.get("workers") or {}
+                    scr_workers = scratch.get("workers") or {}
+                    res_queue = (reserved.get("queue") or {}).get("events") or {}
+                    scr_queue = (scratch.get("queue") or {}).get("events") or {}
+
+                    for r_id, r_worker in res_workers.items():
+                        if not isinstance(r_worker, Mapping):
+                            continue
+                        s_worker = scr_workers.get(r_id)
+                        r_status = str(r_worker.get("status") or "")
+                        s_status = str((s_worker or {}).get("status") or "")
+                        q_ev_id = r_worker.get("queue_event_id")
+                        q_res_status = str((res_queue.get(q_ev_id) or {}).get("status") or "")
+                        q_scr_status = str((scr_queue.get(q_ev_id) or {}).get("status") or "")
+
+                        transitioned_to_completed = (
+                            r_status != "completed"
+                            and (s_status == "completed" or (s_worker is None and q_scr_status == "completed"))
+                        )
+                        queue_transitioned_to_completed = (
+                            bool(q_ev_id)
+                            and q_res_status != "completed"
+                            and q_scr_status == "completed"
+                        )
+                        transitioned_to_superseded = (
+                            r_status != "superseded" and s_status == "superseded"
+                        )
+
+                        t_id = str(r_worker.get("task_id") or "")
+                        if not t_id:
+                            continue
+
+                        if transitioned_to_completed or queue_transitioned_to_completed:
+                            fresh_task = _safe_load_canonical_task(config, {}, t_id)
+                            if fresh_task is None:
+                                cas_matches = False
+                                break
+                            fresh_terminal = canonical_worker_terminal_status(
+                                config,
+                                r_worker,
+                                fresh_task,
+                                activity_events=fresh_events,
+                            )
+                            if fresh_terminal is None:
+                                cas_matches = False
+                                break
+
+                        elif transitioned_to_superseded:
+                            fresh_task = _safe_load_canonical_task(config, {}, t_id)
+                            if fresh_task is None:
+                                cas_matches = False
+                                break
+                            fresh_decision = active_worker_governance_lease_decision(
+                                config,
+                                r_worker,
+                                fresh_task,
+                                activity_events=fresh_events,
+                            )
+                            if fresh_decision.get("action") != "terminate":
+                                cas_matches = False
+                                break
+
         if phase_error is None and cas_matches:
             phase_reservations = (
                 scratch.setdefault("supervisor", {})
@@ -7852,23 +7975,31 @@ def canonical_worker_terminal_status(
                     if isinstance(snap_task, Mapping) and isinstance(snap_task.get("delivery_binding"), Mapping)
                     else snap_meta.get("delivery_binding")
                 )
-                if isinstance(dispatched_delivery, Mapping) and event_bridge is not None:
-                    disp_head = str(dispatched_delivery.get("head_sha") or "").strip()
-                    ev_head = str(event_bridge.get("head_sha") or "").strip()
-                    if disp_head and ev_head and disp_head.lower() != ev_head.lower():
+                if isinstance(dispatched_delivery, Mapping):
+                    dispatched_wrapper = (
+                        snap_task
+                        if isinstance(snap_task, Mapping)
+                        else {"id": task.get("id"), "delivery_binding": dispatched_delivery}
+                    )
+                    if not rewrite_task_machine.delivery_binding_is_current(dispatched_wrapper):
                         return None
-                    disp_pr = str(dispatched_delivery.get("pr") or "").strip()
-                    ev_pr = str(event_bridge.get("pr") or "").strip()
-                    if disp_pr and ev_pr and disp_pr.lstrip("#") != ev_pr.lstrip("#"):
-                        return None
-                    disp_manifest = dispatched_delivery.get("evidence_manifest")
-                    if isinstance(disp_manifest, Mapping) and task_delivery is not None and isinstance(task_delivery, Mapping):
-                        task_manifest = task_delivery.get("evidence_manifest")
-                        if isinstance(task_manifest, Mapping):
-                            if str(disp_manifest.get("blob_sha") or "").strip().lower() != str(task_manifest.get("blob_sha") or "").strip().lower():
-                                return None
-                            if str(disp_manifest.get("path") or "").strip() != str(task_manifest.get("path") or "").strip():
-                                return None
+                    if event_bridge is not None:
+                        disp_head = str(dispatched_delivery.get("head_sha") or "").strip()
+                        ev_head = str(event_bridge.get("head_sha") or "").strip()
+                        if disp_head and ev_head and disp_head.lower() != ev_head.lower():
+                            return None
+                        disp_pr = str(dispatched_delivery.get("pr") or "").strip()
+                        ev_pr = str(event_bridge.get("pr") or "").strip()
+                        if disp_pr and ev_pr and disp_pr.lstrip("#") != ev_pr.lstrip("#"):
+                            return None
+                        disp_manifest = dispatched_delivery.get("evidence_manifest")
+                        if isinstance(disp_manifest, Mapping) and task_delivery is not None and isinstance(task_delivery, Mapping):
+                            task_manifest = task_delivery.get("evidence_manifest")
+                            if isinstance(task_manifest, Mapping):
+                                if str(disp_manifest.get("blob_sha") or "").strip().lower() != str(task_manifest.get("blob_sha") or "").strip().lower():
+                                    return None
+                                if str(disp_manifest.get("path") or "").strip() != str(task_manifest.get("path") or "").strip():
+                                    return None
 
     elif event_type == "handoff":
         event_delivery = latest_terminal.get("delivery_binding")
@@ -8193,11 +8324,61 @@ def active_worker_governance_lease_decision(
         ["done"],
     ) | GOVERNANCE_TERMINAL_TASK_STATUSES
     if isinstance(task, Mapping) and str(task.get("status") or "").lower() in done_statuses:
+        task_status_lower = str(task.get("status") or "").lower()
+        if (
+            task_status_lower in {"cancelled", "canceled", "superseded"}
+            and latest_lifecycle is not None
+            and str(latest_lifecycle.get("type") or "").lower() in {"cancel", "cancelled", "canceled", "supersede", "superseded"}
+            and _ai_status_activity_event_id_matches(latest_lifecycle)
+        ):
+            event_actor = str(
+                latest_lifecycle.get("agent")
+                or latest_lifecycle.get("actor")
+                or latest_lifecycle.get("author")
+                or ""
+            ).strip()
+            event_gen = latest_lifecycle.get("task_generation")
+            if event_gen is None:
+                event_gen = latest_lifecycle.get("generation")
+            worker_gen = worker.get("task_generation")
+            if worker_gen is None and isinstance(worker.get("request_snapshot"), Mapping):
+                worker_gen = (worker["request_snapshot"] or {}).get("task_generation")
+            task_gen = task.get("generation")
+            if task_gen is None:
+                task_gen = task.get("task_generation")
+
+            task_owner = canonical_agent_name(config, str(task.get("owner") or "")).casefold()
+            task_reviewer = canonical_agent_name(config, str(task.get("reviewer") or "")).casefold()
+            event_actor_canon = canonical_agent_name(config, event_actor).casefold()
+            actor_authorized = bool(
+                event_actor
+                and (
+                    event_actor in {"Human/Ops", "Orchestrator"}
+                    or (task_owner and event_actor_canon == task_owner)
+                    or (task_reviewer and event_actor_canon == task_reviewer)
+                )
+            )
+            generation_valid = (
+                worker_matches_current_task_generation(worker, task)
+                and (event_gen is None or worker_gen is None or str(event_gen) == str(worker_gen))
+                and (event_gen is None or task_gen is None or str(event_gen) == str(task_gen))
+            )
+            if actor_authorized and generation_valid:
+                return {
+                    "action": "terminate",
+                    "reason_code": "authorized_terminal_cancellation",
+                    "source_event_id": latest_lifecycle.get("event_id"),
+                    "source_event_type": latest_lifecycle.get("type"),
+                }
         return {
-            "action": "terminate",
-            "reason_code": "authorized_terminal_cancellation",
-            "source_event_id": None,
-            "source_event_type": None,
+            "action": "preserve",
+            "reason_code": "missing_or_ambiguous_task_truth",
+            "source_event_id": latest_lifecycle.get("event_id") if latest_lifecycle else None,
+            "source_event_type": latest_lifecycle.get("type") if latest_lifecycle else None,
+            "producer_event_matches_process": status_event_matches_worker_process(
+                latest_lifecycle,
+                worker,
+            ),
         }
     if task is None:
         return {
@@ -10723,22 +10904,17 @@ def poll_worker_completion_stage(
         activity_events=governance_activity_events,
     )
     if canonical_terminal_status is not None:
-        worker["status"] = "completed"
-        worker["last_event_at"] = utc_now()
-        write_activity_log(
+        if _revalidate_and_commit_worker_terminal_status(
             config,
-            {
-                "type": "worker_completed",
-                "provider": worker.get("provider"),
-                "task_id": worker.get("task_id"),
-                "message": "Background worker process exited.",
-                "worker_run_id": worker["run_id"],
-                "pr_url": worker.get("pr_url"),
-                "session_url": worker.get("session_url"),
-            },
-        )
-        finalize_queue_event_record(config, state, worker, "completed")
-        return {"changed": True, "stop": True}
+            state,
+            worker,
+            task_map=task_map,
+            expected_status=canonical_terminal_status,
+            governance_activity_events=governance_activity_events,
+            message="Background worker process exited.",
+        ):
+            return {"changed": True, "stop": True}
+        return {"changed": False, "stop": True}
 
     if task_status in redispatch_statuses:
         if worker_prepared_review_head(worker):
@@ -10853,22 +11029,6 @@ def poll_worker_orphan_stage(
     return {"changed": True, "stop": True}
 
 
-def _safe_load_canonical_task(
-    config: Mapping[str, Any],
-    task_map: Mapping[str, Any],
-    task_id: str,
-) -> Mapping[str, Any] | None:
-    try:
-        st = load_status(dict(config))
-        return task_index_from_status(dict(config), st).get(task_id)
-    except KeyError:
-        if not (config.get("paths") and isinstance(config["paths"], Mapping) and config["paths"].get("status_file")):
-            return task_map.get(task_id)
-        return None
-    except Exception:
-        return None
-
-
 def _revalidate_and_commit_worker_terminal_status(
     config: Mapping[str, Any],
     state: dict[str, Any],
@@ -10894,8 +11054,9 @@ def _revalidate_and_commit_worker_terminal_status(
         fresh_task = _safe_load_canonical_task(config, task_map or {}, task_id)
         if fresh_task is None or not worker_matches_current_task_generation(worker, fresh_task):
             return False
+        has_log_path = bool((config.get("paths") or {}).get("activity_log")) if isinstance(config.get("paths"), Mapping) else False
         disk_events = recent_governance_activity_events(dict(config))
-        fresh_events = disk_events if disk_events else (governance_activity_events or activity_events or [])
+        fresh_events = disk_events if has_log_path else (disk_events or governance_activity_events or activity_events or [])
         fresh_terminal = canonical_worker_terminal_status(
             config,
             worker,
@@ -11035,118 +11196,104 @@ def poll_worker_assignment_stage(
     if worker.get("queue_event_id") and not worker_matches_current_assignment(config, worker, eval_task_map):
         if worker.get("status") == "superseded":
             return {"changed": False, "stop": True}
-        decision = (
-            {
-                "action": "terminate",
-                "reason_code": "task_generation_fence",
-                "source_event_id": None,
-                "source_event_type": None,
-            }
-            if generation_fence_crossed
-            else lease_guard_decision
-            or active_worker_governance_lease_decision(
-                config,
-                worker,
-                task,
-                activity_events=governance_activity_events,
-            )
+        task_id = str(worker.get("task_id") or "")
+        status_file = config.get("paths", {}).get("status_file") if isinstance(config.get("paths"), Mapping) else None
+        lock_ctx = (
+            canonical_task_state_lock_file(status_file, shared=True)
+            if status_file
+            else nullcontext()
         )
-        if alive and decision["action"] != "terminate":
-            changed = record_worker_governance_lease_guard(
-                config,
-                worker,
-                task,
-                decision,
-            ) or changed
-        elif alive and not terminate_worker_process_generation(worker):
-            changed = record_worker_governance_lease_guard(
-                config,
-                worker,
-                task,
-                {
-                    **decision,
-                    "action": "preserve",
-                    "reason_code": (
-                        "authorized_transition_termination_pending_confirmation"
-                        if worker_process_generation_is_current(worker)
-                        else "authorized_transition_process_identity_unproven"
-                    ),
-                },
-            ) or changed
-            return {"changed": changed, "stop": True}
-        else:
-            task_id = str(worker.get("task_id") or "")
-            status_file = config.get("paths", {}).get("status_file") if isinstance(config.get("paths"), Mapping) else None
-            lock_ctx = (
-                canonical_task_state_lock_file(status_file, shared=True)
-                if status_file
-                else nullcontext()
-            )
-            with lock_ctx:
-                current_task = _safe_load_canonical_task(config, task_map, task_id)
-                if current_task is not None and worker_matches_current_assignment(config, worker, {task_id: current_task}):
-                    return {"changed": False, "stop": False}
-                if not generation_fence_crossed:
-                    disk_events = recent_governance_activity_events(dict(config))
-                    fresh_events = disk_events if disk_events else (governance_activity_events or activity_events or [])
-                    fresh_decision = active_worker_governance_lease_decision(
+        with lock_ctx:
+            current_task = _safe_load_canonical_task(config, task_map, task_id)
+            if current_task is not None and worker_matches_current_assignment(config, worker, {task_id: current_task}):
+                return {"changed": False, "stop": False}
+            curr_generation_fence_crossed = isinstance(
+                current_task, Mapping
+            ) and not worker_matches_current_task_generation(worker, current_task)
+            has_log_path = bool((config.get("paths") or {}).get("activity_log")) if isinstance(config.get("paths"), Mapping) else False
+            disk_events = recent_governance_activity_events(dict(config))
+            fresh_events = disk_events if has_log_path else (disk_events or governance_activity_events or activity_events or [])
+            if curr_generation_fence_crossed:
+                decision = {
+                    "action": "terminate",
+                    "reason_code": "task_generation_fence",
+                    "source_event_id": None,
+                    "source_event_type": None,
+                }
+            else:
+                decision = active_worker_governance_lease_decision(
+                    config,
+                    worker,
+                    current_task,
+                    activity_events=fresh_events,
+                )
+            if decision["action"] != "terminate":
+                if alive:
+                    changed = record_worker_governance_lease_guard(
                         config,
                         worker,
                         current_task,
-                        activity_events=fresh_events,
-                    )
-                    if fresh_decision["action"] != "terminate":
-                        if alive:
-                            changed = record_worker_governance_lease_guard(
-                                config,
-                                worker,
-                                current_task,
-                                fresh_decision,
-                            ) or changed
-                        return {"changed": changed, "stop": False}
-                    decision = fresh_decision
-
-                worker["status"] = "superseded"
-                worker["last_event_at"] = utc_now()
-                reason_code = decision.get("reason_code")
-                if reason_code == "exact_worker_lifecycle_transition":
-                    worker["last_error"] = "Worker superseded after exact task responsibility transition."
-                    final_queue_status = "completed"
-                elif reason_code == "task_generation_fence":
-                    worker["last_error"] = "Worker superseded after task generation fence advanced."
-                    final_queue_status = "completed"
-                elif reason_code in {"authorized_terminal_cancellation", "terminal_task_truth", "terminal_activity_truth"}:
-                    worker["last_error"] = "Worker superseded after authorized terminal cancellation."
-                    final_queue_status = "cancelled"
-                else:
-                    worker["last_error"] = f"Worker superseded: {reason_code}."
-                    final_queue_status = "cancelled"
-                finalize_queue_event_record(
+                        decision,
+                    ) or changed
+                return {"changed": changed, "stop": False}
+            if alive and not terminate_worker_process_generation(worker):
+                changed = record_worker_governance_lease_guard(
                     config,
-                    state,
                     worker,
-                    final_queue_status,
-                    worker["last_error"],
-                )
-                write_activity_log(
-                    config,
+                    current_task,
                     {
-                        "type": "worker_superseded",
-                        "provider": worker.get("provider"),
-                        "task_id": worker.get("task_id"),
-                        "message": worker["last_error"],
-                        "worker_run_id": worker.get("run_id"),
-                        "queue_event_id": worker.get("queue_event_id"),
-                        "process_generation": worker.get("process_generation"),
-                        "governance_reason_code": decision.get("reason_code"),
-                        "source_event_id": decision.get("source_event_id"),
+                        **decision,
+                        "action": "preserve",
+                        "reason_code": (
+                            "authorized_transition_termination_pending_confirmation"
+                            if worker_process_generation_is_current(worker)
+                            else "authorized_transition_process_identity_unproven"
+                        ),
                     },
-                )
-                console_log(
-                    f"worker superseded: task={worker.get('task_id')} provider={worker.get('provider')} run={worker.get('run_id')}",
-                    quiet=SUPERVISOR_LOG_QUIET,
-                )
-                return {"changed": True, "stop": True}
+                ) or changed
+                return {"changed": changed, "stop": True}
+
+            worker["status"] = "superseded"
+            worker["last_event_at"] = utc_now()
+            reason_code = decision.get("reason_code")
+            if reason_code == "exact_worker_lifecycle_transition":
+                worker["last_error"] = "Worker superseded after exact task responsibility transition."
+                final_queue_status = "completed"
+            elif reason_code == "task_generation_fence":
+                worker["last_error"] = "Worker superseded after task generation fence advanced."
+                final_queue_status = "completed"
+            elif reason_code in {"authorized_terminal_cancellation", "terminal_task_truth", "terminal_activity_truth"}:
+                worker["last_error"] = "Worker superseded after authorized terminal cancellation."
+                final_queue_status = "cancelled"
+            else:
+                worker["last_error"] = f"Worker superseded: {reason_code}."
+                final_queue_status = "cancelled"
+            finalize_queue_event_record(
+                config,
+                state,
+                worker,
+                final_queue_status,
+                worker["last_error"],
+            )
+            write_activity_log(
+                config,
+                {
+                    "type": "worker_superseded",
+                    "provider": worker.get("provider"),
+                    "task_id": worker.get("task_id"),
+                    "message": worker["last_error"],
+                    "worker_run_id": worker.get("run_id"),
+                    "queue_event_id": worker.get("queue_event_id"),
+                    "process_generation": worker.get("process_generation"),
+                    "governance_reason_code": decision.get("reason_code"),
+                    "source_event_id": decision.get("source_event_id"),
+                },
+            )
+            console_log(
+                f"worker superseded: task={worker.get('task_id')} provider={worker.get('provider')} run={worker.get('run_id')}",
+                quiet=SUPERVISOR_LOG_QUIET,
+            )
+            return {"changed": True, "stop": True}
 
     stale_assignment_statuses = {
         "retry_backoff",

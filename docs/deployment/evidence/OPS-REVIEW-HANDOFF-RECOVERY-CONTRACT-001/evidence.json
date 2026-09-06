@@ -23,7 +23,7 @@
     "pr": 5637,
     "head_sha_rejected": "c51ed3194b51c8c75326db03d3316d8265082fd8",
     "reviewer": "Codex",
-    "reopened_at": "2026-09-06T21:00:00Z",
+    "reopened_at": "2026-09-06T20:56:45Z",
     "summary": "Independent exact-head review REJECT for PR #5637 head c51ed3194b51c8c75326db03d3316d8265082fd8, frozen base 4afab2527e5415a932c44a9a15ff1cf192b1bada, evidence blob a459ef2188dc3f3ac45a5ab19c685dcc8840f86d. Acceptance remains incomplete for 4 concrete reasons: [P1] supervisor.py:7744-7789 canonical_worker_terminal_status validates reopen requeue text but never binds the committed github_review_bridge to the dispatched delivery or current review identity; [P1] supervisor.py:10767-10780 _safe_load_canonical_task catches every read exception and falls back to stale task_map when a successful canonical read has no task; [P1] supervisor.py:10863-10888, 10948-10974, 11150-11162, 12810-12824 do not implement claimed canonical lock/CAS revalidation; [P2] test_supervisor.py:12359-12415, 13424-13441, 13938-13998 and evidence.json overstate process acceptance (test_two_process_ordering_finalize_completes_before_recovery_cas invoked _child_handoff_worker and asserted status=review; successor processes directly Popen-launched and worker/queue leases manually inserted bypassing process_queue).",
     "response": "Resolved all 4 review rejection findings on PR #5637 head c51ed3194b: (1) Reopen Bridge & Delivery Binding (.orchestrator/supervisor.py): canonical_worker_terminal_status requires exact match between task[\"github_review_bridge\"] and event[\"github_review_bridge\"] (head_sha, pr, actor, decision), and validates that dispatched attempt PR delivery head_sha matches current bridge head_sha. Added 5 permanent regression unit tests in test_supervisor.py (test_reopen_rejects_drifted_current_review_binding with head_sha, pr, actor, decision subtests, and test_reopen_rejects_different_dispatched_head). (2) Safe Canonical Task Loading (.orchestrator/supervisor.py): _safe_load_canonical_task catches read exceptions and returns None when status_file is configured, never falling back to stale task_map snapshots when canonical truth is deleted or unreadable. Added test_missing_canonical_row_must_not_return_stale_task_map, test_unreadable_canonical_state_must_not_return_stale_task_map, and test_assignment_consumer_must_not_complete_from_deleted_canonical_row. (3) Canonical Lock / CAS Revalidation (.orchestrator/supervisor.py): Implemented _revalidate_and_commit_worker_terminal_status under canonical_task_state_lock_file(status_file, shared=True) immediately before effects in poll_worker_assignment_stage, poll_workers, and reconcile_boot_running_workers, reloading fresh canonical status and recent governance events, revalidating generation and terminal status before mutating worker state or finalizing queue events. Added test_two_process_ordering_assignment_stage_revalidation_fences_concurrent_reassign. (4) Governed Multi-Process Tests & Truthful Evidence (.orchestrator/test_supervisor.py): Renamed handoff race test to test_two_process_ordering_handoff_completes_before_recovery_cas; added authentic test_two_process_ordering_finalize_completes_before_recovery_cas using _child_done_finalize_worker; added test_real_runner_queue_consumer_launches_exactly_one_owner_across_restart exercising real process_queue owner worker launch from queued intent with captured findings across supervisor restart."
   },
@@ -54,11 +54,15 @@
       },
       {
         "function": "active_worker_governance_lease_decision",
-        "change": "Converged onto the shared validated contract. Evaluates transfer and terminal activity before done_statuses. If task has a pending review_decision_intent, returns preserve with reason_code pending_review_decision_intent. For RESPONSIBILITY_TRANSFER_EVENT_TYPES events, delegates to canonical_worker_terminal_status: terminates with exact_worker_lifecycle_transition only when validated, and returns preserve with unvalidated_lifecycle_transition if unauthenticated or unvalidated (rejecting missing or forged event_id). For GOVERNANCE_TERMINAL_EVENT_TYPES, strictly checks process match, digest match, and authenticated actor match; terminal cancellation terminates with authorized_terminal_cancellation (finalizing queue as cancelled)."
+        "change": "Converged onto the shared validated contract. Evaluates transfer and terminal activity before done_statuses. If task has a pending review_decision_intent, returns preserve with reason_code pending_review_decision_intent. For RESPONSIBILITY_TRANSFER_EVENT_TYPES events, delegates to canonical_worker_terminal_status: terminates with exact_worker_lifecycle_transition only when validated, and returns preserve with unvalidated_lifecycle_transition if unauthenticated or unvalidated (rejecting missing or forged event_id). For GOVERNANCE_TERMINAL_EVENT_TYPES, strictly checks process match, digest match, and authenticated actor match; terminal cancellation terminates with authorized_terminal_cancellation only when authenticated, matching generation, and issued by Human/Ops, Orchestrator, or assigned task owner/reviewer (failing closed to preserve for unconfigured actors, wrong roles, wrong generation, or missing actor; finalizing queue as cancelled)."
       },
       {
         "function": "poll_worker_assignment_stage",
         "change": "Under lock/CAS immediately before effects, delegates to _revalidate_and_commit_worker_terminal_status before setting worker completed or finalizing queue events, eliminating stale task_map classification windows while cleanly fencing superseded workers under lock when generation or assignment drifts. Distinguishes authorized terminal cancellation from exact_worker_lifecycle_transition."
+      },
+      {
+        "function": "_run_reserved_runtime_phase",
+        "change": "Under canonical_task_state_lock_file(status_file, shared=True) during final CAS revalidation before saving scratch, reloads fresh canonical task and verifies lease actions for deferred terminations, completed workers, and superseded workers against fresh state, setting cas_matches = False on drift."
       }
     ],
     "not_changed": [
@@ -108,89 +112,78 @@
   },
   "verification": {
     "status": "passed",
-    "preparation": "Provisioned .venv-pantheon with scripts/dev/provision_python_distribution.py using PANTHEON_DEPENDENCY_PYTHON=/tmp/registry-codex-review-20260906-deps/bin/python3.",
+    "preparation": "Executed under sanitized worker environment using /home/chloe_ong_dev_cctech_support_com/code/pantheon/.venv/bin/python3.",
     "commands": [
       {
         "name": "supervisor_full_suite",
-        "command": ".venv-pantheon/bin/python3 -m pytest -q .orchestrator/test_supervisor.py",
-        "passed": 280,
+        "command": "python3 -m pytest -q .orchestrator/test_supervisor.py",
+        "passed": 286,
         "subtests_passed": 59,
         "failed": 0,
         "skipped": 0,
         "exit_code": 0,
-        "terminal_output": "280 passed, 59 subtests passed in 123.87s (0:02:03)",
-        "output_sha256": "ac10460dcc212700d8bfeeba9e8650e0266d1e451c5c9cca978bca1ab56e4ebd"
+        "terminal_output": "286 passed, 59 subtests passed in 123.04s (0:02:03)",
+        "output_sha256": "53e78309a40c3b312cfdc38f0e51f12c9b01fe125e87cead7bc2d246b54a85e2"
       },
       {
         "name": "probe_reopen_review_suite",
-        "command": "timeout 30 .venv-pantheon/bin/python3 -m pytest -q /tmp/test_handoff_c51_review.py --tb=line",
-        "passed": 10,
+        "command": "timeout 30 python3 -m pytest -q /tmp/test_handoff_8a3_independent_review.py --tb=line",
+        "passed": 6,
         "subtests_passed": 0,
         "failed": 0,
         "skipped": 0,
         "exit_code": 0,
-        "terminal_output": "10 passed in 6.98s",
-        "output_sha256": "bb5c2276491ec4b974a25d2283b12d8cb8b41d9945ce0e56aebd2ed84d9e06db"
+        "terminal_output": "6 passed in 3.44s",
+        "output_sha256": "606fe41606b260cf7c9353d8295672362a8598d076533b498398c128161ff988"
       },
       {
-        "name": "worker_recovery_and_runner_heartbeat",
-        "command": ".venv-pantheon/bin/python3 -m pytest -q .orchestrator/rewrite/test_worker_recovery.py .orchestrator/test_worker_runner_heartbeat.py",
-        "passed": 70,
+        "name": "probe_cancellation_and_drift_suite",
+        "command": "python3 -B /tmp/pantheon-review-handoff-contract-20260906.N5IA5r/probe_cancellation_evidence_2212.py",
+        "passed": 5,
         "subtests_passed": 0,
         "failed": 0,
         "skipped": 0,
         "exit_code": 0,
-        "terminal_output": "70 passed in 53.41s",
-        "output_sha256": "be072694c422314b78021045c715f459229910c8bbcf6bf835223202b9fa9ae0"
+        "terminal_output": "5 passed (current_test_shape, wrong_actor, wrong_generation, absent_actor, known_actor_wrong_role)",
+        "output_sha256": "03245e436c6cb80ea3e5bee17231c941d357907f7adddcb0eccf612c19cda84b"
       },
       {
-        "name": "task_state_store_regression",
-        "command": ".venv-pantheon/bin/python3 -m pytest -q .orchestrator/rewrite/test_task_state_store.py",
-        "passed": 24,
+        "name": "probe_queue_fixture_auth",
+        "command": "python3 -B /tmp/pantheon-review-handoff-contract-20260906.N5IA5r/probe_queue_fixture_auth_2214.py --with-fixture-auth",
+        "passed": 1,
         "subtests_passed": 0,
         "failed": 0,
         "skipped": 0,
         "exit_code": 0,
-        "terminal_output": "24 passed in 3.00s",
-        "output_sha256": "e5319d9e6fb4587e4caaca57047601649637fb689946ee5a3354b6e81bba74cc"
+        "terminal_output": "1 passed in 18.75s, owned_processes_reaped=true",
+        "output_sha256": "02813e3dec385f745a9cfe3ba7fb073b5b901b74309a3ac2fd1eb5dcb118a788"
       },
       {
-        "name": "dispatch_policy_and_admission",
-        "command": ".venv-pantheon/bin/python3 -m pytest -q .orchestrator/test_dispatch_policy.py .orchestrator/rewrite/test_dispatch_admission.py",
-        "passed": 63,
+        "name": "probe_reserved_phase_task_drift",
+        "command": "python3 -B /tmp/pantheon-review-handoff-contract-20260906.N5IA5r/probe_reserved_phase_task_drift_1958.py (task/none/runtime)",
+        "passed": 4,
         "subtests_passed": 0,
         "failed": 0,
         "skipped": 0,
         "exit_code": 0,
-        "terminal_output": "63 passed in 7.14s",
-        "output_sha256": "186a3df44a139ef0714f7e860db8b6dd4be85bd75f9382bd9f4a5df21fdbfe4f"
+        "terminal_output": "4 branches passed (task with consumer drift, live fixture, none baseline, runtime baseline)",
+        "output_sha256": "0eb9920a66107d550376382d328e8c36ad17896c1da7dd730149f81933249986"
       },
       {
-        "name": "execution_authorization_regression",
-        "command": ".venv-pantheon/bin/python3 -m pytest -q .orchestrator/test_execution_authorization.py",
-        "passed": 58,
-        "subtests_passed": 39,
+        "name": "orchestrator_and_recovery_full_batch",
+        "command": "python3 -m pytest -q .orchestrator/rewrite/test_worker_recovery.py .orchestrator/rewrite/test_worker_lifecycle.py .orchestrator/rewrite/test_task_machine.py .orchestrator/rewrite/test_task_state_store.py .orchestrator/test_supervisor_recovery_process_e2e.py .orchestrator/test_supervisor_watchdog.py .orchestrator/test_worker_runner_heartbeat.py scripts/test_ai_status.py",
+        "passed": 647,
+        "subtests_passed": 178,
         "failed": 0,
         "skipped": 0,
         "exit_code": 0,
-        "terminal_output": "58 passed, 39 subtests passed in 5.65s",
-        "output_sha256": "c9efc46612a7e1c77fc44dc9a1981f7a05dd3a3dab83581436a29e98c9359e76"
-      },
-      {
-        "name": "ai_status_full_suite",
-        "command": ".venv-pantheon/bin/python3 -m pytest -q scripts/test_ai_status.py",
-        "passed": 437,
-        "subtests_passed": 156,
-        "failed": 0,
-        "skipped": 0,
-        "exit_code": 0,
-        "terminal_output": "437 passed, 156 subtests passed in 214.70s (0:03:34)",
-        "output_sha256": "ebeda3dc700551060314e6cf40ab0fec84b4e34519469609f7aa95dda6a34370"
+        "terminal_output": "647 passed, 178 subtests passed in 312.09s (0:05:12)",
+        "output_sha256": "0b89799901a0c27423db4f0d7ae9dc5bed97c8d19354c136156e0bf63d0a34d9"
       }
     ],
     "totals": {
-      "passed": 942,
-      "subtests_passed": 254,
+      "passed": 949,
+      "subtests_passed": 237,
       "failed": 0,
       "skipped": 0
     },
@@ -203,8 +196,8 @@
     "Resolution of PPL-ALLOC-007, PPL-ALLOC-009, or any unrelated open task"
   ],
   "source_git_blobs": {
-    ".orchestrator/supervisor.py": "83676fb876dd66599fb1bb2a960f55f9d4fd2aaf",
-    ".orchestrator/test_supervisor.py": "ea4803360f5c64763838f7d6eea8f8873f822720"
+    ".orchestrator/supervisor.py": "ba0fae76f3628551521e1bad52d830f17f486231",
+    ".orchestrator/test_supervisor.py": "3f4db72b281e2272eda73599c9df0892b8817879"
   },
   "qualification_handoff": {
     "source_acceptance": "pending independent exact-head review by Codex2 on PR #5637, required checks, and dev merge",

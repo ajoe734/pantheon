@@ -19,6 +19,7 @@ import copy
 import hashlib
 import inspect
 import json
+import itertools
 import os
 import shutil
 import signal
@@ -8872,20 +8873,76 @@ class RuntimeAndFailureSemanticsTests(unittest.TestCase):
             "processing",
         )
 
+        # Absent event on done task cannot authorize termination
+        absent_decision = supervisor.active_worker_governance_lease_decision(
+            config, owner_worker, done_task, activity_events=[]
+        )
+        self.assertEqual(absent_decision["action"], "preserve")
+        self.assertEqual(absent_decision["reason_code"], "missing_or_ambiguous_task_truth")
+
         # Consumer regression: genuine authorized terminal cancellation supersedes worker and cancels queue
+        cancel_task = task_fixture(status="cancelled", owner="Codex", reviewer="Codex2")
+        cancel_event = {
+            "type": "cancelled",
+            "task_id": cancel_task["id"],
+            "agent": "Human/Ops",
+            "ts": "2026-09-06T18:00:00Z",
+            "task_generation": 1,
+        }
+        cancel_event["event_id"] = (
+            "ai-status-event-"
+            + hashlib.sha256(
+                json.dumps(cancel_event, sort_keys=True, separators=(",", ":")).encode()
+            ).hexdigest()
+        )
         cancel_state = {
             "workers": {owner_worker["run_id"]: copy.deepcopy(owner_worker)},
             "queue": {
                 "events": {
                     owner_worker["queue_event_id"]: {
                         "status": "processing",
-                        "intent": {"event_id": owner_worker["queue_event_id"], "task_id": done_task["id"]},
+                        "intent": {"event_id": owner_worker["queue_event_id"], "task_id": cancel_task["id"]},
                     }
                 }
             },
         }
+        # Strict negative cancellation regressions: wrong actor, wrong generation, absent actor, known actor wrong role fail closed
+        config_with_claude = copy.deepcopy(config)
+        config_with_claude["agents"]["claude"] = {
+            **config_with_claude["agents"]["codex"],
+            "id": "claude",
+            "display_name": "Claude",
+            "provider": "claude",
+        }
+        for name, updates, cfg in [
+            ("wrong_actor", {"agent": "unconfigured-impostor"}, config),
+            ("wrong_generation", {"task_generation": 999}, config),
+            ("absent_actor", {"agent": ""}, config),
+            ("known_actor_wrong_role", {"agent": "Claude"}, config_with_claude),
+        ]:
+            neg_event = {**cancel_event, **updates}
+            neg_event["event_id"] = (
+                "ai-status-event-"
+                + hashlib.sha256(
+                    json.dumps(neg_event, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode()
+                ).hexdigest()
+            )
+            neg_decision = supervisor.active_worker_governance_lease_decision(
+                cfg, owner_worker, cancel_task, activity_events=[neg_event]
+            )
+            self.assertEqual(
+                neg_decision["action"],
+                "preserve",
+                msg=f"Expected preserve for {name}, got {neg_decision}",
+            )
+            self.assertEqual(
+                neg_decision["reason_code"],
+                "missing_or_ambiguous_task_truth",
+                msg=f"Expected missing_or_ambiguous_task_truth for {name}, got {neg_decision}",
+            )
+
         cancel_decision = supervisor.active_worker_governance_lease_decision(
-            config, owner_worker, done_task, activity_events=[]
+            config, owner_worker, cancel_task, activity_events=[cancel_event]
         )
         self.assertEqual(cancel_decision["action"], "terminate")
         self.assertEqual(cancel_decision["reason_code"], "authorized_terminal_cancellation")
@@ -8899,10 +8956,10 @@ class RuntimeAndFailureSemanticsTests(unittest.TestCase):
                 cancel_state,
                 cancel_state["workers"][owner_worker["run_id"]],
                 run_id=owner_worker["run_id"],
-                task_map={done_task["id"]: done_task},
+                task_map={cancel_task["id"]: cancel_task},
                 active_worker_statuses={"running"},
                 alive=True,
-                governance_activity_events=[],
+                governance_activity_events=[cancel_event],
             )
         term_mock2.assert_called_once()
         self.assertEqual(cancel_state["workers"][owner_worker["run_id"]]["status"], "superseded")
@@ -9416,6 +9473,111 @@ class RuntimeAndFailureSemanticsTests(unittest.TestCase):
                 governance_activity_events=[event],
             )
             self.assertNotEqual(worker["status"], "completed", (result, finalize.call_args))
+
+    def test_completion_consumer_rejects_deleted_canonical_row(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            config, worker, task, event = self._recorded_reopen_case()
+            config["paths"] = {"status_file": str(tmp_path / "status.json"), "activity_log": str(tmp_path / "activity.jsonl")}
+            worker["status"] = "running"
+            state = {"workers": {worker["run_id"]: worker}, "queue": {"events": {}}}
+            with (
+                mock.patch.object(supervisor, "load_status", return_value={"tasks": []}),
+                mock.patch.object(supervisor, "write_activity_log"),
+                mock.patch.object(supervisor, "finalize_queue_event_record") as final,
+            ):
+                result = supervisor.poll_worker_completion_stage(
+                    config, state, worker, task_map={task["id"]: task}, redispatch_statuses={"in_progress"}, governance_activity_events=[event]
+                )
+            self.assertNotEqual(worker["status"], "completed", (result, final.call_args))
+
+    def test_successful_boot_revalidates_before_completion(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            config, worker, task, event = self._recorded_reopen_case()
+            config["paths"] = {"status_file": str(tmp_path / "status.json"), "activity_log": str(tmp_path / "activity.jsonl")}
+            worker["status"] = "running"
+            state = {"workers": {worker["run_id"]: worker}, "queue": {"events": {}}}
+            worker.update(runner_status="completed", exit_code=0)
+            self.assertTrue(supervisor.worker_completed_after_responsibility_transition(config, worker, task, activity_events=[event]))
+            with (
+                mock.patch.object(supervisor, "load_status", side_effect=itertools.chain([{"tasks": [task]}], itertools.repeat({"tasks": []}))) as load,
+                mock.patch.object(supervisor, "recent_governance_activity_events", return_value=[event]),
+                mock.patch.object(supervisor, "update_worker_runtime_markers", return_value=False),
+                mock.patch.object(supervisor, "pid_is_alive", return_value=False),
+                mock.patch.object(supervisor, "write_activity_log"),
+                mock.patch.object(supervisor, "finalize_queue_event_record"),
+            ):
+                supervisor.reconcile_runtime_on_boot(config, state)
+            self.assertNotEqual(worker["status"], "completed", ("completed stale task", load.call_count))
+
+    def test_absent_event_cannot_authorize_done_termination(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            config, worker, task, event = self._recorded_reopen_case()
+            config["paths"] = {"status_file": str(tmp_path / "status.json"), "activity_log": str(tmp_path / "activity.jsonl")}
+            task["status"] = "done"
+            task.pop("review_requeue_intent", None)
+            decision = supervisor.active_worker_governance_lease_decision(config, worker, task, activity_events=[])
+            self.assertEqual(decision["action"], "preserve", decision)
+
+    def test_invalid_dispatched_pr_identity_rejected(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            config, worker, task, event = self._recorded_reopen_case()
+            config["paths"] = {"status_file": str(tmp_path / "status.json"), "activity_log": str(tmp_path / "activity.jsonl")}
+            worker["request_snapshot"]["metadata"]["task"] = {
+                "id": task["id"],
+                "generation": 19,
+                "delivery_binding": {
+                    "kind": "pull_request",
+                    "pr": 5620,
+                    "head_sha": "",
+                    "base": "dev",
+                    "required_merge_method": "SQUASH",
+                },
+            }
+            self.assertIsNone(supervisor.canonical_worker_terminal_status(config, worker, task, activity_events=[event]))
+
+    def test_empty_fresh_events_do_not_reuse_stale_evidence(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            config, worker, task, event = self._recorded_reopen_case()
+            config["paths"] = {"status_file": str(tmp_path / "status.json"), "activity_log": str(tmp_path / "activity.jsonl")}
+            worker["status"] = "running"
+            state = {"workers": {worker["run_id"]: worker}, "queue": {"events": {}}}
+            with (
+                mock.patch.object(supervisor, "load_status", return_value={"tasks": [task]}),
+                mock.patch.object(supervisor, "recent_governance_activity_events", return_value=[]),
+                mock.patch.object(supervisor, "write_activity_log"),
+                mock.patch.object(supervisor, "finalize_queue_event_record"),
+            ):
+                result = supervisor._revalidate_and_commit_worker_terminal_status(
+                    config, state, worker, task_map={task["id"]: task}, expected_status="in_progress", governance_activity_events=[event]
+                )
+            self.assertFalse(result)
+
+    def test_assignment_does_not_signal_after_fresh_pending_intent(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            config, worker, task, event = self._recorded_reopen_case()
+            config["paths"] = {"status_file": str(tmp_path / "status.json"), "activity_log": str(tmp_path / "activity.jsonl")}
+            worker["status"] = "running"
+            state = {"workers": {worker["run_id"]: worker}, "queue": {"events": {}}}
+            pending = copy.deepcopy(task)
+            pending["review_decision_intent"] = {"nonce": "new-pending-decision"}
+            with (
+                mock.patch.object(supervisor, "load_status", side_effect=itertools.chain([{"tasks": [task]}], itertools.repeat({"tasks": [pending]}))),
+                mock.patch.object(supervisor, "recent_governance_activity_events", return_value=[event]),
+                mock.patch.object(supervisor, "terminate_worker_process_generation", return_value=True) as terminate,
+                mock.patch.object(supervisor, "record_worker_governance_lease_guard", return_value=False),
+                mock.patch.object(supervisor, "write_activity_log"),
+                mock.patch.object(supervisor, "finalize_queue_event_record"),
+            ):
+                supervisor.poll_worker_assignment_stage(
+                    config, state, worker, worker["run_id"], {task["id"]: task}, {"running"}, True, governance_activity_events=[event]
+                )
+            terminate.assert_not_called()
 
     def test_active_worker_governance_lease_decision_strict_negatives(self) -> None:
         """Prove active lease termination converges on the shared validated contract."""
@@ -12054,9 +12216,6 @@ def _child_done_finalize_worker(
         raise
 
 
-_child_finalize_worker = _child_done_finalize_worker
-
-
 def _child_reassign_worker(
     worktree_or_config: Any,
     *args: Any,
@@ -12845,40 +13004,41 @@ class RealProcessReviewHandoffRecoveryFlowTests(unittest.TestCase):
                 }
 
                 sink = []
-                planned = supervisor.dispatch_ready_tasks(
-                    config,
-                    st_data,
-                    event_sink=lambda cfg, evt: bool(sink.append(evt) or True),
-                )
-                self.assertTrue(planned)
-                self.assertEqual(len(sink), 1)
+                with mock.patch.object(supervisor, "scan_live_worker_pids_by_agent", return_value={}):
+                    planned = supervisor.dispatch_ready_tasks(
+                        config,
+                        st_data,
+                        event_sink=lambda cfg, evt: bool(sink.append(evt) or True),
+                    )
+                    self.assertTrue(planned)
+                    self.assertEqual(len(sink), 1)
 
-                reserved = supervisor.reserve_dispatch_plan(config, st_data, {"events": sink})
-                self.assertTrue(reserved)
+                    reserved = supervisor.reserve_dispatch_plan(config, st_data, {"events": sink})
+                    self.assertTrue(reserved)
 
-                queued_events = st_data.get("queue", {}).get("events", {})
-                new_event_ids = [eid for eid in queued_events if eid != queue_event_id]
-                self.assertEqual(len(new_event_ids), 1)
-                succ_event_id = new_event_ids[0]
-                succ_event = queued_events[succ_event_id]
-                self.assertEqual(
-                    supervisor.display_name_for(config, succ_event["intent"]["target_agent"]),
-                    "Antigravity",
-                )
-                self.assertEqual(succ_event["intent"]["task_generation"], 1)
-                self.assertEqual(
-                    succ_event["intent"]["metadata"]["task"]["review_requeue_intent"]["reason"],
-                    reopen_message,
-                )
+                    queued_events = st_data.get("queue", {}).get("events", {})
+                    new_event_ids = [eid for eid in queued_events if eid != queue_event_id]
+                    self.assertEqual(len(new_event_ids), 1)
+                    succ_event_id = new_event_ids[0]
+                    succ_event = queued_events[succ_event_id]
+                    self.assertEqual(
+                        supervisor.display_name_for(config, succ_event["intent"]["target_agent"]),
+                        "Antigravity",
+                    )
+                    self.assertEqual(succ_event["intent"]["task_generation"], 1)
+                    self.assertEqual(
+                        succ_event["intent"]["metadata"]["task"]["review_requeue_intent"]["reason"],
+                        reopen_message,
+                    )
 
-                sink2 = []
-                planned_repeat = supervisor.dispatch_ready_tasks(
-                    config,
-                    st_data,
-                    event_sink=lambda cfg, evt: bool(sink2.append(evt) or True),
-                )
-                self.assertFalse(planned_repeat)
-                self.assertEqual(len(sink2), 0)
+                    sink2 = []
+                    planned_repeat = supervisor.dispatch_ready_tasks(
+                        config,
+                        st_data,
+                        event_sink=lambda cfg, evt: bool(sink2.append(evt) or True),
+                    )
+                    self.assertFalse(planned_repeat)
+                    self.assertEqual(len(sink2), 0)
 
                 (central / ".orchestrator" / "state.json").write_text(json.dumps(st_data, indent=2) + "\n")
                 subprocess.run(
@@ -13011,7 +13171,15 @@ class RealProcessReviewHandoffRecoveryFlowTests(unittest.TestCase):
                 "providers": {
                     "codex": {"delivery_mode": "codex", "account": "codex_account"},
                     "codex2": {"delivery_mode": "codex", "account": "codex2_account"},
-                    "antigravity": {"delivery_mode": "antigravity", "account": "antigravity_account", "antigravity": {"cli": str(fake_worker)}},
+                    "antigravity": {
+                        "delivery_mode": "antigravity",
+                        "account": "antigravity_account",
+                        "antigravity": {
+                            "cli": str(fake_worker),
+                            "config_home": str(temp_path / "antigravity_config"),
+                            "env": {"GEMINI_API_KEY": "isolated-fake-cli-not-a-real-key"},
+                        },
+                    },
                 },
             }
 
@@ -13181,10 +13349,11 @@ class RealProcessReviewHandoffRecoveryFlowTests(unittest.TestCase):
                 }
 
                 sink = []
-                planned = supervisor.dispatch_ready_tasks(config, st_data, event_sink=lambda cfg, evt: bool(sink.append(evt) or True))
-                self.assertTrue(planned)
-                reserved = supervisor.reserve_dispatch_plan(config, st_data, {"events": sink})
-                self.assertTrue(reserved)
+                with mock.patch.object(supervisor, "scan_live_worker_pids_by_agent", return_value={}):
+                    planned = supervisor.dispatch_ready_tasks(config, st_data, event_sink=lambda cfg, evt: bool(sink.append(evt) or True))
+                    self.assertTrue(planned)
+                    reserved = supervisor.reserve_dispatch_plan(config, st_data, {"events": sink})
+                    self.assertTrue(reserved)
 
                 queued_events = st_data.get("queue", {}).get("events", {})
                 new_event_ids = [eid for eid in queued_events if eid != queue_event_id]
@@ -13256,6 +13425,15 @@ class RealProcessReviewHandoffRecoveryFlowTests(unittest.TestCase):
                     if p.poll() is None:
                         p.kill()
                         p.wait(timeout=2)
+                if "new_worker_rec" in locals() and new_worker_rec and new_worker_rec.get("pid"):
+                    try:
+                        pid = int(new_worker_rec["pid"])
+                        try:
+                            os.killpg(os.getpgid(pid), signal.SIGKILL)
+                        except (OSError, ProcessLookupError):
+                            os.kill(pid, signal.SIGKILL)
+                    except OSError:
+                        pass
 
     def test_two_process_ordering1_reopen_completes_before_recovery_cas(self) -> None:
         """Two-process race ordering 1: Reviewer completes reopen before Recovery CAS; task stays gen 1, reaped cleanly."""
