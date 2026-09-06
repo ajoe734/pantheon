@@ -26,20 +26,22 @@
       "P2 correction: one effective-model resolver is used by invoke, stream and readiness. Main-agent defaults resolve to OPENCLAW_PRIMARY_MODEL/provider default; non-default agents retain their Gateway model unless an admitted explicit override is supplied.",
       "Mounted HTTP regressions prove conversation continuity/isolation, session alias precedence, identical default model headers including readiness, and preservation of admitted explicit/agent-configured models.",
       "P1 correction for b643c5fa: invoke and stream now share the durable Persona ledger with atomic actor-bound claims, cross-route terminal replay, in-doubt fencing, and admitted tenant/actor/pint session identity. Streaming persists its terminal envelope before publishing it and forwards first-attempt deltas.",
-      "Structured endpoint reads config.get on the same authenticated Gateway before every dispatch; valid exact-agent tools.deny=[\"*\"] is required. Missing, ambiguous, malformed or unavailable policy denies before model execution. Policy RPC and HTTP share one total deadline."
+      "Structured endpoint reads config.get on the same authenticated Gateway before every dispatch; valid exact-agent tools.deny=[\"*\"] is required. Missing, ambiguous, malformed or unavailable policy denies before model execution. Policy RPC and HTTP share one total deadline.",
+      "Replaced fixed replay spawn values with actual CPython Popen audit events attributed to each concurrent arm/case; extra real subprocesses fail the replay count gate. Executed a fresh complete 100-pair replay with frozen inputs."
     ],
     "measured_provider_sha256": "95db5140fa79fc60aeac907717f278a4b0cfbf7d2f4bae264029bc7ee0e3d8da",
     "final_provider_sha256": "95db5140fa79fc60aeac907717f278a4b0cfbf7d2f4bae264029bc7ee0e3d8da",
     "post_measurement_change": "Provider bytes remain identical to the recorded 100-pair replay. main.py now shares the existing Persona durable ledger across mounted invoke/stream routes; those changes are validated by mounted real-provider HTTP fixtures and SQLite fault/concurrency regressions, not by the provider-only replay. The mounted structured endpoint now also verifies live native-tool denial through administrative config.get before invoking the unchanged HTTP provider. This additional extraction admission is covered by mounted pinned-Gateway probes and full regressions, not by ordinary-turn benchmark timing.",
     "routing_anchor": "31ee9f1d7",
     "mounted_admission_anchor": "dc941f9ee",
-    "source_commit": "52d1f5911c73c3b9726dfd94328d2e92e6d9e86a",
+    "source_commit": "d78ad0ef1475abed7caf85ee3867c7ba762e8f7a",
     "integration_base": "96294dcf3c113e3b1cdc44f4d9d4069294259ac1",
     "persona_idempotency_anchor": "e828660f4",
     "persona_regression_anchor": "a8fd6b3dd",
     "persona_error_replay_anchor": "bf3c58836511888a80382809317c84b87c393f68",
     "ownership_recovery": "Canonical supervisor recovery on 2026-09-06 reassigned owner to Codex2 and reviewer to Codex. Earlier source authors and historical reviewer findings remain identified by their original commits.",
-    "structured_policy_anchor": "d2b58415a157fb7b34634104c7684d5448230bf2"
+    "structured_policy_anchor": "d2b58415a157fb7b34634104c7684d5448230bf2",
+    "subprocess_observation_anchor": "d78ad0ef1475abed7caf85ee3867c7ba762e8f7a"
   },
   "validation": [
     {
@@ -93,10 +95,32 @@
       "command": "SIMPLIFY_POLICY_PROBE=verified timeout 100 /tmp/gov-approval-venv/bin/python services/openclaw-gateway-adapter/tests/test_openresponses_transport_contract.py",
       "result": "200 extraction value=7; attempted native exec returns 502 OPENCLAW_RESPONSES_FAILED; three synthetic model requests advertised only emit_extraction; marker absent; fixture cleanup exit 0",
       "exit_code": 0
+    },
+    {
+      "command": "timeout 120 /tmp/gov-approval-venv/bin/python -m pytest -q services/openclaw-gateway-adapter/tests/test_openresponses_transport_contract.py -k replay_subprocess_observation",
+      "result": "2 passed, 59 deselected in 1.21s",
+      "exit_code": 0
+    },
+    {
+      "command": "timeout 120 /tmp/gov-approval-venv/bin/python -m pytest -q services/openclaw-gateway-adapter/tests/test_openresponses_transport_contract.py services/openclaw-gateway-adapter/tests/test_structured_data_tool_contract.py services/control-plane/cron/test_exact_run_wait.py",
+      "result": "128 passed, 2 warnings in 50.70s",
+      "exit_code": 0
+    },
+    {
+      "command": "SIMPLIFY_REPLAY_OUTPUT=/tmp/simplify-observed-replay-100.json timeout 1200 /tmp/gov-approval-venv/bin/python services/openclaw-gateway-adapter/tests/test_openresponses_transport_contract.py",
+      "result": "100 complete pairs / 200 measured rows; CLI 100 observed Popen events; HTTP 0 observed events; both arms zero errors; all timing/usage/count gates passed; fixture cleanup exit 0",
+      "exit_code": 0,
+      "report_sha256": "d5b6e47c45d1017d912ef246afe706361dfcda2d5bb92f1bf8a9107d83510cdd"
     }
   ],
   "local_gateway_evidence": {
     "manifest": {
+      "subprocess_measurement": {
+        "mechanism": "CPython subprocess.Popen audit events; thread-local per-attempt scope",
+        "scope": "synchronous adapter-side invocations, including docker exec for CLI; excludes Gateway descendants and fixture setup/cleanup",
+        "failed_spawn_semantics": "audit events count attempted Popen calls even if OS creation fails; a failed replay is never accepted",
+        "attribution": "unique arm/case attempt_id plus originating thread_id; raw argv/environment omitted"
+      },
       "base_sha": "a9557a6002e8170eb92415cc61e9d6a584cc610f",
       "base_provider_sha256": "8d52da93da25205383062eb0c88211c8bcfb073dcb3da44ad54704d45dd361ad",
       "candidate_provider_sha256": "95db5140fa79fc60aeac907717f278a4b0cfbf7d2f4bae264029bc7ee0e3d8da",
@@ -112,7 +136,7 @@
       "usage_semantics": "model fixture reports fixed input=100/output=10/total=110, not a tokenizer or production cost measurement",
       "ttft_semantics": "CLI buffered invoke first text available on return; HTTP first normalized delta; full includes invocation and normalization",
       "latency_limitation": "CLI transport includes docker exec overhead; local fixture measures transport and Gateway, not external model quality or latency",
-      "config_sha256": "61c1769404f5445042fb4bc624ffac70374e7b693bf5be0264e6a66c490f4934"
+      "config_sha256": "407fe127ab7020e55e09b0b4609860073fdeb05694a0195c9054747691e40e82"
     },
     "capability": {
       "positive": {
@@ -124,7 +148,7 @@
             "value": 7
           },
           "tool_call": {
-            "id": "947988615",
+            "id": "3beac6379",
             "name": "emit_extraction"
           },
           "agent_id": "main",
@@ -134,7 +158,7 @@
             "output_tokens": 10,
             "total_tokens": 110
           },
-          "response_id": "resp_4c014be1-d063-4027-aab1-f2a5d669187c"
+          "response_id": "resp_7b772642-8006-4247-a173-f1c24d88f181"
         },
         "redaction": {
           "provider_invocation": {
@@ -145,22 +169,22 @@
       "invalid": {
         "status": "provider_error",
         "error_code": "OPENCLAW_RESPONSES_FAILED",
-        "message": "{\"type\": \"response.failed\", \"response\": {\"id\": \"resp_159fb842-9f04-4258-8e17-38f2a9a0e2ba\", \"object\": \"response\", \"created_at\": 1788710906, \"status\": \"failed\", \"model\": \"openclaw/main\", \"output\": [], \"usage\": {\"input_tokens\": 200, \"output_tokens\": 20, \"total_tokens\": 110}, \"error\": {\"code\": \"api_err"
+        "message": "{\"type\": \"response.failed\", \"response\": {\"id\": \"resp_3768ea89-5aef-4350-a407-f9521aba2b6e\", \"object\": \"response\", \"created_at\": 1788714838, \"status\": \"failed\", \"model\": \"openclaw/main\", \"output\": [], \"usage\": {\"input_tokens\": 200, \"output_tokens\": 20, \"total_tokens\": 110}, \"error\": {\"code\": \"api_err"
       },
       "wrong": {
         "status": "provider_error",
         "error_code": "OPENCLAW_RESPONSES_FAILED",
-        "message": "{\"type\": \"response.failed\", \"response\": {\"id\": \"resp_5c5d0eb8-5dc9-4932-8585-d1d44aa8381c\", \"object\": \"response\", \"created_at\": 1788710907, \"status\": \"failed\", \"model\": \"openclaw/main\", \"output\": [], \"usage\": {\"input_tokens\": 200, \"output_tokens\": 20, \"total_tokens\": 110}, \"error\": {\"code\": \"api_err"
+        "message": "{\"type\": \"response.failed\", \"response\": {\"id\": \"resp_eb831214-05f4-454f-abe2-fa4fb6f16965\", \"object\": \"response\", \"created_at\": 1788714839, \"status\": \"failed\", \"model\": \"openclaw/main\", \"output\": [], \"usage\": {\"input_tokens\": 200, \"output_tokens\": 20, \"total_tokens\": 110}, \"error\": {\"code\": \"api_err"
       },
       "missing": {
         "status": "provider_error",
         "error_code": "OPENCLAW_RESPONSES_FAILED",
-        "message": "{\"type\": \"response.failed\", \"response\": {\"id\": \"resp_afb6eea9-5b95-4ed1-b442-4b64659d8d8e\", \"object\": \"response\", \"created_at\": 1788710908, \"status\": \"failed\", \"model\": \"openclaw/main\", \"output\": [], \"usage\": {\"input_tokens\": 100, \"output_tokens\": 10, \"total_tokens\": 110}, \"error\": {\"code\": \"api_err"
+        "message": "{\"type\": \"response.failed\", \"response\": {\"id\": \"resp_df8f5adb-391c-4de7-95e6-198ba244da92\", \"object\": \"response\", \"created_at\": 1788714840, \"status\": \"failed\", \"model\": \"openclaw/main\", \"output\": [], \"usage\": {\"input_tokens\": 100, \"output_tokens\": 10, \"total_tokens\": 110}, \"error\": {\"code\": \"api_err"
       },
       "denied": {
         "status": "provider_error",
         "error_code": "OPENCLAW_RESPONSES_FAILED",
-        "message": "{\"type\": \"response.failed\", \"response\": {\"id\": \"resp_f87af60c-80e8-4c35-9e27-a5d5d786484a\", \"object\": \"response\", \"created_at\": 1788710909, \"status\": \"failed\", \"model\": \"openclaw/main\", \"output\": [], \"usage\": {\"input_tokens\": 200, \"output_tokens\": 20, \"total_tokens\": 110}, \"error\": {\"code\": \"api_err"
+        "message": "{\"type\": \"response.failed\", \"response\": {\"id\": \"resp_915d1796-2711-4948-9635-a45c324cfc99\", \"object\": \"response\", \"created_at\": 1788714841, \"status\": \"failed\", \"model\": \"openclaw/main\", \"output\": [], \"usage\": {\"input_tokens\": 200, \"output_tokens\": 20, \"total_tokens\": 110}, \"error\": {\"code\": \"api_err"
       },
       "native_denial": {
         "advertised_tools": [
@@ -175,30 +199,30 @@
       "cli": {
         "all": {
           "n": 100,
-          "full_p50_ms": 14302.009776991326,
-          "full_p95_ms": 19779.84999801265,
-          "ttft_p50_ms": 14302.009776991326,
-          "ttft_p95_ms": 19779.84999801265,
+          "full_p50_ms": 14259.636032977141,
+          "full_p95_ms": 18454.906451981515,
+          "ttft_p50_ms": 14259.636032977141,
+          "ttft_p95_ms": 18454.906451981515,
           "mean_tokens": 110,
           "errors": 0,
           "subprocesses": 100
         },
         "cold": {
           "n": 10,
-          "full_p50_ms": 16184.44422999164,
-          "full_p95_ms": 19847.03600301873,
-          "ttft_p50_ms": 16184.44422999164,
-          "ttft_p95_ms": 19847.03600301873,
+          "full_p50_ms": 17745.02010102151,
+          "full_p95_ms": 18458.66721199127,
+          "ttft_p50_ms": 17745.02010102151,
+          "ttft_p95_ms": 18458.66721199127,
           "mean_tokens": 110,
           "errors": 0,
           "subprocesses": 10
         },
         "warm": {
           "n": 90,
-          "full_p50_ms": 14150.132078037132,
-          "full_p95_ms": 16829.87580198096,
-          "ttft_p50_ms": 14150.132078037132,
-          "ttft_p95_ms": 16829.87580198096,
+          "full_p50_ms": 14112.46207304066,
+          "full_p95_ms": 17531.44259599503,
+          "ttft_p50_ms": 14112.46207304066,
+          "ttft_p95_ms": 17531.44259599503,
           "mean_tokens": 110,
           "errors": 0,
           "subprocesses": 90
@@ -207,30 +231,30 @@
       "http": {
         "all": {
           "n": 100,
-          "full_p50_ms": 4502.181457995903,
-          "full_p95_ms": 5383.192496956326,
-          "ttft_p50_ms": 4359.286747989245,
-          "ttft_p95_ms": 5221.698477980681,
+          "full_p50_ms": 4566.952592984308,
+          "full_p95_ms": 6147.330634004902,
+          "ttft_p50_ms": 4467.227281013038,
+          "ttft_p95_ms": 5966.989487002138,
           "mean_tokens": 110,
           "errors": 0,
           "subprocesses": 0
         },
         "cold": {
           "n": 10,
-          "full_p50_ms": 4667.293095961213,
-          "full_p95_ms": 4824.845105002169,
-          "ttft_p50_ms": 4529.710014990997,
-          "ttft_p95_ms": 4748.2076800079085,
+          "full_p50_ms": 5221.942119009327,
+          "full_p95_ms": 5274.897084047552,
+          "ttft_p50_ms": 5094.818826997653,
+          "ttft_p95_ms": 5150.679362996016,
           "mean_tokens": 110,
           "errors": 0,
           "subprocesses": 0
         },
         "warm": {
           "n": 90,
-          "full_p50_ms": 4487.014698970597,
-          "full_p95_ms": 5385.083105997182,
-          "ttft_p50_ms": 4321.034659980796,
-          "ttft_p95_ms": 5236.442406021524,
+          "full_p50_ms": 4549.505865026731,
+          "full_p95_ms": 6179.325373028405,
+          "ttft_p50_ms": 4446.589461003896,
+          "ttft_p95_ms": 6003.749835013878,
           "mean_tokens": 110,
           "errors": 0,
           "subprocesses": 0
@@ -239,7 +263,8 @@
     },
     "gates": {
       "no_new_errors": true,
-      "full_p95_ratio": 0.27215537516701055,
+      "observed_subprocess_counts": true,
+      "full_p95_ratio": 0.3331000701629056,
       "mean_token_ratio": 1.0
     },
     "rows": [
@@ -247,2801 +272,4401 @@
         "arm": "cli",
         "case": 0,
         "temperature": "cold",
-        "full_ms": 19779.84999801265,
-        "ttft_ms": 19779.84999801265,
+        "full_ms": 18454.906451981515,
+        "ttft_ms": 18454.906451981515,
         "usage": {
           "input_tokens": 100,
           "output_tokens": 10,
           "total_tokens": 110
         },
         "errors": 0,
-        "subprocesses": 1
+        "subprocesses": 1,
+        "subprocess_observation": {
+          "attempt_id": "cli-000",
+          "events": [
+            {
+              "event": "subprocess.Popen",
+              "attempt_id": "cli-000",
+              "thread_id": 132854538467008,
+              "executable": "docker",
+              "ordinal": 1
+            }
+          ]
+        }
       },
       {
         "arm": "http",
         "case": 0,
         "temperature": "cold",
-        "full_ms": 4667.293095961213,
-        "ttft_ms": 4554.09025400877,
+        "full_ms": 5256.159895972814,
+        "ttft_ms": 5116.6906749713235,
         "usage": {
           "input_tokens": 100,
           "output_tokens": 10,
           "total_tokens": 110
         },
         "errors": 0,
-        "subprocesses": 0
+        "subprocesses": 0,
+        "subprocess_observation": {
+          "attempt_id": "http-000",
+          "events": []
+        }
       },
       {
         "arm": "http",
         "case": 1,
         "temperature": "warm",
-        "full_ms": 4760.740760015324,
-        "ttft_ms": 4645.200578030199,
+        "full_ms": 6676.987567043398,
+        "ttft_ms": 6571.114215010311,
         "usage": {
           "input_tokens": 100,
           "output_tokens": 10,
           "total_tokens": 110
         },
         "errors": 0,
-        "subprocesses": 0
+        "subprocesses": 0,
+        "subprocess_observation": {
+          "attempt_id": "http-001",
+          "events": []
+        }
       },
       {
         "arm": "cli",
         "case": 1,
         "temperature": "warm",
-        "full_ms": 15820.17649197951,
-        "ttft_ms": 15820.17649197951,
+        "full_ms": 17484.809739980847,
+        "ttft_ms": 17484.809739980847,
         "usage": {
           "input_tokens": 100,
           "output_tokens": 10,
           "total_tokens": 110
         },
         "errors": 0,
-        "subprocesses": 1
+        "subprocesses": 1,
+        "subprocess_observation": {
+          "attempt_id": "cli-001",
+          "events": [
+            {
+              "event": "subprocess.Popen",
+              "attempt_id": "cli-001",
+              "thread_id": 132854538467008,
+              "executable": "docker",
+              "ordinal": 1
+            }
+          ]
+        }
       },
       {
         "arm": "cli",
         "case": 2,
         "temperature": "warm",
-        "full_ms": 14237.95133200474,
-        "ttft_ms": 14237.95133200474,
+        "full_ms": 19098.50320703117,
+        "ttft_ms": 19098.50320703117,
         "usage": {
           "input_tokens": 100,
           "output_tokens": 10,
           "total_tokens": 110
         },
         "errors": 0,
-        "subprocesses": 1
+        "subprocesses": 1,
+        "subprocess_observation": {
+          "attempt_id": "cli-002",
+          "events": [
+            {
+              "event": "subprocess.Popen",
+              "attempt_id": "cli-002",
+              "thread_id": 132854538467008,
+              "executable": "docker",
+              "ordinal": 1
+            }
+          ]
+        }
       },
       {
         "arm": "http",
         "case": 2,
         "temperature": "warm",
-        "full_ms": 4589.130662032403,
-        "ttft_ms": 4446.075701038353,
+        "full_ms": 5824.411277018953,
+        "ttft_ms": 5692.429146030918,
         "usage": {
           "input_tokens": 100,
           "output_tokens": 10,
           "total_tokens": 110
         },
         "errors": 0,
-        "subprocesses": 0
+        "subprocesses": 0,
+        "subprocess_observation": {
+          "attempt_id": "http-002",
+          "events": []
+        }
       },
       {
         "arm": "http",
         "case": 3,
         "temperature": "warm",
-        "full_ms": 5385.083105997182,
-        "ttft_ms": 5170.0089809601195,
+        "full_ms": 5369.680758041795,
+        "ttft_ms": 5231.647968001198,
         "usage": {
           "input_tokens": 100,
           "output_tokens": 10,
           "total_tokens": 110
         },
         "errors": 0,
-        "subprocesses": 0
+        "subprocesses": 0,
+        "subprocess_observation": {
+          "attempt_id": "http-003",
+          "events": []
+        }
       },
       {
         "arm": "cli",
         "case": 3,
         "temperature": "warm",
-        "full_ms": 16163.495788990986,
-        "ttft_ms": 16163.495788990986,
+        "full_ms": 15416.265001986176,
+        "ttft_ms": 15416.265001986176,
         "usage": {
           "input_tokens": 100,
           "output_tokens": 10,
           "total_tokens": 110
         },
         "errors": 0,
-        "subprocesses": 1
+        "subprocesses": 1,
+        "subprocess_observation": {
+          "attempt_id": "cli-003",
+          "events": [
+            {
+              "event": "subprocess.Popen",
+              "attempt_id": "cli-003",
+              "thread_id": 132854538467008,
+              "executable": "docker",
+              "ordinal": 1
+            }
+          ]
+        }
       },
       {
         "arm": "cli",
         "case": 4,
         "temperature": "warm",
-        "full_ms": 14871.532017015852,
-        "ttft_ms": 14871.532017015852,
+        "full_ms": 14982.403211004566,
+        "ttft_ms": 14982.403211004566,
         "usage": {
           "input_tokens": 100,
           "output_tokens": 10,
           "total_tokens": 110
         },
         "errors": 0,
-        "subprocesses": 1
+        "subprocesses": 1,
+        "subprocess_observation": {
+          "attempt_id": "cli-004",
+          "events": [
+            {
+              "event": "subprocess.Popen",
+              "attempt_id": "cli-004",
+              "thread_id": 132854538467008,
+              "executable": "docker",
+              "ordinal": 1
+            }
+          ]
+        }
       },
       {
         "arm": "http",
         "case": 4,
         "temperature": "warm",
-        "full_ms": 5006.029962038156,
-        "ttft_ms": 4768.211509042885,
+        "full_ms": 4651.169636985287,
+        "ttft_ms": 4486.190567957237,
         "usage": {
           "input_tokens": 100,
           "output_tokens": 10,
           "total_tokens": 110
         },
         "errors": 0,
-        "subprocesses": 0
+        "subprocesses": 0,
+        "subprocess_observation": {
+          "attempt_id": "http-004",
+          "events": []
+        }
       },
       {
         "arm": "http",
         "case": 5,
         "temperature": "warm",
-        "full_ms": 5160.431551979855,
-        "ttft_ms": 4986.623553966638,
+        "full_ms": 4772.381268965546,
+        "ttft_ms": 4592.047501995694,
         "usage": {
           "input_tokens": 100,
           "output_tokens": 10,
           "total_tokens": 110
         },
         "errors": 0,
-        "subprocesses": 0
+        "subprocesses": 0,
+        "subprocess_observation": {
+          "attempt_id": "http-005",
+          "events": []
+        }
       },
       {
         "arm": "cli",
         "case": 5,
         "temperature": "warm",
-        "full_ms": 15301.522998022847,
-        "ttft_ms": 15301.522998022847,
+        "full_ms": 13727.199946995825,
+        "ttft_ms": 13727.199946995825,
         "usage": {
           "input_tokens": 100,
           "output_tokens": 10,
           "total_tokens": 110
         },
         "errors": 0,
-        "subprocesses": 1
+        "subprocesses": 1,
+        "subprocess_observation": {
+          "attempt_id": "cli-005",
+          "events": [
+            {
+              "event": "subprocess.Popen",
+              "attempt_id": "cli-005",
+              "thread_id": 132854538467008,
+              "executable": "docker",
+              "ordinal": 1
+            }
+          ]
+        }
       },
       {
         "arm": "cli",
         "case": 6,
         "temperature": "warm",
-        "full_ms": 16096.302861988079,
-        "ttft_ms": 16096.302861988079,
+        "full_ms": 13582.146374043077,
+        "ttft_ms": 13582.146374043077,
         "usage": {
           "input_tokens": 100,
           "output_tokens": 10,
           "total_tokens": 110
         },
         "errors": 0,
-        "subprocesses": 1
+        "subprocesses": 1,
+        "subprocess_observation": {
+          "attempt_id": "cli-006",
+          "events": [
+            {
+              "event": "subprocess.Popen",
+              "attempt_id": "cli-006",
+              "thread_id": 132854538467008,
+              "executable": "docker",
+              "ordinal": 1
+            }
+          ]
+        }
       },
       {
         "arm": "http",
         "case": 6,
         "temperature": "warm",
-        "full_ms": 5512.746168009471,
-        "ttft_ms": 5347.586688993033,
+        "full_ms": 4912.161011015996,
+        "ttft_ms": 4766.208961023949,
         "usage": {
           "input_tokens": 100,
           "output_tokens": 10,
           "total_tokens": 110
         },
         "errors": 0,
-        "subprocesses": 0
+        "subprocesses": 0,
+        "subprocess_observation": {
+          "attempt_id": "http-006",
+          "events": []
+        }
       },
       {
         "arm": "http",
         "case": 7,
         "temperature": "warm",
-        "full_ms": 5381.287085998338,
-        "ttft_ms": 5236.442406021524,
+        "full_ms": 4992.775573977269,
+        "ttft_ms": 4715.206773020327,
         "usage": {
           "input_tokens": 100,
           "output_tokens": 10,
           "total_tokens": 110
         },
         "errors": 0,
-        "subprocesses": 0
+        "subprocesses": 0,
+        "subprocess_observation": {
+          "attempt_id": "http-007",
+          "events": []
+        }
       },
       {
         "arm": "cli",
         "case": 7,
         "temperature": "warm",
-        "full_ms": 13897.285006009042,
-        "ttft_ms": 13897.285006009042,
+        "full_ms": 14960.870784008875,
+        "ttft_ms": 14960.870784008875,
         "usage": {
           "input_tokens": 100,
           "output_tokens": 10,
           "total_tokens": 110
         },
         "errors": 0,
-        "subprocesses": 1
+        "subprocesses": 1,
+        "subprocess_observation": {
+          "attempt_id": "cli-007",
+          "events": [
+            {
+              "event": "subprocess.Popen",
+              "attempt_id": "cli-007",
+              "thread_id": 132854538467008,
+              "executable": "docker",
+              "ordinal": 1
+            }
+          ]
+        }
       },
       {
         "arm": "cli",
         "case": 8,
         "temperature": "warm",
-        "full_ms": 14850.22999899229,
-        "ttft_ms": 14850.22999899229,
+        "full_ms": 13805.089803994633,
+        "ttft_ms": 13805.089803994633,
         "usage": {
           "input_tokens": 100,
           "output_tokens": 10,
           "total_tokens": 110
         },
         "errors": 0,
-        "subprocesses": 1
+        "subprocesses": 1,
+        "subprocess_observation": {
+          "attempt_id": "cli-008",
+          "events": [
+            {
+              "event": "subprocess.Popen",
+              "attempt_id": "cli-008",
+              "thread_id": 132854538467008,
+              "executable": "docker",
+              "ordinal": 1
+            }
+          ]
+        }
       },
       {
         "arm": "http",
         "case": 8,
         "temperature": "warm",
-        "full_ms": 4781.032279017381,
-        "ttft_ms": 4647.739688050933,
+        "full_ms": 4293.450572993606,
+        "ttft_ms": 4141.892932995688,
         "usage": {
           "input_tokens": 100,
           "output_tokens": 10,
           "total_tokens": 110
         },
         "errors": 0,
-        "subprocesses": 0
+        "subprocesses": 0,
+        "subprocess_observation": {
+          "attempt_id": "http-008",
+          "events": []
+        }
       },
       {
         "arm": "http",
         "case": 9,
         "temperature": "warm",
-        "full_ms": 4950.830115994904,
-        "ttft_ms": 4793.2324160356075,
+        "full_ms": 4871.999262017198,
+        "ttft_ms": 4711.467323009856,
         "usage": {
           "input_tokens": 100,
           "output_tokens": 10,
           "total_tokens": 110
         },
         "errors": 0,
-        "subprocesses": 0
+        "subprocesses": 0,
+        "subprocess_observation": {
+          "attempt_id": "http-009",
+          "events": []
+        }
       },
       {
         "arm": "cli",
         "case": 9,
         "temperature": "warm",
-        "full_ms": 14584.36720498139,
-        "ttft_ms": 14584.36720498139,
+        "full_ms": 12847.896991006564,
+        "ttft_ms": 12847.896991006564,
         "usage": {
           "input_tokens": 100,
           "output_tokens": 10,
           "total_tokens": 110
         },
         "errors": 0,
-        "subprocesses": 1
+        "subprocesses": 1,
+        "subprocess_observation": {
+          "attempt_id": "cli-009",
+          "events": [
+            {
+              "event": "subprocess.Popen",
+              "attempt_id": "cli-009",
+              "thread_id": 132854538467008,
+              "executable": "docker",
+              "ordinal": 1
+            }
+          ]
+        }
       },
       {
         "arm": "cli",
         "case": 10,
         "temperature": "cold",
-        "full_ms": 19808.00951598212,
-        "ttft_ms": 19808.00951598212,
+        "full_ms": 18458.66721199127,
+        "ttft_ms": 18458.66721199127,
         "usage": {
           "input_tokens": 100,
           "output_tokens": 10,
           "total_tokens": 110
         },
         "errors": 0,
-        "subprocesses": 1
+        "subprocesses": 1,
+        "subprocess_observation": {
+          "attempt_id": "cli-010",
+          "events": [
+            {
+              "event": "subprocess.Popen",
+              "attempt_id": "cli-010",
+              "thread_id": 132854530074304,
+              "executable": "docker",
+              "ordinal": 1
+            }
+          ]
+        }
       },
       {
         "arm": "http",
         "case": 10,
         "temperature": "cold",
-        "full_ms": 4672.180695983116,
-        "ttft_ms": 4529.710014990997,
+        "full_ms": 5221.942119009327,
+        "ttft_ms": 5104.566136957146,
         "usage": {
           "input_tokens": 100,
           "output_tokens": 10,
           "total_tokens": 110
         },
         "errors": 0,
-        "subprocesses": 0
+        "subprocesses": 0,
+        "subprocess_observation": {
+          "attempt_id": "http-010",
+          "events": []
+        }
       },
       {
         "arm": "http",
         "case": 11,
         "temperature": "warm",
-        "full_ms": 4738.058651040774,
-        "ttft_ms": 4604.510440025479,
+        "full_ms": 6686.203667020891,
+        "ttft_ms": 6588.8325740233995,
         "usage": {
           "input_tokens": 100,
           "output_tokens": 10,
           "total_tokens": 110
         },
         "errors": 0,
-        "subprocesses": 0
+        "subprocesses": 0,
+        "subprocess_observation": {
+          "attempt_id": "http-011",
+          "events": []
+        }
       },
       {
         "arm": "cli",
         "case": 11,
         "temperature": "warm",
-        "full_ms": 15728.716287994757,
-        "ttft_ms": 15728.716287994757,
+        "full_ms": 17531.44259599503,
+        "ttft_ms": 17531.44259599503,
         "usage": {
           "input_tokens": 100,
           "output_tokens": 10,
           "total_tokens": 110
         },
         "errors": 0,
-        "subprocesses": 1
+        "subprocesses": 1,
+        "subprocess_observation": {
+          "attempt_id": "cli-011",
+          "events": [
+            {
+              "event": "subprocess.Popen",
+              "attempt_id": "cli-011",
+              "thread_id": 132854530074304,
+              "executable": "docker",
+              "ordinal": 1
+            }
+          ]
+        }
       },
       {
         "arm": "cli",
         "case": 12,
         "temperature": "warm",
-        "full_ms": 14302.009776991326,
-        "ttft_ms": 14302.009776991326,
+        "full_ms": 19115.96832703799,
+        "ttft_ms": 19115.96832703799,
         "usage": {
           "input_tokens": 100,
           "output_tokens": 10,
           "total_tokens": 110
         },
         "errors": 0,
-        "subprocesses": 1
+        "subprocesses": 1,
+        "subprocess_observation": {
+          "attempt_id": "cli-012",
+          "events": [
+            {
+              "event": "subprocess.Popen",
+              "attempt_id": "cli-012",
+              "thread_id": 132854530074304,
+              "executable": "docker",
+              "ordinal": 1
+            }
+          ]
+        }
       },
       {
         "arm": "http",
         "case": 12,
         "temperature": "warm",
-        "full_ms": 4594.919771014247,
-        "ttft_ms": 4460.324231011327,
+        "full_ms": 5772.521750011947,
+        "ttft_ms": 5649.947008991148,
         "usage": {
           "input_tokens": 100,
           "output_tokens": 10,
           "total_tokens": 110
         },
         "errors": 0,
-        "subprocesses": 0
+        "subprocesses": 0,
+        "subprocess_observation": {
+          "attempt_id": "http-012",
+          "events": []
+        }
       },
       {
         "arm": "http",
         "case": 13,
         "temperature": "warm",
-        "full_ms": 5381.528627010994,
-        "ttft_ms": 5178.668620996177,
+        "full_ms": 5347.780158976093,
+        "ttft_ms": 5223.129177989904,
         "usage": {
           "input_tokens": 100,
           "output_tokens": 10,
           "total_tokens": 110
         },
         "errors": 0,
-        "subprocesses": 0
+        "subprocesses": 0,
+        "subprocess_observation": {
+          "attempt_id": "http-013",
+          "events": []
+        }
       },
       {
         "arm": "cli",
         "case": 13,
         "temperature": "warm",
-        "full_ms": 16225.762363988906,
-        "ttft_ms": 16225.762363988906,
+        "full_ms": 15484.006277984008,
+        "ttft_ms": 15484.006277984008,
         "usage": {
           "input_tokens": 100,
           "output_tokens": 10,
           "total_tokens": 110
         },
         "errors": 0,
-        "subprocesses": 1
+        "subprocesses": 1,
+        "subprocess_observation": {
+          "attempt_id": "cli-013",
+          "events": [
+            {
+              "event": "subprocess.Popen",
+              "attempt_id": "cli-013",
+              "thread_id": 132854530074304,
+              "executable": "docker",
+              "ordinal": 1
+            }
+          ]
+        }
       },
       {
         "arm": "cli",
         "case": 14,
         "temperature": "warm",
-        "full_ms": 14973.676210967824,
-        "ttft_ms": 14973.676210967824,
+        "full_ms": 14985.350770992227,
+        "ttft_ms": 14985.350770992227,
         "usage": {
           "input_tokens": 100,
           "output_tokens": 10,
           "total_tokens": 110
         },
         "errors": 0,
-        "subprocesses": 1
+        "subprocesses": 1,
+        "subprocess_observation": {
+          "attempt_id": "cli-014",
+          "events": [
+            {
+              "event": "subprocess.Popen",
+              "attempt_id": "cli-014",
+              "thread_id": 132854530074304,
+              "executable": "docker",
+              "ordinal": 1
+            }
+          ]
+        }
       },
       {
         "arm": "http",
         "case": 14,
         "temperature": "warm",
-        "full_ms": 4794.806096993852,
-        "ttft_ms": 4611.371160019189,
+        "full_ms": 4600.422889983747,
+        "ttft_ms": 4446.589461003896,
         "usage": {
           "input_tokens": 100,
           "output_tokens": 10,
           "total_tokens": 110
         },
         "errors": 0,
-        "subprocesses": 0
+        "subprocesses": 0,
+        "subprocess_observation": {
+          "attempt_id": "http-014",
+          "events": []
+        }
       },
       {
         "arm": "http",
         "case": 15,
         "temperature": "warm",
-        "full_ms": 5200.692899001297,
-        "ttft_ms": 5034.02667096816,
+        "full_ms": 4768.893318949267,
+        "ttft_ms": 4593.824660987593,
         "usage": {
           "input_tokens": 100,
           "output_tokens": 10,
           "total_tokens": 110
         },
         "errors": 0,
-        "subprocesses": 0
+        "subprocesses": 0,
+        "subprocess_observation": {
+          "attempt_id": "http-015",
+          "events": []
+        }
       },
       {
         "arm": "cli",
         "case": 15,
         "temperature": "warm",
-        "full_ms": 15199.934275995474,
-        "ttft_ms": 15199.934275995474,
+        "full_ms": 13727.189506986178,
+        "ttft_ms": 13727.189506986178,
         "usage": {
           "input_tokens": 100,
           "output_tokens": 10,
           "total_tokens": 110
         },
         "errors": 0,
-        "subprocesses": 1
+        "subprocesses": 1,
+        "subprocess_observation": {
+          "attempt_id": "cli-015",
+          "events": [
+            {
+              "event": "subprocess.Popen",
+              "attempt_id": "cli-015",
+              "thread_id": 132854530074304,
+              "executable": "docker",
+              "ordinal": 1
+            }
+          ]
+        }
       },
       {
         "arm": "cli",
         "case": 16,
         "temperature": "warm",
-        "full_ms": 16264.891350001562,
-        "ttft_ms": 16264.891350001562,
+        "full_ms": 13604.978482006118,
+        "ttft_ms": 13604.978482006118,
         "usage": {
           "input_tokens": 100,
           "output_tokens": 10,
           "total_tokens": 110
         },
         "errors": 0,
-        "subprocesses": 1
+        "subprocesses": 1,
+        "subprocess_observation": {
+          "attempt_id": "cli-016",
+          "events": [
+            {
+              "event": "subprocess.Popen",
+              "attempt_id": "cli-016",
+              "thread_id": 132854530074304,
+              "executable": "docker",
+              "ordinal": 1
+            }
+          ]
+        }
       },
       {
         "arm": "http",
         "case": 16,
         "temperature": "warm",
-        "full_ms": 5513.702727039345,
-        "ttft_ms": 5315.131011011545,
+        "full_ms": 4888.601012004074,
+        "ttft_ms": 4762.446030974388,
         "usage": {
           "input_tokens": 100,
           "output_tokens": 10,
           "total_tokens": 110
         },
         "errors": 0,
-        "subprocesses": 0
+        "subprocesses": 0,
+        "subprocess_observation": {
+          "attempt_id": "http-016",
+          "events": []
+        }
       },
       {
         "arm": "http",
         "case": 17,
         "temperature": "warm",
-        "full_ms": 5354.601058992557,
-        "ttft_ms": 5186.529659957159,
+        "full_ms": 4989.817234047223,
+        "ttft_ms": 4726.713862037286,
         "usage": {
           "input_tokens": 100,
           "output_tokens": 10,
           "total_tokens": 110
         },
         "errors": 0,
-        "subprocesses": 0
+        "subprocesses": 0,
+        "subprocess_observation": {
+          "attempt_id": "http-017",
+          "events": []
+        }
       },
       {
         "arm": "cli",
         "case": 17,
         "temperature": "warm",
-        "full_ms": 13912.901554023847,
-        "ttft_ms": 13912.901554023847,
+        "full_ms": 15038.585748989135,
+        "ttft_ms": 15038.585748989135,
         "usage": {
           "input_tokens": 100,
           "output_tokens": 10,
           "total_tokens": 110
         },
         "errors": 0,
-        "subprocesses": 1
+        "subprocesses": 1,
+        "subprocess_observation": {
+          "attempt_id": "cli-017",
+          "events": [
+            {
+              "event": "subprocess.Popen",
+              "attempt_id": "cli-017",
+              "thread_id": 132854530074304,
+              "executable": "docker",
+              "ordinal": 1
+            }
+          ]
+        }
       },
       {
         "arm": "cli",
         "case": 18,
         "temperature": "warm",
-        "full_ms": 14890.015206008684,
-        "ttft_ms": 14890.015206008684,
+        "full_ms": 13830.866053001955,
+        "ttft_ms": 13830.866053001955,
         "usage": {
           "input_tokens": 100,
           "output_tokens": 10,
           "total_tokens": 110
         },
         "errors": 0,
-        "subprocesses": 1
+        "subprocesses": 1,
+        "subprocess_observation": {
+          "attempt_id": "cli-018",
+          "events": [
+            {
+              "event": "subprocess.Popen",
+              "attempt_id": "cli-018",
+              "thread_id": 132854530074304,
+              "executable": "docker",
+              "ordinal": 1
+            }
+          ]
+        }
       },
       {
         "arm": "http",
         "case": 18,
         "temperature": "warm",
-        "full_ms": 4727.250351978,
-        "ttft_ms": 4574.967832944822,
+        "full_ms": 4223.687377991155,
+        "ttft_ms": 4059.4752290053293,
         "usage": {
           "input_tokens": 100,
           "output_tokens": 10,
           "total_tokens": 110
         },
         "errors": 0,
-        "subprocesses": 0
+        "subprocesses": 0,
+        "subprocess_observation": {
+          "attempt_id": "http-018",
+          "events": []
+        }
       },
       {
         "arm": "http",
         "case": 19,
         "temperature": "warm",
-        "full_ms": 4916.039878036827,
-        "ttft_ms": 4776.592708018143,
+        "full_ms": 4863.67282300489,
+        "ttft_ms": 4718.423102982342,
         "usage": {
           "input_tokens": 100,
           "output_tokens": 10,
           "total_tokens": 110
         },
         "errors": 0,
-        "subprocesses": 0
+        "subprocesses": 0,
+        "subprocess_observation": {
+          "attempt_id": "http-019",
+          "events": []
+        }
       },
       {
         "arm": "cli",
         "case": 19,
         "temperature": "warm",
-        "full_ms": 14581.518235965632,
-        "ttft_ms": 14581.518235965632,
+        "full_ms": 12761.056685994845,
+        "ttft_ms": 12761.056685994845,
         "usage": {
           "input_tokens": 100,
           "output_tokens": 10,
           "total_tokens": 110
         },
         "errors": 0,
-        "subprocesses": 1
+        "subprocesses": 1,
+        "subprocess_observation": {
+          "attempt_id": "cli-019",
+          "events": [
+            {
+              "event": "subprocess.Popen",
+              "attempt_id": "cli-019",
+              "thread_id": 132854530074304,
+              "executable": "docker",
+              "ordinal": 1
+            }
+          ]
+        }
       },
       {
         "arm": "cli",
         "case": 20,
         "temperature": "cold",
-        "full_ms": 19847.03600301873,
-        "ttft_ms": 19847.03600301873,
+        "full_ms": 18412.296084978152,
+        "ttft_ms": 18412.296084978152,
         "usage": {
           "input_tokens": 100,
           "output_tokens": 10,
           "total_tokens": 110
         },
         "errors": 0,
-        "subprocesses": 1
+        "subprocesses": 1,
+        "subprocess_observation": {
+          "attempt_id": "cli-020",
+          "events": [
+            {
+              "event": "subprocess.Popen",
+              "attempt_id": "cli-020",
+              "thread_id": 132854521681600,
+              "executable": "docker",
+              "ordinal": 1
+            }
+          ]
+        }
       },
       {
         "arm": "http",
         "case": 20,
         "temperature": "cold",
-        "full_ms": 4587.45552203618,
-        "ttft_ms": 4482.3939190246165,
+        "full_ms": 5274.897084047552,
+        "ttft_ms": 5143.7873630202375,
         "usage": {
           "input_tokens": 100,
           "output_tokens": 10,
           "total_tokens": 110
         },
         "errors": 0,
-        "subprocesses": 0
+        "subprocesses": 0,
+        "subprocess_observation": {
+          "attempt_id": "http-020",
+          "events": []
+        }
       },
       {
         "arm": "http",
         "case": 21,
         "temperature": "warm",
-        "full_ms": 4799.703216995113,
-        "ttft_ms": 4650.851696962491,
+        "full_ms": 6689.50869695982,
+        "ttft_ms": 6584.395993966609,
         "usage": {
           "input_tokens": 100,
           "output_tokens": 10,
           "total_tokens": 110
         },
         "errors": 0,
-        "subprocesses": 0
+        "subprocesses": 0,
+        "subprocess_observation": {
+          "attempt_id": "http-021",
+          "events": []
+        }
       },
       {
         "arm": "cli",
         "case": 21,
         "temperature": "warm",
-        "full_ms": 15760.637636005413,
-        "ttft_ms": 15760.637636005413,
+        "full_ms": 17380.786276014987,
+        "ttft_ms": 17380.786276014987,
         "usage": {
           "input_tokens": 100,
           "output_tokens": 10,
           "total_tokens": 110
         },
         "errors": 0,
-        "subprocesses": 1
+        "subprocesses": 1,
+        "subprocess_observation": {
+          "attempt_id": "cli-021",
+          "events": [
+            {
+              "event": "subprocess.Popen",
+              "attempt_id": "cli-021",
+              "thread_id": 132854521681600,
+              "executable": "docker",
+              "ordinal": 1
+            }
+          ]
+        }
       },
       {
         "arm": "cli",
         "case": 22,
         "temperature": "warm",
-        "full_ms": 14233.504582021851,
-        "ttft_ms": 14233.504582021851,
+        "full_ms": 19278.027264983393,
+        "ttft_ms": 19278.027264983393,
         "usage": {
           "input_tokens": 100,
           "output_tokens": 10,
           "total_tokens": 110
         },
         "errors": 0,
-        "subprocesses": 1
+        "subprocesses": 1,
+        "subprocess_observation": {
+          "attempt_id": "cli-022",
+          "events": [
+            {
+              "event": "subprocess.Popen",
+              "attempt_id": "cli-022",
+              "thread_id": 132854521681600,
+              "executable": "docker",
+              "ordinal": 1
+            }
+          ]
+        }
       },
       {
         "arm": "http",
         "case": 22,
         "temperature": "warm",
-        "full_ms": 4635.860727983527,
-        "ttft_ms": 4475.629778986331,
+        "full_ms": 5784.243928967044,
+        "ttft_ms": 5626.275669957977,
         "usage": {
           "input_tokens": 100,
           "output_tokens": 10,
           "total_tokens": 110
         },
         "errors": 0,
-        "subprocesses": 0
+        "subprocesses": 0,
+        "subprocess_observation": {
+          "attempt_id": "http-022",
+          "events": []
+        }
       },
       {
         "arm": "http",
         "case": 23,
         "temperature": "warm",
-        "full_ms": 5337.499709974509,
-        "ttft_ms": 5167.839930974878,
+        "full_ms": 5327.262740989681,
+        "ttft_ms": 5207.835468987469,
         "usage": {
           "input_tokens": 100,
           "output_tokens": 10,
           "total_tokens": 110
         },
         "errors": 0,
-        "subprocesses": 0
+        "subprocesses": 0,
+        "subprocess_observation": {
+          "attempt_id": "http-023",
+          "events": []
+        }
       },
       {
         "arm": "cli",
         "case": 23,
         "temperature": "warm",
-        "full_ms": 16244.778483000118,
-        "ttft_ms": 16244.778483000118,
+        "full_ms": 15512.699564977083,
+        "ttft_ms": 15512.699564977083,
         "usage": {
           "input_tokens": 100,
           "output_tokens": 10,
           "total_tokens": 110
         },
         "errors": 0,
-        "subprocesses": 1
+        "subprocesses": 1,
+        "subprocess_observation": {
+          "attempt_id": "cli-023",
+          "events": [
+            {
+              "event": "subprocess.Popen",
+              "attempt_id": "cli-023",
+              "thread_id": 132854521681600,
+              "executable": "docker",
+              "ordinal": 1
+            }
+          ]
+        }
       },
       {
         "arm": "cli",
         "case": 24,
         "temperature": "warm",
-        "full_ms": 14964.916942000855,
-        "ttft_ms": 14964.916942000855,
+        "full_ms": 14999.100571032614,
+        "ttft_ms": 14999.100571032614,
         "usage": {
           "input_tokens": 100,
           "output_tokens": 10,
           "total_tokens": 110
         },
         "errors": 0,
-        "subprocesses": 1
+        "subprocesses": 1,
+        "subprocess_observation": {
+          "attempt_id": "cli-024",
+          "events": [
+            {
+              "event": "subprocess.Popen",
+              "attempt_id": "cli-024",
+              "thread_id": 132854521681600,
+              "executable": "docker",
+              "ordinal": 1
+            }
+          ]
+        }
       },
       {
         "arm": "http",
         "case": 24,
         "temperature": "warm",
-        "full_ms": 4785.602337971795,
-        "ttft_ms": 4622.4721989710815,
+        "full_ms": 4566.952592984308,
+        "ttft_ms": 4390.989835024811,
         "usage": {
           "input_tokens": 100,
           "output_tokens": 10,
           "total_tokens": 110
         },
         "errors": 0,
-        "subprocesses": 0
+        "subprocesses": 0,
+        "subprocess_observation": {
+          "attempt_id": "http-024",
+          "events": []
+        }
       },
       {
         "arm": "http",
         "case": 25,
         "temperature": "warm",
-        "full_ms": 5231.258136976976,
-        "ttft_ms": 5053.335068980232,
+        "full_ms": 4752.739570976701,
+        "ttft_ms": 4591.808082011994,
         "usage": {
           "input_tokens": 100,
           "output_tokens": 10,
           "total_tokens": 110
         },
         "errors": 0,
-        "subprocesses": 0
+        "subprocesses": 0,
+        "subprocess_observation": {
+          "attempt_id": "http-025",
+          "events": []
+        }
       },
       {
         "arm": "cli",
         "case": 25,
         "temperature": "warm",
-        "full_ms": 15281.0616089846,
-        "ttft_ms": 15281.0616089846,
+        "full_ms": 13790.241671958938,
+        "ttft_ms": 13790.241671958938,
         "usage": {
           "input_tokens": 100,
           "output_tokens": 10,
           "total_tokens": 110
         },
         "errors": 0,
-        "subprocesses": 1
+        "subprocesses": 1,
+        "subprocess_observation": {
+          "attempt_id": "cli-025",
+          "events": [
+            {
+              "event": "subprocess.Popen",
+              "attempt_id": "cli-025",
+              "thread_id": 132854521681600,
+              "executable": "docker",
+              "ordinal": 1
+            }
+          ]
+        }
       },
       {
         "arm": "cli",
         "case": 26,
         "temperature": "warm",
-        "full_ms": 16127.117879979778,
-        "ttft_ms": 16127.117879979778,
+        "full_ms": 13504.043149005156,
+        "ttft_ms": 13504.043149005156,
         "usage": {
           "input_tokens": 100,
           "output_tokens": 10,
           "total_tokens": 110
         },
         "errors": 0,
-        "subprocesses": 1
+        "subprocesses": 1,
+        "subprocess_observation": {
+          "attempt_id": "cli-026",
+          "events": [
+            {
+              "event": "subprocess.Popen",
+              "attempt_id": "cli-026",
+              "thread_id": 132854521681600,
+              "executable": "docker",
+              "ordinal": 1
+            }
+          ]
+        }
       },
       {
         "arm": "http",
         "case": 26,
         "temperature": "warm",
-        "full_ms": 5529.762865975499,
-        "ttft_ms": 5350.102008960675,
+        "full_ms": 4910.599410010036,
+        "ttft_ms": 4788.8296589953825,
         "usage": {
           "input_tokens": 100,
           "output_tokens": 10,
           "total_tokens": 110
         },
         "errors": 0,
-        "subprocesses": 0
+        "subprocesses": 0,
+        "subprocess_observation": {
+          "attempt_id": "http-026",
+          "events": []
+        }
       },
       {
         "arm": "http",
         "case": 27,
         "temperature": "warm",
-        "full_ms": 5358.1385589786805,
-        "ttft_ms": 5221.698477980681,
+        "full_ms": 5027.159551973455,
+        "ttft_ms": 4742.574742005672,
         "usage": {
           "input_tokens": 100,
           "output_tokens": 10,
           "total_tokens": 110
         },
         "errors": 0,
-        "subprocesses": 0
+        "subprocesses": 0,
+        "subprocess_observation": {
+          "attempt_id": "http-027",
+          "events": []
+        }
       },
       {
         "arm": "cli",
         "case": 27,
         "temperature": "warm",
-        "full_ms": 13965.302239987068,
-        "ttft_ms": 13965.302239987068,
+        "full_ms": 15023.576970037539,
+        "ttft_ms": 15023.576970037539,
         "usage": {
           "input_tokens": 100,
           "output_tokens": 10,
           "total_tokens": 110
         },
         "errors": 0,
-        "subprocesses": 1
+        "subprocesses": 1,
+        "subprocess_observation": {
+          "attempt_id": "cli-027",
+          "events": [
+            {
+              "event": "subprocess.Popen",
+              "attempt_id": "cli-027",
+              "thread_id": 132854521681600,
+              "executable": "docker",
+              "ordinal": 1
+            }
+          ]
+        }
       },
       {
         "arm": "cli",
         "case": 28,
         "temperature": "warm",
-        "full_ms": 14883.071716991253,
-        "ttft_ms": 14883.071716991253,
+        "full_ms": 13824.030613002833,
+        "ttft_ms": 13824.030613002833,
         "usage": {
           "input_tokens": 100,
           "output_tokens": 10,
           "total_tokens": 110
         },
         "errors": 0,
-        "subprocesses": 1
+        "subprocesses": 1,
+        "subprocess_observation": {
+          "attempt_id": "cli-028",
+          "events": [
+            {
+              "event": "subprocess.Popen",
+              "attempt_id": "cli-028",
+              "thread_id": 132854521681600,
+              "executable": "docker",
+              "ordinal": 1
+            }
+          ]
+        }
       },
       {
         "arm": "http",
         "case": 28,
         "temperature": "warm",
-        "full_ms": 4725.408372003585,
-        "ttft_ms": 4550.708494032733,
+        "full_ms": 4209.528987994418,
+        "ttft_ms": 4044.597389001865,
         "usage": {
           "input_tokens": 100,
           "output_tokens": 10,
           "total_tokens": 110
         },
         "errors": 0,
-        "subprocesses": 0
+        "subprocesses": 0,
+        "subprocess_observation": {
+          "attempt_id": "http-028",
+          "events": []
+        }
       },
       {
         "arm": "http",
         "case": 29,
         "temperature": "warm",
-        "full_ms": 4923.486237996258,
-        "ttft_ms": 4756.993408955168,
+        "full_ms": 4849.040873988997,
+        "ttft_ms": 4714.1992839751765,
         "usage": {
           "input_tokens": 100,
           "output_tokens": 10,
           "total_tokens": 110
         },
         "errors": 0,
-        "subprocesses": 0
+        "subprocesses": 0,
+        "subprocess_observation": {
+          "attempt_id": "http-029",
+          "events": []
+        }
       },
       {
         "arm": "cli",
         "case": 29,
         "temperature": "warm",
-        "full_ms": 14593.488204991445,
-        "ttft_ms": 14593.488204991445,
+        "full_ms": 12799.355294031557,
+        "ttft_ms": 12799.355294031557,
         "usage": {
           "input_tokens": 100,
           "output_tokens": 10,
           "total_tokens": 110
         },
         "errors": 0,
-        "subprocesses": 1
+        "subprocesses": 1,
+        "subprocess_observation": {
+          "attempt_id": "cli-029",
+          "events": [
+            {
+              "event": "subprocess.Popen",
+              "attempt_id": "cli-029",
+              "thread_id": 132854521681600,
+              "executable": "docker",
+              "ordinal": 1
+            }
+          ]
+        }
       },
       {
         "arm": "cli",
         "case": 30,
         "temperature": "cold",
-        "full_ms": 19819.324894982856,
-        "ttft_ms": 19819.324894982856,
+        "full_ms": 18427.020314033143,
+        "ttft_ms": 18427.020314033143,
         "usage": {
           "input_tokens": 100,
           "output_tokens": 10,
           "total_tokens": 110
         },
         "errors": 0,
-        "subprocesses": 1
+        "subprocesses": 1,
+        "subprocess_observation": {
+          "attempt_id": "cli-030",
+          "events": [
+            {
+              "event": "subprocess.Popen",
+              "attempt_id": "cli-030",
+              "thread_id": 132854513288896,
+              "executable": "docker",
+              "ordinal": 1
+            }
+          ]
+        }
       },
       {
         "arm": "http",
         "case": 30,
         "temperature": "cold",
-        "full_ms": 4637.718687998131,
-        "ttft_ms": 4513.562227017246,
+        "full_ms": 5265.33968601143,
+        "ttft_ms": 5128.404264978599,
         "usage": {
           "input_tokens": 100,
           "output_tokens": 10,
           "total_tokens": 110
         },
         "errors": 0,
-        "subprocesses": 0
+        "subprocesses": 0,
+        "subprocess_observation": {
+          "attempt_id": "http-030",
+          "events": []
+        }
       },
       {
         "arm": "http",
         "case": 31,
         "temperature": "warm",
-        "full_ms": 4767.560199019499,
-        "ttft_ms": 4623.073649010621,
+        "full_ms": 6700.826885993592,
+        "ttft_ms": 6575.028955005109,
         "usage": {
           "input_tokens": 100,
           "output_tokens": 10,
           "total_tokens": 110
         },
         "errors": 0,
-        "subprocesses": 0
+        "subprocesses": 0,
+        "subprocess_observation": {
+          "attempt_id": "http-031",
+          "events": []
+        }
       },
       {
         "arm": "cli",
         "case": 31,
         "temperature": "warm",
-        "full_ms": 15773.252976010554,
-        "ttft_ms": 15773.252976010554,
+        "full_ms": 17494.801008026116,
+        "ttft_ms": 17494.801008026116,
         "usage": {
           "input_tokens": 100,
           "output_tokens": 10,
           "total_tokens": 110
         },
         "errors": 0,
-        "subprocesses": 1
+        "subprocesses": 1,
+        "subprocess_observation": {
+          "attempt_id": "cli-031",
+          "events": [
+            {
+              "event": "subprocess.Popen",
+              "attempt_id": "cli-031",
+              "thread_id": 132854513288896,
+              "executable": "docker",
+              "ordinal": 1
+            }
+          ]
+        }
       },
       {
         "arm": "cli",
         "case": 32,
         "temperature": "warm",
-        "full_ms": 14150.132078037132,
-        "ttft_ms": 14150.132078037132,
+        "full_ms": 19055.82663998939,
+        "ttft_ms": 19055.82663998939,
         "usage": {
           "input_tokens": 100,
           "output_tokens": 10,
           "total_tokens": 110
         },
         "errors": 0,
-        "subprocesses": 1
+        "subprocesses": 1,
+        "subprocess_observation": {
+          "attempt_id": "cli-032",
+          "events": [
+            {
+              "event": "subprocess.Popen",
+              "attempt_id": "cli-032",
+              "thread_id": 132854513288896,
+              "executable": "docker",
+              "ordinal": 1
+            }
+          ]
+        }
       },
       {
         "arm": "http",
         "case": 32,
         "temperature": "warm",
-        "full_ms": 4682.020905020181,
-        "ttft_ms": 4554.095414001495,
+        "full_ms": 5854.931624024175,
+        "ttft_ms": 5712.677704053931,
         "usage": {
           "input_tokens": 100,
           "output_tokens": 10,
           "total_tokens": 110
         },
         "errors": 0,
-        "subprocesses": 0
+        "subprocesses": 0,
+        "subprocess_observation": {
+          "attempt_id": "http-032",
+          "events": []
+        }
       },
       {
         "arm": "http",
         "case": 33,
         "temperature": "warm",
-        "full_ms": 5383.192496956326,
-        "ttft_ms": 5189.048689964693,
+        "full_ms": 5354.441138973925,
+        "ttft_ms": 5227.714037988335,
         "usage": {
           "input_tokens": 100,
           "output_tokens": 10,
           "total_tokens": 110
         },
         "errors": 0,
-        "subprocesses": 0
+        "subprocesses": 0,
+        "subprocess_observation": {
+          "attempt_id": "http-033",
+          "events": []
+        }
       },
       {
         "arm": "cli",
         "case": 33,
         "temperature": "warm",
-        "full_ms": 16255.87946199812,
-        "ttft_ms": 16255.87946199812,
+        "full_ms": 15449.310449999757,
+        "ttft_ms": 15449.310449999757,
         "usage": {
           "input_tokens": 100,
           "output_tokens": 10,
           "total_tokens": 110
         },
         "errors": 0,
-        "subprocesses": 1
+        "subprocesses": 1,
+        "subprocess_observation": {
+          "attempt_id": "cli-033",
+          "events": [
+            {
+              "event": "subprocess.Popen",
+              "attempt_id": "cli-033",
+              "thread_id": 132854513288896,
+              "executable": "docker",
+              "ordinal": 1
+            }
+          ]
+        }
       },
       {
         "arm": "cli",
         "case": 34,
         "temperature": "warm",
-        "full_ms": 14887.12117698742,
-        "ttft_ms": 14887.12117698742,
+        "full_ms": 15071.273006033152,
+        "ttft_ms": 15071.273006033152,
         "usage": {
           "input_tokens": 100,
           "output_tokens": 10,
           "total_tokens": 110
         },
         "errors": 0,
-        "subprocesses": 1
+        "subprocesses": 1,
+        "subprocess_observation": {
+          "attempt_id": "cli-034",
+          "events": [
+            {
+              "event": "subprocess.Popen",
+              "attempt_id": "cli-034",
+              "thread_id": 132854513288896,
+              "executable": "docker",
+              "ordinal": 1
+            }
+          ]
+        }
       },
       {
         "arm": "http",
         "case": 34,
         "temperature": "warm",
-        "full_ms": 4910.813228983898,
-        "ttft_ms": 4686.436393996701,
+        "full_ms": 4560.685363016091,
+        "ttft_ms": 4392.013005039189,
         "usage": {
           "input_tokens": 100,
           "output_tokens": 10,
           "total_tokens": 110
         },
         "errors": 0,
-        "subprocesses": 0
+        "subprocesses": 0,
+        "subprocess_observation": {
+          "attempt_id": "http-034",
+          "events": []
+        }
       },
       {
         "arm": "http",
         "case": 35,
         "temperature": "warm",
-        "full_ms": 5190.243970020674,
-        "ttft_ms": 4987.849304045085,
+        "full_ms": 4729.044163017534,
+        "ttft_ms": 4572.866712987889,
         "usage": {
           "input_tokens": 100,
           "output_tokens": 10,
           "total_tokens": 110
         },
         "errors": 0,
-        "subprocesses": 0
+        "subprocesses": 0,
+        "subprocess_observation": {
+          "attempt_id": "http-035",
+          "events": []
+        }
       },
       {
         "arm": "cli",
         "case": 35,
         "temperature": "warm",
-        "full_ms": 15281.685588997789,
-        "ttft_ms": 15281.685588997789,
+        "full_ms": 13768.946623022202,
+        "ttft_ms": 13768.946623022202,
         "usage": {
           "input_tokens": 100,
           "output_tokens": 10,
           "total_tokens": 110
         },
         "errors": 0,
-        "subprocesses": 1
+        "subprocesses": 1,
+        "subprocess_observation": {
+          "attempt_id": "cli-035",
+          "events": [
+            {
+              "event": "subprocess.Popen",
+              "attempt_id": "cli-035",
+              "thread_id": 132854513288896,
+              "executable": "docker",
+              "ordinal": 1
+            }
+          ]
+        }
       },
       {
         "arm": "cli",
         "case": 36,
         "temperature": "warm",
-        "full_ms": 16042.277725995518,
-        "ttft_ms": 16042.277725995518,
+        "full_ms": 13452.103362011258,
+        "ttft_ms": 13452.103362011258,
         "usage": {
           "input_tokens": 100,
           "output_tokens": 10,
           "total_tokens": 110
         },
         "errors": 0,
-        "subprocesses": 1
+        "subprocesses": 1,
+        "subprocess_observation": {
+          "attempt_id": "cli-036",
+          "events": [
+            {
+              "event": "subprocess.Popen",
+              "attempt_id": "cli-036",
+              "thread_id": 132854513288896,
+              "executable": "docker",
+              "ordinal": 1
+            }
+          ]
+        }
       },
       {
         "arm": "http",
         "case": 36,
         "temperature": "warm",
-        "full_ms": 5596.923440985847,
-        "ttft_ms": 5395.016575988848,
+        "full_ms": 5012.558103015181,
+        "ttft_ms": 4873.021233011968,
         "usage": {
           "input_tokens": 100,
           "output_tokens": 10,
           "total_tokens": 110
         },
         "errors": 0,
-        "subprocesses": 0
+        "subprocesses": 0,
+        "subprocess_observation": {
+          "attempt_id": "http-036",
+          "events": []
+        }
       },
       {
         "arm": "http",
         "case": 37,
         "temperature": "warm",
-        "full_ms": 5361.572327965405,
-        "ttft_ms": 5206.768327974714,
+        "full_ms": 4990.53820502013,
+        "ttft_ms": 4715.922344010323,
         "usage": {
           "input_tokens": 100,
           "output_tokens": 10,
           "total_tokens": 110
         },
         "errors": 0,
-        "subprocesses": 0
+        "subprocesses": 0,
+        "subprocess_observation": {
+          "attempt_id": "http-037",
+          "events": []
+        }
       },
       {
         "arm": "cli",
         "case": 37,
         "temperature": "warm",
-        "full_ms": 13962.277769984212,
-        "ttft_ms": 13962.277769984212,
+        "full_ms": 15037.764998036437,
+        "ttft_ms": 15037.764998036437,
         "usage": {
           "input_tokens": 100,
           "output_tokens": 10,
           "total_tokens": 110
         },
         "errors": 0,
-        "subprocesses": 1
+        "subprocesses": 1,
+        "subprocess_observation": {
+          "attempt_id": "cli-037",
+          "events": [
+            {
+              "event": "subprocess.Popen",
+              "attempt_id": "cli-037",
+              "thread_id": 132854513288896,
+              "executable": "docker",
+              "ordinal": 1
+            }
+          ]
+        }
       },
       {
         "arm": "cli",
         "case": 38,
         "temperature": "warm",
-        "full_ms": 14861.15274898475,
-        "ttft_ms": 14861.15274898475,
+        "full_ms": 13770.827157015447,
+        "ttft_ms": 13770.827157015447,
         "usage": {
           "input_tokens": 100,
           "output_tokens": 10,
           "total_tokens": 110
         },
         "errors": 0,
-        "subprocesses": 1
+        "subprocesses": 1,
+        "subprocess_observation": {
+          "attempt_id": "cli-038",
+          "events": [
+            {
+              "event": "subprocess.Popen",
+              "attempt_id": "cli-038",
+              "thread_id": 132854513288896,
+              "executable": "docker",
+              "ordinal": 1
+            }
+          ]
+        }
       },
       {
         "arm": "http",
         "case": 38,
         "temperature": "warm",
-        "full_ms": 4709.943622001447,
-        "ttft_ms": 4554.515424009878,
+        "full_ms": 4292.736902018078,
+        "ttft_ms": 4101.518726034556,
         "usage": {
           "input_tokens": 100,
           "output_tokens": 10,
           "total_tokens": 110
         },
         "errors": 0,
-        "subprocesses": 0
+        "subprocesses": 0,
+        "subprocess_observation": {
+          "attempt_id": "http-038",
+          "events": []
+        }
       },
       {
         "arm": "http",
         "case": 39,
         "temperature": "warm",
-        "full_ms": 4931.337467976846,
-        "ttft_ms": 4782.1568079525605,
+        "full_ms": 4830.948714981787,
+        "ttft_ms": 4695.353283954319,
         "usage": {
           "input_tokens": 100,
           "output_tokens": 10,
           "total_tokens": 110
         },
         "errors": 0,
-        "subprocesses": 0
+        "subprocesses": 0,
+        "subprocess_observation": {
+          "attempt_id": "http-039",
+          "events": []
+        }
       },
       {
         "arm": "cli",
         "case": 39,
         "temperature": "warm",
-        "full_ms": 14648.001041030511,
-        "ttft_ms": 14648.001041030511,
+        "full_ms": 12833.449521043804,
+        "ttft_ms": 12833.449521043804,
         "usage": {
           "input_tokens": 100,
           "output_tokens": 10,
           "total_tokens": 110
         },
         "errors": 0,
-        "subprocesses": 1
+        "subprocesses": 1,
+        "subprocess_observation": {
+          "attempt_id": "cli-039",
+          "events": [
+            {
+              "event": "subprocess.Popen",
+              "attempt_id": "cli-039",
+              "thread_id": 132854513288896,
+              "executable": "docker",
+              "ordinal": 1
+            }
+          ]
+        }
       },
       {
         "arm": "cli",
         "case": 40,
         "temperature": "cold",
-        "full_ms": 16184.44422999164,
-        "ttft_ms": 16184.44422999164,
+        "full_ms": 17764.141179970466,
+        "ttft_ms": 17764.141179970466,
         "usage": {
           "input_tokens": 100,
           "output_tokens": 10,
           "total_tokens": 110
         },
         "errors": 0,
-        "subprocesses": 1
+        "subprocesses": 1,
+        "subprocess_observation": {
+          "attempt_id": "cli-040",
+          "events": [
+            {
+              "event": "subprocess.Popen",
+              "attempt_id": "cli-040",
+              "thread_id": 132854530074304,
+              "executable": "docker",
+              "ordinal": 1
+            }
+          ]
+        }
       },
       {
         "arm": "http",
         "case": 40,
         "temperature": "cold",
-        "full_ms": 4824.845105002169,
-        "ttft_ms": 4748.2076800079085,
+        "full_ms": 5219.969328027219,
+        "ttft_ms": 5084.356138017029,
         "usage": {
           "input_tokens": 100,
           "output_tokens": 10,
           "total_tokens": 110
         },
         "errors": 0,
-        "subprocesses": 0
+        "subprocesses": 0,
+        "subprocess_observation": {
+          "attempt_id": "http-040",
+          "events": []
+        }
       },
       {
         "arm": "http",
         "case": 41,
         "temperature": "warm",
-        "full_ms": 4168.148820986971,
-        "ttft_ms": 4086.5305259940214,
+        "full_ms": 4537.101526046172,
+        "ttft_ms": 4465.344571042806,
         "usage": {
           "input_tokens": 100,
           "output_tokens": 10,
           "total_tokens": 110
         },
         "errors": 0,
-        "subprocesses": 0
+        "subprocesses": 0,
+        "subprocess_observation": {
+          "attempt_id": "http-041",
+          "events": []
+        }
       },
       {
         "arm": "cli",
         "case": 41,
         "temperature": "warm",
-        "full_ms": 13551.061029022094,
-        "ttft_ms": 13551.061029022094,
+        "full_ms": 14112.46207304066,
+        "ttft_ms": 14112.46207304066,
         "usage": {
           "input_tokens": 100,
           "output_tokens": 10,
           "total_tokens": 110
         },
         "errors": 0,
-        "subprocesses": 1
+        "subprocesses": 1,
+        "subprocess_observation": {
+          "attempt_id": "cli-041",
+          "events": [
+            {
+              "event": "subprocess.Popen",
+              "attempt_id": "cli-041",
+              "thread_id": 132854530074304,
+              "executable": "docker",
+              "ordinal": 1
+            }
+          ]
+        }
       },
       {
         "arm": "cli",
         "case": 42,
         "temperature": "warm",
-        "full_ms": 12619.845404988155,
-        "ttft_ms": 12619.845404988155,
+        "full_ms": 15772.15229801368,
+        "ttft_ms": 15772.15229801368,
         "usage": {
           "input_tokens": 100,
           "output_tokens": 10,
           "total_tokens": 110
         },
         "errors": 0,
-        "subprocesses": 1
+        "subprocesses": 1,
+        "subprocess_observation": {
+          "attempt_id": "cli-042",
+          "events": [
+            {
+              "event": "subprocess.Popen",
+              "attempt_id": "cli-042",
+              "thread_id": 132854530074304,
+              "executable": "docker",
+              "ordinal": 1
+            }
+          ]
+        }
       },
       {
         "arm": "http",
         "case": 42,
         "temperature": "warm",
-        "full_ms": 3976.4223439851776,
-        "ttft_ms": 3882.9447900061496,
+        "full_ms": 6147.330634004902,
+        "ttft_ms": 5956.454708008096,
         "usage": {
           "input_tokens": 100,
           "output_tokens": 10,
           "total_tokens": 110
         },
         "errors": 0,
-        "subprocesses": 0
+        "subprocesses": 0,
+        "subprocess_observation": {
+          "attempt_id": "http-042",
+          "events": []
+        }
       },
       {
         "arm": "http",
         "case": 43,
         "temperature": "warm",
-        "full_ms": 4386.91075501265,
-        "ttft_ms": 4276.109853002708,
+        "full_ms": 4668.830197013449,
+        "ttft_ms": 4551.522434980143,
         "usage": {
           "input_tokens": 100,
           "output_tokens": 10,
           "total_tokens": 110
         },
         "errors": 0,
-        "subprocesses": 0
+        "subprocesses": 0,
+        "subprocess_observation": {
+          "attempt_id": "http-043",
+          "events": []
+        }
       },
       {
         "arm": "cli",
         "case": 43,
         "temperature": "warm",
-        "full_ms": 13382.957231951877,
-        "ttft_ms": 13382.957231951877,
+        "full_ms": 16785.018806986045,
+        "ttft_ms": 16785.018806986045,
         "usage": {
           "input_tokens": 100,
           "output_tokens": 10,
           "total_tokens": 110
         },
         "errors": 0,
-        "subprocesses": 1
+        "subprocesses": 1,
+        "subprocess_observation": {
+          "attempt_id": "cli-043",
+          "events": [
+            {
+              "event": "subprocess.Popen",
+              "attempt_id": "cli-043",
+              "thread_id": 132854530074304,
+              "executable": "docker",
+              "ordinal": 1
+            }
+          ]
+        }
       },
       {
         "arm": "cli",
         "case": 44,
         "temperature": "warm",
-        "full_ms": 13538.71390101267,
-        "ttft_ms": 13538.71390101267,
+        "full_ms": 15385.076545004267,
+        "ttft_ms": 15385.076545004267,
         "usage": {
           "input_tokens": 100,
           "output_tokens": 10,
           "total_tokens": 110
         },
         "errors": 0,
-        "subprocesses": 1
+        "subprocesses": 1,
+        "subprocess_observation": {
+          "attempt_id": "cli-044",
+          "events": [
+            {
+              "event": "subprocess.Popen",
+              "attempt_id": "cli-044",
+              "thread_id": 132854530074304,
+              "executable": "docker",
+              "ordinal": 1
+            }
+          ]
+        }
       },
       {
         "arm": "http",
         "case": 44,
         "temperature": "warm",
-        "full_ms": 4495.182787999511,
-        "ttft_ms": 4379.338365979493,
+        "full_ms": 4394.013686047401,
+        "ttft_ms": 4287.966293049976,
         "usage": {
           "input_tokens": 100,
           "output_tokens": 10,
           "total_tokens": 110
         },
         "errors": 0,
-        "subprocesses": 0
+        "subprocesses": 0,
+        "subprocess_observation": {
+          "attempt_id": "http-044",
+          "events": []
+        }
       },
       {
         "arm": "http",
         "case": 45,
         "temperature": "warm",
-        "full_ms": 4739.010851015337,
-        "ttft_ms": 4603.550739993807,
+        "full_ms": 4401.819485006854,
+        "ttft_ms": 4303.7666020100005,
         "usage": {
           "input_tokens": 100,
           "output_tokens": 10,
           "total_tokens": 110
         },
         "errors": 0,
-        "subprocesses": 0
+        "subprocesses": 0,
+        "subprocess_observation": {
+          "attempt_id": "http-045",
+          "events": []
+        }
       },
       {
         "arm": "cli",
         "case": 45,
         "temperature": "warm",
-        "full_ms": 13161.939095996786,
-        "ttft_ms": 13161.939095996786,
+        "full_ms": 14057.043306995183,
+        "ttft_ms": 14057.043306995183,
         "usage": {
           "input_tokens": 100,
           "output_tokens": 10,
           "total_tokens": 110
         },
         "errors": 0,
-        "subprocesses": 1
+        "subprocesses": 1,
+        "subprocess_observation": {
+          "attempt_id": "cli-045",
+          "events": [
+            {
+              "event": "subprocess.Popen",
+              "attempt_id": "cli-045",
+              "thread_id": 132854530074304,
+              "executable": "docker",
+              "ordinal": 1
+            }
+          ]
+        }
       },
       {
         "arm": "cli",
         "case": 46,
         "temperature": "warm",
-        "full_ms": 16568.58070997987,
-        "ttft_ms": 16568.58070997987,
+        "full_ms": 14759.528477967251,
+        "ttft_ms": 14759.528477967251,
         "usage": {
           "input_tokens": 100,
           "output_tokens": 10,
           "total_tokens": 110
         },
         "errors": 0,
-        "subprocesses": 1
+        "subprocesses": 1,
+        "subprocess_observation": {
+          "attempt_id": "cli-046",
+          "events": [
+            {
+              "event": "subprocess.Popen",
+              "attempt_id": "cli-046",
+              "thread_id": 132854530074304,
+              "executable": "docker",
+              "ordinal": 1
+            }
+          ]
+        }
       },
       {
         "arm": "http",
         "case": 46,
         "temperature": "warm",
-        "full_ms": 4294.955122051761,
-        "ttft_ms": 4183.587770035956,
+        "full_ms": 4496.757537999656,
+        "ttft_ms": 4357.579047966283,
         "usage": {
           "input_tokens": 100,
           "output_tokens": 10,
           "total_tokens": 110
         },
         "errors": 0,
-        "subprocesses": 0
+        "subprocesses": 0,
+        "subprocess_observation": {
+          "attempt_id": "http-046",
+          "events": []
+        }
       },
       {
         "arm": "http",
         "case": 47,
         "temperature": "warm",
-        "full_ms": 4355.708627961576,
-        "ttft_ms": 4211.197117983829,
+        "full_ms": 4749.5247310143895,
+        "ttft_ms": 4608.747121004853,
         "usage": {
           "input_tokens": 100,
           "output_tokens": 10,
           "total_tokens": 110
         },
         "errors": 0,
-        "subprocesses": 0
+        "subprocesses": 0,
+        "subprocess_observation": {
+          "attempt_id": "http-047",
+          "events": []
+        }
       },
       {
         "arm": "cli",
         "case": 47,
         "temperature": "warm",
-        "full_ms": 12995.866607991047,
-        "ttft_ms": 12995.866607991047,
+        "full_ms": 14523.914674995467,
+        "ttft_ms": 14523.914674995467,
         "usage": {
           "input_tokens": 100,
           "output_tokens": 10,
           "total_tokens": 110
         },
         "errors": 0,
-        "subprocesses": 1
+        "subprocesses": 1,
+        "subprocess_observation": {
+          "attempt_id": "cli-047",
+          "events": [
+            {
+              "event": "subprocess.Popen",
+              "attempt_id": "cli-047",
+              "thread_id": 132854530074304,
+              "executable": "docker",
+              "ordinal": 1
+            }
+          ]
+        }
       },
       {
         "arm": "cli",
         "case": 48,
         "temperature": "warm",
-        "full_ms": 12434.662576997653,
-        "ttft_ms": 12434.662576997653,
+        "full_ms": 14249.604823009577,
+        "ttft_ms": 14249.604823009577,
         "usage": {
           "input_tokens": 100,
           "output_tokens": 10,
           "total_tokens": 110
         },
         "errors": 0,
-        "subprocesses": 1
+        "subprocesses": 1,
+        "subprocess_observation": {
+          "attempt_id": "cli-048",
+          "events": [
+            {
+              "event": "subprocess.Popen",
+              "attempt_id": "cli-048",
+              "thread_id": 132854530074304,
+              "executable": "docker",
+              "ordinal": 1
+            }
+          ]
+        }
       },
       {
         "arm": "http",
         "case": 48,
         "temperature": "warm",
-        "full_ms": 4140.08375297999,
-        "ttft_ms": 4012.512461980805,
+        "full_ms": 4269.327644025907,
+        "ttft_ms": 4134.482063003816,
         "usage": {
           "input_tokens": 100,
           "output_tokens": 10,
           "total_tokens": 110
         },
         "errors": 0,
-        "subprocesses": 0
+        "subprocesses": 0,
+        "subprocess_observation": {
+          "attempt_id": "http-048",
+          "events": []
+        }
       },
       {
         "arm": "http",
         "case": 49,
         "temperature": "warm",
-        "full_ms": 4426.947463012766,
-        "ttft_ms": 4298.883781011682,
+        "full_ms": 4256.503594981041,
+        "ttft_ms": 4105.074735998642,
         "usage": {
           "input_tokens": 100,
           "output_tokens": 10,
           "total_tokens": 110
         },
         "errors": 0,
-        "subprocesses": 0
+        "subprocesses": 0,
+        "subprocess_observation": {
+          "attempt_id": "http-049",
+          "events": []
+        }
       },
       {
         "arm": "cli",
         "case": 49,
         "temperature": "warm",
-        "full_ms": 13192.951623990666,
-        "ttft_ms": 13192.951623990666,
+        "full_ms": 13765.215507999528,
+        "ttft_ms": 13765.215507999528,
         "usage": {
           "input_tokens": 100,
           "output_tokens": 10,
           "total_tokens": 110
         },
         "errors": 0,
-        "subprocesses": 1
+        "subprocesses": 1,
+        "subprocess_observation": {
+          "attempt_id": "cli-049",
+          "events": [
+            {
+              "event": "subprocess.Popen",
+              "attempt_id": "cli-049",
+              "thread_id": 132854530074304,
+              "executable": "docker",
+              "ordinal": 1
+            }
+          ]
+        }
       },
       {
         "arm": "cli",
         "case": 50,
         "temperature": "cold",
-        "full_ms": 16208.848458016291,
-        "ttft_ms": 16208.848458016291,
+        "full_ms": 17686.889395001344,
+        "ttft_ms": 17686.889395001344,
         "usage": {
           "input_tokens": 100,
           "output_tokens": 10,
           "total_tokens": 110
         },
         "errors": 0,
-        "subprocesses": 1
+        "subprocesses": 1,
+        "subprocess_observation": {
+          "attempt_id": "cli-050",
+          "events": [
+            {
+              "event": "subprocess.Popen",
+              "attempt_id": "cli-050",
+              "thread_id": 132854521681600,
+              "executable": "docker",
+              "ordinal": 1
+            }
+          ]
+        }
       },
       {
         "arm": "http",
         "case": 50,
         "temperature": "cold",
-        "full_ms": 4777.264347998425,
-        "ttft_ms": 4706.054702983238,
+        "full_ms": 5262.508856016211,
+        "ttft_ms": 5150.679362996016,
         "usage": {
           "input_tokens": 100,
           "output_tokens": 10,
           "total_tokens": 110
         },
         "errors": 0,
-        "subprocesses": 0
+        "subprocesses": 0,
+        "subprocess_observation": {
+          "attempt_id": "http-050",
+          "events": []
+        }
       },
       {
         "arm": "http",
         "case": 51,
         "temperature": "warm",
-        "full_ms": 4189.5837190095335,
-        "ttft_ms": 4084.15121701546,
+        "full_ms": 4566.714442975353,
+        "ttft_ms": 4477.356099989265,
         "usage": {
           "input_tokens": 100,
           "output_tokens": 10,
           "total_tokens": 110
         },
         "errors": 0,
-        "subprocesses": 0
+        "subprocesses": 0,
+        "subprocess_observation": {
+          "attempt_id": "http-051",
+          "events": []
+        }
       },
       {
         "arm": "cli",
         "case": 51,
         "temperature": "warm",
-        "full_ms": 13544.617359992117,
-        "ttft_ms": 13544.617359992117,
+        "full_ms": 14070.281476015225,
+        "ttft_ms": 14070.281476015225,
         "usage": {
           "input_tokens": 100,
           "output_tokens": 10,
           "total_tokens": 110
         },
         "errors": 0,
-        "subprocesses": 1
+        "subprocesses": 1,
+        "subprocess_observation": {
+          "attempt_id": "cli-051",
+          "events": [
+            {
+              "event": "subprocess.Popen",
+              "attempt_id": "cli-051",
+              "thread_id": 132854521681600,
+              "executable": "docker",
+              "ordinal": 1
+            }
+          ]
+        }
       },
       {
         "arm": "cli",
         "case": 52,
         "temperature": "warm",
-        "full_ms": 12638.538852974307,
-        "ttft_ms": 12638.538852974307,
+        "full_ms": 15789.134186983574,
+        "ttft_ms": 15789.134186983574,
         "usage": {
           "input_tokens": 100,
           "output_tokens": 10,
           "total_tokens": 110
         },
         "errors": 0,
-        "subprocesses": 1
+        "subprocesses": 1,
+        "subprocess_observation": {
+          "attempt_id": "cli-052",
+          "events": [
+            {
+              "event": "subprocess.Popen",
+              "attempt_id": "cli-052",
+              "thread_id": 132854521681600,
+              "executable": "docker",
+              "ordinal": 1
+            }
+          ]
+        }
       },
       {
         "arm": "http",
         "case": 52,
         "temperature": "warm",
-        "full_ms": 3943.191836006008,
-        "ttft_ms": 3855.4217019700445,
+        "full_ms": 6120.618946035393,
+        "ttft_ms": 5966.989487002138,
         "usage": {
           "input_tokens": 100,
           "output_tokens": 10,
           "total_tokens": 110
         },
         "errors": 0,
-        "subprocesses": 0
+        "subprocesses": 0,
+        "subprocess_observation": {
+          "attempt_id": "http-052",
+          "events": []
+        }
       },
       {
         "arm": "http",
         "case": 53,
         "temperature": "warm",
-        "full_ms": 4380.772316013463,
-        "ttft_ms": 4278.454392973799,
+        "full_ms": 4680.2277360111475,
+        "ttft_ms": 4559.8161140223965,
         "usage": {
           "input_tokens": 100,
           "output_tokens": 10,
           "total_tokens": 110
         },
         "errors": 0,
-        "subprocesses": 0
+        "subprocesses": 0,
+        "subprocess_observation": {
+          "attempt_id": "http-053",
+          "events": []
+        }
       },
       {
         "arm": "cli",
         "case": 53,
         "temperature": "warm",
-        "full_ms": 13390.954541042447,
-        "ttft_ms": 13390.954541042447,
+        "full_ms": 16840.192003990524,
+        "ttft_ms": 16840.192003990524,
         "usage": {
           "input_tokens": 100,
           "output_tokens": 10,
           "total_tokens": 110
         },
         "errors": 0,
-        "subprocesses": 1
+        "subprocesses": 1,
+        "subprocess_observation": {
+          "attempt_id": "cli-053",
+          "events": [
+            {
+              "event": "subprocess.Popen",
+              "attempt_id": "cli-053",
+              "thread_id": 132854521681600,
+              "executable": "docker",
+              "ordinal": 1
+            }
+          ]
+        }
       },
       {
         "arm": "cli",
         "case": 54,
         "temperature": "warm",
-        "full_ms": 13599.147096974775,
-        "ttft_ms": 13599.147096974775,
+        "full_ms": 15316.878229030408,
+        "ttft_ms": 15316.878229030408,
         "usage": {
           "input_tokens": 100,
           "output_tokens": 10,
           "total_tokens": 110
         },
         "errors": 0,
-        "subprocesses": 1
+        "subprocesses": 1,
+        "subprocess_observation": {
+          "attempt_id": "cli-054",
+          "events": [
+            {
+              "event": "subprocess.Popen",
+              "attempt_id": "cli-054",
+              "thread_id": 132854521681600,
+              "executable": "docker",
+              "ordinal": 1
+            }
+          ]
+        }
       },
       {
         "arm": "http",
         "case": 54,
         "temperature": "warm",
-        "full_ms": 4451.868810981978,
-        "ttft_ms": 4320.270139956847,
+        "full_ms": 4447.225382027682,
+        "ttft_ms": 4318.462550989352,
         "usage": {
           "input_tokens": 100,
           "output_tokens": 10,
           "total_tokens": 110
         },
         "errors": 0,
-        "subprocesses": 0
+        "subprocesses": 0,
+        "subprocess_observation": {
+          "attempt_id": "http-054",
+          "events": []
+        }
       },
       {
         "arm": "http",
         "case": 55,
         "temperature": "warm",
-        "full_ms": 4706.898582982831,
-        "ttft_ms": 4590.871080989018,
+        "full_ms": 4400.525775970891,
+        "ttft_ms": 4299.086362007074,
         "usage": {
           "input_tokens": 100,
           "output_tokens": 10,
           "total_tokens": 110
         },
         "errors": 0,
-        "subprocesses": 0
+        "subprocesses": 0,
+        "subprocess_observation": {
+          "attempt_id": "http-055",
+          "events": []
+        }
       },
       {
         "arm": "cli",
         "case": 55,
         "temperature": "warm",
-        "full_ms": 13181.570234999526,
-        "ttft_ms": 13181.570234999526,
+        "full_ms": 14105.311974009965,
+        "ttft_ms": 14105.311974009965,
         "usage": {
           "input_tokens": 100,
           "output_tokens": 10,
           "total_tokens": 110
         },
         "errors": 0,
-        "subprocesses": 1
+        "subprocesses": 1,
+        "subprocess_observation": {
+          "attempt_id": "cli-055",
+          "events": [
+            {
+              "event": "subprocess.Popen",
+              "attempt_id": "cli-055",
+              "thread_id": 132854521681600,
+              "executable": "docker",
+              "ordinal": 1
+            }
+          ]
+        }
       },
       {
         "arm": "cli",
         "case": 56,
         "temperature": "warm",
-        "full_ms": 16504.940724000335,
-        "ttft_ms": 16504.940724000335,
+        "full_ms": 14814.293314004317,
+        "ttft_ms": 14814.293314004317,
         "usage": {
           "input_tokens": 100,
           "output_tokens": 10,
           "total_tokens": 110
         },
         "errors": 0,
-        "subprocesses": 1
+        "subprocesses": 1,
+        "subprocess_observation": {
+          "attempt_id": "cli-056",
+          "events": [
+            {
+              "event": "subprocess.Popen",
+              "attempt_id": "cli-056",
+              "thread_id": 132854521681600,
+              "executable": "docker",
+              "ordinal": 1
+            }
+          ]
+        }
       },
       {
         "arm": "http",
         "case": 56,
         "temperature": "warm",
-        "full_ms": 4370.487506967038,
-        "ttft_ms": 4245.99775596289,
+        "full_ms": 4374.185686989222,
+        "ttft_ms": 4247.432395990472,
         "usage": {
           "input_tokens": 100,
           "output_tokens": 10,
           "total_tokens": 110
         },
         "errors": 0,
-        "subprocesses": 0
+        "subprocesses": 0,
+        "subprocess_observation": {
+          "attempt_id": "http-056",
+          "events": []
+        }
       },
       {
         "arm": "http",
         "case": 57,
         "temperature": "warm",
-        "full_ms": 4351.139587990474,
-        "ttft_ms": 4187.476710008923,
+        "full_ms": 4752.508111007046,
+        "ttft_ms": 4610.16371101141,
         "usage": {
           "input_tokens": 100,
           "output_tokens": 10,
           "total_tokens": 110
         },
         "errors": 0,
-        "subprocesses": 0
+        "subprocesses": 0,
+        "subprocess_observation": {
+          "attempt_id": "http-057",
+          "events": []
+        }
       },
       {
         "arm": "cli",
         "case": 57,
         "temperature": "warm",
-        "full_ms": 13084.138272039127,
-        "ttft_ms": 13084.138272039127,
+        "full_ms": 14348.745535942726,
+        "ttft_ms": 14348.745535942726,
         "usage": {
           "input_tokens": 100,
           "output_tokens": 10,
           "total_tokens": 110
         },
         "errors": 0,
-        "subprocesses": 1
+        "subprocesses": 1,
+        "subprocess_observation": {
+          "attempt_id": "cli-057",
+          "events": [
+            {
+              "event": "subprocess.Popen",
+              "attempt_id": "cli-057",
+              "thread_id": 132854521681600,
+              "executable": "docker",
+              "ordinal": 1
+            }
+          ]
+        }
       },
       {
         "arm": "cli",
         "case": 58,
         "temperature": "warm",
-        "full_ms": 12348.399813985452,
-        "ttft_ms": 12348.399813985452,
+        "full_ms": 14415.599111991469,
+        "ttft_ms": 14415.599111991469,
         "usage": {
           "input_tokens": 100,
           "output_tokens": 10,
           "total_tokens": 110
         },
         "errors": 0,
-        "subprocesses": 1
+        "subprocesses": 1,
+        "subprocess_observation": {
+          "attempt_id": "cli-058",
+          "events": [
+            {
+              "event": "subprocess.Popen",
+              "attempt_id": "cli-058",
+              "thread_id": 132854521681600,
+              "executable": "docker",
+              "ordinal": 1
+            }
+          ]
+        }
       },
       {
         "arm": "http",
         "case": 58,
         "temperature": "warm",
-        "full_ms": 4147.137972002383,
-        "ttft_ms": 4006.301361019723,
+        "full_ms": 4292.487233004067,
+        "ttft_ms": 4151.833733019885,
         "usage": {
           "input_tokens": 100,
           "output_tokens": 10,
           "total_tokens": 110
         },
         "errors": 0,
-        "subprocesses": 0
+        "subprocesses": 0,
+        "subprocess_observation": {
+          "attempt_id": "http-058",
+          "events": []
+        }
       },
       {
         "arm": "http",
         "case": 59,
         "temperature": "warm",
-        "full_ms": 4419.365762965754,
-        "ttft_ms": 4282.233953010291,
+        "full_ms": 4236.731485987548,
+        "ttft_ms": 4097.148545959499,
         "usage": {
           "input_tokens": 100,
           "output_tokens": 10,
           "total_tokens": 110
         },
         "errors": 0,
-        "subprocesses": 0
+        "subprocesses": 0,
+        "subprocess_observation": {
+          "attempt_id": "http-059",
+          "events": []
+        }
       },
       {
         "arm": "cli",
         "case": 59,
         "temperature": "warm",
-        "full_ms": 13209.755593037698,
-        "ttft_ms": 13209.755593037698,
+        "full_ms": 13843.083621002734,
+        "ttft_ms": 13843.083621002734,
         "usage": {
           "input_tokens": 100,
           "output_tokens": 10,
           "total_tokens": 110
         },
         "errors": 0,
-        "subprocesses": 1
+        "subprocesses": 1,
+        "subprocess_observation": {
+          "attempt_id": "cli-059",
+          "events": [
+            {
+              "event": "subprocess.Popen",
+              "attempt_id": "cli-059",
+              "thread_id": 132854521681600,
+              "executable": "docker",
+              "ordinal": 1
+            }
+          ]
+        }
       },
       {
         "arm": "cli",
         "case": 60,
         "temperature": "cold",
-        "full_ms": 16181.449390016496,
-        "ttft_ms": 16181.449390016496,
+        "full_ms": 17745.02010102151,
+        "ttft_ms": 17745.02010102151,
         "usage": {
           "input_tokens": 100,
           "output_tokens": 10,
           "total_tokens": 110
         },
         "errors": 0,
-        "subprocesses": 1
+        "subprocesses": 1,
+        "subprocess_observation": {
+          "attempt_id": "cli-060",
+          "events": [
+            {
+              "event": "subprocess.Popen",
+              "attempt_id": "cli-060",
+              "thread_id": 132854513288896,
+              "executable": "docker",
+              "ordinal": 1
+            }
+          ]
+        }
       },
       {
         "arm": "http",
         "case": 60,
         "temperature": "cold",
-        "full_ms": 4808.433527010493,
-        "ttft_ms": 4712.49246300431,
+        "full_ms": 5193.400620948523,
+        "ttft_ms": 5044.341810978949,
         "usage": {
           "input_tokens": 100,
           "output_tokens": 10,
           "total_tokens": 110
         },
         "errors": 0,
-        "subprocesses": 0
+        "subprocesses": 0,
+        "subprocess_observation": {
+          "attempt_id": "http-060",
+          "events": []
+        }
       },
       {
         "arm": "http",
         "case": 61,
         "temperature": "warm",
-        "full_ms": 4159.3190809944645,
-        "ttft_ms": 4055.6320380419493,
+        "full_ms": 4544.2523249657825,
+        "ttft_ms": 4450.933960964903,
         "usage": {
           "input_tokens": 100,
           "output_tokens": 10,
           "total_tokens": 110
         },
         "errors": 0,
-        "subprocesses": 0
+        "subprocesses": 0,
+        "subprocess_observation": {
+          "attempt_id": "http-061",
+          "events": []
+        }
       },
       {
         "arm": "cli",
         "case": 61,
         "temperature": "warm",
-        "full_ms": 13475.745425035711,
-        "ttft_ms": 13475.745425035711,
+        "full_ms": 14100.228593975771,
+        "ttft_ms": 14100.228593975771,
         "usage": {
           "input_tokens": 100,
           "output_tokens": 10,
           "total_tokens": 110
         },
         "errors": 0,
-        "subprocesses": 1
+        "subprocesses": 1,
+        "subprocess_observation": {
+          "attempt_id": "cli-061",
+          "events": [
+            {
+              "event": "subprocess.Popen",
+              "attempt_id": "cli-061",
+              "thread_id": 132854513288896,
+              "executable": "docker",
+              "ordinal": 1
+            }
+          ]
+        }
       },
       {
         "arm": "cli",
         "case": 62,
         "temperature": "warm",
-        "full_ms": 12652.57809200557,
-        "ttft_ms": 12652.57809200557,
+        "full_ms": 15774.824517022353,
+        "ttft_ms": 15774.824517022353,
         "usage": {
           "input_tokens": 100,
           "output_tokens": 10,
           "total_tokens": 110
         },
         "errors": 0,
-        "subprocesses": 1
+        "subprocesses": 1,
+        "subprocess_observation": {
+          "attempt_id": "cli-062",
+          "events": [
+            {
+              "event": "subprocess.Popen",
+              "attempt_id": "cli-062",
+              "thread_id": 132854513288896,
+              "executable": "docker",
+              "ordinal": 1
+            }
+          ]
+        }
       },
       {
         "arm": "http",
         "case": 62,
         "temperature": "warm",
-        "full_ms": 4027.285621035844,
-        "ttft_ms": 3920.233208045829,
+        "full_ms": 6109.826387022622,
+        "ttft_ms": 5953.977747994941,
         "usage": {
           "input_tokens": 100,
           "output_tokens": 10,
           "total_tokens": 110
         },
         "errors": 0,
-        "subprocesses": 0
+        "subprocesses": 0,
+        "subprocess_observation": {
+          "attempt_id": "http-062",
+          "events": []
+        }
       },
       {
         "arm": "http",
         "case": 63,
         "temperature": "warm",
-        "full_ms": 4380.92761603184,
-        "ttft_ms": 4266.201374004595,
+        "full_ms": 4675.17601599684,
+        "ttft_ms": 4546.882905007806,
         "usage": {
           "input_tokens": 100,
           "output_tokens": 10,
           "total_tokens": 110
         },
         "errors": 0,
-        "subprocesses": 0
+        "subprocesses": 0,
+        "subprocess_observation": {
+          "attempt_id": "http-063",
+          "events": []
+        }
       },
       {
         "arm": "cli",
         "case": 63,
         "temperature": "warm",
-        "full_ms": 13346.594004018698,
-        "ttft_ms": 13346.594004018698,
+        "full_ms": 16810.40097598452,
+        "ttft_ms": 16810.40097598452,
         "usage": {
           "input_tokens": 100,
           "output_tokens": 10,
           "total_tokens": 110
         },
         "errors": 0,
-        "subprocesses": 1
+        "subprocesses": 1,
+        "subprocess_observation": {
+          "attempt_id": "cli-063",
+          "events": [
+            {
+              "event": "subprocess.Popen",
+              "attempt_id": "cli-063",
+              "thread_id": 132854513288896,
+              "executable": "docker",
+              "ordinal": 1
+            }
+          ]
+        }
       },
       {
         "arm": "cli",
         "case": 64,
         "temperature": "warm",
-        "full_ms": 13611.505854991265,
-        "ttft_ms": 13611.505854991265,
+        "full_ms": 15339.595448051114,
+        "ttft_ms": 15339.595448051114,
         "usage": {
           "input_tokens": 100,
           "output_tokens": 10,
           "total_tokens": 110
         },
         "errors": 0,
-        "subprocesses": 1
+        "subprocesses": 1,
+        "subprocess_observation": {
+          "attempt_id": "cli-064",
+          "events": [
+            {
+              "event": "subprocess.Popen",
+              "attempt_id": "cli-064",
+              "thread_id": 132854513288896,
+              "executable": "docker",
+              "ordinal": 1
+            }
+          ]
+        }
       },
       {
         "arm": "http",
         "case": 64,
         "temperature": "warm",
-        "full_ms": 4456.725490977988,
-        "ttft_ms": 4337.494309002068,
+        "full_ms": 4470.426820975263,
+        "ttft_ms": 4336.4025699556805,
         "usage": {
           "input_tokens": 100,
           "output_tokens": 10,
           "total_tokens": 110
         },
         "errors": 0,
-        "subprocesses": 0
+        "subprocesses": 0,
+        "subprocess_observation": {
+          "attempt_id": "http-064",
+          "events": []
+        }
       },
       {
         "arm": "http",
         "case": 65,
         "temperature": "warm",
-        "full_ms": 4719.849532993976,
-        "ttft_ms": 4604.2224210104905,
+        "full_ms": 4391.426416987088,
+        "ttft_ms": 4271.868425013963,
         "usage": {
           "input_tokens": 100,
           "output_tokens": 10,
           "total_tokens": 110
         },
         "errors": 0,
-        "subprocesses": 0
+        "subprocesses": 0,
+        "subprocess_observation": {
+          "attempt_id": "http-065",
+          "events": []
+        }
       },
       {
         "arm": "cli",
         "case": 65,
         "temperature": "warm",
-        "full_ms": 13092.270710971206,
-        "ttft_ms": 13092.270710971206,
+        "full_ms": 14063.826496014372,
+        "ttft_ms": 14063.826496014372,
         "usage": {
           "input_tokens": 100,
           "output_tokens": 10,
           "total_tokens": 110
         },
         "errors": 0,
-        "subprocesses": 1
+        "subprocesses": 1,
+        "subprocess_observation": {
+          "attempt_id": "cli-065",
+          "events": [
+            {
+              "event": "subprocess.Popen",
+              "attempt_id": "cli-065",
+              "thread_id": 132854513288896,
+              "executable": "docker",
+              "ordinal": 1
+            }
+          ]
+        }
       },
       {
         "arm": "cli",
         "case": 66,
         "temperature": "warm",
-        "full_ms": 16643.016504996922,
-        "ttft_ms": 16643.016504996922,
+        "full_ms": 14837.005812034477,
+        "ttft_ms": 14837.005812034477,
         "usage": {
           "input_tokens": 100,
           "output_tokens": 10,
           "total_tokens": 110
         },
         "errors": 0,
-        "subprocesses": 1
+        "subprocesses": 1,
+        "subprocess_observation": {
+          "attempt_id": "cli-066",
+          "events": [
+            {
+              "event": "subprocess.Popen",
+              "attempt_id": "cli-066",
+              "thread_id": 132854513288896,
+              "executable": "docker",
+              "ordinal": 1
+            }
+          ]
+        }
       },
       {
         "arm": "http",
         "case": 66,
         "temperature": "warm",
-        "full_ms": 4307.662690989673,
-        "ttft_ms": 4189.549028989859,
+        "full_ms": 4373.3832180150785,
+        "ttft_ms": 4252.133766014595,
         "usage": {
           "input_tokens": 100,
           "output_tokens": 10,
           "total_tokens": 110
         },
         "errors": 0,
-        "subprocesses": 0
+        "subprocesses": 0,
+        "subprocess_observation": {
+          "attempt_id": "http-066",
+          "events": []
+        }
       },
       {
         "arm": "http",
         "case": 67,
         "temperature": "warm",
-        "full_ms": 4370.616306026932,
-        "ttft_ms": 4200.705528026447,
+        "full_ms": 4752.419331984129,
+        "ttft_ms": 4614.546520984732,
         "usage": {
           "input_tokens": 100,
           "output_tokens": 10,
           "total_tokens": 110
         },
         "errors": 0,
-        "subprocesses": 0
+        "subprocesses": 0,
+        "subprocess_observation": {
+          "attempt_id": "http-067",
+          "events": []
+        }
       },
       {
         "arm": "cli",
         "case": 67,
         "temperature": "warm",
-        "full_ms": 13056.881854019593,
-        "ttft_ms": 13056.881854019593,
+        "full_ms": 14461.124077963177,
+        "ttft_ms": 14461.124077963177,
         "usage": {
           "input_tokens": 100,
           "output_tokens": 10,
           "total_tokens": 110
         },
         "errors": 0,
-        "subprocesses": 1
+        "subprocesses": 1,
+        "subprocess_observation": {
+          "attempt_id": "cli-067",
+          "events": [
+            {
+              "event": "subprocess.Popen",
+              "attempt_id": "cli-067",
+              "thread_id": 132854513288896,
+              "executable": "docker",
+              "ordinal": 1
+            }
+          ]
+        }
       },
       {
         "arm": "cli",
         "case": 68,
         "temperature": "warm",
-        "full_ms": 12301.236917031929,
-        "ttft_ms": 12301.236917031929,
+        "full_ms": 14259.636032977141,
+        "ttft_ms": 14259.636032977141,
         "usage": {
           "input_tokens": 100,
           "output_tokens": 10,
           "total_tokens": 110
         },
         "errors": 0,
-        "subprocesses": 1
+        "subprocesses": 1,
+        "subprocess_observation": {
+          "attempt_id": "cli-068",
+          "events": [
+            {
+              "event": "subprocess.Popen",
+              "attempt_id": "cli-068",
+              "thread_id": 132854513288896,
+              "executable": "docker",
+              "ordinal": 1
+            }
+          ]
+        }
       },
       {
         "arm": "http",
         "case": 68,
         "temperature": "warm",
-        "full_ms": 4215.994657017291,
-        "ttft_ms": 4065.404858032707,
+        "full_ms": 4330.05679998314,
+        "ttft_ms": 4203.026607981883,
         "usage": {
           "input_tokens": 100,
           "output_tokens": 10,
           "total_tokens": 110
         },
         "errors": 0,
-        "subprocesses": 0
+        "subprocesses": 0,
+        "subprocess_observation": {
+          "attempt_id": "http-068",
+          "events": []
+        }
       },
       {
         "arm": "http",
         "case": 69,
         "temperature": "warm",
-        "full_ms": 4417.15801297687,
-        "ttft_ms": 4272.105153999291,
+        "full_ms": 4256.3428150024265,
+        "ttft_ms": 4113.215285004117,
         "usage": {
           "input_tokens": 100,
           "output_tokens": 10,
           "total_tokens": 110
         },
         "errors": 0,
-        "subprocesses": 0
+        "subprocesses": 0,
+        "subprocess_observation": {
+          "attempt_id": "http-069",
+          "events": []
+        }
       },
       {
         "arm": "cli",
         "case": 69,
         "temperature": "warm",
-        "full_ms": 13108.93693100661,
-        "ttft_ms": 13108.93693100661,
+        "full_ms": 13756.510947016068,
+        "ttft_ms": 13756.510947016068,
         "usage": {
           "input_tokens": 100,
           "output_tokens": 10,
           "total_tokens": 110
         },
         "errors": 0,
-        "subprocesses": 1
+        "subprocesses": 1,
+        "subprocess_observation": {
+          "attempt_id": "cli-069",
+          "events": [
+            {
+              "event": "subprocess.Popen",
+              "attempt_id": "cli-069",
+              "thread_id": 132854513288896,
+              "executable": "docker",
+              "ordinal": 1
+            }
+          ]
+        }
       },
       {
         "arm": "cli",
         "case": 70,
         "temperature": "cold",
-        "full_ms": 16128.400773974136,
-        "ttft_ms": 16128.400773974136,
+        "full_ms": 17668.400417023804,
+        "ttft_ms": 17668.400417023804,
         "usage": {
           "input_tokens": 100,
           "output_tokens": 10,
           "total_tokens": 110
         },
         "errors": 0,
-        "subprocesses": 1
+        "subprocesses": 1,
+        "subprocess_observation": {
+          "attempt_id": "cli-070",
+          "events": [
+            {
+              "event": "subprocess.Popen",
+              "attempt_id": "cli-070",
+              "thread_id": 132854538467008,
+              "executable": "docker",
+              "ordinal": 1
+            }
+          ]
+        }
       },
       {
         "arm": "http",
         "case": 70,
         "temperature": "cold",
-        "full_ms": 4818.315135024022,
-        "ttft_ms": 4730.169221002143,
+        "full_ms": 5229.434017965104,
+        "ttft_ms": 5094.818826997653,
         "usage": {
           "input_tokens": 100,
           "output_tokens": 10,
           "total_tokens": 110
         },
         "errors": 0,
-        "subprocesses": 0
+        "subprocesses": 0,
+        "subprocess_observation": {
+          "attempt_id": "http-070",
+          "events": []
+        }
       },
       {
         "arm": "http",
         "case": 71,
         "temperature": "warm",
-        "full_ms": 4181.626680016052,
-        "ttft_ms": 4073.385287018027,
+        "full_ms": 4549.505865026731,
+        "ttft_ms": 4467.227281013038,
         "usage": {
           "input_tokens": 100,
           "output_tokens": 10,
           "total_tokens": 110
         },
         "errors": 0,
-        "subprocesses": 0
+        "subprocesses": 0,
+        "subprocess_observation": {
+          "attempt_id": "http-071",
+          "events": []
+        }
       },
       {
         "arm": "cli",
         "case": 71,
         "temperature": "warm",
-        "full_ms": 13535.589799983427,
-        "ttft_ms": 13535.589799983427,
+        "full_ms": 14118.354981997982,
+        "ttft_ms": 14118.354981997982,
         "usage": {
           "input_tokens": 100,
           "output_tokens": 10,
           "total_tokens": 110
         },
         "errors": 0,
-        "subprocesses": 1
+        "subprocesses": 1,
+        "subprocess_observation": {
+          "attempt_id": "cli-071",
+          "events": [
+            {
+              "event": "subprocess.Popen",
+              "attempt_id": "cli-071",
+              "thread_id": 132854538467008,
+              "executable": "docker",
+              "ordinal": 1
+            }
+          ]
+        }
       },
       {
         "arm": "cli",
         "case": 72,
         "temperature": "warm",
-        "full_ms": 12637.677613995038,
-        "ttft_ms": 12637.677613995038,
+        "full_ms": 15712.081951962318,
+        "ttft_ms": 15712.081951962318,
         "usage": {
           "input_tokens": 100,
           "output_tokens": 10,
           "total_tokens": 110
         },
         "errors": 0,
-        "subprocesses": 1
+        "subprocesses": 1,
+        "subprocess_observation": {
+          "attempt_id": "cli-072",
+          "events": [
+            {
+              "event": "subprocess.Popen",
+              "attempt_id": "cli-072",
+              "thread_id": 132854538467008,
+              "executable": "docker",
+              "ordinal": 1
+            }
+          ]
+        }
       },
       {
         "arm": "http",
         "case": 72,
         "temperature": "warm",
-        "full_ms": 3956.595634983387,
-        "ttft_ms": 3853.552342974581,
+        "full_ms": 6179.325373028405,
+        "ttft_ms": 6003.749835013878,
         "usage": {
           "input_tokens": 100,
           "output_tokens": 10,
           "total_tokens": 110
         },
         "errors": 0,
-        "subprocesses": 0
+        "subprocesses": 0,
+        "subprocess_observation": {
+          "attempt_id": "http-072",
+          "events": []
+        }
       },
       {
         "arm": "http",
         "case": 73,
         "temperature": "warm",
-        "full_ms": 4373.358586977702,
-        "ttft_ms": 4265.771413978655,
+        "full_ms": 4670.841466984712,
+        "ttft_ms": 4531.132856965996,
         "usage": {
           "input_tokens": 100,
           "output_tokens": 10,
           "total_tokens": 110
         },
         "errors": 0,
-        "subprocesses": 0
+        "subprocesses": 0,
+        "subprocess_observation": {
+          "attempt_id": "http-073",
+          "events": []
+        }
       },
       {
         "arm": "cli",
         "case": 73,
         "temperature": "warm",
-        "full_ms": 13319.808565021958,
-        "ttft_ms": 13319.808565021958,
+        "full_ms": 16774.295828014147,
+        "ttft_ms": 16774.295828014147,
         "usage": {
           "input_tokens": 100,
           "output_tokens": 10,
           "total_tokens": 110
         },
         "errors": 0,
-        "subprocesses": 1
+        "subprocesses": 1,
+        "subprocess_observation": {
+          "attempt_id": "cli-073",
+          "events": [
+            {
+              "event": "subprocess.Popen",
+              "attempt_id": "cli-073",
+              "thread_id": 132854538467008,
+              "executable": "docker",
+              "ordinal": 1
+            }
+          ]
+        }
       },
       {
         "arm": "cli",
         "case": 74,
         "temperature": "warm",
-        "full_ms": 13638.71070399182,
-        "ttft_ms": 13638.71070399182,
+        "full_ms": 15400.97414405318,
+        "ttft_ms": 15400.97414405318,
         "usage": {
           "input_tokens": 100,
           "output_tokens": 10,
           "total_tokens": 110
         },
         "errors": 0,
-        "subprocesses": 1
+        "subprocesses": 1,
+        "subprocess_observation": {
+          "attempt_id": "cli-074",
+          "events": [
+            {
+              "event": "subprocess.Popen",
+              "attempt_id": "cli-074",
+              "thread_id": 132854538467008,
+              "executable": "docker",
+              "ordinal": 1
+            }
+          ]
+        }
       },
       {
         "arm": "http",
         "case": 74,
         "temperature": "warm",
-        "full_ms": 4487.014698970597,
-        "ttft_ms": 4340.985198970884,
+        "full_ms": 4421.432834002189,
+        "ttft_ms": 4289.878703013528,
         "usage": {
           "input_tokens": 100,
           "output_tokens": 10,
           "total_tokens": 110
         },
         "errors": 0,
-        "subprocesses": 0
+        "subprocesses": 0,
+        "subprocess_observation": {
+          "attempt_id": "http-074",
+          "events": []
+        }
       },
       {
         "arm": "http",
         "case": 75,
         "temperature": "warm",
-        "full_ms": 4690.424853994045,
-        "ttft_ms": 4591.16247104248,
+        "full_ms": 4400.900806009304,
+        "ttft_ms": 4288.035624020267,
         "usage": {
           "input_tokens": 100,
           "output_tokens": 10,
           "total_tokens": 110
         },
         "errors": 0,
-        "subprocesses": 0
+        "subprocesses": 0,
+        "subprocess_observation": {
+          "attempt_id": "http-075",
+          "events": []
+        }
       },
       {
         "arm": "cli",
         "case": 75,
         "temperature": "warm",
-        "full_ms": 13125.640028971247,
-        "ttft_ms": 13125.640028971247,
+        "full_ms": 14059.386176988482,
+        "ttft_ms": 14059.386176988482,
         "usage": {
           "input_tokens": 100,
           "output_tokens": 10,
           "total_tokens": 110
         },
         "errors": 0,
-        "subprocesses": 1
+        "subprocesses": 1,
+        "subprocess_observation": {
+          "attempt_id": "cli-075",
+          "events": [
+            {
+              "event": "subprocess.Popen",
+              "attempt_id": "cli-075",
+              "thread_id": 132854538467008,
+              "executable": "docker",
+              "ordinal": 1
+            }
+          ]
+        }
       },
       {
         "arm": "cli",
         "case": 76,
         "temperature": "warm",
-        "full_ms": 16563.440619967878,
-        "ttft_ms": 16563.440619967878,
+        "full_ms": 14813.893833954353,
+        "ttft_ms": 14813.893833954353,
         "usage": {
           "input_tokens": 100,
           "output_tokens": 10,
           "total_tokens": 110
         },
         "errors": 0,
-        "subprocesses": 1
+        "subprocesses": 1,
+        "subprocess_observation": {
+          "attempt_id": "cli-076",
+          "events": [
+            {
+              "event": "subprocess.Popen",
+              "attempt_id": "cli-076",
+              "thread_id": 132854538467008,
+              "executable": "docker",
+              "ordinal": 1
+            }
+          ]
+        }
       },
       {
         "arm": "http",
         "case": 76,
         "temperature": "warm",
-        "full_ms": 4379.281386965886,
-        "ttft_ms": 4256.735034985468,
+        "full_ms": 4431.1759429983795,
+        "ttft_ms": 4293.960172974039,
         "usage": {
           "input_tokens": 100,
           "output_tokens": 10,
           "total_tokens": 110
         },
         "errors": 0,
-        "subprocesses": 0
+        "subprocesses": 0,
+        "subprocess_observation": {
+          "attempt_id": "http-076",
+          "events": []
+        }
       },
       {
         "arm": "http",
         "case": 77,
         "temperature": "warm",
-        "full_ms": 4352.660058008041,
-        "ttft_ms": 4186.234338965733,
+        "full_ms": 4751.685361028649,
+        "ttft_ms": 4608.031611016486,
         "usage": {
           "input_tokens": 100,
           "output_tokens": 10,
           "total_tokens": 110
         },
         "errors": 0,
-        "subprocesses": 0
+        "subprocesses": 0,
+        "subprocess_observation": {
+          "attempt_id": "http-077",
+          "events": []
+        }
       },
       {
         "arm": "cli",
         "case": 77,
         "temperature": "warm",
-        "full_ms": 13088.248881977051,
-        "ttft_ms": 13088.248881977051,
+        "full_ms": 14478.966327034868,
+        "ttft_ms": 14478.966327034868,
         "usage": {
           "input_tokens": 100,
           "output_tokens": 10,
           "total_tokens": 110
         },
         "errors": 0,
-        "subprocesses": 1
+        "subprocesses": 1,
+        "subprocess_observation": {
+          "attempt_id": "cli-077",
+          "events": [
+            {
+              "event": "subprocess.Popen",
+              "attempt_id": "cli-077",
+              "thread_id": 132854538467008,
+              "executable": "docker",
+              "ordinal": 1
+            }
+          ]
+        }
       },
       {
         "arm": "cli",
         "case": 78,
         "temperature": "warm",
-        "full_ms": 12332.800795033108,
-        "ttft_ms": 12332.800795033108,
+        "full_ms": 14357.627985998988,
+        "ttft_ms": 14357.627985998988,
         "usage": {
           "input_tokens": 100,
           "output_tokens": 10,
           "total_tokens": 110
         },
         "errors": 0,
-        "subprocesses": 1
+        "subprocesses": 1,
+        "subprocess_observation": {
+          "attempt_id": "cli-078",
+          "events": [
+            {
+              "event": "subprocess.Popen",
+              "attempt_id": "cli-078",
+              "thread_id": 132854538467008,
+              "executable": "docker",
+              "ordinal": 1
+            }
+          ]
+        }
       },
       {
         "arm": "http",
         "case": 78,
         "temperature": "warm",
-        "full_ms": 4144.089722016361,
-        "ttft_ms": 4007.7323220320977,
+        "full_ms": 4184.781479998492,
+        "ttft_ms": 4065.200328011997,
         "usage": {
           "input_tokens": 100,
           "output_tokens": 10,
           "total_tokens": 110
         },
         "errors": 0,
-        "subprocesses": 0
+        "subprocesses": 0,
+        "subprocess_observation": {
+          "attempt_id": "http-078",
+          "events": []
+        }
       },
       {
         "arm": "http",
         "case": 79,
         "temperature": "warm",
-        "full_ms": 4458.112691005226,
-        "ttft_ms": 4289.209523005411,
+        "full_ms": 4247.3860859754495,
+        "ttft_ms": 4117.743704991881,
         "usage": {
           "input_tokens": 100,
           "output_tokens": 10,
           "total_tokens": 110
         },
         "errors": 0,
-        "subprocesses": 0
+        "subprocesses": 0,
+        "subprocess_observation": {
+          "attempt_id": "http-079",
+          "events": []
+        }
       },
       {
         "arm": "cli",
         "case": 79,
         "temperature": "warm",
-        "full_ms": 13122.626858996227,
-        "ttft_ms": 13122.626858996227,
+        "full_ms": 13851.8762110034,
+        "ttft_ms": 13851.8762110034,
         "usage": {
           "input_tokens": 100,
           "output_tokens": 10,
           "total_tokens": 110
         },
         "errors": 0,
-        "subprocesses": 1
+        "subprocesses": 1,
+        "subprocess_observation": {
+          "attempt_id": "cli-079",
+          "events": [
+            {
+              "event": "subprocess.Popen",
+              "attempt_id": "cli-079",
+              "thread_id": 132854538467008,
+              "executable": "docker",
+              "ordinal": 1
+            }
+          ]
+        }
       },
       {
         "arm": "cli",
         "case": 80,
         "temperature": "cold",
-        "full_ms": 11369.162641000003,
-        "ttft_ms": 11369.162641000003,
+        "full_ms": 12325.833606999367,
+        "ttft_ms": 12325.833606999367,
         "usage": {
           "input_tokens": 100,
           "output_tokens": 10,
           "total_tokens": 110
         },
         "errors": 0,
-        "subprocesses": 1
+        "subprocesses": 1,
+        "subprocess_observation": {
+          "attempt_id": "cli-080",
+          "events": [
+            {
+              "event": "subprocess.Popen",
+              "attempt_id": "cli-080",
+              "thread_id": 132854513288896,
+              "executable": "docker",
+              "ordinal": 1
+            }
+          ]
+        }
       },
       {
         "arm": "http",
         "case": 80,
         "temperature": "cold",
-        "full_ms": 2057.1189069887623,
-        "ttft_ms": 1991.3239720044658,
+        "full_ms": 2049.6881770086475,
+        "ttft_ms": 1991.5589420124888,
         "usage": {
           "input_tokens": 100,
           "output_tokens": 10,
           "total_tokens": 110
         },
         "errors": 0,
-        "subprocesses": 0
+        "subprocesses": 0,
+        "subprocess_observation": {
+          "attempt_id": "http-080",
+          "events": []
+        }
       },
       {
         "arm": "http",
         "case": 81,
         "temperature": "warm",
-        "full_ms": 2004.6084010391496,
-        "ttft_ms": 1941.356055031065,
+        "full_ms": 2173.2762189931236,
+        "ttft_ms": 2066.0422969958745,
         "usage": {
           "input_tokens": 100,
           "output_tokens": 10,
           "total_tokens": 110
         },
         "errors": 0,
-        "subprocesses": 0
+        "subprocesses": 0,
+        "subprocess_observation": {
+          "attempt_id": "http-081",
+          "events": []
+        }
       },
       {
         "arm": "cli",
         "case": 81,
         "temperature": "warm",
-        "full_ms": 9069.293440959882,
-        "ttft_ms": 9069.293440959882,
+        "full_ms": 9773.971063026693,
+        "ttft_ms": 9773.971063026693,
         "usage": {
           "input_tokens": 100,
           "output_tokens": 10,
           "total_tokens": 110
         },
         "errors": 0,
-        "subprocesses": 1
+        "subprocesses": 1,
+        "subprocess_observation": {
+          "attempt_id": "cli-081",
+          "events": [
+            {
+              "event": "subprocess.Popen",
+              "attempt_id": "cli-081",
+              "thread_id": 132854513288896,
+              "executable": "docker",
+              "ordinal": 1
+            }
+          ]
+        }
       },
       {
         "arm": "cli",
         "case": 82,
         "temperature": "warm",
-        "full_ms": 8223.413410014473,
-        "ttft_ms": 8223.413410014473,
+        "full_ms": 10387.764880957548,
+        "ttft_ms": 10387.764880957548,
         "usage": {
           "input_tokens": 100,
           "output_tokens": 10,
           "total_tokens": 110
         },
         "errors": 0,
-        "subprocesses": 1
+        "subprocesses": 1,
+        "subprocess_observation": {
+          "attempt_id": "cli-082",
+          "events": [
+            {
+              "event": "subprocess.Popen",
+              "attempt_id": "cli-082",
+              "thread_id": 132854513288896,
+              "executable": "docker",
+              "ordinal": 1
+            }
+          ]
+        }
       },
       {
         "arm": "http",
         "case": 82,
         "temperature": "warm",
-        "full_ms": 1896.932978008408,
-        "ttft_ms": 1823.2821130077355,
+        "full_ms": 2011.5248099900782,
+        "ttft_ms": 1938.669646042399,
         "usage": {
           "input_tokens": 100,
           "output_tokens": 10,
           "total_tokens": 110
         },
         "errors": 0,
-        "subprocesses": 0
+        "subprocesses": 0,
+        "subprocess_observation": {
+          "attempt_id": "http-082",
+          "events": []
+        }
       },
       {
         "arm": "http",
         "case": 83,
         "temperature": "warm",
-        "full_ms": 1994.5405310136266,
-        "ttft_ms": 1934.333795972634,
+        "full_ms": 1982.2129929671064,
+        "ttft_ms": 1911.4359579980373,
         "usage": {
           "input_tokens": 100,
           "output_tokens": 10,
           "total_tokens": 110
         },
         "errors": 0,
-        "subprocesses": 0
+        "subprocesses": 0,
+        "subprocess_observation": {
+          "attempt_id": "http-083",
+          "events": []
+        }
       },
       {
         "arm": "cli",
         "case": 83,
         "temperature": "warm",
-        "full_ms": 9023.119263001718,
-        "ttft_ms": 9023.119263001718,
+        "full_ms": 9487.572333018761,
+        "ttft_ms": 9487.572333018761,
         "usage": {
           "input_tokens": 100,
           "output_tokens": 10,
           "total_tokens": 110
         },
         "errors": 0,
-        "subprocesses": 1
+        "subprocesses": 1,
+        "subprocess_observation": {
+          "attempt_id": "cli-083",
+          "events": [
+            {
+              "event": "subprocess.Popen",
+              "attempt_id": "cli-083",
+              "thread_id": 132854513288896,
+              "executable": "docker",
+              "ordinal": 1
+            }
+          ]
+        }
       },
       {
         "arm": "cli",
         "case": 84,
         "temperature": "warm",
-        "full_ms": 9922.813300974667,
-        "ttft_ms": 9922.813300974667,
+        "full_ms": 10322.335575008765,
+        "ttft_ms": 10322.335575008765,
         "usage": {
           "input_tokens": 100,
           "output_tokens": 10,
           "total_tokens": 110
         },
         "errors": 0,
-        "subprocesses": 1
+        "subprocesses": 1,
+        "subprocess_observation": {
+          "attempt_id": "cli-084",
+          "events": [
+            {
+              "event": "subprocess.Popen",
+              "attempt_id": "cli-084",
+              "thread_id": 132854513288896,
+              "executable": "docker",
+              "ordinal": 1
+            }
+          ]
+        }
       },
       {
         "arm": "http",
         "case": 84,
         "temperature": "warm",
-        "full_ms": 2981.6697929636575,
-        "ttft_ms": 2825.214783952106,
+        "full_ms": 2076.5196960419416,
+        "ttft_ms": 1998.228241049219,
         "usage": {
           "input_tokens": 100,
           "output_tokens": 10,
           "total_tokens": 110
         },
         "errors": 0,
-        "subprocesses": 0
+        "subprocesses": 0,
+        "subprocess_observation": {
+          "attempt_id": "http-084",
+          "events": []
+        }
       },
       {
         "arm": "http",
         "case": 85,
         "temperature": "warm",
-        "full_ms": 4505.86314703105,
-        "ttft_ms": 4359.286747989245,
+        "full_ms": 2160.7831100118347,
+        "ttft_ms": 2065.716407028958,
         "usage": {
           "input_tokens": 100,
           "output_tokens": 10,
           "total_tokens": 110
         },
         "errors": 0,
-        "subprocesses": 0
+        "subprocesses": 0,
+        "subprocess_observation": {
+          "attempt_id": "http-085",
+          "events": []
+        }
       },
       {
         "arm": "cli",
         "case": 85,
         "temperature": "warm",
-        "full_ms": 16076.422175043263,
-        "ttft_ms": 16076.422175043263,
+        "full_ms": 10736.704676004592,
+        "ttft_ms": 10736.704676004592,
         "usage": {
           "input_tokens": 100,
           "output_tokens": 10,
           "total_tokens": 110
         },
         "errors": 0,
-        "subprocesses": 1
+        "subprocesses": 1,
+        "subprocess_observation": {
+          "attempt_id": "cli-085",
+          "events": [
+            {
+              "event": "subprocess.Popen",
+              "attempt_id": "cli-085",
+              "thread_id": 132854513288896,
+              "executable": "docker",
+              "ordinal": 1
+            }
+          ]
+        }
       },
       {
         "arm": "cli",
         "case": 86,
         "temperature": "warm",
-        "full_ms": 15860.986439045519,
-        "ttft_ms": 15860.986439045519,
+        "full_ms": 10336.964591988362,
+        "ttft_ms": 10336.964591988362,
         "usage": {
           "input_tokens": 100,
           "output_tokens": 10,
           "total_tokens": 110
         },
         "errors": 0,
-        "subprocesses": 1
+        "subprocesses": 1,
+        "subprocess_observation": {
+          "attempt_id": "cli-086",
+          "events": [
+            {
+              "event": "subprocess.Popen",
+              "attempt_id": "cli-086",
+              "thread_id": 132854513288896,
+              "executable": "docker",
+              "ordinal": 1
+            }
+          ]
+        }
       },
       {
         "arm": "http",
         "case": 86,
         "temperature": "warm",
-        "full_ms": 4499.07466804143,
-        "ttft_ms": 4249.5675350073725,
+        "full_ms": 2004.3880220036954,
+        "ttft_ms": 1922.546457964927,
         "usage": {
           "input_tokens": 100,
           "output_tokens": 10,
           "total_tokens": 110
         },
         "errors": 0,
-        "subprocesses": 0
+        "subprocesses": 0,
+        "subprocess_observation": {
+          "attempt_id": "http-086",
+          "events": []
+        }
       },
       {
         "arm": "http",
         "case": 87,
         "temperature": "warm",
-        "full_ms": 4480.327229015529,
-        "ttft_ms": 4321.034659980796,
+        "full_ms": 2274.2131520062685,
+        "ttft_ms": 2196.3973969686776,
         "usage": {
           "input_tokens": 100,
           "output_tokens": 10,
           "total_tokens": 110
         },
         "errors": 0,
-        "subprocesses": 0
+        "subprocesses": 0,
+        "subprocess_observation": {
+          "attempt_id": "http-087",
+          "events": []
+        }
       },
       {
         "arm": "cli",
         "case": 87,
         "temperature": "warm",
-        "full_ms": 20338.203379011247,
-        "ttft_ms": 20338.203379011247,
+        "full_ms": 9963.95935898181,
+        "ttft_ms": 9963.95935898181,
         "usage": {
           "input_tokens": 100,
           "output_tokens": 10,
           "total_tokens": 110
         },
         "errors": 0,
-        "subprocesses": 1
+        "subprocesses": 1,
+        "subprocess_observation": {
+          "attempt_id": "cli-087",
+          "events": [
+            {
+              "event": "subprocess.Popen",
+              "attempt_id": "cli-087",
+              "thread_id": 132854513288896,
+              "executable": "docker",
+              "ordinal": 1
+            }
+          ]
+        }
       },
       {
         "arm": "cli",
         "case": 88,
         "temperature": "warm",
-        "full_ms": 17558.237250021193,
-        "ttft_ms": 17558.237250021193,
+        "full_ms": 9763.47053196514,
+        "ttft_ms": 9763.47053196514,
         "usage": {
           "input_tokens": 100,
           "output_tokens": 10,
           "total_tokens": 110
         },
         "errors": 0,
-        "subprocesses": 1
+        "subprocesses": 1,
+        "subprocess_observation": {
+          "attempt_id": "cli-088",
+          "events": [
+            {
+              "event": "subprocess.Popen",
+              "attempt_id": "cli-088",
+              "thread_id": 132854513288896,
+              "executable": "docker",
+              "ordinal": 1
+            }
+          ]
+        }
       },
       {
         "arm": "http",
         "case": 88,
         "temperature": "warm",
-        "full_ms": 4149.030812026467,
-        "ttft_ms": 3982.805053994525,
+        "full_ms": 2245.1927840011194,
+        "ttft_ms": 2151.5173810184933,
         "usage": {
           "input_tokens": 100,
           "output_tokens": 10,
           "total_tokens": 110
         },
         "errors": 0,
-        "subprocesses": 0
+        "subprocesses": 0,
+        "subprocess_observation": {
+          "attempt_id": "http-088",
+          "events": []
+        }
       },
       {
         "arm": "http",
         "case": 89,
         "temperature": "warm",
-        "full_ms": 4342.01636898797,
-        "ttft_ms": 4167.313220968936,
+        "full_ms": 1858.2442909828387,
+        "ttft_ms": 1773.1594069628045,
         "usage": {
           "input_tokens": 100,
           "output_tokens": 10,
           "total_tokens": 110
         },
         "errors": 0,
-        "subprocesses": 0
+        "subprocesses": 0,
+        "subprocess_observation": {
+          "attempt_id": "http-089",
+          "events": []
+        }
       },
       {
         "arm": "cli",
         "case": 89,
         "temperature": "warm",
-        "full_ms": 16817.092453013174,
-        "ttft_ms": 16817.092453013174,
+        "full_ms": 9786.76602896303,
+        "ttft_ms": 9786.76602896303,
         "usage": {
           "input_tokens": 100,
           "output_tokens": 10,
           "total_tokens": 110
         },
         "errors": 0,
-        "subprocesses": 1
+        "subprocesses": 1,
+        "subprocess_observation": {
+          "attempt_id": "cli-089",
+          "events": [
+            {
+              "event": "subprocess.Popen",
+              "attempt_id": "cli-089",
+              "thread_id": 132854513288896,
+              "executable": "docker",
+              "ordinal": 1
+            }
+          ]
+        }
       },
       {
         "arm": "cli",
         "case": 90,
         "temperature": "cold",
-        "full_ms": 11338.800793979317,
-        "ttft_ms": 11338.800793979317,
+        "full_ms": 12324.640106002335,
+        "ttft_ms": 12324.640106002335,
         "usage": {
           "input_tokens": 100,
           "output_tokens": 10,
           "total_tokens": 110
         },
         "errors": 0,
-        "subprocesses": 1
+        "subprocesses": 1,
+        "subprocess_observation": {
+          "attempt_id": "cli-090",
+          "events": [
+            {
+              "event": "subprocess.Popen",
+              "attempt_id": "cli-090",
+              "thread_id": 132854530074304,
+              "executable": "docker",
+              "ordinal": 1
+            }
+          ]
+        }
       },
       {
         "arm": "http",
         "case": 90,
         "temperature": "cold",
-        "full_ms": 2041.1842489847913,
-        "ttft_ms": 1984.7514830180444,
+        "full_ms": 2040.851327998098,
+        "ttft_ms": 1975.4902929998934,
         "usage": {
           "input_tokens": 100,
           "output_tokens": 10,
           "total_tokens": 110
         },
         "errors": 0,
-        "subprocesses": 0
+        "subprocesses": 0,
+        "subprocess_observation": {
+          "attempt_id": "http-090",
+          "events": []
+        }
       },
       {
         "arm": "http",
         "case": 91,
         "temperature": "warm",
-        "full_ms": 2005.4138410487212,
-        "ttft_ms": 1948.7121240235865,
+        "full_ms": 2185.762798995711,
+        "ttft_ms": 2058.1760380300693,
         "usage": {
           "input_tokens": 100,
           "output_tokens": 10,
           "total_tokens": 110
         },
         "errors": 0,
-        "subprocesses": 0
+        "subprocesses": 0,
+        "subprocess_observation": {
+          "attempt_id": "http-091",
+          "events": []
+        }
       },
       {
         "arm": "cli",
         "case": 91,
         "temperature": "warm",
-        "full_ms": 9107.686097966507,
-        "ttft_ms": 9107.686097966507,
+        "full_ms": 9787.785381951835,
+        "ttft_ms": 9787.785381951835,
         "usage": {
           "input_tokens": 100,
           "output_tokens": 10,
           "total_tokens": 110
         },
         "errors": 0,
-        "subprocesses": 1
+        "subprocesses": 1,
+        "subprocess_observation": {
+          "attempt_id": "cli-091",
+          "events": [
+            {
+              "event": "subprocess.Popen",
+              "attempt_id": "cli-091",
+              "thread_id": 132854530074304,
+              "executable": "docker",
+              "ordinal": 1
+            }
+          ]
+        }
       },
       {
         "arm": "cli",
         "case": 92,
         "temperature": "warm",
-        "full_ms": 8157.294043980073,
-        "ttft_ms": 8157.294043980073,
+        "full_ms": 10406.15118900314,
+        "ttft_ms": 10406.15118900314,
         "usage": {
           "input_tokens": 100,
           "output_tokens": 10,
           "total_tokens": 110
         },
         "errors": 0,
-        "subprocesses": 1
+        "subprocesses": 1,
+        "subprocess_observation": {
+          "attempt_id": "cli-092",
+          "events": [
+            {
+              "event": "subprocess.Popen",
+              "attempt_id": "cli-092",
+              "thread_id": 132854530074304,
+              "executable": "docker",
+              "ordinal": 1
+            }
+          ]
+        }
       },
       {
         "arm": "http",
         "case": 92,
         "temperature": "warm",
-        "full_ms": 1924.9298359500244,
-        "ttft_ms": 1856.7912209546193,
+        "full_ms": 1953.407455002889,
+        "ttft_ms": 1890.6472189701162,
         "usage": {
           "input_tokens": 100,
           "output_tokens": 10,
           "total_tokens": 110
         },
         "errors": 0,
-        "subprocesses": 0
+        "subprocesses": 0,
+        "subprocess_observation": {
+          "attempt_id": "http-092",
+          "events": []
+        }
       },
       {
         "arm": "http",
         "case": 93,
         "temperature": "warm",
-        "full_ms": 1995.8937619812787,
-        "ttft_ms": 1942.045235016849,
+        "full_ms": 1986.439051979687,
+        "ttft_ms": 1928.7677560350858,
         "usage": {
           "input_tokens": 100,
           "output_tokens": 10,
           "total_tokens": 110
         },
         "errors": 0,
-        "subprocesses": 0
+        "subprocesses": 0,
+        "subprocess_observation": {
+          "attempt_id": "http-093",
+          "events": []
+        }
       },
       {
         "arm": "cli",
         "case": 93,
         "temperature": "warm",
-        "full_ms": 9047.206172021106,
-        "ttft_ms": 9047.206172021106,
+        "full_ms": 9466.617384983692,
+        "ttft_ms": 9466.617384983692,
         "usage": {
           "input_tokens": 100,
           "output_tokens": 10,
           "total_tokens": 110
         },
         "errors": 0,
-        "subprocesses": 1
+        "subprocesses": 1,
+        "subprocess_observation": {
+          "attempt_id": "cli-093",
+          "events": [
+            {
+              "event": "subprocess.Popen",
+              "attempt_id": "cli-093",
+              "thread_id": 132854530074304,
+              "executable": "docker",
+              "ordinal": 1
+            }
+          ]
+        }
       },
       {
         "arm": "cli",
         "case": 94,
         "temperature": "warm",
-        "full_ms": 9858.368496003095,
-        "ttft_ms": 9858.368496003095,
+        "full_ms": 10388.440740003716,
+        "ttft_ms": 10388.440740003716,
         "usage": {
           "input_tokens": 100,
           "output_tokens": 10,
           "total_tokens": 110
         },
         "errors": 0,
-        "subprocesses": 1
+        "subprocesses": 1,
+        "subprocess_observation": {
+          "attempt_id": "cli-094",
+          "events": [
+            {
+              "event": "subprocess.Popen",
+              "attempt_id": "cli-094",
+              "thread_id": 132854530074304,
+              "executable": "docker",
+              "ordinal": 1
+            }
+          ]
+        }
       },
       {
         "arm": "http",
         "case": 94,
         "temperature": "warm",
-        "full_ms": 3011.7672010092065,
-        "ttft_ms": 2887.198398995679,
+        "full_ms": 2046.5629780082963,
+        "ttft_ms": 1961.3990240031853,
         "usage": {
           "input_tokens": 100,
           "output_tokens": 10,
           "total_tokens": 110
         },
         "errors": 0,
-        "subprocesses": 0
+        "subprocesses": 0,
+        "subprocess_observation": {
+          "attempt_id": "http-094",
+          "events": []
+        }
       },
       {
         "arm": "http",
         "case": 95,
         "temperature": "warm",
-        "full_ms": 4502.181457995903,
-        "ttft_ms": 4369.298486970365,
+        "full_ms": 2143.719352025073,
+        "ttft_ms": 2060.955097025726,
         "usage": {
           "input_tokens": 100,
           "output_tokens": 10,
           "total_tokens": 110
         },
         "errors": 0,
-        "subprocesses": 0
+        "subprocesses": 0,
+        "subprocess_observation": {
+          "attempt_id": "http-095",
+          "events": []
+        }
       },
       {
         "arm": "cli",
         "case": 95,
         "temperature": "warm",
-        "full_ms": 16135.22988097975,
-        "ttft_ms": 16135.22988097975,
+        "full_ms": 10726.431595976464,
+        "ttft_ms": 10726.431595976464,
         "usage": {
           "input_tokens": 100,
           "output_tokens": 10,
           "total_tokens": 110
         },
         "errors": 0,
-        "subprocesses": 1
+        "subprocesses": 1,
+        "subprocess_observation": {
+          "attempt_id": "cli-095",
+          "events": [
+            {
+              "event": "subprocess.Popen",
+              "attempt_id": "cli-095",
+              "thread_id": 132854530074304,
+              "executable": "docker",
+              "ordinal": 1
+            }
+          ]
+        }
       },
       {
         "arm": "cli",
         "case": 96,
         "temperature": "warm",
-        "full_ms": 15830.81532100914,
-        "ttft_ms": 15830.81532100914,
+        "full_ms": 10342.401642003097,
+        "ttft_ms": 10342.401642003097,
         "usage": {
           "input_tokens": 100,
           "output_tokens": 10,
           "total_tokens": 110
         },
         "errors": 0,
-        "subprocesses": 1
+        "subprocesses": 1,
+        "subprocess_observation": {
+          "attempt_id": "cli-096",
+          "events": [
+            {
+              "event": "subprocess.Popen",
+              "attempt_id": "cli-096",
+              "thread_id": 132854530074304,
+              "executable": "docker",
+              "ordinal": 1
+            }
+          ]
+        }
       },
       {
         "arm": "http",
         "case": 96,
         "temperature": "warm",
-        "full_ms": 4522.496607038192,
-        "ttft_ms": 4249.268766026944,
+        "full_ms": 2008.793451008387,
+        "ttft_ms": 1927.5637670070864,
         "usage": {
           "input_tokens": 100,
           "output_tokens": 10,
           "total_tokens": 110
         },
         "errors": 0,
-        "subprocesses": 0
+        "subprocesses": 0,
+        "subprocess_observation": {
+          "attempt_id": "http-096",
+          "events": []
+        }
       },
       {
         "arm": "http",
         "case": 97,
         "temperature": "warm",
-        "full_ms": 4431.263292033691,
-        "ttft_ms": 4295.087851991411,
+        "full_ms": 2288.3182810037397,
+        "ttft_ms": 2202.215107041411,
         "usage": {
           "input_tokens": 100,
           "output_tokens": 10,
           "total_tokens": 110
         },
         "errors": 0,
-        "subprocesses": 0
+        "subprocesses": 0,
+        "subprocess_observation": {
+          "attempt_id": "http-097",
+          "events": []
+        }
       },
       {
         "arm": "cli",
         "case": 97,
         "temperature": "warm",
-        "full_ms": 20404.03057396179,
-        "ttft_ms": 20404.03057396179,
+        "full_ms": 9991.759545984678,
+        "ttft_ms": 9991.759545984678,
         "usage": {
           "input_tokens": 100,
           "output_tokens": 10,
           "total_tokens": 110
         },
         "errors": 0,
-        "subprocesses": 1
+        "subprocesses": 1,
+        "subprocess_observation": {
+          "attempt_id": "cli-097",
+          "events": [
+            {
+              "event": "subprocess.Popen",
+              "attempt_id": "cli-097",
+              "thread_id": 132854530074304,
+              "executable": "docker",
+              "ordinal": 1
+            }
+          ]
+        }
       },
       {
         "arm": "cli",
         "case": 98,
         "temperature": "warm",
-        "full_ms": 17472.137616947293,
-        "ttft_ms": 17472.137616947293,
+        "full_ms": 9723.37682597572,
+        "ttft_ms": 9723.37682597572,
         "usage": {
           "input_tokens": 100,
           "output_tokens": 10,
           "total_tokens": 110
         },
         "errors": 0,
-        "subprocesses": 1
+        "subprocesses": 1,
+        "subprocess_observation": {
+          "attempt_id": "cli-098",
+          "events": [
+            {
+              "event": "subprocess.Popen",
+              "attempt_id": "cli-098",
+              "thread_id": 132854530074304,
+              "executable": "docker",
+              "ordinal": 1
+            }
+          ]
+        }
       },
       {
         "arm": "http",
         "case": 98,
         "temperature": "warm",
-        "full_ms": 4201.42975798808,
-        "ttft_ms": 4017.780200985726,
+        "full_ms": 2239.909033989534,
+        "ttft_ms": 2154.3494799989276,
         "usage": {
           "input_tokens": 100,
           "output_tokens": 10,
           "total_tokens": 110
         },
         "errors": 0,
-        "subprocesses": 0
+        "subprocesses": 0,
+        "subprocess_observation": {
+          "attempt_id": "http-098",
+          "events": []
+        }
       },
       {
         "arm": "http",
         "case": 99,
         "temperature": "warm",
-        "full_ms": 4344.873939000536,
-        "ttft_ms": 4153.473681944888,
+        "full_ms": 1862.4178009922616,
+        "ttft_ms": 1789.0720859868452,
         "usage": {
           "input_tokens": 100,
           "output_tokens": 10,
           "total_tokens": 110
         },
         "errors": 0,
-        "subprocesses": 0
+        "subprocesses": 0,
+        "subprocess_observation": {
+          "attempt_id": "http-099",
+          "events": []
+        }
       },
       {
         "arm": "cli",
         "case": 99,
         "temperature": "warm",
-        "full_ms": 16829.87580198096,
-        "ttft_ms": 16829.87580198096,
+        "full_ms": 9807.649366965052,
+        "ttft_ms": 9807.649366965052,
         "usage": {
           "input_tokens": 100,
           "output_tokens": 10,
           "total_tokens": 110
         },
         "errors": 0,
-        "subprocesses": 1
+        "subprocesses": 1,
+        "subprocess_observation": {
+          "attempt_id": "cli-099",
+          "events": [
+            {
+              "event": "subprocess.Popen",
+              "attempt_id": "cli-099",
+              "thread_id": 132854530074304,
+              "executable": "docker",
+              "ordinal": 1
+            }
+          ]
+        }
       }
     ]
   },
@@ -3053,7 +4678,7 @@
     "Other shared host work can influence wall-clock timings; CPU quota was unavailable.",
     "The production Docker cron transport integrations/openclaw/adapter/cron_transport.py remains outside this task artifact grant and still needs an owner scope handoff for its most-recent-run fallback."
   ],
-  "prior_evidence_history": "The prior 100-pair replay and its measured provider identity remain in evidence at 3cdc067150bc51ecb6722672aa63be9a90c6c947. This manifest records the new routing correction and a full replay of the final provider bytes. Earlier lifted environment holds are preserved at 35dd715336de58d07a65cd326e1253eb3e436261.",
+  "prior_evidence_history": "The prior 100-pair replay and its measured provider identity remain in evidence at 3cdc067150bc51ecb6722672aa63be9a90c6c947. This manifest records the new routing correction and a full replay of the final provider bytes. Earlier lifted environment holds are preserved at 35dd715336de58d07a65cd326e1253eb3e436261. The rejected 889065d9a replay is now explicitly historical in historical_gateway_replays; its assumed subprocess totals are not accepted measurements. local_gateway_evidence holds the fresh observed replay.",
   "delivery": {
     "state": "awaiting independent review and required CI/integrator merge",
     "merge_commit": null,
@@ -3182,5 +4807,178 @@
       "error": "Baseline CLI bench-0 / cli-0 / Replay item 000 timed out after its original 30-second deadline. No complete report was emitted.",
       "disposition": "Failed whole-batch attempt, not acceptance. Retry once with unchanged frozen setup and deadline; no inferred cause and no claim of zero failures across attempts."
     }
-  ]
+  ],
+  "historical_gateway_replays": [
+    {
+      "source_commit": "889065d9a390cde2e8c0af8110b173b8a2548d89",
+      "evidence_path": "docs/deployment/evidence/SIMPLIFY-OPENCLAW-001/evidence.json",
+      "evidence_blob": "53cc90b65702b89f80a21708ec78495703fd83e2",
+      "json_path": "local_gateway_evidence",
+      "manifest": {
+        "base_sha": "a9557a6002e8170eb92415cc61e9d6a584cc610f",
+        "base_provider_sha256": "8d52da93da25205383062eb0c88211c8bcfb073dcb3da44ad54704d45dd361ad",
+        "candidate_provider_sha256": "95db5140fa79fc60aeac907717f278a4b0cfbf7d2f4bae264029bc7ee0e3d8da",
+        "image_id": "sha256:f435502b113f873768b64cd7f5f2a63f44d0a236ae3a5647ff42716652c74c31",
+        "gateway_version": "2026.7.1",
+        "model": "fixture/fixture-model",
+        "auth_route": "isolated loopback Gateway, synthetic test token; local deterministic OpenAI-completions model",
+        "count_per_arm": 100,
+        "prompt_sha256": "984e80159bf60bda7acdfa13d32b143265208bc4a360083de0b3786aa5e5ebd1",
+        "session_design": "10 independent admitted agents, each with 10 sequential turns per arm; first is session-cold, next 9 warm; four concurrent sequences, one shared Gateway, no process-cold claim",
+        "concurrency": 4,
+        "deadline_seconds": 30,
+        "usage_semantics": "model fixture reports fixed input=100/output=10/total=110, not a tokenizer or production cost measurement",
+        "ttft_semantics": "CLI buffered invoke first text available on return; HTTP first normalized delta; full includes invocation and normalization",
+        "latency_limitation": "CLI transport includes docker exec overhead; local fixture measures transport and Gateway, not external model quality or latency",
+        "config_sha256": "61c1769404f5445042fb4bc624ffac70374e7b693bf5be0264e6a66c490f4934"
+      },
+      "replay": {
+        "cli": {
+          "all": {
+            "n": 100,
+            "full_p50_ms": 14302.009776991326,
+            "full_p95_ms": 19779.84999801265,
+            "ttft_p50_ms": 14302.009776991326,
+            "ttft_p95_ms": 19779.84999801265,
+            "mean_tokens": 110,
+            "errors": 0,
+            "subprocesses": 100
+          },
+          "cold": {
+            "n": 10,
+            "full_p50_ms": 16184.44422999164,
+            "full_p95_ms": 19847.03600301873,
+            "ttft_p50_ms": 16184.44422999164,
+            "ttft_p95_ms": 19847.03600301873,
+            "mean_tokens": 110,
+            "errors": 0,
+            "subprocesses": 10
+          },
+          "warm": {
+            "n": 90,
+            "full_p50_ms": 14150.132078037132,
+            "full_p95_ms": 16829.87580198096,
+            "ttft_p50_ms": 14150.132078037132,
+            "ttft_p95_ms": 16829.87580198096,
+            "mean_tokens": 110,
+            "errors": 0,
+            "subprocesses": 90
+          }
+        },
+        "http": {
+          "all": {
+            "n": 100,
+            "full_p50_ms": 4502.181457995903,
+            "full_p95_ms": 5383.192496956326,
+            "ttft_p50_ms": 4359.286747989245,
+            "ttft_p95_ms": 5221.698477980681,
+            "mean_tokens": 110,
+            "errors": 0,
+            "subprocesses": 0
+          },
+          "cold": {
+            "n": 10,
+            "full_p50_ms": 4667.293095961213,
+            "full_p95_ms": 4824.845105002169,
+            "ttft_p50_ms": 4529.710014990997,
+            "ttft_p95_ms": 4748.2076800079085,
+            "mean_tokens": 110,
+            "errors": 0,
+            "subprocesses": 0
+          },
+          "warm": {
+            "n": 90,
+            "full_p50_ms": 4487.014698970597,
+            "full_p95_ms": 5385.083105997182,
+            "ttft_p50_ms": 4321.034659980796,
+            "ttft_p95_ms": 5236.442406021524,
+            "mean_tokens": 110,
+            "errors": 0,
+            "subprocesses": 0
+          }
+        }
+      },
+      "gates": {
+        "no_new_errors": true,
+        "full_p95_ratio": 0.27215537516701055,
+        "mean_token_ratio": 1.0
+      },
+      "rows_count": 200,
+      "rows_sha256": "f85158dc6efa01a925e8a0ba236b2d071dc53b384e765e33aac896d0ff2c01f6",
+      "disposition": "Historical replay retained byte-for-byte at the cited committed blob. Its subprocess values were constants, not observations; they do not satisfy measured subprocess acceptance. The new local_gateway_evidence replaces this replay for acceptance."
+    }
+  ],
+  "subprocess_measurement_correction": {
+    "rejected_head": "889065d9a390cde2e8c0af8110b173b8a2548d89",
+    "reviewer": "Codex",
+    "finding": "Acceptance clause 7: previous CLI/HTTP rows recorded assumed constants 1/0 instead of observing actual per-attempt subprocess invocations.",
+    "owner": "Codex2",
+    "source_commit": "d78ad0ef1475abed7caf85ee3867c7ba762e8f7a",
+    "independent_review": "pending exact-head handoff; no approval asserted",
+    "frozen_fields_verified_equal_to_rejected_replay": [
+      "base_sha",
+      "base_provider_sha256",
+      "candidate_provider_sha256",
+      "image_id",
+      "gateway_version",
+      "model",
+      "auth_route",
+      "count_per_arm",
+      "prompt_sha256",
+      "session_design",
+      "concurrency",
+      "deadline_seconds",
+      "usage_semantics",
+      "ttft_semantics",
+      "latency_limitation"
+    ],
+    "ephemeral_config_difference": "The fixture allocates fresh loopback ports and temporary paths per run, as before; config_sha256 therefore differs. Gateway/model/policy/session setup source is unchanged.",
+    "measurement": {
+      "mechanism": "CPython subprocess.Popen audit events; thread-local per-attempt scope",
+      "scope": "synchronous adapter-side invocations, including docker exec for CLI; excludes Gateway descendants and fixture setup/cleanup",
+      "failed_spawn_semantics": "audit events count attempted Popen calls even if OS creation fails; a failed replay is never accepted",
+      "attribution": "unique arm/case attempt_id plus originating thread_id; raw argv/environment omitted"
+    },
+    "negative_controls": [
+      "Four overlapping pool-thread attempts launch 0/1/2/3 genuine processes through pre-captured run/check_output/Popen aliases and retain exact attribution; outside work and reused threads do not contaminate them.",
+      "An extra CLI-side process (2 rather than 1) fails the same require_count assertion used by replay.",
+      "Real provider.stream with an injected HTTP-side subprocess still returns a valid terminal, but the observed zero-subprocess gate rejects it.",
+      "An exception clears the attribution scope; subsequent attempts start empty."
+    ],
+    "validation": [
+      {
+        "command": "timeout 120 /tmp/gov-approval-venv/bin/python -m pytest -q services/openclaw-gateway-adapter/tests/test_openresponses_transport_contract.py -k replay_subprocess_observation",
+        "result": "2 passed, 59 deselected in 1.21s",
+        "exit_code": 0
+      },
+      {
+        "command": "timeout 120 /tmp/gov-approval-venv/bin/python -m pytest -q services/openclaw-gateway-adapter/tests/test_openresponses_transport_contract.py services/openclaw-gateway-adapter/tests/test_structured_data_tool_contract.py services/control-plane/cron/test_exact_run_wait.py",
+        "result": "128 passed, 2 warnings in 50.70s",
+        "exit_code": 0
+      },
+      {
+        "command": "SIMPLIFY_REPLAY_OUTPUT=/tmp/simplify-observed-replay-100.json timeout 1200 /tmp/gov-approval-venv/bin/python services/openclaw-gateway-adapter/tests/test_openresponses_transport_contract.py",
+        "result": "100 complete pairs / 200 measured rows; CLI 100 observed Popen events; HTTP 0 observed events; both arms zero errors; all timing/usage/count gates passed; fixture cleanup exit 0",
+        "exit_code": 0,
+        "report_sha256": "d5b6e47c45d1017d912ef246afe706361dfcda2d5bb92f1bf8a9107d83510cdd"
+      }
+    ],
+    "gates": {
+      "no_new_errors": true,
+      "observed_subprocess_counts": true,
+      "full_p95_ratio": 0.3331000701629056,
+      "mean_token_ratio": 1.0
+    },
+    "source_sha256": {
+      "services/openclaw-gateway-adapter/tests/test_openresponses_transport_contract.py": "9dadd52308e31a6716cc56e453f9601548623604898ea49e6c7f24a7474b630e",
+      "services/openclaw-gateway-adapter/assistant_openclaw_provider.py": "95db5140fa79fc60aeac907717f278a4b0cfbf7d2f4bae264029bc7ee0e3d8da",
+      "services/openclaw-gateway-adapter/main.py": "fce1b2b8eab522eea230365248bfc673bdb88fdfd11d6712a5f647bfc4360cee",
+      "integrations/openclaw/integration.md": "4b3acd060e2e8539ecd89843b81acade1322e69a3da3bdfd1735925f23143f6a"
+    },
+    "limitations": [
+      "Observation covers synchronous subprocess.Popen invocations on the adapter replay threads, including Docker exec transport overhead; it does not claim process-tree counts inside the shared Gateway.",
+      "The audit hook records process-creation attempts. An OS creation failure aborts acceptance rather than becoming a successful spawn count.",
+      "Synthetic model usage and local transport timings do not establish external model costs, model quality or hosted readiness."
+    ]
+  }
 }
