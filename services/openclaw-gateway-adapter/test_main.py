@@ -2224,6 +2224,80 @@ class TestGovernedServantAgentSync(unittest.TestCase):
         # fallback candidate substituted in front of it.
         self.assertEqual(invoke.call_args.kwargs["model"], "anthropic/claude-opus-4-8")
 
+    def test_admitted_invoke_and_stream_preserve_effective_model_over_http(self):
+        from assistant_openclaw_provider import AssistantOpenClawProvider
+
+        payload = self._opinion_payload()
+        admission = {key: payload[key] for key in (
+            "persona_id", "tenant_id", "persona_version", "agent_id", "workspace_ref",
+            "capability_snapshot_id", "allowed_capabilities", "environment_ceiling",
+            "requested_environment", "execution_authority", "display_name", "mandate",
+            "archetype", "strategy_family", "traits",
+        )}
+        captured = []
+
+        def forbidden_run(*args, **kwargs):
+            raise AssertionError("ordinary admitted turn must not spawn CLI")
+
+        def fake_http(req, timeout=None, deadline=None):
+            captured.append({k.lower(): v for k, v in req.header_items()})
+            class Response:
+                def __iter__(self):
+                    return iter([
+                        b'data: {"type":"response.output_text.done","text":"ok"}\n',
+                        b'data: {"type":"response.completed","response":{"status":"completed"}}\n',
+                        b'data: [DONE]\n',
+                    ])
+
+                def close(self):
+                    pass
+
+            return Response()
+
+        provider = AssistantOpenClawProvider(
+            gateway_url="ws://fixture:18789", token="synthetic-token",
+            _run_func=forbidden_run, _which_func=lambda _: None,
+        )
+        with (
+            self._auth_config(),
+            patch.object(adapter_main, "_OPENCLAW_AGENT_PROVIDER", provider),
+            patch.object(adapter_main, "_sync_persona_opinion_agent", return_value={
+                "status": "created", "agent_id": payload["agent_id"],
+                "workspace_ref": payload["workspace_ref"],
+            }),
+            patch.object(adapter_main, "_assert_persona_opinion_runtime_policy", return_value={}),
+            patch.object(provider, "gateway_agents_list", return_value=[{"id": payload["agent_id"]}]),
+            patch("assistant_openclaw_provider._urlopen_with_deadline", side_effect=fake_http),
+        ):
+            ensured = client.post(
+                "/api/openclaw-adapter/agents/persona-opinion/ensure", json=payload,
+                headers={**self._HEADERS, "Idempotency-Key": "cross-route-model-ensure",
+                         "X-Request-Id": "cross-route-model-ensure"},
+            )
+            self.assertEqual(ensured.status_code, 201, ensured.text)
+            for model in (None, "fixture/explicit-model"):
+                for suffix in ("", "/stream"):
+                    with self.subTest(model=model, route=suffix):
+                        body = {"prompt": "Return opinion", "agent_id": payload["agent_id"],
+                                "persona_admission": admission, "metadata": {"allowed_tools": []}}
+                        if model is not None:
+                            body["model"] = model
+                        response = client.post(
+                            "/api/openclaw-adapter/assistant/providers/openclaw/invoke" + suffix,
+                            json=body, headers={"X-Pantheon-Service-Token": "adapter-secret",
+                                "X-Operator-Id": "operator-1",
+                                "Idempotency-Key": f"cross-route-model-{model}-{suffix}"},
+                        )
+                        self.assertEqual(response.status_code, 200, response.text)
+                        if suffix:
+                            self.assertIn('"type": "done"', response.text)
+                        else:
+                            self.assertEqual(response.json()["data"]["status"], "completed")
+            self.assertEqual(len(captured), 4)
+            self.assertEqual([row.get("x-openclaw-model") for row in captured],
+                             [None, None, "fixture/explicit-model", "fixture/explicit-model"])
+            self.assertTrue(all(row["x-openclaw-agent-id"] == payload["agent_id"] for row in captured))
+
     def test_default_agent_explicit_model_is_rejected(self):
         """Without a governed non-default `agent_id` + `persona_admission`,
         there is no authorization surface for a model override on the

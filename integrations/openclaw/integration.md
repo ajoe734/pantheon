@@ -195,10 +195,15 @@ kernel delegation retain their existing owners.
 
 The request selects `openclaw/<agentId>` and carries an admitted explicit model
 in `X-OpenClaw-Model`. A successful explicit override does not change the next
-ordinary request's model. Readiness tries only the configured primary model;
-it neither retries on another model nor changes future routing. Tenant, actor,
+ordinary request's model. Invoke, stream, and readiness resolve the main agent
+to `OPENCLAW_PRIMARY_MODEL` (or the provider default); non-default agents retain
+their Gateway-configured model unless an admitted explicit override is given.
+Readiness neither retries on another model nor changes future routing. Tenant, actor,
 and conversation components are positionally encoded and escaped in the
-upstream session key. History, context, attachments, and trace use the same
+upstream session key. Both mounted turn routes resolve the conversation from
+`metadata.session_user`, then the legacy `metadata.session_id`; an internal
+explicit session ID takes precedence, including governed invocation IDs.
+History, context, attachments, and trace use the same
 builder. Socket reads, TLS reads, and SSE consumption share a total deadline.
 Only one normalized terminal result is emitted, including interruption,
 timeout, refusal, incomplete output, and upstream failures.
