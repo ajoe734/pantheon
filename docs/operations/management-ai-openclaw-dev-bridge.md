@@ -150,6 +150,58 @@ original `DEV-RELEASE-HOSTED-001`, `L12-HOSTED-001` and `MGMT-AGORA-E2E-001`
 as pending, preserving IDs and contracts and rechecking deduplication. This
 source task issues no live grant and performs no hosted operation.
 
+## Archive resurrection recovery (stale role-recovery retirement)
+
+When a task has completed source delivery and an immutable archive snapshot at
+an earlier generation (e.g., generation 1), but an active row at a higher
+generation (e.g., generation 2) exists solely due to documented role/evidence-recovery
+reassignments without new work or delivery changes, the narrow archive-resurrection
+contract permits retiring the stale active row and recovering the original
+completed archive.
+
+The approved architecture plan is [ARCHIVE_RESURRECTION_SA_SD.md](../04/pantheon_first_release_closure_2026-09-06/ARCHIVE_RESURRECTION_SA_SD.md),
+byte-identical to `/tmp/pantheon-legacy-closeout-reconcile-20260906.Ljk3M1/SA_SD.md`
+(SHA256 `4a6862fd7465896da09381030dc6310d7efaf4468791c3ef55a327ca8453c9d8`),
+accompanied by [LEGACY_CLOSEOUT_RECONCILIATION.md](../04/pantheon_first_release_closure_2026-09-06/LEGACY_CLOSEOUT_RECONCILIATION.md)
+(SHA256 `75d9435610d38771795c79a1c76a27fff23db96eec029e36ca6cc8bef6f335c3`).
+
+### Preconditions and eligibility
+
+- **Actor**: Only explicit local `Human/Ops` may initiate stale resurrection recovery:
+  ```bash
+  "$PANTHEON_COMMAND_ROOT/scripts/human-ops-status.sh" reconcile-merged-done <task-id> "<message>"
+  ```
+- **Scope identity**: The active row must exactly match the immutable archive snapshot in
+  `title`, `phase`, `depends_on`, `dependency_tracks`, `artifacts`, `acceptance`,
+  `target_repo`, `task_class`, `dev_bridge`, `execution_resources`,
+  `execution_authorization`, and `completion_tracks`. A new functional or hosted
+  milestone cannot be discarded by recovering an earlier completed delivery.
+- **Delivery identity**: Merged delivery evidence and review evidence must match the archive's
+  recorded delivery and review bindings byte-identically.
+- **Lineage proof**: Complete, unbroken, authenticated ordered reassignment events
+  (`task_reassigned` validated by `task_machine`) must exist in the activity audit log
+  accounting for every generation hop and role change between the completed archive
+  and the active row. Any gap, fork, forged event, out-of-order timestamp, or intervening
+  reopen/work event causes proof verification to fail closed.
+  The complete task audit sequence must have valid, nondecreasing timestamps;
+  a backdated or undated event appended after import cannot become historical
+  evidence. Ordered historical prefixes remain subject to the existing
+  historical reassignment checks. After the archive, only authenticated import
+  and role changes plus narrative notes are admitted; other lifecycle/delivery
+  events (including milestone, operator acceptance, supersede, and unknown
+  mutation types) reject recovery. Preflight binds all task event payloads in
+  source order, including the historical prefix, for transaction revalidation.
+- **Execution isolation**: No active worker, running process, reserved launch, worktree lease,
+  or pending queue event may exist for the target task.
+
+### Effect and idempotency
+
+- Original archive bytes and completed generation (e.g., g1) terminal facts are preserved.
+- The stale active row (e.g., g2) is atomically retired via the canonical status archive outbox.
+- An append-only audit event records the retired active row digest/generation and complete proof.
+- Subsequent calls are idempotent; the task ID is protected against re-admission or resurrection
+  at `assign` and `dev_bridge_materialize` boundaries.
+
 ## Removing development tooling
 
 After product release, archive tasks and verify that no worker, lease, or queue
