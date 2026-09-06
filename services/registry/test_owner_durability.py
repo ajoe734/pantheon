@@ -359,11 +359,11 @@ def test_generic_route_embedded_spec_serializes_concurrent_revision_race(pg_app)
     paused_started = threading.Event()
     release_paused = threading.Event()
 
-    def _pausing_validate(registry_service, strategy_id_arg, version, lineage, *, ctx):
+    def _pausing_validate(registry_service, strategy_id_arg, version, lineage, *, ctx, **kwargs):
         if version == "1.0.1":
             paused_started.set()
             assert release_paused.wait(15), "1.1.0 request did not signal completion in time"
-        return real_validate(registry_service, strategy_id_arg, version, lineage, ctx=ctx)
+        return real_validate(registry_service, strategy_id_arg, version, lineage, ctx=ctx, **kwargs)
 
     def _submit(version: str):
         return pg_app.post(

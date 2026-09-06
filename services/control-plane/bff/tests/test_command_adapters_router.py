@@ -445,12 +445,12 @@ def test_typed_domain_command_dispatch_and_receipt(monkeypatch) -> None:
         committed_entry = {
             "registry_id": "reg-dispatch-1",
             "strategy_id": "stg-01",
-            "owner_tenant": None,
+            "owner_tenant": "tenant-dispatch",
             "version": "1.0.0",
             "checksum": "sha256:dispatch",
             "metadata": {"note": "new"},
             "updated_at": "2026-09-06T00:00:00Z",
-            "last_actor": {"actor_id": "test", "tenant": None},
+            "last_actor": {"actor_id": "test", "tenant": "tenant-dispatch"},
         }
         if method == "PATCH":
             return 200, {"X-Idempotent-Replay": "false"}, {"entry": committed_entry}
@@ -461,7 +461,7 @@ def test_typed_domain_command_dispatch_and_receipt(monkeypatch) -> None:
             return 200, {}, {"entry": precheck_entry}
         from services.registry.pg_store import PostgresRegistryStore, _request_digest
         receipt_key = PostgresRegistryStore.receipt_key(
-            "cmd-dispatch-1", "reg-dispatch-1", actor={"actor_id": "test", "tenant": "unscoped"}, command_type="metadata",
+            "cmd-dispatch-1", "reg-dispatch-1", actor={"actor_id": "test", "tenant": "tenant-dispatch"}, command_type="metadata",
         )
         request_digest = _request_digest({
             "registry_id": "reg-dispatch-1",
@@ -481,6 +481,24 @@ def test_typed_domain_command_dispatch_and_receipt(monkeypatch) -> None:
 
     monkeypatch.setattr(strategy_adapter_module, "http_request_json_with_headers", _fake_http)
     monkeypatch.setenv("PANTHEON_REGISTRY_API_URL", "http://registry-svc.internal")
+    monkeypatch.setenv("PANTHEON_BFF_AUTH_MODE", "strict")
+    monkeypatch.setenv("PANTHEON_BFF_JWT_SECRET", "test-dispatch-secret")
+    monkeypatch.setenv("PANTHEON_BFF_JWT_ISSUER", "test-dispatch-iss")
+    monkeypatch.setenv("PANTHEON_BFF_JWT_AUDIENCE", "test-dispatch-aud")
+
+    import time
+    from services.runtime_auth_inbound import encode_jwt_hs256
+    token = encode_jwt_hs256(
+        {
+            "sub": "test",
+            "tenant": "tenant-dispatch",
+            "roles": ["operator"],
+            "iss": "test-dispatch-iss",
+            "aud": "test-dispatch-aud",
+            "exp": time.time() + 3600,
+        },
+        secret="test-dispatch-secret",
+    )
 
     adapter = find_adapter(CommandType.STRATEGY_ACTION)
     assert adapter is not None
@@ -496,7 +514,7 @@ def test_typed_domain_command_dispatch_and_receipt(monkeypatch) -> None:
             "expected_metadata": {"note": "old"},
             "metadata": {"note": "new"},
         },
-        auth_token="Bearer test",
+        auth_token=token,
     )
     assert receipt["command_id"] == "cmd-dispatch-1"
     assert receipt["status"] == "metadata_updated"

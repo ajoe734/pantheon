@@ -160,6 +160,7 @@ class RegistryEntryOrDraftRequest(BaseModel):
     rollback_target: Optional[str] = None
     metadata: Optional[dict[str, Any]] = None
     strategy_spec: Optional[dict[str, Any]] = None
+    base_checksum: Optional[str] = None
 
 
 class StrategySpecRegisterRequest(BaseModel):
@@ -176,6 +177,7 @@ class StrategySpecRegisterRequest(BaseModel):
     rollback_target: Optional[str] = None
     metadata: Optional[dict[str, Any]] = None
     strategy_spec: Optional[dict[str, Any]] = None
+    base_checksum: Optional[str] = None
 
 
 class StrategyArtifactRegisterRequest(BaseModel):
@@ -587,6 +589,8 @@ def _strategy_spec_register_payload(body: StrategySpecRegisterRequest) -> Regist
     metadata = dict(body.metadata or {})
     if source_seed_id:
         metadata.setdefault("source_seed_id", source_seed_id)
+    if body.base_checksum:
+        metadata.setdefault("base_checksum", body.base_checksum)
     if strategy_spec is not None:
         # Always bind metadata["strategy_spec"] to the exact payload the
         # checksum above was computed from — never a caller-supplied
@@ -617,27 +621,43 @@ def _check_strategy_spec_version_lineage(
     strategy_id: str,
     version: str,
     lineage: Lineage,
+    *,
+    base_checksum: Optional[str] = None,
 ) -> None:
-    """Reject an out-of-sequence StrategySpec version with no valid parent linkage.
+    """Reject an out-of-sequence StrategySpec version with no valid parent linkage,
+    or a revision with a missing, mismatched, or stale parent/base digest.
 
     A StrategySpec revision is either the first version for its strategy_id,
     an exact replay of an already-registered version (idempotency is handled
     by ``register_if_absent``/``_ensure_strategy_spec_registration_matches``,
     not here), a legitimate immediate-next semver bump from the current
     latest known version, or a version that declares ``parent_registry_ids``
-    naming an existing StrategySpec entry for this strategy_id. An arbitrary
-    version like "9.9.9" with none of the above must be rejected — accepting
-    it would let a caller silently jump the immutable revision sequence.
+    naming an existing StrategySpec entry for this strategy_id.
 
-    This is the pure invariant check, factored out of the ctx-scoped list
-    resolution (:func:`_validate_strategy_spec_version_lineage`) so it can
-    also be re-invoked, unchanged, against a freshly-locked read of the true
-    latest-committed state inside :meth:`RegistryService.register_strategy_spec_revision`
-    (reviewer finding 4 — see that method's docstring for the TOCTOU race
-    this closes). ``existing_specs`` must already be scoped to the entries
-    the caller is authorized to see and to ``artifact_type == STRATEGY_SPEC``.
+    Invariants enforced:
+    - If no existing versions exist, any declared parent_registry_ids or base_checksum
+      fails closed (no base exists yet).
+    - If parent_registry_ids is supplied, every named parent must exist for this
+      strategy, and the newest parent must be the current latest known version
+      (a parent link to an older version is a stale base -> 409 Conflict).
+    - The new revision's version must be strictly greater than its linked parent's
+      version (no downgrade).
+    - If base_checksum is provided (with or without parent_registry_ids), it must
+      match the checksum of the expected base entry (mismatch -> 409 Conflict).
+    - An arbitrary version without valid parent linkage and base checksum is rejected (400).
     """
     if not existing_specs:
+        if base_checksum:
+            raise RegistryError(
+                f"StrategySpec version {version!r} declares base_checksum {base_checksum!r} "
+                f"but no parent entry exists for strategy {strategy_id!r}."
+            )
+        if lineage.parent_registry_ids:
+            raise RegistryError(
+                f"StrategySpec version {version!r} for strategy_id={strategy_id!r} declares "
+                "parent_registry_ids that do not reference any existing StrategySpec entry "
+                "for this strategy."
+            )
         return
 
     existing_versions = {entry.version for entry in existing_specs}
@@ -648,28 +668,50 @@ def _check_strategy_spec_version_lineage(
         parts = tuple(int(x) for x in v.split("."))
         return parts  # type: ignore[return-value]
 
+    latest_entry = max(existing_specs, key=lambda e: _parse_ver(e.version))
+    latest = latest_entry.version
+
     parent_ids = lineage.parent_registry_ids or []
     if parent_ids:
-        valid_parents = {entry.registry_id: entry.version for entry in existing_specs}
-        matching = [pid for pid in parent_ids if pid in valid_parents]
+        valid_parents = {entry.registry_id: entry for entry in existing_specs}
+        matching = [valid_parents[pid] for pid in parent_ids if pid in valid_parents]
         if not matching:
             raise RegistryError(
                 f"StrategySpec version {version!r} for strategy_id={strategy_id!r} declares "
                 "parent_registry_ids that do not reference any existing StrategySpec entry "
                 "for this strategy."
             )
-        # A parent link names an actual base digest/version; the new
-        # revision must move strictly forward from it, never backward
-        # (reviewer finding 4: a valid parent_registry_ids link previously
-        # let a caller "downgrade" to e.g. 0.0.1 from a 1.0.0 base with no
-        # version-direction check at all).
-        newest_parent_version = max((valid_parents[pid] for pid in matching), key=_parse_ver)
+        if len(matching) < len(parent_ids):
+            raise RegistryError(
+                f"StrategySpec version {version!r} for strategy_id={strategy_id!r} declares "
+                "parent_registry_ids containing entries that do not exist for this strategy."
+            )
+
+        newest_parent_entry = max(matching, key=lambda e: _parse_ver(e.version))
+        newest_parent_version = newest_parent_entry.version
+
+        # Stale base check: parent must be the latest known version!
+        if newest_parent_version != latest:
+            raise RegistryConflictError(
+                f"StrategySpec version {version!r} for strategy_id={strategy_id!r} is parented to "
+                f"stale base version {newest_parent_version!r} (registry_id={newest_parent_entry.registry_id!r}); "
+                f"current latest version is {latest!r}."
+            )
+
         if _parse_ver(version) <= _parse_ver(newest_parent_version):
             raise RegistryError(
                 f"StrategySpec version {version!r} for strategy_id={strategy_id!r} must be "
                 f"strictly greater than its linked parent's version {newest_parent_version!r}; "
                 "a revision cannot downgrade or restate its own base version."
             )
+
+        if base_checksum:
+            if base_checksum != newest_parent_entry.checksum:
+                raise RegistryConflictError(
+                    f"StrategySpec version {version!r} declares base_checksum {base_checksum!r}, "
+                    f"but parent base {newest_parent_entry.registry_id!r} (version {newest_parent_version!r}) "
+                    f"has checksum {newest_parent_entry.checksum!r}."
+                )
         return
 
     latest = max(existing_versions, key=_parse_ver)
@@ -687,6 +729,14 @@ def _check_strategy_spec_version_lineage(
             f"{sorted('.'.join(str(p) for p in v) for v in valid_next)}."
         )
 
+    if base_checksum:
+        if base_checksum != latest_entry.checksum:
+            raise RegistryConflictError(
+                f"StrategySpec version {version!r} declares base_checksum {base_checksum!r}, "
+                f"but latest base {latest_entry.registry_id!r} (version {latest!r}) "
+                f"has checksum {latest_entry.checksum!r}."
+            )
+
 
 def _validate_strategy_spec_version_lineage(
     registry_service: RegistryService,
@@ -695,6 +745,7 @@ def _validate_strategy_spec_version_lineage(
     lineage: Lineage,
     *,
     ctx: AuthContext,
+    base_checksum: Optional[str] = None,
 ) -> None:
     """Best-effort (non-atomic) ctx-scoped pre-check, mirroring
     ``RegistryService._reject_version_collision``'s documented "narrows but
@@ -714,7 +765,9 @@ def _validate_strategy_spec_version_lineage(
         if view.entry.artifact_type == ArtifactType.STRATEGY_SPEC
         and _can_read_entry(ctx, view.entry)
     ]
-    _check_strategy_spec_version_lineage(existing_specs, strategy_id, version, lineage)
+    _check_strategy_spec_version_lineage(
+        existing_specs, strategy_id, version, lineage, base_checksum=base_checksum,
+    )
 
 
 def _strategy_spec_lineage_validator(
@@ -722,6 +775,8 @@ def _strategy_spec_lineage_validator(
     strategy_id: str,
     version: str,
     lineage: Lineage,
+    *,
+    base_checksum: Optional[str] = None,
 ) -> Callable[[list[RegistryEntry]], None]:
     """Build a ``validate_lineage`` callback for
     :meth:`RegistryService.register_strategy_spec_revision` that scopes a
@@ -735,7 +790,9 @@ def _strategy_spec_lineage_validator(
             entry for entry in existing_entries
             if entry.artifact_type == ArtifactType.STRATEGY_SPEC and _can_read_entry(ctx, entry)
         ]
-        _check_strategy_spec_version_lineage(scoped, strategy_id, version, lineage)
+        _check_strategy_spec_version_lineage(
+            scoped, strategy_id, version, lineage, base_checksum=base_checksum,
+        )
 
     return _validate
 
@@ -1022,6 +1079,11 @@ def _resolve_entry_or_draft_payload(
                     "require lineage, even through the generic /api/registry/entries route."
                 )
 
+    meta = dict(payload.metadata) if payload.metadata is not None else None
+    if payload.base_checksum:
+        meta = dict(meta or {})
+        meta.setdefault("base_checksum", payload.base_checksum)
+
     registry_id = f"reg-{payload.strategy_id}-{payload.version}-{uuid.uuid4().hex[:8]}"
     create_payload = RegistryEntryCreate(
         artifact_type=payload.artifact_type,
@@ -1034,7 +1096,7 @@ def _resolve_entry_or_draft_payload(
         producer_run_id=payload.producer_run_id,
         evaluation_summary=payload.evaluation_summary,
         rollback_target=payload.rollback_target,
-        metadata=payload.metadata,
+        metadata=meta,
     )
     return create_payload, registry_id
 
@@ -1066,20 +1128,24 @@ async def register_entry(
         # an out-of-sequence revision (e.g. "9.9.9" with no valid parent)
         # rejected by the dedicated route could still be smuggled through
         # this one with identical content.
+        base_checksum = payload.base_checksum or (payload.metadata or {}).get("base_checksum")
         if (
             create_payload.artifact_type == ArtifactType.STRATEGY_SPEC
             and (create_payload.metadata or {}).get("strategy_spec") is not None
         ):
+            precheck_kwargs = {"base_checksum": base_checksum} if base_checksum is not None else {}
             _validate_strategy_spec_version_lineage(
                 registry_service,
                 create_payload.strategy_id,
                 create_payload.version,
                 create_payload.lineage,
                 ctx=ctx,
+                **precheck_kwargs,
             )
         return create_payload, registry_id
 
     try:
+        base_checksum = payload.base_checksum or (payload.metadata or {}).get("base_checksum")
         if idempotency_key:
             target_strategy_id = payload.strategy_id
             validate_lineage = None
@@ -1097,7 +1163,8 @@ async def register_entry(
                     _Lineage(**payload.lineage) if isinstance(payload.lineage, dict) else _Lineage()
                 )
                 validate_lineage = _strategy_spec_lineage_validator(
-                    ctx, target_strategy_id, payload.version, lineage_obj
+                    ctx, target_strategy_id, payload.version, lineage_obj,
+                    base_checksum=base_checksum,
                 )
             view, _replayed = registry_service.register_with_idempotency(
                 _build_payload,
@@ -1140,6 +1207,7 @@ async def register_entry(
                 registry_id,
                 validate_lineage=_strategy_spec_lineage_validator(
                     ctx, create_payload.strategy_id, create_payload.version, create_payload.lineage,
+                    base_checksum=base_checksum,
                 ),
                 actor=_actor_context(ctx),
             )
@@ -1394,6 +1462,7 @@ async def register_strategy_spec(
     registry_service = get_registry_service()
     try:
         create_payload = _strategy_spec_register_payload(payload)
+        base_checksum = payload.base_checksum or (payload.metadata or {}).get("base_checksum")
         # Reviewer finding 4: validate the version/lineage invariant inside
         # the same per-strategy_id lock/transaction as the insert (not as a
         # separate read-then-decide step beforehand) so two concurrent
@@ -1403,7 +1472,11 @@ async def register_strategy_spec(
             create_payload,
             registry_id,
             validate_lineage=_strategy_spec_lineage_validator(
-                ctx, payload.strategy_id, payload.version, create_payload.lineage,
+                ctx,
+                payload.strategy_id,
+                payload.version,
+                create_payload.lineage,
+                base_checksum=base_checksum,
             ),
             actor=_actor_context(ctx),
         )

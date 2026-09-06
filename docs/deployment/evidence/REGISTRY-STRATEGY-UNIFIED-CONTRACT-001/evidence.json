@@ -2,32 +2,27 @@
   "schema_version": "pantheon.task-evidence.v1",
   "task_id": "REGISTRY-STRATEGY-UNIFIED-CONTRACT-001",
   "normative_plan": "/home/chloe_ong_dev_cctech_support_com/code/pantheon-artifacts/dev-closure-20260906/architecture-resumption-sa-sd.md, /home/chloe_ong_dev_cctech_support_com/code/pantheon-artifacts/dev-closure-20260906/operator-architecture-confirmation.md",
-  "predecessor": "generation-11 delivery on PR #5620 (base 9a6c3eaa8356e1982152acc65f3eafc9cbe9a215, manifest blob f76051a9cb0737aaaddb304ee7cf7e35f7e6f86a), which reviewer Codex reopened with 3 specific findings (coordinator diagnosis note 1143): [P1] strategy adapter command proof false-success via unverified parser and missing durable receipt reload, [P1] keyed generic full-spec revision protocol lock ordering and advisory lock bypass, [P2] adversarial crash-window/response-loss proofs against real PostgreSQL and stale first_release_contract statements.",
-  "scope_note": "This is the generation-12 corrective pass resolving all 3 reopen findings from PR #5620: (1) Strategy adapter command proof: Eliminated false-success 'metadata_updated' reporting by requiring StrategyCommandAdapter._execute_update_params to strictly validate the durable original command receipt from Registry via GET /api/registry/entries/{registry_id}/receipts/{command_key}. Removed duplicate unverified token parser in favor of canonical services.runtime_auth_inbound.validate_request_auth (rejecting unauthenticated requests with 401 UNAUTHORIZED or 403 FORBIDDEN). Enforced strict receipt scope verification (command_key, registry_id, receipt_key, request_digest, non-null committed_at, tenant ID, and caller actor ID). Eliminated entry-only receipt fabrication. Caught ambiguous transport exceptions (RemoteDisconnected, URLError) on PATCH and recovered via scoped receipt readback or failed closed with retryable 503 UNCONFIRMED_COMMAND_RECEIPT (preventing spurious EXECUTION_ERROR). (2) Keyed generic full-spec revision protocol & lock ordering: Enforced globally consistent lock acquisition order across all writers: advisory_xact_lock(strategy_id) FIRST -> entries.lock_table() SECOND -> receipts.insert_if_absent() THIRD. Eliminated reverse lock order cycle in create_with_receipt. Generic POST /api/registry/entries now extracts strategy_spec and passes strategy_id and validate_lineage to register_with_idempotency, ensuring concurrent typed and keyed revision registrations serialize behind the same advisory lock. Added dual-key receipt indexing in create_with_receipt so receipts can be queried by either register_entry or canonical registry_id. (3) Real PostgreSQL crash-window/response-loss proof & stale contract reconciliation: Replaced graceful termination with genuine ungraceful proc.kill() (SIGKILL) in services/registry/test_owner_durability_real_process.py. Added DroppedSocketProxy testing hard TCP connection resets (RST via SO_LINGER) after commit for create, metadata, and advance lifecycle operations. Added deterministic fault injection between state write and receipt write in services/foundation/tests/test_registry_owner_transaction.py proving store-level atomicity, zero partial mutations, and clean retry. Reconciled first_release_contract.json to remove stale no-second-GET statements and document independent receipt readback and transport recovery.",
+  "predecessor": "head 01855c71a13431cb928aca9f0f761bfc2697c935 on PR #5620, which reviewer Codex reopened with 3 specific findings in activity event ai-status-event-7e5f3e188d3763b2f8f9f3bfa9dac4de2a899b03907c2c28c19c227d2a66ef6d: [P1] false COMMIT_TIME_UNCHANGED rejection on same-second rapid mutations due to second-level timestamp truncation, [P1] adapter authentication defaulting and validation before owner I/O with strict claims validation and removal of synthetic :operator token synthesis, and [P1] parent/base digest contract with base_checksum and stale-base 409 rejection under per-strategy advisory lock.",
+  "scope_note": "This is the generation-13 corrective pass resolving all 3 reopen findings from PR #5620: (1) Strategy adapter rapid mutation proof: Removed invalid COMMIT_TIME_UNCHANGED check where entry['updated_at'] == original_entry['updated_at'] caused rapid same-second real-owner mutations to be falsely rejected because models.py:16 truncates timestamps to seconds. Tested rapid same-second mutation without sleep directly against real PostgreSQL Registry process, confirming metadata_updated and verified replay. (2) Strict authentication and claim validation before owner I/O: Defaulted _adapter_auth_env to 'strict', required explicit configuration (secret, issuer, audience), removed synthetic :operator compatibility on bare tokens, passed required_roles=_STRATEGY_WRITE_ROLES to validate_request_auth, strictly verified non-empty sub/tenant/roles/exp claims, and performed caller authentication BEFORE any owner I/O. Updated tests to use strict synthetic JWT fixtures. (3) Parent/base digest and stale-parent contract: Added base_checksum to StrategySpecRegisterRequest and RegistryEntryOrDraftRequest. Enforced parent/base digest validation under per-strategy shared advisory lock: rejected missing parent (400), rejected stale base parent where newest_parent != latest (409 Conflict), rejected version downgrade (400), and rejected mismatched base_checksum against parent/latest base entry (409 Conflict). Added real PostgreSQL integration tests for parent linkage and concurrent writers on typed and generic keyed routes.",
   "implementation": {
     "files_added": [],
     "files_modified": [
       "services/control-plane/bff/command_adapters/strategy_adapter.py",
       "services/control-plane/bff/tests/test_command_adapters_router.py",
       "services/control-plane/bff/tests/test_strategy_registry_owner_prerequisite.py",
-      "services/foundation/tests/test_registry_owner_transaction.py",
       "services/registry/first_release_contract.json",
-      "services/registry/pg_store.py",
       "services/registry/service.py",
-      "services/registry/split_api.py",
-      "services/registry/storage.py",
+      "services/registry/test_owner_durability.py",
       "services/registry/test_owner_durability_real_process.py",
       "docs/deployment/evidence/REGISTRY-STRATEGY-UNIFIED-CONTRACT-001/evidence.json"
     ],
     "summary": [
-      "strategy_adapter.py: Integrated caller authentication with canonical services.runtime_auth_inbound.validate_request_auth (failing closed with 401 UNAUTHORIZED or 403 FORBIDDEN). Built strict receipt validator _validate_scoped_receipt requiring matching command_key, registry_id, receipt_key, request_digest, non-null committed_at, tenant ID, and caller actor ID. Eliminated fabricated entry-only fallback from _readback_receipt. Updated _execute_update_params to catch transport exceptions (RemoteDisconnected, URLError) on PATCH, attempt scoped receipt readback recovery without duplicate mutation, and fail closed with retryable 503 UNCONFIRMED_COMMAND_RECEIPT if unconfirmed.",
-      "test_strategy_registry_owner_prerequisite.py: Added 10 adversarial and transport recovery tests covering entry-only rejection, OTHER-COMMAND, OTHER-REGISTRY, WRONG-KEY, WRONG-DIGEST, null committed_at, missing token (401), unverified JWT (401), RemoteDisconnected recovery, and RemoteDisconnected failing closed with retryable 503 (50/50 tests pass).",
-      "pg_store.py: Corrected writer lock ordering: advisory_xact_lock(strategy_id) -> entries.lock_table() -> receipts.insert_if_absent(). Re-validated lineage under the advisory lock. Added dual-key receipt write in create_with_receipt so receipts are indexed under both register_entry and canonical registry_id. Added get_command_receipt with fallback checking. Added validate callback support to commit_metadata_cas.",
-      "storage.py: Updated in-memory store mirror to match pg_store.py (lineage validation under lock, get_command_receipt fallback, dual-key receipt indexing in create_with_receipt, validate callback in commit_metadata_cas).",
-      "service.py: Added GET /api/registry/entries/{registry_id}/receipts/{command_key} route with tenant-read authorization and command_type query param. Updated POST /api/registry/entries to support strategy_spec and pass target_strategy_id and validate_lineage to register_with_idempotency.",
-      "first_release_contract.json: Reconciled create_draft receipt, atomic uniqueness, and bff_adapter_semantics statements (13/13 tests pass in test_first_release_contract.py).",
-      "test_owner_durability_real_process.py: Replaced graceful proc.terminate() with genuine ungraceful proc.kill() (SIGKILL). Added DroppedSocketProxy and test_tcp_proxy_response_loss_and_recovery_across_lifecycle testing hard TCP connection resets after commit for create, metadata, and advance operations against live PostgreSQL (5/5 tests pass).",
-      "test_registry_owner_transaction.py: Added test_deterministic_fault_injection_between_state_and_receipt_write testing store-level rollback between state mutation and receipt finalization, proving zero partial mutations and clean retry across create, metadata CAS, and advance CAS (12/12 tests pass)."
+      "strategy_adapter.py: Removed invalid COMMIT_TIME_UNCHANGED check. Defaulted _adapter_auth_env to strict requiring secret/issuer/audience. Removed synthetic :operator compatibility. Added required_roles=_STRATEGY_WRITE_ROLES. Strictly validated raw non-empty claims (sub, tenant, roles, exp). Moved caller authentication to execute before any owner I/O.",
+      "test_strategy_registry_owner_prerequisite.py: Added strict JWT fixture _strict_token() with autouse bff_auth_env. Replaced bare tokens with valid signed JWTs. Updated COMMIT_TIME_UNCHANGED assertions to READBACK_MISMATCH. Added tests for missing claims, insufficient role, and unconfigured environment (53/53 tests pass).",
+      "test_command_adapters_router.py: Updated test_typed_domain_command_dispatch_and_receipt to configure strict auth and pass a signed JWT token.",
+      "service.py: Added base_checksum to StrategySpecRegisterRequest and RegistryEntryOrDraftRequest. Enforced parent linkage under advisory transaction lock (rejecting missing parent, stale parent with 409, version downgrade, and mismatched base_checksum with 409). Passed base_checksum across generic keyed and typed revision registration.",
+      "test_owner_durability_real_process.py: Added test_strategy_command_adapter_rapid_same_second_mutation_and_replay (proving rapid same-second mutation without sleep and replay against live Postgres), test_strategy_spec_parent_lineage_and_base_checksum_enforced_in_real_process (proving mismatched base_checksum 409, missing parent 400, downgrade 400, and stale parent 409 against live Postgres), and test_concurrent_parent_linked_writers_on_typed_and_keyed_routes (proving serialized concurrency on typed and generic keyed routes against live Postgres) (8/8 tests pass).",
+      "first_release_contract.json: Documented parent/base digest contract with base_checksum, stale-base 409 rejection, and strict adapter authentication before owner I/O."
     ]
   },
   "verification": {
@@ -35,31 +30,31 @@
     "commands": [
       {
         "command": "TEST_DATABASE_URL=postgresql://postgres:postgres@127.0.0.1:25432/postgres .venv-pantheon/bin/python3 -m pytest services/registry services/foundation/tests/test_registry_owner_transaction.py services/foundation/tests/test_control_plane_postgres_owner_stores.py services/control-plane/bff/tests/test_strategy_registry_owner_prerequisite.py services/control-plane/bff/test_command_executor.py services/control-plane/bff/tests/test_command_adapters_router.py -q",
-        "result": "372 passed, 3 warnings in 125.81s (0:02:05) against live PostgreSQL container"
+        "result": "378 passed, 3 warnings in 141.62s (0:02:21) against live PostgreSQL container"
       },
       {
         "command": "TEST_DATABASE_URL=postgresql://postgres:postgres@127.0.0.1:25432/postgres .venv-pantheon/bin/python3 -m pytest -v services/registry/test_owner_durability_real_process.py",
-        "result": "5 passed, 1 warning in 17.75s -- real process SIGKILL, crash window, rollback before commit, and response-loss tests with DroppedSocketProxy against live PostgreSQL"
-      },
-      {
-        "command": "TEST_DATABASE_URL=postgresql://postgres:postgres@127.0.0.1:25432/postgres .venv-pantheon/bin/python3 -m pytest -v services/foundation/tests/test_registry_owner_transaction.py",
-        "result": "12 passed in 3.82s -- store-level atomicity, deterministic fault injection rollback without orphan rows, and lock ordering against live PostgreSQL"
+        "result": "8 passed, 1 warning in 26.67s -- real process SIGKILL, crash window, rapid same-second mutation/replay without sleep, parent lineage base_checksum 409, and concurrent parent-linked writers against live PostgreSQL"
       },
       {
         "command": ".venv-pantheon/bin/python3 -m pytest -v services/control-plane/bff/tests/test_strategy_registry_owner_prerequisite.py",
-        "result": "50 passed in 16.52s -- caller auth, scoped receipt validation, transport recovery, and adversarial tests"
+        "result": "53 passed in 17.66s -- caller strict auth before owner I/O, claims validation, scoped receipt validation, transport recovery, and adversarial tests"
       },
       {
-        "command": ".venv-pantheon/bin/python3 -m pytest -v services/foundation/tests/test_registry_owner_transaction.py services/registry/test_owner_durability_real_process.py (no TEST_DATABASE_URL)",
-        "result": "1 passed, 16 skipped cleanly when TEST_DATABASE_URL is not set"
+        "command": "TEST_DATABASE_URL=postgresql://postgres:postgres@127.0.0.1:25432/postgres .venv-pantheon/bin/python3 -m pytest services/registry/test_owner_durability.py",
+        "result": "16 passed in 9.77s against live PostgreSQL"
       },
       {
-        "command": "python3 -m py_compile services/control-plane/bff/command_adapters/strategy_adapter.py services/control-plane/bff/tests/test_strategy_registry_owner_prerequisite.py services/control-plane/bff/tests/test_command_adapters_router.py services/foundation/tests/test_registry_owner_transaction.py services/registry/pg_store.py services/registry/service.py services/registry/split_api.py services/registry/storage.py services/registry/test_owner_durability_real_process.py",
+        "command": ".venv-pantheon/bin/python3 -m pytest services/registry/test_first_release_contract.py",
+        "result": "13 passed in 4.14s"
+      },
+      {
+        "command": "python3 -m py_compile services/control-plane/bff/command_adapters/strategy_adapter.py services/control-plane/bff/tests/test_strategy_registry_owner_prerequisite.py services/control-plane/bff/tests/test_command_adapters_router.py services/foundation/tests/test_registry_owner_transaction.py services/registry/pg_store.py services/registry/service.py services/registry/split_api.py services/registry/storage.py services/registry/test_owner_durability_real_process.py services/registry/test_owner_durability.py",
         "result": "clean compile, no syntax errors"
       }
     ],
     "not_covered_in_this_delivery": [
-      "Governance/paper/runtime positives (submit_review/promote_paper/activate/pause/archive real owner integration) remain assigned to the existing downstream tasks named in architecture-resumption-sa-sd.md §4's consumer table; this pass does not implement their scope."
+      "Governance/paper/runtime positives (submit_review/promote_paper/activate/pause/archive real owner integration) remain assigned to the existing downstream tasks named in architecture-resumption-sa-sd.md \u00a74's consumer table; this pass does not implement their scope."
     ]
   },
   "acceptance_check": {
@@ -69,7 +64,10 @@
     "strategy_adapter_caller_auth_inbound_validated": true,
     "strategy_adapter_strict_receipt_scope_validated": true,
     "strategy_adapter_transport_disconnect_retryable": true,
+    "strategy_adapter_rapid_same_second_mutation_verified": true,
     "strategy_spec_generic_and_typed_writes_share_advisory_lock": true,
+    "strategy_spec_parent_lineage_base_checksum_enforced": true,
+    "strategy_spec_stale_parent_rejected_409": true,
     "create_with_receipt_lock_ordering_consistent": true,
     "real_postgres_adversarial_crash_and_response_loss_tested": true,
     "sigkill_process_durability_tested": true,
@@ -83,6 +81,6 @@
   },
   "review": {
     "reviewer": "Codex",
-    "decision": "Resolved all 3 reopen findings from PR #5620 (manifest blob f76051a9cb0737aaaddb304ee7cf7e35f7e6f86a) and coordinator diagnosis note 1143: (1) Strategy adapter strictly validates caller authentication via services.runtime_auth_inbound.validate_request_auth (401/403), eliminates entry-only receipt fabrication, strictly validates original scoped receipts (command_key, registry_id, receipt_key, request_digest, committed_at, tenant/actor), and handles ambiguous transport exceptions (RemoteDisconnected, URLError) via readback recovery or retryable 503; (2) Enforced globally consistent lock acquisition order: advisory_xact_lock(strategy_id) -> entries.lock_table() -> receipts.insert_if_absent(), ensuring generic full-spec writes share the revision advisory lock and validate lineage under the lock; (3) Added real PostgreSQL ungraceful process kill (SIGKILL) tests, TCP proxy response-loss tests with hard RST across create/metadata/advance lifecycle operations, deterministic fault injection between state mutation and receipt write proving clean rollback with zero partial mutations, and reconciled first_release_contract.json. All 372 suite tests pass against live PostgreSQL."
+    "decision": "Resolved all 3 reopen findings from PR #5620 (head 01855c71a13431cb928aca9f0f761bfc2697c935): (1) Removed false COMMIT_TIME_UNCHANGED check in StrategyCommandAdapter; validated rapid same-second mutation without sleep and replay against real PostgreSQL Registry process; (2) Strict caller authentication via validate_request_auth defaulting to strict, requiring non-empty sub/tenant/roles/exp claims, executing before any owner I/O, and removing synthetic :operator compatibility; (3) Added base_checksum to register requests; enforced parent linkage, base_checksum validation, and stale-base 409 rejection under per-strategy advisory lock; verified concurrent parent-linked writers on typed and generic keyed routes. All 378 suite tests pass against live PostgreSQL."
   }
 }

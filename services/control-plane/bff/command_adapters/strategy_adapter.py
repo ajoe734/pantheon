@@ -29,13 +29,17 @@ from services.registry.command_contract import ActionOwner, resolve_action
 log = logging.getLogger(__name__)
 
 
+_STRATEGY_WRITE_ROLES = ("operator", "strategy-writer", "registry-writer", "admin")
+_TENANT_CLAIM_NAMES = ("tenant", "tenant_id")
+
+
 def _adapter_auth_env() -> dict[str, str]:
     return {
         "PANTHEON_RUNTIME_AUTH_MODE": (
             os.getenv("PANTHEON_BFF_AUTH_MODE")
             or os.getenv("PANTHEON_REGISTRY_AUTH_MODE")
             or os.getenv("PANTHEON_RUNTIME_AUTH_MODE")
-            or "permissive"
+            or "strict"
         ),
         "PANTHEON_RUNTIME_JWT_SECRET": (
             os.getenv("PANTHEON_BFF_JWT_SECRET")
@@ -65,7 +69,7 @@ def _authenticate_caller(
 ) -> tuple[str, str]:
     """Verify caller identity via services.runtime_auth_inbound.validate_request_auth.
 
-    Rejects absent, unverified, expired, or malformed tokens.
+    Rejects absent, unverified, expired, malformed, or incomplete tokens.
     Returns (actor_id, tenant).
     """
     if not auth_token or not str(auth_token).strip():
@@ -81,14 +85,19 @@ def _authenticate_caller(
     token_body = auth_header[7:].strip()
     env = _adapter_auth_env()
 
-    # In permissive mode, support structured tokens (e.g. "actor_id:role").
-    # If no colon is present in a non-JWT token in permissive mode, supply default role.
-    if (
-        not token_body.startswith("ey")
-        and ":" not in token_body
-        and env.get("PANTHEON_RUNTIME_AUTH_MODE") == "permissive"
-    ):
-        auth_header = f"Bearer {token_body}:operator"
+    mode = env.get("PANTHEON_RUNTIME_AUTH_MODE", "").strip().lower()
+    if mode == "strict":
+        secret = env.get("PANTHEON_RUNTIME_JWT_SECRET", "").strip()
+        issuer = env.get("PANTHEON_RUNTIME_JWT_ISSUER", "").strip()
+        audience = env.get("PANTHEON_RUNTIME_JWT_AUDIENCE", "").strip()
+        if not secret or not issuer or not audience:
+            raise ActionUnavailableError(
+                "Strict authentication requires JWT secret, issuer, and audience to be explicitly configured.",
+                action_id=action_id,
+                entity_type=entity_type,
+                error_code="UNAUTHORIZED",
+                downstream_status=500,
+            )
 
     try:
         from services.runtime_auth_inbound import AuthError, validate_request_auth
@@ -96,7 +105,11 @@ def _authenticate_caller(
         from runtime_auth_inbound import AuthError, validate_request_auth  # type: ignore[no-redef]
 
     try:
-        ctx = validate_request_auth(authorization=auth_header, env=env)
+        ctx = validate_request_auth(
+            authorization=auth_header,
+            required_roles=_STRATEGY_WRITE_ROLES,
+            env=env,
+        )
     except AuthError as exc:
         raise ActionUnavailableError(
             f"Caller authentication failed: {exc.message}",
@@ -106,13 +119,58 @@ def _authenticate_caller(
             downstream_status=exc.status_code,
         ) from exc
 
-    actor_id = ctx.actor_id
-    tenant = "unscoped"
-    for name in ("tenant", "tenant_id"):
-        val = ctx.claims.get(name)
-        if val and str(val).strip():
-            tenant = str(val).strip()
-            break
+    if ctx.token_kind == "jwt":
+        sub = ctx.claims.get("sub")
+        if sub is None or not str(sub).strip():
+            raise ActionUnavailableError(
+                "Caller authentication failed: missing or empty 'sub' claim.",
+                action_id=action_id,
+                entity_type=entity_type,
+                error_code="FORBIDDEN",
+                downstream_status=403,
+            )
+        tenant_val = None
+        for name in _TENANT_CLAIM_NAMES:
+            val = ctx.claims.get(name)
+            if val is not None and str(val).strip():
+                tenant_val = str(val).strip()
+                break
+        if not tenant_val:
+            raise ActionUnavailableError(
+                "Caller authentication failed: missing or empty 'tenant' claim.",
+                action_id=action_id,
+                entity_type=entity_type,
+                error_code="FORBIDDEN",
+                downstream_status=403,
+            )
+        raw_roles = ctx.claims.get("roles") or ctx.claims.get("role")
+        if not raw_roles:
+            raise ActionUnavailableError(
+                "Caller authentication failed: missing or empty 'roles' claim.",
+                action_id=action_id,
+                entity_type=entity_type,
+                error_code="FORBIDDEN",
+                downstream_status=403,
+            )
+        exp = ctx.claims.get("exp")
+        if exp is None:
+            raise ActionUnavailableError(
+                "Caller authentication failed: missing 'exp' claim.",
+                action_id=action_id,
+                entity_type=entity_type,
+                error_code="FORBIDDEN",
+                downstream_status=403,
+            )
+        actor_id = str(sub).strip()
+        tenant = tenant_val
+    else:
+        actor_id = ctx.actor_id
+        tenant = "unscoped"
+        for name in _TENANT_CLAIM_NAMES:
+            val = ctx.claims.get(name)
+            if val and str(val).strip():
+                tenant = str(val).strip()
+                break
 
     return actor_id, tenant
 
@@ -490,6 +548,10 @@ class StrategyCommandAdapter(DomainCommandAdapter):
         # finding 7) — never a PATCH response's own self-reported claims
         # alone, and never a fresh "whatever is current now" comparison
         # that a later, unrelated command could have since moved.
+        caller_actor_id, caller_tenant = _authenticate_caller(
+            auth_token, action_id=action_id, entity_type="Strategy"
+        )
+
         original_entry = self._readback_entry(registry_id, auth_token=auth_token, mfa_token=mfa_token)
         if original_entry is None:
             raise ActionUnavailableError(
@@ -530,10 +592,6 @@ class StrategyCommandAdapter(DomainCommandAdapter):
                 or candidate.get("version") != original_identity["version"]
                 or candidate.get("owner_tenant") != original_identity["owner_tenant"]
             )
-
-        caller_actor_id, caller_tenant = _authenticate_caller(
-            auth_token, action_id=action_id, entity_type="Strategy"
-        )
 
         from services.registry.pg_store import PostgresRegistryStore, _request_digest
 
@@ -808,16 +866,6 @@ class StrategyCommandAdapter(DomainCommandAdapter):
                         action_id=action_id,
                         entity_type="Strategy",
                         error_code="MISSING_ACTOR",
-                    )
-                if entry.get("updated_at") == original_entry.get("updated_at"):
-                    raise ActionUnavailableError(
-                        f"Registry metadata PATCH response for registry_id={registry_id!r} carries the "
-                        "same commit timestamp as the pre-mutation baseline captured before this "
-                        "command was issued; a genuine commit always advances it, so an unchanged "
-                        "timestamp means this command did not actually commit anything.",
-                        action_id=action_id,
-                        entity_type="Strategy",
-                        error_code="COMMIT_TIME_UNCHANGED",
                     )
                 if entry.get("metadata") != new_metadata:
                     raise ActionUnavailableError(

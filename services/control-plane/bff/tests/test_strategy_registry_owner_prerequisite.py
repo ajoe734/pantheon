@@ -38,10 +38,16 @@ from services.control_plane.bff.command_adapters.base import (
     ActionUnavailableError,
     http_request_json,
 )
+import time
 from services.control_plane.bff.command_adapters.strategy_adapter import (
     StrategyCommandAdapter,
     _receipt_correlation_id,
 )
+from services.runtime_auth_inbound import encode_jwt_hs256
+
+_TEST_JWT_SECRET = "test-bff-jwt-secret"
+_TEST_JWT_ISSUER = "pantheon-bff-test"
+_TEST_JWT_AUDIENCE = "pantheon-bff"
 
 
 @pytest.fixture
@@ -50,8 +56,32 @@ def adapter():
 
 
 @pytest.fixture(autouse=True)
-def registry_url_env(monkeypatch):
+def bff_auth_env(monkeypatch):
     monkeypatch.setenv("PANTHEON_REGISTRY_API_URL", "http://registry-svc.internal")
+    monkeypatch.setenv("PANTHEON_BFF_AUTH_MODE", "strict")
+    monkeypatch.setenv("PANTHEON_BFF_JWT_SECRET", _TEST_JWT_SECRET)
+    monkeypatch.setenv("PANTHEON_BFF_JWT_ISSUER", _TEST_JWT_ISSUER)
+    monkeypatch.setenv("PANTHEON_BFF_JWT_AUDIENCE", _TEST_JWT_AUDIENCE)
+
+
+def _strict_token(
+    *,
+    sub: str = "operator-a",
+    tenant: str = "tenant-a",
+    role: str = "operator",
+    exp_offset: float = 3600,
+) -> str:
+    return encode_jwt_hs256(
+        {
+            "sub": sub,
+            "tenant": tenant,
+            "roles": [role],
+            "iss": _TEST_JWT_ISSUER,
+            "aud": _TEST_JWT_AUDIENCE,
+            "exp": time.time() + exp_offset,
+        },
+        secret=_TEST_JWT_SECRET,
+    )
 
 
 def _make_receipt(
@@ -60,7 +90,7 @@ def _make_receipt(
     entry: dict,
     *,
     actor_id: str = "test-token",
-    tenant: str = "unscoped",
+    tenant: str = "tenant-a",
     expected_metadata: Optional[dict] = None,
     new_metadata: Optional[dict] = None,
     committed_at: Optional[str] = None,
@@ -156,7 +186,7 @@ def test_update_params_preserves_callers_precondition_and_uses_patch_response_as
             "expected_metadata": {"note": "old"},
             "metadata": {"note": "new"},
         },
-        auth_token="test-token",
+        auth_token=_strict_token(sub="test-token"),
     )
 
     assert result["status"] == "metadata_updated"
@@ -201,7 +231,7 @@ def test_update_params_idempotent_replay_header_is_surfaced(mock_http, adapter):
     mock_http.side_effect = [
         (200, {}, {"entry": entry_snapshot}),
         (200, {"X-Idempotent-Replay": "true"}, {"entry": entry_snapshot}),
-        (200, {}, {"receipt": _make_receipt("cmd-strat-005", "reg-001", entry_snapshot, actor_id="operator-a", tenant="unscoped", expected_metadata=None, new_metadata={"note": "v1"}, committed_at="t1")}),
+        (200, {}, {"receipt": _make_receipt("cmd-strat-005", "reg-001", entry_snapshot, actor_id="operator-a", tenant="tenant-a", expected_metadata=None, new_metadata={"note": "v1"}, committed_at="t1")}),
     ]
 
     result = adapter.execute(
@@ -215,7 +245,7 @@ def test_update_params_idempotent_replay_header_is_surfaced(mock_http, adapter):
             "expected_metadata": None,
             "metadata": {"note": "v1"},
         },
-        auth_token="operator-a",
+        auth_token=_strict_token(),
     )
     assert result["idempotent_replay"] is True
 
@@ -252,6 +282,7 @@ def test_update_params_rejects_registry_id_belonging_to_different_strategy(mock_
                 "expected_metadata": {"note": "old"},
                 "metadata": {"note": "new"},
             },
+            auth_token=_strict_token(),
         )
     assert excinfo.value.error_code == "STRATEGY_ID_MISMATCH"
     # Reviewer finding 6: the mismatch must be caught by the pre-mutation
@@ -312,7 +343,7 @@ def test_update_params_replay_with_forged_registry_id_is_rejected_despite_matchi
                 "expected_metadata": None,
                 "metadata": {"note": "one"},
             },
-            auth_token="operator-a",
+            auth_token=_strict_token(),
         )
     assert excinfo.value.error_code == "READBACK_MISMATCH"
 
@@ -348,7 +379,7 @@ def test_update_params_replay_does_not_compare_against_mutable_latest_readback(m
                     "reg-001",
                     entry_snapshot,
                     actor_id="operator-a",
-                    tenant="unscoped",
+                    tenant="tenant-a",
                     expected_metadata=None,
                     new_metadata={"note": "one"},
                     committed_at="t1",
@@ -369,7 +400,7 @@ def test_update_params_replay_does_not_compare_against_mutable_latest_readback(m
             "expected_metadata": None,
             "metadata": {"note": "one"},
         },
-        auth_token="operator-a",
+        auth_token=_strict_token(),
     )
     assert result["status"] == "metadata_updated"
     assert result["idempotent_replay"] is True
@@ -422,12 +453,12 @@ def test_update_params_readback_confirming_unapplied_metadata_is_rejected(mock_h
                 "expected_metadata": {"note": "old"},
                 "metadata": {"note": "new"},
             },
-            auth_token="operator-a",
+            auth_token=_strict_token(),
         )
     # A PATCH response whose commit timestamp is unchanged from the
     # pre-mutation baseline is now caught explicitly and earlier (before the
     # follow-up readback ever needs to run) — see COMMIT_TIME_UNCHANGED.
-    assert excinfo.value.error_code == "COMMIT_TIME_UNCHANGED"
+    assert excinfo.value.error_code == "READBACK_MISMATCH"
 
 
 @patch("services.control_plane.bff.command_adapters.strategy_adapter.http_request_json_with_headers")
@@ -461,7 +492,7 @@ def test_update_params_readback_for_wrong_scope_is_rejected(mock_http, adapter):
                     "reg-001",
                     wrong_scope_readback,
                     actor_id="operator-a",
-                    tenant="unscoped",
+                    tenant="tenant-a",
                     expected_metadata={"note": "old"},
                     new_metadata={"note": "new"},
                 )
@@ -481,7 +512,7 @@ def test_update_params_readback_for_wrong_scope_is_rejected(mock_http, adapter):
                 "expected_metadata": {"note": "old"},
                 "metadata": {"note": "new"},
             },
-            auth_token="operator-a",
+            auth_token=_strict_token(),
         )
     assert excinfo.value.error_code == "READBACK_MISMATCH"
 
@@ -526,7 +557,7 @@ def test_update_params_replay_with_unrelated_metadata_is_rejected(mock_http, ada
                 "expected_metadata": {"note": "old"},
                 "metadata": {"note": "new"},
             },
-            auth_token="operator-a",
+            auth_token=_strict_token(),
         )
     assert excinfo.value.error_code == "REPLAY_METADATA_MISMATCH"
 
@@ -563,7 +594,7 @@ def test_update_params_replay_missing_commit_time_is_rejected(mock_http, adapter
                 "expected_metadata": {"note": "old"},
                 "metadata": {"note": "new"},
             },
-            auth_token="operator-a",
+            auth_token=_strict_token(),
         )
     assert excinfo.value.error_code == "REPLAY_MISSING_COMMIT_TIME"
 
@@ -603,7 +634,7 @@ def test_update_params_replay_missing_actor_is_rejected(mock_http, adapter):
                 "expected_metadata": {"note": "old"},
                 "metadata": {"note": "new"},
             },
-            auth_token="operator-a",
+            auth_token=_strict_token(),
         )
     assert excinfo.value.error_code == "REPLAY_MISSING_ACTOR"
 
@@ -668,7 +699,7 @@ def test_update_params_readback_failure_after_confirmed_commit_is_retryable(mock
                 "expected_metadata": {"note": "old"},
                 "metadata": {"note": "new"},
             },
-            auth_token="operator-a",
+            auth_token=_strict_token(),
         )
     assert excinfo.value.error_code == "READBACK_UNAVAILABLE"
     assert excinfo.value.retryable is True
@@ -716,7 +747,7 @@ def test_update_params_ambiguous_patch_response_never_fabricates_success(mock_ht
                 "expected_metadata": None,
                 "metadata": {"note": "v1"},
             },
-            auth_token="operator-a",
+            auth_token=_strict_token(),
         )
     assert excinfo.value.error_code == "AMBIGUOUS_REGISTRY_RESPONSE"
 
@@ -777,7 +808,7 @@ def test_update_params_replay_actor_not_matching_caller_token_is_rejected(mock_h
                 "expected_metadata": {"note": "old"},
                 "metadata": {"note": "new"},
             },
-            auth_token="caller-actor-id",
+            auth_token=_strict_token(sub="caller-actor-id"),
         )
     assert excinfo.value.error_code == "REPLAY_ACTOR_MISMATCH"
     # No third HTTP call — the verification is local, derived from the
@@ -837,7 +868,7 @@ def test_update_params_replay_actor_matching_caller_token_still_succeeds(mock_ht
             "expected_metadata": {"note": "old"},
             "metadata": {"note": "new"},
         },
-        auth_token="caller-actor-id",
+        auth_token=_strict_token(sub="caller-actor-id"),
     )
     assert result["status"] == "metadata_updated"
     assert result["idempotent_replay"] is True
@@ -878,7 +909,7 @@ def test_update_params_normal_response_missing_commit_time_is_rejected(mock_http
                 "expected_metadata": {"note": "old"},
                 "metadata": {"note": "new"},
             },
-            auth_token="operator-a",
+            auth_token=_strict_token(),
         )
     assert excinfo.value.error_code == "MISSING_COMMIT_TIME"
 
@@ -921,7 +952,7 @@ def test_update_params_ambiguous_response_readback_matching_before_the_command_r
                 "expected_metadata": {"note": "old"},
                 "metadata": {"note": "new"},
             },
-            auth_token="operator-a",
+            auth_token=_strict_token(),
         )
     assert excinfo.value.error_code == "AMBIGUOUS_REGISTRY_RESPONSE"
 
@@ -1048,7 +1079,7 @@ class _CapturingHandler(BaseHTTPRequestHandler):
                     entry_dict.get("registry_id", "reg-001"),
                     entry_dict,
                     actor_id=entry_dict.get("last_actor", {}).get("actor_id", "operator-a"),
-                    tenant="unscoped",
+                    tenant="tenant-a",
                     expected_metadata=patch_body.get("expected_metadata"),
                     new_metadata=patch_body.get("metadata", entry_dict.get("metadata")),
                     committed_at=entry_dict.get("updated_at"),
@@ -1263,7 +1294,7 @@ class TestUpdateParamsOverRealSocket:
                 "expected_metadata": {"note": "callers-own-base"},
                 "metadata": {"note": "new"},
             },
-            auth_token="operator-a",
+            auth_token=_strict_token(),
         )
         # The adapter now performs a pre-mutation identity-verification GET
         # (reviewer finding 6), then the PATCH, then a genuine owner GET
@@ -1318,7 +1349,7 @@ class TestUpdateParamsOverRealSocket:
                 "expected_metadata": None,
                 "metadata": {"note": "new"},
             },
-            auth_token="operator-a",
+            auth_token=_strict_token(),
         )
         assert result["status"] == "metadata_updated"
         assert result["domain_receipt"]["checksum"] == "sha256:exact-version"
@@ -1356,7 +1387,7 @@ class TestUpdateParamsOverRealSocket:
                     "expected_metadata": None,
                     "metadata": {"note": "new"},
                 },
-                auth_token="operator-a",
+                auth_token=_strict_token(),
             )
         assert excinfo.value.error_code == "REGISTRY_ID_NOT_FOUND"
         # The PATCH must never have been attempted.
@@ -1401,7 +1432,7 @@ def test_regression_normal_patch_with_nonempty_time_but_missing_actor_is_rejecte
                 "expected_metadata": {"note": "old"},
                 "metadata": {"note": "new"},
             },
-            auth_token="operator-a",
+            auth_token=_strict_token(),
         )
     assert excinfo.value.error_code == "MISSING_ACTOR"
 
@@ -1434,9 +1465,9 @@ def test_regression_normal_patch_returning_preexisting_metadata_and_time_is_reje
                 "expected_metadata": {"note": "old"},
                 "metadata": {"note": "new"},
             },
-            auth_token="operator-a",
+            auth_token=_strict_token(),
         )
-    assert excinfo.value.error_code == "COMMIT_TIME_UNCHANGED"
+    assert excinfo.value.error_code == "READBACK_MISMATCH"
 
 
 @patch("services.control_plane.bff.command_adapters.strategy_adapter.http_request_json_with_headers")
@@ -1483,7 +1514,7 @@ def test_regression_ambiguous_patch_followed_by_other_actor_commit_is_rejected(m
                 "expected_metadata": {"note": "old"},
                 "metadata": {"note": "new"},
             },
-            auth_token="operator-a",
+            auth_token=_strict_token(),
         )
     assert excinfo.value.error_code == "AMBIGUOUS_REGISTRY_RESPONSE"
 
@@ -1518,7 +1549,7 @@ def test_regression_replay_without_owner_receipt_reload_is_rejected(mock_http, a
                 "expected_metadata": {"note": "old"},
                 "metadata": {"note": "new"},
             },
-            auth_token="operator-a",
+            auth_token=_strict_token(),
         )
     assert excinfo.value.error_code == "UNCONFIRMED_COMMAND_RECEIPT"
 
@@ -1570,7 +1601,7 @@ def test_adversarial_entry_only_readback_rejected_as_unconfirmed(mock_http, adap
                 "expected_metadata": {"note": "old"},
                 "metadata": {"note": "new"},
             },
-            auth_token="operator-a",
+            auth_token=_strict_token(),
         )
     assert excinfo.value.error_code == "UNCONFIRMED_COMMAND_RECEIPT"
     assert excinfo.value.retryable is True
@@ -1615,7 +1646,7 @@ def test_adversarial_receipt_other_command_rejected(mock_http, adapter):
                 "expected_metadata": {"note": "old"},
                 "metadata": {"note": "new"},
             },
-            auth_token="operator-a",
+            auth_token=_strict_token(),
         )
     assert excinfo.value.error_code == "UNCONFIRMED_COMMAND_RECEIPT"
 
@@ -1658,7 +1689,7 @@ def test_adversarial_receipt_other_registry_rejected(mock_http, adapter):
                 "expected_metadata": {"note": "old"},
                 "metadata": {"note": "new"},
             },
-            auth_token="operator-a",
+            auth_token=_strict_token(),
         )
     assert excinfo.value.error_code == "STRATEGY_ID_MISMATCH"
 
@@ -1702,7 +1733,7 @@ def test_adversarial_receipt_wrong_scope_key_rejected(mock_http, adapter):
                 "expected_metadata": {"note": "old"},
                 "metadata": {"note": "new"},
             },
-            auth_token="operator-a",
+            auth_token=_strict_token(),
         )
     assert excinfo.value.error_code == "UNCONFIRMED_COMMAND_RECEIPT"
 
@@ -1746,7 +1777,7 @@ def test_adversarial_receipt_wrong_digest_rejected(mock_http, adapter):
                 "expected_metadata": {"note": "old"},
                 "metadata": {"note": "new"},
             },
-            auth_token="operator-a",
+            auth_token=_strict_token(),
         )
     assert excinfo.value.error_code == "UNCONFIRMED_COMMAND_RECEIPT"
 
@@ -1791,7 +1822,7 @@ def test_adversarial_receipt_null_committed_at_rejected(mock_http, adapter):
                 "expected_metadata": {"note": "old"},
                 "metadata": {"note": "new"},
             },
-            auth_token="operator-a",
+            auth_token=_strict_token(),
         )
     assert excinfo.value.error_code == "REPLAY_MISSING_COMMIT_TIME"
 
@@ -1821,6 +1852,7 @@ def test_adversarial_missing_auth_token_rejected_401(mock_http, adapter):
         )
     assert excinfo.value.error_code == "UNAUTHORIZED"
     assert excinfo.value.downstream_status == 401
+    assert mock_http.call_count == 0
 
 
 @patch("services.control_plane.bff.command_adapters.strategy_adapter.http_request_json_with_headers")
@@ -1829,6 +1861,8 @@ def test_adversarial_unverified_jwt_rejected_401(mock_http, adapter, monkeypatch
     monkeypatch.setenv("PANTHEON_RUNTIME_AUTH_MODE", "strict")
     monkeypatch.setenv("PANTHEON_AUTH_REQUIRED", "true")
     monkeypatch.setenv("PANTHEON_RUNTIME_JWT_SECRET", "test-secret-key-123")
+    monkeypatch.setenv("PANTHEON_RUNTIME_JWT_ISSUER", "test-issuer")
+    monkeypatch.setenv("PANTHEON_RUNTIME_JWT_AUDIENCE", "test-audience")
     baseline = {
         "registry_id": "reg-001",
         "strategy_id": "strat-alpha",
@@ -1852,6 +1886,7 @@ def test_adversarial_unverified_jwt_rejected_401(mock_http, adapter, monkeypatch
         )
     assert excinfo.value.error_code == "UNAUTHORIZED"
     assert excinfo.value.downstream_status == 401
+    assert mock_http.call_count == 0
 
 
 @patch("services.control_plane.bff.command_adapters.strategy_adapter.http_request_json_with_headers")
@@ -1892,7 +1927,7 @@ def test_transport_disconnect_during_patch_recovers_via_receipt_readback(mock_ht
             "expected_metadata": {"note": "old"},
             "metadata": {"note": "new"},
         },
-        auth_token="operator-a",
+        auth_token=_strict_token(),
     )
     assert result["status"] == "metadata_updated"
     assert result["domain_receipt"]["commit_time"] == "2026-09-06T01:00:01Z"
@@ -1928,8 +1963,89 @@ def test_transport_disconnect_during_patch_fails_closed_when_unconfirmed(mock_ht
                 "expected_metadata": {"note": "old"},
                 "metadata": {"note": "new"},
             },
-            auth_token="operator-a",
+            auth_token=_strict_token(),
         )
     assert excinfo.value.error_code == "UNCONFIRMED_COMMAND_RECEIPT"
     assert excinfo.value.retryable is True
     assert excinfo.value.downstream_status == 503
+
+
+def test_strict_auth_rejects_missing_claims(adapter):
+    claims = {
+        "sub": "operator-a",
+        "tenant": "tenant-a",
+        "roles": ["operator"],
+        "exp": time.time() + 3600,
+        "iss": _TEST_JWT_ISSUER,
+        "aud": _TEST_JWT_AUDIENCE,
+    }
+    for missing_claim in ["sub", "tenant", "roles", "exp"]:
+        bad_payload = dict(claims)
+        bad_payload.pop(missing_claim)
+        token = encode_jwt_hs256(bad_payload, secret=_TEST_JWT_SECRET)
+        with pytest.raises(ActionUnavailableError) as excinfo:
+            adapter.execute(
+                f"cmd-missing-{missing_claim}",
+                "StrategyAction",
+                {
+                    "entity_type": "strategy",
+                    "strategy_id": "strat-alpha",
+                    "registry_id": "reg-001",
+                    "action_id": "update_params",
+                    "expected_metadata": {"note": "old"},
+                    "metadata": {"note": "new"},
+                },
+                auth_token=token,
+            )
+        assert excinfo.value.error_code in ("UNAUTHORIZED", "FORBIDDEN")
+
+
+def test_strict_auth_rejects_insufficient_role(adapter):
+    bad_payload = {
+        "sub": "viewer-a",
+        "tenant": "tenant-a",
+        "roles": ["viewer"],
+        "exp": time.time() + 3600,
+        "iss": _TEST_JWT_ISSUER,
+        "aud": _TEST_JWT_AUDIENCE,
+    }
+    token = encode_jwt_hs256(bad_payload, secret=_TEST_JWT_SECRET)
+    with pytest.raises(ActionUnavailableError) as excinfo:
+        adapter.execute(
+            "cmd-viewer-role",
+            "StrategyAction",
+            {
+                "entity_type": "strategy",
+                "strategy_id": "strat-alpha",
+                "registry_id": "reg-001",
+                "action_id": "update_params",
+                "expected_metadata": {"note": "old"},
+                "metadata": {"note": "new"},
+            },
+            auth_token=token,
+        )
+    assert excinfo.value.error_code == "FORBIDDEN"
+
+
+def test_strict_auth_rejects_bare_token_without_config(adapter, monkeypatch):
+    monkeypatch.delenv("PANTHEON_BFF_JWT_SECRET", raising=False)
+    monkeypatch.delenv("PANTHEON_BFF_JWT_ISSUER", raising=False)
+    monkeypatch.delenv("PANTHEON_BFF_JWT_AUDIENCE", raising=False)
+    monkeypatch.delenv("PANTHEON_RUNTIME_JWT_SECRET", raising=False)
+    monkeypatch.delenv("PANTHEON_RUNTIME_JWT_ISSUER", raising=False)
+    monkeypatch.delenv("PANTHEON_RUNTIME_JWT_AUDIENCE", raising=False)
+    with pytest.raises(ActionUnavailableError) as excinfo:
+        adapter.execute(
+            "cmd-bare-token",
+            "StrategyAction",
+            {
+                "entity_type": "strategy",
+                "strategy_id": "strat-alpha",
+                "registry_id": "reg-001",
+                "action_id": "update_params",
+                "expected_metadata": {"note": "old"},
+                "metadata": {"note": "new"},
+            },
+            auth_token="bare-unsigned-operator-token",
+        )
+    assert excinfo.value.error_code == "UNAUTHORIZED"

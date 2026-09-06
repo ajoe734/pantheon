@@ -963,3 +963,271 @@ def test_tcp_proxy_response_loss_and_recovery_across_lifecycle(pg_schema):
     finally:
         proxy.close()
         _sigkill(proc)
+
+
+def test_strategy_command_adapter_rapid_same_second_mutation_and_replay(pg_schema):
+    """Review finding 1 & 2: StrategyCommandAdapter executes against real
+    Postgres-backed Registry process with strict authentication, performing
+    rapid same-second metadata update (no sleep) and confirming metadata_updated
+    without false COMMIT_TIME_UNCHANGED rejection, followed by verified replay."""
+    from unittest.mock import patch
+    from services.control_plane.bff.command_adapters.strategy_adapter import StrategyCommandAdapter
+
+    dsn, schema = pg_schema
+    port = _free_port()
+    proc = _spawn_registry_process(port=port, dsn=dsn, schema=schema)
+    try:
+        _wait_for_health(port)
+        token = _strict_jwt()
+        status, draft = _http(
+            "POST",
+            port,
+            "/api/registry/entries",
+            token=token,
+            payload={"name": "Rapid Adapter Integration Strategy"},
+            headers={"Idempotency-Key": "rapid-adapter-create"},
+        )
+        assert status == 200, draft
+        entry = draft["entry"]
+
+        env = {
+            "PANTHEON_BFF_AUTH_MODE": "strict",
+            "PANTHEON_BFF_JWT_SECRET": _JWT_SECRET,
+            "PANTHEON_BFF_JWT_ISSUER": "registry-durability-tests",
+            "PANTHEON_BFF_JWT_AUDIENCE": "registry-svc",
+            "PANTHEON_REGISTRY_API_URL": f"http://127.0.0.1:{port}",
+        }
+        with patch.dict(os.environ, env):
+            adapter = StrategyCommandAdapter()
+            args = {
+                "entity_type": "strategy",
+                "strategy_id": entry["strategy_id"],
+                "registry_id": entry["registry_id"],
+                "action_id": "update_params",
+                "expected_metadata": entry["metadata"],
+                "metadata": dict(entry["metadata"] or {}, note="rapid-same-second-success"),
+            }
+            # Execute rapidly without sleep
+            result = adapter.execute("cmd-rapid-meta", "StrategyAction", args, auth_token=token)
+            assert result["status"] == "metadata_updated"
+            assert result["authoritative_readback"]["metadata"]["note"] == "rapid-same-second-success"
+            assert result["idempotent_replay"] is False
+
+            # Immediate replay under same command_key
+            replay = adapter.execute("cmd-rapid-meta", "StrategyAction", args, auth_token=token)
+            assert replay["status"] == "metadata_updated"
+            assert replay["authoritative_readback"]["metadata"]["note"] == "rapid-same-second-success"
+            assert replay["idempotent_replay"] is True
+    finally:
+        _stop(proc)
+
+
+def test_strategy_spec_parent_lineage_and_base_checksum_enforced_in_real_process(pg_schema):
+    """Review finding 3: Real Postgres process enforces parent linkage:
+    rejects mismatched base_checksum (409), missing parent (400),
+    version downgrade (400), and stale base parent (409)."""
+    dsn, schema = pg_schema
+    port = _free_port()
+    proc = _spawn_registry_process(port=port, dsn=dsn, schema=schema)
+    try:
+        _wait_for_health(port)
+        token = _strict_jwt()
+        from services.registry.test_service import _valid_spec
+
+        sid = "strat-lineage-proof"
+        first_body = {
+            "strategy_id": sid,
+            "registry_id": f"reg-{sid}-100",
+            "version": "1.0.0",
+            "lineage": {"source_run_ids": ["run-001"]},
+            "strategy_spec": _valid_spec(sid),
+        }
+        st, first = _http("POST", port, "/api/registry/strategy-specs", token=token, payload=first_body)
+        assert st == 200, first
+        parent_reg_id = first["entry"]["registry_id"]
+        parent_checksum = first["entry"]["checksum"]
+
+        # 1. Reject mismatched base_checksum (409)
+        bad_checksum_body = {
+            "strategy_id": sid,
+            "registry_id": f"reg-{sid}-101-bad-cs",
+            "version": "1.0.1",
+            "lineage": {"parent_registry_ids": [parent_reg_id]},
+            "base_checksum": "sha256:" + "0" * 64,
+            "strategy_spec": _valid_spec(sid, v=101),
+        }
+        st, res = _http("POST", port, "/api/registry/strategy-specs", token=token, payload=bad_checksum_body)
+        assert st == 409, (st, res)
+        assert "base_checksum" in res.get("detail", "")
+
+        # 2. Reject missing parent (400)
+        missing_parent_body = {
+            "strategy_id": sid,
+            "registry_id": f"reg-{sid}-101-missing-parent",
+            "version": "1.0.1",
+            "lineage": {"parent_registry_ids": ["reg-nonexistent-999"]},
+            "strategy_spec": _valid_spec(sid, v=101),
+        }
+        st, res = _http("POST", port, "/api/registry/strategy-specs", token=token, payload=missing_parent_body)
+        assert st == 400, (st, res)
+
+        # 3. Reject version downgrade (400)
+        downgrade_body = {
+            "strategy_id": sid,
+            "registry_id": f"reg-{sid}-090",
+            "version": "0.9.0",
+            "lineage": {"parent_registry_ids": [parent_reg_id]},
+            "strategy_spec": _valid_spec(sid, v=90),
+        }
+        st, res = _http("POST", port, "/api/registry/strategy-specs", token=token, payload=downgrade_body)
+        assert st == 400, (st, res)
+
+        # 4. Valid revision with matching base_checksum succeeds (200)
+        valid_101_body = {
+            "strategy_id": sid,
+            "registry_id": f"reg-{sid}-101",
+            "version": "1.0.1",
+            "lineage": {"parent_registry_ids": [parent_reg_id]},
+            "base_checksum": parent_checksum,
+            "strategy_spec": _valid_spec(sid, v=101),
+        }
+        st, rev_101 = _http("POST", port, "/api/registry/strategy-specs", token=token, payload=valid_101_body)
+        assert st == 200, rev_101
+        rev_101_id = rev_101["entry"]["registry_id"]
+        rev_101_cs = rev_101["entry"]["checksum"]
+
+        # 5. Reject stale parent (parenting to 1.0.0 when 1.0.1 is latest) (409)
+        stale_parent_body = {
+            "strategy_id": sid,
+            "registry_id": f"reg-{sid}-102-stale",
+            "version": "1.0.2",
+            "lineage": {"parent_registry_ids": [parent_reg_id]},
+            "base_checksum": parent_checksum,
+            "strategy_spec": _valid_spec(sid, v=102),
+        }
+        st, res = _http("POST", port, "/api/registry/strategy-specs", token=token, payload=stale_parent_body)
+        assert st == 409, (st, res)
+        assert "stale base version" in res.get("detail", "")
+
+        # 6. Valid revision from 1.0.1 succeeds
+        valid_102_body = {
+            "strategy_id": sid,
+            "registry_id": f"reg-{sid}-102",
+            "version": "1.0.2",
+            "lineage": {"parent_registry_ids": [rev_101_id]},
+            "base_checksum": rev_101_cs,
+            "strategy_spec": _valid_spec(sid, v=102),
+        }
+        st, rev_102 = _http("POST", port, "/api/registry/strategy-specs", token=token, payload=valid_102_body)
+        assert st == 200, rev_102
+    finally:
+        _stop(proc)
+
+
+def test_concurrent_parent_linked_writers_on_typed_and_keyed_routes(pg_schema):
+    """Review finding 3: Test concurrent parent-linked writers racing from the same base.
+    Under the serialized advisory lock, exactly one writer succeeds in
+    advancing the strategy revision from that base, while concurrent writers
+    from the now-stale base are rejected with 409 Conflict."""
+    dsn, schema = pg_schema
+    port = _free_port()
+    proc = _spawn_registry_process(port=port, dsn=dsn, schema=schema)
+    try:
+        _wait_for_health(port)
+        token = _strict_jwt()
+        from services.registry.test_service import _valid_spec
+
+        # Test A: Concurrent writers on typed route (POST /api/registry/strategy-specs)
+        sid_typed = "strat-conc-typed"
+        base_body = {
+            "strategy_id": sid_typed,
+            "registry_id": f"reg-{sid_typed}-100",
+            "version": "1.0.0",
+            "lineage": {"source_run_ids": ["run-001"]},
+            "strategy_spec": _valid_spec(sid_typed),
+        }
+        st, base_res = _http("POST", port, "/api/registry/strategy-specs", token=token, payload=base_body)
+        assert st == 200, base_res
+        base_id = base_res["entry"]["registry_id"]
+        base_cs = base_res["entry"]["checksum"]
+
+        results_typed = []
+        barrier = threading.Barrier(2)
+
+        def _writer_typed(ver, suffix):
+            body = {
+                "strategy_id": sid_typed,
+                "registry_id": f"reg-{sid_typed}-{suffix}",
+                "version": ver,
+                "lineage": {"parent_registry_ids": [base_id]},
+                "base_checksum": base_cs,
+                "strategy_spec": _valid_spec(sid_typed, v=int(ver.replace(".", ""))),
+            }
+            try:
+                barrier.wait(timeout=5)
+            except Exception:
+                pass
+            status, resp = _http("POST", port, "/api/registry/strategy-specs", token=token, payload=body)
+            results_typed.append((status, resp))
+
+        t1 = threading.Thread(target=_writer_typed, args=("1.0.1", "a"))
+        t2 = threading.Thread(target=_writer_typed, args=("2.0.0", "b"))
+        t1.start(); t2.start()
+        t1.join(timeout=10); t2.join(timeout=10)
+
+        statuses_typed = sorted([s for s, _ in results_typed])
+        assert statuses_typed == [200, 409], f"Expected exactly one 200 and one 409, got {statuses_typed}"
+
+        # Test B: Concurrent writers on generic keyed route (POST /api/registry/entries with Idempotency-Key)
+        sid_keyed = "strat-conc-keyed"
+        base_keyed_body = {
+            "artifact_type": "strategy_spec",
+            "strategy_id": sid_keyed,
+            "version": "1.0.0",
+            "artifact_state": "draft",
+            "lineage": {"source_run_ids": ["run-001"]},
+            "strategy_spec": _valid_spec(sid_keyed),
+        }
+        st, base_keyed_res = _http(
+            "POST", port, "/api/registry/entries",
+            token=token, payload=base_keyed_body,
+            headers={"Idempotency-Key": f"create-{sid_keyed}"},
+        )
+        assert st == 200, base_keyed_res
+        base_keyed_id = base_keyed_res["entry"]["registry_id"]
+        base_keyed_cs = base_keyed_res["entry"]["checksum"]
+
+        results_keyed = []
+        barrier_keyed = threading.Barrier(2)
+
+        def _writer_keyed(ver, key_suffix):
+            body = {
+                "artifact_type": "strategy_spec",
+                "strategy_id": sid_keyed,
+                "version": ver,
+                "artifact_state": "draft",
+                "lineage": {"parent_registry_ids": [base_keyed_id]},
+                "base_checksum": base_keyed_cs,
+                "strategy_spec": _valid_spec(sid_keyed, v=int(ver.replace(".", ""))),
+            }
+            try:
+                barrier_keyed.wait(timeout=5)
+            except Exception:
+                pass
+            status, resp = _http(
+                "POST", port, "/api/registry/entries",
+                token=token, payload=body,
+                headers={"Idempotency-Key": f"rev-{sid_keyed}-{key_suffix}"},
+            )
+            results_keyed.append((status, resp))
+
+        tk1 = threading.Thread(target=_writer_keyed, args=("1.0.1", "k1"))
+        tk2 = threading.Thread(target=_writer_keyed, args=("2.0.0", "k2"))
+        tk1.start(); tk2.start()
+        tk1.join(timeout=10); tk2.join(timeout=10)
+
+        statuses_keyed = sorted([s for s, _ in results_keyed])
+        assert statuses_keyed == [200, 409], f"Expected exactly one 200 and one 409 on keyed route, got {statuses_keyed}"
+
+    finally:
+        _stop(proc)
