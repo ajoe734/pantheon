@@ -8,7 +8,13 @@ import time
 import uuid
 from typing import Any, Callable
 
-from .models import OpenClawRuntimePin, WorkflowDefinition, utc_now
+try:
+    from .models import OpenClawRuntimePin, WorkflowDefinition, utc_now
+except ImportError:  # pragma: no cover - exercised when loaded as a bare top-level
+    # module (some test harness configurations add this directory itself to
+    # sys.path rather than its parent, so there is no enclosing package for a
+    # relative import to resolve against).
+    from models import OpenClawRuntimePin, WorkflowDefinition, utc_now
 
 
 Transport = Callable[[dict[str, Any]], dict[str, Any]]
@@ -86,21 +92,36 @@ class _CliGatewayTransport:
             )
         return json.loads(result.stdout.strip() or "{}")
 
-    def _wait_for_terminal_run(self, job_id: str, run_id: str | None) -> dict[str, Any]:
+    def _wait_for_terminal_run(self, job_id: str, run_id: str) -> dict[str, Any]:
+        """Poll `cron.runs` until the EXACT dispatched run reaches a terminal
+        status, or the bounded deadline elapses.
+
+        Correlation is by exact `(job_id, run_id)` match only. There is no
+        `entries[0]` "most recent run" fallback here: a job can have multiple
+        interleaved runs, and returning the wrong one would silently report an
+        unrelated run's outcome as if it were this dispatch's result (a
+        crossed-run false-positive/false-negative). If the target run has not
+        yet appeared in the polled window, that is treated as "not found yet"
+        (continue polling) — not as failure and not as success — and the
+        caller only ever sees a real terminal status for `run_id` itself, or
+        the timeout below (unknown outcome).
+
+        NOTE: if/when a pinned exact-run-lookup RPC (e.g. a hypothetical
+        `cron.run.get`) is verified to exist on the upstream OpenClaw Gateway
+        build actually pinned by this repo, it should be preferred here
+        instead of polling `cron.runs` and filtering client-side. No such RPC
+        is documented/verified in this repo today, so we do not invent one.
+        """
         deadline = time.monotonic() + self._poll_timeout
         while time.monotonic() < deadline:
-            runs = self._call("cron.runs", {"id": job_id, "limit": 5})
+            runs = self._call("cron.runs", {"id": job_id, "limit": 20})
             entries = runs.get("entries") or []
-            target = None
-            if run_id:
-                target = next((e for e in entries if e.get("runId") == run_id), None)
-            if target is None and entries:
-                target = entries[0]
+            target = next((e for e in entries if e.get("runId") == run_id), None)
             if target and target.get("status") in _TERMINAL_RUN_STATUSES:
                 return target
             time.sleep(self._poll_interval)
         raise RuntimeError(
-            f"Timed out waiting for openclaw cron job {job_id} to reach a terminal state."
+            f"Timed out waiting for openclaw cron job {job_id} run {run_id} to reach a terminal state."
         )
 
     def __call__(self, request: dict[str, Any]) -> dict[str, Any]:
@@ -152,6 +173,16 @@ class _CliGatewayTransport:
 
         run_response = self._call("cron.run", {"id": job_id, "mode": "force"})
         run_id = run_response.get("runId")
+        if not run_id:
+            # No run id means we cannot correlate a later poll to this exact
+            # dispatch. Fail fast here rather than falling back to "most
+            # recent run" (which could be a different run of the same job) or
+            # blindly resubmitting cron.run (which could trigger a duplicate
+            # execution of an already-accepted, possibly side-effecting turn).
+            raise RuntimeError(
+                f"openclaw cron.run for job {job_id} did not return a run id; "
+                "completion is unknown, not resubmitting."
+            )
         latest_run = self._wait_for_terminal_run(job_id, run_id)
 
         if latest_run.get("status") != "ok":

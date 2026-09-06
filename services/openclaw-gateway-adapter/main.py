@@ -857,6 +857,33 @@ class AssistantProviderInvokeRequest(BaseModel):
         return self
 
 
+class AssistantProviderStructuredInvokeRequest(BaseModel):
+    """Restricted structured-data extraction request.
+
+    Accepts only a caller-declared JSON-schema `parameters` body
+    (`extraction_schema`) for the fixed, server-approved `emit_extraction`
+    tool. A caller may never supply its own `tools`/`tool_choice` — that
+    would let it smuggle in an arbitrary shell/tool definition.
+    """
+
+    mode: str = "user"
+    prompt: str
+    agent_id: Optional[str] = None
+    session_id: Optional[str] = None
+    messages: Optional[List[Dict[str, Any]]] = None
+    extraction_schema: Dict[str, Any]
+    tools: Optional[Any] = None
+    tool_choice: Optional[Any] = None
+
+    @model_validator(mode="after")
+    def reject_caller_supplied_tools(self) -> "AssistantProviderStructuredInvokeRequest":
+        if self.tools is not None or self.tool_choice is not None:
+            raise ValueError(
+                "caller-supplied tool definitions are not accepted; only extraction_schema is allowed"
+            )
+        return self
+
+
 class AssistantSkillAuthorizeRequest(BaseModel):
     mode: Optional[str] = None
     operator_role: Optional[str] = None
@@ -1619,6 +1646,57 @@ def invoke_openclaw_provider(
             })
         return JSONResponse(status_code=status_code, content=payload)
     return JSONResponse(status_code=200, content=_invoke_upstream())
+
+
+@app.post("/api/openclaw-adapter/assistant/providers/openclaw/structured")
+def invoke_openclaw_structured_provider(
+    req: AssistantProviderStructuredInvokeRequest,
+    x_operator_id: Optional[str] = Header(default=None, alias="X-Operator-Id"),
+    x_trace_id: Optional[str] = Header(default=None, alias="X-Trace-Id"),
+) -> JSONResponse:
+    """Restricted, server-approved structured-data extraction turn.
+
+    Accepts only a caller-declared JSON-schema `parameters` body
+    (`extraction_schema`) — never a full arbitrary tool/tool-list (rejected
+    with 422 by the request model above). The model is pinned to the fixed
+    `emit_extraction` tool via `invoke_structured`; this endpoint returns
+    parsed structured data only and never executes a domain action.
+    """
+    if not x_operator_id or not x_operator_id.strip():
+        return JSONResponse(
+            status_code=401,
+            content={
+                "status": "provider_error",
+                "error_code": "OPERATOR_REQUIRED",
+                "message": "X-Operator-Id header is required for OpenClaw provider invocation.",
+            },
+        )
+    mode = str(req.mode or "user").strip().lower() or "user"
+    if delegates_kernel_mode_to_codex(mode):
+        return JSONResponse(
+            status_code=409,
+            content={
+                "status": "provider_error",
+                "error_code": "OPENCLAW_KERNEL_DELEGATION_REQUIRED",
+                "message": "OpenClaw kernel modes must be delegated to the adapter Codex runtime.",
+            },
+        )
+    invoke_kwargs: Dict[str, Any] = {
+        "extraction_schema": req.extraction_schema,
+        "mode": mode,
+        "messages": req.messages,
+        "operator_id": x_operator_id.strip(),
+        "trace_id": x_trace_id,
+    }
+    if req.agent_id is not None:
+        invoke_kwargs["agent_id"] = req.agent_id
+    if req.session_id is not None:
+        invoke_kwargs["session_id"] = req.session_id
+    try:
+        result = _OPENCLAW_AGENT_PROVIDER.invoke_structured(req.prompt, **invoke_kwargs)
+    except GatewayOpenClawProviderError as exc:
+        return JSONResponse(status_code=exc.status_code, content=exc.to_payload())
+    return JSONResponse(status_code=200, content={"status": "ok", "data": result.to_dict()})
 
 
 @app.post("/api/openclaw-adapter/assistant/providers/openclaw/invoke/stream")

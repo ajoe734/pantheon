@@ -184,3 +184,50 @@ Smoke evidence captured on `2026-04-16`:
 - artifacts: `/tmp/openclaw-bp5-oss-002.fXeSom/smoke-results.json`
 - result: `ingest`, `review`, `retrain`, and `deploy` all passed against the
   pinned upstream runtime
+
+## 10. SIMPLIFY-OPENCLAW-001 (2026-09-06)
+
+Ordinary agent turns in `services/openclaw-gateway-adapter/assistant_openclaw_provider.py`
+are now unified on a single HTTP request builder against the existing Gateway
+`POST /v1/responses` endpoint:
+
+- `invoke()`, `stream()`, and `readiness()`'s answer-probe all go through one
+  `_invoke_via_http()` helper. The general-turn CLI subprocess path
+  (`_invoke_single_model`) and the 96 KiB argv-size branch are removed
+  entirely — transport selection for an ordinary turn no longer depends on
+  prompt length, and ordinary turns never spawn the `openclaw` CLI binary.
+- Administrative/cron CLI paths (`gateway_cron_call`, `_gateway_call`,
+  `gateway_agents_list`, `_openclaw_bin`, `_openclaw_cli_state_env`) and
+  `kernel_debug` Codex delegation are unchanged and still use the `openclaw`
+  CLI — this cleanup only affects ordinary-turn invoke/stream/readiness.
+- `stream()` gained `model`, `agent_id`, `messages`, `tools`, `tool_choice`,
+  and `timeout_seconds` parameters, and now also reads a nested
+  `response.completed`'s `response` object (`status`, `output[]`, `usage`,
+  `id`) for function-call/usage/response-id extraction. **This nested-object
+  shape is an assumption based on the OpenAI-Responses-API family and was not
+  independently re-verified against a live pinned Gateway** (no live gateway
+  reachable in the dev sandbox that implemented this change).
+- A restricted, server-approved `emit_extraction` function tool
+  (`emit_extraction_tool_schema()` / `invoke_structured()`) was added on the
+  same transport: the caller supplies only a JSON-schema `parameters` body,
+  never a full tool/tool-list; the tool call is pinned via `tool_choice` and
+  never triggers a domain mutation. A new restricted endpoint
+  `POST /api/openclaw-adapter/assistant/providers/openclaw/structured` in
+  `main.py` exposes this for the (separate, later) SIMPLIFY-EXTRACTION-001
+  task to consume.
+- Cron exact-run correlation fix in
+  `services/control-plane/cron/openclaw_client.py`
+  (`_CliGatewayTransport._wait_for_terminal_run`): removed the
+  `entries[0]` "most recent run" fallback; a run is only ever reported
+  terminal when its `runId` exactly matches the dispatched `run_id`. A
+  missing `run_id` from `cron.run` now fails fast instead of polling blindly
+  or resubmitting `cron.run`. The `cron.runs` poll window was widened from
+  `limit: 5` to `limit: 20` to reduce (not fix on its own) the chance of a
+  target run falling outside the polled window; the exact-match check is
+  what actually prevents crossed-run false positives/negatives.
+- Known cross-scope finding (not fixed here, out of this task's declared
+  artifact list): `integrations/openclaw/adapter/cron_transport.py`
+  (`OpenClawCronGatewayTransport`, the production Docker-gateway cron path)
+  contains the same `entries[0]`-fallback pattern as the CLI transport did.
+  That file needs a separate scope-handoff task to receive the equivalent
+  fix.

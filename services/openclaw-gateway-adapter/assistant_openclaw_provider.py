@@ -57,13 +57,7 @@ DEFAULT_OPENCLAW_BIN = "openclaw"
 DEFAULT_PRIMARY_MODEL = "anthropic/claude-opus-4-8"
 DEFAULT_FALLBACK_MODELS = ("openai/gpt-5.6-sol", "openai/gpt-5.5")
 CODEX_DELEGATED_KERNEL_MODES = frozenset({"kernel_debug"})
-# `openclaw agent` accepts the prompt ONLY as an argv string (`-m/--message
-# <text>`); it has NO stdin support and `--message -` is taken LITERALLY — the
-# agent then receives a bare "-" heartbeat tick and replies "HEARTBEAT_OK"
-# instead of running the prompt. A single argv is bounded by the kernel's
-# MAX_ARG_STRLEN (128 KiB); cap below that and fail loudly rather than silently
-# truncating/dropping the prompt.
-_MAX_ARGV_PROMPT_BYTES = 96 * 1024
+EMIT_EXTRACTION_TOOL_NAME = "emit_extraction"
 # Canonical docker-compose service name — used when no URL is configured.
 _DEFAULT_GATEWAY_WS_URL = "ws://openclaw-gateway:18789"
 _AGENT_ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
@@ -104,6 +98,80 @@ def delegates_kernel_mode_to_codex(mode: str) -> bool:
 
     return str(mode or "").strip().lower() in CODEX_DELEGATED_KERNEL_MODES
 
+
+
+def emit_extraction_tool_schema(schema: Dict[str, Any]) -> Dict[str, Any]:
+    """Build the fixed-shape, server-approved `emit_extraction` function tool.
+
+    The caller supplies only the JSON-schema ``parameters`` body describing
+    the extracted-fields shape; the tool name/type/description/strict flag
+    are fixed so a caller cannot smuggle in an arbitrary shell/tool
+    definition. This is a pure, data-emission-only tool — invoking it never
+    executes a domain action.
+    """
+    return {
+        "type": "function",
+        "name": EMIT_EXTRACTION_TOOL_NAME,
+        "description": "Emit only extracted structured data; no domain action is executed.",
+        "parameters": schema,
+        "strict": True,
+    }
+
+
+_JSON_TYPE_TO_PYTHON = {
+    "string": str,
+    "number": (int, float),
+    "integer": int,
+    "boolean": bool,
+    "object": dict,
+    "array": list,
+}
+
+
+def _validate_extraction_arguments(parsed_arguments: Any, extraction_schema: Dict[str, Any]) -> None:
+    """Dependency-free structural check of tool-call arguments against a schema.
+
+    Deliberately not a general JSON-schema validator (``jsonschema`` is not a
+    dependency of this service) — checks only required-field presence and a
+    rough type match for properties that declare a JSON ``type``.
+    """
+    if not isinstance(parsed_arguments, dict):
+        raise OpenClawProviderError(
+            "tool call arguments must be a JSON object",
+            status_code=422,
+            error_code="OPENCLAW_TOOL_ARGS_SCHEMA_MISMATCH",
+        )
+    required = extraction_schema.get("required", []) or []
+    for field in required:
+        if field not in parsed_arguments:
+            raise OpenClawProviderError(
+                f"tool call arguments missing required field {field!r}",
+                status_code=422,
+                error_code="OPENCLAW_TOOL_ARGS_SCHEMA_MISMATCH",
+            )
+    properties = extraction_schema.get("properties", {}) or {}
+    for name, value in parsed_arguments.items():
+        prop_schema = properties.get(name)
+        if not isinstance(prop_schema, dict):
+            continue
+        declared_type = prop_schema.get("type")
+        expected_python_type = _JSON_TYPE_TO_PYTHON.get(declared_type)
+        if expected_python_type is None:
+            continue
+        # bool is a subclass of int in Python; a JSON "integer"/"number" field
+        # should not silently accept a JSON boolean.
+        if declared_type in ("integer", "number") and isinstance(value, bool):
+            raise OpenClawProviderError(
+                f"tool call argument {name!r} expected type {declared_type!r}",
+                status_code=422,
+                error_code="OPENCLAW_TOOL_ARGS_SCHEMA_MISMATCH",
+            )
+        if not isinstance(value, expected_python_type):
+            raise OpenClawProviderError(
+                f"tool call argument {name!r} expected type {declared_type!r}",
+                status_code=422,
+                error_code="OPENCLAW_TOOL_ARGS_SCHEMA_MISMATCH",
+            )
 
 
 def _sanitize_failure_reason(reason: Any, message: Any = None) -> str:
@@ -259,28 +327,15 @@ class AssistantOpenClawProvider:
                 "status": "not_checked",
                 "reason": "answer_probe_not_run",
             }
-        # Full probe: exercise the actual answer path inside one bounded budget.
-        binary = self._openclaw_bin()
-        if not binary:
-            return {
-                **base,
-                "ready": False,
-                "status": "degraded",
-                "reason": "openclaw_binary_not_found",
-                "binary_path": DEFAULT_OPENCLAW_BIN,
-                "answer_probe": {
-                    "status": "failed",
-                    "reason": "openclaw_binary_not_found",
-                    "deadline_seconds": answer_timeout,
-                },
-            }
+        # Full probe: exercise the actual HTTP answer path inside one bounded
+        # budget. Ordinary turns never spawn the `openclaw` CLI subprocess, so
+        # no binary existence check is needed here anymore.
         if not self._token:
             return {
                 **base,
                 "ready": False,
                 "status": "degraded",
                 "reason": "OPENCLAW_GATEWAY_TOKEN_not_set",
-                "binary_path": binary,
                 "answer_probe": {
                     "status": "failed",
                     "reason": "OPENCLAW_GATEWAY_TOKEN_not_set",
@@ -308,7 +363,7 @@ class AssistantOpenClawProvider:
 
             cand_started = time.monotonic()
             try:
-                result = self._invoke_single_model(
+                result = self._invoke_via_http(
                     _READINESS_PROMPT,
                     model=candidate,
                     mode="user",
@@ -359,7 +414,6 @@ class AssistantOpenClawProvider:
                     "status": "ready",
                     "auth": "account_session",
                     "auth_status": "ready",
-                    "binary_path": binary,
                     "active_model": candidate,
                     "primary_model": primary,
                     **(
@@ -404,13 +458,12 @@ class AssistantOpenClawProvider:
             "ready": False,
             "status": "degraded",
             "reason": reason,
-            "binary_path": binary,
             "primary_model": primary,
             **({"primary_unavailable": primary_unavailable} if primary_unavailable else {}),
             "answer_probe": probe_err,
         }
 
-    def _invoke_single_model(
+    def _invoke_via_http(
         self,
         prompt: str,
         *,
@@ -424,110 +477,83 @@ class AssistantOpenClawProvider:
         operator_id: Optional[str] = None,
         trace_id: Optional[str] = None,
         timeout_seconds: Optional[float] = None,
+        tools: Optional[List[Dict[str, Any]]] = None,
+        tool_choice: Optional[Any] = None,
     ) -> OpenClawProviderResult:
+        """Run one ordinary agent turn through the Gateway `POST /v1/responses`
+        (OpenResponses) HTTP transport.
+
+        This is the single request builder for `invoke()`, `readiness()`'s
+        answer-probe, and `invoke_structured()`. It never spawns a subprocess
+        and its transport choice never depends on prompt length — collapsing
+        the normalized terminal SSE stream (see `stream()`) back into the
+        standard invoke result keeps the BFF's existing adapter contract
+        intact and preserves typed Responses failures.
+        """
+
         selected_agent_id = str(agent_id or self._agent_id).strip()
-        effective_url = self._gateway_url or _DEFAULT_GATEWAY_WS_URL
-        binary = self._openclaw_bin()
-        if not binary:
-            raise OpenClawProviderError(
-                "openclaw binary not found. Ensure the openclaw CLI is installed in the adapter image.",
-                status_code=503,
-                error_code="OPENCLAW_BINARY_NOT_FOUND",
+        metadata_session = str((metadata or {}).get("session_id") or "").strip()
+        session_user = str(session_id or metadata_session or operator_id or "").strip() or None
+        events = list(
+            self.stream(
+                prompt,
+                mode=mode,
+                operator_id=operator_id,
+                trace_id=trace_id,
+                session_user=session_user,
+                model=model,
+                agent_id=selected_agent_id,
+                messages=messages,
+                tools=tools,
+                tool_choice=tool_choice,
+                timeout_seconds=timeout_seconds,
             )
-        if not self._token:
+        )
+        error = next((event for event in events if event.get("type") == "error"), None)
+        if error is not None:
+            status_code = error.get("status_code")
+            try:
+                normalized_status = int(status_code) if status_code is not None else 502
+            except (TypeError, ValueError):
+                normalized_status = 502
             raise OpenClawProviderError(
-                "OPENCLAW_GATEWAY_TOKEN is not set. Configure the token in the compose env.",
-                status_code=503,
-                error_code="OPENCLAW_TOKEN_NOT_CONFIGURED",
+                str(error.get("message") or "OpenResponses invocation failed."),
+                status_code=normalized_status,
+                error_code=str(error.get("error_code") or "OPENCLAW_RESPONSES_FAILED"),
             )
-
-        request_id = str(uuid.uuid4())
-        started_at = time.monotonic()
-        invocation_timeout = float(self._timeout)
-        if timeout_seconds is not None:
-            invocation_timeout = min(invocation_timeout, float(timeout_seconds))
-        if invocation_timeout <= 0:
+        done = next((event for event in reversed(events) if event.get("type") == "done"), None)
+        if done is None:
             raise OpenClawProviderError(
-                "openclaw agent invocation exhausted its bounded deadline.",
-                status_code=504,
-                error_code="OPENCLAW_GATEWAY_TIMEOUT",
-            )
-
-        cmd = [
-            binary,
-            "agent",
-            "--agent", selected_agent_id,
-            *(["--session-id", session_id] if session_id else []),
-            "--message", prompt,
-            "--json",
-            "--timeout", str(max(1, int(invocation_timeout))),
-        ]
-        if model:
-            cmd.extend(["--model", model])
-
-        run_env = _openclaw_cli_state_env({
-            **os.environ,
-            "NO_COLOR": "1",
-            "OPENCLAW_GATEWAY_URL": effective_url,
-            "OPENCLAW_GATEWAY_TOKEN": self._token,
-        })
-        try:
-            proc = self._run(
-                cmd,
-                capture_output=True,
-                text=True,
-                timeout=invocation_timeout,
-                env=run_env,
-            )
-        except subprocess.TimeoutExpired as exc:
-            raise OpenClawProviderError(
-                f"openclaw agent invocation timed out after {invocation_timeout:g}s.",
-                status_code=504,
-                error_code="OPENCLAW_GATEWAY_TIMEOUT",
-            ) from exc
-        except FileNotFoundError as exc:
-            raise OpenClawProviderError(
-                "openclaw binary disappeared after readiness check.",
-                status_code=503,
-                error_code="OPENCLAW_BINARY_NOT_FOUND",
-            ) from exc
-        except Exception as exc:  # noqa: BLE001
-            raise OpenClawProviderError(
-                f"openclaw agent invocation failed: {exc}",
+                "Gateway completed /v1/responses without a terminal event.",
                 status_code=502,
-                error_code="OPENCLAW_GATEWAY_INVOCATION_FAILED",
-            ) from exc
-
-        elapsed_ms = int((time.monotonic() - started_at) * 1000)
-
-        if proc.returncode != 0:
-            stderr = (proc.stderr or "").strip()
-            stderr_low = stderr.lower()
-            if any(k in stderr_low for k in ("auth", "unauthorized", "expired", "401", "login", "oauth")):
-                err_code = "OPENCLAW_AUTH_UNAVAILABLE"
-            elif any(k in stderr_low for k in ("timeout", "timed out", "deadline")):
-                err_code = "OPENCLAW_GATEWAY_TIMEOUT"
-            elif any(k in stderr_low for k in ("connection refused", "unreachable", "econnrefused")):
-                err_code = "OPENCLAW_GATEWAY_UNREACHABLE"
-            else:
-                err_code = "OPENCLAW_GATEWAY_INVOCATION_FAILED"
-            raise OpenClawProviderError(
-                f"openclaw agent exited with code {proc.returncode}: {stderr[:400]}",
-                status_code=502,
-                error_code=err_code,
+                error_code="OPENCLAW_RESPONSES_EMPTY",
             )
-
-        text = self._extract_reply(proc.stdout or "")
+        text = str(done.get("text") or "")
+        function_calls = done.get("function_calls")
+        if not text.strip() and not function_calls:
+            raise OpenClawProviderError(
+                "Gateway completed /v1/responses without assistant text.",
+                status_code=502,
+                error_code="OPENCLAW_RESPONSES_EMPTY",
+            )
         output = self._build_output(
             text=text,
-            request_id=request_id,
-            elapsed_ms=elapsed_ms,
-            stderr=proc.stderr or "",
+            request_id=str(uuid.uuid4()),
+            elapsed_ms=max(0, int(done.get("elapsed_ms") or 0)),
+            stderr="",
             agent_id=selected_agent_id,
         )
+        output["transport"] = "responses_http"
         if model:
             output["active_model"] = model
-
+        if function_calls:
+            output["function_calls"] = function_calls
+        # Missing usage is unknown, not zero — only set the key when upstream
+        # actually reported it.
+        if "usage" in done:
+            output["usage"] = done["usage"]
+        if "response_id" in done:
+            output["response_id"] = done["response_id"]
         return OpenClawProviderResult(
             provider=OPENCLAW_PROVIDER,
             mode=mode,
@@ -565,28 +591,13 @@ class AssistantOpenClawProvider:
                 error_code="OPENCLAW_AGENT_ID_INVALID",
             )
 
-        binary = self._openclaw_bin()
-        if not binary:
-            raise OpenClawProviderError(
-                "openclaw binary not found. Ensure the openclaw CLI is installed in the adapter image.",
-                status_code=503,
-                error_code="OPENCLAW_BINARY_NOT_FOUND",
-            )
+        # Ordinary turns go through HTTP only, so the `openclaw` CLI binary is
+        # not required here. Bearer auth is still required for the HTTP call.
         if not self._token:
             raise OpenClawProviderError(
                 "OPENCLAW_GATEWAY_TOKEN is not set. Configure the token in the compose env.",
                 status_code=503,
                 error_code="OPENCLAW_TOKEN_NOT_CONFIGURED",
-            )
-
-        prompt_bytes = len(prompt.encode("utf-8"))
-        if prompt_bytes > _MAX_ARGV_PROMPT_BYTES:
-            return self._invoke_oversized_prompt_via_openresponses(
-                prompt,
-                mode=mode,
-                operator_id=operator_id,
-                session_id=session_id,
-                metadata=metadata,
             )
 
         invocation_timeout = float(self._timeout)
@@ -600,10 +611,10 @@ class AssistantOpenClawProvider:
             )
 
         # Preserve per-agent configured routing: if a non-default agent (e.g. persona agent)
-        # is called and no model override was requested, invoke without --model so OpenClaw
-        # uses the model configured in the agent definition.
+        # is called and no model override was requested, invoke without a model override so
+        # OpenClaw uses the model configured in the agent definition.
         if selected_agent_id != DEFAULT_AGENT_ID and model is None:
-            return self._invoke_single_model(
+            return self._invoke_via_http(
                 prompt,
                 model=None,
                 agent_id=selected_agent_id,
@@ -621,7 +632,7 @@ class AssistantOpenClawProvider:
         selected_model = candidates[0] if candidates else None
         primary_configured = os.getenv("OPENCLAW_PRIMARY_MODEL", "").strip() or DEFAULT_PRIMARY_MODEL
 
-        result = self._invoke_single_model(
+        result = self._invoke_via_http(
             prompt,
             model=selected_model,
             agent_id=selected_agent_id,
@@ -641,61 +652,82 @@ class AssistantOpenClawProvider:
                 result.output["primary_model"] = primary_configured
         return result
 
-    def _invoke_oversized_prompt_via_openresponses(
+    def invoke_structured(
         self,
         prompt: str,
         *,
-        mode: str,
-        operator_id: Optional[str],
-        session_id: Optional[str],
-        metadata: Optional[Dict[str, Any]],
+        extraction_schema: Dict[str, Any],
+        model: Optional[str] = None,
+        agent_id: Optional[str] = None,
+        session_id: Optional[str] = None,
+        mode: str = "user",
+        messages: Optional[List[Dict[str, Any]]] = None,
+        operator_id: Optional[str] = None,
+        trace_id: Optional[str] = None,
+        timeout_seconds: Optional[float] = None,
     ) -> OpenClawProviderResult:
-        """Run a large normal invocation through the existing Responses transport.
+        """Run one restricted, server-approved, data-only extraction turn.
 
-        ``openclaw agent --message`` is argv-only, while ``POST /v1/responses``
-        accepts the same prompt in a request body.  Collapsing the normalized
-        terminal stream back into the standard invoke result keeps the BFF's
-        existing adapter contract intact and preserves typed Responses failures.
+        Uses the same HTTP transport as `invoke()`, with a fixed-shape
+        `emit_extraction` function tool and a pinned tool_choice so the model
+        cannot decline into free text or pick a different tool. The tool call
+        itself never triggers a domain mutation — this method returns parsed
+        structured data only.
         """
 
-        metadata_session = str((metadata or {}).get("session_id") or "").strip()
-        session_user = str(session_id or metadata_session or operator_id or "").strip() or None
-        events = list(
-            self.stream(
-                prompt,
-                mode=mode,
-                operator_id=operator_id,
-                session_user=session_user,
-            )
+        tool_schema = emit_extraction_tool_schema(extraction_schema)
+        result = self._invoke_via_http(
+            prompt,
+            model=model,
+            agent_id=agent_id,
+            session_id=session_id,
+            mode=mode,
+            messages=messages,
+            operator_id=operator_id,
+            trace_id=trace_id,
+            timeout_seconds=timeout_seconds,
+            tools=[tool_schema],
+            tool_choice={"type": "function", "name": EMIT_EXTRACTION_TOOL_NAME},
         )
-        error = next((event for event in events if event.get("type") == "error"), None)
-        if error is not None:
-            status_code = error.get("status_code")
-            try:
-                normalized_status = int(status_code) if status_code is not None else 502
-            except (TypeError, ValueError):
-                normalized_status = 502
+        function_calls = result.output.get("function_calls") or []
+        if not function_calls:
             raise OpenClawProviderError(
-                str(error.get("message") or "OpenResponses invocation failed."),
-                status_code=normalized_status,
-                error_code=str(error.get("error_code") or "OPENCLAW_RESPONSES_FAILED"),
-            )
-        done = next((event for event in reversed(events) if event.get("type") == "done"), None)
-        if done is None or not str(done.get("text") or "").strip():
-            raise OpenClawProviderError(
-                "Gateway completed /v1/responses without assistant text.",
+                "no matching tool call in response",
                 status_code=502,
-                error_code="OPENCLAW_RESPONSES_EMPTY",
+                error_code="OPENCLAW_TOOL_NO_MATCH",
             )
-        output = self._build_output(
-            text=str(done["text"]),
-            request_id=str(uuid.uuid4()),
-            elapsed_ms=max(0, int(done.get("elapsed_ms") or 0)),
-            stderr="",
-            agent_id=self._agent_id,
-        )
-        output["transport"] = "responses_http"
-        output["transport_reason"] = "argv_prompt_exceeds_safe_limit"
+        call = function_calls[0]
+        call_name = call.get("name")
+        if call_name != EMIT_EXTRACTION_TOOL_NAME:
+            raise OpenClawProviderError(
+                f"tool call name {call_name!r} does not match {EMIT_EXTRACTION_TOOL_NAME!r}",
+                status_code=502,
+                error_code="OPENCLAW_TOOL_MISMATCH",
+            )
+        raw_arguments = call.get("arguments")
+        try:
+            parsed_arguments = json.loads(raw_arguments if isinstance(raw_arguments, str) else "")
+        except (ValueError, TypeError) as exc:
+            raise OpenClawProviderError(
+                "tool call arguments are not valid JSON",
+                status_code=422,
+                error_code="OPENCLAW_TOOL_ARGS_INVALID_JSON",
+            ) from exc
+        _validate_extraction_arguments(parsed_arguments, extraction_schema)
+
+        output: Dict[str, Any] = {
+            "structured_data": parsed_arguments,
+            "tool_call": {
+                "id": call.get("call_id"),
+                "name": call_name,
+            },
+            "agent_id": str(agent_id or self._agent_id).strip(),
+            "transport": "responses_http",
+        }
+        if "usage" in result.output:
+            output["usage"] = result.output["usage"]
+        if "response_id" in result.output:
+            output["response_id"] = result.output["response_id"]
         return OpenClawProviderResult(
             provider=OPENCLAW_PROVIDER,
             mode=mode,
@@ -911,17 +943,31 @@ class AssistantOpenClawProvider:
         operator_id: Optional[str] = None,
         trace_id: Optional[str] = None,
         session_user: Optional[str] = None,
+        model: Optional[str] = None,
+        agent_id: Optional[str] = None,
+        messages: Optional[List[Dict[str, Any]]] = None,
+        tools: Optional[List[Dict[str, Any]]] = None,
+        tool_choice: Optional[Any] = None,
+        timeout_seconds: Optional[float] = None,
     ) -> Iterator[Dict[str, Any]]:
         """Stream an agent turn via the gateway OpenAI-compatible `POST /v1/responses`
         (OpenResponses) endpoint with SSE, yielding NORMALIZED events:
 
             {"type": "delta", "text": "<token chunk>"}
-            {"type": "done", "text": "<full reply>", "elapsed_ms": N, "transport": "responses_http"}
+            {"type": "done", "text": "<full reply>", "elapsed_ms": N, "transport": "responses_http",
+             "function_calls": [...], "usage": {...}, "response_id": "..."}
             {"type": "error", "error_code": "...", "message": "..."}
+
+        `function_calls`/`usage`/`response_id` are only present in the "done"
+        event when the upstream Gateway actually reported them — a missing
+        `usage` is unknown, not zero cost.
 
         The endpoint runs a normal Gateway agent run (workspace/memory/persona/tools
         preserved). Requires the gateway-side `gateway.http.endpoints.responses.enabled`.
         Upstream OpenClaw v2026.7.1 contract accepts model 'openclaw' (or 'openclaw/<agentId>').
+        This is the single request builder used by ordinary `invoke()`,
+        `readiness()`'s answer-probe, and `invoke_structured()` — none of them
+        spawn a subprocess or pick a transport based on prompt length.
         """
         if delegates_kernel_mode_to_codex(mode):
             raise OpenClawProviderError(
@@ -944,15 +990,42 @@ class AssistantOpenClawProvider:
             }
             return
 
+        effective_agent_id = str(agent_id or self._agent_id).strip()
+        effective_timeout = float(timeout_seconds) if timeout_seconds is not None else float(self._timeout)
+        if effective_timeout <= 0:
+            yield {
+                "type": "error",
+                "error_code": "OPENCLAW_GATEWAY_TIMEOUT",
+                "status_code": 504,
+                "message": "openclaw agent invocation exhausted its bounded deadline.",
+            }
+            return
+
         url = f"{self._http_base()}/v1/responses"
         payload: Dict[str, Any] = {
-            "model": OPENRESPONSES_MODEL,
-            "input": prompt,
+            "model": model or OPENRESPONSES_MODEL,
             "stream": True,
         }
+        if messages:
+            input_list: List[Dict[str, Any]] = list(messages)
+            last_entry = input_list[-1] if input_list else None
+            already_last = (
+                isinstance(last_entry, dict)
+                and str(last_entry.get("role")) == "user"
+                and str(last_entry.get("content")) == prompt
+            )
+            if prompt and not already_last:
+                input_list = input_list + [{"role": "user", "content": prompt}]
+            payload["input"] = input_list
+        else:
+            payload["input"] = prompt
         # Stable session key for warm multi-turn routing (per OpenResponses `user`).
         if session_user:
             payload["user"] = session_user
+        if tools is not None:
+            payload["tools"] = tools
+        if tool_choice is not None:
+            payload["tool_choice"] = tool_choice
         data = json.dumps(payload).encode("utf-8")
         req = urllib.request.Request(
             url,
@@ -962,7 +1035,7 @@ class AssistantOpenClawProvider:
                 "Authorization": f"Bearer {self._token}",
                 "Content-Type": "application/json",
                 "Accept": "text/event-stream",
-                "X-OpenClaw-Agent-Id": self._agent_id,
+                "X-OpenClaw-Agent-Id": effective_agent_id,
             },
         )
 
@@ -971,7 +1044,7 @@ class AssistantOpenClawProvider:
         terminal_text = ""
         emitted_done = False
         try:
-            resp = urllib.request.urlopen(req, timeout=self._timeout)
+            resp = urllib.request.urlopen(req, timeout=effective_timeout)
         except urllib.error.HTTPError as exc:
             body = ""
             try:
@@ -1049,7 +1122,44 @@ class AssistantOpenClawProvider:
                         terminal_text = text
                 elif etype == "response.completed":
                     reply = terminal_text or "".join(chunks)
-                    if not reply:
+                    # ASSUMPTION (not independently verified against a live pinned
+                    # OpenClaw Gateway in this dev sandbox — no live gateway was
+                    # reachable here): `response.completed` carries a nested
+                    # `response` object shaped like the OpenAI Responses API
+                    # family (`status`, `output[]`, `usage`, `id`). Treat this as
+                    # an unverified-capability caveat, not a proven contract.
+                    nested_response = evt.get("response")
+                    function_calls: List[Dict[str, Any]] = []
+                    usage: Optional[Dict[str, Any]] = None
+                    response_id: Optional[str] = None
+                    if isinstance(nested_response, dict):
+                        nested_status = nested_response.get("status")
+                        if nested_status in ("failed", "incomplete"):
+                            yield {
+                                "type": "error",
+                                "error_code": (
+                                    "OPENCLAW_RESPONSES_FAILED"
+                                    if nested_status == "failed"
+                                    else "OPENCLAW_RESPONSES_INCOMPLETE"
+                                ),
+                                "message": json.dumps(nested_response)[:300],
+                            }
+                            return
+                        output_items = nested_response.get("output")
+                        if isinstance(output_items, list):
+                            for item in output_items:
+                                if isinstance(item, dict) and item.get("type") == "function_call":
+                                    function_calls.append(
+                                        {
+                                            "name": item.get("name"),
+                                            "arguments": item.get("arguments"),
+                                            "call_id": item.get("call_id"),
+                                        }
+                                    )
+                        if "usage" in nested_response:
+                            usage = nested_response.get("usage")
+                        response_id = nested_response.get("id")
+                    if not reply and not function_calls:
                         yield {
                             "type": "error",
                             "error_code": "OPENCLAW_RESPONSES_EMPTY",
@@ -1057,12 +1167,21 @@ class AssistantOpenClawProvider:
                         }
                         return
                     emitted_done = True
-                    yield {
+                    done_event: Dict[str, Any] = {
                         "type": "done",
                         "text": reply,
                         "elapsed_ms": int((time.monotonic() - started_at) * 1000),
                         "transport": "responses_http",
                     }
+                    if function_calls:
+                        done_event["function_calls"] = function_calls
+                    # Missing usage is unknown, not zero — only include the key
+                    # when the upstream Gateway actually reported it.
+                    if usage is not None:
+                        done_event["usage"] = usage
+                    if response_id is not None:
+                        done_event["response_id"] = response_id
+                    yield done_event
                 elif etype in ("response.failed", "error"):
                     yield {
                         "type": "error",
