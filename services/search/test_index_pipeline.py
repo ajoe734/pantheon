@@ -609,6 +609,7 @@ def test_notify_search_index_refresh_fires_on_completed_run():
         with mock.patch("urllib.request.urlopen") as mock_open:
             mock_open.return_value = fake_response
             summary = ingest_main._notify_search_index_refresh(
+                ingest_main.SEARCH_INGEST_NOTIFY_URL,
                 "run-abc",
                 connector_id="conn-test",
                 source_type="paper",
@@ -647,7 +648,7 @@ def test_notify_search_index_refresh_noop_when_url_empty():
     with mock.patch("urllib.request.urlopen") as mock_open:
         with mock.patch.dict("os.environ", {"SEARCH_INGEST_NOTIFY_URL": ""}):
             ingest_main.SEARCH_INGEST_NOTIFY_URL = ""
-            summary = ingest_main._notify_search_index_refresh("run-abc")
+            summary = ingest_main._notify_search_index_refresh(ingest_main.SEARCH_INGEST_NOTIFY_URL, "run-abc")
         mock_open.assert_not_called()
         assert summary["status"] == "not_configured"
         assert summary["configured"] is False
@@ -658,7 +659,7 @@ def test_notify_search_index_refresh_ignores_network_errors():
     import services.source_ingestion.main as ingest_main
     with mock.patch("urllib.request.urlopen", side_effect=OSError("connection refused")):
         ingest_main.SEARCH_INGEST_NOTIFY_URL = "http://search-svc:8098"
-        summary = ingest_main._notify_search_index_refresh("run-abc")  # must not raise
+        summary = ingest_main._notify_search_index_refresh(ingest_main.SEARCH_INGEST_NOTIFY_URL, "run-abc")  # must not raise
         assert summary["status"] == "notify_failed"
         assert "connection refused" in summary["error"]
         ingest_main.SEARCH_INGEST_NOTIFY_URL = ""
