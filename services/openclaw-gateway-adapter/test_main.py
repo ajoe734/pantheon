@@ -2453,6 +2453,62 @@ class TestGovernedServantAgentSync(unittest.TestCase):
             self.assertEqual(closed, [True, True])
             self.assertEqual(captured, [])
 
+    def test_persona_mounted_crash_or_failed_commit_never_publishes_done(self):
+        with self._admitted_replay_case() as (body, headers, captured):
+            def crashed_stream(*args, **kwargs):
+                yield {"type": "delta", "text": "partial"}
+                raise RuntimeError("crashed before terminal")
+
+            fault_patches = (
+                patch.object(adapter_main._OPENCLAW_AGENT_PROVIDER, "stream", side_effect=crashed_stream),
+                patch.object(adapter_main, "_complete_persona_opinion_invocation",
+                             side_effect=adapter_main.sqlite3.OperationalError("disk full")),
+            )
+            for index, fault in enumerate(fault_patches):
+                key = f"mounted-fault-{index}"
+                with fault:
+                    response = self._post_opinion("/stream", body, headers, key)
+                self.assertEqual(self._opinion_terminal(response, "/stream")["type"], "error")
+                self.assertNotIn('"type": "done"', response.text)
+                for route in ("", "/stream"):
+                    replay = self._post_opinion(route, body, headers, key)
+                    error = self._opinion_terminal(replay, route) if route else replay.json()
+                    self.assertEqual(error["error_code"], "PERSONA_OPINION_INVOCATION_IN_DOUBT")
+            self.assertEqual(len(captured), 1)
+
+    def test_persona_replay_preserves_verbatim_json_text(self):
+        text = '  {"answer": "embedded", "decision": "abstain"}\n'
+        with self._admitted_replay_case() as (body, headers, captured):
+            terminal = {"type": "done", "text": text, "transport": "responses_http", "elapsed_ms": 1}
+            with patch.object(adapter_main._OPENCLAW_AGENT_PROVIDER, "stream", return_value=iter([terminal])):
+                first = self._post_opinion("/stream", body, headers, "json-opinion")
+            for route in ("", "/stream"):
+                replay = self._post_opinion(route, body, headers, "json-opinion")
+                self.assertEqual(self._opinion_terminal(replay, route), self._opinion_terminal(first, "/stream"))
+                self.assertNotIn("usage", self._opinion_terminal(replay, route))
+            self.assertEqual(captured, [])
+
+    def test_persona_simultaneous_claims_have_one_winner(self):
+        with self._admitted_replay_case() as (body, headers, captured):
+            request = adapter_main.AssistantProviderInvokeRequest(**body)
+            barrier = threading.Barrier(4)
+
+            def claim():
+                barrier.wait(timeout=5)
+                try:
+                    adapter_main._claim_persona_opinion_invocation(
+                        request, idempotency_key="simultaneous-claim", operator_id="operator-1",
+                    )
+                    return "claimed"
+                except adapter_main._PersonaOpinionInvocationInDoubt:
+                    return "in_doubt"
+
+            with ThreadPoolExecutor(max_workers=4) as executor:
+                futures = [executor.submit(claim) for _ in range(4)]
+                outcomes = [future.result(timeout=10) for future in futures]
+            self.assertEqual(sorted(outcomes), ["claimed", "in_doubt", "in_doubt", "in_doubt"])
+            self.assertEqual(captured, [])
+
     def test_persona_concurrent_mounted_attempts_are_fenced_across_routes(self):
         entered, release = threading.Event(), threading.Event()
 

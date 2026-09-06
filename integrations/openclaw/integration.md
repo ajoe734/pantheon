@@ -208,6 +208,19 @@ builder. Socket reads, TLS reads, and SSE consumption share a total deadline.
 Only one normalized terminal result is emitted, including interruption,
 timeout, refusal, incomplete output, and upstream failures.
 
+Governed Persona `invoke` and `invoke/stream` share the existing durable
+invocation ledger. An atomic SQLite claim is committed before upstream I/O;
+concurrent requests see `in_doubt` rather than issuing a second turn. A
+completed key replays across either route, preserving exact text, response ID,
+and reported usage; streaming still forwards live deltas on the first attempt.
+The terminal envelope is committed before a stream publishes its terminal
+result. Crash, cancellation, or failed persistence leaves the claim fenced.
+Changed content or authenticated operator returns an idempotency conflict.
+Both routes use the admitted tenant, authenticated actor, and the same `pint-`
+identity derived from the trimmed idempotency key. Previously stored fingerprints
+that lack the authenticated operator fail closed as conflicts; they are never
+silently resubmitted or replayed to an unbound actor.
+
 `POST /api/openclaw-adapter/assistant/providers/openclaw/structured` accepts a
 schema for the fixed data-only `emit_extraction` tool. Arbitrary caller tool
 names, tool definitions, tool choice, and unadmitted agents are rejected.
