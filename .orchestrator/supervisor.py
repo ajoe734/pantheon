@@ -3174,73 +3174,22 @@ def start_worker_for_request(
         activity_type=activity_type,
         activity_message=activity_message,
     )
-    # OPS-PRIVILEGED-TASK-EXECUTION-AUTH-001 (SA/SD 4): spend a privileged
-    # task's one-shot execution grant, under its own exclusive critical
-    # section, before ever entering the shared read-lock section below that
-    # actually launches the adapter process. This must not nest inside the
-    # shared lock acquired next: a second exclusive acquisition on the same
-    # lock file from this same process while the shared lock is already held
-    # is a self-deadlock risk, not a safe upgrade.
-    #
-    # Only an owner-execution dispatch purpose actually spends the grant.
-    # ``request.reason`` is the same non-spoofable dispatch-reason string
-    # dispatch_policy computed from canonical owner/reviewer identity and
-    # lifecycle status (never a caller-supplied label). REVIEW_READY and
-    # OWNED_FINALIZE dispatch never reach a privileged
-    # ``requires_execution_authorization`` denial at admission (see
-    # ``rewrite/dispatch_admission.py``'s purpose-scoped check) and must not
-    # be reserved/consumed here either -- reserving unconditionally would
-    # raise ``ExecutionAuthorizationSpendFailed`` for a merely
-    # pending/expired/revoked privileged task's legitimate read-only review
-    # or closeout dispatch (SA/SD 4).
-    #
-    # ``latest_task_map`` -- when the caller has one -- is used only to
-    # decide *whether a privileged policy exists at all*, never to decide
-    # whether it is currently granted: that structural fact (a policy with
-    # ``requires_execution_authorization`` was attached at intake) is
-    # immutable for the life of the task, so a snapshot taken moments
-    # earlier by the caller is a safe, cheap proxy for it and lets an
-    # ordinary functional/paper/read_only/ci/reconcile_only dispatch --
-    # the overwhelmingly common case -- skip the lock/reload entirely. An
-    # earlier revision instead pre-checked
-    # ``task_index_from_status(config, state)`` -- ``state`` is the
-    # dispatch-loop's runtime/queue state, not a canonical status snapshot,
-    # so that lookup was always empty and silently skipped the authoritative
-    # reserve for every task, including privileged ones (an isolated
-    # actual-process probe showed a launch still proceeding after revocation
-    # was injected between admission and launch). When no ``latest_task_map``
-    # is supplied, always call the authoritative reserve instead of silently
-    # skipping it.
+    # Always reload at the spend boundary. A stale/corrupted queue snapshot
+    # cannot classify privileged work as ordinary to skip this check.
     if request.reason in (REASON_OWNED_IN_PROGRESS, REASON_OWNED_READY):
-        skip_reserve = False
-        if latest_task_map is not None:
-            candidate_task = latest_task_map.get(str(request.task_id or ""))
-            # Ground truth (verified dev-bridge packet provenance), not the
-            # ``execution_authorization`` subrecord shape: a missing snapshot
-            # row or a corrupt/downgraded subrecord on a task that source
-            # provenance says *is* privileged must not skip the reserve --
-            # skipping here means the authoritative fail-closed check inside
-            # ``reserve_execution_authorization_for_launch`` never runs at
-            # all (SA/SD 2, 7). Only a task that is genuinely non-privileged
-            # by source provenance may skip.
-            skip_reserve = isinstance(
-                candidate_task, dict
-            ) and not execution_authorization.task_privileged_by_source(candidate_task)
-        if not skip_reserve:
-            execution_authorization_run_id = str(event_id_for_log or queue_event_id or "")
+        execution_authorization_run_id = (
+            f"{event_id_for_log or queue_event_id or ''}"
+            f"-attempt-{max(1, int(attempt_count))}"
+        )
+        try:
             reserve_execution_authorization_for_launch(
-                config,
-                str(request.task_id or ""),
+                config, str(request.task_id or ""),
                 run_id=execution_authorization_run_id,
             )
-            # Thread the exact bound run id through to worker_runner.py's
-            # direct worker-entry check (SA/SD 4, "revalidate at actual
-            # worker entry"). An adapter generates its own, unrelated run id
-            # for heartbeat/log bookkeeping (``new_runtime_id``) well after
-            # this reservation commits, so worker_runner cannot use its own
-            # ``--run-id`` to recognize this exact reservation; it must
-            # receive the identity the reservation was actually bound to.
-            request.metadata["execution_authorization_run_id"] = execution_authorization_run_id
+        except BaseException:
+            _discard_unlaunched_runtime_phase_intent(config, state)
+            raise
+        request.metadata["execution_authorization_run_id"] = execution_authorization_run_id
     delivery_invoked = False
     try:
         # Keep the canonical assignment read lock through process creation.
@@ -3260,6 +3209,16 @@ def start_worker_for_request(
             )
             if stale_message:
                 raise StaleDispatchBeforeLaunch(stale_message)
+            if request.reason in (REASON_OWNED_IN_PROGRESS, REASON_OWNED_READY):
+                current_task = latest_task_map.get(str(request.task_id or ""))
+                if current_task is None or not execution_authorization.reservation_is_current(
+                    current_task,
+                    run_id=request.metadata.get("execution_authorization_run_id"),
+                    now=datetime.now(timezone.utc),
+                ):
+                    raise ExecutionAuthorizationSpendFailed(
+                        "execution authorization changed between reservation and launch"
+                    )
             delivery_invoked = True
             result = adapter.deliver(request)
     except BaseException:
@@ -3370,6 +3329,9 @@ def start_worker_for_request(
         "provider_usage": None,
         "commit_progress_count": 0,
         "status_root": request.metadata.get("status_root"),
+        "task_state_identity": json.loads(
+            issued_command_env.get("PANTHEON_CANONICAL_TASK_STATE_IDENTITY_JSON", "{}")
+        ),
         "status_command_runtime": issued_command_runtime,
         "pid": result_pid,
         "pid_start_ticks": result_pid_start_ticks,

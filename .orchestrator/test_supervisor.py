@@ -11,6 +11,8 @@ authoritative TaskStore projection.
 from __future__ import annotations
 
 import ast
+import base64
+import multiprocessing
 import copy
 import inspect
 import json
@@ -3494,6 +3496,152 @@ class SharedPlannerContractTests(unittest.TestCase):
         )
 
 
+def _synthetic_privileged_task(*, granted: bool = True) -> dict:
+    """Local synthetic issuer fixture; never uses live operator authority."""
+    from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+    from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
+
+    spec = {
+        "id": "TASK-1", "title": "Isolated execution probe",
+        "owner": "Codex", "reviewer": "Codex2", "summary": "Local stub only",
+        "phase": "test", "acceptance": ["Write a local test marker once"],
+        "depends_on": [], "dependency_tracks": {}, "artifacts": [],
+        "execution_resources": [], "target_repo": "pantheon",
+    }
+    task = task_fixture()
+    task.update({k: v for k, v in spec.items() if k != "summary"})
+    task["summary_zh"] = spec["summary"]
+    policy = execution_authorization.derive_execution_policy(
+        task_id="TASK-1", work_class="hosted", repository="pantheon",
+        task_spec=spec,
+    )
+    task["dev_bridge"] = {
+        "work_class": "hosted", "task_spec": spec,
+        "task_spec_hash": policy["task_spec_hash"],
+    }
+    task["execution_authorization"] = execution_authorization.pending_authorization_hold(policy)
+    if not granted:
+        task["waiting_for"] = "Human/Ops"
+        return task
+    now = datetime.now(timezone.utc)
+    key = Ed25519PrivateKey.generate()
+    b64 = lambda value: base64.urlsafe_b64encode(value).decode().rstrip("=")
+    grant = {
+        "task_id": "TASK-1", "generation": 1,
+        "policy_digest": policy["policy_digest"], "repository": "pantheon",
+        "environment": "pantheon-dev", "resources": [], "action_scope": "execute",
+        "purpose": execution_authorization.EXECUTION_GRANT_PURPOSE,
+        "capability": execution_authorization.EXECUTION_GRANT_CAPABILITY,
+        "audience": "TASK-1", "mfa_verified": True, "mfa_actor": "synthetic-local-operator",
+        "nonce": "synthetic-one-shot", "issued_at": now.isoformat(),
+        "expires_at": (now + timedelta(seconds=120)).isoformat(), "run_ttl_seconds": 60,
+    }
+    grant["signature"] = {
+        "key_id": "isolated-test-mfa", "algorithm": "Ed25519",
+        "value": b64(key.sign(execution_authorization._canonical_json(grant))),
+    }
+    execution_authorization.verify_execution_grant(
+        grant, policy=policy, task_id="TASK-1", generation=1, now=now,
+        trusted_issuers={"isolated-test-mfa": b64(key.public_key().public_bytes(Encoding.Raw, PublicFormat.Raw))},
+    )
+    task["execution_authorization"] = execution_authorization.build_granted_authorization(
+        policy=policy, grant=grant, task=task,
+    )
+    return task
+
+
+def _process_authorization_spend(config, run_id, marker, crash, gate):
+    if not gate.wait(10):
+        raise RuntimeError("isolated process race start timed out")
+    if crash == "before":
+        os._exit(23)
+    try:
+        supervisor.reserve_execution_authorization_for_launch(config, "TASK-1", run_id=run_id)
+    except supervisor.ExecutionAuthorizationSpendFailed:
+        raise SystemExit(7)
+    if crash == "after":
+        os._exit(24)
+    subprocess.run(
+        [sys.executable, "-c", "from pathlib import Path; import sys; Path(sys.argv[1]).write_text(sys.argv[2])", marker, run_id],
+        check=True, timeout=10,
+    )
+
+
+class ExecutionAuthorizationProcessTests(unittest.TestCase):
+    def setUp(self):
+        self.directory = tempfile.TemporaryDirectory()
+        self.addCleanup(self.directory.cleanup)
+        root = Path(self.directory.name)
+        status_root = root / "status"
+        (status_root / ".orchestrator").mkdir(parents=True)
+        self.config = config_fixture(status_root)
+        self.config["task_state_store"] = {"mode": "authoritative", "event_log": str(root / "runtime" / "tasks.jsonl")}
+        self.task = _synthetic_privileged_task()
+        supervisor.write_status(self.config, {"tasks": [self.task]}, source="isolated-synthetic-grant")
+        self.ctx = multiprocessing.get_context("fork")
+        self.marker = root / "effect"
+
+    def _run(self, attempts):
+        gate = self.ctx.Event()
+        processes = [self.ctx.Process(target=_process_authorization_spend, args=(self.config, run, str(self.marker), crash, gate)) for run, crash in attempts]
+        try:
+            for process in processes:
+                process.start()
+            gate.set()
+            for process in processes:
+                process.join(15)
+            self.assertFalse(any(process.is_alive() for process in processes), "authorization subprocess timed out")
+            return [process.exitcode for process in processes]
+        finally:
+            for process in processes:
+                if process.is_alive():
+                    process.terminate()
+                process.join(5)
+                if process.is_alive():
+                    process.kill()
+                    process.join(5)
+
+    def test_two_processes_cannot_spend_one_synthetic_grant(self):
+        codes = self._run([("attempt-a", None), ("attempt-b", None)])
+        self.assertEqual(sorted(codes), [0, 7])
+        task = supervisor.load_status(self.config)["tasks"][0]
+        self.assertEqual(task["execution_authorization"]["reserved_run_id"], self.marker.read_text())
+
+    def test_crash_before_consume_preserves_single_future_attempt(self):
+        self.assertEqual(self._run([("lost", "before")]), [23])
+        self.assertFalse(self.marker.exists())
+        self.assertEqual(self._run([("replacement", None)]), [0])
+
+    def test_crash_after_consume_and_restart_cannot_launch_replacement(self):
+        self.assertEqual(self._run([("lost", "after")]), [24])
+        self.assertFalse(self.marker.exists())
+        self.assertEqual(self._run([("replacement", None), ("lost", None)]), [7, 7])
+        self.assertFalse(self.marker.exists())
+
+    def test_pending_with_done_dependencies_cannot_launch_but_functional_can(self):
+        self.task = _synthetic_privileged_task(granted=False)
+        self.task["depends_on"] = ["DEP"]
+        supervisor.write_status(self.config, {"tasks": [self.task, task_fixture("DEP", status="done")]}, source="isolated-pending")
+        self.assertEqual(self._run([("pending", None)]), [7])
+        self.assertFalse(self.marker.exists())
+        supervisor.write_status(self.config, {"tasks": [task_fixture()]}, source="isolated-functional")
+        self.assertEqual(self._run([("functional", None)]), [0])
+
+    def test_revoked_and_reassigned_grants_have_zero_process_effects(self):
+        for field, value in (("generation", 2), ("owner", "Codex2"), ("acceptance", ["Changed action"])):
+            with self.subTest(field=field):
+                task = copy.deepcopy(self.task)
+                task[field] = value
+                supervisor.write_status(self.config, {"tasks": [task]}, source="isolated-revision")
+                self.assertEqual(self._run([("stale", None)]), [7])
+                self.assertFalse(self.marker.exists())
+        task = copy.deepcopy(self.task)
+        task["execution_authorization"] = execution_authorization.revoked_execution_authorization(task, actor="synthetic-local-operator", now=datetime.now(timezone.utc))
+        supervisor.write_status(self.config, {"tasks": [task]}, source="isolated-revoked")
+        self.assertEqual(self._run([("revoked", None)]), [7])
+        self.assertFalse(self.marker.exists())
+
+
 class ExecutionAuthorizationLaunchReserveTests(unittest.TestCase):
     """OPS-PRIVILEGED-TASK-EXECUTION-AUTH-001: the claim/lease boundary spend."""
 
@@ -3518,25 +3666,7 @@ class ExecutionAuthorizationLaunchReserveTests(unittest.TestCase):
             write.assert_not_called()
 
     def test_granted_task_reserves_and_commits(self) -> None:
-        policy = execution_authorization.derive_execution_policy(
-            task_id="TASK-1", work_class="security", repository="pantheon"
-        )
-        grant = {
-            "task_id": "TASK-1",
-            "generation": 1,
-            "policy_digest": policy["policy_digest"],
-            "repository": "pantheon",
-            "environment": policy["environment"],
-            "resources": [],
-            "action_scope": "execute",
-        }
-        task = task_fixture()
-        task["execution_authorization"] = execution_authorization.build_granted_authorization(
-            policy=policy, grant=grant
-        )
-        task["execution_authorization"]["grant"]["expires_at"] = (
-            datetime.now(timezone.utc) + timedelta(minutes=5)
-        ).isoformat().replace("+00:00", "Z")
+        task = _synthetic_privileged_task()
         status = {"tasks": [task]}
         with self._locked(status) as write:
             supervisor.reserve_execution_authorization_for_launch(
