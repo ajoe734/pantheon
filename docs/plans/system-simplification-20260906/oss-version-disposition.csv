@@ -1,0 +1,448 @@
+inventory,package,source_file,source_line,declared,task_id,disposition,status
+pypi_declaration,pydantic,.orchestrator/requirements.txt,17,"pydantic>=2.9,<3",OSS-TOOLING-BASELINE-001,worker_refresh_required,planned
+pypi_declaration,cryptography,.orchestrator/requirements.txt,18,"cryptography>=42,<51",OSS-TOOLING-BASELINE-001,worker_refresh_required,planned
+pypi_declaration,packaging,.orchestrator/requirements.txt,19,"packaging>=23,<27",OSS-TOOLING-BASELINE-001,worker_refresh_required,planned
+pypi_declaration,flask,requirements.txt,11,"flask>=3.0,<4.0",OSS-CORE-BASELINE-001,worker_refresh_required,planned
+pypi_declaration,asyncpg,requirements.txt,12,"asyncpg>=0.29,<1.0",OSS-CORE-BASELINE-001,worker_refresh_required,planned
+pypi_declaration,jsonschema,requirements.txt,13,"jsonschema>=4.0,<5.0",OSS-CORE-BASELINE-001,worker_refresh_required,planned
+pypi_declaration,uvicorn,requirements.txt,17,"uvicorn>=0.30,<1.0",OSS-CORE-BASELINE-001,worker_refresh_required,planned
+pypi_declaration,fastapi,services/broker/requirements.txt,1,fastapi,OSS-EXECUTION-BASELINE-001,worker_refresh_required,planned
+pypi_declaration,uvicorn,services/broker/requirements.txt,2,uvicorn,OSS-EXECUTION-BASELINE-001,worker_refresh_required,planned
+pypi_declaration,pydantic,services/broker/requirements.txt,3,pydantic,OSS-EXECUTION-BASELINE-001,worker_refresh_required,planned
+pypi_declaration,shioaji,services/broker/requirements.txt,4,"shioaji>=1.2.0,<2.0.0",OSS-EXECUTION-BASELINE-001,worker_refresh_required,planned
+pypi_declaration,shioaji,services/broker/sinopac/requirements.txt,1,"shioaji>=1.2.0,<2.0.0",OSS-EXECUTION-BASELINE-001,worker_refresh_required,planned
+pypi_declaration,fastapi,services/capital/requirements.txt,1,fastapi,OSS-CORE-BASELINE-001,worker_refresh_required,planned
+pypi_declaration,uvicorn,services/capital/requirements.txt,2,uvicorn,OSS-CORE-BASELINE-001,worker_refresh_required,planned
+pypi_declaration,httpx,services/capital/requirements.txt,3,httpx,OSS-CORE-BASELINE-001,worker_refresh_required,planned
+pypi_declaration,pydantic,services/capital/requirements.txt,4,pydantic,OSS-CORE-BASELINE-001,worker_refresh_required,planned
+pypi_declaration,psycopg,services/capital/requirements.txt,5,psycopg[binary],OSS-CORE-BASELINE-001,worker_refresh_required,planned
+pypi_declaration,discord.py,services/channels/discord/requirements.txt,1,discord.py>=2.3.0,OSS-CORE-BASELINE-001,worker_refresh_required,planned
+pypi_declaration,httpx,services/channels/discord/requirements.txt,2,httpx>=0.27.0,OSS-CORE-BASELINE-001,worker_refresh_required,planned
+pypi_declaration,python-telegram-bot,services/channels/telegram/requirements.txt,1,python-telegram-bot>=21.0,OSS-CORE-BASELINE-001,worker_refresh_required,planned
+pypi_declaration,httpx,services/channels/telegram/requirements.txt,2,httpx>=0.27.0,OSS-CORE-BASELINE-001,worker_refresh_required,planned
+pypi_declaration,fastapi,services/channels/web/requirements.txt,1,fastapi>=0.111.0,OSS-CORE-BASELINE-001,worker_refresh_required,planned
+pypi_declaration,uvicorn,services/channels/web/requirements.txt,2,uvicorn[standard]>=0.29.0,OSS-CORE-BASELINE-001,worker_refresh_required,planned
+pypi_declaration,pydantic,services/channels/web/requirements.txt,3,pydantic>=2.7.0,OSS-CORE-BASELINE-001,worker_refresh_required,planned
+pypi_declaration,httpx,services/channels/web/requirements.txt,4,httpx>=0.27.0,OSS-CORE-BASELINE-001,worker_refresh_required,planned
+pypi_declaration,fastapi,services/consultation/requirements.txt,1,fastapi,OSS-CORE-BASELINE-001,worker_refresh_required,planned
+pypi_declaration,uvicorn,services/consultation/requirements.txt,2,uvicorn,OSS-CORE-BASELINE-001,worker_refresh_required,planned
+pypi_declaration,pydantic,services/consultation/requirements.txt,3,pydantic,OSS-CORE-BASELINE-001,worker_refresh_required,planned
+pypi_declaration,python-multipart,services/consultation/requirements.txt,4,python-multipart,OSS-CORE-BASELINE-001,worker_refresh_required,planned
+pypi_declaration,jsonschema,services/consultation/requirements.txt,5,"jsonschema>=4.0,<5.0",OSS-CORE-BASELINE-001,worker_refresh_required,planned
+pypi_declaration,psycopg,services/consultation/requirements.txt,6,psycopg[binary],OSS-CORE-BASELINE-001,worker_refresh_required,planned
+pypi_declaration,fastapi,services/control-plane/bff/requirements.txt,1,fastapi,OSS-CORE-BASELINE-001,worker_refresh_required,planned
+pypi_declaration,uvicorn,services/control-plane/bff/requirements.txt,2,uvicorn,OSS-CORE-BASELINE-001,worker_refresh_required,planned
+pypi_declaration,httpx,services/control-plane/bff/requirements.txt,3,httpx,OSS-CORE-BASELINE-001,worker_refresh_required,planned
+pypi_declaration,pydantic,services/control-plane/bff/requirements.txt,4,pydantic,OSS-CORE-BASELINE-001,worker_refresh_required,planned
+pypi_declaration,python-multipart,services/control-plane/bff/requirements.txt,5,python-multipart,OSS-CORE-BASELINE-001,worker_refresh_required,planned
+pypi_declaration,python-jose,services/control-plane/bff/requirements.txt,6,python-jose[cryptography],OSS-CORE-BASELINE-001,worker_refresh_required,planned
+pypi_declaration,passlib,services/control-plane/bff/requirements.txt,7,passlib[bcrypt],OSS-CORE-BASELINE-001,worker_refresh_required,planned
+pypi_declaration,pytest,services/control-plane/bff/requirements.txt,8,pytest,OSS-CORE-BASELINE-001,worker_refresh_required,planned
+pypi_declaration,jsonschema,services/control-plane/bff/requirements.txt,9,"jsonschema>=4.0,<5.0",OSS-CORE-BASELINE-001,worker_refresh_required,planned
+pypi_declaration,psycopg,services/control-plane/bff/requirements.txt,10,"psycopg[binary]>=3.1,<4.0",OSS-CORE-BASELINE-001,worker_refresh_required,planned
+pypi_declaration,google-cloud-storage,services/control-plane/bff/requirements.txt,11,"google-cloud-storage>=2.16,<3.0",OSS-CORE-BASELINE-001,worker_refresh_required,planned
+pypi_declaration,asyncpg,services/control-plane/bff/requirements.txt,12,"asyncpg>=0.29,<1.0",OSS-CORE-BASELINE-001,worker_refresh_required,planned
+pypi_declaration,fastapi,services/control-plane/feedback/requirements.txt,1,fastapi>=0.111.0,OSS-CORE-BASELINE-001,worker_refresh_required,planned
+pypi_declaration,httpx,services/control-plane/feedback/requirements.txt,2,httpx>=0.28.0,OSS-CORE-BASELINE-001,worker_refresh_required,planned
+pypi_declaration,uvicorn,services/control-plane/feedback/requirements.txt,3,uvicorn[standard]>=0.29.0,OSS-CORE-BASELINE-001,worker_refresh_required,planned
+pypi_declaration,pydantic,services/control-plane/feedback/requirements.txt,4,pydantic>=2.7.0,OSS-CORE-BASELINE-001,worker_refresh_required,planned
+pypi_declaration,jsonschema,services/control-plane/feedback/requirements.txt,5,jsonschema>=4.21.0,OSS-CORE-BASELINE-001,worker_refresh_required,planned
+pypi_declaration,fastapi,services/control-plane/persona/requirements.txt,1,fastapi>=0.111.0,OSS-CORE-BASELINE-001,worker_refresh_required,planned
+pypi_declaration,httpx,services/control-plane/persona/requirements.txt,2,httpx>=0.28.0,OSS-CORE-BASELINE-001,worker_refresh_required,planned
+pypi_declaration,uvicorn,services/control-plane/persona/requirements.txt,3,uvicorn[standard]>=0.29.0,OSS-CORE-BASELINE-001,worker_refresh_required,planned
+pypi_declaration,pydantic,services/control-plane/persona/requirements.txt,4,pydantic>=2.7.0,OSS-CORE-BASELINE-001,worker_refresh_required,planned
+pypi_declaration,psycopg,services/control-plane/persona/requirements.txt,5,psycopg[binary]>=3.1.0,OSS-CORE-BASELINE-001,worker_refresh_required,planned
+pypi_declaration,jsonschema,services/control-plane/persona/requirements.txt,6,jsonschema>=4.0,OSS-CORE-BASELINE-001,worker_refresh_required,planned
+pypi_declaration,redis,services/control-plane/persona/requirements.txt,10,redis>=5.0.0,OSS-CORE-BASELINE-001,worker_refresh_required,planned
+pypi_declaration,fastapi,services/control-plane/router/requirements.txt,1,fastapi>=0.111.0,OSS-CORE-BASELINE-001,worker_refresh_required,planned
+pypi_declaration,uvicorn,services/control-plane/router/requirements.txt,2,uvicorn[standard]>=0.29.0,OSS-CORE-BASELINE-001,worker_refresh_required,planned
+pypi_declaration,pydantic,services/control-plane/router/requirements.txt,3,pydantic>=2.7.0,OSS-CORE-BASELINE-001,worker_refresh_required,planned
+pypi_declaration,httpx,services/control-plane/router/requirements.txt,4,httpx>=0.27.0,OSS-CORE-BASELINE-001,worker_refresh_required,planned
+pypi_declaration,fastapi,services/deployment/requirements.txt,1,fastapi,OSS-CORE-BASELINE-001,worker_refresh_required,planned
+pypi_declaration,uvicorn,services/deployment/requirements.txt,2,uvicorn,OSS-CORE-BASELINE-001,worker_refresh_required,planned
+pypi_declaration,httpx,services/deployment/requirements.txt,3,httpx,OSS-CORE-BASELINE-001,worker_refresh_required,planned
+pypi_declaration,pydantic,services/deployment/requirements.txt,4,pydantic,OSS-CORE-BASELINE-001,worker_refresh_required,planned
+pypi_declaration,jsonschema,services/deployment/requirements.txt,5,"jsonschema>=4.0,<5.0",OSS-CORE-BASELINE-001,worker_refresh_required,planned
+pypi_declaration,fastapi,services/evaluation/requirements.txt,1,fastapi,OSS-CORE-BASELINE-001,worker_refresh_required,planned
+pypi_declaration,uvicorn,services/evaluation/requirements.txt,2,uvicorn,OSS-CORE-BASELINE-001,worker_refresh_required,planned
+pypi_declaration,pydantic,services/evaluation/requirements.txt,3,pydantic,OSS-CORE-BASELINE-001,worker_refresh_required,planned
+pypi_declaration,fastapi,services/evolution/requirements.txt,1,fastapi,OSS-CORE-BASELINE-001,worker_refresh_required,planned
+pypi_declaration,uvicorn,services/evolution/requirements.txt,2,uvicorn,OSS-CORE-BASELINE-001,worker_refresh_required,planned
+pypi_declaration,httpx,services/evolution/requirements.txt,3,httpx,OSS-CORE-BASELINE-001,worker_refresh_required,planned
+pypi_declaration,pydantic,services/evolution/requirements.txt,4,pydantic,OSS-CORE-BASELINE-001,worker_refresh_required,planned
+pypi_declaration,psycopg,services/evolution/requirements.txt,5,psycopg[binary],OSS-CORE-BASELINE-001,worker_refresh_required,planned
+pypi_declaration,jsonschema,services/execution/lean_runtime/requirements.txt,1,jsonschema>=4.21.0,OSS-EXECUTION-BASELINE-001,worker_refresh_required,planned
+pypi_declaration,redis,services/execution/lean_runtime/requirements.txt,2,redis>=5.0.4,OSS-EXECUTION-BASELINE-001,worker_refresh_required,planned
+pypi_declaration,asyncpg,services/execution/lean_runtime/requirements.txt,3,asyncpg>=0.29.0,OSS-EXECUTION-BASELINE-001,worker_refresh_required,planned
+pypi_declaration,fastapi,services/feedback/requirements.txt,1,fastapi,OSS-CORE-BASELINE-001,worker_refresh_required,planned
+pypi_declaration,uvicorn,services/feedback/requirements.txt,2,uvicorn,OSS-CORE-BASELINE-001,worker_refresh_required,planned
+pypi_declaration,pydantic,services/feedback/requirements.txt,3,pydantic,OSS-CORE-BASELINE-001,worker_refresh_required,planned
+pypi_declaration,fastapi,services/governance/requirements.txt,1,fastapi,OSS-CORE-BASELINE-001,worker_refresh_required,planned
+pypi_declaration,uvicorn,services/governance/requirements.txt,2,uvicorn,OSS-CORE-BASELINE-001,worker_refresh_required,planned
+pypi_declaration,httpx,services/governance/requirements.txt,3,httpx,OSS-CORE-BASELINE-001,worker_refresh_required,planned
+pypi_declaration,pydantic,services/governance/requirements.txt,4,pydantic,OSS-CORE-BASELINE-001,worker_refresh_required,planned
+pypi_declaration,psycopg,services/governance/requirements.txt,5,psycopg[binary],OSS-CORE-BASELINE-001,worker_refresh_required,planned
+pypi_declaration,fastapi,services/incidents/requirements.txt,1,fastapi,OSS-CORE-BASELINE-001,worker_refresh_required,planned
+pypi_declaration,uvicorn,services/incidents/requirements.txt,2,uvicorn,OSS-CORE-BASELINE-001,worker_refresh_required,planned
+pypi_declaration,pydantic,services/incidents/requirements.txt,3,pydantic,OSS-CORE-BASELINE-001,worker_refresh_required,planned
+pypi_declaration,httpx,services/incidents/requirements.txt,4,httpx,OSS-CORE-BASELINE-001,worker_refresh_required,planned
+pypi_declaration,psycopg,services/incidents/requirements.txt,5,psycopg[binary],OSS-CORE-BASELINE-001,worker_refresh_required,planned
+pypi_declaration,dspy-ai,services/learning/dspy/requirements.txt,1,dspy-ai==2.4.5,OSS-RESEARCH-BASELINE-001,worker_refresh_required,planned
+pypi_declaration,imitation,services/learning/imitation/requirements.txt,1,imitation==1.0.1,OSS-RESEARCH-BASELINE-001,worker_refresh_required,planned
+pypi_declaration,trl,services/learning/trl/requirements.txt,8,"trl>=0.8.0,<0.10.0",OSS-RESEARCH-BASELINE-001,worker_refresh_required,planned
+pypi_declaration,transformers,services/learning/trl/requirements.txt,9,"transformers>=4.36.0,<5.0.0",OSS-RESEARCH-BASELINE-001,worker_refresh_required,planned
+pypi_declaration,accelerate,services/learning/trl/requirements.txt,10,"accelerate>=0.26.0,<1.0.0",OSS-RESEARCH-BASELINE-001,worker_refresh_required,planned
+pypi_declaration,peft,services/learning/trl/requirements.txt,11,"peft>=0.7.0,<1.0.0",OSS-RESEARCH-BASELINE-001,worker_refresh_required,planned
+pypi_declaration,datasets,services/learning/trl/requirements.txt,12,"datasets>=2.16.0,<4.0.0",OSS-RESEARCH-BASELINE-001,worker_refresh_required,planned
+pypi_declaration,torch,services/learning/trl/requirements.txt,13,"torch>=2.1.0,<3.0.0",OSS-RESEARCH-BASELINE-001,worker_refresh_required,planned
+pypi_declaration,sentencepiece,services/learning/trl/requirements.txt,14,sentencepiece>=0.1.99,OSS-RESEARCH-BASELINE-001,worker_refresh_required,planned
+pypi_declaration,fastapi,services/lineage-read/requirements.txt,1,fastapi,OSS-CORE-BASELINE-001,worker_refresh_required,planned
+pypi_declaration,uvicorn,services/lineage-read/requirements.txt,2,uvicorn,OSS-CORE-BASELINE-001,worker_refresh_required,planned
+pypi_declaration,pydantic,services/lineage-read/requirements.txt,3,pydantic,OSS-CORE-BASELINE-001,worker_refresh_required,planned
+pypi_declaration,httpx,services/lineage-read/requirements.txt,4,httpx,OSS-CORE-BASELINE-001,worker_refresh_required,planned
+pypi_declaration,fastapi,services/memory/requirements.txt,1,fastapi,OSS-CORE-BASELINE-001,worker_refresh_required,planned
+pypi_declaration,uvicorn,services/memory/requirements.txt,2,uvicorn,OSS-CORE-BASELINE-001,worker_refresh_required,planned
+pypi_declaration,pydantic,services/memory/requirements.txt,3,pydantic,OSS-CORE-BASELINE-001,worker_refresh_required,planned
+pypi_declaration,psycopg,services/memory/requirements.txt,4,psycopg[binary],OSS-CORE-BASELINE-001,worker_refresh_required,planned
+pypi_declaration,jsonschema,services/memory/requirements.txt,5,"jsonschema>=4.0,<5.0",OSS-CORE-BASELINE-001,worker_refresh_required,planned
+pypi_declaration,fastapi,services/openclaw-gateway-adapter/requirements.txt,1,fastapi,OSS-CORE-BASELINE-001,worker_refresh_required,planned
+pypi_declaration,uvicorn,services/openclaw-gateway-adapter/requirements.txt,2,uvicorn,OSS-CORE-BASELINE-001,worker_refresh_required,planned
+pypi_declaration,pydantic,services/openclaw-gateway-adapter/requirements.txt,3,pydantic,OSS-CORE-BASELINE-001,worker_refresh_required,planned
+pypi_declaration,httpx,services/openclaw-gateway-adapter/requirements.txt,4,httpx,OSS-CORE-BASELINE-001,worker_refresh_required,planned
+pypi_declaration,pytest,services/openclaw-gateway-adapter/requirements.txt,5,pytest,OSS-CORE-BASELINE-001,worker_refresh_required,planned
+pypi_declaration,fastapi,services/optimizer-svc/requirements.txt,1,fastapi,OSS-CORE-BASELINE-001,worker_refresh_required,planned
+pypi_declaration,uvicorn,services/optimizer-svc/requirements.txt,2,uvicorn,OSS-CORE-BASELINE-001,worker_refresh_required,planned
+pypi_declaration,pydantic,services/optimizer-svc/requirements.txt,3,pydantic,OSS-CORE-BASELINE-001,worker_refresh_required,planned
+pypi_declaration,redis,services/paper_fleet_reconciler/requirements.txt,4,redis>=5.0.4,OSS-CORE-BASELINE-001,worker_refresh_required,planned
+pypi_declaration,jsonschema,services/paper_fleet_reconciler/requirements.txt,5,jsonschema>=4.21.0,OSS-CORE-BASELINE-001,worker_refresh_required,planned
+pypi_declaration,fastapi,services/policy-learning/requirements.txt,1,fastapi,OSS-RESEARCH-BASELINE-001,worker_refresh_required,planned
+pypi_declaration,uvicorn,services/policy-learning/requirements.txt,2,uvicorn,OSS-RESEARCH-BASELINE-001,worker_refresh_required,planned
+pypi_declaration,pydantic,services/policy-learning/requirements.txt,3,pydantic,OSS-RESEARCH-BASELINE-001,worker_refresh_required,planned
+pypi_declaration,psycopg,services/policy-learning/requirements.txt,4,psycopg[binary],OSS-RESEARCH-BASELINE-001,worker_refresh_required,planned
+pypi_declaration,jsonschema,services/policy-learning/requirements.txt,5,"jsonschema>=4.0,<5.0",OSS-RESEARCH-BASELINE-001,worker_refresh_required,planned
+pypi_declaration,fastapi,services/postmortems/requirements.txt,1,fastapi,OSS-CORE-BASELINE-001,worker_refresh_required,planned
+pypi_declaration,uvicorn,services/postmortems/requirements.txt,2,uvicorn,OSS-CORE-BASELINE-001,worker_refresh_required,planned
+pypi_declaration,pydantic,services/postmortems/requirements.txt,3,pydantic,OSS-CORE-BASELINE-001,worker_refresh_required,planned
+pypi_declaration,httpx,services/postmortems/requirements.txt,4,httpx,OSS-CORE-BASELINE-001,worker_refresh_required,planned
+pypi_declaration,psycopg,services/postmortems/requirements.txt,5,psycopg[binary],OSS-CORE-BASELINE-001,worker_refresh_required,planned
+pypi_declaration,fastapi,services/promotion/requirements.txt,1,fastapi,OSS-CORE-BASELINE-001,worker_refresh_required,planned
+pypi_declaration,uvicorn,services/promotion/requirements.txt,2,uvicorn,OSS-CORE-BASELINE-001,worker_refresh_required,planned
+pypi_declaration,pydantic,services/promotion/requirements.txt,3,pydantic,OSS-CORE-BASELINE-001,worker_refresh_required,planned
+pypi_declaration,psycopg,services/promotion/requirements.txt,4,psycopg[binary],OSS-CORE-BASELINE-001,worker_refresh_required,planned
+pypi_declaration,fastapi,services/reconciliation-drift/requirements.txt,1,fastapi,OSS-CORE-BASELINE-001,worker_refresh_required,planned
+pypi_declaration,uvicorn,services/reconciliation-drift/requirements.txt,2,uvicorn,OSS-CORE-BASELINE-001,worker_refresh_required,planned
+pypi_declaration,pydantic,services/reconciliation-drift/requirements.txt,3,pydantic,OSS-CORE-BASELINE-001,worker_refresh_required,planned
+pypi_declaration,psycopg,services/reconciliation-drift/requirements.txt,4,psycopg[binary],OSS-CORE-BASELINE-001,worker_refresh_required,planned
+pypi_declaration,wandb,services/registry/experiments/requirements.txt,1,"wandb>=0.16.0,<1.0",OSS-RESEARCH-BASELINE-001,worker_refresh_required,planned
+pypi_declaration,fastapi,services/registry/requirements.txt,1,fastapi,OSS-CORE-BASELINE-001,worker_refresh_required,planned
+pypi_declaration,uvicorn,services/registry/requirements.txt,2,uvicorn,OSS-CORE-BASELINE-001,worker_refresh_required,planned
+pypi_declaration,pydantic,services/registry/requirements.txt,3,pydantic,OSS-CORE-BASELINE-001,worker_refresh_required,planned
+pypi_declaration,jsonschema,services/registry/requirements.txt,4,"jsonschema>=4.0,<5.0",OSS-CORE-BASELINE-001,worker_refresh_required,planned
+pypi_declaration,finrl,services/research/finrl/requirements.txt,2,finrl==0.3.7,OSS-RESEARCH-BASELINE-001,worker_refresh_required,planned
+pypi_declaration,torch,services/research/finrl/requirements.txt,3,torch==2.13.0+cpu,OSS-RESEARCH-BASELINE-001,worker_refresh_required,planned
+pypi_declaration,stable-baselines3,services/research/finrl/requirements.txt,4,stable-baselines3==2.8.0,OSS-RESEARCH-BASELINE-001,worker_refresh_required,planned
+pypi_declaration,matplotlib,services/research/finrl/requirements.txt,5,matplotlib==3.10.9,OSS-RESEARCH-BASELINE-001,worker_refresh_required,planned
+pypi_declaration,gymnasium,services/research/finrl/requirements.txt,6,gymnasium==1.2.3,OSS-RESEARCH-BASELINE-001,worker_refresh_required,planned
+pypi_declaration,pandas,services/research/finrl/requirements.txt,7,pandas==3.0.3,OSS-RESEARCH-BASELINE-001,worker_refresh_required,planned
+pypi_declaration,numpy,services/research/finrl/requirements.txt,8,numpy==2.4.5,OSS-RESEARCH-BASELINE-001,worker_refresh_required,planned
+pypi_declaration,pytest,services/research/finrl/requirements.txt,9,pytest==9.0.3,OSS-RESEARCH-BASELINE-001,worker_refresh_required,planned
+pypi_declaration,mlflow,services/research/mlflow/requirements.txt,1,mlflow==3.11.1,OSS-RESEARCH-BASELINE-001,worker_refresh_required,planned
+pypi_declaration,pydantic,services/research/mlflow/requirements.txt,2,pydantic>=2.6.3,OSS-RESEARCH-BASELINE-001,worker_refresh_required,planned
+pypi_declaration,redis,services/research/mlflow/requirements.txt,3,redis>=5.0.0,OSS-RESEARCH-BASELINE-001,worker_refresh_required,planned
+pypi_declaration,pyqlib,services/research/qlib/requirements.txt,1,pyqlib==0.9.6,OSS-RESEARCH-BASELINE-001,worker_refresh_required,planned
+pypi_declaration,lightgbm,services/research/qlib/requirements.txt,2,lightgbm>=3.3.0,OSS-RESEARCH-BASELINE-001,worker_refresh_required,planned
+pypi_declaration,pydantic,services/research/qlib/requirements.txt,3,pydantic>=2.6.3,OSS-RESEARCH-BASELINE-001,worker_refresh_required,planned
+pypi_declaration,redis,services/research/qlib/requirements.txt,4,redis>=5.0.0,OSS-RESEARCH-BASELINE-001,worker_refresh_required,planned
+pypi_declaration,QuantLib-Python,services/research/quantlib/requirements.txt,1,QuantLib-Python==1.18,OSS-RESEARCH-BASELINE-001,worker_refresh_required,planned
+pypi_declaration,numpy,services/research/quantlib/requirements.txt,2,"numpy>=1.26.4,<2.0.0",OSS-RESEARCH-BASELINE-001,worker_refresh_required,planned
+pypi_declaration,ray,services/research/rllib/requirements.txt,9,ray[rllib]==2.55.1,OSS-RESEARCH-BASELINE-001,worker_refresh_required,planned
+pypi_declaration,ray,services/research/rllib/requirements.txt,10,ray[tune]==2.55.1,OSS-RESEARCH-BASELINE-001,worker_refresh_required,planned
+pypi_declaration,torch,services/research/rllib/requirements.txt,11,torch==2.13.0+cpu,OSS-RESEARCH-BASELINE-001,worker_refresh_required,planned
+pypi_declaration,gymnasium,services/research/rllib/requirements.txt,12,gymnasium==1.2.2,OSS-RESEARCH-BASELINE-001,worker_refresh_required,planned
+pypi_declaration,pydantic,services/research/rllib/requirements.txt,13,pydantic>=2.6.3,OSS-RESEARCH-BASELINE-001,worker_refresh_required,planned
+pypi_declaration,redis,services/research/rllib/requirements.txt,14,redis>=5.0.0,OSS-RESEARCH-BASELINE-001,worker_refresh_required,planned
+pypi_declaration,statsmodels,services/research/statsmodels/requirements.txt,3,statsmodels==0.14.2,OSS-RESEARCH-BASELINE-001,worker_refresh_required,planned
+pypi_declaration,pandas,services/research/statsmodels/requirements.txt,4,"pandas>=2.2.2,<2.3.0",OSS-RESEARCH-BASELINE-001,worker_refresh_required,planned
+pypi_declaration,numpy,services/research/statsmodels/requirements.txt,5,"numpy>=1.26.4,<2.0.0",OSS-RESEARCH-BASELINE-001,worker_refresh_required,planned
+pypi_declaration,vectorbt,services/research/vectorbt/requirements.txt,1,vectorbt==0.26.2,OSS-RESEARCH-BASELINE-001,worker_refresh_required,planned
+pypi_declaration,pandas,services/research/vectorbt/requirements.txt,2,"pandas>=1.5.0,<3.0.0",OSS-RESEARCH-BASELINE-001,worker_refresh_required,planned
+pypi_declaration,numpy,services/research/vectorbt/requirements.txt,3,"numpy>=1.23.0,<2.0.0",OSS-RESEARCH-BASELINE-001,worker_refresh_required,planned
+pypi_declaration,plotly,services/research/vectorbt/requirements.txt,4,"plotly>=4.12.0,<6.0.0",OSS-RESEARCH-BASELINE-001,worker_refresh_required,planned
+pypi_declaration,pydantic,services/research/vectorbt/requirements.txt,5,pydantic>=2.6.3,OSS-RESEARCH-BASELINE-001,worker_refresh_required,planned
+pypi_declaration,redis,services/research/vectorbt/requirements.txt,6,redis>=5.0.0,OSS-RESEARCH-BASELINE-001,worker_refresh_required,planned
+pypi_declaration,flask,services/runtime-manager/requirements.txt,1,"flask>=3.0,<4.0",OSS-CORE-BASELINE-001,worker_refresh_required,planned
+pypi_declaration,pydantic,services/runtime-manager/requirements.txt,2,pydantic>=2.7.0,OSS-CORE-BASELINE-001,worker_refresh_required,planned
+pypi_declaration,jsonschema,services/runtime-manager/requirements.txt,3,"jsonschema>=4.0,<5.0",OSS-CORE-BASELINE-001,worker_refresh_required,planned
+pypi_declaration,fastapi,services/search/requirements.txt,1,fastapi,OSS-CORE-BASELINE-001,worker_refresh_required,planned
+pypi_declaration,uvicorn,services/search/requirements.txt,2,uvicorn,OSS-CORE-BASELINE-001,worker_refresh_required,planned
+pypi_declaration,pydantic,services/search/requirements.txt,3,pydantic,OSS-CORE-BASELINE-001,worker_refresh_required,planned
+pypi_declaration,psycopg,services/search/requirements.txt,4,psycopg[binary],OSS-CORE-BASELINE-001,worker_refresh_required,planned
+pypi_declaration,fastapi,services/source_ingestion/requirements.txt,1,fastapi,OSS-CORE-BASELINE-001,worker_refresh_required,planned
+pypi_declaration,uvicorn,services/source_ingestion/requirements.txt,2,uvicorn,OSS-CORE-BASELINE-001,worker_refresh_required,planned
+pypi_declaration,pydantic,services/source_ingestion/requirements.txt,3,pydantic,OSS-CORE-BASELINE-001,worker_refresh_required,planned
+pypi_declaration,psycopg,services/source_ingestion/requirements.txt,4,psycopg[binary],OSS-CORE-BASELINE-001,worker_refresh_required,planned
+pypi_declaration,asyncpg,services/source_ingestion/requirements.txt,5,"asyncpg>=0.29,<1.0",OSS-CORE-BASELINE-001,worker_refresh_required,planned
+pypi_declaration,jsonschema,services/source_ingestion/requirements.txt,6,"jsonschema>=4.0,<5.0",OSS-CORE-BASELINE-001,worker_refresh_required,planned
+pypi_declaration,httpx,services/source_ingestion/requirements.txt,7,httpx>=0.27.0,OSS-CORE-BASELINE-001,worker_refresh_required,planned
+pypi_declaration,asyncpg,services/telemetry/requirements.txt,1,"asyncpg>=0.29,<1.0",OSS-CORE-BASELINE-001,worker_refresh_required,planned
+pypi_declaration,flask,services/telemetry/requirements.txt,2,"flask>=3.0,<4.0",OSS-CORE-BASELINE-001,worker_refresh_required,planned
+pypi_declaration,jsonschema,services/telemetry/requirements.txt,3,"jsonschema>=4.0,<5.0",OSS-CORE-BASELINE-001,worker_refresh_required,planned
+pypi_declaration,nats-py,services/telemetry/requirements.txt,4,"nats-py>=2.9,<3.0",OSS-CORE-BASELINE-001,worker_refresh_required,planned
+pypi_declaration,psycopg,services/telemetry/requirements.txt,5,"psycopg[binary]>=3.1,<4.0",OSS-CORE-BASELINE-001,worker_refresh_required,planned
+pypi_declaration,fastapi,services/training-session/requirements.txt,1,fastapi,OSS-RESEARCH-BASELINE-001,worker_refresh_required,planned
+pypi_declaration,uvicorn,services/training-session/requirements.txt,2,uvicorn,OSS-RESEARCH-BASELINE-001,worker_refresh_required,planned
+pypi_declaration,pydantic,services/training-session/requirements.txt,3,pydantic,OSS-RESEARCH-BASELINE-001,worker_refresh_required,planned
+pypi_declaration,psycopg,services/training-session/requirements.txt,4,psycopg[binary],OSS-RESEARCH-BASELINE-001,worker_refresh_required,planned
+pypi_declaration,jsonschema,services/training-session/requirements.txt,5,"jsonschema>=4.0,<5.0",OSS-RESEARCH-BASELINE-001,worker_refresh_required,planned
+image_declaration,,Dockerfile.smoke,1,FROM python:3.11-slim,OSS-CORE-BASELINE-001,worker_refresh_required,planned
+image_declaration,,docker-compose.control.yml,25,image: postgres:16-alpine,OSS-INFRA-PROFILES-001,worker_refresh_required,planned
+image_declaration,,docker-compose.control.yml,47,image: minio/minio@sha256:14cea493d9a34af32f524e538b8346cf79f3321eff8e708c1e2960462bd8936e,OSS-INFRA-PROFILES-001,worker_refresh_required,planned
+image_declaration,,docker-compose.control.yml,66,image: nats:2.11-alpine,OSS-INFRA-PROFILES-001,worker_refresh_required,planned
+image_declaration,,docker-compose.control.yml,82,image: minio/mc:latest,OSS-INFRA-PROFILES-001,worker_refresh_required,planned
+image_declaration,,docker-compose.exec.yml,21,image: redis:7-alpine,OSS-INFRA-PROFILES-001,worker_refresh_required,planned
+image_declaration,,docker-compose.remote-dev.yml,3,image: redis:alpine,OSS-INFRA-PROFILES-001,worker_refresh_required,planned
+image_declaration,,docker-compose.yml,11,image: postgres:16-alpine,OSS-INFRA-PROFILES-001,worker_refresh_required,planned
+image_declaration,,docker-compose.yml,38,image: minio/minio@sha256:14cea493d9a34af32f524e538b8346cf79f3321eff8e708c1e2960462bd8936e,OSS-INFRA-PROFILES-001,worker_refresh_required,planned
+image_declaration,,docker-compose.yml,57,image: minio/mc:RELEASE.2024-01-16T16-06-34Z,OSS-INFRA-PROFILES-001,worker_refresh_required,planned
+image_declaration,,docker-compose.yml,74,image: nats:2.11-alpine,OSS-INFRA-PROFILES-001,worker_refresh_required,planned
+image_declaration,,docker-compose.yml,90,image: redis:7-alpine,OSS-INFRA-PROFILES-001,worker_refresh_required,planned
+image_declaration,,docker-compose.yml,723,image: busybox:1.36,OSS-INFRA-PROFILES-001,worker_refresh_required,planned
+image_declaration,,docker-compose.yml,740,image: pantheon-openclaw-gateway:2026.7.1,OSS-INFRA-PROFILES-001,worker_refresh_required,planned
+image_declaration,,docker-compose.yml,2545,image: pantheon-openclaw-activation-ready-e2e-adapter:latest,OSS-INFRA-PROFILES-001,worker_refresh_required,planned
+image_declaration,,integrations/openclaw/gateway/Dockerfile,17,FROM ghcr.io/openclaw/openclaw:2026.7.1,SIMPLIFY-OPENCLAW-001,worker_refresh_required,planned
+image_declaration,,services/broker/Dockerfile,1,FROM python:3.12-slim,OSS-EXECUTION-BASELINE-001,worker_refresh_required,planned
+image_declaration,,services/capital/Dockerfile,1,FROM python:3.11-slim,OSS-CORE-BASELINE-001,worker_refresh_required,planned
+image_declaration,,services/channels/web/Dockerfile,1,FROM python:3.11-slim,OSS-CORE-BASELINE-001,worker_refresh_required,planned
+image_declaration,,services/consultation/Dockerfile,1,FROM python:3.11-slim,OSS-CORE-BASELINE-001,worker_refresh_required,planned
+image_declaration,,services/control-plane/bff/Dockerfile,1,FROM python:3.11-slim,OSS-CORE-BASELINE-001,worker_refresh_required,planned
+image_declaration,,services/control-plane/feedback/Dockerfile,1,FROM python:3.11-slim,OSS-CORE-BASELINE-001,worker_refresh_required,planned
+image_declaration,,services/control-plane/persona/Dockerfile,1,FROM python:3.11-slim,OSS-CORE-BASELINE-001,worker_refresh_required,planned
+image_declaration,,services/control-plane/router/Dockerfile,1,FROM python:3.11-slim,OSS-CORE-BASELINE-001,worker_refresh_required,planned
+image_declaration,,services/deployment/Dockerfile,1,FROM python:3.11-slim,OSS-CORE-BASELINE-001,worker_refresh_required,planned
+image_declaration,,services/evaluation/Dockerfile,1,FROM python:3.11-slim,OSS-CORE-BASELINE-001,worker_refresh_required,planned
+image_declaration,,services/evolution/Dockerfile,1,FROM python:3.11-slim,OSS-CORE-BASELINE-001,worker_refresh_required,planned
+image_declaration,,services/execution/lean_runtime/Dockerfile,1,FROM python:3.11-slim,OSS-EXECUTION-BASELINE-001,worker_refresh_required,planned
+image_declaration,,services/feedback/Dockerfile,1,FROM python:3.11-slim,OSS-CORE-BASELINE-001,worker_refresh_required,planned
+image_declaration,,services/governance/Dockerfile,1,FROM python:3.11-slim,OSS-CORE-BASELINE-001,worker_refresh_required,planned
+image_declaration,,services/incidents/Dockerfile,1,FROM python:3.11-slim,OSS-CORE-BASELINE-001,worker_refresh_required,planned
+image_declaration,,services/learning/dspy/Dockerfile,1,FROM python:3.11-slim,OSS-RESEARCH-BASELINE-001,worker_refresh_required,planned
+image_declaration,,services/learning/imitation/Dockerfile,1,FROM python:3.11-slim,OSS-RESEARCH-BASELINE-001,worker_refresh_required,planned
+image_declaration,,services/learning/trl/Dockerfile,9,FROM python:3.11-slim,OSS-RESEARCH-BASELINE-001,worker_refresh_required,planned
+image_declaration,,services/lineage-read/Dockerfile,1,FROM python:3.11-slim,OSS-CORE-BASELINE-001,worker_refresh_required,planned
+image_declaration,,services/memory/Dockerfile,1,FROM python:3.11-slim,OSS-CORE-BASELINE-001,worker_refresh_required,planned
+image_declaration,,services/openclaw-gateway-adapter/Dockerfile,10,FROM ghcr.io/openclaw/openclaw:2026.7.1 AS openclaw_cli,OSS-CORE-BASELINE-001,worker_refresh_required,planned
+image_declaration,,services/openclaw-gateway-adapter/Dockerfile,12,FROM python:3.11-slim,OSS-CORE-BASELINE-001,worker_refresh_required,planned
+image_declaration,,services/optimizer-svc/Dockerfile,1,FROM python:3.11-slim,OSS-CORE-BASELINE-001,worker_refresh_required,planned
+image_declaration,,services/paper_fleet_reconciler/Dockerfile,1,FROM python:3.11-slim,OSS-CORE-BASELINE-001,worker_refresh_required,planned
+image_declaration,,services/policy-learning/Dockerfile,1,FROM python:3.11-slim,OSS-RESEARCH-BASELINE-001,worker_refresh_required,planned
+image_declaration,,services/postmortems/Dockerfile,1,FROM python:3.11-slim,OSS-CORE-BASELINE-001,worker_refresh_required,planned
+image_declaration,,services/promotion/Dockerfile,1,FROM python:3.11-slim,OSS-CORE-BASELINE-001,worker_refresh_required,planned
+image_declaration,,services/reconciliation-drift/Dockerfile,1,FROM python:3.11-slim,OSS-CORE-BASELINE-001,worker_refresh_required,planned
+image_declaration,,services/registry/Dockerfile,1,FROM python:3.11-slim,OSS-CORE-BASELINE-001,worker_refresh_required,planned
+image_declaration,,services/registry/Dockerfile.test,1,FROM python:3.12-slim,OSS-CORE-BASELINE-001,worker_refresh_required,planned
+image_declaration,,services/registry/experiments/Dockerfile,5,FROM python:3.11-slim,OSS-RESEARCH-BASELINE-001,worker_refresh_required,planned
+image_declaration,,services/research-worker-gateway/Dockerfile,1,FROM python:3.11-slim,OSS-RESEARCH-BASELINE-001,worker_refresh_required,planned
+image_declaration,,services/research/Dockerfile,1,FROM python:3.11-slim,OSS-RESEARCH-BASELINE-001,worker_refresh_required,planned
+image_declaration,,services/research/dspy/Dockerfile,1,FROM python:3.11-slim,OSS-RESEARCH-BASELINE-001,worker_refresh_required,planned
+image_declaration,,services/research/finrl/Dockerfile,1,FROM python:3.11-slim,OSS-RESEARCH-BASELINE-001,worker_refresh_required,planned
+image_declaration,,services/research/imitation/Dockerfile,1,FROM python:3.11-slim,OSS-RESEARCH-BASELINE-001,worker_refresh_required,planned
+image_declaration,,services/research/mlflow/Dockerfile,1,FROM python:3.11-slim,OSS-RESEARCH-BASELINE-001,worker_refresh_required,planned
+image_declaration,,services/research/qlib/Dockerfile,5,FROM python:3.11-slim,OSS-RESEARCH-BASELINE-001,worker_refresh_required,planned
+image_declaration,,services/research/quantlib/Dockerfile,1,FROM python:3.11-slim,OSS-RESEARCH-BASELINE-001,worker_refresh_required,planned
+image_declaration,,services/research/rllib/Dockerfile,7,FROM python:3.11-slim,OSS-RESEARCH-BASELINE-001,worker_refresh_required,planned
+image_declaration,,services/research/statsmodels/Dockerfile,1,FROM python:3.11-slim,OSS-RESEARCH-BASELINE-001,worker_refresh_required,planned
+image_declaration,,services/research/vectorbt/Dockerfile,1,FROM python:3.11-slim,OSS-RESEARCH-BASELINE-001,worker_refresh_required,planned
+image_declaration,,services/runtime-manager/Dockerfile,1,FROM python:3.11-slim,OSS-CORE-BASELINE-001,worker_refresh_required,planned
+image_declaration,,services/search/Dockerfile,1,FROM python:3.11-slim,OSS-CORE-BASELINE-001,worker_refresh_required,planned
+image_declaration,,services/source_ingestion/Dockerfile,1,FROM python:3.11-slim,OSS-CORE-BASELINE-001,worker_refresh_required,planned
+image_declaration,,services/telemetry/Dockerfile,1,FROM python:3.11-slim,OSS-CORE-BASELINE-001,worker_refresh_required,planned
+image_declaration,,services/training-session/Dockerfile,1,FROM python:3.11-slim,OSS-RESEARCH-BASELINE-001,worker_refresh_required,planned
+inline_install,,Dockerfile.smoke,14,"RUN pip install --no-cache-dir fastapi uvicorn pydantic ""jsonschema>=4.0,<5.0"" httpx",OSS-CORE-BASELINE-001,worker_refresh_required,planned
+inline_install,,integrations/openclaw/gateway/Dockerfile,21,ARG ANTHROPIC_CLAUDE_CODE_NPM_VERSION=2.1.216,SIMPLIFY-OPENCLAW-001,worker_refresh_required,planned
+inline_install,,integrations/openclaw/gateway/Dockerfile,22,ARG GOOGLE_GEMINI_CLI_NPM_VERSION=0.51.0,SIMPLIFY-OPENCLAW-001,worker_refresh_required,planned
+inline_install,,requirements.txt,8,# test suite that are not yet included in the CI baseline pip installs.,OSS-CORE-BASELINE-001,worker_refresh_required,planned
+inline_install,,services/broker/Dockerfile,4,RUN pip install --no-cache-dir -r requirements.txt,OSS-EXECUTION-BASELINE-001,worker_refresh_required,planned
+inline_install,,services/capital/Dockerfile,9,RUN pip install --no-cache-dir -r /tmp/requirements.txt,OSS-CORE-BASELINE-001,worker_refresh_required,planned
+inline_install,,services/channels/web/Dockerfile,10,RUN pip install --no-cache-dir -r /tmp/requirements.txt,OSS-CORE-BASELINE-001,worker_refresh_required,planned
+inline_install,,services/consultation/Dockerfile,9,RUN pip install --no-cache-dir -r /tmp/requirements.txt,OSS-CORE-BASELINE-001,worker_refresh_required,planned
+inline_install,,services/control-plane/bff/Dockerfile,9,RUN pip install --no-cache-dir -r /tmp/requirements.txt,OSS-CORE-BASELINE-001,worker_refresh_required,planned
+inline_install,,services/control-plane/feedback/Dockerfile,10,RUN pip install --no-cache-dir -r /tmp/requirements.txt,OSS-CORE-BASELINE-001,worker_refresh_required,planned
+inline_install,,services/control-plane/persona/Dockerfile,10,RUN pip install --no-cache-dir -r /tmp/requirements.txt,OSS-CORE-BASELINE-001,worker_refresh_required,planned
+inline_install,,services/control-plane/router/Dockerfile,9,RUN pip install --no-cache-dir -r requirements.txt,OSS-CORE-BASELINE-001,worker_refresh_required,planned
+inline_install,,services/deployment/Dockerfile,9,RUN pip install --no-cache-dir -r /tmp/requirements.txt,OSS-CORE-BASELINE-001,worker_refresh_required,planned
+inline_install,,services/evaluation/Dockerfile,9,RUN pip install --no-cache-dir -r /tmp/requirements.txt,OSS-CORE-BASELINE-001,worker_refresh_required,planned
+inline_install,,services/evolution/Dockerfile,9,RUN pip install --no-cache-dir -r /tmp/requirements.txt,OSS-CORE-BASELINE-001,worker_refresh_required,planned
+inline_install,,services/execution/lean_runtime/Dockerfile,9,RUN pip install --no-cache-dir -r /tmp/requirements.txt,OSS-EXECUTION-BASELINE-001,worker_refresh_required,planned
+inline_install,,services/feedback/Dockerfile,9,RUN pip install --no-cache-dir -r /tmp/requirements.txt,OSS-CORE-BASELINE-001,worker_refresh_required,planned
+inline_install,,services/governance/Dockerfile,9,RUN pip install --no-cache-dir -r /tmp/requirements.txt,OSS-CORE-BASELINE-001,worker_refresh_required,planned
+inline_install,,services/incidents/Dockerfile,9,RUN pip install --no-cache-dir -r /tmp/requirements.txt,OSS-CORE-BASELINE-001,worker_refresh_required,planned
+inline_install,,services/learning/dspy/Dockerfile,8,"RUN if [ ""$PANTHEON_INSTALL_UPSTREAM_DEPS"" = ""true"" ]; then pip install --no-cache-dir -r requirements.txt; fi",OSS-RESEARCH-BASELINE-001,worker_refresh_required,planned
+inline_install,,services/learning/imitation/Dockerfile,8,"RUN if [ ""$PANTHEON_INSTALL_UPSTREAM_DEPS"" = ""true"" ]; then pip install --no-cache-dir -r requirements.txt; fi",OSS-RESEARCH-BASELINE-001,worker_refresh_required,planned
+inline_install,,services/lineage-read/Dockerfile,9,RUN pip install --no-cache-dir -r /tmp/requirements.txt,OSS-CORE-BASELINE-001,worker_refresh_required,planned
+inline_install,,services/memory/Dockerfile,9,RUN pip install --no-cache-dir -r /tmp/requirements.txt,OSS-CORE-BASELINE-001,worker_refresh_required,planned
+inline_install,,services/openclaw-gateway-adapter/Dockerfile,16,ARG OPENAI_CODEX_NPM_VERSION=0.136.0,OSS-CORE-BASELINE-001,worker_refresh_required,planned
+inline_install,,services/openclaw-gateway-adapter/Dockerfile,19,ARG ANTHROPIC_CLAUDE_CODE_NPM_VERSION=2.1.161,OSS-CORE-BASELINE-001,worker_refresh_required,planned
+inline_install,,services/openclaw-gateway-adapter/Dockerfile,41,RUN pip install --no-cache-dir -r /tmp/requirements.txt,OSS-CORE-BASELINE-001,worker_refresh_required,planned
+inline_install,,services/optimizer-svc/Dockerfile,10,RUN pip install --no-cache-dir -r /tmp/requirements.txt,OSS-CORE-BASELINE-001,worker_refresh_required,planned
+inline_install,,services/paper_fleet_reconciler/Dockerfile,10,RUN pip install --no-cache-dir -r /tmp/requirements.txt,OSS-CORE-BASELINE-001,worker_refresh_required,planned
+inline_install,,services/policy-learning/Dockerfile,10,RUN pip install --no-cache-dir -r /tmp/requirements.txt,OSS-RESEARCH-BASELINE-001,worker_refresh_required,planned
+inline_install,,services/postmortems/Dockerfile,9,RUN pip install --no-cache-dir -r /tmp/requirements.txt,OSS-CORE-BASELINE-001,worker_refresh_required,planned
+inline_install,,services/promotion/Dockerfile,9,RUN pip install --no-cache-dir -r /tmp/requirements.txt,OSS-CORE-BASELINE-001,worker_refresh_required,planned
+inline_install,,services/reconciliation-drift/Dockerfile,10,RUN pip install --no-cache-dir -r /tmp/requirements.txt,OSS-CORE-BASELINE-001,worker_refresh_required,planned
+inline_install,,services/registry/Dockerfile,9,RUN pip install --no-cache-dir -r /tmp/requirements.txt,OSS-CORE-BASELINE-001,worker_refresh_required,planned
+inline_install,,services/registry/Dockerfile.test,8,&& pip install --no-cache-dir \,OSS-CORE-BASELINE-001,worker_refresh_required,planned
+inline_install,,services/registry/experiments/Dockerfile,8,RUN pip install --no-cache-dir -r requirements.txt,OSS-RESEARCH-BASELINE-001,worker_refresh_required,planned
+inline_install,,services/research-worker-gateway/Dockerfile,9,"RUN pip install --no-cache-dir fastapi uvicorn pydantic ""psycopg[binary]""",OSS-RESEARCH-BASELINE-001,worker_refresh_required,planned
+inline_install,,services/research/Dockerfile,9,"RUN pip install --no-cache-dir fastapi uvicorn pydantic ""psycopg[binary]"" ""jsonschema>=4.0,<5.0""",OSS-RESEARCH-BASELINE-001,worker_refresh_required,planned
+inline_install,,services/research/dspy/Dockerfile,5,"RUN if [ ""$PANTHEON_INSTALL_UPSTREAM_DEPS"" = ""true"" ]; then pip install --no-cache-dir -r requirements.txt; fi",OSS-RESEARCH-BASELINE-001,worker_refresh_required,planned
+inline_install,,services/research/finrl/Dockerfile,5,"RUN if [ ""$PANTHEON_INSTALL_UPSTREAM_DEPS"" = ""true"" ]; then apt-get update && apt-get install -y build-essential && pip install --no-cache-dir -r requirements.txt && rm -rf /var/lib/apt/lists/*; fi",OSS-RESEARCH-BASELINE-001,worker_refresh_required,planned
+inline_install,,services/research/imitation/Dockerfile,5,"RUN if [ ""$PANTHEON_INSTALL_UPSTREAM_DEPS"" = ""true"" ]; then pip install --no-cache-dir -r requirements.txt; fi",OSS-RESEARCH-BASELINE-001,worker_refresh_required,planned
+inline_install,,services/research/mlflow/Dockerfile,4,RUN pip install --no-cache-dir -r requirements.txt,OSS-RESEARCH-BASELINE-001,worker_refresh_required,planned
+inline_install,,services/research/qlib/Dockerfile,9,"RUN if [ ""$PANTHEON_INSTALL_UPSTREAM_DEPS"" = ""true"" ]; then pip install --no-cache-dir -r requirements.txt; fi",OSS-RESEARCH-BASELINE-001,worker_refresh_required,planned
+inline_install,,services/research/quantlib/Dockerfile,6,RUN pip install --no-cache-dir -r requirements.txt,OSS-RESEARCH-BASELINE-001,worker_refresh_required,planned
+inline_install,,services/research/rllib/Dockerfile,11,"RUN if [ ""$PANTHEON_INSTALL_UPSTREAM_DEPS"" = ""true"" ]; then pip install --no-cache-dir -r requirements.txt; fi",OSS-RESEARCH-BASELINE-001,worker_refresh_required,planned
+inline_install,,services/research/statsmodels/Dockerfile,6,RUN pip install --no-cache-dir -r requirements.txt,OSS-RESEARCH-BASELINE-001,worker_refresh_required,planned
+inline_install,,services/research/vectorbt/Dockerfile,6,RUN pip install --no-cache-dir -r requirements.txt,OSS-RESEARCH-BASELINE-001,worker_refresh_required,planned
+inline_install,,services/runtime-manager/Dockerfile,9,RUN pip install --no-cache-dir -r /tmp/requirements.txt,OSS-CORE-BASELINE-001,worker_refresh_required,planned
+inline_install,,services/search/Dockerfile,9,RUN pip install --no-cache-dir -r /tmp/requirements.txt,OSS-CORE-BASELINE-001,worker_refresh_required,planned
+inline_install,,services/source_ingestion/Dockerfile,9,RUN pip install --no-cache-dir -r /tmp/requirements.txt,OSS-CORE-BASELINE-001,worker_refresh_required,planned
+inline_install,,services/telemetry/Dockerfile,9,RUN pip install --no-cache-dir -r /tmp/requirements.txt,OSS-CORE-BASELINE-001,worker_refresh_required,planned
+inline_install,,services/training-session/Dockerfile,11,RUN pip install --no-cache-dir \,OSS-RESEARCH-BASELINE-001,worker_refresh_required,planned
+npm_package,@ai-sdk/react,execute-plans:package.json,,^3.0.193,FE-DEP-CLOSURE-001,worker_refresh_required,planned
+npm_package,@axe-core/playwright,execute-plans:package.json,,^4.11.3,FE-TOOLCHAIN-BASELINE-001,worker_refresh_required,planned
+npm_package,@eslint/js,execute-plans:package.json,,^9.32.0,FE-TOOLCHAIN-BASELINE-001,worker_refresh_required,planned
+npm_package,@hookform/resolvers,execute-plans:package.json,,^3.10.0,FE-UI-DEPS-BASELINE-001,worker_refresh_required,planned
+npm_package,@playwright/test,execute-plans:package.json,,^1.60.0,FE-TOOLCHAIN-BASELINE-001,worker_refresh_required,planned
+npm_package,@radix-ui/react-accordion,execute-plans:package.json,,^1.2.11,FE-UI-DEPS-BASELINE-001,worker_refresh_required,planned
+npm_package,@radix-ui/react-alert-dialog,execute-plans:package.json,,^1.1.14,FE-UI-DEPS-BASELINE-001,worker_refresh_required,planned
+npm_package,@radix-ui/react-aspect-ratio,execute-plans:package.json,,^1.1.7,FE-UI-DEPS-BASELINE-001,worker_refresh_required,planned
+npm_package,@radix-ui/react-avatar,execute-plans:package.json,,^1.1.10,FE-UI-DEPS-BASELINE-001,worker_refresh_required,planned
+npm_package,@radix-ui/react-checkbox,execute-plans:package.json,,^1.3.2,FE-UI-DEPS-BASELINE-001,worker_refresh_required,planned
+npm_package,@radix-ui/react-collapsible,execute-plans:package.json,,^1.1.12,FE-UI-DEPS-BASELINE-001,worker_refresh_required,planned
+npm_package,@radix-ui/react-context-menu,execute-plans:package.json,,^2.2.15,FE-UI-DEPS-BASELINE-001,worker_refresh_required,planned
+npm_package,@radix-ui/react-dialog,execute-plans:package.json,,^1.1.15,FE-UI-DEPS-BASELINE-001,worker_refresh_required,planned
+npm_package,@radix-ui/react-dropdown-menu,execute-plans:package.json,,^2.1.16,FE-UI-DEPS-BASELINE-001,worker_refresh_required,planned
+npm_package,@radix-ui/react-hover-card,execute-plans:package.json,,^1.1.15,FE-UI-DEPS-BASELINE-001,worker_refresh_required,planned
+npm_package,@radix-ui/react-label,execute-plans:package.json,,^2.1.7,FE-UI-DEPS-BASELINE-001,worker_refresh_required,planned
+npm_package,@radix-ui/react-menubar,execute-plans:package.json,,^1.1.15,FE-UI-DEPS-BASELINE-001,worker_refresh_required,planned
+npm_package,@radix-ui/react-navigation-menu,execute-plans:package.json,,^1.2.13,FE-UI-DEPS-BASELINE-001,worker_refresh_required,planned
+npm_package,@radix-ui/react-popover,execute-plans:package.json,,^1.1.14,FE-UI-DEPS-BASELINE-001,worker_refresh_required,planned
+npm_package,@radix-ui/react-progress,execute-plans:package.json,,^1.1.7,FE-UI-DEPS-BASELINE-001,worker_refresh_required,planned
+npm_package,@radix-ui/react-radio-group,execute-plans:package.json,,^1.3.7,FE-UI-DEPS-BASELINE-001,worker_refresh_required,planned
+npm_package,@radix-ui/react-scroll-area,execute-plans:package.json,,^1.2.9,FE-UI-DEPS-BASELINE-001,worker_refresh_required,planned
+npm_package,@radix-ui/react-select,execute-plans:package.json,,^2.2.6,FE-UI-DEPS-BASELINE-001,worker_refresh_required,planned
+npm_package,@radix-ui/react-separator,execute-plans:package.json,,^1.1.8,FE-UI-DEPS-BASELINE-001,worker_refresh_required,planned
+npm_package,@radix-ui/react-slider,execute-plans:package.json,,^1.3.5,FE-UI-DEPS-BASELINE-001,worker_refresh_required,planned
+npm_package,@radix-ui/react-slot,execute-plans:package.json,,^1.2.4,FE-UI-DEPS-BASELINE-001,worker_refresh_required,planned
+npm_package,@radix-ui/react-switch,execute-plans:package.json,,^1.2.5,FE-UI-DEPS-BASELINE-001,worker_refresh_required,planned
+npm_package,@radix-ui/react-tabs,execute-plans:package.json,,^1.1.12,FE-UI-DEPS-BASELINE-001,worker_refresh_required,planned
+npm_package,@radix-ui/react-toast,execute-plans:package.json,,^1.2.14,FE-UI-DEPS-BASELINE-001,worker_refresh_required,planned
+npm_package,@radix-ui/react-toggle,execute-plans:package.json,,^1.1.9,FE-UI-DEPS-BASELINE-001,worker_refresh_required,planned
+npm_package,@radix-ui/react-toggle-group,execute-plans:package.json,,^1.1.10,FE-UI-DEPS-BASELINE-001,worker_refresh_required,planned
+npm_package,@radix-ui/react-tooltip,execute-plans:package.json,,^1.2.8,FE-UI-DEPS-BASELINE-001,worker_refresh_required,planned
+npm_package,@streamdown/cjk,execute-plans:package.json,,^1.0.3,FE-UI-DEPS-BASELINE-001,worker_refresh_required,planned
+npm_package,@streamdown/code,execute-plans:package.json,,^1.1.1,FE-UI-DEPS-BASELINE-001,worker_refresh_required,planned
+npm_package,@streamdown/math,execute-plans:package.json,,^1.0.2,FE-UI-DEPS-BASELINE-001,worker_refresh_required,planned
+npm_package,@streamdown/mermaid,execute-plans:package.json,,^1.0.2,FE-UI-DEPS-BASELINE-001,worker_refresh_required,planned
+npm_package,@tailwindcss/typography,execute-plans:package.json,,^0.5.16,FE-TOOLCHAIN-BASELINE-001,worker_refresh_required,planned
+npm_package,@tanstack/react-query,execute-plans:package.json,,^5.83.0,FE-UI-DEPS-BASELINE-001,worker_refresh_required,planned
+npm_package,@testing-library/jest-dom,execute-plans:package.json,,^6.6.0,FE-TOOLCHAIN-BASELINE-001,worker_refresh_required,planned
+npm_package,@testing-library/react,execute-plans:package.json,,^16.0.0,FE-TOOLCHAIN-BASELINE-001,worker_refresh_required,planned
+npm_package,@types/node,execute-plans:package.json,,^22.16.5,FE-TOOLCHAIN-BASELINE-001,worker_refresh_required,planned
+npm_package,@types/react,execute-plans:package.json,,^18.3.23,FE-UI-DEPS-BASELINE-001,worker_refresh_required,planned
+npm_package,@types/react-dom,execute-plans:package.json,,^18.3.7,FE-UI-DEPS-BASELINE-001,worker_refresh_required,planned
+npm_package,@types/react-grid-layout,execute-plans:package.json,,^1.3.5,FE-UI-DEPS-BASELINE-001,worker_refresh_required,planned
+npm_package,@vitejs/plugin-react-swc,execute-plans:package.json,,^3.11.0,FE-TOOLCHAIN-BASELINE-001,worker_refresh_required,planned
+npm_package,ai,execute-plans:package.json,,^6.0.191,FE-UI-DEPS-BASELINE-001,worker_refresh_required,planned
+npm_package,autoprefixer,execute-plans:package.json,,^10.4.21,FE-TOOLCHAIN-BASELINE-001,worker_refresh_required,planned
+npm_package,axe-core,execute-plans:package.json,,^4.11.4,FE-TOOLCHAIN-BASELINE-001,worker_refresh_required,planned
+npm_package,class-variance-authority,execute-plans:package.json,,^0.7.1,FE-UI-DEPS-BASELINE-001,worker_refresh_required,planned
+npm_package,clsx,execute-plans:package.json,,^2.1.1,FE-UI-DEPS-BASELINE-001,worker_refresh_required,planned
+npm_package,cmdk,execute-plans:package.json,,^1.1.1,FE-UI-DEPS-BASELINE-001,worker_refresh_required,planned
+npm_package,date-fns,execute-plans:package.json,,^3.6.0,FE-UI-DEPS-BASELINE-001,worker_refresh_required,planned
+npm_package,echarts,execute-plans:package.json,,^6.1.0,FE-UI-DEPS-BASELINE-001,worker_refresh_required,planned
+npm_package,echarts-for-react,execute-plans:package.json,,^3.0.2,FE-UI-DEPS-BASELINE-001,worker_refresh_required,planned
+npm_package,embla-carousel-react,execute-plans:package.json,,^8.6.0,FE-UI-DEPS-BASELINE-001,worker_refresh_required,planned
+npm_package,eslint,execute-plans:package.json,,^9.32.0,FE-TOOLCHAIN-BASELINE-001,worker_refresh_required,planned
+npm_package,eslint-plugin-react-hooks,execute-plans:package.json,,^5.2.0,FE-TOOLCHAIN-BASELINE-001,worker_refresh_required,planned
+npm_package,eslint-plugin-react-refresh,execute-plans:package.json,,^0.4.20,FE-TOOLCHAIN-BASELINE-001,worker_refresh_required,planned
+npm_package,firebase,execute-plans:package.json,,^12.16.0,FE-UI-DEPS-BASELINE-001,worker_refresh_required,planned
+npm_package,globals,execute-plans:package.json,,^15.15.0,FE-TOOLCHAIN-BASELINE-001,worker_refresh_required,planned
+npm_package,i18next,execute-plans:package.json,,^26.0.8,FE-UI-DEPS-BASELINE-001,worker_refresh_required,planned
+npm_package,input-otp,execute-plans:package.json,,^1.4.2,FE-UI-DEPS-BASELINE-001,worker_refresh_required,planned
+npm_package,jsdom,execute-plans:package.json,,^20.0.3,FE-TOOLCHAIN-BASELINE-001,worker_refresh_required,planned
+npm_package,lovable-tagger,execute-plans:package.json,,^1.1.13,FE-DEP-CLOSURE-001,worker_refresh_required,planned
+npm_package,lucide-react,execute-plans:package.json,,^1.16.0,FE-UI-DEPS-BASELINE-001,worker_refresh_required,planned
+npm_package,motion,execute-plans:package.json,,^12.40.0,FE-UI-DEPS-BASELINE-001,worker_refresh_required,planned
+npm_package,nanoid,execute-plans:package.json,,^5.1.11,FE-UI-DEPS-BASELINE-001,worker_refresh_required,planned
+npm_package,next-themes,execute-plans:package.json,,^0.3.0,FE-UI-DEPS-BASELINE-001,worker_refresh_required,planned
+npm_package,postcss,execute-plans:package.json,,^8.5.6,FE-TOOLCHAIN-BASELINE-001,worker_refresh_required,planned
+npm_package,react,execute-plans:package.json,,^18.3.1,FE-UI-DEPS-BASELINE-001,worker_refresh_required,planned
+npm_package,react-day-picker,execute-plans:package.json,,^8.10.1,FE-UI-DEPS-BASELINE-001,worker_refresh_required,planned
+npm_package,react-dom,execute-plans:package.json,,^18.3.1,FE-UI-DEPS-BASELINE-001,worker_refresh_required,planned
+npm_package,react-grid-layout,execute-plans:package.json,,^1.5.0,FE-UI-DEPS-BASELINE-001,worker_refresh_required,planned
+npm_package,react-hook-form,execute-plans:package.json,,^7.61.1,FE-UI-DEPS-BASELINE-001,worker_refresh_required,planned
+npm_package,react-i18next,execute-plans:package.json,,^17.0.6,FE-UI-DEPS-BASELINE-001,worker_refresh_required,planned
+npm_package,react-markdown,execute-plans:package.json,,^10.1.0,FE-DEP-CLOSURE-001,worker_refresh_required,planned
+npm_package,react-resizable-panels,execute-plans:package.json,,^2.1.9,FE-UI-DEPS-BASELINE-001,worker_refresh_required,planned
+npm_package,react-router-dom,execute-plans:package.json,,^6.30.1,FE-UI-DEPS-BASELINE-001,worker_refresh_required,planned
+npm_package,recharts,execute-plans:package.json,,^2.15.4,FE-UI-DEPS-BASELINE-001,worker_refresh_required,planned
+npm_package,shiki,execute-plans:package.json,,^4.1.0,FE-UI-DEPS-BASELINE-001,worker_refresh_required,planned
+npm_package,sonner,execute-plans:package.json,,^1.7.4,FE-UI-DEPS-BASELINE-001,worker_refresh_required,planned
+npm_package,streamdown,execute-plans:package.json,,^2.5.0,FE-UI-DEPS-BASELINE-001,worker_refresh_required,planned
+npm_package,tailwind-merge,execute-plans:package.json,,^2.6.0,FE-UI-DEPS-BASELINE-001,worker_refresh_required,planned
+npm_package,tailwindcss,execute-plans:package.json,,^3.4.17,FE-TOOLCHAIN-BASELINE-001,worker_refresh_required,planned
+npm_package,tailwindcss-animate,execute-plans:package.json,,^1.0.7,FE-TOOLCHAIN-BASELINE-001,worker_refresh_required,planned
+npm_package,tsx,execute-plans:package.json,,^4.21.0,FE-TOOLCHAIN-BASELINE-001,worker_refresh_required,planned
+npm_package,typescript,execute-plans:package.json,,^5.8.3,FE-TOOLCHAIN-BASELINE-001,worker_refresh_required,planned
+npm_package,typescript-eslint,execute-plans:package.json,,^8.38.0,FE-TOOLCHAIN-BASELINE-001,worker_refresh_required,planned
+npm_package,use-stick-to-bottom,execute-plans:package.json,,^1.1.4,FE-UI-DEPS-BASELINE-001,worker_refresh_required,planned
+npm_package,vaul,execute-plans:package.json,,^0.9.9,FE-UI-DEPS-BASELINE-001,worker_refresh_required,planned
+npm_package,vite,execute-plans:package.json,,^5.4.19,FE-TOOLCHAIN-BASELINE-001,worker_refresh_required,planned
+npm_package,vitest,execute-plans:package.json,,^3.2.4,FE-TOOLCHAIN-BASELINE-001,worker_refresh_required,planned
+npm_package,zod,execute-plans:package.json,,^3.25.76,FE-UI-DEPS-BASELINE-001,worker_refresh_required,planned
+npm_package,zustand,execute-plans:package.json,,^5.0.12,FE-UI-DEPS-BASELINE-001,worker_refresh_required,planned
+pypi_package_summary,accelerate,,,,OSS-RESEARCH-BASELINE-001,rollup_of_all_declaration_rows,planned
+pypi_package_summary,asyncpg,,,,OSS-CORE-BASELINE-001;OSS-EXECUTION-BASELINE-001,rollup_of_all_declaration_rows,planned
+pypi_package_summary,cryptography,,,,OSS-TOOLING-BASELINE-001,rollup_of_all_declaration_rows,planned
+pypi_package_summary,datasets,,,,OSS-RESEARCH-BASELINE-001,rollup_of_all_declaration_rows,planned
+pypi_package_summary,discord.py,,,,OSS-CORE-BASELINE-001,rollup_of_all_declaration_rows,planned
+pypi_package_summary,dspy-ai,,,,OSS-RESEARCH-BASELINE-001,rollup_of_all_declaration_rows,planned
+pypi_package_summary,fastapi,,,,OSS-CORE-BASELINE-001;OSS-EXECUTION-BASELINE-001;OSS-RESEARCH-BASELINE-001,rollup_of_all_declaration_rows,planned
+pypi_package_summary,finrl,,,,OSS-RESEARCH-BASELINE-001,rollup_of_all_declaration_rows,planned
+pypi_package_summary,flask,,,,OSS-CORE-BASELINE-001,rollup_of_all_declaration_rows,planned
+pypi_package_summary,google-cloud-storage,,,,OSS-CORE-BASELINE-001,rollup_of_all_declaration_rows,planned
+pypi_package_summary,gymnasium,,,,OSS-RESEARCH-BASELINE-001,rollup_of_all_declaration_rows,planned
+pypi_package_summary,httpx,,,,OSS-CORE-BASELINE-001,rollup_of_all_declaration_rows,planned
+pypi_package_summary,imitation,,,,OSS-RESEARCH-BASELINE-001,rollup_of_all_declaration_rows,planned
+pypi_package_summary,jsonschema,,,,OSS-CORE-BASELINE-001;OSS-EXECUTION-BASELINE-001;OSS-RESEARCH-BASELINE-001,rollup_of_all_declaration_rows,planned
+pypi_package_summary,lightgbm,,,,OSS-RESEARCH-BASELINE-001,rollup_of_all_declaration_rows,planned
+pypi_package_summary,matplotlib,,,,OSS-RESEARCH-BASELINE-001,rollup_of_all_declaration_rows,planned
+pypi_package_summary,mlflow,,,,OSS-RESEARCH-BASELINE-001,rollup_of_all_declaration_rows,planned
+pypi_package_summary,nats-py,,,,OSS-CORE-BASELINE-001,rollup_of_all_declaration_rows,planned
+pypi_package_summary,numpy,,,,OSS-RESEARCH-BASELINE-001,rollup_of_all_declaration_rows,planned
+pypi_package_summary,packaging,,,,OSS-TOOLING-BASELINE-001,rollup_of_all_declaration_rows,planned
+pypi_package_summary,pandas,,,,OSS-RESEARCH-BASELINE-001,rollup_of_all_declaration_rows,planned
+pypi_package_summary,passlib,,,,OSS-CORE-BASELINE-001,rollup_of_all_declaration_rows,planned
+pypi_package_summary,peft,,,,OSS-RESEARCH-BASELINE-001,rollup_of_all_declaration_rows,planned
+pypi_package_summary,plotly,,,,OSS-RESEARCH-BASELINE-001,rollup_of_all_declaration_rows,planned
+pypi_package_summary,psycopg,,,,OSS-CORE-BASELINE-001;OSS-RESEARCH-BASELINE-001,rollup_of_all_declaration_rows,planned
+pypi_package_summary,pydantic,,,,OSS-CORE-BASELINE-001;OSS-EXECUTION-BASELINE-001;OSS-RESEARCH-BASELINE-001;OSS-TOOLING-BASELINE-001,rollup_of_all_declaration_rows,planned
+pypi_package_summary,pyqlib,,,,OSS-RESEARCH-BASELINE-001,rollup_of_all_declaration_rows,planned
+pypi_package_summary,pytest,,,,OSS-CORE-BASELINE-001;OSS-RESEARCH-BASELINE-001,rollup_of_all_declaration_rows,planned
+pypi_package_summary,python-jose,,,,OSS-CORE-BASELINE-001,rollup_of_all_declaration_rows,planned
+pypi_package_summary,python-multipart,,,,OSS-CORE-BASELINE-001,rollup_of_all_declaration_rows,planned
+pypi_package_summary,python-telegram-bot,,,,OSS-CORE-BASELINE-001,rollup_of_all_declaration_rows,planned
+pypi_package_summary,QuantLib-Python,,,,OSS-RESEARCH-BASELINE-001,rollup_of_all_declaration_rows,planned
+pypi_package_summary,ray,,,,OSS-RESEARCH-BASELINE-001,rollup_of_all_declaration_rows,planned
+pypi_package_summary,redis,,,,OSS-CORE-BASELINE-001;OSS-EXECUTION-BASELINE-001;OSS-RESEARCH-BASELINE-001,rollup_of_all_declaration_rows,planned
+pypi_package_summary,sentencepiece,,,,OSS-RESEARCH-BASELINE-001,rollup_of_all_declaration_rows,planned
+pypi_package_summary,shioaji,,,,OSS-EXECUTION-BASELINE-001,rollup_of_all_declaration_rows,planned
+pypi_package_summary,stable-baselines3,,,,OSS-RESEARCH-BASELINE-001,rollup_of_all_declaration_rows,planned
+pypi_package_summary,statsmodels,,,,OSS-RESEARCH-BASELINE-001,rollup_of_all_declaration_rows,planned
+pypi_package_summary,torch,,,,OSS-RESEARCH-BASELINE-001,rollup_of_all_declaration_rows,planned
+pypi_package_summary,transformers,,,,OSS-RESEARCH-BASELINE-001,rollup_of_all_declaration_rows,planned
+pypi_package_summary,trl,,,,OSS-RESEARCH-BASELINE-001,rollup_of_all_declaration_rows,planned
+pypi_package_summary,uvicorn,,,,OSS-CORE-BASELINE-001;OSS-EXECUTION-BASELINE-001;OSS-RESEARCH-BASELINE-001,rollup_of_all_declaration_rows,planned
+pypi_package_summary,vectorbt,,,,OSS-RESEARCH-BASELINE-001,rollup_of_all_declaration_rows,planned
+pypi_package_summary,wandb,,,,OSS-RESEARCH-BASELINE-001,rollup_of_all_declaration_rows,planned
