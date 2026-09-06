@@ -380,15 +380,21 @@ class RegistryStore:
             self._put_unlocked(entry)
             committed = entry.to_dict()
             finalized = {
-                "committed_entry": committed,
+                "command_key": command_key,
+                "registry_id": entry.registry_id,
+                "receipt_key": scoped_key,
                 "request_digest": request_digest,
+                "committed_entry": committed,
+                "committed_at": committed.get("created_at") or committed.get("updated_at") or utc_now_iso(),
             }
             self._command_receipts[scoped_key] = finalized
             by_reg_id_key = PostgresRegistryStore.receipt_key(
                 command_key, entry.registry_id, actor=actor, command_type="create",
             )
             if by_reg_id_key != scoped_key:
-                self._command_receipts[by_reg_id_key] = finalized
+                by_reg_finalized = dict(finalized)
+                by_reg_finalized["receipt_key"] = by_reg_id_key
+                self._command_receipts[by_reg_id_key] = by_reg_finalized
             return RegistryEntry.from_dict(committed), False
 
     def register_strategy_spec_revision(
@@ -506,7 +512,7 @@ class RegistryStore:
         resubmitted with a genuinely different claimed base is detected as
         divergent rather than silently replayed.
         """
-        from .pg_store import PostgresRegistryStore
+        from .pg_store import DivergentCommandReplayError, PostgresRegistryStore, _request_digest
 
         scoped_key = (
             PostgresRegistryStore.receipt_key(
@@ -516,6 +522,15 @@ class RegistryStore:
             else None
         )
         target_value = target_state.value if hasattr(target_state, "value") else target_state
+        request_digest = _request_digest({
+            "registry_id": registry_id,
+            "target_state": target_value,
+            "approver": approver,
+            "approval_decision_id": approval_decision_id,
+            "expected_artifact_state": expected_artifact_state,
+            "expected_version": expected_version,
+            "expected_updated_at": expected_updated_at,
+        })
         with self._lock:
             if scoped_key:
                 receipt = self._command_receipts.get(scoped_key)
@@ -534,8 +549,6 @@ class RegistryStore:
                         or receipt.get("expected_version") != expected_version
                         or receipt.get("expected_updated_at") != expected_updated_at
                     ):
-                        from .pg_store import DivergentCommandReplayError
-
                         raise DivergentCommandReplayError(command_key)
                     return RegistryEntry.from_dict(receipt["committed_entry"]), True
 
@@ -559,6 +572,10 @@ class RegistryStore:
             committed = entry.to_dict()
             if scoped_key:
                 self._command_receipts[scoped_key] = {
+                    "command_key": command_key,
+                    "receipt_key": scoped_key,
+                    "registry_id": registry_id,
+                    "request_digest": request_digest,
                     "target_state": target_value,
                     "approver": approver,
                     "approval_decision_id": approval_decision_id,
@@ -566,6 +583,7 @@ class RegistryStore:
                     "expected_version": expected_version,
                     "expected_updated_at": expected_updated_at,
                     "committed_entry": committed,
+                    "committed_at": committed.get("updated_at") or utc_now_iso(),
                 }
             return RegistryEntry.from_dict(committed), False
 
@@ -594,7 +612,7 @@ class RegistryStore:
         client-chosen ``command_key`` cannot collide across tenants/actors/
         aggregates.
         """
-        from .pg_store import PostgresRegistryStore
+        from .pg_store import DivergentCommandReplayError, PostgresRegistryStore, _request_digest
 
         scoped_key = (
             PostgresRegistryStore.receipt_key(
@@ -603,6 +621,11 @@ class RegistryStore:
             if command_key
             else None
         )
+        request_digest = _request_digest({
+            "registry_id": registry_id,
+            "expected_metadata": base_snapshot.get("metadata"),
+            "metadata": new_metadata,
+        })
         with self._lock:
             if scoped_key:
                 receipt = self._command_receipts.get(scoped_key)
@@ -614,11 +637,12 @@ class RegistryStore:
                     # when the target metadata happens to match (reviewer
                     # finding 6; mirrors PostgresRegistryStore).
                     if (
-                        receipt["new_metadata"] != new_metadata
-                        or receipt.get("expected_metadata") != base_snapshot.get("metadata")
+                        receipt.get("request_digest") != request_digest
+                        and (
+                            receipt.get("new_metadata") != new_metadata
+                            or receipt.get("expected_metadata") != base_snapshot.get("metadata")
+                        )
                     ):
-                        from .pg_store import DivergentCommandReplayError
-
                         raise DivergentCommandReplayError(command_key)
                     # Return the entry snapshot as it was at the moment this
                     # command_key originally committed — not a fresh read of
@@ -639,9 +663,14 @@ class RegistryStore:
             committed = entry.to_dict()
             if scoped_key:
                 self._command_receipts[scoped_key] = {
+                    "command_key": command_key,
+                    "receipt_key": scoped_key,
+                    "registry_id": registry_id,
+                    "request_digest": request_digest,
                     "new_metadata": new_metadata,
                     "expected_metadata": base_snapshot.get("metadata"),
                     "committed_entry": committed,
+                    "committed_at": committed.get("updated_at") or utc_now_iso(),
                 }
             return RegistryEntry.from_dict(committed), False
 

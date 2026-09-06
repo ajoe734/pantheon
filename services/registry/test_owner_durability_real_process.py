@@ -36,8 +36,10 @@ import hashlib
 import json
 import os
 import socket
+import struct
 import subprocess
 import sys
+import threading
 import time
 import urllib.error
 import urllib.request
@@ -160,14 +162,108 @@ def _http(
             return exc.code, {"detail": body}
 
 
-def _stop(proc: subprocess.Popen) -> None:
+def _stop(proc: subprocess.Popen, *, sigkill: bool = False) -> None:
     if proc.poll() is None:
-        proc.terminate()
+        if sigkill:
+            proc.kill()
+        else:
+            proc.terminate()
         try:
             proc.wait(timeout=10)
         except subprocess.TimeoutExpired:
             proc.kill()
             proc.wait(timeout=10)
+
+
+def _sigkill(proc: subprocess.Popen) -> None:
+    """Ungraceful OS-level kill (SIGKILL) without running any process shutdown hooks."""
+    if proc.poll() is None:
+        proc.kill()
+        try:
+            proc.wait(timeout=10)
+        except subprocess.TimeoutExpired:
+            pass
+
+
+class DroppedSocketProxy:
+    """A lightweight TCP proxy that can simulate hard response loss.
+    When drop_next is True, it forwards the client's request to upstream,
+    waits for the upstream server to write response bytes (proving the commit
+    succeeded in the database), and immediately resets/aborts the client socket
+    before forwarding any response bytes.
+    """
+    def __init__(self, target_port: int):
+        self.target_port = target_port
+        self.server_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        self.server_sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        self.server_sock.bind(("127.0.0.1", 0))
+        self.server_sock.listen(10)
+        self.port = self.server_sock.getsockname()[1]
+        self.drop_next = False
+        self._running = True
+        self._thread = threading.Thread(target=self._run, daemon=True)
+        self._thread.start()
+
+    def _run(self) -> None:
+        while self._running:
+            try:
+                self.server_sock.settimeout(0.5)
+                client_sock, _ = self.server_sock.accept()
+            except (socket.timeout, OSError):
+                continue
+
+            try:
+                upstream_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                upstream_sock.connect(("127.0.0.1", self.target_port))
+
+                client_sock.settimeout(5.0)
+                req_data = b""
+                while True:
+                    chunk = client_sock.recv(4096)
+                    if not chunk:
+                        break
+                    req_data += chunk
+                    if b"\r\n\r\n" in req_data:
+                        header_part, rest = req_data.split(b"\r\n\r\n", 1)
+                        content_length = 0
+                        for line in header_part.split(b"\r\n"):
+                            if line.lower().startswith(b"content-length:"):
+                                content_length = int(line.split(b":")[1].strip())
+                        if len(rest) >= content_length:
+                            break
+
+                upstream_sock.sendall(req_data)
+
+                if self.drop_next:
+                    # Wait for upstream response bytes to prove server commit
+                    upstream_sock.settimeout(5.0)
+                    _ = upstream_sock.recv(4096)
+                    # Reset client connection immediately (hard close via RST)
+                    client_sock.setsockopt(socket.SOL_SOCKET, socket.SO_LINGER, struct.pack('ii', 1, 0))
+                    client_sock.close()
+                    upstream_sock.close()
+                else:
+                    upstream_sock.settimeout(5.0)
+                    while True:
+                        resp_chunk = upstream_sock.recv(4096)
+                        if not resp_chunk:
+                            break
+                        client_sock.sendall(resp_chunk)
+                    client_sock.close()
+                    upstream_sock.close()
+            except Exception:
+                try:
+                    client_sock.close()
+                except Exception:
+                    pass
+
+    def close(self) -> None:
+        self._running = False
+        try:
+            self.server_sock.close()
+        except Exception:
+            pass
+        self._thread.join(timeout=2)
 
 
 @pytest.fixture
@@ -213,7 +309,7 @@ def test_entry_survives_a_real_process_kill_and_restart(pg_schema):
         assert status == 200, body
         registry_id = body["entry"]["registry_id"]
     finally:
-        _stop(proc_a)
+        _sigkill(proc_a)
 
     port_b = _free_port()
     proc_b = _spawn_registry_process(port=port_b, dsn=dsn, schema=schema)
@@ -530,7 +626,7 @@ def test_response_loss_crash_window_and_replay_recovery_across_lifecycle(pg_sche
         reg_id = create_resp["entry"]["registry_id"]
     finally:
         # Crash/kill process A immediately after commit (simulating response loss)
-        _stop(proc_a)
+        _sigkill(proc_a)
 
     # Start brand new Process B
     port_b = _free_port()
@@ -595,7 +691,7 @@ def test_response_loss_crash_window_and_replay_recovery_across_lifecycle(pg_sche
         assert status == 200, meta_resp
     finally:
         # Crash/kill process B immediately after metadata commit
-        _stop(proc_b)
+        _sigkill(proc_b)
 
     # Start brand new Process C
     port_c = _free_port()
@@ -664,7 +760,7 @@ def test_response_loss_crash_window_and_replay_recovery_across_lifecycle(pg_sche
         assert adv_resp["entry"]["artifact_state"] == "candidate"
     finally:
         # Crash/kill process C immediately after state advance commit
-        _stop(proc_c)
+        _sigkill(proc_c)
 
     # Start brand new Process D
     port_d = _free_port()
@@ -721,3 +817,149 @@ def test_response_loss_crash_window_and_replay_recovery_across_lifecycle(pg_sche
         assert live_get["entry"]["artifact_state"] == "retired"
     finally:
         _stop(proc_d)
+
+
+def test_tcp_proxy_response_loss_and_recovery_across_lifecycle(pg_schema):
+    """P2 Reviewer finding 3: Real response-loss testing using a TCP proxy with
+    dropped sockets for create, metadata, and advance lifecycle operations:
+    1. CREATE: Request sent through TCP proxy with drop_next=True. Proxy forwards
+       request to server, server commits entry and receipt to Postgres, then proxy
+       resets client connection before response arrives. Client experiences
+       transport error. Client re-queries receipt (or replays under same key),
+       recovering the exact committed snapshot.
+    2. METADATA: Request sent through proxy with drop_next=True. Server commits
+       metadata CAS. Proxy drops connection. Client recovers via receipt readback.
+    3. ADVANCE: Request sent through proxy with drop_next=True. Server commits
+       state advance CAS. Proxy drops connection. Client recovers via receipt readback.
+    """
+    dsn, schema = pg_schema
+    port = _free_port()
+    proc = _spawn_registry_process(port=port, dsn=dsn, schema=schema)
+    proxy = DroppedSocketProxy(target_port=port)
+    token = _strict_jwt()
+    try:
+        _wait_for_health(port)
+
+        # 1. CREATE THROUGH DROPPED PROXY
+        from services.registry.test_service import _valid_spec
+        spec_payload = _valid_spec("strat-proxy-loss")
+        create_body = {
+            "artifact_type": "strategy_spec",
+            "strategy_id": "strat-proxy-loss",
+            "version": "1.0.0",
+            "artifact_state": "draft",
+            "lineage": {"source_run_ids": ["run-proxy-1"]},
+            "checksum": _spec_checksum(spec_payload),
+            "metadata": {"strategy_spec": spec_payload},
+        }
+
+        proxy.drop_next = True
+        create_failed = False
+        try:
+            _http(
+                "POST",
+                proxy.port,
+                "/api/registry/entries",
+                token=token,
+                headers={"Idempotency-Key": "proxy-create-001"},
+                payload=create_body,
+            )
+        except Exception:
+            create_failed = True
+        assert create_failed is True, "Expected TCP proxy to drop socket on create"
+
+        # Recover CREATE via same-key replay through server (or proxy in normal mode)
+        proxy.drop_next = False
+        status, replay_create = _http(
+            "POST",
+            port,
+            "/api/registry/entries",
+            token=token,
+            headers={"Idempotency-Key": "proxy-create-001"},
+            payload=create_body,
+        )
+        assert status == 200, replay_create
+        reg_id = replay_create["entry"]["registry_id"]
+        assert replay_create["entry"]["strategy_id"] == "strat-proxy-loss"
+
+        # Also independently verify durable receipt reload
+        status, rcpt_create = _http(
+            "GET",
+            port,
+            f"/api/registry/entries/{reg_id}/receipts/proxy-create-001?command_type=create",
+            token=token,
+        )
+        assert status == 200, rcpt_create
+        assert rcpt_create["receipt"]["command_key"] == "proxy-create-001"
+
+        # 2. METADATA UPDATE THROUGH DROPPED PROXY
+        proxy.drop_next = True
+        meta_failed = False
+        meta_body = {
+            "expected_metadata": {"strategy_spec": spec_payload},
+            "metadata": {"strategy_spec": spec_payload, "note": "committed-before-proxy-drop"},
+            "command_key": "proxy-meta-002",
+        }
+        try:
+            _http(
+                "PATCH",
+                proxy.port,
+                f"/api/registry/entries/{reg_id}/metadata",
+                token=token,
+                payload=meta_body,
+            )
+        except Exception:
+            meta_failed = True
+        assert meta_failed is True, "Expected TCP proxy to drop socket on metadata update"
+
+        # Recover via receipt readback
+        proxy.drop_next = False
+        status, rcpt_meta = _http(
+            "GET",
+            port,
+            f"/api/registry/entries/{reg_id}/receipts/proxy-meta-002?command_type=metadata",
+            token=token,
+        )
+        assert status == 200, rcpt_meta
+        assert rcpt_meta["receipt"]["committed_entry"]["metadata"]["note"] == "committed-before-proxy-drop"
+
+        # 3. ADVANCE STATE THROUGH DROPPED PROXY
+        proxy.drop_next = True
+        adv_failed = False
+        adv_body = {
+            "target_state": "candidate",
+            "expected_artifact_state": "draft",
+            "command_key": "proxy-adv-003",
+        }
+        try:
+            _http(
+                "POST",
+                proxy.port,
+                f"/api/registry/entries/{reg_id}/advance",
+                token=token,
+                payload=adv_body,
+            )
+        except Exception:
+            adv_failed = True
+        assert adv_failed is True, "Expected TCP proxy to drop socket on advance"
+
+        # Recover via receipt readback
+        proxy.drop_next = False
+        status, rcpt_adv = _http(
+            "GET",
+            port,
+            f"/api/registry/entries/{reg_id}/receipts/proxy-adv-003?command_type=advance",
+            token=token,
+        )
+        assert status == 200, rcpt_adv
+        assert rcpt_adv["receipt"]["committed_entry"]["artifact_state"] == "candidate"
+
+        # Verify entry readback
+        status, final_get = _http("GET", port, f"/api/registry/entries/{reg_id}", token=token)
+        assert status == 200, final_get
+        assert final_get["entry"]["artifact_state"] == "candidate"
+        assert final_get["entry"]["metadata"]["note"] == "committed-before-proxy-drop"
+
+    finally:
+        proxy.close()
+        _sigkill(proc)

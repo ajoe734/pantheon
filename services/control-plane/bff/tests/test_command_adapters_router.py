@@ -459,7 +459,25 @@ def test_typed_domain_command_dispatch_and_receipt(monkeypatch) -> None:
             precheck_entry = dict(committed_entry, metadata={"note": "old"}, updated_at="2026-09-05T00:00:00Z")
             precheck_entry.pop("last_actor", None)
             return 200, {}, {"entry": precheck_entry}
-        return 200, {}, {"entry": committed_entry}
+        from services.registry.pg_store import PostgresRegistryStore, _request_digest
+        receipt_key = PostgresRegistryStore.receipt_key(
+            "cmd-dispatch-1", "reg-dispatch-1", actor={"actor_id": "test", "tenant": "unscoped"}, command_type="metadata",
+        )
+        request_digest = _request_digest({
+            "registry_id": "reg-dispatch-1",
+            "expected_metadata": {"note": "old"},
+            "metadata": {"note": "new"},
+        })
+        return 200, {}, {
+            "receipt": {
+                "command_key": "cmd-dispatch-1",
+                "registry_id": "reg-dispatch-1",
+                "receipt_key": receipt_key,
+                "request_digest": request_digest,
+                "committed_at": "2026-09-06T00:00:00Z",
+                "committed_entry": committed_entry,
+            }
+        }
 
     monkeypatch.setattr(strategy_adapter_module, "http_request_json_with_headers", _fake_http)
     monkeypatch.setenv("PANTHEON_REGISTRY_API_URL", "http://registry-svc.internal")

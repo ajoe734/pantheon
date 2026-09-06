@@ -688,14 +688,19 @@ class PostgresRegistryStore:
 
             finalized = dict(reservation)
             finalized["committed_entry"] = committed_entry
+            actual_reg_id = committed_entry.get("registry_id")
+            if actual_reg_id:
+                finalized["registry_id"] = actual_reg_id
+            finalized["committed_at"] = committed_entry.get("created_at") or committed_entry.get("updated_at") or utc_now_iso()
             filled, _ = self._receipts.compare_and_set(scoped_key, reservation, finalized, conn=conn)
             if not filled:
                 raise RegistryConcurrentUpdateError("register_entry")
-            actual_reg_id = committed_entry.get("registry_id")
             if actual_reg_id:
                 by_reg_id_key = self.receipt_key(command_key, actual_reg_id, actor=actor, command_type="create")
                 if by_reg_id_key != scoped_key:
-                    self._receipts.insert_if_absent(by_reg_id_key, finalized, conn=conn)
+                    by_reg_finalized = dict(finalized)
+                    by_reg_finalized["receipt_key"] = by_reg_id_key
+                    self._receipts.insert_if_absent(by_reg_id_key, by_reg_finalized, conn=conn)
         return RegistryEntry.from_dict(committed_entry), False
 
     def register_strategy_spec_revision(

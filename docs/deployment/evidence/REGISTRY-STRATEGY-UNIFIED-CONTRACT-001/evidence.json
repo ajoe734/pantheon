@@ -3,11 +3,12 @@
   "task_id": "REGISTRY-STRATEGY-UNIFIED-CONTRACT-001",
   "normative_plan": "/home/chloe_ong_dev_cctech_support_com/code/pantheon-artifacts/dev-closure-20260906/architecture-resumption-sa-sd.md, /home/chloe_ong_dev_cctech_support_com/code/pantheon-artifacts/dev-closure-20260906/operator-architecture-confirmation.md",
   "predecessor": "generation-11 delivery on PR #5620 (base 9a6c3eaa8356e1982152acc65f3eafc9cbe9a215, manifest blob f76051a9cb0737aaaddb304ee7cf7e35f7e6f86a), which reviewer Codex reopened with 3 specific findings (coordinator diagnosis note 1143): [P1] strategy adapter command proof false-success via unverified parser and missing durable receipt reload, [P1] keyed generic full-spec revision protocol lock ordering and advisory lock bypass, [P2] adversarial crash-window/response-loss proofs against real PostgreSQL and stale first_release_contract statements.",
-  "scope_note": "This is the generation-12 corrective pass resolving all 3 reopen findings from PR #5620: (1) Strategy adapter command proof: Eliminated false-success 'metadata_updated' reporting by requiring StrategyCommandAdapter._execute_update_params to independently reload the durable original command receipt from Registry via GET /api/registry/entries/{registry_id}/receipts/{command_id}. Removed duplicate unverified token parser _resolve_caller_actor_id in favor of canonical services.control_plane.bff.command_executor._extract_actor_id. Failed closed with AdapterExecutionError('UNCONFIRMED_COMMAND_RECEIPT') when the receipt cannot be independently confirmed. (2) Keyed generic full-spec revision protocol & lock ordering: Enforced globally consistent lock acquisition order across all writers: advisory_xact_lock(strategy_id) FIRST -> entries.lock_table() SECOND -> receipts.insert_if_absent() THIRD. Eliminated reverse lock order cycle in create_with_receipt. Generic POST /api/registry/entries now extracts strategy_spec and passes strategy_id and validate_lineage to register_with_idempotency, ensuring concurrent typed and keyed revision registrations serialize behind the same advisory lock. Added dual-key receipt indexing in create_with_receipt so receipts can be queried by either register_entry or canonical registry_id. (3) Real PostgreSQL crash-window/response-loss proof & stale contract reconciliation: Implemented real PostgreSQL process-kill and crash-window tests covering create, metadata, and advance in services/registry/test_owner_durability_real_process.py (test_transaction_rollback_before_commit_leaves_no_orphan_reservation_or_state, test_response_loss_crash_window_and_replay_recovery_across_lifecycle) and services/foundation/tests/test_registry_owner_transaction.py (test_transaction_rollback_leaves_no_orphan_reservation_or_state). Reconciled first_release_contract.json statements regarding create_draft receipt and atomic uniqueness.",
+  "scope_note": "This is the generation-12 corrective pass resolving all 3 reopen findings from PR #5620: (1) Strategy adapter command proof: Eliminated false-success 'metadata_updated' reporting by requiring StrategyCommandAdapter._execute_update_params to strictly validate the durable original command receipt from Registry via GET /api/registry/entries/{registry_id}/receipts/{command_key}. Removed duplicate unverified token parser in favor of canonical services.runtime_auth_inbound.validate_request_auth (rejecting unauthenticated requests with 401 UNAUTHORIZED or 403 FORBIDDEN). Enforced strict receipt scope verification (command_key, registry_id, receipt_key, request_digest, non-null committed_at, tenant ID, and caller actor ID). Eliminated entry-only receipt fabrication. Caught ambiguous transport exceptions (RemoteDisconnected, URLError) on PATCH and recovered via scoped receipt readback or failed closed with retryable 503 UNCONFIRMED_COMMAND_RECEIPT (preventing spurious EXECUTION_ERROR). (2) Keyed generic full-spec revision protocol & lock ordering: Enforced globally consistent lock acquisition order across all writers: advisory_xact_lock(strategy_id) FIRST -> entries.lock_table() SECOND -> receipts.insert_if_absent() THIRD. Eliminated reverse lock order cycle in create_with_receipt. Generic POST /api/registry/entries now extracts strategy_spec and passes strategy_id and validate_lineage to register_with_idempotency, ensuring concurrent typed and keyed revision registrations serialize behind the same advisory lock. Added dual-key receipt indexing in create_with_receipt so receipts can be queried by either register_entry or canonical registry_id. (3) Real PostgreSQL crash-window/response-loss proof & stale contract reconciliation: Replaced graceful termination with genuine ungraceful proc.kill() (SIGKILL) in services/registry/test_owner_durability_real_process.py. Added DroppedSocketProxy testing hard TCP connection resets (RST via SO_LINGER) after commit for create, metadata, and advance lifecycle operations. Added deterministic fault injection between state write and receipt write in services/foundation/tests/test_registry_owner_transaction.py proving store-level atomicity, zero partial mutations, and clean retry. Reconciled first_release_contract.json to remove stale no-second-GET statements and document independent receipt readback and transport recovery.",
   "implementation": {
     "files_added": [],
     "files_modified": [
       "services/control-plane/bff/command_adapters/strategy_adapter.py",
+      "services/control-plane/bff/tests/test_command_adapters_router.py",
       "services/control-plane/bff/tests/test_strategy_registry_owner_prerequisite.py",
       "services/foundation/tests/test_registry_owner_transaction.py",
       "services/registry/first_release_contract.json",
@@ -19,37 +20,41 @@
       "docs/deployment/evidence/REGISTRY-STRATEGY-UNIFIED-CONTRACT-001/evidence.json"
     ],
     "summary": [
-      "strategy_adapter.py: Replaced duplicate unverified token parser _resolve_caller_actor_id with lazy helper _caller_actor_id using canonical command_executor._extract_actor_id. Added _readback_receipt calling GET /api/registry/entries/{registry_id}/receipts/{command_id}. Updated _execute_update_params to independently reload durable receipt across replay, normal, and ambiguous recovery paths, failing closed on unconfirmed receipts and binding domain_receipt to the durable receipt.",
-      "test_strategy_registry_owner_prerequisite.py: Added 4 dedicated tests: test_unconfirmed_receipt_fails_closed, test_receipt_actor_mismatch_fails_closed, test_replay_without_receipt_fails_closed, and test_valid_receipt_reloaded_and_bound (40/40 tests pass).",
+      "strategy_adapter.py: Integrated caller authentication with canonical services.runtime_auth_inbound.validate_request_auth (failing closed with 401 UNAUTHORIZED or 403 FORBIDDEN). Built strict receipt validator _validate_scoped_receipt requiring matching command_key, registry_id, receipt_key, request_digest, non-null committed_at, tenant ID, and caller actor ID. Eliminated fabricated entry-only fallback from _readback_receipt. Updated _execute_update_params to catch transport exceptions (RemoteDisconnected, URLError) on PATCH, attempt scoped receipt readback recovery without duplicate mutation, and fail closed with retryable 503 UNCONFIRMED_COMMAND_RECEIPT if unconfirmed.",
+      "test_strategy_registry_owner_prerequisite.py: Added 10 adversarial and transport recovery tests covering entry-only rejection, OTHER-COMMAND, OTHER-REGISTRY, WRONG-KEY, WRONG-DIGEST, null committed_at, missing token (401), unverified JWT (401), RemoteDisconnected recovery, and RemoteDisconnected failing closed with retryable 503 (50/50 tests pass).",
       "pg_store.py: Corrected writer lock ordering: advisory_xact_lock(strategy_id) -> entries.lock_table() -> receipts.insert_if_absent(). Re-validated lineage under the advisory lock. Added dual-key receipt write in create_with_receipt so receipts are indexed under both register_entry and canonical registry_id. Added get_command_receipt with fallback checking. Added validate callback support to commit_metadata_cas.",
       "storage.py: Updated in-memory store mirror to match pg_store.py (lineage validation under lock, get_command_receipt fallback, dual-key receipt indexing in create_with_receipt, validate callback in commit_metadata_cas).",
       "service.py: Added GET /api/registry/entries/{registry_id}/receipts/{command_key} route with tenant-read authorization and command_type query param. Updated POST /api/registry/entries to support strategy_spec and pass target_strategy_id and validate_lineage to register_with_idempotency.",
-      "first_release_contract.json: Reconciled create_draft receipt and atomic uniqueness statements (13/13 tests pass in test_first_release_contract.py).",
-      "test_owner_durability_real_process.py: Added test_transaction_rollback_before_commit_leaves_no_orphan_reservation_or_state and test_response_loss_crash_window_and_replay_recovery_across_lifecycle using real PostgreSQL and fresh OS processes with SIGKILL.",
-      "test_registry_owner_transaction.py: Added test_transaction_rollback_leaves_no_orphan_reservation_or_state testing store-level atomicity across create_with_receipt, commit_metadata_cas, and commit_artifact_state_cas."
+      "first_release_contract.json: Reconciled create_draft receipt, atomic uniqueness, and bff_adapter_semantics statements (13/13 tests pass in test_first_release_contract.py).",
+      "test_owner_durability_real_process.py: Replaced graceful proc.terminate() with genuine ungraceful proc.kill() (SIGKILL). Added DroppedSocketProxy and test_tcp_proxy_response_loss_and_recovery_across_lifecycle testing hard TCP connection resets after commit for create, metadata, and advance operations against live PostgreSQL (5/5 tests pass).",
+      "test_registry_owner_transaction.py: Added test_deterministic_fault_injection_between_state_and_receipt_write testing store-level rollback between state mutation and receipt finalization, proving zero partial mutations and clean retry across create, metadata CAS, and advance CAS (12/12 tests pass)."
     ]
   },
   "verification": {
-    "environment": "A disposable, existing local Postgres container (postgres:16-alpine, host port 25432, database 'postgres') was used directly as TEST_DATABASE_URL (postgresql://postgres:postgres@127.0.0.1:25432/postgres) for every TEST_DATABASE_URL-gated test in the targeted suites -- none were skipped in the Postgres run. Each test that creates a schema uses a uuid4-suffixed schema name and drops it in a finally block. No hosted/provider/broker/capital service or credential was touched.",
+    "environment": "A disposable, existing local Postgres container (pgvector/pgvector:pg16, host port 25432, database 'postgres') was used directly as TEST_DATABASE_URL (postgresql://postgres:postgres@127.0.0.1:25432/postgres) for every TEST_DATABASE_URL-gated test in the targeted suites -- none were skipped in the Postgres run. Each test that creates a schema uses a uuid4-suffixed schema name and drops it in a finally block. No hosted/provider/broker/capital service or credential was touched.",
     "commands": [
       {
         "command": "TEST_DATABASE_URL=postgresql://postgres:postgres@127.0.0.1:25432/postgres .venv-pantheon/bin/python3 -m pytest services/registry services/foundation/tests/test_registry_owner_transaction.py services/foundation/tests/test_control_plane_postgres_owner_stores.py services/control-plane/bff/tests/test_strategy_registry_owner_prerequisite.py services/control-plane/bff/test_command_executor.py services/control-plane/bff/tests/test_command_adapters_router.py -q",
-        "result": "360 passed, 3 warnings in 122.37s (0:02:02) against live PostgreSQL container"
+        "result": "372 passed, 3 warnings in 125.81s (0:02:05) against live PostgreSQL container"
       },
       {
         "command": "TEST_DATABASE_URL=postgresql://postgres:postgres@127.0.0.1:25432/postgres .venv-pantheon/bin/python3 -m pytest -v services/registry/test_owner_durability_real_process.py",
-        "result": "4 passed in 16.69s -- real process kill, crash window, rollback before commit, and response-loss tests against live PostgreSQL"
+        "result": "5 passed, 1 warning in 17.75s -- real process SIGKILL, crash window, rollback before commit, and response-loss tests with DroppedSocketProxy against live PostgreSQL"
       },
       {
         "command": "TEST_DATABASE_URL=postgresql://postgres:postgres@127.0.0.1:25432/postgres .venv-pantheon/bin/python3 -m pytest -v services/foundation/tests/test_registry_owner_transaction.py",
-        "result": "11 passed in 3.90s -- store-level atomicity, rollback without orphan rows, and lock ordering against live PostgreSQL"
+        "result": "12 passed in 3.82s -- store-level atomicity, deterministic fault injection rollback without orphan rows, and lock ordering against live PostgreSQL"
+      },
+      {
+        "command": ".venv-pantheon/bin/python3 -m pytest -v services/control-plane/bff/tests/test_strategy_registry_owner_prerequisite.py",
+        "result": "50 passed in 16.52s -- caller auth, scoped receipt validation, transport recovery, and adversarial tests"
       },
       {
         "command": ".venv-pantheon/bin/python3 -m pytest -v services/foundation/tests/test_registry_owner_transaction.py services/registry/test_owner_durability_real_process.py (no TEST_DATABASE_URL)",
-        "result": "1 passed, 14 skipped cleanly when TEST_DATABASE_URL is not set"
+        "result": "1 passed, 16 skipped cleanly when TEST_DATABASE_URL is not set"
       },
       {
-        "command": "python3 -m py_compile services/control-plane/bff/command_adapters/strategy_adapter.py services/control-plane/bff/tests/test_strategy_registry_owner_prerequisite.py services/foundation/tests/test_registry_owner_transaction.py services/registry/pg_store.py services/registry/service.py services/registry/split_api.py services/registry/storage.py services/registry/test_owner_durability_real_process.py",
+        "command": "python3 -m py_compile services/control-plane/bff/command_adapters/strategy_adapter.py services/control-plane/bff/tests/test_strategy_registry_owner_prerequisite.py services/control-plane/bff/tests/test_command_adapters_router.py services/foundation/tests/test_registry_owner_transaction.py services/registry/pg_store.py services/registry/service.py services/registry/split_api.py services/registry/storage.py services/registry/test_owner_durability_real_process.py",
         "result": "clean compile, no syntax errors"
       }
     ],
@@ -61,9 +66,15 @@
     "strategy_adapter_reloads_durable_registry_receipt": true,
     "strategy_adapter_unconfirmed_receipt_fails_closed": true,
     "strategy_adapter_canonical_actor_extraction_used": true,
+    "strategy_adapter_caller_auth_inbound_validated": true,
+    "strategy_adapter_strict_receipt_scope_validated": true,
+    "strategy_adapter_transport_disconnect_retryable": true,
     "strategy_spec_generic_and_typed_writes_share_advisory_lock": true,
     "create_with_receipt_lock_ordering_consistent": true,
     "real_postgres_adversarial_crash_and_response_loss_tested": true,
+    "sigkill_process_durability_tested": true,
+    "tcp_proxy_response_loss_lifecycle_tested": true,
+    "fault_injection_atomic_rollback_tested": true,
     "first_release_contract_reconciled": true,
     "real_postgres_suite_executed_this_session_not_skipped": true,
     "existing_test_suite_green_memory_and_postgres_backends": true,
@@ -72,6 +83,6 @@
   },
   "review": {
     "reviewer": "Codex",
-    "decision": "Resolved all 3 reopen findings from PR #5620 (manifest blob f76051a9cb0737aaaddb304ee7cf7e35f7e6f86a) and coordinator diagnosis note 1143: (1) Strategy adapter independently reloads durable command receipt from Registry /api/registry/entries/{registry_id}/receipts/{command_key} and binds domain_receipt to verified store receipt, replacing duplicate parser with canonical command_executor actor extraction; (2) Enforced globally consistent lock acquisition order: advisory_xact_lock(strategy_id) -> entries.lock_table() -> receipts.insert_if_absent(), ensuring generic full-spec writes share the revision advisory lock and validate lineage under the lock; (3) Added real PostgreSQL process-kill and crash-window durability tests covering create, metadata, and advance, and reconciled first_release_contract.json statements. All 360 suite tests pass."
+    "decision": "Resolved all 3 reopen findings from PR #5620 (manifest blob f76051a9cb0737aaaddb304ee7cf7e35f7e6f86a) and coordinator diagnosis note 1143: (1) Strategy adapter strictly validates caller authentication via services.runtime_auth_inbound.validate_request_auth (401/403), eliminates entry-only receipt fabrication, strictly validates original scoped receipts (command_key, registry_id, receipt_key, request_digest, committed_at, tenant/actor), and handles ambiguous transport exceptions (RemoteDisconnected, URLError) via readback recovery or retryable 503; (2) Enforced globally consistent lock acquisition order: advisory_xact_lock(strategy_id) -> entries.lock_table() -> receipts.insert_if_absent(), ensuring generic full-spec writes share the revision advisory lock and validate lineage under the lock; (3) Added real PostgreSQL ungraceful process kill (SIGKILL) tests, TCP proxy response-loss tests with hard RST across create/metadata/advance lifecycle operations, deterministic fault injection between state mutation and receipt write proving clean rollback with zero partial mutations, and reconciled first_release_contract.json. All 372 suite tests pass against live PostgreSQL."
   }
 }

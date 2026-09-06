@@ -8,6 +8,8 @@ from __future__ import annotations
 
 import hashlib
 import logging
+import os
+import urllib.error
 from typing import Any, Dict, Optional
 from urllib.parse import quote
 
@@ -27,11 +29,262 @@ from services.registry.command_contract import ActionOwner, resolve_action
 log = logging.getLogger(__name__)
 
 
-def _caller_actor_id(auth_token: Optional[str]) -> str:
-    """Extract actor identity using canonical command_executor._extract_actor_id."""
-    from services.control_plane.bff.command_executor import _extract_actor_id
+def _adapter_auth_env() -> dict[str, str]:
+    return {
+        "PANTHEON_RUNTIME_AUTH_MODE": (
+            os.getenv("PANTHEON_BFF_AUTH_MODE")
+            or os.getenv("PANTHEON_REGISTRY_AUTH_MODE")
+            or os.getenv("PANTHEON_RUNTIME_AUTH_MODE")
+            or "permissive"
+        ),
+        "PANTHEON_RUNTIME_JWT_SECRET": (
+            os.getenv("PANTHEON_BFF_JWT_SECRET")
+            or os.getenv("PANTHEON_REGISTRY_JWT_SECRET")
+            or os.getenv("PANTHEON_RUNTIME_JWT_SECRET", "")
+        ),
+        "PANTHEON_RUNTIME_JWT_ISSUER": (
+            os.getenv("PANTHEON_BFF_JWT_ISSUER")
+            or os.getenv("PANTHEON_REGISTRY_JWT_ISSUER")
+            or os.getenv("PANTHEON_RUNTIME_JWT_ISSUER", "")
+        ),
+        "PANTHEON_RUNTIME_JWT_AUDIENCE": (
+            os.getenv("PANTHEON_BFF_JWT_AUDIENCE")
+            or os.getenv("PANTHEON_REGISTRY_JWT_AUDIENCE")
+            or os.getenv("PANTHEON_RUNTIME_JWT_AUDIENCE", "")
+        ),
+        "PANTHEON_RUNTIME_DEFAULT_ROLE": os.getenv("PANTHEON_RUNTIME_DEFAULT_ROLE", "operator"),
+        "PANTHEON_RUNTIME_MFA_REQUIRED": os.getenv("PANTHEON_RUNTIME_MFA_REQUIRED", "false"),
+    }
 
-    return _extract_actor_id(auth_token)
+
+def _authenticate_caller(
+    auth_token: Optional[str],
+    *,
+    action_id: str = "update_params",
+    entity_type: str = "Strategy",
+) -> tuple[str, str]:
+    """Verify caller identity via services.runtime_auth_inbound.validate_request_auth.
+
+    Rejects absent, unverified, expired, or malformed tokens.
+    Returns (actor_id, tenant).
+    """
+    if not auth_token or not str(auth_token).strip():
+        raise ActionUnavailableError(
+            "Authentication required for strategy update_params: missing auth token.",
+            action_id=action_id,
+            entity_type=entity_type,
+            error_code="UNAUTHORIZED",
+            downstream_status=401,
+        )
+    raw = str(auth_token).strip()
+    auth_header = raw if raw.startswith("Bearer ") else f"Bearer {raw}"
+    token_body = auth_header[7:].strip()
+    env = _adapter_auth_env()
+
+    # In permissive mode, support structured tokens (e.g. "actor_id:role").
+    # If no colon is present in a non-JWT token in permissive mode, supply default role.
+    if (
+        not token_body.startswith("ey")
+        and ":" not in token_body
+        and env.get("PANTHEON_RUNTIME_AUTH_MODE") == "permissive"
+    ):
+        auth_header = f"Bearer {token_body}:operator"
+
+    try:
+        from services.runtime_auth_inbound import AuthError, validate_request_auth
+    except ImportError:
+        from runtime_auth_inbound import AuthError, validate_request_auth  # type: ignore[no-redef]
+
+    try:
+        ctx = validate_request_auth(authorization=auth_header, env=env)
+    except AuthError as exc:
+        raise ActionUnavailableError(
+            f"Caller authentication failed: {exc.message}",
+            action_id=action_id,
+            entity_type=entity_type,
+            error_code="UNAUTHORIZED" if exc.status_code == 401 else "FORBIDDEN",
+            downstream_status=exc.status_code,
+        ) from exc
+
+    actor_id = ctx.actor_id
+    tenant = "unscoped"
+    for name in ("tenant", "tenant_id"):
+        val = ctx.claims.get(name)
+        if val and str(val).strip():
+            tenant = str(val).strip()
+            break
+
+    return actor_id, tenant
+
+
+def _validate_scoped_receipt(
+    receipt: Optional[Dict[str, Any]],
+    *,
+    command_id: str,
+    registry_id: str,
+    strategy_id: str,
+    expected_metadata: Optional[Dict[str, Any]],
+    new_metadata: Optional[Dict[str, Any]],
+    caller_actor_id: str,
+    caller_tenant: Optional[str],
+    original_entry: Dict[str, Any],
+    expected_receipt_key: str,
+    expected_request_digest: str,
+    action_id: str,
+    expected_entry: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    if not isinstance(receipt, dict):
+        raise ActionUnavailableError(
+            f"Registry command receipt for registry_id={registry_id!r}, command_key={command_id!r} is missing or malformed.",
+            action_id=action_id,
+            entity_type="Strategy",
+            error_code="UNCONFIRMED_COMMAND_RECEIPT",
+        )
+    if receipt.get("command_key") != command_id:
+        raise ActionUnavailableError(
+            f"Registry command receipt reports command_key={receipt.get('command_key')!r}, "
+            f"expected {command_id!r}.",
+            action_id=action_id,
+            entity_type="Strategy",
+            error_code="UNCONFIRMED_COMMAND_RECEIPT",
+        )
+    if receipt.get("registry_id") != registry_id:
+        raise ActionUnavailableError(
+            f"Registry command receipt reports registry_id={receipt.get('registry_id')!r}, "
+            f"expected {registry_id!r}.",
+            action_id=action_id,
+            entity_type="Strategy",
+            error_code="STRATEGY_ID_MISMATCH",
+        )
+    if receipt.get("receipt_key") != expected_receipt_key:
+        raise ActionUnavailableError(
+            f"Registry command receipt reports receipt_key={receipt.get('receipt_key')!r}, "
+            f"expected scoped key {expected_receipt_key!r}.",
+            action_id=action_id,
+            entity_type="Strategy",
+            error_code="UNCONFIRMED_COMMAND_RECEIPT",
+        )
+    if receipt.get("request_digest") != expected_request_digest:
+        raise ActionUnavailableError(
+            f"Registry command receipt reports request_digest={receipt.get('request_digest')!r}, "
+            f"expected request digest {expected_request_digest!r}.",
+            action_id=action_id,
+            entity_type="Strategy",
+            error_code="UNCONFIRMED_COMMAND_RECEIPT",
+        )
+    if not receipt.get("committed_at"):
+        raise ActionUnavailableError(
+            "Registry command receipt carries null or missing committed_at timestamp.",
+            action_id=action_id,
+            entity_type="Strategy",
+            error_code="REPLAY_MISSING_COMMIT_TIME",
+        )
+
+    committed_entry = receipt.get("committed_entry")
+    if not isinstance(committed_entry, dict) or not committed_entry.get("registry_id"):
+        raise ActionUnavailableError(
+            f"Registry command receipt for registry_id={registry_id!r} carries no committed entry payload.",
+            action_id=action_id,
+            entity_type="Strategy",
+            error_code="UNCONFIRMED_COMMAND_RECEIPT",
+        )
+
+    if committed_entry.get("strategy_id") != strategy_id:
+        raise ActionUnavailableError(
+            f"Registry command receipt committed entry belongs to "
+            f"strategy_id={committed_entry.get('strategy_id')!r}, not the requested "
+            f"strategy_id={strategy_id!r}.",
+            action_id=action_id,
+            entity_type="Strategy",
+            error_code="READBACK_MISMATCH",
+        )
+
+    # Check divergence from original immutable identity
+    if (
+        committed_entry.get("registry_id") != original_entry.get("registry_id")
+        or committed_entry.get("checksum") != original_entry.get("checksum")
+        or committed_entry.get("version") != original_entry.get("version")
+        or committed_entry.get("owner_tenant") != original_entry.get("owner_tenant")
+    ):
+        raise ActionUnavailableError(
+            f"Registry command receipt committed entry for registry_id={registry_id!r} diverges "
+            "from the original immutable receipt captured before this command was issued "
+            "(registry_id/checksum/version/owner_tenant).",
+            action_id=action_id,
+            entity_type="Strategy",
+            error_code="READBACK_MISMATCH",
+        )
+
+    if committed_entry.get("metadata") != new_metadata:
+        raise ActionUnavailableError(
+            f"Registry command receipt committed entry for registry_id={registry_id!r} reports "
+            "metadata different from what this exact command requested.",
+            action_id=action_id,
+            entity_type="Strategy",
+            error_code="REPLAY_METADATA_MISMATCH",
+        )
+
+    if not committed_entry.get("updated_at"):
+        raise ActionUnavailableError(
+            f"Registry command receipt committed entry for registry_id={registry_id!r} carries no "
+            "commit timestamp.",
+            action_id=action_id,
+            entity_type="Strategy",
+            error_code="REPLAY_MISSING_COMMIT_TIME",
+        )
+
+    last_actor = (
+        committed_entry.get("last_actor")
+        if isinstance(committed_entry.get("last_actor"), dict)
+        else {}
+    )
+    receipt_actor_id = last_actor.get("actor_id")
+    if not receipt_actor_id:
+        raise ActionUnavailableError(
+            f"Registry command receipt committed entry for registry_id={registry_id!r} carries no "
+            "recorded actor.",
+            action_id=action_id,
+            entity_type="Strategy",
+            error_code="REPLAY_MISSING_ACTOR",
+        )
+
+    if receipt_actor_id != caller_actor_id:
+        raise ActionUnavailableError(
+            f"Registry command receipt committed entry reports actor {receipt_actor_id!r}, "
+            f"not the verified caller identity {caller_actor_id!r}.",
+            action_id=action_id,
+            entity_type="Strategy",
+            error_code="REPLAY_ACTOR_MISMATCH",
+        )
+
+    if caller_tenant and caller_tenant != "unscoped":
+        entry_tenant = committed_entry.get("owner_tenant")
+        if entry_tenant and entry_tenant != caller_tenant:
+            raise ActionUnavailableError(
+                f"Registry command receipt committed entry reports tenant {entry_tenant!r}, "
+                f"not the verified caller tenant {caller_tenant!r}.",
+                action_id=action_id,
+                entity_type="Strategy",
+                error_code="READBACK_MISMATCH",
+            )
+
+    if expected_entry is not None:
+        if (
+            committed_entry.get("checksum") != expected_entry.get("checksum")
+            or committed_entry.get("updated_at") != expected_entry.get("updated_at")
+            or committed_entry.get("metadata") != expected_entry.get("metadata")
+            or (committed_entry.get("last_actor") or {}).get("actor_id")
+            != (expected_entry.get("last_actor") or {}).get("actor_id")
+        ):
+            raise ActionUnavailableError(
+                f"Registry metadata PATCH response for registry_id={registry_id!r} does not "
+                "match a follow-up owner receipt readback.",
+                action_id=action_id,
+                entity_type="Strategy",
+                error_code="READBACK_MISMATCH",
+            )
+
+    return committed_entry
 
 
 def _receipt_correlation_id(
@@ -278,329 +531,351 @@ class StrategyCommandAdapter(DomainCommandAdapter):
                 or candidate.get("owner_tenant") != original_identity["owner_tenant"]
             )
 
-        status_code, headers, body = http_request_json_with_headers(
-            registry_url(f"/api/registry/entries/{registry_id}/metadata"),
-            method="PATCH",
-            payload={
-                "expected_metadata": expected_metadata,
-                "metadata": new_metadata,
-                "command_key": command_id,
-            },
-            auth_token=auth_token,
-            mfa_token=mfa_token,
+        caller_actor_id, caller_tenant = _authenticate_caller(
+            auth_token, action_id=action_id, entity_type="Strategy"
         )
 
-        entry = body.get("entry") if isinstance(body, dict) else None
-        idempotent_replay = str(header_value(headers, "X-Idempotent-Replay") or "").strip().lower() == "true"
+        from services.registry.pg_store import PostgresRegistryStore, _request_digest
+
+        expected_receipt_key = PostgresRegistryStore.receipt_key(
+            command_id,
+            registry_id,
+            actor={"actor_id": caller_actor_id, "tenant": caller_tenant},
+            command_type="metadata",
+        )
+        expected_request_digest = _request_digest({
+            "registry_id": registry_id,
+            "expected_metadata": expected_metadata,
+            "metadata": new_metadata,
+        })
+
+        patch_exc = None
+        status_code = None
+        headers = {}
+        body = None
+        try:
+            status_code, headers, body = http_request_json_with_headers(
+                registry_url(f"/api/registry/entries/{registry_id}/metadata"),
+                method="PATCH",
+                payload={
+                    "expected_metadata": expected_metadata,
+                    "metadata": new_metadata,
+                    "command_key": command_id,
+                },
+                auth_token=auth_token,
+                mfa_token=mfa_token,
+            )
+        except urllib.error.HTTPError as exc:
+            if exc.code == 409:
+                raise ActionUnavailableError(
+                    f"Registry metadata PATCH for registry_id={registry_id!r} rejected with 409 conflict: precondition mismatch.",
+                    action_id=action_id,
+                    entity_type="Strategy",
+                    error_code="REGISTRY_CONFLICT",
+                    downstream_status=409,
+                ) from exc
+            if exc.code < 500:
+                raise
+            patch_exc = exc
+        except Exception as exc:
+            patch_exc = exc
 
         response_lost = False
+        idempotent_replay = False
 
-        caller_actor_id = _caller_actor_id(auth_token)
-
-        if idempotent_replay:
-            # Reviewer finding 7 / 9a6c review P1: a replay's PATCH response is
-            # the historically-committed entry snapshot. We verify its claims
-            # against caller request and immutable baseline, then independently
-            # reload the durable scoped command receipt from Registry to confirm it.
-            if not isinstance(entry, dict) or not entry.get("registry_id"):
-                raise ActionUnavailableError(
-                    f"Registry metadata PATCH replay for registry_id={registry_id!r} returned an "
-                    "ambiguous response with no entry payload.",
-                    action_id=action_id,
-                    entity_type="Strategy",
-                    error_code="AMBIGUOUS_REGISTRY_RESPONSE",
-                )
-            if not _belongs_to_requested_strategy(entry):
-                raise ActionUnavailableError(
-                    f"Registry metadata PATCH replay for registry_id={registry_id!r} belongs to "
-                    f"strategy_id={entry.get('strategy_id')!r}, not the requested "
-                    f"strategy_id={strategy_id!r}.",
-                    action_id=action_id,
-                    entity_type="Strategy",
-                    error_code="STRATEGY_ID_MISMATCH",
-                )
-            if _diverges_from_original(entry):
-                raise ActionUnavailableError(
-                    f"Registry metadata PATCH replay for registry_id={registry_id!r} diverges "
-                    "from the original immutable receipt captured before this command was "
-                    "issued (registry_id/checksum/version/owner_tenant); refusing to trust a "
-                    "replay against a different identity/content than the one this command "
-                    "originally targeted.",
-                    action_id=action_id,
-                    entity_type="Strategy",
-                    error_code="READBACK_MISMATCH",
-                )
-            if entry.get("metadata") != new_metadata:
-                raise ActionUnavailableError(
-                    f"Registry metadata PATCH replay for registry_id={registry_id!r} reports "
-                    "metadata different from what this exact command originally requested; "
-                    "refusing to trust it as this command's original receipt.",
-                    action_id=action_id,
-                    entity_type="Strategy",
-                    error_code="REPLAY_METADATA_MISMATCH",
-                )
-            if not entry.get("updated_at"):
-                raise ActionUnavailableError(
-                    f"Registry metadata PATCH replay for registry_id={registry_id!r} carries no "
-                    "commit timestamp; a genuinely committed original receipt always has one.",
-                    action_id=action_id,
-                    entity_type="Strategy",
-                    error_code="REPLAY_MISSING_COMMIT_TIME",
-                )
-            if not isinstance(entry.get("last_actor"), dict) or not entry["last_actor"].get("actor_id"):
-                raise ActionUnavailableError(
-                    f"Registry metadata PATCH replay for registry_id={registry_id!r} carries no "
-                    "recorded actor; a genuinely committed original receipt always has one.",
-                    action_id=action_id,
-                    entity_type="Strategy",
-                    error_code="REPLAY_MISSING_ACTOR",
-                )
-            if caller_actor_id != "operator-command" and entry["last_actor"].get("actor_id") != caller_actor_id:
-                raise ActionUnavailableError(
-                    f"Registry metadata PATCH replay for registry_id={registry_id!r} reports actor "
-                    f"{entry['last_actor'].get('actor_id')!r}, not the verified caller identity "
-                    f"{caller_actor_id!r} derived from this command's own auth token; a genuine "
-                    "replay of this caller's own prior command always carries this caller's own "
-                    "actor identity.",
-                    action_id=action_id,
-                    entity_type="Strategy",
-                    error_code="REPLAY_ACTOR_MISMATCH",
-                )
-
-            # Reviewer finding (9a6c review, P1): independently reload the original
-            # durable command receipt from the Registry owner store.
-            receipt, status_code = self._readback_receipt(
-                registry_id, command_id, auth_token=auth_token, mfa_token=mfa_token, command_type="metadata",
+        if patch_exc is not None:
+            log.warning(
+                "Registry metadata PATCH for %s/%s encountered transport error (%s); "
+                "recovering via scoped receipt readback.",
+                registry_id, command_id, patch_exc,
+            )
+            receipt, receipt_status = self._readback_receipt(
+                registry_id,
+                command_id,
+                auth_token=auth_token,
+                mfa_token=mfa_token,
+                command_type="metadata",
             )
             if receipt is None:
-                if status_code is None or (status_code and status_code >= 500):
+                raise ActionUnavailableError(
+                    f"Registry metadata PATCH for registry_id={registry_id!r}, command_key={command_id!r} "
+                    f"encountered ambiguous transport exception ({patch_exc}), and follow-up receipt readback was unconfirmed.",
+                    action_id=action_id,
+                    entity_type="Strategy",
+                    error_code="UNCONFIRMED_COMMAND_RECEIPT",
+                    retryable=True,
+                    downstream_status=503,
+                ) from patch_exc
+
+            entry = _validate_scoped_receipt(
+                receipt,
+                command_id=command_id,
+                registry_id=registry_id,
+                strategy_id=strategy_id,
+                expected_metadata=expected_metadata,
+                new_metadata=new_metadata,
+                caller_actor_id=caller_actor_id,
+                caller_tenant=caller_tenant,
+                original_entry=original_entry,
+                expected_receipt_key=expected_receipt_key,
+                expected_request_digest=expected_request_digest,
+                action_id=action_id,
+            )
+            response_lost = True
+        else:
+            entry = body.get("entry") if isinstance(body, dict) else None
+            idempotent_replay = str(header_value(headers, "X-Idempotent-Replay") or "").strip().lower() == "true"
+
+            if idempotent_replay:
+                if not isinstance(entry, dict) or not entry.get("registry_id"):
+                    raise ActionUnavailableError(
+                        f"Registry metadata PATCH replay for registry_id={registry_id!r} returned an "
+                        "ambiguous response with no entry payload.",
+                        action_id=action_id,
+                        entity_type="Strategy",
+                        error_code="AMBIGUOUS_REGISTRY_RESPONSE",
+                    )
+                if not _belongs_to_requested_strategy(entry):
+                    raise ActionUnavailableError(
+                        f"Registry metadata PATCH replay for registry_id={registry_id!r} belongs to "
+                        f"strategy_id={entry.get('strategy_id')!r}, not the requested "
+                        f"strategy_id={strategy_id!r}.",
+                        action_id=action_id,
+                        entity_type="Strategy",
+                        error_code="STRATEGY_ID_MISMATCH",
+                    )
+                if _diverges_from_original(entry):
+                    raise ActionUnavailableError(
+                        f"Registry metadata PATCH replay for registry_id={registry_id!r} diverges "
+                        "from the original immutable receipt captured before this command was "
+                        "issued (registry_id/checksum/version/owner_tenant); refusing to trust a "
+                        "replay against a different identity/content than the one this command "
+                        "originally targeted.",
+                        action_id=action_id,
+                        entity_type="Strategy",
+                        error_code="READBACK_MISMATCH",
+                    )
+                if entry.get("metadata") != new_metadata:
+                    raise ActionUnavailableError(
+                        f"Registry metadata PATCH replay for registry_id={registry_id!r} reports "
+                        "metadata different from what this exact command originally requested; "
+                        "refusing to trust it as this command's original receipt.",
+                        action_id=action_id,
+                        entity_type="Strategy",
+                        error_code="REPLAY_METADATA_MISMATCH",
+                    )
+                if not entry.get("updated_at"):
+                    raise ActionUnavailableError(
+                        f"Registry metadata PATCH replay for registry_id={registry_id!r} carries no "
+                        "commit timestamp; a genuinely committed original receipt always has one.",
+                        action_id=action_id,
+                        entity_type="Strategy",
+                        error_code="REPLAY_MISSING_COMMIT_TIME",
+                    )
+                if not isinstance(entry.get("last_actor"), dict) or not entry["last_actor"].get("actor_id"):
+                    raise ActionUnavailableError(
+                        f"Registry metadata PATCH replay for registry_id={registry_id!r} carries no "
+                        "recorded actor; a genuinely committed original receipt always has one.",
+                        action_id=action_id,
+                        entity_type="Strategy",
+                        error_code="REPLAY_MISSING_ACTOR",
+                    )
+                if entry["last_actor"].get("actor_id") != caller_actor_id:
+                    raise ActionUnavailableError(
+                        f"Registry metadata PATCH replay for registry_id={registry_id!r} reports actor "
+                        f"{entry['last_actor'].get('actor_id')!r}, not the verified caller identity "
+                        f"{caller_actor_id!r} derived from this command's own auth token; a genuine "
+                        "replay of this caller's own prior command always carries this caller's own "
+                        "actor identity.",
+                        action_id=action_id,
+                        entity_type="Strategy",
+                        error_code="REPLAY_ACTOR_MISMATCH",
+                    )
+
+                receipt, receipt_status = self._readback_receipt(
+                    registry_id, command_id, auth_token=auth_token, mfa_token=mfa_token, command_type="metadata",
+                )
+                if receipt is None:
+                    if receipt_status is None or (receipt_status and receipt_status >= 500):
+                        raise ActionUnavailableError(
+                            f"Registry metadata PATCH replay for registry_id={registry_id!r} could not be confirmed "
+                            "by a follow-up owner receipt readback.",
+                            action_id=action_id,
+                            entity_type="Strategy",
+                            error_code="READBACK_UNAVAILABLE",
+                            retryable=True,
+                            downstream_status=503,
+                        )
                     raise ActionUnavailableError(
                         f"Registry metadata PATCH replay for registry_id={registry_id!r} could not be confirmed "
-                        "by a follow-up owner receipt readback.",
+                        "by independent owner receipt reload.",
                         action_id=action_id,
                         entity_type="Strategy",
-                        error_code="READBACK_UNAVAILABLE",
+                        error_code="UNCONFIRMED_COMMAND_RECEIPT",
                         retryable=True,
                         downstream_status=503,
                     )
-                raise ActionUnavailableError(
-                    f"Registry metadata PATCH replay for registry_id={registry_id!r} could not be confirmed "
-                    "by independent owner receipt reload.",
+                entry = _validate_scoped_receipt(
+                    receipt,
+                    command_id=command_id,
+                    registry_id=registry_id,
+                    strategy_id=strategy_id,
+                    expected_metadata=expected_metadata,
+                    new_metadata=new_metadata,
+                    caller_actor_id=caller_actor_id,
+                    caller_tenant=caller_tenant,
+                    original_entry=original_entry,
+                    expected_receipt_key=expected_receipt_key,
+                    expected_request_digest=expected_request_digest,
                     action_id=action_id,
-                    entity_type="Strategy",
-                    error_code="UNCONFIRMED_COMMAND_RECEIPT",
-                    retryable=True,
-                    downstream_status=503,
-                )
-            committed_entry = receipt.get("committed_entry") if isinstance(receipt, dict) else None
-            if not isinstance(committed_entry, dict) or not committed_entry.get("registry_id"):
-                raise ActionUnavailableError(
-                    f"Registry metadata receipt for registry_id={registry_id!r} carries no committed entry payload.",
-                    action_id=action_id,
-                    entity_type="Strategy",
-                    error_code="UNCONFIRMED_COMMAND_RECEIPT",
-                )
-            if not _belongs_to_requested_strategy(committed_entry):
-                raise ActionUnavailableError(
-                    f"Registry metadata receipt for registry_id={registry_id!r} belongs to "
-                    f"strategy_id={committed_entry.get('strategy_id')!r}, not the requested "
-                    f"strategy_id={strategy_id!r}.",
-                    action_id=action_id,
-                    entity_type="Strategy",
-                    error_code="STRATEGY_ID_MISMATCH",
-                )
-            if _diverges_from_original(committed_entry):
-                raise ActionUnavailableError(
-                    f"Registry metadata receipt for registry_id={registry_id!r} diverges from the original immutable identity.",
-                    action_id=action_id,
-                    entity_type="Strategy",
-                    error_code="READBACK_MISMATCH",
-                )
-            if committed_entry.get("metadata") != new_metadata:
-                raise ActionUnavailableError(
-                    f"Registry metadata receipt for registry_id={registry_id!r} reports metadata different from requested.",
-                    action_id=action_id,
-                    entity_type="Strategy",
-                    error_code="REPLAY_METADATA_MISMATCH",
-                )
-            if not committed_entry.get("updated_at"):
-                raise ActionUnavailableError(
-                    f"Registry metadata receipt for registry_id={registry_id!r} carries no commit timestamp.",
-                    action_id=action_id,
-                    entity_type="Strategy",
-                    error_code="REPLAY_MISSING_COMMIT_TIME",
-                )
-            last_actor = committed_entry.get("last_actor") if isinstance(committed_entry.get("last_actor"), dict) else {}
-            receipt_actor_id = last_actor.get("actor_id")
-            if not receipt_actor_id:
-                raise ActionUnavailableError(
-                    f"Registry metadata receipt for registry_id={registry_id!r} carries no recorded actor.",
-                    action_id=action_id,
-                    entity_type="Strategy",
-                    error_code="REPLAY_MISSING_ACTOR",
-                )
-            if caller_actor_id != "operator-command" and receipt_actor_id != caller_actor_id:
-                raise ActionUnavailableError(
-                    f"Registry metadata receipt for registry_id={registry_id!r} reports actor {receipt_actor_id!r}, "
-                    f"not caller identity {caller_actor_id!r}.",
-                    action_id=action_id,
-                    entity_type="Strategy",
-                    error_code="REPLAY_ACTOR_MISMATCH",
-                )
-            entry = committed_entry
-
-        elif not isinstance(entry, dict) or not entry.get("registry_id"):
-            # The PATCH nominally succeeded or dropped connection with no entry payload.
-            # Attempt independent receipt reload to determine if this specific command committed.
-            receipt, status_code = self._readback_receipt(
-                registry_id, command_id, auth_token=auth_token, mfa_token=mfa_token, command_type="metadata",
-            )
-            if receipt is None:
-                raise ActionUnavailableError(
-                    f"Registry metadata PATCH for registry_id={registry_id!r} returned an ambiguous response "
-                    "with no entry payload, and a follow-up owner receipt readback does not confirm the command.",
-                    action_id=action_id,
-                    entity_type="Strategy",
-                    error_code="AMBIGUOUS_REGISTRY_RESPONSE",
-                )
-            committed_entry = receipt.get("committed_entry") if isinstance(receipt, dict) else None
-            last_actor = (committed_entry.get("last_actor") or {}) if isinstance(committed_entry, dict) else {}
-            receipt_actor_id = last_actor.get("actor_id")
-            if (
-                not isinstance(committed_entry, dict)
-                or not committed_entry.get("registry_id")
-                or committed_entry.get("metadata") != new_metadata
-                or not _belongs_to_requested_strategy(committed_entry)
-                or _diverges_from_original(committed_entry)
-                or not committed_entry.get("updated_at")
-                or committed_entry.get("updated_at") == original_entry.get("updated_at")
-                or not receipt_actor_id
-                or (caller_actor_id != "operator-command" and receipt_actor_id != caller_actor_id)
-            ):
-                raise ActionUnavailableError(
-                    f"Registry metadata PATCH for registry_id={registry_id!r} returned an ambiguous response, "
-                    "and follow-up receipt readback does not confirm the requested metadata was committed by this command.",
-                    action_id=action_id,
-                    entity_type="Strategy",
-                    error_code="AMBIGUOUS_REGISTRY_RESPONSE",
-                )
-            entry = committed_entry
-            response_lost = True
-
-        else:
-            if not _belongs_to_requested_strategy(entry):
-                raise ActionUnavailableError(
-                    f"Registry entry registry_id={registry_id!r} belongs to "
-                    f"strategy_id={entry.get('strategy_id')!r}, not the requested "
-                    f"strategy_id={strategy_id!r}; refusing to report success for a "
-                    "different aggregate than the caller asked to mutate.",
-                    action_id=action_id,
-                    entity_type="Strategy",
-                    error_code="STRATEGY_ID_MISMATCH",
-                )
-            if _diverges_from_original(entry):
-                raise ActionUnavailableError(
-                    f"Registry metadata PATCH response for registry_id={registry_id!r} diverges "
-                    "from the original immutable receipt captured before this command was "
-                    "issued (registry_id/checksum/version/owner_tenant); refusing to report "
-                    "success against a different identity/content than the one this command "
-                    "originally targeted.",
-                    action_id=action_id,
-                    entity_type="Strategy",
-                    error_code="READBACK_MISMATCH",
-                )
-            if not entry.get("updated_at"):
-                raise ActionUnavailableError(
-                    f"Registry metadata PATCH response for registry_id={registry_id!r} carries no "
-                    "commit timestamp; a genuinely committed mutation always has one.",
-                    action_id=action_id,
-                    entity_type="Strategy",
-                    error_code="MISSING_COMMIT_TIME",
-                )
-            if not isinstance(entry.get("last_actor"), dict) or not entry["last_actor"].get("actor_id"):
-                raise ActionUnavailableError(
-                    f"Registry metadata PATCH response for registry_id={registry_id!r} carries no "
-                    "recorded actor; a genuinely committed mutation always has one.",
-                    action_id=action_id,
-                    entity_type="Strategy",
-                    error_code="MISSING_ACTOR",
-                )
-            if entry.get("updated_at") == original_entry.get("updated_at"):
-                raise ActionUnavailableError(
-                    f"Registry metadata PATCH response for registry_id={registry_id!r} carries the "
-                    "same commit timestamp as the pre-mutation baseline captured before this "
-                    "command was issued; a genuine commit always advances it, so an unchanged "
-                    "timestamp means this command did not actually commit anything.",
-                    action_id=action_id,
-                    entity_type="Strategy",
-                    error_code="COMMIT_TIME_UNCHANGED",
-                )
-            if entry.get("metadata") != new_metadata:
-                raise ActionUnavailableError(
-                    f"Registry metadata PATCH response for registry_id={registry_id!r} does not "
-                    "report the requested metadata.",
-                    action_id=action_id,
-                    entity_type="Strategy",
-                    error_code="READBACK_MISMATCH",
-                )
-            if caller_actor_id != "operator-command" and entry["last_actor"].get("actor_id") != caller_actor_id:
-                raise ActionUnavailableError(
-                    f"Registry metadata PATCH response for registry_id={registry_id!r} reports actor "
-                    f"{entry['last_actor'].get('actor_id')!r}, not the verified caller identity "
-                    f"{caller_actor_id!r} derived from this command's own auth token; refusing to "
-                    "report success for a commit made by a different actor.",
-                    action_id=action_id,
-                    entity_type="Strategy",
-                    error_code="ACTOR_MISMATCH",
                 )
 
-            # Reviewer finding (9a6c review, P1): independently reload the durable receipt
-            # to verify this specific command committed.
-            receipt, status_code = self._readback_receipt(
-                registry_id, command_id, auth_token=auth_token, mfa_token=mfa_token, command_type="metadata",
-            )
-            if receipt is None:
-                if status_code is None or (status_code and status_code >= 500):
+            elif not isinstance(entry, dict) or not entry.get("registry_id"):
+                receipt, receipt_status = self._readback_receipt(
+                    registry_id, command_id, auth_token=auth_token, mfa_token=mfa_token, command_type="metadata",
+                )
+                if receipt is None:
                     raise ActionUnavailableError(
-                        f"Registry metadata PATCH for registry_id={registry_id!r} committed but could "
-                        "not be confirmed by a follow-up owner receipt readback.",
+                        f"Registry metadata PATCH for registry_id={registry_id!r} returned an ambiguous response "
+                        "with no entry payload, and a follow-up owner receipt readback does not confirm the command.",
                         action_id=action_id,
                         entity_type="Strategy",
-                        error_code="READBACK_UNAVAILABLE",
+                        error_code="AMBIGUOUS_REGISTRY_RESPONSE",
                         retryable=True,
                         downstream_status=503,
                     )
-                raise ActionUnavailableError(
-                    f"Registry metadata PATCH for registry_id={registry_id!r} could not be confirmed "
-                    "by independent owner receipt reload.",
-                    action_id=action_id,
-                    entity_type="Strategy",
-                    error_code="UNCONFIRMED_COMMAND_RECEIPT",
-                    retryable=True,
-                    downstream_status=503,
+                try:
+                    entry = _validate_scoped_receipt(
+                        receipt,
+                        command_id=command_id,
+                        registry_id=registry_id,
+                        strategy_id=strategy_id,
+                        expected_metadata=expected_metadata,
+                        new_metadata=new_metadata,
+                        caller_actor_id=caller_actor_id,
+                        caller_tenant=caller_tenant,
+                        original_entry=original_entry,
+                        expected_receipt_key=expected_receipt_key,
+                        expected_request_digest=expected_request_digest,
+                        action_id=action_id,
+                    )
+                except ActionUnavailableError as exc:
+                    raise ActionUnavailableError(
+                        f"Registry metadata PATCH for registry_id={registry_id!r} returned an ambiguous response, "
+                        f"and follow-up receipt readback failed validation: {exc.message}",
+                        action_id=action_id,
+                        entity_type="Strategy",
+                        error_code="AMBIGUOUS_REGISTRY_RESPONSE",
+                        retryable=True,
+                        downstream_status=503,
+                    ) from exc
+                response_lost = True
+
+            else:
+                if not _belongs_to_requested_strategy(entry):
+                    raise ActionUnavailableError(
+                        f"Registry entry registry_id={registry_id!r} belongs to "
+                        f"strategy_id={entry.get('strategy_id')!r}, not the requested "
+                        f"strategy_id={strategy_id!r}; refusing to report success for a "
+                        "different aggregate than the caller asked to mutate.",
+                        action_id=action_id,
+                        entity_type="Strategy",
+                        error_code="STRATEGY_ID_MISMATCH",
+                    )
+                if _diverges_from_original(entry):
+                    raise ActionUnavailableError(
+                        f"Registry metadata PATCH response for registry_id={registry_id!r} diverges "
+                        "from the original immutable receipt captured before this command was "
+                        "issued (registry_id/checksum/version/owner_tenant); refusing to report "
+                        "success against a different identity/content than the one this command "
+                        "originally targeted.",
+                        action_id=action_id,
+                        entity_type="Strategy",
+                        error_code="READBACK_MISMATCH",
+                    )
+                if not entry.get("updated_at"):
+                    raise ActionUnavailableError(
+                        f"Registry metadata PATCH response for registry_id={registry_id!r} carries no "
+                        "commit timestamp; a genuinely committed mutation always has one.",
+                        action_id=action_id,
+                        entity_type="Strategy",
+                        error_code="MISSING_COMMIT_TIME",
+                    )
+                if not isinstance(entry.get("last_actor"), dict) or not entry["last_actor"].get("actor_id"):
+                    raise ActionUnavailableError(
+                        f"Registry metadata PATCH response for registry_id={registry_id!r} carries no "
+                        "recorded actor; a genuinely committed mutation always has one.",
+                        action_id=action_id,
+                        entity_type="Strategy",
+                        error_code="MISSING_ACTOR",
+                    )
+                if entry.get("updated_at") == original_entry.get("updated_at"):
+                    raise ActionUnavailableError(
+                        f"Registry metadata PATCH response for registry_id={registry_id!r} carries the "
+                        "same commit timestamp as the pre-mutation baseline captured before this "
+                        "command was issued; a genuine commit always advances it, so an unchanged "
+                        "timestamp means this command did not actually commit anything.",
+                        action_id=action_id,
+                        entity_type="Strategy",
+                        error_code="COMMIT_TIME_UNCHANGED",
+                    )
+                if entry.get("metadata") != new_metadata:
+                    raise ActionUnavailableError(
+                        f"Registry metadata PATCH response for registry_id={registry_id!r} does not "
+                        "report the requested metadata.",
+                        action_id=action_id,
+                        entity_type="Strategy",
+                        error_code="READBACK_MISMATCH",
+                    )
+                if entry["last_actor"].get("actor_id") != caller_actor_id:
+                    raise ActionUnavailableError(
+                        f"Registry metadata PATCH response for registry_id={registry_id!r} reports actor "
+                        f"{entry['last_actor'].get('actor_id')!r}, not the verified caller identity "
+                        f"{caller_actor_id!r} derived from this command's own auth token; refusing to "
+                        "report success for a commit made by a different actor.",
+                        action_id=action_id,
+                        entity_type="Strategy",
+                        error_code="ACTOR_MISMATCH",
+                    )
+
+                receipt, receipt_status = self._readback_receipt(
+                    registry_id, command_id, auth_token=auth_token, mfa_token=mfa_token, command_type="metadata",
                 )
-            committed_entry = receipt.get("committed_entry") if isinstance(receipt, dict) else None
-            if (
-                not isinstance(committed_entry, dict)
-                or committed_entry.get("registry_id") != registry_id
-                or not _belongs_to_requested_strategy(committed_entry)
-                or _diverges_from_original(committed_entry)
-                or committed_entry.get("metadata") != new_metadata
-                or committed_entry.get("checksum") != entry.get("checksum")
-                or committed_entry.get("updated_at") != entry.get("updated_at")
-                or not isinstance(committed_entry.get("last_actor"), dict)
-                or committed_entry["last_actor"].get("actor_id") != entry["last_actor"].get("actor_id")
-            ):
-                raise ActionUnavailableError(
-                    f"Registry metadata PATCH response for registry_id={registry_id!r} does not "
-                    "match a follow-up owner receipt readback, or the readback does not confirm the "
-                    "requested metadata was actually applied against the original immutable "
-                    "identity; refusing to report success on a discrepant or unapplied state.",
+                if receipt is None:
+                    if receipt_status is None or (receipt_status and receipt_status >= 500):
+                        raise ActionUnavailableError(
+                            f"Registry metadata PATCH for registry_id={registry_id!r} committed but could "
+                            "not be confirmed by a follow-up owner receipt readback.",
+                            action_id=action_id,
+                            entity_type="Strategy",
+                            error_code="READBACK_UNAVAILABLE",
+                            retryable=True,
+                            downstream_status=503,
+                        )
+                    raise ActionUnavailableError(
+                        f"Registry metadata PATCH for registry_id={registry_id!r} could not be confirmed "
+                        "by independent owner receipt reload.",
+                        action_id=action_id,
+                        entity_type="Strategy",
+                        error_code="UNCONFIRMED_COMMAND_RECEIPT",
+                        retryable=True,
+                        downstream_status=503,
+                    )
+                entry = _validate_scoped_receipt(
+                    receipt,
+                    command_id=command_id,
+                    registry_id=registry_id,
+                    strategy_id=strategy_id,
+                    expected_metadata=expected_metadata,
+                    new_metadata=new_metadata,
+                    caller_actor_id=caller_actor_id,
+                    caller_tenant=caller_tenant,
+                    original_entry=original_entry,
+                    expected_receipt_key=expected_receipt_key,
+                    expected_request_digest=expected_request_digest,
                     action_id=action_id,
-                    entity_type="Strategy",
-                    error_code="READBACK_MISMATCH",
+                    expected_entry=entry,
                 )
-            entry = committed_entry
 
         return build_domain_receipt(
             command_id=command_id,
@@ -703,13 +978,6 @@ class StrategyCommandAdapter(DomainCommandAdapter):
                 receipt = body.get("receipt")
                 if isinstance(receipt, dict):
                     return receipt, 200
-                if isinstance(body.get("entry"), dict):
-                    return {
-                        "command_key": command_id,
-                        "registry_id": registry_id,
-                        "committed_entry": body["entry"],
-                        "committed_at": body["entry"].get("updated_at"),
-                    }, 200
             return None, status_code
         except Exception as exc:
             log.warning("Failed to readback command receipt for %s/%s: %s", registry_id, command_id, exc)

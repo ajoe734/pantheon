@@ -523,3 +523,133 @@ def test_transaction_rollback_leaves_no_orphan_reservation_or_state(pg_case):
     assert entry_adv.artifact_state == ArtifactState.CANDIDATE
     assert _count_receipts("payload->>'command_key' = 'cmd-rb-adv-01'") >= 1
 
+
+def test_deterministic_fault_injection_between_state_and_receipt_write(pg_case):
+    """Deterministic fault injection between state mutation and receipt finalization:
+    When a failure occurs AFTER the state row is written in Postgres but BEFORE
+    or DURING receipt finalization, the entire transaction must roll back cleanly,
+    leaving 0 partial state mutations and 0 unconfirmed receipts, and allowing
+    clean retry under the same command_key.
+    Proven across create, metadata, and advance lifecycle operations.
+    """
+    import psycopg
+
+    dsn, entries_table, receipts_table = pg_case
+    store = _store(pg_case)
+
+    def _count_entries(where: str = "") -> int:
+        with psycopg.connect(dsn) as conn:
+            with conn.cursor() as cur:
+                clause = f" WHERE {where}" if where else ""
+                cur.execute(f"SELECT count(*) FROM {entries_table}{clause}")
+                return cur.fetchone()[0]
+
+    def _count_receipts(where: str = "") -> int:
+        with psycopg.connect(dsn) as conn:
+            with conn.cursor() as cur:
+                clause = f" WHERE {where}" if where else ""
+                cur.execute(f"SELECT count(*) FROM {receipts_table}{clause}")
+                return cur.fetchone()[0]
+
+    # 1. CREATE FAULT INJECTION (between insert_if_absent and receipt compare_and_set)
+    payload = _payload(strategy_id="strat-fault-inj", version="1.0.0")
+    real_receipt_cas = store._receipts.compare_and_set
+
+    fault_armed = [True]
+
+    def _failing_receipt_cas(key, old_val, new_val, conn=None):
+        if fault_armed[0]:
+            raise RuntimeError("FAULT_INJECTED_BETWEEN_STATE_AND_RECEIPT_WRITE")
+        return real_receipt_cas(key, old_val, new_val, conn=conn)
+
+    store._receipts.compare_and_set = _failing_receipt_cas
+
+    with pytest.raises(RuntimeError, match="FAULT_INJECTED_BETWEEN_STATE_AND_RECEIPT_WRITE"):
+        store.create_with_receipt(
+            lambda: (payload, "reg-fault-01"),
+            command_key="cmd-fault-create-01",
+            actor={"actor_id": "test-actor"},
+            request_fingerprint={"test": "create-fault"},
+            strategy_id="strat-fault-inj",
+        )
+
+    # State write must have rolled back!
+    assert _count_entries("record_id = 'reg-fault-01'") == 0
+    assert _count_receipts("payload->>'command_key' = 'cmd-fault-create-01'") == 0
+
+    # Disarm fault and retry under SAME command_key
+    fault_armed[0] = False
+    entry, replayed = store.create_with_receipt(
+        lambda: (payload, "reg-fault-01"),
+        command_key="cmd-fault-create-01",
+        actor={"actor_id": "test-actor"},
+        request_fingerprint={"test": "create-fault"},
+        strategy_id="strat-fault-inj",
+    )
+    assert replayed is False
+    assert entry.registry_id == "reg-fault-01"
+    assert _count_entries("record_id = 'reg-fault-01'") == 1
+    assert _count_receipts("payload->>'command_key' = 'cmd-fault-create-01'") >= 1
+
+    # 2. METADATA CAS FAULT INJECTION (between entries.compare_and_set and receipts.compare_and_set)
+    base_snapshot = entry.to_dict()
+    fault_armed[0] = True
+
+    with pytest.raises(RuntimeError, match="FAULT_INJECTED_BETWEEN_STATE_AND_RECEIPT_WRITE"):
+        store.commit_metadata_cas(
+            registry_id="reg-fault-01",
+            base_snapshot=base_snapshot,
+            new_metadata={"note": "faulted-metadata"},
+            command_key="cmd-fault-meta-01",
+            actor={"actor_id": "test-actor"},
+        )
+
+    # State write must have rolled back!
+    reread = store.get("reg-fault-01")
+    assert reread.metadata != {"note": "faulted-metadata"}
+    assert _count_receipts("payload->>'command_key' = 'cmd-fault-meta-01'") == 0
+
+    # Disarm fault and retry under SAME command_key
+    fault_armed[0] = False
+    entry_meta, replayed_meta = store.commit_metadata_cas(
+        registry_id="reg-fault-01",
+        base_snapshot=base_snapshot,
+        new_metadata={"note": "succeeded-metadata"},
+        command_key="cmd-fault-meta-01",
+        actor={"actor_id": "test-actor"},
+    )
+    assert replayed_meta is False
+    assert entry_meta.metadata == {"note": "succeeded-metadata"}
+    assert _count_receipts("payload->>'command_key' = 'cmd-fault-meta-01'") >= 1
+
+    # 3. ADVANCE CAS FAULT INJECTION (between entries.compare_and_set and receipts.compare_and_set)
+    base_snapshot_adv = entry_meta.to_dict()
+    fault_armed[0] = True
+
+    with pytest.raises(RuntimeError, match="FAULT_INJECTED_BETWEEN_STATE_AND_RECEIPT_WRITE"):
+        store.commit_artifact_state_cas(
+            registry_id="reg-fault-01",
+            base_snapshot=base_snapshot_adv,
+            target_state=ArtifactState.CANDIDATE,
+            command_key="cmd-fault-adv-01",
+            actor={"actor_id": "test-actor"},
+        )
+
+    # State write must have rolled back!
+    reread_state = store.get("reg-fault-01")
+    assert reread_state.artifact_state == ArtifactState.DRAFT
+    assert _count_receipts("payload->>'command_key' = 'cmd-fault-adv-01'") == 0
+
+    # Disarm fault and retry under SAME command_key
+    fault_armed[0] = False
+    entry_adv, replayed_adv = store.commit_artifact_state_cas(
+        registry_id="reg-fault-01",
+        base_snapshot=base_snapshot_adv,
+        target_state=ArtifactState.CANDIDATE,
+        command_key="cmd-fault-adv-01",
+        actor={"actor_id": "test-actor"},
+    )
+    assert replayed_adv is False
+    assert entry_adv.artifact_state == ArtifactState.CANDIDATE
+    assert _count_receipts("payload->>'command_key' = 'cmd-fault-adv-01'") >= 1
+

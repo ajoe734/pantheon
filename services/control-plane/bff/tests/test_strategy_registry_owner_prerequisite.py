@@ -54,6 +54,40 @@ def registry_url_env(monkeypatch):
     monkeypatch.setenv("PANTHEON_REGISTRY_API_URL", "http://registry-svc.internal")
 
 
+def _make_receipt(
+    command_id: str,
+    registry_id: str,
+    entry: dict,
+    *,
+    actor_id: str = "test-token",
+    tenant: str = "unscoped",
+    expected_metadata: Optional[dict] = None,
+    new_metadata: Optional[dict] = None,
+    committed_at: Optional[str] = None,
+    receipt_key: Optional[str] = None,
+    request_digest: Optional[str] = None,
+) -> dict:
+    from services.registry.pg_store import PostgresRegistryStore, _request_digest
+    if receipt_key is None:
+        receipt_key = PostgresRegistryStore.receipt_key(
+            command_id, registry_id, actor={"actor_id": actor_id, "tenant": tenant}, command_type="metadata",
+        )
+    if request_digest is None:
+        request_digest = _request_digest({
+            "registry_id": registry_id,
+            "expected_metadata": expected_metadata,
+            "metadata": new_metadata if new_metadata is not None else entry.get("metadata"),
+        })
+    return {
+        "command_key": command_id,
+        "registry_id": registry_id,
+        "receipt_key": receipt_key,
+        "request_digest": request_digest,
+        "committed_at": committed_at or entry.get("updated_at") or "2026-09-06T00:00:00Z",
+        "committed_entry": entry,
+    }
+
+
 @patch("services.control_plane.bff.command_adapters.strategy_adapter.http_request_json_with_headers")
 def test_update_params_preserves_callers_precondition_and_uses_patch_response_as_truth(mock_http, adapter):
     """The caller's own expected_metadata (its real CAS precondition) must
@@ -92,14 +126,21 @@ def test_update_params_preserves_callers_precondition_and_uses_patch_response_as
             200,
             {},
             {
-                "entry": {
-                    "registry_id": "reg-001",
-                    "strategy_id": "strat-alpha",
-                    "metadata": {"note": "new"},
-                    "updated_at": "2026-09-06T00:00:00Z",
-                    "checksum": "sha256:abc",
-                    "last_actor": {"actor_id": "test-token", "tenant": "tenant-a"},
-                }
+                "receipt": _make_receipt(
+                    "cmd-strat-001",
+                    "reg-001",
+                    {
+                        "registry_id": "reg-001",
+                        "strategy_id": "strat-alpha",
+                        "metadata": {"note": "new"},
+                        "updated_at": "2026-09-06T00:00:00Z",
+                        "checksum": "sha256:abc",
+                        "last_actor": {"actor_id": "test-token", "tenant": "tenant-a"},
+                    },
+                    actor_id="test-token",
+                    expected_metadata={"note": "old"},
+                    new_metadata={"note": "new"},
+                )
             },
         ),
     ]
@@ -149,22 +190,20 @@ def test_update_params_preserves_callers_precondition_and_uses_patch_response_as
 
 @patch("services.control_plane.bff.command_adapters.strategy_adapter.http_request_json_with_headers")
 def test_update_params_idempotent_replay_header_is_surfaced(mock_http, adapter):
-    mock_http.return_value = (
-        200,
-        {"X-Idempotent-Replay": "true"},
-        {
-            "entry": {
-                "registry_id": "reg-001",
-                "strategy_id": "strat-alpha",
-                "metadata": {"note": "v1"},
-                "updated_at": "t1",
-                "last_actor": {"actor_id": "operator-a", "tenant": "tenant-a"},
-            }
-        },
-    )
+    entry_snapshot = {
+        "registry_id": "reg-001",
+        "strategy_id": "strat-alpha",
+        "metadata": {"note": "v1"},
+        "updated_at": "t1",
+        "checksum": "sha256:abc",
+        "last_actor": {"actor_id": "operator-a", "tenant": "tenant-a"},
+    }
+    mock_http.side_effect = [
+        (200, {}, {"entry": entry_snapshot}),
+        (200, {"X-Idempotent-Replay": "true"}, {"entry": entry_snapshot}),
+        (200, {}, {"receipt": _make_receipt("cmd-strat-005", "reg-001", entry_snapshot, actor_id="operator-a", tenant="unscoped", expected_metadata=None, new_metadata={"note": "v1"}, committed_at="t1")}),
+    ]
 
-    # mock_http.return_value applies identically to every call this makes
-    # (pre-check GET + PATCH); both see the same strat-alpha entry shape.
     result = adapter.execute(
         "cmd-strat-005",
         "StrategyAction",
@@ -176,6 +215,7 @@ def test_update_params_idempotent_replay_header_is_surfaced(mock_http, adapter):
             "expected_metadata": None,
             "metadata": {"note": "v1"},
         },
+        auth_token="operator-a",
     )
     assert result["idempotent_replay"] is True
 
@@ -272,6 +312,7 @@ def test_update_params_replay_with_forged_registry_id_is_rejected_despite_matchi
                 "expected_metadata": None,
                 "metadata": {"note": "one"},
             },
+            auth_token="operator-a",
         )
     assert excinfo.value.error_code == "READBACK_MISMATCH"
 
@@ -302,12 +343,16 @@ def test_update_params_replay_does_not_compare_against_mutable_latest_readback(m
             200,
             {},
             {
-                "receipt": {
-                    "command_key": "cmd-strat-replay",
-                    "registry_id": "reg-001",
-                    "committed_entry": entry_snapshot,
-                    "committed_at": "t1",
-                }
+                "receipt": _make_receipt(
+                    "cmd-strat-replay",
+                    "reg-001",
+                    entry_snapshot,
+                    actor_id="operator-a",
+                    tenant="unscoped",
+                    expected_metadata=None,
+                    new_metadata={"note": "one"},
+                    committed_at="t1",
+                )
             },
         ),
     ]
@@ -324,6 +369,7 @@ def test_update_params_replay_does_not_compare_against_mutable_latest_readback(m
             "expected_metadata": None,
             "metadata": {"note": "one"},
         },
+        auth_token="operator-a",
     )
     assert result["status"] == "metadata_updated"
     assert result["idempotent_replay"] is True
@@ -376,6 +422,7 @@ def test_update_params_readback_confirming_unapplied_metadata_is_rejected(mock_h
                 "expected_metadata": {"note": "old"},
                 "metadata": {"note": "new"},
             },
+            auth_token="operator-a",
         )
     # A PATCH response whose commit timestamp is unchanged from the
     # pre-mutation baseline is now caught explicitly and earlier (before the
@@ -405,7 +452,21 @@ def test_update_params_readback_for_wrong_scope_is_rejected(mock_http, adapter):
     mock_http.side_effect = [
         (200, {}, {"entry": baseline}),
         (200, {"X-Idempotent-Replay": "false"}, {"entry": patched}),
-        (200, {}, {"entry": wrong_scope_readback}),
+        (
+            200,
+            {},
+            {
+                "receipt": _make_receipt(
+                    "cmd-wrong-scope",
+                    "reg-001",
+                    wrong_scope_readback,
+                    actor_id="operator-a",
+                    tenant="unscoped",
+                    expected_metadata={"note": "old"},
+                    new_metadata={"note": "new"},
+                )
+            },
+        ),
     ]
 
     with pytest.raises(ActionUnavailableError) as excinfo:
@@ -420,6 +481,7 @@ def test_update_params_readback_for_wrong_scope_is_rejected(mock_http, adapter):
                 "expected_metadata": {"note": "old"},
                 "metadata": {"note": "new"},
             },
+            auth_token="operator-a",
         )
     assert excinfo.value.error_code == "READBACK_MISMATCH"
 
@@ -464,6 +526,7 @@ def test_update_params_replay_with_unrelated_metadata_is_rejected(mock_http, ada
                 "expected_metadata": {"note": "old"},
                 "metadata": {"note": "new"},
             },
+            auth_token="operator-a",
         )
     assert excinfo.value.error_code == "REPLAY_METADATA_MISMATCH"
 
@@ -500,6 +563,7 @@ def test_update_params_replay_missing_commit_time_is_rejected(mock_http, adapter
                 "expected_metadata": {"note": "old"},
                 "metadata": {"note": "new"},
             },
+            auth_token="operator-a",
         )
     assert excinfo.value.error_code == "REPLAY_MISSING_COMMIT_TIME"
 
@@ -539,6 +603,7 @@ def test_update_params_replay_missing_actor_is_rejected(mock_http, adapter):
                 "expected_metadata": {"note": "old"},
                 "metadata": {"note": "new"},
             },
+            auth_token="operator-a",
         )
     assert excinfo.value.error_code == "REPLAY_MISSING_ACTOR"
 
@@ -603,6 +668,7 @@ def test_update_params_readback_failure_after_confirmed_commit_is_retryable(mock
                 "expected_metadata": {"note": "old"},
                 "metadata": {"note": "new"},
             },
+            auth_token="operator-a",
         )
     assert excinfo.value.error_code == "READBACK_UNAVAILABLE"
     assert excinfo.value.retryable is True
@@ -650,6 +716,7 @@ def test_update_params_ambiguous_patch_response_never_fabricates_success(mock_ht
                 "expected_metadata": None,
                 "metadata": {"note": "v1"},
             },
+            auth_token="operator-a",
         )
     assert excinfo.value.error_code == "AMBIGUOUS_REGISTRY_RESPONSE"
 
@@ -746,12 +813,15 @@ def test_update_params_replay_actor_matching_caller_token_still_succeeds(mock_ht
             200,
             {},
             {
-                "receipt": {
-                    "command_key": "cmd-replay-same-actor",
-                    "registry_id": "reg-001",
-                    "committed_entry": replay_same_actor,
-                    "committed_at": "2026-09-06T01:00:01Z",
-                }
+                "receipt": _make_receipt(
+                    "cmd-replay-same-actor",
+                    "reg-001",
+                    replay_same_actor,
+                    actor_id="caller-actor-id",
+                    expected_metadata={"note": "old"},
+                    new_metadata={"note": "new"},
+                    committed_at="2026-09-06T01:00:01Z",
+                )
             },
         ),
     ]
@@ -808,6 +878,7 @@ def test_update_params_normal_response_missing_commit_time_is_rejected(mock_http
                 "expected_metadata": {"note": "old"},
                 "metadata": {"note": "new"},
             },
+            auth_token="operator-a",
         )
     assert excinfo.value.error_code == "MISSING_COMMIT_TIME"
 
@@ -850,6 +921,7 @@ def test_update_params_ambiguous_response_readback_matching_before_the_command_r
                 "expected_metadata": {"note": "old"},
                 "metadata": {"note": "new"},
             },
+            auth_token="operator-a",
         )
     assert excinfo.value.error_code == "AMBIGUOUS_REGISTRY_RESPONSE"
 
@@ -965,6 +1037,23 @@ class _CapturingHandler(BaseHTTPRequestHandler):
                 # plain GETs and would otherwise share one static body.
                 get_index = sum(1 for r in type(self).received_log if r["method"] != "PATCH") - 1
                 body = body[min(get_index, len(body) - 1)]
+        if "/receipts/" in self.path and isinstance(body, dict) and "entry" in body and "receipt" not in body:
+            cmd_key = self.path.split("?")[0].rstrip("/").split("/")[-1]
+            entry_dict = body["entry"]
+            patch_records = [r for r in type(self).received_log if r["method"] == "PATCH"]
+            patch_body = patch_records[-1]["body"] if patch_records else {}
+            body = {
+                "receipt": _make_receipt(
+                    cmd_key,
+                    entry_dict.get("registry_id", "reg-001"),
+                    entry_dict,
+                    actor_id=entry_dict.get("last_actor", {}).get("actor_id", "operator-a"),
+                    tenant="unscoped",
+                    expected_metadata=patch_body.get("expected_metadata"),
+                    new_metadata=patch_body.get("metadata", entry_dict.get("metadata")),
+                    committed_at=entry_dict.get("updated_at"),
+                )
+            }
         payload = json.dumps(body).encode("utf-8")
         self.send_response(type(self).response_status)
         self.send_header("Content-Type", "application/json")
@@ -1174,6 +1263,7 @@ class TestUpdateParamsOverRealSocket:
                 "expected_metadata": {"note": "callers-own-base"},
                 "metadata": {"note": "new"},
             },
+            auth_token="operator-a",
         )
         # The adapter now performs a pre-mutation identity-verification GET
         # (reviewer finding 6), then the PATCH, then a genuine owner GET
@@ -1228,6 +1318,7 @@ class TestUpdateParamsOverRealSocket:
                 "expected_metadata": None,
                 "metadata": {"note": "new"},
             },
+            auth_token="operator-a",
         )
         assert result["status"] == "metadata_updated"
         assert result["domain_receipt"]["checksum"] == "sha256:exact-version"
@@ -1265,6 +1356,7 @@ class TestUpdateParamsOverRealSocket:
                     "expected_metadata": None,
                     "metadata": {"note": "new"},
                 },
+                auth_token="operator-a",
             )
         assert excinfo.value.error_code == "REGISTRY_ID_NOT_FOUND"
         # The PATCH must never have been attempted.
@@ -1429,3 +1521,415 @@ def test_regression_replay_without_owner_receipt_reload_is_rejected(mock_http, a
             auth_token="operator-a",
         )
     assert excinfo.value.error_code == "UNCONFIRMED_COMMAND_RECEIPT"
+
+
+# ===========================================================================
+# PR #5620 Reopening Finding 1 & 2 Adversarial Tests:
+# - Strict scoped receipt validation:
+#   * entry-only response rejection (no fabrication)
+#   * OTHER-COMMAND rejection
+#   * OTHER-REGISTRY rejection
+#   * WRONG-KEY (scoped receipt_key) rejection
+#   * WRONG-DIGEST rejection
+#   * null committed_at rejection
+#   * caller authentication via runtime_auth_inbound (missing & unverified tokens)
+# - Ambiguous transport exception handling:
+#   * RemoteDisconnected during PATCH recovers via receipt readback
+#   * RemoteDisconnected during PATCH fails closed with retryable 503 UNCONFIRMED_COMMAND_RECEIPT
+# ===========================================================================
+
+
+@patch("services.control_plane.bff.command_adapters.strategy_adapter.http_request_json_with_headers")
+def test_adversarial_entry_only_readback_rejected_as_unconfirmed(mock_http, adapter):
+    """Entry-only response on receipt endpoint must never be treated as valid receipt."""
+    baseline = {
+        "registry_id": "reg-001",
+        "strategy_id": "strat-alpha",
+        "owner_tenant": "tenant-a",
+        "version": "1.0.0",
+        "checksum": "sha256:abc",
+        "metadata": {"note": "old"},
+        "updated_at": "2026-09-06T01:00:00Z",
+        "last_actor": {"actor_id": "operator-a", "tenant": "tenant-a"},
+    }
+    patched = dict(baseline, metadata={"note": "new"}, updated_at="2026-09-06T01:00:01Z")
+    mock_http.side_effect = [
+        (200, {}, {"entry": baseline}),
+        (200, {"X-Idempotent-Replay": "true"}, {"entry": patched}),
+        (200, {}, {"entry": patched}),  # Entry-only response, NOT a receipt!
+    ]
+    with pytest.raises(ActionUnavailableError) as excinfo:
+        adapter.execute(
+            "cmd-entry-only",
+            "StrategyAction",
+            {
+                "entity_type": "strategy",
+                "strategy_id": "strat-alpha",
+                "registry_id": "reg-001",
+                "action_id": "update_params",
+                "expected_metadata": {"note": "old"},
+                "metadata": {"note": "new"},
+            },
+            auth_token="operator-a",
+        )
+    assert excinfo.value.error_code == "UNCONFIRMED_COMMAND_RECEIPT"
+    assert excinfo.value.retryable is True
+    assert excinfo.value.downstream_status == 503
+
+
+@patch("services.control_plane.bff.command_adapters.strategy_adapter.http_request_json_with_headers")
+def test_adversarial_receipt_other_command_rejected(mock_http, adapter):
+    baseline = {
+        "registry_id": "reg-001",
+        "strategy_id": "strat-alpha",
+        "owner_tenant": "tenant-a",
+        "version": "1.0.0",
+        "checksum": "sha256:abc",
+        "metadata": {"note": "old"},
+        "updated_at": "2026-09-06T01:00:00Z",
+        "last_actor": {"actor_id": "operator-a", "tenant": "tenant-a"},
+    }
+    patched = dict(baseline, metadata={"note": "new"}, updated_at="2026-09-06T01:00:01Z")
+    receipt = _make_receipt(
+        "OTHER-COMMAND",
+        "reg-001",
+        patched,
+        actor_id="operator-a",
+        expected_metadata={"note": "old"},
+        new_metadata={"note": "new"},
+    )
+    mock_http.side_effect = [
+        (200, {}, {"entry": baseline}),
+        (200, {"X-Idempotent-Replay": "false"}, {"entry": patched}),
+        (200, {}, {"receipt": receipt}),
+    ]
+    with pytest.raises(ActionUnavailableError) as excinfo:
+        adapter.execute(
+            "cmd-target",
+            "StrategyAction",
+            {
+                "entity_type": "strategy",
+                "strategy_id": "strat-alpha",
+                "registry_id": "reg-001",
+                "action_id": "update_params",
+                "expected_metadata": {"note": "old"},
+                "metadata": {"note": "new"},
+            },
+            auth_token="operator-a",
+        )
+    assert excinfo.value.error_code == "UNCONFIRMED_COMMAND_RECEIPT"
+
+
+@patch("services.control_plane.bff.command_adapters.strategy_adapter.http_request_json_with_headers")
+def test_adversarial_receipt_other_registry_rejected(mock_http, adapter):
+    baseline = {
+        "registry_id": "reg-001",
+        "strategy_id": "strat-alpha",
+        "owner_tenant": "tenant-a",
+        "version": "1.0.0",
+        "checksum": "sha256:abc",
+        "metadata": {"note": "old"},
+        "updated_at": "2026-09-06T01:00:00Z",
+        "last_actor": {"actor_id": "operator-a", "tenant": "tenant-a"},
+    }
+    patched = dict(baseline, metadata={"note": "new"}, updated_at="2026-09-06T01:00:01Z")
+    receipt = _make_receipt(
+        "cmd-target",
+        "OTHER-REGISTRY",
+        patched,
+        actor_id="operator-a",
+        expected_metadata={"note": "old"},
+        new_metadata={"note": "new"},
+    )
+    mock_http.side_effect = [
+        (200, {}, {"entry": baseline}),
+        (200, {"X-Idempotent-Replay": "false"}, {"entry": patched}),
+        (200, {}, {"receipt": receipt}),
+    ]
+    with pytest.raises(ActionUnavailableError) as excinfo:
+        adapter.execute(
+            "cmd-target",
+            "StrategyAction",
+            {
+                "entity_type": "strategy",
+                "strategy_id": "strat-alpha",
+                "registry_id": "reg-001",
+                "action_id": "update_params",
+                "expected_metadata": {"note": "old"},
+                "metadata": {"note": "new"},
+            },
+            auth_token="operator-a",
+        )
+    assert excinfo.value.error_code == "STRATEGY_ID_MISMATCH"
+
+
+@patch("services.control_plane.bff.command_adapters.strategy_adapter.http_request_json_with_headers")
+def test_adversarial_receipt_wrong_scope_key_rejected(mock_http, adapter):
+    baseline = {
+        "registry_id": "reg-001",
+        "strategy_id": "strat-alpha",
+        "owner_tenant": "tenant-a",
+        "version": "1.0.0",
+        "checksum": "sha256:abc",
+        "metadata": {"note": "old"},
+        "updated_at": "2026-09-06T01:00:00Z",
+        "last_actor": {"actor_id": "operator-a", "tenant": "tenant-a"},
+    }
+    patched = dict(baseline, metadata={"note": "new"}, updated_at="2026-09-06T01:00:01Z")
+    receipt = _make_receipt(
+        "cmd-target",
+        "reg-001",
+        patched,
+        actor_id="operator-a",
+        expected_metadata={"note": "old"},
+        new_metadata={"note": "new"},
+        receipt_key="forged-or-wrong-scope-key",
+    )
+    mock_http.side_effect = [
+        (200, {}, {"entry": baseline}),
+        (200, {"X-Idempotent-Replay": "false"}, {"entry": patched}),
+        (200, {}, {"receipt": receipt}),
+    ]
+    with pytest.raises(ActionUnavailableError) as excinfo:
+        adapter.execute(
+            "cmd-target",
+            "StrategyAction",
+            {
+                "entity_type": "strategy",
+                "strategy_id": "strat-alpha",
+                "registry_id": "reg-001",
+                "action_id": "update_params",
+                "expected_metadata": {"note": "old"},
+                "metadata": {"note": "new"},
+            },
+            auth_token="operator-a",
+        )
+    assert excinfo.value.error_code == "UNCONFIRMED_COMMAND_RECEIPT"
+
+
+@patch("services.control_plane.bff.command_adapters.strategy_adapter.http_request_json_with_headers")
+def test_adversarial_receipt_wrong_digest_rejected(mock_http, adapter):
+    baseline = {
+        "registry_id": "reg-001",
+        "strategy_id": "strat-alpha",
+        "owner_tenant": "tenant-a",
+        "version": "1.0.0",
+        "checksum": "sha256:abc",
+        "metadata": {"note": "old"},
+        "updated_at": "2026-09-06T01:00:00Z",
+        "last_actor": {"actor_id": "operator-a", "tenant": "tenant-a"},
+    }
+    patched = dict(baseline, metadata={"note": "new"}, updated_at="2026-09-06T01:00:01Z")
+    receipt = _make_receipt(
+        "cmd-target",
+        "reg-001",
+        patched,
+        actor_id="operator-a",
+        expected_metadata={"note": "old"},
+        new_metadata={"note": "new"},
+        request_digest="sha256:forged-request-digest",
+    )
+    mock_http.side_effect = [
+        (200, {}, {"entry": baseline}),
+        (200, {"X-Idempotent-Replay": "false"}, {"entry": patched}),
+        (200, {}, {"receipt": receipt}),
+    ]
+    with pytest.raises(ActionUnavailableError) as excinfo:
+        adapter.execute(
+            "cmd-target",
+            "StrategyAction",
+            {
+                "entity_type": "strategy",
+                "strategy_id": "strat-alpha",
+                "registry_id": "reg-001",
+                "action_id": "update_params",
+                "expected_metadata": {"note": "old"},
+                "metadata": {"note": "new"},
+            },
+            auth_token="operator-a",
+        )
+    assert excinfo.value.error_code == "UNCONFIRMED_COMMAND_RECEIPT"
+
+
+@patch("services.control_plane.bff.command_adapters.strategy_adapter.http_request_json_with_headers")
+def test_adversarial_receipt_null_committed_at_rejected(mock_http, adapter):
+    baseline = {
+        "registry_id": "reg-001",
+        "strategy_id": "strat-alpha",
+        "owner_tenant": "tenant-a",
+        "version": "1.0.0",
+        "checksum": "sha256:abc",
+        "metadata": {"note": "old"},
+        "updated_at": "2026-09-06T01:00:00Z",
+        "last_actor": {"actor_id": "operator-a", "tenant": "tenant-a"},
+    }
+    patched = dict(baseline, metadata={"note": "new"}, updated_at="2026-09-06T01:00:01Z")
+    receipt = _make_receipt(
+        "cmd-target",
+        "reg-001",
+        patched,
+        actor_id="operator-a",
+        expected_metadata={"note": "old"},
+        new_metadata={"note": "new"},
+        committed_at=None,
+    )
+    receipt["committed_at"] = None
+    mock_http.side_effect = [
+        (200, {}, {"entry": baseline}),
+        (200, {"X-Idempotent-Replay": "false"}, {"entry": patched}),
+        (200, {}, {"receipt": receipt}),
+    ]
+    with pytest.raises(ActionUnavailableError) as excinfo:
+        adapter.execute(
+            "cmd-target",
+            "StrategyAction",
+            {
+                "entity_type": "strategy",
+                "strategy_id": "strat-alpha",
+                "registry_id": "reg-001",
+                "action_id": "update_params",
+                "expected_metadata": {"note": "old"},
+                "metadata": {"note": "new"},
+            },
+            auth_token="operator-a",
+        )
+    assert excinfo.value.error_code == "REPLAY_MISSING_COMMIT_TIME"
+
+
+@patch("services.control_plane.bff.command_adapters.strategy_adapter.http_request_json_with_headers")
+def test_adversarial_missing_auth_token_rejected_401(mock_http, adapter):
+    baseline = {
+        "registry_id": "reg-001",
+        "strategy_id": "strat-alpha",
+    }
+    mock_http.side_effect = [
+        (200, {}, {"entry": baseline}),
+    ]
+    with pytest.raises(ActionUnavailableError) as excinfo:
+        adapter.execute(
+            "cmd-no-auth",
+            "StrategyAction",
+            {
+                "entity_type": "strategy",
+                "strategy_id": "strat-alpha",
+                "registry_id": "reg-001",
+                "action_id": "update_params",
+                "expected_metadata": {"note": "old"},
+                "metadata": {"note": "new"},
+            },
+            auth_token=None,
+        )
+    assert excinfo.value.error_code == "UNAUTHORIZED"
+    assert excinfo.value.downstream_status == 401
+
+
+@patch("services.control_plane.bff.command_adapters.strategy_adapter.http_request_json_with_headers")
+def test_adversarial_unverified_jwt_rejected_401(mock_http, adapter, monkeypatch):
+    monkeypatch.setenv("PANTHEON_BFF_AUTH_MODE", "strict")
+    monkeypatch.setenv("PANTHEON_RUNTIME_AUTH_MODE", "strict")
+    monkeypatch.setenv("PANTHEON_AUTH_REQUIRED", "true")
+    monkeypatch.setenv("PANTHEON_RUNTIME_JWT_SECRET", "test-secret-key-123")
+    baseline = {
+        "registry_id": "reg-001",
+        "strategy_id": "strat-alpha",
+    }
+    mock_http.side_effect = [
+        (200, {}, {"entry": baseline}),
+    ]
+    with pytest.raises(ActionUnavailableError) as excinfo:
+        adapter.execute(
+            "cmd-bad-jwt",
+            "StrategyAction",
+            {
+                "entity_type": "strategy",
+                "strategy_id": "strat-alpha",
+                "registry_id": "reg-001",
+                "action_id": "update_params",
+                "expected_metadata": {"note": "old"},
+                "metadata": {"note": "new"},
+            },
+            auth_token="ey-forged-invalid-jwt-signature",
+        )
+    assert excinfo.value.error_code == "UNAUTHORIZED"
+    assert excinfo.value.downstream_status == 401
+
+
+@patch("services.control_plane.bff.command_adapters.strategy_adapter.http_request_json_with_headers")
+def test_transport_disconnect_during_patch_recovers_via_receipt_readback(mock_http, adapter):
+    baseline = {
+        "registry_id": "reg-001",
+        "strategy_id": "strat-alpha",
+        "owner_tenant": "tenant-a",
+        "version": "1.0.0",
+        "checksum": "sha256:abc",
+        "metadata": {"note": "old"},
+        "updated_at": "2026-09-06T01:00:00Z",
+        "last_actor": {"actor_id": "operator-a", "tenant": "tenant-a"},
+    }
+    patched = dict(baseline, metadata={"note": "new"}, updated_at="2026-09-06T01:00:01Z")
+    valid_receipt = _make_receipt(
+        "cmd-disconnect",
+        "reg-001",
+        patched,
+        actor_id="operator-a",
+        expected_metadata={"note": "old"},
+        new_metadata={"note": "new"},
+        committed_at="2026-09-06T01:00:01Z",
+    )
+    mock_http.side_effect = [
+        (200, {}, {"entry": baseline}),
+        urllib.error.URLError("RemoteDisconnected('Remote end closed connection without response')"),
+        (200, {}, {"receipt": valid_receipt}),
+    ]
+    result = adapter.execute(
+        "cmd-disconnect",
+        "StrategyAction",
+        {
+            "entity_type": "strategy",
+            "strategy_id": "strat-alpha",
+            "registry_id": "reg-001",
+            "action_id": "update_params",
+            "expected_metadata": {"note": "old"},
+            "metadata": {"note": "new"},
+        },
+        auth_token="operator-a",
+    )
+    assert result["status"] == "metadata_updated"
+    assert result["domain_receipt"]["commit_time"] == "2026-09-06T01:00:01Z"
+    assert result["response_lost"] is True
+
+
+@patch("services.control_plane.bff.command_adapters.strategy_adapter.http_request_json_with_headers")
+def test_transport_disconnect_during_patch_fails_closed_when_unconfirmed(mock_http, adapter):
+    baseline = {
+        "registry_id": "reg-001",
+        "strategy_id": "strat-alpha",
+        "owner_tenant": "tenant-a",
+        "version": "1.0.0",
+        "checksum": "sha256:abc",
+        "metadata": {"note": "old"},
+        "updated_at": "2026-09-06T01:00:00Z",
+        "last_actor": {"actor_id": "operator-a", "tenant": "tenant-a"},
+    }
+    mock_http.side_effect = [
+        (200, {}, {"entry": baseline}),
+        urllib.error.URLError("RemoteDisconnected('Remote end closed connection without response')"),
+        (404, {}, {"detail": "No committed command receipt found"}),
+    ]
+    with pytest.raises(ActionUnavailableError) as excinfo:
+        adapter.execute(
+            "cmd-disconnect-unconfirmed",
+            "StrategyAction",
+            {
+                "entity_type": "strategy",
+                "strategy_id": "strat-alpha",
+                "registry_id": "reg-001",
+                "action_id": "update_params",
+                "expected_metadata": {"note": "old"},
+                "metadata": {"note": "new"},
+            },
+            auth_token="operator-a",
+        )
+    assert excinfo.value.error_code == "UNCONFIRMED_COMMAND_RECEIPT"
+    assert excinfo.value.retryable is True
+    assert excinfo.value.downstream_status == 503
