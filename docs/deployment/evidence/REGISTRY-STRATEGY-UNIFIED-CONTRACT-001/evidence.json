@@ -24,6 +24,7 @@
       "services/foundation/postgres_json_store.py",
       "services/control-plane/bff/command_adapters/strategy_adapter.py",
       "services/control-plane/bff/command_adapters/base.py",
+      "services/control-plane/bff/command_executor.py",
       "docker-compose.yml",
       "docker-compose.control.yml"
     ],
@@ -36,7 +37,8 @@
       "command_contract.py: canonical STRATEGY_ACTIONS matrix. update_params resolves to Registry's update_metadata_cas capability; submit_review/promote_paper/activate/pause/archive resolve to governance_review/promotion/runtime and carry no Registry capability, so a caller can no longer relabel one business action as another.",
       "BFF strategy_adapter.py: _execute_strategy_action no longer fabricates a resulting_status from a static action->status map. update_params now performs a real GET (base metadata) + PATCH (CAS) + GET (verified readback) sequence against the Registry owner; submit_review/promote_paper/activate/pause/archive raise ActionUnavailableError naming the exact non-Registry owner instead of returning an inferred success. RankingFormula/Ranking handling in the same file is untouched (architecture-resumption-sa-sd.md §3.2 explicitly preserves that unrelated scope).",
       "BFF base.py: fixed http_request_json's method dispatch, which previously routed any non-GET call (including the new PATCH) through command_executor._post_json, which hardcodes method='POST' — silently sending the wrong HTTP verb. Added registry_url() helper.",
-      "No parallel full-spec/revision authority or duplicate route exists in the currently mounted app (confirmed by enumerating all 23 mounted routes); the retirement inventory in first_release_contract.json documents this explicitly rather than claiming a retirement that was never needed."
+      "No parallel full-spec/revision authority or duplicate route exists in the currently mounted app (confirmed by enumerating all 23 mounted routes); the retirement inventory in first_release_contract.json documents this explicitly rather than claiming a retirement that was never needed.",
+      "Front-loaded shared HTTP slice (formal artifact-contract revision 2026-09-06T03:31:41Z, after PR #5620's draft head remained unaccepted): added real-socket regressions in test_strategy_registry_owner_prerequisite.py::TestHttpRequestJsonMethodDispatch proving base.py's http_request_json actually sends GET/POST/PATCH/DELETE as the requested verb (not silently coerced to POST — the exact bug this task already fixed in base.py, which also affected capital_adapter.py's pre-existing PATCH calls), forwards Authorization/X-MFA-Token headers, propagates a real 409/5xx owner error, and honors an explicit timeout instead of hanging. Discovered and fixed a second instance of the same class of bug while writing these regressions: command_executor.py's _get_json/_post_json (used by every other domain adapter through the same http_request_json entrypoint) unconditionally re-wrapped an already-'Bearer '-prefixed auth_token into 'Bearer Bearer ...', unlike base.py's own fallback path, which already guarded against this — command_executor.py now uses the same not-already-prefixed guard for both."
     ]
   },
   "verification": {
@@ -47,8 +49,21 @@
         "result": "194 passed, 1 warning",
         "executed": 194,
         "collected": 194
+      },
+      {
+        "command": "python3 -m pytest -q services/control-plane/bff/tests/test_strategy_registry_owner_prerequisite.py -v (front-loaded shared HTTP slice, generation 3 revision: adds TestHttpRequestJsonMethodDispatch, 9 new real-socket tests)",
+        "result": "17 passed",
+        "executed": 17,
+        "collected": 17
+      },
+      {
+        "command": "python3 -m pytest -q services/registry/test_first_release_contract.py services/registry/test_owner_durability.py (no live Postgres available in this checkout; TEST_DATABASE_URL-gated cases skip rather than fail)",
+        "result": "13 passed, 7 skipped, 1 warning",
+        "executed": 20,
+        "collected": 20
       }
     ],
+    "test_command_executor_and_test_command_adapters_router_note": "The artifact-contract revision (2026-09-06T03:31:41Z) also named services/control-plane/bff/test_command_executor.py and services/control-plane/bff/tests/test_command_adapters_router.py in scope. Both are pre-existing broken imports on origin/dev, unrelated to this task: test_command_executor.py bare-imports 'command_executor', which itself uses 'from .models import ...' since BFF-PACKAGE-BOUNDARY-CORRECTIVE-PREREQUISITE-001 (that commit's own message states it 'Composes with: BFF-TEST-ARCH-001 after this task is reviewed and merged'); tests/test_command_adapters_router.py bare-imports 'command_adapters', whose __init__.py chain now does the same relative-import-beyond-top-level failure via service.py -> ..action_catalog. Both fail at collection with ImportError on a clean origin/dev checkout, verified before any edit in this task. Fixing that shared test-architecture rot is BFF-TEST-ARCH-001's scope, not this task's; adding new tests to an uncollectable file would not be executable proof of anything. The equivalent real-HTTP regression coverage was added instead to test_strategy_registry_owner_prerequisite.py, which is also a declared artifact and already uses the correct services.control_plane.bff dotted-import style.",
     "real_postgres_proofs": [
       "services/foundation/tests/test_registry_owner_transaction.py::test_create_if_absent_survives_fresh_process_restart",
       "services/foundation/tests/test_registry_owner_transaction.py::test_two_concurrent_stores_race_to_exactly_one_create",
@@ -81,7 +96,7 @@
     "retirement_of_mounted_duplicate_routes": "not_applicable_none_exist"
   },
   "review": {
-    "reviewer": "Antigravity",
-    "decision": "pending independent exact-head review"
+    "reviewer": "Codex",
+    "decision": "pending independent exact-head review (generation 3; no reuse of prior Antigravity approval)"
   }
 }

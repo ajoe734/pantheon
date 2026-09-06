@@ -247,7 +247,7 @@ def _post_json(
     data = json.dumps(payload).encode("utf-8")
     headers: Dict[str, str] = {"Content-Type": "application/json"}
     if auth_token:
-        headers["Authorization"] = f"Bearer {auth_token}"
+        headers["Authorization"] = auth_token if auth_token.startswith("Bearer ") else f"Bearer {auth_token}"
     if mfa_token:
         headers["X-MFA-Token"] = mfa_token
     req = urllib.request.Request(
@@ -278,7 +278,7 @@ def _get_json(
     """GET JSON from an owner API for post-error receipt reconciliation."""
     headers: Dict[str, str] = {"Accept": "application/json"}
     if auth_token:
-        headers["Authorization"] = f"Bearer {auth_token}"
+        headers["Authorization"] = auth_token if auth_token.startswith("Bearer ") else f"Bearer {auth_token}"
     if mfa_token:
         headers["X-MFA-Token"] = mfa_token
     req = urllib.request.Request(url, headers=headers, method="GET")
