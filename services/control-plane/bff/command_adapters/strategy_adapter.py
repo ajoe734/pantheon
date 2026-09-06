@@ -35,12 +35,7 @@ _TENANT_CLAIM_NAMES = ("tenant", "tenant_id")
 
 def _adapter_auth_env() -> dict[str, str]:
     return {
-        "PANTHEON_RUNTIME_AUTH_MODE": (
-            os.getenv("PANTHEON_BFF_AUTH_MODE")
-            or os.getenv("PANTHEON_REGISTRY_AUTH_MODE")
-            or os.getenv("PANTHEON_RUNTIME_AUTH_MODE")
-            or "strict"
-        ),
+        "PANTHEON_RUNTIME_AUTH_MODE": "strict",
         "PANTHEON_RUNTIME_JWT_SECRET": (
             os.getenv("PANTHEON_BFF_JWT_SECRET")
             or os.getenv("PANTHEON_REGISTRY_JWT_SECRET")
@@ -119,59 +114,58 @@ def _authenticate_caller(
             downstream_status=exc.status_code,
         ) from exc
 
-    if ctx.token_kind == "jwt":
-        sub = ctx.claims.get("sub")
-        if sub is None or not str(sub).strip():
-            raise ActionUnavailableError(
-                "Caller authentication failed: missing or empty 'sub' claim.",
-                action_id=action_id,
-                entity_type=entity_type,
-                error_code="FORBIDDEN",
-                downstream_status=403,
-            )
-        tenant_val = None
-        for name in _TENANT_CLAIM_NAMES:
-            val = ctx.claims.get(name)
-            if val is not None and str(val).strip():
-                tenant_val = str(val).strip()
-                break
-        if not tenant_val:
-            raise ActionUnavailableError(
-                "Caller authentication failed: missing or empty 'tenant' claim.",
-                action_id=action_id,
-                entity_type=entity_type,
-                error_code="FORBIDDEN",
-                downstream_status=403,
-            )
-        raw_roles = ctx.claims.get("roles") or ctx.claims.get("role")
-        if not raw_roles:
-            raise ActionUnavailableError(
-                "Caller authentication failed: missing or empty 'roles' claim.",
-                action_id=action_id,
-                entity_type=entity_type,
-                error_code="FORBIDDEN",
-                downstream_status=403,
-            )
-        exp = ctx.claims.get("exp")
-        if exp is None:
-            raise ActionUnavailableError(
-                "Caller authentication failed: missing 'exp' claim.",
-                action_id=action_id,
-                entity_type=entity_type,
-                error_code="FORBIDDEN",
-                downstream_status=403,
-            )
-        actor_id = str(sub).strip()
-        tenant = tenant_val
-    else:
-        actor_id = ctx.actor_id
-        tenant = "unscoped"
-        for name in _TENANT_CLAIM_NAMES:
-            val = ctx.claims.get(name)
-            if val and str(val).strip():
-                tenant = str(val).strip()
-                break
+    if ctx.token_kind != "jwt":
+        raise ActionUnavailableError(
+            "Caller authentication failed: non-JWT token not accepted. Production strategy adapter requires a verified JWT.",
+            action_id=action_id,
+            entity_type=entity_type,
+            error_code="UNAUTHORIZED",
+            downstream_status=401,
+        )
 
+    sub = ctx.claims.get("sub")
+    if sub is None or not str(sub).strip():
+        raise ActionUnavailableError(
+            "Caller authentication failed: missing or empty 'sub' claim.",
+            action_id=action_id,
+            entity_type=entity_type,
+            error_code="FORBIDDEN",
+            downstream_status=403,
+        )
+    tenant_val = None
+    for name in _TENANT_CLAIM_NAMES:
+        val = ctx.claims.get(name)
+        if val is not None and str(val).strip():
+            tenant_val = str(val).strip()
+            break
+    if not tenant_val:
+        raise ActionUnavailableError(
+            "Caller authentication failed: missing or empty 'tenant' claim.",
+            action_id=action_id,
+            entity_type=entity_type,
+            error_code="FORBIDDEN",
+            downstream_status=403,
+        )
+    raw_roles = ctx.claims.get("roles") or ctx.claims.get("role")
+    if not raw_roles:
+        raise ActionUnavailableError(
+            "Caller authentication failed: missing or empty 'roles' claim.",
+            action_id=action_id,
+            entity_type=entity_type,
+            error_code="FORBIDDEN",
+            downstream_status=403,
+        )
+    exp = ctx.claims.get("exp")
+    if exp is None:
+        raise ActionUnavailableError(
+            "Caller authentication failed: missing 'exp' claim.",
+            action_id=action_id,
+            entity_type=entity_type,
+            error_code="FORBIDDEN",
+            downstream_status=403,
+        )
+    actor_id = str(sub).strip()
+    tenant = tenant_val
     return actor_id, tenant
 
 

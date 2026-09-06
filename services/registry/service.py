@@ -672,70 +672,77 @@ def _check_strategy_spec_version_lineage(
     latest = latest_entry.version
 
     parent_ids = lineage.parent_registry_ids or []
-    if parent_ids:
-        valid_parents = {entry.registry_id: entry for entry in existing_specs}
-        matching = [valid_parents[pid] for pid in parent_ids if pid in valid_parents]
-        if not matching:
-            raise RegistryError(
-                f"StrategySpec version {version!r} for strategy_id={strategy_id!r} declares "
-                "parent_registry_ids that do not reference any existing StrategySpec entry "
-                "for this strategy."
-            )
-        if len(matching) < len(parent_ids):
-            raise RegistryError(
-                f"StrategySpec version {version!r} for strategy_id={strategy_id!r} declares "
-                "parent_registry_ids containing entries that do not exist for this strategy."
-            )
-
-        newest_parent_entry = max(matching, key=lambda e: _parse_ver(e.version))
-        newest_parent_version = newest_parent_entry.version
-
-        # Stale base check: parent must be the latest known version!
-        if newest_parent_version != latest:
-            raise RegistryConflictError(
-                f"StrategySpec version {version!r} for strategy_id={strategy_id!r} is parented to "
-                f"stale base version {newest_parent_version!r} (registry_id={newest_parent_entry.registry_id!r}); "
-                f"current latest version is {latest!r}."
-            )
-
-        if _parse_ver(version) <= _parse_ver(newest_parent_version):
-            raise RegistryError(
-                f"StrategySpec version {version!r} for strategy_id={strategy_id!r} must be "
-                f"strictly greater than its linked parent's version {newest_parent_version!r}; "
-                "a revision cannot downgrade or restate its own base version."
-            )
-
-        if base_checksum:
-            if base_checksum != newest_parent_entry.checksum:
-                raise RegistryConflictError(
-                    f"StrategySpec version {version!r} declares base_checksum {base_checksum!r}, "
-                    f"but parent base {newest_parent_entry.registry_id!r} (version {newest_parent_version!r}) "
-                    f"has checksum {newest_parent_entry.checksum!r}."
-                )
-        return
-
-    latest = max(existing_versions, key=_parse_ver)
-    major, minor, patch = _parse_ver(latest)
-    valid_next = {
-        (major + 1, 0, 0),
-        (major, minor + 1, 0),
-        (major, minor, patch + 1),
-    }
-    if _parse_ver(version) not in valid_next:
+    if not parent_ids and not base_checksum:
         raise RegistryError(
-            f"StrategySpec version {version!r} is not a valid next revision from the "
-            f"latest known version {latest!r} for strategy_id={strategy_id!r}, and declares "
-            "no parent_registry_ids linking it to an existing entry. Valid next versions: "
-            f"{sorted('.'.join(str(p) for p in v) for v in valid_next)}."
+            f"StrategySpec version {version!r} is not a valid next revision from latest "
+            f"version {latest!r} for strategy_id={strategy_id!r}: noninitial revisions "
+            "must declare explicit caller parent/base identity (parent_registry_ids in lineage "
+            "and/or base_checksum) linking it to an existing entry; cannot infer base from "
+            "current latest version."
         )
 
-    if base_checksum:
+    if not parent_ids:
+        # Caller provided base_checksum without parent_registry_ids: bind directly to latest base entry
         if base_checksum != latest_entry.checksum:
             raise RegistryConflictError(
                 f"StrategySpec version {version!r} declares base_checksum {base_checksum!r}, "
-                f"but latest base {latest_entry.registry_id!r} (version {latest!r}) "
+                f"but current latest base {latest_entry.registry_id!r} (version {latest!r}) "
                 f"has checksum {latest_entry.checksum!r}."
             )
+        major, minor, patch = _parse_ver(latest)
+        valid_next = {
+            (major + 1, 0, 0),
+            (major, minor + 1, 0),
+            (major, minor, patch + 1),
+        }
+        if _parse_ver(version) not in valid_next:
+            raise RegistryError(
+                f"StrategySpec version {version!r} is not a valid next revision from latest "
+                f"version {latest!r} for strategy_id={strategy_id!r}. Valid next versions: "
+                f"{sorted('.'.join(str(p) for p in v) for v in valid_next)}."
+            )
+        return
+
+    valid_parents = {entry.registry_id: entry for entry in existing_specs}
+    matching = [valid_parents[pid] for pid in parent_ids if pid in valid_parents]
+    if not matching:
+        raise RegistryError(
+            f"StrategySpec version {version!r} for strategy_id={strategy_id!r} declares "
+            "parent_registry_ids that do not reference any existing StrategySpec entry "
+            "for this strategy."
+        )
+    if len(matching) < len(parent_ids):
+        raise RegistryError(
+            f"StrategySpec version {version!r} for strategy_id={strategy_id!r} declares "
+            "parent_registry_ids containing entries that do not exist for this strategy."
+        )
+
+    newest_parent_entry = max(matching, key=lambda e: _parse_ver(e.version))
+    newest_parent_version = newest_parent_entry.version
+
+    # Stale base check: parent must be the latest known version!
+    if newest_parent_version != latest:
+        raise RegistryConflictError(
+            f"StrategySpec version {version!r} for strategy_id={strategy_id!r} is parented to "
+            f"stale base version {newest_parent_version!r} (registry_id={newest_parent_entry.registry_id!r}); "
+            f"current latest version is {latest!r}."
+        )
+
+    if _parse_ver(version) <= _parse_ver(newest_parent_version):
+        raise RegistryError(
+            f"StrategySpec version {version!r} for strategy_id={strategy_id!r} must be "
+            f"strictly greater than its linked parent's version {newest_parent_version!r}; "
+            "a revision cannot downgrade or restate its own base version."
+        )
+
+    if base_checksum:
+        if base_checksum != newest_parent_entry.checksum:
+            raise RegistryConflictError(
+                f"StrategySpec version {version!r} declares base_checksum {base_checksum!r}, "
+                f"but parent base {newest_parent_entry.registry_id!r} (version {newest_parent_version!r}) "
+                f"has checksum {newest_parent_entry.checksum!r}."
+            )
+    return
 
 
 def _validate_strategy_spec_version_lineage(

@@ -2049,3 +2049,26 @@ def test_strict_auth_rejects_bare_token_without_config(adapter, monkeypatch):
             auth_token="bare-unsigned-operator-token",
         )
     assert excinfo.value.error_code == "UNAUTHORIZED"
+
+
+def test_adapter_rejects_permissive_unsigned_before_owner_io(adapter, monkeypatch):
+    """Even if PANTHEON_BFF_AUTH_MODE=permissive is in the environment, StrategyCommandAdapter
+    must enforce strict JWT validation and perform ZERO owner I/O for unsigned/non-JWT tokens."""
+    monkeypatch.setenv("PANTHEON_BFF_AUTH_MODE", "permissive")
+    with patch.object(adapter, "_readback_entry", return_value=None) as read:
+        with pytest.raises(ActionUnavailableError):
+            adapter.execute(
+                "review-unsigned",
+                "StrategyAction",
+                {
+                    "entity_type": "strategy",
+                    "strategy_id": "review-strategy",
+                    "registry_id": "review-registry",
+                    "action_id": "update_params",
+                    "expected_metadata": None,
+                    "metadata": {"note": "review"},
+                },
+                auth_token="review-unsigned:operator",
+            )
+        assert read.call_count == 0, "Unsigned token reached owner I/O"
+

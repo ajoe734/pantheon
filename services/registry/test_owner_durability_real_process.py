@@ -502,7 +502,7 @@ def test_transaction_rollback_before_commit_leaves_no_orphan_reservation_or_stat
                 "strategy_id": "strat-rb-proof",
                 "version": "1.0.1",
                 "artifact_state": "draft",
-                "lineage": {"source_run_ids": ["run-valid-next"]},
+                "lineage": {"source_run_ids": ["run-valid-next"], "parent_registry_ids": [reg_id]},
                 "checksum": _spec_checksum(spec_101),
                 "metadata": {"strategy_spec": spec_101},
             },
@@ -1231,3 +1231,43 @@ def test_concurrent_parent_linked_writers_on_typed_and_keyed_routes(pg_schema):
 
     finally:
         _stop(proc)
+
+
+@pytest.mark.parametrize("route", ["/api/registry/strategy-specs", "/api/registry/entries"])
+def test_revision_requires_caller_base(pg_schema, route):
+    """Prove that a noninitial StrategySpec revision without caller parent/base identity
+    is rejected (400) on both dedicated /strategy-specs and generic /entries routes,
+    preventing an intervening revision race from committing undetected."""
+    from services.registry.test_service import _valid_spec
+
+    dsn, schema = pg_schema
+    port = _free_port()
+    proc = _spawn_registry_process(port=port, dsn=dsn, schema=schema)
+    try:
+        _wait_for_health(port)
+        token = _strict_jwt()
+        sid = f"rev-unbound-{uuid4().hex[:6]}"
+        statuses = []
+        for version, content in [("1.0.0", 100), ("1.0.1", 101), ("2.0.0", 200)]:
+            payload = {
+                "strategy_id": sid,
+                "version": version,
+                "artifact_type": "strategy_spec",
+                "lineage": {"source_run_ids": ["run-base-100"]},
+                "strategy_spec": _valid_spec(sid, v=content),
+            }
+            status, body = _http(
+                "POST",
+                port,
+                route,
+                token=token,
+                payload=payload,
+                headers={"Idempotency-Key": f"review-{sid}-{version}"},
+            )
+            statuses.append(status)
+        assert statuses[0] == 200
+        assert statuses[1] in (400, 409, 422), f"Revision accepted without caller parent/base binding: {statuses}"
+        assert statuses[2] in (400, 409, 422), f"Revision accepted without caller parent/base binding: {statuses}"
+    finally:
+        _stop(proc)
+

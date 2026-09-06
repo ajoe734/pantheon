@@ -164,13 +164,30 @@ def test_register_strategy_spec_accepts_valid_next_version(client):
         },
     )
     assert first.status_code == 200, first.text
+    parent_id = first.json()["entry"]["registry_id"]
+    parent_checksum = first.json()["entry"]["checksum"]
 
-    next_patch = client.post(
+    # Noninitial revision without parent/base identity is rejected (400)
+    unbound = client.post(
         "/api/registry/strategy-specs",
         json={
             "strategy_id": strategy_id,
             "version": "1.0.1",
             "lineage": _lineage(),
+            "strategy_spec": _valid_spec(strategy_id, v=2),
+        },
+    )
+    assert unbound.status_code == 400, unbound.text
+    assert "caller parent/base identity" in unbound.json()["detail"]
+
+    # Valid next revision with parent linkage succeeds (200)
+    next_patch = client.post(
+        "/api/registry/strategy-specs",
+        json={
+            "strategy_id": strategy_id,
+            "version": "1.0.1",
+            "lineage": {"source_run_ids": ["run-1"], "parent_registry_ids": [parent_id]},
+            "base_checksum": parent_checksum,
             "strategy_spec": _valid_spec(strategy_id, v=2),
         },
     )

@@ -352,6 +352,8 @@ def test_generic_route_embedded_spec_serializes_concurrent_revision_race(pg_app)
         },
     )
     assert base.status_code == 200, base.text
+    parent_reg_id = base.json()["entry"]["registry_id"]
+    parent_checksum = base.json()["entry"]["checksum"]
 
     from . import service as service_module
 
@@ -372,7 +374,8 @@ def test_generic_route_embedded_spec_serializes_concurrent_revision_race(pg_app)
                 "artifact_type": "strategy_spec",
                 "strategy_id": strategy_id,
                 "version": version,
-                "lineage": {"source_run_ids": ["run-base"]},
+                "lineage": {"source_run_ids": ["run-base"], "parent_registry_ids": [parent_reg_id]},
+                "base_checksum": parent_checksum,
                 "metadata": {"strategy_spec": _valid_spec(strategy_id, variant=version)},
             },
         )
@@ -390,7 +393,7 @@ def test_generic_route_embedded_spec_serializes_concurrent_revision_race(pg_app)
     finally:
         service_module._validate_strategy_spec_version_lineage = real_validate
 
-    assert stale_result.status_code == 400, stale_result.text
+    assert stale_result.status_code in (400, 409), stale_result.text
 
     listed = pg_app.get(f"/api/registry/strategies/{strategy_id}/strategy-specs")
     versions = sorted(item["entry"]["version"] for item in listed.json())
