@@ -2967,6 +2967,80 @@ class TestOpenClawAssistantProvider(unittest.TestCase):
         self.assertEqual(kwargs["context_pack"], {"context_pack_id": "ctx-1"})
         self.assertEqual(kwargs["trace_id"], "trace-1")
 
+    def test_invoke_stream_applies_same_persona_admission_fencing_as_invoke(self):
+        """SIMPLIFY-OPENCLAW-001 reviewer finding 1: forwarding `req.agent_id`
+        directly to the stream path bypassed ordinary `/invoke`'s Persona
+        admission/runtime-policy/live-agent/idempotency fencing entirely.
+        Reproduction: the exact same syntactically valid Persona request
+        with an empty admission DB (no prior
+        `/agents/persona-opinion/ensure` call) must be denied on BOTH routes
+        with the same rejection, and the provider's `invoke()`/`stream()`
+        must never be reached on either."""
+        tenant_id = "tenant-fence"
+        persona_id = "persona-fence"
+        persona_version = "persona-fence-v1"
+        snapshot_id = "snapshot-fence-v1"
+        requested_environment = "paper"
+        agent_id = adapter_main._persona_opinion_agent_id(
+            tenant_id, persona_id, persona_version, snapshot_id, requested_environment
+        )
+        admission = {
+            "persona_id": persona_id,
+            "tenant_id": tenant_id,
+            "persona_version": persona_version,
+            "agent_id": agent_id,
+            "workspace_ref": f"/home/node/.openclaw/workspaces/{agent_id}",
+            "capability_snapshot_id": snapshot_id,
+            "allowed_capabilities": ["persona_opinion"],
+            "environment_ceiling": "paper",
+            "requested_environment": requested_environment,
+            "execution_authority": "none",
+            "display_name": "Fence",
+        }
+        body = {
+            "mode": "user",
+            "prompt": "attempt without prior admission",
+            "agent_id": agent_id,
+            "persona_admission": admission,
+            "metadata": {"allowed_tools": []},
+        }
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            db_patch = patch.object(
+                adapter_main,
+                "_OPENCLAW_AGENT_IDEMPOTENCY_DB",
+                Path(tmp_dir) / "agent-ensure.sqlite3",
+            )
+            db_patch.start()
+            try:
+                with patch.object(adapter_main._OPENCLAW_AGENT_PROVIDER, "invoke") as invoke_mock:
+                    invoke_resp = client.post(
+                        "/api/openclaw-adapter/assistant/providers/openclaw/invoke",
+                        json=body,
+                        headers={"X-Operator-Id": "op-1", "Idempotency-Key": "fence-invoke-1"},
+                    )
+                self.assertEqual(invoke_resp.status_code, 403, invoke_resp.text)
+                self.assertEqual(invoke_resp.json()["error_code"], "PERSONA_OPINION_ADMISSION_DENIED")
+                invoke_mock.assert_not_called()
+
+                with patch.object(adapter_main._OPENCLAW_AGENT_PROVIDER, "stream") as stream_mock:
+                    stream_resp = client.post(
+                        "/api/openclaw-adapter/assistant/providers/openclaw/invoke/stream",
+                        json=body,
+                        headers={"X-Operator-Id": "op-1", "Idempotency-Key": "fence-stream-1"},
+                    )
+                self.assertEqual(stream_resp.status_code, 200, stream_resp.text)
+                events = [
+                    json.loads(line.removeprefix("data: "))
+                    for line in stream_resp.text.splitlines()
+                    if line.startswith("data: {")
+                ]
+                self.assertEqual(len(events), 1)
+                self.assertEqual(events[0]["type"], "error")
+                self.assertEqual(events[0]["error_code"], "PERSONA_OPINION_ADMISSION_DENIED")
+                stream_mock.assert_not_called()
+            finally:
+                db_patch.stop()
+
     def test_openclaw_invoke_forwards_attachments(self):
         """The mounted (non-stream) invoke route must also forward
         `req.attachments` to the provider — previously silently dropped."""

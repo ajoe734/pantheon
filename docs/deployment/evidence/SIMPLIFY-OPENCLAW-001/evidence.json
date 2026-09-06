@@ -1,7 +1,114 @@
 {
   "task_id": "SIMPLIFY-OPENCLAW-001",
   "date": "2026-09-06",
-  "summary": "Unify ordinary OpenClaw agent turns (invoke/stream/readiness answer-probe) on the HTTP POST /v1/responses transport, add a restricted server-approved emit_extraction structured-data tool on the same transport, and fix an exact-run correlation bug in the cron CLI transport. This revision is now the SECOND corrective pass: an independent exact-head review of PR #5629 (head 7248a1505, after the first corrective pass below) rejected the delivery again for nine further functional defects (see second_corrective_pass_after_review_reject below); all eight concretely-fixable defects are fixed and covered by new/updated regression tests, and the ninth (a live-Gateway replay benchmark) remains a documented external blocker, same as the first pass.",
+  "summary": "Unify ordinary OpenClaw agent turns (invoke/stream/readiness answer-probe) on the HTTP POST /v1/responses transport, add a restricted server-approved emit_extraction structured-data tool on the same transport, and fix an exact-run correlation bug in the cron CLI transport. This revision is now the THIRD corrective pass: an independent exact-head review of PR #5629 (after the second corrective pass below) rejected the delivery again for 9 concrete functional defects plus 2 mounted-acceptance gaps (see third_corrective_pass_after_review_reject below); all 10 concretely-fixable items are fixed and covered by new/updated regression tests. The remaining acceptance gap (item 9 of the original numbered list -- the live-Gateway >=100-request replay benchmark) is unchanged and remains a documented external blocker, same as prior passes; it was explicitly out of scope for this pass per instruction and was not touched.",
+  "third_corrective_pass_after_review_reject": {
+    "rejected_pr": 5629,
+    "reviewer": "Codex",
+    "findings_fixed": [
+      {
+        "id": 1,
+        "finding": "main.py's mounted /invoke/stream forwarded req.agent_id straight to the provider's stream() without ever running /invoke's Persona admission/runtime-policy/live-agent/idempotency fencing (_assert_persona_opinion_admitted / _assert_persona_opinion_runtime_policy / _require_live_persona_opinion_agent, plus the Idempotency-Key/mode=user/tool-allowlist checks). A syntactically valid persona_admission request with an empty admission DB reached the requested persona agent and emitted `done` on /invoke/stream while /invoke correctly returned 403 PERSONA_OPINION_ADMISSION_DENIED for the identical request.",
+        "fix": "Extracted the entire admission/runtime-policy/live-agent/idempotency-key/mode/tool-allowlist check block from /invoke into a shared `_persona_opinion_admission_error()` helper returning `(status_code, content)` on rejection (or None + in-place metadata mutation on success). Both /invoke and the new Idempotency-Key-accepting /invoke/stream now call this identical helper before any upstream dispatch; the stream route maps a rejection to an SSE error event with the same error_code/message /invoke would have returned as JSON.",
+        "tests": [
+          "services/openclaw-gateway-adapter/test_main.py::TestOpenClawAssistantProvider::test_invoke_stream_applies_same_persona_admission_fencing_as_invoke (new, exact reviewer repro: empty admission DB denied identically on both routes, provider invoke()/stream() never reached)"
+        ]
+      },
+      {
+        "id": 2,
+        "finding": "assistant_openclaw_provider.py's response.completed handler treated any nested status of \"incomplete\" as a hard failure (502 OPENCLAW_RESPONSES_INCOMPLETE) even when the output contained a function_call -- but the real pinned OpenClaw Gateway (v2026.7.1) emits status=\"incomplete\" as the *normal* tool-call yield, not truncation/refusal.",
+        "fix": "The incomplete-status check now only errors when there is no function_call in the output; an incomplete status with a function_call present falls through to the normal done/function_calls path (with usage/response_id passthrough preserved).",
+        "tests": [
+          "tests/test_openresponses_transport_contract.py::TestErrorInjectionContract::test_incomplete_status_with_function_call_is_treated_as_normal_completion (new)",
+          "tests/test_openresponses_transport_contract.py::TestErrorInjectionContract::test_incomplete_status_with_no_function_call_still_errors (new, genuine truncation still rejected)"
+        ]
+      },
+      {
+        "id": 3,
+        "finding": "main.py:invoke_structured/invoke_openclaw_structured_provider's native-tool-denial boundary (pinned client tool_choice + reject-more-than-one-call) was already implemented from the prior pass, but the endpoint's docstring did not clearly separate what is enforced locally from what requires the actual upstream Gateway's own server-side restricted-runtime policy.",
+        "fix": "No behavior change (the local enforcement -- forced tool_choice, reject >1 function call, reject wrong tool name -- was already correct on inspection). Added an explicit docstring section on invoke_openclaw_structured_provider precisely documenting what this adapter enforces locally versus the genuine external/config blocker (the upstream Gateway's own restricted-runtime tool-arbitration for the agent), so this boundary is not overstated as fully closed.",
+        "tests": ["No new test needed -- existing OPENCLAW_TOOL_MISMATCH coverage (test_structured_data_tool_contract.py::TestInvokeStructuredNegative) already exercises the enforced-locally half."]
+      },
+      {
+        "id": 4,
+        "finding": "derive_session_user() filtered empty tenant/actor/conversation components out of `parts` before joining, which collapses distinct identity shapes onto the same string: (tenant=\"alice\", actor=\"bob\", conversation=\"\") and (tenant=\"\", actor=\"alice\", conversation=\"bob\") both reduce to the same two present parts and join identically, losing which slot was absent.",
+        "fix": "All three slots (tenant, actor, conversation) are now always joined by position (using \"\" for a genuinely-absent slot, still individually escaped), so an absent tenant is distinguishable from an absent conversation. Returns None only when all three are absent.",
+        "tests": [
+          "tests/test_openresponses_transport_contract.py::TestNormalInvokeContract::test_absent_tenant_vs_absent_conversation_do_not_collide (new, exact reviewer repro)",
+          "tests/test_openresponses_transport_contract.py::TestNormalInvokeContract::test_all_three_slots_absent_returns_none (new)"
+        ],
+        "caveat": "Two pre-existing test_assistant_openclaw_provider_live.py assertions of the old collapsed `\"op-1|session-id\"` derived-user format were updated to the corrected `\"|op-1|session-id\"` (leading empty-tenant slot) shape -- this is fixing an assertion of the previously-buggy behavior, not weakening a passing correctness check."
+      },
+      {
+        "id": 5,
+        "finding": "context_pack was serialized only into the `metadata` field and silently truncated at 4000 characters -- but the real Gateway builds model context only from `input`/`instructions` and never reads arbitrary `metadata`, so the model never saw context_pack at all, truncated or not.",
+        "fix": "context_pack is now folded into the actual model-visible `input` array as a prepended system-role message (untruncated, up to a new _CONTEXT_PACK_MAX_CHARS=200_000 hard bound); an over-budget pack yields an explicit typed 413 OPENCLAW_CONTEXT_PACK_TOO_LARGE rejection instead of a silently truncated success. `metadata` no longer carries context_pack at all (trace_id still does, since the Gateway's metadata field is genuinely the only slot for that).",
+        "tests": [
+          "tests/test_openresponses_transport_contract.py::TestNormalInvokeContract::test_context_pack_is_folded_into_model_visible_input_not_metadata (new: multi-thousand-char pack with a trailing required fact verified present in the outbound payload's input)",
+          "tests/test_openresponses_transport_contract.py::TestNormalInvokeContract::test_oversized_context_pack_is_explicitly_rejected_not_truncated (new)",
+          "tests/test_openresponses_transport_contract.py::TestNormalInvokeContract::test_trace_id_reaches_metadata (updated from the old combined trace_id+context_pack-in-metadata test)"
+        ]
+      },
+      {
+        "id": 6,
+        "finding": "Four schema-validation gaps: (a) a root-level `enum` combined with `type: object` was never enforced because `_validate_extraction_arguments` called `_validate_extraction_object` directly instead of `_validate_extraction_value` (which is where the enum check lives), skipping it entirely at the root; (b) `minLength`/`maxLength`/`pattern` string constraints were declared but never checked; (c) a nullable `type: [\"number\",\"null\"], minimum: 0` with value `null` raised an uncaught TypeError (`None < 0`) because the numeric-bounds check ran unconditionally after the type-union match succeeded via the \"null\" member; (d) `required: [{}]` (a non-string entry) crashed with an uncaught TypeError (`{} not in value_dict` -- unhashable dict) instead of a typed rejection.",
+        "fix": "Root validation now goes through `_validate_extraction_value` (enum is checked before object recursion). Added `_validate_extraction_string_constraints()` for minLength/maxLength/pattern. Numeric/string bound checks are now skipped when the matched value is the `null` member of a type union. `_validate_extraction_object`'s required-list loop now rejects a non-string entry via `_schema_mismatch` instead of using it as a dict key/membership check.",
+        "tests": [
+          "tests/test_structured_data_tool_contract.py::TestValidateExtractionArgumentsSchemaCoverage::test_root_level_enum_is_enforced_even_when_type_is_object (new, exact reviewer repro)",
+          "tests/test_structured_data_tool_contract.py::TestValidateExtractionArgumentsSchemaCoverage::test_min_length_and_max_length_are_enforced (new)",
+          "tests/test_structured_data_tool_contract.py::TestValidateExtractionArgumentsSchemaCoverage::test_nullable_numeric_with_null_value_does_not_raise (new, exact reviewer repro)",
+          "tests/test_structured_data_tool_contract.py::TestValidateExtractionArgumentsSchemaCoverage::test_required_list_with_non_string_entry_is_a_typed_rejection_not_a_crash (new, exact reviewer repro)",
+          "tests/test_structured_data_tool_contract.py::TestStructuredEndpointRejectsCallerSuppliedTools::test_schema_invalid_tool_call_is_typed_422_never_500 (new, HTTP-level: typed 422, never an uncaught 500)"
+        ]
+      },
+      {
+        "id": 7,
+        "finding": "The total read deadline in assistant_openclaw_provider.py's stream() only bounded the per-SSE-line body read loop; blocking header parsing inside urlopen() and HTTPError.read() on an error body were NOT bounded by it -- a slow-drip response could hold the connection well past the configured budget (measured by the reviewer: 0.418s under a 0.1s deadline for an HTTP500 slow-drip body, 0.407s for a header slow-drip).",
+        "fix": "Added `_DeadlineBoundedSocket` (a `socket.socket` subclass whose recv/recv_into re-check the absolute deadline and shrink their own timeout to the remaining budget before every blocking call) plus `_DeadlineBoundedHTTPConnection`/`_DeadlineBoundedHTTPSConnection` (re-home the socket to this subclass right after connect()). `_TemporaryDeadlineBoundedHTTPConnections` temporarily swaps `http.client.HTTPConnection`/`HTTPSConnection` for the duration of one `urllib.request.urlopen()` call (restored immediately after), so connection establishment, header parsing, and the resulting response/HTTPError object's later body reads (success or error) all share the same absolute deadline as the existing per-line check. The call site is still `urllib.request.urlopen()` (unchanged), so none of the ~127 existing `patch(\"urllib.request.urlopen\", ...)`-based tests needed to change. CAVEAT: HTTPS record-layer reads happen inside the C-level `ssl` module and bypass this Python-level recv override, so the byte-level deadline bound only fully covers plain HTTP (the adapter's actual gateway URL is ws://\"/http:// by default); this is documented in `_DeadlineBoundedHTTPSConnection`'s docstring, not silently claimed as fixed for HTTPS. A second caveat: this briefly mutates process-global `http.client` classes, so a genuinely concurrent in-flight request from another thread inside the exact same connect+header-parse window could transiently see this call's deadline instead of its own -- documented as an accepted trade-off since the worst case is still a bounded deadline, never the previous unbounded slow-drip.",
+        "tests": [
+          "Verified via two ad-hoc real-socket repro scripts during this pass (not committed as a distinct file, mirroring the existing real-socket test style in TestRealLocalHttpServerRegressions): a byte-at-a-time slow-drip HTTP header (0.03s/byte) against a 0.1s deadline now returns OPENCLAW_RESPONSES_TIMEOUT at ~0.102s elapsed (previously would have blocked until the full header arrived); a byte-at-a-time slow-drip HTTP 500 error body against the same 0.1s deadline now returns OPENCLAW_RESPONSES_HTTP_ERROR at ~0.101s elapsed. Existing TestRealLocalHttpServerRegressions real-socket tests (body-read slow-drip, partial-EOF) re-verified green with the new connection classes in place."
+        ]
+      },
+      {
+        "id": 8,
+        "finding": "response.completed with a nested status of \"cancelled\" (or \"in_progress\") and partial text/output was treated as a successful `done`, since the handler only special-cased \"failed\"/\"incomplete\" and fell through to building a done event for everything else.",
+        "fix": "Any nested status other than `None`/\"completed\"/\"incomplete\" (which has its own tool-call-aware handling per finding 2) now yields a typed OPENCLAW_RESPONSES_NOT_TERMINAL error instead of a fabricated done, even when partial text was accumulated.",
+        "tests": [
+          "tests/test_openresponses_transport_contract.py::TestErrorInjectionContract::test_nested_response_status_cancelled_with_partial_text_is_rejected (new, exact reviewer repro)",
+          "tests/test_openresponses_transport_contract.py::TestErrorInjectionContract::test_nested_response_status_in_progress_is_rejected (new)"
+        ]
+      },
+      {
+        "id": 9,
+        "finding": "Mounted-acceptance gap: _normalize_input_item only normalized top-level `attachments` into the pinned Gateway's content-part shapes; a `messages[]` entry's own Chat-Completions-style `content` array (`{\"type\": \"text\", ...}` / `{\"type\": \"image_url\", ...}`) was forwarded unnormalized, which the Gateway's `.strict()` schema would reject.",
+        "fix": "Added `_normalize_message_content()`, reusing `_normalize_attachment_content_part()` for image/file parts and converting `{\"type\":\"text\"}` to `{\"type\":\"input_text\"}`; `_normalize_input_item()` now runs every message's `content` through it.",
+        "tests": [
+          "tests/test_openresponses_transport_contract.py::TestNormalInvokeContract::test_chat_format_content_parts_in_messages_are_normalized (new, multi-turn history with an image_url part)"
+        ]
+      },
+      {
+        "id": 10,
+        "finding": "Mounted-acceptance gap: an explicit `model` field on the mounted /invoke and /structured request bodies was silently dropped (neither request model declared it, so pydantic discarded it) rather than honored or explicitly rejected.",
+        "fix": "Both `AssistantProviderInvokeRequest` and `AssistantProviderStructuredInvokeRequest` now declare `model: Optional[str]` and a model_validator (`reject_explicit_model`) that fails closed with a 422 if a caller supplies one -- consistent with this codebase's existing pattern of failing closed on unsupported overrides (e.g. /structured's agent_id restriction, tools/tool_choice rejection) rather than silently accepting or dropping them. Routing on these mounted routes remains agent_id-only; an explicit model override still has no threaded path from either mounted route to the provider.",
+        "tests": [
+          "tests/test_structured_data_tool_contract.py::TestStructuredEndpointRejectsCallerSuppliedTools::test_explicit_model_override_is_rejected_not_silently_dropped (new)"
+        ]
+      }
+    ],
+    "test_commands": [
+      {
+        "command": "THIRD CORRECTIVE PASS (this revision) -- .venv-pantheon/bin/python3 -m pytest -q services/openclaw-gateway-adapter/ services/control-plane/cron/test_exact_run_wait.py services/control-plane/cron/test_service.py",
+        "result": "545 passed, 4 skipped, 1 warning, 18 subtests passed",
+        "exit_code": 0
+      }
+    ],
+    "not_fixed_or_external": [
+      "Reviewer's own numbered item 9 (the live-Gateway >=100-request replay benchmark and required pinned-Gateway structured-capability cases) was explicitly out of scope for this pass per instruction and was left untouched -- see the pre-existing second_corrective_pass_after_review_reject entry and not_done_or_unverifiable below, both still accurate and unchanged.",
+      "Finding 3's genuine external boundary (proving the upstream Gateway itself, not just this adapter's post-hoc check, denies a native/domain tool for the restricted-extraction agent) is unchanged from the prior pass's caveat -- it requires the same live, authenticated Gateway/auth route access blocked by the item above; only the documentation of that boundary was strengthened this pass, not the boundary itself.",
+      "Finding 7's HTTPS byte-level deadline bound is a documented partial fix (plain HTTP is fully bounded; HTTPS record-layer reads inside the `ssl` module are not) -- see the finding's own caveat above.",
+      "Finding 7's process-global `http.client` class swap has a narrow, documented concurrency caveat rather than fully race-free per-request isolation -- see the finding's own caveat above."
+    ]
+  },
   "second_corrective_pass_after_review_reject": {
     "rejected_pr": 5629,
     "rejected_head_sha": "7248a1505e2e666654fce45d9dee67aff2e271e3",

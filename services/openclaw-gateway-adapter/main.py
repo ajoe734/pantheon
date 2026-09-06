@@ -54,7 +54,7 @@ import urllib.request
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, Iterator, List, Optional
+from typing import Any, Dict, Iterator, List, Optional, Tuple
 
 import httpx
 from fastapi import FastAPI, Header, Request
@@ -847,6 +847,16 @@ class AssistantProviderInvokeRequest(BaseModel):
     metadata: Optional[Dict[str, Any]] = None
     messages: Optional[List[Dict[str, Any]]] = None
     attachments: Optional[List[Dict[str, Any]]] = None
+    # No mounted route threads an explicit provider/model override through
+    # today (routing is by `agent_id`, and any actual model override lives
+    # in the provider's own `X-OpenClaw-Model` header contract, validated
+    # server-side against the agent's allowed model visibility policy).
+    # Accepting this field and silently dropping it would let a caller
+    # believe an override took effect when it never reached the upstream
+    # request at all; declaring it here purely so `reject_explicit_model`
+    # below can fail closed with a typed 422 instead of pydantic silently
+    # discarding an unrecognized field.
+    model: Optional[str] = None
 
     @model_validator(mode="after")
     def validate_agent_selection(self) -> "AssistantProviderInvokeRequest":
@@ -856,6 +866,15 @@ class AssistantProviderInvokeRequest(BaseModel):
             raise ValueError("agent_id and persona_admission must be supplied together")
         if self.agent_id != self.persona_admission.agent_id:
             raise ValueError("agent_id does not match the governed Persona admission")
+        return self
+
+    @model_validator(mode="after")
+    def reject_explicit_model(self) -> "AssistantProviderInvokeRequest":
+        if self.model is not None:
+            raise ValueError(
+                "an explicit model override is not supported on this mounted route; "
+                "routing is by agent_id only"
+            )
         return self
 
 
@@ -876,12 +895,25 @@ class AssistantProviderStructuredInvokeRequest(BaseModel):
     extraction_schema: Dict[str, Any]
     tools: Optional[Any] = None
     tool_choice: Optional[Any] = None
+    # See AssistantProviderInvokeRequest.model's comment -- no mounted route
+    # threads an explicit model override through; declared here only so it
+    # can be explicitly rejected rather than silently dropped.
+    model: Optional[str] = None
 
     @model_validator(mode="after")
     def reject_caller_supplied_tools(self) -> "AssistantProviderStructuredInvokeRequest":
         if self.tools is not None or self.tool_choice is not None:
             raise ValueError(
                 "caller-supplied tool definitions are not accepted; only extraction_schema is allowed"
+            )
+        return self
+
+    @model_validator(mode="after")
+    def reject_explicit_model(self) -> "AssistantProviderStructuredInvokeRequest":
+        if self.model is not None:
+            raise ValueError(
+                "an explicit model override is not supported on this mounted route; "
+                "routing is by agent_id only"
             )
         return self
 
@@ -1417,6 +1449,75 @@ class _PersonaOpinionInvocationInDoubt(RuntimeError):
     pass
 
 
+def _persona_opinion_admission_error(
+    req: "AssistantProviderInvokeRequest",
+    *,
+    idempotency_key: Optional[str],
+    mode: str,
+    metadata: Dict[str, Any],
+) -> Optional[Tuple[int, Dict[str, Any]]]:
+    """Shared Persona-opinion admission/runtime-policy/live-agent/idempotency
+    fencing check.
+
+    Every dispatch path that can route a `persona_admission` request to an
+    upstream agent (the ordinary `/invoke` endpoint and the `/invoke/stream`
+    SSE variant) MUST call this before starting the upstream attempt so a
+    caller cannot bypass admission by hitting a different route with the
+    same syntactically valid Persona request. Returns `None` and mutates
+    `metadata` in place on success; returns `(status_code, content)` on
+    rejection.
+    """
+    if req.persona_admission is None:
+        return None
+    if not str(idempotency_key or "").strip():
+        return 422, {
+            "status": "provider_error",
+            "error_code": "PERSONA_OPINION_IDEMPOTENCY_REQUIRED",
+            "message": "Idempotency-Key is required for governed Persona opinion invocation.",
+        }
+    if mode != "user":
+        return 422, {
+            "status": "provider_error",
+            "error_code": "PERSONA_OPINION_MODE_DENIED",
+            "message": "Governed Persona opinion agents may only run in user mode.",
+        }
+    try:
+        _assert_persona_opinion_admitted(req.persona_admission)
+        _assert_persona_opinion_runtime_policy(req.persona_admission.agent_id)
+        _require_live_persona_opinion_agent(req.persona_admission.agent_id)
+    except _PersonaOpinionAgentNotReady as exc:
+        resp = _persona_opinion_agent_not_ready_response(exc)
+        return resp.status_code, json.loads(bytes(resp.body))
+    except GatewayOpenClawProviderError as exc:
+        resp = _persona_opinion_gateway_error_response(exc)
+        return resp.status_code, json.loads(bytes(resp.body))
+    except (ValueError, RuntimeError) as exc:
+        return 403, {
+            "status": "provider_error",
+            "error_code": "PERSONA_OPINION_ADMISSION_DENIED",
+            "message": str(exc),
+        }
+    requested_tools = metadata.get("allowed_tools")
+    if requested_tools not in (None, []):
+        return 422, {
+            "status": "provider_error",
+            "error_code": "PERSONA_OPINION_TOOL_AUTHORITY_DENIED",
+            "message": "Governed Persona opinion invocation has an empty tool allowlist.",
+        }
+    metadata.update({
+        "allowed_tools": [],
+        "execution_authority": "none",
+        "order_submitted": False,
+        "broker_called": False,
+        "capital_changed": False,
+        "runtime_bound": False,
+        "lifecycle_promoted": False,
+        "policy_mutated": False,
+        "persona_memory_mutated": False,
+    })
+    return None
+
+
 def _invoke_persona_opinion_idempotently(
     req: AssistantProviderInvokeRequest,
     *,
@@ -1514,62 +1615,12 @@ def invoke_openclaw_provider(
         metadata.setdefault("trace_id", x_trace_id)
     mode = str(req.mode or "user").strip().lower() or "user"
     if req.persona_admission is not None:
-        if not str(idempotency_key or "").strip():
-            return JSONResponse(
-                status_code=422,
-                content={
-                    "status": "provider_error",
-                    "error_code": "PERSONA_OPINION_IDEMPOTENCY_REQUIRED",
-                    "message": "Idempotency-Key is required for governed Persona opinion invocation.",
-                },
-            )
-        if mode != "user":
-            return JSONResponse(
-                status_code=422,
-                content={
-                    "status": "provider_error",
-                    "error_code": "PERSONA_OPINION_MODE_DENIED",
-                    "message": "Governed Persona opinion agents may only run in user mode.",
-                },
-            )
-        try:
-            _assert_persona_opinion_admitted(req.persona_admission)
-            _assert_persona_opinion_runtime_policy(req.persona_admission.agent_id)
-            _require_live_persona_opinion_agent(req.persona_admission.agent_id)
-        except _PersonaOpinionAgentNotReady as exc:
-            return _persona_opinion_agent_not_ready_response(exc)
-        except GatewayOpenClawProviderError as exc:
-            return _persona_opinion_gateway_error_response(exc)
-        except (ValueError, RuntimeError) as exc:
-            return JSONResponse(
-                status_code=403,
-                content={
-                    "status": "provider_error",
-                    "error_code": "PERSONA_OPINION_ADMISSION_DENIED",
-                    "message": str(exc),
-                },
-            )
-        requested_tools = metadata.get("allowed_tools")
-        if requested_tools not in (None, []):
-            return JSONResponse(
-                status_code=422,
-                content={
-                    "status": "provider_error",
-                    "error_code": "PERSONA_OPINION_TOOL_AUTHORITY_DENIED",
-                    "message": "Governed Persona opinion invocation has an empty tool allowlist.",
-                },
-            )
-        metadata.update({
-            "allowed_tools": [],
-            "execution_authority": "none",
-            "order_submitted": False,
-            "broker_called": False,
-            "capital_changed": False,
-            "runtime_bound": False,
-            "lifecycle_promoted": False,
-            "policy_mutated": False,
-            "persona_memory_mutated": False,
-        })
+        admission_error = _persona_opinion_admission_error(
+            req, idempotency_key=idempotency_key, mode=mode, metadata=metadata,
+        )
+        if admission_error is not None:
+            status_code, content = admission_error
+            return JSONResponse(status_code=status_code, content=content)
     if delegates_kernel_mode_to_codex(mode):
         try:
             result = _invoke_codex_runtime(req, metadata=metadata, mode=mode)
@@ -1664,6 +1715,23 @@ def invoke_openclaw_structured_provider(
     with 422 by the request model above). The model is pinned to the fixed
     `emit_extraction` tool via `invoke_structured`; this endpoint returns
     parsed structured data only and never executes a domain action.
+
+    Native-tool-denial boundary (what is enforced locally vs. externally):
+    this adapter forces `tool_choice={"type":"function","name":"emit_extraction"}`
+    on the outbound request (a client-side *request*, not a guarantee), and
+    `invoke_structured` fails closed if the upstream response contains more
+    than one function call or a call with the wrong name (rejecting the
+    whole turn rather than silently accepting the first matching call).
+    Neither of those is a substitute for the upstream Gateway's own
+    server-side restricted-runtime/tool-arbitration policy actually
+    disabling the agent's native/domain tools for this call: proving that
+    the pinned Gateway itself denies a native tool (rather than merely that
+    this adapter would reject a response that arrived with one) requires a
+    live, authenticated Gateway/auth route and permitted restricted-runtime
+    policy configuration that is not available in this sandbox. That
+    server-side enforcement is a genuine external/config blocker, not
+    something this adapter can close unilaterally, and is not claimed as
+    fully closed here.
     """
     if not x_operator_id or not x_operator_id.strip():
         return JSONResponse(
@@ -1725,6 +1793,7 @@ def invoke_openclaw_provider_stream(
     req: AssistantProviderInvokeRequest,
     x_operator_id: Optional[str] = Header(default=None, alias="X-Operator-Id"),
     x_trace_id: Optional[str] = Header(default=None, alias="X-Trace-Id"),
+    idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
 ) -> StreamingResponse:
     """Stream an OpenClaw agent turn as SSE via the gateway `POST /v1/responses`.
 
@@ -1758,6 +1827,19 @@ def invoke_openclaw_provider_stream(
         metadata["operator_id"] = operator
         if x_trace_id:
             metadata.setdefault("trace_id", x_trace_id)
+        if req.persona_admission is not None:
+            admission_error = _persona_opinion_admission_error(
+                req, idempotency_key=idempotency_key, mode=mode, metadata=metadata,
+            )
+            if admission_error is not None:
+                _, content = admission_error
+                yield "data: " + json.dumps({
+                    "type": "error",
+                    "error_code": content.get("error_code", "PERSONA_OPINION_ADMISSION_DENIED"),
+                    "message": content.get("message", "Persona opinion admission denied."),
+                }) + "\n\n"
+                yield "data: [DONE]\n\n"
+                return
         if delegates_kernel_mode_to_codex(mode):
             try:
                 result = _invoke_codex_runtime(req, metadata=metadata, mode=mode)

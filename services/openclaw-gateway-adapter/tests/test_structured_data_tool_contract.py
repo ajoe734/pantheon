@@ -408,6 +408,60 @@ class TestValidateExtractionArgumentsSchemaCoverage:
         assert excinfo.value.error_code == "OPENCLAW_TOOL_ARGS_SCHEMA_MISMATCH"
         assert excinfo.value.status_code == 422
 
+    def test_root_level_enum_is_enforced_even_when_type_is_object(self):
+        """SIMPLIFY-OPENCLAW-001 second corrective pass (reviewer finding 6):
+        the root-level validation entry point called the object validator
+        directly, skipping the enum check entirely for a root schema shaped
+        like `{type: "object", enum: [...]}`."""
+        schema = {"type": "object", "enum": [{"kind": "ok"}]}
+        with pytest.raises(OpenClawProviderError) as excinfo:
+            _validate_extraction_arguments({"kind": "wrong"}, schema)
+        assert excinfo.value.error_code == "OPENCLAW_TOOL_ARGS_SCHEMA_MISMATCH"
+        # The exact enum member must still pass.
+        _validate_extraction_arguments({"kind": "ok"}, schema)
+
+    def test_min_length_and_max_length_are_enforced(self):
+        schema = {
+            "type": "object",
+            "properties": {"name": {"type": "string", "minLength": 3, "maxLength": 5}},
+            "required": ["name"],
+        }
+        with pytest.raises(OpenClawProviderError) as excinfo:
+            _validate_extraction_arguments({"name": "ab"}, schema)
+        assert excinfo.value.error_code == "OPENCLAW_TOOL_ARGS_SCHEMA_MISMATCH"
+        with pytest.raises(OpenClawProviderError):
+            _validate_extraction_arguments({"name": "abcdef"}, schema)
+        _validate_extraction_arguments({"name": "abcd"}, schema)
+
+    def test_nullable_numeric_with_null_value_does_not_raise(self):
+        """SIMPLIFY-OPENCLAW-001 second corrective pass (reviewer finding 6):
+        `type: ["number", "null"], minimum: 0` with value `null` previously
+        raised an uncaught TypeError (`None < 0`) instead of passing, since
+        the numeric-bounds check ran unconditionally after the type-union
+        match succeeded via the "null" member."""
+        schema = {
+            "type": "object",
+            "properties": {"amount": {"type": ["number", "null"], "minimum": 0}},
+            "required": [],
+        }
+        _validate_extraction_arguments({"amount": None}, schema)
+        _validate_extraction_arguments({"amount": 5}, schema)
+        with pytest.raises(OpenClawProviderError) as excinfo:
+            _validate_extraction_arguments({"amount": -1}, schema)
+        assert excinfo.value.error_code == "OPENCLAW_TOOL_ARGS_SCHEMA_MISMATCH"
+
+    def test_required_list_with_non_string_entry_is_a_typed_rejection_not_a_crash(self):
+        """SIMPLIFY-OPENCLAW-001 second corrective pass (reviewer finding 6):
+        `required: [{}]` (a non-string entry) previously crashed with an
+        uncaught `TypeError` (`{} not in value_dict` raises "unhashable type:
+        'dict'"), since each entry was used directly as a dict key/membership
+        check without validating it was a string."""
+        schema = {"type": "object", "properties": {"a": {"type": "string"}}, "required": [{}]}
+        with pytest.raises(OpenClawProviderError) as excinfo:
+            _validate_extraction_arguments({"a": "x"}, schema)
+        assert excinfo.value.error_code == "OPENCLAW_TOOL_ARGS_SCHEMA_MISMATCH"
+        assert excinfo.value.status_code == 422
+
 
 class TestStructuredEndpointRejectsCallerSuppliedTools:
     """Endpoint-level contract: a caller-supplied `tools`/`tool_choice` must
@@ -471,6 +525,38 @@ class TestStructuredEndpointRejectsCallerSuppliedTools:
         assert resp.status_code == 200, resp.text
         assert resp.json()["data"]["output"]["structured_data"] == {"title": "ok"}
         assert mocked.call_args.kwargs["extraction_schema"] == EXTRACTION_SCHEMA
+
+    def test_schema_invalid_tool_call_is_typed_422_never_500(self):
+        """A schema-mismatched tool-call response must surface as a typed
+        422 OPENCLAW_TOOL_ARGS_SCHEMA_MISMATCH through the HTTP endpoint,
+        never an uncaught 500 and never a false-positive 200/completed."""
+        client, adapter_main = self._client()
+        events = _tool_call_events(EMIT_EXTRACTION_TOOL_NAME, json.dumps({"count": "not-a-number"}))
+        with (
+            patch.object(adapter_main._OPENCLAW_AGENT_PROVIDER, "_gateway_url", "http://openclaw.test"),
+            patch.object(adapter_main._OPENCLAW_AGENT_PROVIDER, "_token", "test-token"),
+            patch("urllib.request.urlopen", return_value=_FakeSSEResponse(events)),
+        ):
+            resp = client.post(
+                "/api/openclaw-adapter/assistant/providers/openclaw/structured",
+                json={"prompt": "extract", "extraction_schema": EXTRACTION_SCHEMA},
+                headers={"X-Operator-Id": "operator-1"},
+            )
+        assert resp.status_code == 422
+        assert resp.json()["error_code"] == "OPENCLAW_TOOL_ARGS_SCHEMA_MISMATCH"
+
+    def test_explicit_model_override_is_rejected_not_silently_dropped(self):
+        """SIMPLIFY-OPENCLAW-001 mounted-acceptance gap: an explicit `model`
+        field on the mounted request must not be silently dropped -- this
+        adapter does not thread a model override through this route, so it
+        must fail closed with a typed 4xx instead."""
+        client, _adapter_main = self._client()
+        resp = client.post(
+            "/api/openclaw-adapter/assistant/providers/openclaw/structured",
+            json={"prompt": "extract", "extraction_schema": EXTRACTION_SCHEMA, "model": "gpt-5"},
+            headers={"X-Operator-Id": "operator-1"},
+        )
+        assert resp.status_code == 422
 
     def test_missing_operator_id_is_rejected(self):
         client, _adapter_main = self._client()

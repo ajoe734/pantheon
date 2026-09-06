@@ -22,11 +22,13 @@ Degrades cleanly when the binary is absent or the gateway is unreachable.
 from __future__ import annotations
 
 import hashlib
+import http.client
 import json
 import os
 import re
 import shutil
 import socket
+import ssl
 import subprocess
 import time
 import urllib.error
@@ -61,6 +63,11 @@ EMIT_EXTRACTION_TOOL_NAME = "emit_extraction"
 # Canonical docker-compose service name — used when no URL is configured.
 _DEFAULT_GATEWAY_WS_URL = "ws://openclaw-gateway:18789"
 _AGENT_ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
+# Hard bound on the serialized context_pack folded into model-visible
+# `input` (see stream()). An oversized pack is explicitly rejected rather
+# than silently truncated, so a caller never gets a false "success" while
+# the model quietly never saw the tail of its context.
+_CONTEXT_PACK_MAX_CHARS = 200_000
 _READINESS_SENTINEL = "PANTHEON_PROVIDER_READY"
 _READINESS_PROMPT = f"Reply with exactly: {_READINESS_SENTINEL}"
 
@@ -101,10 +108,46 @@ def _normalize_input_item(item: Dict[str, Any]) -> Dict[str, Any]:
     """
     if not isinstance(item, dict) or item.get("type") is not None:
         return item
-    normalized = {"type": "message", "role": item.get("role"), "content": item.get("content")}
+    normalized = {
+        "type": "message",
+        "role": item.get("role"),
+        "content": _normalize_message_content(item.get("content")),
+    }
     if "phase" in item:
         normalized["phase"] = item["phase"]
     return normalized
+
+
+def _normalize_message_content(content: Any) -> Any:
+    """Normalize a Chat-Completions-style `messages[].content` array's parts
+    (e.g. `{"type": "text", ...}` / `{"type": "image_url", ...}`) into the
+    pinned OpenResponses content-part shapes.
+
+    Only top-level `attachments` used to go through this conversion (via
+    `_normalize_attachment_content_part`); multimodal chat *history*
+    forwarded via `messages[]` must round-trip through the same
+    normalization, not silently keep Chat-format part shapes the pinned
+    Gateway's `.strict()` schema rejects. A bare string `content` (the
+    common single-turn shape) and an already-Responses-shaped part pass
+    through unchanged.
+    """
+    if not isinstance(content, list):
+        return content
+    normalized_parts: List[Any] = []
+    for part in content:
+        if not isinstance(part, dict):
+            normalized_parts.append(part)
+            continue
+        part_type = part.get("type")
+        if part_type == "text":
+            normalized_parts.append({"type": "input_text", "text": part.get("text", "")})
+            continue
+        if part_type in ("input_text", "input_image", "input_file"):
+            normalized_parts.append(part)
+            continue
+        converted = _normalize_attachment_content_part(part)
+        normalized_parts.append(converted if converted is not None else part)
+    return normalized_parts
 
 
 def _normalize_attachment_content_part(attachment: Dict[str, Any]) -> Optional[Dict[str, Any]]:
@@ -177,15 +220,24 @@ def derive_session_user(
     tenant = str(metadata.get("tenant_id") or "").strip()
     actor = str(operator_id or "").strip()
     conversation = str(session_id or metadata.get("session_id") or "").strip()
-    parts = [part for part in (tenant, actor, conversation) if part]
-    if not parts:
+    if not (tenant or actor or conversation):
         return None
     # A bare "|".join would let a boundary-shifting caller-chosen component
     # (e.g. a conversation name containing "|") collide onto the same joined
     # string as a different tenant/actor/conversation split — escape the
     # separator (and its own escape char) inside each component first so the
-    # unescaped "|" only ever marks a genuine component boundary.
-    return "|".join(part.replace("\\", "\\\\").replace("|", "\\|") for part in parts)
+    # unescaped "|" only ever marks a genuine component boundary. Each of the
+    # three slots (tenant, actor, conversation) must also be encoded by
+    # *position*, not filtered out when absent: dropping an empty slot before
+    # joining would collapse distinct identity shapes onto the same string,
+    # e.g. (tenant="alice", actor="bob", conversation="") and
+    # (tenant="", actor="alice", conversation="bob") would otherwise both
+    # join to "alice|bob". Always emit exactly three components (using ""
+    # for a genuinely-absent slot) so which slot was absent is preserved.
+    return "|".join(
+        part.replace("\\", "\\\\").replace("|", "\\|")
+        for part in (tenant, actor, conversation)
+    )
 
 
 def delegates_kernel_mode_to_codex(mode: str) -> bool:
@@ -272,6 +324,22 @@ def _validate_extraction_numeric_bounds(value: Any, schema: Dict[str, Any], path
         raise _schema_mismatch(path, f"is not below the declared exclusiveMaximum {exclusive_maximum!r}")
 
 
+def _validate_extraction_string_constraints(value: str, schema: Dict[str, Any], path: str) -> None:
+    min_length = schema.get("minLength")
+    if isinstance(min_length, int) and not isinstance(min_length, bool) and len(value) < min_length:
+        raise _schema_mismatch(path, f"is shorter than the declared minLength {min_length!r}")
+    max_length = schema.get("maxLength")
+    if isinstance(max_length, int) and not isinstance(max_length, bool) and len(value) > max_length:
+        raise _schema_mismatch(path, f"is longer than the declared maxLength {max_length!r}")
+    pattern = schema.get("pattern")
+    if isinstance(pattern, str):
+        try:
+            if re.search(pattern, value) is None:
+                raise _schema_mismatch(path, f"does not match the declared pattern {pattern!r}")
+        except re.error:
+            raise _schema_mismatch(path or "root", "declares a malformed pattern")
+
+
 def _validate_extraction_array(value: Any, schema: Dict[str, Any], path: str) -> None:
     if not isinstance(value, list):
         raise _schema_mismatch(path or "root", "must be a JSON array")
@@ -322,8 +390,17 @@ def _validate_extraction_value(value: Any, schema: Dict[str, Any], path: str) ->
         return
     if not _json_value_matches_type(value, declared_type):
         raise _schema_mismatch(path, f"expected type {declared_type!r}")
+    # `value is None` here means a nullable `type: [<t>, "null"]` union
+    # matched via its "null" member — the numeric/string bound checks below
+    # only apply to an actual number/string value, never to the valid `null`
+    # member of the union (e.g. `type: ["number","null"], minimum: 0` with
+    # value `None` must pass, not crash comparing `None < 0`).
+    if value is None:
+        return
     if "integer" in types or "number" in types:
         _validate_extraction_numeric_bounds(value, schema, path)
+    if "string" in types:
+        _validate_extraction_string_constraints(value, schema, path)
 
 
 def _validate_extraction_object(value: Any, schema: Dict[str, Any], path: str) -> None:
@@ -333,6 +410,8 @@ def _validate_extraction_object(value: Any, schema: Dict[str, Any], path: str) -
     if not isinstance(required, list):
         raise _schema_mismatch(path or "root", "declares a malformed required list")
     for field in required:
+        if not isinstance(field, str):
+            raise _schema_mismatch(path or "root", "declares a malformed required list entry (must be a string)")
         if field not in value:
             raise _schema_mismatch(path, f"is missing required field {field!r}")
     properties = schema.get("properties", {}) or {}
@@ -368,7 +447,12 @@ def _validate_extraction_arguments(parsed_arguments: Any, extraction_schema: Dic
     ``items``/``enum`` shape) is rejected explicitly with a typed 422 rather
     than crashing with an unhandled 500.
     """
-    _validate_extraction_object(parsed_arguments, extraction_schema, "")
+    # Root-level validation goes through `_validate_extraction_value`, not
+    # `_validate_extraction_object` directly, so a root-level `enum` (e.g.
+    # `{type: "object", enum: [{"kind": "ok"}]}`) is actually enforced even
+    # though the root value is also type `object` — calling the object
+    # validator directly would skip the enum check entirely.
+    _validate_extraction_value(parsed_arguments, extraction_schema, "")
 
 
 def _sanitize_failure_reason(reason: Any, message: Any = None) -> str:
@@ -420,6 +504,146 @@ class OpenClawProviderError(RuntimeError):
             "error_code": self.error_code,
             "message": self.message,
         }
+
+
+class _DeadlineBoundedSocket(socket.socket):
+    """A `socket.socket` subclass whose `recv`/`recv_into` re-check an
+    absolute deadline and shrink the effective per-call timeout to the
+    remaining budget before every blocking read.
+
+    A single static `timeout=` on `urlopen()` only bounds each individual
+    recv; a "slow drip" sender that keeps returning a few bytes just under
+    that per-call timeout, repeatedly, never trips it, and can hold the
+    connection open far past the caller's actual total budget -- both
+    while blocked parsing response headers (before `urlopen()` ever
+    returns control) and while reading an `HTTPError` body via `.read()`.
+    Re-homing the connection's socket onto this subclass right after
+    connect() makes every subsequent recv shrink its own timeout to
+    whatever is left of the deadline, so the total time spent blocked in
+    header parsing or body reads (success or error) is bounded by the same
+    absolute deadline the SSE line-reading loop already uses.
+    """
+
+    _pantheon_deadline: float = float("inf")
+
+    def _pantheon_check_deadline(self) -> None:
+        remaining = self._pantheon_deadline - time.monotonic()
+        if remaining <= 0:
+            raise TimeoutError("bounded deadline exceeded while reading the response")
+        self.settimeout(remaining)
+
+    def recv(self, *args: Any, **kwargs: Any) -> bytes:
+        self._pantheon_check_deadline()
+        return super().recv(*args, **kwargs)
+
+    def recv_into(self, *args: Any, **kwargs: Any) -> int:
+        self._pantheon_check_deadline()
+        return super().recv_into(*args, **kwargs)
+
+
+def _rebind_socket_to_deadline(sock: socket.socket, deadline: float) -> "_DeadlineBoundedSocket":
+    """Re-home an already-connected plain socket onto `_DeadlineBoundedSocket`
+    (same underlying fd) so its subsequent recv calls enforce `deadline`.
+    """
+    original_timeout = sock.gettimeout()
+    fd = sock.detach()
+    bounded = _DeadlineBoundedSocket(sock.family, sock.type, sock.proto, fileno=fd)
+    bounded._pantheon_deadline = deadline
+    bounded.settimeout(original_timeout)
+    return bounded
+
+
+class _DeadlineBoundedHTTPConnection(http.client.HTTPConnection):
+    """Plain-HTTP connection whose socket is deadline-bound after connect()
+    so header parsing and body reads all share one absolute deadline with
+    connection establishment, instead of each only being bounded by its own
+    static per-call `timeout=`.
+    """
+
+    _pantheon_deadline: float = float("inf")
+
+    def connect(self) -> None:
+        super().connect()
+        self.sock = _rebind_socket_to_deadline(self.sock, self._pantheon_deadline)
+
+
+class _DeadlineBoundedHTTPSConnection(http.client.HTTPSConnection):
+    """HTTPS connection whose pre-TLS TCP socket is deadline-bound.
+
+    CAVEAT (documented, not silently claimed as fully fixed): once the TLS
+    handshake wraps this socket in `ssl.SSLSocket`, actual record-layer
+    reads happen inside the C-level `_ssl` module rather than through this
+    class's Python-level `recv`/`recv_into`, so this cannot enforce a
+    byte-level deadline the way the plain-HTTP path does. HTTPS reads
+    remain bounded only by the connection's static `timeout=` -- closing
+    that gap fully would require a custom memory-BIO TLS implementation,
+    which is out of scope here. The adapter's actual gateway URL is
+    `ws://`/`http://` by default (`_DEFAULT_GATEWAY_WS_URL`); this class
+    exists for completeness when an operator configures an `https://`
+    gateway URL.
+    """
+
+    _pantheon_deadline: float = float("inf")
+
+    def connect(self) -> None:
+        raw = socket.create_connection(
+            (self.host, self.port), self.timeout, self.source_address
+        )
+        self.sock = _rebind_socket_to_deadline(raw, self._pantheon_deadline)
+        if getattr(self, "_tunnel_host", None):
+            self._tunnel()
+        context = self._context or ssl.create_default_context()
+        self.sock = context.wrap_socket(self.sock, server_hostname=self.host)
+
+
+class _TemporaryDeadlineBoundedHTTPConnections:
+    """Context manager that temporarily replaces `http.client.HTTPConnection`
+    /`HTTPSConnection` with deadline-aware subclasses for the duration of one
+    `urllib.request.urlopen()` call, so connection establishment and header
+    parsing (both otherwise entirely unbounded by `stream()`'s own
+    per-SSE-line deadline check, since they happen before/outside that loop)
+    share the same absolute deadline. Once `urlopen()` returns or raises, the
+    resulting response/`HTTPError` object already holds a reference to the
+    deadline-bound socket instance, so subsequent reads (the SSE body loop,
+    or an `HTTPError.read()` in the caller's `except` block) stay bounded
+    even after this context manager has restored the original classes.
+
+    This mutates process-global `http.client` state for a short window
+    (bounded above by `deadline` itself, since header parsing can no longer
+    run unbounded). A genuinely concurrent in-flight request from another
+    thread inside the exact same window would transiently pick up this
+    call's deadline instead of its own; the worst case of that is still a
+    *bounded* deadline (never the previous fully-unbounded slow-drip), so
+    this is an accepted, documented trade-off, not a fully race-free
+    per-request isolation -- true isolation would require not sharing the
+    `http.client` module classes across threads at all, which is out of
+    scope for this fix.
+    """
+
+    def __init__(self, deadline: float) -> None:
+        self._deadline = deadline
+        self._orig_http: Any = None
+        self._orig_https: Any = None
+
+    def __enter__(self) -> "_TemporaryDeadlineBoundedHTTPConnections":
+        self._orig_http = http.client.HTTPConnection
+        self._orig_https = http.client.HTTPSConnection
+        deadline = self._deadline
+
+        class _HTTPConn(_DeadlineBoundedHTTPConnection):
+            _pantheon_deadline = deadline
+
+        class _HTTPSConn(_DeadlineBoundedHTTPSConnection):
+            _pantheon_deadline = deadline
+
+        http.client.HTTPConnection = _HTTPConn
+        http.client.HTTPSConnection = _HTTPSConn
+        return self
+
+    def __exit__(self, *exc_info: Any) -> bool:
+        http.client.HTTPConnection = self._orig_http
+        http.client.HTTPSConnection = self._orig_https
+        return False
 
 
 class AssistantOpenClawProvider:
@@ -1228,6 +1452,39 @@ class AssistantOpenClawProvider:
             }
             return
 
+        # The real Gateway builds model context only from `input`/`instructions`
+        # -- it never reads arbitrary `metadata` -- so a `context_pack` folded
+        # only into `metadata` (as this used to do, truncated at 4000 chars)
+        # is never actually seen by the model, truncated or not. It must
+        # instead be folded into the genuinely model-visible `input`. Rather
+        # than silently truncating an oversized pack (which would report
+        # success while quietly dropping model-visible context), an
+        # over-budget pack is explicitly rejected.
+        context_pack_input_item: Optional[Dict[str, Any]] = None
+        if context_pack:
+            try:
+                serialized_context = json.dumps(context_pack, sort_keys=True, default=str)
+            except (TypeError, ValueError):
+                serialized_context = None
+            if serialized_context:
+                if len(serialized_context) > _CONTEXT_PACK_MAX_CHARS:
+                    yield {
+                        "type": "error",
+                        "error_code": "OPENCLAW_CONTEXT_PACK_TOO_LARGE",
+                        "status_code": 413,
+                        "message": (
+                            f"context_pack serializes to {len(serialized_context)} chars, "
+                            f"exceeding the {_CONTEXT_PACK_MAX_CHARS}-char bound; rejecting "
+                            "rather than silently truncating model-visible context."
+                        ),
+                    }
+                    return
+                context_pack_input_item = {
+                    "type": "message",
+                    "role": "system",
+                    "content": [{"type": "input_text", "text": f"context_pack: {serialized_context}"}],
+                }
+
         url = f"{self._http_base()}/v1/responses"
         # The pinned Gateway's OpenAI-compat model resolver
         # (`resolveOpenAiCompatModelOverride`) only accepts `openclaw` or
@@ -1277,6 +1534,21 @@ class AssistantOpenClawProvider:
             payload["input"] = [{"type": "message", "role": "user", "content": text_parts + attachment_parts}]
         else:
             payload["input"] = prompt
+        if context_pack_input_item is not None:
+            if isinstance(payload["input"], list):
+                payload["input"] = [context_pack_input_item] + payload["input"]
+            else:
+                # Bare-string input (no messages/attachments) — convert to a
+                # content-part array so the context item and the prompt both
+                # ride in the same model-visible `input`.
+                payload["input"] = [
+                    context_pack_input_item,
+                    {
+                        "type": "message",
+                        "role": "user",
+                        "content": [{"type": "input_text", "text": payload["input"]}],
+                    },
+                ]
         # Stable session key for warm multi-turn routing (per OpenResponses `user`).
         if session_user:
             payload["user"] = session_user
@@ -1285,20 +1557,14 @@ class AssistantOpenClawProvider:
         if tool_choice is not None:
             payload["tool_choice"] = tool_choice
         # The pinned Gateway's `metadata` field is the only strict-schema slot
-        # for opaque caller context — trace_id and context_pack are otherwise
-        # silently dropped at the HTTP boundary rather than actually reaching
-        # the upstream turn. Values must be strings (per the Gateway's
-        # `z.record(z.string(), z.string())`), so context_pack is serialized.
+        # for opaque caller context — trace_id is otherwise silently dropped
+        # at the HTTP boundary rather than actually reaching the upstream
+        # turn. Values must be strings (per the Gateway's
+        # `z.record(z.string(), z.string())`). context_pack itself is folded
+        # into `input` above (not here) since the model never reads `metadata`.
         request_metadata: Dict[str, str] = {}
         if trace_id:
             request_metadata["trace_id"] = str(trace_id)
-        if context_pack:
-            try:
-                serialized_context = json.dumps(context_pack, sort_keys=True, default=str)
-            except (TypeError, ValueError):
-                serialized_context = None
-            if serialized_context:
-                request_metadata["context_pack"] = serialized_context[:4000]
         if request_metadata:
             payload["metadata"] = request_metadata
         data = json.dumps(payload).encode("utf-8")
@@ -1325,8 +1591,19 @@ class AssistantOpenClawProvider:
         chunks: List[str] = []
         terminal_text = ""
         emitted_done = False
+        # The same `read_deadline` also has to bound connection establishment,
+        # header parsing, and an HTTPError body read (`exc.read()` below) --
+        # none of those are covered by the per-line check above, since they
+        # all happen before or outside that loop. Temporarily re-homing the
+        # connection classes `urlopen()` uses (see
+        # `_TemporaryDeadlineBoundedHTTPConnections`) makes every subsequent
+        # recv on the resulting socket (header parse, success body, or error
+        # body -- they share the same underlying socket) shrink its own
+        # timeout to whatever is left of `read_deadline`, instead of only
+        # being bounded by the static `timeout=` below.
         try:
-            resp = urllib.request.urlopen(req, timeout=effective_timeout)
+            with _TemporaryDeadlineBoundedHTTPConnections(read_deadline):
+                resp = urllib.request.urlopen(req, timeout=effective_timeout)
         except urllib.error.HTTPError as exc:
             body = ""
             try:
@@ -1449,16 +1726,6 @@ class AssistantOpenClawProvider:
                 response_id: Optional[str] = None
                 if isinstance(nested_response, dict):
                     nested_status = nested_response.get("status")
-                    if nested_status in ("failed", "incomplete"):
-                        return [{
-                            "type": "error",
-                            "error_code": (
-                                "OPENCLAW_RESPONSES_FAILED"
-                                if nested_status == "failed"
-                                else "OPENCLAW_RESPONSES_INCOMPLETE"
-                            ),
-                            "message": json.dumps(nested_response)[:300],
-                        }], "return"
                     output_items = nested_response.get("output")
                     if isinstance(output_items, list):
                         for item in output_items:
@@ -1470,6 +1737,35 @@ class AssistantOpenClawProvider:
                                         "call_id": item.get("call_id"),
                                     }
                                 )
+                    if nested_status == "failed":
+                        return [{
+                            "type": "error",
+                            "error_code": "OPENCLAW_RESPONSES_FAILED",
+                            "message": json.dumps(nested_response)[:300],
+                        }], "return"
+                    # The real pinned OpenClaw Gateway (v2026.7.1) emits
+                    # response.completed with status="incomplete" as the
+                    # *normal* tool-call yield whenever the model stops to
+                    # hand back a function_call item for the caller's
+                    # extraction/action tool -- this is not truncation or
+                    # refusal. Only report OPENCLAW_RESPONSES_INCOMPLETE when
+                    # there is genuinely no tool call to fall back on.
+                    if nested_status == "incomplete" and not function_calls:
+                        return [{
+                            "type": "error",
+                            "error_code": "OPENCLAW_RESPONSES_INCOMPLETE",
+                            "message": json.dumps(nested_response)[:300],
+                        }], "return"
+                    if nested_status not in (None, "completed", "incomplete"):
+                        # Any other non-terminal-success status ("cancelled",
+                        # "in_progress", etc.) must never be reported as a
+                        # successful "done", even when partial text/output
+                        # happens to be present.
+                        return [{
+                            "type": "error",
+                            "error_code": "OPENCLAW_RESPONSES_NOT_TERMINAL",
+                            "message": json.dumps(nested_response)[:300],
+                        }], "return"
                     if "usage" in nested_response:
                         usage = nested_response.get("usage")
                     response_id = nested_response.get("id")

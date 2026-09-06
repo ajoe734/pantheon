@@ -211,6 +211,43 @@ class TestNormalInvokeContract:
         assert all(item.get("type") == "message" for item in input_list)
         assert input_list[-1] == {"type": "message", "role": "user", "content": "second turn"}
 
+    def test_chat_format_content_parts_in_messages_are_normalized(self):
+        """SIMPLIFY-OPENCLAW-001 mounted-acceptance gap: only top-level
+        `attachments` were normalized into the pinned Gateway's content-part
+        shapes; a `messages[]` entry carrying Chat-Completions-style content
+        parts (`{"type": "text", ...}` / `{"type": "image_url", ...}`) must
+        round-trip through the same normalization so multimodal chat
+        history is not rejected by the Gateway's `.strict()` schema."""
+        provider = _make_provider()
+        captured = {}
+
+        def fake_urlopen(req, timeout=None):
+            captured["body"] = json.loads(req.data.decode("utf-8"))
+            return _FakeSSEResponse(_answer_events("ok"))
+
+        history = [
+            {"role": "user", "content": "first turn"},
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": "what is in this image?"},
+                    {"type": "image_url", "image_url": {"url": "data:image/png;base64,QUJD"}},
+                ],
+            },
+            {"role": "assistant", "content": "a description"},
+        ]
+        with patch("urllib.request.urlopen", fake_urlopen):
+            list(provider.stream("second turn", operator_id="op-1", messages=history))
+        input_list = captured["body"]["input"]
+        multimodal_entry = input_list[1]
+        assert multimodal_entry["type"] == "message"
+        content = multimodal_entry["content"]
+        assert {"type": "input_text", "text": "what is in this image?"} in content
+        assert {
+            "type": "input_image",
+            "source": {"type": "base64", "media_type": "image/png", "data": "QUJD"},
+        } in content
+
     def test_boundary_shifting_session_components_do_not_collide(self):
         """A caller-chosen component containing the "|" separator must not
         let a different tenant/actor/conversation split collide onto the
@@ -225,10 +262,33 @@ class TestNormalInvokeContract:
         )
         assert first != second
 
-    def test_trace_id_and_context_pack_reach_metadata(self):
-        """`trace_id`/`context_pack` are accepted by the request builder but
-        must actually reach the upstream `/v1/responses` call — the pinned
-        Gateway's only strict-schema slot for opaque caller context is the
+    def test_absent_tenant_vs_absent_conversation_do_not_collide(self):
+        """SIMPLIFY-OPENCLAW-001 corrective pass (reviewer finding 4):
+        filtering out an empty component before joining collapses distinct
+        identity shapes onto the same string --
+        (tenant="alice", actor="bob", conversation="") and
+        (tenant="", actor="alice", conversation="bob") both reduce to just
+        the two present parts "alice" and "bob", losing which slot was
+        absent. Each of the three slots must be encoded by position."""
+        from assistant_openclaw_provider import derive_session_user
+
+        no_conversation = derive_session_user(
+            operator_id="bob", session_id="", metadata={"tenant_id": "alice"}
+        )
+        no_tenant = derive_session_user(
+            operator_id="alice", session_id="bob", metadata={}
+        )
+        assert no_conversation != no_tenant
+
+    def test_all_three_slots_absent_returns_none(self):
+        from assistant_openclaw_provider import derive_session_user
+
+        assert derive_session_user(operator_id=None, session_id=None, metadata={}) is None
+
+    def test_trace_id_reaches_metadata(self):
+        """`trace_id` is accepted by the request builder but must actually
+        reach the upstream `/v1/responses` call — the pinned Gateway's only
+        strict-schema slot for opaque caller context is the
         `metadata: Record<string,string>` field."""
         provider = _make_provider()
         captured = {}
@@ -243,12 +303,65 @@ class TestNormalInvokeContract:
                     "hi",
                     operator_id="op-1",
                     trace_id="trace-123",
-                    context_pack={"context_pack_id": "ctx-1"},
                 )
             )
         metadata = captured["body"]["metadata"]
         assert metadata["trace_id"] == "trace-123"
-        assert json.loads(metadata["context_pack"]) == {"context_pack_id": "ctx-1"}
+
+    def test_context_pack_is_folded_into_model_visible_input_not_metadata(self):
+        """SIMPLIFY-OPENCLAW-001 corrective pass (reviewer finding 5): the
+        real Gateway builds model context only from `input`/`instructions`
+        and never reads arbitrary `metadata`, so a `context_pack` serialized
+        only into `metadata` (the old, truncated-at-4000-chars behavior) is
+        never actually seen by the model. A multi-thousand-character pack
+        with a trailing required fact must be verifiably present in the
+        actual outbound `input` payload, untruncated."""
+        provider = _make_provider()
+        captured = {}
+
+        def fake_urlopen(req, timeout=None):
+            captured["body"] = json.loads(req.data.decode("utf-8"))
+            return _FakeSSEResponse(_answer_events("ok"))
+
+        padding = "x" * 5000
+        context_pack = {"padding": padding, "required_fact": "the-secret-passphrase-99"}
+        with patch("urllib.request.urlopen", fake_urlopen):
+            list(
+                provider.stream(
+                    "hi",
+                    operator_id="op-1",
+                    context_pack=context_pack,
+                )
+            )
+        body = captured["body"]
+        # context_pack must never be serialized into metadata (the model
+        # never reads it there).
+        assert "context_pack" not in (body.get("metadata") or {})
+        input_list = body["input"]
+        assert isinstance(input_list, list)
+        context_item = input_list[0]
+        assert context_item["role"] == "system"
+        context_text = context_item["content"][0]["text"]
+        assert "the-secret-passphrase-99" in context_text
+        assert padding in context_text
+        # The prompt itself must still be present as the trailing user turn.
+        trailing = input_list[-1]
+        assert trailing["role"] == "user"
+
+    def test_oversized_context_pack_is_explicitly_rejected_not_truncated(self):
+        """An over-budget context_pack must yield a typed rejection, never a
+        silently truncated "success" that quietly drops model-visible
+        context."""
+        provider = _make_provider()
+        oversized = {"padding": "y" * 400_000}
+        with patch("urllib.request.urlopen") as mock_urlopen:
+            events = list(
+                provider.stream("hi", operator_id="op-1", context_pack=oversized)
+            )
+        mock_urlopen.assert_not_called()
+        assert len(events) == 1
+        assert events[0]["type"] == "error"
+        assert events[0]["error_code"] == "OPENCLAW_CONTEXT_PACK_TOO_LARGE"
 
     def test_attachments_are_normalized_into_input_content_parts(self):
         """A caller-supplied Chat-Completions-style attachment must be
@@ -493,6 +606,81 @@ class TestErrorInjectionContract:
         assert len(events) == 1
         assert events[0]["type"] == "error"
         assert events[0]["error_code"] == "OPENCLAW_RESPONSES_INCOMPLETE"
+
+    def test_incomplete_status_with_function_call_is_treated_as_normal_completion(self):
+        """SIMPLIFY-OPENCLAW-001 corrective pass (reviewer finding 2): the
+        real pinned OpenClaw Gateway (v2026.7.1) emits response.completed
+        with status="incomplete" as the *normal* tool-call yield whenever
+        the model stops to hand back a function_call -- this is not
+        truncation/refusal/failure and must not raise 502."""
+        provider = _make_provider()
+        payload = {
+            "type": "response.completed",
+            "response": {
+                "status": "incomplete",
+                "output": [
+                    {
+                        "type": "function_call",
+                        "name": "emit_extraction",
+                        "arguments": "{}",
+                        "call_id": "call-1",
+                    }
+                ],
+                "usage": {"input_tokens": 5, "output_tokens": 2},
+                "id": "resp-1",
+            },
+        }
+        lines = [("data: " + json.dumps(payload) + "\n").encode("utf-8")]
+        with patch("urllib.request.urlopen", return_value=_RawLinesResponse(lines)):
+            events = list(provider.stream("hi", operator_id="op-1"))
+        done = [e for e in events if e["type"] == "done"]
+        assert len(done) == 1
+        assert done[0]["function_calls"] == [
+            {"name": "emit_extraction", "arguments": "{}", "call_id": "call-1"}
+        ]
+        assert done[0]["usage"] == {"input_tokens": 5, "output_tokens": 2}
+        assert done[0]["response_id"] == "resp-1"
+
+    def test_incomplete_status_with_no_function_call_still_errors(self):
+        """Genuine truncation/refusal (incomplete with no tool call to fall
+        back on) must still be reported as OPENCLAW_RESPONSES_INCOMPLETE."""
+        provider = _make_provider()
+        payload = {
+            "type": "response.completed",
+            "response": {"status": "incomplete", "output": []},
+        }
+        lines = [("data: " + json.dumps(payload) + "\n").encode("utf-8")]
+        with patch("urllib.request.urlopen", return_value=_RawLinesResponse(lines)):
+            events = list(provider.stream("hi", operator_id="op-1"))
+        assert len(events) == 1
+        assert events[0]["type"] == "error"
+        assert events[0]["error_code"] == "OPENCLAW_RESPONSES_INCOMPLETE"
+
+    def test_nested_response_status_cancelled_with_partial_text_is_rejected(self):
+        """SIMPLIFY-OPENCLAW-001 corrective pass (reviewer finding 8):
+        response.completed with a nested status of "cancelled" and partial
+        text must never be reported as a successful "done"."""
+        provider = _make_provider()
+        lines = [
+            b'data: {"type":"response.output_text.delta","delta":"partial"}\n',
+            b'data: {"type":"response.completed","response":{"status":"cancelled"}}\n',
+        ]
+        with patch("urllib.request.urlopen", return_value=_RawLinesResponse(lines)):
+            events = list(provider.stream("hi", operator_id="op-1"))
+        done = [e for e in events if e["type"] == "done"]
+        assert done == []
+        terminal = [e for e in events if e["type"] == "error"]
+        assert len(terminal) == 1
+        assert terminal[0]["error_code"] == "OPENCLAW_RESPONSES_NOT_TERMINAL"
+
+    def test_nested_response_status_in_progress_is_rejected(self):
+        provider = _make_provider()
+        lines = [b'data: {"type":"response.completed","response":{"status":"in_progress"}}\n']
+        with patch("urllib.request.urlopen", return_value=_RawLinesResponse(lines)):
+            events = list(provider.stream("hi", operator_id="op-1"))
+        assert len(events) == 1
+        assert events[0]["type"] == "error"
+        assert events[0]["error_code"] == "OPENCLAW_RESPONSES_NOT_TERMINAL"
 
     def test_refusal_with_no_text_and_no_function_calls_is_typed_empty(self):
         provider = _make_provider()

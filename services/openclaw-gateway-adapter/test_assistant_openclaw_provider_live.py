@@ -778,8 +778,12 @@ class TestAssistantOpenClawProviderUnit(unittest.TestCase):
 
         self.assertEqual(captured["agent_id"], "persona-opinion-0123456789abcdef01234567")
         # `user` is derived from authenticated actor + conversation, not the
-        # raw caller-supplied session_id verbatim (tenant isolation).
-        self.assertEqual(captured["body"]["user"], "op-1|fresh-persona-session-1")
+        # raw caller-supplied session_id verbatim (tenant isolation). All
+        # three slots (tenant, actor, conversation) are always encoded by
+        # position -- an absent tenant is an empty leading component, not
+        # simply omitted (that would collapse distinct identity shapes onto
+        # the same joined string; see derive_session_user()).
+        self.assertEqual(captured["body"]["user"], "|op-1|fresh-persona-session-1")
         # A non-default agent with no explicit model override must NOT request
         # one of the primary/fallback models; it uses the agent's own config.
         self.assertEqual(
@@ -912,7 +916,9 @@ class TestAssistantOpenClawProviderUnit(unittest.TestCase):
         self.assertEqual(len(calls), 1)
         self.assertEqual(calls[0]["body"]["input"], big_prompt)
         self.assertTrue(calls[0]["body"]["stream"])
-        self.assertEqual(calls[0]["body"]["user"], "op-1|session-large-prompt")
+        # See derive_session_user(): an absent tenant is an empty leading
+        # component, not omitted.
+        self.assertEqual(calls[0]["body"]["user"], "|op-1|session-large-prompt")
         self.assertEqual(result.status, "completed")
         self.assertEqual(result.output["transport"], "responses_http")
         self.assertEqual(
