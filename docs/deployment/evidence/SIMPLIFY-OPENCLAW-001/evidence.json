@@ -24,15 +24,18 @@
       "Fixed test_cron.py canonical package imports so the previously excluded cron suite now runs.",
       "P1 correction: invoke and stream share conversation resolution: internal explicit session ID, metadata.session_user, then legacy metadata.session_id. Tenant/actor escaping and positional identity remain unchanged.",
       "P2 correction: one effective-model resolver is used by invoke, stream and readiness. Main-agent defaults resolve to OPENCLAW_PRIMARY_MODEL/provider default; non-default agents retain their Gateway model unless an admitted explicit override is supplied.",
-      "Mounted HTTP regressions prove conversation continuity/isolation, session alias precedence, identical default model headers including readiness, and preservation of admitted explicit/agent-configured models."
+      "Mounted HTTP regressions prove conversation continuity/isolation, session alias precedence, identical default model headers including readiness, and preservation of admitted explicit/agent-configured models.",
+      "P1 correction for b643c5fa: invoke and stream now share the durable Persona ledger with atomic actor-bound claims, cross-route terminal replay, in-doubt fencing, and admitted tenant/actor/pint session identity. Streaming persists its terminal envelope before publishing it and forwards first-attempt deltas."
     ],
     "measured_provider_sha256": "95db5140fa79fc60aeac907717f278a4b0cfbf7d2f4bae264029bc7ee0e3d8da",
     "final_provider_sha256": "95db5140fa79fc60aeac907717f278a4b0cfbf7d2f4bae264029bc7ee0e3d8da",
-    "post_measurement_change": "None: the replay measures the exact final provider bytes. Subsequent changes are test/docs/evidence and conflict-free dev merges of development tooling and Registry/BFF owner work; no task-owned transport or cron files changed.",
+    "post_measurement_change": "Provider bytes remain identical to the recorded 100-pair replay. main.py now shares the existing Persona durable ledger across mounted invoke/stream routes; those changes are validated by mounted real-provider HTTP fixtures and SQLite fault/concurrency regressions, not by the provider-only replay.",
     "routing_anchor": "31ee9f1d7",
     "mounted_admission_anchor": "dc941f9ee",
-    "source_commit": "c80cecb88bf7a862c1216560fce96ecd9cd95ecf",
-    "integration_base": "96294dcf3c113e3b1cdc44f4d9d4069294259ac1"
+    "source_commit": "a8fd6b3dde8328c56aac4ffffdf3a047a83de007",
+    "integration_base": "96294dcf3c113e3b1cdc44f4d9d4069294259ac1",
+    "persona_idempotency_anchor": "e828660f4",
+    "persona_regression_anchor": "a8fd6b3dd"
   },
   "validation": [
     {
@@ -54,6 +57,12 @@
       "command": "SIMPLIFY_REPLAY_OUTPUT=/tmp/simplify-review-fix-replay-100-retry.json timeout 1200 .venv-pantheon/bin/python3 services/openclaw-gateway-adapter/tests/test_openresponses_transport_contract.py",
       "result": "Five pinned Gateway capability cases and 100 CLI/HTTP pairs completed; fixture container cleanup exit 0",
       "exit_code": 0
+    },
+    {
+      "command": "timeout 300 .venv-pantheon/bin/python3 -m pytest -q -rs services/openclaw-gateway-adapter/ services/control-plane/cron/test_exact_run_wait.py services/control-plane/cron/test_cron.py services/control-plane/cron/test_service.py",
+      "result": "592 passed, 4 legacy external-Gateway smoke skipped, 4 warnings, 26 subtests passed in 147.24s",
+      "exit_code": 0,
+      "source_commit": "a8fd6b3dde8328c56aac4ffffdf3a047a83de007"
     }
   ],
   "local_gateway_evidence": {
@@ -3042,5 +3051,36 @@
       }
     ],
     "configured_reviewer_decision": "pending independent exact-head review"
+  },
+  "persona_idempotency_correction": {
+    "rejected_head": "b643c5fa8bad7244ea93a633c1666ae0668a86d9",
+    "reviewer": "Codex2",
+    "finding": "Persona stream bypassed the invoke ledger and governed session identity, allowing duplicate upstream attempts for already-completed keys.",
+    "negative_control": {
+      "command": "timeout 45 .venv-pantheon/bin/python3 /tmp/simplify-persona-negative-control.py",
+      "method": "Load main.py from rejected_head in memory under its original module name, use the current TestGovernedServantAgentSync._admitted_replay_case mounted admission/SQLite/real-provider HTTP fixture, then post the same key/body to invoke->stream, stream->invoke and stream->stream. No repository source is replaced.",
+      "result": "All three pairs made two upstream HTTP calls instead of the required one.",
+      "exit_code": 1,
+      "classification": "expected failure on rejected source, not candidate acceptance"
+    },
+    "focused_validation": {
+      "command": "timeout 90 .venv-pantheon/bin/python3 -m pytest -q services/openclaw-gateway-adapter/test_main.py -k 'persona_exact_attempt or persona_changed_content or persona_failed_terminal or persona_crash_or_cancel or persona_concurrent_mounted or persona_mounted_crash or persona_replay_preserves or persona_simultaneous'",
+      "result": "8 passed, 123 deselected, 4 subtests passed in 4.59s",
+      "exit_code": 0
+    },
+    "coverage": [
+      "All four invoke/stream first-attempt and replay combinations issue exactly one upstream HTTP request, preserve text/usage/response ID and use admitted tenant, authenticated actor and normalized pint identity.",
+      "Changed prompt or authenticated actor conflicts on both routes without upstream work.",
+      "Failed terminals replay as errors, never done; missing usage remains absent and JSON opinion text is replayed verbatim.",
+      "Mounted generator crash and failed terminal persistence publish no done; both routes fence subsequent attempts in_doubt.",
+      "Partial-stream generator cancellation closes its upstream iterator and leaves the persistent claim in_doubt.",
+      "Four cross-route concurrency combinations fence the competing request; four simultaneous SQLite claims yield one winner and three typed in_doubt results."
+    ],
+    "source_sha256": {
+      "services/openclaw-gateway-adapter/main.py": "da9d2c019073520344da18135a90fb03e49f9f929d8894fbf895ba8a3b0be5fe",
+      "services/openclaw-gateway-adapter/test_main.py": "2ba640775c47f6a771aca76744ab09241c3ce526919dd265c45625913a3dcc38"
+    },
+    "compatibility": "Existing fingerprints without authenticated actor binding are denied as conflicts, not retried or replayed to an unbound actor. No hosted ledger migration was performed.",
+    "independent_review": "pending exact-head handoff to configured Codex2 reviewer"
   }
 }
