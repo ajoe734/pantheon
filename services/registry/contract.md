@@ -340,6 +340,18 @@ supplying or trusting `artifact_type` themselves. It must still preserve:
 - identical atomic revision sequencing invariants across both the dedicated `/api/registry/strategy-specs` facade and the generic `/api/registry/entries` endpoint for all StrategySpec representations (inline or storage reference); draft classification is strictly derived server-side from request structure, and reserved `draft_kind` metadata markers on typed or StrategySpec submissions are rejected (400)
 - the same `artifact_state` / `deployment_stage` split as the generic registry entry API
 
+Generic typed StrategySpec creation uses the same canonical payload admission
+as this facade, for both keyed and unkeyed requests. Lineage is mandatory;
+inline content must pass schema, identity and checksum validation, while an
+external reference requires a nonempty storage path and checksum. A name-only
+draft remains a separate metadata record, not a validated full specification.
+
+`allocation_policy` creation is exclusive to
+`POST /api/registry/allocation-policy-artifacts`. Generic `POST /api/registry/entries`
+rejects that kind with 400, including keyed requests and otherwise valid payloads.
+The typed validator supplies artifact content, provenance and derived fields;
+generic reads and lawful transitions remain available for those validated entries.
+
 ### Evolvable StrategyArtifact facade
 
 `EVOLOOP-003` defines an executable StrategyArtifact as an additive payload

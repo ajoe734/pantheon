@@ -89,12 +89,36 @@
   "action_owner_matrix": {
     "note": "See services/registry/command_contract.py (STRATEGY_ACTIONS) for the executable form of this table; this JSON is a frozen snapshot for review, command_contract.py is the source of truth a caller resolves against at runtime.",
     "entries": [
-      {"action_id": "update_params", "owner": "registry", "registry_capability": "update_metadata_cas"},
-      {"action_id": "submit_review", "owner": "governance_review", "registry_capability": null},
-      {"action_id": "promote_paper", "owner": "promotion", "registry_capability": null},
-      {"action_id": "activate", "owner": "runtime", "registry_capability": null},
-      {"action_id": "pause", "owner": "runtime", "registry_capability": null},
-      {"action_id": "archive", "owner": "runtime", "registry_capability": null}
+      {
+        "action_id": "update_params",
+        "owner": "registry",
+        "registry_capability": "update_metadata_cas"
+      },
+      {
+        "action_id": "submit_review",
+        "owner": "governance_review",
+        "registry_capability": null
+      },
+      {
+        "action_id": "promote_paper",
+        "owner": "promotion",
+        "registry_capability": null
+      },
+      {
+        "action_id": "activate",
+        "owner": "runtime",
+        "registry_capability": null
+      },
+      {
+        "action_id": "pause",
+        "owner": "runtime",
+        "registry_capability": null
+      },
+      {
+        "action_id": "archive",
+        "owner": "runtime",
+        "registry_capability": null
+      }
     ]
   },
   "bff_adapter_semantics": {
@@ -126,8 +150,8 @@
     "proof": "services/registry/test_service.py::test_latest_approved_endpoint_does_not_leak_another_tenants_approved_entry"
   },
   "generic_route_typed_content_validation": {
-    "note": "POST /api/registry/entries previously stored a caller-supplied checksum verbatim with no content validation, and only enforced lineage/sequence validation if inline metadata.strategy_spec was present. It now enforces the identical atomic revision sequencing invariants, parent lineage, and base checksum CAS for all StrategySpec representations (both inline metadata.strategy_spec and storage_ref/object_store references) under the per-strategy advisory lock, preventing noninitial reference revisions from bypassing caller base validation while preserving distinct artifacts and name-only drafts. In addition, inline strategy_spec payloads are schema-validated and their checksum is verified against the embedded content. Draft classification is strictly derived server-side from request structure, reserved draft_kind metadata markers on typed submissions and StrategySpec submissions are rejected (400), and mixing name with typed fields is rejected (400).",
-    "proof": "services/registry/test_registry_positives.py (updated to submit schema-complete payloads), services/registry/test_service.py, services/registry/test_owner_durability_real_process.py::test_generic_reference_revision_cannot_skip_caller_base, services/registry/test_owner_durability_real_process.py::test_typed_revision_cannot_claim_name_only_to_skip_base, services/registry/test_owner_durability_real_process.py::test_name_only_draft_real_process_positive_and_durable_readback"
+    "note": "Every typed strategy_spec on POST /api/registry/entries uses _strategy_spec_register_payload, the same canonical admission used by POST /api/registry/strategy-specs: mandatory lineage, schema/identity/checksum validation for inline content, or explicit nonempty storage_ref and checksum for references. Keyed and unkeyed writes retain the same atomic revision lineage invariants. Genuine name-only drafts remain distinct server-classified metadata records.",
+    "proof": "services/registry/test_owner_durability_real_process.py::test_generic_typed_admission_and_restart"
   },
   "atomic_composite_identity_on_plain_create": {
     "note": "register() (the non-register_if_absent create path used by e.g. model_artifact entries and name-only drafts) previously inserted unconditionally with no composite-identity reservation at the store layer at all — only a non-atomic, best-effort application-layer check. RegistryStore.create/PostgresRegistryStore.create now accept unique_fields and atomically reserve (strategy_id, version, artifact_type) the same way register_if_absent does; a genuine collision under this path raises RegistryUniqueViolationError -> RegistryConflictError (409) instead of relying solely on the non-atomic pre-check.",
@@ -152,5 +176,15 @@
   },
   "auth_wiring_status": {
     "note": "architecture-resumption-sa-sd.md §3.3 requires reusing services/runtime_auth_inbound.py validate_request_auth with strict mode across Registry mutation routes. The 2026-09-06 corrective pass wires _authenticate_registry_write into every mutating route in service.py (register_entry, register_strategy_spec, register_strategy_artifact, register_allocation_policy_artifact, every advance route, mutate_strategy_artifact_entry, update_deployment_summary) — not just the metadata-CAS route — and additionally rejects a signature-valid JWT missing subject/tenant/role/expiry claims via _require_verified_identity. docker-compose.yml and docker-compose.control.yml already set PANTHEON_REGISTRY_AUTH_MODE=strict and REGISTRY_STORE_BACKEND=postgres for the registry service. A follow-up gen-5 pass additionally scopes register_strategy_spec's replay-return path (and the cross-tenant aggregate reads named above) through _authorize_write/_can_read_entry, since authentication alone does not scope which tenant's data a verified caller may read back."
+  },
+  "generic_route_mutation_kinds": {
+    "route": "POST /api/registry/entries",
+    "excluded": {
+      "allocation_policy": "POST /api/registry/allocation-policy-artifacts"
+    },
+    "rejection_status": 400,
+    "semantics": "AllocationPolicyArtifact creation is exclusively admitted through its canonical typed validator; generic keyed and unkeyed creation rejects the kind even with otherwise valid content. Generic reads and legal transitions of validated entries remain available.",
+    "proof": "services/registry/test_owner_durability_real_process.py::test_allocation_typed_admission_and_restart",
+    "consumer_handoff": "DOMAIN-WRITERS-DURABILITY-CORRECTIVE-001 owns optimizer/research callers; use the existing allocation-policy-artifacts DTO and verified caller credentials. No production Python generic allocation writer was found in the current source inventory; mounted HTTP rejection and typed positive/replay/restart tests enforce the boundary."
   }
 }
