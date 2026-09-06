@@ -229,6 +229,20 @@ def _commit_exists(oid: str, *, repo: Path) -> bool:
     return proc.returncode == 0
 
 
+def _blob_at(path: str, *, repo: Path, rev: str) -> str | None:
+    """Return a file's content at one revision, or None when absent there."""
+
+    proc = subprocess.run(
+        ["git", "-C", str(repo), "show", f"{rev}:{path}"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if proc.returncode != 0:
+        return None
+    return proc.stdout
+
+
 @dataclass
 class SiblingRepositories:
     """Which configured checkouts are available to resolve a cited commit.
@@ -308,6 +322,7 @@ def check_evidence_manifest(
     repo: Path,
     manifest_path: str | None,
     verify_oids: bool,
+    head: str = "HEAD",
     siblings: "SiblingRepositories | None" = None,
 ) -> CheckResult:
     """The manifest must exist, parse, and name only resolvable commits.
@@ -321,16 +336,19 @@ def check_evidence_manifest(
 
     if not manifest_path:
         return CheckResult("evidence-manifest", True, "no manifest declared; nothing to verify")
-    path = repo / manifest_path
-    if not path.exists():
+    # Read the manifest out of the reviewed tree, not the working directory: the
+    # delivery under test is a commit, and the checkout running this gate is
+    # frequently on some other ref.
+    raw = _blob_at(manifest_path, repo=repo, rev=head)
+    if raw is None:
         return CheckResult(
             "evidence-manifest",
             False,
-            f"declared manifest is missing from the delivery: {manifest_path}",
+            f"declared manifest is not present at {head[:12]}: {manifest_path}",
         )
     try:
-        payload = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as exc:
+        payload = json.loads(raw)
+    except json.JSONDecodeError as exc:
         return CheckResult(
             "evidence-manifest",
             False,
@@ -462,6 +480,7 @@ def run_preflight(
             repo=repo,
             manifest_path=resolve_manifest_path(task),
             verify_oids=verify_evidence_oids,
+            head=head,
             siblings=sibling_repositories(repo=repo),
         ),
     ]

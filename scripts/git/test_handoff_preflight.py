@@ -173,16 +173,41 @@ def test_commit_trailers_fail_and_report_the_offending_commit(repo):
 
 def test_evidence_manifest_missing_file_is_reported(repo):
     result = preflight.check_evidence_manifest(
-        repo=repo, manifest_path="docs/evidence.json", verify_oids=True
+        repo=repo, manifest_path="docs/evidence.json", verify_oids=True, head="HEAD"
     )
     assert not result.ok
-    assert "missing" in result.summary
+    assert "not present" in result.summary
+
+
+def test_evidence_manifest_is_read_from_the_reviewed_tree_not_the_checkout(repo):
+    """A gate run from another checkout must still see the delivery's manifest.
+
+    Observed live on PR #5627: the manifest existed at the reviewed head and the
+    gate, running from a worktree checked out on dev, reported it missing.
+    """
+    _commit(
+        repo,
+        "evidence.json",
+        json.dumps({"task_id": "T"}),
+        "T: add evidence\n\nLLM-Agent: Claude\nTask-ID: T\nReviewer: Codex\n",
+    )
+    delivered = subprocess.run(
+        ["git", "rev-parse", "HEAD"], cwd=str(repo), capture_output=True, text=True
+    ).stdout.strip()
+    # Move the working tree off the delivery, exactly like a gate worktree on dev.
+    _run(["git", "checkout", "-q", "HEAD~1"], repo)
+    assert not (repo / "evidence.json").exists()
+
+    result = preflight.check_evidence_manifest(
+        repo=repo, manifest_path="evidence.json", verify_oids=True, head=delivered
+    )
+    assert result.ok, result.render()
 
 
 def test_evidence_manifest_invalid_json_is_reported(repo):
-    (repo / "evidence.json").write_text("{not json", encoding="utf-8")
+    _commit(repo, "evidence.json", "{not json", "T: bad\n\nTask-ID: T\n")
     result = preflight.check_evidence_manifest(
-        repo=repo, manifest_path="evidence.json", verify_oids=True
+        repo=repo, manifest_path="evidence.json", verify_oids=True, head="HEAD"
     )
     assert not result.ok
     assert "not readable JSON" in result.summary
@@ -191,12 +216,14 @@ def test_evidence_manifest_invalid_json_is_reported(repo):
 def test_evidence_manifest_rejects_unresolvable_commit_id(repo):
     """OSS-COVERAGE-PLAN-001 was rejected for a mis-stated commit id."""
     bogus = "4fd6088d5478d32911029628d5047b5e37c6bbdf"
-    (repo / "evidence.json").write_text(
+    _commit(
+        repo,
+        "evidence.json",
         json.dumps({"verified": f"execute-plans {bogus} is the paired head"}),
-        encoding="utf-8",
+        "T: evidence\n\nTask-ID: T\n",
     )
     result = preflight.check_evidence_manifest(
-        repo=repo, manifest_path="evidence.json", verify_oids=True
+        repo=repo, manifest_path="evidence.json", verify_oids=True, head="HEAD"
     )
     assert not result.ok
     assert bogus in result.details
@@ -206,22 +233,27 @@ def test_evidence_manifest_accepts_resolvable_commit_id(repo):
     head = subprocess.run(
         ["git", "rev-parse", "HEAD"], cwd=str(repo), capture_output=True, text=True
     ).stdout.strip()
-    (repo / "evidence.json").write_text(
-        json.dumps({"nested": {"head_sha": head}}), encoding="utf-8"
+    _commit(
+        repo,
+        "evidence.json",
+        json.dumps({"nested": {"head_sha": head}}),
+        "T: evidence\n\nTask-ID: T\n",
     )
     result = preflight.check_evidence_manifest(
-        repo=repo, manifest_path="evidence.json", verify_oids=True
+        repo=repo, manifest_path="evidence.json", verify_oids=True, head="HEAD"
     )
     assert result.ok, result.render()
 
 
 def test_evidence_manifest_can_skip_oid_verification_for_foreign_repos(repo):
-    (repo / "evidence.json").write_text(
+    _commit(
+        repo,
+        "evidence.json",
         json.dumps({"fe": "4fd6088d5478d32911029628d5047b5e37c6bbdf"}),
-        encoding="utf-8",
+        "T: evidence\n\nTask-ID: T\n",
     )
     result = preflight.check_evidence_manifest(
-        repo=repo, manifest_path="evidence.json", verify_oids=False
+        repo=repo, manifest_path="evidence.json", verify_oids=False, head="HEAD"
     )
     assert result.ok
 
@@ -249,11 +281,14 @@ def test_evidence_manifest_resolves_a_sibling_repository_commit(repo, tmp_path):
         ["git", "rev-parse", "HEAD"], cwd=str(sibling), capture_output=True, text=True
     ).stdout.strip()
 
-    (repo / "evidence.json").write_text(
-        json.dumps({"frontend_sha": sibling_head}), encoding="utf-8"
+    _commit(
+        repo,
+        "evidence.json",
+        json.dumps({"frontend_sha": sibling_head}),
+        "T: evidence\n\nTask-ID: T\n",
     )
     without = preflight.check_evidence_manifest(
-        repo=repo, manifest_path="evidence.json", verify_oids=True
+        repo=repo, manifest_path="evidence.json", verify_oids=True, head="HEAD"
     )
     assert not without.ok, "sibling commit is unknown to this repository alone"
 
@@ -261,6 +296,7 @@ def test_evidence_manifest_resolves_a_sibling_repository_commit(repo, tmp_path):
         repo=repo,
         manifest_path="evidence.json",
         verify_oids=True,
+        head="HEAD",
         siblings=preflight.SiblingRepositories(available=[sibling]),
     )
     assert with_sibling.ok, with_sibling.render()

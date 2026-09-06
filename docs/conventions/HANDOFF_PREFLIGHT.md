@@ -60,7 +60,9 @@ Exit codes: `0` clean, `1` at least one gate failed, `2` the gate could not run
    `services/x/**` authorizes a subtree, `services/x/test_*.py` and
    `services/x/*/test*.py` are segment-local globs, a bare path is exact. A file
    outside the contract is named individually.
-3. **evidence-manifest** — the declared manifest must exist, parse as JSON, and
+3. **evidence-manifest** — the declared manifest is read out of the reviewed
+   tree (`git show <head>:<path>`), not the working directory, so a gate run
+   from a checkout on another ref still sees it. It must parse as JSON, and
    every 40-hex commit id it cites must resolve in this repository or in a
    configured sibling checkout. Missing sibling checkouts are listed in the
    failure, so "wrong commit id" is distinguishable from "that repository is not
