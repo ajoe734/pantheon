@@ -75,7 +75,7 @@ class ApprovalEvidence(BaseModel):
         return self
 
 
-class _NoApprovalRedirect(HTTPRedirectHandler):
+class NoOwnerRedirect(HTTPRedirectHandler):
     def redirect_request(self, req, fp, code, msg, headers, newurl):
         # Exact owner reads must not forward the scoped bearer to another URL.
         return None
@@ -91,7 +91,7 @@ class ApprovalReader:
                 or parsed.username or parsed.password or parsed.query or parsed.fragment
                 or not service_token or not math.isfinite(timeout_seconds) or timeout_seconds <= 0):
             raise ApprovalUnavailable('Governance reader URL, scoped principal and timeout required')
-        self._opener = build_opener(_NoApprovalRedirect())
+        self._opener = build_opener(NoOwnerRedirect())
         self.base_url = base_url.rstrip('/')
         self.service_token = service_token
         self.timeout_seconds = timeout_seconds

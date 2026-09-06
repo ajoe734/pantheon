@@ -129,6 +129,7 @@ def verify_promotion_authorities(
     timeout_seconds: float = 5.0,
     fetch_json: FetchJson | None = None,
     approval_reader=None,
+    registry_fetch_json: FetchJson | None = None,
     now: datetime | None = None,
 ) -> dict[str, Any]:
     """Return a server-derived cutover request and correlated proof report."""
@@ -164,6 +165,7 @@ def verify_promotion_authorities(
             timeout_seconds=timeout_seconds,
             fetch_json=fetch_json,
             approval_reader=approval_reader,
+            registry_fetch_json=registry_fetch_json,
             now=now,
             allowed_target_stages=(target_stage,),
             allowed_registry_deployment_stages=(source_stage,),

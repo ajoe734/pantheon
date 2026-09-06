@@ -379,6 +379,7 @@ def test_canonical_track_c_sequence_satisfies_runtime_deploy_authority() -> None
         governance_base_url="http://governance.contract",
         capital_base_url="http://capital.contract",
         approval_reader=SnapshotApprovalReader(approval),
+        registry_fetch_json=lambda url, timeout: {"entry": registry_entry, "deployment_stage": "none"},
         fetch_json=_fetcher(
             plan=plan,
             registry_view={

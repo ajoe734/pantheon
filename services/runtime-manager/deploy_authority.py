@@ -22,7 +22,7 @@ from datetime import datetime, timezone
 from typing import Any, Callable, Collection, Mapping
 from urllib.error import HTTPError, URLError
 from urllib.parse import quote, urlencode
-from urllib.request import Request, urlopen
+from urllib.request import Request, build_opener
 
 from services.registry.strategy_artifact import (
     StrategyArtifactValidationError,
@@ -32,7 +32,7 @@ from services.registry.strategy_artifact import (
 
 
 from services.governance.approval_authority import (
-    ApprovalInvalid, ApprovalUnavailable, configured_approval_reader,
+    ApprovalInvalid, ApprovalUnavailable, configured_approval_reader, NoOwnerRedirect,
 )
 
 
@@ -102,7 +102,7 @@ def _fetch_json(
         method="GET",
     )
     try:
-        with urlopen(request, timeout=timeout_seconds) as response:
+        with build_opener(NoOwnerRedirect()).open(request, timeout=timeout_seconds) as response:
             raw = response.read().decode("utf-8")
     except HTTPError as exc:
         error_type = (
@@ -171,6 +171,7 @@ def verify_deploy_authorities(
     timeout_seconds: float = 5.0,
     fetch_json: FetchJson | None = None,
     approval_reader=None,
+    registry_fetch_json: FetchJson | None = None,
     now: datetime | None = None,
     allowed_plan_statuses: Collection[str] = ("approved", "executing"),
     allowed_target_stages: Collection[str] = ("paper",),
@@ -237,16 +238,18 @@ def verify_deploy_authorities(
     )
 
     fetch = fetch_json or _fetch_json
-    registry_fetch = fetch
-    deployment_fetch = fetch
-    if fetch_json is None:
-        deployment_headers = _deployment_request_headers()
+    registry_fetch = registry_fetch_json
+    if registry_fetch is None:
         registry_token = os.getenv('RUNTIME_MANAGER_REGISTRY_SERVICE_TOKEN', '').strip()
         if not registry_token:
             raise DeployAuthorityUnavailableError('Registry scoped read principal required')
 
         def registry_fetch(url: str, timeout: float) -> Mapping[str, Any]:
             return _fetch_json(url, timeout, headers={'Authorization': 'Bearer ' + registry_token})
+
+    deployment_fetch = fetch
+    if fetch_json is None:
+        deployment_headers = _deployment_request_headers()
 
         def deployment_fetch(url: str, timeout: float) -> Mapping[str, Any]:
             return _fetch_json(url, timeout, headers=deployment_headers)

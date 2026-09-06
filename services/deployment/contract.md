@@ -771,3 +771,11 @@ stored in the plan, receipt, audit or evidence. Missing configuration fails
 closed. The isolated dispatcher test exercises real Governance/Registry HTTP,
 Deployment stores and the shared Runtime verifier; capital/lifecycle doubles
 are explicitly identified and do not establish a hosted trading lifecycle.
+
+The existing outbox consumer uses the shared Runtime authority function. Its
+Registry transport is separately scoped even when a lifecycle fetch callback
+is supplied. Configure that process's `RUNTIME_MANAGER_REGISTRY_SERVICE_TOKEN`
+and `RUNTIME_MANAGER_GOVERNANCE_SERVICE_TOKEN` with the Deployment reader
+principals. The dispatcher proof includes the actual Runtime HTTP deploy route,
+strict synthetic JWT/MFA admission and repeated owner verification at that
+write boundary; synthetic MFA proof does not grant any real account authority.

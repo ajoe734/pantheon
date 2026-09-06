@@ -308,6 +308,17 @@ def test_approved_paper_command_reaches_terminal_plan_and_binding(
         environment.setenv("DEPLOYMENT_REGISTRY_SERVICE_TOKEN", owners["registry_token"])
         environment.setenv("DEPLOYMENT_GOVERNANCE_BASE_URL", owners["governance_url"])
         environment.setenv("DEPLOYMENT_GOVERNANCE_SERVICE_TOKEN", owners["governance_token"])
+        environment.setenv("RUNTIME_MANAGER_GOVERNANCE_SERVICE_TOKEN", owners["governance_token"])
+        environment.setenv("RUNTIME_MANAGER_REGISTRY_SERVICE_TOKEN", owners["registry_token"])
+        environment.setenv("PANTHEON_GOVERNANCE_APPROVAL_API_URL", owners["governance_url"])
+        environment.setenv("PANTHEON_REGISTRY_API_URL", owners["registry_url"])
+        environment.setenv("PANTHEON_CAPITAL_API_URL", "http://capital.test")
+        from services.governance.test_approval_authority_postgres import token
+        environment.setenv('PANTHEON_DEPLOYMENT_AUTH_MODE', 'strict')
+        environment.setenv('PANTHEON_DEPLOYMENT_JWT_SECRET', owner_env['PANTHEON_GOVERNANCE_JWT_SECRET'])
+        environment.setenv('PANTHEON_DEPLOYMENT_JWT_ISSUER', 'isolated-governance-test')
+        environment.setenv('PANTHEON_DEPLOYMENT_JWT_AUDIENCE', 'isolated-deployment')
+        deployment_token = token(owner_env['PANTHEON_GOVERNANCE_JWT_SECRET'], roles=['operator', 'service'], aud='isolated-deployment')
         environment.setenv("CAPITAL_DATA_DIR", str(governance_dir))
         environment.setenv("DEPLOYMENT_DATA_DIR", str(governance_dir))
         environment.setenv("PANTHEON_GOVERNANCE_DATA_DIR", str(governance_dir))
@@ -315,7 +326,7 @@ def test_approved_paper_command_reaches_terminal_plan_and_binding(
             "PANTHEON_RUNTIME_BINDING_STORE_PATH", str(runtime_binding_store)
         )
         environment.setenv("PANTHEON_DEPLOYMENT_OUTBOX_LEASE_REQUIRED", "false")
-        environment.setenv("PANTHEON_DEPLOYMENT_SERVICE_TOKEN", "l12:service")
+        environment.setenv("PANTHEON_DEPLOYMENT_SERVICE_TOKEN", deployment_token)
         environment.setenv("PANTHEON_DEPLOYMENT_TENANT_ID", "synthetic-tenant")
         environment.delenv("PANTHEON_PAPER_FLEET_RECONCILER_URL", raising=False)
         environment.delenv("PANTHEON_RUNTIME_MANAGER_URL", raising=False)
@@ -326,7 +337,7 @@ def test_approved_paper_command_reaches_terminal_plan_and_binding(
         client = TestClient(
             deployment_service.app,
             headers={
-                "Authorization": "Bearer l12:operator,service",
+                "Authorization": "Bearer " + deployment_token,
                 "X-Tenant-Id": "synthetic-tenant",
             },
         )
@@ -364,10 +375,32 @@ def test_approved_paper_command_reaches_terminal_plan_and_binding(
                 "services.deployment.outbox_consumer_worker"
             )
             runtime_service = worker.RuntimeManagerClient(allow_local=True)._local()
+            runtime_main = importlib.import_module('services.runtime-manager.main')
+            environment.setattr(runtime_main, '_svc', runtime_service)
+            from services.governance.test_approval_authority_postgres import token
+            environment.setenv('PANTHEON_RUNTIME_AUTH_MODE', 'strict')
+            environment.setenv('PANTHEON_RUNTIME_JWT_SECRET', owner_env['PANTHEON_GOVERNANCE_JWT_SECRET'])
+            environment.setenv('PANTHEON_RUNTIME_JWT_ISSUER', 'isolated-governance-test')
+            environment.setenv('PANTHEON_RUNTIME_JWT_AUDIENCE', 'isolated-runtime')
+            environment.setenv('PANTHEON_DEPLOYMENT_API_URL', 'http://deployment.test')
+            runtime_headers = {'Authorization': 'Bearer '+token(owner_env['PANTHEON_GOVERNANCE_JWT_SECRET'],
+                               sub='isolated-runtime-operator', roles=['operator'], aud='isolated-runtime',
+                               mfa=True, mfa_verified=True, amr=['mfa'])}
+            runtime_http = runtime_main.app.test_client()
+            runtime_authority = importlib.import_module(runtime_main.verify_deploy_authorities.__module__)
+            original_runtime_read = runtime_authority._fetch_json
+
+            def _runtime_read(url, timeout, *, headers=None):
+                if url.startswith(owners['registry_url']):
+                    return original_runtime_read(url, timeout, headers=headers)
+                return _authority_fetch(url, timeout)
 
             class LocalRuntimeAuthority:
                 def deploy(self, request):
-                    return runtime_service.deploy(request).to_dict()
+                    with patch.object(runtime_authority, '_fetch_json', side_effect=_runtime_read):
+                        response = runtime_http.post('/api/runtimes/deploy', json=request, headers=runtime_headers)
+                    assert response.status_code == 201, response.get_json()
+                    return response.get_json()
 
                 def get(self, binding_id):
                     binding = runtime_service.get(binding_id)
@@ -398,47 +431,32 @@ def test_approved_paper_command_reaches_terminal_plan_and_binding(
                     )
                 )
 
-            def _authority_report(*, saga, plan, **_kwargs):
-                # Actual shared Runtime verifier; only capital/lifecycle reads are
-                # isolated doubles. Registry and Governance use scoped HTTP reads.
-                from services.governance.approval_authority import ApprovalReader
-                from importlib import import_module
+            def _authority_fetch(url, timeout):
+                # Only lifecycle/capital doubles use the generic callback.
+                # Real worker code must read Registry/Governance independently.
                 from urllib.parse import urlparse
-                import httpx
-                authority = import_module('services.runtime-manager.deploy_authority')
+                path = urlparse(url).path
                 pool = json.loads((governance_dir / 'capital_pools.json').read_text())[0]
                 binding = json.loads((governance_dir / 'persona_capital_bindings.json').read_text())[0]
+                if path.startswith('/api/deployment/plans/'):
+                    return _response(client.get(path))
+                if path.startswith('/api/capital-pools/'):
+                    return pool
+                if path == '/api/bindings/admissibility':
+                    return dict(persona_id=binding['persona_id'], capital_pool_id=binding['capital_pool_id'],
+                                target_stage='paper', permitted=True, pool_status=pool['status'],
+                                single_runtime_enforced=True, binding_id=binding['binding_id'],
+                                binding_status=binding['status'], allowed_deployment_scope='paper')
+                if path.startswith('/api/bindings/'):
+                    return binding
+                raise AssertionError('Owner approval/Registry read escaped its scoped transport: '+url)
 
-                def fetch(url, timeout):
-                    if url.startswith(owners['registry_url']):
-                        response = httpx.get(url, headers={'Authorization': 'Bearer '+owners['registry_token']}, timeout=timeout)
-                        assert response.status_code == 200, response.text
-                        return response.json()
-                    path = urlparse(url).path
-                    if path.startswith('/api/deployment/plans/'):
-                        return _response(client.get(path))
-                    if path.startswith('/api/capital-pools/'):
-                        return pool
-                    if path == '/api/bindings/admissibility':
-                        return dict(persona_id=binding['persona_id'], capital_pool_id=binding['capital_pool_id'],
-                                    target_stage='paper', permitted=True, pool_status=pool['status'],
-                                    single_runtime_enforced=True, binding_id=binding['binding_id'],
-                                    binding_status=binding['status'], allowed_deployment_scope='paper')
-                    if path.startswith('/api/bindings/'):
-                        return binding
-                    raise AssertionError(url)
-
-                return authority.verify_deploy_authorities(
-                    dict(plan_id=plan['plan_id'], plan_status=plan['status'], target_stage=plan['target_stage'],
-                         artifact_id=plan['artifact_id'], artifact_version=plan['artifact_version'],
-                         strategy_id=plan['strategy_id'], approval_decision_id=plan['approval_decision_id'],
-                         capital_pool_id=plan['capital_pool_id'], sponsor_persona_id=plan['sponsor_persona_id'],
-                         persona_capital_binding_id=binding['binding_id'], persona_capital_binding_status='active',
-                         allowed_deployment_scope='paper'),
-                    deployment_base_url='http://deployment.test', registry_base_url=owners['registry_url'],
-                    governance_base_url=owners['governance_url'], capital_base_url='http://capital.test',
-                    fetch_json=fetch, approval_reader=ApprovalReader(base_url=owners['governance_url'],
-                                                                  service_token=owners['governance_token']))
+            def _authority_report(*, saga, plan):
+                with patch.object(worker, '_fetch_authority_json', side_effect=_authority_fetch):
+                    return worker.verify_binding_deploy_authorities(
+                        saga=saga or plan, plan=plan, persona_capital_binding_id='pcb-l12-dep',
+                        persona_capital_binding_status='active', allowed_deployment_scope='paper',
+                        deployment_base_url='http://deployment.test', timeout_seconds=5)
 
             def _unexpected_urlopen(request, *_args, **_kwargs):
                 raise RuntimeError(f"unexpected outbound request: {request.full_url}")
@@ -482,8 +500,8 @@ def test_approved_paper_command_reaches_terminal_plan_and_binding(
                 ),
                 patch.object(
                     worker,
-                    "verify_binding_deploy_authorities",
-                    side_effect=_authority_report,
+                    "_fetch_authority_json",
+                    side_effect=_authority_fetch,
                 ),
                 patch.object(
                     worker,
@@ -594,8 +612,7 @@ def test_approved_paper_command_reaches_terminal_plan_and_binding(
             revoked = post(owners['governance_url'], '/'+approval_id+'/revoke', owner_env,
                            dict(expected_version=3, actor_id='synthetic-reviewer', actor_role='risk_owner'), roles=['risk_owner'])
             assert revoked.status_code == 200, revoked.text
-            authority_module = importlib.import_module('services.runtime-manager.deploy_authority')
-            with pytest.raises(authority_module.DeployAuthorityError, match='governance authority mismatch'):
+            with pytest.raises(worker.DeployAuthorityError, match='governance authority mismatch'):
                 _authority_report(saga={}, plan=queued.json())
             rejected = client.post('/api/deployment/plans/plan-l12-revocation/dispatch', json={})
             assert rejected.status_code == 400, rejected.text
