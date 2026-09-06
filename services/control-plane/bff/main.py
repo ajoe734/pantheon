@@ -226,6 +226,10 @@ except ImportError:
     except ImportError:
         build_persona_runtime_profile = None  # type: ignore[assignment]
         PersonaRuntimeProfile = None  # type: ignore[assignment,misc]
+# Uvicorn attaches handlers only to its own loggers, so without this the root
+# logger keeps its default WARNING level and no handler at all: every
+# application INFO record is dropped before it reaches the container log.
+logging.basicConfig(level=logging.INFO)
 log = logging.getLogger(__name__)
 def _bool_from_env(name: str, *, default: bool = False) -> bool:
     raw = os.getenv(name)
