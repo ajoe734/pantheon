@@ -11,8 +11,8 @@ Source completion (`merged`) is explicitly **not** the same as
 
 | Task ID | Status as of 2026-09-06 | Notes |
 | --- | --- | --- |
-| `PLAN-ADMIT-001` | `merged` (done) | Predecessor; admitted the original six audit documents. Its `done` status is not treated as proof those documents were already durably delivered as documentation — that gap is what this task closes. |
-| `DOC-FIRST-RELEASE-PLAN-DELIVERY-001` (this task) | `running` → pending PR/review/merge | Docs-only. See `docs/deployment/evidence/DOC-FIRST-RELEASE-PLAN-DELIVERY-001/evidence.json` for the exact PR/head/merge evidence once available. Not `done` until commit is pushed, PR is independently reviewed, required CI passes, and the integrator merges to `dev`. |
+| `PLAN-ADMIT-001` | `merged` (done) | Predecessor; admitted the original six audit documents. Its `done` status is separately proven delivered: PR [#5551](https://github.com/ajoe734/pantheon/pull/5551) (source head `7a741afd811ba8cd31885a07bc783d32d5353161`, merge commit `87134886b7438e2db4b698cedfa0eb4eff9cb202`) already merged those six documents plus `tasks.json` to `dev` — see `archive/PLAN_ADMISSION_ERRATUM.md`. |
+| `DOC-FIRST-RELEASE-PLAN-DELIVERY-001` (this task) | `running` → pending PR/review/merge | Docs-only. The original six audit documents are **not** this task's remaining gap — they are already `merged` via PR #5551 above. This task closes the *supplemental/current* closure gap: the 20 supplemental Markdown files, the 5 registry-resumption sources, the approved plan, the erratum, and the current INDEX/SA_SD/EXECUTION_ORDER/TRACEABILITY/STATUS entrypoint. See `docs/deployment/evidence/DOC-FIRST-RELEASE-PLAN-DELIVERY-001/evidence.json` for the exact PR/head/merge evidence once available. Not `done` until commit is pushed, PR is independently reviewed, required CI passes, and the integrator merges to `dev`. |
 | `GOV-APPROVAL-AUTHORITY-PREREQUISITE-001` | `todo` (materialized) | Canonical task row already exists (owner `Antigravity2`, reviewer `Codex2`). `depends_on`: this task, `REGISTRY-STRATEGY-UNIFIED-CONTRACT-001`, `DOMAIN-WRITERS-001`. Materialized does not mean started or reviewed. |
 | `STRUCT-RETIRE-001` | `todo` (materialized) | Canonical task row already exists (owner `Antigravity`, reviewer `Codex2`). `depends_on`: this task, `GOV-APPROVAL-AUTHORITY-PREREQUISITE-001`, `REGISTRY-STRATEGY-UNIFIED-CONTRACT-001`, `DOMAIN-WRITERS-DURABILITY-CORRECTIVE-001`, `DEV-DELIVERY-001`. |
 
@@ -39,6 +39,11 @@ This task is not `done` until `docs/deployment/evidence/DOC-FIRST-RELEASE-PLAN-D
 records the actual pushed commit, independently reviewed PR number, exact
 accepted head SHA, and integrator merge to `dev` — a queued packet,
 worker health, or the existence of a PR are not sufficient by themselves.
+PR number and exact head are populated as soon as they are known (at
+handoff time), through the canonical review-binding record; the merge
+field is left honestly `null`/pending until the integrator actually
+merges — evidence is never edited after reviewer approval to backfill
+these fields on the already-approved head.
 
 ## Validation performed
 

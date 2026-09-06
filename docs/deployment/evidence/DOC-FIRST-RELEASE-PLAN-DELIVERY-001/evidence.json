@@ -32,7 +32,7 @@
     "checked_via": "$PANTHEON_COMMAND_ROOT/scripts/ai-status.sh show <task-id>, 2026-09-06"
   },
   "validation": {
-    "byte_identical_source_copies_verified": 26,
+    "byte_identical_source_copies_verified": 27,
     "relative_links_checked_current_entrypoint": 19,
     "relative_links_broken_current_entrypoint": 0,
     "relative_links_broken_in_frozen_archive_snapshots": 15,
@@ -56,8 +56,8 @@
     {"path": "docs/04/pantheon_first_release_closure_2026-09-06/SA_SD.md", "sha256": "ed5b4b617a5a828b260cc42d1c030c2adcdd03b13b58aa3a65d18814cf3f73bc"},
     {"path": "docs/04/pantheon_first_release_closure_2026-09-06/EXECUTION_ORDER.md", "sha256": "a0eb4cf61e0a5a4e9bd7c5a1599ca52cb99bfb789bfee13c6a7c151526f6bcba"},
     {"path": "docs/04/pantheon_first_release_closure_2026-09-06/TRACEABILITY.md", "sha256": "296fe5d5a2a9da408e84cc3cddd410a68d0e7e05673d970547544f7a069aef2a"},
-    {"path": "docs/04/pantheon_first_release_closure_2026-09-06/STATUS.md", "sha256": "f00fbde2d9c6540803863f08d17497fb52f01b662d293eae068180b2d9ea94b3"},
-    {"path": "docs/04/pantheon_first_release_closure_2026-09-06/SOURCE_MANIFEST.json", "sha256": "a50e1c11a16b4927688bc4457e24e8927cb9fb5c11484957ff26c2afd20dca1e"},
+    {"path": "docs/04/pantheon_first_release_closure_2026-09-06/STATUS.md", "sha256": "c4c9e722648868940ecad019b58f22ef2891f8995a29d18106f1f0dc845b20d1"},
+    {"path": "docs/04/pantheon_first_release_closure_2026-09-06/SOURCE_MANIFEST.json", "sha256": "9db8b514a2d76695c9586b8aca9b45ce1e020fb550e40dbefc2dc8c3a5df4d6f"},
     {"path": "docs/04/pantheon_first_release_closure_2026-09-06/archive/APPROVAL_RELEASE_SA_SD.md", "sha256": "6a6bbd28f45b7b052b19d09b2f0bc5b20e0e37ca2620f722e1a40cbbc9fa7157"},
     {"path": "docs/04/pantheon_first_release_closure_2026-09-06/archive/PLAN_ADMISSION_ERRATUM.md", "sha256": "43635b209d4704d03058a13fa40955ae576754f97ae37e46dfec55904dd6b549"},
     {"path": "docs/04/pantheon_first_release_closure_2026-09-06/archive/registry-resumption-20260906/architecture-resumption-sa-sd.md", "sha256": "b7fbb1189cc963b2bee58f52c1f267b4e85e6782381685735db9c4dbc4677790"},
