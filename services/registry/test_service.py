@@ -242,8 +242,9 @@ class TestStorage:
 
         # Approve all
         for rid in ["reg-001", "reg-002", "reg-003"]:
-            store.get(rid).artifact_state = ArtifactState.APPROVED
-            store.update(store.get(rid))
+            entry = store.get(rid)
+            entry.artifact_state = ArtifactState.APPROVED
+            store.update(entry)
 
         latest = store.resolve_latest_approved("test-alpha")
         assert latest is not None

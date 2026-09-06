@@ -24,7 +24,7 @@ from .models import (
     RegistryEntryView,
     utc_now_iso,
 )
-from .storage import RegistryStore
+from .storage import RegistryConcurrentUpdateError, RegistryStore
 
 logger = logging.getLogger(__name__)
 
@@ -35,6 +35,10 @@ class RegistryError(ValueError):
 
 class RegistryNotFoundError(RegistryError):
     """Raised when a registry entry does not exist (maps to HTTP 404)."""
+
+
+class RegistryConflictError(RegistryError):
+    """Raised when a CAS-guarded mutation's base snapshot is stale (maps to HTTP 409)."""
 
 
 class RegistryService:
@@ -103,6 +107,7 @@ class RegistryService:
         if entry is None:
             raise RegistryNotFoundError(f"Registry entry not found: {registry_id}")
 
+        base_snapshot = entry.to_dict()
         current = entry.artifact_state
         allowed = ALLOWED_ARTIFACT_TRANSITIONS.get(current, [])
         if target_state not in allowed:
@@ -126,12 +131,60 @@ class RegistryService:
             if approval_decision_id:
                 entry.approval_decision_id = approval_decision_id
 
-        self.store.update(entry)
+        try:
+            entry = self.store.update(entry, expected=base_snapshot)
+        except RegistryConcurrentUpdateError as exc:
+            raise RegistryConflictError(str(exc)) from exc
         logger.info(
             "Advanced %s artifact_state: %s -> %s",
             registry_id, current.value, target_state.value,
         )
         return self._to_view(entry)
+
+    def update_metadata(
+        self,
+        registry_id: str,
+        *,
+        expected_metadata: Optional[dict],
+        new_metadata: Optional[dict],
+        command_key: Optional[str] = None,
+    ) -> tuple[RegistryEntryView, bool]:
+        """Allowed metadata update with CAS — architecture-resumption-sa-sd.md §3.2.
+
+        This mutates only the operator-facing ``metadata`` record kind; it can
+        never fabricate or upgrade a validated StrategySpec/artifact_state.
+        ``expected_metadata`` must match the entry's current durable metadata
+        or the call fails with :class:`RegistryConflictError`. ``command_key``
+        makes a retried identical request an idempotent no-op replay instead
+        of a second mutation; a replay with different ``new_metadata`` under
+        the same key fails instead of silently accepting a divergent write.
+        """
+        entry = self.store.get(registry_id)
+        if entry is None:
+            raise RegistryNotFoundError(f"Registry entry not found: {registry_id}")
+        # The CAS binds the caller's claimed base (their expected_metadata
+        # against the entry's other fields as just re-read) rather than a
+        # bare "is expected_metadata == current metadata" check performed
+        # here in Python: that would reject a valid idempotent replay, since
+        # a replay's expected_metadata reflects the *original* request, not
+        # whatever the row has become since. commit_metadata_cas() skips the
+        # CAS entirely once command_key identifies an exact replay; for a
+        # genuine (non-replay) call, a stale expected_metadata makes
+        # claimed_base_snapshot disagree with the durable row and the CAS
+        # fails closed the same way a stale full-entry snapshot would.
+        claimed_base_snapshot = entry.to_dict()
+        claimed_base_snapshot["metadata"] = expected_metadata
+        base_snapshot = claimed_base_snapshot
+        try:
+            updated, replayed = self.store.commit_metadata_cas(
+                registry_id=registry_id,
+                base_snapshot=base_snapshot,
+                new_metadata=new_metadata,
+                command_key=command_key,
+            )
+        except RegistryConcurrentUpdateError as exc:
+            raise RegistryConflictError(str(exc)) from exc
+        return self._to_view(updated), replayed
 
     def resolve_latest_approved(self, strategy_id: str) -> Optional[RegistryEntryView]:
         """Return the newest approved entry for a strategy family."""
@@ -170,12 +223,15 @@ class RegistryService:
             raise RegistryError(
                 "Cannot project a non-'none' deployment stage onto an artifact that is not approved."
             )
-        entry = self.store.update_deployment_summary(
-            registry_id,
-            current_stage=current_stage,
-            deployment_plan_id=deployment_plan_id,
-            runtime_binding_id=runtime_binding_id,
-        )
+        try:
+            entry = self.store.update_deployment_summary(
+                registry_id,
+                current_stage=current_stage,
+                deployment_plan_id=deployment_plan_id,
+                runtime_binding_id=runtime_binding_id,
+            )
+        except RegistryConcurrentUpdateError as exc:
+            raise RegistryConflictError(str(exc)) from exc
         if entry is None:
             raise RegistryNotFoundError(f"Registry entry not found: {registry_id}")
         return self._to_view(entry)

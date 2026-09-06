@@ -230,10 +230,28 @@ The storage backend is still open, but the logical operations are not.
 | `get(registry_id)` | read one entry |
 | `list_by_strategy(strategy_id)` | enumerate versions within a strategy family |
 | `advance_artifact_state(registry_id, target_state, approver?, approval_decision_id?)` | transition an entry through governed artifact-state checks and retain the canonical decision link when approving |
+| `update_metadata(registry_id, expected_metadata, new_metadata, command_key?)` | allowed operator metadata update with CAS: fails with a conflict when `expected_metadata` no longer matches the durable entry; `command_key` makes an identical retry an idempotent no-op replay |
 | `resolve_latest_approved(strategy_id)` | return the newest approved entry for a strategy |
 | `resolve_deployment_view(strategy_id)` | return the derived deployment-stage view from deployment/runtime objects |
 
 `resolve_deployment_view()` is a composed read path, not a registry-only write authority.
+
+`update_metadata()` mutates only the operator-facing `metadata` record kind — it can never fabricate
+or upgrade a validated StrategySpec or `artifact_state`. It is the `PATCH /api/registry/entries/{registry_id}/metadata`
+HTTP endpoint (REGISTRY-STRATEGY-UNIFIED-CONTRACT-001), backed by a real Postgres CAS commit in the
+same transaction as its idempotent command receipt when `command_key` is supplied. See
+`services/registry/first_release_contract.json` for the frozen capability matrix and
+`services/registry/command_contract.py` for the canonical Strategy-action-to-owner mapping (Registry
+owns this metadata update; review/paper-promotion/activation/pause/archive belong to other owners and
+must not be relabeled as Registry operations).
+
+### Storage backend
+
+Production selects `PostgresRegistryStore` (`services/registry/pg_store.py`, `REGISTRY_STORE_BACKEND=postgres`)
+as the single durable write authority for StrategySpec content, immutable versions, RegistryEntry
+identities and artifact-state, using `services/foundation/postgres_json_store.py`'s CAS/transaction
+primitives. The in-memory `RegistryStore` (`services/registry/storage.py`) is an explicit test double
+constructed directly by unit tests, never a missing-config production fallback.
 
 ### StrategySpec registry facade
 

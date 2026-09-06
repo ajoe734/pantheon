@@ -1,0 +1,109 @@
+{
+  "$schema_note": "Machine-checkable first-release capability/API/DTO/action-owner-state/receipt/retirement matrix — architecture-resumption-sa-sd.md §3.2. Validated for internal consistency and against the actual mounted FastAPI routes by services/registry/test_first_release_contract.py.",
+  "source_plan": "architecture-resumption-sa-sd.md",
+  "frozen_at": "2026-09-06",
+  "write_authority": {
+    "owner_service": "registry-svc",
+    "backend": "PostgresRegistryStore (services/registry/pg_store.py), selected via REGISTRY_STORE_BACKEND=postgres",
+    "test_double": "RegistryStore (services/registry/storage.py, in-memory) — explicitly injected by unit tests only, never a production fallback",
+    "note": "One write authority for StrategySpec content, immutable versions, RegistryEntry identities and artifact-state. No independent full-spec/revision copy exists in the mounted app; the parallel authority referenced in architecture-resumption-sa-sd.md §2/§5 (command_contract.py + pg_store.py from the superseded REGISTRY-STRATEGY-DURABILITY-PREREQUISITE-001 worktree) was never merged to dev and is not part of the retirement inventory below because it was never mounted."
+  },
+  "capabilities": [
+    {
+      "capability": "create_draft",
+      "route": "POST /api/registry/entries",
+      "principal_scope": "not yet enforced by validate_request_auth on this route (tracked gap; see auth_wiring_status)",
+      "request_identity": "generated server-side (reg-{strategy_id}-{version}-{uuid8})",
+      "sole_writer": "registry-svc",
+      "legal_transition": "creates artifact_state=draft or candidate",
+      "durable_receipt": "RegistryEntry row (registry.entries), no separate command receipt on this route yet",
+      "exact_version_read": "GET /api/registry/entries/{registry_id}",
+      "status": "implemented",
+      "proof": "services/registry/test_owner_durability.py::test_register_and_readback_survive_fresh_process_restart"
+    },
+    {
+      "capability": "update_metadata_cas",
+      "route": "PATCH /api/registry/entries/{registry_id}/metadata",
+      "principal_scope": "not yet enforced by validate_request_auth on this route (tracked gap; see auth_wiring_status)",
+      "request_identity": "registry_id + command_key (optional idempotency key)",
+      "sole_writer": "registry-svc",
+      "legal_transition": "replaces the entry's metadata record kind only; never fabricates or upgrades artifact_state or a validated StrategySpec",
+      "durable_receipt": "registry.command_receipts row when command_key is supplied, committed in the same Postgres transaction as the entry mutation",
+      "exact_version_read": "GET /api/registry/entries/{registry_id}",
+      "status": "implemented (net-new capability added by this task)",
+      "proof": [
+        "services/foundation/tests/test_registry_owner_transaction.py::test_metadata_cas_commit_and_receipt_are_one_atomic_transaction",
+        "services/foundation/tests/test_registry_owner_transaction.py::test_metadata_cas_divergent_replay_under_same_key_fails_closed",
+        "services/foundation/tests/test_registry_owner_transaction.py::test_metadata_cas_rejects_stale_base_snapshot",
+        "services/registry/test_owner_durability.py::test_metadata_cas_update_over_http_succeeds_and_verifies_readback",
+        "services/registry/test_owner_durability.py::test_metadata_cas_update_over_http_rejects_stale_expected",
+        "services/registry/test_owner_durability.py::test_metadata_cas_update_idempotent_replay_over_http"
+      ]
+    },
+    {
+      "capability": "register_strategy_spec",
+      "route": "POST /api/registry/strategy-specs",
+      "principal_scope": "not yet enforced by validate_request_auth on this route (tracked gap; see auth_wiring_status)",
+      "request_identity": "registry_id (client-supplied or generated) + schema/lineage/checksum validation",
+      "sole_writer": "registry-svc",
+      "legal_transition": "schema/lineage/checksum-valid full StrategySpec registration",
+      "durable_receipt": "RegistryEntry row (registry.entries)",
+      "exact_version_read": "GET /api/registry/strategy-specs/{registry_id}",
+      "status": "implemented (pre-existing)",
+      "proof": "services/registry/test_service.py, services/registry/test_paper_strategy_spec.py"
+    },
+    {
+      "capability": "create_next_revision",
+      "route": "POST /api/registry/strategy-specs",
+      "principal_scope": "not yet enforced by validate_request_auth on this route (tracked gap; see auth_wiring_status)",
+      "request_identity": "registry_id + parent/base digest + semver",
+      "sole_writer": "registry-svc",
+      "legal_transition": "next immutable revision with parent/base digest and semver; an aggregate CAS counter is not accepted as semver",
+      "durable_receipt": "RegistryEntry row (registry.entries)",
+      "exact_version_read": "GET /api/registry/strategies/{strategy_id}/strategy-specs",
+      "status": "implemented (pre-existing)",
+      "proof": "services/registry/test_service.py, services/registry/test_paper_strategy_spec.py"
+    },
+    {
+      "capability": "advance_artifact_state",
+      "route": "POST /api/registry/entries/{registry_id}/advance",
+      "principal_scope": "not yet enforced by validate_request_auth on this route (tracked gap; see auth_wiring_status)",
+      "request_identity": "registry_id, base snapshot captured server-side at read time",
+      "sole_writer": "registry-svc",
+      "legal_transition": "governed artifact_state transition per ALLOWED_ARTIFACT_TRANSITIONS in models.py; CAS-guarded (RegistryConflictError/409 on a stale base)",
+      "durable_receipt": "RegistryEntry row (registry.entries)",
+      "exact_version_read": "GET /api/registry/entries/{registry_id}",
+      "status": "implemented; CAS guard added by this task (was previously an unconditional overwrite)",
+      "proof": "services/registry/test_owner_durability.py::test_advance_state_conflict_is_409_not_silent_overwrite"
+    }
+  ],
+  "action_owner_matrix": {
+    "note": "See services/registry/command_contract.py (STRATEGY_ACTIONS) for the executable form of this table; this JSON is a frozen snapshot for review, command_contract.py is the source of truth a caller resolves against at runtime.",
+    "entries": [
+      {"action_id": "update_params", "owner": "registry", "registry_capability": "update_metadata_cas"},
+      {"action_id": "submit_review", "owner": "governance_review", "registry_capability": null},
+      {"action_id": "promote_paper", "owner": "promotion", "registry_capability": null},
+      {"action_id": "activate", "owner": "runtime", "registry_capability": null},
+      {"action_id": "pause", "owner": "runtime", "registry_capability": null},
+      {"action_id": "archive", "owner": "runtime", "registry_capability": null}
+    ]
+  },
+  "bff_adapter_semantics": {
+    "file": "services/control-plane/bff/command_adapters/strategy_adapter.py",
+    "prior_defect": "StrategyCommandAdapter._execute_strategy_action fabricated a resulting_status from a static action->status map and returned an authoritative_readback with zero owner I/O — architecture-resumption-sa-sd.md §2.",
+    "fix": "update_params now performs a real HTTP PATCH against the Registry metadata-CAS route and returns the verified GET readback as authoritative_readback. submit_review/promote_paper/activate/pause/archive now raise ActionUnavailableError naming the exact owner from command_contract.py instead of returning a fabricated status.",
+    "unrelated_scope_preserved": "RankingFormula and Ranking action handling in the same adapter file is untouched by this task; their pre-existing fake-receipt pattern is not claimed solved here."
+  },
+  "retirement": {
+    "note": "No parallel full-spec/revision authority is mounted in the current dev app; the WIP that added one lived only in the archived, never-merged REGISTRY-STRATEGY-DURABILITY-PREREQUISITE-001 worktree (superseded, not resumed). There is therefore no retired-but-still-mounted route to remove in this delivery.",
+    "mounted_routes_audit": "services/registry/test_first_release_contract.py::test_no_unlisted_mutating_routes_are_mounted enumerates every mounted route and fails if a route appears that this contract does not name.",
+    "remaining_scope_not_owned_by_this_task": [
+      "Full JWT/validate_request_auth enforcement across every Registry mutation route (only wiring the metadata-CAS route was in scope for this delivery; see auth_wiring_status)",
+      "Real governance-review/promotion/runtime owner integration for submit_review/promote_paper/activate/pause/archive (OVERLAY-RETIRE-001, DOMAIN-WRITERS-DURABILITY-CORRECTIVE-001 own those consumers per architecture-resumption-sa-sd.md §4)",
+      "Full outbox/prepare-activate-reconcile crash-window proof across every existing mutation route (proven here only for the net-new metadata-CAS route)"
+    ]
+  },
+  "auth_wiring_status": {
+    "note": "architecture-resumption-sa-sd.md §3.3 requires reusing services/runtime_auth_inbound.py validate_request_auth with strict mode across Registry mutation routes. This delivery did not wire it into service.py's FastAPI routes (a repo-wide look at other services shows this is normally done via the caller-side BFF layer plus a service-level dependency, and doing it safely for every existing mutation route without breaking today's callers is bigger than this task's tested slice). This is recorded as an explicit gap, not silently skipped."
+  }
+}

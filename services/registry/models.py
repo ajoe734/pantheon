@@ -233,6 +233,59 @@ class RegistryEntry:
     updated_at: Optional[str] = None
 
 
+    def to_dict(self) -> dict:
+        """Durable JSONB payload for a Postgres owner store row.
+
+        Every field round-trips through :meth:`from_dict`; enum values are
+        serialized as their plain string value so the payload is a portable
+        JSON document rather than a Python-specific pickle.
+        """
+        return {
+            "registry_id": self.registry_id,
+            "artifact_type": self.artifact_type.value,
+            "strategy_id": self.strategy_id,
+            "version": self.version,
+            "artifact_state": self.artifact_state.value,
+            "lineage": self.lineage.to_dict(),
+            "storage_ref": self.storage_ref.to_dict(),
+            "checksum": self.checksum,
+            "producer_run_id": self.producer_run_id,
+            "evaluation_summary": self.evaluation_summary,
+            "approval_decision_id": self.approval_decision_id,
+            "approver": self.approver,
+            "approved_at": self.approved_at,
+            "rollback_target": self.rollback_target,
+            "deployment_summary": self.deployment_summary.to_dict() if self.deployment_summary else None,
+            "metadata": self.metadata,
+            "created_at": self.created_at,
+            "updated_at": self.updated_at,
+        }
+
+    @classmethod
+    def from_dict(cls, d: dict) -> "RegistryEntry":
+        deployment_summary = d.get("deployment_summary")
+        return cls(
+            registry_id=d["registry_id"],
+            artifact_type=ArtifactType(d["artifact_type"]),
+            strategy_id=d["strategy_id"],
+            version=d["version"],
+            artifact_state=ArtifactState(d["artifact_state"]),
+            lineage=Lineage.from_dict(d.get("lineage")),
+            storage_ref=StorageRef.from_dict(d["storage_ref"]),
+            checksum=d.get("checksum", ""),
+            producer_run_id=d.get("producer_run_id"),
+            evaluation_summary=d.get("evaluation_summary"),
+            approval_decision_id=d.get("approval_decision_id"),
+            approver=d.get("approver"),
+            approved_at=d.get("approved_at"),
+            rollback_target=d.get("rollback_target"),
+            deployment_summary=DeploymentSummary.from_dict(deployment_summary) if deployment_summary else None,
+            metadata=d.get("metadata"),
+            created_at=d.get("created_at"),
+            updated_at=d.get("updated_at"),
+        )
+
+
 @dataclass
 class RegistryEntryView:
     """Read-model view returned by API — includes derived deployment_stage."""

@@ -1,0 +1,87 @@
+{
+  "schema_version": "pantheon.task-evidence.v1",
+  "task_id": "REGISTRY-STRATEGY-UNIFIED-CONTRACT-001",
+  "normative_plan": "/home/chloe_ong_dev_cctech_support_com/code/pantheon-artifacts/dev-closure-20260906/architecture-resumption-sa-sd.md, /home/chloe_ong_dev_cctech_support_com/code/pantheon-artifacts/dev-closure-20260906/operator-architecture-confirmation.md",
+  "predecessor": "REGISTRY-STRATEGY-DURABILITY-PREREQUISITE-001 (superseded; its command_contract.py/pg_store.py WIP added a second full-spec/revision authority and was never merged to dev, so it was not resumed unchanged)",
+  "scope_note": "This delivery covers §3.1 (single durable write authority), part of §3.2 (frozen capability contract, the net-new update_metadata_cas capability, correct action-owner semantics for the BFF Strategy adapter), and part of §3.3 (CAS + atomic idempotent receipt, initial auth enforcement on the new metadata route). It does NOT cover full JWT enforcement across every existing mutation route, real governance-review/promotion/runtime owner integration for submit_review/promote_paper/activate/pause/archive, or a full outbox/prepare-activate-reconcile crash-window proof across every existing route. Those remaining gaps are recorded explicitly in services/registry/first_release_contract.json (retirement.remaining_scope_not_owned_by_this_task) rather than silently treated as complete; architecture-resumption-sa-sd.md §4 explicitly permits Registry to merge before all consumers once its own required checks pass.",
+  "implementation": {
+    "files_added": [
+      "services/registry/pg_store.py",
+      "services/registry/command_contract.py",
+      "services/registry/first_release_contract.json",
+      "services/registry/test_first_release_contract.py",
+      "services/registry/test_owner_durability.py",
+      "services/foundation/tests/test_registry_owner_transaction.py",
+      "services/control-plane/bff/tests/test_strategy_registry_owner_prerequisite.py"
+    ],
+    "files_modified": [
+      "services/registry/storage.py",
+      "services/registry/split_api.py",
+      "services/registry/service.py",
+      "services/registry/models.py",
+      "services/registry/test_service.py",
+      "services/registry/requirements.txt",
+      "services/foundation/postgres_json_store.py",
+      "services/control-plane/bff/command_adapters/strategy_adapter.py",
+      "services/control-plane/bff/command_adapters/base.py",
+      "docker-compose.yml",
+      "docker-compose.control.yml"
+    ],
+    "summary": [
+      "PostgresRegistryStore (pg_store.py): durable RegistryEntry owner store using services/foundation/postgres_json_store.py's PostgresJsonOwnerStore. CAS-guarded update() binds the caller's base snapshot (not a fetch-immediately-before-write); commit_metadata_cas() commits an entry mutation and its idempotent command receipt in one Postgres transaction via a new PostgresJsonOwnerStore.transaction()/conn= extension.",
+      "Fixed a latent concurrent-first-bootstrap race in postgres_json_store.ensure_postgres_schema/PostgresJsonOwnerStore.bootstrap (23505 unique-violation when two owner-store instances race their first CREATE SCHEMA/TABLE IF NOT EXISTS) — proven with a dedicated concurrency test against a real database, affects every consumer of this shared primitive.",
+      "storage.py: build_registry_store()/get_store() select memory (test double, unchanged default for existing tests) vs postgres (REGISTRY_STORE_BACKEND=postgres, fails closed on missing DSN rather than silently downgrading) — mirrors services/governance/pg_store.py's build_approval_decision_store pattern. Fixed a pre-existing aliasing bug: RegistryStore.get()/list_by_strategy() returned live references into the store's internal dict, so a caller mutating the returned object silently mutated durable state outside of update(); both now return copies, matching real backend semantics.",
+      "split_api.py: advance_artifact_state() and update_deployment_summary() now pass a base snapshot to store.update()/store.update_deployment_summary() and translate a stale-snapshot conflict into RegistryConflictError (HTTP 409) instead of an unconditional overwrite. Added update_metadata() — the net-new 'allowed metadata update with CAS' capability required by architecture-resumption-sa-sd.md §3.2, including a command_key idempotent-replay path.",
+      "service.py: new PATCH /api/registry/entries/{registry_id}/metadata route; verified-caller auth enforcement (services/runtime_auth_inbound.validate_request_auth) wired onto this one net-new route via _authenticate_registry_write (PANTHEON_REGISTRY_AUTH_MODE, default permissive at the library level, hardened to strict in docker-compose.yml/control.yml per §3.3's 'no anonymous compatibility path').",
+      "command_contract.py: canonical STRATEGY_ACTIONS matrix. update_params resolves to Registry's update_metadata_cas capability; submit_review/promote_paper/activate/pause/archive resolve to governance_review/promotion/runtime and carry no Registry capability, so a caller can no longer relabel one business action as another.",
+      "BFF strategy_adapter.py: _execute_strategy_action no longer fabricates a resulting_status from a static action->status map. update_params now performs a real GET (base metadata) + PATCH (CAS) + GET (verified readback) sequence against the Registry owner; submit_review/promote_paper/activate/pause/archive raise ActionUnavailableError naming the exact non-Registry owner instead of returning an inferred success. RankingFormula/Ranking handling in the same file is untouched (architecture-resumption-sa-sd.md §3.2 explicitly preserves that unrelated scope).",
+      "BFF base.py: fixed http_request_json's method dispatch, which previously routed any non-GET call (including the new PATCH) through command_executor._post_json, which hardcodes method='POST' — silently sending the wrong HTTP verb. Added registry_url() helper.",
+      "No parallel full-spec/revision authority or duplicate route exists in the currently mounted app (confirmed by enumerating all 23 mounted routes); the retirement inventory in first_release_contract.json documents this explicitly rather than claiming a retirement that was never needed."
+    ]
+  },
+  "verification": {
+    "environment": "Provisioned via scripts/dev/provision_python_distribution.py (PANTHEON_DEPENDENCY_PYTHON pointed at a sibling worktree's already-provisioned .venv-pantheon). Real PostgreSQL (postgres:16-alpine, docker) reachable at 127.0.0.1:15432 for TEST_DATABASE_URL-gated suites — not the SQL-emulating fake in test_control_plane_postgres_owner_stores.py.",
+    "commands": [
+      {
+        "command": "python3 -m pytest -q services/registry/ services/foundation/tests/test_registry_owner_transaction.py services/foundation/tests/test_control_plane_postgres_owner_stores.py services/incident/test_pg_store_integration.py services/control-plane/bff/tests/test_strategy_registry_owner_prerequisite.py  (with TEST_DATABASE_URL set to the live Postgres instance)",
+        "result": "194 passed, 1 warning",
+        "executed": 194,
+        "collected": 194
+      }
+    ],
+    "real_postgres_proofs": [
+      "services/foundation/tests/test_registry_owner_transaction.py::test_create_if_absent_survives_fresh_process_restart",
+      "services/foundation/tests/test_registry_owner_transaction.py::test_two_concurrent_stores_race_to_exactly_one_create",
+      "services/foundation/tests/test_registry_owner_transaction.py::test_cas_update_binds_callers_base_snapshot_not_latest",
+      "services/foundation/tests/test_registry_owner_transaction.py::test_metadata_cas_commit_and_receipt_are_one_atomic_transaction",
+      "services/foundation/tests/test_registry_owner_transaction.py::test_metadata_cas_divergent_replay_under_same_key_fails_closed",
+      "services/foundation/tests/test_registry_owner_transaction.py::test_metadata_cas_rejects_stale_base_snapshot",
+      "services/foundation/tests/test_registry_owner_transaction.py::test_concurrent_first_bootstrap_does_not_raise",
+      "services/foundation/tests/test_registry_owner_transaction.py::test_missing_config_fails_closed_not_memory_fallback",
+      "services/registry/test_owner_durability.py (mounted FastAPI app against real Postgres: fresh-process restart, metadata CAS success/conflict/replay/404/401, advance-state conflict)"
+    ],
+    "not_covered_in_this_delivery": [
+      "Two-OS-process (not just two in-process store instances) crash-window proof for the outbox/receipt path",
+      "Full JWT enforcement on register/advance/strategy-spec/strategy-artifact/allocation-policy-artifact routes (only the net-new metadata route)",
+      "Real governance-review/promotion/runtime HTTP integration for submit_review/promote_paper/activate/pause/archive (those owners are not this task's artifacts)"
+    ]
+  },
+  "acceptance_check": {
+    "single_durable_write_authority": true,
+    "memory_is_test_double_not_prod_fallback": true,
+    "first_release_contract_frozen_and_route_checked": true,
+    "metadata_cas_capability_implemented_and_proven": true,
+    "action_owner_semantics_corrected_no_relabeling": true,
+    "bff_adapter_no_longer_fabricates_status": true,
+    "auth_enforced_on_new_route_strict_in_compose": true,
+    "atomic_mutation_plus_receipt_one_transaction": true,
+    "full_jwt_wiring_all_mutation_routes": false,
+    "governance_promotion_runtime_owner_integration": false,
+    "full_outbox_crash_window_proof_all_routes": false,
+    "retirement_of_mounted_duplicate_routes": "not_applicable_none_exist"
+  },
+  "review": {
+    "reviewer": "Antigravity",
+    "decision": "pending independent exact-head review"
+  }
+}

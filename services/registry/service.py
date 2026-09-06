@@ -17,13 +17,16 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import os
 import uuid
 from contextlib import asynccontextmanager
 from typing import Any, Optional
 
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, Header, HTTPException, Request, Response
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
+
+from services.runtime_auth_inbound import AuthError, validate_request_auth
 
 from .models import (
     ArtifactType,
@@ -36,7 +39,7 @@ from .models import (
     StorageBackend,
     StorageRef,
 )
-from .split_api import RegistryError, RegistryNotFoundError, RegistryService
+from .split_api import RegistryConflictError, RegistryError, RegistryNotFoundError, RegistryService
 from .storage import get_store
 from .strategy_artifact import (
     build_strategy_artifact_registry_payload,
@@ -85,6 +88,19 @@ class DeploymentSummaryUpdate(BaseModel):
     runtime_binding_id: Optional[str] = None
 
 
+class MetadataUpdateRequest(BaseModel):
+    """Allowed metadata update with CAS — architecture-resumption-sa-sd.md §3.2.
+
+    ``expected_metadata`` must equal the entry's current durable metadata
+    (``None`` means the caller expects no metadata set yet); this is the
+    caller's base snapshot binding, not a value fetched fresh at write time.
+    ``command_key`` makes an identical retried request an idempotent replay.
+    """
+    expected_metadata: Optional[dict[str, Any]] = None
+    metadata: Optional[dict[str, Any]] = None
+    command_key: Optional[str] = None
+
+
 class StrategySpecRegisterRequest(BaseModel):
     strategy_id: str
     version: str
@@ -125,9 +141,58 @@ async def registry_not_found_handler(request: Request, exc: RegistryNotFoundErro
     return JSONResponse(status_code=404, content={"detail": str(exc)})
 
 
+@app.exception_handler(RegistryConflictError)
+async def registry_conflict_handler(request: Request, exc: RegistryConflictError):
+    return JSONResponse(status_code=409, content={"detail": str(exc)})
+
+
 @app.exception_handler(RegistryError)
 async def registry_error_handler(request: Request, exc: RegistryError):
     return JSONResponse(status_code=400, content={"detail": str(exc)})
+
+
+_REGISTRY_WRITE_ROLES = ("operator", "registry-writer", "admin")
+
+
+def _registry_auth_env() -> dict[str, str]:
+    """Map REGISTRY_* / fallback RUNTIME_* env vars onto validate_request_auth's
+    expected PANTHEON_RUNTIME_* keys, mirroring services/governance/main.py's
+    ``_governance_auth_env`` so each service can configure its own issuer/
+    audience/secret without a second JWT engine."""
+    return {
+        "PANTHEON_RUNTIME_AUTH_MODE": os.getenv("PANTHEON_REGISTRY_AUTH_MODE") or os.getenv("PANTHEON_RUNTIME_AUTH_MODE") or "permissive",
+        "PANTHEON_RUNTIME_JWT_SECRET": os.getenv("PANTHEON_REGISTRY_JWT_SECRET") or os.getenv("PANTHEON_RUNTIME_JWT_SECRET", ""),
+        "PANTHEON_RUNTIME_JWT_ISSUER": os.getenv("PANTHEON_REGISTRY_JWT_ISSUER") or os.getenv("PANTHEON_RUNTIME_JWT_ISSUER", ""),
+        "PANTHEON_RUNTIME_JWT_AUDIENCE": os.getenv("PANTHEON_REGISTRY_JWT_AUDIENCE") or os.getenv("PANTHEON_RUNTIME_JWT_AUDIENCE", ""),
+        "PANTHEON_RUNTIME_DEFAULT_ROLE": os.getenv("PANTHEON_REGISTRY_DEFAULT_ROLE") or os.getenv("PANTHEON_RUNTIME_DEFAULT_ROLE", "operator"),
+        "PANTHEON_RUNTIME_MFA_REQUIRED": os.getenv("PANTHEON_REGISTRY_MFA_REQUIRED") or os.getenv("PANTHEON_RUNTIME_MFA_REQUIRED", "false"),
+        "PANTHEON_RUNTIME_ROLE_CLAIMS": os.getenv("PANTHEON_REGISTRY_ROLE_CLAIMS") or os.getenv("PANTHEON_RUNTIME_ROLE_CLAIMS", ""),
+        "PANTHEON_RUNTIME_MFA_CLAIMS": os.getenv("PANTHEON_REGISTRY_MFA_CLAIMS") or os.getenv("PANTHEON_RUNTIME_MFA_CLAIMS", ""),
+        "PANTHEON_RUNTIME_MFA_VALUES": os.getenv("PANTHEON_REGISTRY_MFA_VALUES") or os.getenv("PANTHEON_RUNTIME_MFA_VALUES", ""),
+    }
+
+
+def _authenticate_registry_write(authorization: Optional[str]) -> None:
+    """Enforce verified-caller auth on a Registry mutation route.
+
+    Always requires a well-formed Bearer token (an absent/malformed
+    Authorization header is rejected regardless of mode). Production sets
+    ``PANTHEON_REGISTRY_AUTH_MODE=strict`` (docker-compose.yml /
+    docker-compose.control.yml) per architecture-resumption-sa-sd.md §3.3's
+    "no anonymous compatibility path" requirement; the library default here
+    stays ``permissive`` so existing structured-token callers and tests keep
+    working until every Registry mutation route is migrated to this check
+    (tracked as a remaining gap in first_release_contract.json).
+    """
+    env = _registry_auth_env()
+    try:
+        validate_request_auth(
+            authorization=authorization,
+            required_roles=_REGISTRY_WRITE_ROLES,
+            env=env,
+        )
+    except AuthError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
 
 
 def _strategy_spec_checksum(payload: dict[str, Any]) -> str:
@@ -368,6 +433,44 @@ async def advance_state(registry_id: str, body: AdvanceRequest):
         raise HTTPException(status_code=404, detail=str(e))
     except RegistryError as e:
         raise HTTPException(status_code=400, detail=str(e))
+
+
+@app.patch(
+    "/api/registry/entries/{registry_id}/metadata",
+    response_model=RegistryEntryView,
+)
+async def update_metadata(
+    registry_id: str,
+    body: MetadataUpdateRequest,
+    response: Response,
+    authorization: Optional[str] = Header(default=None),
+):
+    """Allowed metadata update with CAS.
+
+    This is the operator draft-metadata record kind (§3.2 of
+    architecture-resumption-sa-sd.md): it never fabricates or upgrades a
+    validated StrategySpec/artifact_state, and it fails closed (409) when
+    ``expected_metadata`` does not match the entry's current durable value.
+    Requires a verified caller (services.runtime_auth_inbound) — see
+    _authenticate_registry_write.
+    """
+    _authenticate_registry_write(authorization)
+    registry_service = get_registry_service()
+    try:
+        view, replayed = registry_service.update_metadata(
+            registry_id,
+            expected_metadata=body.expected_metadata,
+            new_metadata=body.metadata,
+            command_key=body.command_key,
+        )
+    except RegistryNotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except RegistryConflictError as e:
+        raise HTTPException(status_code=409, detail=str(e))
+    except RegistryError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    response.headers["X-Idempotent-Replay"] = "true" if replayed else "false"
+    return view
 
 
 @app.get(

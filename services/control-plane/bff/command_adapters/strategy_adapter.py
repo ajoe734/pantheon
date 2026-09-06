@@ -16,8 +16,11 @@ from .base import (
     build_domain_receipt,
     governance_url,
     http_request_json,
+    registry_url,
     utc_now,
 )
+
+from services.registry.command_contract import ActionOwner, resolve_action
 
 log = logging.getLogger(__name__)
 
@@ -80,35 +83,124 @@ class StrategyCommandAdapter(DomainCommandAdapter):
         auth_token: Optional[str] = None,
         mfa_token: Optional[str] = None,
     ) -> Dict[str, Any]:
+        """Dispatch a Strategy action to its lawful owner (command_contract.py).
+
+        Previously this fabricated a resulting_status from a static
+        action->status map and returned it as an "authoritative_readback"
+        with zero owner I/O (architecture-resumption-sa-sd.md §2). Every
+        action now either performs a genuine owner command with a verified
+        readback, or raises ActionUnavailableError naming the exact owner —
+        never an inferred success.
+        """
         target_id = strategy_id or str(params.get("strategy_id") or "").strip()
         if not target_id:
             raise ValueError("StrategyAction requires strategy_id.")
 
-        status_map = {
-            "submit_review": "review_pending",
-            "activate": "active",
-            "pause": "paused",
-            "archive": "archived",
-            "update_params": "updated",
-            "promote_paper": "paper_promoted",
-        }
-        resulting_status = status_map.get(action_id.lower(), "executed")
+        normalized_action = action_id.lower()
+        try:
+            action_spec = resolve_action(normalized_action)
+        except KeyError:
+            raise ActionUnavailableError(
+                f"Strategy action {action_id!r} is not a recognized command_contract action.",
+                action_id=action_id,
+                entity_type="Strategy",
+            )
+
+        if action_spec.owner is not ActionOwner.REGISTRY:
+            raise ActionUnavailableError(
+                f"Strategy action {action_id!r} on {target_id!r} belongs to the "
+                f"{action_spec.owner.value} owner, which is not yet integrated here: "
+                f"{action_spec.description}",
+                action_id=action_id,
+                entity_type="Strategy",
+                error_code="OWNER_NOT_INTEGRATED",
+                suggestion=(
+                    f"Route this action through the {action_spec.owner.value} owner's "
+                    "command surface once it is integrated; see command_contract.STRATEGY_ACTIONS."
+                ),
+            )
+
+        if action_spec.action_id == "update_params":
+            return self._execute_update_params(
+                command_id, target_id, action_id, params, auth_token=auth_token, mfa_token=mfa_token,
+            )
+
+        raise ActionUnavailableError(
+            f"Strategy action {action_id!r} is mapped to a Registry capability that this "
+            "adapter does not yet call.",
+            action_id=action_id,
+            entity_type="Strategy",
+        )
+
+    def _execute_update_params(
+        self,
+        command_id: str,
+        strategy_id: str,
+        action_id: str,
+        params: Dict[str, Any],
+        auth_token: Optional[str] = None,
+        mfa_token: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Real CAS metadata update against the Registry owner, with a
+        verified GET readback — the actual fix for the fabricated-status bug.
+        """
+        registry_id = str(params.get("registry_id") or "").strip()
+        if not registry_id:
+            raise ActionUnavailableError(
+                f"update_params on strategy {strategy_id!r} requires registry_id "
+                "(the exact RegistryEntry this metadata update targets).",
+                action_id=action_id,
+                entity_type="Strategy",
+                error_code="MISSING_REGISTRY_ID",
+                suggestion="Resolve the target registry_id via GET /api/registry/strategies/{strategy_id}/entries first.",
+            )
+        new_metadata = params.get("metadata") if isinstance(params.get("metadata"), dict) else {}
+
+        current = http_request_json(
+            registry_url(f"/api/registry/entries/{registry_id}"),
+            method="GET",
+            auth_token=auth_token,
+            mfa_token=mfa_token,
+        )
+        expected_metadata = (current or {}).get("entry", {}).get("metadata")
+
+        http_request_json(
+            registry_url(f"/api/registry/entries/{registry_id}/metadata"),
+            method="PATCH",
+            payload={
+                "expected_metadata": expected_metadata,
+                "metadata": new_metadata,
+                "command_key": command_id,
+            },
+            auth_token=auth_token,
+            mfa_token=mfa_token,
+        )
+
+        # Real owner GET/readback proof — never trust the PATCH response body
+        # as authoritative on its own.
+        readback = http_request_json(
+            registry_url(f"/api/registry/entries/{registry_id}"),
+            method="GET",
+            auth_token=auth_token,
+            mfa_token=mfa_token,
+        )
+        readback_entry = (readback or {}).get("entry", {})
 
         return build_domain_receipt(
             command_id=command_id,
             entity_type="Strategy",
-            entity_id=target_id,
+            entity_id=strategy_id,
             action_id=action_id,
-            status=resulting_status,
+            status="metadata_updated",
             dispatch_path="strategy_registry_authority",
             domain_receipt={
-                "strategy_id": target_id,
+                "strategy_id": strategy_id,
+                "registry_id": registry_id,
                 "action": action_id,
-                "resulting_status": resulting_status,
-                "reason": params.get("reason"),
+                "metadata": readback_entry.get("metadata"),
             },
-            authoritative_readback={"strategy_id": target_id, "status": resulting_status},
-            extra={"strategy_id": target_id, "action_id": action_id},
+            authoritative_readback=readback_entry,
+            extra={"strategy_id": strategy_id, "registry_id": registry_id, "action_id": action_id},
         )
 
     def _execute_formula_action(

@@ -78,6 +78,11 @@ def governance_url(path: str) -> str:
     return f"{base}{path}"
 
 
+def registry_url(path: str) -> str:
+    base = get_base_url("PANTHEON_REGISTRY_API_URL", "PANTHEON_REGISTRY_URL")
+    return f"{base}{path}"
+
+
 def governance_approval_url(path: str) -> str:
     base = get_base_url("PANTHEON_GOVERNANCE_APPROVAL_API_URL", "PANTHEON_GOVERNANCE_SERVICE_URL")
     return f"{base}{path}"
@@ -128,9 +133,13 @@ def http_request_json(
 ) -> Any:
     """Execute HTTP request to a domain authority endpoint and parse JSON response."""
     from services.control_plane.bff import command_executor
-    if method.upper() == "GET" and hasattr(command_executor, "_get_json"):
+    normalized_method = method.upper()
+    if normalized_method == "GET" and hasattr(command_executor, "_get_json"):
         return command_executor._get_json(url, auth_token=auth_token, mfa_token=mfa_token)
-    if hasattr(command_executor, "_post_json"):
+    if normalized_method == "POST" and hasattr(command_executor, "_post_json"):
+        # _post_json hardcodes method="POST"; PATCH/PUT/DELETE must not reuse
+        # it or they would silently be sent as POST against a route that
+        # doesn't accept it.
         return command_executor._post_json(url, payload or {}, auth_token=auth_token, mfa_token=mfa_token)
 
     req_timeout = timeout or _DEFAULT_REQUEST_TIMEOUT
