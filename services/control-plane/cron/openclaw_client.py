@@ -99,9 +99,20 @@ class _CliGatewayTransport:
             )
         return json.loads(result.stdout.strip() or "{}")
 
-    def _wait_for_terminal_run(self, job_id: str, run_id: str) -> dict[str, Any]:
+    def _wait_for_terminal_run(
+        self, job_id: str, run_id: str, deadline: float | None = None
+    ) -> dict[str, Any]:
         """Poll `cron.runs` until the EXACT dispatched run reaches a terminal
         status, or the bounded deadline elapses.
+
+        `deadline` is an absolute `time.monotonic()` value shared with the
+        caller's earlier `cron.add`/`cron.run` calls (see `__call__`) so the
+        whole dispatch — add, run, and poll — spends at most one total
+        budget, never `poll_timeout_seconds` freshly on top of whatever
+        `cron.add`/`cron.run` already spent. When called directly (as the
+        tests below do), `deadline` defaults to a fresh
+        `now + poll_timeout_seconds` window, preserving the previous
+        poll-only-budget behavior for standalone callers.
 
         Correlation is by exact `(job_id, run_id)` match only. There is no
         `entries[0]` "most recent run" fallback here: a job can have multiple
@@ -130,7 +141,8 @@ class _CliGatewayTransport:
         (timeout), never accepted as a late success — a slow/hung RPC must
         not silently extend the caller's bounded budget.
         """
-        deadline = time.monotonic() + self._poll_timeout
+        if deadline is None:
+            deadline = time.monotonic() + self._poll_timeout
         while True:
             remaining = deadline - time.monotonic()
             if remaining <= 0:
@@ -157,6 +169,23 @@ class _CliGatewayTransport:
     def __call__(self, request: dict[str, Any]) -> dict[str, Any]:
         import re
         from datetime import datetime, timedelta, timezone
+
+        # ONE deadline governs the entire dispatch — `cron.add`, `cron.run`,
+        # and the terminal-run poll — instead of each phase getting its own
+        # fresh budget on top of whatever the previous phase already spent
+        # (previously: up to 30s for `cron.add` + 30s for `cron.run` + a
+        # freshly-started `poll_timeout_seconds` for polling, regardless of
+        # how little of the caller's actual budget remained).
+        deadline = time.monotonic() + self._poll_timeout
+
+        def _remaining(phase: str, *, prior_error: str | None = None) -> float:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise RuntimeError(
+                    f"openclaw cron dispatch exhausted its bounded deadline before {phase}"
+                    + (f"; {prior_error}" if prior_error else "")
+                )
+            return remaining
 
         workflow_id = request["workflow"]["workflow_id"]
         slug = re.sub(r"[^a-z0-9]+", "-", workflow_id.lower()).strip("-")
@@ -196,12 +225,19 @@ class _CliGatewayTransport:
                 "payload": {"kind": "systemEvent", "text": event_text},
                 "delivery": {"mode": "none"},
             },
+            timeout_seconds=_remaining("cron.add"),
         )
         job_id = add_response.get("id")
         if not job_id:
             raise RuntimeError(f"openclaw cron.add did not return a job id: {add_response}")
 
-        run_response = self._call("cron.run", {"id": job_id, "mode": "force"})
+        run_response = self._call(
+            "cron.run",
+            {"id": job_id, "mode": "force"},
+            timeout_seconds=_remaining(
+                "cron.run", prior_error=f"job {job_id} was accepted but not dispatched, not resubmitting"
+            ),
+        )
         run_id = run_response.get("runId")
         if not run_id:
             # No run id means we cannot correlate a later poll to this exact
@@ -213,7 +249,7 @@ class _CliGatewayTransport:
                 f"openclaw cron.run for job {job_id} did not return a run id; "
                 "completion is unknown, not resubmitting."
             )
-        latest_run = self._wait_for_terminal_run(job_id, run_id)
+        latest_run = self._wait_for_terminal_run(job_id, run_id, deadline)
 
         if latest_run.get("status") != "ok":
             raise RuntimeError(

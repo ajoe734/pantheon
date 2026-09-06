@@ -196,6 +196,44 @@ class TestInvokeStructuredNegative:
                 )
         assert excinfo.value.error_code == "OPENCLAW_TOOL_MISMATCH"
 
+    def test_extra_tool_call_alongside_emit_extraction_is_rejected(self):
+        """SIMPLIFY-OPENCLAW-001 reviewer defect: a pinned client-side
+        `tool_choice` is only a request, not proof the Gateway enforced a
+        single-tool policy. Checking only `function_calls[0]` would silently
+        ignore a second, unauthorized call (e.g. a native/domain tool)
+        emitted alongside the requested `emit_extraction` — this must fail
+        closed instead."""
+        provider = _make_provider()
+        events = [
+            {
+                "type": "response.completed",
+                "response": {
+                    "status": "completed",
+                    "id": "resp_1",
+                    "output": [
+                        {
+                            "type": "function_call",
+                            "name": EMIT_EXTRACTION_TOOL_NAME,
+                            "arguments": json.dumps({"title": "ok"}),
+                            "call_id": "call_1",
+                        },
+                        {
+                            "type": "function_call",
+                            "name": "shell_exec",
+                            "arguments": "{}",
+                            "call_id": "call_2",
+                        },
+                    ],
+                },
+            }
+        ]
+        with patch("urllib.request.urlopen", return_value=_FakeSSEResponse(events)):
+            with pytest.raises(OpenClawProviderError) as excinfo:
+                provider.invoke_structured(
+                    "extract", extraction_schema=EXTRACTION_SCHEMA, operator_id="op-1"
+                )
+        assert excinfo.value.error_code == "OPENCLAW_TOOL_MISMATCH"
+
     def test_invalid_json_arguments_are_rejected(self):
         provider = _make_provider()
         events = _tool_call_events(EMIT_EXTRACTION_TOOL_NAME, "{not valid json")
@@ -303,6 +341,72 @@ class TestValidateExtractionArgumentsSchemaCoverage:
         with pytest.raises(OpenClawProviderError) as excinfo:
             _validate_extraction_arguments({"note": 42}, schema)
         assert excinfo.value.error_code == "OPENCLAW_TOOL_ARGS_SCHEMA_MISMATCH"
+
+    def test_array_item_type_mismatch_is_rejected(self):
+        """SIMPLIFY-OPENCLAW-001 reviewer defect: `records[].amount` was
+        previously accepted with a non-integer value because array `items`
+        were never validated at all."""
+        schema = {
+            "type": "object",
+            "properties": {
+                "records": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {"amount": {"type": "integer"}},
+                        "required": ["amount"],
+                        "additionalProperties": False,
+                    },
+                }
+            },
+            "required": ["records"],
+        }
+        with pytest.raises(OpenClawProviderError) as excinfo:
+            _validate_extraction_arguments({"records": [{"amount": "not-an-integer"}]}, schema)
+        assert excinfo.value.error_code == "OPENCLAW_TOOL_ARGS_SCHEMA_MISMATCH"
+        # A well-typed array item must still pass.
+        _validate_extraction_arguments({"records": [{"amount": 5}]}, schema)
+
+    def test_additional_properties_false_rejects_extra_field(self):
+        """SIMPLIFY-OPENCLAW-001 reviewer defect: an extra field alongside a
+        closed (`additionalProperties: false`) object schema was previously
+        silently accepted."""
+        schema = {
+            "type": "object",
+            "properties": {"amount": {"type": "integer"}},
+            "required": ["amount"],
+            "additionalProperties": False,
+        }
+        with pytest.raises(OpenClawProviderError) as excinfo:
+            _validate_extraction_arguments({"amount": 5, "extra": True}, schema)
+        assert excinfo.value.error_code == "OPENCLAW_TOOL_ARGS_SCHEMA_MISMATCH"
+        # additionalProperties defaults to permissive when omitted.
+        _validate_extraction_arguments({"amount": 5, "extra": True}, {**schema, "additionalProperties": True})
+
+    def test_numeric_bounds_are_enforced(self):
+        schema = {
+            "type": "object",
+            "properties": {"score": {"type": "integer", "minimum": 0, "maximum": 100}},
+            "required": ["score"],
+        }
+        with pytest.raises(OpenClawProviderError) as excinfo:
+            _validate_extraction_arguments({"score": 101}, schema)
+        assert excinfo.value.error_code == "OPENCLAW_TOOL_ARGS_SCHEMA_MISMATCH"
+        with pytest.raises(OpenClawProviderError):
+            _validate_extraction_arguments({"score": -1}, schema)
+        _validate_extraction_arguments({"score": 50}, schema)
+
+    def test_malformed_required_declaration_is_a_typed_rejection_not_a_crash(self):
+        """SIMPLIFY-OPENCLAW-001 reviewer defect: a malformed schema
+        (`required: 17` instead of a list) previously crashed with an
+        unhandled `TypeError` (surfacing as an unhandled HTTP 500), since
+        `for field in required` was never guarded. It must now be rejected
+        as a typed schema-mismatch error."""
+        schema = {"type": "object", "properties": {"a": {"type": "string"}}, "required": 17}
+        with pytest.raises(OpenClawProviderError) as excinfo:
+            _validate_extraction_arguments({"a": "x"}, schema)
+        assert excinfo.value.error_code == "OPENCLAW_TOOL_ARGS_SCHEMA_MISMATCH"
+        assert excinfo.value.status_code == 422
 
 
 class TestStructuredEndpointRejectsCallerSuppliedTools:

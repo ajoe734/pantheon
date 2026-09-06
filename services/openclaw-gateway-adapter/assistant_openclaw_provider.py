@@ -107,6 +107,55 @@ def _normalize_input_item(item: Dict[str, Any]) -> Dict[str, Any]:
     return normalized
 
 
+def _normalize_attachment_content_part(attachment: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    """Convert one caller-supplied attachment into a pinned OpenResponses
+    `input_image`/`input_file` content part.
+
+    Callers/the BFF forward attachments in the Chat-Completions-style shape
+    already used elsewhere in this adapter (`{"type": "image_url",
+    "image_url": {"url": "data:<mime>;base64,<...>"}}` — see
+    `assistant_codex_provider.py`'s `_collect_image_parts`), not the
+    Responses-API `input_image`/`input_file` shape the pinned Gateway's
+    `.strict()` schema actually requires. An already-shaped part passes
+    through unchanged; anything unrecognized is dropped rather than
+    corrupting the request body.
+    """
+    if not isinstance(attachment, dict):
+        return None
+    kind = attachment.get("type")
+    if kind in ("input_image", "input_file"):
+        return attachment
+    if kind == "image_url":
+        image_url = attachment.get("image_url")
+        url = str(image_url.get("url") or "") if isinstance(image_url, dict) else ""
+        if url.startswith("data:") and "," in url:
+            header, _, b64 = url.partition(",")
+            if not b64:
+                return None
+            mime = header[len("data:"):].split(";")[0].strip().lower() or "image/png"
+            return {"type": "input_image", "source": {"type": "base64", "media_type": mime, "data": b64}}
+        if url:
+            return {"type": "input_image", "source": {"type": "url", "url": url}}
+        return None
+    if kind == "file":
+        file_part = attachment.get("file")
+        if not isinstance(file_part, dict):
+            return None
+        data_url = str(file_part.get("file_data") or "")
+        if not (data_url.startswith("data:") and "," in data_url):
+            return None
+        header, _, b64 = data_url.partition(",")
+        if not b64:
+            return None
+        mime = header[len("data:"):].split(";")[0].strip().lower() or "application/octet-stream"
+        source: Dict[str, Any] = {"type": "base64", "media_type": mime, "data": b64}
+        filename = file_part.get("filename")
+        if filename:
+            source["filename"] = filename
+        return {"type": "input_file", "source": source}
+    return None
+
+
 def derive_session_user(
     *,
     operator_id: Optional[str] = None,
@@ -131,7 +180,12 @@ def derive_session_user(
     parts = [part for part in (tenant, actor, conversation) if part]
     if not parts:
         return None
-    return "|".join(parts)
+    # A bare "|".join would let a boundary-shifting caller-chosen component
+    # (e.g. a conversation name containing "|") collide onto the same joined
+    # string as a different tenant/actor/conversation split — escape the
+    # separator (and its own escape char) inside each component first so the
+    # unescaped "|" only ever marks a genuine component boundary.
+    return "|".join(part.replace("\\", "\\\\").replace("|", "\\|") for part in parts)
 
 
 def delegates_kernel_mode_to_codex(mode: str) -> bool:
@@ -203,40 +257,100 @@ def _json_value_matches_type(value: Any, declared_type: Any) -> bool:
     return isinstance(value, expected_python_type)
 
 
+def _validate_extraction_numeric_bounds(value: Any, schema: Dict[str, Any], path: str) -> None:
+    minimum = schema.get("minimum")
+    if isinstance(minimum, (int, float)) and not isinstance(minimum, bool) and value < minimum:
+        raise _schema_mismatch(path, f"is below the declared minimum {minimum!r}")
+    maximum = schema.get("maximum")
+    if isinstance(maximum, (int, float)) and not isinstance(maximum, bool) and value > maximum:
+        raise _schema_mismatch(path, f"is above the declared maximum {maximum!r}")
+    exclusive_minimum = schema.get("exclusiveMinimum")
+    if isinstance(exclusive_minimum, (int, float)) and not isinstance(exclusive_minimum, bool) and value <= exclusive_minimum:
+        raise _schema_mismatch(path, f"is not above the declared exclusiveMinimum {exclusive_minimum!r}")
+    exclusive_maximum = schema.get("exclusiveMaximum")
+    if isinstance(exclusive_maximum, (int, float)) and not isinstance(exclusive_maximum, bool) and value >= exclusive_maximum:
+        raise _schema_mismatch(path, f"is not below the declared exclusiveMaximum {exclusive_maximum!r}")
+
+
+def _validate_extraction_array(value: Any, schema: Dict[str, Any], path: str) -> None:
+    if not isinstance(value, list):
+        raise _schema_mismatch(path or "root", "must be a JSON array")
+    min_items = schema.get("minItems")
+    if isinstance(min_items, int) and not isinstance(min_items, bool) and len(value) < min_items:
+        raise _schema_mismatch(path or "root", f"has fewer items than the declared minItems {min_items!r}")
+    max_items = schema.get("maxItems")
+    if isinstance(max_items, int) and not isinstance(max_items, bool) and len(value) > max_items:
+        raise _schema_mismatch(path or "root", f"has more items than the declared maxItems {max_items!r}")
+    items_schema = schema.get("items")
+    if items_schema is None:
+        return
+    if not isinstance(items_schema, dict):
+        raise _schema_mismatch(path or "root", "declares a malformed items schema")
+    for index, item in enumerate(value):
+        _validate_extraction_value(item, items_schema, f"{path}[{index}]" if path else f"[{index}]")
+
+
 def _validate_extraction_value(value: Any, schema: Dict[str, Any], path: str) -> None:
+    if not isinstance(schema, dict):
+        raise _schema_mismatch(path or "root", "declares an unsupported or malformed schema")
     enum_values = schema.get("enum")
-    if enum_values is not None and value not in enum_values:
-        raise _schema_mismatch(path, f"is not one of the declared enum values {enum_values!r}")
+    if enum_values is not None:
+        if not isinstance(enum_values, list):
+            raise _schema_mismatch(path or "root", "declares a malformed enum (must be a list)")
+        if value not in enum_values:
+            raise _schema_mismatch(path, f"is not one of the declared enum values {enum_values!r}")
 
     declared_type = schema.get("type")
     if declared_type is None:
-        # No declared type: still recurse into nested object schemas that
-        # only declare `properties`/`required` without a `type: object`.
+        # No declared type: still recurse into nested object/array schemas
+        # that only declare `properties`/`required`/`items` without an
+        # explicit `type`.
         if isinstance(value, dict) and ("properties" in schema or "required" in schema):
             _validate_extraction_object(value, schema, path)
+        elif isinstance(value, list) and "items" in schema:
+            _validate_extraction_array(value, schema, path)
         return
 
     types = declared_type if isinstance(declared_type, list) else [declared_type]
+    if not isinstance(declared_type, (str, list)) or any(not isinstance(t, str) for t in types):
+        raise _schema_mismatch(path or "root", f"declares an unsupported type {declared_type!r}")
     if "object" in types and isinstance(value, dict):
         _validate_extraction_object(value, schema, path)
         return
+    if "array" in types and isinstance(value, list):
+        _validate_extraction_array(value, schema, path)
+        return
     if not _json_value_matches_type(value, declared_type):
         raise _schema_mismatch(path, f"expected type {declared_type!r}")
+    if "integer" in types or "number" in types:
+        _validate_extraction_numeric_bounds(value, schema, path)
 
 
 def _validate_extraction_object(value: Any, schema: Dict[str, Any], path: str) -> None:
     if not isinstance(value, dict):
         raise _schema_mismatch(path or "root", "must be a JSON object")
     required = schema.get("required", []) or []
+    if not isinstance(required, list):
+        raise _schema_mismatch(path or "root", "declares a malformed required list")
     for field in required:
         if field not in value:
             raise _schema_mismatch(path, f"is missing required field {field!r}")
     properties = schema.get("properties", {}) or {}
+    if not isinstance(properties, dict):
+        raise _schema_mismatch(path or "root", "declares a malformed properties map")
+    # `additionalProperties` defaults to permissive (True) per JSON Schema —
+    # only an explicit `false` (or a schema for validating the extra
+    # fields) tightens this.
+    additional_properties = schema.get("additionalProperties", True)
     for name, field_value in value.items():
         prop_schema = properties.get(name)
-        if not isinstance(prop_schema, dict):
-            continue
         field_path = f"{path}.{name}" if path else name
+        if not isinstance(prop_schema, dict):
+            if additional_properties is False:
+                raise _schema_mismatch(field_path, "is not declared and additionalProperties is false")
+            if isinstance(additional_properties, dict):
+                _validate_extraction_value(field_value, additional_properties, field_path)
+            continue
         _validate_extraction_value(field_value, prop_schema, field_path)
 
 
@@ -245,10 +359,14 @@ def _validate_extraction_arguments(parsed_arguments: Any, extraction_schema: Dic
 
     Deliberately not a general JSON-schema validator (``jsonschema`` is not a
     dependency of this service) — checks required-field presence (recursing
-    into nested object properties), a rough type match for properties that
-    declare a JSON ``type`` (including a nullable ``type: [<t>, "null"]``
-    union), and ``enum`` membership. An unsupported/malformed ``type``
-    declaration is rejected explicitly rather than silently ignored.
+    into nested object properties), array `items`/`minItems`/`maxItems`,
+    numeric `minimum`/`maximum`/`exclusiveMinimum`/`exclusiveMaximum` bounds,
+    `additionalProperties: false` rejection, a rough type match for
+    properties that declare a JSON ``type`` (including a nullable
+    ``type: [<t>, "null"]`` union), and ``enum`` membership. An
+    unsupported/malformed schema (bad ``type``/``required``/``properties``/
+    ``items``/``enum`` shape) is rejected explicitly with a typed 422 rather
+    than crashing with an unhandled 500.
     """
     _validate_extraction_object(parsed_arguments, extraction_schema, "")
 
@@ -553,6 +671,7 @@ class AssistantOpenClawProvider:
         context_pack: Optional[Dict[str, Any]] = None,
         metadata: Optional[Dict[str, Any]] = None,
         messages: Optional[List[Dict[str, Any]]] = None,
+        attachments: Optional[List[Dict[str, Any]]] = None,
         operator_id: Optional[str] = None,
         trace_id: Optional[str] = None,
         timeout_seconds: Optional[float] = None,
@@ -584,6 +703,8 @@ class AssistantOpenClawProvider:
                 model=model,
                 agent_id=selected_agent_id,
                 messages=messages,
+                attachments=attachments,
+                context_pack=context_pack,
                 tools=tools,
                 tool_choice=tool_choice,
                 timeout_seconds=timeout_seconds,
@@ -653,6 +774,7 @@ class AssistantOpenClawProvider:
         context_pack: Optional[Dict[str, Any]] = None,
         metadata: Optional[Dict[str, Any]] = None,
         messages: Optional[List[Dict[str, Any]]] = None,
+        attachments: Optional[List[Dict[str, Any]]] = None,
         operator_id: Optional[str] = None,
         trace_id: Optional[str] = None,
         timeout_seconds: Optional[float] = None,
@@ -703,6 +825,7 @@ class AssistantOpenClawProvider:
                 context_pack=context_pack,
                 metadata=metadata,
                 messages=messages,
+                attachments=attachments,
                 operator_id=operator_id,
                 trace_id=trace_id,
                 timeout_seconds=invocation_timeout,
@@ -721,6 +844,7 @@ class AssistantOpenClawProvider:
             context_pack=context_pack,
             metadata=metadata,
             messages=messages,
+            attachments=attachments,
             operator_id=operator_id,
             trace_id=trace_id,
             timeout_seconds=invocation_timeout,
@@ -775,6 +899,19 @@ class AssistantOpenClawProvider:
                 "no matching tool call in response",
                 status_code=502,
                 error_code="OPENCLAW_TOOL_NO_MATCH",
+            )
+        # A pinned client-side `tool_choice` only requests a preference — it
+        # is not proof the upstream Gateway actually enforced a single-tool
+        # policy. Checking only `function_calls[0]` would silently ignore
+        # any additional call the model emitted (e.g. a native/domain tool
+        # invoked alongside the requested one); every emitted call must be
+        # named `emit_extraction`, and there must be exactly one, or this
+        # fails closed rather than trusting the first entry alone.
+        if len(function_calls) > 1:
+            raise OpenClawProviderError(
+                f"expected exactly one {EMIT_EXTRACTION_TOOL_NAME!r} tool call, got {len(function_calls)}",
+                status_code=502,
+                error_code="OPENCLAW_TOOL_MISMATCH",
             )
         call = function_calls[0]
         call_name = call.get("name")
@@ -1026,6 +1163,8 @@ class AssistantOpenClawProvider:
         model: Optional[str] = None,
         agent_id: Optional[str] = None,
         messages: Optional[List[Dict[str, Any]]] = None,
+        attachments: Optional[List[Dict[str, Any]]] = None,
+        context_pack: Optional[Dict[str, Any]] = None,
         tools: Optional[List[Dict[str, Any]]] = None,
         tool_choice: Optional[Any] = None,
         timeout_seconds: Optional[float] = None,
@@ -1071,6 +1210,14 @@ class AssistantOpenClawProvider:
             return
 
         effective_agent_id = str(agent_id or self._agent_id).strip()
+        if not _AGENT_ID_PATTERN.fullmatch(effective_agent_id):
+            yield {
+                "type": "error",
+                "error_code": "OPENCLAW_AGENT_ID_INVALID",
+                "status_code": 422,
+                "message": "OpenClaw agent_id contains unsupported characters.",
+            }
+            return
         effective_timeout = float(timeout_seconds) if timeout_seconds is not None else float(self._timeout)
         if effective_timeout <= 0:
             yield {
@@ -1093,6 +1240,11 @@ class AssistantOpenClawProvider:
             "model": f"{OPENRESPONSES_MODEL}/{effective_agent_id}",
             "stream": True,
         }
+        attachment_parts = [
+            part
+            for part in (_normalize_attachment_content_part(a) for a in (attachments or []))
+            if part is not None
+        ]
         if messages:
             input_list: List[Dict[str, Any]] = [_normalize_input_item(m) for m in messages]
             last_entry = input_list[-1] if input_list else None
@@ -1103,7 +1255,26 @@ class AssistantOpenClawProvider:
             )
             if prompt and not already_last:
                 input_list = input_list + [_normalize_input_item({"role": "user", "content": prompt})]
+            if attachment_parts:
+                # Attach to the trailing user message's content — the
+                # Gateway's `MessageItemSchema.content` is a union of a bare
+                # string or a content-part array, so a string content must be
+                # converted to a `[input_text, ...]` array before appending
+                # the attachment parts, never silently dropped.
+                trailing = input_list[-1] if input_list else None
+                if isinstance(trailing, dict) and trailing.get("type") == "message" and str(trailing.get("role")) == "user":
+                    content = trailing.get("content")
+                    if isinstance(content, list):
+                        trailing["content"] = content + attachment_parts
+                    else:
+                        text_parts = [{"type": "input_text", "text": str(content)}] if content else []
+                        trailing["content"] = text_parts + attachment_parts
+                else:
+                    input_list = input_list + [{"type": "message", "role": "user", "content": attachment_parts}]
             payload["input"] = input_list
+        elif attachment_parts:
+            text_parts = [{"type": "input_text", "text": prompt}] if prompt else []
+            payload["input"] = [{"type": "message", "role": "user", "content": text_parts + attachment_parts}]
         else:
             payload["input"] = prompt
         # Stable session key for warm multi-turn routing (per OpenResponses `user`).
@@ -1113,6 +1284,23 @@ class AssistantOpenClawProvider:
             payload["tools"] = tools
         if tool_choice is not None:
             payload["tool_choice"] = tool_choice
+        # The pinned Gateway's `metadata` field is the only strict-schema slot
+        # for opaque caller context — trace_id and context_pack are otherwise
+        # silently dropped at the HTTP boundary rather than actually reaching
+        # the upstream turn. Values must be strings (per the Gateway's
+        # `z.record(z.string(), z.string())`), so context_pack is serialized.
+        request_metadata: Dict[str, str] = {}
+        if trace_id:
+            request_metadata["trace_id"] = str(trace_id)
+        if context_pack:
+            try:
+                serialized_context = json.dumps(context_pack, sort_keys=True, default=str)
+            except (TypeError, ValueError):
+                serialized_context = None
+            if serialized_context:
+                request_metadata["context_pack"] = serialized_context[:4000]
+        if request_metadata:
+            payload["metadata"] = request_metadata
         data = json.dumps(payload).encode("utf-8")
         headers = {
             "Authorization": f"Bearer {self._token}",
@@ -1194,19 +1382,30 @@ class AssistantOpenClawProvider:
         # JSON object per `data:` line with no blank-line separators at all.
         # To support both shapes without misparsing either, each new line is
         # first tried on its own (matching the common single-line-per-event
-        # shape, and letting a prior unparseable fragment be discarded rather
-        # than corrupt a following, unrelated, well-formed line); only when no
-        # individual line parses standalone do accumulated fragments get
-        # joined — at the next blank line, or at end-of-stream.
+        # shape); only when it does not parse as a JSON *object* on its own
+        # does it get appended to the buffer of a still-incomplete multi-line
+        # event, whose join is tried first on the next line before that new
+        # line is ever considered standalone — a later fragment that happens
+        # to parse alone (e.g. a bare JSON string half of a legitimately
+        # split value) must not silently discard genuine buffered content.
         data_buffer: List[str] = []
 
-        def _flush_buffer() -> Optional[str]:
+        def _parse_event(payload: str) -> Optional[Dict[str, Any]]:
+            try:
+                parsed = json.loads(payload)
+            except (ValueError, TypeError):
+                return None
+            return parsed if isinstance(parsed, dict) else None
+
+        def _flush_buffer() -> Optional[Dict[str, Any]]:
             nonlocal data_buffer
             if not data_buffer:
                 return None
             joined = "\n".join(data_buffer)
             data_buffer = []
-            return joined
+            if joined == "[DONE]":
+                return None
+            return _parse_event(joined)
 
         def _handle_event(evt: Dict[str, Any]) -> Tuple[List[Dict[str, Any]], Optional[str]]:
             """Process one parsed SSE JSON event.
@@ -1306,24 +1505,57 @@ class AssistantOpenClawProvider:
                 }], "return"
             return [], None
 
-        try:
-            for raw in resp:
-                if time.monotonic() > read_deadline:
-                    yield {
-                        "type": "error",
-                        "error_code": "OPENCLAW_RESPONSES_TIMEOUT",
-                        "status_code": 504,
-                        "message": "/v1/responses response exceeded its bounded deadline while streaming.",
-                    }
+        def _iter_deadline_bounded_lines(response: Any, deadline: float) -> Iterator[bytes]:
+            """Yield raw response lines while keeping the *total* remaining
+            time bounded to `deadline`, even when data trickles in with no
+            newline for a long time.
+
+            Plain line iteration (`for raw in response`) calls one atomic
+            `readline()`-style operation per line: a real socket sending a
+            handful of newline-free bytes well inside any single `recv()`'s
+            own timeout keeps that one call blocking long after `deadline`
+            has passed, because nothing re-checks the clock until the whole
+            line finally arrives. Reading through the response's real
+            `.read(1)` (when available — it already understands chunked vs.
+            close-delimited framing) lets the deadline be rechecked before
+            every single byte instead. Test doubles that only implement
+            `__iter__` (never block in real time) fall back to plain
+            iteration with a per-line check.
+            """
+            read_one = getattr(response, "read", None)
+            if not callable(read_one):
+                for raw in response:
+                    if time.monotonic() > deadline:
+                        raise TimeoutError("bounded deadline exceeded while reading the response body")
+                    yield raw
+                return
+            buf = bytearray()
+            while True:
+                if time.monotonic() > deadline:
+                    raise TimeoutError("bounded deadline exceeded while reading the response body")
+                chunk = read_one(1)
+                if not chunk:
+                    if buf:
+                        yield bytes(buf)
                     return
+                buf += chunk
+                if chunk == b"\n":
+                    yield bytes(buf)
+                    buf = bytearray()
+
+        # Set only once an explicit end-of-stream signal (`[DONE]` or a
+        # `response.completed` event) is actually observed. A real EOF with
+        # neither — a dropped connection, a client cancellation, a truncated
+        # frame — is never a legitimate completion and must not fabricate a
+        # "done" from whatever partial text happened to accumulate first.
+        stream_terminated_cleanly = False
+
+        try:
+            for raw in _iter_deadline_bounded_lines(resp, read_deadline):
                 line = raw.decode("utf-8", errors="replace").rstrip("\r\n")
                 if line == "":
-                    payload_str = _flush_buffer()
-                    if payload_str is None or payload_str == "[DONE]":
-                        continue
-                    try:
-                        evt = json.loads(payload_str)
-                    except (ValueError, TypeError):
+                    evt = _flush_buffer()
+                    if evt is None:
                         continue
                 elif not line.startswith("data:"):
                     # Ignore other SSE fields (event:/id:/retry:/comments).
@@ -1333,18 +1565,37 @@ class AssistantOpenClawProvider:
                     if fragment.startswith(" "):
                         fragment = fragment[1:]
                     if fragment == "[DONE]" and not data_buffer:
+                        stream_terminated_cleanly = True
                         break
-                    try:
-                        evt = json.loads(fragment)
-                    except (ValueError, TypeError):
-                        # Not (yet) valid JSON on its own — could be a
-                        # malformed line (dropped once a later line parses
-                        # standalone) or one physical line of a legal
-                        # multi-line event (completed once joined at the
-                        # next blank line / end of stream).
-                        data_buffer.append(fragment)
-                        continue
-                    data_buffer = []
+                    if data_buffer:
+                        # Try completing the buffered multi-line event first.
+                        # A later fragment that happens to parse as valid
+                        # JSON *on its own* (e.g. a bare JSON string that is
+                        # only one physical half of a legally split value)
+                        # must not silently discard genuine buffered content
+                        # before the join is even attempted.
+                        joined_evt = _parse_event("\n".join(data_buffer + [fragment]))
+                        if joined_evt is not None:
+                            data_buffer = []
+                            evt = joined_evt
+                        else:
+                            solo_evt = _parse_event(fragment)
+                            if solo_evt is not None:
+                                # The buffered fragment(s) never became valid
+                                # JSON on their own — treat them as orphaned/
+                                # malformed and start fresh with this new,
+                                # independently-valid event.
+                                data_buffer = []
+                                evt = solo_evt
+                            else:
+                                data_buffer.append(fragment)
+                                continue
+                    else:
+                        solo_evt = _parse_event(fragment)
+                        if solo_evt is None:
+                            data_buffer.append(fragment)
+                            continue
+                        evt = solo_evt
 
                 events_to_yield, control = _handle_event(evt)
                 for out_event in events_to_yield:
@@ -1354,18 +1605,21 @@ class AssistantOpenClawProvider:
             # End of stream (real EOF, or `[DONE]` above). A legal multi-line
             # event with no trailing blank line separator is still buffered —
             # flush and process it rather than silently dropping real content.
-            trailing_payload = _flush_buffer()
-            if trailing_payload and trailing_payload != "[DONE]":
-                try:
-                    trailing_evt = json.loads(trailing_payload)
-                except (ValueError, TypeError):
-                    trailing_evt = None
-                if trailing_evt is not None:
-                    events_to_yield, control = _handle_event(trailing_evt)
-                    for out_event in events_to_yield:
-                        yield out_event
-                    if control == "return":
-                        return
+            trailing_evt = _flush_buffer()
+            if trailing_evt is not None:
+                events_to_yield, control = _handle_event(trailing_evt)
+                for out_event in events_to_yield:
+                    yield out_event
+                if control == "return":
+                    return
+        except (TimeoutError, socket.timeout):
+            yield {
+                "type": "error",
+                "error_code": "OPENCLAW_RESPONSES_TIMEOUT",
+                "status_code": 504,
+                "message": "/v1/responses response exceeded its bounded deadline while streaming.",
+            }
+            return
         except Exception as exc:  # noqa: BLE001
             yield {
                 "type": "error",
@@ -1380,8 +1634,26 @@ class AssistantOpenClawProvider:
                 pass
 
         if not emitted_done:
-            # Stream ended (e.g. [DONE]) without an explicit completed event.
             reply = terminal_text or "".join(chunks)
+            if not stream_terminated_cleanly:
+                # The connection ended (real EOF) without ever seeing an
+                # explicit completion signal — a cancelled/disconnected/
+                # truncated run, not a genuine success. Report it truthfully
+                # even when partial text was salvaged; never fabricate a
+                # "done" for output the Gateway never actually finished.
+                if reply:
+                    yield {
+                        "type": "error",
+                        "error_code": "OPENCLAW_RESPONSES_STREAM_INTERRUPTED",
+                        "message": "stream ended without a completion signal after partial output.",
+                    }
+                else:
+                    yield {
+                        "type": "error",
+                        "error_code": "OPENCLAW_RESPONSES_EMPTY",
+                        "message": "stream ended without a completion signal and no assistant text.",
+                    }
+                return
             if not reply:
                 yield {
                     "type": "error",

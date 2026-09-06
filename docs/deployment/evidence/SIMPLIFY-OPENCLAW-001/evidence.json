@@ -1,7 +1,98 @@
 {
   "task_id": "SIMPLIFY-OPENCLAW-001",
   "date": "2026-09-06",
-  "summary": "Unify ordinary OpenClaw agent turns (invoke/stream/readiness answer-probe) on the HTTP POST /v1/responses transport, add a restricted server-approved emit_extraction structured-data tool on the same transport, and fix an exact-run correlation bug in the cron CLI transport. This revision is a corrective pass after an independent exact-head review of PR #5629 rejected the first delivery for nine functional defects (see corrective_pass_after_review_reject below); all nine are fixed and covered by new/updated regression tests in this revision.",
+  "summary": "Unify ordinary OpenClaw agent turns (invoke/stream/readiness answer-probe) on the HTTP POST /v1/responses transport, add a restricted server-approved emit_extraction structured-data tool on the same transport, and fix an exact-run correlation bug in the cron CLI transport. This revision is now the SECOND corrective pass: an independent exact-head review of PR #5629 (head 7248a1505, after the first corrective pass below) rejected the delivery again for nine further functional defects (see second_corrective_pass_after_review_reject below); all eight concretely-fixable defects are fixed and covered by new/updated regression tests, and the ninth (a live-Gateway replay benchmark) remains a documented external blocker, same as the first pass.",
+  "second_corrective_pass_after_review_reject": {
+    "rejected_pr": 5629,
+    "rejected_head_sha": "7248a1505e2e666654fce45d9dee67aff2e271e3",
+    "reviewer": "Codex",
+    "reviewer_verdict_recorded_at": "2026-09-06T08:03:00Z",
+    "findings_fixed": [
+      {
+        "id": 1,
+        "finding": "assistant_openclaw_provider.py:1382-1396 stream() emitted a fabricated `done` event whenever the connection ended (real EOF, no [DONE] sentinel, no response.completed) as long as some partial delta/output_text.done text had been accumulated -- a cancelled/disconnected/truncated run was reported as a real success using whatever partial text happened to arrive first. The existing test (`test_partial_data_then_cancellation_yields_single_terminal`) explicitly asserted this as intended behavior.",
+        "fix": "Added a `stream_terminated_cleanly` flag set only when an explicit end-of-stream signal (`[DONE]` sentinel or a `response.completed` event) is actually observed. A real EOF without either now yields `OPENCLAW_RESPONSES_STREAM_INTERRUPTED` (if partial text was salvaged) or `OPENCLAW_RESPONSES_EMPTY` (if none was), never a fabricated `done`. A legitimate `[DONE]` with no `response.completed` still returns the salvaged text as a real `done` (new coverage added for that case).",
+        "tests": [
+          "services/openclaw-gateway-adapter/tests/test_openresponses_transport_contract.py::TestErrorInjectionContract::test_partial_data_then_cancellation_yields_single_terminal (updated: now asserts error/STREAM_INTERRUPTED)",
+          "services/openclaw-gateway-adapter/tests/test_openresponses_transport_contract.py::TestErrorInjectionContract::test_missing_done_marker_and_no_completed_event_still_single_terminal (updated: now asserts error/STREAM_INTERRUPTED)",
+          "services/openclaw-gateway-adapter/tests/test_openresponses_transport_contract.py::TestErrorInjectionContract::test_done_marker_with_no_completed_event_is_accepted_terminal (new: legitimate [DONE] still succeeds)"
+        ]
+      },
+      {
+        "id": 2,
+        "finding": "provider.py:1310 checked the total read deadline only once per fully-received SSE line (`for raw in resp:` calls one atomic readline()-equivalent per iteration). A real local HTTP server sending 12 newline-free bytes 30ms apart returned only after 0.404s for a 0.1s budget, because nothing re-checked the clock mid-line while data kept trickling in well inside any single recv's own timeout.",
+        "fix": "Added `_iter_deadline_bounded_lines()`: when the response object exposes a real `.read(1)` (a genuine socket, not this module's line-only test doubles), it reads one byte at a time and rechecks the absolute deadline before every single byte, so a byte-by-byte drip with no newline is now bounded by the total deadline instead of by however long one full line takes to arrive. Test doubles lacking `.read` fall back to the previous per-line check (they never block in real time, so this is unaffected).",
+        "tests": [
+          "services/openclaw-gateway-adapter/tests/test_openresponses_transport_contract.py::TestRealLocalHttpServerRegressions::test_newline_free_slow_drip_is_bounded_by_total_deadline (new, real socket, not mocked urlopen)"
+        ]
+      },
+      {
+        "id": 3,
+        "finding": "provider.py:1337-1347 discarded a still-incomplete buffered multi-line SSE event whenever a later physical line happened to parse as valid JSON *on its own* (e.g. a bare JSON string half of a legally split value like `{\"type\":...,\"text\":` / `\"joined reply\"` / `}`), because the code reset `data_buffer = []` before ever trying to join it with the new line. This raised `AttributeError: 'str' object has no attribute 'get'` inside `_handle_event`, surfacing as `OPENCLAW_RESPONSES_STREAM_INTERRUPTED`.",
+        "fix": "The fragment-assembly logic now tries joining the buffered fragment(s) with the new line FIRST (and only accepts that join if it parses as a JSON *object*, via a new `_parse_event()` helper that rejects non-dict JSON values); only if the join fails does it fall back to treating the new line as a fresh standalone event (discarding the buffer as genuinely orphaned/malformed).",
+        "tests": [
+          "services/openclaw-gateway-adapter/tests/test_openresponses_transport_contract.py::TestErrorInjectionContract::test_standalone_parseable_fragment_does_not_discard_buffered_multiline_event (new, exact reviewer repro)"
+        ]
+      },
+      {
+        "id": 4,
+        "finding": "derive_session_user()'s plain `\"|\".join(parts)` let a boundary-shifting caller-chosen component collide with a different tenant/actor/conversation split onto the identical joined string: (tenant=\"tenant\", actor=\"alice\", conversation=\"bob|shared\") and (tenant=\"tenant|alice\", actor=\"bob\", conversation=\"shared\") both produced \"tenant|alice|bob|shared\".",
+        "fix": "Each component is now escaped (`\\\\` -> `\\\\\\\\`, `|` -> `\\\\|`) before joining, so an unescaped `|` in the final string only ever marks a genuine component boundary.",
+        "tests": [
+          "services/openclaw-gateway-adapter/tests/test_openresponses_transport_contract.py::TestNormalInvokeContract::test_boundary_shifting_session_components_do_not_collide (new, exact reviewer repro)"
+        ],
+        "caveat": "The reviewer's related note that structured invoke has no tenant input at all, and that ordinary `metadata.tenant_id` is caller-supplied rather than cryptographically authenticated, is accurate and unchanged by this fix -- adding real tenant authentication is a separate, materially larger change (out of scope for a collision-safety fix) and is not claimed as done here."
+      },
+      {
+        "id": 5,
+        "finding": "main.py's mounted stream route (`/invoke/stream`) dropped `req.messages` entirely and never forwarded `req.attachments`/`req.context_pack` to the provider at all; the mounted invoke route forwarded `context_pack`/`messages` but also silently dropped `req.attachments`. Additionally, `stream()`/`_invoke_via_http()` accepted `trace_id`/`context_pack` parameters but never actually serialized them anywhere in the outbound HTTP payload -- they were silently discarded at the transport boundary.",
+        "fix": "`stream()` now accepts `attachments`/`context_pack`, converts Chat-Completions-style attachments (the same shape used elsewhere in this adapter, e.g. assistant_codex_provider.py) into the pinned Gateway's `input_image`/`input_file` content parts attached to the trailing user message, and serializes `trace_id`/`context_pack` into the Gateway's `metadata: Record<string,string>` field (the only strict-schema slot for opaque caller context). `_invoke_via_http()`/`invoke()` forward `attachments` through to `stream()`. main.py's stream route now forwards `agent_id`/`messages`/`attachments`/`context_pack`; the invoke route now forwards `attachments`. `stream()` also gained the same `_AGENT_ID_PATTERN` validation `invoke()` already had, since a caller-declared `agent_id` is now actually honored on this path.",
+        "tests": [
+          "services/openclaw-gateway-adapter/tests/test_openresponses_transport_contract.py::TestNormalInvokeContract::test_trace_id_and_context_pack_reach_metadata (new)",
+          "services/openclaw-gateway-adapter/tests/test_openresponses_transport_contract.py::TestNormalInvokeContract::test_attachments_are_normalized_into_input_content_parts (new)",
+          "services/openclaw-gateway-adapter/tests/test_openresponses_transport_contract.py::TestNormalInvokeContract::test_attachments_attach_to_trailing_message_with_history (new)",
+          "services/openclaw-gateway-adapter/test_main.py::TestOpenClawAssistantProvider::test_openclaw_ordinary_stream_forwards_full_mounted_contract (new)",
+          "services/openclaw-gateway-adapter/test_main.py::TestOpenClawAssistantProvider::test_openclaw_invoke_forwards_attachments (new)"
+        ],
+        "caveat": "Admitted `agent_id` forwarding through the governed persona-opinion admission flow (agent_id + persona_admission paired, per AssistantProviderInvokeRequest.validate_agent_selection) is exercised by the existing TestGovernedServantAgentSync persona-opinion invoke coverage, which requires the full admission fixture; the new mounted-contract test above deliberately omits agent_id/persona_admission to keep the test focused on messages/attachments/context_pack/trace_id and avoid duplicating that heavier fixture."
+      },
+      {
+        "id": 6,
+        "finding": "_validate_extraction_arguments never validated array `items` at all (records[].amount=\"not-an-integer\" was accepted for an integer-typed array item schema), never enforced `additionalProperties: false` (an extra field alongside a closed schema was silently accepted), never enforced numeric `minimum`/`maximum`/`exclusiveMinimum`/`exclusiveMaximum` bounds, and crashed with an unhandled `TypeError` (surfacing as an unhandled HTTP 500, uncaught by the `except GatewayOpenClawProviderError` handler) on a malformed schema like `required: 17` (a non-list), since `for field in required` was never guarded.",
+        "fix": "Added `_validate_extraction_array()` (items/minItems/maxItems recursion) and `_validate_extraction_numeric_bounds()` (minimum/maximum/exclusiveMinimum/exclusiveMaximum), and `_validate_extraction_object()` now enforces `additionalProperties: false` (rejecting undeclared fields) while permissively allowing them (or validating them against a schema) when `additionalProperties` is omitted/true/a schema. Every malformed schema shape (`required`, `properties`, `items`, `enum`, `type` not the expected JSON-schema shape) now raises a typed 422 `OPENCLAW_TOOL_ARGS_SCHEMA_MISMATCH` via `_schema_mismatch()` instead of crashing with an unguarded Python exception.",
+        "tests": [
+          "services/openclaw-gateway-adapter/tests/test_structured_data_tool_contract.py::TestValidateExtractionArgumentsSchemaCoverage::test_array_item_type_mismatch_is_rejected (new, exact reviewer repro)",
+          "services/openclaw-gateway-adapter/tests/test_structured_data_tool_contract.py::TestValidateExtractionArgumentsSchemaCoverage::test_additional_properties_false_rejects_extra_field (new, exact reviewer repro)",
+          "services/openclaw-gateway-adapter/tests/test_structured_data_tool_contract.py::TestValidateExtractionArgumentsSchemaCoverage::test_numeric_bounds_are_enforced (new)",
+          "services/openclaw-gateway-adapter/tests/test_structured_data_tool_contract.py::TestValidateExtractionArgumentsSchemaCoverage::test_malformed_required_declaration_is_a_typed_rejection_not_a_crash (new, exact reviewer repro: required=17)"
+        ]
+      },
+      {
+        "id": 7,
+        "finding": "invoke_structured() only checked `function_calls[0]`'s name against `emit_extraction` -- a pinned client-side `tool_choice` is a request, not proof the upstream Gateway enforced a single-tool policy, so a model emitting a second, unauthorized tool call (e.g. a native/domain tool) alongside the requested `emit_extraction` would have that second call silently ignored rather than failing closed.",
+        "fix": "invoke_structured() now rejects the response with `OPENCLAW_TOOL_MISMATCH` whenever more than one function call is present, not only when the first one has the wrong name.",
+        "tests": [
+          "services/openclaw-gateway-adapter/tests/test_structured_data_tool_contract.py::TestInvokeStructuredNegative::test_extra_tool_call_alongside_emit_extraction_is_rejected (new, exact reviewer repro)"
+        ],
+        "caveat": "Demonstrating this against the actual pinned Gateway/auth route (proving the Gateway itself denies native/domain tools, not just that this adapter would reject a second call if one arrived) requires a live, authenticated Gateway and is part of the same external blocker as finding 9 below -- not independently re-claimed here."
+      },
+      {
+        "id": 8,
+        "finding": "cron/openclaw_client.py's `__call__` gave `cron.add` and `cron.run` each their own independent up-to-30s RPC timeout (via `_call`'s `timeout_seconds=None` default), then `_wait_for_terminal_run` started a BRAND NEW poll deadline from `time.monotonic()` at that point -- so a caller-supplied 1s total budget could still spend .75s on cron.add + .75s on cron.run + .1s polling and return \"accepted\" at 1.6s elapsed, ignoring the caller's actual budget entirely.",
+        "fix": "`__call__` now computes ONE deadline up front (`time.monotonic() + self._poll_timeout`) and threads it through: `cron.add`'s and `cron.run`'s `_call()` invocations now receive only the time remaining until that deadline (raising immediately, before even attempting the RPC, if the deadline has already elapsed -- with a job-accepted-but-not-dispatched message for the cron.run case so the in-doubt state is clear), and `_wait_for_terminal_run` now accepts that same deadline instead of computing a fresh one (falling back to computing its own, for backward compatibility with direct unit-test callers that exercise it standalone).",
+        "tests": [
+          "services/control-plane/cron/test_exact_run_wait.py::TestExactRunLookupAndSharedDeadline::test_rpc_and_sleep_share_one_total_deadline_not_a_fixed_subprocess_timeout (pre-existing, still green -- exercises _wait_for_terminal_run's own standalone-deadline fallback path)",
+          "All 13 test_exact_run_wait.py cases re-verified green with the shared-deadline `__call__` plumbing in place."
+        ],
+        "caveat": "A dedicated end-to-end `__call__`-level test asserting the exact `.75s add + .75s run + .1s poll -> 1.6s` clock repro from the reviewer's finding was not added as a new named test in this pass (the existing per-phase and _wait_for_terminal_run-level deadline tests already cover the mechanism this fix relies on); the fix itself was verified by code inspection of the new `_remaining()` helper and by all existing tests remaining green."
+      },
+      {
+        "id": 9,
+        "finding": "Required pinned-Gateway structured-capability cases and the controlled >=100-request base/candidate replay benchmark (cold/warm TTFT/full p50/p95, usage, errors, subprocess counts, acceptance thresholds) remain unexecuted; this cannot be waived via an evidence caveat per the reviewer.",
+        "fix": "Unchanged from the first corrective pass: no live, authenticated OpenClaw Gateway/model backend was reachable in this sandbox at any point in this task's execution. This is a genuine external blocker, reported honestly here and in not_done_or_unverifiable below, not fabricated or waived."
+      }
+    ]
+  },
   "corrective_pass_after_review_reject": {
     "rejected_pr": 5629,
     "rejected_head_sha": "4a103a1df2f5c0a9822800647f6669965791aeef",
@@ -94,44 +185,58 @@
   "files_changed": [
     {
       "path": "services/openclaw-gateway-adapter/assistant_openclaw_provider.py",
-      "why": "Removed the general-turn CLI subprocess path (_invoke_single_model) and the 96 KiB argv-size branch; generalized the old oversized-prompt-only HTTP path into _invoke_via_http(), the single request builder now used by invoke(), readiness()'s answer-probe, and the new invoke_structured(). Extended stream() with model/agent_id/messages/tools/tool_choice/timeout_seconds and nested response.completed parsing (status/output/usage/id) for function-call and usage extraction. Added EMIT_EXTRACTION_TOOL_NAME, emit_extraction_tool_schema(), a rewritten recursive schema validator, and invoke_structured(). Corrective pass: fixed model/header contract (finding 1), input[] message normalization (finding 2), derive_session_user() tenant/actor isolation (finding 3), enum/nested/nullable schema validation (finding 5), SSE parsing (duplicate-completed return, legal multi-line join) (finding 6), and a shared read_deadline for the streaming loop (finding 7). Left _openclaw_bin, gateway_cron_call, _gateway_call, gateway_agents_list, _probe_gateway, _extract_gateway_json, delegates_kernel_mode_to_codex, CODEX_DELEGATED_KERNEL_MODES, and _openclaw_cli_state_env untouched (still used by the preserved cron/gateway-admin CLI proxy)."
+      "why": "Removed the general-turn CLI subprocess path (_invoke_single_model) and the 96 KiB argv-size branch; generalized the old oversized-prompt-only HTTP path into _invoke_via_http(), the single request builder now used by invoke(), readiness()'s answer-probe, and the new invoke_structured(). Extended stream() with model/agent_id/messages/tools/tool_choice/timeout_seconds and nested response.completed parsing (status/output/usage/id) for function-call and usage extraction. Added EMIT_EXTRACTION_TOOL_NAME, emit_extraction_tool_schema(), a rewritten recursive schema validator, and invoke_structured(). Corrective pass: fixed model/header contract (finding 1), input[] message normalization (finding 2), derive_session_user() tenant/actor isolation (finding 3), enum/nested/nullable schema validation (finding 5), SSE parsing (duplicate-completed return, legal multi-line join) (finding 6), and a shared read_deadline for the streaming loop (finding 7). Left _openclaw_bin, gateway_cron_call, _gateway_call, gateway_agents_list, _probe_gateway, _extract_gateway_json, delegates_kernel_mode_to_codex, CODEX_DELEGATED_KERNEL_MODES, and _openclaw_cli_state_env untouched (still used by the preserved cron/gateway-admin CLI proxy). SECOND corrective pass: reworked the stream() read loop's terminal-state logic to only accept `done` when an explicit completion signal was observed (2nd-pass finding 1); replaced per-line-only deadline checking with `_iter_deadline_bounded_lines()` byte-bounded reading (2nd-pass finding 2); fixed the SSE fragment-join-vs-standalone-parse ordering bug via a new `_parse_event()` helper (2nd-pass finding 3); escaped `derive_session_user()`'s joined components (2nd-pass finding 4); added `_normalize_attachment_content_part()` and `attachments`/`context_pack` params (serialized into the Gateway's `metadata` field) threaded through `stream()`/`_invoke_via_http()`/`invoke()`, plus agent_id pattern validation in `stream()` (2nd-pass finding 5); rewrote `_validate_extraction_value`/`_validate_extraction_object` and added `_validate_extraction_array`/`_validate_extraction_numeric_bounds` for items/additionalProperties/bounds/malformed-schema handling (2nd-pass finding 6); made `invoke_structured()` reject more than one function call, not only a wrong-named first one (2nd-pass finding 7)."
     },
     {
       "path": "services/openclaw-gateway-adapter/main.py",
-      "why": "Added AssistantProviderStructuredInvokeRequest (rejects caller-supplied tools/tool_choice with a 422 via a model_validator) and a new POST /api/openclaw-adapter/assistant/providers/openclaw/structured endpoint that delegates to AssistantOpenClawProvider.invoke_structured(). Corrective pass: restricted /structured to the default agent only (finding 4), and switched the raw SSE stream endpoint's session_user derivation to the shared derive_session_user() helper (finding 3)."
+      "why": "Added AssistantProviderStructuredInvokeRequest (rejects caller-supplied tools/tool_choice with a 422 via a model_validator) and a new POST /api/openclaw-adapter/assistant/providers/openclaw/structured endpoint that delegates to AssistantOpenClawProvider.invoke_structured(). Corrective pass: restricted /structured to the default agent only (finding 4), and switched the raw SSE stream endpoint's session_user derivation to the shared derive_session_user() helper (finding 3). SECOND corrective pass: the mounted invoke route now forwards req.attachments; the mounted stream route now forwards req.agent_id/req.messages/req.attachments/req.context_pack, none of which reached the provider before (2nd-pass finding 5)."
     },
     {
       "path": "services/openclaw-gateway-adapter/test_assistant_openclaw_provider_live.py",
-      "why": "Rewrote every test that mocked the removed CLI subprocess path (_invoke_single_model / subprocess.run) for invoke()/readiness() to instead mock urllib.request.urlopen against the HTTP /v1/responses transport. Corrective pass: updated `_model_dispatch_urlopen` and the model-field assertions to reflect the openclaw/<agentId> alias + x-openclaw-model header contract (finding 1), and updated two session_user assertions to the actor-mixed-in derived value (finding 3)."
+      "why": "Rewrote every test that mocked the removed CLI subprocess path (_invoke_single_model / subprocess.run) for invoke()/readiness() to instead mock urllib.request.urlopen against the HTTP /v1/responses transport. Corrective pass: updated `_model_dispatch_urlopen` and the model-field assertions to reflect the openclaw/<agentId> alias + x-openclaw-model header contract (finding 1), and updated two session_user assertions to the actor-mixed-in derived value (finding 3). Unchanged in the second corrective pass; re-verified green (49 passed, 4 skipped)."
     },
     {
       "path": "services/control-plane/cron/openclaw_client.py",
-      "why": "Removed the `if target is None and entries: target = entries[0]` fallback in _CliGatewayTransport._wait_for_terminal_run so a run is only ever reported terminal when its runId exactly equals the dispatched run_id; added a fail-fast RuntimeError at the __call__ site when cron.run does not return a run id. Corrective pass: `_call` now accepts an explicit timeout_seconds (finding 7); `_wait_for_terminal_run` requests an exact {id, runId} lookup instead of a fixed limit:20 page (finding 8) and shares one total deadline across the RPC call and the inter-poll sleep, rejecting a late RPC result rather than accepting it (finding 7). Also added a defensive try/except import fallback for `from .models import ...` so the module still imports correctly when this repo's pytest conftest.py loads it as a bare top-level module for services/control-plane/cron/test_cron.py (see caveats below) instead of as part of the `cron` package."
+      "why": "Removed the `if target is None and entries: target = entries[0]` fallback in _CliGatewayTransport._wait_for_terminal_run so a run is only ever reported terminal when its runId exactly equals the dispatched run_id; added a fail-fast RuntimeError at the __call__ site when cron.run does not return a run id. Corrective pass: `_call` now accepts an explicit timeout_seconds (finding 7); `_wait_for_terminal_run` requests an exact {id, runId} lookup instead of a fixed limit:20 page (finding 8) and shares one total deadline across the RPC call and the inter-poll sleep, rejecting a late RPC result rather than accepting it (finding 7). Also added a defensive try/except import fallback for `from .models import ...` so the module still imports correctly when this repo's pytest conftest.py loads it as a bare top-level module for services/control-plane/cron/test_cron.py (see caveats below) instead of as part of the `cron` package. SECOND corrective pass: `__call__` now computes one deadline up front and threads it through `cron.add`'s and `cron.run`'s own `_call()` timeout budgets (previously each independently defaulted to 30s) and into `_wait_for_terminal_run` (now takes an optional `deadline` param, defaulting to a fresh one for standalone callers) so the entire dispatch — add, run, poll — spends at most one total budget (2nd-pass finding 8)."
     },
     {
       "path": "integrations/openclaw/integration.md",
-      "why": "Appended a dated changelog section (## 10. SIMPLIFY-OPENCLAW-001) summarizing the HTTP-unification, the emit_extraction tool, the cron exact-run fix, and the cross-scope cron_transport.py finding. Corrective pass: appended ## 10.1 documenting the independent review REJECT and all nine fixes."
+      "why": "Appended a dated changelog section (## 10. SIMPLIFY-OPENCLAW-001) summarizing the HTTP-unification, the emit_extraction tool, the cron exact-run fix, and the cross-scope cron_transport.py finding. Corrective pass: appended ## 10.1 documenting the independent review REJECT and all nine fixes. Unchanged in the second corrective pass -- see second_corrective_pass_after_review_reject above for that round's findings instead of a duplicate changelog edit."
     },
     {
       "path": "services/openclaw-gateway-adapter/tests/test_openresponses_transport_contract.py",
-      "why": "Corrective pass: updated the explicit-agent+model routing test and the no-retry-on-failure test for the openclaw/<agentId> + x-openclaw-model contract (finding 1); added message-normalization, tenant/actor isolation, duplicate-completed, legal-multiline, and real-local-HTTP-server slow-drip/partial-EOF regression tests (findings 2, 3, 6, 7)."
+      "why": "Corrective pass: updated the explicit-agent+model routing test and the no-retry-on-failure test for the openclaw/<agentId> + x-openclaw-model contract (finding 1); added message-normalization, tenant/actor isolation, duplicate-completed, legal-multiline, and real-local-HTTP-server slow-drip/partial-EOF regression tests (findings 2, 3, 6, 7). SECOND corrective pass: updated the cancellation/no-completion-event tests to assert truthful interruption instead of a fabricated done (2nd-pass finding 1); added a legitimate-[DONE]-no-completed-event success test, a real-socket newline-free slow-drip deadline test (2nd-pass finding 2), a standalone-parseable-fragment-vs-buffered-event test (2nd-pass finding 3), a session-collision test (2nd-pass finding 4), and trace_id/context_pack/attachments serialization tests (2nd-pass finding 5)."
     },
     {
       "path": "services/openclaw-gateway-adapter/tests/test_structured_data_tool_contract.py",
-      "why": "Corrective pass: added the arbitrary-agent-id-rejected and explicit-default-agent-accepted endpoint tests (finding 4), and a new TestValidateExtractionArgumentsSchemaCoverage class covering enum/nested-required/nullable-type-list validation (finding 5)."
+      "why": "Corrective pass: added the arbitrary-agent-id-rejected and explicit-default-agent-accepted endpoint tests (finding 4), and a new TestValidateExtractionArgumentsSchemaCoverage class covering enum/nested-required/nullable-type-list validation (finding 5). SECOND corrective pass: added array-items, additionalProperties:false, numeric-bounds, and malformed-required-is-a-typed-rejection tests (2nd-pass finding 6), and an extra-tool-call-alongside-emit_extraction rejection test (2nd-pass finding 7)."
     },
     {
       "path": "services/control-plane/cron/test_exact_run_wait.py",
-      "why": "Corrective pass: added TestExactRunLookupAndSharedDeadline covering the exact {id, runId} RPC param, a target run behind more than the old fixed limit, the RPC/sleep shared-deadline bound (never the old fixed 30s), and rejection of a late RPC result arriving after the deadline (findings 7, 8)."
+      "why": "Corrective pass: added TestExactRunLookupAndSharedDeadline covering the exact {id, runId} RPC param, a target run behind more than the old fixed limit, the RPC/sleep shared-deadline bound (never the old fixed 30s), and rejection of a late RPC result arriving after the deadline (findings 7, 8). Unchanged in the second corrective pass; all 13 cases re-verified green against the new shared-deadline `__call__` plumbing (2nd-pass finding 8)."
+    },
+    {
+      "path": "services/openclaw-gateway-adapter/test_main.py",
+      "why": "SECOND corrective pass (new file touch this pass): fixed a test-double `fake_invoke` stub missing the new `attachments` kwarg (would otherwise TypeError on every mounted-invoke test once `invoke()` started passing `attachments=` through); added two new mounted-contract tests asserting the stream route forwards messages/attachments/context_pack/trace_id and the invoke route forwards attachments (2nd-pass finding 5)."
     }
   ],
   "files_created": [
     {
       "path": "docs/deployment/evidence/SIMPLIFY-OPENCLAW-001/evidence.json",
-      "why": "This file (revised for the corrective pass)."
+      "why": "This file (revised for the corrective pass; revised again for the second corrective pass)."
     }
   ],
   "test_commands": [
+    {
+      "command": "SECOND CORRECTIVE PASS (this revision) -- PANTHEON_PY=.venv-pantheon/bin/python3; \"$PANTHEON_PY\" -m pytest -q services/openclaw-gateway-adapter/ services/control-plane/cron/test_exact_run_wait.py services/control-plane/cron/test_service.py",
+      "result": "529 passed, 4 skipped, 1 warning, 18 subtests passed",
+      "exit_code": 0
+    },
+    {
+      "command": "SECOND CORRECTIVE PASS -- per-file breakdown: test_openresponses_transport_contract.py (41 passed), test_structured_data_tool_contract.py (26 passed, 1 warning), test_main.py (119 passed, 1 warning, 18 subtests), test_exact_run_wait.py (13 passed)",
+      "result": "all green; test_cron.py excluded from the aggregate run above only because it cannot even collect (pre-existing, unrelated ImportError -- see the existing test_cron.py entry below, unchanged by this task)",
+      "exit_code": 0
+    },
     {
       "command": "PANTHEON_PY=.venv-pantheon/bin/python3; \"$PANTHEON_PY\" -m pytest -q services/openclaw-gateway-adapter/test_main.py services/openclaw-gateway-adapter/test_assistant_openclaw_provider_live.py services/openclaw-gateway-adapter/tests/test_assistant_provider_runtime.py services/openclaw-gateway-adapter/tests/test_prompt_injection.py services/openclaw-gateway-adapter/tests/test_openresponses_transport_contract.py services/openclaw-gateway-adapter/tests/test_structured_data_tool_contract.py",
       "result": "230 passed, 4 skipped, 2 warnings, 18 subtests passed",
@@ -150,9 +255,12 @@
   ],
   "cron_correlation_fix_verified_independently_via": "services/control-plane/cron/test_exact_run_wait.py imports only openclaw_client (not service.py), so it collects and runs independently of the test_cron.py harness issue above; all 13 of its cases pass, directly exercising the exact-match-only correlation logic, the exact {id, runId} RPC lookup, the shared-deadline/late-result-rejection behavior, the fail-fast missing-run-id behavior, and the timeout/unknown-outcome behavior described in the task.",
   "not_done_or_unverifiable": [
-    "No live OpenClaw Gateway was reachable in this dev sandbox, so the task's acceptance-criterion-4 controlled replay benchmark (>=100 requests, CLI base SHA vs. HTTP candidate, cold/warm split, TTFT/full p50/p95, error rate, input/output usage, subprocess count, full-turn p95 <= 1.10x base, token usage not increasing >5%) could NOT be executed. This is a genuine external blocker (no reachable authenticated live Gateway/model backend in this sandbox), not a claimed pass; this benchmark was not fabricated and is simply not run.",
+    "No live OpenClaw Gateway was reachable in this dev sandbox, so the task's acceptance-criterion-4 controlled replay benchmark (>=100 requests, CLI base SHA vs. HTTP candidate, cold/warm split, TTFT/full p50/p95, error rate, input/output usage, subprocess count, full-turn p95 <= 1.10x base, token usage not increasing >5%) could NOT be executed. This is a genuine external blocker (no reachable authenticated live Gateway/model backend in this sandbox), not a claimed pass; this benchmark was not fabricated and is simply not run. Still true as of the second corrective pass (2nd-pass finding 9).",
     "The exact nested response.completed's response.output/response.usage/response.status/response.id JSON shape used for function-call/usage/status extraction in stream() is an assumption based on the OpenAI-Responses-API family. The pinned Gateway's own open-responses.schema.ts (statically reviewed for findings 1-2 above) is consistent with this shape (ResponseResourceSchema has status/output/usage/id), which raises confidence, but no live round-trip against the actually-deployed Gateway build was performed to prove it end-to-end.",
-    "The cross-scope finding below (cron_transport.py) was identified but intentionally NOT fixed, per the task's explicit scope boundary."
+    "The cross-scope finding below (cron_transport.py) was identified but intentionally NOT fixed, per the task's explicit scope boundary.",
+    "SECOND corrective pass: demonstrating invoke_structured()'s restricted-agent tool-denial (2nd-pass finding 7) against the actual pinned Gateway/auth route -- i.e. proving the upstream Gateway itself, not just this adapter's own post-hoc response check, denies a native/domain tool for the default agent -- requires the same live Gateway access blocked by finding 9 above; only the adapter-side 'reject more than one function call' check could be fixed and tested without one.",
+    "SECOND corrective pass: no new dedicated end-to-end `_CliGatewayTransport.__call__`-level test reproducing the exact '.75s add + .75s run + .1s poll -> accepted at 1.6s against a 1s budget' clock sequence from 2nd-pass finding 8 was added; the fix (one shared deadline threaded through cron.add/cron.run/_wait_for_terminal_run) was verified by code inspection and by all 13 existing test_exact_run_wait.py cases remaining green, not by a new clock-driven reproduction of that exact sequence.",
+    "SECOND corrective pass: services/control-plane/cron/test_cron.py still cannot collect (pre-existing ImportError, unrelated to and unchanged by this pass -- see the existing test_cron.py entry in test_commands)."
   ],
   "cross_scope_finding": {
     "file": "integrations/openclaw/adapter/cron_transport.py",

@@ -1593,6 +1593,7 @@ def invoke_openclaw_provider(
             "context_pack": req.context_pack or {},
             "metadata": metadata,
             "messages": req.messages,
+            "attachments": req.attachments,
             "operator_id": x_operator_id.strip(),
             "trace_id": x_trace_id,
         }
@@ -1801,6 +1802,10 @@ def invoke_openclaw_provider_stream(
                 operator_id=operator,
                 trace_id=x_trace_id,
                 session_user=session_user,
+                agent_id=req.agent_id,
+                messages=req.messages,
+                attachments=req.attachments,
+                context_pack=req.context_pack,
             ):
                 yield "data: " + json.dumps(evt, ensure_ascii=False) + "\n\n"
         except Exception as exc:  # noqa: BLE001

@@ -2931,6 +2931,75 @@ class TestOpenClawAssistantProvider(unittest.TestCase):
         self.assertEqual(request.metadata["operator_id"], "op-debug")
         openclaw_stream.assert_not_called()
 
+    def test_openclaw_ordinary_stream_forwards_full_mounted_contract(self):
+        """SIMPLIFY-OPENCLAW-001 reviewer defect: the mounted stream route
+        previously dropped `req.messages` and never forwarded
+        `req.attachments`/`req.context_pack` at all — only the mounted
+        invoke route did (and even that route silently ignored
+        attachments). Both must reach the provider's single HTTP request
+        builder. (Admitted `agent_id` forwarding is exercised separately in
+        `TestGovernedServantAgentSync`'s persona-opinion invoke coverage,
+        which requires a fully governed admission fixture.)"""
+
+        def fake_stream(self_inner, prompt, **kwargs):
+            yield {"type": "done", "text": "ok", "elapsed_ms": 1, "transport": "responses_http"}
+
+        with patch.object(adapter_main._OPENCLAW_AGENT_PROVIDER.__class__, "stream", autospec=True) as openclaw_stream:
+            openclaw_stream.side_effect = fake_stream
+            resp = client.post(
+                "/api/openclaw-adapter/assistant/providers/openclaw/invoke/stream",
+                json={
+                    "prompt": "hello",
+                    "messages": [{"role": "user", "content": "earlier turn"}],
+                    "attachments": [{"type": "image_url", "image_url": {"url": "data:image/png;base64,QUJD"}}],
+                    "context_pack": {"context_pack_id": "ctx-1"},
+                },
+                headers={"X-Operator-Id": "op-1", "X-Trace-Id": "trace-1"},
+            )
+
+        self.assertEqual(resp.status_code, 200, resp.text)
+        _args, kwargs = openclaw_stream.call_args
+        self.assertEqual(kwargs["messages"], [{"role": "user", "content": "earlier turn"}])
+        self.assertEqual(
+            kwargs["attachments"],
+            [{"type": "image_url", "image_url": {"url": "data:image/png;base64,QUJD"}}],
+        )
+        self.assertEqual(kwargs["context_pack"], {"context_pack_id": "ctx-1"})
+        self.assertEqual(kwargs["trace_id"], "trace-1")
+
+    def test_openclaw_invoke_forwards_attachments(self):
+        """The mounted (non-stream) invoke route must also forward
+        `req.attachments` to the provider — previously silently dropped."""
+
+        def fake_invoke(self_inner, prompt, *, mode="user", context_pack=None, metadata=None,
+                        messages=None, attachments=None, operator_id=None, trace_id=None):
+            from assistant_openclaw_provider import OpenClawProviderResult
+            return OpenClawProviderResult(
+                provider="openclaw",
+                mode=mode,
+                status="completed",
+                output={"json_events": [], "agent_id": "main", "request_id": "req-1", "duration_ms": 1},
+                redaction={"provider_invocation": {"redacted_fields": 0}},
+            )
+
+        with patch.object(adapter_main._OPENCLAW_AGENT_PROVIDER.__class__, "invoke", autospec=True) as openclaw_invoke:
+            openclaw_invoke.side_effect = fake_invoke
+            resp = client.post(
+                "/api/openclaw-adapter/assistant/providers/openclaw/invoke",
+                json={
+                    "prompt": "hello",
+                    "attachments": [{"type": "image_url", "image_url": {"url": "data:image/png;base64,QUJD"}}],
+                },
+                headers={"X-Operator-Id": "op-1"},
+            )
+
+        self.assertEqual(resp.status_code, 200, resp.text)
+        _args, kwargs = openclaw_invoke.call_args
+        self.assertEqual(
+            kwargs["attachments"],
+            [{"type": "image_url", "image_url": {"url": "data:image/png;base64,QUJD"}}],
+        )
+
     def test_openclaw_invoke_returns_completed_result_on_success(self):
         fake_response_body = {
             "status": "completed",
@@ -2939,7 +3008,7 @@ class TestOpenClawAssistantProvider(unittest.TestCase):
         }
 
         def fake_invoke(self_inner, prompt, *, mode="user", context_pack=None, metadata=None,
-                        messages=None, operator_id=None, trace_id=None):
+                        messages=None, attachments=None, operator_id=None, trace_id=None):
             from assistant_openclaw_provider import OpenClawProviderResult
             return OpenClawProviderResult(
                 provider="openclaw",

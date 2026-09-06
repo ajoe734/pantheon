@@ -211,6 +211,105 @@ class TestNormalInvokeContract:
         assert all(item.get("type") == "message" for item in input_list)
         assert input_list[-1] == {"type": "message", "role": "user", "content": "second turn"}
 
+    def test_boundary_shifting_session_components_do_not_collide(self):
+        """A caller-chosen component containing the "|" separator must not
+        let a different tenant/actor/conversation split collide onto the
+        same derived upstream `user` key."""
+        from assistant_openclaw_provider import derive_session_user
+
+        first = derive_session_user(
+            operator_id="alice", session_id="bob|shared", metadata={"tenant_id": "tenant"}
+        )
+        second = derive_session_user(
+            operator_id="bob", session_id="shared", metadata={"tenant_id": "tenant|alice"}
+        )
+        assert first != second
+
+    def test_trace_id_and_context_pack_reach_metadata(self):
+        """`trace_id`/`context_pack` are accepted by the request builder but
+        must actually reach the upstream `/v1/responses` call — the pinned
+        Gateway's only strict-schema slot for opaque caller context is the
+        `metadata: Record<string,string>` field."""
+        provider = _make_provider()
+        captured = {}
+
+        def fake_urlopen(req, timeout=None):
+            captured["body"] = json.loads(req.data.decode("utf-8"))
+            return _FakeSSEResponse(_answer_events("ok"))
+
+        with patch("urllib.request.urlopen", fake_urlopen):
+            list(
+                provider.stream(
+                    "hi",
+                    operator_id="op-1",
+                    trace_id="trace-123",
+                    context_pack={"context_pack_id": "ctx-1"},
+                )
+            )
+        metadata = captured["body"]["metadata"]
+        assert metadata["trace_id"] == "trace-123"
+        assert json.loads(metadata["context_pack"]) == {"context_pack_id": "ctx-1"}
+
+    def test_attachments_are_normalized_into_input_content_parts(self):
+        """A caller-supplied Chat-Completions-style attachment must be
+        converted into the pinned Gateway's `input_image` content part and
+        attached to the trailing user message, not silently dropped."""
+        provider = _make_provider()
+        captured = {}
+
+        def fake_urlopen(req, timeout=None):
+            captured["body"] = json.loads(req.data.decode("utf-8"))
+            return _FakeSSEResponse(_answer_events("ok"))
+
+        with patch("urllib.request.urlopen", fake_urlopen):
+            list(
+                provider.stream(
+                    "describe this",
+                    operator_id="op-1",
+                    attachments=[
+                        {"type": "image_url", "image_url": {"url": "data:image/png;base64,QUJD"}},
+                    ],
+                )
+            )
+        input_list = captured["body"]["input"]
+        assert len(input_list) == 1
+        message = input_list[0]
+        assert message["type"] == "message"
+        assert message["role"] == "user"
+        content = message["content"]
+        assert {"type": "input_text", "text": "describe this"} in content
+        assert {
+            "type": "input_image",
+            "source": {"type": "base64", "media_type": "image/png", "data": "QUJD"},
+        } in content
+
+    def test_attachments_attach_to_trailing_message_with_history(self):
+        provider = _make_provider()
+        captured = {}
+
+        def fake_urlopen(req, timeout=None):
+            captured["body"] = json.loads(req.data.decode("utf-8"))
+            return _FakeSSEResponse(_answer_events("ok"))
+
+        history = [{"role": "user", "content": "first turn"}]
+        with patch("urllib.request.urlopen", fake_urlopen):
+            list(
+                provider.stream(
+                    "second turn",
+                    operator_id="op-1",
+                    messages=history,
+                    attachments=[
+                        {"type": "image_url", "image_url": {"url": "https://example.com/a.png"}},
+                    ],
+                )
+            )
+        input_list = captured["body"]["input"]
+        assert len(input_list) == 2
+        trailing = input_list[-1]
+        assert trailing["role"] == "user"
+        assert {"type": "input_text", "text": "second turn"} in trailing["content"]
+        assert {"type": "input_image", "source": {"type": "url", "url": "https://example.com/a.png"}} in trailing["content"]
+
 
 class TestErrorInjectionContract:
     """Every scenario must produce exactly one terminal event: no double
@@ -361,10 +460,12 @@ class TestErrorInjectionContract:
             events = list(provider.stream("hi", operator_id="op-1"))
         terminal = [e for e in events if e["type"] in ("done", "error")]
         assert len(terminal) == 1
-        # A cancelled/incomplete stream with real partial text is reported as
-        # a real (non-fabricated) done using the salvaged partial text.
-        assert terminal[0]["type"] == "done"
-        assert terminal[0]["text"] == "partial answer"
+        # A cancelled/incomplete stream never saw an explicit completion
+        # signal ([DONE] or response.completed) — even though real partial
+        # text was salvaged, it must be reported truthfully as an
+        # interruption, never fabricated as a "done" success.
+        assert terminal[0]["type"] == "error"
+        assert terminal[0]["error_code"] == "OPENCLAW_RESPONSES_STREAM_INTERRUPTED"
 
     def test_response_failed_event_is_single_typed_error(self):
         provider = _make_provider()
@@ -415,15 +516,58 @@ class TestErrorInjectionContract:
         assert done[0]["text"] == "no done marker"
 
     def test_missing_done_marker_and_no_completed_event_still_single_terminal(self):
-        """The gateway's connection just ends. No [DONE], no response.completed."""
+        """The gateway's connection just ends. No [DONE], no response.completed.
+
+        This is indistinguishable from a dropped/cancelled connection — it
+        must fail truthfully rather than fabricate a "done" from whatever
+        text happened to arrive first."""
         provider = _make_provider()
         lines = [b'data: {"type":"response.output_text.delta","delta":"streamed"}\n']
         with patch("urllib.request.urlopen", return_value=_RawLinesResponse(lines)):
             events = list(provider.stream("hi", operator_id="op-1"))
         terminal = [e for e in events if e["type"] in ("done", "error")]
         assert len(terminal) == 1
+        assert terminal[0]["type"] == "error"
+        assert terminal[0]["error_code"] == "OPENCLAW_RESPONSES_STREAM_INTERRUPTED"
+
+    def test_done_marker_with_no_completed_event_is_accepted_terminal(self):
+        """A legitimate `[DONE]` sentinel (an explicit end-of-stream signal,
+        unlike a bare EOF) still yields the salvaged text as a real "done",
+        even when no `response.completed` event was ever seen."""
+        provider = _make_provider()
+        lines = [
+            b'data: {"type":"response.output_text.delta","delta":"streamed"}\n',
+            b"data: [DONE]\n",
+        ]
+        with patch("urllib.request.urlopen", return_value=_RawLinesResponse(lines)):
+            events = list(provider.stream("hi", operator_id="op-1"))
+        terminal = [e for e in events if e["type"] in ("done", "error")]
+        assert len(terminal) == 1
         assert terminal[0]["type"] == "done"
         assert terminal[0]["text"] == "streamed"
+
+    def test_standalone_parseable_fragment_does_not_discard_buffered_multiline_event(self):
+        """A legal multi-line event may be split such that an intermediate
+        physical line happens to parse as valid JSON *on its own* (here, a
+        bare JSON string) — this must not be mistaken for a fresh standalone
+        event that discards the still-incomplete buffered fragment before
+        them."""
+        provider = _make_provider()
+        lines = [
+            b'data: {"type":"response.output_text.done","text":\n',
+            b'data: "joined reply"\n',
+            b"data: }\n",
+            b"\n",
+            b'data: {"type":"response.completed","response":{"status":"completed"}}\n',
+            b"data: [DONE]\n",
+        ]
+        with patch("urllib.request.urlopen", return_value=_RawLinesResponse(lines)):
+            events = list(provider.stream("hi", operator_id="op-1"))
+        errors = [e for e in events if e["type"] == "error"]
+        assert not errors, errors
+        done = [e for e in events if e["type"] == "done"]
+        assert len(done) == 1
+        assert done[0]["text"] == "joined reply"
 
     def test_invoke_does_not_retry_or_swap_model_on_failure(self):
         provider = _make_provider()
@@ -563,3 +707,54 @@ class TestRealLocalHttpServerRegressions:
         # truthfully as empty, never fabricated as "completed".
         assert terminal[0]["type"] == "error"
         assert terminal[0]["error_code"] == "OPENCLAW_RESPONSES_EMPTY"
+
+    def test_newline_free_slow_drip_is_bounded_by_total_deadline(self):
+        """A per-`recv()` timeout alone never fires here: each of the twelve
+        one-byte writes, sent 30ms apart with no newline anywhere in the
+        stream, individually arrives comfortably inside any single read's
+        timeout. Only checking the *total* elapsed time before every single
+        byte — not only after a whole line finally completes — bounds the
+        real elapsed time close to the requested budget."""
+        import http.server
+        import threading
+        import time as _time
+
+        class _Handler(http.server.BaseHTTPRequestHandler):
+            def log_message(self, *_a):
+                pass
+
+            def do_POST(self):  # noqa: N802
+                length = int(self.headers.get("Content-Length", "0"))
+                self.rfile.read(length)
+                self.send_response(200)
+                self.send_header("Content-Type", "text/event-stream")
+                self.end_headers()
+                for _ in range(12):
+                    try:
+                        self.wfile.write(b"x")
+                        self.wfile.flush()
+                    except (BrokenPipeError, ConnectionError):
+                        return
+                    _time.sleep(0.03)
+
+        server = http.server.HTTPServer(("127.0.0.1", 0), _Handler)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        try:
+            provider = AssistantOpenClawProvider(
+                gateway_url=f"ws://127.0.0.1:{server.server_address[1]}",
+                agent_id="main",
+                token="test-token",
+                _which_func=lambda _: None,
+                _run_func=_forbidden_run,
+            )
+            started = _time.monotonic()
+            events = list(provider.stream("hi", operator_id="op-1", timeout_seconds=0.1))
+            elapsed = _time.monotonic() - started
+        finally:
+            server.shutdown()
+            server.server_close()
+        assert elapsed < 0.3, f"total streaming time {elapsed:.3f}s was not bounded near the 0.1s budget"
+        assert len(events) == 1
+        assert events[0]["type"] == "error"
+        assert events[0]["error_code"] == "OPENCLAW_RESPONSES_TIMEOUT"
