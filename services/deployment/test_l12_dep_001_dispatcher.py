@@ -301,7 +301,7 @@ def test_approved_paper_command_reaches_terminal_plan_and_binding(
         encoding="utf-8",
     )
 
-    with approved_registry_owners(owner_env) as owners, monkeypatch.context() as environment:
+    with approved_registry_owners(owner_env, execution_bundle=True) as owners, monkeypatch.context() as environment:
         registry_id = owners["entry"]["registry_id"]
         approval_id = owners["decision"]["decision_id"]
         environment.setenv("DEPLOYMENT_REGISTRY_BASE_URL", owners["registry_url"])
@@ -399,32 +399,46 @@ def test_approved_paper_command_reaches_terminal_plan_and_binding(
                 )
 
             def _authority_report(*, saga, plan, **_kwargs):
-                return {
-                    "status": "passed",
-                    "authority": "canonical_deployment_registry_governance_capital",
-                    "plan_id": plan["plan_id"],
-                    "plan_status": plan["status"],
-                    "target_stage": plan["target_stage"],
-                    "artifact_id": plan["artifact_id"],
-                    "artifact_version": plan["artifact_version"],
-                    "strategy_id": plan["strategy_id"],
-                    "approval_decision_id": plan["approval_decision_id"],
-                    "capital_pool_id": plan["capital_pool_id"],
-                    "sponsor_persona_id": plan["sponsor_persona_id"],
-                    "persona_capital_binding_id": "pcb-l12-dep",
-                    "persona_capital_binding_status": "active",
-                    "allowed_deployment_scope": "paper",
-                    "deployment_plan_current_stage": plan["current_stage"],
-                    "deployment_plan_binding_id": plan.get("binding_id"),
-                    "deployment_plan_runtime_lifecycle": {},
-                    "deployment_plan_sha256": "sha256:" + "0" * 64,
-                    "deployment_plan_authority_sha256": "sha256:" + "a" * 64,
-                    "registry_entry_sha256": "sha256:" + "1" * 64,
-                    "approval_decision_sha256": "sha256:" + "2" * 64,
-                    "capital_pool_sha256": "sha256:" + "3" * 64,
-                    "capital_admissibility_sha256": "sha256:" + "4" * 64,
-                    "persona_capital_binding_sha256": "sha256:" + "5" * 64,
-                }
+                # Actual shared Runtime verifier; only capital/lifecycle reads are
+                # isolated doubles. Registry and Governance use scoped HTTP reads.
+                from services.governance.approval_authority import ApprovalReader
+                from importlib import import_module
+                from urllib.parse import urlparse
+                import httpx
+                authority = import_module('services.runtime-manager.deploy_authority')
+                pool = json.loads((governance_dir / 'capital_pools.json').read_text())[0]
+                binding = json.loads((governance_dir / 'persona_capital_bindings.json').read_text())[0]
+
+                def fetch(url, timeout):
+                    if url.startswith(owners['registry_url']):
+                        response = httpx.get(url, headers={'Authorization': 'Bearer '+owners['registry_token']}, timeout=timeout)
+                        assert response.status_code == 200, response.text
+                        return response.json()
+                    path = urlparse(url).path
+                    if path.startswith('/api/deployment/plans/'):
+                        return _response(client.get(path))
+                    if path.startswith('/api/capital-pools/'):
+                        return pool
+                    if path == '/api/bindings/admissibility':
+                        return dict(persona_id=binding['persona_id'], capital_pool_id=binding['capital_pool_id'],
+                                    target_stage='paper', permitted=True, pool_status=pool['status'],
+                                    single_runtime_enforced=True, binding_id=binding['binding_id'],
+                                    binding_status=binding['status'], allowed_deployment_scope='paper')
+                    if path.startswith('/api/bindings/'):
+                        return binding
+                    raise AssertionError(url)
+
+                return authority.verify_deploy_authorities(
+                    dict(plan_id=plan['plan_id'], plan_status=plan['status'], target_stage=plan['target_stage'],
+                         artifact_id=plan['artifact_id'], artifact_version=plan['artifact_version'],
+                         strategy_id=plan['strategy_id'], approval_decision_id=plan['approval_decision_id'],
+                         capital_pool_id=plan['capital_pool_id'], sponsor_persona_id=plan['sponsor_persona_id'],
+                         persona_capital_binding_id=binding['binding_id'], persona_capital_binding_status='active',
+                         allowed_deployment_scope='paper'),
+                    deployment_base_url='http://deployment.test', registry_base_url=owners['registry_url'],
+                    governance_base_url=owners['governance_url'], capital_base_url='http://capital.test',
+                    fetch_json=fetch, approval_reader=ApprovalReader(base_url=owners['governance_url'],
+                                                                  service_token=owners['governance_token']))
 
             def _unexpected_urlopen(request, *_args, **_kwargs):
                 raise RuntimeError(f"unexpected outbound request: {request.full_url}")
@@ -568,5 +582,25 @@ def test_approved_paper_command_reaches_terminal_plan_and_binding(
             assert capital_readback["active_runtime_binding_ids"] == [
                 projection["runtime_binding_id"]
             ]
+            # A historical Registry APPROVED state must not authorize another
+            # plan or dispatch after Governance revokes the cited decision.
+            next_request = json.loads(created.request.content)
+            next_request['plan_id'] = 'plan-l12-revocation'
+            queued = client.post('/api/deployment/plans', json=next_request)
+            assert queued.status_code == 201, queued.text
+            assert _authority_report(saga={}, plan=queued.json())['status'] == 'passed'
+            before_outbox = client.get('/api/deployment/outbox').json()
+            from services.governance.test_approval_authority_postgres import post
+            revoked = post(owners['governance_url'], '/'+approval_id+'/revoke', owner_env,
+                           dict(expected_version=3, actor_id='synthetic-reviewer', actor_role='risk_owner'), roles=['risk_owner'])
+            assert revoked.status_code == 200, revoked.text
+            authority_module = importlib.import_module('services.runtime-manager.deploy_authority')
+            with pytest.raises(authority_module.DeployAuthorityError, match='governance authority mismatch'):
+                _authority_report(saga={}, plan=queued.json())
+            rejected = client.post('/api/deployment/plans/plan-l12-revocation/dispatch', json={})
+            assert rejected.status_code == 400, rejected.text
+            assert client.get('/api/deployment/outbox').json() == before_outbox
+            next_request['plan_id'] = 'plan-l12-after-revocation'
+            assert client.post('/api/deployment/plans', json=next_request).status_code == 422
         finally:
             client.close()

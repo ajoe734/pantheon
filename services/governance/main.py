@@ -215,40 +215,6 @@ def _to_response(d: ApprovalDecision) -> ApprovalDecisionResponse:
     return ApprovalDecisionResponse(**d.to_dict())
 
 
-def _emit(
-    event_type: str,
-    decision: ApprovalDecision,
-    detail: Optional[Dict[str, Any]] = None,
-) -> None:
-    try:
-        audit_store.append_event(
-            event_type=event_type,
-            decision_id=decision.decision_id,
-            actor_id=decision.actor_id,
-            actor_role=(
-                decision.actor_role.value
-                if isinstance(decision.actor_role, ActorRole)
-                else decision.actor_role
-            ),
-            target_type=(
-                decision.target_type.value
-                if isinstance(decision.target_type, TargetType)
-                else decision.target_type
-            ),
-            target_id=decision.target_id,
-            detail=detail,
-        )
-    except Exception as exc:
-        log.warning("Audit write failed: %s", exc)
-
-
-def _get_or_404(decision_id: str) -> ApprovalDecision:
-    decision = store.get(decision_id)
-    if not decision:
-        raise HTTPException(status_code=404, detail=f"Decision '{decision_id}' not found")
-    return decision
-
-
 def _record_or_404(
     record_store: GovernanceRecordStore,
     record_id: str,

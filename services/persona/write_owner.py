@@ -1465,7 +1465,8 @@ def build_training_target_approval_verifier() -> TrainingTargetApprovalVerifier 
     if not base_url or not service_token:
         return None
     return HttpGovernanceApprovalVerifier(
-        base_url=base_url, service_token=service_token
+        base_url=base_url, service_token=service_token,
+        timeout_seconds=float(os.getenv("PERSONA_GOVERNANCE_TIMEOUT_SECONDS", "5")),
     )
 
 

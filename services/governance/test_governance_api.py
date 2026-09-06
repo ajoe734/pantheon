@@ -158,7 +158,11 @@ def test_authz_lesson_decide_and_merge():
 
 def test_propose_returns_proposed_state():
     did = uid()
-    r = client.post("/api/governance/approvals", json={"expected_version": 0, "expires_at": "2099-01-01T00:00:00Z", "tenant_id": "synthetic-tenant", "owner_user_id": "synthetic-reviewer", 
+    r = client.post("/api/governance/approvals", json={
+        "expected_version": 0,
+        "expires_at": "2099-01-01T00:00:00Z",
+        "tenant_id": "synthetic-tenant",
+        "owner_user_id": "synthetic-reviewer",
         "decision_id":    did,
         "target_type":    "registry_entry",
         "target_id":      "art-001",
@@ -174,7 +178,9 @@ def test_propose_returns_proposed_state():
 
 def test_propose_accepts_strategy_workshop_target():
     did = uid()
-    r = client.post("/api/governance/approvals", json={"expected_version": 0, "expires_at": "2099-01-01T00:00:00Z", 
+    r = client.post("/api/governance/approvals", json={
+        "expected_version": 0,
+        "expires_at": "2099-01-01T00:00:00Z",
         "decision_id": did,
         "target_type": "strategy_workshop",
         "target_id": "workshop-public-api",
@@ -189,7 +195,11 @@ def test_propose_accepts_strategy_workshop_target():
 
 
 def test_propose_rejects_noncanonical_workshop_alias():
-    r = client.post("/api/governance/approvals", json={"expected_version": 0, "expires_at": "2099-01-01T00:00:00Z", "tenant_id": "synthetic-tenant", "owner_user_id": "synthetic-reviewer", 
+    r = client.post("/api/governance/approvals", json={
+        "expected_version": 0,
+        "expires_at": "2099-01-01T00:00:00Z",
+        "tenant_id": "synthetic-tenant",
+        "owner_user_id": "synthetic-reviewer",
         "decision_id": uid(),
         "target_type": "workshop",
         "target_id": "workshop-alias",
@@ -200,7 +210,11 @@ def test_propose_rejects_noncanonical_workshop_alias():
 
 
 def test_propose_autogenerates_decision_id():
-    r = client.post("/api/governance/approvals", json={"expected_version": 0, "expires_at": "2099-01-01T00:00:00Z", "tenant_id": "synthetic-tenant", "owner_user_id": "synthetic-reviewer", 
+    r = client.post("/api/governance/approvals", json={
+        "expected_version": 0,
+        "expires_at": "2099-01-01T00:00:00Z",
+        "tenant_id": "synthetic-tenant",
+        "owner_user_id": "synthetic-reviewer",
         "target_type":    "strategy_spec",
         "target_id":      "art-auto",
         "target_version": "v1",
@@ -227,7 +241,11 @@ def test_duplicate_decision_id_rejected():
 
 def test_get_returns_decision():
     did = uid()
-    client.post("/api/governance/approvals", json={"expected_version": 0, "expires_at": "2099-01-01T00:00:00Z", "tenant_id": "synthetic-tenant", "owner_user_id": "synthetic-reviewer", 
+    client.post("/api/governance/approvals", json={
+        "expected_version": 0,
+        "expires_at": "2099-01-01T00:00:00Z",
+        "tenant_id": "synthetic-tenant",
+        "owner_user_id": "synthetic-reviewer",
         "decision_id":    did,
         "target_type":    "model_artifact",
         "target_id":      "m-1",
@@ -246,7 +264,11 @@ def test_get_not_found():
 def test_list_filter_by_target_id():
     target_id = f"art-list-{uuid.uuid4().hex[:6]}"
     for i in range(3):
-        client.post("/api/governance/approvals", json={"expected_version": 0, "expires_at": "2099-01-01T00:00:00Z", "tenant_id": "synthetic-tenant", "owner_user_id": "synthetic-reviewer", 
+        client.post("/api/governance/approvals", json={
+            "expected_version": 0,
+            "expires_at": "2099-01-01T00:00:00Z",
+            "tenant_id": "synthetic-tenant",
+            "owner_user_id": "synthetic-reviewer",
             "target_type":    "strategy_spec",
             "target_id":      target_id,
             "target_version": f"v{i}",
@@ -258,7 +280,11 @@ def test_list_filter_by_target_id():
 
 def test_list_filter_by_state():
     did = uid()
-    client.post("/api/governance/approvals", json={"expected_version": 0, "expires_at": "2099-01-01T00:00:00Z", "tenant_id": "synthetic-tenant", "owner_user_id": "synthetic-reviewer", 
+    client.post("/api/governance/approvals", json={
+        "expected_version": 0,
+        "expires_at": "2099-01-01T00:00:00Z",
+        "tenant_id": "synthetic-tenant",
+        "owner_user_id": "synthetic-reviewer",
         "decision_id":    did,
         "target_type":    "model_artifact",
         "target_id":      "m-state",
@@ -278,7 +304,11 @@ def test_list_filter_by_state():
 def test_full_lifecycle_approved():
     did = uid()
     # Propose
-    client.post("/api/governance/approvals", json={"expected_version": 0, "expires_at": "2099-01-01T00:00:00Z", "tenant_id": "synthetic-tenant", "owner_user_id": "synthetic-reviewer", 
+    client.post("/api/governance/approvals", json={
+        "expected_version": 0,
+        "expires_at": "2099-01-01T00:00:00Z",
+        "tenant_id": "synthetic-tenant",
+        "owner_user_id": "synthetic-reviewer",
         "decision_id":    did,
         "target_type":    "model_artifact",
         "target_id":      "m-lc",
@@ -287,7 +317,8 @@ def test_full_lifecycle_approved():
     }, headers=_signed_headers(actor='synthetic-reviewer', role='approval_proposer', tenant='synthetic-tenant'))
 
     # Accept review — risk_owner is authorized for medium
-    r = client.post(f"/api/governance/approvals/{did}/review", json={"expected_version": 1, 
+    r = client.post(f"/api/governance/approvals/{did}/review", json={
+        "expected_version": 1,
         "actor_role": "risk_owner",
         "actor_id":   "risk-owner-1",
     }, headers=_signed_headers(actor="risk-owner-1", role="risk_owner", tenant='synthetic-tenant'))
@@ -295,7 +326,8 @@ def test_full_lifecycle_approved():
     assert r.json()["decision_state"] == "under_review"
 
     # Decide — risk_owner is authorized for medium
-    r = client.post(f"/api/governance/approvals/{did}/decide", json={"expected_version": 2, 
+    r = client.post(f"/api/governance/approvals/{did}/decide", json={
+        "expected_version": 2,
         "actor_role": "risk_owner",
         "outcome":    "approved",
         "rationale":  "All checks passed",
@@ -310,18 +342,24 @@ def test_full_lifecycle_approved():
 
 def test_approved_with_conditions():
     did = uid()
-    client.post("/api/governance/approvals", json={"expected_version": 0, "expires_at": "2099-01-01T00:00:00Z", "tenant_id": "synthetic-tenant", "owner_user_id": "synthetic-reviewer", 
+    client.post("/api/governance/approvals", json={
+        "expected_version": 0,
+        "expires_at": "2099-01-01T00:00:00Z",
+        "tenant_id": "synthetic-tenant",
+        "owner_user_id": "synthetic-reviewer",
         "decision_id":    did,
         "target_type":    "strategy_spec",
         "target_id":      "s-cond",
         "target_version": "v1",
         "risk_level":     "low",
     }, headers=_signed_headers(actor='synthetic-reviewer', role='approval_proposer', tenant='synthetic-tenant'))
-    client.post(f"/api/governance/approvals/{did}/review", json={"expected_version": 1, 
+    client.post(f"/api/governance/approvals/{did}/review", json={
+        "expected_version": 1,
         "actor_role": "governance_reviewer",
         "actor_id":   "rev-1",
     }, headers=_signed_headers(actor="rev-1", role="governance_reviewer", tenant='synthetic-tenant'))
-    r = client.post(f"/api/governance/approvals/{did}/decide", json={"expected_version": 2, 
+    r = client.post(f"/api/governance/approvals/{did}/decide", json={
+        "expected_version": 2,
         "actor_role": "governance_reviewer",
         "outcome":    "approved_with_conditions",
         "rationale":  "Conditional approval",
@@ -334,18 +372,24 @@ def test_approved_with_conditions():
 
 def test_rejected_decision():
     did = uid()
-    client.post("/api/governance/approvals", json={"expected_version": 0, "expires_at": "2099-01-01T00:00:00Z", "tenant_id": "synthetic-tenant", "owner_user_id": "synthetic-reviewer", 
+    client.post("/api/governance/approvals", json={
+        "expected_version": 0,
+        "expires_at": "2099-01-01T00:00:00Z",
+        "tenant_id": "synthetic-tenant",
+        "owner_user_id": "synthetic-reviewer",
         "decision_id":    did,
         "target_type":    "registry_entry",
         "target_id":      "art-rej",
         "target_version": "v1",
         "risk_level":     "low",
     }, headers=_signed_headers(actor='synthetic-reviewer', role='approval_proposer', tenant='synthetic-tenant'))
-    client.post(f"/api/governance/approvals/{did}/review", json={"expected_version": 1, 
+    client.post(f"/api/governance/approvals/{did}/review", json={
+        "expected_version": 1,
         "actor_role": "governance_reviewer",
         "actor_id":   "rev-1",
     }, headers=_signed_headers(actor="rev-1", role="governance_reviewer", tenant='synthetic-tenant'))
-    r = client.post(f"/api/governance/approvals/{did}/decide", json={"expected_version": 2, 
+    r = client.post(f"/api/governance/approvals/{did}/decide", json={
+        "expected_version": 2,
         "actor_role": "governance_reviewer",
         "outcome":    "rejected",
         "rationale":  "Fails OOS validation",
@@ -362,7 +406,11 @@ def test_rejected_decision():
 def test_unauthorized_decide_role_rejected():
     """A role not in the write-authority matrix for the risk level must get 400."""
     did = uid()
-    client.post("/api/governance/approvals", json={"expected_version": 0, "expires_at": "2099-01-01T00:00:00Z", "tenant_id": "synthetic-tenant", "owner_user_id": "synthetic-reviewer", 
+    client.post("/api/governance/approvals", json={
+        "expected_version": 0,
+        "expires_at": "2099-01-01T00:00:00Z",
+        "tenant_id": "synthetic-tenant",
+        "owner_user_id": "synthetic-reviewer",
         "decision_id":    did,
         "target_type":    "registry_entry",
         "target_id":      "art-decide-unauth",
@@ -370,12 +418,14 @@ def test_unauthorized_decide_role_rejected():
         "risk_level":     "high",  # requires risk_owner or governance_committee
     }, headers=_signed_headers(actor='synthetic-reviewer', role='approval_proposer', tenant='synthetic-tenant'))
     # Accept review with an authorized role so we reach under_review
-    client.post(f"/api/governance/approvals/{did}/review", json={"expected_version": 1, 
+    client.post(f"/api/governance/approvals/{did}/review", json={
+        "expected_version": 1,
         "actor_role": "risk_owner",
         "actor_id":   "ro-1",
     }, headers=_signed_headers(actor="ro-1", role="risk_owner", tenant='synthetic-tenant'))
     # governance_reviewer is NOT authorized to decide at high risk
-    r = client.post(f"/api/governance/approvals/{did}/decide", json={"expected_version": 2, 
+    r = client.post(f"/api/governance/approvals/{did}/decide", json={
+        "expected_version": 2,
         "actor_role": "governance_reviewer",
         "outcome":    "approved",
         "rationale":  "Should be rejected",
@@ -386,7 +436,11 @@ def test_unauthorized_decide_role_rejected():
 
 def test_unauthorized_role_for_high_risk_rejected():
     did = uid()
-    client.post("/api/governance/approvals", json={"expected_version": 0, "expires_at": "2099-01-01T00:00:00Z", "tenant_id": "synthetic-tenant", "owner_user_id": "synthetic-reviewer", 
+    client.post("/api/governance/approvals", json={
+        "expected_version": 0,
+        "expires_at": "2099-01-01T00:00:00Z",
+        "tenant_id": "synthetic-tenant",
+        "owner_user_id": "synthetic-reviewer",
         "decision_id":    did,
         "target_type":    "registry_entry",
         "target_id":      "art-auth",
@@ -394,7 +448,8 @@ def test_unauthorized_role_for_high_risk_rejected():
         "risk_level":     "high",  # requires risk_owner or governance_committee
     }, headers=_signed_headers(actor='synthetic-reviewer', role='approval_proposer', tenant='synthetic-tenant'))
     # governance_reviewer is not authorized at high risk level
-    r = client.post(f"/api/governance/approvals/{did}/review", json={"expected_version": 1, 
+    r = client.post(f"/api/governance/approvals/{did}/review", json={
+        "expected_version": 1,
         "actor_role": "governance_reviewer",
         "actor_id":   "rev-1",
     }, headers=_signed_headers(actor="rev-1", role="governance_reviewer", tenant='synthetic-tenant'))
@@ -403,7 +458,11 @@ def test_unauthorized_role_for_high_risk_rejected():
 
 def test_unauthorized_role_for_critical_rejected():
     did = uid()
-    client.post("/api/governance/approvals", json={"expected_version": 0, "expires_at": "2099-01-01T00:00:00Z", "tenant_id": "synthetic-tenant", "owner_user_id": "synthetic-reviewer", 
+    client.post("/api/governance/approvals", json={
+        "expected_version": 0,
+        "expires_at": "2099-01-01T00:00:00Z",
+        "tenant_id": "synthetic-tenant",
+        "owner_user_id": "synthetic-reviewer",
         "decision_id":    did,
         "target_type":    "evolution_proposal",
         "target_id":      "evo-crit",
@@ -411,7 +470,8 @@ def test_unauthorized_role_for_critical_rejected():
         "risk_level":     "critical",  # requires governance_committee only
     }, headers=_signed_headers(actor='synthetic-reviewer', role='approval_proposer', tenant='synthetic-tenant'))
     # risk_owner is not authorized at critical
-    r = client.post(f"/api/governance/approvals/{did}/review", json={"expected_version": 1, 
+    r = client.post(f"/api/governance/approvals/{did}/review", json={
+        "expected_version": 1,
         "actor_role": "risk_owner",
         "actor_id":   "ro-1",
     }, headers=_signed_headers(actor="ro-1", role="risk_owner", tenant='synthetic-tenant'))
@@ -420,14 +480,19 @@ def test_unauthorized_role_for_critical_rejected():
 
 def test_governance_committee_authorized_for_critical():
     did = uid()
-    client.post("/api/governance/approvals", json={"expected_version": 0, "expires_at": "2099-01-01T00:00:00Z", "tenant_id": "synthetic-tenant", "owner_user_id": "synthetic-reviewer", 
+    client.post("/api/governance/approvals", json={
+        "expected_version": 0,
+        "expires_at": "2099-01-01T00:00:00Z",
+        "tenant_id": "synthetic-tenant",
+        "owner_user_id": "synthetic-reviewer",
         "decision_id":    did,
         "target_type":    "evolution_proposal",
         "target_id":      "evo-crit2",
         "target_version": "v1",
         "risk_level":     "critical",
     }, headers=_signed_headers(actor='synthetic-reviewer', role='approval_proposer', tenant='synthetic-tenant'))
-    r = client.post(f"/api/governance/approvals/{did}/review", json={"expected_version": 1, 
+    r = client.post(f"/api/governance/approvals/{did}/review", json={
+        "expected_version": 1,
         "actor_role": "governance_committee",
         "actor_id":   "gc-1",
     }, headers=_signed_headers(actor="gc-1", role="governance_committee", tenant='synthetic-tenant'))
@@ -440,18 +505,24 @@ def test_governance_committee_authorized_for_critical():
 
 def _make_decided(target_id: str = "m-rev") -> str:
     did = uid()
-    client.post("/api/governance/approvals", json={"expected_version": 0, "expires_at": "2099-01-01T00:00:00Z", "tenant_id": "synthetic-tenant", "owner_user_id": "synthetic-reviewer", 
+    client.post("/api/governance/approvals", json={
+        "expected_version": 0,
+        "expires_at": "2099-01-01T00:00:00Z",
+        "tenant_id": "synthetic-tenant",
+        "owner_user_id": "synthetic-reviewer",
         "decision_id":    did,
         "target_type":    "model_artifact",
         "target_id":      target_id,
         "target_version": "v1",
         "risk_level":     "low",
     }, headers=_signed_headers(actor='synthetic-reviewer', role='approval_proposer', tenant='synthetic-tenant'))
-    client.post(f"/api/governance/approvals/{did}/review", json={"expected_version": 1, 
+    client.post(f"/api/governance/approvals/{did}/review", json={
+        "expected_version": 1,
         "actor_role": "governance_reviewer",
         "actor_id":   "rev-1",
     }, headers=_signed_headers(actor="rev-1", role="governance_reviewer", tenant='synthetic-tenant'))
-    client.post(f"/api/governance/approvals/{did}/decide", json={"expected_version": 2, 
+    client.post(f"/api/governance/approvals/{did}/decide", json={
+        "expected_version": 2,
         "actor_role": "governance_reviewer",
         "outcome":    "approved",
         "rationale":  "OK",
@@ -462,7 +533,8 @@ def _make_decided(target_id: str = "m-rev") -> str:
 
 def test_revoke_by_risk_owner():
     did = _make_decided("m-rev-ro")
-    r = client.post(f"/api/governance/approvals/{did}/revoke", json={"expected_version": 3, 
+    r = client.post(f"/api/governance/approvals/{did}/revoke", json={
+        "expected_version": 3,
         "actor_role": "risk_owner",
         "actor_id":   "risk-1",
     }, headers=_signed_headers(actor="risk-1", role="risk_owner", tenant='synthetic-tenant'))
@@ -472,7 +544,8 @@ def test_revoke_by_risk_owner():
 
 def test_revoke_by_unauthorized_role_rejected():
     did = _make_decided("m-rev-unauth")
-    r = client.post(f"/api/governance/approvals/{did}/revoke", json={"expected_version": 3, 
+    r = client.post(f"/api/governance/approvals/{did}/revoke", json={
+        "expected_version": 3,
         "actor_role": "governance_reviewer",  # not in REVOKE_AUTHORITY
         "actor_id":   "rev-1",
     }, headers=_signed_headers(actor="rev-1", role="governance_reviewer", tenant='synthetic-tenant'))
@@ -486,17 +559,23 @@ def test_revoke_by_unauthorized_role_rejected():
 def test_latest_approved_returns_correct_decision():
     target_id = f"art-la-{uuid.uuid4().hex[:6]}"
     did = uid()
-    client.post("/api/governance/approvals", json={"expected_version": 0, "expires_at": "2099-01-01T00:00:00Z", "tenant_id": "synthetic-tenant", "owner_user_id": "synthetic-reviewer", 
+    client.post("/api/governance/approvals", json={
+        "expected_version": 0,
+        "expires_at": "2099-01-01T00:00:00Z",
+        "tenant_id": "synthetic-tenant",
+        "owner_user_id": "synthetic-reviewer",
         "decision_id":    did,
         "target_type":    "registry_entry",
         "target_id":      target_id,
         "target_version": "v1",
     }, headers=_signed_headers(actor='synthetic-reviewer', role='approval_proposer', tenant='synthetic-tenant'))
-    client.post(f"/api/governance/approvals/{did}/review", json={"expected_version": 1, 
+    client.post(f"/api/governance/approvals/{did}/review", json={
+        "expected_version": 1,
         "actor_role": "governance_reviewer",
         "actor_id":   "rev-1",
     }, headers=_signed_headers(actor="rev-1", role="governance_reviewer", tenant='synthetic-tenant'))
-    client.post(f"/api/governance/approvals/{did}/decide", json={"expected_version": 2, 
+    client.post(f"/api/governance/approvals/{did}/decide", json={
+        "expected_version": 2,
         "actor_role": "governance_reviewer",
         "outcome":    "approved",
         "rationale":  "Pass",
@@ -525,7 +604,11 @@ def test_latest_approved_returns_null_when_none():
 
 def test_audit_log_records_events():
     did = uid()
-    client.post("/api/governance/approvals", json={"expected_version": 0, "expires_at": "2099-01-01T00:00:00Z", "tenant_id": "synthetic-tenant", "owner_user_id": "synthetic-reviewer", 
+    client.post("/api/governance/approvals", json={
+        "expected_version": 0,
+        "expires_at": "2099-01-01T00:00:00Z",
+        "tenant_id": "synthetic-tenant",
+        "owner_user_id": "synthetic-reviewer",
         "decision_id":    did,
         "target_type":    "registry_entry",
         "target_id":      "art-aud",
@@ -541,18 +624,24 @@ def test_audit_log_records_events():
 def test_audit_log_grows_through_lifecycle():
     did = uid()
     target_id = f"art-aud-lc-{uuid.uuid4().hex[:4]}"
-    client.post("/api/governance/approvals", json={"expected_version": 0, "expires_at": "2099-01-01T00:00:00Z", "tenant_id": "synthetic-tenant", "owner_user_id": "synthetic-reviewer", 
+    client.post("/api/governance/approvals", json={
+        "expected_version": 0,
+        "expires_at": "2099-01-01T00:00:00Z",
+        "tenant_id": "synthetic-tenant",
+        "owner_user_id": "synthetic-reviewer",
         "decision_id":    did,
         "target_type":    "model_artifact",
         "target_id":      target_id,
         "target_version": "v1",
         "risk_level":     "low",
     }, headers=_signed_headers(actor='synthetic-reviewer', role='approval_proposer', tenant='synthetic-tenant'))
-    client.post(f"/api/governance/approvals/{did}/review", json={"expected_version": 1, 
+    client.post(f"/api/governance/approvals/{did}/review", json={
+        "expected_version": 1,
         "actor_role": "governance_reviewer",
         "actor_id":   "rev-1",
     }, headers=_signed_headers(actor="rev-1", role="governance_reviewer", tenant='synthetic-tenant'))
-    client.post(f"/api/governance/approvals/{did}/decide", json={"expected_version": 2, 
+    client.post(f"/api/governance/approvals/{did}/decide", json={
+        "expected_version": 2,
         "actor_role": "governance_reviewer",
         "outcome":    "approved",
         "rationale":  "OK",
@@ -572,14 +661,19 @@ def test_audit_log_grows_through_lifecycle():
 
 def test_decide_from_proposed_raises_400():
     did = uid()
-    client.post("/api/governance/approvals", json={"expected_version": 0, "expires_at": "2099-01-01T00:00:00Z", "tenant_id": "synthetic-tenant", "owner_user_id": "synthetic-reviewer", 
+    client.post("/api/governance/approvals", json={
+        "expected_version": 0,
+        "expires_at": "2099-01-01T00:00:00Z",
+        "tenant_id": "synthetic-tenant",
+        "owner_user_id": "synthetic-reviewer",
         "decision_id":    did,
         "target_type":    "registry_entry",
         "target_id":      "art-tr",
         "target_version": "v1",
     }, headers=_signed_headers(actor='synthetic-reviewer', role='approval_proposer', tenant='synthetic-tenant'))
     # Skip the review step — decide directly from proposed (state check must reject)
-    r = client.post(f"/api/governance/approvals/{did}/decide", json={"expected_version": 1, 
+    r = client.post(f"/api/governance/approvals/{did}/decide", json={
+        "expected_version": 1,
         "actor_role": "governance_reviewer",
         "outcome":    "approved",
         "rationale":  "Should fail",
@@ -590,18 +684,24 @@ def test_decide_from_proposed_raises_400():
 
 def test_review_from_under_review_raises_400():
     did = uid()
-    client.post("/api/governance/approvals", json={"expected_version": 0, "expires_at": "2099-01-01T00:00:00Z", "tenant_id": "synthetic-tenant", "owner_user_id": "synthetic-reviewer", 
+    client.post("/api/governance/approvals", json={
+        "expected_version": 0,
+        "expires_at": "2099-01-01T00:00:00Z",
+        "tenant_id": "synthetic-tenant",
+        "owner_user_id": "synthetic-reviewer",
         "decision_id":    did,
         "target_type":    "registry_entry",
         "target_id":      "art-tr2",
         "target_version": "v1",
     }, headers=_signed_headers(actor='synthetic-reviewer', role='approval_proposer', tenant='synthetic-tenant'))
-    client.post(f"/api/governance/approvals/{did}/review", json={"expected_version": 1, 
+    client.post(f"/api/governance/approvals/{did}/review", json={
+        "expected_version": 1,
         "actor_role": "governance_reviewer",
         "actor_id":   "rev-1",
     }, headers=_signed_headers(actor="rev-1", role="governance_reviewer", tenant='synthetic-tenant'))
     # Second review call should fail
-    r = client.post(f"/api/governance/approvals/{did}/review", json={"expected_version": 2, 
+    r = client.post(f"/api/governance/approvals/{did}/review", json={
+        "expected_version": 2,
         "actor_role": "governance_reviewer",
         "actor_id":   "rev-1",
     }, headers=_signed_headers(actor="rev-1", role="governance_reviewer", tenant='synthetic-tenant'))
@@ -610,19 +710,25 @@ def test_review_from_under_review_raises_400():
 
 def test_decide_records_actual_approver_identity_and_audit():
     did = uid()
-    client.post("/api/governance/approvals", json={"expected_version": 0, "expires_at": "2099-01-01T00:00:00Z", "tenant_id": "synthetic-tenant", "owner_user_id": "synthetic-reviewer", 
+    client.post("/api/governance/approvals", json={
+        "expected_version": 0,
+        "expires_at": "2099-01-01T00:00:00Z",
+        "tenant_id": "synthetic-tenant",
+        "owner_user_id": "synthetic-reviewer",
         "decision_id":    did,
         "target_type":    "evolution_proposal",
         "target_id":      "evo-medium-1",
         "target_version": "v1",
         "risk_level":     "medium",
     }, headers=_signed_headers(actor='synthetic-reviewer', role='approval_proposer', tenant='synthetic-tenant'))
-    client.post(f"/api/governance/approvals/{did}/review", json={"expected_version": 1, 
+    client.post(f"/api/governance/approvals/{did}/review", json={
+        "expected_version": 1,
         "actor_role": "governance_reviewer",
         "actor_id":   "reviewer-1",
     }, headers=_signed_headers(actor="reviewer-1", role="governance_reviewer", tenant='synthetic-tenant'))
 
-    r = client.post(f"/api/governance/approvals/{did}/decide", json={"expected_version": 2, 
+    r = client.post(f"/api/governance/approvals/{did}/decide", json={
+        "expected_version": 2,
         "actor_role": "risk_owner",
         "actor_id":   "risk-owner-2",
         "outcome":    "approved",
@@ -643,7 +749,10 @@ def test_decide_records_actual_approver_identity_and_audit():
 
 def test_authoritative_approval_readback_and_anti_forgery():
     did = uid()
-    r_prop = client.post("/api/governance/approvals", json={"expected_version": 0, "tenant_id": "synthetic-tenant", "owner_user_id": "synthetic-reviewer", 
+    r_prop = client.post("/api/governance/approvals", json={
+        "expected_version": 0,
+        "tenant_id": "synthetic-tenant",
+        "owner_user_id": "synthetic-reviewer",
         "decision_id": did,
         "target_type": "registry_entry",
         "target_id": "target-123",
@@ -664,13 +773,15 @@ def test_authoritative_approval_readback_and_anti_forgery():
     assert prop_body.get("authority_status") is None
     assert prop_body.get("controller_record_ref") is None
 
-    client.post(f"/api/governance/approvals/{did}/review", json={"expected_version": 1, 
+    client.post(f"/api/governance/approvals/{did}/review", json={
+        "expected_version": 1,
         "actor_role": "governance_reviewer",
         "actor_id": "rev-1",
     }, headers=_signed_headers(actor="rev-1", role="governance_reviewer", tenant='synthetic-tenant'))
 
     # Decide with approval
-    r_dec = client.post(f"/api/governance/approvals/{did}/decide", json={"expected_version": 2, 
+    r_dec = client.post(f"/api/governance/approvals/{did}/decide", json={
+        "expected_version": 2,
         "actor_role": "governance_reviewer",
         "actor_id": "rev-1",
         "outcome": "approved",

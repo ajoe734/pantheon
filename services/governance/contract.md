@@ -338,3 +338,46 @@ Downstream tasks that depend on this service being complete:
 - `BP5-SVC-012` — EvolutionDecision governance read path
 - `BP5-SVC-015` — BFF snapshot/fallback removal
 - `BP5-WB-003`  — Governance Workbench packetization
+
+## First-release approval authority (GOV-APPROVAL-AUTHORITY-PREREQUISITE-001)
+
+All mounted `/api/governance/approvals` propose/review/decide/revoke and
+GET/list/latest-approved operations verify JWTs through `runtime_auth_inbound`.
+Configure the Governance-specific JWT secret or existing JWKS/OIDC settings,
+expected issuer and audience. The verified `sub`, `tenant_id`, roles and finite
+future `exp` are mandatory. Generic BFF/runtime credentials and asserted body or
+header roles are not approval authority. A scoped `approval_reader` can read;
+`approval_proposer` can propose. Decision/revocation roles use the single matrix
+in `write_authority.py`, including low-risk `automated_gate`. Human promotion
+MFA and distinct-actor gates remain separately enforced.
+
+Each mutation requires `Idempotency-Key` and integer `expected_version` (0 for
+proposal, then the last exact GET's version). Proposal `owner_user_id` and
+`tenant_id`, and command `actor_id`/`actor_role`, must match verified claims.
+Unknown or other-tenant IDs return 404. Reusing a key with different content,
+a stale base or competing decision returns 409. Additional body authority fields
+are rejected. PostgreSQL decision, original scoped receipt and audit event commit
+in one foundation transaction; audit/receipt/commit failure returns 503 and rolls
+back all three. Retrying returns the original version, event ID, time and body,
+even if later commands changed the current decision. There is no separate
+ApprovalDecision event bus/outbox publisher; its canonical audit is atomic.
+
+`approval_authority.ApprovalReader` is the common read-only exact-ID transport.
+It rejects redirects, non-JSON, malformed/unavailable responses and ID mismatch.
+`ApprovalEvidence.require_valid` requires unconditional decided approval,
+authorized actor/risk, owner provenance, no revocation/supersession, and a valid
+future expiry. Consumers bind tenant, target type/ID/version and applicable
+candidate/proof digests on every new use. GET can return a revoked decision for
+truthful diagnostics; latest-approved filters through the same validity policy.
+
+Overlay handoff: propose with the canonical Registry ID, `target_type=registry_entry`,
+its exact version/checksum as `candidate_digest`, a finite `expires_at`, and the
+verified tenant/owner. Review and decide using their returned versions and
+independently authorized principals. Pass only `decision_id` to Registry advance,
+with candidate base state/version/updated_at and a scoped command key. Read back
+Registry's immutable artifact/checksum and `approval_evidence`. Persona training
+targets instead use `target_type=persona_training_target`, Persona ID, generation
+as a string version, session ID, candidate digest and proof digest;
+`approval_decision_ref` is the exact decision ID. This contract enables the
+existing Overlay owner to connect after accepted delivery; it is not hosted or
+provider/MFA authorization.

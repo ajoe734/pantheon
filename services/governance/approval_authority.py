@@ -6,11 +6,12 @@ adapters supply their immutable target/version/digest and additional predicates.
 from __future__ import annotations
 
 import json
+import math
 import os
 from datetime import datetime, timezone
 from typing import Any, Mapping
 from urllib.error import HTTPError, URLError
-from urllib.parse import quote
+from urllib.parse import quote, urlsplit
 from urllib.request import Request, build_opener, HTTPRedirectHandler
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -82,7 +83,13 @@ class _NoApprovalRedirect(HTTPRedirectHandler):
 
 class ApprovalReader:
     def __init__(self, *, base_url: str, service_token: str, timeout_seconds: float = 5.0):
-        if not base_url or not service_token or timeout_seconds <= 0:
+        try:
+            parsed = urlsplit(base_url)
+        except ValueError as exc:
+            raise ApprovalUnavailable('Governance reader URL is malformed') from exc
+        if (parsed.scheme not in {'http', 'https'} or not parsed.hostname
+                or parsed.username or parsed.password or parsed.query or parsed.fragment
+                or not service_token or not math.isfinite(timeout_seconds) or timeout_seconds <= 0):
             raise ApprovalUnavailable('Governance reader URL, scoped principal and timeout required')
         self._opener = build_opener(_NoApprovalRedirect())
         self.base_url = base_url.rstrip('/')
@@ -122,8 +129,12 @@ class ApprovalReader:
 
 def configured_approval_reader(domain: str, *, base_url: str | None = None) -> ApprovalReader:
     prefix = domain.upper().replace('-', '_')
+    try:
+        timeout = float(os.getenv(f'{prefix}_GOVERNANCE_TIMEOUT_SECONDS', '5'))
+    except ValueError as exc:
+        raise ApprovalUnavailable('Governance reader timeout is malformed') from exc
     return ApprovalReader(
         base_url=base_url or os.getenv(f'{prefix}_GOVERNANCE_BASE_URL', ''),
         service_token=os.getenv(f'{prefix}_GOVERNANCE_SERVICE_TOKEN', ''),
-        timeout_seconds=float(os.getenv(f'{prefix}_GOVERNANCE_TIMEOUT_SECONDS', '5')),
+        timeout_seconds=timeout,
     )

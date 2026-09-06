@@ -209,7 +209,8 @@ def test_atomic_rollback_on_audit_failure(mounted, owner_env):
 
 @contextmanager
 def approved_registry_owners(env, *, strategy_id='strategy-l12-dep',
-                             capital_pool_id='pool-l12-dep', persona_id='persona-l12-dep'):
+                             capital_pool_id='pool-l12-dep', persona_id='persona-l12-dep',
+                             execution_bundle=False):
     """Real scoped Registry/Governance HTTP owners, on dedicated PG schemas.
 
     Consumers receive owner URLs and read principals only. No caller-provided
@@ -232,31 +233,220 @@ def approved_registry_owners(env, *, strategy_id='strategy-l12-dep',
                             REGISTRY_GOVERNANCE_SERVICE_TOKEN=read_token)
         with server(registry_env, 'services.registry.service:app') as registry_url:
             with httpx.Client(base_url=registry_url, headers={'Authorization': 'Bearer '+registry_token}, timeout=10) as client:
-                r = client.post('/api/registry/entries', headers={'Idempotency-Key': uuid.uuid4().hex}, json={
-                    'artifact_type': 'model_artifact', 'strategy_id': strategy_id,
-                    'version': '1.0.0', 'artifact_state': 'draft', 'checksum': 'sha256:'+'a'*64,
-                    'lineage': {'source_run_ids': ['isolated-governance-proof']},
-                    'storage_ref': {'backend': 'object_store', 'path': 'isolated/model.bin'}})
+                if execution_bundle:
+                    from services.registry.strategy_artifact import load_strategy_artifact_registration, BUILTIN_STRATEGY_ARTIFACT_PATHS
+                    artifact = load_strategy_artifact_registration(BUILTIN_STRATEGY_ARTIFACT_PATHS[0])['strategy_artifact']
+                    artifact.update(artifact_id='isolated-bundle-'+uuid.uuid4().hex, strategy_id=strategy_id, version='1.0.0')
+                    artifact['binding_intent'].update(persona_id=persona_id,
+                                                      persona_capital_binding_id='pcb-l12-dep')
+                    r = client.post('/api/registry/strategy-artifacts', json={'strategy_artifact': artifact})
+                else:
+                    r = client.post('/api/registry/entries', headers={'Idempotency-Key': uuid.uuid4().hex}, json={
+                        'artifact_type': 'model_artifact', 'strategy_id': strategy_id,
+                        'version': '1.0.0', 'artifact_state': 'draft', 'checksum': 'sha256:'+'a'*64,
+                        'lineage': {'source_run_ids': ['isolated-governance-proof']},
+                        'storage_ref': {'backend': 'object_store', 'path': 'isolated/model.bin'}})
                 assert r.status_code == 200, r.text
                 entry = r.json()['entry']
                 registry_id = entry['registry_id']
-                r = client.post(f'/api/registry/entries/{registry_id}/advance', json={
-                    'target_state': 'candidate', 'expected_artifact_state': 'draft',
-                    'expected_version': entry['version'], 'expected_updated_at': entry['updated_at'],
-                    'command_key': uuid.uuid4().hex})
-                assert r.status_code == 200, r.text
-                candidate = r.json()['entry']
+                if entry['artifact_state'] == 'draft':
+                    r = client.post(f'/api/registry/entries/{registry_id}/advance', json={
+                        'target_state': 'candidate', 'expected_artifact_state': 'draft',
+                        'expected_version': entry['version'], 'expected_updated_at': entry['updated_at'],
+                        'command_key': uuid.uuid4().hex})
+                    assert r.status_code == 200, r.text
+                    candidate = r.json()['entry']
+                else:
+                    candidate = entry
                 decision = approved(governance_url, env, target_id=registry_id,
                                     candidate_digest=entry['checksum'],
                                     capital_pool_id=capital_pool_id, persona_id=persona_id)
-                r = client.post(f'/api/registry/entries/{registry_id}/advance', json={
+                approval_command = {
                     'target_state': 'approved', 'expected_artifact_state': 'candidate',
                     'expected_version': candidate['version'], 'expected_updated_at': candidate['updated_at'],
-                    'command_key': uuid.uuid4().hex, 'approval_decision_id': decision['decision_id']})
+                    'command_key': uuid.uuid4().hex, 'approval_decision_id': decision['decision_id']}
+                r = client.post(f'/api/registry/entries/{registry_id}/advance', json=approval_command)
                 assert r.status_code == 200, r.text
                 readback = client.get(f'/api/registry/entries/{registry_id}')
                 assert readback.status_code == 200, readback.text
                 assert readback.json() == r.json()
                 yield dict(registry_url=registry_url, governance_url=governance_url,
                            registry_token=registry_token, governance_token=read_token,
-                           entry=readback.json()['entry'], decision=decision)
+                           entry=readback.json()['entry'], decision=decision, registry_env=registry_env,
+                           approval_command=approval_command, approved_view=readback.json())
+
+
+def test_deciding_competition_and_lost_response_replay(mounted, owner_env):
+    proposed = post(mounted, '', owner_env, proposal()).json()
+    path = '/'+proposed['decision_id']
+    reviewed = post(mounted, path+'/review', owner_env, dict(expected_version=1, actor_id='synthetic-reviewer', actor_role='governance_reviewer'))
+    assert reviewed.status_code == 200, reviewed.text
+    commands = [dict(expected_version=2, actor_id=actor, actor_role='governance_reviewer', outcome=outcome, rationale='competing isolated decision')
+                for actor, outcome in [('reviewer-one', 'approved'), ('reviewer-two', 'rejected')]]
+    keys = [uuid.uuid4().hex, uuid.uuid4().hex]
+    with server(owner_env) as second:
+        with ThreadPoolExecutor(2) as pool:
+            futures = [pool.submit(post, url, path+'/decide', owner_env, body, key, sub=body['actor_id'])
+                       for url, body, key in zip((mounted, second), commands, keys)]
+            responses = [f.result() for f in futures]
+        assert sorted(r.status_code for r in responses) == [200, 409]
+    winner = next(i for i, response in enumerate(responses) if response.status_code == 200)
+    original = responses[winner].json()
+    with server(owner_env) as restarted:
+        replay = post(restarted, path+'/decide', owner_env, commands[winner], keys[winner], sub=commands[winner]['actor_id'])
+        assert replay.status_code == 200 and replay.json() == original
+        divergent = post(restarted, path+'/decide', owner_env, {**commands[winner], 'rationale': 'changed'}, keys[winner], sub=commands[winner]['actor_id'])
+        assert divergent.status_code == 409
+
+
+@pytest.mark.parametrize('failure', ['receipt', 'commit'])
+def test_receipt_and_commit_failure_roll_back_every_record(mounted, owner_env, failure):
+    from psycopg import sql
+    schema, decision_table = owner_env['GOVERNANCE_STORE_TABLE'].split('.')
+    receipt_table = decision_table+'_receipts'
+    audit_table = owner_env['GOVERNANCE_AUDIT_TABLE'].split('.')[1]
+    key = uuid.uuid4().hex
+    body = proposal(decision_id='failure-'+key)
+    with psycopg.connect(owner_env['GOVERNANCE_STORE_DSN']) as conn:
+        if failure == 'receipt':
+            # Reservation succeeds, final immutable receipt write fails.
+            conn.execute(sql.SQL("ALTER TABLE {} ADD CONSTRAINT reject_receipt CHECK (NOT (payload ? 'response')) NOT VALID").format(sql.Identifier(schema, receipt_table)))
+        else:
+            conn.execute(sql.SQL("CREATE FUNCTION {}() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'isolated deferred commit failure'; END $$").format(sql.Identifier(schema, 'fail_commit')))
+            conn.execute(sql.SQL('CREATE CONSTRAINT TRIGGER fail_commit AFTER INSERT ON {} DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION {}()').format(sql.Identifier(schema, audit_table), sql.Identifier(schema, 'fail_commit')))
+    try:
+        response = post(mounted, '', owner_env, body, key)
+        assert response.status_code == 503, response.text
+        readback = httpx.get(mounted+'/api/governance/approvals/'+body['decision_id'], headers=headers(owner_env))
+        assert readback.status_code == 404
+        with psycopg.connect(owner_env['GOVERNANCE_STORE_DSN']) as conn:
+            for table in [decision_table, receipt_table, audit_table]:
+                # No command, response or event from the failed transaction is durable.
+                count = conn.execute(sql.SQL('SELECT count(*) FROM {} WHERE payload::text LIKE %s').format(sql.Identifier(schema, table)), ('%'+body['decision_id']+'%',)).fetchone()[0]
+                assert count == 0
+    finally:
+        with psycopg.connect(owner_env['GOVERNANCE_STORE_DSN']) as conn:
+            if failure == 'receipt':
+                conn.execute(sql.SQL('ALTER TABLE {} DROP CONSTRAINT reject_receipt').format(sql.Identifier(schema, receipt_table)))
+            else:
+                conn.execute(sql.SQL('DROP TRIGGER fail_commit ON {}').format(sql.Identifier(schema, audit_table)))
+                conn.execute(sql.SQL('DROP FUNCTION {}()').format(sql.Identifier(schema, 'fail_commit')))
+    retry = post(mounted, '', owner_env, body, key)
+    assert retry.status_code == 201, retry.text
+    assert post(mounted, '', owner_env, body, key).json() == retry.json()
+
+
+def test_persona_exact_owner_predicates_and_revocation(mounted, owner_env):
+    from services.persona.write_owner import HttpGovernanceApprovalVerifier
+    decision = approved(mounted, owner_env, target_type='persona_training_target', target_id='persona-isolated',
+                        persona_id='persona-isolated', target_version='1', session_id='session-isolated',
+                        candidate_digest='a'*64, proof_digest='b'*64)
+    verifier = HttpGovernanceApprovalVerifier(base_url=mounted, service_token=token(
+        owner_env['PANTHEON_GOVERNANCE_JWT_SECRET'], roles=['approval_reader']))
+    target = dict(approval_decision_id=decision['decision_id'], approval_decision_ref=decision['decision_id'],
+                  target_version='1', persona_id='persona-isolated', tenant_id='synthetic-tenant',
+                  session_id='session-isolated', candidate_digest='a'*64, proof_digest='b'*64)
+    assert verifier.verify_training_target_approval(**target)
+    for field in target:
+        assert not verifier.verify_training_target_approval(**{**target, field: 'wrong-'+field}), field
+    revoked = post(mounted, '/'+decision['decision_id']+'/revoke', owner_env,
+                   dict(expected_version=3, actor_id='synthetic-reviewer', actor_role='risk_owner'), roles=['risk_owner'])
+    assert revoked.status_code == 200, revoked.text
+    assert not verifier.verify_training_target_approval(**target)
+
+
+def test_original_approved_receipt_survives_revocation_and_process_restart(mounted, owner_env):
+    created = post(mounted, '', owner_env, proposal()).json()
+    path = '/'+created['decision_id']
+    assert post(mounted, path+'/review', owner_env, dict(expected_version=1, actor_id='synthetic-reviewer', actor_role='governance_reviewer')).status_code == 200
+    body = dict(expected_version=2, actor_id='synthetic-reviewer', actor_role='governance_reviewer', outcome='approved', rationale='response loss')
+    key = uuid.uuid4().hex
+    # Discard the committed response body at the client boundary.
+    with httpx.stream('POST', mounted+'/api/governance/approvals'+path+'/decide', json=body, headers=headers(owner_env, key)) as response:
+        assert response.status_code == 200
+    original = httpx.get(mounted+'/api/governance/approvals'+path, headers=headers(owner_env)).json()
+    assert original['decision'] == 'approved' and original['version'] == 3
+    revoked = post(mounted, path+'/revoke', owner_env, dict(expected_version=3, actor_id='synthetic-reviewer', actor_role='risk_owner'), roles=['risk_owner'])
+    assert revoked.status_code == 200
+    with server(owner_env) as restarted:
+        retry = post(restarted, path+'/decide', owner_env, body, key)
+        assert retry.status_code == 200 and retry.json() == original
+        current = httpx.get(restarted+'/api/governance/approvals'+path, headers=headers(owner_env)).json()
+        assert current['decision_state'] == 'revoked' and current['version'] == 4
+
+
+@pytest.fixture(scope='module')
+def owner_chain(owner_env):
+    with approved_registry_owners(owner_env) as owners:
+        yield owners
+
+
+@pytest.mark.parametrize('invalid', ['target', 'version', 'digest', 'tenant', 'conditions', 'expired', 'revoked', 'missing'])
+def test_registry_rejects_invalid_owner_decision_without_transition(owner_chain, owner_env, invalid):
+    owners = owner_chain
+    with httpx.Client(base_url=owners['registry_url'], headers={'Authorization': 'Bearer '+owners['registry_token']}, timeout=10) as client:
+        result = client.post('/api/registry/entries', json={
+            'artifact_type': 'model_artifact', 'strategy_id': 'invalid-'+uuid.uuid4().hex,
+            'version': '1.0.0', 'artifact_state': 'draft', 'checksum': 'sha256:'+'a'*64,
+            'lineage': {'source_run_ids': ['isolated-negative']},
+            'storage_ref': {'backend': 'object_store', 'path': 'isolated.bin'}})
+        assert result.status_code == 200, result.text
+        identity = result.json()['entry']['registry_id']
+        candidate = client.post(f'/api/registry/entries/{identity}/advance', json={'target_state': 'candidate', 'expected_artifact_state': 'draft'}).json()['entry']
+        fields = dict(target_id=identity, candidate_digest=candidate['checksum'])
+        if invalid == 'target': fields['target_id'] = 'wrong-target'
+        if invalid == 'version': fields['target_version'] = '2.0.0'
+        if invalid == 'digest': fields['candidate_digest'] = 'wrong-digest'
+        if invalid == 'expired': fields['expires_at'] = '2000-01-01T00:00:00Z'
+        if invalid == 'tenant':
+            # A separate verified tenant owns this private decision.
+            r = post(owners['governance_url'], '', owner_env, proposal(tenant_id='other-tenant', **fields), tenant_id='other-tenant')
+            assert r.status_code == 201, r.text
+            decision = r.json()
+        elif invalid == 'conditions':
+            r = post(owners['governance_url'], '', owner_env, proposal(**fields))
+            decision = r.json()
+            path = '/'+decision['decision_id']
+            assert post(owners['governance_url'], path+'/review', owner_env, dict(expected_version=1, actor_id='synthetic-reviewer', actor_role='governance_reviewer')).status_code == 200
+            r = post(owners['governance_url'], path+'/decide', owner_env, dict(expected_version=2, actor_id='synthetic-reviewer', actor_role='governance_reviewer', outcome='approved_with_conditions', conditions=['pending'], rationale='conditional proof'))
+            assert r.status_code == 200
+            decision = r.json()
+        else:
+            decision = approved(owners['governance_url'], owner_env, **fields)
+        if invalid == 'revoked':
+            r = post(owners['governance_url'], '/'+decision['decision_id']+'/revoke', owner_env, dict(expected_version=3, actor_id='synthetic-reviewer', actor_role='risk_owner'), roles=['risk_owner'])
+            assert r.status_code == 200
+        command = dict(target_state='approved', expected_artifact_state='candidate',
+                       expected_version=candidate['version'], expected_updated_at=candidate['updated_at'],
+                       command_key=uuid.uuid4().hex, approval_decision_id=('missing' if invalid == 'missing' else decision['decision_id']))
+        rejected = client.post(f'/api/registry/entries/{identity}/advance', json=command)
+        assert rejected.status_code == 400, rejected.text
+        assert client.get(f'/api/registry/entries/{identity}').json()['entry'] == candidate
+
+
+def test_registry_original_approval_receipt_and_evidence_after_restart(owner_chain):
+    owners = owner_chain
+    assert owners['entry']['approval_evidence'] == owners['decision']
+    with server(owners['registry_env'], 'services.registry.service:app') as restarted:
+        with httpx.Client(base_url=restarted, headers={'Authorization': 'Bearer '+owners['registry_token']}, timeout=10) as client:
+            path = '/api/registry/entries/'+owners['entry']['registry_id']
+            assert client.get(path).json() == owners['approved_view']
+            replay = client.post(path+'/advance', json=owners['approval_command'])
+            assert replay.status_code == 200, replay.text
+            assert replay.json() == owners['approved_view']
+            conflict = client.post(path+'/advance', json={**owners['approval_command'], 'approval_decision_id': 'another-decision'})
+            assert conflict.status_code == 409, conflict.text
+
+
+def test_every_mounted_approval_path_rejects_missing_principal_and_header_escalation(mounted, owner_env):
+    decision = approved(mounted, owner_env)
+    root = mounted+'/api/governance/approvals'
+    paths = [('', 'GET', None), ('/latest-approved?target_type=registry_entry&target_id=synthetic-artifact', 'GET', None),
+             ('/'+decision['decision_id'], 'GET', None), ('', 'POST', proposal())]
+    for operation in ['review', 'decide', 'revoke']:
+        body = dict(expected_version=3, actor_id='synthetic-reviewer', actor_role='risk_owner')
+        if operation == 'decide': body.update(outcome='approved', rationale='forged')
+        paths.append(('/'+decision['decision_id']+'/'+operation, 'POST', body))
+    for suffix, method, body in paths:
+        r = httpx.request(method, root+suffix, json=body, headers={'Idempotency-Key': uuid.uuid4().hex, 'X-Actor-Role': 'risk_owner', 'X-Tenant-Id': 'synthetic-tenant'})
+        assert r.status_code == 401, (method, suffix, r.text)

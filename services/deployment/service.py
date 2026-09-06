@@ -203,10 +203,7 @@ DATA_DIR = _resolve_governance_dir()
 PLAN_STORE_PATH = DATA_DIR / "deployment_plans.json"
 SAGA_STORE_PATH = DATA_DIR / "deployment_sagas.json"
 OUTBOX_LEASE_STORE_PATH = DATA_DIR / "deployment_outbox_leases.json"
-APPROVAL_STORE_PATH = DATA_DIR / "approval_decisions.json"
 RUNTIME_BINDING_STORE_PATH = _resolve_runtime_binding_store_path()
-_REGISTRY_SNAPSHOT_ENV = os.getenv("PANTHEON_DEPLOYMENT_REGISTRY_SNAPSHOT_PATH", "").strip()
-REGISTRY_SNAPSHOT_PATH = Path(_REGISTRY_SNAPSHOT_ENV).expanduser() if _REGISTRY_SNAPSHOT_ENV else None
 
 
 def _resolve_capital_pool_store_path() -> Path | None:
@@ -368,14 +365,10 @@ class DeploymentPlannerService:
         self,
         *,
         plan_store: DeploymentPlanStore,
-        approval_store_path: Path,
-        registry_snapshot_path: Path | None = None,
         registry_reader=None,
         approval_reader=None,
     ) -> None:
         self.plan_store = plan_store
-        self.approval_store_path = approval_store_path
-        self.registry_snapshot_path = registry_snapshot_path
         self.registry_reader = registry_reader
         self.approval_reader = approval_reader
         self.planner = StagePlanner()
@@ -689,14 +682,10 @@ class DeploymentProjectionReadModelService:
         *,
         planner_service: DeploymentPlannerService,
         saga_store: DeploymentSagaStore,
-        approval_store_path: Path,
-        registry_snapshot_path: Path | None,
         runtime_binding_store_path: Path,
     ) -> None:
         self.planner_service = planner_service
         self.saga_store = saga_store
-        self.approval_store_path = approval_store_path
-        self.registry_snapshot_path = registry_snapshot_path
         self.runtime_binding_store_path = runtime_binding_store_path
 
     def list_projections(
@@ -1945,8 +1934,6 @@ def _execution_context_for_stage(target_stage: DeploymentStage | str) -> str:
 
 planner_service = DeploymentPlannerService(
     plan_store=store,
-    approval_store_path=APPROVAL_STORE_PATH,
-    registry_snapshot_path=REGISTRY_SNAPSHOT_PATH,
 )
 orchestration_service = DeploymentOrchestrationService(
     planner_service=planner_service,
@@ -1955,8 +1942,6 @@ orchestration_service = DeploymentOrchestrationService(
 projection_service = DeploymentProjectionReadModelService(
     planner_service=planner_service,
     saga_store=saga_store,
-    approval_store_path=APPROVAL_STORE_PATH,
-    registry_snapshot_path=REGISTRY_SNAPSHOT_PATH,
     runtime_binding_store_path=RUNTIME_BINDING_STORE_PATH,
 )
 compatibility_service = PoolRuntimeCompatibilityService(

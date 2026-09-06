@@ -751,3 +751,23 @@ BP5-SVC-005 closes the deployable gap when:
 3. compensation paths are exposed and tested through the deployable API
 4. L12-DEP-001 adds authenticated tenant ownership plus exclusive claim,
    acknowledgement, idle recovery, and crash-after-side-effect replay proof
+
+## First-release owner approval references
+
+Plan creation accepts `registry_id` and `approval_decision_id`. Caller Registry
+or ApprovalDecision objects are rejected, including dispatch `registry_entry`.
+Deployment reads the exact scoped Registry owner and the shared Governance
+ApprovalReader; local Registry/approval JSON files are not production authority
+or projection sources. Dispatch rechecks immutable version, tenant, approved
+Registry linkage and current Governance validity before creating any saga or
+outbox event. A historical approved Registry entry cannot override a revocation.
+Projection reads those same owners and reports missing sources honestly.
+
+Configure `DEPLOYMENT_REGISTRY_BASE_URL`, `DEPLOYMENT_REGISTRY_SERVICE_TOKEN`,
+`DEPLOYMENT_REGISTRY_TIMEOUT_SECONDS`, `DEPLOYMENT_GOVERNANCE_BASE_URL`,
+`DEPLOYMENT_GOVERNANCE_SERVICE_TOKEN` and `DEPLOYMENT_GOVERNANCE_TIMEOUT_SECONDS`.
+Tokens are scoped principals supplied by deployment configuration; no token is
+stored in the plan, receipt, audit or evidence. Missing configuration fails
+closed. The isolated dispatcher test exercises real Governance/Registry HTTP,
+Deployment stores and the shared Runtime verifier; capital/lifecycle doubles
+are explicitly identified and do not establish a hosted trading lifecycle.
