@@ -5203,6 +5203,50 @@ def command_artifact_contract(state: dict[str, Any], args: list[str]) -> None:
     )
 
 
+def _reopen_invalidates_execution_authorization(task: dict[str, Any]) -> bool:
+    """Reset an outstanding privileged grant/reservation back to pending.
+
+    OPS-PRIVILEGED-TASK-EXECUTION-AUTH-001 (SA/SD 2, 6): reopen must not let
+    a previously verified execution grant, or an in-flight reservation,
+    survive into the next attempt -- the reopened task may carry a revised
+    scope, and either way a fresh, independently verified MFA grant is
+    required before it may execute again. Returns whether the task is
+    privileged (by durable source provenance, or by an already-attached
+    policy) so the caller can also restore the old-runtime-recognized
+    ``waiting_for`` fence instead of unconditionally clearing it.
+    """
+
+    dev_bridge = task.get("dev_bridge")
+    work_class = (
+        str(dev_bridge.get("work_class") or "").strip().lower()
+        if isinstance(dev_bridge, dict)
+        else ""
+    )
+    existing_record = task.get("execution_authorization")
+    existing_policy = (
+        existing_record.get("policy") if isinstance(existing_record, dict) else None
+    )
+    already_privileged_record = isinstance(existing_policy, dict) and bool(
+        existing_policy.get("requires_execution_authorization")
+    )
+    privileged = (
+        execution_authorization.is_privileged_work_class(work_class)
+        or already_privileged_record
+    )
+    if not privileged:
+        return False
+    policy = execution_authorization.derive_execution_policy(
+        task_id=task.get("id"),
+        work_class=work_class or (existing_policy or {}).get("work_class"),
+        repository=task.get("target_repo"),
+        environment=(existing_policy or {}).get("environment"),
+        resources=task.get("execution_resources"),
+        artifacts=task.get("artifacts"),
+    )
+    task["execution_authorization"] = execution_authorization.pending_authorization_hold(policy)
+    return True
+
+
 def command_reopen(state: dict[str, Any], args: list[str]) -> None:
     if len(args) < 2:
         raise SystemExit("Usage: reopen <task-id> <message>")
@@ -5231,6 +5275,7 @@ def command_reopen(state: dict[str, Any], args: list[str]) -> None:
     task.pop(REVIEW_DECISION_INTENT_KEY, None)
     task.pop(REVIEW_DECISION_INTENT_RECOVERY_KEY, None)
     apply_task_lifecycle_transition(task, "reopen")
+    task_is_privileged = _reopen_invalidates_execution_authorization(task)
     generation = max(1, int(task.get("generation", 1) or 1))
     requeue_basis = {
         "schema_version": REVIEW_REQUEUE_INTENT_SCHEMA_VERSION,
@@ -5257,7 +5302,15 @@ def command_reopen(state: dict[str, Any], args: list[str]) -> None:
     task[REVIEW_REQUEUE_INTENT_KEY] = deepcopy(requeue_intent)
     task["last_update"] = timestamp
     task["next"] = message
-    task.pop("waiting_for", None)
+    if task_is_privileged:
+        # Restore the old-runtime-recognized durable hold (SA/SD 2, 6): the
+        # grant invalidation above means this task is once again
+        # non-executable pending authorization, so an old runtime that
+        # predates execution_authorization.py entirely must still see it as
+        # dispatch-blocked, exactly like at fresh intake.
+        task["waiting_for"] = "Human/Ops"
+    else:
+        task.pop("waiting_for", None)
     # A reviewer rejection returns the work to the owner.  A subsequent
     # handoff must freeze the new deliverable instead of reusing this head.
     task.pop(DELIVERY_BINDING_KEY, None)
@@ -5691,6 +5744,11 @@ def command_execution_grant_revoke(state: dict[str, Any], args: list[str]) -> No
         )
     except execution_authorization.ExecutionAuthorizationError as exc:
         raise SystemExit(str(exc)) from exc
+    # Restore the old-runtime-recognized durable hold (SA/SD 2, 6): a revoked
+    # grant is once again non-executable, so an old runtime that predates
+    # execution_authorization.py entirely must still see this task as
+    # dispatch-blocked, exactly like at fresh intake and after reopen.
+    task["waiting_for"] = "Human/Ops"
     timestamp = iso_now()
     task["last_update"] = timestamp
     append_log(

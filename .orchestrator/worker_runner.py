@@ -779,6 +779,38 @@ def ensure_execution_authorized_before_launch(
         )
 
 
+def execution_authorization_still_current(
+    coordination_root: Path | None,
+    task_id: str | None,
+    *,
+    active_role: str,
+    run_id: str,
+) -> bool:
+    """Running-loop counterpart to :func:`ensure_execution_authorized_before_launch`.
+
+    A revoked or expired reservation only prevents *new* effects (SA/SD 4);
+    it does not retroactively undo a process already launched. This is the
+    safe-stop boundary that enforces that half of the contract for an
+    already-running owner-execution attempt: the running loop re-reads the
+    canonical task on every heartbeat tick and, once this returns ``False``,
+    the caller must move to terminate the child rather than let it keep
+    running unobserved for the rest of its lifetime. Non-owner purposes are
+    never gated, matching :func:`ensure_execution_authorized_before_launch`.
+    """
+
+    if active_role != "owner":
+        return True
+    task = _get_task_record(coordination_root, task_id)
+    if task is None:
+        # Same rationale as at launch: an unresolvable coordination root/task
+        # id cannot be turned into a fabricated "revoked" verdict here, and
+        # this worker was already let through the entry barrier under the
+        # identical condition.
+        return True
+    now = datetime.now(timezone.utc)
+    return execution_authorization.reservation_is_current(task, run_id=run_id, now=now)
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Run an auto-worker command with heartbeat and terminal markers.")
     parser.add_argument("--run-id", required=True)
@@ -868,11 +900,12 @@ def main(argv: list[str] | None = None) -> int:
         elif normalized_agent == reviewer_lower.split("-")[0] or agent_lower == reviewer_lower:
             active_role = "reviewer"
 
+    authorization_run_id = str(os.environ.get("ORCH_EXECUTION_AUTHORIZATION_RUN_ID") or "")
     ensure_execution_authorized_before_launch(
         coordination_root,
         task_id,
         active_role=active_role,
-        run_id=str(os.environ.get("ORCH_EXECUTION_AUTHORIZATION_RUN_ID") or ""),
+        run_id=authorization_run_id,
     )
 
     interval = max(1.0, float(args.heartbeat_interval_seconds or 15.0))
@@ -951,6 +984,7 @@ def main(argv: list[str] | None = None) -> int:
         status["child_pid"] = child.pid
         publish("running")
         next_heartbeat = time.monotonic() + interval
+        next_authorization_check = time.monotonic() + interval
         direct_exit_code: int | None = None
         while True:
             if direct_exit_code is None:
@@ -958,6 +992,37 @@ def main(argv: list[str] | None = None) -> int:
                 if direct_exit_code is not None:
                     status["exit_code"] = direct_exit_code
                     status["finished_at"] = utc_now()
+
+            # Safe-stop boundary (SA/SD 4): an already-launched owner-execution
+            # attempt is re-checked against the canonical reservation on every
+            # cadence tick. Revocation only prevents *new* effects, so this
+            # cannot retroactively undo work already done -- it only moves
+            # this running process onto the same bounded termination path a
+            # forwarded SIGTERM already uses, instead of letting a revoked or
+            # expired attempt keep running unobserved for its full lifetime.
+            if (
+                direct_exit_code is None
+                and terminating_signal is None
+                and time.monotonic() >= next_authorization_check
+            ):
+                next_authorization_check = time.monotonic() + interval
+                if not execution_authorization_still_current(
+                    coordination_root,
+                    task_id,
+                    active_role=active_role,
+                    run_id=authorization_run_id,
+                ):
+                    status["execution_authorization_revoked"] = True
+                    terminating_signal = signal.SIGTERM
+                    signal_received_at = time.monotonic()
+                    status["signal"] = signal.SIGTERM
+                    try:
+                        os.killpg(child.pid, signal.SIGTERM)
+                    except OSError:
+                        try:
+                            child.send_signal(signal.SIGTERM)
+                        except OSError:
+                            pass
 
             # Normal path: child exited and we aren't terminating
             if direct_exit_code is not None and terminating_signal is None:

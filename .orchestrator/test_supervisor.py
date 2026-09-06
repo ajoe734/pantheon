@@ -3568,6 +3568,44 @@ class ExecutionAuthorizationLaunchReserveTests(unittest.TestCase):
                 )
             write.assert_not_called()
 
+    def test_missing_task_fails_closed(self) -> None:
+        # Codex2 exact-head REJECT P1-7: an authoritative reload that cannot
+        # even find the task must not be treated as an ordinary,
+        # non-privileged no-op.
+        status = {"tasks": []}
+        with self._locked(status) as write:
+            with self.assertRaises(supervisor.ExecutionAuthorizationSpendFailed):
+                supervisor.reserve_execution_authorization_for_launch(
+                    config_fixture(), "TASK-1", run_id="run-1"
+                )
+            write.assert_not_called()
+
+    def test_privileged_source_with_missing_subrecord_fails_closed(self) -> None:
+        # Ground truth (dev_bridge.work_class) says this task is privileged,
+        # but its execution_authorization subrecord was dropped or never
+        # attached. Must refuse to reserve rather than silently no-op.
+        task = task_fixture()
+        task["dev_bridge"] = {"work_class": "hosted"}
+        status = {"tasks": [task]}
+        with self._locked(status) as write:
+            with self.assertRaises(supervisor.ExecutionAuthorizationSpendFailed):
+                supervisor.reserve_execution_authorization_for_launch(
+                    config_fixture(), "TASK-1", run_id="run-1"
+                )
+            write.assert_not_called()
+
+    def test_privileged_source_with_corrupt_policy_fails_closed(self) -> None:
+        task = task_fixture()
+        task["dev_bridge"] = {"work_class": "hosted"}
+        task["execution_authorization"] = {"policy": "corrupt"}
+        status = {"tasks": [task]}
+        with self._locked(status) as write:
+            with self.assertRaises(supervisor.ExecutionAuthorizationSpendFailed):
+                supervisor.reserve_execution_authorization_for_launch(
+                    config_fixture(), "TASK-1", run_id="run-1"
+                )
+            write.assert_not_called()
+
 
 class DurableQueueContractTests(unittest.TestCase):
     def setUp(self) -> None:

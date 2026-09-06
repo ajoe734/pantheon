@@ -569,6 +569,39 @@ class ExecutionAuthorizationTestCase(unittest.TestCase):
             ea.reservation_is_current(task, run_id="any-run", now=self.now)
         )
 
+    # -- 2026-09-06 Codex2 exact-head REJECT P1-4: reservation must re-apply
+    # the exact-binding scope check, not just state/run-id/TTL -------------
+
+    def test_reservation_is_current_rejects_generation_bump_after_reserve(self) -> None:
+        # A reassignment committed after the claim/lease boundary reserved
+        # this exact run must invalidate the reservation, the same way it
+        # already invalidates an outstanding (not-yet-reserved) grant.
+        task = self._granted_task()
+        reserved = ea.reserve_execution_authorization(task, run_id="run-1", now=self.now)
+        task["execution_authorization"] = reserved
+        self.assertTrue(
+            ea.reservation_is_current(task, run_id="run-1", now=self.now)
+        )
+        task["generation"] = 1
+        self.assertFalse(
+            ea.reservation_is_current(task, run_id="run-1", now=self.now)
+        )
+
+    def test_reservation_is_current_rejects_scope_revision_after_reserve(self) -> None:
+        # command_execution_resource/command_artifact_contract revise scope
+        # without bumping generation; a reservation made before that revision
+        # must not still be treated as current at actual worker entry.
+        task = self._granted_task()
+        reserved = ea.reserve_execution_authorization(task, run_id="run-1", now=self.now)
+        task["execution_authorization"] = reserved
+        self.assertTrue(
+            ea.reservation_is_current(task, run_id="run-1", now=self.now)
+        )
+        task["execution_resources"] = ["dev-supervisor", "extra-resource"]
+        self.assertFalse(
+            ea.reservation_is_current(task, run_id="run-1", now=self.now)
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

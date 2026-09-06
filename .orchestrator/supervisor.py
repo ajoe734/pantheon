@@ -3096,13 +3096,31 @@ def reserve_execution_authorization_for_launch(
         status = load_status(config)
         task = task_index_from_status(config, status).get(task_id)
         if task is None:
-            return
+            # Cannot independently prove this dispatched task is
+            # non-privileged when the authoritative reload cannot even find
+            # it. Fail closed rather than treating an unresolvable task the
+            # same as an ordinary functional one (SA/SD 4, 7).
+            raise ExecutionAuthorizationSpendFailed(
+                f"cannot verify execution-authorization policy for missing task {task_id}"
+            )
+        privileged_by_source = execution_authorization.task_privileged_by_source(task)
         record = task.get("execution_authorization")
-        if not isinstance(record, dict):
+        policy = record.get("policy") if isinstance(record, dict) else None
+        policy_requires = isinstance(policy, dict) and bool(
+            policy.get("requires_execution_authorization")
+        )
+        if not privileged_by_source and not policy_requires:
             return
-        policy = record.get("policy")
-        if not isinstance(policy, dict) or not policy.get("requires_execution_authorization"):
-            return
+        if not policy_requires:
+            # Ground truth (the verified dev-bridge packet provenance) says
+            # this task is privileged, but its execution-authorization
+            # subrecord/policy is missing, corrupt, or downgraded. Never
+            # silently relabel that as an ordinary, unauthorized-by-default
+            # task -- refuse the launch instead (SA/SD 2, 7).
+            raise ExecutionAuthorizationSpendFailed(
+                f"task {task_id} is privileged by source provenance but has no "
+                "valid execution-authorization policy; refusing to reserve"
+            )
         now = datetime.now(timezone.utc)
         try:
             updated = execution_authorization.reserve_execution_authorization(
@@ -3197,20 +3215,17 @@ def start_worker_for_request(
         skip_reserve = False
         if latest_task_map is not None:
             candidate_task = latest_task_map.get(str(request.task_id or ""))
-            candidate_record = (
-                candidate_task.get("execution_authorization")
-                if isinstance(candidate_task, dict)
-                else None
-            )
-            candidate_policy = (
-                candidate_record.get("policy")
-                if isinstance(candidate_record, dict)
-                else None
-            )
-            skip_reserve = not (
-                isinstance(candidate_policy, dict)
-                and candidate_policy.get("requires_execution_authorization")
-            )
+            # Ground truth (verified dev-bridge packet provenance), not the
+            # ``execution_authorization`` subrecord shape: a missing snapshot
+            # row or a corrupt/downgraded subrecord on a task that source
+            # provenance says *is* privileged must not skip the reserve --
+            # skipping here means the authoritative fail-closed check inside
+            # ``reserve_execution_authorization_for_launch`` never runs at
+            # all (SA/SD 2, 7). Only a task that is genuinely non-privileged
+            # by source provenance may skip.
+            skip_reserve = isinstance(
+                candidate_task, dict
+            ) and not execution_authorization.task_privileged_by_source(candidate_task)
         if not skip_reserve:
             execution_authorization_run_id = str(event_id_for_log or queue_event_id or "")
             reserve_execution_authorization_for_launch(

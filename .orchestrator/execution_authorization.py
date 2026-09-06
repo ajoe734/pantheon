@@ -426,7 +426,7 @@ def build_granted_authorization(
     }
 
 
-def _task_privileged_by_source(task: Mapping[str, Any]) -> bool:
+def task_privileged_by_source(task: Mapping[str, Any]) -> bool:
     """Return the task's ground-truth privileged classification.
 
     Derived from the durable, verified dev-bridge packet provenance
@@ -434,7 +434,10 @@ def _task_privileged_by_source(task: Mapping[str, Any]) -> bool:
     ``execution_authorization`` subrecord happens to be present. Canonical
     assignment, metadata, reopen, recovery, and replay can drop or corrupt
     the subrecord; they cannot change what packet the task was actually
-    materialized from (SA/SD 2).
+    materialized from (SA/SD 2). Public so callers outside this module
+    (``supervisor.py``'s authoritative reserve/launch boundary) can apply the
+    same source-derived fail-closed verdict instead of trusting a possibly
+    stale or corrupt ``execution_authorization`` snapshot.
     """
 
     dev_bridge = task.get("dev_bridge")
@@ -443,42 +446,28 @@ def _task_privileged_by_source(task: Mapping[str, Any]) -> bool:
     return is_privileged_work_class(dev_bridge.get("work_class"))
 
 
-def is_execution_authorized(
+# Retained as a private alias: this module's own callers below predate the
+# public rename and an external audit trail may still reference the old name.
+_task_privileged_by_source = task_privileged_by_source
+
+
+def _grant_matches_current_scope(
     task: Mapping[str, Any],
     *,
-    now: datetime,
+    policy: Mapping[str, Any],
+    grant: Mapping[str, Any],
 ) -> bool:
-    """Pure query: may ``task`` launch a privileged execution attempt now.
+    """Shared exact-binding check used by both the grant and the reservation gate.
 
-    Fed into the same normalized verdict consumed by both the planner and
-    late delivery through ``rewrite/dispatch_admission.py`` (SA/SD 4). A task
-    that is not privileged by its durable source provenance, and carries no
-    execution-authorization subrecord, is always authorized -- ordinary
-    functional/paper/read_only/ci/reconcile_only dispatch is unaffected.
-
-    A task that *is* privileged by source provenance fails closed on a
-    missing, malformed, or downgraded subrecord/policy instead of falling
-    back to "authorized": a dropped subrecord, a corrupt policy shape, or an
-    erased/downgraded ``requires_execution_authorization`` flag can never
-    silently relabel privileged work as ordinary functional work.
+    A grant only ever authorizes the exact task generation, policy digest,
+    and current target/resources/artifact scope it was verified against
+    (SA/SD 3, "reassignment, scope or target change invalidates it"). Used
+    identically by :func:`is_execution_authorized` (does the outstanding
+    grant still apply) and :func:`reservation_is_current` (does the reserved
+    grant still apply at actual worker entry) so neither can drift out of
+    sync with the other.
     """
 
-    privileged_by_source = _task_privileged_by_source(task)
-    record = task.get("execution_authorization")
-    if record is None:
-        return not privileged_by_source
-    if not isinstance(record, Mapping):
-        return False
-    policy = record.get("policy")
-    if not isinstance(policy, Mapping):
-        return False
-    if not policy.get("requires_execution_authorization"):
-        return not privileged_by_source
-    if record.get("state") != STATE_GRANTED:
-        return False
-    grant = record.get("grant")
-    if not isinstance(grant, Mapping):
-        return False
     try:
         task_generation = int(task.get("generation", 0) or 0)
     except (TypeError, ValueError):
@@ -502,7 +491,46 @@ def is_execution_authorized(
         action_scope=policy.get("action_scope"),
         artifacts=task.get("artifacts"),
     )
-    if current_digest != str(policy.get("policy_digest") or ""):
+    return current_digest == str(policy.get("policy_digest") or "")
+
+
+def is_execution_authorized(
+    task: Mapping[str, Any],
+    *,
+    now: datetime,
+) -> bool:
+    """Pure query: may ``task`` launch a privileged execution attempt now.
+
+    Fed into the same normalized verdict consumed by both the planner and
+    late delivery through ``rewrite/dispatch_admission.py`` (SA/SD 4). A task
+    that is not privileged by its durable source provenance, and carries no
+    execution-authorization subrecord, is always authorized -- ordinary
+    functional/paper/read_only/ci/reconcile_only dispatch is unaffected.
+
+    A task that *is* privileged by source provenance fails closed on a
+    missing, malformed, or downgraded subrecord/policy instead of falling
+    back to "authorized": a dropped subrecord, a corrupt policy shape, or an
+    erased/downgraded ``requires_execution_authorization`` flag can never
+    silently relabel privileged work as ordinary functional work.
+    """
+
+    privileged_by_source = task_privileged_by_source(task)
+    record = task.get("execution_authorization")
+    if record is None:
+        return not privileged_by_source
+    if not isinstance(record, Mapping):
+        return False
+    policy = record.get("policy")
+    if not isinstance(policy, Mapping):
+        return False
+    if not policy.get("requires_execution_authorization"):
+        return not privileged_by_source
+    if record.get("state") != STATE_GRANTED:
+        return False
+    grant = record.get("grant")
+    if not isinstance(grant, Mapping):
+        return False
+    if not _grant_matches_current_scope(task, policy=policy, grant=grant):
         return False
     expires = _parse_utc(grant.get("expires_at"))
     if expires is None or now > expires:
@@ -529,9 +557,16 @@ def reservation_is_current(
     stale run id, or an attempt outside the reserved run's TTL is rejected
     before any process launch. A non-privileged task is always current, same
     as :func:`is_execution_authorized`.
+
+    Also re-applies :func:`_grant_matches_current_scope`: a reservation
+    committed against one task generation/policy/scope must not still be
+    treated as current once a reassignment, scope, or target revision lands
+    after the reservation was made but before the worker actually enters
+    (SA/SD 3, 4) -- the reservation boundary is not exempt from the same
+    exact-binding rule the original grant is held to.
     """
 
-    privileged_by_source = _task_privileged_by_source(task)
+    privileged_by_source = task_privileged_by_source(task)
     record = task.get("execution_authorization")
     if record is None:
         return not privileged_by_source
@@ -548,6 +583,8 @@ def reservation_is_current(
         return False
     grant = record.get("grant")
     if not isinstance(grant, Mapping):
+        return False
+    if not _grant_matches_current_scope(task, policy=policy, grant=grant):
         return False
     reserved_at = _parse_utc(record.get("reserved_at"))
     if reserved_at is None:
