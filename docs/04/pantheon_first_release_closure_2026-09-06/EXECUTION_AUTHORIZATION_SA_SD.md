@@ -28,23 +28,47 @@ location instead of living solely on an operator workstation or in `/tmp`.
 Delivered by task `OPS-PRIVILEGED-TASK-EXECUTION-AUTH-001`:
 
 - `.orchestrator/execution_authorization.py` — the execution-time
-  MFA-bound authorization module (policy derivation, pending-authorization
-  hold, genuine grant verification, one-shot reserve/consume, revocation).
+  MFA-bound authorization module (policy derivation over the task's current
+  target/resources/artifacts, pending-authorization hold, genuine grant
+  verification, one-shot reserve/consume, `reservation_is_current` for the
+  direct worker-entry check, revocation). Privileged classification is
+  derived from the task's durable `dev_bridge.work_class`, not from whether
+  the subrecord happens to be present, so a dropped/downgraded subrecord on
+  a privileged task fails closed.
 - `.orchestrator/rewrite/dispatch_admission.py` and
   `.orchestrator/dispatch_policy.py` — the one normalized authorization
   verdict wired into the existing shared planner/delivery predicate
-  (`TaskIntent.execution_authorized`, `DispatchBlockReason.EXECUTION_AUTHORIZATION_REQUIRED`).
+  (`TaskIntent.execution_authorized`, `DispatchBlockReason.EXECUTION_AUTHORIZATION_REQUIRED`),
+  scoped to the `OWNED_IN_PROGRESS`/`OWNED_READY` owner-execution dispatch
+  purposes only; read-only `REVIEW_READY`/`OWNED_FINALIZE` dispatch never
+  acquires or clears the grant.
 - `.orchestrator/development_bridge/dev_bridge_materialize.py` — the former
   MFA-at-intake gate is retired; a signed privileged (`security`/`hosted`/
   `live`) packet now materializes without an operator grant.
 - `scripts/ai_status.py` — `command_assign` attaches the immutable pending-
-  authorization hold at materialization time for a privileged dev-bridge
-  task; new `execution-grant-submit` / `execution-grant-revoke` Human/Ops CLI
-  commands extend the existing local operator status CLI (plan section 3);
-  `show <task-id>` already surfaces the redacted authorization state.
+  authorization hold, and an old-runtime-recognized `waiting_for` hold, at
+  materialization time for a privileged dev-bridge task; new
+  `execution-grant-submit` / `execution-grant-revoke` Human/Ops CLI commands
+  extend the existing local operator status CLI (plan section 3), sourcing
+  the MFA-issuer trust root from `.orchestrator/config.json`
+  (`execution_authorization.mfa_issuer_public_keys`), never from the grant
+  submitter's own environment; `execution-grant-submit` releases the
+  `waiting_for` hold once a genuine grant is bound; `show <task-id>` already
+  surfaces the redacted authorization state.
 - `.orchestrator/supervisor.py` — `reserve_execution_authorization_for_launch`
   is the authoritative claim/lease-boundary one-shot spend, called
-  immediately before the adapter process is launched (plan section 4).
+  immediately before the adapter process is launched, scoped to
+  owner-execution dispatch only (plan section 4).
+- `.orchestrator/worker_runner.py` —
+  `ensure_execution_authorized_before_launch` independently revalidates the
+  exact `STATE_RESERVED` binding (via `ORCH_EXECUTION_AUTHORIZATION_RUN_ID`)
+  at actual process-launch time, so a direct invocation that bypasses the
+  supervisor's reserve step cannot launch owner-execution work either.
+- `scripts/promote_supervisor_runtime.py` —
+  `verify_execution_authorization_barriers` discover-only-probes a
+  candidate command runtime for both barriers before promotion/rollback,
+  refusing an old-runtime target that predates `execution_authorization.py`
+  entirely (plan section 6).
 
 Not delivered by this task, and explicitly out of scope per plan section 7:
 any live MFA issuer operational setup, and the revised signed submission of
@@ -53,11 +77,24 @@ operator-authorized steps.
 
 ## Operational command/receipt contract
 
+The trusted MFA-issuer public-key set is configured at
+`execution_authorization.mfa_issuer_public_keys` in
+`.orchestrator/config.json` — an independently provisioned file, not an
+environment variable the same command invocation could also set. An
+isolated exact-head review (2026-09-06, Codex2) found that an earlier
+revision instead read this trust root from a caller-supplied
+`EXECUTION_MFA_ISSUER_PUBLIC_KEYS_JSON` environment variable, which let a
+single command invocation supply both a self-generated "issuer" key and a
+grant signed by the matching private key. That defect is fixed: the
+grant-submit command no longer reads any such environment variable for the
+trust root at all.
+
 ```bash
 # Human/Ops submits one independently verified, signed execution grant.
+# The trust root comes from .orchestrator/config.json, never from this
+# invocation's own environment.
 AI_NAME=Human/Ops \
 EXECUTION_GRANT_JSON="$(cat grant.json)" \
-EXECUTION_MFA_ISSUER_PUBLIC_KEYS_JSON='{"<issuer-key-id>":"<base64url-public-key>"}' \
 PANTHEON_LOCAL_HUMAN_OPS=1 \
 ./scripts/ai-status.sh execution-grant-submit <task-id>
 
@@ -77,10 +114,14 @@ PANTHEON_LOCAL_HUMAN_OPS=1 \
 `audience=<task_id>`, `mfa_verified=true`, an independently verified
 `mfa_actor` identity, `issued_at`/`expires_at` (start-freshness window
 &le;300s), a bounded `run_ttl_seconds`, and a one-shot `nonce`. The signing
-key must belong to `EXECUTION_MFA_ISSUER_PUBLIC_KEYS_JSON` — a trust root
-kept distinct from the dev-bridge packet-source keys
-(`BRIDGE_SIGNING_PUBLIC_KEYS_JSON`), so a packet-source key can never
-double as an MFA issuer.
+key must belong to the configured
+`execution_authorization.mfa_issuer_public_keys` trust root — kept distinct
+from the dev-bridge packet-source keys (`BRIDGE_SIGNING_PUBLIC_KEYS_JSON`)
+and from the grant submitter's own environment, so neither a packet-source
+key nor a self-supplied trust root can ever double as an MFA issuer. An
+empty (default) `mfa_issuer_public_keys` means no genuine MFA issuer is yet
+provisioned in this checkout: grant submission fails closed with an
+actionable reason while pending intake remains fully usable.
 
 ---
 

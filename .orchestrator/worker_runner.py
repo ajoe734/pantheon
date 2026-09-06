@@ -33,6 +33,7 @@ from common import (  # noqa: E402 - worker_runner must bootstrap its sibling mo
     git_toplevel as _git_toplevel,
     validate_status_command_runtime as _validate_status_command_runtime,
 )
+import execution_authorization  # noqa: E402 - see sys.path bootstrap above
 
 
 def utc_now() -> str:
@@ -707,24 +708,75 @@ def derive_task_id(cmd):
     return m.group(1) if m else None
 
 
-def _get_task_roles(coordination_root: Path | None, task_id: str | None) -> dict[str, str]:
-    roles = {"owner": "", "reviewer": ""}
+def _get_task_record(coordination_root: Path | None, task_id: str | None) -> dict[str, Any] | None:
     if not coordination_root or not task_id:
-        return roles
+        return None
     status_file = coordination_root / "ai-status.json"
     if not status_file.exists():
-        return roles
+        return None
     try:
         data = json.loads(status_file.read_text(encoding="utf-8"))
         if isinstance(data, dict):
             for t in data.get("tasks", []):
                 if isinstance(t, dict) and t.get("id") == task_id:
-                    roles["owner"] = str(t.get("owner") or "").strip()
-                    roles["reviewer"] = str(t.get("reviewer") or "").strip()
-                    break
+                    return t
     except Exception:
         pass
+    return None
+
+
+def _get_task_roles(coordination_root: Path | None, task_id: str | None) -> dict[str, str]:
+    roles = {"owner": "", "reviewer": ""}
+    task = _get_task_record(coordination_root, task_id)
+    if isinstance(task, dict):
+        roles["owner"] = str(task.get("owner") or "").strip()
+        roles["reviewer"] = str(task.get("reviewer") or "").strip()
     return roles
+
+
+def ensure_execution_authorized_before_launch(
+    coordination_root: Path | None,
+    task_id: str | None,
+    *,
+    active_role: str,
+    run_id: str,
+) -> None:
+    """Direct worker-entry execution-authorization barrier (SA/SD 4).
+
+    ``worker_runner`` is the actual process-launch boundary: a direct
+    invocation (bypassing ``supervisor.start_worker_for_request``'s planned
+    dispatch), a replayed queue event, or a stale run id must never launch a
+    privileged owner-execution attempt just because it reached this binary.
+    Only the owner-execution purpose spends/requires the grant; a reviewer or
+    finalize invocation is read-only and is intentionally not checked here,
+    matching the purpose-scoped gate in ``rewrite/dispatch_admission.py`` and
+    ``supervisor.start_worker_for_request``.
+
+    Raises :class:`RuntimeError` before any subprocess is created if the
+    canonical task is privileged and this exact run is not a live, current,
+    unexpired ``STATE_RESERVED`` binding for ``run_id``.
+    """
+
+    if active_role != "owner":
+        return
+    task = _get_task_record(coordination_root, task_id)
+    if task is None:
+        # No canonical task record is resolvable from this coordination
+        # root. This worker_runner cannot independently prove the task is
+        # non-privileged, but it also cannot fabricate a "reserved" record
+        # to check that does not exist; the supervisor's own reserve step
+        # (which requires a resolvable canonical task) is the actual grant
+        # spend, and refuses first when the task is missing. This matches
+        # the documented no-op behavior for the overwhelmingly common case
+        # where no coordination root/task id is resolvable at all (for
+        # example a direct CLI status command, not a dispatched worker).
+        return
+    now = datetime.now(timezone.utc)
+    if not execution_authorization.reservation_is_current(task, run_id=run_id, now=now):
+        raise RuntimeError(
+            f"worker_runner: task {task_id} is not currently execution-authorized "
+            f"for run {run_id!r}; refusing to launch owner-execution process"
+        )
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -815,6 +867,13 @@ def main(argv: list[str] | None = None) -> int:
             active_role = "owner"
         elif normalized_agent == reviewer_lower.split("-")[0] or agent_lower == reviewer_lower:
             active_role = "reviewer"
+
+    ensure_execution_authorized_before_launch(
+        coordination_root,
+        task_id,
+        active_role=active_role,
+        run_id=str(os.environ.get("ORCH_EXECUTION_AUTHORIZATION_RUN_ID") or ""),
+    )
 
     interval = max(1.0, float(args.heartbeat_interval_seconds or 15.0))
     started_at = utc_now()

@@ -421,6 +421,55 @@ def verify_worker_sandbox(root: Path) -> dict[str, Any]:
     }
 
 
+def verify_execution_authorization_barriers(root: Path) -> dict[str, Any]:
+    """Discover-only proof a candidate command runtime has both barriers.
+
+    OPS-PRIVILEGED-TASK-EXECUTION-AUTH-001 (SA/SD 2, 6): a runtime that
+    predates ``execution_authorization.py`` entirely -- an old-runtime
+    rollback target -- has no concept of a privileged task's pending or
+    granted authorization record at all, and would fall back to ordinary
+    dependency-only dispatch for it. This runs a subprocess probe against
+    the *candidate* root's own interpreter/module path (never the currently
+    running supervisor's already-imported copy) and refuses promotion unless
+    that exact candidate declares the post-barrier runtime capability and
+    both the planner/delivery admission gate and the direct worker-entry
+    gate are actually present. It performs no canonical mutation, issues no
+    grant, and launches no privileged work.
+    """
+
+    runtime_root = root.expanduser().resolve()
+    orchestrator_dir = runtime_root / ".orchestrator"
+    probe_script = (
+        "import execution_authorization as ea\n"
+        "import worker_runner\n"
+        "import rewrite.dispatch_admission as da\n"
+        "assert ea.RUNTIME_CAPABILITY_EXECUTION_AUTHORIZATION in ea.RUNTIME_CAPABILITIES\n"
+        "assert hasattr(worker_runner, 'ensure_execution_authorized_before_launch')\n"
+        "assert hasattr(ea, 'reservation_is_current')\n"
+        "assert 'execution_authorized' in da.TaskIntent.__dataclass_fields__\n"
+        "print('ok')\n"
+    )
+    probe = subprocess.run(
+        [sys.executable, "-c", probe_script],
+        cwd=str(orchestrator_dir),
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=15,
+    )
+    if probe.returncode != 0 or probe.stdout.strip() != "ok":
+        detail = (probe.stderr or probe.stdout or "execution-authorization barrier probe failed").strip()
+        raise ValueError(
+            "command runtime is missing the required deferred-intake/late-"
+            f"execution authorization barriers: {detail}"
+        )
+    return {
+        "outcome": "barriers_present",
+        "command_root": str(runtime_root),
+        "capability": "execution_authorization_v1",
+    }
+
+
 def sync_coordination_root_code(candidate_root: Path, status_root: Path) -> dict[str, Any]:
     """Preserve the coordination checkout; executable code is immutable.
 
@@ -508,6 +557,9 @@ def _replace_supervisor_locked(
         result["command_runtime_seal"] = seal_command_runtime(Path(identity["root"]))
         result["worker_sandbox_preflight"] = verify_worker_sandbox(
             Path(identity["root"])
+        )
+        result["execution_authorization_barrier_preflight"] = (
+            verify_execution_authorization_barriers(Path(identity["root"]))
         )
         ensure_approval_queue_marker(approval_queue_path)
         stopped_pid = stop_existing_supervisor(

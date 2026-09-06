@@ -367,10 +367,22 @@ def evaluate_dispatch_intent(
             None,
             lane_id,
         )
-    if not intent.execution_authorized:
-        # Deny privileged owner execution before capacity/worktree/provider
+    if not intent.execution_authorized and task_reason in (
+        DispatchReason.OWNED_IN_PROGRESS,
+        DispatchReason.OWNED_READY,
+    ):
+        # Deny privileged *owner execution* before capacity/worktree/provider
         # launch when authorization is absent, invalid, stale, expired,
         # revoked, or already consumed by a different attempt (SA/SD 4).
+        # This purpose check is derived from the canonical, non-spoofable
+        # ``task_reason`` computed above (owner/reviewer identity plus
+        # lifecycle status), not from any caller-supplied label: a worker
+        # cannot claim a different purpose to dodge the gate. Only
+        # OWNED_IN_PROGRESS/OWNED_READY actually launch privileged execution
+        # work; REVIEW_READY and OWNED_FINALIZE are read-only review and
+        # closeout-bookkeeping dispatch and must remain usable while a
+        # privileged task sits pending/expired/revoked -- they never acquire
+        # or clear the mutation grant themselves (SA/SD 4).
         return DispatchDecision(
             False,
             DispatchBlockReason.EXECUTION_AUTHORIZATION_REQUIRED,

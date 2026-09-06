@@ -1697,6 +1697,184 @@ class DevBridgeMaterializeBatchTests(unittest.TestCase):
                 task, now=datetime.now(timezone.utc)
             )
         )
+        # Old-runtime-recognized durable hold (SA/SD 2, 6): ``waiting_for``
+        # is honored unconditionally by dispatch admission on any runtime
+        # revision, including one that predates execution_authorization.py
+        # entirely.
+        self.assertEqual(task["waiting_for"], "Human/Ops")
+
+    def test_execution_grant_submit_binds_a_genuine_grant_and_releases_hold(self) -> None:
+        packet_id = "pkt-security-grant-submit-20260906T000000Z"
+        task_id = "SECURITY-GRANT-SUBMIT"
+        row = self._task_row(task_id, packet_id=packet_id)
+        payload = self._payload_path(
+            [row], packet_id=packet_id, packet_digest="unused",
+            work_class="security", include_authorization=False,
+        )
+        self.assertEqual(self._run_main(payload), 0)
+        task = ai_status.get_task(ai_status.load_state(), task_id)
+        policy = task["execution_authorization"]["policy"]
+
+        issuer_key = Ed25519PrivateKey.from_private_bytes(
+            hashlib.sha256(b"mfa-issuer-test-key-for-ai-status").digest()
+        )
+        issuer_public_key = base64.urlsafe_b64encode(
+            issuer_key.public_key().public_bytes(
+                encoding=serialization.Encoding.Raw,
+                format=serialization.PublicFormat.Raw,
+            )
+        ).decode().rstrip("=")
+        now = datetime.now(timezone.utc)
+        grant_body = {
+            "task_id": task_id,
+            "generation": task.get("generation", 0),
+            "policy_digest": policy["policy_digest"],
+            "repository": policy["repository"],
+            "environment": policy["environment"],
+            "resources": policy["resources"],
+            "action_scope": policy["action_scope"],
+            "purpose": execution_authorization.EXECUTION_GRANT_PURPOSE,
+            "capability": execution_authorization.EXECUTION_GRANT_CAPABILITY,
+            "audience": task_id,
+            "mfa_verified": True,
+            "mfa_actor": "human-ops-genuine",
+            "nonce": "genuine-nonce-1",
+            "issued_at": now.isoformat().replace("+00:00", "Z"),
+            "expires_at": (now + timedelta(seconds=120)).isoformat().replace("+00:00", "Z"),
+            "run_ttl_seconds": 1800,
+        }
+        canonical = execution_authorization._canonical_json(grant_body)
+        grant = dict(grant_body)
+        grant["signature"] = {
+            "key_id": "mfa-issuer-1",
+            "algorithm": "Ed25519",
+            "value": base64.urlsafe_b64encode(issuer_key.sign(canonical)).decode().rstrip("="),
+        }
+
+        # A caller-supplied env var claiming to be the trust root must be
+        # ignored entirely (Codex2 exact-head review finding 3): only the
+        # independently provisioned config counts.
+        spoofed_key = Ed25519PrivateKey.generate()
+        spoofed_public = base64.urlsafe_b64encode(
+            spoofed_key.public_key().public_bytes(
+                encoding=serialization.Encoding.Raw, format=serialization.PublicFormat.Raw
+            )
+        ).decode().rstrip("=")
+        with (
+            mock.patch.object(ai_status, "validate_status_command_runtime_binding"),
+            mock.patch.object(ai_status, "validate_status_root_binding"),
+            mock.patch.object(
+                ai_status,
+                "load_config",
+                return_value={
+                    "execution_authorization": {
+                        "mfa_issuer_public_keys": {"mfa-issuer-1": issuer_public_key}
+                    }
+                },
+            ),
+            mock.patch.object(sys, "stdout", io.StringIO()),
+            mock.patch.dict(
+                os.environ,
+                {
+                    "AI_NAME": "Human/Ops",
+                    ai_status.LOCAL_HUMAN_OPS_ENV: "1",
+                    "EXECUTION_GRANT_JSON": json.dumps(grant),
+                    "EXECUTION_MFA_ISSUER_PUBLIC_KEYS_JSON": json.dumps(
+                        {"mfa-issuer-1": spoofed_public}
+                    ),
+                },
+                clear=False,
+            ),
+        ):
+            exit_code = ai_status.main(
+                ["ai_status.py", "execution-grant-submit", task_id]
+            )
+        self.assertEqual(exit_code, 0)
+        task_after = ai_status.get_task(ai_status.load_state(), task_id)
+        self.assertEqual(
+            task_after["execution_authorization"]["state"],
+            execution_authorization.STATE_GRANTED,
+        )
+        self.assertNotIn("waiting_for", task_after)
+        self.assertTrue(
+            execution_authorization.is_execution_authorized(task_after, now=now)
+        )
+
+    def test_execution_grant_submit_rejects_caller_supplied_trust_root(self) -> None:
+        # Without any configured issuer, a caller-supplied
+        # EXECUTION_MFA_ISSUER_PUBLIC_KEYS_JSON must not substitute for it,
+        # even if it happens to verify the grant's own signature.
+        packet_id = "pkt-security-grant-spoof-20260906T000000Z"
+        task_id = "SECURITY-GRANT-SPOOF"
+        row = self._task_row(task_id, packet_id=packet_id)
+        payload = self._payload_path(
+            [row], packet_id=packet_id, packet_digest="unused",
+            work_class="security", include_authorization=False,
+        )
+        self.assertEqual(self._run_main(payload), 0)
+        task = ai_status.get_task(ai_status.load_state(), task_id)
+        policy = task["execution_authorization"]["policy"]
+
+        issuer_key = Ed25519PrivateKey.generate()
+        issuer_public_key = base64.urlsafe_b64encode(
+            issuer_key.public_key().public_bytes(
+                encoding=serialization.Encoding.Raw, format=serialization.PublicFormat.Raw
+            )
+        ).decode().rstrip("=")
+        now = datetime.now(timezone.utc)
+        grant_body = {
+            "task_id": task_id,
+            "generation": task.get("generation", 0),
+            "policy_digest": policy["policy_digest"],
+            "repository": policy["repository"],
+            "environment": policy["environment"],
+            "resources": policy["resources"],
+            "action_scope": policy["action_scope"],
+            "purpose": execution_authorization.EXECUTION_GRANT_PURPOSE,
+            "capability": execution_authorization.EXECUTION_GRANT_CAPABILITY,
+            "audience": task_id,
+            "mfa_verified": True,
+            "mfa_actor": "self-issued",
+            "nonce": "spoof-nonce-1",
+            "issued_at": now.isoformat().replace("+00:00", "Z"),
+            "expires_at": (now + timedelta(seconds=120)).isoformat().replace("+00:00", "Z"),
+            "run_ttl_seconds": 1800,
+        }
+        canonical = execution_authorization._canonical_json(grant_body)
+        grant = dict(grant_body)
+        grant["signature"] = {
+            "key_id": "mfa-issuer-1",
+            "algorithm": "Ed25519",
+            "value": base64.urlsafe_b64encode(issuer_key.sign(canonical)).decode().rstrip("="),
+        }
+
+        with (
+            mock.patch.object(ai_status, "validate_status_command_runtime_binding"),
+            mock.patch.object(ai_status, "validate_status_root_binding"),
+            mock.patch.object(ai_status, "load_config", return_value={}),
+            mock.patch.object(sys, "stdout", io.StringIO()),
+            mock.patch.object(sys, "stderr", io.StringIO()),
+            mock.patch.dict(
+                os.environ,
+                {
+                    "AI_NAME": "Human/Ops",
+                    ai_status.LOCAL_HUMAN_OPS_ENV: "1",
+                    "EXECUTION_GRANT_JSON": json.dumps(grant),
+                    "EXECUTION_MFA_ISSUER_PUBLIC_KEYS_JSON": json.dumps(
+                        {"mfa-issuer-1": issuer_public_key}
+                    ),
+                },
+                clear=False,
+            ),
+        ):
+            with self.assertRaises(SystemExit):
+                ai_status.main(["ai_status.py", "execution-grant-submit", task_id])
+        task_after = ai_status.get_task(ai_status.load_state(), task_id)
+        self.assertEqual(
+            task_after["execution_authorization"]["state"],
+            execution_authorization.STATE_PENDING,
+        )
+        self.assertEqual(task_after["waiting_for"], "Human/Ops")
 
     def test_batch_commits_every_task_in_exactly_one_journal_event(self) -> None:
         packet_id = "pkt-batch-ok-20260811T000000Z"

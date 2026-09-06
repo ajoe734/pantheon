@@ -13,6 +13,7 @@ import pytest
 import promote_supervisor_runtime as promotion
 
 _REAL_VERIFY_WORKER_SANDBOX = promotion.verify_worker_sandbox
+_REAL_VERIFY_EXECUTION_AUTHORIZATION_BARRIERS = promotion.verify_execution_authorization_barriers
 
 
 @pytest.fixture(autouse=True)
@@ -26,6 +27,23 @@ def _command_runtime_parent(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
             "outcome": "available",
             "binary": "/usr/bin/bwrap",
             "command_root": str(Path(root).resolve()),
+        },
+    )
+    # This module's `_candidate()` fixture writes a minimal stub
+    # ``.orchestrator`` (a placeholder ``supervisor.py``, no
+    # ``execution_authorization.py``/``worker_runner.py`` at all) -- these
+    # tests exercise stop/install/launch/rollback semantics, not actual
+    # runtime source content, which is what
+    # ``verify_execution_authorization_barriers`` discover-only-probes for
+    # (OPS-PRIVILEGED-TASK-EXECUTION-AUTH-001). Tests that need to exercise
+    # that probe itself replace this stub explicitly.
+    monkeypatch.setattr(
+        promotion,
+        "verify_execution_authorization_barriers",
+        lambda root: {
+            "outcome": "barriers_present",
+            "command_root": str(Path(root).resolve()),
+            "capability": "execution_authorization_v1",
         },
     )
     monkeypatch.setenv(
@@ -777,3 +795,104 @@ def test_deploy_root_honors_env_override_and_expands_user(tmp_path: Path) -> Non
     assert lines[0] == expected_root
     assert lines[1] == str(Path(expected_root) / "runtime" / "live-supervisor-mainroot-config.json")
     assert lines[2] == str(Path(expected_root) / "command-runtimes")
+
+
+def _write_real_orchestrator_modules(orchestrator_dir: Path) -> None:
+    """Copy the actual barrier-bearing modules into a candidate root.
+
+    Unlike ``_candidate()``'s minimal stub, this is what a genuine promotion
+    candidate looks like: the real ``execution_authorization.py``,
+    ``worker_runner.py``, and ``rewrite/dispatch_admission.py`` this
+    repository ships, on the module search path
+    ``verify_execution_authorization_barriers`` actually probes.
+    """
+
+    repo_orchestrator = Path(__file__).resolve().parents[1] / ".orchestrator"
+    for name in ("execution_authorization.py", "worker_runner.py", "common.py"):
+        (orchestrator_dir / name).write_bytes((repo_orchestrator / name).read_bytes())
+    rewrite_dir = orchestrator_dir / "rewrite"
+    rewrite_dir.mkdir(exist_ok=True)
+    (rewrite_dir / "__init__.py").write_bytes(
+        (repo_orchestrator / "rewrite" / "__init__.py").read_bytes()
+    )
+    for name in ("dispatch_admission.py", "task_machine.py", "provider_health.py"):
+        (rewrite_dir / name).write_bytes(
+            (repo_orchestrator / "rewrite" / name).read_bytes()
+        )
+
+
+def test_verify_execution_authorization_barriers_accepts_current_source(
+    tmp_path: Path,
+) -> None:
+    candidate, _status_root = _candidate(tmp_path)
+    _write_real_orchestrator_modules(candidate / ".orchestrator")
+
+    result = _REAL_VERIFY_EXECUTION_AUTHORIZATION_BARRIERS(candidate)
+
+    assert result["outcome"] == "barriers_present"
+    assert result["capability"] == "execution_authorization_v1"
+
+
+def test_verify_execution_authorization_barriers_rejects_old_runtime(
+    tmp_path: Path,
+) -> None:
+    # An old-runtime rollback target predates execution_authorization.py
+    # entirely (OPS-PRIVILEGED-TASK-EXECUTION-AUTH-001 SA/SD 2, 6):
+    # ``_candidate()``'s stub ``.orchestrator`` has no such module at all.
+    candidate, _status_root = _candidate(tmp_path)
+
+    with pytest.raises(ValueError, match="authorization barriers"):
+        _REAL_VERIFY_EXECUTION_AUTHORIZATION_BARRIERS(candidate)
+
+
+def test_verify_execution_authorization_barriers_rejects_missing_worker_runner_hook(
+    tmp_path: Path,
+) -> None:
+    candidate, _status_root = _candidate(tmp_path)
+    _write_real_orchestrator_modules(candidate / ".orchestrator")
+    worker_runner_path = candidate / ".orchestrator" / "worker_runner.py"
+    stripped = worker_runner_path.read_text(encoding="utf-8").replace(
+        "def ensure_execution_authorized_before_launch(",
+        "def _renamed_execution_authorization_hook(",
+    )
+    assert stripped != worker_runner_path.read_text(encoding="utf-8")
+    worker_runner_path.write_text(stripped, encoding="utf-8")
+
+    with pytest.raises(ValueError, match="authorization barriers"):
+        _REAL_VERIFY_EXECUTION_AUTHORIZATION_BARRIERS(candidate)
+
+
+def test_replace_supervisor_refuses_old_runtime_rollback_without_barriers(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    candidate, status_root = _candidate(tmp_path)
+    live_config = tmp_path / "runtime" / "live.json"
+    monkeypatch.undo()  # restore the autouse stub so the real probe runs
+    monkeypatch.setattr(promotion, "COMMAND_RUNTIME_PARENT", tmp_path / "command-runtimes")
+    monkeypatch.setattr(
+        promotion,
+        "verify_worker_sandbox",
+        lambda root: {
+            "outcome": "available",
+            "binary": "/usr/bin/bwrap",
+            "command_root": str(Path(root).resolve()),
+        },
+    )
+    monkeypatch.setenv("BRIDGE_SIGNING_PUBLIC_KEYS_JSON", '{"test-key":"public-test-key"}')
+    stop_calls = []
+    monkeypatch.setattr(
+        promotion, "stop_existing_supervisor", lambda *a, **k: stop_calls.append(1) or 41
+    )
+
+    result = promotion.replace_supervisor(
+        candidate,
+        status_root=status_root,
+        live_config_path=live_config,
+        python_executable=Path(sys.executable),
+        termination_timeout=1,
+    )
+
+    assert result["outcome"] == "failed"
+    assert "authorization barriers" in result["error"]
+    # The healthy incumbent must never be stopped once this preflight fails.
+    assert stop_calls == []

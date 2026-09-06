@@ -65,6 +65,17 @@ STATE_REVOKED = "revoked"
 # hold").
 RUNTIME_CAPABILITY_EXECUTION_AUTHORIZATION = "execution_authorization_v1"
 
+# The current runtime's own declaration of which execution-authorization
+# capabilities it has. Any runtime root that has this exact module revision
+# on its import path declares this; an older command-runtime root -- one
+# that predates this module, or an earlier copy of it without this constant
+# -- has no such declaration at all. ``scripts/promote_supervisor_runtime.py``
+# discover-only-probes a *candidate* runtime root's own interpreter for this
+# constant (not the currently running supervisor's copy) before promoting it,
+# so an old-runtime rollback is refused while any task carries a pending or
+# granted privileged execution-authorization record (SA/SD 2, 6).
+RUNTIME_CAPABILITIES = frozenset({RUNTIME_CAPABILITY_EXECUTION_AUTHORIZATION})
+
 
 class ExecutionAuthorizationError(ValueError):
     """A grant, policy, or authorization state is invalid or insufficient."""
@@ -86,6 +97,11 @@ def _normalized_resources(resources: Any) -> list[str]:
     return sorted({str(item).strip() for item in resources if str(item).strip()})
 
 
+# Alias: artifacts are normalized the same way (sorted, deduplicated,
+# stripped strings) so both feed the same canonical-digest shape.
+_normalized_artifacts = _normalized_resources
+
+
 def is_privileged_work_class(work_class: Any) -> bool:
     return str(work_class or "").strip().lower() in PRIVILEGED_WORK_CLASSES
 
@@ -99,14 +115,18 @@ def runtime_supports_execution_authorization(capabilities: Any) -> bool:
     """
 
     if isinstance(capabilities, Mapping):
-        values = capabilities.keys()
-    elif isinstance(capabilities, (list, tuple, set, frozenset)):
-        values = capabilities
-    else:
-        return False
-    return RUNTIME_CAPABILITY_EXECUTION_AUTHORIZATION in {
-        str(value).strip() for value in values
-    }
+        # A mapping declares capability *values*, not just capability
+        # *names*: a runtime that reports
+        # ``{RUNTIME_CAPABILITY_EXECUTION_AUTHORIZATION: False}`` is
+        # explicitly declaring the barrier absent, not present. Checking
+        # only ``.keys()`` treated that false value as enabled solely
+        # because the key existed.
+        return bool(capabilities.get(RUNTIME_CAPABILITY_EXECUTION_AUTHORIZATION))
+    if isinstance(capabilities, (list, tuple, set, frozenset)):
+        return RUNTIME_CAPABILITY_EXECUTION_AUTHORIZATION in {
+            str(value).strip() for value in capabilities
+        }
+    return False
 
 
 def execution_policy_digest(
@@ -116,13 +136,26 @@ def execution_policy_digest(
     environment: Any,
     resources: Any,
     action_scope: Any,
+    artifacts: Any = None,
 ) -> str:
+    """Digest one task's exact execution scope, including its artifact contract.
+
+    ``artifacts`` is included so a canonical ``command_artifact_contract``
+    revision changes this digest exactly like a ``command_execution_resource``
+    revision does; :func:`is_execution_authorized` recomputes this digest
+    against the *current* task on every call and fails closed on a mismatch,
+    so either kind of scope revision invalidates an outstanding grant even
+    when it does not also bump ``generation`` (SA/SD 3, "reassignment, scope
+    or target change invalidates the grant").
+    """
+
     payload = {
         "task_id": str(task_id or "").strip(),
         "repository": str(repository or "").strip(),
         "environment": str(environment or "").strip(),
         "resources": _normalized_resources(resources),
         "action_scope": str(action_scope or "").strip(),
+        "artifacts": _normalized_artifacts(artifacts),
     }
     return _sha256_hex(_canonical_json(payload))
 
@@ -135,6 +168,7 @@ def derive_execution_policy(
     environment: Any = None,
     resources: Any = None,
     action_scope: Any = None,
+    artifacts: Any = None,
 ) -> dict[str, Any]:
     """Derive the immutable execution policy for one task's exact contract.
 
@@ -148,6 +182,7 @@ def derive_execution_policy(
     environment_value = str(environment or "pantheon-dev").strip()
     action_scope_value = str(action_scope or "execute").strip()
     resources_list = _normalized_resources(resources)
+    artifacts_list = _normalized_artifacts(artifacts)
     repository_value = str(repository or "").strip()
     digest = execution_policy_digest(
         task_id=task_id,
@@ -155,6 +190,7 @@ def derive_execution_policy(
         environment=environment_value,
         resources=resources_list,
         action_scope=action_scope_value,
+        artifacts=artifacts_list,
     )
     return {
         "work_class": normalized_class,
@@ -162,6 +198,7 @@ def derive_execution_policy(
         "repository": repository_value,
         "environment": environment_value,
         "resources": resources_list,
+        "artifacts": artifacts_list,
         "action_scope": action_scope_value,
         "policy_digest": digest,
     }
@@ -389,6 +426,23 @@ def build_granted_authorization(
     }
 
 
+def _task_privileged_by_source(task: Mapping[str, Any]) -> bool:
+    """Return the task's ground-truth privileged classification.
+
+    Derived from the durable, verified dev-bridge packet provenance
+    (``task.dev_bridge.work_class``), never from whether an
+    ``execution_authorization`` subrecord happens to be present. Canonical
+    assignment, metadata, reopen, recovery, and replay can drop or corrupt
+    the subrecord; they cannot change what packet the task was actually
+    materialized from (SA/SD 2).
+    """
+
+    dev_bridge = task.get("dev_bridge")
+    if not isinstance(dev_bridge, Mapping):
+        return False
+    return is_privileged_work_class(dev_bridge.get("work_class"))
+
+
 def is_execution_authorized(
     task: Mapping[str, Any],
     *,
@@ -398,20 +452,28 @@ def is_execution_authorized(
 
     Fed into the same normalized verdict consumed by both the planner and
     late delivery through ``rewrite/dispatch_admission.py`` (SA/SD 4). A task
-    with no execution-authorization subrecord, or one whose policy does not
-    require authorization, is always authorized -- ordinary
+    that is not privileged by its durable source provenance, and carries no
+    execution-authorization subrecord, is always authorized -- ordinary
     functional/paper/read_only/ci/reconcile_only dispatch is unaffected.
-    Any malformed or corrupt subrecord fails closed (returns ``False``).
+
+    A task that *is* privileged by source provenance fails closed on a
+    missing, malformed, or downgraded subrecord/policy instead of falling
+    back to "authorized": a dropped subrecord, a corrupt policy shape, or an
+    erased/downgraded ``requires_execution_authorization`` flag can never
+    silently relabel privileged work as ordinary functional work.
     """
 
+    privileged_by_source = _task_privileged_by_source(task)
     record = task.get("execution_authorization")
     if record is None:
-        return True
+        return not privileged_by_source
     if not isinstance(record, Mapping):
         return False
     policy = record.get("policy")
-    if not isinstance(policy, Mapping) or not policy.get("requires_execution_authorization"):
-        return True
+    if not isinstance(policy, Mapping):
+        return False
+    if not policy.get("requires_execution_authorization"):
+        return not privileged_by_source
     if record.get("state") != STATE_GRANTED:
         return False
     grant = record.get("grant")
@@ -425,8 +487,80 @@ def is_execution_authorized(
         return False
     if str(grant.get("policy_digest") or "") != str(policy.get("policy_digest") or ""):
         return False
+    # Recompute the digest against the task's *current* target/resources/
+    # artifact contract rather than trusting the two frozen, previously
+    # agreeing digests above. ``command_execution_resource`` and
+    # ``command_artifact_contract`` revise a pre-dispatch task's scope
+    # without bumping ``generation``; without this recomputation neither
+    # frozen digest would ever change, so a scope revision made after grant
+    # issuance would silently keep an outstanding grant valid.
+    current_digest = execution_policy_digest(
+        task_id=task.get("id"),
+        repository=task.get("target_repo") or policy.get("repository"),
+        environment=policy.get("environment"),
+        resources=task.get("execution_resources"),
+        action_scope=policy.get("action_scope"),
+        artifacts=task.get("artifacts"),
+    )
+    if current_digest != str(policy.get("policy_digest") or ""):
+        return False
     expires = _parse_utc(grant.get("expires_at"))
     if expires is None or now > expires:
+        return False
+    return True
+
+
+def reservation_is_current(
+    task: Mapping[str, Any],
+    *,
+    run_id: Any,
+    now: datetime,
+) -> bool:
+    """Pure query: may this exact ``run_id`` actually launch privileged work now.
+
+    This is the direct worker-entry counterpart to :func:`is_execution_authorized`
+    (SA/SD 4, "revalidate at actual worker entry before privileged execution,
+    not only when a queue row was originally planned"). It requires the
+    canonical claim/lease boundary
+    (``supervisor.reserve_execution_authorization_for_launch``) to have
+    already committed a ``STATE_RESERVED`` record bound to this exact
+    ``run_id``, within its grant's bounded run lifetime -- a direct
+    ``worker_runner`` invocation that bypasses that boundary, a replayed or
+    stale run id, or an attempt outside the reserved run's TTL is rejected
+    before any process launch. A non-privileged task is always current, same
+    as :func:`is_execution_authorized`.
+    """
+
+    privileged_by_source = _task_privileged_by_source(task)
+    record = task.get("execution_authorization")
+    if record is None:
+        return not privileged_by_source
+    if not isinstance(record, Mapping):
+        return False
+    policy = record.get("policy")
+    if not isinstance(policy, Mapping):
+        return False
+    if not policy.get("requires_execution_authorization"):
+        return not privileged_by_source
+    if record.get("state") != STATE_RESERVED:
+        return False
+    if str(record.get("reserved_run_id") or "").strip() != str(run_id or "").strip():
+        return False
+    grant = record.get("grant")
+    if not isinstance(grant, Mapping):
+        return False
+    reserved_at = _parse_utc(record.get("reserved_at"))
+    if reserved_at is None:
+        return False
+    try:
+        run_ttl_seconds = int(grant.get("run_ttl_seconds", DEFAULT_RUN_TTL_SECONDS))
+    except (TypeError, ValueError):
+        return False
+    if run_ttl_seconds <= 0:
+        return False
+    if now < reserved_at:
+        return False
+    if (now - reserved_at).total_seconds() > run_ttl_seconds:
         return False
     return True
 

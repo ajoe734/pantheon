@@ -14,58 +14,127 @@
     "packet_id": "pkt-privileged-execution-auth-20260906-v2",
     "packet_digest": "325967d8df0c347544f5c23eb5749e377e1fe1f6382d51f79e47340f4a52fe18"
   },
+  "revision_history": [
+    {
+      "revision": 1,
+      "outcome": "REJECT",
+      "reviewer": "Codex2",
+      "recorded_at": "2026-09-06T07:03:35Z",
+      "pr": 5627,
+      "head_sha": "a924749f813abb59d6c9ea100a247134241863aa",
+      "summary": "Independent exact-head review found 8 concrete P1 defects plus an earlier read-only source diagnostic's 4 executable false-positive observations; see required_changes_addressed below. The GitHub write of this REJECT decision itself failed (HTTP 422); canonical review/task state still recorded the reopen and moved responsibility to the owner."
+    },
+    {
+      "revision": 2,
+      "outcome": "in_progress",
+      "summary": "This evidence revision. Addresses all 8 review findings and the 4 diagnostic false-positives with real code changes plus new regression tests; see required_changes_addressed."
+    }
+  ],
+  "required_changes_addressed": [
+    {
+      "finding": "supervisor.py:3170 looked up tasks via task_index_from_status(config, state) -- state is dispatch-loop runtime/queue state, not a canonical status snapshot, so the lookup was always empty and the authoritative reserve step was silently skipped for every task, including privileged ones (an isolated actual-process probe showed a launch still proceeding after revocation was injected between admission and launch).",
+      "fix": "start_worker_for_request now takes an explicit latest_task_map parameter (the already-freshly-loaded canonical snapshot process_queue computed moments earlier) and uses it only to decide whether a privileged policy exists at all (an immutable structural fact, safe from a slightly stale snapshot); when it does, reserve_execution_authorization_for_launch is always called and performs its own authoritative reload/CAS under the exclusive lock. When no latest_task_map is supplied, the authoritative reserve is always invoked instead of silently skipped.",
+      "files": [".orchestrator/supervisor.py"],
+      "tests": ["DurableQueueContractTests::test_spawn_boundary_launches_only_the_current_assignment", "DurableQueueContractTests::test_spawn_boundary_rejects_stale_assignment_snapshots"]
+    },
+    {
+      "finding": "execution_authorization.py:407-414 authorized hosted provenance with a missing execution_authorization subrecord, an empty/corrupt record, a missing policy, or requires_execution_authorization=false; supervisor.py:3100-3105 also returned successfully in these cases.",
+      "fix": "is_execution_authorized now derives ground-truth privileged classification from the task's durable dev_bridge.work_class via a new _task_privileged_by_source helper, independent of whether the execution_authorization subrecord happens to be present. A privileged task with a missing subrecord, a malformed policy, or a downgraded requires_execution_authorization flag now fails closed (returns False) instead of falling back to authorized.",
+      "files": [".orchestrator/execution_authorization.py"],
+      "tests": ["test_privileged_source_with_missing_subrecord_fails_closed", "test_privileged_source_with_corrupt_policy_fails_closed", "test_privileged_source_with_downgraded_flag_fails_closed", "test_non_privileged_task_with_no_subrecord_is_unaffected"]
+    },
+    {
+      "finding": "scripts/ai_status.py:5570-5584 trusted a caller-supplied EXECUTION_MFA_ISSUER_PUBLIC_KEYS_JSON environment variable as the MFA-issuer trust root. An isolated local Human/Ops ingress accepted a caller-generated key also labelled as source signing authority with self-asserted MFA in the same command invocation.",
+      "fix": "command_execution_grant_submit no longer reads any environment variable for the trust root. A new _trusted_execution_mfa_issuers helper sources it exclusively from execution_authorization.mfa_issuer_public_keys in the on-disk .orchestrator/config.json (added as a new, narrow, empty-by-default config section) via load_config(), which the same CLI invocation's environment cannot set. EXECUTION_GRANT_JSON (the signed assertion itself, not a trust root) is unaffected.",
+      "files": ["scripts/ai_status.py", ".orchestrator/config.json"],
+      "tests": ["DevBridgeMaterializeBatchTests::test_execution_grant_submit_binds_a_genuine_grant_and_releases_hold", "DevBridgeMaterializeBatchTests::test_execution_grant_submit_rejects_caller_supplied_trust_root"]
+    },
+    {
+      "finding": "execution_authorization.py:420-430 did not validate the task's current contract/resources. command_execution_resource and command_artifact_contract could both change scope after a grant was issued while preserving generation and is_execution_authorized=true, because the stored policy_digest was never recomputed against the task's current fields.",
+      "fix": "execution_policy_digest and derive_execution_policy now also bind the artifact contract. is_execution_authorized recomputes the digest against the task's current target_repo/execution_resources/artifacts on every call and fails closed on any mismatch against the frozen policy_digest, so a scope revision made after grant issuance invalidates the outstanding grant even without a generation bump.",
+      "files": [".orchestrator/execution_authorization.py", "scripts/ai_status.py"],
+      "tests": ["test_execution_resource_revision_invalidates_outstanding_grant", "test_artifact_contract_revision_invalidates_outstanding_grant", "test_target_repo_change_invalidates_outstanding_grant"]
+    },
+    {
+      "finding": "execution_authorization.py:185's old_runtime_hold was an unrecognized new field with no old-runtime-recognized meaning, and runtime_supports_execution_authorization had no production caller. A frozen-base actual dispatch predicate admitted the new hosted pending/no-grant record with completed dependencies.",
+      "fix": "Two independent layers. (1) A fresh privileged task now also gets the pre-existing, universally-honored waiting_for=\"Human/Ops\" hold at intake (command_assign), which any dispatch-admission revision -- including one that predates execution_authorization.py entirely -- already refuses to dispatch; execution-grant-submit clears it once a genuine grant is bound. (2) runtime_supports_execution_authorization's boolean-value bug is fixed (a mapping now checks the capability's *value*, not merely key presence), and it gets a real production caller: scripts/promote_supervisor_runtime.py's new verify_execution_authorization_barriers discover-only-probes a candidate command runtime's own interpreter for execution_authorization.py, worker_runner.py's entry hook, and dispatch_admission.py's execution_authorized field before promotion, refusing an old-runtime rollback target that lacks any of them. It runs in the same preflight position as the existing verify_worker_sandbox check, before the healthy incumbent is ever stopped.",
+      "files": [".orchestrator/execution_authorization.py", "scripts/ai_status.py", "scripts/promote_supervisor_runtime.py"],
+      "tests": ["test_false_capability_value_is_not_treated_as_enabled", "test_current_runtime_declares_its_own_capability", "DevBridgeMaterializeBatchTests::test_security_packet_without_operator_authorization_materializes_pending (waiting_for assertion)", "test_verify_execution_authorization_barriers_accepts_current_source", "test_verify_execution_authorization_barriers_rejects_old_runtime", "test_verify_execution_authorization_barriers_rejects_missing_worker_runner_hook", "test_replace_supervisor_refuses_old_runtime_rollback_without_barriers"]
+    },
+    {
+      "finding": "worker_runner.py had no canonical execution binding check before the provider Popen call, and reserved_run_id/run_ttl_seconds/revocation had no worker/recovery enforcement -- a direct invocation could launch owner-execution work without ever consulting execution_authorization.",
+      "fix": "A new execution_authorization.reservation_is_current(task, run_id, now) pure query requires a live, current, unexpired STATE_RESERVED record bound to the exact run id. worker_runner.py's new ensure_execution_authorized_before_launch calls it (for the owner role only) immediately before subprocess.Popen, reading the canonical task directly from ai-status.json. The exact bound run id is threaded from supervisor.reserve_execution_authorization_for_launch through request.metadata['execution_authorization_run_id'] -> common.delivery_runtime_env's new ORCH_EXECUTION_AUTHORIZATION_RUN_ID env var (an adapter's own new_runtime_id-generated --run-id is unrelated and cannot be used for this binding).",
+      "files": [".orchestrator/worker_runner.py", ".orchestrator/execution_authorization.py", ".orchestrator/supervisor.py", ".orchestrator/common.py"],
+      "tests": ["test_reservation_is_current_requires_matching_run_id", "test_reservation_is_current_rejects_granted_but_unreserved_task", "test_reservation_is_current_rejects_expired_run_ttl", "test_reservation_is_current_rejects_revoked_task", "test_reservation_is_current_unaffected_for_non_privileged_task", "test_reservation_is_current_fails_closed_for_privileged_missing_record"]
+    },
+    {
+      "finding": "execution_authorization.py has a caller-holds-lock docstring but consume_grant_nonce/reserve_execution_authorization were pure in-memory helpers; the required real two-process/no-unauthorized-launch integration and tests were missing.",
+      "fix": "The imperative claim/lease integration already exists in supervisor.reserve_execution_authorization_for_launch (exclusive canonical task-state lock, load-verify-CAS-write); this revision fixes the bug (finding 1 above) that made it unreachable for a privileged task and adds the worker-entry counterpart (finding 6). Isolated reserve/CAS-race and worker-entry-TTL/state coverage is in test_execution_authorization.py; DurableQueueContractTests exercises the actual supervisor dispatch-loop integration under mocked load_status snapshots. A genuine live two-process OS-level race and a real bwrap-sandboxed worker_runner subprocess launch were not additionally exercised in this revision; see not_delivered.",
+      "files": [],
+      "tests": ["test_genuine_synthetic_grant_authorizes_exactly_one_attempt", "test_reserve_without_prior_grant_fails"]
+    },
+    {
+      "finding": "rewrite/dispatch_admission.py:370 applied the execution-authorization mutation gate to REVIEW_READY and OWNED_FINALIZE dispatch reasons too, so a reserved/expired/pending privileged task could not even receive read-only review or finalization dispatch.",
+      "fix": "The EXECUTION_AUTHORIZATION_REQUIRED denial is now scoped to task_reason in (OWNED_IN_PROGRESS, OWNED_READY) only -- derived from the same canonical, non-spoofable dispatch_reason() computation already used for lifecycle gating, not a caller-supplied label. supervisor.start_worker_for_request's reserve call is scoped the same way via request.reason. REVIEW_READY/OWNED_FINALIZE dispatch of a privileged task is now unaffected by its authorization state, matching SA/SD 4's 'read-only review/status/finalization must not acquire a mutation permit or clear a pending gate'.",
+      "files": [".orchestrator/rewrite/dispatch_admission.py", ".orchestrator/supervisor.py"],
+      "tests": ["test_unauthorized_privileged_task_review_dispatch_is_unaffected", "test_unauthorized_privileged_task_finalize_dispatch_is_unaffected", "test_unauthorized_privileged_task_in_progress_dispatch_is_denied"]
+    },
+    {
+      "finding": "The prior evidence.json described the two-process race as sequential in-memory reserve calls and mocked-lock unit tests, not a real race; it also omitted claimed deselection arguments, described a pass_pending_commit_reverify status that was never followed up, and its embedded plan copy's source hash did not match the original.",
+      "fix": "This revision's evidence records exact commands/exits/counts (see verification below), does not claim a real OS-level two-process race was exercised (see not_delivered), and the repository-readable EXECUTION_AUTHORIZATION_SA_SD.md copy's verbatim source section is unchanged from the original signed text; only the living 'Implementation status' / 'Operational command/receipt contract' commentary around it (not the verbatim section) was updated to match this revision's actual behavior.",
+      "files": ["docs/deployment/evidence/OPS-PRIVILEGED-TASK-EXECUTION-AUTH-001/evidence.json", "docs/04/pantheon_first_release_closure_2026-09-06/EXECUTION_AUTHORIZATION_SA_SD.md"],
+      "tests": []
+    }
+  ],
+  "diagnostic_false_positives_addressed": [
+    "is_execution_authorized(privileged task with no execution_authorization subrecord) now returns False (was True)",
+    "is_execution_authorized(privileged task with execution_authorization={\"policy\": \"corrupt\"}) now returns False (was True)",
+    "is_execution_authorized(privileged task with policy.requires_execution_authorization=False) now returns False (was True)",
+    "runtime_supports_execution_authorization({CAPABILITY: False}) now returns False (was True)"
+  ],
   "scope": {
     "owned": [
       ".orchestrator/execution_authorization.py",
       ".orchestrator/test_execution_authorization.py",
       ".orchestrator/rewrite/dispatch_admission.py",
       ".orchestrator/rewrite/test_dispatch_admission.py",
-      ".orchestrator/dispatch_policy.py",
-      ".orchestrator/dispatch_policy_contract.md",
-      ".orchestrator/development_bridge/dev_bridge_materialize.py",
-      ".orchestrator/development_bridge/tests/test_dev_bridge_inbox_cli.py",
       ".orchestrator/supervisor.py",
-      ".orchestrator/test_supervisor.py",
+      ".orchestrator/worker_runner.py",
+      ".orchestrator/common.py",
+      ".orchestrator/config.json",
+      ".orchestrator/dispatch_policy_contract.md",
       "scripts/ai_status.py",
       "scripts/test_ai_status.py",
-      "scripts/test_status_command_runtime_pin.py",
+      "scripts/promote_supervisor_runtime.py",
+      "scripts/test_promote_supervisor_runtime.py",
       "docs/operations/management-ai-openclaw-dev-bridge.md",
-      "docs/02-architecture/development-tooling-product-boundary.md",
-      "docs/04/pantheon_first_release_closure_2026-09-06/INDEX.md",
       "docs/04/pantheon_first_release_closure_2026-09-06/EXECUTION_AUTHORIZATION_SA_SD.md",
       "docs/deployment/evidence/OPS-PRIVILEGED-TASK-EXECUTION-AUTH-001/evidence.json"
     ],
     "not_changing": [
-      "docs/04/pantheon_first_release_closure_2026-09-06/STATUS.md and SOURCE_MANIFEST.json (already-accepted DOC-FIRST-RELEASE-PLAN-DELIVERY-001 frozen evidence; only a new INDEX.md pointer was added, no existing hash-verified content was touched)",
-      ".orchestrator/config.json (no config schema change was required; the MFA-issuer trust root is env-var based, EXECUTION_MFA_ISSUER_PUBLIC_KEYS_JSON, mirroring the existing BRIDGE_SIGNING_PUBLIC_KEYS_JSON convention which is also not in config.json)",
+      "docs/04/pantheon_first_release_closure_2026-09-06/STATUS.md, INDEX.md, and SOURCE_MANIFEST.json (already-accepted DOC-FIRST-RELEASE-PLAN-DELIVERY-001 frozen evidence; untouched by this revision)",
+      "docs/02-architecture/development-tooling-product-boundary.md (its existing generic reference to execution_authorization.py already covers this revision; no edit needed)",
+      ".orchestrator/development_bridge/dev_bridge_materialize.py, .orchestrator/dispatch_policy.py, .orchestrator/rewrite/task_machine.py (unchanged by this revision's fixes; the former MFA-at-intake retirement and the TaskIntent/dispatch_reason wiring landed in revision 1 and needed no further change)",
       "the three original hosted task IDs (DEV-RELEASE-HOSTED-001, L12-HOSTED-001, MGMT-AGORA-E2E-001) and their unsigned/unqueued packet at /tmp/pantheon-dispatch-dedup-20260906.0T4kBq/hosted-packet.pending-genuine-authorization.json -- plan section 7 gates their submission on accepted source AND qualified-runtime/no-MFA no-launch evidence, both later, separate, operator-authorized steps",
       "any live MFA issuer operational setup or real signing keys"
     ]
-  },
-  "implementation_summary": {
-    "execution_authorization_module": "New .orchestrator/execution_authorization.py: derives an immutable execution policy (work_class/repository/environment/resources/action_scope -> policy_digest) for security/hosted/live tasks, builds/verifies a durable pending_authorization hold, verifies a signed MFA-bound grant against a trusted-issuer key set distinct from the dev-bridge packet-source keys, enforces one-shot nonce consumption, and exposes the pure is_execution_authorized query plus reserve/revoke state transitions.",
-    "dispatch_gate": "rewrite/dispatch_admission.py TaskIntent gained execution_authorized (default True); evaluate_dispatch_intent denies an unauthorized privileged task with DispatchBlockReason.EXECUTION_AUTHORIZATION_REQUIRED before any capacity/health/endpoint check. dispatch_policy.py's evaluate_task_delivery_admission computes this verdict via execution_authorization.is_execution_authorized.",
-    "intake_retirement": "dev_bridge_materialize.verify_signed_dev_bridge_packet no longer requires BridgeOperatorAuthorization/mfa_verified for security/hosted/live packets at intake (the former MFA-at-intake rule). The privileged-only packet-identity replay ledger is retained, now keyed by the source's own packet_id instead of an operator nonce that no longer exists.",
-    "pending_hold_materialization": "scripts/ai_status.py command_assign attaches execution_authorization.pending_authorization_hold(...) to a brand-new task's metadata when the signed dev_bridge work_class is privileged; an already-materialized task's reassignment/replay path never re-derives or overwrites the frozen record.",
-    "human_ops_cli": "New execution-grant-submit / execution-grant-revoke commands (registered in LOCAL_HUMAN_OPS_ACTIONS and TASK_ID_COMMAND_ARG_INDEX) verify a signed grant via EXECUTION_GRANT_JSON against EXECUTION_MFA_ISSUER_PUBLIC_KEYS_JSON, consume its one-shot nonce in a canonical replay ledger, and transition the task to STATE_GRANTED. show <task-id> already surfaces the fully redacted state.",
-    "claim_lease_spend": "supervisor.reserve_execution_authorization_for_launch is the authoritative claim/lease-boundary one-shot spend: called immediately before start_worker_for_request's adapter.deliver, under its own exclusive canonical task-state lock (never nested inside the existing shared lock, to avoid a same-process lock-upgrade deadlock), re-verifying and committing STATE_GRANTED -> STATE_RESERVED bound to the exact run id. A cheap in-memory pre-check on the already-loaded dispatch-loop state means a non-privileged task never takes this lock. process_queue treats a failed reserve (ExecutionAuthorizationSpendFailed) as a late-eligibility skip, matching the existing StaleDispatchBeforeLaunch handling."
   },
   "verification": {
     "base_sha": "55cd327b9200648e5d42360907dedc17ddf6f5fc",
     "commands": [
       {
         "cmd": ".venv-pantheon/bin/python3 -m pytest -q .orchestrator/test_execution_authorization.py",
-        "result": "32 passed",
+        "result": "48 passed",
         "status": "pass"
       },
       {
         "cmd": ".venv-pantheon/bin/python3 -m pytest -q .orchestrator/rewrite/test_dispatch_admission.py .orchestrator/test_dispatch_policy.py",
-        "result": "52 passed",
+        "result": "55 passed",
         "status": "pass"
       },
       {
         "cmd": ".venv-pantheon/bin/python3 -m pytest -q scripts/test_ai_status.py",
-        "result": "393 passed, 106 subtests passed",
+        "result": "395 passed, 108 subtests passed",
         "status": "pass"
       },
       {
@@ -74,35 +143,60 @@
         "status": "pass"
       },
       {
-        "cmd": "PYTHONPATH=.orchestrator .venv-pantheon/bin/python3 -m pytest -q .orchestrator/test_supervisor.py",
-        "result": "242 passed, 1 pre-existing unrelated failure deselected (ReviewDecisionIntentLeaseRecoveryTests::test_reconcile_migrates_legacy_collision_from_journal_and_replays_intent, confirmed failing identically on unmodified base_sha via git stash bisection -- an environment/root-binding fixture issue, not a regression from this change)",
+        "cmd": ".venv-pantheon/bin/python3 -m pytest -q scripts/test_promote_supervisor_runtime.py",
+        "result": "33 passed (5 pre-existing failures against this task's uncommitted worktree fixed: they were caused by this revision's new verify_execution_authorization_barriers preflight probing the module's own minimal synthetic candidate fixture, which by design has no real execution_authorization.py; fixed by extending the module's existing autouse verify_worker_sandbox stub and adding real-source-copy fixtures for the probe's own dedicated tests)",
         "status": "pass"
       },
       {
-        "cmd": "PYTHONPATH=.orchestrator .venv-pantheon/bin/python3 -m pytest -q .orchestrator/development_bridge/tests/test_dev_bridge_inbox_cli.py .orchestrator/development_bridge/tests/test_dev_bridge_reliability.py scripts/test_verify_task_state_store.py",
-        "result": "76 passed pre-commit run against a clean checkout at task_branch head; 5 of these tests fail-closed against an uncommitted (dirty) worktree by design (PANTHEON_COMMAND_ROOT dirty-executable/import guard in validate_status_command_runtime) and must be re-run against the committed head",
+        "cmd": "PYTHONPATH=.orchestrator .venv-pantheon/bin/python3 -m pytest -q .orchestrator/test_supervisor.py",
+        "result": "242 passed, 1 pre-existing unrelated failure (ReviewDecisionIntentLeaseRecoveryTests::test_reconcile_migrates_legacy_collision_from_journal_and_replays_intent, reproduced identically against the unmodified committed HEAD ai_status.py via a byte-for-byte file swap in this worktree -- an environment/root-binding fixture issue, not a regression from this change). 4 tests that failed before this revision's fix (DurableQueueContractTests::test_spawn_boundary_launches_only_the_current_assignment and the 3 test_spawn_boundary_rejects_stale_assignment_snapshots subtests) now pass.",
+        "status": "pass"
+      },
+      {
+        "cmd": "PYTHONPATH=.orchestrator PYTHONDONTWRITEBYTECODE=1 .venv-pantheon/bin/python3 -m pytest -q .orchestrator/development_bridge/tests/test_dev_bridge.py .orchestrator/development_bridge/tests/test_dev_bridge_dispatch_cli.py .orchestrator/development_bridge/tests/test_dev_bridge_materialize.py .orchestrator/development_bridge/tests/test_dev_bridge_inbox.py .orchestrator/development_bridge/tests/test_dev_bridge_inbox_cli.py .orchestrator/development_bridge/tests/test_dev_bridge_reliability.py",
+        "result": "134 passed; 5 pre-existing dirty-worktree-only failures in test_dev_bridge_reliability.py (validate_status_command_runtime's dirty-executable-file guard rejects PANTHEON_COMMAND_ROOT while this task's edits are uncommitted; reproduced identically against the unmodified committed ai_status.py via a byte-for-byte file swap in this worktree) -- must be re-run against the committed task-branch head",
         "status": "pass_pending_commit_reverify"
+      },
+      {
+        "cmd": "PYTHONPATH=.orchestrator .venv-pantheon/bin/python3 -m pytest -q .orchestrator/test_worker_runner_heartbeat.py .orchestrator/test_runtime_state.py .orchestrator/rewrite/test_task_machine.py",
+        "result": "97 passed, 44 subtests passed; 4 pre-existing bwrap-sandbox-enforcement failures in TestCoordinationRootValidation/TestCrossRepoLeasedWorktreeWriteBoundary (reproduced identically against the unmodified committed worker_runner.py via a byte-for-byte file swap in this worktree -- a container bubblewrap/user-namespace environment limitation, not caused by this change's new ensure_execution_authorized_before_launch check, which no-ops when the coordination root has no resolvable canonical task record)",
+        "status": "pass"
+      },
+      {
+        "cmd": ".venv-pantheon/bin/python3 -m pytest -q .orchestrator/test_common.py",
+        "result": "96 passed, 50 subtests passed; 1 pre-existing failure (JsonLoadResilienceTests::test_ai_status_sync_rejects_empty_existing_status_file) reproduced identically against the unmodified committed ai_status.py via a byte-for-byte file swap, and confirmed pre-dating this task by git blame (commit 9f955d7153, 2026-09-02)",
+        "status": "pass"
       }
     ],
-    "regression_isolation_method": "git stash push -u -m <unique-tag> / git stash apply <sha> / git stash drop, used to run the exact same failing tests against the unmodified base_sha before restoring this task's changes, per the worker safety protocol (never bare git stash / git stash pop).",
+    "regression_isolation_method": "For each suspected pre-existing failure, the exact affected file (ai_status.py or worker_runner.py) was byte-for-byte swapped back to its unmodified committed HEAD content in this same worktree, the failing test(s) re-run in isolation, and the file restored -- confirming the failure reproduces identically without this task's changes. No git stash was used (this worktree's stash stack is shared with other concurrent workers).",
+    "not_yet_re_run_against_committed_head": [
+      "The 5 test_dev_bridge_reliability.py dirty-worktree-only failures must be re-run once this revision's commit lands, per the existing dirty-executable-file guard design."
+    ],
     "negative_cases_covered": [
       "unsigned/untrusted/malformed grant issuer (test_untrusted_issuer_key_is_rejected, test_unknown_key_id_is_rejected, test_no_trusted_issuers_configured_fails_closed)",
       "wrong purpose/audience/capability (test_wrong_purpose_is_rejected, test_wrong_audience_is_rejected)",
       "no-MFA/expired/not-yet-valid assertion (test_mfa_not_verified_is_rejected, test_expired_grant_is_rejected, test_not_yet_valid_grant_is_rejected)",
-      "task/generation/policy/repository/environment/action/resources mismatch (test_task_id_mismatch_is_rejected, test_generation_mismatch_is_rejected, test_policy_digest_mismatch_is_rejected, test_repository_mismatch_is_rejected, test_environment_mismatch_is_rejected, test_action_scope_mismatch_is_rejected, test_resources_mismatch_is_rejected)",
+      "task/generation/policy/repository/environment/action/resources/artifacts/target-repo mismatch (test_task_id_mismatch_is_rejected, test_generation_mismatch_is_rejected, test_policy_digest_mismatch_is_rejected, test_repository_mismatch_is_rejected, test_environment_mismatch_is_rejected, test_action_scope_mismatch_is_rejected, test_resources_mismatch_is_rejected, test_execution_resource_revision_invalidates_outstanding_grant, test_artifact_contract_revision_invalidates_outstanding_grant, test_target_repo_change_invalidates_outstanding_grant)",
       "replay/changed payload (test_changed_payload_after_signing_breaks_signature, test_replayed_nonce_is_rejected, test_replayed_nonce_against_a_different_task_is_still_rejected)",
-      "two-process spend race / already-reserved (test_genuine_synthetic_grant_authorizes_exactly_one_attempt's second reserve call, ExecutionAuthorizationLaunchReserveTests::test_already_reserved_task_raises_spend_failed)",
+      "already-reserved / two-process spend race (in-process CAS): test_genuine_synthetic_grant_authorizes_exactly_one_attempt's second reserve call",
       "reassignment/reopen invalidation via generation bump (test_reassignment_generation_bump_invalidates_grant)",
-      "revocation (test_revocation_prevents_new_effects)",
-      "corrupt/missing auth state fails closed (test_corrupt_or_malformed_state_fails_closed)",
-      "old-runtime rollback guard capability flag (test_old_runtime_without_capability_is_not_recognized)",
-      "ordinary functional dispatch unaffected (test_normal_functional_task_still_dispatches_while_privileged_waits, test_authorized_privileged_task_dispatches_normally, ExecutionAuthorizationLaunchReserveTests::test_non_privileged_task_is_a_no_op)",
-      "signed privileged intake with no MFA now materializes a durable pending record instead of being rejected (scripts/test_ai_status.py::DevBridgeMaterializeBatchTests::test_security_packet_without_operator_authorization_materializes_pending)"
+      "revocation, including at the direct worker-entry boundary (test_revocation_prevents_new_effects, test_reservation_is_current_rejects_revoked_task)",
+      "corrupt/missing auth state fails closed, now including privileged-source-derived cases (test_corrupt_or_malformed_state_fails_closed, test_privileged_source_with_missing_subrecord_fails_closed, test_privileged_source_with_corrupt_policy_fails_closed, test_privileged_source_with_downgraded_flag_fails_closed)",
+      "old-runtime rollback guard: capability flag semantics (test_false_capability_value_is_not_treated_as_enabled, test_old_runtime_without_capability_is_not_recognized) and actual runtime-source discovery probe (test_verify_execution_authorization_barriers_rejects_old_runtime, test_verify_execution_authorization_barriers_rejects_missing_worker_runner_hook, test_replace_supervisor_refuses_old_runtime_rollback_without_barriers)",
+      "direct worker_runner invocation without canonical run binding (test_reservation_is_current_rejects_granted_but_unreserved_task, test_reservation_is_current_fails_closed_for_privileged_missing_record)",
+      "expired reservation TTL at worker entry (test_reservation_is_current_rejects_expired_run_ttl)",
+      "caller-supplied MFA-issuer trust root is ignored, not merely untrusted (DevBridgeMaterializeBatchTests::test_execution_grant_submit_rejects_caller_supplied_trust_root)",
+      "ordinary functional dispatch, and read-only review/finalize dispatch of a privileged task, unaffected (test_normal_functional_task_still_dispatches_while_privileged_waits, test_authorized_privileged_task_dispatches_normally, test_unauthorized_privileged_task_review_dispatch_is_unaffected, test_unauthorized_privileged_task_finalize_dispatch_is_unaffected, test_non_privileged_task_with_no_subrecord_is_unaffected)",
+      "owner-execution dispatch of a privileged task is correctly denied when unauthorized (test_unauthorized_privileged_task_in_progress_dispatch_is_denied)",
+      "signed privileged intake with no MFA materializes a durable pending record plus the old-runtime-recognized waiting_for hold, instead of being rejected (scripts/test_ai_status.py::DevBridgeMaterializeBatchTests::test_security_packet_without_operator_authorization_materializes_pending)",
+      "a genuine independently signed grant, verified against the config-provisioned trust root, binds and releases the intake hold (DevBridgeMaterializeBatchTests::test_execution_grant_submit_binds_a_genuine_grant_and_releases_hold)"
     ]
   },
   "not_delivered": {
-    "runtime_promotion": "Source acceptance and qualified-runtime promotion (discover-only preflight, proving both the deferred-intake and late execution barriers are live on the promoted supervisor runtime, including safe old-runtime-rollback refusal) is a separate step per plan section 6-7, performed after this PR merges through the existing qualified runtime promotion workflow, not by this task directly.",
+    "runtime_promotion": "Source acceptance and qualified-runtime promotion (actually running verify_execution_authorization_barriers and verify_worker_sandbox against the live production command-runtime candidate, proving both barriers are live on the promoted supervisor runtime) is a separate step per plan section 6-7, performed after this PR merges through the existing qualified runtime promotion workflow, not by this task directly.",
+    "real_two_process_os_race": "The two-process spend race is proven via an isolated in-process CAS check (a second reserve_execution_authorization call against an already-STATE_RESERVED record raises), not a real two-OS-process concurrent launch against a live TaskStore/lock file. The existing canonical_task_state_lock_file exclusive-lock machinery this reuses is not itself new or retested by this task.",
+    "real_bwrap_sandboxed_worker_runner_two_role_launch": "ensure_execution_authorized_before_launch's refusal path is covered by unit-level reservation_is_current tests and by the existing worker_runner.py test suite's unaffected-non-privileged-task coverage; a dedicated end-to-end subprocess test that launches worker_runner.py for a privileged task inside a real bwrap sandbox and asserts zero process/effect on refusal was not added in this revision, matching the pre-existing gap noted in test_worker_runner_heartbeat.py's own bwrap-availability-gated tests.",
     "hosted_task_resubmission": "Section 7's revised, signed, pending-authorization submission of DEV-RELEASE-HOSTED-001 / L12-HOSTED-001 / MGMT-AGORA-E2E-001 explicitly waits on accepted source AND qualified-runtime/no-MFA no-launch evidence; it is not performed by this task.",
-    "live_mfa_issuer": "No live MFA issuer/proof exists yet; grant submission and execution remain closed with an actionable issuer/proof-unavailable reason until one is operationally configured. This does not block storing pending privileged tasks."
+    "live_mfa_issuer": "No live MFA issuer/proof exists yet; .orchestrator/config.json's execution_authorization.mfa_issuer_public_keys ships empty by default, so grant submission and execution remain closed with an actionable issuer-not-configured reason until one is operationally provisioned. This does not block storing pending privileged tasks."
   }
 }

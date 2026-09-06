@@ -52,14 +52,26 @@ lane, helper claim, priority preemption, or direct retry launch.
 
 `evaluate_task_delivery_admission` also computes
 `execution_authorization.is_execution_authorized(task, now=...)` and feeds it
-into `TaskIntent.execution_authorized`. A privileged (`security`/`hosted`/
+into `TaskIntent.execution_authorized`. `evaluate_dispatch_intent` only
+consults that verdict for the two *owner-execution* dispatch reasons,
+`OWNED_IN_PROGRESS` and `OWNED_READY`: a privileged (`security`/`hosted`/
 `live`) task whose `execution_authorization` subrecord is not currently
-`STATE_GRANTED` and current is denied with
+`STATE_GRANTED` and current is denied there with
 `DispatchBlockReason.EXECUTION_AUTHORIZATION_REQUIRED`, before any capacity,
-health, or endpoint check. A non-privileged task, or any task with no
+health, or endpoint check. `REVIEW_READY` and `OWNED_FINALIZE` dispatch are
+read-only/closeout-bookkeeping purposes and are never denied on this
+verdict -- a pending, expired, or revoked privileged task can still be
+reviewed and finalized. A non-privileged task, or any task with no
 `execution_authorization` subrecord, is unaffected (`execution_authorized`
-defaults to `True`). See `.orchestrator/execution_authorization.py`'s module
-docstring and
+defaults to `True`). `is_execution_authorized` derives privileged
+classification from the task's durable `dev_bridge.work_class`, not from
+whether the subrecord happens to be present, so a dropped or downgraded
+subrecord on a privileged task fails closed instead of falling back to
+authorized. `supervisor.start_worker_for_request` spends the one-shot grant
+under the canonical task-state lock immediately before launch (also scoped
+to `OWNED_IN_PROGRESS`/`OWNED_READY`), and `worker_runner.py` independently
+revalidates the exact reservation at actual process-launch time. See
+`.orchestrator/execution_authorization.py`'s module docstring and
 `docs/04/pantheon_first_release_closure_2026-09-06/EXECUTION_AUTHORIZATION_SA_SD.md`
 for the full policy/grant/one-shot-consume contract.
 

@@ -4434,10 +4434,25 @@ def command_assign(state: dict[str, Any], args: list[str]) -> bool | None:
                 work_class=bridge_work_class,
                 repository=target_repo,
                 resources=execution_resources,
+                artifacts=artifacts,
             )
             metadata["execution_authorization"] = (
                 execution_authorization.pending_authorization_hold(execution_policy)
             )
+            # Old-runtime-recognized durable hold (SA/SD 2, 6): ``waiting_for``
+            # predates this task and is already honored, unconditionally, by
+            # every prior supervisor/dispatch-admission revision (including
+            # one with no execution_authorization module at all) as a
+            # dispatch-blocking Human/Ops hold. Only OWNED_READY is reachable
+            # from a brand-new task's ``todo`` status, so this cannot also
+            # block a review/finalize purpose (SA/SD 4) the way the
+            # execution-authorization gate itself could if applied too
+            # broadly; it exists purely so an old runtime that predates
+            # execution_authorization.py entirely still cannot dispatch this
+            # task's first, owner-execution attempt.
+            # command_execution_grant_submit clears this once a genuine grant
+            # is verified and bound.
+            metadata["waiting_for"] = "Human/Ops"
     else:
         phase = os.environ.get("TASK_PHASE", "Unassigned")
         depends_on = parse_csv_env("TASK_DEPENDS_ON")
@@ -5539,17 +5554,49 @@ def _execution_authorization_record(task: Mapping[str, Any]) -> dict[str, Any]:
     return record
 
 
+def _trusted_execution_mfa_issuers(config: Mapping[str, Any]) -> dict[str, str]:
+    """Return the independently provisioned MFA-issuer public-key trust root.
+
+    Deliberately read from the on-disk ``.orchestrator/config.json`` (via
+    ``load_config()``), never from an environment variable the same CLI
+    invocation could also set: an isolated probe showed a caller supplying
+    both a self-generated "issuer" key through an env var and a grant signed
+    by the matching private key in the same command invocation, which a
+    caller-controlled trust root can never distinguish from a genuine
+    independently issued grant. Binding this to the config file instead
+    means the grant submitter's own shell environment cannot mint its own
+    trust root; only whatever is actually provisioned in the config this
+    process was launched with counts (SA/SD 3).
+    """
+
+    section = config.get("execution_authorization")
+    if not isinstance(section, Mapping):
+        return {}
+    issuers = section.get("mfa_issuer_public_keys")
+    if not isinstance(issuers, Mapping):
+        return {}
+    return {
+        str(key_id): str(public_key)
+        for key_id, public_key in issuers.items()
+        if str(key_id).strip() and str(public_key).strip()
+    }
+
+
 def command_execution_grant_submit(state: dict[str, Any], args: list[str]) -> None:
     """Human/Ops CLI: submit one independently verified MFA-bound execution grant.
 
     OPS-PRIVILEGED-TASK-EXECUTION-AUTH-001. The signed grant travels through
-    ``EXECUTION_GRANT_JSON`` and is verified against a trusted MFA-issuer
-    public-key set in ``EXECUTION_MFA_ISSUER_PUBLIC_KEYS_JSON`` -- a distinct
-    trust root from the dev-bridge packet-source keys
-    (``BRIDGE_SIGNING_PUBLIC_KEYS_JSON``). A source-only signing key, an
-    unsigned ``mfaVerified`` boolean, or a claimed operator id is never
-    accepted here; only a signature verified against the configured issuer
-    trust root counts. Never issues real keys or a signing service.
+    ``EXECUTION_GRANT_JSON`` (the assertion itself, not a trust root) and is
+    verified against the trusted MFA-issuer public-key set configured at
+    ``execution_authorization.mfa_issuer_public_keys`` in
+    ``.orchestrator/config.json`` -- a distinct, independently provisioned
+    trust root from both the dev-bridge packet-source keys
+    (``BRIDGE_SIGNING_PUBLIC_KEYS_JSON``) and the grant submitter's own
+    environment. A source-only signing key, an unsigned ``mfaVerified``
+    boolean, a claimed operator id, or a trust root the same command
+    invocation also supplied is never accepted here; only a signature
+    verified against the configured issuer trust root counts. Never issues
+    real keys or a signing service.
     """
 
     if len(args) < 1:
@@ -5567,11 +5614,13 @@ def command_execution_grant_submit(state: dict[str, Any], args: list[str]) -> No
     grant = parse_json_env("EXECUTION_GRANT_JSON")
     if not grant:
         raise SystemExit("EXECUTION_GRANT_JSON is required")
-    trusted_issuers = parse_json_env("EXECUTION_MFA_ISSUER_PUBLIC_KEYS_JSON")
+    trusted_issuers = _trusted_execution_mfa_issuers(load_config())
     if not trusted_issuers:
         raise SystemExit(
-            "EXECUTION_MFA_ISSUER_PUBLIC_KEYS_JSON is required; no dev fallback "
-            "may authorize privileged execution"
+            "No trusted MFA issuer is configured at "
+            "execution_authorization.mfa_issuer_public_keys in "
+            ".orchestrator/config.json; no dev fallback or caller-supplied "
+            "trust root may authorize privileged execution"
         )
 
     now = datetime.now(timezone.utc)
@@ -5596,6 +5645,10 @@ def command_execution_grant_submit(state: dict[str, Any], args: list[str]) -> No
     task["execution_authorization"] = execution_authorization.build_granted_authorization(
         policy=policy, grant=grant
     )
+    # Release the old-runtime-recognized intake hold (SA/SD 2, 6) now that a
+    # genuine grant is bound. The ongoing execution-authorization gate itself
+    # -- scoped to owner-execution dispatch only -- takes over from here.
+    task.pop("waiting_for", None)
     timestamp = iso_now()
     task["last_update"] = timestamp
     append_log(

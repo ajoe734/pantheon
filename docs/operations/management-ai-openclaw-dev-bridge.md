@@ -66,21 +66,28 @@ packet — see the "Execution authorization" section below.
 
 Genuine MFA is required later, separately, at actual execution — never at
 intake. `.orchestrator/execution_authorization.py` is the sole module that
-derives a privileged task's immutable execution policy, verifies an
-independently issued MFA-bound grant against it, and enforces one-shot
-consumption so a grant authorizes exactly one dispatch attempt. It is fed
-into the existing shared planner/delivery predicate
-(`rewrite/dispatch_admission.py`'s `TaskIntent.execution_authorized`) and
-spent at the actual claim/lease boundary
+derives a privileged task's immutable execution policy (over its current
+target/resources/artifacts), verifies an independently issued MFA-bound
+grant against it, and enforces one-shot consumption so a grant authorizes
+exactly one dispatch attempt. It is fed into the existing shared
+planner/delivery predicate (`rewrite/dispatch_admission.py`'s
+`TaskIntent.execution_authorized`), scoped to owner-execution dispatch only
+so a pending/revoked privileged task can still be reviewed and finalized,
+and spent at the actual claim/lease boundary
 (`supervisor.reserve_execution_authorization_for_launch`, called immediately
-before the adapter process launches).
+before the adapter process launches). `worker_runner.py`'s
+`ensure_execution_authorized_before_launch` independently revalidates the
+exact reservation at actual process-launch time, so a direct invocation
+bypassing the supervisor cannot launch owner-execution work either. A fresh
+privileged task also carries an old-runtime-recognized `waiting_for` hold
+until a genuine grant is bound, so an older command-runtime rollback that
+predates this module entirely still cannot dispatch it.
 
 Human/Ops CLI:
 
 ```bash
 AI_NAME=Human/Ops \
 EXECUTION_GRANT_JSON="$(cat grant.json)" \
-EXECUTION_MFA_ISSUER_PUBLIC_KEYS_JSON='{"<issuer-key-id>":"<base64url-public-key>"}' \
 PANTHEON_LOCAL_HUMAN_OPS=1 \
 ./scripts/ai-status.sh execution-grant-submit <task-id>
 
@@ -89,9 +96,12 @@ PANTHEON_LOCAL_HUMAN_OPS=1 \
 ./scripts/ai-status.sh execution-grant-revoke <task-id> "<reason>"
 ```
 
-`EXECUTION_MFA_ISSUER_PUBLIC_KEYS_JSON` is a trust root kept distinct from
-`BRIDGE_SIGNING_PUBLIC_KEYS_JSON`: a dev-bridge packet-source key is never an
-accepted MFA issuer. See
+The trusted MFA-issuer public-key set is configured at
+`execution_authorization.mfa_issuer_public_keys` in
+`.orchestrator/config.json` — an independently provisioned trust root kept
+distinct from `BRIDGE_SIGNING_PUBLIC_KEYS_JSON` and from the grant
+submitter's own environment: a dev-bridge packet-source key, or a
+caller-supplied environment variable, is never an accepted MFA issuer. See
 `docs/04/pantheon_first_release_closure_2026-09-06/EXECUTION_AUTHORIZATION_SA_SD.md`
 for the full grant field contract and the approved plan this implements.
 

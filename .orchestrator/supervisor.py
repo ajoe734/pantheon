@@ -3127,6 +3127,7 @@ def start_worker_for_request(
     delivery_mode_override: str | None = None,
     activity_type: str = "worker_started",
     activity_message: str | None = None,
+    latest_task_map: Mapping[str, dict[str, Any]] | None = None,
 ) -> tuple[bool, str | None, dict[str, Any] | None]:
     agent = agent_config_for(config, request.agent_id)
     adapter_name = delivery_mode_override or str(agent.get("adapter") or "")
@@ -3161,26 +3162,70 @@ def start_worker_for_request(
     # actually launches the adapter process. This must not nest inside the
     # shared lock acquired next: a second exclusive acquisition on the same
     # lock file from this same process while the shared lock is already held
-    # is a self-deadlock risk, not a safe upgrade. The cheap in-memory
-    # pre-check against the already-loaded dispatch-loop ``state`` (no extra
-    # lock or disk read) means an ordinary functional/paper/read_only/ci/
-    # reconcile_only task -- the overwhelmingly common case -- never takes
-    # the lock path at all; only a task carrying a privileged
-    # execution-authorization subrecord pays for the authoritative reload.
-    in_memory_task = task_index_from_status(config, state).get(str(request.task_id or ""))
-    if isinstance(in_memory_task, dict):
-        in_memory_record = in_memory_task.get("execution_authorization")
-        in_memory_policy = (
-            in_memory_record.get("policy") if isinstance(in_memory_record, dict) else None
-        )
-        if isinstance(in_memory_policy, dict) and in_memory_policy.get(
-            "requires_execution_authorization"
-        ):
+    # is a self-deadlock risk, not a safe upgrade.
+    #
+    # Only an owner-execution dispatch purpose actually spends the grant.
+    # ``request.reason`` is the same non-spoofable dispatch-reason string
+    # dispatch_policy computed from canonical owner/reviewer identity and
+    # lifecycle status (never a caller-supplied label). REVIEW_READY and
+    # OWNED_FINALIZE dispatch never reach a privileged
+    # ``requires_execution_authorization`` denial at admission (see
+    # ``rewrite/dispatch_admission.py``'s purpose-scoped check) and must not
+    # be reserved/consumed here either -- reserving unconditionally would
+    # raise ``ExecutionAuthorizationSpendFailed`` for a merely
+    # pending/expired/revoked privileged task's legitimate read-only review
+    # or closeout dispatch (SA/SD 4).
+    #
+    # ``latest_task_map`` -- when the caller has one -- is used only to
+    # decide *whether a privileged policy exists at all*, never to decide
+    # whether it is currently granted: that structural fact (a policy with
+    # ``requires_execution_authorization`` was attached at intake) is
+    # immutable for the life of the task, so a snapshot taken moments
+    # earlier by the caller is a safe, cheap proxy for it and lets an
+    # ordinary functional/paper/read_only/ci/reconcile_only dispatch --
+    # the overwhelmingly common case -- skip the lock/reload entirely. An
+    # earlier revision instead pre-checked
+    # ``task_index_from_status(config, state)`` -- ``state`` is the
+    # dispatch-loop's runtime/queue state, not a canonical status snapshot,
+    # so that lookup was always empty and silently skipped the authoritative
+    # reserve for every task, including privileged ones (an isolated
+    # actual-process probe showed a launch still proceeding after revocation
+    # was injected between admission and launch). When no ``latest_task_map``
+    # is supplied, always call the authoritative reserve instead of silently
+    # skipping it.
+    if request.reason in (REASON_OWNED_IN_PROGRESS, REASON_OWNED_READY):
+        skip_reserve = False
+        if latest_task_map is not None:
+            candidate_task = latest_task_map.get(str(request.task_id or ""))
+            candidate_record = (
+                candidate_task.get("execution_authorization")
+                if isinstance(candidate_task, dict)
+                else None
+            )
+            candidate_policy = (
+                candidate_record.get("policy")
+                if isinstance(candidate_record, dict)
+                else None
+            )
+            skip_reserve = not (
+                isinstance(candidate_policy, dict)
+                and candidate_policy.get("requires_execution_authorization")
+            )
+        if not skip_reserve:
+            execution_authorization_run_id = str(event_id_for_log or queue_event_id or "")
             reserve_execution_authorization_for_launch(
                 config,
                 str(request.task_id or ""),
-                run_id=str(event_id_for_log or queue_event_id or ""),
+                run_id=execution_authorization_run_id,
             )
+            # Thread the exact bound run id through to worker_runner.py's
+            # direct worker-entry check (SA/SD 4, "revalidate at actual
+            # worker entry"). An adapter generates its own, unrelated run id
+            # for heartbeat/log bookkeeping (``new_runtime_id``) well after
+            # this reservation commits, so worker_runner cannot use its own
+            # ``--run-id`` to recognize this exact reservation; it must
+            # receive the identity the reservation was actually bound to.
+            request.metadata["execution_authorization_run_id"] = execution_authorization_run_id
     delivery_invoked = False
     try:
         # Keep the canonical assignment read lock through process creation.
@@ -3730,6 +3775,7 @@ def process_queue(
                 queue_event_id=event_id,
                 attempt_count=attempt_count,
                 event_id_for_log=event_id,
+                latest_task_map=latest_task_map,
             )
         except StaleDispatchBeforeLaunch as exc:
             record["status"] = "completed"

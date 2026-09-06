@@ -35,6 +35,16 @@ class ExecutionAuthorizationTestCase(unittest.TestCase):
             resources=["dev-supervisor"],
             action_scope="execute",
         )
+        # is_execution_authorized recomputes the policy digest against the
+        # task's *current* target/resources/artifacts, so any granted-task
+        # fixture must mirror exactly what derive_execution_policy above was
+        # given, the same way scripts/ai_status.py's command_assign mirrors
+        # them onto the real task row at intake.
+        self.current_scope_fields = {
+            "target_repo": "pantheon",
+            "execution_resources": ["dev-supervisor"],
+            "artifacts": [],
+        }
 
     def _sign(self, body: dict, key, key_id: str = "mfa-issuer-1") -> dict:
         payload = deepcopy(body)
@@ -118,7 +128,12 @@ class ExecutionAuthorizationTestCase(unittest.TestCase):
             now=self.now,
         )
         record = ea.build_granted_authorization(policy=self.policy, grant=grant)
-        task = {"id": "OPS-PRIV-001", "generation": 0, "execution_authorization": record}
+        task = {
+            "id": "OPS-PRIV-001",
+            "generation": 0,
+            "execution_authorization": record,
+            **self.current_scope_fields,
+        }
         self.assertTrue(ea.is_execution_authorized(task, now=self.now))
 
         reserved = ea.reserve_execution_authorization(task, run_id="run-1", now=self.now)
@@ -314,7 +329,12 @@ class ExecutionAuthorizationTestCase(unittest.TestCase):
     def test_reassignment_generation_bump_invalidates_grant(self) -> None:
         grant = self._grant()
         record = ea.build_granted_authorization(policy=self.policy, grant=grant)
-        task = {"id": "OPS-PRIV-001", "generation": 0, "execution_authorization": record}
+        task = {
+            "id": "OPS-PRIV-001",
+            "generation": 0,
+            "execution_authorization": record,
+            **self.current_scope_fields,
+        }
         self.assertTrue(ea.is_execution_authorized(task, now=self.now))
         task["generation"] = 1
         self.assertFalse(ea.is_execution_authorized(task, now=self.now))
@@ -322,7 +342,12 @@ class ExecutionAuthorizationTestCase(unittest.TestCase):
     def test_revocation_prevents_new_effects(self) -> None:
         grant = self._grant()
         record = ea.build_granted_authorization(policy=self.policy, grant=grant)
-        task = {"id": "OPS-PRIV-001", "generation": 0, "execution_authorization": record}
+        task = {
+            "id": "OPS-PRIV-001",
+            "generation": 0,
+            "execution_authorization": record,
+            **self.current_scope_fields,
+        }
         self.assertTrue(ea.is_execution_authorized(task, now=self.now))
         revoked = ea.revoked_execution_authorization(task, actor="Human/Ops", now=self.now, reason="incident")
         task["execution_authorization"] = revoked
@@ -358,6 +383,190 @@ class ExecutionAuthorizationTestCase(unittest.TestCase):
             ea.runtime_supports_execution_authorization(
                 [ea.RUNTIME_CAPABILITY_EXECUTION_AUTHORIZATION]
             )
+        )
+
+    def test_false_capability_value_is_not_treated_as_enabled(self) -> None:
+        # 2026-09-06 diagnostic case 4: a mapping declares capability
+        # *values*, not just presence of the key.
+        self.assertFalse(
+            ea.runtime_supports_execution_authorization(
+                {ea.RUNTIME_CAPABILITY_EXECUTION_AUTHORIZATION: False}
+            )
+        )
+        self.assertTrue(
+            ea.runtime_supports_execution_authorization(
+                {ea.RUNTIME_CAPABILITY_EXECUTION_AUTHORIZATION: True}
+            )
+        )
+
+    def test_current_runtime_declares_its_own_capability(self) -> None:
+        self.assertTrue(
+            ea.runtime_supports_execution_authorization(ea.RUNTIME_CAPABILITIES)
+        )
+
+    # -- 2026-09-06 Codex2 exact-head review REJECT regressions --------------
+
+    def _privileged_hosted_task(self, **overrides) -> dict:
+        task = {
+            "id": "DIAGNOSTIC-HOSTED-NO-EXECUTE",
+            "generation": 1,
+            "target_repo": "pantheon",
+            "dev_bridge": {
+                "work_class": "hosted",
+                "operator_authorization_required": True,
+            },
+        }
+        task.update(overrides)
+        return task
+
+    def test_privileged_source_with_missing_subrecord_fails_closed(self) -> None:
+        # Diagnostic case 1: privileged source provenance with no
+        # execution_authorization subrecord at all must not silently become
+        # ordinary functional work.
+        task = self._privileged_hosted_task()
+        self.assertNotIn("execution_authorization", task)
+        self.assertFalse(ea.is_execution_authorized(task, now=self.now))
+
+    def test_privileged_source_with_corrupt_policy_fails_closed(self) -> None:
+        # Diagnostic case 2: a malformed policy shape must not authorize.
+        task = self._privileged_hosted_task(
+            execution_authorization={"policy": "corrupt"}
+        )
+        self.assertFalse(ea.is_execution_authorized(task, now=self.now))
+
+    def test_privileged_source_with_downgraded_flag_fails_closed(self) -> None:
+        # Diagnostic case 3: an erased/downgraded
+        # requires_execution_authorization flag must never override the
+        # durable, verified privileged classification.
+        task = self._privileged_hosted_task(
+            execution_authorization={
+                "policy": {"requires_execution_authorization": False}
+            }
+        )
+        self.assertFalse(ea.is_execution_authorized(task, now=self.now))
+
+    def test_non_privileged_task_with_no_subrecord_is_unaffected(self) -> None:
+        task = {
+            "id": "FUNCTIONAL-TASK",
+            "generation": 0,
+            "dev_bridge": {"work_class": "functional"},
+        }
+        self.assertTrue(ea.is_execution_authorized(task, now=self.now))
+        task_no_bridge = {"id": "PLAIN-TASK", "generation": 0}
+        self.assertTrue(ea.is_execution_authorized(task_no_bridge, now=self.now))
+
+    # -- Codex2 finding 4: current resources/artifacts must be rebound -------
+
+    def _granted_task(self) -> dict:
+        grant = self._grant()
+        record = ea.build_granted_authorization(policy=self.policy, grant=grant)
+        return {
+            "id": "OPS-PRIV-001",
+            "generation": 0,
+            "execution_authorization": record,
+            **self.current_scope_fields,
+        }
+
+    def test_execution_resource_revision_invalidates_outstanding_grant(self) -> None:
+        task = self._granted_task()
+        self.assertTrue(ea.is_execution_authorized(task, now=self.now))
+        # command_execution_resource revises this field directly, without
+        # bumping generation or touching the frozen policy/grant digests.
+        task["execution_resources"] = ["dev-supervisor", "extra-resource"]
+        self.assertFalse(ea.is_execution_authorized(task, now=self.now))
+
+    def test_artifact_contract_revision_invalidates_outstanding_grant(self) -> None:
+        task = self._granted_task()
+        self.assertTrue(ea.is_execution_authorized(task, now=self.now))
+        # command_artifact_contract revises this field directly, without
+        # bumping generation or touching the frozen policy/grant digests.
+        task["artifacts"] = ["services/new-surface/"]
+        self.assertFalse(ea.is_execution_authorized(task, now=self.now))
+
+    def test_target_repo_change_invalidates_outstanding_grant(self) -> None:
+        task = self._granted_task()
+        self.assertTrue(ea.is_execution_authorized(task, now=self.now))
+        task["target_repo"] = "execute-plans"
+        self.assertFalse(ea.is_execution_authorized(task, now=self.now))
+
+    # -- Codex2 finding 3: MFA issuer trust must bind to independent authority
+
+    def test_source_signing_key_is_not_an_automatic_mfa_issuer(self) -> None:
+        # A packet-source key must never double as an MFA issuer even if a
+        # caller labels it that way; verify_execution_grant only accepts a
+        # signature verified against the trust root the caller explicitly
+        # passes in, and never falls back to any bridge/source trust root of
+        # its own. This documents that verify_execution_grant has no notion
+        # of "packet-source keys" at all -- the isolated separation is the
+        # caller's responsibility (scripts/ai_status.py sourcing
+        # ``execution_authorization.mfa_issuer_public_keys`` from
+        # ``.orchestrator/config.json``, never from the packet-source
+        # ``BRIDGE_SIGNING_PUBLIC_KEYS_JSON`` trust root or the grant
+        # submitter's own environment).
+        grant = self._grant(_key=self.other_key, _key_id="bridge-packet-source-key")
+        with self.assertRaisesRegex(ea.ExecutionAuthorizationError, "issuer is not trusted"):
+            ea.verify_execution_grant(
+                grant, policy=self.policy, task_id="OPS-PRIV-001", generation=0,
+                trusted_issuers=self.trusted_issuers, now=self.now,
+            )
+
+    # -- Codex2 finding 1/6: reservation_is_current direct worker-entry gate -
+
+    def test_reservation_is_current_requires_matching_run_id(self) -> None:
+        task = self._granted_task()
+        reserved = ea.reserve_execution_authorization(task, run_id="run-1", now=self.now)
+        task["execution_authorization"] = reserved
+        self.assertTrue(
+            ea.reservation_is_current(task, run_id="run-1", now=self.now)
+        )
+        self.assertFalse(
+            ea.reservation_is_current(task, run_id="run-2", now=self.now)
+        )
+        self.assertFalse(
+            ea.reservation_is_current(task, run_id="", now=self.now)
+        )
+
+    def test_reservation_is_current_rejects_granted_but_unreserved_task(self) -> None:
+        # A task that is merely GRANTED (the canonical claim/lease boundary
+        # never reserved it) must not pass the direct worker-entry check --
+        # this is exactly the "direct runner without canonical run binding"
+        # required negative.
+        task = self._granted_task()
+        self.assertFalse(
+            ea.reservation_is_current(task, run_id="any-run", now=self.now)
+        )
+
+    def test_reservation_is_current_rejects_expired_run_ttl(self) -> None:
+        task = self._granted_task()
+        reserved = ea.reserve_execution_authorization(task, run_id="run-1", now=self.now)
+        task["execution_authorization"] = reserved
+        much_later = self.now + timedelta(seconds=reserved["grant"]["run_ttl_seconds"] + 1)
+        self.assertFalse(
+            ea.reservation_is_current(task, run_id="run-1", now=much_later)
+        )
+
+    def test_reservation_is_current_rejects_revoked_task(self) -> None:
+        task = self._granted_task()
+        reserved = ea.reserve_execution_authorization(task, run_id="run-1", now=self.now)
+        task["execution_authorization"] = reserved
+        revoked = ea.revoked_execution_authorization(
+            task, actor="Human/Ops", now=self.now, reason="incident"
+        )
+        task["execution_authorization"] = revoked
+        self.assertFalse(
+            ea.reservation_is_current(task, run_id="run-1", now=self.now)
+        )
+
+    def test_reservation_is_current_unaffected_for_non_privileged_task(self) -> None:
+        task = {"id": "F1", "generation": 0}
+        self.assertTrue(
+            ea.reservation_is_current(task, run_id="anything-or-nothing", now=self.now)
+        )
+
+    def test_reservation_is_current_fails_closed_for_privileged_missing_record(self) -> None:
+        task = self._privileged_hosted_task()
+        self.assertFalse(
+            ea.reservation_is_current(task, run_id="any-run", now=self.now)
         )
 
 
