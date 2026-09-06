@@ -1861,7 +1861,15 @@ services:
       # Render strict auth and a local/dev verifier input without enabling live
       # broker or capital-binding writes.
       CAPITAL_AUTH_MODE: ${CAPITAL_AUTH_MODE:-strict}
-      CAPITAL_JWT_SECRET: ${CAPITAL_JWT_SECRET:-pantheon-local-capital-jwt-secret}
+      # Persona owner calls originate in the authenticated BFF.  Keep the
+      # strict Capital verifier on the same explicitly supplied dev secret and
+      # issuer/audience so the BFF can mint a short-lived tenant-bound service
+      # JWT without introducing a second unprovisioned credential.
+      CAPITAL_JWT_SECRET: ${CAPITAL_JWT_SECRET:-${PANTHEON_BFF_JWT_SECRET:-pantheon-local-capital-jwt-secret}}
+      CAPITAL_JWT_ISSUER: ${CAPITAL_JWT_ISSUER:-${PANTHEON_BFF_JWT_ISSUER:-}}
+      CAPITAL_JWT_AUDIENCE: ${CAPITAL_JWT_AUDIENCE:-${PANTHEON_BFF_JWT_AUDIENCE:-}}
+      CAPITAL_ROLE_CLAIMS: ${CAPITAL_ROLE_CLAIMS:-roles,role}
+      CAPITAL_PERMISSIVE_ALLOWED_TENANTS: ${CAPITAL_PERMISSIVE_ALLOWED_TENANTS:-${PANTHEON_BFF_TENANT_ID:-default}}
     volumes:
       - capital-data:/data/capital
     depends_on:
