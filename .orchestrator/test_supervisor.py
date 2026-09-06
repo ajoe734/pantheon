@@ -9712,6 +9712,99 @@ class RuntimeAndFailureSemanticsTests(unittest.TestCase):
             )
         )
 
+    def test_producer_to_consumer_supersede_retained_and_compact_shapes(self) -> None:
+        """Prove producer-to-consumer supersede handles retained-row and compact terminal facts."""
+        from scripts import ai_status
+        with tempfile.TemporaryDirectory(prefix="pantheon-supersede-shape-") as directory:
+            root = Path(directory)
+            subprocess.run(["git", "init", "-q", "-b", "dev", str(root)], check=True)
+            subprocess.run(
+                ["git", "-C", str(root), "-c", "user.name=Fixture Admin",
+                 "-c", "user.email=admin@example.invalid", "-c", "commit.gpgsign=false",
+                 "commit", "-q", "--allow-empty", "-m", "Baseline"],
+                check=True,
+            )
+            ai_status.configure_status_root_paths(root)
+            self.assertTrue(ai_status.STATUS_FILE.is_relative_to(root))
+            self.assertTrue(ai_status.task_archive_module.ARCHIVE_DIR.is_relative_to(root))
+
+            task = task_fixture(status="in_progress", owner="Codex", reviewer="Codex2")
+            state = {"tasks": [task], "agents": [], "handoffs": [], "blockers": []}
+            worker = RuntimeAndFailureSemanticsTests._owner_worker(generation=1)
+            cfg = config_fixture(root)
+
+            # 1. Real producer: supersede by Human/Ops
+            with mock.patch.dict(os.environ, {"AI_NAME": "Human/Ops", "ORCH_RUN_ID": "",
+                                             ai_status.LOCAL_HUMAN_OPS_ENV: "1"}), ai_status.buffer_activity_events() as buffer:
+                ai_status.command_supersede(state, [task["id"], "Legitimate fixture supersede by Human/Ops"])
+                events = copy.deepcopy(buffer)
+
+            self.assertEqual(len(events), 1)
+            self.assertEqual(events[0]["type"], "superseded")
+
+            # Retained row shape before archive
+            before_archive = supervisor.task_index_from_status(cfg, state)[task["id"]]
+            before_decision = supervisor.active_worker_governance_lease_decision(
+                cfg, worker, before_archive, activity_events=events
+            )
+            self.assertEqual(before_decision["action"], "terminate")
+            self.assertEqual(before_decision["reason_code"], "authorized_terminal_cancellation")
+
+            # Archive outbox recovery creates compact terminal facts
+            recovered = ai_status.recover_status_archive_outbox(state)
+            self.assertTrue(recovered)
+            after_archive = supervisor.task_index_from_status(cfg, state)[task["id"]]
+            after_decision = supervisor.active_worker_governance_lease_decision(
+                cfg, worker, after_archive, activity_events=events
+            )
+            self.assertEqual(after_decision["action"], "terminate")
+            self.assertEqual(after_decision["reason_code"], "authorized_terminal_cancellation")
+
+            # 2. Compact fact with owner as actor: resolves owner from archive snapshot
+            owner_event = dict(events[0])
+            owner_event["agent"] = "Codex"
+            owner_event.pop("event_id", None)
+            owner_encoded = json.dumps(owner_event, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
+            owner_event["event_id"] = "ai-status-event-" + hashlib.sha256(owner_encoded).hexdigest()
+            owner_decision = supervisor.active_worker_governance_lease_decision(
+                cfg, worker, after_archive, activity_events=[owner_event]
+            )
+            self.assertEqual(owner_decision["action"], "terminate")
+            self.assertEqual(owner_decision["reason_code"], "authorized_terminal_cancellation")
+
+            # 3. Compact fact with reviewer as actor: resolves reviewer from archive snapshot
+            reviewer_event = dict(events[0])
+            reviewer_event["agent"] = "Codex2"
+            reviewer_event.pop("event_id", None)
+            rev_encoded = json.dumps(reviewer_event, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
+            reviewer_event["event_id"] = "ai-status-event-" + hashlib.sha256(rev_encoded).hexdigest()
+            reviewer_decision = supervisor.active_worker_governance_lease_decision(
+                cfg, worker, after_archive, activity_events=[reviewer_event]
+            )
+            self.assertEqual(reviewer_decision["action"], "terminate")
+            self.assertEqual(reviewer_decision["reason_code"], "authorized_terminal_cancellation")
+
+            # 4. Compact fact with unauthenticated actor (Gemini): fails closed to preserve
+            unauth_event = dict(events[0])
+            unauth_event["agent"] = "Gemini"
+            unauth_event.pop("event_id", None)
+            unauth_encoded = json.dumps(unauth_event, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
+            unauth_event["event_id"] = "ai-status-event-" + hashlib.sha256(unauth_encoded).hexdigest()
+            unauth_decision = supervisor.active_worker_governance_lease_decision(
+                cfg, worker, after_archive, activity_events=[unauth_event]
+            )
+            self.assertEqual(unauth_decision["action"], "preserve")
+            self.assertEqual(unauth_decision["reason_code"], "missing_or_ambiguous_task_truth")
+
+            # 5. Mismatched generation on worker: fails closed to preserve
+            mismatched_worker = dict(worker)
+            mismatched_worker["task_generation"] = 2
+            mismatched_decision = supervisor.active_worker_governance_lease_decision(
+                cfg, mismatched_worker, after_archive, activity_events=events
+            )
+            self.assertEqual(mismatched_decision["action"], "preserve")
+            self.assertEqual(mismatched_decision["reason_code"], "missing_or_ambiguous_task_truth")
+
 
     def test_run_once_orders_launch_before_slow_maintenance(self) -> None:
         source = inspect.getsource(supervisor.run_once)
@@ -12325,7 +12418,6 @@ def _child_assignment_stage_worker(
     except Exception as exc:
         result_queue.put({"error": str(exc), "status": worker.get("status")})
         raise
-
 
 class RealProcessReviewHandoffRecoveryFlowTests(unittest.TestCase):
     """Real isolated two-process CLI/TaskStore/outbox/runner-stop/poll/restart/owner-dispatch flow and crash race tests."""
@@ -15310,6 +15402,190 @@ class RealProcessReviewHandoffRecoveryFlowTests(unittest.TestCase):
                 if runner_proc.poll() is None:
                     runner_proc.kill()
                     runner_proc.wait(timeout=2)
+
+    def test_two_process_ordering_reserved_phase_save_window_locks_concurrent_writer(self) -> None:
+        """Two-process race: canonical_task_state_lock held through save_runtime_state blocks concurrent writer."""
+        with tempfile.TemporaryDirectory(prefix="pantheon-phase-drift-") as directory:
+            root = Path(directory)
+            status_root = root / "status"
+            (status_root / ".orchestrator").mkdir(parents=True)
+            c = config_fixture(status_root)
+            journal = root / "events.jsonl"
+            c["task_state_store"] = {"mode": "authoritative", "event_log": str(journal)}
+            t = task_fixture(status="review", owner="Codex", reviewer="Codex2")
+            t["delivery_binding"] = review_admission_binding(task_id=t["id"])
+            rewrite_task_state_store.append_state_commit(
+                journal,
+                {"tasks": [t], "agents": [], "handoffs": [], "blockers": []},
+                source="isolated initial fixture",
+            )
+            w = RuntimeAndFailureSemanticsTests._owner_worker(generation=1)
+            e = RuntimeAndFailureSemanticsTests._exact_lifecycle_event(w, event_type="handoff", agent="Codex")
+            e.pop("event_id")
+            e["delivery_binding"] = copy.deepcopy(t["delivery_binding"])
+            e["event_id"] = "ai-status-event-" + hashlib.sha256(
+                json.dumps(e, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode()
+            ).hexdigest()
+            supervisor.write_activity_log(c, e)
+
+            state = runtime_state.default_state()
+            state["workers"][w["run_id"]] = copy.deepcopy(w)
+            state["queue"]["events"][w["queue_event_id"]] = {
+                "status": "processing",
+                "intent": {"event_id": w["queue_event_id"], "task_id": t["id"]},
+            }
+            runtime_state.save_runtime_state(c, state)
+
+            writer_exitcode = []
+            final_save_writer = []
+
+            child_script = (
+                "import sys, json\n"
+                "from pathlib import Path\n"
+                "repo_root = Path(sys.argv[1])\n"
+                "sys.path.insert(0, str(repo_root / '.orchestrator'))\n"
+                "sys.path.insert(0, str(repo_root))\n"
+                "import supervisor\n"
+                "from rewrite import task_state_store\n"
+                "journal = sys.argv[2]\n"
+                "status_file = sys.argv[3]\n"
+                "try:\n"
+                "    with supervisor.canonical_task_state_lock_file(status_file, shared=False, nonblocking=True):\n"
+                "        snap = task_state_store.load_snapshot(journal, refresh_checkpoint=False)\n"
+                "        task_item = snap['state']['tasks'][0]\n"
+                "        task_item['delivery_binding']['evidence_manifest']['blob_sha'] = 'f' * 40\n"
+                "        task_state_store.append_state_commit(journal, snap['state'], source='concurrent drift')\n"
+                "except BlockingIOError:\n"
+                "    sys.exit(73)\n"
+            )
+
+            def operation(scratch):
+                observed_task = supervisor.load_status(c)["tasks"][0]
+                result = supervisor.poll_worker_assignment_stage(
+                    c, scratch, scratch["workers"][w["run_id"]],
+                    run_id=w["run_id"], task_map={t["id"]: observed_task},
+                    active_worker_statuses={"running"}, alive=False,
+                    governance_activity_events=[e],
+                )
+                def run_concurrent_child():
+                    repo_root = Path(__file__).resolve().parents[1]
+                    proc = subprocess.run(
+                        [sys.executable, "-c", child_script, str(repo_root), str(journal), str(c["paths"]["status_file"])],
+                        capture_output=True,
+                    )
+                    writer_exitcode.append(proc.returncode)
+                final_save_writer.append(run_concurrent_child)
+                return result["changed"]
+
+            real_save = supervisor.save_runtime_state
+
+            def observed_final_save(config, data):
+                if final_save_writer:
+                    final_save_writer.pop(0)()
+                return real_save(config, data)
+
+            with mock.patch.object(supervisor, "write_activity_log"), \
+                 mock.patch.object(supervisor, "console_log"), \
+                 mock.patch.object(supervisor, "save_runtime_state", side_effect=observed_final_save):
+                committed = supervisor._run_reserved_runtime_phase(c, "isolated_poll", operation)
+
+            self.assertEqual(writer_exitcode, [73], "writer should be blocked with code 73 while task_lock is held")
+            self.assertTrue(committed)
+            final_state = runtime_state.load_runtime_state(c)
+            self.assertEqual(final_state["queue"]["events"][w["queue_event_id"]]["status"], "completed")
+            self.assertIsNone(final_state["workers"].get(w["run_id"]))
+
+    def test_two_process_ordering_reserved_phase_drift_fences_deferred_termination(self) -> None:
+        """Two-process race: canonical drift before final CAS fences phase commit and defers terminations."""
+        with tempfile.TemporaryDirectory(prefix="pantheon-phase-drift-") as directory:
+            root = Path(directory)
+            status_root = root / "status"
+            (status_root / ".orchestrator").mkdir(parents=True)
+            c = config_fixture(status_root)
+            journal = root / "events.jsonl"
+            c["task_state_store"] = {"mode": "authoritative", "event_log": str(journal)}
+            t = task_fixture(status="review", owner="Codex", reviewer="Codex2")
+            t["delivery_binding"] = review_admission_binding(task_id=t["id"])
+            rewrite_task_state_store.append_state_commit(
+                journal,
+                {"tasks": [t], "agents": [], "handoffs": [], "blockers": []},
+                source="isolated initial fixture",
+            )
+            w = RuntimeAndFailureSemanticsTests._owner_worker(generation=1)
+
+            # Spawn real disposable process
+            proc = subprocess.Popen(
+                [sys.executable, "-c", "import time; time.sleep(45)"],
+                cwd=root, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL, start_new_session=True,
+            )
+            try:
+                w["pid"] = proc.pid
+                w["pid_start_ticks"] = supervisor.worker_pid_start_ticks(proc.pid)
+                self.assertIsNotNone(w["pid_start_ticks"])
+                w["process_generation"] = supervisor.worker_process_generation_id(
+                    task_id=w["task_id"], worker_run_id=w["run_id"],
+                    queue_event_id=w["queue_event_id"], pid=w["pid"],
+                    pid_start_ticks=w["pid_start_ticks"],
+                )
+
+                e = RuntimeAndFailureSemanticsTests._exact_lifecycle_event(w, event_type="handoff", agent="Codex")
+                e.pop("event_id")
+                e["delivery_binding"] = copy.deepcopy(t["delivery_binding"])
+                e["event_id"] = "ai-status-event-" + hashlib.sha256(
+                    json.dumps(e, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode()
+                ).hexdigest()
+                supervisor.write_activity_log(c, e)
+
+                state = runtime_state.default_state()
+                state["workers"][w["run_id"]] = copy.deepcopy(w)
+                state["queue"]["events"][w["queue_event_id"]] = {
+                    "status": "processing",
+                    "intent": {"event_id": w["queue_event_id"], "task_id": t["id"]},
+                }
+                runtime_state.save_runtime_state(c, state)
+
+                def operation(scratch):
+                    observed_task = supervisor.load_status(c)["tasks"][0]
+                    result = supervisor.poll_worker_assignment_stage(
+                        c, scratch, scratch["workers"][w["run_id"]],
+                        run_id=w["run_id"], task_map={t["id"]: observed_task},
+                        active_worker_statuses={"running"}, alive=True,
+                        governance_activity_events=[e],
+                    )
+                    # Mutate canonical task before final CAS revalidation
+                    snap = rewrite_task_state_store.load_snapshot(str(journal), refresh_checkpoint=False)
+                    task_item = snap["state"]["tasks"][0]
+                    task_item["delivery_binding"]["evidence_manifest"]["blob_sha"] = "f" * 40
+                    rewrite_task_state_store.append_state_commit(
+                        str(journal), snap["state"], source="concurrent drift before CAS"
+                    )
+                    return result["changed"]
+
+                signals_sent = []
+                real_kill = os.kill
+
+                def observe_kill(pid, sig):
+                    if pid == proc.pid and int(sig) != 0:
+                        signals_sent.append({"pid": pid, "signal": int(sig)})
+                    return real_kill(pid, sig)
+
+                with mock.patch.object(supervisor, "write_activity_log"), \
+                     mock.patch.object(supervisor, "console_log"), \
+                     mock.patch.object(os, "kill", side_effect=observe_kill):
+                    committed = supervisor._run_reserved_runtime_phase(c, "isolated_poll", operation)
+
+                self.assertFalse(committed, "phase should be discarded due to canonical task drift before CAS")
+                self.assertEqual(signals_sent, [], "live process must not receive signals when phase is discarded")
+                self.assertIsNone(proc.poll(), "process should still be running")
+            finally:
+                if proc.poll() is None:
+                    proc.terminate()
+                    try:
+                        proc.wait(timeout=3)
+                    except subprocess.TimeoutExpired:
+                        proc.kill()
+                        proc.wait(timeout=3)
 
 
 if __name__ == "__main__":

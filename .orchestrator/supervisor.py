@@ -159,10 +159,15 @@ from runtime_state import (
 )
 from task_archive import (
     TaskResolver,
+    archive_task_path_in_dir,
+    archive_tasks_dir_for_status_root,
     compact_completion_tracks,
     completion_track_status,
     dependency_satisfied_for,
     dependency_track_for,
+    load_archived_snapshot,
+    read_task_archive_file_safe,
+    task_from_archive_snapshot,
 )
 from watch_events import (
     _queue_delivery_event_locked,
@@ -7502,17 +7507,18 @@ def _run_reserved_runtime_phase(
                                 cas_matches = False
                                 break
 
-        if phase_error is None and cas_matches:
-            phase_reservations = (
-                scratch.setdefault("supervisor", {})
-                .setdefault("runtime_phase_reservations", {})
-            )
-            phase_reservations.pop(phase_name, None)
-            if not phase_reservations:
-                scratch["supervisor"].pop("runtime_phase_reservations", None)
-            save_runtime_state(config, scratch)
-            committed = True
-        elif (
+                if cas_matches:
+                    phase_reservations = (
+                        scratch.setdefault("supervisor", {})
+                        .setdefault("runtime_phase_reservations", {})
+                    )
+                    phase_reservations.pop(phase_name, None)
+                    if not phase_reservations:
+                        scratch["supervisor"].pop("runtime_phase_reservations", None)
+                    save_runtime_state(config, scratch)
+                    committed = True
+
+        if not committed and (
             isinstance(current_reservation, Mapping)
             and current_reservation.get("token") == reservation_token
         ):
@@ -8325,8 +8331,13 @@ def active_worker_governance_lease_decision(
     ) | GOVERNANCE_TERMINAL_TASK_STATUSES
     if isinstance(task, Mapping) and str(task.get("status") or "").lower() in done_statuses:
         task_status_lower = str(task.get("status") or "").lower()
-        if (
+        task_terminal_outcome = str(task.get("terminal_outcome") or "").lower()
+        is_terminal_cancellation = (
             task_status_lower in {"cancelled", "canceled", "superseded"}
+            or task_terminal_outcome in {"cancelled", "canceled", "superseded"}
+        )
+        if (
+            is_terminal_cancellation
             and latest_lifecycle is not None
             and str(latest_lifecycle.get("type") or "").lower() in {"cancel", "cancelled", "canceled", "supersede", "superseded"}
             and _ai_status_activity_event_id_matches(latest_lifecycle)
@@ -8349,6 +8360,61 @@ def active_worker_governance_lease_decision(
 
             task_owner = canonical_agent_name(config, str(task.get("owner") or "")).casefold()
             task_reviewer = canonical_agent_name(config, str(task.get("reviewer") or "")).casefold()
+            if not task_owner and not task_reviewer and str(task.get("id") or ""):
+                req_task = None
+                if isinstance(worker.get("request_snapshot"), Mapping):
+                    req_snap = worker.get("request_snapshot") or {}
+                    meta = req_snap.get("metadata")
+                    if isinstance(meta, Mapping) and isinstance(meta.get("task"), Mapping):
+                        req_task = meta["task"]
+                    elif isinstance(req_snap.get("task"), Mapping):
+                        req_task = req_snap["task"]
+                if isinstance(req_task, Mapping):
+                    req_task_gen = req_task.get("generation")
+                    if req_task_gen is None:
+                        req_task_gen = req_task.get("task_generation")
+                    gen_matches = True
+                    if task_gen is not None and req_task_gen is not None and str(req_task_gen) != str(task_gen):
+                        gen_matches = False
+                    if worker_gen is not None and req_task_gen is not None and str(req_task_gen) != str(worker_gen):
+                        gen_matches = False
+                    if gen_matches and str(req_task.get("id") or "") == str(task.get("id") or ""):
+                        task_owner = canonical_agent_name(config, str(req_task.get("owner") or "")).casefold()
+                        task_reviewer = canonical_agent_name(config, str(req_task.get("reviewer") or "")).casefold()
+
+            if not task_owner and not task_reviewer and str(task.get("id") or ""):
+                archived_snapshot = None
+                status_root_val = (config.get("paths") or {}).get("status_root")
+                if not status_root_val and (config.get("paths") or {}).get("status_file"):
+                    status_root_val = Path(config["paths"]["status_file"]).parent
+                if status_root_val:
+                    arch_dir = archive_tasks_dir_for_status_root(status_root_val)
+                    arch_file = archive_task_path_in_dir(str(task.get("id") or ""), arch_dir)
+                    if arch_file.is_file():
+                        try:
+                            archived_snapshot = json.loads(read_task_archive_file_safe(arch_file))
+                        except Exception:
+                            pass
+                if archived_snapshot is None:
+                    try:
+                        archived_snapshot = load_archived_snapshot(str(task.get("id") or ""))
+                    except Exception:
+                        pass
+                if archived_snapshot:
+                    arch_task = task_from_archive_snapshot(archived_snapshot) or {}
+                    arch_gen = arch_task.get("generation")
+                    if arch_gen is None:
+                        arch_gen = arch_task.get("task_generation")
+                    gen_matches = True
+                    if task_gen is not None and arch_gen is not None and str(arch_gen) != str(task_gen):
+                        gen_matches = False
+                    if worker_gen is not None and arch_gen is not None and str(arch_gen) != str(worker_gen):
+                        gen_matches = False
+                    if gen_matches and str(arch_task.get("id") or "") == str(task.get("id") or ""):
+                        task_owner = canonical_agent_name(config, str(arch_task.get("owner") or "")).casefold()
+                        task_reviewer = canonical_agent_name(config, str(arch_task.get("reviewer") or "")).casefold()
+
+
             event_actor_canon = canonical_agent_name(config, event_actor).casefold()
             actor_authorized = bool(
                 event_actor
