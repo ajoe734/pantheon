@@ -6,6 +6,7 @@ and governance review stores.
 """
 from __future__ import annotations
 
+import hashlib
 import logging
 from typing import Any, Dict, Optional
 from urllib.parse import quote
@@ -64,6 +65,27 @@ def _resolve_caller_actor_id(auth_token: Optional[str]) -> Optional[str]:
         return str(actor_id) if actor_id else None
     actor_id = token.split(":")[0].strip()
     return actor_id or None
+
+
+def _receipt_correlation_id(
+    *,
+    registry_id: str,
+    version: Optional[str],
+    checksum: Optional[str],
+    commit_time: Optional[str],
+    actor_id: Optional[str],
+    command_id: str,
+) -> str:
+    """Derive a correlation id from the independently-verified durable
+    receipt this command's own checks already confirmed, not merely from
+    caller-supplied input. Deterministic and content-addressed: replays of
+    the exact same command against the exact same committed snapshot always
+    produce the same correlation_id."""
+    framed = "|".join(
+        f"{len(str(part))}:{part}"
+        for part in (registry_id, version, checksum, commit_time, actor_id, command_id)
+    )
+    return hashlib.sha256(framed.encode("utf-8")).hexdigest()
 
 
 class StrategyCommandAdapter(DomainCommandAdapter):
@@ -420,6 +442,7 @@ class StrategyCommandAdapter(DomainCommandAdapter):
             # "not committed" — a hard FAILED here would fabricate a
             # downstream error for a write that actually succeeded.
             readback_entry = self._readback_entry(registry_id, auth_token=auth_token, mfa_token=mfa_token)
+            verified_actor_id = _resolve_caller_actor_id(auth_token)
             if (
                 readback_entry is None
                 or readback_entry.get("metadata") != new_metadata
@@ -440,14 +463,26 @@ class StrategyCommandAdapter(DomainCommandAdapter):
                 or readback_entry.get("updated_at") == original_entry.get("updated_at")
                 or not isinstance(readback_entry.get("last_actor"), dict)
                 or not readback_entry["last_actor"].get("actor_id")
+                # Reviewer finding (9a6c review, P1): matching metadata plus a
+                # changed timestamp plus *some* actor is still not proof that
+                # *this caller's* command is what committed it — a genuinely
+                # ambiguous PATCH response (this command's own outcome truly
+                # unknown) followed by a *different* actor coincidentally (or
+                # adversarially) writing the same target metadata must not be
+                # misreported as this command's own success.
+                or (
+                    verified_actor_id is not None
+                    and readback_entry["last_actor"].get("actor_id") != verified_actor_id
+                )
             ):
                 raise ActionUnavailableError(
                     f"Registry metadata PATCH for registry_id={registry_id!r} returned an "
                     "ambiguous response with no entry payload, and a follow-up owner GET "
                     "readback does not confirm the requested metadata was actually committed "
                     "by this command (against the original immutable identity, with a changed "
-                    "commit timestamp and a recorded actor) rather than merely already matching "
-                    "the target value beforehand.",
+                    "commit timestamp and a recorded actor matching the verified caller) rather "
+                    "than merely already matching the target value beforehand or having been "
+                    "committed by a different actor.",
                     action_id=action_id,
                     entity_type="Strategy",
                     error_code="AMBIGUOUS_REGISTRY_RESPONSE",
@@ -494,6 +529,49 @@ class StrategyCommandAdapter(DomainCommandAdapter):
                     entity_type="Strategy",
                     error_code="MISSING_COMMIT_TIME",
                 )
+            # Reviewer finding (9a6c review, P1): a concrete PATCH response
+            # with a commit timestamp but no recorded actor, or one whose
+            # commit timestamp is unchanged from the pre-mutation baseline
+            # captured before this command was ever issued, is not
+            # trustworthy proof that *this* command committed anything —
+            # commit_metadata_cas always records last_actor and bumps
+            # updated_at on every genuine write, mirroring the equivalent
+            # replay-path (REPLAY_MISSING_ACTOR) and ambiguous-path checks.
+            if not isinstance(entry.get("last_actor"), dict) or not entry["last_actor"].get("actor_id"):
+                raise ActionUnavailableError(
+                    f"Registry metadata PATCH response for registry_id={registry_id!r} carries no "
+                    "recorded actor; a genuinely committed mutation always has one.",
+                    action_id=action_id,
+                    entity_type="Strategy",
+                    error_code="MISSING_ACTOR",
+                )
+            if entry.get("updated_at") == original_entry.get("updated_at"):
+                raise ActionUnavailableError(
+                    f"Registry metadata PATCH response for registry_id={registry_id!r} carries the "
+                    "same commit timestamp as the pre-mutation baseline captured before this "
+                    "command was issued; a genuine commit always advances it, so an unchanged "
+                    "timestamp means this command did not actually commit anything.",
+                    action_id=action_id,
+                    entity_type="Strategy",
+                    error_code="COMMIT_TIME_UNCHANGED",
+                )
+            # Reviewer finding (9a6c review, P1): the actor recorded on the
+            # response must be the verified caller's own identity, not merely
+            # non-empty — otherwise a response describing a genuine commit
+            # made by a *different* actor (e.g. a race with a concurrent
+            # writer) could be misreported as this caller's own successful
+            # update. Mirrors REPLAY_ACTOR_MISMATCH.
+            verified_actor_id = _resolve_caller_actor_id(auth_token)
+            if verified_actor_id is not None and entry["last_actor"].get("actor_id") != verified_actor_id:
+                raise ActionUnavailableError(
+                    f"Registry metadata PATCH response for registry_id={registry_id!r} reports actor "
+                    f"{entry['last_actor'].get('actor_id')!r}, not the verified caller identity "
+                    f"{verified_actor_id!r} derived from this command's own auth token; refusing to "
+                    "report success for a commit made by a different actor.",
+                    action_id=action_id,
+                    entity_type="Strategy",
+                    error_code="ACTOR_MISMATCH",
+                )
             # The PATCH response claimed a specific committed snapshot;
             # verify it against an independent owner read rather than taking
             # the mutation response's own word for it — architecture-
@@ -535,6 +613,8 @@ class StrategyCommandAdapter(DomainCommandAdapter):
                 or readback_entry.get("metadata") != new_metadata
                 or readback_entry.get("checksum") != entry.get("checksum")
                 or readback_entry.get("updated_at") != entry.get("updated_at")
+                or not isinstance(readback_entry.get("last_actor"), dict)
+                or readback_entry["last_actor"].get("actor_id") != entry["last_actor"].get("actor_id")
             ):
                 raise ActionUnavailableError(
                     f"Registry metadata PATCH response for registry_id={registry_id!r} does not "
@@ -561,7 +641,25 @@ class StrategyCommandAdapter(DomainCommandAdapter):
                 "version": entry.get("version"),
                 "checksum": entry.get("checksum"),
                 "commit_time": entry.get("updated_at"),
-                "correlation_id": command_id,
+                # Reviewer finding (9a6c review, P1): a correlation_id built
+                # from the caller-supplied command_id alone is synthesized
+                # from input, not derived from anything the owner store
+                # actually committed — it would be identical whether or not
+                # any of the verification above ever ran. Bind it instead to
+                # the independently-verified durable receipt identity this
+                # command's checks above already confirmed: the exact
+                # registry_id/version/checksum/commit-time/actor this owner
+                # store recorded, plus command_id only to disambiguate
+                # distinct commands that happen to land on the same
+                # committed snapshot (e.g. two callers racing to a no-op).
+                "correlation_id": _receipt_correlation_id(
+                    registry_id=registry_id,
+                    version=entry.get("version"),
+                    checksum=entry.get("checksum"),
+                    commit_time=entry.get("updated_at"),
+                    actor_id=(entry.get("last_actor") or {}).get("actor_id"),
+                    command_id=command_id,
+                ),
             },
             authoritative_readback=entry,
             idempotent_replay=idempotent_replay,

@@ -631,6 +631,26 @@ class PostgresRegistryStore:
                 return RegistryEntry.from_dict(committed_entry), True
 
             payload, registry_id = payload_factory()
+            # Reviewer finding (9a6c review, P1): this keyed generic creation
+            # path committed a new revision under ``payload.strategy_id``
+            # without ever taking the same per-strategy_id advisory lock
+            # ``register_strategy_spec_revision`` uses to serialize its own
+            # read-validate-write lineage check. The two writers' locks never
+            # composed — this path's ``lock_table`` (a table-level SHARE ROW
+            # EXCLUSIVE lock) and the typed path's ``advisory_xact_lock``
+            # (a Postgres advisory lock) are independent lock spaces that do
+            # not exclude each other — so a typed writer could validate
+            # "1.0.1 is a valid next version from 1.0.0" and then commit
+            # *after* this path had already committed 1.1.0 under the same
+            # strategy_id, landing a stale revision with no invariant
+            # re-check. Taking the identical advisory lock here, before the
+            # insert, makes the two writers mutually exclusive for the same
+            # strategy_id: whichever acquires it first serializes the other
+            # behind its own commit (or transaction end), so a lineage
+            # invariant the typed path re-validates under the lock can no
+            # longer be silently invalidated by this path committing in
+            # between the typed path's read and its own write.
+            self._entries.advisory_xact_lock(payload.strategy_id, conn=conn)
             entry = _new_entry(payload, registry_id, actor=actor)
             created, canonical = self._entries.insert_if_absent(
                 registry_id, entry.to_dict(), unique_fields=unique_fields, conn=conn,

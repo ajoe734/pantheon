@@ -433,8 +433,16 @@ def test_typed_domain_command_dispatch_and_receipt(monkeypatch) -> None:
     """
     from services.control_plane.bff.command_adapters import strategy_adapter as strategy_adapter_module
 
+    get_calls = {"n": 0}
+
     def _fake_http(url, *, method="GET", payload=None, auth_token=None, mfa_token=None):
-        entry = {
+        # "Bearer test" resolves (via _resolve_caller_actor_id) to verified
+        # actor_id "test"; a genuine committed entry's last_actor must match
+        # it. The pre-mutation identity-check GET returns the pre-commit
+        # snapshot (an unchanged/older updated_at) while the PATCH and the
+        # post-PATCH readback GET both return the actually-committed
+        # snapshot — mirrors test_strategy_registry_owner_prerequisite.py.
+        committed_entry = {
             "registry_id": "reg-dispatch-1",
             "strategy_id": "stg-01",
             "owner_tenant": None,
@@ -442,9 +450,16 @@ def test_typed_domain_command_dispatch_and_receipt(monkeypatch) -> None:
             "checksum": "sha256:dispatch",
             "metadata": {"note": "new"},
             "updated_at": "2026-09-06T00:00:00Z",
-            "last_actor": {"actor_id": "operator-command", "tenant": None},
+            "last_actor": {"actor_id": "test", "tenant": None},
         }
-        return 200, {"X-Idempotent-Replay": "false"}, {"entry": entry}
+        if method == "PATCH":
+            return 200, {"X-Idempotent-Replay": "false"}, {"entry": committed_entry}
+        get_calls["n"] += 1
+        if get_calls["n"] == 1:
+            precheck_entry = dict(committed_entry, metadata={"note": "old"}, updated_at="2026-09-05T00:00:00Z")
+            precheck_entry.pop("last_actor", None)
+            return 200, {}, {"entry": precheck_entry}
+        return 200, {}, {"entry": committed_entry}
 
     monkeypatch.setattr(strategy_adapter_module, "http_request_json_with_headers", _fake_http)
     monkeypatch.setenv("PANTHEON_REGISTRY_API_URL", "http://registry-svc.internal")

@@ -38,7 +38,10 @@ from services.control_plane.bff.command_adapters.base import (
     ActionUnavailableError,
     http_request_json,
 )
-from services.control_plane.bff.command_adapters.strategy_adapter import StrategyCommandAdapter
+from services.control_plane.bff.command_adapters.strategy_adapter import (
+    StrategyCommandAdapter,
+    _receipt_correlation_id,
+)
 
 
 @pytest.fixture
@@ -57,19 +60,49 @@ def test_update_params_preserves_callers_precondition_and_uses_patch_response_as
     reach the PATCH unchanged — never silently refreshed to "latest" via an
     extra GET first — and the receipt must reflect the actual PATCH response,
     not a separate re-GET."""
-    mock_http.return_value = (
-        200,
-        {"X-Idempotent-Replay": "false"},
-        {
-            "entry": {
-                "registry_id": "reg-001",
-                "strategy_id": "strat-alpha",
-                "metadata": {"note": "new"},
-                "updated_at": "2026-09-06T00:00:00Z",
-                "checksum": "sha256:abc",
-            }
-        },
-    )
+    mock_http.side_effect = [
+        (
+            200,
+            {},
+            {
+                "entry": {
+                    "registry_id": "reg-001",
+                    "strategy_id": "strat-alpha",
+                    "metadata": {"note": "old"},
+                    "updated_at": "2026-09-05T00:00:00Z",
+                    "checksum": "sha256:abc",
+                }
+            },
+        ),
+        (
+            200,
+            {"X-Idempotent-Replay": "false"},
+            {
+                "entry": {
+                    "registry_id": "reg-001",
+                    "strategy_id": "strat-alpha",
+                    "metadata": {"note": "new"},
+                    "updated_at": "2026-09-06T00:00:00Z",
+                    "checksum": "sha256:abc",
+                    "last_actor": {"actor_id": "test-token", "tenant": "tenant-a"},
+                }
+            },
+        ),
+        (
+            200,
+            {},
+            {
+                "entry": {
+                    "registry_id": "reg-001",
+                    "strategy_id": "strat-alpha",
+                    "metadata": {"note": "new"},
+                    "updated_at": "2026-09-06T00:00:00Z",
+                    "checksum": "sha256:abc",
+                    "last_actor": {"actor_id": "test-token", "tenant": "tenant-a"},
+                }
+            },
+        ),
+    ]
 
     result = adapter.execute(
         "cmd-strat-001",
@@ -335,7 +368,10 @@ def test_update_params_readback_confirming_unapplied_metadata_is_rejected(mock_h
                 "metadata": {"note": "new"},
             },
         )
-    assert excinfo.value.error_code == "READBACK_MISMATCH"
+    # A PATCH response whose commit timestamp is unchanged from the
+    # pre-mutation baseline is now caught explicitly and earlier (before the
+    # follow-up readback ever needs to run) — see COMMIT_TIME_UNCHANGED.
+    assert excinfo.value.error_code == "COMMIT_TIME_UNCHANGED"
 
 
 @patch("services.control_plane.bff.command_adapters.strategy_adapter.http_request_json_with_headers")
@@ -521,6 +557,7 @@ def test_update_params_readback_failure_after_confirmed_commit_is_retryable(mock
                         "metadata": {"note": "new"},
                         "updated_at": "2026-09-06T00:00:00Z",
                         "checksum": "sha256:abc",
+                        "last_actor": {"actor_id": "operator-a", "tenant": "tenant-a"},
                     }
                 },
             )
@@ -878,6 +915,11 @@ class _CapturingHandler(BaseHTTPRequestHandler):
 
     response_status = 200
     response_body: Dict[str, Any] = {"ok": True}
+    # When set, overrides response_body for the PATCH request specifically —
+    # lets a test give the mutating PATCH a distinct (advanced) updated_at/
+    # last_actor from the pre-mutation and readback GETs, which otherwise
+    # all share the same static response_body.
+    patch_response_body: Optional[Dict[str, Any]] = None
     received: Optional[Dict[str, Any]] = None
     received_log: list = []
 
@@ -891,7 +933,18 @@ class _CapturingHandler(BaseHTTPRequestHandler):
         }
         type(self).received = record
         type(self).received_log = type(self).received_log + [record]
-        payload = json.dumps(type(self).response_body).encode("utf-8")
+        if self.command == "PATCH" and type(self).patch_response_body is not None:
+            body = type(self).patch_response_body
+        else:
+            body = type(self).response_body
+            if isinstance(body, list):
+                # response_body as a list lets a test give the pre-mutation
+                # identity GET and the post-PATCH readback GET distinct
+                # snapshots (e.g. an advancing updated_at), since both are
+                # plain GETs and would otherwise share one static body.
+                get_index = sum(1 for r in type(self).received_log if r["method"] != "PATCH") - 1
+                body = body[min(get_index, len(body) - 1)]
+        payload = json.dumps(body).encode("utf-8")
         self.send_response(type(self).response_status)
         self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", str(len(payload)))
@@ -933,6 +986,7 @@ class TestHttpRequestJsonMethodDispatch:
         _CapturingHandler.received_log = []
         _CapturingHandler.response_status = 200
         _CapturingHandler.response_body = {"ok": True}
+        _CapturingHandler.patch_response_body = None
         server = HTTPServer(("127.0.0.1", 0), _CapturingHandler)
         thread = threading.Thread(target=server.serve_forever, daemon=True)
         thread.start()
@@ -1041,6 +1095,7 @@ class TestUpdateParamsOverRealSocket:
         _CapturingHandler.received_log = []
         _CapturingHandler.response_status = 200
         _CapturingHandler.response_body = {"ok": True}
+        _CapturingHandler.patch_response_body = None
         server = HTTPServer(("127.0.0.1", 0), _CapturingHandler)
         thread = threading.Thread(target=server.serve_forever, daemon=True)
         thread.start()
@@ -1051,13 +1106,40 @@ class TestUpdateParamsOverRealSocket:
         thread.join(timeout=5)
 
     def test_callers_base_precondition_is_sent_unchanged_over_the_wire(self, adapter):
-        _CapturingHandler.response_body = {
+        # response_body is a list: [pre-mutation identity GET, post-PATCH
+        # readback GET] — each plain GET pulls the next entry in order, so
+        # the pre-check can carry the old (pre-commit) snapshot while the
+        # readback confirms the same advanced snapshot the PATCH itself
+        # returns via patch_response_body.
+        _CapturingHandler.response_body = [
+            {
+                "entry": {
+                    "registry_id": "reg-001",
+                    "strategy_id": "strat-alpha",
+                    "metadata": {"note": "old"},
+                    "updated_at": "2026-09-05T00:00:00Z",
+                    "checksum": "sha256:real",
+                }
+            },
+            {
+                "entry": {
+                    "registry_id": "reg-001",
+                    "strategy_id": "strat-alpha",
+                    "metadata": {"note": "new"},
+                    "updated_at": "2026-09-06T00:00:00Z",
+                    "checksum": "sha256:real",
+                    "last_actor": {"actor_id": "operator-a", "tenant": "tenant-a"},
+                }
+            },
+        ]
+        _CapturingHandler.patch_response_body = {
             "entry": {
                 "registry_id": "reg-001",
                 "strategy_id": "strat-alpha",
                 "metadata": {"note": "new"},
                 "updated_at": "2026-09-06T00:00:00Z",
                 "checksum": "sha256:real",
+                "last_actor": {"actor_id": "operator-a", "tenant": "tenant-a"},
             }
         }
         adapter.execute(
@@ -1083,13 +1165,35 @@ class TestUpdateParamsOverRealSocket:
         assert _CapturingHandler.received["method"] == "GET"
 
     def test_correct_patch_result_produces_receipt_bound_to_that_exact_response(self, adapter):
-        _CapturingHandler.response_body = {
+        _CapturingHandler.response_body = [
+            {
+                "entry": {
+                    "registry_id": "reg-001",
+                    "strategy_id": "strat-alpha",
+                    "metadata": {"note": "old"},
+                    "updated_at": "2026-09-06T00:00:00Z",
+                    "checksum": "sha256:exact-version",
+                }
+            },
+            {
+                "entry": {
+                    "registry_id": "reg-001",
+                    "strategy_id": "strat-alpha",
+                    "metadata": {"note": "new"},
+                    "updated_at": "2026-09-06T01:23:45Z",
+                    "checksum": "sha256:exact-version",
+                    "last_actor": {"actor_id": "operator-a", "tenant": "tenant-a"},
+                }
+            },
+        ]
+        _CapturingHandler.patch_response_body = {
             "entry": {
                 "registry_id": "reg-001",
                 "strategy_id": "strat-alpha",
                 "metadata": {"note": "new"},
                 "updated_at": "2026-09-06T01:23:45Z",
                 "checksum": "sha256:exact-version",
+                "last_actor": {"actor_id": "operator-a", "tenant": "tenant-a"},
             }
         }
         result = adapter.execute(
@@ -1107,7 +1211,18 @@ class TestUpdateParamsOverRealSocket:
         assert result["status"] == "metadata_updated"
         assert result["domain_receipt"]["checksum"] == "sha256:exact-version"
         assert result["domain_receipt"]["commit_time"] == "2026-09-06T01:23:45Z"
-        assert result["domain_receipt"]["correlation_id"] == "cmd-real-002"
+        # correlation_id is now derived from the independently-verified
+        # durable receipt (registry_id/version/checksum/commit_time/actor),
+        # not the caller-supplied command_id alone — see
+        # _receipt_correlation_id.
+        assert result["domain_receipt"]["correlation_id"] == _receipt_correlation_id(
+            registry_id="reg-001",
+            version=None,
+            checksum="sha256:exact-version",
+            commit_time="2026-09-06T01:23:45Z",
+            actor_id="operator-a",
+            command_id="cmd-real-002",
+        )
         assert result["authoritative_readback"]["updated_at"] == "2026-09-06T01:23:45Z"
 
     def test_empty_response_body_cannot_manufacture_a_fake_success(self, adapter):
