@@ -6,6 +6,7 @@ Zero reverse imports of main.py.
 from __future__ import annotations
 
 import asyncio
+import base64
 from contextvars import ContextVar
 from copy import deepcopy
 import copy
@@ -710,6 +711,82 @@ def _persona_provisioning_store():
 class _PersonaOwnerHttpTransport:
     """Strict synchronous transport to canonical provisioning owner APIs."""
 
+    def __init__(self, *, tenant_id: str | None = None) -> None:
+        # The coordinator knows the authoritative tenant while the transport
+        # is deliberately kept independent of the request object.  Carry that
+        # identity into every owner call so internal writes cannot fall back to
+        # an unbound/default tenant during a GET-first reconciliation.
+        self.tenant_id = str(tenant_id or "").strip() or str(
+            os.getenv("PANTHEON_BFF_TENANT_ID")
+            or os.getenv("PANTHEON_TENANT_ID")
+            or "default"
+        ).strip()
+
+    def _service_jwt(self) -> str:
+        """Mint a short-lived, tenant-bound service JWT for strict Capital."""
+
+        secret = str(
+            os.getenv("PANTHEON_CAPITAL_JWT_SECRET")
+            or os.getenv("PANTHEON_BFF_JWT_SECRET")
+            or ""
+        ).strip()
+        if not secret:
+            raise RuntimeError(
+                "PANTHEON_BFF_JWT_SECRET is required for strict Persona owner calls"
+            )
+        from services.runtime_auth_inbound import encode_jwt_hs256
+
+        now = int(time.time())
+        claims: dict[str, Any] = {
+            "sub": "control-plane-bff",
+            "service": "control-plane-bff",
+            "allowed_tenants": [self.tenant_id],
+            "roles": [
+                "service",
+                "operator",
+                "admin",
+                "approver",
+                "reviewer",
+                "risk_owner",
+                "capital.admin",
+                "persona.admin",
+            ],
+            "iat": now,
+            "exp": now + 120,
+        }
+        issuer = str(
+            os.getenv("CAPITAL_JWT_ISSUER")
+            or os.getenv("PANTHEON_BFF_JWT_ISSUER")
+            or ""
+        ).strip()
+        audience = str(
+            os.getenv("CAPITAL_JWT_AUDIENCE")
+            or os.getenv("PANTHEON_BFF_JWT_AUDIENCE")
+            or ""
+        ).strip()
+        if issuer:
+            claims["iss"] = issuer
+        if audience:
+            claims["aud"] = audience
+        return encode_jwt_hs256(claims, secret=secret)
+
+    def _headers(self, owner: str, payload: Mapping[str, Any] | None = None) -> dict[str, str]:
+        tenant_id = str((payload or {}).get("tenant_id") or self.tenant_id).strip()
+        headers = {
+            "Accept": "application/json",
+            "Content-Type": "application/json",
+            "X-Tenant-Id": tenant_id,
+            "X-Pantheon-Service": "control-plane-bff",
+        }
+        if owner == "capital":
+            headers["Authorization"] = f"Bearer {self._service_jwt()}"
+        else:
+            # Deployment and the other dev owner APIs use the repository's
+            # bounded structured token in permissive dev mode.  Capital is the
+            # exception: it remains strict and receives the JWT above.
+            headers["Authorization"] = "Bearer control-plane-bff:operator,admin,service"
+        return headers
+
     _OWNER_ENVIRONMENTS = {
         "capital": ("PANTHEON_CAPITAL_API_URL", "PANTHEON_CAPITAL_SERVICE_URL"),
         "registry": ("PANTHEON_REGISTRY_API_URL", "PANTHEON_REGISTRY_URL"),
@@ -735,7 +812,16 @@ class _PersonaOwnerHttpTransport:
 
     def get(self, owner: str, path: str) -> Optional[Dict[str, Any]]:
         try:
-            value = _get_json(self._url(owner, path))
+            request = urllib_request.Request(
+                self._url(owner, path),
+                headers=self._headers(owner),
+                method="GET",
+            )
+            with urllib_request.urlopen(
+                request,
+                timeout=max(1, int(os.getenv("PANTHEON_COMMAND_TIMEOUT_SECONDS", "30"))),
+            ) as response:
+                value = json.loads(response.read().decode("utf-8"))
         except urllib_error.HTTPError as exc:
             if exc.code == 404:
                 return None
@@ -745,7 +831,17 @@ class _PersonaOwnerHttpTransport:
         return value
 
     def post(self, owner: str, path: str, payload: Mapping[str, Any]) -> Dict[str, Any]:
-        value = _post_json(self._url(owner, path), dict(payload))
+        request = urllib_request.Request(
+            self._url(owner, path),
+            data=json.dumps(dict(payload)).encode("utf-8"),
+            headers=self._headers(owner, payload),
+            method="POST",
+        )
+        with urllib_request.urlopen(
+            request,
+            timeout=max(1, int(os.getenv("PANTHEON_COMMAND_TIMEOUT_SECONDS", "30"))),
+        ) as response:
+            value = json.loads(response.read().decode("utf-8"))
         if not isinstance(value, dict):
             raise RuntimeError(f"{owner} POST {path} returned a non-object receipt")
         return value
@@ -754,7 +850,7 @@ class _PersonaOwnerHttpTransport:
         request = urllib_request.Request(
             self._url(owner, path),
             data=json.dumps(dict(payload)).encode("utf-8"),
-            headers={"Accept": "application/json", "Content-Type": "application/json"},
+            headers=self._headers(owner, payload),
             method="PATCH",
         )
         timeout = max(1, int(os.getenv("PANTHEON_COMMAND_TIMEOUT_SECONDS", "30")))
@@ -1223,7 +1319,7 @@ def _reconcile_persona_provisioning_compensation(
         return None
     coordinator = PersonaProvisioningCoordinator(
         store=store,
-        transport=_PersonaOwnerHttpTransport(),
+        transport=_PersonaOwnerHttpTransport(tenant_id=str(metadata.get("tenant_id") or "")),
         schedule_registrar=_register_persona_cron_required,
         lease_owner=f"persona-compensation:{uuid.uuid4().hex}",
         lease_seconds=max(
@@ -3894,7 +3990,7 @@ def _coordinate_persona_create(
     )
     coordinator = PersonaProvisioningCoordinator(
         store=store,
-        transport=_PersonaOwnerHttpTransport(),
+        transport=_PersonaOwnerHttpTransport(tenant_id=record.tenant_id),
         schedule_registrar=_register_persona_cron_required,
         lease_owner=f"operator-bff:{os.getenv('HOSTNAME', 'local')}:{uuid.uuid4().hex}",
         lease_seconds=max(
