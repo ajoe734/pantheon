@@ -27,44 +27,11 @@ from services.registry.command_contract import ActionOwner, resolve_action
 log = logging.getLogger(__name__)
 
 
-def _resolve_caller_actor_id(auth_token: Optional[str]) -> Optional[str]:
-    """Best-effort local extraction of the verified caller's own actor
-    identity from its own auth token — mirrors
-    services.control_plane.bff.command_executor._extract_actor_id's JWT/
-    structured-token parsing, but returns ``None`` (skip verification)
-    rather than a generic ``"operator-command"`` fallback placeholder when
-    no token was supplied. "No token" is not itself a verified identity to
-    cross-check a replay against — treating the fallback placeholder as a
-    real identity would wrongly reject a legitimate replay whose recorded
-    actor happens to differ from that placeholder string (reviewer finding
-    3, gen-10 review).
-    """
-    if not auth_token:
-        return None
-    token = auth_token.strip()
-    if token.lower().startswith("bearer "):
-        token = token[7:].strip()
-    if not token:
-        return None
-    if token.startswith("ey") and "." in token:
-        parts = token.split(".")
-        if len(parts) != 3:
-            return None
-        try:
-            import base64
-            import json as _json
+def _caller_actor_id(auth_token: Optional[str]) -> str:
+    """Extract actor identity using canonical command_executor._extract_actor_id."""
+    from services.control_plane.bff.command_executor import _extract_actor_id
 
-            payload_b64 = parts[1]
-            padding = len(payload_b64) % 4
-            if padding:
-                payload_b64 += "=" * (4 - padding)
-            payload = _json.loads(base64.b64decode(payload_b64).decode("utf-8"))
-        except Exception:
-            return None
-        actor_id = payload.get("sub") or payload.get("actor_id")
-        return str(actor_id) if actor_id else None
-    actor_id = token.split(":")[0].strip()
-    return actor_id or None
+    return _extract_actor_id(auth_token)
 
 
 def _receipt_correlation_id(
@@ -328,16 +295,13 @@ class StrategyCommandAdapter(DomainCommandAdapter):
 
         response_lost = False
 
+        caller_actor_id = _caller_actor_id(auth_token)
+
         if idempotent_replay:
-            # Reviewer finding 7: a replay's PATCH response IS the
-            # historically-committed entry snapshot (see
-            # RegistryService.update_metadata / commit_metadata_cas's
-            # receipt-replay semantics), not a claim to be re-verified
-            # against "whatever is current now". Comparing it against an
-            # independent readback GET spuriously fails whenever a later,
-            # unrelated command under a *different* key has since moved the
-            # row on — the row diverging from the original commit is
-            # expected and correct, not evidence the replay is wrong.
+            # Reviewer finding 7 / 9a6c review P1: a replay's PATCH response is
+            # the historically-committed entry snapshot. We verify its claims
+            # against caller request and immutable baseline, then independently
+            # reload the durable scoped command receipt from Registry to confirm it.
             if not isinstance(entry, dict) or not entry.get("registry_id"):
                 raise ActionUnavailableError(
                     f"Registry metadata PATCH replay for registry_id={registry_id!r} returned an "
@@ -355,13 +319,6 @@ class StrategyCommandAdapter(DomainCommandAdapter):
                     entity_type="Strategy",
                     error_code="STRATEGY_ID_MISMATCH",
                 )
-            # Reviewer finding 7: a replay response claiming ``strategy_id``
-            # matches is not sufficient on its own — a fault-injected/forged
-            # replay body could report the right strategy_id while carrying
-            # a wrong registry_id, checksum (content), version, or
-            # owner_tenant. Bind the verification to the immutable identity
-            # captured at command-issue time (before the PATCH was ever
-            # sent), not to whatever the response claims about itself.
             if _diverges_from_original(entry):
                 raise ActionUnavailableError(
                     f"Registry metadata PATCH replay for registry_id={registry_id!r} diverges "
@@ -373,16 +330,6 @@ class StrategyCommandAdapter(DomainCommandAdapter):
                     entity_type="Strategy",
                     error_code="READBACK_MISMATCH",
                 )
-            # Reviewer finding 4 (gen-8 review): registry_id/checksum/
-            # version/owner_tenant identity matching is not sufficient on
-            # its own for a *metadata* commit — those fields are exactly
-            # what stays fixed while metadata is what changed, so a replay
-            # response carrying unrelated metadata, no recorded actor, or a
-            # null commit timestamp passed every check above while reporting
-            # a fabricated "metadata_updated" success. A genuine original
-            # command receipt always reflects the metadata this exact
-            # command actually requested, carries a non-null commit
-            # timestamp, and records the actor who committed it.
             if entry.get("metadata") != new_metadata:
                 raise ActionUnavailableError(
                     f"Registry metadata PATCH replay for registry_id={registry_id!r} reports "
@@ -408,93 +355,139 @@ class StrategyCommandAdapter(DomainCommandAdapter):
                     entity_type="Strategy",
                     error_code="REPLAY_MISSING_ACTOR",
                 )
-            # Reviewer finding 3 (gen-10 review): the checks above only
-            # required *some* non-empty actor_id on the replay response —
-            # any actor_id, not necessarily the one who could legitimately
-            # have committed this exact caller's own retried command. A
-            # replay of *this* caller's own prior command is only reachable
-            # server-side under the exact same tenant+actor+command_key
-            # scope the receipt was originally reserved under (see
-            # PostgresRegistryStore.receipt_key) — so a genuine replay's
-            # recorded actor always equals the actor identity of the token
-            # issuing *this* retry. Verifying that locally (no extra network
-            # call — see the "no third HTTP call on replay" contract this
-            # suite already pins) catches a fabricated/forged replay body
-            # claiming an unrelated actor without ever needing to trust a
-            # second, independent read of the same single response.
-            verified_actor_id = _resolve_caller_actor_id(auth_token)
-            if verified_actor_id is not None and entry["last_actor"].get("actor_id") != verified_actor_id:
+            if caller_actor_id != "operator-command" and entry["last_actor"].get("actor_id") != caller_actor_id:
                 raise ActionUnavailableError(
                     f"Registry metadata PATCH replay for registry_id={registry_id!r} reports actor "
                     f"{entry['last_actor'].get('actor_id')!r}, not the verified caller identity "
-                    f"{verified_actor_id!r} derived from this command's own auth token; a genuine "
+                    f"{caller_actor_id!r} derived from this command's own auth token; a genuine "
                     "replay of this caller's own prior command always carries this caller's own "
                     "actor identity.",
                     action_id=action_id,
                     entity_type="Strategy",
                     error_code="REPLAY_ACTOR_MISMATCH",
                 )
-        elif not isinstance(entry, dict) or not entry.get("registry_id"):
-            # The PATCH nominally succeeded (no HTTPError was raised) but its
-            # body carries no confirmable entry snapshot (e.g. 200 {}).
-            # Rather than immediately reporting failure, attempt the
-            # readback to distinguish "committed but response lost" from
-            # "not committed" — a hard FAILED here would fabricate a
-            # downstream error for a write that actually succeeded.
-            readback_entry = self._readback_entry(registry_id, auth_token=auth_token, mfa_token=mfa_token)
-            verified_actor_id = _resolve_caller_actor_id(auth_token)
-            if (
-                readback_entry is None
-                or readback_entry.get("metadata") != new_metadata
-                or not _belongs_to_requested_strategy(readback_entry)
-                or _diverges_from_original(readback_entry)
-                # Reviewer finding 3 (gen-10 review): metadata already
-                # matching the target is not, by itself, proof that *this*
-                # command committed it — the entry could simply have already
-                # been at that value before this command ever ran (e.g. a
-                # rejected/no-op PATCH whose ambiguous body masks a stale
-                # precondition that never actually CAS'd). commit_metadata_cas
-                # always bumps updated_at and records last_actor on every
-                # genuine commit, even a metadata-content no-op, so a
-                # readback whose updated_at is unchanged from the
-                # pre-mutation baseline captured before the PATCH was ever
-                # issued (``original_entry``) is not evidence of a commit.
-                or not readback_entry.get("updated_at")
-                or readback_entry.get("updated_at") == original_entry.get("updated_at")
-                or not isinstance(readback_entry.get("last_actor"), dict)
-                or not readback_entry["last_actor"].get("actor_id")
-                # Reviewer finding (9a6c review, P1): matching metadata plus a
-                # changed timestamp plus *some* actor is still not proof that
-                # *this caller's* command is what committed it — a genuinely
-                # ambiguous PATCH response (this command's own outcome truly
-                # unknown) followed by a *different* actor coincidentally (or
-                # adversarially) writing the same target metadata must not be
-                # misreported as this command's own success.
-                or (
-                    verified_actor_id is not None
-                    and readback_entry["last_actor"].get("actor_id") != verified_actor_id
-                )
-            ):
+
+            # Reviewer finding (9a6c review, P1): independently reload the original
+            # durable command receipt from the Registry owner store.
+            receipt, status_code = self._readback_receipt(
+                registry_id, command_id, auth_token=auth_token, mfa_token=mfa_token, command_type="metadata",
+            )
+            if receipt is None:
+                if status_code is None or (status_code and status_code >= 500):
+                    raise ActionUnavailableError(
+                        f"Registry metadata PATCH replay for registry_id={registry_id!r} could not be confirmed "
+                        "by a follow-up owner receipt readback.",
+                        action_id=action_id,
+                        entity_type="Strategy",
+                        error_code="READBACK_UNAVAILABLE",
+                        retryable=True,
+                        downstream_status=503,
+                    )
                 raise ActionUnavailableError(
-                    f"Registry metadata PATCH for registry_id={registry_id!r} returned an "
-                    "ambiguous response with no entry payload, and a follow-up owner GET "
-                    "readback does not confirm the requested metadata was actually committed "
-                    "by this command (against the original immutable identity, with a changed "
-                    "commit timestamp and a recorded actor matching the verified caller) rather "
-                    "than merely already matching the target value beforehand or having been "
-                    "committed by a different actor.",
+                    f"Registry metadata PATCH replay for registry_id={registry_id!r} could not be confirmed "
+                    "by independent owner receipt reload.",
+                    action_id=action_id,
+                    entity_type="Strategy",
+                    error_code="UNCONFIRMED_COMMAND_RECEIPT",
+                    retryable=True,
+                    downstream_status=503,
+                )
+            committed_entry = receipt.get("committed_entry") if isinstance(receipt, dict) else None
+            if not isinstance(committed_entry, dict) or not committed_entry.get("registry_id"):
+                raise ActionUnavailableError(
+                    f"Registry metadata receipt for registry_id={registry_id!r} carries no committed entry payload.",
+                    action_id=action_id,
+                    entity_type="Strategy",
+                    error_code="UNCONFIRMED_COMMAND_RECEIPT",
+                )
+            if not _belongs_to_requested_strategy(committed_entry):
+                raise ActionUnavailableError(
+                    f"Registry metadata receipt for registry_id={registry_id!r} belongs to "
+                    f"strategy_id={committed_entry.get('strategy_id')!r}, not the requested "
+                    f"strategy_id={strategy_id!r}.",
+                    action_id=action_id,
+                    entity_type="Strategy",
+                    error_code="STRATEGY_ID_MISMATCH",
+                )
+            if _diverges_from_original(committed_entry):
+                raise ActionUnavailableError(
+                    f"Registry metadata receipt for registry_id={registry_id!r} diverges from the original immutable identity.",
+                    action_id=action_id,
+                    entity_type="Strategy",
+                    error_code="READBACK_MISMATCH",
+                )
+            if committed_entry.get("metadata") != new_metadata:
+                raise ActionUnavailableError(
+                    f"Registry metadata receipt for registry_id={registry_id!r} reports metadata different from requested.",
+                    action_id=action_id,
+                    entity_type="Strategy",
+                    error_code="REPLAY_METADATA_MISMATCH",
+                )
+            if not committed_entry.get("updated_at"):
+                raise ActionUnavailableError(
+                    f"Registry metadata receipt for registry_id={registry_id!r} carries no commit timestamp.",
+                    action_id=action_id,
+                    entity_type="Strategy",
+                    error_code="REPLAY_MISSING_COMMIT_TIME",
+                )
+            last_actor = committed_entry.get("last_actor") if isinstance(committed_entry.get("last_actor"), dict) else {}
+            receipt_actor_id = last_actor.get("actor_id")
+            if not receipt_actor_id:
+                raise ActionUnavailableError(
+                    f"Registry metadata receipt for registry_id={registry_id!r} carries no recorded actor.",
+                    action_id=action_id,
+                    entity_type="Strategy",
+                    error_code="REPLAY_MISSING_ACTOR",
+                )
+            if caller_actor_id != "operator-command" and receipt_actor_id != caller_actor_id:
+                raise ActionUnavailableError(
+                    f"Registry metadata receipt for registry_id={registry_id!r} reports actor {receipt_actor_id!r}, "
+                    f"not caller identity {caller_actor_id!r}.",
+                    action_id=action_id,
+                    entity_type="Strategy",
+                    error_code="REPLAY_ACTOR_MISMATCH",
+                )
+            entry = committed_entry
+
+        elif not isinstance(entry, dict) or not entry.get("registry_id"):
+            # The PATCH nominally succeeded or dropped connection with no entry payload.
+            # Attempt independent receipt reload to determine if this specific command committed.
+            receipt, status_code = self._readback_receipt(
+                registry_id, command_id, auth_token=auth_token, mfa_token=mfa_token, command_type="metadata",
+            )
+            if receipt is None:
+                raise ActionUnavailableError(
+                    f"Registry metadata PATCH for registry_id={registry_id!r} returned an ambiguous response "
+                    "with no entry payload, and a follow-up owner receipt readback does not confirm the command.",
                     action_id=action_id,
                     entity_type="Strategy",
                     error_code="AMBIGUOUS_REGISTRY_RESPONSE",
                 )
-            entry = readback_entry
+            committed_entry = receipt.get("committed_entry") if isinstance(receipt, dict) else None
+            last_actor = (committed_entry.get("last_actor") or {}) if isinstance(committed_entry, dict) else {}
+            receipt_actor_id = last_actor.get("actor_id")
+            if (
+                not isinstance(committed_entry, dict)
+                or not committed_entry.get("registry_id")
+                or committed_entry.get("metadata") != new_metadata
+                or not _belongs_to_requested_strategy(committed_entry)
+                or _diverges_from_original(committed_entry)
+                or not committed_entry.get("updated_at")
+                or committed_entry.get("updated_at") == original_entry.get("updated_at")
+                or not receipt_actor_id
+                or (caller_actor_id != "operator-command" and receipt_actor_id != caller_actor_id)
+            ):
+                raise ActionUnavailableError(
+                    f"Registry metadata PATCH for registry_id={registry_id!r} returned an ambiguous response, "
+                    "and follow-up receipt readback does not confirm the requested metadata was committed by this command.",
+                    action_id=action_id,
+                    entity_type="Strategy",
+                    error_code="AMBIGUOUS_REGISTRY_RESPONSE",
+                )
+            entry = committed_entry
             response_lost = True
+
         else:
-            # Reviewer finding 6: registry_id is caller-supplied and must be
-            # verified to actually belong to the *requested* strategy_id
-            # before this is ever reported as success — otherwise a caller
-            # could target strategy A but supply a registry_id from strategy
-            # B, mutate B, and get back a receipt claiming A was updated.
             if not _belongs_to_requested_strategy(entry):
                 raise ActionUnavailableError(
                     f"Registry entry registry_id={registry_id!r} belongs to "
@@ -516,11 +509,6 @@ class StrategyCommandAdapter(DomainCommandAdapter):
                     entity_type="Strategy",
                     error_code="READBACK_MISMATCH",
                 )
-            # Reviewer finding 3 (gen-10 review): a PATCH response with a
-            # concrete entry payload but no commit timestamp at all is not a
-            # trustworthy proof of commit either — commit_metadata_cas always
-            # stamps a fresh updated_at on every genuine write. Mirrors the
-            # equivalent replay-path check (REPLAY_MISSING_COMMIT_TIME).
             if not entry.get("updated_at"):
                 raise ActionUnavailableError(
                     f"Registry metadata PATCH response for registry_id={registry_id!r} carries no "
@@ -529,14 +517,6 @@ class StrategyCommandAdapter(DomainCommandAdapter):
                     entity_type="Strategy",
                     error_code="MISSING_COMMIT_TIME",
                 )
-            # Reviewer finding (9a6c review, P1): a concrete PATCH response
-            # with a commit timestamp but no recorded actor, or one whose
-            # commit timestamp is unchanged from the pre-mutation baseline
-            # captured before this command was ever issued, is not
-            # trustworthy proof that *this* command committed anything —
-            # commit_metadata_cas always records last_actor and bumps
-            # updated_at on every genuine write, mirroring the equivalent
-            # replay-path (REPLAY_MISSING_ACTOR) and ambiguous-path checks.
             if not isinstance(entry.get("last_actor"), dict) or not entry["last_actor"].get("actor_id"):
                 raise ActionUnavailableError(
                     f"Registry metadata PATCH response for registry_id={registry_id!r} carries no "
@@ -555,76 +535,72 @@ class StrategyCommandAdapter(DomainCommandAdapter):
                     entity_type="Strategy",
                     error_code="COMMIT_TIME_UNCHANGED",
                 )
-            # Reviewer finding (9a6c review, P1): the actor recorded on the
-            # response must be the verified caller's own identity, not merely
-            # non-empty — otherwise a response describing a genuine commit
-            # made by a *different* actor (e.g. a race with a concurrent
-            # writer) could be misreported as this caller's own successful
-            # update. Mirrors REPLAY_ACTOR_MISMATCH.
-            verified_actor_id = _resolve_caller_actor_id(auth_token)
-            if verified_actor_id is not None and entry["last_actor"].get("actor_id") != verified_actor_id:
+            if entry.get("metadata") != new_metadata:
+                raise ActionUnavailableError(
+                    f"Registry metadata PATCH response for registry_id={registry_id!r} does not "
+                    "report the requested metadata.",
+                    action_id=action_id,
+                    entity_type="Strategy",
+                    error_code="READBACK_MISMATCH",
+                )
+            if caller_actor_id != "operator-command" and entry["last_actor"].get("actor_id") != caller_actor_id:
                 raise ActionUnavailableError(
                     f"Registry metadata PATCH response for registry_id={registry_id!r} reports actor "
                     f"{entry['last_actor'].get('actor_id')!r}, not the verified caller identity "
-                    f"{verified_actor_id!r} derived from this command's own auth token; refusing to "
+                    f"{caller_actor_id!r} derived from this command's own auth token; refusing to "
                     "report success for a commit made by a different actor.",
                     action_id=action_id,
                     entity_type="Strategy",
                     error_code="ACTOR_MISMATCH",
                 )
-            # The PATCH response claimed a specific committed snapshot;
-            # verify it against an independent owner read rather than taking
-            # the mutation response's own word for it — architecture-
-            # resumption-sa-sd.md §3.3 / reviewer finding 5. "POST/PATCH
-            # accepted" does not constitute owner GET/reload proof.
-            readback_entry = self._readback_entry(registry_id, auth_token=auth_token, mfa_token=mfa_token)
-            if readback_entry is None:
-                # The write itself is already confirmed committed (the PATCH
-                # returned a concrete entry snapshot); a subsequent readback
-                # failure is a transient confirmation gap, not proof the
-                # mutation did not happen — the caller should retry the read,
-                # not resubmit the same command (reviewer finding 7).
+
+            # Reviewer finding (9a6c review, P1): independently reload the durable receipt
+            # to verify this specific command committed.
+            receipt, status_code = self._readback_receipt(
+                registry_id, command_id, auth_token=auth_token, mfa_token=mfa_token, command_type="metadata",
+            )
+            if receipt is None:
+                if status_code is None or (status_code and status_code >= 500):
+                    raise ActionUnavailableError(
+                        f"Registry metadata PATCH for registry_id={registry_id!r} committed but could "
+                        "not be confirmed by a follow-up owner receipt readback.",
+                        action_id=action_id,
+                        entity_type="Strategy",
+                        error_code="READBACK_UNAVAILABLE",
+                        retryable=True,
+                        downstream_status=503,
+                    )
                 raise ActionUnavailableError(
-                    f"Registry metadata PATCH for registry_id={registry_id!r} committed but could "
-                    "not be confirmed by a follow-up owner GET readback.",
+                    f"Registry metadata PATCH for registry_id={registry_id!r} could not be confirmed "
+                    "by independent owner receipt reload.",
                     action_id=action_id,
                     entity_type="Strategy",
-                    error_code="READBACK_UNAVAILABLE",
+                    error_code="UNCONFIRMED_COMMAND_RECEIPT",
                     retryable=True,
                     downstream_status=503,
                 )
-            # Reviewer finding 3 (gen-8 review): comparing the readback only
-            # against the PATCH response's own self-reported checksum/
-            # updated_at/metadata was not enough on two counts:
-            #   (1) it never checked that the *requested* metadata was
-            #       actually applied — an owner that silently no-op'd the
-            #       write (returning the unchanged old metadata in both the
-            #       PATCH response and the follow-up GET) satisfied every
-            #       check while never actually updating anything.
-            #   (2) it never verified the follow-up GET's own identity
-            #       (registry_id/strategy_id/owner_tenant/version) — a
-            #       readback for a *different* aggregate that happened to
-            #       carry the same checksum/updated_at/metadata as the PATCH
-            #       response also satisfied every check.
+            committed_entry = receipt.get("committed_entry") if isinstance(receipt, dict) else None
             if (
-                readback_entry.get("registry_id") != registry_id
-                or not _belongs_to_requested_strategy(readback_entry)
-                or _diverges_from_original(readback_entry)
-                or readback_entry.get("metadata") != new_metadata
-                or readback_entry.get("checksum") != entry.get("checksum")
-                or readback_entry.get("updated_at") != entry.get("updated_at")
-                or not isinstance(readback_entry.get("last_actor"), dict)
-                or readback_entry["last_actor"].get("actor_id") != entry["last_actor"].get("actor_id")
+                not isinstance(committed_entry, dict)
+                or committed_entry.get("registry_id") != registry_id
+                or not _belongs_to_requested_strategy(committed_entry)
+                or _diverges_from_original(committed_entry)
+                or committed_entry.get("metadata") != new_metadata
+                or committed_entry.get("checksum") != entry.get("checksum")
+                or committed_entry.get("updated_at") != entry.get("updated_at")
+                or not isinstance(committed_entry.get("last_actor"), dict)
+                or committed_entry["last_actor"].get("actor_id") != entry["last_actor"].get("actor_id")
             ):
                 raise ActionUnavailableError(
                     f"Registry metadata PATCH response for registry_id={registry_id!r} does not "
-                    "match a follow-up owner GET readback, or the readback does not confirm the "
+                    "match a follow-up owner receipt readback, or the readback does not confirm the "
                     "requested metadata was actually applied against the original immutable "
                     "identity; refusing to report success on a discrepant or unapplied state.",
                     action_id=action_id,
                     entity_type="Strategy",
                     error_code="READBACK_MISMATCH",
                 )
+            entry = committed_entry
 
         return build_domain_receipt(
             command_id=command_id,
@@ -698,6 +674,46 @@ class StrategyCommandAdapter(DomainCommandAdapter):
         if isinstance(entry, dict) and entry.get("registry_id") == registry_id:
             return entry
         return None
+
+    @staticmethod
+    def _readback_receipt(
+        registry_id: str,
+        command_id: str,
+        *,
+        auth_token: Optional[str] = None,
+        mfa_token: Optional[str] = None,
+        command_type: str = "metadata",
+    ) -> tuple[Optional[Dict[str, Any]], Optional[int]]:
+        """Independently reload the durable scoped command receipt from Registry.
+
+        Returns (receipt_dict, status_code). status_code is None if an exception occurred.
+        """
+        url = registry_url(
+            f"/api/registry/entries/{quote(registry_id, safe='')}/receipts/{quote(command_id, safe='')}"
+            f"?command_type={quote(command_type, safe='')}"
+        )
+        try:
+            status_code, _headers, body = http_request_json_with_headers(
+                url,
+                method="GET",
+                auth_token=auth_token,
+                mfa_token=mfa_token,
+            )
+            if status_code == 200 and isinstance(body, dict):
+                receipt = body.get("receipt")
+                if isinstance(receipt, dict):
+                    return receipt, 200
+                if isinstance(body.get("entry"), dict):
+                    return {
+                        "command_key": command_id,
+                        "registry_id": registry_id,
+                        "committed_entry": body["entry"],
+                        "committed_at": body["entry"].get("updated_at"),
+                    }, 200
+            return None, status_code
+        except Exception as exc:
+            log.warning("Failed to readback command receipt for %s/%s: %s", registry_id, command_id, exc)
+            return None, None
 
     def _execute_formula_action(
         self,

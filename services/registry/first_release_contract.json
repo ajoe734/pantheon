@@ -15,8 +15,8 @@
       "principal_scope": "enforced by validate_request_auth via _authenticate_registry_write on every mutation route, including this one; the verified actor's tenant is recorded as the entry's immutable owner_tenant (see models.RegistryEntry.owner_tenant) and every subsequent read/write is scoped against it (_authorize_read/_authorize_write)",
       "request_identity": "generated server-side (reg-{strategy_id}-{version}-{uuid8}); accepts either a name-only draft body ({\"name\": \"...\"}, synthesized strategy_id/version 0.0.1) or the full typed body (artifact_type/strategy_id/version) per the 2026-09-06 REGISTRY-STRATEGY-UNIFIED-CONTRACT-001 draft-kind fix — see _resolve_entry_or_draft_payload",
       "sole_writer": "registry-svc",
-      "legal_transition": "creates artifact_state=draft or candidate; rejects (409) a second registry_id at an already-registered (strategy_id, version, artifact_type) via a non-atomic best-effort collision guard (see create_next_revision for the atomic version of this check)",
-      "durable_receipt": "RegistryEntry row (registry.entries), no separate command receipt on this route yet",
+      "legal_transition": "creates artifact_state=draft or candidate; rejects (409) a second registry_id at an already-registered (strategy_id, version, artifact_type) atomically via create_with_receipt/unique_fields when Idempotency-Key is supplied or register_strategy_spec_revision, and via collision guard on plain unkeyed registration",
+      "durable_receipt": "RegistryEntry row (registry.entries); when Idempotency-Key is supplied, an atomic command receipt in registry.command_receipts is committed in the same transaction as the entry creation",
       "exact_version_read": "GET /api/registry/entries/{registry_id} (tenant-scoped read; builtins are publicly readable)",
       "status": "implemented",
       "proof": "services/registry/test_owner_durability.py::test_register_and_readback_survive_fresh_process_restart"

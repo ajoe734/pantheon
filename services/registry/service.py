@@ -23,7 +23,7 @@ import uuid
 from contextlib import asynccontextmanager
 from typing import Any, Callable, Optional
 
-from fastapi import FastAPI, Header, HTTPException, Request, Response
+from fastapi import FastAPI, Header, HTTPException, Query, Request, Response
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
@@ -159,6 +159,7 @@ class RegistryEntryOrDraftRequest(BaseModel):
     evaluation_summary: Optional[dict[str, Any]] = None
     rollback_target: Optional[str] = None
     metadata: Optional[dict[str, Any]] = None
+    strategy_spec: Optional[dict[str, Any]] = None
 
 
 class StrategySpecRegisterRequest(BaseModel):
@@ -979,6 +980,11 @@ def _resolve_entry_or_draft_payload(
     resolved_checksum = payload.checksum or ""
     if payload.artifact_type == ArtifactType.STRATEGY_SPEC:
         embedded_spec = (payload.metadata or {}).get("strategy_spec")
+        if embedded_spec is None and getattr(payload, "strategy_spec", None) is not None:
+            embedded_spec = payload.strategy_spec
+            if payload.metadata is None:
+                payload.metadata = {}
+            payload.metadata["strategy_spec"] = embedded_spec
         if embedded_spec is not None:
             # Reviewer finding 2: a caller registering a *full* StrategySpec
             # through this generic route (an embedded metadata.strategy_spec,
@@ -1075,6 +1081,24 @@ async def register_entry(
 
     try:
         if idempotency_key:
+            target_strategy_id = payload.strategy_id
+            validate_lineage = None
+            if (
+                payload.artifact_type == ArtifactType.STRATEGY_SPEC
+                and (
+                    (payload.metadata or {}).get("strategy_spec") is not None
+                    or getattr(payload, "strategy_spec", None) is not None
+                )
+                and target_strategy_id
+                and payload.version
+            ):
+                from services.registry.models import Lineage as _Lineage
+                lineage_obj = payload.lineage if isinstance(payload.lineage, _Lineage) else (
+                    _Lineage(**payload.lineage) if isinstance(payload.lineage, dict) else _Lineage()
+                )
+                validate_lineage = _strategy_spec_lineage_validator(
+                    ctx, target_strategy_id, payload.version, lineage_obj
+                )
             view, _replayed = registry_service.register_with_idempotency(
                 _build_payload,
                 command_key=idempotency_key,
@@ -1087,6 +1111,8 @@ async def register_entry(
                 # a different draft name) is rejected as divergent rather
                 # than silently returning the first request's entry.
                 request_fingerprint=payload.model_dump(mode="json"),
+                strategy_id=target_strategy_id,
+                validate_lineage=validate_lineage,
             )
             return view
         create_payload, registry_id = _build_payload()
@@ -1242,6 +1268,37 @@ async def update_metadata(
         raise HTTPException(status_code=400, detail=str(e))
     response.headers["X-Idempotent-Replay"] = "true" if replayed else "false"
     return view
+
+
+@app.get(
+    "/api/registry/entries/{registry_id}/receipts/{command_key}",
+)
+async def get_entry_command_receipt(
+    registry_id: str,
+    command_key: str,
+    command_type: str = Query(default="metadata"),
+    authorization: Optional[str] = Header(default=None),
+):
+    """Return the durable original scoped command receipt committed for command_key."""
+    ctx = _authenticate_registry_read(authorization)
+    registry_service = get_registry_service()
+    try:
+        current = registry_service.get(registry_id)
+    except RegistryNotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    _authorize_read(ctx, current)
+    receipt = registry_service.get_command_receipt(
+        registry_id=registry_id,
+        command_key=command_key,
+        actor=_actor_context(ctx),
+        command_type=command_type,
+    )
+    if receipt is None or receipt.get("committed_entry") is None:
+        raise HTTPException(
+            status_code=404,
+            detail=f"No committed command receipt found for registry_id={registry_id!r}, command_key={command_key!r}",
+        )
+    return {"receipt": receipt}
 
 
 @app.get(

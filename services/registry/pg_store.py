@@ -188,6 +188,26 @@ class PostgresRegistryStore:
         original = self._read_creation_receipt(registry_id)
         return RegistryEntry.from_dict(original) if original is not None else None
 
+    def get_command_receipt(
+        self,
+        command_key: str,
+        registry_id: str,
+        *,
+        actor: Optional[dict[str, Any]] = None,
+        command_type: str = "metadata",
+    ) -> Optional[dict[str, Any]]:
+        """Return the durable command receipt committed for a command_key."""
+        scoped_key = self.receipt_key(command_key, registry_id, actor=actor, command_type=command_type)
+        receipt = self._receipts.get(scoped_key)
+        if receipt is None and command_type == "create":
+            scoped_key_reg = self.receipt_key(command_key, "register_entry", actor=actor, command_type="create")
+            receipt = self._receipts.get(scoped_key_reg)
+            if receipt is not None:
+                committed = receipt.get("committed_entry")
+                if committed is not None and committed.get("registry_id") != registry_id:
+                    return None
+        return receipt
+
     def put(self, entry: RegistryEntry) -> None:
         """Unconditional overwrite — restricted to idempotent built-in bootstrap
         registration at startup, never a caller-facing mutation path."""
@@ -314,6 +334,7 @@ class PostgresRegistryStore:
         new_metadata: Optional[dict[str, Any]],
         command_key: Optional[str] = None,
         actor: Optional[dict[str, Any]] = None,
+        validate: Optional[Callable[[RegistryEntry], None]] = None,
     ) -> tuple[RegistryEntry, bool]:
         """Atomically CAS the metadata field and record an idempotent receipt.
 
@@ -394,6 +415,9 @@ class PostgresRegistryStore:
                         # fail closed rather than return an incomplete replay.
                         raise RegistryConcurrentUpdateError(registry_id)
                     return RegistryEntry.from_dict(committed_entry), True
+
+            if validate is not None:
+                validate(RegistryEntry.from_dict(base_snapshot))
 
             ok, canonical = self._entries.compare_and_set(
                 registry_id, base_snapshot, new_payload, conn=conn,
@@ -572,6 +596,8 @@ class PostgresRegistryStore:
         actor: Optional[dict[str, Any]] = None,
         unique_fields: tuple[str, ...] = (),
         request_fingerprint: Any = None,
+        strategy_id: Optional[str] = None,
+        validate_lineage: Optional[Callable[[list[RegistryEntry]], None]] = None,
     ) -> tuple[RegistryEntry, bool]:
         """Atomically create-or-replay a caller-scoped idempotent creation.
 
@@ -600,16 +626,14 @@ class PostgresRegistryStore:
         scoped_key = self.receipt_key(command_key, "register_entry", actor=actor, command_type="create")
         request_digest = _request_digest({"request": request_fingerprint})
         with self._entries.transaction() as conn:
-            # Reviewer finding 2 (gen-10 review): this method previously
-            # locked receipts (via insert_if_absent below) before ever
-            # touching entries — the opposite order from create_if_absent/
-            # register_strategy_spec_revision, which always insert into
-            # entries before receipts. Two unrelated, lawful concurrent HTTP
-            # requests — one landing on this idempotency-keyed path, one on
-            # either of those — could deadlock in Postgres as a result (each
-            # holds one table's SHARE ROW EXCLUSIVE lock and waits on the
-            # other's). Locking entries first here, before receipts is ever
-            # touched, makes the acquisition order consistent everywhere.
+            # Globally consistent lock acquisition order across all writers:
+            # 1. Per-strategy_id advisory transaction lock (if strategy_id known up front)
+            # 2. Entries table-level lock
+            # 3. Receipts table reservation
+            # Taking advisory lock first ensures that no wait-for cycle can form
+            # between this method and register_strategy_spec_revision.
+            if strategy_id:
+                self._entries.advisory_xact_lock(strategy_id, conn=conn)
             self._entries.lock_table(conn=conn)
             reservation = {
                 "command_key": command_key,
@@ -631,26 +655,21 @@ class PostgresRegistryStore:
                 return RegistryEntry.from_dict(committed_entry), True
 
             payload, registry_id = payload_factory()
-            # Reviewer finding (9a6c review, P1): this keyed generic creation
-            # path committed a new revision under ``payload.strategy_id``
-            # without ever taking the same per-strategy_id advisory lock
-            # ``register_strategy_spec_revision`` uses to serialize its own
-            # read-validate-write lineage check. The two writers' locks never
-            # composed — this path's ``lock_table`` (a table-level SHARE ROW
-            # EXCLUSIVE lock) and the typed path's ``advisory_xact_lock``
-            # (a Postgres advisory lock) are independent lock spaces that do
-            # not exclude each other — so a typed writer could validate
-            # "1.0.1 is a valid next version from 1.0.0" and then commit
-            # *after* this path had already committed 1.1.0 under the same
-            # strategy_id, landing a stale revision with no invariant
-            # re-check. Taking the identical advisory lock here, before the
-            # insert, makes the two writers mutually exclusive for the same
-            # strategy_id: whichever acquires it first serializes the other
-            # behind its own commit (or transaction end), so a lineage
-            # invariant the typed path re-validates under the lock can no
-            # longer be silently invalidated by this path committing in
-            # between the typed path's read and its own write.
-            self._entries.advisory_xact_lock(payload.strategy_id, conn=conn)
+            target_strategy_id = strategy_id or getattr(payload, "strategy_id", None)
+            if not strategy_id and target_strategy_id:
+                self._entries.advisory_xact_lock(target_strategy_id, conn=conn)
+
+            # Re-read existing entries under the advisory and table locks to
+            # serialize revision creation and validate lineage against true latest committed state.
+            if validate_lineage is not None and target_strategy_id:
+                existing_raw = self._entries.list_all(conn=conn)
+                existing_entries = [
+                    RegistryEntry.from_dict(raw)
+                    for raw in existing_raw
+                    if raw.get("strategy_id") == target_strategy_id
+                ]
+                validate_lineage(existing_entries)
+
             entry = _new_entry(payload, registry_id, actor=actor)
             created, canonical = self._entries.insert_if_absent(
                 registry_id, entry.to_dict(), unique_fields=unique_fields, conn=conn,
@@ -672,6 +691,11 @@ class PostgresRegistryStore:
             filled, _ = self._receipts.compare_and_set(scoped_key, reservation, finalized, conn=conn)
             if not filled:
                 raise RegistryConcurrentUpdateError("register_entry")
+            actual_reg_id = committed_entry.get("registry_id")
+            if actual_reg_id:
+                by_reg_id_key = self.receipt_key(command_key, actual_reg_id, actor=actor, command_type="create")
+                if by_reg_id_key != scoped_key:
+                    self._receipts.insert_if_absent(by_reg_id_key, finalized, conn=conn)
         return RegistryEntry.from_dict(committed_entry), False
 
     def register_strategy_spec_revision(

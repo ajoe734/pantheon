@@ -140,6 +140,8 @@ class RegistryService:
         command_key: str,
         actor: Optional[dict] = None,
         request_fingerprint: object = None,
+        strategy_id: Optional[str] = None,
+        validate_lineage: Optional[Callable[[list[RegistryEntry]], None]] = None,
     ) -> tuple[RegistryEntryView, bool]:
         """Create a new entry, replaying the original result under a repeated
         caller-scoped ``command_key`` instead of synthesizing a fresh
@@ -166,6 +168,8 @@ class RegistryService:
                 actor=actor,
                 unique_fields=_REVISION_UNIQUE_FIELDS,
                 request_fingerprint=request_fingerprint,
+                strategy_id=strategy_id,
+                validate_lineage=validate_lineage,
             )
         except RegistryUniqueViolationError as exc:
             raise RegistryConflictError(str(exc)) from exc
@@ -319,6 +323,22 @@ class RegistryService:
             return None
         entry = get_receipt(registry_id)
         return self._to_view(entry) if entry is not None else None
+
+    def get_command_receipt(
+        self,
+        registry_id: str,
+        command_key: str,
+        *,
+        actor: Optional[dict[str, Any]] = None,
+        command_type: str = "metadata",
+    ) -> Optional[dict[str, Any]]:
+        """Return the durable command receipt committed for a command_key,
+        or None if no receipt exists.
+        """
+        get_receipt = getattr(self.store, "get_command_receipt", None)
+        if get_receipt is None:
+            return None
+        return get_receipt(command_key, registry_id, actor=actor, command_type=command_type)
 
     def advance_artifact_state(
         self,

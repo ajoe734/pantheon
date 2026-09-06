@@ -142,7 +142,7 @@ def test_update_params_preserves_callers_precondition_and_uses_patch_response_as
     assert patch_call.kwargs["payload"]["expected_metadata"] == {"note": "old"}
     readback_call = mock_http.call_args_list[2]
     assert readback_call.kwargs["method"] == "GET"
-    assert readback_call.args[0] == "http://registry-svc.internal/api/registry/entries/reg-001"
+    assert readback_call.args[0].startswith("http://registry-svc.internal/api/registry/entries/reg-001/receipts/cmd-strat-001")
     assert patch_call.kwargs["payload"]["metadata"] == {"note": "new"}
     assert patch_call.kwargs["payload"]["command_key"] == "cmd-strat-001"
 
@@ -297,6 +297,19 @@ def test_update_params_replay_does_not_compare_against_mutable_latest_readback(m
         (200, {}, {"entry": entry_snapshot}),
         # The PATCH itself, reporting a replay.
         (200, {"X-Idempotent-Replay": "true"}, {"entry": entry_snapshot}),
+        # Reviewer finding (9a6c review, P1): independent durable receipt reload.
+        (
+            200,
+            {},
+            {
+                "receipt": {
+                    "command_key": "cmd-strat-replay",
+                    "registry_id": "reg-001",
+                    "committed_entry": entry_snapshot,
+                    "committed_at": "t1",
+                }
+            },
+        ),
     ]
     mock_http.side_effect = call_responses
 
@@ -314,11 +327,7 @@ def test_update_params_replay_does_not_compare_against_mutable_latest_readback(m
     )
     assert result["status"] == "metadata_updated"
     assert result["idempotent_replay"] is True
-    # A replay must not issue a *third* (post-PATCH readback) HTTP call —
-    # there is nothing to verify against that could ever be more
-    # authoritative than the original committed receipt itself. Only the
-    # pre-mutation identity-verification GET and the PATCH itself run.
-    assert mock_http.call_count == 2
+    assert mock_http.call_count == 3
 
 
 # ===========================================================================
@@ -733,6 +742,18 @@ def test_update_params_replay_actor_matching_caller_token_still_succeeds(mock_ht
     mock_http.side_effect = [
         (200, {}, {"entry": baseline}),
         (200, {"X-Idempotent-Replay": "true"}, {"entry": replay_same_actor}),
+        (
+            200,
+            {},
+            {
+                "receipt": {
+                    "command_key": "cmd-replay-same-actor",
+                    "registry_id": "reg-001",
+                    "committed_entry": replay_same_actor,
+                    "committed_at": "2026-09-06T01:00:01Z",
+                }
+            },
+        ),
     ]
 
     result = adapter.execute(
@@ -1248,3 +1269,163 @@ class TestUpdateParamsOverRealSocket:
         assert excinfo.value.error_code == "REGISTRY_ID_NOT_FOUND"
         # The PATCH must never have been attempted.
         assert all(record["method"] == "GET" for record in _CapturingHandler.received_log)
+
+
+# ===========================================================================
+# Finding 1 regression tests (PR #5620 reopening findings):
+# (a) a normal PATCH and GET with nonempty timestamp but last_actor=None;
+# (b) a normal PATCH and GET returning exactly the preexisting metadata/timestamp, with no mutation;
+# (c) an empty PATCH body followed by a changed row committed by other-actor;
+# (d) a replay body with correct actor and entry fields but no owner command identity or independent original-receipt reload.
+# ===========================================================================
+
+
+@patch("services.control_plane.bff.command_adapters.strategy_adapter.http_request_json_with_headers")
+def test_regression_normal_patch_with_nonempty_time_but_missing_actor_is_rejected(mock_http, adapter):
+    baseline = {
+        "registry_id": "reg-001",
+        "strategy_id": "strat-alpha",
+        "owner_tenant": "tenant-a",
+        "version": "1.0.0",
+        "checksum": "sha256:abc",
+        "metadata": {"note": "old"},
+        "updated_at": "2026-09-06T01:00:00Z",
+        "last_actor": {"actor_id": "operator-a", "tenant": "tenant-a"},
+    }
+    patched_no_actor = dict(baseline, metadata={"note": "new"}, updated_at="2026-09-06T01:00:01Z", last_actor=None)
+    mock_http.side_effect = [
+        (200, {}, {"entry": baseline}),
+        (200, {"X-Idempotent-Replay": "false"}, {"entry": patched_no_actor}),
+    ]
+    with pytest.raises(ActionUnavailableError) as excinfo:
+        adapter.execute(
+            "cmd-missing-actor",
+            "StrategyAction",
+            {
+                "entity_type": "strategy",
+                "strategy_id": "strat-alpha",
+                "registry_id": "reg-001",
+                "action_id": "update_params",
+                "expected_metadata": {"note": "old"},
+                "metadata": {"note": "new"},
+            },
+            auth_token="operator-a",
+        )
+    assert excinfo.value.error_code == "MISSING_ACTOR"
+
+
+@patch("services.control_plane.bff.command_adapters.strategy_adapter.http_request_json_with_headers")
+def test_regression_normal_patch_returning_preexisting_metadata_and_time_is_rejected(mock_http, adapter):
+    baseline = {
+        "registry_id": "reg-001",
+        "strategy_id": "strat-alpha",
+        "owner_tenant": "tenant-a",
+        "version": "1.0.0",
+        "checksum": "sha256:abc",
+        "metadata": {"note": "old"},
+        "updated_at": "2026-09-06T01:00:00Z",
+        "last_actor": {"actor_id": "operator-a", "tenant": "tenant-a"},
+    }
+    mock_http.side_effect = [
+        (200, {}, {"entry": baseline}),
+        (200, {"X-Idempotent-Replay": "false"}, {"entry": baseline}),
+    ]
+    with pytest.raises(ActionUnavailableError) as excinfo:
+        adapter.execute(
+            "cmd-no-commit",
+            "StrategyAction",
+            {
+                "entity_type": "strategy",
+                "strategy_id": "strat-alpha",
+                "registry_id": "reg-001",
+                "action_id": "update_params",
+                "expected_metadata": {"note": "old"},
+                "metadata": {"note": "new"},
+            },
+            auth_token="operator-a",
+        )
+    assert excinfo.value.error_code == "COMMIT_TIME_UNCHANGED"
+
+
+@patch("services.control_plane.bff.command_adapters.strategy_adapter.http_request_json_with_headers")
+def test_regression_ambiguous_patch_followed_by_other_actor_commit_is_rejected(mock_http, adapter):
+    baseline = {
+        "registry_id": "reg-001",
+        "strategy_id": "strat-alpha",
+        "owner_tenant": "tenant-a",
+        "version": "1.0.0",
+        "checksum": "sha256:abc",
+        "metadata": {"note": "old"},
+        "updated_at": "2026-09-06T01:00:00Z",
+        "last_actor": {"actor_id": "operator-a", "tenant": "tenant-a"},
+    }
+    other_actor_receipt = {
+        "command_key": "cmd-other",
+        "registry_id": "reg-001",
+        "committed_entry": {
+            "registry_id": "reg-001",
+            "strategy_id": "strat-alpha",
+            "owner_tenant": "tenant-a",
+            "version": "1.0.0",
+            "checksum": "sha256:abc",
+            "metadata": {"note": "new"},
+            "updated_at": "2026-09-06T01:00:01Z",
+            "last_actor": {"actor_id": "other-actor", "tenant": "tenant-a"},
+        },
+        "committed_at": "2026-09-06T01:00:01Z",
+    }
+    mock_http.side_effect = [
+        (200, {}, {"entry": baseline}),
+        (200, {}, {}),  # ambiguous empty PATCH response
+        (200, {}, {"receipt": other_actor_receipt}),  # receipt was by other actor
+    ]
+    with pytest.raises(ActionUnavailableError) as excinfo:
+        adapter.execute(
+            "cmd-ambiguous-other",
+            "StrategyAction",
+            {
+                "entity_type": "strategy",
+                "strategy_id": "strat-alpha",
+                "registry_id": "reg-001",
+                "action_id": "update_params",
+                "expected_metadata": {"note": "old"},
+                "metadata": {"note": "new"},
+            },
+            auth_token="operator-a",
+        )
+    assert excinfo.value.error_code == "AMBIGUOUS_REGISTRY_RESPONSE"
+
+
+@patch("services.control_plane.bff.command_adapters.strategy_adapter.http_request_json_with_headers")
+def test_regression_replay_without_owner_receipt_reload_is_rejected(mock_http, adapter):
+    baseline = {
+        "registry_id": "reg-001",
+        "strategy_id": "strat-alpha",
+        "owner_tenant": "tenant-a",
+        "version": "1.0.0",
+        "checksum": "sha256:abc",
+        "metadata": {"note": "old"},
+        "updated_at": "2026-09-06T01:00:00Z",
+        "last_actor": {"actor_id": "operator-a", "tenant": "tenant-a"},
+    }
+    replay_body = dict(baseline, metadata={"note": "new"}, updated_at="2026-09-06T01:00:01Z")
+    mock_http.side_effect = [
+        (200, {}, {"entry": baseline}),
+        (200, {"X-Idempotent-Replay": "true"}, {"entry": replay_body}),
+        (404, {}, {"detail": "No committed command receipt found"}),  # receipt reload fails
+    ]
+    with pytest.raises(ActionUnavailableError) as excinfo:
+        adapter.execute(
+            "cmd-replay-no-receipt",
+            "StrategyAction",
+            {
+                "entity_type": "strategy",
+                "strategy_id": "strat-alpha",
+                "registry_id": "reg-001",
+                "action_id": "update_params",
+                "expected_metadata": {"note": "old"},
+                "metadata": {"note": "new"},
+            },
+            auth_token="operator-a",
+        )
+    assert excinfo.value.error_code == "UNCONFIRMED_COMMAND_RECEIPT"

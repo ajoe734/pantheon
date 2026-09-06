@@ -289,6 +289,33 @@ class RegistryStore:
 
         return view
 
+    def get_command_receipt(
+        self,
+        command_key: str,
+        registry_id: str,
+        *,
+        actor: Optional[dict] = None,
+        command_type: str = "metadata",
+    ) -> Optional[dict[str, Any]]:
+        """In-memory mirror of PostgresRegistryStore.get_command_receipt."""
+        from .pg_store import PostgresRegistryStore
+
+        scoped_key = PostgresRegistryStore.receipt_key(
+            command_key, registry_id, actor=actor, command_type=command_type,
+        )
+        with self._lock:
+            receipt = self._command_receipts.get(scoped_key)
+            if receipt is None and command_type == "create":
+                scoped_key_reg = PostgresRegistryStore.receipt_key(
+                    command_key, "register_entry", actor=actor, command_type="create",
+                )
+                receipt = self._command_receipts.get(scoped_key_reg)
+                if receipt is not None:
+                    committed = receipt.get("committed_entry")
+                    if committed is not None and committed.get("registry_id") != registry_id:
+                        return None
+            return dict(receipt) if receipt is not None else None
+
     def create_with_receipt(
         self,
         payload_factory: Callable[[], tuple[RegistryEntryCreate, str]],
@@ -297,6 +324,8 @@ class RegistryStore:
         actor: Optional[dict] = None,
         unique_fields: tuple[str, ...] = (),
         request_fingerprint: object = None,
+        strategy_id: Optional[str] = None,
+        validate_lineage: Optional[Callable[[list[RegistryEntry]], None]] = None,
     ) -> tuple[RegistryEntry, bool]:
         """Atomically create-or-replay a caller-scoped idempotent creation.
 
@@ -331,6 +360,11 @@ class RegistryStore:
                 return RegistryEntry.from_dict(receipt["committed_entry"]), True
 
             payload, registry_id = payload_factory()
+            target_strategy_id = strategy_id or getattr(payload, "strategy_id", None)
+            if validate_lineage is not None and target_strategy_id:
+                existing = [e for e in self._entries.values() if e.strategy_id == target_strategy_id]
+                validate_lineage(existing)
+
             if unique_fields:
                 for other in self._entries.values():
                     if other.registry_id == registry_id:
@@ -345,10 +379,16 @@ class RegistryStore:
             entry = self._new_entry(payload, registry_id, actor=actor)
             self._put_unlocked(entry)
             committed = entry.to_dict()
-            self._command_receipts[scoped_key] = {
+            finalized = {
                 "committed_entry": committed,
                 "request_digest": request_digest,
             }
+            self._command_receipts[scoped_key] = finalized
+            by_reg_id_key = PostgresRegistryStore.receipt_key(
+                command_key, entry.registry_id, actor=actor, command_type="create",
+            )
+            if by_reg_id_key != scoped_key:
+                self._command_receipts[by_reg_id_key] = finalized
             return RegistryEntry.from_dict(committed), False
 
     def register_strategy_spec_revision(
@@ -539,6 +579,7 @@ class RegistryStore:
         new_metadata: Optional[dict],
         command_key: Optional[str] = None,
         actor: Optional[dict] = None,
+        validate: Optional[Callable[[RegistryEntry], None]] = None,
     ) -> tuple[RegistryEntry, bool]:
         """In-memory mirror of ``PostgresRegistryStore.commit_metadata_cas``.
 
@@ -587,6 +628,8 @@ class RegistryStore:
             current = self._entries.get(registry_id)
             if current is None or current.to_dict() != base_snapshot:
                 raise RegistryConcurrentUpdateError(registry_id)
+            if validate is not None:
+                validate(RegistryEntry.from_dict(base_snapshot))
             entry = RegistryEntry.from_dict(base_snapshot)
             entry.metadata = new_metadata
             entry.updated_at = utc_now_iso()

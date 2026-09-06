@@ -400,3 +400,126 @@ def test_missing_config_fails_closed_not_memory_fallback():
             os.environ["REGISTRY_STORE_DSN"] = prior
         if prior_db_url is not None:
             os.environ["DATABASE_URL"] = prior_db_url
+
+
+def test_transaction_rollback_leaves_no_orphan_reservation_or_state(pg_case):
+    """Store-level atomicity: an in-transaction exception in create_with_receipt,
+    commit_metadata_cas, or commit_artifact_state_cas aborts the transaction,
+    leaving 0 orphan rows in both entries and command_receipts, and allowing
+    clean retry under the same command_key."""
+    import psycopg
+
+    dsn, entries_table, receipts_table = pg_case
+    store = _store(pg_case)
+
+    def _count_entries(where: str = "") -> int:
+        with psycopg.connect(dsn) as conn:
+            with conn.cursor() as cur:
+                clause = f" WHERE {where}" if where else ""
+                cur.execute(f"SELECT count(*) FROM {entries_table}{clause}")
+                return cur.fetchone()[0]
+
+    def _count_receipts(where: str = "") -> int:
+        with psycopg.connect(dsn) as conn:
+            with conn.cursor() as cur:
+                clause = f" WHERE {where}" if where else ""
+                cur.execute(f"SELECT count(*) FROM {receipts_table}{clause}")
+                return cur.fetchone()[0]
+
+    # 1. CREATE_WITH_RECEIPT ROLLBACK
+    payload = _payload(strategy_id="strat-rb-store", version="1.0.0")
+
+    def _failing_lineage(_entries):
+        raise RuntimeError("injected lineage check failure before commit")
+
+    with pytest.raises(RuntimeError, match="injected lineage check failure"):
+        store.create_with_receipt(
+            lambda: (payload, "reg-rb-01"),
+            command_key="cmd-rb-create-01",
+            actor={"actor_id": "test-actor"},
+            request_fingerprint={"test": "data"},
+            strategy_id="strat-rb-store",
+            validate_lineage=_failing_lineage,
+        )
+
+    # Verify 0 rows in entries and receipts
+    assert _count_entries("record_id = 'reg-rb-01'") == 0
+    assert _count_receipts("payload->>'command_key' = 'cmd-rb-create-01'") == 0
+
+    # Clean retry under same command_key succeeds
+    entry, replayed = store.create_with_receipt(
+        lambda: (payload, "reg-rb-01"),
+        command_key="cmd-rb-create-01",
+        actor={"actor_id": "test-actor"},
+        request_fingerprint={"test": "data"},
+        strategy_id="strat-rb-store",
+    )
+    assert replayed is False
+    assert entry.registry_id == "reg-rb-01"
+    assert _count_entries("record_id = 'reg-rb-01'") == 1
+    assert _count_receipts("payload->>'command_key' = 'cmd-rb-create-01'") >= 1
+
+    # 2. COMMIT_METADATA_CAS ROLLBACK
+    base_snapshot = entry.to_dict()
+
+    def _failing_meta_validate(_current):
+        raise RuntimeError("injected metadata validation failure before commit")
+
+    with pytest.raises(RuntimeError, match="injected metadata validation failure"):
+        store.commit_metadata_cas(
+            registry_id="reg-rb-01",
+            base_snapshot=base_snapshot,
+            validate=_failing_meta_validate,
+            new_metadata={"note": "failing"},
+            command_key="cmd-rb-meta-01",
+            actor={"actor_id": "test-actor"},
+        )
+
+    assert _count_receipts("payload->>'command_key' = 'cmd-rb-meta-01'") == 0
+    reread = store.get("reg-rb-01")
+    assert reread.metadata != {"note": "failing"}
+
+    # Clean retry under same command_key succeeds
+    entry_meta, replayed_meta = store.commit_metadata_cas(
+        registry_id="reg-rb-01",
+        base_snapshot=base_snapshot,
+        new_metadata={"note": "succeeding"},
+        command_key="cmd-rb-meta-01",
+        actor={"actor_id": "test-actor"},
+    )
+    assert replayed_meta is False
+    assert entry_meta.metadata == {"note": "succeeding"}
+    assert _count_receipts("payload->>'command_key' = 'cmd-rb-meta-01'") >= 1
+
+    # 3. COMMIT_ARTIFACT_STATE_CAS ROLLBACK
+    base_snapshot_adv = entry_meta.to_dict()
+
+    def _failing_state_validate(_current):
+        raise RuntimeError("injected state validation failure before commit")
+
+    with pytest.raises(RuntimeError, match="injected state validation failure"):
+        store.commit_artifact_state_cas(
+            registry_id="reg-rb-01",
+            base_snapshot=base_snapshot_adv,
+            validate=_failing_state_validate,
+            target_state=ArtifactState.CANDIDATE,
+            command_key="cmd-rb-adv-01",
+            actor={"actor_id": "test-actor"},
+        )
+
+    assert _count_receipts("payload->>'command_key' = 'cmd-rb-adv-01'") == 0
+    reread_state = store.get("reg-rb-01")
+    assert reread_state.artifact_state == ArtifactState.DRAFT
+
+    # Clean retry under same command_key succeeds
+    entry_adv, replayed_adv = store.commit_artifact_state_cas(
+        registry_id="reg-rb-01",
+        base_snapshot=base_snapshot_adv,
+        target_state=ArtifactState.CANDIDATE,
+        command_key="cmd-rb-adv-01",
+        actor={"actor_id": "test-actor"},
+    )
+    assert replayed_adv is False
+    assert entry_adv.artifact_state == ArtifactState.CANDIDATE
+    assert _count_receipts("payload->>'command_key' = 'cmd-rb-adv-01'") >= 1
+
