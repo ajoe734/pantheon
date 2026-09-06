@@ -2,3 +2,6 @@ fastapi
 uvicorn
 pydantic
 psycopg[binary]
+pgvector
+fastembed
+qdrant-client

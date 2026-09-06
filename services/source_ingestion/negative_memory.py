@@ -244,9 +244,23 @@ def is_blocking_negative_memory_match(match: Mapping[str, Any] | NegativeMemoryM
     return str(match.get("warning_level") or "").lower() == NegativeMemoryWarningLevel.BLOCKING.value
 
 
+def _cosine_similarity(vec_a: Sequence[float], vec_b: Sequence[float]) -> float:
+    if len(vec_a) != len(vec_b) or not vec_a:
+        return 0.0
+    dot = sum(a * b for a, b in zip(vec_a, vec_b))
+    norm_a = sum(a * a for a in vec_a) ** 0.5
+    norm_b = sum(b * b for b in vec_b) ** 0.5
+    if norm_a == 0.0 or norm_b == 0.0:
+        return 0.0
+    return max(-1.0, min(1.0, dot / (norm_a * norm_b)))
+
+
 def match_negative_memory(
     seed_candidate: Mapping[str, Any],
     negative_memory_records: Sequence[Mapping[str, Any] | Any] = (),
+    *,
+    embedding_engine: Any | None = None,
+    backend: Any | None = None,
 ) -> NegativeMemoryMatch:
     """Return the strongest deterministic negative-memory match.
 
@@ -257,12 +271,30 @@ def match_negative_memory(
     """
 
     candidate = _profile(seed_candidate)
+    cand_text = " ".join(str(v) for v in seed_candidate.values() if isinstance(v, str))
+    cand_vec = None
+    if embedding_engine is not None and cand_text.strip():
+        try:
+            cand_vec = embedding_engine.embed_query(cand_text)
+        except Exception:
+            cand_vec = None
+
     best: _ScoredRecord | None = None
     for raw_record in negative_memory_records:
         record = _to_mapping(raw_record)
         if not record:
             continue
-        scored = _score(candidate, _profile(record, is_memory=True), record)
+        sem_sim = None
+        if cand_vec is not None and embedding_engine is not None:
+            rec_text = " ".join(str(v) for v in record.values() if isinstance(v, str))
+            if rec_text.strip():
+                try:
+                    mem_vec = embedding_engine.embed_query(rec_text)
+                    sem_sim = _cosine_similarity(cand_vec, mem_vec)
+                except Exception:
+                    sem_sim = None
+
+        scored = _score(candidate, _profile(record, is_memory=True), record, sem_sim=sem_sim)
         if scored is None:
             continue
         if best is None or scored.similarity > best.similarity:
@@ -326,7 +358,12 @@ class _ScoredRecord:
     exact_ref_match: bool
 
 
-def _score(candidate: _Profile, memory: _Profile, raw_record: Mapping[str, Any]) -> _ScoredRecord | None:
+def _score(
+    candidate: _Profile,
+    memory: _Profile,
+    raw_record: Mapping[str, Any],
+    sem_sim: float | None = None,
+) -> _ScoredRecord | None:
     matched_terms = tuple(sorted(candidate.all_terms.intersection(memory.all_terms)))
     exact_ref_match = bool(candidate.refs and candidate.refs.intersection(memory.refs))
     if exact_ref_match:
@@ -351,11 +388,13 @@ def _score(candidate: _Profile, memory: _Profile, raw_record: Mapping[str, Any])
             similarity = weighted_score / total_weight
         if len(matched_terms) >= 3:
             similarity += min(0.15, len(matched_terms) * 0.015)
+        if sem_sim is not None and sem_sim > 0.6:
+            similarity = max(similarity, float(sem_sim))
         similarity = max(0.0, min(1.0, similarity))
 
     if similarity < _WARNING_THRESHOLD and not exact_ref_match:
         return None
-    if not exact_ref_match and len(matched_terms) < 2:
+    if not exact_ref_match and len(matched_terms) < 2 and (sem_sim is None or sem_sim < 0.7):
         return None
     return _ScoredRecord(
         similarity=round(similarity, 4),

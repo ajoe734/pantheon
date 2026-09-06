@@ -38,6 +38,13 @@ from services.persona.lesson_governance import (
     TradeLessonCandidateError,
     is_sensitive_change,
 )
+from .search_retrieval import (
+    get_search_retrieval_backend,
+    project_institutional_entry,
+    project_persona_entry,
+    retrieve_institutional_with_backend,
+    retrieve_persona_with_backend,
+)
 
 
 def _split_csv_values(values: Optional[List[str]]) -> List[str]:
@@ -379,16 +386,20 @@ async def retrieve_memory(
             },
         )
 
+    search_backend = get_search_retrieval_backend()
     ranked_hits = []
     if scope in {"institutional", "both"}:
         institutional_store = _store()
-        for hit in institutional_store.retrieve(
+        hits = retrieve_institutional_with_backend(
+            institutional_store,
+            backend=search_backend,
             query=query,
             knowledge_type=knowledge_type,
             scope_filter=scope_filter,
             tags=tag_values,
             limit=limit,
-        ):
+        )
+        for hit in hits:
             ranked_hits.append(
                 ("institutional", hit.relevance_score, hit.entry.written_at, hit.entry.entry_id, hit.entry)
             )
@@ -396,14 +407,17 @@ async def retrieve_memory(
     if scope in {"persona", "both"}:
         try:
             persona_store = _persona_store()
-            for hit in persona_store.retrieve(
+            hits = retrieve_persona_with_backend(
+                persona_store,
+                backend=search_backend,
                 persona_id=persona_id or "",
                 query=query,
                 memory_type=memory_type,
                 relevance_scope=persona_relevance_scope,
                 tags=tag_values,
                 limit=limit,
-            ):
+            )
+            for hit in hits:
                 ranked_hits.append(
                     ("persona", hit.relevance_score, hit.entry.written_at, hit.entry.memory_id, hit.entry)
                 )

@@ -1,0 +1,167 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "RetrievalBenchmarkManifest",
+  "description": "Schema for governed retrieval held-out benchmark and evaluation results manifest",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "task_id",
+    "evaluated_at",
+    "backend_evaluated",
+    "model_metadata",
+    "corpus_summary",
+    "query_suite_summary",
+    "metrics",
+    "performance_benchmarks",
+    "quality_gates"
+  ],
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "const": "retrieval_manifest.v1"
+    },
+    "task_id": {
+      "type": "string",
+      "const": "SIMPLIFY-RETRIEVAL-MEMORY-001"
+    },
+    "evaluated_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "backend_evaluated": {
+      "type": "string",
+      "enum": ["postgres_pgvector", "qdrant"]
+    },
+    "model_metadata": {
+      "type": "object",
+      "required": ["model_name", "dimension", "revision", "manifest_hash"],
+      "properties": {
+        "model_name": { "type": "string" },
+        "dimension": { "type": "integer", "const": 1024 },
+        "revision": { "type": "string" },
+        "manifest_hash": { "type": "string" }
+      }
+    },
+    "corpus_summary": {
+      "type": "object",
+      "required": ["total_documents", "traditional_chinese_count", "english_count", "memory_count", "negative_memory_count", "corpus_hash"],
+      "properties": {
+        "total_documents": { "type": "integer", "minimum": 10000 },
+        "traditional_chinese_count": { "type": "integer" },
+        "english_count": { "type": "integer" },
+        "memory_count": { "type": "integer" },
+        "negative_memory_count": { "type": "integer" },
+        "corpus_hash": { "type": "string" }
+      }
+    },
+    "query_suite_summary": {
+      "type": "object",
+      "required": ["total_queries", "traditional_chinese_queries", "english_queries", "cross_language_queries", "negative_memory_queries"],
+      "properties": {
+        "total_queries": { "type": "integer", "minimum": 200 },
+        "traditional_chinese_queries": { "type": "integer", "minimum": 50 },
+        "english_queries": { "type": "integer", "minimum": 50 },
+        "cross_language_queries": { "type": "integer", "minimum": 50 },
+        "negative_memory_queries": { "type": "integer" }
+      }
+    },
+    "metrics": {
+      "type": "object",
+      "required": [
+        "recall_at_10",
+        "ndcg_at_10",
+        "citation_identity_rate",
+        "exact_negative_memory_recall",
+        "semantic_warning_recall",
+        "isolation_leakage_rate",
+        "per_language_slice"
+      ],
+      "properties": {
+        "recall_at_10": { "type": "number", "minimum": 0.90, "maximum": 1.0 },
+        "ndcg_at_10": { "type": "number", "minimum": 0.85, "maximum": 1.0 },
+        "citation_identity_rate": { "type": "number", "const": 1.0 },
+        "exact_negative_memory_recall": { "type": "number", "const": 1.0 },
+        "semantic_warning_recall": { "type": "number", "minimum": 0.95, "maximum": 1.0 },
+        "isolation_leakage_rate": { "type": "number", "const": 0.0 },
+        "per_language_slice": {
+          "type": "object",
+          "required": ["traditional_chinese", "english", "cross_language"],
+          "properties": {
+            "traditional_chinese": {
+              "type": "object",
+              "required": ["recall_at_10", "ndcg_at_10"],
+              "properties": {
+                "recall_at_10": { "type": "number" },
+                "ndcg_at_10": { "type": "number" }
+              }
+            },
+            "english": {
+              "type": "object",
+              "required": ["recall_at_10", "ndcg_at_10"],
+              "properties": {
+                "recall_at_10": { "type": "number" },
+                "ndcg_at_10": { "type": "number" }
+              }
+            },
+            "cross_language": {
+              "type": "object",
+              "required": ["recall_at_10", "ndcg_at_10"],
+              "properties": {
+                "recall_at_10": { "type": "number" },
+                "ndcg_at_10": { "type": "number" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "performance_benchmarks": {
+      "type": "object",
+      "required": [
+        "concurrency",
+        "total_requests",
+        "warm_p50_latency_ms",
+        "warm_p95_latency_ms",
+        "cold_start_latency_ms",
+        "throughput_qps",
+        "cpu_seconds_per_query",
+        "rss_memory_mb",
+        "external_inference_calls"
+      ],
+      "properties": {
+        "concurrency": { "type": "integer", "const": 4 },
+        "total_requests": { "type": "integer", "minimum": 1000 },
+        "warm_p50_latency_ms": { "type": "number" },
+        "warm_p95_latency_ms": { "type": "number", "maximum": 1000.0 },
+        "cold_start_latency_ms": { "type": "number" },
+        "throughput_qps": { "type": "number" },
+        "cpu_seconds_per_query": { "type": "number" },
+        "rss_memory_mb": { "type": "number" },
+        "external_inference_calls": { "type": "integer", "const": 0 }
+      }
+    },
+    "quality_gates": {
+      "type": "object",
+      "required": [
+        "gate_recall_ge_0_90",
+        "gate_ndcg_ge_baseline",
+        "gate_citation_identity_100pct",
+        "gate_exact_negative_recall_100pct",
+        "gate_semantic_warning_ge_0_95",
+        "gate_zero_isolation_leakage",
+        "gate_p95_under_1s",
+        "gate_zero_external_inference"
+      ],
+      "properties": {
+        "gate_recall_ge_0_90": { "type": "boolean", "const": true },
+        "gate_ndcg_ge_baseline": { "type": "boolean", "const": true },
+        "gate_citation_identity_100pct": { "type": "boolean", "const": true },
+        "gate_exact_negative_recall_100pct": { "type": "boolean", "const": true },
+        "gate_semantic_warning_ge_0_95": { "type": "boolean", "const": true },
+        "gate_zero_isolation_leakage": { "type": "boolean", "const": true },
+        "gate_p95_under_1s": { "type": "boolean", "const": true },
+        "gate_zero_external_inference": { "type": "boolean", "const": true }
+      }
+    }
+  }
+}

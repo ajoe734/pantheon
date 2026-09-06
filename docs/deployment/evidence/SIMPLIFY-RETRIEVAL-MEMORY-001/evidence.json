@@ -1,0 +1,91 @@
+{
+  "schema_version": "pantheon.review-evidence.v1",
+  "task_id": "SIMPLIFY-RETRIEVAL-MEMORY-001",
+  "title": "Select and implement one local search backend for governed source and memory retrieval",
+  "owner": "Antigravity",
+  "reviewer": "Codex",
+  "target_repo": "pantheon",
+  "task_class": "functional",
+  "delivery_state": "ready_for_independent_review",
+  "source_base_sha": "ec47156479e6d51fe1e03056d9060cbc8893d739",
+  "backend_decision": {
+    "selected": "postgres_pgvector",
+    "evaluated_against": "qdrant",
+    "rationale": "PostgreSQL with native FTS and pgvector satisfies all quality gates without requiring a second database daemon, extra network port, separate snapshot/backup schedule, or additional RAM. Qdrant dense vector search was implemented and evaluated on identical data but rejected for primary production deployment per repository policy (\"Choose existing PG when both pass without justified operational gain\")."
+  },
+  "scope": {
+    "owned": [
+      "Select and implement one local search backend (PostgreSQL with native FTS + pgvector) for unified source and memory retrieval",
+      "Model pinning with sha256 digests in services/search/model-manifest.json using intfloat/multilingual-e5-large (1024-dim, FastEmbed ONNX)",
+      "Zero external inference network calls; strictly local CPU inference with ONNX runtime",
+      "Unified SearchGateway facade with pre-retrieval ACL/scope/as-of/supersession filtering in SQL",
+      "Unified institutional and persona memory retrieval bridged through PostgreSQL search index with owner hydration/revalidation",
+      "Negative memory matching: 100% exact reference match retention and semantic similarity warning matching (>=0.95 recall)",
+      "Isolated test environment via docker-compose.search.yml (PostgreSQL + pgvector on 25432, Qdrant on 26333)",
+      "Frozen evaluation corpus of 10,060 documents and 210 queries with 8/8 passing quality gates"
+    ],
+    "not_changing": [
+      "Production database schemas or shared compose topology (owned by OSS-INFRA-PROFILES-001)",
+      "External LLM API accounts, credentials, or provider configuration",
+      "Frontend UI code or repository assets"
+    ]
+  },
+  "acceptance_matrix": [
+    {
+      "criterion": "Local embedding integrity check against pinned sha256 digests with zero external inference calls.",
+      "evidence": "LocalEmbeddingEngine verifies intfloat/multilingual-e5-large model files against services/search/model-manifest.json. All 5 isolation tests in test_local_retrieval_isolation.py passed with 0 external network requests.",
+      "status": "passed"
+    },
+    {
+      "criterion": "Compare existing PostgreSQL (FTS + pgvector) with local Qdrant on identical frozen data; select PostgreSQL.",
+      "evidence": "Both backends tested under identical 1024-dim vectors. PostgreSQL passed all 8 gates with warm p95=231.33ms and 0.0% isolation leakage. Decision published in services/search/backend-contract.json.",
+      "status": "passed"
+    },
+    {
+      "criterion": "Pre-retrieval ACL/persona/workspace/as-of filtering inside database queries with zero leakage across tenants, personas, or future timestamps.",
+      "evidence": "PostgresRetrievalBackend enforces tenant_id, persona_id, workspace_id, role_scope, access_scope, and available_time <= cutoff in SQL CTEs with GIN and HNSW index scans. Verified in test_local_retrieval_isolation.py and run_retrieval_eval.py (leakage = 0.0%).",
+      "status": "passed"
+    },
+    {
+      "criterion": "Unify institutional, persona, and negative memory retrieval through search backend while preserving exact blocking matches.",
+      "evidence": "services/memory/search_retrieval.py bridges memory to backend. services/source_ingestion/negative_memory.py achieves 100% exact recall (BLOCKING) and 100% semantic warning recall. Verified across test_search_retrieval.py and test_negative_memory_matcher.py.",
+      "status": "passed"
+    },
+    {
+      "criterion": "Evaluation on >=10k fixed documents and >=200 queries (>=50 TC, >=50 EN, >=50 cross): Recall@10 >= 0.90, nDCG@10 >= 0.85, citation identity 100%, negative memory recall 100%, semantic warning >= 0.95.",
+      "evidence": "run_retrieval_eval.py executed on 10,060 documents and 210 queries. Results: Recall@10=1.0 (pass), nDCG@10=0.9978 (pass), citation identity=100.0% (pass), exact negative recall=100.0% (pass), semantic warning recall=100.0% (pass). Manifest validated against schema.",
+      "status": "passed"
+    },
+    {
+      "criterion": "Warm retrieval p95 <= 1000ms over >=1000 replays at concurrency 4 on 10k documents.",
+      "evidence": "1,000 concurrent replays benchmarked at concurrency 4: warm p50 = 172.45ms, warm p95 = 231.33ms (pass, <= 1000ms), throughput = 22.55 QPS.",
+      "status": "passed"
+    }
+  ],
+  "verification": {
+    "status": "passed",
+    "commands": [
+      "./.venv-pantheon/bin/python3 -m unittest services/search/tests/test_pg_retrieval.py (6 tests passed, OK)",
+      "./.venv-pantheon/bin/python3 -m unittest services/search/tests/test_qdrant_backend.py (4 tests passed, OK)",
+      "./.venv-pantheon/bin/python3 -m unittest services/search/tests/test_local_retrieval_isolation.py (5 tests passed, OK)",
+      "./.venv-pantheon/bin/python3 -m unittest services/memory/test_search_retrieval.py (3 tests passed, OK)",
+      "./.venv-pantheon/bin/python3 -m unittest services/source_ingestion/tests/test_negative_memory_matcher.py (4 tests passed, OK)",
+      "./.venv-pantheon/bin/python3 -m unittest integrations/openclaw/test_persona_memory_bridge.py (3 tests passed, OK)",
+      "./.venv-pantheon/bin/python3 -m unittest services/search/test_index_pipeline.py (26 tests passed, OK)",
+      "./.venv-pantheon/bin/python3 services/search/evaluation/run_retrieval_eval.py (210 queries on 10,060 documents, 8/8 gates passed)",
+      "./.venv-pantheon/bin/python3 -c \"import json, jsonschema; jsonschema.validate(json.load(open(\"services/search/evaluation/retrieval_manifest.json\")), json.load(open(\"services/search/evaluation/retrieval_manifest.schema.json\"))); print(\"valid\")\" (manifest valid)"
+    ]
+  },
+  "delivery": {
+    "pr": null,
+    "exact_head_sha": null,
+    "merge_method_required": "MERGE",
+    "merge_sha": null,
+    "note": "PR and exact head will be submitted for independent Codex review per repository workflow."
+  },
+  "non_actions": [
+    "No production database mutation or hosted deployment was performed.",
+    "No external vector database cloud service or remote embedding API was called.",
+    "No live trading, broker, order, capital, or execution setting was enabled."
+  ]
+}

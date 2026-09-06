@@ -34,6 +34,7 @@ from .hybrid_retriever import HybridRetriever
 from .index_adapter import KeywordIndexAdapter
 from .index_pipeline import IncrementalIndexPipeline, JsonlIndexPipelineStore
 from .index_store import JsonlSearchIndexStore
+from .pg_retrieval import PostgresRetrievalBackend
 from .pg_store import build_search_evidence_repository, build_search_index_store
 from .retriever import (
     FullTextRetriever,
@@ -359,6 +360,15 @@ def create_app(
     hyb_retriever = HybridRetriever(lexical_retriever=ft_retriever, semantic_retriever=sem_retriever)
     alpha_eng = alpha_engine or StructuredAlphaEngine()
 
+    retrieval_backend = None
+    pg_dsn = os.getenv("PANTHEON_SEARCH_POSTGRES_DSN") or os.getenv("SEARCH_POSTGRES_DSN")
+    if pg_dsn:
+        try:
+            retrieval_backend = PostgresRetrievalBackend(dsn=pg_dsn)
+            retrieval_backend.setup_schema()
+        except Exception:
+            retrieval_backend = None
+
     def _build_gateway(repository: InMemoryEvidenceRepository, adapter: KeywordIndexAdapter | None = None) -> SearchGateway:
         return SearchGateway(
             repository=repository,
@@ -369,6 +379,7 @@ def create_app(
             alpha_engine=alpha_eng,
             index_store=store,
             index_adapter=adapter,
+            retrieval_backend=retrieval_backend,
         )
 
     def _materialize_index_state(
@@ -432,6 +443,7 @@ def create_app(
         "pantheon-search",
         dependencies=lambda: {
             "source_search_posture": PRODUCTION_POSTURE.to_dict(),
+            "retrieval_backend": retrieval_backend.check_health() if retrieval_backend else {"status": "in_memory"},
         },
         metrics=lambda: {
             "snapshot_count": len(store.list_snapshots()),

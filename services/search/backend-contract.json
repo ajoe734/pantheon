@@ -1,0 +1,99 @@
+{
+  "contract_version": "pantheon.search-backend-contract.v1",
+  "task_id": "SIMPLIFY-RETRIEVAL-MEMORY-001",
+  "published_at": "2026-09-06T07:07:30Z",
+  "chosen_backend": "postgres_pgvector",
+  "rationale": "PostgreSQL with native FTS (GIN index on simple tsvector) and pgvector (HNSW index on vector(1024)) satisfies all 8 quality gates: Recall@10 = 1.0 (>=0.90), nDCG@10 = 0.9978 (>=0.85), 100% citation identity, 100% exact negative recall, 100% semantic warning recall, 0.0% isolation leakage, warm p95 = 231.33ms (<=1000ms) at 22.55 QPS over 10,060 documents, and 0 external inference calls. Under task rules (\"Choose existing PG when both pass without justified operational gain\"), PostgreSQL is selected as the sole production backend. This eliminates the operational overhead, extra daemon, memory footprint, and separate snapshot/backup lifecycle of Qdrant.",
+  "candidate_comparison": {
+    "postgres_pgvector": {
+      "status": "selected",
+      "image": "pgvector/pgvector:pg16",
+      "features": [
+        "Native PostgreSQL simple FTS with GIN index on spaced CJK / alphanumeric tsvector",
+        "pgvector 0.3.6 with HNSW cosine distance index (embedding vector_cosine_ops, m=16, ef_construction=64)",
+        "Parameterized SQL CTE Reciprocal Rank Fusion (RRF k=60) with pre-retrieval ACL/as-of index filtering",
+        "Row Level Security (RLS) support for strict tenant/persona/workspace isolation"
+      ],
+      "operational_overhead": "Zero additional daemons; runs inside existing PostgreSQL infrastructure.",
+      "gates_passed": "8/8"
+    },
+    "qdrant": {
+      "status": "rejected_for_production",
+      "image": "qdrant/qdrant:v1.11.3",
+      "features": [
+        "Dense vector collection with cosine distance",
+        "Payload index filtering on tenant/persona/workspace/access_scope",
+        "Score fusion over vector search"
+      ],
+      "operational_overhead": "Requires separate daemon, extra TCP port (6333), dedicated memory allocation, and independent volume snapshot/backup regime.",
+      "justification_for_rejection": "PG satisfies all quality and latency gates with 0.0% leakage and 231ms p95. No >=30% CPU/p95 benefit demonstrated that would justify running a secondary database daemon."
+    }
+  },
+  "runtime_specification": {
+    "dependencies": {
+      "python_packages": {
+        "pgvector": "0.3.6",
+        "psycopg": "3.2.1",
+        "psycopg-binary": "3.2.1",
+        "fastembed": "0.5.1",
+        "onnxruntime": "1.20.1"
+      }
+    },
+    "embedding_model": {
+      "name": "intfloat/multilingual-e5-large",
+      "dimension": 1024,
+      "manifest_path": "services/search/model-manifest.json",
+      "manifest_sha256": "a4fa9449f8bc7f836940026e632313ec9df34988e0db966c8882419a4e9a3048",
+      "model_file_sha256": "4cf230559ebfd07eb8e4952ddc7cb1d31a5477dae1bcbbd6477e6274488beac8",
+      "inference_engine": "FastEmbed ONNX local CPU runtime",
+      "external_calls": 0
+    },
+    "schema": {
+      "table_name": "search_retrieval_index",
+      "sql_definition": "services/search/sql/retrieval_index.sql",
+      "indexes": [
+        "search_retrieval_index_pkey (btree on id)",
+        "idx_search_retrieval_tsv (gin on tsv)",
+        "idx_search_retrieval_embedding (hnsw on embedding vector_cosine_ops)",
+        "idx_search_retrieval_kind_active (btree on record_kind, is_active)",
+        "idx_search_retrieval_tenant (btree on tenant_id)",
+        "idx_search_retrieval_persona_workspace (btree on persona_id, workspace_id)",
+        "idx_search_retrieval_event_time (btree on event_time)",
+        "idx_search_retrieval_available_time (btree on available_time)"
+      ]
+    },
+    "environment_variables": {
+      "PANTHEON_SEARCH_BACKEND": "postgres_pgvector",
+      "PANTHEON_SEARCH_POSTGRES_DSN": "postgresql://postgres:postgres@localhost:25432/pantheon_search",
+      "SEARCH_EMBEDDING_CACHE_DIR": "/tmp/fastembed_cache"
+    },
+    "readiness_probe": {
+      "http_endpoint": "GET /health",
+      "db_probe_sql": "SELECT extversion FROM pg_extension WHERE extname=\"vector\""
+    },
+    "rebuild_procedure": {
+      "method": "Execute services/search/sql/retrieval_index.sql against database; re-index versioned projections via SearchIndexPipeline or PostgresRetrievalBackend.index_documents",
+      "idempotency": "CREATE TABLE IF NOT EXISTS and ON CONFLICT (id) DO UPDATE"
+    },
+    "rollback_procedure": {
+      "method": "SearchGateway facade maintains backwards-compatible search(), index_documents(), and delete_document() signatures. If Postgres is unavailable, gateway returns structured degraded/unavailable error."
+    }
+  },
+  "verified_evaluation_metrics": {
+    "corpus_size": 10060,
+    "queries_evaluated": 210,
+    "recall_at_10": 1.0,
+    "ndcg_at_10": 0.9978,
+    "citation_identity": 1.0,
+    "exact_negative_memory_recall": 1.0,
+    "semantic_warning_recall": 1.0,
+    "isolation_leakage_rate": 0.0,
+    "warm_p95_latency_ms": 231.33,
+    "warm_p50_latency_ms": 172.45,
+    "throughput_qps": 22.55,
+    "concurrency": 4,
+    "replays": 1000,
+    "external_inference_calls": 0,
+    "evaluation_manifest_path": "services/search/evaluation/retrieval_manifest.json"
+  }
+}
