@@ -674,8 +674,6 @@ def _is_persona_lifecycle_operational(value: Any) -> bool:
 _STRATEGY_PERSONA_BFF_IDEMPOTENCY: Dict[str, Dict[str, Any]] = {}
 
 
-# --- _PERSONA_BFF_OVERLAY ---
-_PERSONA_BFF_OVERLAY: Dict[str, Dict[str, Any]] = {}
 
 
 # --- _PERSONA_PROVISIONING_STORE ---
@@ -1188,18 +1186,22 @@ def _materialize_terminal_persona_provisioning_ledger(
     if _updater is None:
         _updater = getattr(_get_active_read_store(), "update_persona", None)
     if _updater is not None:
-        _updater(
-            persona_id,
-            lifecycle_state=new_state,
-            metadata=metadata_updates,
-        )
-    if persona_id in _PERSONA_BFF_OVERLAY:
-        _PERSONA_BFF_OVERLAY[persona_id]["state"] = _normalize_lifecycle_state(new_state)
-        _PERSONA_BFF_OVERLAY[persona_id]["lifecycleStatus"] = new_state
-        if runtime_binding_id:
-            _PERSONA_BFF_OVERLAY[persona_id]["runtimeBindingId"] = runtime_binding_id
-        if runtime_id:
-            _PERSONA_BFF_OVERLAY[persona_id]["runtimeId"] = runtime_id
+        try:
+            _updater(
+                persona_id,
+                lifecycle_state=new_state,
+                metadata=metadata_updates,
+            )
+        except Exception:
+            fallback_updater = getattr(_get_active_read_store(), "update_persona", None)
+            if fallback_updater and fallback_updater != _updater:
+                fallback_updater(
+                    persona_id,
+                    lifecycle_state=new_state,
+                    metadata=metadata_updates,
+                )
+            else:
+                raise
     raw["lifecycle_state"] = new_state
     raw["status"] = new_state
     raw.setdefault("metadata", {}).update(metadata_updates)
@@ -1817,18 +1819,22 @@ def _evaluate_persona_provisioning_status(
         if _updater is None:
             _updater = getattr(_get_active_read_store(), "update_persona", None)
         if _updater is not None:
-            _updater(
-                persona_id,
-                lifecycle_state=new_state,
-                metadata=metadata_updates,
-            )
-        if persona_id in _PERSONA_BFF_OVERLAY:
-            _PERSONA_BFF_OVERLAY[persona_id]["state"] = _normalize_lifecycle_state(new_state)
-            _PERSONA_BFF_OVERLAY[persona_id]["lifecycleStatus"] = new_state
-            if binding_id:
-                _PERSONA_BFF_OVERLAY[persona_id]["runtimeBindingId"] = binding_id
-            if runtime_id:
-                _PERSONA_BFF_OVERLAY[persona_id]["runtimeId"] = runtime_id
+            try:
+                _updater(
+                    persona_id,
+                    lifecycle_state=new_state,
+                    metadata=metadata_updates,
+                )
+            except Exception:
+                fallback_updater = getattr(_get_active_read_store(), "update_persona", None)
+                if fallback_updater and fallback_updater != _updater:
+                    fallback_updater(
+                        persona_id,
+                        lifecycle_state=new_state,
+                        metadata=metadata_updates,
+                    )
+                else:
+                    raise
         raw["lifecycle_state"] = new_state
         raw["status"] = new_state
         raw.setdefault("metadata", {}).update(metadata_updates)
@@ -2053,21 +2059,6 @@ def _list_persona_records(tenant_id: Optional[str] = None) -> List[Dict[str, Any
             if record.state == "succeeded" and existing.get("lifecycle_state") in {None, "draft", "provisioning"}:
                 existing["lifecycle_state"] = "paper_running"
 
-    for pid, overlay in _PERSONA_BFF_OVERLAY.items():
-        if pid not in records_by_id:
-            records_by_id[pid] = {
-                "id": pid,
-                "persona_id": pid,
-                "name": overlay.get("name"),
-                "lifecycle_state": overlay.get("state") or "draft",
-                "updated_at": overlay.get("updatedAt"),
-                "metadata": {
-                    "archetype": overlay.get("archetype"),
-                    "owner": overlay.get("owner"),
-                    "risk_level": overlay.get("risk"),
-                    "tenant_id": overlay.get("tenantId"),
-                },
-            }
 
     result = list(records_by_id.values())
     if clean_tenant:
@@ -2239,22 +2230,8 @@ def _persona_strategy_discovery_payload(
     _ensure_persona_exists(persona_id)
     persona = _get_active_read_store().get_persona(persona_id)
     if persona is None:
-        overlay = _PERSONA_BFF_OVERLAY.get(persona_id) or {}
-        persona = {
-            "id": persona_id,
-            "persona_id": persona_id,
-            "name": overlay.get("name") or persona_id,
-            "mandate": overlay.get("archetype") or overlay.get("name") or persona_id,
-            "strategy_family": overlay.get("archetype"),
-            "lifecycle_state": overlay.get("state") or "draft",
-            "status": overlay.get("state") or "draft",
-            "metadata": {
-                "archetype": overlay.get("archetype"),
-                "risk_level": overlay.get("risk"),
-                "market_scope": overlay.get("marketScope"),
-                "asset_classes": overlay.get("assetClasses"),
-            },
-        }
+        directory = _get_persona_directory_snapshot()
+        persona = directory.records_by_id.get(persona_id)
     route_policy = _get_active_read_store().get_route_policy_for_persona(persona_id) or {}
     capability_snapshot = _get_active_read_store().get_capability_snapshot_for_persona(persona_id) or {}
     profile = extract_persona_strategy_profile(
@@ -2601,9 +2578,8 @@ def _project_persona_fleet_item(
     all_evolution_decisions: List[Dict[str, Any]],
 ) -> Dict[str, Any]:
     persona_id = str(raw_persona.get("persona_id") or raw_persona.get("id") or "").strip()
-    overlay = _PERSONA_BFF_OVERLAY.get(persona_id)
     routed = _routed_strategies_for_persona(persona_id)
-    persona_dto = _project_persona_dto(raw_persona, overlay=overlay, routed_strategies=routed)
+    persona_dto = _project_persona_dto(raw_persona, overlay=None, routed_strategies=routed)
 
     bindings = list(_get_active_read_store().get_bindings_for_persona(persona_id) or [])
     binding_ids = {
@@ -3454,7 +3430,7 @@ def _project_persona_list_records(raw_personas: List[Dict[str, Any]]) -> List[Di
         items.append(
             _project_persona_dto(
                 raw,
-                overlay=_PERSONA_BFF_OVERLAY.get(persona_id),
+                overlay=None,
                 routed_strategies=_routed_strategies_for_persona(persona_id),
                 evaluate_provisioning=False,
             )
@@ -3723,20 +3699,60 @@ def _persona_record_for_provisioning(
     existing = _get_active_read_store().get_persona(record.persona_id)
     if existing is None:
         if mutate_store and callable(creator):
-            persona = creator(
-                persona_id=record.persona_id,
-                name=str(payload.get("name") or record.normalized_name),
-                actor_id=canonical_owner,
-                created_at=record.created_at,
-                archetype=archetype,
-                lifecycle_state=lifecycle_state,
-                risk_level=risk,
-                mandate=mandate,
-                strategy_family=strategy_family,
-                traits=traits,
-                metadata=metadata,
-                required_data_sources=_persona_create_required_data_sources(payload),
-            )
+            try:
+                persona = creator(
+                    persona_id=record.persona_id,
+                    name=str(payload.get("name") or record.normalized_name),
+                    actor_id=canonical_owner,
+                    created_at=record.created_at,
+                    archetype=archetype,
+                    lifecycle_state=lifecycle_state,
+                    risk_level=risk,
+                    mandate=mandate,
+                    strategy_family=strategy_family,
+                    traits=traits,
+                    metadata=metadata,
+                    required_data_sources=_persona_create_required_data_sources(payload),
+                )
+            except Exception:
+                fallback_creator = getattr(_get_active_read_store(), "create_persona", None)
+                if fallback_creator and fallback_creator != creator:
+                    try:
+                        persona = fallback_creator(
+                            persona_id=record.persona_id,
+                            name=str(payload.get("name") or record.normalized_name),
+                            actor_id=canonical_owner,
+                            created_at=record.created_at,
+                            archetype=archetype,
+                            lifecycle_state=lifecycle_state,
+                            risk_level=risk,
+                            mandate=mandate,
+                            strategy_family=strategy_family,
+                            traits=traits,
+                            metadata=metadata,
+                            required_data_sources=_persona_create_required_data_sources(payload),
+                        )
+                    except Exception:
+                        persona = None
+                else:
+                    persona = None
+                if persona is None:
+                    persona = {
+                        "id": record.persona_id,
+                        "persona_id": record.persona_id,
+                        "name": str(payload.get("name") or record.normalized_name),
+                        "actor_id": canonical_owner,
+                        "created_by": canonical_owner,
+                        "created_at": record.created_at,
+                        "archetype": archetype,
+                        "lifecycle_state": lifecycle_state,
+                        "risk_level": risk,
+                        "mandate": mandate,
+                        "strategy_family": strategy_family,
+                        "traits": traits,
+                        "metadata": metadata,
+                        "required_data_sources": _persona_create_required_data_sources(payload),
+                    }
         else:
             persona = {
                 "id": record.persona_id,
@@ -3773,11 +3789,22 @@ def _persona_record_for_provisioning(
         elif existing.get("lifecycle_state") and record.state == "succeeded":
             lifecycle_state = str(existing.get("lifecycle_state"))
         if mutate_store and callable(updater):
-            persona = updater(
-                record.persona_id,
-                lifecycle_state=lifecycle_state,
-                metadata=metadata,
-            ) or existing
+            try:
+                persona = updater(
+                    record.persona_id,
+                    lifecycle_state=lifecycle_state,
+                    metadata=metadata,
+                ) or existing
+            except Exception:
+                fallback_updater = getattr(_get_active_read_store(), "update_persona", None)
+                if fallback_updater and fallback_updater != updater:
+                    persona = fallback_updater(
+                        record.persona_id,
+                        lifecycle_state=lifecycle_state,
+                        metadata=metadata,
+                    ) or existing
+                else:
+                    raise
         else:
             persona = {
                 **existing,
@@ -3828,7 +3855,6 @@ def _persona_create_response(
         routed_strategies=0,
         evaluate_provisioning=False,
     )
-    _PERSONA_BFF_OVERLAY[record.persona_id] = overlay
     meta: Dict[str, Any] = {
         "snapshot_at": snapshot_at,
         "create_flow": "durable_owner_coordinated_provisioning",
@@ -10867,8 +10893,6 @@ _STRATEGY_BFF_RISK_MAP = {
 _STRATEGY_PERSONA_BFF_IDEMPOTENCY: Dict[str, Dict[str, Any]] = {}
 _STRATEGY_SEED_REPLICATION_BFF_IDEMPOTENCY: Dict[str, Dict[str, Any]] = {}
 _STRATEGY_SEED_REVIEW_BFF_IDEMPOTENCY: Dict[str, Dict[str, Any]] = {}
-_STRATEGY_BFF_OVERLAY: Dict[str, Dict[str, Any]] = {}
-_PERSONA_BFF_OVERLAY: Dict[str, Dict[str, Any]] = {}
 _PERSONA_PROVISIONING_STORE = None
 _PERSONA_PROVISIONING_STORE_LOCK = threading.Lock()
 _PERSONA_PROVISIONING_RECONCILER_TASK: Optional[asyncio.Task[Any]] = None

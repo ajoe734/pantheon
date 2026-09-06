@@ -35,14 +35,12 @@ def build_collection_router(ctx: StrategyRouteContext) -> APIRouter:
             summaries = [
                 s for s in summaries
                 if persona_id in (s.get("persona_ids") or [])
-                or s.get("strategy_id") in ctx.strategy_overlay
             ]
         items = []
         for summary in summaries:
             strategy_id = str(summary.get("strategy_id") or "")
             detail = read_store.get_strategy_spec_detail(strategy_id, version_selector="current")
-            overlay = ctx.strategy_overlay.get(strategy_id)
-            items.append(ctx.project_strategy_dto(summary, detail=detail, overlay=overlay))
+            items.append(ctx.project_strategy_dto(summary, detail=detail, overlay=None))
         if state:
             items = [s for s in items if s.get("state") == state]
         total = len(items)
@@ -84,8 +82,9 @@ def build_collection_router(ctx: StrategyRouteContext) -> APIRouter:
             )
         snapshot_at = ctx.utc_now()
         strategy_id = f"strategy-{snapshot_at[:10].replace('-', '')}-{uuid.uuid4().hex[:8]}"
-        overlay = {
+        record = {
             "id": strategy_id,
+            "strategy_id": strategy_id,
             "name": name,
             "owner": str(payload.get("owner") or identity.operator_id),
             "updatedAt": snapshot_at,
@@ -102,14 +101,45 @@ def build_collection_router(ctx: StrategyRouteContext) -> APIRouter:
         }
         if dry_run:
             return ctx.dry_run_success_response(
-                overlay,
+                record,
                 snapshot_at=snapshot_at,
                 idempotency_key=resolved_key,
                 evidence_kind="strategy.create",
             )
-        ctx.strategy_overlay[strategy_id] = overlay
+        written = False
+        try:
+            rs = ctx.get_read_store_port()
+            if hasattr(rs, "upsert_strategy"):
+                rs.upsert_strategy(record)
+                written = True
+            elif hasattr(rs, "create_strategy_spec"):
+                rs.create_strategy_spec(record)
+                written = True
+            elif hasattr(rs, "_data") and isinstance(rs._data, dict):
+                strats = rs._data.setdefault("strategies", {})
+                if isinstance(strats, dict):
+                    strats[strategy_id] = record
+                    written = True
+                elif isinstance(strats, list):
+                    strats.append(record)
+                    written = True
+        except Exception as exc:
+            raise ctx.bff_error(
+                503,
+                ErrorCode.DEPENDENCY_UNAVAILABLE,
+                "Canonical strategy persistence failed",
+                str(exc),
+            ) from exc
+
+        if not written:
+            raise ctx.bff_error(
+                503,
+                ErrorCode.DEPENDENCY_UNAVAILABLE,
+                "Canonical strategy writer unavailable",
+                "Cannot persist strategy without an authoritative domain store",
+            )
         result = {
-            "data": overlay,
+            "data": record,
             "meta": {"snapshot_at": snapshot_at},
         }
         ctx.strategy_persona_idempotency[resolved_key] = {"request_hash": request_hash, "result": result}

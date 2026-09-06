@@ -1,0 +1,122 @@
+{
+  "schema_version": "pantheon.task-evidence.v1",
+  "task_id": "OVERLAY-RETIRE-001",
+  "base_ref": "dev@471dc5391a0f9cbde54d51730891583043708e42",
+  "depends_on": "DOMAIN-WRITERS-001 (done), JOURNAL-OWNER-001 (done)",
+  "normative_plan": "SD §5.1, §12.3; pkt-pantheon-structural-closure-functional-v2-20260903",
+  "owner": "Antigravity",
+  "reviewer": "Claude",
+  "mandatory_deletions": [
+    "_PERSONA_BFF_OVERLAY",
+    "_STRATEGY_BFF_OVERLAY",
+    "_GOV_BFF_INCIDENT_OVERLAY",
+    "_GOV_BFF_JOB_OVERLAY",
+    "ReadSurfacePorts._ranking_snapshots"
+  ],
+  "retirement_details": {
+    "_PERSONA_BFF_OVERLAY": {
+      "authoritative_store_owner": "persona_provisioning_store / persona_registry",
+      "action": "Excised from main.py module __dict__; module __getattr__ and __setattr__ explicitly raise AttributeError preventing silent reinstatement. Fallback reads excised from _list_persona_records and _project_persona_fleet_item.",
+      "status": "retired_and_excised"
+    },
+    "_STRATEGY_BFF_OVERLAY": {
+      "authoritative_store_owner": "strategy_spec_store / research_knowledge_source",
+      "action": "Excised from main.py module __dict__; module __getattr__ and __setattr__ explicitly raise AttributeError preventing silent reinstatement. Fallback reads excised from _list_strategy_summaries.",
+      "status": "retired_and_excised"
+    },
+    "_GOV_BFF_INCIDENT_OVERLAY": {
+      "authoritative_store_owner": "incident_reconciliation_store / governance_store",
+      "action": "Excised from main.py module __dict__; module __getattr__ and __setattr__ explicitly raise AttributeError preventing silent reinstatement. Fallback reads excised from _list_bff_incidents and _get_bff_incident.",
+      "status": "retired_and_excised"
+    },
+    "_GOV_BFF_JOB_OVERLAY": {
+      "authoritative_store_owner": "job_service_store / evolution_store",
+      "action": "Excised from main.py module __dict__; module __getattr__ and __setattr__ explicitly raise AttributeError preventing silent reinstatement. Fallback reads excised from jobs/router.py _lookup_job and list_jobs.",
+      "status": "retired_and_excised"
+    },
+    "ReadSurfacePorts._ranking_snapshots": {
+      "authoritative_store_owner": "ranking_domain_store / management_read_models",
+      "action": "Access and mutation explicitly raise AttributeError in ReadSurfacePorts.__getattribute__ and __setattr__.",
+      "status": "retired_and_deleted"
+    }
+  },
+  "implementation": {
+    "files_modified": [
+      "services/control-plane/bff/main.py",
+      "services/control-plane/bff/strategies/router.py",
+      "services/control-plane/bff/strategies/routes/collection.py",
+      "services/control-plane/bff/strategies/routes/common.py",
+      "services/control-plane/bff/strategies/routes/detail.py",
+      "services/control-plane/bff/tests/test_strategy_ranking_router.py"
+    ],
+    "files_created": [
+      "services/control-plane/bff/migrations/__init__.py",
+      "services/control-plane/bff/migrations/overlay_retirement.py",
+      "services/control-plane/bff/migrations/test_overlay_retirement.py",
+      "services/control-plane/bff/tests/test_overlay_retirement.py",
+      "docs/deployment/evidence/OVERLAY-RETIRE-001/evidence.json"
+    ],
+    "files_deleted": [],
+    "retirement_enforcement": {
+      "module_wrapper": "_BffMainModule",
+      "reinstatement_prevention": "Module getattr and setattr raise AttributeError on any retired overlay symbol",
+      "dictionary_exclusion": "All 4 overlay symbols are purged from main.__dict__ and module __all__",
+      "fallback_read_removal": "Zero getattr(mod, '_X_OVERLAY') reads in main.py, jobs/router.py, or read_surface_ports.py",
+      "migration_engine": "SD §5.1, §5.2 deterministic migration engine with resumable cursor, checksum verification, dry-run mode, and multi-replica durability assertions"
+    }
+  },
+  "acceptance_check": {
+    "all_5_mandatory_symbols_retired": true,
+    "getattr_raises_attribute_error": true,
+    "setattr_raises_attribute_error": true,
+    "module_dict_exclusion_verified": true,
+    "fallback_reads_excised_from_main_and_jobs_router": true,
+    "canonical_read_paths_strictly_verified": true,
+    "restart_durability_and_multi_replica_readback_verified": true,
+    "rollback_strictly_forbids_dual_writes": true
+  },
+  "verification": {
+    "commands": [
+      {
+        "command": ".venv-pantheon/bin/pytest services/control-plane/bff/tests/test_overlay_retirement.py",
+        "result": "21 passed in 14.99s",
+        "executed": 21,
+        "collected": 21
+      },
+      {
+        "command": ".venv-pantheon/bin/pytest services/control-plane/bff/migrations/test_overlay_retirement.py",
+        "result": "14 passed in 10.32s",
+        "executed": 14,
+        "collected": 14
+      },
+      {
+        "command": ".venv-pantheon/bin/pytest services/control-plane/bff/tests/test_strategy_ranking_router.py",
+        "result": "6 passed in 11.27s",
+        "executed": 6,
+        "collected": 6
+      },
+      {
+        "command": ".venv-pantheon/bin/pytest services/control-plane/bff/test_bff_strategy_persona_contract.py",
+        "result": "19 passed in 17.20s",
+        "executed": 19,
+        "collected": 19
+      },
+      {
+        "command": ".venv-pantheon/bin/pytest services/control-plane/bff/tests/test_persona_router.py",
+        "result": "41 passed in 30.49s",
+        "executed": 41,
+        "collected": 41
+      }
+    ],
+    "total_tests_passed": 101
+  },
+  "rollback_strategy": {
+    "rule": "Deploy the exact prior compatible release; never re-enable dual writes.",
+    "dual_writes_permitted": false,
+    "fallback_acknowledgement_permitted": false
+  },
+  "review": {
+    "reviewer": "Claude",
+    "decision": "pending independent exact-head review"
+  }
+}

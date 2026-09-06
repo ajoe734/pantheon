@@ -6,10 +6,8 @@ explicit narrow dependency ports, matching the pattern already established
 by evolution/router.py and research/router.py. No router imports main as
 bff_main, inspects main.__dict__, or uses globals()/dynamic-proxy forwarding.
 
-The in-memory ``_GOV_BFF_JOB_OVERLAY`` dict stays defined in main.py because
-non-route code (management shell summary, assistant tenant filtering) and
-several test modules reach into it directly (``bff_main._GOV_BFF_JOB_OVERLAY``);
-this router observes it through an injected getter instead of owning it.
+Under OVERLAY-RETIRE-001, in-memory job overlays have been retired and deleted;
+all job reads resolve directly through the canonical read store.
 """
 from __future__ import annotations
 
@@ -35,7 +33,7 @@ def create_jobs_router(
     read_surface_meta: Callable[..., Dict[str, Any]],
     dataset_surface_status: Callable[..., Dict[str, Any]],
     raise_if_read_surface_unavailable: Callable[..., None],
-    get_job_overlay: JobOverlay,
+    get_job_overlay: Optional[JobOverlay] = None,
     reject_body_idempotency_key: Callable[[Dict[str, Any]], None],
     resolve_final_idempotency_key: Callable[[Optional[str], Optional[str]], str],
     submit_job_action: SubmitJobAction,
@@ -53,7 +51,7 @@ def create_jobs_router(
 
     def _lookup_job(job_id: str) -> Optional[Dict[str, Any]]:
         read_store = _resolve_read_store()
-        return get_job_overlay().get(job_id) or read_store.get_job_bff(job_id)
+        return read_store.get_job_bff(job_id)
 
     @router.get("/bff/jobs")
     async def list_jobs(
@@ -68,7 +66,7 @@ def create_jobs_router(
         require_read_role(identity)
         read_store = _resolve_read_store()
         snapshot_at = utc_now()
-        jobs = list(get_job_overlay().values()) or read_store.list_jobs_bff(status=status, job_type=job_type)
+        jobs = list(read_store.list_jobs_bff(status=status, job_type=job_type) or [])
         if status:
             jobs = [j for j in jobs if j.get("status") == status]
         if job_type:

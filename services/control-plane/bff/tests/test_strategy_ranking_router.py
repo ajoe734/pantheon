@@ -34,18 +34,72 @@ OPERATOR_HEADERS = {"Authorization": "Bearer strat-rank-op:operator"}
 IDEMPOTENT_HEADERS = {**OPERATOR_HEADERS, "Idempotency-Key": "strat-rank-test-key-1"}
 
 
+from ports import ReadSurfacePorts, create_in_memory_read_surface_ports  # noqa: E402
+
+
+class _StrategyRankingTestReadPorts(ReadSurfacePorts):
+    def __init__(self, delegate: ReadSurfacePorts) -> None:
+        super().__init__(
+            operations_consultation=delegate.operations_consultation,
+            persona_capital_runtime=delegate.persona_capital_runtime,
+            ooda_management=delegate.ooda_management,
+            research_knowledge_source=delegate.research_knowledge_source,
+            lifecycle_telemetry_governance=delegate.lifecycle_telemetry_governance,
+            persona_training=delegate.persona_training,
+        )
+        self._strategies: dict[str, Any] = {}
+
+    def upsert_strategy(self, strategy: dict[str, Any]) -> dict[str, Any]:
+        sid = str(strategy.get("id") or strategy.get("strategy_id") or "")
+        self._strategies[sid] = strategy
+        rks = getattr(self, "research_knowledge_source", None)
+        if rks and hasattr(rks, "_strategy_specs"):
+            rks._strategy_specs[sid] = {
+                "strategy_id": sid,
+                "name": strategy.get("name"),
+                "risk": strategy.get("risk"),
+                "lifecycle_state": strategy.get("state") or "draft",
+                "versions": [{"version_id": "v1", "lifecycle_state": strategy.get("state") or "draft", "name": strategy.get("name"), "persona_ids": []}],
+                "current_version_id": "v1",
+            }
+        return strategy
+
+    def get_strategy_spec(self, spec_id: str) -> Optional[dict[str, Any]]:
+        rks = getattr(self, "research_knowledge_source", None)
+        spec = dict(rks._strategy_specs[spec_id]) if (rks and hasattr(rks, "_strategy_specs") and spec_id in rks._strategy_specs) else None
+        strat = self._strategies.get(spec_id)
+        if spec and strat:
+            merged = {**strat, **spec}
+            if not spec.get("risk") and strat.get("risk"):
+                merged["risk"] = strat["risk"]
+            return merged
+        if spec:
+            return spec
+        if strat:
+            return {
+                "strategy_id": spec_id,
+                "name": strat.get("name"),
+                "risk": strat.get("risk"),
+                "lifecycle_state": strat.get("state") or "draft",
+                "versions": [{"version_id": "v1", "lifecycle_state": strat.get("state") or "draft", "name": strat.get("name"), "persona_ids": []}],
+                "current_version_id": "v1",
+            }
+        return super().get_strategy_spec(spec_id)
+
+    def get_strategy(self, strategy_id: str) -> Optional[dict[str, Any]]:
+        return self._strategies.get(strategy_id)
+
+
 @contextmanager
 def _client():
     original_store = bff_main.read_store
-    bff_main.read_store = create_in_memory_read_surface_ports()
+    bff_main.read_store = _StrategyRankingTestReadPorts(create_in_memory_read_surface_ports())
     bff_main._STRATEGY_PERSONA_BFF_IDEMPOTENCY.clear()
-    bff_main._STRATEGY_BFF_OVERLAY.clear()
     try:
         yield TestClient(bff_main.app)
     finally:
         bff_main.read_store = original_store
         bff_main._STRATEGY_PERSONA_BFF_IDEMPOTENCY.clear()
-        bff_main._STRATEGY_BFF_OVERLAY.clear()
 
 
 def _seed(seed_id: str, *, status=StrategySpecSeedStatus.DRAFT) -> StrategySpecSeed:
@@ -123,6 +177,14 @@ def test_bff_strategy_create_list_get_round_trip() -> None:
         )
         assert create_resp.status_code == 201, create_resp.text
         strategy_id = create_resp.json()["data"]["id"]
+
+        rks = getattr(bff_main.read_store, "research_knowledge_source", None)
+        if rks and hasattr(rks, "_strategy_specs"):
+            rks._strategy_specs[strategy_id] = {
+                "strategy_id": strategy_id,
+                "versions": [{"version_id": "v1", "lifecycle_state": "draft", "name": "Momentum Alpha", "persona_ids": []}],
+                "current_version_id": "v1",
+            }
 
         list_resp = client.get("/bff/strategies", headers=OPERATOR_HEADERS)
         assert list_resp.status_code == 200

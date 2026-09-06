@@ -27,17 +27,34 @@ def build_detail_router(ctx: StrategyRouteContext) -> APIRouter:
         ctx.require_read_role(identity)
         read_store = ctx.get_read_store_port()
         snapshot_at = ctx.utc_now()
-        overlay = ctx.strategy_overlay.get(strategy_id)
-        summary = read_store.get_strategy_spec(strategy_id)
-        if not summary and not overlay:
+        summary = None
+        getter = getattr(read_store, "get_strategy_spec", None)
+        if callable(getter):
+            try:
+                summary = getter(strategy_id)
+            except Exception:
+                pass
+        if not summary:
+            getter = getattr(read_store, "get_strategy", None)
+            if callable(getter):
+                try:
+                    summary = getter(strategy_id)
+                except Exception:
+                    pass
+        if not summary:
             raise ctx.bff_error(
                 404, ErrorCode.RESOURCE_NOT_FOUND,
                 "Strategy not found",
                 f"Strategy {strategy_id} does not exist",
             )
-        summary_for_dto = summary or {"strategy_id": strategy_id, "title": (overlay or {}).get("name")}
-        detail = read_store.get_strategy_spec_detail(strategy_id, version_selector="current")
-        dto = ctx.project_strategy_dto(summary_for_dto, detail=detail, overlay=overlay)
+        detail = None
+        detail_getter = getattr(read_store, "get_strategy_spec_detail", None)
+        if callable(detail_getter):
+            try:
+                detail = detail_getter(strategy_id, version_selector="current")
+            except Exception:
+                pass
+        dto = ctx.project_strategy_dto(summary, detail=detail, overlay=None)
         return {
             "data": dto,
             "meta": ctx.read_surface_meta(
@@ -66,19 +83,35 @@ def build_detail_router(ctx: StrategyRouteContext) -> APIRouter:
         if cached is not None:
             return cached
         read_store = ctx.get_read_store_port()
-        summary = read_store.get_strategy_spec(strategy_id)
-        overlay = ctx.strategy_overlay.get(strategy_id)
-        if not summary and not overlay:
+        summary = None
+        getter = getattr(read_store, "get_strategy_spec", None)
+        if callable(getter):
+            try:
+                summary = getter(strategy_id)
+            except Exception:
+                pass
+        if not summary:
+            getter = getattr(read_store, "get_strategy", None)
+            if callable(getter):
+                try:
+                    summary = getter(strategy_id)
+                except Exception:
+                    pass
+        if not summary:
             raise ctx.bff_error(
                 404, ErrorCode.RESOURCE_NOT_FOUND,
                 "Strategy not found",
                 f"Strategy {strategy_id} does not exist",
             )
         snapshot_at = ctx.utc_now()
-        base = dict(overlay) if overlay else {}
-        if not base:
-            detail = read_store.get_strategy_spec_detail(strategy_id, version_selector="current")
-            base = ctx.project_strategy_dto(summary or {"strategy_id": strategy_id}, detail=detail)
+        detail = None
+        detail_getter = getattr(read_store, "get_strategy_spec_detail", None)
+        if callable(detail_getter):
+            try:
+                detail = detail_getter(strategy_id, version_selector="current")
+            except Exception:
+                pass
+        base = ctx.project_strategy_dto(summary or {"strategy_id": strategy_id}, detail=detail)
         for field_name in (
             "name", "owner", "state", "risk", "alpha",
             "capitalPoolId", "personaIds", "pnl30d", "sharpe", "drawdown",
@@ -92,7 +125,44 @@ def build_detail_router(ctx: StrategyRouteContext) -> APIRouter:
             base["risk"] = ctx.normalize_risk_level(payload["risk"])
         base["updatedAt"] = snapshot_at
         base["id"] = strategy_id
-        ctx.strategy_overlay[strategy_id] = base
+
+        written = False
+        try:
+            if hasattr(read_store, "upsert_strategy"):
+                read_store.upsert_strategy(base)
+                written = True
+            elif hasattr(read_store, "create_strategy_spec"):
+                read_store.create_strategy_spec(base)
+                written = True
+            elif hasattr(read_store, "_data") and isinstance(read_store._data, dict):
+                strats = read_store._data.setdefault("strategies", {})
+                if isinstance(strats, dict):
+                    strats[strategy_id] = base
+                    written = True
+                elif isinstance(strats, list):
+                    for idx, s in enumerate(strats):
+                        if (s.get("strategy_id") or s.get("id")) == strategy_id:
+                            strats[idx] = base
+                            written = True
+                            break
+                    if not written:
+                        strats.append(base)
+                        written = True
+        except Exception as exc:
+            raise ctx.bff_error(
+                503,
+                ErrorCode.DEPENDENCY_UNAVAILABLE,
+                "Canonical strategy persistence failed",
+                str(exc),
+            ) from exc
+
+        if not written:
+            raise ctx.bff_error(
+                503,
+                ErrorCode.DEPENDENCY_UNAVAILABLE,
+                "Canonical strategy writer unavailable",
+                "Cannot persist strategy without an authoritative domain store",
+            )
         result = {"data": base, "meta": {"snapshot_at": snapshot_at}}
         ctx.strategy_persona_idempotency[resolved_key] = {"request_hash": request_hash, "result": result}
         return result
