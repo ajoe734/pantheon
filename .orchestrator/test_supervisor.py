@@ -1915,30 +1915,44 @@ class RuntimeConfigurationContractTests(unittest.TestCase):
                 for slot_id in supervisor.logical_worker_slot_ids(config, agent_id):
                     self.assertNotIn("max_parallel", config["agents"][slot_id])
 
-    def test_repo_claude_accounts_are_isolated_at_requested_capacities(self) -> None:
+    def test_repo_claude_and_codex_accounts_are_shared_at_confirmed_capacities(self) -> None:
+        """Claude/Claude2 and Codex/Codex2 are confirmed to share one real
+        login identity each (see OPS-SHARED-LLM-ACCOUNTS-20260906): they must
+        resolve to the same provider account while keeping their own
+        individual logical dispatch capacity and physical worker slots."""
         config = json.loads(Path(__file__).with_name("config.json").read_text())
-        expected = {
-            "claude": ("claude1", 3),
-            "claude2": ("claude2", 1),
+        expected_groups = {
+            "claude1": (("claude", 3), ("claude2", 1)),
+            "codex1": (("codex", 2), ("codex2", 2)),
         }
         account_caps = config["ready_dispatcher"]["max_concurrent_per_account"]
 
-        for agent_id, (account_id, capacity) in expected.items():
-            with self.subTest(agent_id=agent_id):
-                self.assertEqual(config["providers"][agent_id]["account"], account_id)
-                self.assertEqual(config["agents"][agent_id]["max_parallel"], capacity)
-                self.assertEqual(account_caps[account_id], capacity)
-                lane = supervisor.delivery_lane_for_agent(config, agent_id)
-                self.assertEqual(lane.max_parallel, capacity)
+        for account_id, members in expected_groups.items():
+            with self.subTest(account_id=account_id):
+                for agent_id, own_capacity in members:
+                    self.assertEqual(config["providers"][agent_id]["account"], account_id)
+                    self.assertEqual(config["agents"][agent_id]["max_parallel"], own_capacity)
+                    lane = supervisor.delivery_lane_for_agent(config, agent_id)
+                    self.assertEqual(lane.max_parallel, own_capacity)
+                    self.assertEqual(
+                        {endpoint.account_id for endpoint in lane.endpoints},
+                        {account_id},
+                    )
                 self.assertEqual(
-                    {endpoint.account_id for endpoint in lane.endpoints},
-                    {account_id},
+                    account_caps[account_id],
+                    max(capacity for _, capacity in members),
                 )
 
-        self.assertNotEqual(
+        self.assertEqual(
             config["providers"]["claude"]["account"],
             config["providers"]["claude2"]["account"],
         )
+        self.assertEqual(
+            config["providers"]["codex"]["account"],
+            config["providers"]["codex2"]["account"],
+        )
+        self.assertNotIn("claude2", account_caps)
+        self.assertNotIn("codex2", account_caps)
 
     def test_retired_capacity_fields_fail_closed(self) -> None:
         for retired in (

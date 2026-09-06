@@ -1,0 +1,75 @@
+{
+  "schema_version": "pantheon.review-evidence.v1",
+  "task_id": "OPS-SHARED-LLM-ACCOUNTS-20260906",
+  "title": "Align worker account sharing with confirmed login identities",
+  "owner": "Claude",
+  "reviewer": "Codex2",
+  "target_repo": "ajoe734/pantheon",
+  "task_class": "development_tooling",
+  "delivery_state": "ready_for_independent_review",
+  "base_sha": "70e7abadaa4800f6d58acbbe3189a76c932d149d",
+  "scope": {
+    "owned": [
+      ".orchestrator/config.json provider.account mapping for claude2 and codex2/codex2-1..4",
+      ".orchestrator/config.json ready_dispatcher.max_concurrent_per_account cleanup of unreferenced accounts",
+      ".orchestrator/test_supervisor.py repo-config contract test that asserted claude/claude2 used isolated accounts"
+    ],
+    "not_changing": [
+      "logical agent identities, worker_slots, and per-agent max_parallel (claude=3, claude2=1, codex=2, codex2=2)",
+      "credential values, auth directories, model settings, or task owner/reviewer assignments",
+      "the fleet-wide max_concurrent_workers=13 global cap",
+      "the primary shared-account caps claude1=3 and codex1=2",
+      "any grouping/adapter abstraction layer; sharing uses the existing provider.account field directly"
+    ],
+    "composes_with": [
+      "the operator-confirmed auth-file copy and byte-equality verification performed by root outside this repo"
+    ]
+  },
+  "failure_reproduction": {
+    "case": "providers.claude2.account was \"claude2\" and providers.codex2 / codex2-1..4 .account were \"codex2\", each with their own entries in ready_dispatcher.max_concurrent_per_account, even though the operator confirmed Claude2 logs into the same Anthropic account/org as Claude, and Codex2 was deliberately given a byte-identical copy of Codex's login data.",
+    "prior_outcome": "Capacity accounting treated claude/claude2 and codex/codex2 as fully independent accounts, understating that they draw against one shared provider-side quota.",
+    "regression": "test_repo_claude_accounts_are_isolated_at_requested_capacities in .orchestrator/test_supervisor.py explicitly asserted providers.claude.account != providers.claude2.account, which is now false by design and had to be replaced."
+  },
+  "implementation": {
+    "config_change": "providers.claude2.account, providers.codex2.account, and providers.codex2-1/-2/-3/-4.account now all read \"claude1\" / \"codex1\" respectively, matching the operator-confirmed shared login identity.",
+    "account_cap_cleanup": "ready_dispatcher.max_concurrent_per_account no longer declares the now-unreferenced \"claude2\" (was 1) and \"codex2\" (was 2) keys; claude1=3, codex1=2, antigravity=4, antigravity2=4, copilot=0, and the global max_concurrent_workers=13 are unchanged.",
+    "identity_preservation": "agents.claude2/codex2/codex2-1..4 keep their own display_name, provider, max_parallel, worker_slots, and dispatch_slot_for entries untouched, so logical identities and physical slots are unaffected; only the shared account they draw capacity from changed.",
+    "test_update": "Replaced test_repo_claude_accounts_are_isolated_at_requested_capacities with test_repo_claude_and_codex_accounts_are_shared_at_confirmed_capacities, which asserts both members of each shared-account group resolve to the same account, keep their own individual dispatch capacity/slots, and that the shared account cap equals the confirmed primary cap (claude1=3, codex1=2); it also asserts the obsolete claude2/codex2 keys are absent from max_concurrent_per_account.",
+    "no_new_abstraction": true
+  },
+  "verification": {
+    "passed": [
+      {
+        "command": "cd .orchestrator && /usr/bin/python3 -m unittest test_supervisor.RuntimeConfigurationContractTests -v",
+        "result": "9 tests passed"
+      },
+      {
+        "command": "cd .orchestrator && /usr/bin/python3 -m unittest test_supervisor -v",
+        "result": "239 passed; 1 pre-existing unrelated error"
+      },
+      {
+        "command": "python3 -c \"import json; json.load(open('.orchestrator/config.json'))\"",
+        "result": "valid JSON"
+      }
+    ],
+    "broader_nonpassing_observations": [
+      {
+        "command": "cd .orchestrator && /usr/bin/python3 -m unittest test_supervisor.ReviewDecisionIntentLeaseRecoveryTests.test_reconcile_migrates_legacy_collision_from_journal_and_replays_intent",
+        "result": "1 pre-existing error",
+        "detail": "Fails identically on the unmodified config.json/test_supervisor.py (verified by stashing this task's diff and re-running); assert_task_archive_root_binding rejects the fixture because the legacy-collision fixture leaves task_archive globals bound to another status root in this worktree environment. Not touched by this task's account-mapping change."
+      }
+    ],
+    "runner": {
+      "python": "3.12 (/usr/bin/python3)"
+    },
+    "checksums": {
+      ".orchestrator/config.json": "621c3ea48340b2abf5b36d44b22e7915e49b23248b2993db845b646237aee0ca",
+      ".orchestrator/test_supervisor.py": "4a366e694b493f6762fe525a2a73597796155a820bc5fead0742cdf225937acf"
+    }
+  },
+  "review_decision": {
+    "status": "pending",
+    "reviewer": "Codex2",
+    "note": "Independently verify the confirmed shared-account mapping (claude2->claude1, codex2/codex2-1..4->codex1), the max_concurrent_per_account cleanup, that no credential/auth/model/assignment fields were touched, and the replacement repo-config contract test at the exact PR head."
+  }
+}

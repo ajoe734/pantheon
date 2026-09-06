@@ -429,7 +429,7 @@
     },
     "claude2": {
       "delivery_mode": "claude_cli",
-      "account": "claude2",
+      "account": "claude1",
       "runtime": {
         "cli": ".orchestrator/bin/claude",
         "output_format": "stream-json",
@@ -536,7 +536,7 @@
     },
     "codex2": {
       "delivery_mode": "codex",
-      "account": "codex2",
+      "account": "codex1",
       "codex": {
         "cli": ".orchestrator/bin/codex",
         "codex_home": "~/.codex2",
@@ -625,7 +625,7 @@
     },
     "codex2-1": {
       "delivery_mode": "codex",
-      "account": "codex2",
+      "account": "codex1",
       "codex": {
         "cli": ".orchestrator/bin/codex",
         "codex_home": "~/.codex2",
@@ -642,7 +642,7 @@
     },
     "codex2-2": {
       "delivery_mode": "codex",
-      "account": "codex2",
+      "account": "codex1",
       "codex": {
         "cli": ".orchestrator/bin/codex",
         "codex_home": "~/.codex2",
@@ -659,7 +659,7 @@
     },
     "codex2-3": {
       "delivery_mode": "codex",
-      "account": "codex2",
+      "account": "codex1",
       "codex": {
         "cli": ".orchestrator/bin/codex",
         "codex_home": "~/.codex2",
@@ -676,7 +676,7 @@
     },
     "codex2-4": {
       "delivery_mode": "codex",
-      "account": "codex2",
+      "account": "codex1",
       "codex": {
         "cli": ".orchestrator/bin/codex",
         "codex_home": "~/.codex2",
@@ -757,11 +757,9 @@
     "max_active_workers_per_task": 1,
     "max_concurrent_per_account": {
       "claude1": 3,
-      "claude2": 1,
       "antigravity": 4,
       "antigravity2": 4,
       "codex1": 2,
-      "codex2": 2,
       "copilot": 0
     },
     "max_concurrent_workers": 13
