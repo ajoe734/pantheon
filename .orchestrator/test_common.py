@@ -225,14 +225,15 @@ class JsonLoadResilienceTests(unittest.TestCase):
                     }
                 )
 
-    def test_ai_status_sync_rejects_empty_existing_status_file(self) -> None:
+    def test_ai_status_rejects_empty_journal_without_initializing_projection(self) -> None:
         repo_root = Path(__file__).resolve().parents[1]
         with tempfile.TemporaryDirectory() as tmpdir:
-            status_root = Path(tmpdir)
+            status_root = Path(tmpdir) / "status"
+            status_root.mkdir()
             subprocess.run(["git", "init", "-q"], cwd=status_root, check=True)
             status_file = status_root / "ai-status.json"
             status_file.write_text("", encoding="utf-8")
-            env = os.environ.copy()
+            env = {key: value for key, value in os.environ.items() if not key.startswith(("PANTHEON_", "ORCH_"))}
             for env_name in (
                 "PANTHEON_WORKTREE_ROOT",
                 "ORCH_WORKSPACE_PATH",
@@ -247,7 +248,11 @@ class JsonLoadResilienceTests(unittest.TestCase):
             ):
                 env.pop(env_name, None)
             env["PANTHEON_STATUS_ROOT"] = str(status_root)
-            env["AI_NAME"] = "Ops"
+            env["AI_NAME"] = "Codex2"
+            env.update(common.task_state_store_runtime_env({
+                "paths": {"status_file": str(status_file)},
+                "task_state_store": {"mode": "authoritative", "event_log": str(Path(tmpdir) / "runtime" / "tasks.jsonl")},
+            }))
 
 
             result = subprocess.run(
@@ -257,10 +262,12 @@ class JsonLoadResilienceTests(unittest.TestCase):
                 capture_output=True,
                 text=True,
                 check=False,
+                timeout=15,
             )
+            self.assertEqual(status_file.read_bytes(), b"", "rejected command must not initialize the projection")
 
         self.assertNotEqual(result.returncode, 0)
-        self.assertIn("Refusing to initialize from empty status file", result.stderr + result.stdout)
+        self.assertIn("Authoritative task-state journal is empty; refusing ai-status.json fallback", result.stderr + result.stdout)
 
     def test_load_json_retries_after_transient_decode_error(self) -> None:
         payload = {"ok": True}

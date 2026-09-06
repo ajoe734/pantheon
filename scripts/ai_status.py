@@ -70,6 +70,7 @@ from dispatch_policy import (
     normalize_execution_resources,
     task_execution_resources,
 )
+import execution_authorization
 import task_archive as task_archive_module
 from task_archive import (
     ARCHIVE_TASKS_DIR,
@@ -273,6 +274,8 @@ LOCAL_HUMAN_OPS_ACTIONS = frozenset(
         "archive_reconcile",
         "record_terminal_fact",
         "operator_accept",
+        "execution-grant-submit",
+        "execution-grant-revoke",
     }
 )
 DEV_BRIDGE_CONSUMED_KEY = "consumed_dev_bridge_packets"
@@ -611,6 +614,8 @@ TASK_ID_COMMAND_ARG_INDEX: dict[str, int] = {
     "retire_archive_collision": 0,
     "approve": 0,
     "archive_correct_review_file": 0,
+    "execution-grant-submit": 0,
+    "execution-grant-revoke": 0,
 }
 ACTIVE_WORKER_LEASE_STATUSES = {
     "running",
@@ -4413,6 +4418,43 @@ def command_assign(state: dict[str, Any], args: list[str]) -> bool | None:
         artifacts = list(spec.get("artifacts") or [])
         acceptance = list(spec.get("acceptance") or [])
         target_repo = spec.get("target_repo")
+        # OPS-PRIVILEGED-TASK-EXECUTION-AUTH-001: a signed security/hosted/
+        # live packet materializes without an operator grant (the former
+        # MFA-at-intake rule is retired, see dev_bridge_materialize.py), but
+        # it must atomically become a canonical non-executable
+        # pending-authorization record. This only ever attaches metadata for
+        # a brand-new task -- the existing-bridge-row path below
+        # (``elif bridge is not None: pass``) never merges ``metadata`` into
+        # an already-materialized task, so a reassignment or replay can
+        # never re-derive or overwrite the frozen policy/hold.
+        bridge_work_class = str(bridge.get("work_class") or "").strip().lower()
+        if execution_authorization.is_privileged_work_class(bridge_work_class):
+            execution_policy = execution_authorization.derive_execution_policy(
+                task_id=task_id,
+                work_class=bridge_work_class,
+                repository=target_repo,
+                resources=execution_resources,
+                artifacts=artifacts,
+                task_spec=spec,
+                task_spec_hash=bridge["task_spec_hash"],
+            )
+            metadata["execution_authorization"] = (
+                execution_authorization.pending_authorization_hold(execution_policy)
+            )
+            # Old-runtime-recognized durable hold (SA/SD 2, 6): ``waiting_for``
+            # predates this task and is already honored, unconditionally, by
+            # every prior supervisor/dispatch-admission revision (including
+            # one with no execution_authorization module at all) as a
+            # dispatch-blocking Human/Ops hold. Only OWNED_READY is reachable
+            # from a brand-new task's ``todo`` status, so this cannot also
+            # block a review/finalize purpose (SA/SD 4) the way the
+            # execution-authorization gate itself could if applied too
+            # broadly; it exists purely so an old runtime that predates
+            # execution_authorization.py entirely still cannot dispatch this
+            # task's first, owner-execution attempt.
+            # command_execution_grant_submit clears this once a genuine grant
+            # is verified and bound.
+            metadata["waiting_for"] = "Human/Ops"
     else:
         phase = os.environ.get("TASK_PHASE", "Unassigned")
         depends_on = parse_csv_env("TASK_DEPENDS_ON")
@@ -4639,6 +4681,8 @@ def command_assign(state: dict[str, Any], args: list[str]) -> bool | None:
         task["owner"] = assignment.new_owner
         task["reviewer"] = assignment.new_reviewer
         task["generation"] = old_generation + 1
+        if _reopen_invalidates_execution_authorization(task):
+            task["waiting_for"] = "Human/Ops"
         if title:
             task["title"] = title
         if summary_zh:
@@ -5163,6 +5207,42 @@ def command_artifact_contract(state: dict[str, Any], args: list[str]) -> None:
     )
 
 
+def _reopen_invalidates_execution_authorization(task: dict[str, Any]) -> bool:
+    """Reset an outstanding privileged grant/reservation back to pending.
+
+    OPS-PRIVILEGED-TASK-EXECUTION-AUTH-001 (SA/SD 2, 6): reopen must not let
+    a previously verified execution grant, or an in-flight reservation,
+    survive into the next attempt -- the reopened task may carry a revised
+    scope, and either way a fresh, independently verified MFA grant is
+    required before it may execute again. Returns whether the task is
+    privileged (by durable source provenance, or by an already-attached
+    policy) so the caller can also restore the old-runtime-recognized
+    ``waiting_for`` fence instead of unconditionally clearing it.
+    """
+
+    existing_record = task.get("execution_authorization")
+    existing_policy = (
+        existing_record.get("policy") if isinstance(existing_record, dict) else None
+    )
+    already_privileged_record = isinstance(existing_policy, dict) and bool(
+        existing_policy.get("requires_execution_authorization")
+    )
+    privileged = execution_authorization.task_privileged_by_source(task) or already_privileged_record
+    if not privileged:
+        return False
+    # Reopen is not source intake authority. Preserve even an invalid policy
+    # as a closed hold; never bless changed scope by deriving a new digest.
+    task["execution_authorization"] = {
+        "state": execution_authorization.STATE_PENDING,
+        "policy": deepcopy(existing_policy),
+        "old_runtime_hold": True,
+        "grant": None,
+        "reserved_run_id": None,
+        "reserved_at": None,
+    }
+    return True
+
+
 def command_reopen(state: dict[str, Any], args: list[str]) -> None:
     if len(args) < 2:
         raise SystemExit("Usage: reopen <task-id> <message>")
@@ -5191,6 +5271,7 @@ def command_reopen(state: dict[str, Any], args: list[str]) -> None:
     task.pop(REVIEW_DECISION_INTENT_KEY, None)
     task.pop(REVIEW_DECISION_INTENT_RECOVERY_KEY, None)
     apply_task_lifecycle_transition(task, "reopen")
+    task_is_privileged = _reopen_invalidates_execution_authorization(task)
     generation = max(1, int(task.get("generation", 1) or 1))
     requeue_basis = {
         "schema_version": REVIEW_REQUEUE_INTENT_SCHEMA_VERSION,
@@ -5217,7 +5298,15 @@ def command_reopen(state: dict[str, Any], args: list[str]) -> None:
     task[REVIEW_REQUEUE_INTENT_KEY] = deepcopy(requeue_intent)
     task["last_update"] = timestamp
     task["next"] = message
-    task.pop("waiting_for", None)
+    if task_is_privileged:
+        # Restore the old-runtime-recognized durable hold (SA/SD 2, 6): the
+        # grant invalidation above means this task is once again
+        # non-executable pending authorization, so an old runtime that
+        # predates execution_authorization.py entirely must still see it as
+        # dispatch-blocked, exactly like at fresh intake.
+        task["waiting_for"] = "Human/Ops"
+    else:
+        task.pop("waiting_for", None)
     # A reviewer rejection returns the work to the owner.  A subsequent
     # handoff must freeze the new deliverable instead of reusing this head.
     task.pop(DELIVERY_BINDING_KEY, None)
@@ -5484,6 +5573,11 @@ def command_blocker(state: dict[str, Any], args: list[str]) -> None:
     timestamp = iso_now()
     apply_task_lifecycle_transition(task, "block")
     task["waiting_for"] = waiting_for
+    authorization = task.get("execution_authorization")
+    if isinstance(authorization, dict):
+        # A genuine blocker owns this wait; an existing authorization record
+        # must not make the shared dispatch predicate ignore it later.
+        authorization["old_runtime_hold"] = False
     task["last_update"] = timestamp
     task["next"] = message
     mark_handoffs_done_for_actor(state, task_id, actor)
@@ -5497,6 +5591,186 @@ def command_blocker(state: dict[str, Any], args: list[str]) -> None:
     }
     state.setdefault("blockers", []).append(blocker)
     append_log({"ts": timestamp, "agent": actor, "type": "blocker", "task_id": task_id, "message": f"Blocked on {waiting_for}: {message}"})
+
+
+def _execution_authorization_record(task: Mapping[str, Any]) -> dict[str, Any]:
+    record = task.get("execution_authorization")
+    if not isinstance(record, dict):
+        raise SystemExit(
+            f"Task {task.get('id')} has no privileged execution-authorization "
+            "policy; this task does not require an execution grant"
+        )
+    policy = record.get("policy")
+    if not isinstance(policy, dict) or not policy.get("requires_execution_authorization"):
+        raise SystemExit(
+            f"Task {task.get('id')} execution policy does not require authorization"
+        )
+    return record
+
+
+def _trusted_execution_mfa_issuers(config: Mapping[str, Any]) -> dict[str, str]:
+    """Return the independently provisioned MFA-issuer public-key trust root.
+
+    Deliberately read from the on-disk ``.orchestrator/config.json`` (via
+    ``load_config()``), never from an environment variable the same CLI
+    invocation could also set: an isolated probe showed a caller supplying
+    both a self-generated "issuer" key through an env var and a grant signed
+    by the matching private key in the same command invocation, which a
+    caller-controlled trust root can never distinguish from a genuine
+    independently issued grant. Binding this to the config file instead
+    means the grant submitter's own shell environment cannot mint its own
+    trust root; only whatever is actually provisioned in the config this
+    process was launched with counts (SA/SD 3).
+    """
+
+    section = config.get("execution_authorization")
+    if not isinstance(section, Mapping):
+        return {}
+    issuers = section.get("mfa_issuer_public_keys")
+    if not isinstance(issuers, Mapping):
+        return {}
+    return {
+        str(key_id): str(public_key)
+        for key_id, public_key in issuers.items()
+        if str(key_id).strip() and str(public_key).strip()
+    }
+
+
+def command_execution_grant_submit(state: dict[str, Any], args: list[str]) -> None:
+    """Human/Ops CLI: submit one independently verified MFA-bound execution grant.
+
+    OPS-PRIVILEGED-TASK-EXECUTION-AUTH-001. The signed grant travels through
+    ``EXECUTION_GRANT_JSON`` (the assertion itself, not a trust root) and is
+    verified against the trusted MFA-issuer public-key set configured at
+    ``execution_authorization.mfa_issuer_public_keys`` in
+    ``.orchestrator/config.json`` -- a distinct, independently provisioned
+    trust root from both the dev-bridge packet-source keys
+    (``BRIDGE_SIGNING_PUBLIC_KEYS_JSON``) and the grant submitter's own
+    environment. A source-only signing key, an unsigned ``mfaVerified``
+    boolean, a claimed operator id, or a trust root the same command
+    invocation also supplied is never accepted here; only a signature
+    verified against the configured issuer trust root counts. Never issues
+    real keys or a signing service.
+    """
+
+    if len(args) < 1:
+        raise SystemExit("Usage: execution-grant-submit <task-id>")
+    task_id = args[0]
+    actor = current_actor()
+    if actor != "Human/Ops":
+        raise SystemExit("Only Human/Ops may submit an execution-authorization grant")
+    task = get_task(state, task_id)
+    if task is None:
+        raise SystemExit(f"Unknown task: {task_id}")
+    record = _execution_authorization_record(task)
+    policy = record["policy"]
+    release_authorization_hold = execution_authorization.is_execution_authorization_hold(task)
+
+    grant = parse_json_env("EXECUTION_GRANT_JSON")
+    if not grant:
+        raise SystemExit("EXECUTION_GRANT_JSON is required")
+    trusted_issuers = _trusted_execution_mfa_issuers(load_config())
+    if not trusted_issuers:
+        raise SystemExit(
+            "No trusted MFA issuer is configured at "
+            "execution_authorization.mfa_issuer_public_keys in "
+            ".orchestrator/config.json; no dev fallback or caller-supplied "
+            "trust root may authorize privileged execution"
+        )
+
+    now = datetime.now(timezone.utc)
+    try:
+        issuer_fingerprint = execution_authorization.verify_execution_grant(
+            grant,
+            policy=policy,
+            task_id=task_id,
+            generation=task.get("generation", 0),
+            trusted_issuers=trusted_issuers,
+            now=now,
+            task=task,
+        )
+        ledger = state.setdefault("execution_authorization_consumed_grants", {})
+        if not isinstance(ledger, dict):
+            raise execution_authorization.ExecutionAuthorizationError(
+                "execution grant replay ledger is invalid"
+            )
+        execution_authorization.consume_grant_nonce(
+            ledger, grant, task_id=task_id, now=now, issuer_fingerprint=issuer_fingerprint,
+        )
+    except execution_authorization.ExecutionAuthorizationError as exc:
+        raise SystemExit(str(exc)) from exc
+
+    task["execution_authorization"] = execution_authorization.build_granted_authorization(
+        policy=policy, grant=grant, task=task
+    )
+    # Release the old-runtime-recognized intake hold (SA/SD 2, 6) now that a
+    # genuine grant is bound. The ongoing execution-authorization gate itself
+    # -- scoped to owner-execution dispatch only -- takes over from here.
+    if release_authorization_hold:
+        task.pop("waiting_for", None)
+    elif task.get("waiting_for"):
+        task["execution_authorization"]["old_runtime_hold"] = False
+    timestamp = iso_now()
+    task["last_update"] = timestamp
+    append_log(
+        {
+            "ts": timestamp,
+            "agent": actor,
+            "type": "execution_grant_submitted",
+            "task_id": task_id,
+            "message": (
+                f"Execution-authorization grant verified and bound for {task_id}; "
+                f"mfa_actor={grant.get('mfa_actor')!r} expires_at={grant.get('expires_at')!r}"
+            ),
+        }
+    )
+
+
+def command_execution_grant_revoke(state: dict[str, Any], args: list[str]) -> None:
+    """Human/Ops CLI: revoke a task's execution-authorization grant.
+
+    Only stops *new* unauthorized effects (dispatch admission will refuse the
+    task again immediately); it never declares an already-running attempt's
+    compensation confirmed on its own (SA/SD 4).
+    """
+
+    if len(args) < 1:
+        raise SystemExit("Usage: execution-grant-revoke <task-id> [reason]")
+    task_id = args[0]
+    reason = args[1] if len(args) > 1 else None
+    actor = current_actor()
+    if actor != "Human/Ops":
+        raise SystemExit("Only Human/Ops may revoke an execution-authorization grant")
+    task = get_task(state, task_id)
+    if task is None:
+        raise SystemExit(f"Unknown task: {task_id}")
+    _execution_authorization_record(task)
+    preserve_unrelated_hold = bool(task.get("waiting_for")) and not execution_authorization.is_execution_authorization_hold(task)
+    now = datetime.now(timezone.utc)
+    try:
+        task["execution_authorization"] = execution_authorization.revoked_execution_authorization(
+            task, actor=actor, now=now, reason=reason
+        )
+    except execution_authorization.ExecutionAuthorizationError as exc:
+        raise SystemExit(str(exc)) from exc
+    # Restore the old-runtime-recognized durable hold (SA/SD 2, 6): a revoked
+    # grant is once again non-executable, so an old runtime that predates
+    # execution_authorization.py entirely must still see this task as
+    # dispatch-blocked, exactly like at fresh intake and after reopen.
+    if not preserve_unrelated_hold:
+        task["waiting_for"] = "Human/Ops"
+    task["execution_authorization"]["old_runtime_hold"] = not preserve_unrelated_hold
+    timestamp = iso_now()
+    task["last_update"] = timestamp
+    append_log(
+        {
+            "ts": timestamp,
+            "agent": actor,
+            "type": "execution_grant_revoked",
+            "task_id": task_id,
+            "message": f"Execution-authorization grant revoked for {task_id}" + (f": {reason}" if reason else ""),
+        }
+    )
 
 
 def _required_reconcile_env(name: str) -> str:
@@ -8664,7 +8938,7 @@ def command_show(state: dict[str, Any], args: list[str]) -> None:
     if len(args) < 1:
         raise SystemExit("Usage: show <task-id>")
     task_id = args[0]
-    resolver = task_resolver(state)
+    resolver = task_resolver(deepcopy(state))
     source = resolver.source(task_id)
     active_task = resolver.get(task_id) if source == "active" else None
     if active_task is not None:
@@ -8673,6 +8947,9 @@ def command_show(state: dict[str, Any], args: list[str]) -> None:
                 {
                     "source": "active",
                     "task": active_task,
+                    "execution_authorization_status": execution_authorization.execution_authorization_status(
+                        active_task, now=datetime.now(timezone.utc)
+                    ),
                 },
                 indent=2,
                 ensure_ascii=False,
@@ -9044,6 +9321,8 @@ def main(argv: list[str]) -> int:
         "archive_reconcile": command_archive_reconcile,
         "archive_correct_review_file": command_archive_correct_review_file,
         "attach_proof_ownership": command_attach_proof_ownership,
+        "execution-grant-submit": command_execution_grant_submit,
+        "execution-grant-revoke": command_execution_grant_revoke,
         "sync": command_sync,
     }
 

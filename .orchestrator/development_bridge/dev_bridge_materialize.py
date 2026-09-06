@@ -58,6 +58,7 @@ from cryptography.exceptions import InvalidSignature
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 
 from common import utc_now as iso_now
+import execution_authorization
 
 # Canonical home of the materialization re-entrancy guard (see module
 # docstring) -- ai_status.py imports this exact instance rather than owning
@@ -286,34 +287,21 @@ def verify_signed_dev_bridge_packet(
     ).strip().lower()
     if work_class not in ai_status.DEV_BRIDGE_WORK_CLASSES:
         raise SystemExit(f"Dev bridge work class is invalid: {work_class!r}")
-    requires_operator_authorization = (
-        work_class not in ai_status.DEV_BRIDGE_FUNCTIONAL_WORK_CLASSES
-    )
-    authorization = packet.get("operator_authorization")
-    operator_id = ""
-    nonce = ""
-    if requires_operator_authorization:
-        if not isinstance(authorization, Mapping):
-            raise SystemExit(
-                "Dev bridge source and operator authorization must be separate"
-            )
-        if authorization.get("capability") != "assistant.canonical.mutate":
-            raise SystemExit("Dev bridge operator capability is invalid")
-        if authorization.get("mfa_verified") is not True:
-            raise SystemExit("Dev bridge operator authorization requires MFA")
-        operator_id = str(authorization.get("operator_id") or "").strip()
-        activation_id = str(
-            authorization.get("control_activation_id") or ""
-        ).strip()
-        nonce = str(authorization.get("nonce") or "").strip()
-        if not operator_id or not activation_id or not nonce:
-            raise SystemExit("Dev bridge operator authorization binding is incomplete")
-        issued = ai_status._parse_utc_timestamp(authorization.get("issued_at"))
-        expires = ai_status._parse_utc_timestamp(authorization.get("expires_at"))
-        if issued is None or expires is None or expires <= issued:
-            raise SystemExit("Dev bridge operator authorization lifetime is invalid")
-        if (expires - issued).total_seconds() > 300 or now < issued:
-            raise SystemExit("Dev bridge operator authorization is not yet valid")
+    # OPS-PRIVILEGED-TASK-EXECUTION-AUTH-001 retired the former MFA-at-intake
+    # rule: a correctly signed security/hosted/live packet may be
+    # materialized without any operator grant.  It becomes a canonical
+    # non-executable pending-authorization record instead
+    # (execution_authorization.pending_authorization_hold, applied by
+    # scripts/ai_status.py's command_assign when it sees a privileged
+    # dev_bridge work_class).  Genuine, independently verified MFA is
+    # enforced later, separately, at actual execution -- never here at
+    # intake.  ``operator_authorization`` on the packet is no longer
+    # consulted for admission; a legacy packet embedding it is accepted the
+    # same way, and that embedded assertion is never treated as an implicit
+    # or perpetual execution grant.  See
+    # docs/04/pantheon_first_release_closure_2026-09-06/EXECUTION_AUTHORIZATION_SA_SD.md
+    # section 2.
+    #
     # Expiry bounds admission at the authenticated BFF boundary.  The signed
     # packet is the durable receipt; a queued packet may drain later without
     # turning supervisor wall-clock latency into an authorization failure.
@@ -345,7 +333,8 @@ def verify_signed_dev_bridge_packet(
             raise SystemExit(
                 f"Dev bridge signed packet task {index} target_repo binding failed"
             )
-    if state is not None and requires_operator_authorization:
+    privileged_work_class = work_class not in ai_status.DEV_BRIDGE_FUNCTIONAL_WORK_CLASSES
+    if state is not None and privileged_work_class:
         try:
             consumed = dev_bridge_replay_ledger(state)
         except ValueError as exc:
@@ -368,14 +357,19 @@ def verify_signed_dev_bridge_packet(
             )
             for consumed_id in ordered[: len(consumed) - 2047]:
                 consumed.pop(consumed_id, None)
-        assertion_id = f"bridge:{batch['packet_id']}:{nonce}"
+        # No genuine operator/MFA nonce exists at intake any more (SA/SD 2):
+        # this is now plain packet-identity replay protection for privileged
+        # classes, keyed by the source's own idempotent packet_id (not the
+        # recomputed signature digest, which legitimately varies with
+        # emitted_at on a resubmitted packet that otherwise reuses the same
+        # packet_id).
+        assertion_id = f"bridge:{batch['packet_id']}"
         if assertion_id in consumed:
-            raise SystemExit("Dev bridge operator authorization was already consumed")
+            raise SystemExit("Dev bridge signed privileged packet was already consumed")
         consumed[assertion_id] = {
-            "nonce": nonce,
+            "packet_digest": batch["packet_digest"],
             "task_id": batch["packet_id"],
             "action": ai_status.DEV_BRIDGE_BATCH_MATERIALIZE_COMMAND,
-            "operator_id": operator_id,
             "consumed_at": iso_now(),
         }
 
@@ -571,6 +565,8 @@ def read_dev_bridge_materialized_batch(
                 expected = {}
             if spec_field == "execution_resources" and spec_field not in signed_spec:
                 expected = []
+            if spec_field == "phase":
+                expected = expected or "Unassigned"
             if spec_field == "target_repo" and spec_field not in signed_spec:
                 expected = task.get("target_repo")
             if spec_field in {"depends_on", "artifacts", "acceptance", "execution_resources"}:
@@ -580,6 +576,13 @@ def read_dev_bridge_materialized_batch(
                 raise SystemExit(
                     "Dev bridge materialize readback immutable task-spec mismatch: "
                     f"{task_id}.{spec_field}"
+                )
+        if execution_authorization.is_privileged_work_class(expected_bridge.get("work_class")):
+            authorization = task.get("execution_authorization")
+            policy = authorization.get("policy") if isinstance(authorization, Mapping) else None
+            if not execution_authorization.execution_policy_matches_task(task, policy=policy):
+                raise SystemExit(
+                    f"Dev bridge materialize readback execution-policy mismatch: {task_id}"
                 )
         results.append(
             {

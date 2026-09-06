@@ -120,6 +120,78 @@ class DispatchAdmissionTests(unittest.TestCase):
         self.assertEqual(decision.endpoint_id, "codex-1")
         self.assertEqual(decision.account_id, "codex-account")
 
+    def test_unauthorized_privileged_task_is_denied_before_capacity(self) -> None:
+        decision = evaluate_dispatch_intent(
+            intent(execution_authorized=False),
+            lane(endpoint()),
+            healthy_snapshot(global_reserved=0),
+        )
+
+        self.assertFalse(decision.eligible)
+        self.assertEqual(
+            decision.reason, DispatchBlockReason.EXECUTION_AUTHORIZATION_REQUIRED
+        )
+        self.assertEqual(decision.task_reason, DispatchReason.OWNED_READY)
+
+    def test_unauthorized_privileged_task_review_dispatch_is_unaffected(self) -> None:
+        # OPS-PRIVILEGED-TASK-EXECUTION-AUTH-001 (Codex2 exact-head review
+        # finding 7, 2026-09-06): the execution-authorization gate is scoped
+        # to owner-execution purposes only. A reviewer's read-only dispatch
+        # of a pending/expired/revoked privileged task must still work --
+        # review never acquires or clears the mutation grant.
+        decision = evaluate_dispatch_intent(
+            intent(
+                status="review",
+                owner="Codex",
+                reviewer="Claude",
+                execution_authorized=False,
+            ),
+            lane(endpoint(), identity="Claude"),
+            healthy_snapshot(),
+        )
+
+        self.assertTrue(decision.eligible)
+        self.assertEqual(decision.task_reason, DispatchReason.REVIEW_READY)
+
+    def test_unauthorized_privileged_task_finalize_dispatch_is_unaffected(self) -> None:
+        # Same as above for owner closeout/finalize dispatch of an
+        # already-approved task: bookkeeping only, no new privileged effect.
+        decision = evaluate_dispatch_intent(
+            intent(
+                status="review_approved",
+                owner="Codex",
+                reviewer="Claude",
+                execution_authorized=False,
+            ),
+            lane(endpoint(), identity="Codex"),
+            healthy_snapshot(),
+        )
+
+        self.assertTrue(decision.eligible)
+        self.assertEqual(decision.task_reason, DispatchReason.OWNED_FINALIZE)
+
+    def test_unauthorized_privileged_task_in_progress_dispatch_is_denied(self) -> None:
+        decision = evaluate_dispatch_intent(
+            intent(status="in_progress", execution_authorized=False),
+            lane(endpoint()),
+            healthy_snapshot(),
+        )
+
+        self.assertFalse(decision.eligible)
+        self.assertEqual(
+            decision.reason, DispatchBlockReason.EXECUTION_AUTHORIZATION_REQUIRED
+        )
+        self.assertEqual(decision.task_reason, DispatchReason.OWNED_IN_PROGRESS)
+
+    def test_authorized_privileged_task_dispatches_normally(self) -> None:
+        decision = evaluate_dispatch_intent(
+            intent(execution_authorized=True),
+            lane(endpoint()),
+            healthy_snapshot(),
+        )
+
+        self.assertTrue(decision.eligible)
+
     def test_review_uses_reviewer_assignment_identity(self) -> None:
         decision = evaluate_dispatch_intent(
             intent(status="review", owner="Codex", reviewer="Claude"),

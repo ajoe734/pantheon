@@ -170,6 +170,7 @@ from watch_events import (
 
 # Supervisor Authority V2 modules.
 from rewrite import concurrency as rewrite_concurrency
+import execution_authorization
 from rewrite import dispatch_admission as rewrite_dispatch_admission
 from rewrite import integration_receipt
 from rewrite import provider_health as rewrite_provider_health
@@ -3062,6 +3063,75 @@ class StaleDispatchBeforeLaunch(RuntimeError):
     """The canonical task assignment changed before adapter process spawn."""
 
 
+class ExecutionAuthorizationSpendFailed(RuntimeError):
+    """A privileged task's grant could not be reserved for this exact launch."""
+
+
+def reserve_execution_authorization_for_launch(
+    config: dict[str, Any],
+    task_id: str,
+    *,
+    run_id: str,
+) -> None:
+    """Atomically spend one privileged task's execution grant for one launch.
+
+    OPS-PRIVILEGED-TASK-EXECUTION-AUTH-001 (SA/SD 4): dispatch admission
+    already refused to build a launch request unless
+    ``execution_authorization.is_execution_authorized`` was ``True`` at
+    snapshot time, but that snapshot is not the authoritative claim/lease
+    boundary -- two concurrent launch attempts could otherwise both observe
+    ``STATE_GRANTED`` and both proceed. This function is that boundary: it
+    reloads canonical state under the same exclusive task-state lock every
+    other canonical mutation uses, re-verifies authorization against the
+    freshly loaded task, and -- only if it is still ``STATE_GRANTED`` --
+    commits the transition to ``STATE_RESERVED`` bound to this exact
+    ``run_id`` in the same write. A task with no execution-authorization
+    subrecord (the overwhelmingly common, non-privileged case) is a no-op:
+    ordinary functional/paper/read_only/ci/reconcile_only dispatch never
+    takes this lock path at all costs beyond one dict lookup.
+    """
+
+    status_path = config_path(config, "status_file")
+    with canonical_task_state_lock_file(status_path, shared=False, nonblocking=False):
+        status = load_status(config)
+        task = task_index_from_status(config, status).get(task_id)
+        if task is None:
+            # Cannot independently prove this dispatched task is
+            # non-privileged when the authoritative reload cannot even find
+            # it. Fail closed rather than treating an unresolvable task the
+            # same as an ordinary functional one (SA/SD 4, 7).
+            raise ExecutionAuthorizationSpendFailed(
+                f"cannot verify execution-authorization policy for missing task {task_id}"
+            )
+        privileged_by_source = execution_authorization.task_privileged_by_source(task)
+        record = task.get("execution_authorization")
+        policy = record.get("policy") if isinstance(record, dict) else None
+        policy_requires = isinstance(policy, dict) and bool(
+            policy.get("requires_execution_authorization")
+        )
+        if not privileged_by_source and not policy_requires:
+            return
+        if not policy_requires:
+            # Ground truth (the verified dev-bridge packet provenance) says
+            # this task is privileged, but its execution-authorization
+            # subrecord/policy is missing, corrupt, or downgraded. Never
+            # silently relabel that as an ordinary, unauthorized-by-default
+            # task -- refuse the launch instead (SA/SD 2, 7).
+            raise ExecutionAuthorizationSpendFailed(
+                f"task {task_id} is privileged by source provenance but has no "
+                "valid execution-authorization policy; refusing to reserve"
+            )
+        now = datetime.now(timezone.utc)
+        try:
+            updated = execution_authorization.reserve_execution_authorization(
+                task, run_id=run_id, now=now
+            )
+        except execution_authorization.ExecutionAuthorizationError as exc:
+            raise ExecutionAuthorizationSpendFailed(str(exc)) from exc
+        task["execution_authorization"] = updated
+        write_status(config, status, source="supervisor-execution-authorization-reserve")
+
+
 def start_worker_for_request(
     config: dict[str, Any],
     state: dict[str, Any],
@@ -3075,6 +3145,7 @@ def start_worker_for_request(
     delivery_mode_override: str | None = None,
     activity_type: str = "worker_started",
     activity_message: str | None = None,
+    latest_task_map: Mapping[str, dict[str, Any]] | None = None,
 ) -> tuple[bool, str | None, dict[str, Any] | None]:
     agent = agent_config_for(config, request.agent_id)
     adapter_name = delivery_mode_override or str(agent.get("adapter") or "")
@@ -3091,6 +3162,14 @@ def start_worker_for_request(
     issued_command_env = status_command_runtime_env(config)
     issued_command_runtime = status_command_runtime_record_from_env(issued_command_env)
     request.metadata["status_command_runtime"] = issued_command_runtime
+    request.metadata["task_state_identity"] = json.loads(
+        issued_command_env.get("PANTHEON_CANONICAL_TASK_STATE_IDENTITY_JSON", "{}")
+    )
+    if request.reason in (REASON_OWNED_IN_PROGRESS, REASON_OWNED_READY):
+        request.metadata["execution_authorization_run_id"] = (
+            f"{event_id_for_log or queue_event_id or ''}"
+            f"-attempt-{max(1, int(attempt_count))}"
+        )
     _persist_runtime_phase_launch_intent(
         config,
         state,
@@ -3103,6 +3182,19 @@ def start_worker_for_request(
         activity_type=activity_type,
         activity_message=activity_message,
     )
+    # Always reload at the spend boundary. A stale/corrupted queue snapshot
+    # cannot classify privileged work as ordinary to skip this check.
+    if request.reason in (REASON_OWNED_IN_PROGRESS, REASON_OWNED_READY):
+        execution_authorization_run_id = request.metadata["execution_authorization_run_id"]
+        try:
+            reserve_execution_authorization_for_launch(
+                config, str(request.task_id or ""),
+                run_id=execution_authorization_run_id,
+            )
+        except BaseException:
+            _discard_unlaunched_runtime_phase_intent(config, state)
+            raise
+        request.metadata["execution_authorization_run_id"] = execution_authorization_run_id
     delivery_invoked = False
     try:
         # Keep the canonical assignment read lock through process creation.
@@ -3122,6 +3214,16 @@ def start_worker_for_request(
             )
             if stale_message:
                 raise StaleDispatchBeforeLaunch(stale_message)
+            if request.reason in (REASON_OWNED_IN_PROGRESS, REASON_OWNED_READY):
+                current_task = latest_task_map.get(str(request.task_id or ""))
+                if current_task is None or not execution_authorization.reservation_is_current(
+                    current_task,
+                    run_id=request.metadata.get("execution_authorization_run_id"),
+                    now=datetime.now(timezone.utc),
+                ):
+                    raise ExecutionAuthorizationSpendFailed(
+                        "execution authorization changed between reservation and launch"
+                    )
             delivery_invoked = True
             result = adapter.deliver(request)
     except BaseException:
@@ -3232,6 +3334,9 @@ def start_worker_for_request(
         "provider_usage": None,
         "commit_progress_count": 0,
         "status_root": request.metadata.get("status_root"),
+        "task_state_identity": json.loads(
+            issued_command_env.get("PANTHEON_CANONICAL_TASK_STATE_IDENTITY_JSON", "{}")
+        ),
         "status_command_runtime": issued_command_runtime,
         "pid": result_pid,
         "pid_start_ticks": result_pid_start_ticks,
@@ -3652,11 +3757,36 @@ def process_queue(
                 queue_event_id=event_id,
                 attempt_count=attempt_count,
                 event_id_for_log=event_id,
+                latest_task_map=latest_task_map,
             )
         except StaleDispatchBeforeLaunch as exc:
             record["status"] = "completed"
             record["processed_at"] = utc_now()
             record["skip_reason"] = "task_generation_changed_before_launch"
+            record["error"] = str(exc)
+            write_activity_log(
+                config,
+                {
+                    "type": "wake_skipped",
+                    "task_id": event.get("task_id"),
+                    "target_agent": event.get("target_display_name")
+                    or event.get("target_agent"),
+                    "message": str(exc),
+                    "queue_event_id": event_id,
+                    "dispatch_reason": event.get("reason"),
+                },
+            )
+            changed = True
+            continue
+        except ExecutionAuthorizationSpendFailed as exc:
+            # The admission snapshot said this privileged task was granted,
+            # but the exact claim/lease boundary found it already reserved,
+            # expired, revoked, or reassigned since that snapshot was taken.
+            # Skip like any other late-eligibility change; a future cycle
+            # re-evaluates admission from fresh canonical state.
+            record["status"] = "completed"
+            record["processed_at"] = utc_now()
+            record["skip_reason"] = "execution_authorization_required"
             record["error"] = str(exc)
             write_activity_log(
                 config,
@@ -6684,7 +6814,7 @@ def _proc_worker_runner_launch_marker(
                 datetime.fromtimestamp(process_started_epoch, tz=timezone.utc)
             ),
             "process_started_epoch_seconds": process_started_epoch,
-            "command": [],
+            "command": argv[argv.index("--") + 1:] if "--" in argv else [],
             "launch_recovered_from": "proc_environ",
         },
         status_path,
@@ -6836,6 +6966,7 @@ def _worker_record_from_runtime_launch_marker(
         "commit_progress_count": 0,
         "status_root": metadata.get("status_root"),
         "status_command_runtime": metadata.get("status_command_runtime"),
+        "task_state_identity": deepcopy(metadata.get("task_state_identity")),
         "pid": pid,
         "pid_start_ticks": pid_start_ticks,
         "process_generation": process_generation,
@@ -11599,116 +11730,6 @@ def persist_review_decision_intent_recovery_receipt(
     return sync_status_pipeline(config)
 
 
-def _migrate_legacy_review_intent_collision_locked(
-    config: dict[str, Any],
-    *,
-    task_id: str,
-    prior_task: Mapping[str, Any],
-    expected_digest: str,
-) -> bool:
-    """Restore one exact task state from journal history, resolving any colliding generic receipt."""
-
-    status = load_status(config)
-    task = task_index_from_status(config, status).get(task_id)
-    if task is None:
-        return False
-    intent = task.get("review_decision_intent")
-    if not isinstance(intent, Mapping):
-        return False
-    if str(intent.get("task_digest") or "").strip() != expected_digest:
-        return False
-
-    restored_task = deepcopy(dict(prior_task))
-    restored_task.pop("worker_recovery", None)
-    restored_task.pop(REVIEW_INTENT_RECOVERY_TASK_KEY, None)
-    restored_task["review_decision_intent"] = deepcopy(dict(intent))
-    if review_intent_recovery_task_digest(restored_task) != expected_digest:
-        return False
-
-    tasks = status.get("tasks", []) or []
-    for i, item in enumerate(tasks):
-        if str(item.get("id") or "") == task_id:
-            tasks[i] = restored_task
-            break
-
-    receipts = status.get(WORKER_RECOVERY_RECEIPTS_KEY)
-    if isinstance(receipts, dict):
-        timestamp = utc_now()
-        for receipt_id, rec in list(receipts.items()):
-            if isinstance(rec, dict) and str(rec.get("task_id") or "") == task_id:
-                if str(rec.get("status") or "") in {"pending", "held"}:
-                    rec["status"] = "resolved"
-                    rec["resolved_at"] = timestamp
-                    rec["resolved_reason"] = (
-                        "Resolved by review decision intent legacy collision migration "
-                        f"from authoritative journal history (restored digest {expected_digest})."
-                    )
-
-    write_status(config, status, source="supervisor-review-intent-collision-migration")
-    return True
-
-
-def reconcile_legacy_review_decision_intent_collision(
-    config: dict[str, Any],
-    state: dict[str, Any],
-    task_id: str,
-    intent: Mapping[str, Any],
-) -> bool:
-    """Migrate a task row that suffered a generic worker recovery collision while a review intent was frozen."""
-
-    expected_digest = str(intent.get("task_digest") or "").strip()
-    if not expected_digest:
-        return False
-
-    event_log = None
-    try:
-        runtime_env = task_state_store_runtime_env(config)
-        event_log = runtime_env.get(TASK_STATE_EVENT_LOG_ENV)
-    except Exception:
-        pass
-    if not event_log:
-        store_config = config.get("task_state_store") or {}
-        event_log = store_config.get("event_log")
-    if not event_log:
-        return False
-
-    prior_task = rewrite_task_state_store.find_exact_prior_task_state_from_journal(
-        event_log,
-        task_id,
-        expected_digest,
-    )
-    if prior_task is None:
-        return False
-
-    status_path = config_path(config, "status_file")
-    with canonical_task_state_lock_file(status_path, shared=False, nonblocking=False):
-        applied = _migrate_legacy_review_intent_collision_locked(
-            config,
-            task_id=task_id,
-            prior_task=prior_task,
-            expected_digest=expected_digest,
-        )
-    if not applied:
-        return False
-
-    write_activity_log(
-        config,
-        {
-            "type": "review_decision_intent_collision_migrated",
-            "task_id": task_id,
-            "nonce": intent.get("nonce"),
-            "actor": intent.get("actor"),
-            "command": intent.get("command"),
-            "task_digest": expected_digest,
-            "message": (
-                f"Supervisor migrated legacy review intent collision on {task_id} "
-                f"from authoritative journal history; restored exact prior task digest {expected_digest}."
-            ),
-        },
-    )
-    return sync_status_pipeline(config)
-
-
 def reconcile_review_decision_intent_lease_recovery(
     config: dict[str, Any],
     state: dict[str, Any],
@@ -11742,19 +11763,14 @@ def reconcile_review_decision_intent_lease_recovery(
 
         expected_digest = str(intent.get("task_digest") or "").strip()
         current_digest = review_intent_recovery_task_digest(task)
-        if expected_digest and current_digest != expected_digest:
-            if reconcile_legacy_review_decision_intent_collision(
-                config, state, task_id, intent
-            ):
-                changed = True
-                status = load_status(config)
-                task = task_index_from_status(config, status).get(task_id)
-                if task is None:
-                    continue
-                current_digest = review_intent_recovery_task_digest(task)
-            else:
-                continue
-
+        # The legacy generic worker-recovery collision migration path that
+        # used to run here (reconcile_legacy_review_decision_intent_collision)
+        # has been retired: no current task row exercises it, and it was a
+        # narrow one-time journal replay for a bug class the current
+        # review-decision-intent CAS design no longer produces. A digest
+        # mismatch is now always treated as a non-recoverable lease -- the
+        # supervisor never rewrites a task row to compensate for a stale
+        # intent digest.
         if current_digest != expected_digest:
             continue
 

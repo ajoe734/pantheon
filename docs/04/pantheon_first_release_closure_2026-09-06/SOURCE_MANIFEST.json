@@ -106,5 +106,13 @@
         {"path": "docs/04/pantheon_first_release_closure_2026-09-06/SOURCE_MANIFEST.json", "note": "this file"}
       ]
     }
-  ]
+  ],
+  "execution_authorization_supplement": {
+    "task_id": "OPS-PRIVILEGED-TASK-EXECUTION-AUTH-001",
+    "source": "/tmp/pantheon-execution-auth-20260906.2Y96ee/SA_SD.md",
+    "path": "docs/04/pantheon_first_release_closure_2026-09-06/EXECUTION_AUTHORIZATION_SA_SD.md",
+    "sha256": "dde7dfc27ca02bf5d8920c9e176d2d543904540a5103cf0c756b0d7b73372e66",
+    "classification": "operator_approved_execution_authorization_plan",
+    "note": "Exact immutable source bytes; implementation commentary is in the local tooling runbook. Original DOC task evidence and historical source entries remain unchanged."
+  }
 }

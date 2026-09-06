@@ -21,6 +21,117 @@ def _init_repo(path: Path) -> None:
 
 
 import shutil
+import time
+from copy import deepcopy
+from datetime import datetime, timedelta, timezone
+
+from common import canonical_task_state_identity_for_paths, status_command_runtime_record_from_env
+from rewrite.task_state_store import append_state_commit, load_snapshot
+
+
+def _run_fixture_worker(argv, *, env, timeout=20, task=None, mutate_receipt=None,
+                        mutate_journal=None, during_run=None, local_stub=False,
+                        publish_receipt=True, mutate_store=None, receipt_in_phase=False,
+                        revoke_during_sandbox=False,
+                        **_kwargs):
+    """Publish an isolated supervisor receipt for one actual wrapper process.
+
+    The local stub replaces only bubblewrap, retaining the real entry barrier,
+    authoritative journal, child Popen, heartbeat and termination paths.
+    """
+    env = dict(env)
+    central = Path(env["PANTHEON_STATUS_ROOT"])
+    for key in ("PANTHEON_TASK_STATE_STORE_MODE", "PANTHEON_TASK_STATE_EVENT_LOG",
+                "PANTHEON_CANONICAL_TASK_STATE_IDENTITY_JSON"):
+        env.pop(key, None)
+    journal = central.parent / "test-task-store" / "events.jsonl"
+    projected = json.loads((central / "ai-status.json").read_text())
+    if task is None:
+        task = deepcopy((projected.get("tasks") or [{"id": "RUNNER-FIXTURE", "owner": "Codex",
+                                                   "reviewer": "Claude", "status": "in_progress"}])[0])
+        task.setdefault("generation", 1)
+        task.setdefault("owner", "Codex")
+        task.setdefault("reviewer", "Claude")
+        task.setdefault("status", "in_progress")
+    state = {"tasks": [deepcopy(task)], "agents": [], "handoffs": [], "blockers": []}
+    append_state_commit(journal, state, source="isolated-worker-test-fixture")
+    identity = canonical_task_state_identity_for_paths(status_root=central, event_log=journal)
+    env.update({"PANTHEON_TASK_STATE_STORE_MODE": "authoritative",
+                "PANTHEON_TASK_STATE_EVENT_LOG": str(journal),
+                "PANTHEON_CANONICAL_TASK_STATE_IDENTITY_JSON": json.dumps(identity)})
+    command = argv[argv.index("--") + 1:]
+    run_id = argv[argv.index("--run-id") + 1]
+    heartbeat = argv[argv.index("--heartbeat-path") + 1]
+    runner_status = argv[argv.index("--status-path") + 1]
+    actual_argv = argv
+    if local_stub:
+        harness = (
+            "import sys; sys.path.insert(0, sys.argv[1]); import worker_runner as wr\n"
+            "def sandbox(command, **kwargs):\n"
+            + ("    import os\n"
+               "    from rewrite.task_state_store import load_snapshot, append_state_commit\n"
+               "    journal=os.environ['PANTHEON_TASK_STATE_EVENT_LOG']\n"
+               "    state=load_snapshot(journal)['state']\n"
+               "    state['tasks'][0]['execution_authorization']['state']='revoked'\n"
+               "    append_state_commit(journal,state,source='isolated-pre-Popen-revocation')\n"
+               if revoke_during_sandbox else "")
+            + "    return command\n"
+            "wr.bind_worker_sandbox=sandbox\n"
+            "sys.exit(wr.main(sys.argv[2:]))"
+        )
+        actual_argv = [sys.executable, "-c", harness, str(Path(_P).resolve().parent), *argv[2:]]
+    proc = subprocess.Popen(actual_argv, env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    try:
+        stat_payload = Path(f"/proc/{proc.pid}/stat").read_text()
+        ticks = int(stat_payload[stat_payload.rfind(")") + 2:].split()[19])
+        worker = {
+            "run_id": run_id, "task_id": task["id"], "queue_event_id": "fixture-dispatch",
+            "pid": proc.pid, "pid_start_ticks": ticks,
+            "process_generation": wr.worker_process_generation_id(
+                task_id=task["id"], worker_run_id=run_id, queue_event_id="fixture-dispatch",
+                pid=proc.pid, pid_start_ticks=ticks),
+            "status": "running", "lease_expires_at": (datetime.now(timezone.utc) + timedelta(minutes=2)).isoformat(),
+            "command": command, "workspace_path": env.get("PANTHEON_WORKTREE_ROOT"),
+            "workspace_source_root": str(central.parent / "shared-pantheon")
+            if (central.parent / "shared-pantheon").exists() else str(central),
+            "heartbeat_path": heartbeat, "runner_status_path": runner_status,
+            "status_command_runtime": status_command_runtime_record_from_env(env),
+            "task_state_identity": identity,
+            "task_generation": wr.canonical_task_generation(task), "agent_id": task["owner"].lower(),
+            "logical_agent_id": task["owner"].lower(),
+            "request_snapshot": {"task_id": task["id"], "task_generation": wr.canonical_task_generation(task),
+                                 "agent_id": task["owner"].lower(), "reason": "owned_in_progress_dispatch",
+                                 "metadata": {"execution_authorization_run_id": "fixture-attempt-1"}},
+        }
+        if mutate_receipt:
+            mutate_receipt(worker)
+        if mutate_journal:
+            mutate_journal(state)
+            append_state_commit(journal, state, source="isolated-authoritative-mutation")
+        if mutate_store:
+            mutate_store(journal)
+        if publish_receipt:
+            runtime_state = ({"supervisor": {"runtime_phase_reservations": {
+                "delivery": {"launch_receipt": {"worker": worker}}}}}
+                if receipt_in_phase else {"workers": {run_id: worker}})
+            wr.write_json(central / ".orchestrator" / "state.json", runtime_state)
+        if during_run:
+            during_run(proc, journal, state)
+        stdout, stderr = proc.communicate(timeout=timeout)
+        return subprocess.CompletedProcess(argv, proc.returncode, stdout, stderr)
+    finally:
+        if proc.poll() is None:
+            proc.terminate()
+            try:
+                proc.communicate(timeout=8)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+                proc.communicate(timeout=5)
+
+
+_CLEANUP_BINDING = {"agent": "codex", "task_id": "CLEANUP-FIXTURE", "role": "owner",
+                    "owner": "Codex", "reviewer": "Claude", "authorization_run_id": "",
+                    "read_only_worktree": False, "source_readonly_roots": []}
 
 def _probe_bwrap() -> str | None:
     bwrap_path = shutil.which("bwrap")
@@ -277,7 +388,7 @@ class TestCoordinationRootValidation(unittest.TestCase):
                 }
             )
             env.update(_command_runtime_env(command_root))
-            proc = subprocess.run(
+            proc = _run_fixture_worker(
                 [
                     sys.executable,
                     _P,
@@ -365,7 +476,7 @@ class TestCoordinationRootValidation(unittest.TestCase):
                 "sys.exit(0 if denied == 2 and guarded.read_text() == 'guarded = True\\n' else 41)"
             )
 
-            proc = subprocess.run(
+            proc = _run_fixture_worker(
                 [
                     sys.executable,
                     _P,
@@ -439,7 +550,7 @@ class TestCoordinationRootValidation(unittest.TestCase):
             )
             env.update(_command_runtime_env(command_root))
 
-            proc = subprocess.run(
+            proc = _run_fixture_worker(
                 [
                     sys.executable,
                     _P,
@@ -523,7 +634,7 @@ class TestCoordinationRootValidation(unittest.TestCase):
                 }
             )
             env.update(_command_runtime_env(command_root))
-            proc = subprocess.run(
+            proc = _run_fixture_worker(
                 [
                     sys.executable,
                     _P,
@@ -584,7 +695,7 @@ class TestCoordinationRootValidation(unittest.TestCase):
             )
             env.update(_command_runtime_env(command_root))
             # Run a failing command (exit code 1)
-            proc = subprocess.run(
+            proc = _run_fixture_worker(
                 [
                     sys.executable,
                     _P,
@@ -642,7 +753,7 @@ class TestCoordinationRootValidation(unittest.TestCase):
 
             orig_cwd = os.getcwd()
             try:
-                with mock.patch.object(wr, "_git_toplevel", return_value=central):
+                with mock.patch.object(wr, "_git_toplevel", return_value=central), mock.patch.object(wr, "validate_worker_entry_binding", return_value=_CLEANUP_BINDING):
                     with mock.patch.object(wr, "validate_status_command_runtime", return_value={"command_root": str(command_root)}):
                         with mock.patch("subprocess.Popen", return_value=mock_child):
                             with mock.patch("sys.argv", test_args):
@@ -688,7 +799,7 @@ class TestCoordinationRootValidation(unittest.TestCase):
 
             orig_cwd = os.getcwd()
             try:
-                with mock.patch.object(wr, "_git_toplevel", return_value=central):
+                with mock.patch.object(wr, "_git_toplevel", return_value=central), mock.patch.object(wr, "validate_worker_entry_binding", return_value=_CLEANUP_BINDING):
                     with mock.patch.object(wr, "validate_status_command_runtime", return_value={"command_root": str(command_root)}):
                         with mock.patch("subprocess.Popen", return_value=mock_child):
                             with mock.patch("sys.argv", test_args):
@@ -747,7 +858,7 @@ class TestCoordinationRootValidation(unittest.TestCase):
 
             orig_cwd = os.getcwd()
             try:
-                with mock.patch.object(wr, "_git_toplevel", return_value=central):
+                with mock.patch.object(wr, "_git_toplevel", return_value=central), mock.patch.object(wr, "validate_worker_entry_binding", return_value=_CLEANUP_BINDING):
                     with mock.patch.object(wr, "validate_status_command_runtime", return_value={"command_root": str(command_root)}):
                         with mock.patch("subprocess.Popen", return_value=mock_child):
                             with mock.patch("sys.argv", test_args):
@@ -849,7 +960,7 @@ class TestCoordinationRootValidation(unittest.TestCase):
                 "--status-path", str(status),
                 "--", "python", "-c", "pass"
             ]
-            with mock.patch.object(wr, "_git_toplevel", return_value=central):
+            with mock.patch.object(wr, "_git_toplevel", return_value=central), mock.patch.object(wr, "validate_worker_entry_binding", return_value=_CLEANUP_BINDING):
                 with mock.patch.object(wr, "validate_status_command_runtime", return_value={"command_root": str(central)}):
                     with mock.patch("sys.argv", test_args):
                         with mock.patch.dict(os.environ, env, clear=True):
@@ -1343,7 +1454,7 @@ class TestCrossRepoLeasedWorktreeWriteBoundary(unittest.TestCase):
                 "sys.exit(0 if mutation_prevented else 42)\n"
             )
 
-            proc = subprocess.run(
+            proc = _run_fixture_worker(
                 [
                     sys.executable,
                     _P,
@@ -1426,7 +1537,7 @@ class TestCrossRepoLeasedWorktreeWriteBoundary(unittest.TestCase):
                 "sys.exit(0 if denied == 2 else 43)\n"
             )
 
-            proc = subprocess.run(
+            proc = _run_fixture_worker(
                 [
                     sys.executable,
                     _P,
@@ -1507,7 +1618,7 @@ class TestCrossRepoLeasedWorktreeWriteBoundary(unittest.TestCase):
                 "sys.exit(0 if denied == 2 else 44)\n"
             )
 
-            proc = subprocess.run(
+            proc = _run_fixture_worker(
                 [
                     sys.executable,
                     _P,
@@ -1602,7 +1713,7 @@ class TestCrossRepoLeasedWorktreeWriteBoundary(unittest.TestCase):
                 "sys.exit(0)\n"
             )
 
-            proc = subprocess.run(
+            proc = _run_fixture_worker(
                 [
                     sys.executable,
                     _P,
@@ -1663,7 +1774,7 @@ class TestCrossRepoLeasedWorktreeWriteBoundary(unittest.TestCase):
             })
             env.update(_command_runtime_env(command_root))
 
-            proc = subprocess.run(
+            proc = _run_fixture_worker(
                 [
                     sys.executable,
                     _P,
@@ -1688,6 +1799,228 @@ class TestCrossRepoLeasedWorktreeWriteBoundary(unittest.TestCase):
 
             self.assertNotEqual(proc.returncode, 0, proc.stderr + proc.stdout)
             self.assertEqual(source.read_text(encoding="utf-8"), "API = 1\n")
+
+
+class TestCanonicalWorkerEntryProcess(unittest.TestCase):
+    """Real local wrapper/provider processes; no bubblewrap-dependent skips."""
+
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory(prefix="worker-entry-process-")
+        self.addCleanup(self.temp.cleanup)
+        self.root = Path(self.temp.name)
+        self.central = self.root / "central"
+        self.command_root = self.root / "command-runtime"
+        self.workspace = self.root / "task-worktree"
+        for root in (self.central, self.command_root, self.workspace):
+            _init_repo(root)
+        _write_status(self.central)
+        self.marker = self.workspace / "provider-effect"
+        self.heartbeat = self.central / ".orchestrator/worker-runtime/heartbeats/run.json"
+        self.runner_status = self.central / ".orchestrator/worker-runtime/status/run.json"
+        self.env = {**os.environ, **_command_runtime_env(self.command_root),
+                    "PANTHEON_STATUS_ROOT": str(self.central),
+                    "PANTHEON_WORKTREE_ROOT": str(self.workspace),
+                    "ORCH_WORKSPACE_PATH": str(self.workspace)}
+        from test_execution_authorization import ExecutionAuthorizationTestCase
+        fixture = ExecutionAuthorizationTestCase()
+        fixture.setUp()
+        fixture.now = datetime.now(timezone.utc)
+        self.task = fixture._granted_task()
+        self.task["generation"] = 1
+        self.task["status"] = "in_progress"
+        grant = fixture._grant(generation=1)
+        # Exercise a genuinely verified isolated synthetic issuer assertion.
+        wr.execution_authorization.verify_execution_grant(
+            grant, policy=fixture.policy, task_id=self.task["id"],
+            generation=self.task["generation"], trusted_issuers=fixture.trusted_issuers,
+            now=fixture.now)
+        self.task["execution_authorization"] = wr.execution_authorization.build_granted_authorization(
+            policy=fixture.policy, grant=grant, task=self.task)
+        self.task["execution_authorization"] = wr.execution_authorization.reserve_execution_authorization(
+            self.task, run_id="fixture-attempt-1", now=fixture.now)
+
+    def run_worker(self, *, task=None, code=None, **kwargs):
+        command = [sys.executable, "-c", code or (
+            "from pathlib import Path; Path('provider-effect').write_text('authorized fixture')"
+        )]
+        argv = [sys.executable, _P, "--run-id", "codex-20260906T000000Z-fixture",
+                "--heartbeat-path", str(self.heartbeat), "--status-path", str(self.runner_status),
+                "--heartbeat-interval-seconds", "1", "--", *command]
+        return _run_fixture_worker(argv, env=self.env, task=task or self.task,
+                                   local_stub=kwargs.pop("local_stub", True), **kwargs)
+
+    def assert_denied(self, proc, reason):
+        self.assertNotEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        self.assertIn(reason, proc.stderr)
+        self.assertFalse(self.marker.exists(), "unauthorized provider child produced an effect")
+        self.assertFalse(self.heartbeat.exists(), "entry published a starting marker before authorization")
+        self.assertFalse(self.runner_status.exists(), "entry published status before authorization")
+
+    def test_exact_canonical_receipt_and_reservation_launch_once(self):
+        proc = self.run_worker()
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertTrue(self.marker.exists())
+        status = json.loads(self.runner_status.read_text())
+        # Codex2's provider run-id happens to start with "codex"; it is not identity.
+        self.assertEqual(status["agent"], "codex2")
+        self.assertEqual(status["task_id"], self.task["id"])
+        self.assertEqual(status["role"], "owner")
+
+    def test_ordinary_functional_task_launches_without_authorization_record(self):
+        task = {"id": "FUNCTIONAL", "owner": "Codex", "reviewer": "Codex2",
+                "generation": 1, "status": "in_progress"}
+        proc = self.run_worker(task=task)
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertTrue(self.marker.exists())
+
+    def test_legacy_functional_task_without_generation_uses_canonical_one(self):
+        task = {"id": "LEGACY-FUNCTIONAL", "owner": "Codex", "reviewer": "Codex2",
+                "status": "in_progress"}
+        proc = self.run_worker(task=task)
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertTrue(self.marker.exists())
+
+    def test_explicit_malformed_generation_has_zero_launch(self):
+        task = {"id": "MALFORMED-GENERATION", "owner": "Codex", "reviewer": "Codex2",
+                "status": "in_progress", "generation": "1"}
+        self.assert_denied(self.run_worker(task=task), "generation or dispatch identity mismatch")
+
+    def test_durable_phase_launch_receipt_authorizes_exact_process(self):
+        proc = self.run_worker(receipt_in_phase=True)
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertTrue(self.marker.exists())
+
+    def test_direct_runner_without_canonical_receipt_has_zero_launch(self):
+        self.assert_denied(self.run_worker(publish_receipt=False), "launch receipt is missing")
+
+    def test_process_identity_replay_has_zero_launch(self):
+        self.assert_denied(self.run_worker(mutate_receipt=lambda worker: worker.update(pid=1)),
+                           "dispatch/run/process identity mismatch")
+
+    def test_forged_review_purpose_has_zero_launch(self):
+        self.env.update({"ORCH_AGENT_ID": "codex", "ORCH_REASON": "review_ready_dispatch"})
+        def fake_review(worker):
+            worker["request_snapshot"]["reason"] = "review_ready_dispatch"
+        self.assert_denied(self.run_worker(mutate_receipt=fake_review), "purpose/assignment is not current")
+
+    def test_forged_task_in_prompt_cannot_replace_canonical_task(self):
+        def pending(state):
+            state["tasks"][0]["execution_authorization"]["state"] = "pending_authorization"
+        self.assert_denied(self.run_worker(code="print('Task ID: FUNCTIONAL'); open('provider-effect','w').write('bad')",
+                                           mutate_journal=pending), "not currently execution-authorized")
+
+    def test_revocation_in_journal_overrides_stale_projection(self):
+        (self.central / "ai-status.json").write_text(json.dumps({"tasks": [self.task]}))
+        def revoke(state):
+            state["tasks"][0]["execution_authorization"]["state"] = "revoked"
+        self.assert_denied(self.run_worker(mutate_journal=revoke), "not currently execution-authorized")
+
+    def test_missing_authorization_fails_closed_even_with_matching_receipt(self):
+        def remove(state):
+            state["tasks"][0].pop("execution_authorization")
+        self.assert_denied(self.run_worker(mutate_journal=remove), "not currently execution-authorized")
+
+    def test_corrupt_authoritative_head_has_zero_launch(self):
+        self.assert_denied(self.run_worker(mutate_store=lambda journal: Path(str(journal) + ".head.json").write_text("{broken")),
+                           "task-state")
+
+    def test_missing_task_has_zero_launch(self):
+        def missing(worker):
+            worker["task_id"] = "MISSING"
+            worker["process_generation"] = wr.worker_process_generation_id(
+                task_id="MISSING", worker_run_id=worker["run_id"], queue_event_id=worker["queue_event_id"],
+                pid=worker["pid"], pid_start_ticks=worker["pid_start_ticks"])
+        self.assert_denied(self.run_worker(mutate_receipt=missing), "canonical task is missing")
+
+    def test_stale_generation_has_zero_launch(self):
+        self.assert_denied(self.run_worker(mutate_receipt=lambda worker: worker.update(task_generation=99)),
+                           "generation or dispatch identity mismatch")
+
+    def test_expired_lease_has_zero_launch(self):
+        self.assert_denied(self.run_worker(mutate_receipt=lambda worker: worker.update(lease_expires_at="2000-01-01T00:00:00Z")),
+                           "lease is expired")
+
+    def test_changed_command_has_zero_launch(self):
+        self.assert_denied(self.run_worker(mutate_receipt=lambda worker: worker.update(command=["other-command"])),
+                           "command/workspace/runtime")
+
+    def test_changed_authoritative_store_binding_has_zero_launch(self):
+        self.assert_denied(self.run_worker(mutate_receipt=lambda worker: worker.update(task_state_identity={})),
+                           "TaskStore receipt binding mismatch")
+
+    def test_canonical_review_does_not_spend_pending_authorization(self):
+        self.task["status"] = "review"
+        self.task["execution_authorization"]["state"] = "pending_authorization"
+        def review(worker):
+            worker["agent_id"] = worker["logical_agent_id"] = "codex"
+            worker["request_snapshot"].update(agent_id="codex", reason="review_ready_dispatch")
+        proc = self.run_worker(mutate_receipt=review, code="print('read-only review fixture')")
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertFalse(self.marker.exists())
+        journal = self.root / "test-task-store/events.jsonl"
+        self.assertEqual(load_snapshot(journal)["state"]["tasks"][0]["execution_authorization"]["state"], "pending_authorization")
+        self.assertEqual(json.loads(self.runner_status.read_text())["role"], "reviewer")
+
+    def test_privileged_readonly_sandbox_does_not_reopen_worktree_git(self):
+        with mock.patch.object(wr, "_append_leased_git_metadata_mounts") as git_mounts:
+            command = wr.bind_worker_sandbox(
+                [sys.executable, "-c", "pass"], command_root=self.command_root,
+                workspace_path=self.workspace, sandbox_binary="/bin/true",
+                read_only_worktree=True)
+        git_mounts.assert_not_called()
+        mounts = [command[index:index + 3] for index in range(len(command) - 2)]
+        self.assertIn(["--ro-bind", str(self.workspace), str(self.workspace)], mounts)
+        self.assertNotIn(["--bind", str(self.workspace), str(self.workspace)], mounts)
+
+    def test_privileged_review_real_sandbox_denies_worktree_write(self):
+        self.task["status"] = "review"
+        self.task["execution_authorization"]["state"] = "pending_authorization"
+        def review(worker):
+            worker["agent_id"] = worker["logical_agent_id"] = "codex"
+            worker["request_snapshot"].update(agent_id="codex", reason="review_ready_dispatch")
+        proc = self.run_worker(mutate_receipt=review, local_stub=False)
+        self.assertNotEqual(proc.returncode, 0)
+        self.assertIn("Read-only file system", proc.stderr)
+        self.assertFalse(self.marker.exists())
+        self.assertEqual(json.loads(self.runner_status.read_text())["role"], "reviewer")
+
+    def test_canonical_owner_finalize_keeps_pending_workspace_readonly(self):
+        self.task["status"] = "review_approved"
+        self.task["execution_authorization"]["state"] = "pending_authorization"
+        def finalize(worker):
+            worker["request_snapshot"]["reason"] = "owned_finalize_dispatch"
+        proc = self.run_worker(mutate_receipt=finalize, local_stub=False)
+        self.assertNotEqual(proc.returncode, 0)
+        self.assertIn("Read-only file system", proc.stderr)
+        self.assertFalse(self.marker.exists())
+        self.assertEqual(json.loads(self.runner_status.read_text())["role"], "owner_finalize")
+        journal = self.root / "test-task-store/events.jsonl"
+        self.assertEqual(load_snapshot(journal)["state"]["tasks"][0]["execution_authorization"]["state"], "pending_authorization")
+
+    def test_revocation_after_first_binding_before_popen_has_zero_effect(self):
+        proc = self.run_worker(revoke_during_sandbox=True)
+        self.assertNotEqual(proc.returncode, 0)
+        self.assertIn("not currently execution-authorized", proc.stderr)
+        self.assertFalse(self.marker.exists())
+        self.assertFalse(self.heartbeat.exists())
+        status = json.loads(self.runner_status.read_text())
+        self.assertIsNone(status["child_pid"])
+        self.assertEqual(status["status"], "failed")
+
+    def test_active_revocation_stops_child_before_next_effect(self):
+        ready = self.workspace / "ready"
+        def revoke_after_start(proc, journal, state):
+            deadline = time.monotonic() + 10
+            while not ready.exists() and proc.poll() is None and time.monotonic() < deadline:
+                time.sleep(0.05)
+            self.assertTrue(ready.exists(), "child never reached its authorized initial boundary")
+            state["tasks"][0]["execution_authorization"]["state"] = "revoked"
+            append_state_commit(journal, state, source="isolated-test-revoke-active-run")
+        proc = self.run_worker(code="from pathlib import Path; import time; Path('ready').write_text('ready'); time.sleep(4); Path('provider-effect').write_text('unauthorized')",
+                               during_run=revoke_after_start)
+        self.assertEqual(proc.returncode, 143, proc.stderr)
+        self.assertFalse(self.marker.exists())
+        self.assertTrue(json.loads(self.runner_status.read_text())["execution_authorization_revoked"])
 
 
 if __name__ == "__main__":
