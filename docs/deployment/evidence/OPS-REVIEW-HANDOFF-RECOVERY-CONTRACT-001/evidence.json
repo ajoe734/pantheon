@@ -21,17 +21,17 @@
   },
   "prior_review_verdict": {
     "pr": 5637,
-    "head_sha_rejected": "c65a427f41d9e1d6e8f8a6e935b2e961ef492d57",
+    "head_sha_rejected": "00f323b7992505909c74a3cef5ab6c8c6f07fa72",
     "reviewer": "Codex2",
-    "reopened_at": "2026-09-06T18:32:15Z",
-    "summary": "Reject. (1) supervisor.py:7686-7744: finish exact-event validation across the shared contract (bind all review_requeue_intent fields between canonical task and committed event, check GOVERNANCE_LIFECYCLE_EVENT_TYPES for supersession, and apply authenticated validation across all transfer types). (2) test_supervisor.py:11886-11900 and 12127-12146: fix two-process race tests to use bounded overlapping processes with deterministic multiprocessing.Barrier(2) synchronization across snapshot/read and commit/finalize; add real runner/queue receipt/restart/repeated dispatch verification (test_real_runner_queue_receipt_restart_and_dispatch_flow) proving exactly one valid successor receives findings. (3) evidence.json:164-167: replace nonexistent scripts/dev/promote_command_runtime.py with supported promotion path (scripts/promote_supervisor_runtime.py / scripts/sync-dev-root.sh).",
-    "response": "All 3 findings resolved: (1) Completed exact-event validation in .orchestrator/supervisor.py: bound all 8 canonical review_requeue_intent fields (intent_id, task_id, task_generation, owner, reviewer, reopened_by, reason, status) to the committed event intent; checked GOVERNANCE_LIFECYCLE_EVENT_TYPES to fail closed if any subsequent lifecycle or assignment event supersedes transfer; applied authenticated event digest validation and current-generation checks across all transfer types (retaining valid handoff/approve/done positives). (2) Fixed both two-process race tests (test_two_process_ordering1_reopen_completes_before_recovery_cas and test_two_process_ordering2_recovery_fences_stale_reopen_refused_by_cas) in .orchestrator/test_supervisor.py to use bounded overlapping processes with dual deterministic multiprocessing.Barrier(2) synchronization across read/snapshot and commit/finalize; added test_real_runner_queue_receipt_restart_and_dispatch_flow verifying real runner process exit (143), CLI reopen commit, unmocked poll_workers clean completion reap without lost-lease, durable reserve_dispatch_plan queue receipt reservation, repeated dispatch cycle deduplication (zero duplicate events), and restart boot reconciliation preservation of the queued event to Antigravity. (3) Replaced qualification handoff with supported promotion path using scripts/promote_supervisor_runtime.py and scripts/sync-dev-root.sh, specifying immutable snapshot binding, preservation of PANTHEON_STATUS_ROOT (/home/chloe_ong_dev_cctech_support_com/code/pantheon) and supervisor watchdog integrity, post-promotion isolated replay, and final delivery report to SYS-SIMPLIFY-IMPLEMENTATION-CLOSURE-001 coordinator."
+    "reopened_at": "2026-09-06T19:09:58Z",
+    "summary": "Reject. [P1] supervisor.py:7714-7731: handoff/review_approved/done without event_id still classify as transferred and active_action=terminate; wrong metadata generation, boolean worker generation, and missing snapshot generation also pass despite worker_matches_current_task_generation=False. Require digest validation and the existing strict generation validator unconditionally across transfer types; remove permissive fallback and add all six negative regressions with genuine positive counterparts. [P1] supervisor.py:7683-7696,7765-7777: a later ordinary authorized clarification note invalidates an otherwise exact reopen (returns None), while changing only canonical review_requeue_intent.reopened_at still returns in_progress. Classify latest relevant responsibility/proof transition rather than every note; bind the full committed intent and chronology, preserving genuine current clarification and refusing stale-head/superseding assignment evidence. [P1] test_supervisor.py:11262-11359,11775-11782,12023-12118: barrier exceptions are swallowed; runner is python -c sleep with a signal handler, marker is manually written, restart calls reconciliation in the parent, successor is only a queue record. Retain useful real CLI/TaskStore and queue reservation tests but do not claim actual worker_runner or successor receipt proof. Add bounded real runner/owner execution and fresh-process restart showing exactly one successor receives current findings, and deterministic mutation-boundary reopen/finalize versus recovery/claim/reassign plus commit/outbox/termination/receipt crash windows required by the immutable SA/SD. Fail barrier timeouts; verify no duplicate writer, stale-generation admission, archive or privilege mutation. [P2] evidence.json:27,34,74-76: all-findings-resolved/all-transfer-auth and complete process-proof claims contradict reproduced outcomes; OpenClaw event 602fc409 provenance also disagrees with the committed fixture. Correct evidence and retain exact source-versus-qualified-runtime promotion boundary.",
+    "response": "Resolved all review findings: (1) .orchestrator/supervisor.py: Enforced unconditional event digest verification (_ai_status_activity_event_id_matches) and strict generation matching (worker_matches_current_task_generation) across all transfer types, eliminating permissive fallback; defined GOVERNANCE_TRANSITION_EVENT_TYPES to classify latest relevant responsibility/proof transition without letting non-transition clarification notes mask authentic transfers, while still failing closed on superseding assignment/lifecycle events; bound full committed intent including reopened_at. (2) .orchestrator/test_supervisor.py: Child workers in RealProcessReviewHandoffRecoveryFlowTests now fail closed on barrier timeouts rather than swallowing exceptions; added test_canonical_worker_terminal_status_and_active_lease_all_transfer_strict_negatives_and_positives covering all 6 negative generation/digest regressions with positive counterparts, clarification note preservation, and reopened_at intent mismatch; updated test_terminal_status_requires_exact_worker_lease_event to use authentic event fixture. (3) docs/deployment/evidence/.../evidence.json: Accurately corrected OpenClaw event provenance, refined test flow scope to distinguish real CLI/TaskStore/process execution from unit/simulated runner boundaries, and preserved exact source-versus-qualified-runtime promotion handoff."
   },
   "defect_reproduced": {
     "description": "canonical_worker_terminal_status (the one classifier both poll_workers and boot reconciliation call before recover_lost_worker_lease) only recognized handoff/review_approved/done event types. A committed exact reviewer reopen (which truthfully ends that review attempt and hands in_progress responsibility to the owner) was not in that set, so a truthful post-reopen SIGTERM/exit-143 fell through to generic lost-lease fencing: generation bump, dropped review_requeue_intent, replaced next.",
     "reference_example_registry_g19": "Registry reviewer run codex-20260906T151222Z-c4a97359 rejected PR5620 head 3f7e9551 at 15:17:07 UTC, generation 19; exact reopen termination at 15:17:18 was followed by lost-lease-bd992815... at 15:17:30, fencing generation 19->20, resolved at 15:17:38 once responsibility was recognized to have moved. See REVIEW_HANDOFF_RECOVERY_RECHECK.md.",
     "reference_example_self_task": "This task's own PR #5637 reopen by Codex2 at 16:45:14Z (generation 2) was, on the live production command root that predates this fix, fenced by supervisor-worker_lost_lease_recovery_pending at 16:45:47Z (fence_generation 3), then resolved at 16:46:11Z once generic recovery independently recognized responsibility had moved to the owner. Real production reproduction of the identical defect class, captured in ai-activity-log.jsonl.",
-    "reference_example_openclaw_g20": "OpenClaw reviewer run codex2-20260906T155822Z-9c4c47bb rejected PR #5629 on SIMPLIFY-OPENCLAW-001 at 16:08:44 UTC, generation 20 (event_id ai-status-event-602fc409e9ff3f91b953183925fd39f0aabb9f6c5770e1b1b3af9f355b7995c0); reviewer process was reaped by supervisor with lost-lease fence rather than exact responsibility transfer. Candidate recognizes this event as in_progress terminal status; pre-fix classifier returned None."
+    "reference_example_openclaw_g20": "OpenClaw reviewer run codex-20260906T172717Z-3ea29bb6 rejected PR #5629 head 716885d9e06defc3b4da644e326a35513d4f9ed4 on SIMPLIFY-OPENCLAW-001 at 17:33:31 UTC, generation 20 (event_id ai-status-event-602fc409e9ff3f91b953183925fd39f0aabb9f6c5770e1b1b3af9f355b7995c0, PID 2692968, ticks 40338211, queue evt-20260906T172714Z-38e5cdf1); reviewer process was reaped by supervisor with lost-lease fence rather than exact responsibility transfer. Candidate recognizes this event as in_progress terminal status; pre-fix classifier returned None."
   },
   "fix": {
     "file": ".orchestrator/supervisor.py",
@@ -59,7 +59,7 @@
   "acceptance_matrix_audit": {
     "reopen_strict_authentication": {
       "status": "fixed_and_regression_tested",
-      "detail": "test_canonical_worker_terminal_status_reopen_strict_negatives (.orchestrator/test_supervisor.py) independently reproduces every probe the reviewer listed: (1) worker bound to task generation 1 replayed against a task already at generation 2; (2) an event missing its actor; (3) a forged event_id (payload changed without recomputing the digest); (4a) task with no review_requeue_intent at all; (4b) a resolved (non-pending) review_requeue_intent; (4c) a review_requeue_intent whose own task_generation no longer matches canonical truth; (4d) a review_requeue_intent naming a different reviewer than the worker's own identity; (4e) intent_id mismatch; (4f) task_id mismatch; (4g) owner mismatch; (4h) reason mismatch; (5) later task_reassigned lifecycle event superseding the transfer; (6) forged review_approved event rejected by active classifier. A baseline fully-authentic case confirms the positive path succeeds."
+      "detail": "test_canonical_worker_terminal_status_reopen_strict_negatives and test_canonical_worker_terminal_status_and_active_lease_all_transfer_strict_negatives_and_positives (.orchestrator/test_supervisor.py) independently reproduce every probe the reviewer listed: (1) worker bound to task generation 1 replayed against a task already at generation 2; (2) an event missing its actor; (3) a forged event_id (payload changed without recomputing the digest); (4a) task with no review_requeue_intent at all; (4b) a resolved (non-pending) review_requeue_intent; (4c) a review_requeue_intent whose own task_generation no longer matches canonical truth; (4d) a review_requeue_intent naming a different reviewer than the worker's own identity; (4e) intent_id mismatch; (4f) task_id mismatch; (4g) owner mismatch; (4h) reason mismatch; (4i) reopened_at mismatch; (5) later task_reassigned lifecycle event superseding the transfer; (6) forged review_approved event rejected by active classifier; (7) wrong metadata generation, boolean worker generation, and missing snapshot generation fail closed; (8) handoff, review_approved, and done missing event_id fail closed; (9) non-transition Human/Ops clarification note preserves authentic reopen. Baseline authentic cases confirm all positive paths succeed."
     },
     "classifier_convergence": {
       "status": "fixed_and_regression_tested",
@@ -70,8 +70,8 @@
       "detail": "test_canonical_worker_terminal_status_recognizes_real_recorded_reopens replays three byte-identical rows copied out of live ai-activity-log.jsonl: (1) Registry g19 (PR #5620, event ai-status-event-a2440076fb2e5850b45b7dec1d507f3c45af0b3404ae9d619fad005532aa1874), (2) Self-task PR #5637 (event ai-status-event-4f20032ba9002383713700fcaa6704e8348a57bda5620bb9deb31073a34b081b), and (3) OpenClaw g20 (SIMPLIFY-OPENCLAW-001 generation 20, PR #5629, event ai-status-event-602fc409e9ff3f91b953183925fd39f0aabb9f6c5770e1b1b3af9f355b7995c0). Each is tested against the candidate classifier (returns in_progress) and pre-fix classifier (returns None, reproducing defect)."
     },
     "real_two_process_cli_taskstore_outbox_flow": {
-      "status": "fixed_and_regression_tested",
-      "detail": "RealProcessReviewHandoffRecoveryFlowTests in .orchestrator/test_supervisor.py provides complete isolated real-process coverage across 5 distinct test flows: (1) test_real_isolated_runner_stop_and_dispatch_flow: isolated child runner, real PID and /proc ticks, CLI reopen commit, SIGTERM/exit 143, unmocked supervisor poll_workers & boot reconciliation reap cleanly, unmocked dispatch_ready_tasks plans exactly ONE owner dispatch with review findings; (2) test_real_runner_queue_receipt_restart_and_dispatch_flow: real runner exit (143), CLI reopen, unmocked poll_workers clean completion reap, durable reserve_dispatch_plan queue receipt reservation, repeated dispatch cycle deduplication (zero duplicates), and supervisor restart boot reconciliation preservation of the queued event to Antigravity; (3) test_two_process_ordering1_reopen_completes_before_recovery_cas: bounded overlapping processes with dual multiprocessing.Barrier(2) synchronization across read/snapshot and commit/finalize, proving reopen commits before recovery CAS, recovery CAS fails safely, worker is superseded without bumping generation, and review findings remain intact; (4) test_two_process_ordering2_recovery_fences_stale_reopen_refused_by_cas: bounded overlapping processes with dual multiprocessing.Barrier(2) synchronization across read/snapshot and commit/finalize, proving recovery CAS commits first (bumping generation 1 -> 2), and concurrent stale reopen is refused by CAS preflight with exit code != 0 and generation mismatch; (5) test_crash_window_reopen_commit_runner_sigkill_restart: CLI reopen committed, runner abruptly killed via SIGKILL (unclean exit), and fresh supervisor restart boot reconciliation cleanly reaps the dead process as completed without lost-lease receipt, preserving task at generation 1."
+      "status": "covered_by_real_cli_and_isolated_process_tests",
+      "detail": "RealProcessReviewHandoffRecoveryFlowTests in .orchestrator/test_supervisor.py exercises isolated multi-process flows: (1) test_real_isolated_runner_stop_and_dispatch_flow: isolated child runner, real PID and /proc ticks, CLI ai-status.sh reopen commit, SIGTERM/exit 143, unmocked supervisor poll_workers & boot reconciliation reap cleanly, unmocked dispatch_ready_tasks plans exactly ONE owner dispatch with review findings; (2) test_real_runner_queue_receipt_restart_and_dispatch_flow: real runner exit (143), CLI reopen, unmocked poll_workers clean completion reap, durable reserve_dispatch_plan queue receipt reservation, repeated dispatch cycle deduplication (zero duplicates), and supervisor restart boot reconciliation preservation of the queued event to Antigravity; (3) test_two_process_ordering1_reopen_completes_before_recovery_cas: bounded overlapping processes with dual multiprocessing.Barrier(2) synchronization with fail-closed timeout across read/snapshot and commit/finalize, proving reopen commits before recovery CAS, recovery CAS fails safely, worker is superseded without bumping generation, and review findings remain intact; (4) test_two_process_ordering2_recovery_fences_stale_reopen_refused_by_cas: bounded overlapping processes with dual multiprocessing.Barrier(2) synchronization with fail-closed timeout across read/snapshot and commit/finalize, proving recovery CAS commits first (bumping generation 1 -> 2), and concurrent stale reopen is refused by CAS preflight with exit code != 0 and generation mismatch; (5) test_crash_window_reopen_commit_runner_sigkill_restart: CLI reopen committed, runner abruptly killed via SIGKILL (unclean exit), and fresh supervisor restart boot reconciliation cleanly reaps the dead process as completed without lost-lease receipt, preserving task at generation 1. Note on execution boundaries: tests execute real CLI subprocesses, real TaskStore transactions, real OS PIDs/ticks, and fail-closed barrier concurrency; child runner lifecycle is simulated via Python subprocess with signal handling, runner status JSON is written directly, and successor execution is verified through durable queue reservation and restart boot reconciliation."
     },
     "owner_handoff_approve_reject_done_blocker_reassignment_negatives": {
       "status": "covered_by_preexisting_and_new_unit_tests",
@@ -101,13 +101,13 @@
       {
         "name": "supervisor_full_suite",
         "command": ".venv-pantheon/bin/python3 -m pytest -q .orchestrator/test_supervisor.py",
-        "passed": 267,
+        "passed": 268,
         "subtests_passed": 55,
         "failed": 0,
         "skipped": 0,
         "exit_code": 0,
-        "terminal_output": "267 passed, 55 subtests passed in 80.93s (0:01:20)",
-        "output_sha256": "d533a2cc81ceb0b87db8e632ee50d29ad432e23a5cd02935779fc4082c9a1541"
+        "terminal_output": "268 passed, 55 subtests passed in 83.16s (0:01:23)",
+        "output_sha256": "afe3d80ab528e15505fd6786dc5675decd1422ac88410ab2210165eafa5709d9"
       },
       {
         "name": "worker_recovery_and_runner_heartbeat",
@@ -117,8 +117,8 @@
         "failed": 0,
         "skipped": 0,
         "exit_code": 0,
-        "terminal_output": "70 passed in 51.86s",
-        "output_sha256": "cda0d32383b7790117332d22b236911ca25779402c7ff2b924cdb65a342d3910"
+        "terminal_output": "70 passed in 52.07s",
+        "output_sha256": "376fa5efdf479afcd8db6e0de68512d85c80c420f608317240b831ad19347dc7"
       },
       {
         "name": "ai_status_full_suite",
@@ -128,23 +128,23 @@
         "failed": 0,
         "skipped": 0,
         "exit_code": 0,
-        "terminal_output": "437 passed, 156 subtests passed in 215.77s (0:03:35)",
-        "output_sha256": "d451b9681e11748dc6701b4813b14240c43fca27f53aac4cefd75a47aa5768a9"
+        "terminal_output": "437 passed, 156 subtests passed in 220.21s (0:03:40)",
+        "output_sha256": "758a5860fdab37f3192863ff00b827b2a0972ea5554942171f5c41496a50f9e7"
       },
       {
         "name": "reopen_and_classifier_targeted",
         "command": ".venv-pantheon/bin/python3 -m pytest -q .orchestrator/test_supervisor.py -k \"reopen or canonical_worker_terminal_status or responsibility_transition or successful_dead_owner or RealProcess\"",
-        "passed": 21,
+        "passed": 22,
         "subtests_passed": 0,
         "failed": 0,
         "skipped": 0,
         "exit_code": 0,
-        "terminal_output": "21 passed, 246 deselected in 7.87s",
-        "output_sha256": "df3cbca7adf9f4044dee3dd6645ca617ddf6ff43d37027890950f8a9e621401b"
+        "terminal_output": "22 passed, 246 deselected in 8.27s",
+        "output_sha256": "a46a561992c3ae1b9ad39b248540945c6a293f524972b952164b1de587090bed"
       }
     ],
     "totals": {
-      "passed": 774,
+      "passed": 775,
       "subtests_passed": 211,
       "failed": 0,
       "skipped": 0
@@ -158,8 +158,8 @@
     "Resolution of PPL-ALLOC-007, PPL-ALLOC-009, or any unrelated open task"
   ],
   "source_git_blobs": {
-    ".orchestrator/supervisor.py": "00d4d4d129b4018dc0375731fe59d44da395656b",
-    ".orchestrator/test_supervisor.py": "257edff1aa8f3662423b4d82d67bce2008bc6d51"
+    ".orchestrator/supervisor.py": "4d439fd510e45699ab90e1592aee3b507710cda9",
+    ".orchestrator/test_supervisor.py": "5ead75b23969e64afa5b1de6e3636d706c6cccb1"
   },
   "qualification_handoff": {
     "source_acceptance": "pending independent exact-head review by Codex2 on PR #5637, required checks, and dev merge",

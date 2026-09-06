@@ -5013,7 +5013,7 @@ def worker_completed_after_responsibility_transition(
     candidate_event = _latest_task_governance_event(
         worker,
         activity_events,
-        event_types=GOVERNANCE_LIFECYCLE_EVENT_TYPES,
+        event_types=GOVERNANCE_TRANSITION_EVENT_TYPES,
     )
     if candidate_event is None or str(candidate_event.get("type") or "") not in RESPONSIBILITY_TRANSFER_EVENT_TYPES:
         return False
@@ -7542,6 +7542,14 @@ GOVERNANCE_TERMINAL_TASK_STATUSES = frozenset(
 RESPONSIBILITY_TRANSFER_EVENT_TYPES = frozenset(
     {"handoff", "review_approved", "done", "reopen"}
 )
+# Event types that represent a governance lifecycle state/responsibility transition.
+# Non-transition events such as clarification notes ("note") or progress updates
+# ("progress") do not supersede or invalidate an earlier authentic responsibility transfer.
+GOVERNANCE_TRANSITION_EVENT_TYPES = frozenset(
+    event_type
+    for event_type in GOVERNANCE_LIFECYCLE_EVENT_TYPES
+    if event_type not in {"note", "progress", "integration_resumed"}
+)
 
 
 def _ai_status_activity_event_id_matches(event: Mapping[str, Any]) -> bool:
@@ -7682,18 +7690,19 @@ def canonical_worker_terminal_status(
     reopen_statuses = frozenset({"in_progress"})
     task_status = str(task.get("status") or "").strip().lower()
 
-    # The transfer event must be the latest governance lifecycle event for the task.
-    # If a subsequent lifecycle event (e.g. task_reassigned, assign, progress, note,
-    # or a later transfer event) has occurred, this worker's responsibility transfer
-    # was superseded.
-    latest_lifecycle = _latest_task_governance_event(
+    # The transfer event must be the latest governance transition event for the task.
+    # Non-transition telemetry (such as authorized clarification notes or progress)
+    # does not supersede an authentic responsibility transfer, but any subsequent
+    # assignment or lifecycle transition (e.g. task_reassigned, assign, blocker,
+    # or a later transfer) means this worker's responsibility was superseded.
+    latest_transition = _latest_task_governance_event(
         worker,
         activity_events,
-        event_types=GOVERNANCE_LIFECYCLE_EVENT_TYPES,
+        event_types=GOVERNANCE_TRANSITION_EVENT_TYPES,
     )
-    if latest_lifecycle is None or str(latest_lifecycle.get("type") or "") not in RESPONSIBILITY_TRANSFER_EVENT_TYPES:
+    if latest_transition is None or str(latest_transition.get("type") or "") not in RESPONSIBILITY_TRANSFER_EVENT_TYPES:
         return None
-    latest_terminal = latest_lifecycle
+    latest_terminal = latest_transition
 
     if not status_event_matches_worker_process(latest_terminal, worker):
         return None
@@ -7709,23 +7718,12 @@ def canonical_worker_terminal_status(
 
     event_type = str(latest_terminal.get("type") or "").strip().lower()
 
-    # Authenticated validation applied across ALL accepted transfer types:
-    # 1. Event ID must match its digest (fails closed on forged or hand-edited event)
-    event_id = str(latest_terminal.get("event_id") or "").strip()
-    if event_type == "reopen" or event_id:
-        if not _ai_status_activity_event_id_matches(latest_terminal):
-            return None
-    # 2. Worker must match the current task generation
-    worker_gen = worker.get("task_generation")
-    curr_task_gen = task_generation(task)
-    if not (
-        worker_matches_current_task_generation(worker, task)
-        or (
-            isinstance(worker_gen, int)
-            and worker_gen == curr_task_gen
-            and (worker.get("request_snapshot") or {}).get("task_generation") in (None, curr_task_gen)
-        )
-    ):
+    # Authenticated validation applied unconditionally across ALL accepted transfer types:
+    # 1. Event ID must be present and match its digest (fails closed on missing, forged, or hand-edited event)
+    if not _ai_status_activity_event_id_matches(latest_terminal):
+        return None
+    # 2. Worker must strictly match the current task generation
+    if not worker_matches_current_task_generation(worker, task):
         return None
     valid_statuses = {
         "handoff": review_statuses,
@@ -7770,6 +7768,7 @@ def canonical_worker_terminal_status(
             "owner",
             "reviewer",
             "reopened_by",
+            "reopened_at",
             "reason",
             "status",
         ):
@@ -7849,7 +7848,7 @@ def active_worker_governance_lease_decision(
     latest_lifecycle = _latest_task_governance_event(
         worker,
         activity_events,
-        event_types=GOVERNANCE_LIFECYCLE_EVENT_TYPES,
+        event_types=GOVERNANCE_TRANSITION_EVENT_TYPES,
     )
     if latest_lifecycle is not None and str(latest_lifecycle.get("type") or "") in RESPONSIBILITY_TRANSFER_EVENT_TYPES:
         if task is not None:
