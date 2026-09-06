@@ -373,6 +373,23 @@ class PostgresJsonOwnerStore:
                 records.append(decoded)
         return records
 
+    def lock_table(self, *, conn: Any) -> None:
+        """Acquire this table's SHARE ROW EXCLUSIVE lock on its own, with no insert.
+
+        A caller that writes to two different owner-store tables (e.g. an
+        entries table and a companion receipts table) in one transaction
+        must always acquire both tables' locks in the same global order,
+        regardless of which table it happens to write to first logically —
+        otherwise two lawful, unrelated transactions that touch the same two
+        tables in opposite orders can deadlock (each holds one table's lock
+        and waits on the other's). ``insert_if_absent`` always takes this
+        same lock internally; this lets a caller take it explicitly, up
+        front, before any other table access in the same transaction, so a
+        consistent acquisition order can be enforced across every method
+        that writes to both tables.
+        """
+        conn.execute(f"LOCK TABLE {self.table} IN SHARE ROW EXCLUSIVE MODE")
+
     def advisory_xact_lock(self, key: str, *, conn: Any) -> None:
         """Take a Postgres session-scoped advisory transaction lock keyed on
         an arbitrary string, released automatically at transaction end

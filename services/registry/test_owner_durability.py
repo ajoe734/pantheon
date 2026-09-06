@@ -243,7 +243,7 @@ def test_advance_state_conflict_is_409_not_silent_overwrite(pg_app):
 
     advance_1 = pg_app.post(
         f"/api/registry/entries/{registry_id}/advance",
-        json={"target_state": "candidate"},
+        json={"target_state": "candidate", "expected_artifact_state": "draft"},
     )
     assert advance_1.status_code == 200
 
@@ -253,7 +253,7 @@ def test_advance_state_conflict_is_409_not_silent_overwrite(pg_app):
     # *new* current state still fails explicitly rather than silently no-op.
     forbidden = pg_app.post(
         f"/api/registry/entries/{registry_id}/advance",
-        json={"target_state": "draft"},
+        json={"target_state": "draft", "expected_artifact_state": "candidate"},
     )
     assert forbidden.status_code == 400
 
@@ -420,3 +420,194 @@ def test_readyz_fails_closed_when_receipts_table_is_missing(pg_app):
     resp = client.get("/readyz")
     body = resp.json()
     assert body.get("ready") is False, body
+
+
+# ===========================================================================
+# Gen-10 independent Codex rejection of PR #5620 (findings 1, 2, 4, 5): a
+# caller-supplied registry_id collision on the allocation-policy-artifact
+# route bypassed authorization/content validation; create_with_receipt's
+# receipts-before-entries lock order (opposite of every other create path)
+# could deadlock a mixed keyed/unkeyed concurrent registration; a typed
+# create replay returned the later mutated row instead of the original
+# creation receipt; and /advance accepted an entirely unbound (no caller
+# claimed base at all) request.
+# ===========================================================================
+
+
+def _alloc_payload(registry_id: str, *, capital_pool_id: str = "pool-durability", version: str = "1.0.0") -> dict:
+    return {
+        "version": version,
+        "registry_id": registry_id,
+        "allocation_policy_artifact": {
+            "artifact_id": f"artifact-{registry_id}",
+            "capital_pool_id": capital_pool_id,
+            "scope_ref": "paper",
+            "sponsor_persona_id": "persona-momentum",
+            "synthesis_method": "weighted_fusion",
+            "target_weights": {"SPY": 0.6, "QQQ": 0.4},
+            "created_at": "2026-06-01T12:00:00Z",
+            "provenance_refs": ["prop-001"],
+            "conflict_resolution_log_id": "log-001",
+        },
+    }
+
+
+def test_allocation_policy_cross_tenant_registry_id_collision_is_denied(pg_app):
+    """Reviewer finding 1 (gen-10 review): a caller-supplied registry_id that
+    already names another tenant's private AllocationPolicyArtifact must be
+    denied (403), not silently returned as if the POST succeeded."""
+    tenant_a = {"Authorization": f"Bearer {_strict_jwt(subject='alice', tenant='tenant-a')}"}
+    tenant_b = {"Authorization": f"Bearer {_strict_jwt(subject='bob', tenant='tenant-b')}"}
+
+    payload = _alloc_payload("reg-alloc-durability-cross")
+    created = pg_app.post("/api/registry/allocation-policy-artifacts", json=payload, headers=tenant_a)
+    assert created.status_code == 200, created.text
+
+    denied_read = pg_app.get(
+        f"/api/registry/allocation-policy-artifacts/reg-alloc-durability-cross", headers=tenant_b,
+    )
+    assert denied_read.status_code == 403
+
+    collision = pg_app.post("/api/registry/allocation-policy-artifacts", json=payload, headers=tenant_b)
+    assert collision.status_code == 403, collision.text
+
+    # A same-tenant, identical-content replay must still succeed (idempotent
+    # collision, not a regression of legitimate re-registration).
+    replay = pg_app.post("/api/registry/allocation-policy-artifacts", json=payload, headers=tenant_a)
+    assert replay.status_code == 200, replay.text
+
+
+def test_allocation_policy_registry_id_collision_with_different_kind_is_denied(pg_app):
+    """Reviewer finding 1 (gen-10 review): a registry_id already owned by a
+    different artifact kind (e.g. a StrategySpec) must not be returned
+    through the allocation-policy-artifacts POST just because the id string
+    matches — even for the same tenant."""
+    tenant_a = {"Authorization": f"Bearer {_strict_jwt(subject='alice', tenant='tenant-a')}"}
+
+    spec_payload = {
+        "registry_id": "reg-durability-cross-kind",
+        "strategy_id": "durability-cross-kind-strat",
+        "version": "1.0.0",
+        "strategy_spec": _valid_spec("durability-cross-kind-strat"),
+        "lineage": {"source_run_ids": ["source"]},
+    }
+    created = pg_app.post("/api/registry/strategy-specs", json=spec_payload, headers=tenant_a)
+    assert created.status_code == 200, created.text
+
+    leak = pg_app.post(
+        "/api/registry/allocation-policy-artifacts",
+        json=_alloc_payload("reg-durability-cross-kind"),
+        headers=tenant_a,
+    )
+    assert leak.status_code == 400, leak.text
+    assert "strategy_spec" not in leak.text or "AllocationPolicyArtifact registry entry not found" in leak.text
+
+
+def test_strategy_spec_create_replay_returns_original_snapshot_not_live_mutated_row(pg_app):
+    """Reviewer finding 4 (gen-10 review): an exact-content create replay of
+    a StrategySpec must return the entry exactly as it was at its original
+    creation, not whatever it has since become via an unrelated later
+    metadata edit. The ordinary GET route remains the way to observe the
+    live, mutated state."""
+    tenant_a = {"Authorization": f"Bearer {_strict_jwt(subject='alice', tenant='tenant-a')}"}
+
+    spec_payload = {
+        "registry_id": "reg-durability-replay-snapshot",
+        "strategy_id": "durability-replay-snapshot-strat",
+        "version": "1.0.0",
+        "strategy_spec": _valid_spec("durability-replay-snapshot-strat"),
+        "lineage": {"source_run_ids": ["source"]},
+    }
+    created = pg_app.post("/api/registry/strategy-specs", json=spec_payload, headers=tenant_a)
+    assert created.status_code == 200, created.text
+    original_metadata = created.json()["entry"]["metadata"]
+
+    edit = pg_app.patch(
+        "/api/registry/entries/reg-durability-replay-snapshot/metadata",
+        json={
+            "expected_metadata": original_metadata,
+            "metadata": dict(original_metadata, operator_note="edited-after-create"),
+            "command_key": "edit-after-create",
+        },
+        headers=tenant_a,
+    )
+    assert edit.status_code == 200, edit.text
+
+    replay = pg_app.post("/api/registry/strategy-specs", json=spec_payload, headers=tenant_a)
+    assert replay.status_code == 200, replay.text
+    assert replay.json()["entry"]["metadata"] == original_metadata, (
+        "create replay must return the original creation snapshot, not the live mutated row"
+    )
+
+    live = pg_app.get("/api/registry/entries/reg-durability-replay-snapshot", headers=tenant_a)
+    assert live.json()["entry"]["metadata"].get("operator_note") == "edited-after-create", (
+        "the ordinary GET route must still show the live, mutated state"
+    )
+
+
+def test_advance_without_any_caller_bound_base_is_rejected(pg_app):
+    """Reviewer finding 5 (gen-10 review): every public advance facade now
+    requires expected_artifact_state — an advance request that omits every
+    caller-claimed base field entirely must be rejected (422) rather than
+    silently falling back to a fresh server re-read as its CAS base."""
+    created = _register(pg_app, lineage={"source_run_ids": ["run-1"]})
+    registry_id = created["entry"]["registry_id"]
+
+    bound = pg_app.post(
+        f"/api/registry/entries/{registry_id}/advance",
+        json={"target_state": "candidate", "expected_artifact_state": "draft"},
+    )
+    assert bound.status_code == 200, bound.text
+
+    unbound = pg_app.post(
+        f"/api/registry/entries/{registry_id}/advance",
+        json={"target_state": "retired"},
+    )
+    assert unbound.status_code == 422, unbound.text
+
+    unchanged = pg_app.get(f"/api/registry/entries/{registry_id}")
+    assert unchanged.json()["entry"]["artifact_state"] == "candidate", (
+        "a rejected unbound advance must not mutate the entry"
+    )
+
+
+def test_mixed_keyed_and_unkeyed_create_paths_do_not_deadlock(pg_app):
+    """Reviewer finding 2 (gen-10 review): create_with_receipt (the
+    Idempotency-Key'd POST /api/registry/entries path) previously locked its
+    receipts table before ever touching entries — the opposite order from
+    create_if_absent/register_strategy_spec_revision, which always lock
+    entries first. Two unrelated, lawful concurrent HTTP requests — one
+    landing on each path — could deadlock in Postgres as a result. Fire many
+    concurrent mixed requests and assert none raises a database error (in
+    particular, never a raw 500 from an uncaught DeadlockDetected); both
+    kinds of request must complete with an ordinary HTTP status."""
+
+    def _keyed_draft(i: int):
+        return pg_app.post(
+            "/api/registry/entries",
+            json={"name": f"deadlock-probe-draft-{i}"},
+            headers={**_AUTH_HEADERS, "Idempotency-Key": f"deadlock-probe-key-{i}"},
+        )
+
+    def _unkeyed_spec(i: int):
+        strategy_id = f"deadlock-probe-spec-{i}"
+        return pg_app.post(
+            "/api/registry/strategy-specs",
+            json={
+                "strategy_id": strategy_id,
+                "version": "1.0.0",
+                "strategy_spec": _valid_spec(strategy_id),
+                "lineage": {"source_run_ids": ["source"]},
+            },
+        )
+
+    tasks = []
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        for i in range(8):
+            tasks.append(pool.submit(_keyed_draft, i))
+            tasks.append(pool.submit(_unkeyed_spec, i))
+        results = [task.result(timeout=30) for task in tasks]
+
+    statuses = [r.status_code for r in results]
+    assert all(status in (200, 409) for status in statuses), statuses
+    assert all(status != 500 for status in statuses), statuses

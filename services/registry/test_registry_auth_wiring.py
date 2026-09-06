@@ -128,7 +128,7 @@ def test_strict_mode_anonymous_advance_is_rejected(strict_client):
 
     resp = strict_client.post(
         f"/api/registry/entries/{registry_id}/advance",
-        json={"target_state": "candidate"},
+        json={"target_state": "candidate", "expected_artifact_state": "draft"},
     )
     assert resp.status_code == 401
 
@@ -143,7 +143,7 @@ def test_strict_mode_valid_jwt_advance_succeeds_and_binds_actor(strict_client):
 
     resp = strict_client.post(
         f"/api/registry/entries/{registry_id}/advance",
-        json={"target_state": "candidate"},
+        json={"target_state": "candidate", "expected_artifact_state": "draft"},
         headers=_bearer(_jwt(sub="approver-2")),
     )
     assert resp.status_code == 200, resp.text

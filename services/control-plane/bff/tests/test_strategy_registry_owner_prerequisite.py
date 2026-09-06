@@ -608,6 +608,194 @@ def test_update_params_ambiguous_patch_response_never_fabricates_success(mock_ht
     assert excinfo.value.error_code == "AMBIGUOUS_REGISTRY_RESPONSE"
 
 
+# ===========================================================================
+# Gen-10 independent Codex rejection of PR #5620 (finding 3): the checks
+# above verified internal self-consistency and identity/content matching,
+# but still trusted a single response body's own self-reported actor/
+# timestamp claims in three additional ways a fault-injection probe
+# reproduced live: (a) a replay reporting *some* actor_id, even one that
+# could not legitimately be this caller's own prior command; (b) a normal
+# (non-replay) response with a null commit timestamp and no actor, whose
+# self-consistency with an equally-null follow-up readback passed every
+# existing check; (c) an ambiguous/empty PATCH body whose follow-up readback
+# happened to already match the target metadata *before* this command ever
+# ran, with no signal distinguishing "this command committed it" from "it
+# was already there".
+# ===========================================================================
+
+
+@patch("services.control_plane.bff.command_adapters.strategy_adapter.http_request_json_with_headers")
+def test_update_params_replay_actor_not_matching_caller_token_is_rejected(mock_http, adapter):
+    """Reviewer finding 3 (gen-10 review): a replay response reporting an
+    actor_id that does not match the verified caller's own token-derived
+    identity is not trustworthy proof of this caller's own prior command,
+    even though it carries a non-empty actor_id, a commit timestamp, and the
+    requested metadata."""
+    baseline = {
+        "registry_id": "reg-001",
+        "strategy_id": "strat-alpha",
+        "owner_tenant": "tenant-a",
+        "version": "1.0.0",
+        "checksum": "sha256:original",
+        "metadata": {"note": "old"},
+        "updated_at": "2026-09-06T01:00:00Z",
+        "last_actor": {"actor_id": "operator-a", "tenant": "tenant-a"},
+    }
+    replay_wrong_actor = dict(
+        baseline,
+        metadata={"note": "new"},
+        updated_at="2026-09-06T01:00:01Z",
+        last_actor={"actor_id": "other-actor", "tenant": "tenant-a"},
+    )
+    mock_http.side_effect = [
+        (200, {}, {"entry": baseline}),
+        (200, {"X-Idempotent-Replay": "true"}, {"entry": replay_wrong_actor}),
+    ]
+
+    with pytest.raises(ActionUnavailableError) as excinfo:
+        adapter.execute(
+            "cmd-replay-wrong-actor",
+            "StrategyAction",
+            {
+                "entity_type": "strategy",
+                "strategy_id": "strat-alpha",
+                "registry_id": "reg-001",
+                "action_id": "update_params",
+                "expected_metadata": {"note": "old"},
+                "metadata": {"note": "new"},
+            },
+            auth_token="caller-actor-id",
+        )
+    assert excinfo.value.error_code == "REPLAY_ACTOR_MISMATCH"
+    # No third HTTP call — the verification is local, derived from the
+    # caller's own auth_token, not an extra network round trip.
+    assert mock_http.call_count == 2
+
+
+@patch("services.control_plane.bff.command_adapters.strategy_adapter.http_request_json_with_headers")
+def test_update_params_replay_actor_matching_caller_token_still_succeeds(mock_http, adapter):
+    """A genuine replay whose recorded actor matches the verified caller's
+    own token-derived identity must still succeed — the new check is a
+    cross-check against forgery, not a new general restriction."""
+    baseline = {
+        "registry_id": "reg-001",
+        "strategy_id": "strat-alpha",
+        "owner_tenant": "tenant-a",
+        "version": "1.0.0",
+        "checksum": "sha256:original",
+        "metadata": {"note": "old"},
+        "updated_at": "2026-09-06T01:00:00Z",
+        "last_actor": {"actor_id": "caller-actor-id", "tenant": "tenant-a"},
+    }
+    replay_same_actor = dict(
+        baseline,
+        metadata={"note": "new"},
+        updated_at="2026-09-06T01:00:01Z",
+        last_actor={"actor_id": "caller-actor-id", "tenant": "tenant-a"},
+    )
+    mock_http.side_effect = [
+        (200, {}, {"entry": baseline}),
+        (200, {"X-Idempotent-Replay": "true"}, {"entry": replay_same_actor}),
+    ]
+
+    result = adapter.execute(
+        "cmd-replay-same-actor",
+        "StrategyAction",
+        {
+            "entity_type": "strategy",
+            "strategy_id": "strat-alpha",
+            "registry_id": "reg-001",
+            "action_id": "update_params",
+            "expected_metadata": {"note": "old"},
+            "metadata": {"note": "new"},
+        },
+        auth_token="caller-actor-id",
+    )
+    assert result["status"] == "metadata_updated"
+    assert result["idempotent_replay"] is True
+
+
+@patch("services.control_plane.bff.command_adapters.strategy_adapter.http_request_json_with_headers")
+def test_update_params_normal_response_missing_commit_time_is_rejected(mock_http, adapter):
+    """Reviewer finding 3 (gen-10 review): a normal (non-replay) PATCH
+    response with a null commit timestamp is not trustworthy proof of
+    commit, even when a follow-up readback is internally self-consistent
+    with it (both null) and reports the requested metadata."""
+    baseline = {
+        "registry_id": "reg-001",
+        "strategy_id": "strat-alpha",
+        "owner_tenant": "tenant-a",
+        "version": "1.0.0",
+        "checksum": "sha256:original",
+        "metadata": {"note": "old"},
+        "updated_at": "2026-09-06T01:00:00Z",
+        "last_actor": {"actor_id": "operator-a", "tenant": "tenant-a"},
+    }
+    no_time_no_actor = dict(baseline, metadata={"note": "new"}, updated_at=None, last_actor=None)
+    mock_http.side_effect = [
+        (200, {}, {"entry": baseline}),
+        (200, {"X-Idempotent-Replay": "false"}, {"entry": no_time_no_actor}),
+        (200, {}, {"entry": no_time_no_actor}),
+    ]
+
+    with pytest.raises(ActionUnavailableError) as excinfo:
+        adapter.execute(
+            "cmd-normal-no-time",
+            "StrategyAction",
+            {
+                "entity_type": "strategy",
+                "strategy_id": "strat-alpha",
+                "registry_id": "reg-001",
+                "action_id": "update_params",
+                "expected_metadata": {"note": "old"},
+                "metadata": {"note": "new"},
+            },
+        )
+    assert excinfo.value.error_code == "MISSING_COMMIT_TIME"
+
+
+@patch("services.control_plane.bff.command_adapters.strategy_adapter.http_request_json_with_headers")
+def test_update_params_ambiguous_response_readback_matching_before_the_command_ran_is_rejected(
+    mock_http, adapter,
+):
+    """Reviewer finding 3 (gen-10 review): an ambiguous/empty PATCH body
+    recovered via a follow-up readback that confirms the target metadata is
+    not proof *this* command committed it if that same metadata/timestamp
+    was already present in the pre-mutation identity-verification GET
+    captured before the command ever ran — the entry may simply have already
+    been at that value (e.g. the CAS was actually rejected)."""
+    already_at_target = {
+        "registry_id": "reg-001",
+        "strategy_id": "strat-alpha",
+        "owner_tenant": "tenant-a",
+        "version": "1.0.0",
+        "checksum": "sha256:original",
+        "metadata": {"note": "new"},
+        "updated_at": "2026-09-06T01:00:01Z",
+        "last_actor": {"actor_id": "operator-a", "tenant": "tenant-a"},
+    }
+    mock_http.side_effect = [
+        (200, {}, {"entry": already_at_target}),  # pre-mutation identity GET
+        (200, {}, {}),  # ambiguous PATCH response
+        (200, {}, {"entry": already_at_target}),  # follow-up readback: unchanged from baseline
+    ]
+
+    with pytest.raises(ActionUnavailableError) as excinfo:
+        adapter.execute(
+            "cmd-ambiguous-no-commit",
+            "StrategyAction",
+            {
+                "entity_type": "strategy",
+                "strategy_id": "strat-alpha",
+                "registry_id": "reg-001",
+                "action_id": "update_params",
+                "expected_metadata": {"note": "old"},
+                "metadata": {"note": "new"},
+            },
+        )
+    assert excinfo.value.error_code == "AMBIGUOUS_REGISTRY_RESPONSE"
+
+
 def test_update_params_requires_registry_id(adapter):
     with pytest.raises(ActionUnavailableError) as excinfo:
         adapter.execute(

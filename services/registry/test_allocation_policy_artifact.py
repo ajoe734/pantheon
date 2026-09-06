@@ -196,7 +196,7 @@ class TestAllocationPolicyLifecycle:
 
         adv_resp = client.post(
             "/api/registry/allocation-policy-artifacts/reg-alloc-lc-001/advance",
-            json={"target_state": "approved", "approver": "governance-bot"},
+            json={"target_state": "approved", "expected_artifact_state": "candidate", "approver": "governance-bot"},
         )
         assert adv_resp.status_code == 200, adv_resp.text
         assert adv_resp.json()["entry"]["artifact_state"] == "approved"
@@ -210,7 +210,7 @@ class TestAllocationPolicyLifecycle:
         )
         adv_resp = client.post(
             "/api/registry/allocation-policy-artifacts/reg-alloc-dep-001/advance",
-            json={"target_state": "approved", "approver": "ops"},
+            json={"target_state": "approved", "expected_artifact_state": "candidate", "approver": "ops"},
         )
         entry = adv_resp.json()["entry"]
         # DeploymentPlan.create_plan() requires artifact_state == 'approved'
@@ -285,7 +285,7 @@ class TestAllocationPolicyRead:
         )
         client.post(
             "/api/registry/allocation-policy-artifacts/reg-filter-001/advance",
-            json={"target_state": "approved", "approver": "ops"},
+            json={"target_state": "approved", "expected_artifact_state": "candidate", "approver": "ops"},
         )
 
         approved = client.get(

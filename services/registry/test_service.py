@@ -383,13 +383,17 @@ class TestFastAPIEndpoints:
 
         candidate_resp = self.client.post(
             f"/api/registry/entries/{registry_id}/advance",
-            json={"target_state": "candidate"},
+            json={"target_state": "candidate", "expected_artifact_state": "draft"},
         )
         assert candidate_resp.status_code == 200, candidate_resp.text
 
         approved_resp = self.client.post(
             f"/api/registry/entries/{registry_id}/advance",
-            json={"target_state": "approved", "approver": "offline-eval-gate"},
+            json={
+                "target_state": "approved",
+                "approver": "offline-eval-gate",
+                "expected_artifact_state": "candidate",
+            },
         )
         assert approved_resp.status_code == 200, approved_resp.text
         assert approved_resp.json()["entry"]["artifact_type"] == "behavior_policy"
@@ -432,12 +436,17 @@ class TestFastAPIEndpoints:
         }
         created = self.client.post("/api/registry/strategy-specs", json=payload)
         assert created.status_code == 200, created.text
+        current_state = "draft"
         for target_state in ("candidate", "approved"):
             advanced = self.client.post(
                 f"/api/registry/strategy-specs/{registry_id}/advance",
-                json={"target_state": target_state},
+                json={
+                    "target_state": target_state,
+                    "expected_artifact_state": current_state,
+                },
             )
             assert advanced.status_code == 200, advanced.text
+            current_state = target_state
 
         duplicate = self.client.post(
             "/api/registry/strategy-specs",
@@ -445,7 +454,15 @@ class TestFastAPIEndpoints:
         )
 
         assert duplicate.status_code == 200, duplicate.text
-        assert duplicate.json()["entry"]["artifact_state"] == "approved"
+        # NOTE: per the gen-10 review's finding 4 (see
+        # _ensure_strategy_spec_registration_matches's docstring in
+        # service.py), a same-identity create replay's *response* now
+        # reports the original creation snapshot (state "draft" here), not
+        # the live current view — a caller retrying its own create command
+        # gets back exactly what that command committed. This test's real
+        # intent — that the duplicate registration never overwrites/reverts
+        # the durable approval — is what the readback below actually proves.
+        assert duplicate.json()["entry"]["artifact_state"] == "draft"
         readback = self.client.get(
             f"/api/registry/strategy-specs/{registry_id}"
         )
@@ -527,7 +544,7 @@ class TestFastAPIEndpoints:
 
         advance_resp = self.client.post(
             f"/api/registry/strategy-specs/{registry_id}/advance",
-            json={"target_state": "candidate"},
+            json={"target_state": "candidate", "expected_artifact_state": "draft"},
         )
         assert advance_resp.status_code == 200, advance_resp.text
         assert advance_resp.json()["entry"]["artifact_state"] == "candidate"
@@ -617,7 +634,7 @@ class TestFastAPIEndpoints:
         # Draft -> Candidate
         resp = self.client.post(
             f"/api/registry/entries/{registry_id}/advance",
-            json={"target_state": "candidate"},
+            json={"target_state": "candidate", "expected_artifact_state": "draft"},
         )
         assert resp.status_code == 200
         assert resp.json()["entry"]["artifact_state"] == "candidate"
@@ -629,6 +646,7 @@ class TestFastAPIEndpoints:
                 "target_state": "approved",
                 "approver": "test-reviewer",
                 "approval_decision_id": "decision-api-test",
+                "expected_artifact_state": "candidate",
             },
         )
         assert resp.status_code == 200
@@ -650,7 +668,7 @@ class TestFastAPIEndpoints:
         # Draft -> Approved (forbidden)
         resp = self.client.post(
             f"/api/registry/entries/{registry_id}/advance",
-            json={"target_state": "approved"},
+            json={"target_state": "approved", "expected_artifact_state": "draft"},
         )
         assert resp.status_code == 400
         assert "Forbidden" in resp.json()["detail"]
@@ -681,8 +699,14 @@ class TestFastAPIEndpoints:
                 "lineage": {"source_run_ids": [f"run-{v}"]},
             })
             rid = create_resp.json()["entry"]["registry_id"]
-            self.client.post(f"/api/registry/entries/{rid}/advance", json={"target_state": "candidate"})
-            self.client.post(f"/api/registry/entries/{rid}/advance", json={"target_state": "approved"})
+            self.client.post(
+                f"/api/registry/entries/{rid}/advance",
+                json={"target_state": "candidate", "expected_artifact_state": "draft"},
+            )
+            self.client.post(
+                f"/api/registry/entries/{rid}/advance",
+                json={"target_state": "approved", "expected_artifact_state": "candidate"},
+            )
 
         resp = self.client.get("/api/registry/strategies/latest-test/latest-approved")
         assert resp.status_code == 200
@@ -712,8 +736,14 @@ class TestFastAPIEndpoints:
             "lineage": {"source_run_ids": ["run-001"]},
         })
         rid = create_resp.json()["entry"]["registry_id"]
-        self.client.post(f"/api/registry/entries/{rid}/advance", json={"target_state": "candidate"})
-        self.client.post(f"/api/registry/entries/{rid}/advance", json={"target_state": "approved"})
+        self.client.post(
+            f"/api/registry/entries/{rid}/advance",
+            json={"target_state": "candidate", "expected_artifact_state": "draft"},
+        )
+        self.client.post(
+            f"/api/registry/entries/{rid}/advance",
+            json={"target_state": "approved", "expected_artifact_state": "candidate"},
+        )
 
         # Update deployment summary (simulating deployment service)
         self.client.put(
@@ -770,10 +800,17 @@ class TestFastAPIEndpoints:
             "lineage": {"source_run_ids": ["run-001"]},
         })
         rid = create_resp.json()["entry"]["registry_id"]
-        self.client.post(f"/api/registry/entries/{rid}/advance", json={"target_state": "candidate"})
+        self.client.post(
+            f"/api/registry/entries/{rid}/advance",
+            json={"target_state": "candidate", "expected_artifact_state": "draft"},
+        )
         approved = self.client.post(
             f"/api/registry/entries/{rid}/advance",
-            json={"target_state": "approved", "approver": "test"},
+            json={
+                "target_state": "approved",
+                "approver": "test",
+                "expected_artifact_state": "candidate",
+            },
         )
         assert approved.status_code == 200
         # artifact_state is approved, deployment_stage is still none
@@ -794,8 +831,14 @@ class TestFastAPIEndpoints:
             "lineage": {"source_run_ids": ["run-001"]},
         })
         rid = create_resp.json()["entry"]["registry_id"]
-        self.client.post(f"/api/registry/entries/{rid}/advance", json={"target_state": "candidate"})
-        self.client.post(f"/api/registry/entries/{rid}/advance", json={"target_state": "approved"})
+        self.client.post(
+            f"/api/registry/entries/{rid}/advance",
+            json={"target_state": "candidate", "expected_artifact_state": "draft"},
+        )
+        self.client.post(
+            f"/api/registry/entries/{rid}/advance",
+            json={"target_state": "approved", "expected_artifact_state": "candidate"},
+        )
 
         # Now update deployment_stage to paper (simulating deployment service)
         resp = self.client.put(
@@ -807,7 +850,10 @@ class TestFastAPIEndpoints:
         assert resp.json()["deployment_stage"] == "paper"
 
         # Advance artifact_state to retired — deployment_stage should remain
-        self.client.post(f"/api/registry/entries/{rid}/advance", json={"target_state": "retired"})
+        self.client.post(
+            f"/api/registry/entries/{rid}/advance",
+            json={"target_state": "retired", "expected_artifact_state": "approved"},
+        )
         resp = self.client.get(f"/api/registry/entries/{rid}")
         assert resp.json()["entry"]["artifact_state"] == "retired"
         # deployment_summary still shows paper (read-model projection persists)
@@ -817,7 +863,7 @@ class TestFastAPIEndpoints:
         """advance_state() on a non-existent registry_id must return 404, not 400."""
         resp = self.client.post(
             "/api/registry/entries/nonexistent-reg-id/advance",
-            json={"target_state": "candidate"},
+            json={"target_state": "candidate", "expected_artifact_state": "draft"},
         )
         assert resp.status_code == 404
         assert "not found" in resp.json()["detail"].lower()
@@ -835,7 +881,7 @@ class TestFastAPIEndpoints:
         # draft -> approved is not an allowed direct transition
         resp = self.client.post(
             f"/api/registry/entries/{rid}/advance",
-            json={"target_state": "approved"},
+            json={"target_state": "approved", "expected_artifact_state": "draft"},
         )
         assert resp.status_code == 400
         assert "forbidden" in resp.json()["detail"].lower()
@@ -1386,12 +1432,12 @@ def test_latest_approved_endpoint_does_not_leak_another_tenants_approved_entry(s
     registry_id_a = created_a["entry"]["registry_id"]
     strict_client.post(
         f"/api/registry/entries/{registry_id_a}/advance",
-        json={"target_state": "candidate"},
+        json={"target_state": "candidate", "expected_artifact_state": "draft"},
         headers=_bearer(token_a),
     )
     strict_client.post(
         f"/api/registry/entries/{registry_id_a}/advance",
-        json={"target_state": "approved"},
+        json={"target_state": "approved", "expected_artifact_state": "candidate"},
         headers=_bearer(token_a),
     )
 
@@ -1630,15 +1676,28 @@ def test_advance_command_key_replay_returns_original_receipt_not_forbidden_trans
 
     first = strict_client.post(
         f"/api/registry/entries/{registry_id}/advance",
-        json={"target_state": "candidate", "command_key": "advance-cmd-001"},
+        json={
+            "target_state": "candidate",
+            "command_key": "advance-cmd-001",
+            "expected_artifact_state": "draft",
+        },
         headers=_bearer(token),
     )
     assert first.status_code == 200, first.text
     assert first.json()["entry"]["artifact_state"] == "candidate"
 
+    # A true replay resends the identical original request — including the
+    # original base state ("draft"), not the post-transition state — since
+    # it must be recognized as the same logical command and short-circuited
+    # to the original receipt rather than re-evaluated against the entry's
+    # (now advanced) current state.
     replay = strict_client.post(
         f"/api/registry/entries/{registry_id}/advance",
-        json={"target_state": "candidate", "command_key": "advance-cmd-001"},
+        json={
+            "target_state": "candidate",
+            "command_key": "advance-cmd-001",
+            "expected_artifact_state": "draft",
+        },
         headers=_bearer(token),
     )
     assert replay.status_code == 200, replay.text
@@ -1656,14 +1715,26 @@ def test_advance_command_key_divergent_replay_is_409(strict_client):
 
     first = strict_client.post(
         f"/api/registry/entries/{registry_id}/advance",
-        json={"target_state": "candidate", "command_key": "advance-cmd-shared"},
+        json={
+            "target_state": "candidate",
+            "command_key": "advance-cmd-shared",
+            "expected_artifact_state": "draft",
+        },
         headers=_bearer(token),
     )
     assert first.status_code == 200, first.text
 
+    # The entry has actually moved to "candidate" by this point; the
+    # divergent-target-state-under-shared-command_key check must still fire
+    # a 409 for the command_key mismatch, not a different "stale base" 409 —
+    # so expected_artifact_state here reflects the entry's true current state.
     diverged = strict_client.post(
         f"/api/registry/entries/{registry_id}/advance",
-        json={"target_state": "retired", "command_key": "advance-cmd-shared"},
+        json={
+            "target_state": "retired",
+            "command_key": "advance-cmd-shared",
+            "expected_artifact_state": "candidate",
+        },
         headers=_bearer(token),
     )
     assert diverged.status_code == 409, diverged.text
@@ -1780,9 +1851,17 @@ def test_strategy_spec_create_replay_after_metadata_edit_still_matches_original(
     assert replay.status_code == 200, replay.text
     # The replay's identity-comparison succeeded (200, not 400) even though
     # the live entry's metadata now differs from what was originally
-    # submitted; the *returned* entry still reflects the live, edited state
-    # — a replayed create is not a request to revert the operator's edit.
-    assert replay.json()["entry"]["metadata"]["operator_note"] == "edited after creation"
+    # submitted. NOTE: per the gen-10 review's finding 4 (see
+    # _ensure_strategy_spec_registration_matches's docstring in service.py),
+    # the contract for *what this POST call itself returns* changed after
+    # this test was first written: a same-identity create replay's response
+    # now reports the original creation snapshot (receipt_entry) rather than
+    # the live, possibly-since-mutated view — a caller retrying its own
+    # create command expects back exactly what that command committed, not
+    # whatever an unrelated later command (the metadata PATCH here) has done
+    # to the aggregate since. The durable row itself is never touched by
+    # this replay either way, which the readback below still confirms.
+    assert "operator_note" not in replay.json()["entry"]["metadata"]
 
     readback = strict_client.get(
         f"/api/registry/strategy-specs/{registry_id}", headers=_bearer(token),
@@ -1832,7 +1911,7 @@ def test_advance_with_stale_expected_base_is_409_not_silently_ignored(strict_cli
 
     first = strict_client.post(
         f"/api/registry/entries/{registry_id}/advance",
-        json={"target_state": "candidate"},
+        json={"target_state": "candidate", "expected_artifact_state": "draft"},
         headers=_bearer(token),
     )
     assert first.status_code == 200, first.text
@@ -1895,7 +1974,11 @@ def test_metadata_and_advance_command_keys_do_not_share_a_receipt_namespace(stri
 
     advance_call = strict_client.post(
         f"/api/registry/entries/{registry_id}/advance",
-        json={"target_state": "candidate", "command_key": shared_key},
+        json={
+            "target_state": "candidate",
+            "command_key": shared_key,
+            "expected_artifact_state": "draft",
+        },
         headers=_bearer(token),
     )
     assert advance_call.status_code == 200, advance_call.text

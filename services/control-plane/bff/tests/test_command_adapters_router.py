@@ -13,17 +13,33 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
-
-from command_adapters import (
+# Reviewer finding 6 (gen-10 review): this previously did
+# ``sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))`` and
+# imported ``command_adapters``/``command_queue``/``models`` as bare
+# top-level modules. That collides with
+# services/control_plane/bff/__init__.py's namespace-package extension
+# (which exposes this on-disk ``control-plane`` directory as
+# ``services.control_plane.bff``) — command_adapters/service.py's own
+# ``from ..action_catalog import ...`` relative import raises
+# ``ImportError: attempted relative import beyond top-level package`` when
+# ``command_adapters`` is imported without that real parent package.
+# Importing through the canonical ``services.control_plane.bff`` path (as
+# every other passing test in this directory already does) fixes this.
+from services.control_plane.bff.command_adapters import (
     CommandAdapterService,
     create_action_command_router,
     create_command_adapters_router,
     dispatch_domain_command,
     find_adapter,
 )
-from command_queue import CommandStore
-from models import CommandStatus, CommandType, ObjectType, OperatorIdentity, TargetObject
+from services.control_plane.bff.command_queue import CommandStore
+from services.control_plane.bff.models import (
+    CommandStatus,
+    CommandType,
+    ObjectType,
+    OperatorIdentity,
+    TargetObject,
+)
 
 
 TASK_REVIEW_MANIFEST = {
@@ -398,8 +414,41 @@ def test_operator_command_status_readback() -> None:
         assert data["status"] == CommandStatus.SUBMITTED.value
 
 
-def test_typed_domain_command_dispatch_and_receipt() -> None:
-    """Test typed domain command execution returns structured receipt."""
+def test_typed_domain_command_dispatch_and_receipt(monkeypatch) -> None:
+    """Test typed domain command execution returns structured receipt.
+
+    Reviewer finding 6 (gen-10 review): this previously exercised
+    ``action_id="submit_review"``, which architecture-resumption-sa-sd.md §2
+    and this codebase's own command_contract.py deliberately route to the
+    governance-review owner, not Registry — StrategyCommandAdapter now
+    correctly raises ActionUnavailableError for it instead of fabricating an
+    "accepted"/"review_pending" receipt (see strategy_adapter.py's
+    _execute_strategy_action docstring). This collection-error-hidden test
+    was asserting the old, intentionally-removed fabricated-success
+    behavior. Exercise a genuinely Registry-owned action (``update_params``)
+    instead, with the outbound Registry HTTP call mocked (mirrors
+    services/control-plane/bff/tests/test_strategy_registry_owner_prerequisite.py),
+    to keep proving typed dispatch produces a structured receipt without a
+    live network dependency.
+    """
+    from services.control_plane.bff.command_adapters import strategy_adapter as strategy_adapter_module
+
+    def _fake_http(url, *, method="GET", payload=None, auth_token=None, mfa_token=None):
+        entry = {
+            "registry_id": "reg-dispatch-1",
+            "strategy_id": "stg-01",
+            "owner_tenant": None,
+            "version": "1.0.0",
+            "checksum": "sha256:dispatch",
+            "metadata": {"note": "new"},
+            "updated_at": "2026-09-06T00:00:00Z",
+            "last_actor": {"actor_id": "operator-command", "tenant": None},
+        }
+        return 200, {"X-Idempotent-Replay": "false"}, {"entry": entry}
+
+    monkeypatch.setattr(strategy_adapter_module, "http_request_json_with_headers", _fake_http)
+    monkeypatch.setenv("PANTHEON_REGISTRY_API_URL", "http://registry-svc.internal")
+
     adapter = find_adapter(CommandType.STRATEGY_ACTION)
     assert adapter is not None
 
@@ -407,11 +456,17 @@ def test_typed_domain_command_dispatch_and_receipt() -> None:
     receipt = adapter.execute(
         command_id="cmd-dispatch-1",
         command_type=CommandType.STRATEGY_ACTION,
-        params={"strategy_id": "stg-01", "action_id": "submit_review"},
+        params={
+            "strategy_id": "stg-01",
+            "action_id": "update_params",
+            "registry_id": "reg-dispatch-1",
+            "expected_metadata": {"note": "old"},
+            "metadata": {"note": "new"},
+        },
         auth_token="Bearer test",
     )
     assert receipt["command_id"] == "cmd-dispatch-1"
-    assert receipt["status"] in ("accepted", "review_pending")
+    assert receipt["status"] == "metadata_updated"
     assert receipt["entity_type"] in ("strategy", "Strategy")
     assert receipt["entity_id"] == "stg-01"
     assert "domain_receipt" in receipt
@@ -419,7 +474,7 @@ def test_typed_domain_command_dispatch_and_receipt() -> None:
 
 def test_main_app_operator_command_submission_regression() -> None:
     """Regression test: verify POST /api/v1/operator/commands works in full main app with idempotency keys."""
-    from main import app as main_app, command_store as main_command_store
+    from services.control_plane.bff.main import app as main_app, command_store as main_command_store
 
     with tempfile.TemporaryDirectory() as td:
         main_command_store.file_path = os.path.join(td, "main_commands.jsonl")
@@ -661,40 +716,50 @@ def test_command_confirmation_degraded_read_surface() -> None:
 
 def test_main_app_command_confirmation_degraded_read_surface_regression() -> None:
     """Regression test: verify POST /bff/command-confirmations in full main app projects staleness_warning when BFF_READ_SURFACE_STATE is degraded."""
-    from main import app as main_app
+    from services.control_plane.bff.main import app as main_app, command_store as main_command_store
 
     orig_env = os.environ.get("BFF_READ_SURFACE_STATE")
     try:
         os.environ["BFF_READ_SURFACE_STATE"] = "degraded"
-        client = TestClient(main_app)
+        with tempfile.TemporaryDirectory() as td:
+            # Reviewer finding 6 (gen-10 review): ``main.command_store`` is a
+            # module-level singleton shared with
+            # test_main_app_operator_command_submission_regression, which
+            # points its ``file_path`` at its own (already-cleaned-up)
+            # TemporaryDirectory. Without repointing it here too, this test's
+            # command writes fail with FileNotFoundError whenever it runs
+            # after that one in the same process — this was invisible while
+            # the whole module failed to collect.
+            main_command_store.file_path = os.path.join(td, "main_commands_degraded.jsonl")
+            client = TestClient(main_app)
 
-        # Create confirm token
-        create_resp = client.post(
-            "/bff/confirm-tokens",
-            headers={
-                "Authorization": "Bearer op-1:operator,approver:mfa",
-                "Idempotency-Key": "main-reg-deg-ct-1",
-            },
-            json={"tokenId": "ct-main-deg-001", "reason": "degraded read test"},
-        )
-        assert create_resp.status_code == 201, create_resp.text
+            # Create confirm token
+            create_resp = client.post(
+                "/bff/confirm-tokens",
+                headers={
+                    "Authorization": "Bearer op-1:operator,approver:mfa",
+                    "Idempotency-Key": "main-reg-deg-ct-1",
+                },
+                json={"tokenId": "ct-main-deg-001", "reason": "degraded read test"},
+            )
+            assert create_resp.status_code == 201, create_resp.text
 
-        # Submit confirmation
-        conf_resp = client.post(
-            "/bff/command-confirmations",
-            headers={
-                "Authorization": "Bearer op-1:operator,approver:mfa",
-                "Idempotency-Key": "main-reg-deg-conf-1",
-            },
-            json={"command_id": "cmd-main-deg-001", "confirm_token": "ct-main-deg-001"},
-        )
-        assert conf_resp.status_code == 202, conf_resp.text
-        data = conf_resp.json()
-        assert data["status"] == "accepted"
-        assert data["lifecycleStatus"] == "redeemed"
-        assert "staleness_warning" in data
-        assert data["staleness_warning"]["read_surface_state"] == "degraded"
-        assert "stale read surface data" in data["staleness_warning"]["message"]
+            # Submit confirmation
+            conf_resp = client.post(
+                "/bff/command-confirmations",
+                headers={
+                    "Authorization": "Bearer op-1:operator,approver:mfa",
+                    "Idempotency-Key": "main-reg-deg-conf-1",
+                },
+                json={"command_id": "cmd-main-deg-001", "confirm_token": "ct-main-deg-001"},
+            )
+            assert conf_resp.status_code == 202, conf_resp.text
+            data = conf_resp.json()
+            assert data["status"] == "accepted"
+            assert data["lifecycleStatus"] == "redeemed"
+            assert "staleness_warning" in data
+            assert data["staleness_warning"]["read_surface_state"] == "degraded"
+            assert "stale read surface data" in data["staleness_warning"]["message"]
     finally:
         if orig_env is None:
             os.environ.pop("BFF_READ_SURFACE_STATE", None)

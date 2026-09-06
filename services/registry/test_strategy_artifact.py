@@ -513,6 +513,7 @@ def test_strategy_artifact_advance_preserves_deployment_split():
         f"/api/registry/strategy-artifacts/{registry_id}/advance",
         json={
             "target_state": "approved",
+            "expected_artifact_state": "candidate",
             "approver": "test-reviewer",
             "approval_decision_id": "decision-evoloop-006",
         },

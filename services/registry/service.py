@@ -91,18 +91,28 @@ class AdvanceRequest(BaseModel):
     advance under the same key returns the originally-committed entry
     instead of re-running the transition or raising a spurious "forbidden
     transition" error once the entry has already moved."""
-    expected_artifact_state: Optional[ArtifactState] = None
+    expected_artifact_state: ArtifactState
+    """Reviewer finding 5 (gen-10 review): the caller's own claimed base
+    ``artifact_state`` is now mandatory, not optional. A prior revision let a
+    caller omit every ``expected_*`` field and silently fall back to a
+    freshly server-read current row as the CAS base — which is not a CAS at
+    all, since the whole point of a compare-and-set precondition is to bind
+    the write to the state the caller actually observed before deciding to
+    advance, not to "whatever the row happens to be right now". A real-PG
+    probe demonstrated this: advance draft->candidate (bound), then an
+    unbound (no expected_* at all) candidate->retired request still
+    succeeded purely off a fresh re-read, discarding the caller's own
+    now-stale belief instead of rejecting it as a 409 stale-base conflict.
+    architecture-resumption-sa-sd.md §3.3 requires a caller/base CAS with no
+    compatibility fallback; every public advance facade now requires this
+    field.
+    """
     expected_version: Optional[str] = None
     expected_updated_at: Optional[str] = None
-    """Reviewer finding 6 (gen-8 review): the caller's own claimed base
-    snapshot. Without these, the CAS this route performs always bound to a
-    freshly server-read current row, never anything the caller actually
-    supplied — so a caller advancing against a stale belief about the
-    entry's current state/version/updated_at had that belief silently
-    discarded instead of rejected as a 409 stale-base conflict. Supplying
-    any of them binds the CAS to that exact claimed field; a caller that
-    does not track a base can omit all three and keep the prior
-    server-reread behavior."""
+    """Additional, optional caller-claimed base fields — supplying either
+    tightens the CAS further (also binding version/updated_at), but
+    ``expected_artifact_state`` alone is already sufficient caller-bound
+    base identity to close the omitted-premise gap above."""
 
 
 class DeploymentSummaryUpdate(BaseModel):
@@ -747,14 +757,23 @@ def _ensure_strategy_spec_registration_matches(
     ``receipt_entry`` (the entry exactly as it was at its original creation
     — see ``RegistryService.get_creation_receipt``) is compared against the
     caller's replay payload when available, instead of ``view.entry``'s
-    live current fields (reviewer finding 5, gen-8 review): a later,
-    unrelated ``update_metadata`` call can legitimately drift ``metadata``
-    away from what was originally submitted, and comparing a replay against
-    that drifted content would wrongly reject an exact replay of the
-    original request as "different content". The row *returned* stays the
-    live ``view`` regardless — a replayed create is not a request to revert
-    real progress (e.g. an approval already granted) back to its original
-    draft state, only the equality check uses the immutable original.
+    live current fields: a later, unrelated ``update_metadata`` call can
+    legitimately drift ``metadata`` away from what was originally submitted,
+    and comparing a replay against that drifted content would wrongly reject
+    an exact replay of the original request as "different content".
+
+    Reviewer finding 4 (gen-10 review): the response returned to an
+    exact-content replay must be the *original creation snapshot*
+    (``receipt_entry``) when one is available, not ``view.entry``'s current
+    (possibly since-mutated) fields. A prior revision of this function
+    returned the live current view here on the theory that "returning the
+    immutable original does not revert live state" — but that conflated two
+    different things: reverting the durable row (which this never does) vs.
+    what this *specific POST call* reports as its own result. A caller
+    retrying its own create command expects back exactly what that command
+    committed, not whatever an unrelated, later command has since done to
+    the same aggregate; the ordinary GET route remains the way to observe
+    current live state.
     """
 
     if view.entry.registry_id != registry_id:
@@ -784,6 +803,8 @@ def _ensure_strategy_spec_registration_matches(
         raise RegistryError(
             f"StrategySpec registry_id already exists with different content: {registry_id}"
         )
+    if receipt_entry is not None:
+        return RegistryService._to_view(receipt_entry)
     return view
 
 
@@ -891,6 +912,12 @@ def _register_strategy_artifact(
         raise RegistryError(
             f"StrategyArtifact registry_id already exists with different content: {registry_id}"
         )
+    # Reviewer finding 4 (gen-10 review): return the original creation
+    # snapshot (when recorded) as this replay's own result, not whatever the
+    # entry has since become via an unrelated later command — see the
+    # identical rationale in _ensure_strategy_spec_registration_matches.
+    if receipt_view is not None:
+        return receipt_view
     return view
 
 
@@ -1699,6 +1726,55 @@ def _ensure_alloc_policy_view(
     return view
 
 
+def _ensure_alloc_policy_registration_matches(
+    view: RegistryEntryView,
+    create_payload: RegistryEntryCreate,
+    registry_id: str,
+    *,
+    receipt_entry: Optional[RegistryEntry] = None,
+) -> RegistryEntryView:
+    """Validate an AllocationPolicyArtifact create-if-absent replay/collision.
+
+    Reviewer finding 1 (gen-10 review): a caller-supplied ``registry_id`` that
+    already names an existing entry (of *any* artifact_type, owned by *any*
+    tenant) was previously returned unconditionally by the plain
+    ``RegistryService.register()`` call this route used to make — an
+    authenticated caller could read another tenant's private
+    AllocationPolicyArtifact, or even a wholly different artifact kind (e.g.
+    a private StrategySpec), simply by re-POSTing a guessed/known
+    ``registry_id``. Mirrors ``_ensure_strategy_spec_registration_matches``'s
+    content-match pattern; the caller (see ``register_allocation_policy_artifact``)
+    additionally runs ``_authorize_read`` on the returned view *before* this
+    is called, so a cross-tenant collision is denied (403) before any content
+    is ever compared or returned.
+    """
+    if view.entry.registry_id != registry_id:
+        raise RegistryConflictError(
+            f"strategy_id={create_payload.strategy_id!r} version={create_payload.version!r} "
+            f"is already registered as registry_id={view.entry.registry_id!r}, not the "
+            f"requested registry_id={registry_id!r}."
+        )
+    view = _ensure_alloc_policy_view(view, registry_id)
+    entry = receipt_entry if receipt_entry is not None else view.entry
+    if (
+        entry.strategy_id != create_payload.strategy_id
+        or entry.version != create_payload.version
+        or entry.checksum != create_payload.checksum
+        or entry.lineage.to_dict() != create_payload.lineage.to_dict()
+        or entry.evaluation_summary != create_payload.evaluation_summary
+        or entry.metadata != create_payload.metadata
+    ):
+        raise RegistryError(
+            f"AllocationPolicyArtifact registry_id already exists with different content: {registry_id}"
+        )
+    # Reviewer finding 4 (gen-10 review): return the original creation
+    # snapshot (when recorded) as this replay's own result, not whatever the
+    # entry has since become via an unrelated later command.
+    if receipt_entry is not None:
+        return RegistryService._to_view(receipt_entry)
+    return view
+
+
 @app.post(
     "/api/registry/allocation-policy-artifacts",
     response_model=RegistryEntryView,
@@ -1725,7 +1801,26 @@ async def register_allocation_policy_artifact(
     registry_service = get_registry_service()
     try:
         create_payload = _alloc_policy_register_payload(payload)
-        return registry_service.register(create_payload, registry_id, actor=_actor_context(ctx))
+        # Reviewer finding 1 (gen-10 review): use register_if_absent (not the
+        # plain register()) so a same-registry_id collision is distinguished
+        # from a genuine fresh create instead of silently returned. A
+        # collision must be independently authorized (tenant/builtin scoped,
+        # same as a GET) and content/kind-matched before it is ever returned
+        # to the caller — a POST replay is not a free read of an arbitrary
+        # caller-chosen identity.
+        view, created = registry_service.register_if_absent(
+            create_payload, registry_id, actor=_actor_context(ctx),
+        )
+        if created:
+            return view
+        _authorize_read(ctx, view)
+        receipt_view = registry_service.get_creation_receipt(registry_id)
+        return _ensure_alloc_policy_registration_matches(
+            view,
+            create_payload,
+            registry_id,
+            receipt_entry=receipt_view.entry if receipt_view is not None else None,
+        )
     except RegistryConflictError as e:
         raise HTTPException(status_code=409, detail=str(e))
     except (RegistryError, ValueError) as e:

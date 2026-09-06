@@ -271,20 +271,42 @@ folded into the framed identity so the same client-chosen `command_key` value re
 metadata-CAS call and an `advance` on the same `registry_id`/tenant/actor can never land on the same
 receipt row, regardless of whether their request digests happen to differ.
 
-`advance_artifact_state` additionally accepts an optional caller-claimed base
-(`expected_artifact_state`/`expected_version`/`expected_updated_at`). When supplied, each is merged
-onto the CAS base snapshot before the compare-and-set, binding the write to what the caller actually
-believes the entry's current state is — not only a value the store re-read fresh at request time. A
-stale claim fails the same 409 conflict a stale `expected_metadata` already does on `update_metadata`.
-Omitting all three preserves the original server-reread behavior.
+Every method that writes to both `registry.entries` and `registry.command_receipts` in one transaction
+locks the **entries table first**, before ever touching receipts (`PostgresJsonOwnerStore.lock_table`,
+called explicitly ahead of any receipts access in `create_with_receipt`/`commit_metadata_cas`/
+`commit_artifact_state_cas`; `create_if_absent`/`register_strategy_spec_revision` already insert into
+entries before receipts naturally). This global ordering is required because
+`PostgresJsonOwnerStore.insert_if_absent` always takes a table-level `SHARE ROW EXCLUSIVE` lock: two
+unrelated, lawful concurrent requests that happened to touch the two tables in opposite orders could
+deadlock in Postgres (one holding entries and waiting on receipts, the other holding receipts and
+waiting on entries) rather than merely serialize.
 
-A same-`registry_id` create-if-absent replay (the StrategySpec/StrategyArtifact facades' "already
-registered, return the existing entry" path) is compared against the entry's **original creation
-content** — a snapshot recorded once, in the same transaction as the entry's first successful insert,
-and exposed via `PostgresRegistryStore.get_creation_receipt`/`RegistryStore.get_creation_receipt` — not
-against whatever the row has mutated into since (a later `advance` or `update_metadata` call). This
-keeps an exact replay of the original request succeeding even after legitimate downstream progress; the
-row *returned* to the caller is always the live current entry, never reverted to its original state.
+`advance_artifact_state` requires the caller's own claimed base (`expected_artifact_state`; every
+public `.../advance` route rejects an omitted value with 422) and accepts optional further narrowing
+(`expected_version`/`expected_updated_at`). Each supplied field is merged onto the CAS base snapshot
+before the compare-and-set, binding the write to what the caller actually believes the entry's current
+state is — never only a value the store re-read fresh at request time. A stale claim fails the same 409
+conflict a stale `expected_metadata` already does on `update_metadata`. `expected_artifact_state` was
+made mandatory (previously optional, silently falling back to a fresh server re-read as the CAS base
+when omitted) after an independent review reproduced a real-Postgres HTTP request that advanced a bound
+transition, then advanced again with no expected_* field at all and still succeeded — not a caller-bound
+CAS at all.
+
+A same-`registry_id` create-if-absent replay (the StrategySpec/StrategyArtifact/AllocationPolicyArtifact
+facades' "already registered, return the existing entry" path) is compared against, and now **returns**,
+the entry's **original creation content** — a snapshot recorded once, in the same transaction as the
+entry's first successful insert, and exposed via
+`PostgresRegistryStore.get_creation_receipt`/`RegistryStore.get_creation_receipt` — not whatever the row
+has mutated into since (a later `advance` or `update_metadata` call). This keeps an exact replay of the
+original request succeeding even after legitimate downstream progress, and reports back exactly what
+that original command committed rather than an unrelated later command's edit; the durable row itself is
+never reverted, and the ordinary `GET` route always returns the live current entry.
+
+A same-`registry_id` collision on any create-if-absent path (including
+`AllocationPolicyArtifactRegisterRequest`'s caller-suppliable `registry_id`) is independently authorized
+(tenant/builtin scoped, matching a `GET` of the same entry) and kind/content-matched against the caller's
+own request before ever being returned — a caller cannot read another tenant's private entry, or a
+different artifact kind entirely, simply by re-POSTing a guessed or known `registry_id`.
 
 ### Storage backend
 

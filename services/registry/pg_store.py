@@ -365,6 +365,14 @@ class PostgresRegistryStore:
         with self._entries.transaction() as conn:
             reservation: Optional[dict[str, Any]] = None
             if scoped_key:
+                # Reviewer finding 2 (gen-10 review): always lock entries
+                # before ever touching receipts in this transaction, matching
+                # create_if_absent/register_strategy_spec_revision's order.
+                # Taking the receipts lock first (as before) let this method
+                # deadlock in Postgres against a concurrent create path that
+                # legitimately locks entries first — see
+                # PostgresJsonOwnerStore.lock_table's docstring.
+                self._entries.lock_table(conn=conn)
                 reservation = {
                     "command_key": command_key,
                     "receipt_key": scoped_key,
@@ -499,6 +507,10 @@ class PostgresRegistryStore:
         with self._entries.transaction() as conn:
             reservation: Optional[dict[str, Any]] = None
             if scoped_key:
+                # Reviewer finding 2 (gen-10 review): see the identical
+                # comment in commit_metadata_cas — always lock entries before
+                # receipts in this transaction.
+                self._entries.lock_table(conn=conn)
                 reservation = {
                     "command_key": command_key,
                     "receipt_key": scoped_key,
@@ -588,6 +600,17 @@ class PostgresRegistryStore:
         scoped_key = self.receipt_key(command_key, "register_entry", actor=actor, command_type="create")
         request_digest = _request_digest({"request": request_fingerprint})
         with self._entries.transaction() as conn:
+            # Reviewer finding 2 (gen-10 review): this method previously
+            # locked receipts (via insert_if_absent below) before ever
+            # touching entries — the opposite order from create_if_absent/
+            # register_strategy_spec_revision, which always insert into
+            # entries before receipts. Two unrelated, lawful concurrent HTTP
+            # requests — one landing on this idempotency-keyed path, one on
+            # either of those — could deadlock in Postgres as a result (each
+            # holds one table's SHARE ROW EXCLUSIVE lock and waits on the
+            # other's). Locking entries first here, before receipts is ever
+            # touched, makes the acquisition order consistent everywhere.
+            self._entries.lock_table(conn=conn)
             reservation = {
                 "command_key": command_key,
                 "receipt_key": scoped_key,
