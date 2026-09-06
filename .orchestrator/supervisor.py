@@ -7795,7 +7795,8 @@ def canonical_worker_terminal_status(
                 return None
             if not rewrite_task_machine.delivery_binding_is_current(task):
                 return None
-            if not rewrite_task_machine.delivery_binding_is_current({"delivery_binding": event_delivery}):
+            event_task = dict(task, delivery_binding=event_delivery)
+            if not rewrite_task_machine.delivery_binding_is_current(event_task):
                 return None
             event_kind = str(event_delivery.get("kind") or "").strip()
             task_kind = str(task_delivery.get("kind") or "").strip()
@@ -7851,7 +7852,12 @@ def canonical_worker_terminal_status(
                         else snap_meta.get("delivery_binding")
                     )
                     if isinstance(dispatched_delivery, Mapping):
-                        dispatched_digest = rewrite_task_machine.delivery_binding_digest({"delivery_binding": dispatched_delivery})
+                        dispatched_wrapper = (
+                            snap_task
+                            if isinstance(snap_task, Mapping)
+                            else dict(task, delivery_binding=dispatched_delivery)
+                        )
+                        dispatched_digest = rewrite_task_machine.delivery_binding_digest(dispatched_wrapper)
                         current_digest = rewrite_task_machine.delivery_binding_digest(task)
                         if dispatched_digest is not None and dispatched_digest != current_digest:
                             return None
@@ -7874,24 +7880,15 @@ def canonical_worker_terminal_status(
                 else:
                     if ev_val != tk_val:
                         return None
-        task_delivery = task.get("delivery_binding")
-        if isinstance(task_delivery, Mapping) and task_delivery.get("kind") == "pull_request":
-            if event_bridge and isinstance(event_bridge, Mapping):
-                if str(event_bridge.get("head_sha") or "").strip().lower() != str(task_delivery.get("head_sha") or "").strip().lower():
-                    return None
-                if str(event_bridge.get("pr") or "").strip().lstrip("#") != str(task_delivery.get("pr") or "").strip().lstrip("#"):
-                    return None
-
-    elif event_type == "done":
-        event_delivery = latest_terminal.get("delivery")
-        task_delivery = task.get("delivery")
-        if event_delivery is not None or task_delivery is not None:
-            if not isinstance(event_delivery, Mapping) or not isinstance(task_delivery, Mapping):
+        event_review = latest_terminal.get("review_binding")
+        task_review = task.get("review_binding")
+        if event_review is not None or task_review is not None:
+            if not isinstance(event_review, Mapping) or not isinstance(task_review, Mapping):
                 return None
-            for field in ("kind", "pr", "head_sha", "merge_commit", "target_branch"):
-                ev_val = str(event_delivery.get(field) or "").strip()
-                tk_val = str(task_delivery.get(field) or "").strip()
-                if field in ("head_sha", "merge_commit"):
+            for field in ("pr", "head_sha", "head_branch", "base"):
+                ev_val = str(event_review.get(field) or "").strip()
+                tk_val = str(task_review.get(field) or "").strip()
+                if field == "head_sha":
                     if ev_val.lower() != tk_val.lower():
                         return None
                 elif field == "pr":
@@ -7900,12 +7897,119 @@ def canonical_worker_terminal_status(
                 else:
                     if ev_val != tk_val:
                         return None
-            merge_commit = str(event_delivery.get("merge_commit") or "").strip()
-            if merge_commit and not rewrite_task_machine._is_hex(merge_commit, 40):
+        task_delivery = task.get("delivery_binding")
+        has_delivery = (
+            requires_pr_delivery_binding(task)
+            or task_delivery is not None
+        )
+        if has_delivery:
+            if not isinstance(task_delivery, Mapping) or not rewrite_task_machine.delivery_binding_is_current(task):
                 return None
-            head_sha = str(event_delivery.get("head_sha") or "").strip()
-            if head_sha and not rewrite_task_machine._is_hex(head_sha, 40):
+            if task_delivery.get("kind") == "pull_request":
+                if event_bridge and isinstance(event_bridge, Mapping):
+                    if str(event_bridge.get("head_sha") or "").strip().lower() != str(task_delivery.get("head_sha") or "").strip().lower():
+                        return None
+                    if str(event_bridge.get("pr") or "").strip().lstrip("#") != str(task_delivery.get("pr") or "").strip().lstrip("#"):
+                        return None
+                if task_review and isinstance(task_review, Mapping):
+                    if str(task_review.get("head_sha") or "").strip().lower() != str(task_delivery.get("head_sha") or "").strip().lower():
+                        return None
+                    if str(task_review.get("pr") or "").strip().lstrip("#") != str(task_delivery.get("pr") or "").strip().lstrip("#"):
+                        return None
+
+            req_snap = worker.get("request_snapshot")
+            if isinstance(req_snap, Mapping):
+                snap_meta = req_snap.get("metadata")
+                if isinstance(snap_meta, Mapping):
+                    snap_task = snap_meta.get("task")
+                    dispatched_delivery = (
+                        snap_task.get("delivery_binding")
+                        if isinstance(snap_task, Mapping) and isinstance(snap_task.get("delivery_binding"), Mapping)
+                        else snap_meta.get("delivery_binding")
+                    )
+                    if isinstance(dispatched_delivery, Mapping):
+                        dispatched_wrapper = (
+                            snap_task
+                            if isinstance(snap_task, Mapping)
+                            else dict(task, delivery_binding=dispatched_delivery)
+                        )
+                        dispatched_digest = rewrite_task_machine.delivery_binding_digest(dispatched_wrapper)
+                        current_digest = rewrite_task_machine.delivery_binding_digest(task)
+                        if dispatched_digest is not None and dispatched_digest != current_digest:
+                            return None
+                        disp_manifest = dispatched_delivery.get("evidence_manifest")
+                        curr_manifest = task_delivery.get("evidence_manifest")
+                        if isinstance(disp_manifest, Mapping) or isinstance(curr_manifest, Mapping):
+                            if not isinstance(disp_manifest, Mapping) or not isinstance(curr_manifest, Mapping):
+                                return None
+                            if str(disp_manifest.get("blob_sha") or "").strip().lower() != str(curr_manifest.get("blob_sha") or "").strip().lower():
+                                return None
+                            if str(disp_manifest.get("path") or "").strip() != str(curr_manifest.get("path") or "").strip():
+                                return None
+
+    elif event_type == "done":
+        event_delivery = latest_terminal.get("delivery")
+        task_delivery = task.get("delivery")
+        if event_delivery is not None or task_delivery is not None:
+            if not isinstance(event_delivery, Mapping) or not isinstance(task_delivery, Mapping):
                 return None
+            for field in (
+                "commit",
+                "repository_id",
+                "repository_slug",
+                "branch",
+                "target_branch",
+                "head_sha",
+                "merge_commit",
+                "pr",
+                "kind",
+                "commit_source",
+            ):
+                if field in event_delivery or field in task_delivery:
+                    ev_val = str(event_delivery.get(field) or "").strip()
+                    tk_val = str(task_delivery.get(field) or "").strip()
+                    if field in ("commit", "head_sha", "merge_commit"):
+                        if ev_val.lower() != tk_val.lower():
+                            return None
+                        if ev_val and not rewrite_task_machine._is_hex(ev_val, 40):
+                            return None
+                        if tk_val and not rewrite_task_machine._is_hex(tk_val, 40):
+                            return None
+                    elif field == "pr":
+                        if ev_val.lstrip("#") != tk_val.lstrip("#"):
+                            return None
+                    else:
+                        if ev_val != tk_val:
+                            return None
+
+            task_review = task.get("review_binding")
+            if isinstance(task_review, Mapping):
+                rev_head = str(task_review.get("head_sha") or "").strip().lower()
+                rev_branch = str(task_review.get("head_branch") or "").strip()
+                rev_pr = str(task_review.get("pr") or "").strip().lstrip("#")
+                if str(task_delivery.get("commit_source") or "").strip() == "canonical_approved_head":
+                    delivered_commit = str(task_delivery.get("commit") or "").strip().lower()
+                    if rev_head and delivered_commit != rev_head:
+                        return None
+                if rev_branch:
+                    delivered_branch = str(task_delivery.get("branch") or "").strip()
+                    if delivered_branch and delivered_branch != rev_branch:
+                        return None
+                if rev_pr:
+                    delivered_pr = str(task_delivery.get("pr") or "").strip().lstrip("#")
+                    if delivered_pr and delivered_pr != rev_pr:
+                        return None
+
+            req_snap = worker.get("request_snapshot")
+            if isinstance(req_snap, Mapping):
+                snap_meta = req_snap.get("metadata")
+                if isinstance(snap_meta, Mapping):
+                    snap_task = snap_meta.get("task")
+                    if isinstance(snap_task, Mapping):
+                        snap_review = snap_task.get("review_binding")
+                        if isinstance(snap_review, Mapping) and isinstance(task_review, Mapping):
+                            if str(snap_review.get("head_sha") or "").strip().lower() != str(task_review.get("head_sha") or "").strip().lower():
+                                return None
     return task_status
 
 
@@ -10661,13 +10765,27 @@ def poll_worker_orphan_stage(
     return {"changed": True, "stop": True}
 
 
+def _safe_load_canonical_task(
+    config: Mapping[str, Any],
+    task_map: Mapping[str, Any],
+    task_id: str,
+) -> Mapping[str, Any] | None:
+    try:
+        st = load_status(config)
+        tk = task_index_from_status(config, st).get(task_id)
+        if tk is not None:
+            return tk
+    except Exception:
+        pass
+    return task_map.get(task_id)
+
+
 def poll_worker_assignment_stage(
-    config: dict[str, Any],
+    config: Mapping[str, Any],
     state: dict[str, Any],
     worker: dict[str, Any],
-    *,
     run_id: str,
-    task_map: dict[str, dict[str, Any]],
+    task_map: Mapping[str, Any],
     active_worker_statuses: set[str],
     alive: bool,
     activity_events: list[dict[str, Any]] | None = None,
@@ -10675,7 +10793,8 @@ def poll_worker_assignment_stage(
 ) -> dict[str, bool]:
     """Apply redelivery and current-assignment lease rules."""
     changed = False
-    task = task_map.get(str(worker.get("task_id") or ""))
+    task_id = str(worker.get("task_id") or "")
+    task = _safe_load_canonical_task(config, task_map, task_id)
     generation_fence_crossed = isinstance(
         task, Mapping
     ) and not worker_matches_current_task_generation(worker, task)
@@ -10746,6 +10865,23 @@ def poll_worker_assignment_stage(
             ready_dispatch_settings(config).get("dependency_done_statuses"),
             ["done"],
         ):
+            fresh_task = _safe_load_canonical_task(config, task_map, task_id)
+            if fresh_task is None or not worker_matches_current_task_generation(worker, fresh_task):
+                return {"changed": False, "stop": False}
+            fresh_events = (
+                activity_events
+                if activity_events is not None
+                else recent_governance_activity_events(config)
+            )
+            fresh_terminal = canonical_worker_terminal_status(
+                config,
+                worker,
+                fresh_task,
+                activity_events=fresh_events,
+            )
+            if fresh_terminal != handoff_status:
+                return {"changed": False, "stop": False}
+
             worker["status"] = "completed"
             worker["last_event_at"] = utc_now()
             worker.pop("last_error", None)
@@ -10767,7 +10903,9 @@ def poll_worker_assignment_stage(
             )
             return {"changed": True, "stop": True}
 
-    if worker.get("queue_event_id") and not worker_matches_current_assignment(config, worker, task_map):
+    fresh_task = _safe_load_canonical_task(config, task_map, task_id)
+    eval_task_map = {task_id: fresh_task} if fresh_task is not None else task_map
+    if worker.get("queue_event_id") and not worker_matches_current_assignment(config, worker, eval_task_map):
         if worker.get("status") == "superseded":
             return {"changed": False, "stop": True}
         decision = (
@@ -10811,15 +10949,20 @@ def poll_worker_assignment_stage(
             return {"changed": changed, "stop": True}
         else:
             task_id = str(worker.get("task_id") or "")
-            current_task = task_map.get(task_id)
+            current_task = _safe_load_canonical_task(config, task_map, task_id)
             if current_task is not None and worker_matches_current_assignment(config, worker, {task_id: current_task}):
                 return {"changed": False, "stop": False}
             if not generation_fence_crossed:
+                fresh_events = (
+                    governance_activity_events
+                    if governance_activity_events is not None
+                    else recent_governance_activity_events(config)
+                )
                 fresh_decision = active_worker_governance_lease_decision(
                     config,
                     worker,
                     current_task,
-                    activity_events=governance_activity_events,
+                    activity_events=fresh_events,
                 )
                 if fresh_decision["action"] != "terminate":
                     if alive:

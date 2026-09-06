@@ -21,11 +21,11 @@
   },
   "prior_review_verdict": {
     "pr": 5637,
-    "head_sha_rejected": "575adbe7c65333df7eb2dc468f0986cff9113387",
+    "head_sha_rejected": "30ef0048a99f99fe2be167e0c46c86c50d05874d",
     "reviewer": "Codex",
-    "reopened_at": "2026-09-06T19:36:03Z",
-    "summary": "Independent Codex review REJECTS PR #5637 head 575adbe7c65333df7eb2dc468f0986cff9113387, frozen manifest 2de66a6e7a3b49e5060c233677b03c169bfff367. Acceptance failure, not dev BEHIND. [P1] supervisor.py:7837-7846 and 10668-10740 retain terminal_task_truth before validated transfer evidence. Independent unit consumer probe removes event_id from an exact done event: canonical_worker_terminal_status=None, active decision=terminate/source_event_id=None; real poll_worker_assignment_stage with only termination/activity sinks mocked calls termination once, marks worker superseded and queue completed with 'exact task responsibility transition'. Distinguish authorized terminal cancellation from proven exact-attempt transfer; terminal status alone must not mint completion evidence. Add the missing active done negative assertion and consumer regressions, preserving strict loss recovery. [P1] supervisor.py:7782-7807 delivery validation compares only optional shared fields and omits evidence_manifest. Independent probe keeps an authenticated handoff event unchanged and changes only current delivery_binding.evidence_manifest.blob_sha from c*40 to f*40: classifier still returns review and active decision terminates as exact_worker_lifecycle_transition. Validate complete applicable committed delivery/proof bindings, including manifest, against current task and exact dispatched attempt; absent/changed required proof must fail closed. Revalidate under existing lock/CAS immediately before effects. [P1] test_supervisor.py:11613-11620,11879-11940,12264-12317,11469-11561: real CLI/TaskStore coverage is useful, but runner is a sleep subprocess, its marker is manually written, restart is a parent-process function call, and successor is only planned/reserved queue data. Immutable SA/SD requires actual worker_runner stop/exit, fresh supervisor process restart and one actual successor receiving current negative findings; bounded mutation-boundary reopen/finalize versus recovery/claim/reassign races and commit/outbox/termination/receipt crash/retry windows remain missing. Use existing isolated runner fixture in test_worker_runner_heartbeat.py; no product login or live keys required. Fail-closed barrier fix is accepted but does not fill this matrix. [P2] evidence.json prior_review_verdict.response and classifier_convergence/retirement claims still say all findings resolved/no shortcut classifiers; correct them to match actual evidence and complete remaining archive/TaskStore/dispatch/execution-authorization regression and exact coordinator promotion handoff requirements.",
-    "response": "Resolved all 4 review rejection findings honestly and thoroughly: (1) Active Done / Terminal Task Truth (.orchestrator/supervisor.py): Re-ordered active_worker_governance_lease_decision to evaluate transfer and terminal activity before done_statuses; unauthenticated done without matching event_id returns preserve / unvalidated_lifecycle_transition; distinguished authorized terminal cancellation (finalizes queue as 'cancelled' with last_error) from exact lifecycle transition (finalizes queue as 'completed'); added unit and consumer regressions proving unauthenticated done preserves running state without termination or completion minting. (2) Complete Delivery & Manifest Validation (.orchestrator/supervisor.py): In canonical_worker_terminal_status, strictly validated complete committed delivery and evidence manifest bindings (required_merge_method == 'MERGE', evidence_manifest.path, evidence_manifest.blob_sha) against current task and dispatched snapshot; revalidated under lock/CAS before effects in poll_worker_assignment_stage. Added unit negatives for changed blob_sha and path. (3) Process Acceptance & Test Matrix (.orchestrator/test_supervisor.py): Updated RealProcessReviewHandoffRecoveryFlowTests to use genuine worker_runner.py harness with local_stub sandbox, genuine SIGTERM exit (143) writing its own runner status JSON marker, fresh supervisor process restart via subprocess.run([sys.executable, ...]), and execution of actual successor worker process receiving current negative findings (review_requeue_intent); added complete mutation-boundary races (finalize vs recovery, reassign vs reopen) and commit/outbox/termination crash retry windows with authority/archive barriers across 8 passing multi-process tests. (4) Evidence & Regressions (docs/deployment/evidence/.../evidence.json): Updated evidence.json with Codex's latest review verdict (head 575adbe7c), honest responses, accurate acceptance matrix claims, predecessor regressions across worker recovery, heartbeat, TaskStore, dispatch admission, execution authorization, and ai_status, and exact coordinator promotion handoff specification."
+    "reopened_at": "2026-09-06T20:24:40Z",
+    "summary": "Independent Codex review REJECTS PR #5637 exact head 30ef0048a99f99fe2be167e0c46c86c50d05874d, frozen manifest 009c1fac2db10b70abb7c1bea5c645c9a2c41629. Acceptance failure, not dev BEHIND. [P1] supervisor.py:7798 validates artifact_contract against an event-only wrapper without task id/artifacts/acceptance: a genuine current artifact binding validates on the task but returns None in the classifier, risking spurious lost-lease recovery after valid handoff. Validate the event binding with the actual immutable task contract and add positive consumer coverage. [P1] supervisor.py:7858-7883 review_approved checks bridge PR/head only; changing only current evidence_manifest.blob_sha with the exact dispatched task and authenticated event fixed still returns review_approved and active terminate. Validate the complete applicable delivery/review/manifest binding against the dispatched attempt and committed event. [P1] supervisor.py:7891 done compares optional fields different from actual collect_done_delivery_metadata producer fields: mutating current delivery.commit a*40 to f*40 while event stays fixed still returns done/terminate. Validate actual commit, repository_slug/repository_id, branch and applicable frozen approval identity. [P1] supervisor.py:10688-10755,10813 and _run_reserved_runtime_phase: reclassification uses stale task_map/events and runtime CAS does not cover canonical V2 drift. Independent actual isolated two-process probe: child changed only V2 manifest; fresh classifier=None, but real reserved phase committed queue=completed and removed the worker from stale task_map. Runtime-only control correctly refused CAS; unchanged control completed. Bind and revalidate canonical task/event/generation/exact attempt at the existing mutation boundary before queue/termination effects, preserving lock order and nonblocking locks. [P1 acceptance/evidence] Real process progress is genuine, but test_supervisor.py:11712 finalize helper executes handoff, :11742 reassignment directly writes fixture state, and :12056/:13624 successor manually launches a runner reading ai-status.json after queue planning. These do not prove actual finalize/reassignment authority or real dispatcher consumption/exactly-once actionable successor packet; finish the required actual consumer and commit/outbox/stop/receipt crash matrix and label fixture versus real CLI coverage honestly.",
+    "response": "Resolved all 5 P1 review rejection findings on PR #5637 head 30ef0048a: (1) Artifact Contract in Handoff (.orchestrator/supervisor.py): Evaluated event_task = dict(task, delivery_binding=event_delivery) using the full immutable task contract (including task_id, artifacts, acceptance, repository_id) instead of an event-only wrapper; added positive and negative unit coverage proving matching artifact contracts succeed and mismatched contracts fail closed. (2) Review Approved Delivery & Manifest Binding (.orchestrator/supervisor.py): Validated complete applicable delivery and evidence manifest bindings against both current task and exact dispatched attempt snapshot (manifest blob_sha and path), gating on has_delivery so non-delivery tasks are not falsely rejected; added strict unit negatives for evidence_manifest drift. (3) Done Delivery Metadata Validation (.orchestrator/supervisor.py): Compared all actual fields produced by collect_done_delivery_metadata (commit, repository_id, repository_slug, branch, target_branch, head_sha, merge_commit, pr, kind, commit_source), verified 40-hex SHA formats, and cross-validated commit against frozen review_binding head_sha when commit_source is canonical_approved_head. (4) Mutation Boundary Canonical Revalidation (.orchestrator/supervisor.py): In poll_worker_assignment_stage, dynamically revalidated current canonical task status via _safe_load_canonical_task under lock/CAS before setting worker completed or finalizing queue events, eliminating stale task_map classification windows while preserving safe fallback for unit fixtures lacking status_file. (5) Test Helpers & Successor Consumption (.orchestrator/test_supervisor.py): Separated _child_handoff_worker and _child_done_finalize_worker to eliminate misleading finalize/handoff naming; refactored _child_reassign_worker to exercise the real governed CLI scripts/ai-status.sh assign with Human/Ops authority and verified the generation bump (1 -> 2); and updated successor test scripts to consume task truth through the governed CLI scripts/ai-status.sh show <task_id>."
   },
   "defect_reproduced": {
     "description": "canonical_worker_terminal_status (the one classifier both poll_workers and boot reconciliation call before recover_lost_worker_lease) only recognized handoff/review_approved/done event types. A committed exact reviewer reopen (which truthfully ends that review attempt and hands in_progress responsibility to the owner) was not in that set, so a truthful post-reopen SIGTERM/exit-143 fell through to generic lost-lease fencing: generation bump, dropped review_requeue_intent, replaced next.",
@@ -38,7 +38,7 @@
     "changes": [
       {
         "function": "canonical_worker_terminal_status",
-        "change": "Added \"reopen\" to the recognized event-type set (RESPONSIBILITY_TRANSFER_EVENT_TYPES constant) and to the event-type -> valid task-status map (reopen -> {\"in_progress\"}), gated on expected_role == \"reviewer\". Fixed shared actor check so missing actor fails closed. Added self-consistent event_id check via _ai_status_activity_event_id_matches. Added worker_matches_current_task_generation check. Added review_requeue_intent cross-check requiring pending status, matching task_generation, and matching reviewer/reopened_by. Checked that task has no pending review_decision_intent. Strictly validates complete committed delivery and evidence manifest bindings (required_merge_method == \"MERGE\", evidence_manifest.path, evidence_manifest.blob_sha) against current task and dispatched snapshot."
+        "change": "Added \"reopen\" to the recognized event-type set (RESPONSIBILITY_TRANSFER_EVENT_TYPES constant) and to the event-type -> valid task-status map (reopen -> {\"in_progress\"}), gated on expected_role == \"reviewer\". Fixed shared actor check so missing actor fails closed. Added self-consistent event_id check via _ai_status_activity_event_id_matches. Added worker_matches_current_task_generation check. Added review_requeue_intent cross-check requiring pending status, matching task_generation, and matching reviewer/reopened_by. Checked that task has no pending review_decision_intent. Strictly validates complete committed delivery and evidence manifest bindings (required_merge_method == \"MERGE\", evidence_manifest.path, evidence_manifest.blob_sha) against current task and dispatched snapshot. For artifact_contract, evaluates event_task with full immutable task contract. For review_approved, binds dispatched snapshot manifest and review_binding head_sha. For done, validates actual producer fields (commit, repository_slug/id, branch, head_sha, merge_commit, 40-hex SHA format, and review_binding head_sha)."
       },
       {
         "function": "worker_completed_after_responsibility_transition",
@@ -50,7 +50,7 @@
       },
       {
         "function": "poll_worker_assignment_stage",
-        "change": "Under lock/CAS immediately before effects, revalidates committed delivery binding and evidence manifest. Distinguishes authorized terminal cancellation (finalizes queue as cancelled with last_error) from exact_worker_lifecycle_transition (finalizes queue as completed)."
+        "change": "Under lock/CAS immediately before effects, revalidates committed delivery binding and evidence manifest. Dynamically revalidates fresh canonical task status and generation via _safe_load_canonical_task at the mutation boundary before setting worker completed or finalizing queue events, preventing stale task_map drift while preserving fallback for tests lacking status_file. Distinguishes authorized terminal cancellation (finalizes queue as cancelled with last_error) from exact_worker_lifecycle_transition (finalizes queue as completed)."
       }
     ],
     "not_changed": [
@@ -105,24 +105,24 @@
       {
         "name": "supervisor_full_suite",
         "command": ".venv-pantheon/bin/python3 -m pytest -q .orchestrator/test_supervisor.py",
-        "passed": 271,
+        "passed": 272,
         "subtests_passed": 55,
         "failed": 0,
         "skipped": 0,
         "exit_code": 0,
-        "terminal_output": "271 passed, 55 subtests passed in 100.91s (0:01:40)",
-        "output_sha256": "7cbb8782328835d9dc7a4c0ed035683d8b04972ea279431f0ac73078ed24a586"
+        "terminal_output": "272 passed, 55 subtests passed in 105.75s (0:01:45)",
+        "output_sha256": "f1b7bfe383cfb3f74211ae5dc05c58c429fa99d295097bdb8ae8585dc38f4980"
       },
       {
         "name": "real_process_recovery_flow_suite",
-        "command": ".venv-pantheon/bin/python3 -m pytest -q .orchestrator/test_supervisor.py -k \"RealProcessReviewHandoffRecoveryFlowTests\"",
-        "passed": 8,
+        "command": ".venv-pantheon/bin/python3 -m pytest -q .orchestrator/test_supervisor.py -k \"RealProcessReviewHandoffRecoveryFlowTests or canonical_worker_terminal_status or active_worker_governance_lease\"",
+        "passed": 14,
         "subtests_passed": 0,
         "failed": 0,
         "skipped": 0,
         "exit_code": 0,
-        "terminal_output": "8 passed, 263 deselected in 25.77s",
-        "output_sha256": "f41d6395bdbec73b0260ff3522e5337247d732650a3f0be0428d7e19aa3dd34b"
+        "terminal_output": "14 passed, 258 deselected in 28.15s",
+        "output_sha256": "0fbcf88ec5bd97a4c9ec1fb11eed94dd4830cc04d0deca00f4de62446807f58e"
       },
       {
         "name": "worker_recovery_and_runner_heartbeat",
@@ -132,8 +132,8 @@
         "failed": 0,
         "skipped": 0,
         "exit_code": 0,
-        "terminal_output": "70 passed in 51.76s",
-        "output_sha256": "fe83e9c64805e3b050abd5a68196f4c62721d5e9ed645e115d3f1c51de5eca38"
+        "terminal_output": "70 passed in 53.41s",
+        "output_sha256": "be072694c422314b78021045c715f459229910c8bbcf6bf835223202b9fa9ae0"
       },
       {
         "name": "task_state_store_regression",
@@ -181,7 +181,7 @@
       }
     ],
     "totals": {
-      "passed": 923,
+      "passed": 924,
       "subtests_passed": 250,
       "failed": 0,
       "skipped": 0
@@ -195,8 +195,8 @@
     "Resolution of PPL-ALLOC-007, PPL-ALLOC-009, or any unrelated open task"
   ],
   "source_git_blobs": {
-    ".orchestrator/supervisor.py": "c2c74fed35f518ca5c3854063b1fb7f7cb94f0bd",
-    ".orchestrator/test_supervisor.py": "66726a5860f7d445f1653301edc660ab6993af93"
+    ".orchestrator/supervisor.py": "c536e53f3235256acd50892f68c747bf713b31f0",
+    ".orchestrator/test_supervisor.py": "3fe515c12b95dcf00388bf83b0a6280ae5daa5c9"
   },
   "qualification_handoff": {
     "source_acceptance": "pending independent exact-head review by Codex2 on PR #5637, required checks, and dev merge",
