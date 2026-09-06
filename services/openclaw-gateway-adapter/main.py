@@ -1620,7 +1620,10 @@ def _persona_opinion_replay_event(payload: Dict[str, Any]) -> Dict[str, Any]:
     data = payload["data"]
     output = data["output"]
     if data["status"] != "completed":
-        return {"type": "error", "error_code": output["reason"], "message": output["message"]}
+        event = {"type": "error", "error_code": output["reason"], "message": output["message"]}
+        if "status_code" in output:
+            event["status_code"] = output["status_code"]
+        return event
     text = next((item["item"]["text"] for item in output.get("json_events", [])
                  if isinstance(item.get("item"), dict) and "text" in item["item"]), "")
     event = {
@@ -1640,6 +1643,8 @@ def _persona_opinion_stream_payload(
     if event["type"] == "error":
         status = "degraded"
         output = {"json_events": [], "reason": event["error_code"], "message": event["message"]}
+        if "status_code" in event:
+            output["status_code"] = event["status_code"]
     else:
         status = "completed"
         output = AssistantOpenClawProvider._build_output(
@@ -1778,6 +1783,7 @@ def invoke_openclaw_provider(
                         "json_events": [],
                         "reason": exc.error_code,
                         "message": exc.message,
+                        **({"status_code": exc.status_code} if req.persona_admission is not None else {}),
                     },
                     "redaction": {"provider_invocation": {"redacted_fields": 0}},
                 },

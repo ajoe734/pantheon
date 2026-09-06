@@ -2423,6 +2423,22 @@ class TestGovernedServantAgentSync(unittest.TestCase):
                     self.assertEqual(self._opinion_terminal(replay, replay_route), terminal)
             self.assertEqual(len(captured), 2)
 
+    def test_persona_replays_typed_http_errors_across_routes(self):
+        with self._admitted_replay_case() as (body, headers, captured):
+            for first_route in ("", "/stream"):
+                for status in (401, 429, 503, 504):
+                    key = f"typed-error-{first_route}-{status}"
+                    event = {"type": "error", "status_code": status,
+                             "error_code": "OPENCLAW_RESPONSES_HTTP_ERROR", "message": "fixture HTTP error"}
+                    with patch.object(adapter_main._OPENCLAW_AGENT_PROVIDER, "stream", return_value=iter([event])) as stream:
+                        first = self._post_opinion(first_route, body, headers, key)
+                        self.assertEqual(self._opinion_terminal(first, first_route), event)
+                        for route in ("", "/stream"):
+                            replay = self._post_opinion(route, body, headers, key)
+                            self.assertEqual(self._opinion_terminal(replay, route), event)
+                        self.assertEqual(stream.call_count, 1)
+            self.assertEqual(captured, [])
+
     def test_persona_crash_or_cancel_keeps_both_routes_in_doubt(self):
         with self._admitted_replay_case() as (body, headers, captured):
             request = adapter_main.AssistantProviderInvokeRequest(**body)
