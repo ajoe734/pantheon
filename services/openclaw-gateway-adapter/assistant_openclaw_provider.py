@@ -207,7 +207,7 @@ def derive_session_user(
 ) -> Optional[str]:
     """Derive the upstream OpenResponses `user` key from authenticated identity.
 
-    A caller-supplied ``session_id``/``metadata.session_id`` is only ever the
+    A caller-supplied ``session_id``/``metadata.session_user``/``metadata.session_id`` is only ever the
     *conversation* component. It must never be forwarded verbatim as the sole
     upstream session key: two different tenants/actors reusing the same
     caller-chosen conversation name (e.g. both naming a session "shared")
@@ -219,7 +219,11 @@ def derive_session_user(
     metadata = metadata or {}
     tenant = str(metadata.get("tenant_id") or "").strip()
     actor = str(operator_id or "").strip()
-    conversation = str(session_id or metadata.get("session_id") or "").strip()
+    # Explicit internal session IDs (including governed invocation IDs) win;
+    # both mounted routes then use session_user before the legacy session_id.
+    conversation = str(
+        session_id or metadata.get("session_user") or metadata.get("session_id") or ""
+    ).strip()
     if not (tenant or actor or conversation):
         return None
     # A bare "|".join would let a boundary-shifting caller-chosen component
@@ -849,6 +853,14 @@ class AssistantOpenClawProvider:
         primary = os.getenv("OPENCLAW_PRIMARY_MODEL", "").strip() or DEFAULT_PRIMARY_MODEL
         return [primary]
 
+    def _resolve_effective_model(
+        self, requested_model: Optional[str], agent_id: str
+    ) -> Optional[str]:
+        """Share ordinary routing while preserving admitted agent configuration."""
+        if agent_id != DEFAULT_AGENT_ID and requested_model is None:
+            return None
+        return self._resolve_model_candidates(requested_model)[0]
+
     def readiness(self, *, auth_probe: bool = False) -> Dict[str, Any]:
         usage = provider_usage_snapshot(OPENCLAW_PROVIDER_ID, OPENCLAW_PROVIDER)
         answer_timeout = self._readiness_answer_timeout_seconds()
@@ -898,7 +910,7 @@ class AssistantOpenClawProvider:
             }
         started_at = time.monotonic()
         deadline = started_at + answer_timeout
-        candidates = self._resolve_model_candidates()
+        candidates = [self._resolve_effective_model(None, self._agent_id)]
         primary = candidates[0]
         primary_unavailable: Optional[Dict[str, Any]] = None
         last_exc: Optional[OpenClawProviderError] = None
@@ -1169,27 +1181,7 @@ class AssistantOpenClawProvider:
                 error_code="OPENCLAW_GATEWAY_TIMEOUT",
             )
 
-        # Preserve per-agent configured routing: if a non-default agent (e.g. persona agent)
-        # is called and no model override was requested, invoke without a model override so
-        # OpenClaw uses the model configured in the agent definition.
-        if selected_agent_id != DEFAULT_AGENT_ID and model is None:
-            return self._invoke_via_http(
-                prompt,
-                model=None,
-                agent_id=selected_agent_id,
-                session_id=session_id,
-                mode=mode,
-                context_pack=context_pack,
-                metadata=metadata,
-                messages=messages,
-                attachments=attachments,
-                operator_id=operator_id,
-                trace_id=trace_id,
-                timeout_seconds=invocation_timeout,
-            )
-
-        candidates = self._resolve_model_candidates(model)
-        selected_model = candidates[0] if candidates else None
+        selected_model = self._resolve_effective_model(model, selected_agent_id)
         primary_configured = os.getenv("OPENCLAW_PRIMARY_MODEL", "").strip() or DEFAULT_PRIMARY_MODEL
 
         result = self._invoke_via_http(
@@ -1575,6 +1567,7 @@ class AssistantOpenClawProvider:
                 "message": "OpenClaw agent_id contains unsupported characters.",
             }
             return
+        model = self._resolve_effective_model(model, effective_agent_id)
         effective_timeout = float(timeout_seconds) if timeout_seconds is not None else float(self._timeout)
         if effective_timeout <= 0:
             yield {

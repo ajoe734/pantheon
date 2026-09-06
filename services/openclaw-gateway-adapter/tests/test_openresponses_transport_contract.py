@@ -86,6 +86,108 @@ def _make_provider(*, gateway_url: str = "ws://openclaw-gateway:18789", token: s
     )
 
 
+@pytest.fixture
+def mounted_http(monkeypatch):
+    from fastapi.testclient import TestClient
+    import main as adapter_main
+
+    provider = _make_provider()
+    captured = []
+
+    def fake_urlopen(req, timeout=None, deadline=None):
+        captured.append({
+            "body": json.loads(req.data),
+            "headers": {k.lower(): v for k, v in req.header_items()},
+        })
+        return _FakeSSEResponse(_answer_events("PANTHEON_PROVIDER_READY"))
+
+    monkeypatch.setattr(adapter_main, "_OPENCLAW_AGENT_PROVIDER", provider)
+    monkeypatch.setattr("assistant_openclaw_provider._urlopen_with_deadline", fake_urlopen)
+    with TestClient(adapter_main.app) as client:
+        yield client, captured
+
+
+@pytest.mark.parametrize("session_field", ["session_user", "session_id"])
+def test_mounted_transports_share_conversations_and_isolate_callers(mounted_http, session_field):
+    client, captured = mounted_http
+    identities = [
+        ("tenant-a", "actor-a", "conversation-a"),
+        ("tenant-a", "actor-a", "conversation-b"),
+        ("tenant-b", "actor-a", "conversation-a"),
+        ("tenant-a", "actor-b", "conversation-a"),
+    ]
+    users = []
+    for tenant, actor, conversation in identities:
+        for suffix in ("", "/stream", ""):
+            response = client.post(
+                "/api/openclaw-adapter/assistant/providers/openclaw/invoke" + suffix,
+                json={"prompt": "continue", "metadata": {
+                    "tenant_id": tenant, session_field: conversation,
+                }},
+                headers={"X-Operator-Id": actor},
+            )
+            assert response.status_code == 200, response.text
+        route_users = [entry["body"]["user"] for entry in captured[-3:]]
+        assert route_users == [f"{tenant}|{actor}|{conversation}"] * 3
+        users.append(route_users[0])
+    assert len(set(users)) == len(identities)
+
+
+def test_mounted_session_user_precedes_legacy_session_id(mounted_http):
+    client, captured = mounted_http
+    for suffix in ("", "/stream"):
+        response = client.post(
+            "/api/openclaw-adapter/assistant/providers/openclaw/invoke" + suffix,
+            json={"prompt": "continue", "metadata": {
+                "tenant_id": "tenant", "session_user": "current", "session_id": "legacy",
+            }},
+            headers={"X-Operator-Id": "actor"},
+        )
+        assert response.status_code == 200, response.text
+    assert [entry["body"]["user"] for entry in captured] == ["tenant|actor|current"] * 2
+
+
+@pytest.mark.parametrize("primary", [None, "fixture/configured-primary"])
+def test_mounted_invoke_stream_readiness_share_effective_model(mounted_http, monkeypatch, primary):
+    from assistant_openclaw_provider import DEFAULT_PRIMARY_MODEL
+
+    client, captured = mounted_http
+    if primary is None:
+        monkeypatch.delenv("OPENCLAW_PRIMARY_MODEL", raising=False)
+    else:
+        monkeypatch.setenv("OPENCLAW_PRIMARY_MODEL", primary)
+    for suffix in ("", "/stream"):
+        response = client.post(
+            "/api/openclaw-adapter/assistant/providers/openclaw/invoke" + suffix,
+            json={"prompt": "hi"}, headers={"X-Operator-Id": "actor"},
+        )
+        assert response.status_code == 200, response.text
+    readiness = client.get("/api/openclaw-adapter/assistant/readiness/openclaw?auth_probe=true")
+    assert readiness.status_code == 200, readiness.text
+    assert readiness.json()["ready"] is True
+    assert len(captured) == 3
+    for entry in captured:
+        assert entry["body"]["model"] == "openclaw/main"
+        assert entry["headers"]["x-openclaw-model"] == (primary or DEFAULT_PRIMARY_MODEL)
+
+
+@pytest.mark.parametrize("model", [None, "fixture/explicit-model"])
+def test_nondefault_agent_model_routing_is_identical_across_transports(monkeypatch, model):
+    provider = _make_provider()
+    captured = []
+
+    def fake_urlopen(req, timeout=None, deadline=None):
+        captured.append({k.lower(): v for k, v in req.header_items()})
+        return _FakeSSEResponse(_answer_events("ok"))
+
+    monkeypatch.setattr("assistant_openclaw_provider._urlopen_with_deadline", fake_urlopen)
+    kwargs = {"agent_id": "persona-opinion-abcdef0123456789abcdef01", "model": model}
+    provider.invoke("hi", **kwargs)
+    assert list(provider.stream("hi", **kwargs))[-1]["type"] == "done"
+    assert [headers.get("x-openclaw-model") for headers in captured] == [model, model]
+    assert all(headers["x-openclaw-agent-id"] == kwargs["agent_id"] for headers in captured)
+
+
 class TestNormalInvokeContract:
     def test_short_prompt_invoke_succeeds_over_http_only(self):
         provider = _make_provider()
@@ -149,7 +251,7 @@ class TestNormalInvokeContract:
         assert captured["model_header"] == "openai/gpt-5.5"
         assert result.output["agent_id"] == "persona-opinion-abcdef0123456789abcdef01"
 
-    def test_default_agent_no_model_override_sends_openclaw_alias_only(self):
+    def test_default_agent_uses_primary_model_with_openclaw_alias(self):
         provider = _make_provider()
         captured = {}
 
@@ -162,7 +264,8 @@ class TestNormalInvokeContract:
         with patch("assistant_openclaw_provider._urlopen_with_deadline", fake_urlopen):
             list(provider.stream("hi", operator_id="op-1"))
         assert captured["body"]["model"] == "openclaw/main"
-        assert captured["model_header"] is None
+        from assistant_openclaw_provider import DEFAULT_PRIMARY_MODEL
+        assert captured["model_header"] == (os.getenv("OPENCLAW_PRIMARY_MODEL", "").strip() or DEFAULT_PRIMARY_MODEL)
 
     def test_same_named_conversation_isolates_by_authenticated_tenant_and_actor(self):
         """Two different tenants/actors reusing the same caller-chosen

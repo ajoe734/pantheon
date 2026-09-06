@@ -1811,7 +1811,7 @@ def invoke_openclaw_provider_stream(
     # conversation name so two callers cannot collide onto the same upstream
     # session by reusing the same caller-chosen session_user/session_id.
     session_user = derive_session_user(
-        operator_id=operator, session_id=metadata.get("session_user"), metadata=metadata
+        operator_id=operator, metadata=metadata
     )
 
     def event_stream() -> Iterator[str]:
