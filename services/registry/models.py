@@ -233,6 +233,7 @@ class RegistryEntry:
     producer_run_id: Optional[str] = None
     evaluation_summary: Optional[dict[str, Any]] = None
     approval_decision_id: Optional[str] = None
+    approval_evidence: Optional[dict[str, Any]] = None
     approver: Optional[str] = None
     approved_at: Optional[str] = None
     rollback_target: Optional[str] = None
@@ -275,6 +276,7 @@ class RegistryEntry:
             "producer_run_id": self.producer_run_id,
             "evaluation_summary": self.evaluation_summary,
             "approval_decision_id": self.approval_decision_id,
+            "approval_evidence": self.approval_evidence,
             "approver": self.approver,
             "approved_at": self.approved_at,
             "rollback_target": self.rollback_target,
@@ -301,6 +303,7 @@ class RegistryEntry:
             producer_run_id=d.get("producer_run_id"),
             evaluation_summary=d.get("evaluation_summary"),
             approval_decision_id=d.get("approval_decision_id"),
+            approval_evidence=d.get("approval_evidence"),
             approver=d.get("approver"),
             approved_at=d.get("approved_at"),
             rollback_target=d.get("rollback_target"),

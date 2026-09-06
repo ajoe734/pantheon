@@ -1,0 +1,258 @@
+{
+  "task_id": "INTEGRATION-UNBLOCK-GOV-APPROVAL-AUTHORITY-PREREQUISITE-001-MERGE-STATE-BLOCKED-B14932FE23E9",
+  "recorded_at": "2026-09-06T17:55:53.414182+00:00",
+  "owner": "Codex",
+  "reviewer": "Codex2",
+  "scope": "Integration-blocker diagnosis and return to the existing supervisor integration runner.",
+  "command_runtime_sha": "65469bc843cab134599995ef7093fe2cf3516af4",
+  "source_task_id": "GOV-APPROVAL-AUTHORITY-PREREQUISITE-001",
+  "source_task_generation": 7,
+  "source_delivery_binding": {
+    "base": "dev",
+    "base_sha": "96294dcf3c113e3b1cdc44f4d9d4069294259ac1",
+    "evidence_manifest": {
+      "blob_sha": "19fa5ad4194466bf20b15ab76b48d402d4c526c8",
+      "path": "docs/deployment/evidence/GOV-APPROVAL-AUTHORITY-PREREQUISITE-001/evidence.json"
+    },
+    "head_branch": "task/GOV-APPROVAL-AUTHORITY-PREREQUISITE-001",
+    "head_sha": "fcefcea8465e2ac4e1b585f39fdc85384fcdccff",
+    "kind": "pull_request",
+    "pr": 5636,
+    "required_merge_method": "MERGE"
+  },
+  "source_canonical_review": {
+    "status": "review_approved",
+    "reviewer": "Codex2",
+    "recorded_at": "2026-09-06T17:49:55Z",
+    "intent_nonce": "85e73f89c25072a6be28e4f32770c697",
+    "mode": "required_commit_status"
+  },
+  "root_cause": {
+    "dispatch_reason": "merge-state-blocked",
+    "observed_status_history": [
+      {
+        "created_at": "2026-09-06T17:42:07Z",
+        "context": "Pantheon canonical review gate",
+        "state": "failure",
+        "reason": "No review-proof tag existed for this head."
+      },
+      {
+        "created_at": "2026-09-06T17:49:50Z",
+        "context": "Pantheon canonical review gate",
+        "state": "success",
+        "reason": "Codex2 canonical approval bridge published the exact-head status."
+      },
+      {
+        "created_at": "2026-09-06T17:50:10Z",
+        "context": "Pantheon canonical review gate",
+        "state": "success",
+        "reason": "Canonical Review Gate confirmed the exact-head review-proof tag."
+      }
+    ],
+    "conclusion": "The dispatch captured a transient BLOCKED merge state around canonical review publication. Live required checks and the exact-head canonical gate now allow integration. The precise instant of GitHub merge-state cache propagation is not available; that timing explanation is an inference from status history and the unchanged head.",
+    "remaining_failed_checks": "Two explicitly non-required Canonical Review Attestation Audit checks completed before the canonical approval. Existing integrator code requires both optional requiredness and known diagnostic workflow provenance before ignoring them."
+  },
+  "live_pr": {
+    "number": 5636,
+    "url": "https://github.com/ajoe734/pantheon/pull/5636",
+    "state": "OPEN",
+    "headRefName": "task/GOV-APPROVAL-AUTHORITY-PREREQUISITE-001",
+    "headRefOid": "fcefcea8465e2ac4e1b585f39fdc85384fcdccff",
+    "baseRefName": "dev",
+    "mergeStateStatus": "UNSTABLE",
+    "mergeCommit": null,
+    "autoMergeRequest": null
+  },
+  "integrator_check_assessment": {
+    "head_sha": "fcefcea8465e2ac4e1b585f39fdc85384fcdccff",
+    "merge_state": "UNSTABLE",
+    "allowed_direct_merge_state": true,
+    "checks": {
+      "state": "green",
+      "total": 11,
+      "failing": [],
+      "pending": [],
+      "ignored_diagnostic": [
+        "Audit signed canonical review (not required issuer) (5636)",
+        "Audit signed canonical review (not required issuer) (5636)"
+      ]
+    },
+    "rollup": [
+      {
+        "__typename": "CheckRun",
+        "completedAt": "2026-09-06T17:42:12Z",
+        "conclusion": "SUCCESS",
+        "detailsUrl": "https://github.com/ajoe734/pantheon/actions/runs/34049413852/job/101530191215",
+        "name": "Commit trailers",
+        "startedAt": "2026-09-06T17:41:58Z",
+        "status": "COMPLETED",
+        "workflowName": "Branch CI Gate",
+        "isRequired": true
+      },
+      {
+        "__typename": "CheckRun",
+        "completedAt": "2026-09-06T17:42:01Z",
+        "conclusion": "SUCCESS",
+        "detailsUrl": "https://github.com/ajoe734/pantheon/actions/runs/34049413153/job/101530189235",
+        "name": "Discover PR heads to evaluate",
+        "startedAt": "2026-09-06T17:41:58Z",
+        "status": "COMPLETED",
+        "workflowName": "Canonical Review Attestation Audit",
+        "isRequired": false
+      },
+      {
+        "__typename": "CheckRun",
+        "completedAt": "2026-09-06T17:42:26Z",
+        "conclusion": "SUCCESS",
+        "detailsUrl": "https://github.com/ajoe734/pantheon/actions/runs/34049435268/job/101530246597",
+        "name": "Discover PR heads to evaluate",
+        "startedAt": "2026-09-06T17:42:23Z",
+        "status": "COMPLETED",
+        "workflowName": "Canonical Review Attestation Audit",
+        "isRequired": false
+      },
+      {
+        "__typename": "CheckRun",
+        "completedAt": "2026-09-06T17:42:11Z",
+        "conclusion": "SUCCESS",
+        "detailsUrl": "https://github.com/ajoe734/pantheon/actions/runs/34049413951/job/101530191526",
+        "name": "Publish canonical review status",
+        "startedAt": "2026-09-06T17:41:58Z",
+        "status": "COMPLETED",
+        "workflowName": "Canonical Review Gate",
+        "isRequired": false
+      },
+      {
+        "__typename": "CheckRun",
+        "completedAt": "2026-09-06T17:42:12Z",
+        "conclusion": "SUCCESS",
+        "detailsUrl": "https://github.com/ajoe734/pantheon/actions/runs/34049413855/job/101530190978",
+        "name": "Reachable critical/high inventory",
+        "startedAt": "2026-09-06T17:41:58Z",
+        "status": "COMPLETED",
+        "workflowName": "Dependency Alert Reachability",
+        "isRequired": false
+      },
+      {
+        "__typename": "CheckRun",
+        "completedAt": "2026-09-06T17:42:15Z",
+        "conclusion": "FAILURE",
+        "detailsUrl": "https://github.com/ajoe734/pantheon/actions/runs/34049413153/job/101530204771",
+        "name": "Audit signed canonical review (not required issuer) (5636)",
+        "startedAt": "2026-09-06T17:42:03Z",
+        "status": "COMPLETED",
+        "workflowName": "Canonical Review Attestation Audit",
+        "isRequired": false
+      },
+      {
+        "__typename": "CheckRun",
+        "completedAt": "2026-09-06T17:42:42Z",
+        "conclusion": "FAILURE",
+        "detailsUrl": "https://github.com/ajoe734/pantheon/actions/runs/34049435268/job/101530260481",
+        "name": "Audit signed canonical review (not required issuer) (5636)",
+        "startedAt": "2026-09-06T17:42:29Z",
+        "status": "COMPLETED",
+        "workflowName": "Canonical Review Attestation Audit",
+        "isRequired": false
+      },
+      {
+        "__typename": "CheckRun",
+        "completedAt": "2026-09-06T17:42:13Z",
+        "conclusion": "SUCCESS",
+        "detailsUrl": "https://github.com/ajoe734/pantheon/actions/runs/34049413852/job/101530191189",
+        "name": "Runtime mirror guard",
+        "startedAt": "2026-09-06T17:41:57Z",
+        "status": "COMPLETED",
+        "workflowName": "Branch CI Gate",
+        "isRequired": true
+      },
+      {
+        "__typename": "CheckRun",
+        "completedAt": "2026-09-06T17:42:31Z",
+        "conclusion": "SUCCESS",
+        "detailsUrl": "https://github.com/ajoe734/pantheon/actions/runs/34049413852/job/101530191160",
+        "name": "Python packaging provision",
+        "startedAt": "2026-09-06T17:42:05Z",
+        "status": "COMPLETED",
+        "workflowName": "Branch CI Gate",
+        "isRequired": false
+      },
+      {
+        "__typename": "CheckRun",
+        "completedAt": "2026-09-06T17:43:30Z",
+        "conclusion": "SUCCESS",
+        "detailsUrl": "https://github.com/ajoe734/pantheon/actions/runs/34049413852/job/101530231062",
+        "name": "Smoke acceptance",
+        "startedAt": "2026-09-06T17:42:16Z",
+        "status": "COMPLETED",
+        "workflowName": "Branch CI Gate",
+        "isRequired": true
+      },
+      {
+        "__typename": "StatusContext",
+        "context": "Pantheon canonical review gate",
+        "startedAt": "2026-09-06T17:50:10Z",
+        "state": "SUCCESS",
+        "targetUrl": "https://github.com/ajoe734/pantheon/actions/runs/34049818672",
+        "isRequired": true
+      }
+    ]
+  },
+  "verification": [
+    {
+      "command": "gh pr checks 5636 --required",
+      "exit_code": 0,
+      "result": "4/4 required checks pass: Commit trailers, Runtime mirror guard, Smoke acceptance, Pantheon canonical review gate."
+    },
+    {
+      "command": "gh api repos/ajoe734/pantheon/commits/fcefcea8465e2ac4e1b585f39fdc85384fcdccff/statuses",
+      "exit_code": 0,
+      "result": "Status history above: failure followed by two success publications."
+    },
+    {
+      "command": "AI_NAME=Codex timeout 60 python3 \"$PANTHEON_COMMAND_ROOT/scripts/git/task_review_merge_gate.py\" check GOV-APPROVAL-AUTHORITY-PREREQUISITE-001 --pr-json /tmp/gov-pr-5636.json --json",
+      "exit_code": 0,
+      "result": {
+        "allow_merge": true,
+        "allow_auto_merge": false,
+        "reason": "exact_head_approved"
+      }
+    },
+    {
+      "command": "timeout 60 python3: import auto_integrator from PANTHEON_COMMAND_ROOT/scripts/git; enrich_pr_status_rollup(live_pr, CommandRunner(), root=Path.cwd()); summarize_status_rollup(enriched_rollup)",
+      "exit_code": 0,
+      "result": "11 checks assessed; green; zero failing or pending; two explicitly optional diagnostic failures ignored. UNSTABLE is already an allowed direct merge state."
+    },
+    {
+      "command": "timeout 60 python3 \"$PANTHEON_COMMAND_ROOT/scripts/git/auto_integrator.py\" --task-id GOV-APPROVAL-AUTHORITY-PREREQUISITE-001 --no-open-unblock --json",
+      "exit_code": 2,
+      "result": "Full dry-run unavailable to this worker: supervisor lock parent is not writable. This is not a passed integration run."
+    },
+    {
+      "command": "timeout 60 python3 \"$PANTHEON_COMMAND_ROOT/scripts/git/auto_integrator.py\" --task-id GOV-APPROVAL-AUTHORITY-PREREQUISITE-001 --no-lock --no-open-unblock --json",
+      "exit_code": 2,
+      "result": "Dry-run-only no-lock mode still fails supervisor repository preflight: git common dir is not writable. No execute mode, permission changes, or bypass attempted."
+    },
+    {
+      "command": "git merge-base --is-ancestor fcefcea8465e2ac4e1b585f39fdc85384fcdccff origin/dev && git show -s --format=\"%H%n%P%n%s\" 27fa03b087132c9aa45a223885f6f5ab4db89b62",
+      "exit_code": 0,
+      "result": "Exact approved head is a direct parent of source merge commit 27fa03b087132c9aa45a223885f6f5ab4db89b62 and an ancestor of dev."
+    }
+  ],
+  "resolution": {
+    "state": "source_pr_merged_original_blocker_resolved",
+    "original_head_changed_by_this_task": false,
+    "integrator_code_change_required": false,
+    "remaining_action": "Source owner finalizes its accepted delivery through governed closeout. This evidence PR still needs Codex2 independent review, supervisor merge and owner done.",
+    "limitations": "The live_pr field is the initial OPEN snapshot; final_source_delivery records the later observed merge. Hosted acceptance is not claimed. No approval evidence was fabricated or replaced; no branch protection or runtime permissions were changed."
+  },
+  "final_source_delivery": {
+    "headRefOid": "fcefcea8465e2ac4e1b585f39fdc85384fcdccff",
+    "mergeCommit": {
+      "oid": "27fa03b087132c9aa45a223885f6f5ab4db89b62"
+    },
+    "mergedAt": "2026-09-06T17:55:28Z",
+    "state": "MERGED",
+    "url": "https://github.com/ajoe734/pantheon/pull/5636"
+  }
+}

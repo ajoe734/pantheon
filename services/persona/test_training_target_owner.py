@@ -106,6 +106,7 @@ class _FakeGovernanceApprovalVerifier:
         *,
         approval_decision_id: str,
         approval_decision_ref: str,
+        target_version: str,
         persona_id: str,
         tenant_id: str,
         session_id: str,
@@ -113,7 +114,7 @@ class _FakeGovernanceApprovalVerifier:
         proof_digest: str,
     ) -> bool:
         decision = self._issued.get(approval_decision_id)
-        if decision is None:
+        if decision is None or decision.get("target_version") != target_version:
             return False
         lifecycle = str(decision.get("decision_state") or "").strip().lower()
         outcome = str(decision.get("decision") or "").strip().lower()
@@ -217,6 +218,7 @@ def _commit_inputs(module, precondition: Mapping[str, Any], *, session_id: str, 
     approval = {
         "decision_id": f"approval-{PERSONA_ID}-{generation}",
         "approval_decision_ref": approval_decision_ref,
+        "target_version": str(generation),
         "decision_state": "decided",
         "decision": "approved",
         "persona_id": PERSONA_ID,

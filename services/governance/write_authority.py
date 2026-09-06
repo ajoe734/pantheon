@@ -3,8 +3,7 @@ Write-authority matrix for the Governance Service.
 
 Defines which actor roles are authorized to record (or revoke) an
 ApprovalDecision at each risk level.  This is the single canonical
-reference — the matrix in services/control-plane/governance/approval_decision.py
-(OWNER_MATRIX / REVOKE_ROLES) must stay consistent with this file.
+reference; control-plane platform objects delegate to this policy.
 
 Other services that need to validate approval authority should call this
 module rather than maintaining their own role lists.
