@@ -1,0 +1,14 @@
+{
+  "source_commit": "471dc5391a0f9cbde54d51730891583043708e42",
+  "requirements_files": 49,
+  "requirement_declarations": 195,
+  "unique_packages": 44,
+  "pin_types": {
+    "range": 82,
+    "unbounded": 94,
+    "exact": 19
+  },
+  "docker_image_declarations": 63,
+  "inline_install_declarations": 51,
+  "lockfiles": []
+}
