@@ -179,7 +179,10 @@ from rewrite import task_state_store as rewrite_task_state_store
 from rewrite import worker_lifecycle as rewrite_worker_lifecycle
 from rewrite.runtime_authority import validate_supervisor_launch_authority
 from rewrite.task_identity import task_generation
-from rewrite.task_contract import validate_reassignment_against_acceptance
+from rewrite.task_contract import (
+    requires_pr_delivery_binding,
+    validate_reassignment_against_acceptance,
+)
 from rewrite.worker_recovery import (
     LOST_LEASE_RECEIPT_SCHEMA_VERSION,
     MAX_WORKER_RECOVERY_RECEIPTS,
@@ -7782,29 +7785,127 @@ def canonical_worker_terminal_status(
     elif event_type == "handoff":
         event_delivery = latest_terminal.get("delivery_binding")
         task_delivery = task.get("delivery_binding")
-        if isinstance(event_delivery, Mapping) and isinstance(task_delivery, Mapping):
-            for field in ("kind", "pr", "head_sha", "head_branch", "base", "base_sha"):
-                if field in event_delivery and field in task_delivery:
-                    if str(event_delivery.get(field) or "") != str(task_delivery.get(field) or ""):
-                        return None
+        has_delivery = (
+            requires_pr_delivery_binding(task)
+            or event_delivery is not None
+            or task_delivery is not None
+        )
+        if has_delivery:
+            if not isinstance(event_delivery, Mapping) or not isinstance(task_delivery, Mapping):
+                return None
+            if not rewrite_task_machine.delivery_binding_is_current(task):
+                return None
+            if not rewrite_task_machine.delivery_binding_is_current({"delivery_binding": event_delivery}):
+                return None
+            event_kind = str(event_delivery.get("kind") or "").strip()
+            task_kind = str(task_delivery.get("kind") or "").strip()
+            if event_kind != task_kind:
+                return None
+            if event_kind == "pull_request":
+                for field in (
+                    "pr",
+                    "head_sha",
+                    "head_branch",
+                    "base",
+                    "base_sha",
+                    "required_merge_method",
+                ):
+                    ev_val = str(event_delivery.get(field) or "").strip()
+                    tk_val = str(task_delivery.get(field) or "").strip()
+                    if field in ("head_sha", "base_sha"):
+                        if ev_val.lower() != tk_val.lower():
+                            return None
+                    elif field == "pr":
+                        if ev_val.lstrip("#") != tk_val.lstrip("#"):
+                            return None
+                    elif field == "required_merge_method":
+                        if ev_val.upper() != tk_val.upper():
+                            return None
+                    else:
+                        if ev_val != tk_val:
+                            return None
+                ev_manifest = event_delivery.get("evidence_manifest")
+                tk_manifest = task_delivery.get("evidence_manifest")
+                if not isinstance(ev_manifest, Mapping) or not isinstance(tk_manifest, Mapping):
+                    return None
+                if str(ev_manifest.get("path") or "").strip() != str(tk_manifest.get("path") or "").strip():
+                    return None
+                if str(ev_manifest.get("blob_sha") or "").strip().lower() != str(tk_manifest.get("blob_sha") or "").strip().lower():
+                    return None
+            elif event_kind == "artifact_contract":
+                if str(event_delivery.get("task_id") or "").strip() != str(task_delivery.get("task_id") or "").strip():
+                    return None
+                if str(event_delivery.get("contract_sha256") or "").strip().lower() != str(task_delivery.get("contract_sha256") or "").strip().lower():
+                    return None
+            else:
+                return None
+
+            req_snap = worker.get("request_snapshot")
+            if isinstance(req_snap, Mapping):
+                snap_meta = req_snap.get("metadata")
+                if isinstance(snap_meta, Mapping):
+                    snap_task = snap_meta.get("task")
+                    dispatched_delivery = (
+                        snap_task.get("delivery_binding")
+                        if isinstance(snap_task, Mapping) and isinstance(snap_task.get("delivery_binding"), Mapping)
+                        else snap_meta.get("delivery_binding")
+                    )
+                    if isinstance(dispatched_delivery, Mapping):
+                        dispatched_digest = rewrite_task_machine.delivery_binding_digest({"delivery_binding": dispatched_delivery})
+                        current_digest = rewrite_task_machine.delivery_binding_digest(task)
+                        if dispatched_digest is not None and dispatched_digest != current_digest:
+                            return None
 
     elif event_type == "review_approved":
         event_bridge = latest_terminal.get("github_review_bridge")
         task_bridge = task.get("github_review_bridge")
-        if isinstance(event_bridge, Mapping) and isinstance(task_bridge, Mapping):
+        if event_bridge is not None or task_bridge is not None:
+            if not isinstance(event_bridge, Mapping) or not isinstance(task_bridge, Mapping):
+                return None
             for field in ("pr", "head_sha", "decision", "actor"):
-                if field in event_bridge and field in task_bridge:
-                    if str(event_bridge.get(field) or "") != str(task_bridge.get(field) or ""):
+                ev_val = str(event_bridge.get(field) or "").strip()
+                tk_val = str(task_bridge.get(field) or "").strip()
+                if field == "head_sha":
+                    if ev_val.lower() != tk_val.lower():
                         return None
+                elif field == "pr":
+                    if ev_val.lstrip("#") != tk_val.lstrip("#"):
+                        return None
+                else:
+                    if ev_val != tk_val:
+                        return None
+        task_delivery = task.get("delivery_binding")
+        if isinstance(task_delivery, Mapping) and task_delivery.get("kind") == "pull_request":
+            if event_bridge and isinstance(event_bridge, Mapping):
+                if str(event_bridge.get("head_sha") or "").strip().lower() != str(task_delivery.get("head_sha") or "").strip().lower():
+                    return None
+                if str(event_bridge.get("pr") or "").strip().lstrip("#") != str(task_delivery.get("pr") or "").strip().lstrip("#"):
+                    return None
 
     elif event_type == "done":
         event_delivery = latest_terminal.get("delivery")
         task_delivery = task.get("delivery")
-        if isinstance(event_delivery, Mapping) and isinstance(task_delivery, Mapping):
+        if event_delivery is not None or task_delivery is not None:
+            if not isinstance(event_delivery, Mapping) or not isinstance(task_delivery, Mapping):
+                return None
             for field in ("kind", "pr", "head_sha", "merge_commit", "target_branch"):
-                if field in event_delivery and field in task_delivery:
-                    if str(event_delivery.get(field) or "") != str(task_delivery.get(field) or ""):
+                ev_val = str(event_delivery.get(field) or "").strip()
+                tk_val = str(task_delivery.get(field) or "").strip()
+                if field in ("head_sha", "merge_commit"):
+                    if ev_val.lower() != tk_val.lower():
                         return None
+                elif field == "pr":
+                    if ev_val.lstrip("#") != tk_val.lstrip("#"):
+                        return None
+                else:
+                    if ev_val != tk_val:
+                        return None
+            merge_commit = str(event_delivery.get("merge_commit") or "").strip()
+            if merge_commit and not rewrite_task_machine._is_hex(merge_commit, 40):
+                return None
+            head_sha = str(event_delivery.get("head_sha") or "").strip()
+            if head_sha and not rewrite_task_machine._is_hex(head_sha, 40):
+                return None
     return task_status
 
 
@@ -7830,19 +7931,6 @@ def active_worker_governance_lease_decision(
             "reason_code": "pending_review_decision_intent",
             "source_event_id": intent.get("intent_id"),
             "source_event_type": "review_decision_intent",
-        }
-
-    settings = ready_dispatch_settings(config)
-    done_statuses = normalized_status_set(
-        settings.get("dependency_done_statuses"),
-        ["done"],
-    ) | GOVERNANCE_TERMINAL_TASK_STATUSES
-    if isinstance(task, Mapping) and str(task.get("status") or "").lower() in done_statuses:
-        return {
-            "action": "terminate",
-            "reason_code": "terminal_task_truth",
-            "source_event_id": None,
-            "source_event_type": None,
         }
 
     latest_lifecycle = _latest_task_governance_event(
@@ -7906,6 +7994,19 @@ def active_worker_governance_lease_decision(
                 "source_event_id": latest_lifecycle.get("event_id"),
                 "source_event_type": latest_lifecycle.get("type"),
             }
+
+    settings = ready_dispatch_settings(config)
+    done_statuses = normalized_status_set(
+        settings.get("dependency_done_statuses"),
+        ["done"],
+    ) | GOVERNANCE_TERMINAL_TASK_STATUSES
+    if isinstance(task, Mapping) and str(task.get("status") or "").lower() in done_statuses:
+        return {
+            "action": "terminate",
+            "reason_code": "authorized_terminal_cancellation",
+            "source_event_id": None,
+            "source_event_type": None,
+        }
     if task is None:
         return {
             "action": "preserve",
@@ -10709,14 +10810,48 @@ def poll_worker_assignment_stage(
             ) or changed
             return {"changed": changed, "stop": True}
         else:
+            task_id = str(worker.get("task_id") or "")
+            current_task = task_map.get(task_id)
+            if current_task is not None and worker_matches_current_assignment(config, worker, {task_id: current_task}):
+                return {"changed": False, "stop": False}
+            if not generation_fence_crossed:
+                fresh_decision = active_worker_governance_lease_decision(
+                    config,
+                    worker,
+                    current_task,
+                    activity_events=governance_activity_events,
+                )
+                if fresh_decision["action"] != "terminate":
+                    if alive:
+                        changed = record_worker_governance_lease_guard(
+                            config,
+                            worker,
+                            current_task,
+                            fresh_decision,
+                        ) or changed
+                    return {"changed": changed, "stop": False}
+                decision = fresh_decision
+
             worker["status"] = "superseded"
             worker["last_event_at"] = utc_now()
-            worker["last_error"] = "Worker superseded after exact task responsibility transition."
+            reason_code = decision.get("reason_code")
+            if reason_code == "exact_worker_lifecycle_transition":
+                worker["last_error"] = "Worker superseded after exact task responsibility transition."
+                final_queue_status = "completed"
+            elif reason_code == "task_generation_fence":
+                worker["last_error"] = "Worker superseded after task generation fence advanced."
+                final_queue_status = "completed"
+            elif reason_code in {"authorized_terminal_cancellation", "terminal_task_truth", "terminal_activity_truth"}:
+                worker["last_error"] = "Worker superseded after authorized terminal cancellation."
+                final_queue_status = "cancelled"
+            else:
+                worker["last_error"] = f"Worker superseded: {reason_code}."
+                final_queue_status = "cancelled"
             finalize_queue_event_record(
                 config,
                 state,
                 worker,
-                "completed",
+                final_queue_status,
                 worker["last_error"],
             )
             write_activity_log(
