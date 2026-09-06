@@ -49,8 +49,14 @@ for the current synthesis.
   plan this task executes; it is immutable and not rewritten here.
 - [archive/supplemental-reconcile-20260905/](archive/supplemental-reconcile-20260905/)
   — the 20 supplemental Markdown files from the 2026-09-05/06 archive
-  reconciliation prerequisite bundle (superseded/historical signed sources —
-  discussion holds, SA/SD drafts, reaudits, preflight notes).
+  reconciliation prerequisite bundle. Most are superseded/historical signed
+  SA/SD drafts, reaudits, and preflight notes, but two are explicitly *not*
+  signed sources: `API_CONVERGENCE_RETIREMENT_DISCUSSION_20260906.md` and
+  `ARCHITECTURE_DISCUSSION_HOLD_20260906.md` are pending-operator-confirmation
+  discussion drafts (their own headers say so), and
+  `FIRST_RELEASE_UNIFIED_ARCHITECTURE_SA_SD_20260906.md` is the rejected/
+  unqueued four-task draft (see below). See `SOURCE_MANIFEST.json` for the
+  authoritative per-file classification override on each.
 - [archive/registry-resumption-20260906/](archive/registry-resumption-20260906/)
   — the 5 Registry-resumption/report/preference sources from the
   2026-09-06 dev-closure artifact bundle (current verified state as of that

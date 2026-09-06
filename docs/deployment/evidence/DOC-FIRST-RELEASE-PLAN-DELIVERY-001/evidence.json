@@ -52,12 +52,12 @@
     "runtime_tests": "not run: documentation-only delivery; no product/runtime code changed"
   },
   "files": [
-    {"path": "docs/04/pantheon_first_release_closure_2026-09-06/INDEX.md", "sha256": "93b570583113fc863eb7ed2dca45fcc3c16f4af9ac2a5f4d9a69610532a7ca65"},
+    {"path": "docs/04/pantheon_first_release_closure_2026-09-06/INDEX.md", "sha256": "62abf766032126dd071bbdf25a3e8a98452a4a3aaa4d4864cf3250ee25d16655"},
     {"path": "docs/04/pantheon_first_release_closure_2026-09-06/SA_SD.md", "sha256": "ed5b4b617a5a828b260cc42d1c030c2adcdd03b13b58aa3a65d18814cf3f73bc"},
     {"path": "docs/04/pantheon_first_release_closure_2026-09-06/EXECUTION_ORDER.md", "sha256": "a0eb4cf61e0a5a4e9bd7c5a1599ca52cb99bfb789bfee13c6a7c151526f6bcba"},
     {"path": "docs/04/pantheon_first_release_closure_2026-09-06/TRACEABILITY.md", "sha256": "296fe5d5a2a9da408e84cc3cddd410a68d0e7e05673d970547544f7a069aef2a"},
     {"path": "docs/04/pantheon_first_release_closure_2026-09-06/STATUS.md", "sha256": "c4c9e722648868940ecad019b58f22ef2891f8995a29d18106f1f0dc845b20d1"},
-    {"path": "docs/04/pantheon_first_release_closure_2026-09-06/SOURCE_MANIFEST.json", "sha256": "9db8b514a2d76695c9586b8aca9b45ce1e020fb550e40dbefc2dc8c3a5df4d6f"},
+    {"path": "docs/04/pantheon_first_release_closure_2026-09-06/SOURCE_MANIFEST.json", "sha256": "582f6b226010b7d4df35b899fc2071e30394d5fb030588daa95cb6b79fbd9f41"},
     {"path": "docs/04/pantheon_first_release_closure_2026-09-06/archive/APPROVAL_RELEASE_SA_SD.md", "sha256": "6a6bbd28f45b7b052b19d09b2f0bc5b20e0e37ca2620f722e1a40cbbc9fa7157"},
     {"path": "docs/04/pantheon_first_release_closure_2026-09-06/archive/PLAN_ADMISSION_ERRATUM.md", "sha256": "43635b209d4704d03058a13fa40955ae576754f97ae37e46dfec55904dd6b549"},
     {"path": "docs/04/pantheon_first_release_closure_2026-09-06/archive/registry-resumption-20260906/architecture-resumption-sa-sd.md", "sha256": "b7fbb1189cc963b2bee58f52c1f267b4e85e6782381685735db9c4dbc4677790"},
