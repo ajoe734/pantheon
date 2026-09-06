@@ -1,0 +1,143 @@
+{
+  "task_id": "OPS-LEGACY-REVIEW-RETIRE-001",
+  "owner": "Claude2",
+  "reviewer": "Codex2",
+  "generated_at": "2026-09-06T10:11:17Z",
+  "summary": "Both retirement candidates were confirmed to have zero live consumers (see legacy-consumers.json for the exact inventory) and were fully retired. Regression tests were updated to assert rejection instead of the retired approve/migrate behavior. All focused and full-file test suites pass; no test outside the intended scope changed behavior.",
+  "candidates": [
+    {
+      "name": "Candidate A: reconcile_legacy_review_decision_intent_collision",
+      "disposition": "retired",
+      "inventory_reference": "docs/deployment/evidence/OPS-LEGACY-REVIEW-RETIRE-001/legacy-consumers.json#candidate_a",
+      "before": {
+        "removed_functions": [
+          ".orchestrator/supervisor.py: def reconcile_legacy_review_decision_intent_collision(config, state, task_id, intent) -> bool",
+          ".orchestrator/supervisor.py: def _migrate_legacy_review_intent_collision_locked(config, *, task_id, prior_task, expected_digest) -> bool"
+        ],
+        "removed_call_site": "reconcile_review_decision_intent_lease_recovery() used to call reconcile_legacy_review_decision_intent_collision(...) when expected_digest and current_digest mismatched, restoring the task row from journal history on success and only `continue`-ing on failure."
+      },
+      "after": {
+        "behavior": "reconcile_review_decision_intent_lease_recovery() now treats any digest mismatch (current_digest != expected_digest) as a uniform non-recoverable-lease case: it always `continue`s to the next task without any journal lookup, restoration, or write. No task row is ever rewritten to compensate for a stale review_decision_intent digest anymore.",
+        "code_comment_added": "A short comment at the mismatch check documents that the legacy migration path was retired under OPS-LEGACY-REVIEW-RETIRE-001 and explains why (no current task row exercises it; the current CAS design does not produce the bug class it existed to repair)."
+      },
+      "preserved_contracts": [
+        "reconcile_review_decision_intent_lease_recovery still mints review_decision_intent_recovery receipts for tasks whose digest matches and whose lease is lost (the non-legacy, current path) -- unchanged.",
+        "The lease/CAS/replay semantics for the current, non-legacy recovery lane (build_review_decision_intent_recovery_receipt, persist_review_decision_intent_recovery_receipt, review_decision_intent_lease_is_lost, task_execution_dispatch_candidate eligibility) are untouched.",
+        "The independent existing test test_legacy_collision_fails_closed_when_journal_is_missing_or_mismatched (already asserting fail-closed, no-mutation behavior on a digest mismatch) continues to pass unmodified, and its expected outcome (changed=False, no review_decision_intent_recovery minted) is now the *only* behavior for a mismatch, not a fallback."
+      ],
+      "tests_updated": [
+        {
+          "file": ".orchestrator/test_supervisor.py",
+          "change": "Replaced test_reconcile_migrates_legacy_collision_from_journal_and_replays_intent (which asserted the retired migration restored a collided task row from journal history and let the original actor replay) with test_digest_mismatch_is_never_migrated_even_when_journal_has_exact_prior_state, which reuses the same fixture shape (a journal that DOES hold an exact prior task state matching the frozen intent's digest) and now asserts the opposite: the collided task row stays exactly as collided (generation 13, WORKER_RECOVERY_TASK_KEY still present, no review_decision_intent_recovery minted, the generic lost-lease receipt stays 'pending' not 'resolved'), and no actor -- not even the original one -- gets a dispatch candidate out of it."
+        }
+      ]
+    },
+    {
+      "name": "Candidate B: task_brief_only_successor / carry_approval_to_task_brief_only_successor / publish_task_brief_only_successor_proof and their carry-forward branches",
+      "disposition": "retired",
+      "inventory_reference": "docs/deployment/evidence/OPS-LEGACY-REVIEW-RETIRE-001/legacy-consumers.json#candidate_b",
+      "before": {
+        "removed_from_github_review_bridge_py": [
+          "def _is_task_brief_path(value) -> bool",
+          "def task_brief_only_successor(*, repository, approved_head_sha, successor_head_sha, runner=None) -> dict | None",
+          "def carry_approval_to_task_brief_only_successor(*, repository, task_id, actor, approved_head_sha, successor_head_sha, pr, head_branch, base, publish, runner=None) -> dict | None",
+          "def publish_task_brief_only_successor_proof(*, repository, task_id, actor, carried, pr, head_branch, base, dispatch_if_proof_exists=True, runner=None) -> dict",
+          "constants TASK_BRIEF_PREFIX, COMMIT_FILES_PAGE_SIZE, MAX_SAFE_SUCCESSOR_FILES (used only by the above)"
+        ],
+        "removed_from_task_review_merge_gate_py": [
+          "evaluate_gate(...) parameter task_brief_carry_forward: Mapping | None",
+          "evaluate_gate(...) local carried_task_brief_only computed value and its use in the approved_head_sha-mismatch bypass and the head_committed_at-after-approval bypass",
+          "GateDecision reason/detail branch for 'task_brief_only_approval_carried_forward'",
+          "gate_for_task(...) parameter task_brief_carry_forward: Mapping | None (and its pass-through to evaluate_gate)"
+        ],
+        "removed_from_auto_integrator_py": [
+          "ReviewGate.decide(...) parameter task_brief_carry_forward",
+          "ReviewGate.task_brief_carry_forward(...) classification method (called GitHub commits API to classify a successor as brief-only)",
+          "ReviewGate.publish_task_brief_carry_forward(...) publish method (pushed the git-native carry-forward proof tag and dispatched the canonical review-gate workflow)",
+          "4 call sites: final-merge revalidation (fresh_gate.task_brief_carry_forward + fresh_gate.decide(..., task_brief_carry_forward=...)); already-merged reconciliation path (gate.task_brief_carry_forward + gate.decide(...) + gate.publish_task_brief_carry_forward(...) block); the main pre-merge gate call (gate.task_brief_carry_forward + gate.decide(..., task_brief_carry_forward=...)); and the 'publish proof before red rollup, then wait' block keyed on decision.reason == 'task_brief_only_approval_carried_forward'",
+          "def canonical_review_gate_is_green(rollup) -> bool (dead once its only caller, the publish-before-red-rollup block, was removed)"
+        ]
+      },
+      "after": {
+        "behavior": "A direct successor commit that changes only .orchestrator/task-briefs/ paths after an approved head is now evaluated exactly like any other successor: evaluate_gate compares approval.approved_head_sha to the PR's current head_oid unconditionally, and since a brief-only successor's head differs from the approved head, the gate returns allow_merge=False, reason='approval_head_mismatch'. The auto-integrator's decide() call takes no carry-forward argument and never calls the GitHub commits API to classify the successor, never pushes a git tag, and never dispatches the canonical review-gate workflow for it."
+      },
+      "preserved_contracts": [
+        "Independent reviewer eligibility checks (approval.reviewer normalized against contract.reviewer) -- untouched.",
+        "Approved-head identity binding (PR number, base branch, head branch matching) -- untouched.",
+        "Current-head/code-change invalidation: approval.approved_head_sha != head_oid now unconditionally blocks (previously bypassable via the carry-forward exception) -- strengthened, not weakened.",
+        "head_committed_at > approved_at invalidation (a head committed after the approval timestamp) is likewise now unconditional -- strengthened.",
+        "Operator exact-head acceptance path (exact_head_operator_accepted), auto-merge revocation logic, merged-PR reconciliation gating, and every other existing block/allow reason in evaluate_gate are unchanged.",
+        "Task-scoped evidence requirements, review decision/audit ordering (load_approval_record, revoked-approval checks, binding_error/binding_present checks) -- untouched."
+      ],
+      "tests_updated": [
+        {
+          "file": "scripts/git/test_github_review_bridge.py",
+          "change": "Removed the four tests that exercised the now-deleted classification/publish functions directly (test_task_brief_only_successor_is_a_narrow_direct_child, test_task_brief_only_successor_rejects_a_code_change, test_task_brief_only_successor_rejects_a_full_files_page, test_task_brief_only_successor_publishes_a_carry_forward_proof, test_task_brief_carry_forward_dispatch_failure_is_not_ignored). Added test_task_brief_only_successor_carry_forward_exception_is_retired, a guard test asserting hasattr(bridge, name) is False for the three retired function names, to catch any accidental re-introduction."
+        },
+        {
+          "file": "scripts/git/test_task_review_merge_gate.py",
+          "change": "Removed the task_brief_carry_forward parameter from the local decide() test helper (it no longer exists on gate_for_task). Replaced test_task_brief_only_successor_carries_approval_without_rereview (asserted allow_merge=True, reason='task_brief_only_approval_carried_forward') with test_task_brief_only_successor_is_rejected_without_a_fresh_review, using the identical successor/approved-head fixture but asserting allow_merge=False, reason='approval_head_mismatch', revoke_auto_merge=True -- i.e. the same input now produces the correct rejection instead of the retired approval."
+        },
+        {
+          "file": "scripts/git/test_auto_integrator.py",
+          "change": "Replaced test_task_brief_only_successor_is_carried_forward_automatically with test_task_brief_only_successor_is_rejected_without_a_fresh_review: same fixture (brief-only successor commit, approved_gate()), now asserts result.action == 'blocked', 'approval_head_mismatch' in result.detail, and that no commits-API classification call, git tag push, workflow dispatch, or gh pr merge command is ever issued. Removed test_task_brief_successor_publishes_before_red_rollup_then_merges_green_pass entirely (it exercised only the deleted publish/dispatch/wait machinery, which has no successor behavior to test now that the whole code path is gone). Replaced test_rejected_gate_never_publishes_task_brief_carry_forward_proof with test_rejected_gate_never_touches_the_retired_carry_forward_machinery, keeping the existing negative case (an unapproved review still blocks with reason='review_not_approved') and updating its assertions to confirm no tag/workflow-dispatch commands are ever issued (previously it also asserted a commits-API classification call happened, which no longer occurs since the retired classification step is gone). Removed the dead test_carry_forward_publication_failure_blocks_before_merging test and the now-unused FakeRunner carry_forward_publish_fails constructor parameter/branch that only supported it."
+        }
+      ]
+    }
+  ],
+  "documentation": {
+    "file": "docs/02-architecture/development-tooling-product-boundary.md",
+    "change": "none",
+    "reason": "Grepped for task_brief_only, carry.forward, carry forward, review_decision_intent_collision, and legacy -- this document does not mention either legacy exception as sanctioned/expected behavior, so no narrowing edit was needed per the task's instruction to only touch it if it currently documents the retired behavior."
+  },
+  "verification": {
+    "python_env_setup": [
+      "export PANTHEON_DEPENDENCY_PYTHON=/tmp/pantheon-worker-worktrees/pantheon/ops-privileged-task-execution-auth-001/.venv-pantheon/bin/python3",
+      "python3 scripts/dev/provision_python_distribution.py",
+      "PANTHEON_PY=\"$(python3 scripts/dev/provision_python_distribution.py --print-python)\"",
+      "note: the ambient default python (/usr/bin/python3) had no pytest installed and no local .venv existed in this worktree or the main worktree, so PANTHEON_DEPENDENCY_PYTHON was pointed at an already-provisioned sibling worktree's venv (a different task's worktree, read-only dependency source only) per the documented provisioning fallback in AI_COLLABORATION_GUIDE.md."
+    ],
+    "commands": [
+      {
+        "command": "$PANTHEON_PY -m pytest -q .orchestrator/test_supervisor.py -k \"review_decision_intent or legacy or collision or migrat or digest_mismatch\"",
+        "exit_code": 0,
+        "result": "4 passed, 249 deselected"
+      },
+      {
+        "command": "$PANTHEON_PY -m pytest -q .orchestrator/test_supervisor.py",
+        "exit_code": 0,
+        "result": "253 passed, 55 subtests passed"
+      },
+      {
+        "command": "$PANTHEON_PY -m pytest -q .orchestrator/test_supervisor.py .orchestrator/test_common.py",
+        "exit_code": 0,
+        "result": "350 passed, 105 subtests passed"
+      },
+      {
+        "command": "$PANTHEON_PY -m pytest -q scripts/git/test_github_review_bridge.py scripts/git/test_task_review_merge_gate.py scripts/git/test_auto_integrator.py",
+        "exit_code": 0,
+        "result": "269 passed, 19 subtests passed"
+      }
+    ],
+    "no_unexpected_failures": "No test outside the intentionally-updated set changed status. All existing negative tests (forged/stale/mixed-code successor, revoked approval, unbound approval, PR/base/branch mismatch, auto-merge outlived head, operator-acceptance edge cases, merged-before-approval, etc.) still pass unmodified."
+  },
+  "residual_or_blocked_items": [],
+  "files_changed": [
+    ".orchestrator/supervisor.py",
+    ".orchestrator/test_supervisor.py",
+    "scripts/git/github_review_bridge.py",
+    "scripts/git/test_github_review_bridge.py",
+    "scripts/git/task_review_merge_gate.py",
+    "scripts/git/test_task_review_merge_gate.py",
+    "scripts/git/auto_integrator.py",
+    "scripts/git/test_auto_integrator.py",
+    "docs/deployment/evidence/OPS-LEGACY-REVIEW-RETIRE-001/evidence.json",
+    "docs/deployment/evidence/OPS-LEGACY-REVIEW-RETIRE-001/legacy-consumers.json"
+  ],
+  "files_declared_but_not_touched": [
+    ".orchestrator/common.py",
+    ".orchestrator/test_common.py",
+    "docs/02-architecture/development-tooling-product-boundary.md"
+  ],
+  "not_committed": "Per instructions, no git add/commit/state transition was performed. The working tree is left with these edits uncommitted for the task owner to review, commit, and carry through the PR/review/closeout flow."
+}

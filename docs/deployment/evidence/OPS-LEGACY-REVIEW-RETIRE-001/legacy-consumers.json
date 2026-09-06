@@ -1,0 +1,52 @@
+{
+  "task_id": "OPS-LEGACY-REVIEW-RETIRE-001",
+  "observed_at": "2026-09-06T10:11:17Z",
+  "purpose": "Read-only inventory of live consumers of the two legacy retirement candidates, taken before any code change, to decide whether retirement is safe.",
+  "candidate_a": {
+    "name": "reconcile_legacy_review_decision_intent_collision",
+    "location": ".orchestrator/supervisor.py (plus helper _migrate_legacy_review_intent_collision_locked), called from reconcile_review_decision_intent_lease_recovery",
+    "description": "Migrates a task row back to its exact prior journal state when a frozen review_decision_intent's CAS task_digest no longer matches the task's current digest, a collision caused by a legacy generic worker-recovery bug that predates the current review-decision-intent CAS design.",
+    "searches_performed": [
+      {
+        "what": "Current (non-terminal) canonical task rows with a review_decision_intent field",
+        "how": "Loaded /home/chloe_ong_dev_cctech_support_com/code/pantheon/ai-status.json (canonical status_file per PANTHEON_CANONICAL_TASK_STATE_IDENTITY_JSON), filtered tasks with status in {todo, in_progress, review, review_approved, blocked}, and checked each for an isinstance(dict) review_decision_intent field.",
+        "result": "39 total tasks, 36 current (non-terminal); 0 of the 36 current tasks carry a review_decision_intent at all, so none can have a digest mismatch."
+      },
+      {
+        "what": "Historical firings of the migration (type=review_decision_intent_collision_migrated activity-log events)",
+        "how": "python3 scan of /home/chloe_ong_dev_cctech_support_com/code/pantheon/ai-activity-log.jsonl, parsing every line as JSON and counting entries whose top-level \"type\" field equals \"review_decision_intent_collision_migrated\" (the exact event type write_activity_log emits when the migration applies). A separate raw grep -c on the literal string returned 3 hits, but all 3 were this task's own PostToolUse/PreToolUse permission_hook log entries recording Read/Bash tool calls that echoed the function's source code and docstring back into the log -- not real migration events.",
+        "result": "0 real (non-hook, type-matched) collision-migration events have ever been recorded in the canonical activity log."
+      },
+      {
+        "what": "Whether the specific historical incident task referenced by the unit-test fixture (FULL-OPERATION-GAP-SA-SD-PLAN-FREEZE-20260830, 'reproducing Seq 9611/9612') still exists as a current or archived task",
+        "how": "Searched ai-status.json tasks[] for that id (no match), and grepped ai-activity-log.jsonl for any non-hook event mentioning that task id (0 matches). Also checked ai-task-archive for a file matching that id (no match).",
+        "result": "The task id used by the existing regression test is a synthetic fixture id, not a real task ever present in canonical status or activity history; it does not represent a live consumer."
+      }
+    ],
+    "verdict": "no live consumer found -- safe to retire",
+    "verdict_detail": "Zero current (non-terminal) task rows carry a review_decision_intent at all, so none can hit the digest-mismatch branch this migration exists to repair. The migration has never actually fired in the canonical activity log (0 real review_decision_intent_collision_migrated events). The one existing regression test that exercises the migration uses a synthetic task id with no footprint in canonical state or activity history. Retirement proceeds: the migration function and its call-site branch are removed; a digest mismatch on the lease-recovery path is now uniformly treated as a non-recoverable lease (skip, no mutation), which is the same fail-closed behavior the pre-existing test_legacy_collision_fails_closed_when_journal_is_missing_or_mismatched test already required for a missing/mismatched journal."
+  },
+  "candidate_b": {
+    "name": "task_brief_only_successor / carry_approval_to_task_brief_only_successor / publish_task_brief_only_successor_proof (github_review_bridge.py) and their carried_task_brief_only branches in task_review_merge_gate.py / auto_integrator.py",
+    "description": "Let a new commit that only changed the generated .orchestrator/task-briefs/ path inherit a prior commit's already-recorded review approval, publish a git-native carry-forward proof tag, and dispatch the canonical review-gate workflow for that successor head, all without a fresh independent review.",
+    "searches_performed": [
+      {
+        "what": "Historical firings of the carry-forward exception (activity-log evidence of reason=task_brief_only_approval_carried_forward, or any mention of task_brief_only_successor / carry_forward / carry-forward)",
+        "how": "python3 scan of ai-activity-log.jsonl for lines containing any of \"task_brief_only_approval_carried_forward\", \"task_brief_only_successor\", \"carry_forward\", \"carry-forward\", excluding this task's own permission_hook tool-read echoes.",
+        "result": "0 non-hook activity-log events ever reference this carry-forward reason or classification."
+      },
+      {
+        "what": "Current canonical task rows for any pending review/PR state that would depend on the exception existing (i.e. a task presently in review/review_approved whose only viable path to merge is a brief-only successor carry-forward)",
+        "how": "Inspected the 36 current non-terminal task rows in ai-status.json for review_decision_intent / review_binding / delivery_binding fields indicating an in-flight approval awaiting a brief-only successor. Canonical status carries no such transient GitHub-side state (PR head SHAs, successor commit shapes) at all -- that information only ever existed live on GitHub and in the git tag proofs the retired code created, which this task's search does not have write access to fabricate evidence about.",
+        "result": "No current canonical task row's fields indicate dependence on this exception; canonical state carries no artifact that would only make sense if the exception were pending."
+      },
+      {
+        "what": "Whether any local git tags of the form refs/tags/pantheon-review/approve/<sha> exist in this worktree, which would indicate a locally-visible carry-forward proof",
+        "how": "git tag -l | grep -i 'review-proof|carry' in the worktree.",
+        "result": "0 matches (this worktree's local tag list is not authoritative for the remote's live state, so this is corroborating rather than conclusive)."
+      }
+    ],
+    "verdict": "no live consumer found -- safe to retire",
+    "verdict_detail": "The carry-forward exception has never fired in the canonical activity log, and no current canonical task row shows any dependence on it. Retirement proceeds: task_brief_only_successor, carry_approval_to_task_brief_only_successor, and publish_task_brief_only_successor_proof are removed from github_review_bridge.py (along with the TASK_BRIEF_PREFIX / COMMIT_FILES_PAGE_SIZE / MAX_SAFE_SUCCESSOR_FILES constants and _is_task_brief_path helper that existed only to support them); the task_brief_carry_forward parameter and carried_task_brief_only branch are removed from task_review_merge_gate.evaluate_gate/gate_for_task; and the ReviewGate.task_brief_carry_forward classification method, ReviewGate.publish_task_brief_carry_forward publish method, all four call sites, and the now-dead canonical_review_gate_is_green helper are removed from auto_integrator.py. A direct successor that changes only .orchestrator/task-briefs/ paths after an approved head is now rejected exactly like any other unreviewed successor (reason=approval_head_mismatch), not silently approved."
+  }
+}
