@@ -65,10 +65,15 @@ bucket/prefix partition for either backend; the existing partition scheme
 is a `session_id/turn_id` path prefix inside one shared bucket. Tenant
 isolation for attachment reads *is* enforced, just above the storage layer:
 `services/control-plane/bff/main.py`'s `bff_management_ai_attachment`
-handler (lines ~17354-17383) resolves the caller's tenant identity and
-404s before reading the object if the attachment's owning session does not
-match that tenant — any cutover must keep routing reads through that same
-check, not merely preserve object bytes. There is no MinIO-specific
+handler (lines ~17354-17383) resolves the caller's tenant identity and,
+via `_management_ai_get_session_or_404` (main.py:13536-13547), 404s only
+if the attachment or its owning session does not exist at all; if the
+session exists but the caller is neither its owner nor tenant-matched,
+`_management_ai_require_session_access` (main.py:13499-13508) instead
+raises 403 FORBIDDEN before the object is read — any cutover must keep
+routing reads through that same check, including this exact
+404-for-nonexistent vs 403-for-unauthorized split, not merely preserve
+object bytes. There is no MinIO-specific
 backup/restore runbook — MinIO objects fall under the same generic
 VM-disk-snapshot policy as every other stateful backend
 (`docs/deployment/vm-dev-staging-prod-management-plan.md` §11.3), not a
