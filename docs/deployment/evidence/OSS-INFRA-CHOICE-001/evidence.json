@@ -1,0 +1,95 @@
+{
+  "task_id": "OSS-INFRA-CHOICE-001",
+  "owner": "Claude",
+  "reviewer": "Codex2",
+  "summary": "Enumerated every declared object-store consumer across docker-compose.yml/docker-compose.control.yml and services/**/*.py, found zero real S3/MinIO I/O consumers and one real consumer already on Google Cloud Storage, compared local-S3-replacement vs managed-store vs retirement, produced a reproducible isolated round-trip proof against the real adapter, recorded the accepted choice, and designed the core/workers/research/management-ai/execution source-profile contract per the accepted environment-identity plan.",
+  "depends_on": ["OSS-COVERAGE-PLAN-001"],
+  "task_branch_head": "ec47156479e6d51fe1e03056d9060cbc8893d739",
+  "task_branch_base_dev": "ec47156479e6d51fe1e03056d9060cbc8893d739",
+  "source_documents_read": [
+    "docs/reviews/2026-09-06-system-simplification/oss-findings.md",
+    "docs/plans/system-simplification-20260906/tasks.json",
+    "docs/plans/system-simplification-20260906/oss-version-disposition.csv",
+    "docs/04/pantheon_environment_closure_sa_sd_2026-09/SA.md",
+    "docs/04/pantheon_environment_closure_sa_sd_2026-09/RESOURCE_AND_COST_MODEL.md",
+    "docs/deployment/vm-dev-staging-prod-management-plan.md",
+    "docs/deployment/evidence/ops-vm-env-phase0-20260825/service-inventory.md"
+  ],
+  "artifacts_produced": [
+    {
+      "file": "docs/plans/system-simplification-20260906/storage-consumer-matrix.json",
+      "purpose": "Full read-only enumeration of every docker-compose service declaring PANTHEON_S3_* env vars or depends_on minio, plus the repo-wide non-test search for boto3/botocore/S3-client usage (zero hits), and the one real object-store consumer (management_ai_store.py on GCS).",
+      "sha256": "89ce2ee278b1ec1029b3ad12ec375bdebfd098aec847a6ad48d6611da1378d90"
+    },
+    {
+      "file": "docs/plans/system-simplification-20260906/storage-topology-decision.md",
+      "purpose": "Compares the 3 acceptance-bounded options (maintained local S3-compatible replacement, existing managed object store, documented retirement), records the accepted decision (GCS as sole backend; retire the unused MinIO layer), and carries the reproducible isolated proof.",
+      "sha256": "40e5ded0ab3d81348757e57dbf5fb7d48861527ff3f5ad88c4d8f81758d4cfba"
+    },
+    {
+      "file": "docs/plans/system-simplification-20260906/profile-contract.json",
+      "purpose": "Design-only core/workers/research/management-ai/execution profile contract with health/dependency/volume/isolation requirements, aligned to SA.md's accepted environment-identity plan and to the storage decision (no profile's health depends on MinIO).",
+      "sha256": "d18090ffe222b8a8dd8720e96dc4a6c219f1ec9e39d2c206167e01f1b192f56b"
+    }
+  ],
+  "consumer_enumeration": {
+    "method": "grep across docker-compose.yml, docker-compose.control.yml, docker-compose.remote-dev.yml, docker-compose.exec.yml for PANTHEON_S3_ENDPOINT/PANTHEON_ARTIFACT_BUCKET/minio, and a repo-wide non-test grep for boto3/botocore/S3 client construction under services/ and scripts/",
+    "result": "17 services (main stack) / 12 services (control stack) declare the four PANTHEON_S3_* env vars; only 8/9 of those add a depends_on: minio: condition: service_healthy edge. Zero non-test source files construct an S3 client. The two files that read the env vars (services/foundation/persistence_posture.py, services/source_search_posture.py) only check presence for a staging/prod posture gate and explicitly document that they never open a connection.",
+    "real_consumer": "services/control-plane/bff/management_ai_store.py already uses google-cloud-storage (Apache-2.0), gated by PANTHEON_MGMT_AI_ATTACH_BUCKET, with a local-filesystem fallback when unset; unrelated to PANTHEON_S3_*."
+  },
+  "upstream_recheck": {
+    "minio_server": "minio/minio@sha256:14cea493d9a34af32f524e538b8346cf79f3321eff8e708c1e2960462bd8936e; upstream community repo archived 2026-04-25, no longer maintained, source-only distribution going forward (per docs/reviews/2026-09-06-system-simplification/oss-findings.md line 34, produced under OSS-COVERAGE-PLAN-001).",
+    "minio_client_divergence": "docker-compose.yml pins minio/mc:RELEASE.2024-01-16T16-06-34Z; docker-compose.control.yml floats minio/mc:latest. Neither can be refreshed against a maintained upstream release channel.",
+    "gcs_client": "google-cloud-storage>=2.16,<3.0 (Apache-2.0), pinned in services/control-plane/bff/requirements.txt:11; already the production adapter for the one real consumer."
+  },
+  "options_compared": [
+    {
+      "option": "A: replace MinIO with another maintained local S3-compatible server",
+      "disposition": "rejected — no S3-API consumer exists to justify standing up a replacement server; would not help the one real consumer, which already uses GCS"
+    },
+    {
+      "option": "B: standardize on the existing supported managed object store (Google Cloud Storage)",
+      "disposition": "accepted — already integrated, already budgeted in RESOURCE_AND_COST_MODEL.md (~$6/month), already proven in isolation, matches the all-GCP environment-identity plan"
+    },
+    {
+      "option": "C: documented retirement (no real consumer/data remains)",
+      "disposition": "folded into the accepted decision, scoped to the MinIO/S3 layer only — object storage itself is not retired, the redundant self-hosted layer with zero consumers is"
+    }
+  ],
+  "isolated_proof": {
+    "target": "services/control-plane/bff/management_ai_store.py::ManagementAiAttachmentStore (production adapter, no network, no hosted credentials)",
+    "command": "sys.path.insert(0, 'services/control-plane'); import bff.management_ai_store as mas — full script in storage-topology-decision.md §4",
+    "result": "PASS — ISOLATED_GCS_OBJECT_STORE_PROOF: PASS management-ai-attachments/mgmt-gcs-session/turn-gcs/att_48f3e55c76604878-screen.png",
+    "asserted": [
+      "storageUrl starts with gs://<bucket>/management-ai-attachments/...",
+      "sizeBytes matches the uploaded byte length",
+      "read() returns byte-identical content, matching mimeType, and matching filename after a round trip through the fake bucket"
+    ],
+    "pre_existing_equivalent_test": {
+      "file": "services/control-plane/bff/test_bff_mgmt_ai_persistence_2026_06_03.py",
+      "test": "test_management_ai_attachment_store_uses_gcs_bucket_metadata",
+      "status_in_this_worktree": "collection currently fails standalone with 'ImportError: attempted relative import with no known parent package' inside main.py's own `.models` import — a pre-existing BFF pytest import-mode issue unrelated to storage and not introduced or touched by this task. The equivalent assertions were proven directly against management_ai_store.py without importing main.py, per the isolated_proof command above."
+    }
+  },
+  "profile_contract_design": {
+    "profiles": ["core", "workers", "research", "management-ai", "execution"],
+    "cross_cutting_rule": "no profile's startup health may depend on minio; the accepted GCS path stays env-gated/optional for every profile",
+    "scope_boundary": "design/document only; no docker-compose.yml/docker-compose.control.yml edit was made, no hostname was provisioned, no data was migrated, no runtime was promoted or deployed by this task"
+  },
+  "decision_recorded": {
+    "chosen_backend": "Google Cloud Storage, via the existing ManagementAiAttachmentStore adapter",
+    "minio_disposition": "accepted for retirement by OSS-OBJECT-STORE-CUTOVER-001 after that task's own reversible local migration/readback proof confirms zero remaining consumers; this task performs no deletion",
+    "posture_files_to_update_later": [
+      "services/foundation/persistence_posture.py (OBJECT_STORE_KEYS enforcement)",
+      "services/source_search_posture.py (object_store_keys enforcement)"
+    ],
+    "no_new_authorization_required": "GCS is already the running managed backend for the one real consumer; no paid hosting change, real-data migration, or MFA/capital authorization is implied or requested by this choice"
+  },
+  "not_performed": [
+    "no docker-compose.yml or docker-compose.control.yml edit",
+    "no hostname/DNS provisioning",
+    "no data migration against any hosted MinIO or GCS bucket",
+    "no runtime promotion or deployment",
+    "no secret values were read"
+  ]
+}

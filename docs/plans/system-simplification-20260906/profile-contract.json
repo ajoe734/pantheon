@@ -1,0 +1,92 @@
+{
+  "task_id": "OSS-INFRA-CHOICE-001",
+  "status": "design_contract_only",
+  "generated_at": "2026-09-06T00:00:00Z",
+  "note": "This is a design artifact only. No Compose file was edited, no hostname was provisioned, no data was migrated, no runtime was promoted or deployed by this task. OSS-INFRA-PROFILES-001 is the sole later Compose writer that implements this contract; OSS-OBJECT-STORE-CUTOVER-001 consumes the storage disposition below.",
+  "source_of_truth_read": {
+    "environment_identity_plan": "docs/04/pantheon_environment_closure_sa_sd_2026-09/SA.md",
+    "profile_table_cited": "SA.md §5 Component Profiles & Resource Bounds",
+    "cost_model_read": "docs/04/pantheon_environment_closure_sa_sd_2026-09/RESOURCE_AND_COST_MODEL.md",
+    "storage_decision_read": "docs/plans/system-simplification-20260906/storage-topology-decision.md"
+  },
+  "cross_cutting_rules": {
+    "health": "Every profile-scoped service keeps its existing /readyz or /healthz HTTP probe or CMD-SHELL healthcheck unchanged; profile activation only changes which services start, never how an individual service reports health.",
+    "dependency": "No profile's health or startup readiness may depend on MinIO/minio-init. Per storage-topology-decision.md, the accepted object-store backend is Google Cloud Storage, reached only by services/control-plane/bff/management_ai_store.py, and that dependency is env-gated/optional (falls back to local filesystem when PANTHEON_MGMT_AI_ATTACH_BUCKET is unset) rather than a startup precondition. `depends_on: minio: condition: service_healthy` edges enumerated in storage-consumer-matrix.json are scheduled for removal by OSS-OBJECT-STORE-CUTOVER-001, not added to any new profile.",
+    "volume": "A profile only mounts the durable volumes its own services already declare in docker-compose.yml/docker-compose.control.yml today (for example postgres-data, nats-data, *-data per service). No profile may share a volume across environments; this is already Architecture Invariant / Non-Goal #4 in SA.md (\"No Cross-Environment Resource Sharing\").",
+    "isolation": "Profile activation must preserve SA.md's per-environment activation matrix (Dev/Ephemeral Staging/Prod Control/Prod Execution) and its Architecture Invariant #3 (Control and Execution Plane Segregation): the `execution` profile never runs on Prod Control, and no profile grants public ingress to anything other than the `core` profile's Caddy/Operator BFF edge."
+  },
+  "profiles": {
+    "core": {
+      "sa_definition": "Postgres, NATS, Caddy, Operator BFF, Projectors, Lifecycle",
+      "activation": {"dev": "YES", "ephemeral_staging": "YES", "prod_control": "YES", "prod_execution": "NO"},
+      "services": [
+        "postgres", "nats", "operator-bff", "router", "telemetry",
+        "governance", "deployment", "incidents", "postmortems",
+        "lifecycle-projector-capacity-benchmark", "loop-run-projector-scheduler",
+        "lineage-read", "signal-store", "web-channel"
+      ],
+      "health_requirements": "Postgres/NATS healthchecks gate every dependent service (existing service_healthy conditions retained). Operator BFF /readyz must stay green independent of GCS bucket configuration (attachment store degrades to local-filesystem, never blocks readiness).",
+      "dependency_requirements": "postgres, nats only as hard startup dependencies. No minio dependency in this profile.",
+      "volume_requirements": ["postgres-data", "nats-data", "governance-data", "incident-data", "telemetry-data", "lineage-data"],
+      "isolation_requirements": "Only this profile's Caddy/Operator BFF edge may accept public ingress; core never carries live broker credentials."
+    },
+    "workers": {
+      "sa_definition": "Scheduler, Outbox consumer, Policy/Audit reconcilers",
+      "activation": {"dev": "YES", "ephemeral_staging": "Conditional", "prod_control": "YES (Singleton)", "prod_execution": "NO"},
+      "services": [
+        "deployment-outbox-consumer", "reconciliation-drift-consumer",
+        "reconciliation-drift-scheduler", "reconciliation-drift-incident-listener",
+        "evolution-dispatch-worker", "evolution-daily-sweep-scheduler",
+        "evolution-threshold-sweep-producer", "policy-learning-shadow-eval-scheduler",
+        "search-index-scheduler", "source-ingest-scheduler",
+        "source-ingest-agora-projector", "source-ingest-controller-migrate",
+        "training-session-preview-worker", "alpha-replication-worker",
+        "agora-interaction-worker", "strategy-distillation-worker"
+      ],
+      "health_requirements": "Each scheduler/consumer keeps its own liveness signal (health file or /readyz); prod_control runs each as a singleton (no horizontal replicas) per SA.md §5 footnote.",
+      "dependency_requirements": "postgres, nats, and the owning core service (e.g. reconciliation-drift-svc, evolution, source-ingest) as declared today. No minio dependency.",
+      "volume_requirements": ["reconciliation-drift-data", "evolution-data", "policy-learning-data", "search-data", "source-ingest-data", "training-session-data"],
+      "isolation_requirements": "Workers never expose a public port; prod_control singleton constraint prevents duplicate outbox/reconciler consumption."
+    },
+    "research": {
+      "sa_definition": "Model engines, MLflow, FinRL, Qlib, Data Scrapers",
+      "activation": {"dev": "YES", "ephemeral_staging": "NO", "prod_control": "NO", "prod_execution": "NO"},
+      "services": [
+        "research-orchestrator-svc", "research-worker-gateway-svc",
+        "training-session-svc", "policy-learning-svc",
+        "finrl-dormant-smoke", "mlflow-dormant-smoke", "qlib-dormant-smoke",
+        "rllib-dormant-smoke", "ray-tune-dormant-smoke", "trl-dormant-smoke",
+        "experiments-dormant-smoke"
+      ],
+      "health_requirements": "Dormant-smoke placeholders stay opt-in/inactive by default per OSS-INFRA-PROFILES-001's acceptance criterion to make unused research services opt-in; only research-orchestrator-svc/research-worker-gateway-svc/training-session-svc/policy-learning-svc are always-on in dev.",
+      "dependency_requirements": "postgres required; nats optional per service. No minio dependency (research-orchestrator-svc currently declares PANTHEON_S3_* env only for posture, not I/O, per storage-consumer-matrix.json).",
+      "volume_requirements": ["research-orchestrator-data", "research-worker-gateway-data", "training-session-data", "policy-learning-data"],
+      "isolation_requirements": "Never activated outside dev; heavy ML dependency images stay isolated from core/workers/management-ai/execution images (separate per-framework containers, no shared requirements file, per AI_COLLABORATION_GUIDE.md OSS framework rule)."
+    },
+    "management-ai": {
+      "sa_definition": "OpenClaw, diagnostic kernel (read-only)",
+      "activation": {"dev": "YES", "ephemeral_staging": "Conditional", "prod_control": "YES (Read-Only)", "prod_execution": "NO"},
+      "services": [
+        "openclaw-gateway", "openclaw-gateway-adapter", "openclaw-data-init",
+        "openclaw-activation-ready-e2e"
+      ],
+      "health_requirements": "Read-only diagnostic posture on prod_control: no durable-write command routes active; existing /readyz probes unchanged.",
+      "dependency_requirements": "operator-bff (core) must be healthy first; no minio dependency. The BFF's management_ai_store.py attachment path is the profile's only object-store touchpoint and stays env-gated to GCS/local-fallback per storage-topology-decision.md.",
+      "volume_requirements": ["openclaw-data", "openclaw-adapter-data", "bff-data"],
+      "isolation_requirements": "Prod Control instance is read-only (no SOURCE_MANAGEMENT_COMMANDS_ENABLED / mutation routes armed); dev instance may enable durable-write local testing only."
+    },
+    "execution": {
+      "sa_definition": "Runtime Manager, Broker Adapter, Exchange Adapter, Live LEAN",
+      "activation": {"dev": "NO (Paper)", "ephemeral_staging": "Conditional (Sandbox)", "prod_control": "NO", "prod_execution": "YES (Phase 4)"},
+      "services": [
+        "runtime-manager", "broker", "paper-signal-producer",
+        "paper-fleet-reconciler", "pantheon-paper-runtime"
+      ],
+      "health_requirements": "PANTHEON_LIVE_BROKER_ENABLED=false hardcoded outside the isolated Prod Execution VM (SA.md Architecture Invariant #5); readiness gates on paper/broker adapter health only.",
+      "dependency_requirements": "postgres, nats, runtime-manager (core-adjacent) as declared today; broker credentials exist exclusively on Prod Execution. No minio dependency; execution never touches object storage in the current codebase (storage-consumer-matrix.json shows zero boto3/S3 usage repo-wide).",
+      "volume_requirements": ["runtime-data", "broker-data", "capital-data"],
+      "isolation_requirements": "Prod Execution VM has zero public IP / zero public ingress and accepts traffic only from Prod Control over private VPC peering, per SA.md Architecture Invariant #3; this profile must never be co-activated with prod_control."
+    }
+  },
+  "unclassified_services_default_rule": "Any docker-compose service not explicitly listed above (for example capital, registry, promotion, evaluation, persona, memory, consultation-svc, feedback, search-svc, source-ingest, evolution, smoke/e2e harness containers) remains scoped to `core` by default until OSS-INFRA-PROFILES-001 assigns it a profile during Compose convergence; this contract intentionally does not force every one of the ~80 declared services into a bucket, since that assignment is that task's implementation work, not this task's choice-and-design scope."
+}

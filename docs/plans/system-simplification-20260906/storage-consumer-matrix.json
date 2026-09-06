@@ -1,0 +1,109 @@
+{
+  "task_id": "OSS-INFRA-CHOICE-001",
+  "generated_at": "2026-09-06T00:00:00Z",
+  "method": "git grep across docker-compose.yml, docker-compose.control.yml, docker-compose.remote-dev.yml, docker-compose.exec.yml and services/**/*.py (excluding *_test.py/tests/) for PANTHEON_S3_*, PANTHEON_ARTIFACT_BUCKET, boto3, botocore, and an S3 client construction. Read-only; no secret values were read and no hosted system was mutated.",
+  "object_store_env_keys": [
+    "PANTHEON_S3_ENDPOINT",
+    "PANTHEON_S3_ACCESS_KEY",
+    "PANTHEON_S3_SECRET_KEY",
+    "PANTHEON_ARTIFACT_BUCKET"
+  ],
+  "declared_server": {
+    "main_stack": {
+      "file": "docker-compose.yml",
+      "server_service": "minio",
+      "server_image": "minio/minio@sha256:14cea493d9a34af32f524e538b8346cf79f3321eff8e708c1e2960462bd8936e",
+      "init_service": "minio-init",
+      "init_image": "minio/mc:RELEASE.2024-01-16T16-06-34Z",
+      "default_bucket": "pantheon-artifacts",
+      "volume": "minio-data"
+    },
+    "control_stack": {
+      "file": "docker-compose.control.yml",
+      "server_service": "minio",
+      "server_image": "minio/minio@sha256:14cea493d9a34af32f524e538b8346cf79f3321eff8e708c1e2960462bd8936e",
+      "init_service": "minio-init",
+      "init_image": "minio/mc:latest",
+      "default_bucket": "pantheon-artifacts",
+      "volume": "minio-data",
+      "note": "client tag diverges from main_stack (pinned digest vs floating latest); both point at the same archived/unmaintained upstream per docs/reviews/2026-09-06-system-simplification/oss-findings.md line 34."
+    },
+    "remote_dev_stack": {
+      "file": "docker-compose.remote-dev.yml",
+      "server_service": null,
+      "note": "no minio/S3 declaration found"
+    },
+    "exec_stack": {
+      "file": "docker-compose.exec.yml",
+      "server_service": null,
+      "note": "no minio/S3 declaration found"
+    }
+  },
+  "declared_consumers": {
+    "main_stack_env_only": [
+      "capital", "consultation-svc", "evaluation", "governance", "incidents",
+      "memory", "optimizer-svc", "persona", "policy-learning-svc", "postmortems",
+      "promotion", "reconciliation-drift-svc", "registry",
+      "research-orchestrator-svc", "research-worker-gateway-svc",
+      "search-svc", "source-ingest", "training-session-svc"
+    ],
+    "main_stack_depends_on_minio_healthy": [
+      "evaluation", "governance", "memory", "minio-init", "optimizer-svc",
+      "persona", "postmortems", "registry"
+    ],
+    "control_stack_env_only": [
+      "capital", "evaluation", "feedback", "governance", "incidents", "memory",
+      "optimizer-svc", "persona", "postmortems", "promotion",
+      "reconciliation-drift-svc", "registry"
+    ],
+    "control_stack_depends_on_minio_healthy": [
+      "evaluation", "feedback", "governance", "memory", "minio-init",
+      "optimizer-svc", "persona", "postmortems", "registry"
+    ]
+  },
+  "code_level_finding": {
+    "boto3_or_botocore_or_s3_client_in_non_test_source": [],
+    "posture_only_readers_of_object_store_env": [
+      {
+        "file": "services/foundation/persistence_posture.py",
+        "keys_checked": [
+          "PANTHEON_S3_ENDPOINT", "PANTHEON_ARTIFACT_BUCKET",
+          "PANTHEON_S3_ACCESS_KEY", "PANTHEON_S3_SECRET_KEY"
+        ],
+        "behavior": "validate_persistence_posture() only checks that all four keys are non-empty strings when PANTHEON_PERSISTENCE_POSTURE/PANTHEON_ENV is stage/staging/prod. It never opens a network connection, never constructs an S3/GCS client, and never reads or writes an object.",
+        "docstring_confirmation": "\"The check is intentionally configuration-only ... It does not open database or object-store connections.\""
+      },
+      {
+        "file": "services/source_search_posture.py",
+        "keys_checked": [
+          "PANTHEON_S3_ENDPOINT", "PANTHEON_ARTIFACT_BUCKET",
+          "PANTHEON_S3_ACCESS_KEY", "PANTHEON_S3_SECRET_KEY"
+        ],
+        "behavior": "validate_source_search_posture() performs the same presence-only check for source-ingest/search staging/prod posture; no object I/O."
+      }
+    ],
+    "conclusion": "Every one of the 17 (main) / 12 (control) declared 'consumers' above only forwards or requires the four PANTHEON_S3_* env vars for a staging/prod posture gate. No service in services/**/*.py constructs a boto3/S3 client or performs an S3 GET/PUT against MinIO. The MinIO server + minio-init glue in both Compose files currently has zero real object read/write consumers and holds zero real objects beyond the empty 'pantheon-artifacts' bucket minio-init creates at boot."
+  },
+  "real_object_store_consumer": {
+    "file": "services/control-plane/bff/management_ai_store.py",
+    "class": "ManagementAiAttachmentStore",
+    "backend": "Google Cloud Storage (google-cloud-storage>=2.16,<3.0, services/control-plane/bff/requirements.txt:11)",
+    "env_key": "PANTHEON_MGMT_AI_ATTACH_BUCKET",
+    "behavior": "prepare_inline_attachment()/store_inline_attachment() upload management-AI chat attachments to `gs://<bucket>/management-ai-attachments/<session>/<turn>/<id>-<filename>` via storage.Client().bucket(...).blob(...).upload_from_string(...); read() downloads the same object by its recorded storageUrl/objectName. When PANTHEON_MGMT_AI_ATTACH_BUCKET is unset it falls back to a local filesystem path (dev/local), never to MinIO/S3.",
+    "existing_isolated_proof": "services/control-plane/bff/test_bff_mgmt_ai_persistence_2026_06_03.py::test_management_ai_attachment_store_uses_gcs_bucket_metadata (fake-bucket round trip of content, size, content-type, filename)",
+    "note": "This is the only place in the repository where real object bytes are written to and read back from an external object-store API. It already uses GCS, not MinIO/S3, and it is unrelated to the PANTHEON_S3_* variables above."
+  },
+  "retention_legal_hold_versioning_encryption_tenant_requirements": {
+    "finding": "No service (MinIO-wired or GCS-wired) declares a retention policy, legal-hold flag, bucket versioning, server-side-encryption key, or per-tenant bucket/prefix partition anywhere in docker-compose.yml, docker-compose.control.yml, or services/control-plane/bff/management_ai_store.py. The one real consumer partitions objects by session_id/turn_id path prefix only, inside a single shared bucket/prefix.",
+    "implication": "There is no existing retention/legal-hold/versioning/tenant-isolation contract to preserve or migrate; the storage-topology-decision only needs to keep object durability and the existing prefix-based identity scheme."
+  },
+  "existing_data_volumes": {
+    "minio_data_docker_volume": "declared (minio-data) in both docker-compose.yml and docker-compose.control.yml, but no committed evidence of populated hosted content was found or read; this task did not connect to a hosted MinIO instance or read its data.",
+    "gcs_bucket": "PANTHEON_MGMT_AI_ATTACH_BUCKET is unset by default in both compose files (empty string), so the default posture for both stacks is the local-filesystem fallback, not a populated GCS bucket."
+  },
+  "licensing_and_restore_ownership": {
+    "minio_server": "AGPLv3 community distribution; per docs/reviews/2026-09-06-system-simplification/oss-findings.md line 34 the upstream community repository was archived 2026-04-25 and is no longer maintained (source-only distribution going forward); the currently pinned digest and the two divergent `mc` client tags (RELEASE.2024-01-16T16-06-34Z vs latest) cannot be refreshed against a maintained upstream release.",
+    "google_cloud_storage_client": "Apache-2.0 licensed Python client (google-cloud-storage), backed by the managed Google Cloud Storage service under Google's standard GCP terms; restore/versioning/retention are GCS platform features configured on the bucket, not something Pantheon has to operate.",
+    "restore_ownership_today": "docs/deployment/vm-dev-staging-prod-management-plan.md §11.3 declares a general per-release restore-rehearsal and production-shaped restore-drill policy, and lists MinIO alongside Postgres/NATS among stateful backends covered by VM/data-disk backup, but neither it nor docs/deployment/evidence/ops-vm-env-phase0-20260825/service-inventory.md documents a MinIO-specific object-level restore/versioning procedure; restore ownership for MinIO objects today is the same generic VM-disk-snapshot policy as every other stateful backend, not a bucket-specific runbook."
+  }
+}
