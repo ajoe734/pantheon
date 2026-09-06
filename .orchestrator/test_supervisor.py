@@ -8143,6 +8143,19 @@ class RuntimeAndFailureSemanticsTests(unittest.TestCase):
         }
         if include_actor and agent:
             payload["agent"] = agent
+        if event_type == "reopen":
+            payload["review_requeue_intent"] = {
+                "schema_version": 1,
+                "task_id": "TASK-1",
+                "task_generation": int(worker.get("task_generation") or 1),
+                "owner": "Codex",
+                "reviewer": agent or "Codex2",
+                "reopened_at": "2026-08-15T04:01:00Z",
+                "reopened_by": agent or "Codex2",
+                "reason": "Independent exact-head review rejects this delivery.",
+                "intent_id": "review-requeue-" + ("a" * 64),
+                "status": "pending",
+            }
         # ai_status.py stamps a self-consistent digest event_id on every
         # unbespoke event; canonical_worker_terminal_status now verifies it
         # (a forged/hand-edited event_id must not authorize a reopen), so the
@@ -8615,6 +8628,54 @@ class RuntimeAndFailureSemanticsTests(unittest.TestCase):
             supervisor.canonical_worker_terminal_status(
                 config, worker, other_reviewer_task, activity_events=[reopen_event]
             )
+        )
+
+        # (4e) Current review_requeue_intent has fields (intent_id, task_id, owner, reason)
+        # mismatched from the committed event's review_requeue_intent -- must fail closed.
+        for field, bad_val in [
+            ("intent_id", "review-requeue-unrelated"),
+            ("task_id", "OTHER-TASK"),
+            ("owner", "OTHER-OWNER"),
+            ("reason", "New review supersedes old findings"),
+        ]:
+            mismatched_intent_task = _task()
+            mismatched_intent_task["review_requeue_intent"][field] = bad_val
+            self.assertIsNone(
+                supervisor.canonical_worker_terminal_status(
+                    config, worker, mismatched_intent_task, activity_events=[reopen_event]
+                ),
+                f"Expected None for mismatched review_requeue_intent field {field}",
+            )
+
+        # (4f) A later lifecycle event (e.g. task_reassigned) supersedes earlier reopen.
+        later_reassignment_event = {
+            "type": "task_reassigned",
+            "task_id": "TASK-1",
+            "ts": "2026-08-15T04:02:00Z",
+            "agent": "Human/Ops",
+            "message": "A new assignment supersedes old reviewer attempt",
+        }
+        self.assertIsNone(
+            supervisor.canonical_worker_terminal_status(
+                config, worker, task, activity_events=[reopen_event, later_reassignment_event]
+            )
+        )
+
+        # (4g) Forged event_id on review_approved is rejected by shared active classifier.
+        approved_task = task_fixture(
+            status="review_approved",
+            owner="Codex",
+            reviewer="Codex2",
+        )
+        approved_event = self._exact_lifecycle_event(
+            worker, event_type="review_approved", agent="Codex2"
+        )
+        approved_event["event_id"] = "ai-status-event-forged"
+        self.assertEqual(
+            supervisor.active_worker_governance_lease_decision(
+                config, worker, approved_task, activity_events=[approved_event]
+            )["action"],
+            "preserve",
         )
 
     def test_canonical_worker_terminal_status_recognizes_real_recorded_reopens(
@@ -11198,55 +11259,54 @@ class ReviewDecisionIntentLeaseRecoveryTests(unittest.TestCase):
         self.assertNotIn("review_decision_intent_recovery", task_after)
 
 
-def _child_reopen_worker(worktree_str: str, env_dict: dict, result_queue: Any) -> None:
+def _child_reopen_worker(
+    worktree_str: str,
+    env_dict: dict,
+    result_queue: Any,
+    barrier1: Any = None,
+    barrier2: Any = None,
+) -> None:
     import subprocess
+    if barrier1 is not None:
+        try:
+            barrier1.wait(timeout=10)
+        except Exception:
+            pass
     cmd = ["bash", f"{worktree_str}/scripts/ai-status.sh", "reopen", "TASK-RACE-001", "Rejection from child process"]
     proc = subprocess.run(cmd, env=env_dict, cwd=worktree_str, capture_output=True, text=True)
+    if barrier2 is not None:
+        try:
+            barrier2.wait(timeout=10)
+        except Exception:
+            pass
     result_queue.put({"returncode": proc.returncode, "stdout": proc.stdout, "stderr": proc.stderr})
 
 
-def _child_poll_worker(config: dict, state: dict, result_queue: Any) -> None:
-    import supervisor
-    changed = supervisor.poll_workers(config, state)
-    result_queue.put({"changed": changed, "state": state})
-
-
-def _child_recovery_worker(config: dict, state: dict, worker: dict, result_queue: Any) -> None:
-    import supervisor
-    res = supervisor.recover_lost_worker_lease(
-        config,
-        state,
-        worker,
-        reason_kind="worker_process_missing",
-        reason="Process missing in race test",
-    )
-    result_queue.put({"result": res, "status": worker.get("status"), "worker": dict(worker)})
-
-
-def _child_stale_reopen(worktree_str: str, env_dict: dict, result_queue: Any) -> None:
-    import subprocess
-    cmd = ["bash", f"{worktree_str}/scripts/ai-status.sh", "reopen", "TASK-RACE-002", "Stale reopen attempt"]
-    proc = subprocess.run(cmd, env=env_dict, cwd=worktree_str, capture_output=True, text=True)
-    result_queue.put({"returncode": proc.returncode, "stdout": proc.stdout, "stderr": proc.stderr})
-
-
-def _child_reopen_worker(worktree_str: str, env_dict: dict, result_queue: Any) -> None:
-    import subprocess
-    cmd = ["bash", f"{worktree_str}/scripts/ai-status.sh", "reopen", "TASK-RACE-001", "Rejection from child process"]
-    proc = subprocess.run(cmd, env=env_dict, cwd=worktree_str, capture_output=True, text=True)
-    result_queue.put({"returncode": proc.returncode, "stdout": proc.stdout, "stderr": proc.stderr})
-
-
-def _child_poll_worker(config: dict, state: dict, result_queue: Any) -> None:
-    import supervisor
-    changed = supervisor.poll_workers(config, state)
-    result_queue.put({"changed": changed, "state": state})
-
-
-def _child_recovery_worker(config: dict, state: dict, worker: dict, result_queue: Any) -> None:
+def _child_recovery_worker(
+    config: dict,
+    state: dict,
+    worker: dict,
+    result_queue: Any,
+    barrier1: Any = None,
+    barrier2: Any = None,
+    take_snapshot_first: bool = False,
+) -> None:
     from unittest import mock
     import common
     import supervisor
+    snapshot = None
+    if take_snapshot_first:
+        snapshot = supervisor.load_status(config)
+    if barrier1 is not None:
+        try:
+            barrier1.wait(timeout=10)
+        except Exception:
+            pass
+    if barrier2 is not None and take_snapshot_first:
+        try:
+            barrier2.wait(timeout=10)
+        except Exception:
+            pass
     issued = worker.get("status_command_runtime")
     if issued:
         issued_env = common._status_command_runtime_env_from_record(issued)
@@ -11258,6 +11318,7 @@ def _child_recovery_worker(config: dict, state: dict, worker: dict, result_queue
                 worker,
                 reason_kind="worker_process_missing",
                 reason="Process missing in race test",
+                status=snapshot,
             )
             result_queue.put({"result": res, "status": worker.get("status"), "worker": dict(worker)})
     else:
@@ -11267,12 +11328,34 @@ def _child_recovery_worker(config: dict, state: dict, worker: dict, result_queue
             worker,
             reason_kind="worker_process_missing",
             reason="Process missing in race test",
+            status=snapshot,
         )
         result_queue.put({"result": res, "status": worker.get("status"), "worker": dict(worker)})
+    if barrier2 is not None and not take_snapshot_first:
+        try:
+            barrier2.wait(timeout=10)
+        except Exception:
+            pass
 
 
-def _child_stale_reopen(worktree_str: str, env_dict: dict, result_queue: Any) -> None:
+def _child_stale_reopen(
+    worktree_str: str,
+    env_dict: dict,
+    result_queue: Any,
+    barrier1: Any = None,
+    barrier2: Any = None,
+) -> None:
     import subprocess
+    if barrier1 is not None:
+        try:
+            barrier1.wait(timeout=10)
+        except Exception:
+            pass
+    if barrier2 is not None:
+        try:
+            barrier2.wait(timeout=10)
+        except Exception:
+            pass
     cmd = ["bash", f"{worktree_str}/scripts/ai-status.sh", "reopen", "TASK-RACE-002", "Stale reopen attempt"]
     proc = subprocess.run(cmd, env=env_dict, cwd=worktree_str, capture_output=True, text=True)
     result_queue.put({"returncode": proc.returncode, "stdout": proc.stdout, "stderr": proc.stderr})
@@ -11665,6 +11748,380 @@ class RealProcessReviewHandoffRecoveryFlowTests(unittest.TestCase):
                     runner_proc.kill()
                     runner_proc.wait(timeout=2)
 
+    def test_real_runner_queue_receipt_restart_and_dispatch_flow(self) -> None:
+        """Real runner process exit, CLI reopen, queue receipt reservation, deduplicated repeated dispatch, and restart preservation."""
+        repo_root = Path(__file__).resolve().parents[1]
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_path = Path(temp_dir)
+            central = temp_path / "central"
+            worktree = temp_path / "worktree"
+            runtime_dir = temp_path / "runtime"
+            runtime_dir.mkdir(parents=True)
+            task_state_event_log = runtime_dir / "task-state-events.jsonl"
+
+            central.mkdir(parents=True, exist_ok=True)
+            subprocess.run(["git", "init", "-q", "-b", "dev"], cwd=central, check=True)
+            subprocess.run(["git", "config", "user.name", "Tooling Admin"], cwd=central, check=True)
+            subprocess.run(["git", "config", "user.email", "admin@example.com"], cwd=central, check=True)
+            self._copy_tooling(repo_root, central)
+
+            # 1. Start a real child runner process
+            runner_proc = subprocess.Popen(
+                [
+                    sys.executable,
+                    "-c",
+                    "import time, signal, sys; signal.signal(signal.SIGTERM, lambda s, f: sys.exit(143)); time.sleep(60)",
+                ]
+            )
+            try:
+                real_pid = runner_proc.pid
+                real_ticks = supervisor.worker_pid_start_ticks(real_pid)
+                self.assertIsNotNone(real_ticks, f"Could not get ticks for real PID {real_pid}")
+
+                run_id = f"codex-run-queue-{real_pid}"
+                queue_event_id = f"evt-codex-queue-{real_pid}"
+                proc_gen = supervisor.worker_process_generation_id(
+                    task_id="TASK-QUEUE-001",
+                    worker_run_id=run_id,
+                    queue_event_id=queue_event_id,
+                    pid=real_pid,
+                    pid_start_ticks=real_ticks,
+                )
+
+                initial_task = {
+                    "id": "TASK-QUEUE-001",
+                    "title": "Test Queue Receipt Task",
+                    "owner": "Antigravity",
+                    "reviewer": "Codex2",
+                    "status": "review",
+                    "generation": 1,
+                    "next": "Ready for review",
+                    "artifacts": [".orchestrator/supervisor.py"],
+                    "target_repo": "pantheon",
+                    "depends_on": [],
+                }
+                from scripts import ai_status
+                init_state = ai_status.default_state()
+                init_state["tasks"] = [initial_task]
+                (central / "ai-status.json").write_text(json.dumps(init_state, indent=2) + "\n")
+                (central / "ai-activity-log.jsonl").write_text(json.dumps({"event_id": "seed", "type": "seed"}) + "\n")
+
+                central_runner_status = central / ".orchestrator" / "worker-runtime" / "status" / f"{run_id}.json"
+                central_runner_status.parent.mkdir(parents=True, exist_ok=True)
+                central_heartbeat = central / ".orchestrator" / "worker-runtime" / "heartbeats" / f"{run_id}.json"
+                central_heartbeat.parent.mkdir(parents=True, exist_ok=True)
+
+                issued_runtime = {
+                    "command_root": str(central),
+                    "source_sha": "will_be_set",
+                    "remote": "ajoe734/pantheon",
+                    "base_ref": "origin/dev",
+                }
+
+                worker_record = {
+                    "task_id": "TASK-QUEUE-001",
+                    "run_id": run_id,
+                    "queue_event_id": queue_event_id,
+                    "agent_id": "codex2_1",
+                    "logical_agent_id": "codex2",
+                    "provider": "codex",
+                    "pid": real_pid,
+                    "pid_start_ticks": real_ticks,
+                    "process_generation": proc_gen,
+                    "status": "running",
+                    "runner_status": "running",
+                    "runner_status_path": str(central_runner_status),
+                    "heartbeat_path": str(central_heartbeat),
+                    "last_heartbeat_at": "2026-09-06T17:00:00Z",
+                    "task_generation": 1,
+                    "lease_acquired_at": "2026-09-06T17:00:00Z",
+                    "lease_expires_at": "2999-01-01T00:00:00Z",
+                    "request_snapshot": {
+                        "reason": supervisor.REASON_REVIEW_READY,
+                        "task_generation": 1,
+                        "metadata": {
+                            "task_generation": 1,
+                            "workspace_task_id": "TASK-QUEUE-001",
+                            "workspace_path": str(worktree),
+                            "workspace_repository_id": "pantheon",
+                            "workspace_source_root": str(central),
+                        },
+                    },
+                    "workspace_path": str(worktree),
+                    "workspace_repository_id": "pantheon",
+                    "workspace_source_root": str(central),
+                    "status_root": str(central),
+                    "status_command_runtime": issued_runtime,
+                }
+
+                runtime_state_data = {
+                    "version": 2,
+                    "workers": {run_id: worker_record},
+                    "worktree_leases": {
+                        "leases": {
+                            run_id: {
+                                "task_id": "TASK-QUEUE-001",
+                                "repository_id": "pantheon",
+                                "status_root": str(central),
+                                "path": str(worktree),
+                            }
+                        }
+                    },
+                    "worker_worktrees": {
+                        "leases": {
+                            "TASK-QUEUE-001": {
+                                "task_id": "TASK-QUEUE-001",
+                                "workspace_task_id": "TASK-QUEUE-001",
+                                "branch": "task/TASK-QUEUE-001",
+                                "path": str(worktree),
+                                "repository_id": "pantheon",
+                                "status_root": str(central),
+                                "last_queue_event_id": queue_event_id,
+                                "last_target_agent": "Codex2",
+                                "last_used_at": "2026-09-06T17:00:00Z",
+                            }
+                        }
+                    },
+                    "queue": {
+                        "events": {
+                            queue_event_id: {
+                                "status": "running",
+                                "intent": {
+                                    "event_id": queue_event_id,
+                                    "task_id": "TASK-QUEUE-001",
+                                    "task_generation": 1,
+                                    "target_agent": "codex2_1",
+                                },
+                            }
+                        }
+                    },
+                }
+
+                runtime_state_path = central / ".orchestrator" / "state.json"
+                runtime_state_path.parent.mkdir(parents=True, exist_ok=True)
+                runtime_state_path.write_text(json.dumps(runtime_state_data, indent=2) + "\n")
+                (central / ".orchestrator" / "supervisor.json").write_text(json.dumps(runtime_state_data, indent=2) + "\n")
+
+                (central / ".gitignore").write_text(".orchestrator/state.json\n.orchestrator/supervisor.json\nai-status.json\nai-activity-log.jsonl\n")
+                subprocess.run(["git", "add", "."], cwd=central, check=True)
+                subprocess.run(["git", "commit", "-q", "-m", "install tooling"], cwd=central, check=True)
+                subprocess.run(["git", "remote", "add", "origin", "https://github.com/ajoe734/pantheon.git"], cwd=central, check=True)
+                subprocess.run(["git", "update-ref", "refs/remotes/origin/dev", "HEAD"], cwd=central, check=True)
+                command_sha = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=central, text=True).strip()
+                issued_runtime["source_sha"] = command_sha
+                runtime_state_path.write_text(json.dumps(runtime_state_data, indent=2) + "\n")
+
+                worktree.mkdir(parents=True, exist_ok=True)
+                subprocess.run(["git", "init", "-q", "-b", "dev"], cwd=worktree, check=True)
+                subprocess.run(["git", "config", "user.name", "Test Reviewer"], cwd=worktree, check=True)
+                subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=worktree, check=True)
+                self._copy_tooling(repo_root, worktree)
+                (worktree / "README.md").write_text("# Test\n")
+                subprocess.run(["git", "add", "."], cwd=worktree, check=True)
+                subprocess.run(["git", "commit", "-q", "-m", "initial commit"], cwd=worktree, check=True)
+                subprocess.run(["git", "remote", "add", "origin", "https://github.com/ajoe734/pantheon.git"], cwd=worktree, check=True)
+                subprocess.run(["git", "update-ref", "refs/remotes/origin/dev", "HEAD"], cwd=worktree, check=True)
+                subprocess.run(["git", "branch", "task/TASK-QUEUE-001"], cwd=worktree, check=True)
+                subprocess.run(["git", "checkout", "task/TASK-QUEUE-001"], cwd=worktree, check=True)
+
+                fake_bin = temp_path / "bin"
+                fake_bin.mkdir(parents=True)
+                fake_gh = fake_bin / "gh"
+                fake_gh.write_text("#!/bin/sh\nprintf '[]\\n'\n")
+                fake_gh.chmod(0o755)
+
+                config = {
+                    "paths": {
+                        "root": str(central),
+                        "state_file": str(runtime_state_path),
+                        "status_file": str(central / "ai-status.json"),
+                        "activity_log": str(central / "ai-activity-log.jsonl"),
+                        "approval_queue": str(central / ".orchestrator" / "approval-queue.json"),
+                    },
+                    "task_state_store": {
+                        "mode": "authoritative",
+                        "event_log": str(task_state_event_log),
+                    },
+                    "supervisor": {
+                        "ready_dispatch": {
+                            "enabled": True,
+                            "max_concurrent_workers": 2,
+                            "active_worker_statuses": ["running", "stalled"],
+                            "review_statuses": ["review"],
+                            "owned_statuses": ["todo", "in_progress"],
+                            "finalize_statuses": ["review_approved"],
+                            "dependency_done_statuses": ["done"],
+                        },
+                        "worker_runtime": {
+                            "heartbeat_interval_seconds": 30,
+                            "heartbeat_timeout_seconds": 120,
+                        },
+                    },
+                    "ready_dispatcher": {
+                        "enabled": True,
+                        "max_concurrent_workers": 4,
+                        "max_dispatches_per_tick": 4,
+                        "max_concurrent_per_account": {
+                            "codex_account": 2,
+                            "codex2_account": 2,
+                            "antigravity_account": 2,
+                        },
+                        "active_worker_statuses": ["running", "stalled"],
+                        "owned_statuses": ["todo", "in_progress"],
+                        "review_statuses": ["review"],
+                        "finalize_statuses": ["review_approved"],
+                        "dependency_done_statuses": ["done"],
+                        "unchanged_task_cooldown_seconds": 0,
+                    },
+                    "agents": {
+                        "codex2_1": {"id": "codex2_1", "display_name": "Codex2", "account": "codex2", "role": "reviewer", "provider": "codex", "max_parallel": 2},
+                        "codex": {"id": "codex", "display_name": "Codex", "account": "codex", "role": "owner", "provider": "codex", "max_parallel": 2},
+                        "antigravity": {"id": "antigravity", "display_name": "Antigravity", "account": "antigravity_account", "role": "owner", "provider": "antigravity", "max_parallel": 2},
+                    },
+                    "providers": {
+                        "codex": {"delivery_mode": "codex", "account": "codex_account"},
+                        "codex2": {"delivery_mode": "codex", "account": "codex2_account"},
+                        "antigravity": {"delivery_mode": "antigravity", "account": "antigravity_account"},
+                    },
+                }
+                (central / ".orchestrator" / "approval-queue.json").write_text(json.dumps({"pending": [], "history": []}) + "\n")
+                supervisor.write_status(config, init_state, source="test-init")
+
+                child_env = os.environ.copy()
+                for k in list(child_env.keys()):
+                    if k.startswith("ORCH_") or k.startswith("PANTHEON_") or k == "AI_NAME":
+                        child_env.pop(k, None)
+
+                identity_json = json.dumps(
+                    common.canonical_task_state_identity_for_paths(
+                        status_root=central,
+                        event_log=task_state_event_log,
+                    ),
+                    sort_keys=True,
+                    separators=(",", ":"),
+                )
+
+                child_env.update({
+                    "AI_NAME": "Codex2",
+                    "PANTHEON_STATUS_ROOT": str(central),
+                    "PANTHEON_WORKTREE_ROOT": str(worktree),
+                    "ORCH_WORKSPACE_PATH": str(worktree),
+                    "ORCH_RUN_ID": run_id,
+                    "ORCH_TASK_ID": "TASK-QUEUE-001",
+                    "ORCH_RUNNER_STATUS_PATH": str(central_runner_status),
+                    "ORCH_HEARTBEAT_PATH": str(central_heartbeat),
+                    "PANTHEON_COMMAND_ROOT": str(central),
+                    "PANTHEON_COMMAND_RUNTIME_SHA": command_sha,
+                    "PANTHEON_COMMAND_REMOTE": "ajoe734/pantheon",
+                    "PANTHEON_COMMAND_BASE_REF": "origin/dev",
+                    "PANTHEON_TASK_STATE_STORE_MODE": "authoritative",
+                    "PANTHEON_TASK_STATE_EVENT_LOG": str(task_state_event_log),
+                    common.CANONICAL_TASK_STATE_IDENTITY_ENV: identity_json,
+                    "PATH": f"{fake_bin}:{child_env.get('PATH', '')}",
+                })
+
+                # 2. Reviewer commits reopen via real CLI
+                reopen_message = "Independent Codex2 review: return to owner for fixes"
+                cmd = ["bash", str(worktree / "scripts" / "ai-status.sh"), "reopen", "TASK-QUEUE-001", reopen_message]
+                proc = subprocess.run(cmd, env=child_env, cwd=worktree, capture_output=True, text=True)
+                self.assertEqual(proc.returncode, 0)
+
+                # 3. Stop real runner via SIGTERM
+                runner_proc.send_signal(signal.SIGTERM)
+                runner_proc.wait(timeout=5)
+                self.assertEqual(runner_proc.returncode, 143)
+                self.assertFalse(supervisor.pid_is_alive(real_pid))
+
+                central_runner_status.write_text(json.dumps({
+                    "status": "failed",
+                    "exit_code": 143,
+                    "signal": 15,
+                    "pid": real_pid,
+                    "finished_at": "2026-09-06T17:05:00Z",
+                }) + "\n")
+
+                # 4. Supervisor poll_workers reaps completed reviewer without lost-lease
+                state = {
+                    "workers": {run_id: worker_record},
+                    "queue": runtime_state_data["queue"],
+                    "delivery_health": {
+                        "version": 1,
+                        "endpoints": {
+                            "antigravity": {"state": "healthy", "valid_until": "2999-01-01T00:00:00Z"},
+                            "codex2_1": {"state": "healthy", "valid_until": "2999-01-01T00:00:00Z"},
+                            "codex": {"state": "healthy", "valid_until": "2999-01-01T00:00:00Z"},
+                        },
+                        "accounts": {
+                            "antigravity_account": {"state": "healthy", "valid_until": "2999-01-01T00:00:00Z"},
+                            "codex2_account": {"state": "healthy", "valid_until": "2999-01-01T00:00:00Z"},
+                            "codex_account": {"state": "healthy", "valid_until": "2999-01-01T00:00:00Z"},
+                        },
+                    },
+                }
+                changed = supervisor.poll_workers(config, state)
+                self.assertTrue(changed)
+                self.assertEqual(worker_record["status"], "completed")
+
+                # 5. Plan ready tasks and record durable queue receipt
+                sink = []
+                planned = supervisor.dispatch_ready_tasks(
+                    config,
+                    state,
+                    event_sink=lambda cfg, evt: bool(sink.append(evt) or True),
+                )
+                self.assertTrue(planned)
+                self.assertEqual(len(sink), 1)
+
+                reserved = supervisor.reserve_dispatch_plan(config, state, {"events": sink})
+                self.assertTrue(reserved)
+
+                # Exactly one successor event is queued
+                queued_events = state.get("queue", {}).get("events", {})
+                new_event_ids = [eid for eid in queued_events if eid != queue_event_id]
+                self.assertEqual(len(new_event_ids), 1)
+                succ_event_id = new_event_ids[0]
+                succ_event = queued_events[succ_event_id]
+                self.assertEqual(
+                    supervisor.display_name_for(config, succ_event["intent"]["target_agent"]),
+                    "Antigravity",
+                )
+                self.assertEqual(succ_event["intent"]["task_generation"], 1)
+                self.assertEqual(
+                    succ_event["intent"]["metadata"]["task"]["review_requeue_intent"]["reason"],
+                    reopen_message,
+                )
+
+                # 6. Repeated dispatch cycle produces zero duplicate events
+                sink2 = []
+                planned_repeat = supervisor.dispatch_ready_tasks(
+                    config,
+                    state,
+                    event_sink=lambda cfg, evt: bool(sink2.append(evt) or True),
+                )
+                self.assertFalse(planned_repeat)
+                self.assertEqual(len(sink2), 0)
+
+                # 7. Restart preservation: boot reconciliation preserves queued event
+                runtime_state_path.write_text(json.dumps(state, indent=2) + "\n")
+                boot_state = json.loads(runtime_state_path.read_text())
+                supervisor.reconcile_runtime_on_boot(config, boot_state)
+
+                boot_queued = boot_state.get("queue", {}).get("events", {})
+                self.assertIn(succ_event_id, boot_queued)
+                boot_succ = boot_queued[succ_event_id]
+                self.assertEqual(
+                    supervisor.display_name_for(config, boot_succ["intent"]["target_agent"]),
+                    "Antigravity",
+                )
+                self.assertEqual(
+                    boot_succ["intent"]["metadata"]["task"]["review_requeue_intent"]["reason"],
+                    reopen_message,
+                )
+            finally:
+                if runner_proc.poll() is None:
+                    runner_proc.kill()
+                    runner_proc.wait(timeout=2)
+
     def test_two_process_ordering1_reopen_completes_before_recovery_cas(self) -> None:
         """Two-process race ordering 1: Reviewer completes reopen before Recovery CAS; task stays gen 1, reaped cleanly."""
         ctx = multiprocessing.get_context("fork")
@@ -11883,28 +12340,40 @@ class RealProcessReviewHandoffRecoveryFlowTests(unittest.TestCase):
                 "PATH": f"{fake_bin}:{child_env.get('PATH', '')}",
             })
 
+            barrier1 = ctx.Barrier(2)
+            barrier2 = ctx.Barrier(2)
             q_reopen = ctx.Queue()
-            p_reopen = ctx.Process(target=_child_reopen_worker, args=(str(worktree), child_env, q_reopen))
-            p_reopen.start()
-            res_reopen = q_reopen.get(timeout=10)
-            p_reopen.join(timeout=5)
-            self.assertEqual(res_reopen["returncode"], 0, f"Reopen failed: {res_reopen}")
+            p_reopen = ctx.Process(
+                target=_child_reopen_worker,
+                args=(str(worktree), child_env, q_reopen, barrier1, barrier2),
+            )
 
-            # Now Process 2 runs recovery / poll_workers
             state = {"workers": {run_id: worker_record}, "queue": runtime_state_data["queue"]}
             q_rec = ctx.Queue()
-            p_rec = ctx.Process(target=_child_poll_worker, args=(config, state, q_rec))
-            p_rec.start()
-            res_rec = q_rec.get(timeout=10)
-            p_rec.join(timeout=5)
-            self.assertTrue(res_rec["changed"])
-            self.assertEqual(res_rec["state"]["workers"][run_id]["status"], "completed")
+            p_rec = ctx.Process(
+                target=_child_recovery_worker,
+                args=(config, state, worker_record, q_rec, barrier1, barrier2, True),
+            )
 
-            # Check task generation was NOT bumped
+            # Start both processes concurrently and release them across the barriers
+            p_reopen.start()
+            p_rec.start()
+
+            res_reopen = q_reopen.get(timeout=15)
+            res_rec = q_rec.get(timeout=15)
+            p_reopen.join(timeout=5)
+            p_rec.join(timeout=5)
+
+            self.assertEqual(res_reopen["returncode"], 0, f"Reopen failed: {res_reopen}")
+            self.assertTrue(res_rec["result"])
+            self.assertEqual(res_rec["status"], "superseded")
+
+            # Check task generation was NOT bumped by recovery; reopen won
             task_now = supervisor.load_status(config)["tasks"][0]
             self.assertEqual(task_now["status"], "in_progress")
             self.assertEqual(task_now["generation"], 1)
             self.assertIn("review_requeue_intent", task_now)
+            self.assertEqual(task_now["review_requeue_intent"]["reason"], "Rejection from child process")
 
     def test_two_process_ordering2_recovery_fences_stale_reopen_refused_by_cas(self) -> None:
         """Two-process race ordering 2: Recovery CAS fences generation 1 -> 2; concurrent stale reopen refused."""
@@ -12124,26 +12593,31 @@ class RealProcessReviewHandoffRecoveryFlowTests(unittest.TestCase):
                 "PATH": f"{fake_bin}:{child_env.get('PATH', '')}",
             })
 
-            # Process 1 recovers and fences first
+            barrier1 = ctx.Barrier(2)
+            barrier2 = ctx.Barrier(2)
             q_rec = ctx.Queue()
             state2 = {"workers": {run_id: worker_record}, "queue": runtime_state_data["queue"]}
-            p_rec2 = ctx.Process(target=_child_recovery_worker, args=(config, state2, worker_record, q_rec))
-            p_rec2.start()
-            res_rec2 = q_rec.get(timeout=10)
-            p_rec2.join(timeout=5)
-            self.assertTrue(res_rec2["result"])
+            p_rec2 = ctx.Process(
+                target=_child_recovery_worker,
+                args=(config, state2, worker_record, q_rec, barrier1, barrier2, False),
+            )
 
-            # Verify task is now fenced at generation 2
-            task2_fenced = [t for t in supervisor.load_status(config)["tasks"] if t["id"] == "TASK-RACE-002"][0]
-            self.assertEqual(task2_fenced["generation"], 2)
-            self.assertIn("worker_recovery", task2_fenced)
-
-            # Process 2 attempts reopen with stale generation 1
             q_reopen = ctx.Queue()
-            p_reopen2 = ctx.Process(target=_child_stale_reopen, args=(str(worktree), child_env, q_reopen))
+            p_reopen2 = ctx.Process(
+                target=_child_stale_reopen,
+                args=(str(worktree), child_env, q_reopen, barrier1, barrier2),
+            )
+
+            # Start both processes concurrently and release them across the barriers
+            p_rec2.start()
             p_reopen2.start()
-            res_reopen2 = q_reopen.get(timeout=10)
+
+            res_rec2 = q_rec.get(timeout=15)
+            res_reopen2 = q_reopen.get(timeout=15)
+            p_rec2.join(timeout=5)
             p_reopen2.join(timeout=5)
+
+            self.assertTrue(res_rec2["result"])
 
             # Stale reopen MUST be refused by CAS preflight
             self.assertNotEqual(res_reopen2["returncode"], 0)

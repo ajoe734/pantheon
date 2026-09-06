@@ -5013,9 +5013,11 @@ def worker_completed_after_responsibility_transition(
     candidate_event = _latest_task_governance_event(
         worker,
         activity_events,
-        event_types=RESPONSIBILITY_TRANSFER_EVENT_TYPES,
+        event_types=GOVERNANCE_LIFECYCLE_EVENT_TYPES,
     )
-    if candidate_event is None or not status_event_matches_worker_process(candidate_event, worker):
+    if candidate_event is None or str(candidate_event.get("type") or "") not in RESPONSIBILITY_TRANSFER_EVENT_TYPES:
+        return False
+    if not status_event_matches_worker_process(candidate_event, worker):
         return False
     return (
         canonical_worker_terminal_status(
@@ -7670,24 +7672,30 @@ def canonical_worker_terminal_status(
     if not worker_actor or worker_actor.casefold() != canonical_agent_name(config, expected_actor).casefold():
         return None
 
+    if isinstance(task, Mapping) and task.get("review_decision_intent") not in (None, {}, []):
+        return None
+
     settings = ready_dispatch_settings(config)
     review_statuses = normalized_status_set(settings.get("review_statuses"), ["review"])
     approved_statuses = normalized_status_set(settings.get("finalize_statuses"), ["review_approved"])
     done_statuses = normalized_status_set(settings.get("dependency_done_statuses"), ["done"])
-    # A committed exact reopen finishes the reviewer's dispatched attempt just
-    # as surely as a handoff/approve/done write does: it is the reviewer's own
-    # canonical verdict (rejection), and responsibility has already moved to
-    # the owner. The runner's own exit/signal after that commit is unrelated
-    # to whether the review attempt itself completed, so this must be proven
-    # here -- the one shared classifier -- and not re-derived per call site.
     reopen_statuses = frozenset({"in_progress"})
     task_status = str(task.get("status") or "").strip().lower()
-    latest_terminal = _latest_task_governance_event(
+
+    # The transfer event must be the latest governance lifecycle event for the task.
+    # If a subsequent lifecycle event (e.g. task_reassigned, assign, progress, note,
+    # or a later transfer event) has occurred, this worker's responsibility transfer
+    # was superseded.
+    latest_lifecycle = _latest_task_governance_event(
         worker,
         activity_events,
-        event_types=RESPONSIBILITY_TRANSFER_EVENT_TYPES,
+        event_types=GOVERNANCE_LIFECYCLE_EVENT_TYPES,
     )
-    if latest_terminal is None or not status_event_matches_worker_process(latest_terminal, worker):
+    if latest_lifecycle is None or str(latest_lifecycle.get("type") or "") not in RESPONSIBILITY_TRANSFER_EVENT_TYPES:
+        return None
+    latest_terminal = latest_lifecycle
+
+    if not status_event_matches_worker_process(latest_terminal, worker):
         return None
     event_actor = str(
         latest_terminal.get("agent")
@@ -7695,12 +7703,30 @@ def canonical_worker_terminal_status(
         or latest_terminal.get("author")
         or ""
     ).strip()
-    # A missing actor is not an unauthenticated-but-otherwise-fine event: it is
-    # the one case the truthy "and" below used to silently skip, letting an
-    # actor-less event stand in for anyone. Fail closed instead.
+    # A missing actor fails closed.
     if not event_actor or canonical_agent_name(config, event_actor).casefold() != worker_actor.casefold():
         return None
+
     event_type = str(latest_terminal.get("type") or "").strip().lower()
+
+    # Authenticated validation applied across ALL accepted transfer types:
+    # 1. Event ID must match its digest (fails closed on forged or hand-edited event)
+    event_id = str(latest_terminal.get("event_id") or "").strip()
+    if event_type == "reopen" or event_id:
+        if not _ai_status_activity_event_id_matches(latest_terminal):
+            return None
+    # 2. Worker must match the current task generation
+    worker_gen = worker.get("task_generation")
+    curr_task_gen = task_generation(task)
+    if not (
+        worker_matches_current_task_generation(worker, task)
+        or (
+            isinstance(worker_gen, int)
+            and worker_gen == curr_task_gen
+            and (worker.get("request_snapshot") or {}).get("task_generation") in (None, curr_task_gen)
+        )
+    ):
+        return None
     valid_statuses = {
         "handoff": review_statuses,
         "review_approved": approved_statuses,
@@ -7713,19 +7739,9 @@ def canonical_worker_terminal_status(
         return None
     if event_type in {"handoff", "done"} and expected_role != "owner":
         return None
+
     if event_type == "reopen":
-        # The reopen path is the one newly trusted here to end a dispatched
-        # attempt without the runner's own exit proving it, so it carries
-        # strictly more authentication than the shared checks above: a
-        # self-consistent (non-forged) event_id, a worker bound to the exact
-        # current task generation (not a stale earlier dispatch that happens
-        # to still match on process identity alone), and the still-pending
-        # review_requeue_intent that ``command_reopen`` committed atomically
-        # with this same event -- proving no later handoff/reassign/reopen
-        # has already superseded it.
         if expected_role != "reviewer":
-            return None
-        if not _ai_status_activity_event_id_matches(latest_terminal):
             return None
         if not worker_matches_current_task_generation(worker, task):
             return None
@@ -7742,6 +7758,54 @@ def canonical_worker_terminal_status(
             return None
         if requeue_actor.casefold() != worker_actor.casefold():
             return None
+
+        # Bind the current canonical review_requeue_intent to the event's committed intent.
+        event_requeue_intent = latest_terminal.get("review_requeue_intent")
+        if not isinstance(event_requeue_intent, Mapping):
+            return None
+        for field in (
+            "intent_id",
+            "task_id",
+            "task_generation",
+            "owner",
+            "reviewer",
+            "reopened_by",
+            "reason",
+            "status",
+        ):
+            if str(event_requeue_intent.get(field) or "") != str(requeue_intent.get(field) or ""):
+                return None
+        if str(task.get("id") or "").strip() != str(requeue_intent.get("task_id") or "").strip():
+            return None
+        if str(task.get("owner") or "").strip().casefold() != str(requeue_intent.get("owner") or "").strip().casefold():
+            return None
+
+    elif event_type == "handoff":
+        event_delivery = latest_terminal.get("delivery_binding")
+        task_delivery = task.get("delivery_binding")
+        if isinstance(event_delivery, Mapping) and isinstance(task_delivery, Mapping):
+            for field in ("kind", "pr", "head_sha", "head_branch", "base", "base_sha"):
+                if field in event_delivery and field in task_delivery:
+                    if str(event_delivery.get(field) or "") != str(task_delivery.get(field) or ""):
+                        return None
+
+    elif event_type == "review_approved":
+        event_bridge = latest_terminal.get("github_review_bridge")
+        task_bridge = task.get("github_review_bridge")
+        if isinstance(event_bridge, Mapping) and isinstance(task_bridge, Mapping):
+            for field in ("pr", "head_sha", "decision", "actor"):
+                if field in event_bridge and field in task_bridge:
+                    if str(event_bridge.get(field) or "") != str(task_bridge.get(field) or ""):
+                        return None
+
+    elif event_type == "done":
+        event_delivery = latest_terminal.get("delivery")
+        task_delivery = task.get("delivery")
+        if isinstance(event_delivery, Mapping) and isinstance(task_delivery, Mapping):
+            for field in ("kind", "pr", "head_sha", "merge_commit", "target_branch"):
+                if field in event_delivery and field in task_delivery:
+                    if str(event_delivery.get(field) or "") != str(task_delivery.get(field) or ""):
+                        return None
     return task_status
 
 
