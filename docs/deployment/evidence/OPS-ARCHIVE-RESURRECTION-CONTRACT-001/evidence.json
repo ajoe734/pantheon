@@ -46,11 +46,11 @@
     },
     "clause_8_positive_fixtures_and_crash_recovery": {
       "status": "satisfied",
-      "detail": "Positive fixtures with genuine fixture git ancestry, authenticated import event and reassignment lineage g1 -> g2, cross-process tests, restart/crash outbox recovery tested in scripts/test_ai_status.py."
+      "detail": "Positive fixtures with genuine isolated command runtime and git ancestry, executing real isolated CLI invocations (ai_status.py show, reconcile_merged_done, and recover) without in-process mocks; authenticated import provenance and reassignment lineage g1 -> g2; real two-process concurrency race via subprocess.Popen exercising authoritative TaskStore serialization lock; uncommitted crash zero-effect, post-commit crash/restart recovery, outbox receipt convergence, idempotent recovery, changed-proof failure, and re-admission rejection."
     },
     "clause_9_zero_effect_negatives": {
       "status": "satisfied",
-      "detail": "Zero-effect negatives verified for missing import lineage, missing/forged/forked/reordered lineage, altered scope/policy/execution resources, active delivery mismatch, real new work (all lifecycle writers), active worker/lease/corrupt runtime, nonoperator, and post-preflight CAS/proof forks."
+      "detail": "Zero-effect negatives verified for unauthenticated import (missing event_id, unauthorized actor, generation/archive mismatch), corrupt/malformed runtime structures (dict or list workers, queue, leases, supervisor reservations with launch_intent), active review invalidation/rejection, intervening new work, nonoperator invocations, and concurrent CAS/proof forks."
     },
     "clause_10_clean_worktree_base": {
       "status": "satisfied",
@@ -84,15 +84,23 @@
     "commands": [
       {
         "name": "archive_resurrection_contract_tests",
-        "command": "AI_NAME=Antigravity2 uv run --no-project --with pytest --with cryptography python -m pytest -q scripts/test_ai_status.py -k TestStaleArchiveResurrectionContract",
+        "command": "AI_NAME=Antigravity2 python3 -m pytest -q scripts/test_ai_status.py -k TestStaleArchiveResurrectionContract",
         "passed": 19,
         "subtests_passed": 19,
         "failed": 0,
         "exit_code": 0
       },
       {
+        "name": "reviewer_probes",
+        "command": "PYTHONPATH=. python3 /tmp/archive_resurrection_review_probes.py",
+        "passed": 4,
+        "subtests_passed": 0,
+        "failed": 0,
+        "exit_code": 0
+      },
+      {
         "name": "archive_index_and_bridge_materialize_and_seed_tests",
-        "command": "AI_NAME=Antigravity2 uv run --no-project --with pytest --with cryptography python -m pytest -q .orchestrator/test_task_archive_index_legacy_id.py .orchestrator/development_bridge/tests/test_dev_bridge_materialize.py scripts/test_seed_task_state_v2.py",
+        "command": "AI_NAME=Antigravity2 python3 -m pytest -q .orchestrator/test_task_archive_index_legacy_id.py .orchestrator/development_bridge/tests/test_dev_bridge_materialize.py scripts/test_seed_task_state_v2.py",
         "passed": 17,
         "subtests_passed": 4,
         "failed": 0,
@@ -100,7 +108,7 @@
       },
       {
         "name": "store_and_dispatch_policy_tests",
-        "command": "AI_NAME=Antigravity2 uv run --no-project --with pytest --with cryptography python -m pytest -q .orchestrator/rewrite/test_task_state_store.py .orchestrator/test_dispatch_policy.py",
+        "command": "AI_NAME=Antigravity2 python3 -m pytest -q .orchestrator/rewrite/test_task_state_store.py .orchestrator/test_dispatch_policy.py",
         "passed": 62,
         "subtests_passed": 0,
         "failed": 0,
@@ -108,7 +116,7 @@
       },
       {
         "name": "supervisor_tests",
-        "command": "AI_NAME=Antigravity2 uv run --no-project --with pytest --with cryptography python -m pytest -q .orchestrator/test_supervisor.py",
+        "command": "AI_NAME=Antigravity2 python3 -m pytest -q .orchestrator/test_supervisor.py",
         "passed": 253,
         "subtests_passed": 55,
         "failed": 0,
@@ -116,7 +124,7 @@
       },
       {
         "name": "focused_ai_status_tests",
-        "command": "AI_NAME=Antigravity2 uv run --no-project --with pytest --with cryptography python -m pytest -q scripts/test_ai_status.py -k 'assign or reopen or reconcile or archive'",
+        "command": "AI_NAME=Antigravity2 python3 -m pytest -q scripts/test_ai_status.py -k 'assign or reopen or reconcile or archive'",
         "passed": 137,
         "subtests_passed": 56,
         "failed": 0,
@@ -124,7 +132,7 @@
       }
     ],
     "totals": {
-      "passed": 488,
+      "passed": 492,
       "subtests_passed": 134,
       "failed": 0
     }

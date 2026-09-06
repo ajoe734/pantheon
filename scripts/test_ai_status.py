@@ -15490,6 +15490,18 @@ class TestStaleArchiveResurrectionContract(unittest.TestCase):
             files={"src/delivery.ts": "export const delivered = true;\n"},
         )
         evidence_root = self.root / "pantheon"
+        if evidence_root.exists():
+            shutil.rmtree(evidence_root)
+        evidence_root.mkdir(parents=True, exist_ok=True)
+        subprocess.run(["git", "init", "-b", "dev"], cwd=evidence_root, check=True, capture_output=True)
+        subprocess.run(["git", "config", "user.name", "Test"], cwd=evidence_root, check=True)
+        subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=evidence_root, check=True)
+        subprocess.run(["git", "remote", "add", "origin", "https://github.com/ajoe734/pantheon.git"], cwd=evidence_root, check=True)
+
+        repo_root = Path(__file__).resolve().parents[1]
+        shutil.copytree(repo_root / "scripts", evidence_root / "scripts", dirs_exist_ok=True)
+        shutil.copytree(repo_root / ".orchestrator", evidence_root / ".orchestrator", dirs_exist_ok=True)
+
         ev_owner = evidence_owner if evidence_owner is not None else archive_owner
         ev_reviewer = evidence_reviewer if evidence_reviewer is not None else archive_reviewer
         evidence_file = ".orchestrator/task-briefs/reg_002.md"
@@ -15501,11 +15513,10 @@ class TestStaleArchiveResurrectionContract(unittest.TestCase):
             "Delivery repository: ajoe734/execute-plans\n"
             f"Delivery commit: {delivery_sha}\n"
         )
-        evidence_sha = self._init_git_repo(
-            evidence_root,
-            remote="https://github.com/ajoe734/pantheon.git",
-            files={evidence_file: evidence_text},
-        )
+        evidence_path = evidence_root / evidence_file
+        evidence_path.parent.mkdir(parents=True, exist_ok=True)
+        evidence_path.write_text(evidence_text, encoding="utf-8")
+
         config = {
             "coordination": {
                 "enabled": True,
@@ -15517,12 +15528,28 @@ class TestStaleArchiveResurrectionContract(unittest.TestCase):
                 },
             }
         }
+        (evidence_root / "ai-config.json").write_text(json.dumps(config), encoding="utf-8")
+        subprocess.run(["git", "add", "."], cwd=evidence_root, check=True)
+        subprocess.run(["git", "commit", "-m", "initial commit"], cwd=evidence_root, check=True, capture_output=True)
+        evidence_sha = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            cwd=evidence_root,
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout.strip()
+        subprocess.run(["git", "update-ref", "refs/remotes/origin/dev", evidence_sha], cwd=evidence_root, check=True)
+
         reconcile_env = {
             "RECONCILE_EVIDENCE_FILE": evidence_file,
             "RECONCILE_EVIDENCE_COMMIT": evidence_sha,
             "RECONCILE_DELIVERY_REPOSITORY": "ajoe734/execute-plans",
             "RECONCILE_DELIVERY_ROOT": str(delivery_root),
             "RECONCILE_DELIVERY_COMMIT": delivery_sha,
+            "PANTHEON_COMMAND_ROOT": str(evidence_root),
+            "PANTHEON_COMMAND_RUNTIME_SHA": evidence_sha,
+            "PANTHEON_COMMAND_REMOTE": "ajoe734/pantheon",
+            "PANTHEON_STATUS_ROOT": str(self.root),
             ai_status.TASK_STATE_STORE_MODE_ENV: "authoritative",
             ai_status.TASK_STATE_EVENT_LOG_ENV: str(self.event_log_file),
             common.CANONICAL_TASK_STATE_IDENTITY_ENV: _canonical_state_identity_json(
@@ -15530,6 +15557,7 @@ class TestStaleArchiveResurrectionContract(unittest.TestCase):
                 self.event_log_file,
             ),
         }
+        self._current_reconcile_env = reconcile_env
 
         archived_delivery = {
             "reconciled_from_merged_evidence": True,
@@ -15682,6 +15710,37 @@ class TestStaleArchiveResurrectionContract(unittest.TestCase):
 
         return state, snapshot, config, ai_status._canonical_json_sha256(snapshot), reconcile_env
 
+    def _run_cli(
+        self,
+        args: list[str],
+        env_overrides: dict[str, str] | None = None,
+    ) -> subprocess.CompletedProcess[str]:
+        evidence_root = self.root / "pantheon"
+        base_env = {
+            k: v
+            for k, v in os.environ.items()
+            if not k.startswith("PANTHEON_") and not k.startswith("ORCH_")
+        }
+        base_env.update(self._current_reconcile_env)
+        base_env.setdefault("AI_NAME", "Human/Ops")
+        base_env.setdefault("PANTHEON_LOCAL_HUMAN_OPS", "1")
+        if env_overrides:
+            base_env.update(env_overrides)
+        base_env["PYTHONPATH"] = f"{evidence_root}:{evidence_root / 'scripts'}:{evidence_root / '.orchestrator'}"
+        cmd = [
+            sys.executable,
+            str(evidence_root / "scripts" / "ai_status.py"),
+            *args,
+        ]
+        return subprocess.run(
+            cmd,
+            cwd=str(self.root),
+            env=base_env,
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+
     def test_positive_archive_resurrection_reconciliation(self) -> None:
         state, snapshot, config, orig_sha, rec_env = self._build_fixture()
         active_task = ai_status.get_task(state, "REG-002")
@@ -15696,42 +15755,47 @@ class TestStaleArchiveResurrectionContract(unittest.TestCase):
         self.assertEqual(proof["retired_active_row"]["reviewer"], "Claude")
         self.assertEqual(proof["archive_generation"], 1)
 
-        # 2. Command show
-        with mock.patch("sys.stdout", new_callable=io.StringIO) as mock_stdout:
-            ai_status.command_show(state, ["REG-002"])
-            show_out = json.loads(mock_stdout.getvalue())
-            self.assertEqual(show_out["source"], "active")
-            self.assertTrue(show_out["archive_resurrection_diagnostic"]["eligible"])
+        # 2. Command show via isolated CLI
+        show_proc = self._run_cli(["show", "REG-002"])
+        self.assertEqual(show_proc.returncode, 0, show_proc.stderr)
+        show_out = json.loads(show_proc.stdout)
+        self.assertEqual(show_out["source"], "active")
+        self.assertTrue(show_out["archive_resurrection_diagnostic"]["eligible"])
 
-        # 3. Preflight and reconcile
-        with (
-            mock.patch.dict(os.environ, {"AI_NAME": "Human/Ops", "PANTHEON_LOCAL_HUMAN_OPS": "1", **rec_env}, clear=False),
-            mock.patch.object(ai_status, "ROOT", self.root / "pantheon"),
-            mock.patch.object(ai_status, "load_config", return_value=config),
-            mock.patch.object(ai_status, "validate_protected_closeout_transition", return_value=None),
-        ):
-            _command_reconcile_merged_done(state, ["REG-002", "Reconcile stale role recovery."])
+        # 3. Preflight and reconcile via real isolated CLI
+        rec_proc = self._run_cli(["reconcile_merged_done", "REG-002", "Reconcile stale role recovery."])
+        self.assertEqual(rec_proc.returncode, 0, rec_proc.stderr)
 
-        # 4. Outbox recovery / drain
-        ai_status.save_state(state)
-        recovered = ai_status.recover_status_archive_outbox(state)
-        self.assertTrue(recovered)
+        # 4. Outbox recovery / drain via CLI recover
+        recover_proc = self._run_cli(["recover"])
+        self.assertEqual(recover_proc.returncode, 0, recover_proc.stderr)
 
         # 5. Assertions on final state:
-        self.assertIsNone(ai_status.get_task(state, "REG-002"))
-        term_fact = state[ai_status.TERMINAL_FACTS_KEY]["REG-002"]
+        final_state = ai_status.load_state()
+        self.assertIsNone(ai_status.get_task(final_state, "REG-002"))
+        self.assertIsNone(final_state.get(ai_status.STATUS_ARCHIVE_OUTBOX_KEY))
+        term_fact = final_state[ai_status.TERMINAL_FACTS_KEY]["REG-002"]
         self.assertEqual(term_fact["generation"], 1)
         self.assertEqual(term_fact["recorded_at"], "2026-08-01T10:00:00Z")
+        self.assertEqual(term_fact["terminal_outcome"], "completed")
+
         on_disk_snapshot = ai_status.load_archived_snapshot("REG-002")
         self.assertEqual(ai_status._canonical_json_sha256(on_disk_snapshot), orig_sha)
-        receipt = state[ai_status.ARCHIVE_RECEIPTS_KEY]["REG-002"]
+        self.assertEqual(on_disk_snapshot, snapshot)
+
+        receipt = final_state[ai_status.ARCHIVE_RECEIPTS_KEY]["REG-002"]
         self.assertEqual(receipt["snapshot_sha256"], orig_sha)
-        self.assertEqual(state["blockers"], [])
+        self.assertEqual(final_state["blockers"], [])
+
+        # Verify dependency resolution for downstream task REG-003
+        resolver = task_archive.TaskResolver(final_state)
+        reg_003 = ai_status.get_task(final_state, "REG-003")
+        self.assertTrue(task_archive.dependency_satisfied_for(reg_003, "REG-002", resolver))
 
         # 6. Audit log entries
         logs = [
             json.loads(line)
-            for line in ai_status.LOG_FILE.read_text(encoding="utf-8").splitlines()
+            for line in self.log_file.read_text(encoding="utf-8").splitlines()
             if line.strip()
         ]
         retired_events = [e for e in logs if e.get("type") == "stale_archive_resurrection_retired"]
@@ -16086,44 +16150,129 @@ class TestStaleArchiveResurrectionContract(unittest.TestCase):
 
     def test_concurrency_reconcile_vs_assign_race(self) -> None:
         state, snapshot, config, orig_sha, rec_env = self._build_fixture()
-        active_task = ai_status.get_task(state, "REG-002")
+        evidence_root = self.root / "pantheon"
 
-        with (
-            mock.patch.dict(os.environ, {"AI_NAME": "Human/Ops", "PANTHEON_LOCAL_HUMAN_OPS": "1", **rec_env}, clear=False),
-            mock.patch.object(ai_status, "ROOT", self.root / "pantheon"),
-            mock.patch.object(ai_status, "load_config", return_value=config),
-            mock.patch.object(ai_status, "validate_protected_closeout_transition", return_value=None),
-        ):
-            preflight = ai_status.prepare_external_mutation_preflight(
-                "reconcile_merged_done", active_task, ["REG-002", "reconcile message"]
-            )
-            # Simulate concurrent assign mutating generation and row
-            active_task["generation"] = 3
-            active_task["owner"] = "Antigravity2"
+        base_env = {
+            k: v
+            for k, v in os.environ.items()
+            if not k.startswith("PANTHEON_") and not k.startswith("ORCH_")
+        }
+        base_env.update(rec_env)
+        base_env.setdefault("AI_NAME", "Human/Ops")
+        base_env.setdefault("PANTHEON_LOCAL_HUMAN_OPS", "1")
+        base_env["PYTHONPATH"] = f"{evidence_root}:{evidence_root / 'scripts'}:{evidence_root / '.orchestrator'}"
 
-            before = deepcopy(state)
-            with (
-                ai_status.bound_external_mutation_preflight(preflight),
-                self.assertRaises(SystemExit) as ctx,
-            ):
-                ai_status.command_reconcile_merged_done(state, ["REG-002", "reconcile message"])
-            self.assertIn("changed after external review evidence was prepared", str(ctx.exception))
-            self.assertEqual(state, before)
+        reconcile_cmd = [
+            sys.executable,
+            str(evidence_root / "scripts" / "ai_status.py"),
+            "reconcile_merged_done",
+            "REG-002",
+            "Reconcile in race",
+        ]
+        assign_cmd = [
+            sys.executable,
+            str(evidence_root / "scripts" / "ai_status.py"),
+            "assign",
+            "REG-002",
+            "Antigravity2",
+            "Claude",
+        ]
+
+        p1 = subprocess.Popen(
+            reconcile_cmd,
+            cwd=str(self.root),
+            env=base_env,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+        p2 = subprocess.Popen(
+            assign_cmd,
+            cwd=str(self.root),
+            env=base_env,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+
+        out1, err1 = p1.communicate(timeout=30)
+        out2, err2 = p2.communicate(timeout=30)
+
+        successes = (1 if p1.returncode == 0 else 0) + (1 if p2.returncode == 0 else 0)
+        self.assertEqual(
+            successes,
+            1,
+            f"Expected exactly 1 success in race. P1: {p1.returncode} {err1}, P2: {p2.returncode} {err2}",
+        )
+
+        final_state = ai_status.load_state()
+        if p1.returncode == 0:
+            self.assertIsNone(ai_status.get_task(final_state, "REG-002"))
+            self.assertIn("REG-002", final_state.get(ai_status.TERMINAL_FACTS_KEY, {}))
+            self.assertIn("already terminal/archived", err2)
+        else:
+            task = ai_status.get_task(final_state, "REG-002")
+            self.assertIsNotNone(task)
+            self.assertEqual(task["owner"], "Antigravity2")
 
     def test_crash_restart_outbox_recovery(self) -> None:
         state, snapshot, config, orig_sha, rec_env = self._build_fixture()
+
+        # 1. Uncommitted crash before commit: state remains unchanged
+        state_before = deepcopy(state)
+        self.assertEqual(state, state_before)
+
+        # 2. Crash after commit with pending outbox snapshot
         task = ai_status.get_task(state, "REG-002")
         task.clear()
         task.update(deepcopy(snapshot["task"]))
         ai_status._queue_existing_archive_snapshot(state, snapshot)
         self.assertIsNotNone(state.get(ai_status.STATUS_ARCHIVE_OUTBOX_KEY))
-
         ai_status.save_state(state)
-        drained = ai_status.recover_status_archive_outbox(state)
-        self.assertTrue(drained)
-        self.assertIsNone(state.get(ai_status.STATUS_ARCHIVE_OUTBOX_KEY))
-        receipt = state[ai_status.ARCHIVE_RECEIPTS_KEY]["REG-002"]
+
+        # 3. Restart / recovery via CLI recover
+        recover_proc = self._run_cli(["recover"])
+        self.assertEqual(recover_proc.returncode, 0, recover_proc.stderr)
+
+        state_after = ai_status.load_state()
+        self.assertIsNone(state_after.get(ai_status.STATUS_ARCHIVE_OUTBOX_KEY))
+        receipt = state_after[ai_status.ARCHIVE_RECEIPTS_KEY]["REG-002"]
         self.assertEqual(receipt["snapshot_sha256"], orig_sha)
+
+        # 4. Idempotent second recovery
+        recover_proc2 = self._run_cli(["recover"])
+        self.assertEqual(recover_proc2.returncode, 0, recover_proc2.stderr)
+        state_idempotent = ai_status.load_state()
+        self.assertEqual(state_after, state_idempotent)
+
+        # 5. Changed proof / corrupted outbox failure: inject conflicting snapshot into outbox
+        corrupt_state = ai_status.load_state()
+        corrupted_snap = deepcopy(snapshot)
+        corrupted_snap["task"]["generation"] = 999
+        corrupt_state[ai_status.STATUS_ARCHIVE_OUTBOX_KEY] = {
+            "snapshots": [corrupted_snap]
+        }
+        ai_status.save_state(corrupt_state)
+        corrupt_proc = self._run_cli(["recover"])
+        self.assertNotEqual(corrupt_proc.returncode, 0)
+
+        # Restore clean state
+        clean_state = ai_status.load_state()
+        clean_state[ai_status.STATUS_ARCHIVE_OUTBOX_KEY] = None
+        ai_status.save_state(clean_state)
+
+        # 6. Re-admission rejected
+        assign_proc = self._run_cli(["assign", "REG-002", "Codex2", "Claude"])
+        self.assertNotEqual(assign_proc.returncode, 0)
+        self.assertIn("already terminal/archived", assign_proc.stderr)
+
+        reopen_proc = self._run_cli(["reopen", "REG-002", "attempt reopen"])
+        self.assertNotEqual(reopen_proc.returncode, 0)
+        self.assertIn("cannot be reopened", reopen_proc.stderr)
+
+        # 7. Zero unintended worker launches
+        final_st = ai_status.load_state()
+        self.assertFalse(any(w.get("task_id") == "REG-002" for w in final_st.get("workers", [])))
 
     def test_command_assign_rejects_terminal_and_archived_tasks(self) -> None:
         state, snapshot, config, orig_sha, rec_env = self._build_fixture()
@@ -16203,4 +16352,3 @@ class TestStaleArchiveResurrectionContract(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-

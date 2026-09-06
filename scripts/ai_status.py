@@ -6697,51 +6697,131 @@ def _assert_no_active_execution(
             raise RuntimeError(
                 "orchestrator runtime state is not a valid JSON object"
             )
+
         workers = orc_state.get("workers")
         if isinstance(workers, Mapping):
-            for run_id, worker in workers.items():
-                if isinstance(worker, Mapping) and str(worker.get("task_id") or "").strip() == task_id:
-                    status = str(worker.get("status") or "").strip()
-                    if status in {
-                        "running",
-                        "started",
-                        "waiting_approval",
-                        "suspended_approval",
-                        "retry_backoff",
-                        "stalled",
-                    }:
-                        raise RuntimeError(
-                            f"cannot reconcile stale resurrected task with active worker {run_id} ({status}): {task_id}"
-                        )
+            worker_items = list(workers.values())
+        elif isinstance(workers, list):
+            worker_items = workers
+        elif workers is not None:
+            raise RuntimeError(f"orchestrator runtime workers structure is malformed: {task_id}")
+        else:
+            worker_items = []
+
+        for worker in worker_items:
+            if not isinstance(worker, Mapping):
+                raise RuntimeError(f"orchestrator runtime worker item is malformed: {task_id}")
+            if str(worker.get("task_id") or "").strip() == task_id:
+                status = str(worker.get("status") or "").strip()
+                if status in {
+                    "running",
+                    "started",
+                    "waiting_approval",
+                    "suspended_approval",
+                    "retry_backoff",
+                    "stalled",
+                    "active",
+                }:
+                    raise RuntimeError(
+                        f"cannot reconcile stale resurrected task with active worker ({status}): {task_id}"
+                    )
+
         queue = orc_state.get("queue")
         if isinstance(queue, Mapping):
             events = queue.get("events")
             if isinstance(events, Mapping):
-                for ev_id, ev in events.items():
-                    if isinstance(ev, Mapping) and str(ev.get("task_id") or "").strip() == task_id:
-                        q_status = str(ev.get("status") or "").strip()
-                        if q_status in {
-                            "queued",
-                            "started",
-                            "running",
-                            "waiting_approval",
-                            "suspended_approval",
-                            "retry_backoff",
-                            "stalled",
-                            "admitted",
-                        }:
-                            raise RuntimeError(
-                                f"cannot reconcile stale resurrected task with active queue event {ev_id} ({q_status}): {task_id}"
-                            )
+                event_items = list(events.values())
+            elif isinstance(events, list):
+                event_items = events
+            elif events is not None:
+                raise RuntimeError(f"orchestrator runtime queue events structure is malformed: {task_id}")
+            else:
+                event_items = []
+
+            for ev in event_items:
+                if not isinstance(ev, Mapping):
+                    raise RuntimeError(f"orchestrator runtime queue event is malformed: {task_id}")
+                if str(ev.get("task_id") or "").strip() == task_id:
+                    q_status = str(ev.get("status") or "").strip()
+                    if q_status in {
+                        "queued",
+                        "started",
+                        "running",
+                        "waiting_approval",
+                        "suspended_approval",
+                        "retry_backoff",
+                        "stalled",
+                        "admitted",
+                        "active",
+                    }:
+                        raise RuntimeError(
+                            f"cannot reconcile stale resurrected task with active queue event ({q_status}): {task_id}"
+                        )
+        elif queue is not None:
+            raise RuntimeError(f"orchestrator runtime queue structure is malformed: {task_id}")
+
         worktrees = orc_state.get("worker_worktrees")
         if isinstance(worktrees, Mapping):
             leases = worktrees.get("leases")
             if isinstance(leases, Mapping):
-                for lease_key, lease in leases.items():
-                    if isinstance(lease, Mapping) and str(lease.get("task_id") or "").strip() == task_id:
-                        raise RuntimeError(
-                            f"cannot reconcile stale resurrected task with active worktree lease {lease_key}: {task_id}"
-                        )
+                lease_items = list(leases.values())
+            elif isinstance(leases, list):
+                lease_items = leases
+            elif leases is not None:
+                raise RuntimeError(f"orchestrator runtime worktree leases structure is malformed: {task_id}")
+            else:
+                lease_items = []
+
+            for lease in lease_items:
+                if not isinstance(lease, Mapping):
+                    raise RuntimeError(f"orchestrator runtime worktree lease item is malformed: {task_id}")
+                if str(lease.get("task_id") or "").strip() == task_id:
+                    raise RuntimeError(
+                        f"cannot reconcile stale resurrected task with active worktree lease: {task_id}"
+                    )
+        elif worktrees is not None:
+            raise RuntimeError(f"orchestrator runtime worker_worktrees structure is malformed: {task_id}")
+
+        supervisor = orc_state.get("supervisor")
+        if isinstance(supervisor, Mapping):
+            reservations = supervisor.get("runtime_phase_reservations")
+            if isinstance(reservations, Mapping):
+                res_items = list(reservations.values())
+            elif isinstance(reservations, list):
+                res_items = reservations
+            elif reservations is not None:
+                raise RuntimeError(f"orchestrator runtime reservations structure is malformed: {task_id}")
+            else:
+                res_items = []
+
+            for res in res_items:
+                if not isinstance(res, Mapping):
+                    raise RuntimeError(f"orchestrator runtime reservation item is malformed: {task_id}")
+                if str(res.get("task_id") or "").strip() == task_id:
+                    raise RuntimeError(
+                        f"cannot reconcile stale resurrected task with active supervisor reservation: {task_id}"
+                    )
+                launch_intent = res.get("launch_intent")
+                if isinstance(launch_intent, Mapping):
+                    if str(launch_intent.get("task_id") or "").strip() == task_id:
+                        l_status = str(launch_intent.get("status") or "").strip()
+                        if l_status in {
+                            "prepared",
+                            "pending",
+                            "active",
+                            "dispatched",
+                            "running",
+                            "started",
+                            "admitted",
+                            "",
+                        }:
+                            raise RuntimeError(
+                                f"cannot reconcile stale resurrected task with supervisor launch reservation ({l_status}): {task_id}"
+                            )
+                elif launch_intent is not None:
+                    raise RuntimeError(f"orchestrator runtime launch_intent structure is malformed: {task_id}")
+        elif supervisor is not None:
+            raise RuntimeError(f"orchestrator runtime supervisor structure is malformed: {task_id}")
 
 
 def _compute_audit_proof_digest(events: list[Mapping[str, Any]], task_id: str, archived_at: datetime) -> str:
@@ -6878,6 +6958,38 @@ def verify_stale_archive_resurrection_proof(
                 f"existing archive snapshot conflicts with terminal task: {task_id}"
             )
 
+    archive_sha256 = _canonical_json_sha256(archived)
+
+    review_evidence = archived_delivery.get("review_evidence")
+    current_review = delivery.get("review_evidence")
+    if not isinstance(review_evidence, Mapping) or not isinstance(current_review, Mapping):
+        raise RuntimeError(
+            f"existing archive snapshot conflicts with terminal task: {task_id}"
+        )
+    if str(review_evidence.get("status") or "").strip() != "review_approved":
+        raise RuntimeError(
+            f"archived review evidence status is not review_approved: {task_id}"
+        )
+    if str(current_review.get("status") or "").strip() != "review_approved":
+        raise RuntimeError(
+            f"current review evidence status is not review_approved: {task_id}"
+        )
+    for field in ("file", "commit", "merge_target_ref", "merge_target_sha"):
+        if field in review_evidence and field in current_review:
+            if str(review_evidence.get(field) or "").strip() != str(current_review.get(field) or "").strip():
+                raise RuntimeError(
+                    f"existing archive snapshot review evidence {field} mismatch: {task_id}"
+                )
+    evidence_owner = canonical_agent_name(current_review.get("owner"))
+    evidence_reviewer = canonical_agent_name(current_review.get("reviewer"))
+    if (
+        canonical_agent_name(review_evidence.get("owner")) != evidence_owner
+        or canonical_agent_name(review_evidence.get("reviewer")) != evidence_reviewer
+    ):
+        raise RuntimeError(
+            f"existing archive snapshot conflicts with terminal task: {task_id}"
+        )
+
     active_delivery = active_task.get("delivery")
     if active_delivery is not None:
         if not isinstance(active_delivery, Mapping):
@@ -6889,6 +7001,28 @@ def verify_stale_archive_resurrection_proof(
                 raise RuntimeError(
                     f"existing archive snapshot conflicts with terminal task: {task_id}"
                 )
+        active_review = active_delivery.get("review_evidence")
+        if active_review is not None:
+            if not isinstance(active_review, Mapping):
+                raise RuntimeError(
+                    f"active task review evidence is malformed: {task_id}"
+                )
+            if str(active_review.get("status") or "").strip() != "review_approved":
+                raise RuntimeError(
+                    f"active task review evidence is invalidated ({active_review.get('status')}): {task_id}"
+                )
+            for field in ("file", "commit", "merge_target_ref", "merge_target_sha"):
+                if str(active_review.get(field) or "").strip() != str(review_evidence.get(field) or "").strip():
+                    raise RuntimeError(
+                        f"active task review evidence {field} does not match archive: {task_id}"
+                    )
+            if (
+                canonical_agent_name(active_review.get("owner")) != evidence_owner
+                or canonical_agent_name(active_review.get("reviewer")) != evidence_reviewer
+            ):
+                raise RuntimeError(
+                    f"active task review evidence owner/reviewer does not match archive: {task_id}"
+                )
 
     archived_binding = archived_task.get("delivery_binding")
     active_binding = active_task.get("delivery_binding")
@@ -6898,20 +7032,21 @@ def verify_stale_archive_resurrection_proof(
                 f"existing archive snapshot conflicts with terminal task: {task_id}"
             )
 
-    review_evidence = archived_delivery.get("review_evidence")
-    current_review = delivery.get("review_evidence")
-    if not isinstance(review_evidence, Mapping) or not isinstance(current_review, Mapping):
+    active_bridge = active_task.get("github_review_bridge")
+    if active_bridge is not None:
+        if not isinstance(active_bridge, Mapping):
+            raise RuntimeError(
+                f"active task github review bridge is malformed: {task_id}"
+            )
+        bridge_decision = str(active_bridge.get("decision") or "").strip().lower()
+        if bridge_decision in {"reopen", "changes_requested", "reject"}:
+            raise RuntimeError(
+                f"active task github review bridge indicates review rejection ({bridge_decision}): {task_id}"
+            )
+
+    if active_task.get("review_decision_intent") is not None:
         raise RuntimeError(
-            f"existing archive snapshot conflicts with terminal task: {task_id}"
-        )
-    evidence_owner = canonical_agent_name(current_review.get("owner"))
-    evidence_reviewer = canonical_agent_name(current_review.get("reviewer"))
-    if (
-        canonical_agent_name(review_evidence.get("owner")) != evidence_owner
-        or canonical_agent_name(review_evidence.get("reviewer")) != evidence_reviewer
-    ):
-        raise RuntimeError(
-            f"existing archive snapshot conflicts with terminal task: {task_id}"
+            f"active task has pending review decision intent: {task_id}"
         )
 
     archive_owner = canonical_agent_name(archived_task.get("owner"))
@@ -6978,10 +7113,54 @@ def verify_stale_archive_resurrection_proof(
             continue
         ev_type = str(event.get("type") or "").strip()
         if ev_type in {"assign", "task_imported", "import", "task_reentered"}:
+            ev_id = str(event.get("event_id") or "").strip()
             actor = str(event.get("agent") or "").strip()
-            op_mode = str(event.get("operator_mode") or "").strip()
-            if actor == "Human/Ops" or op_mode == "local_human_ops":
-                import_events.append((ev_ts, event))
+            if not ev_id:
+                raise RuntimeError(
+                    f"stale resurrection import event missing event_id: {task_id}"
+                )
+            if actor != "Human/Ops":
+                raise RuntimeError(
+                    f"stale resurrection import event unauthorized actor ({actor!r}): {task_id}"
+                )
+            raw_gen = event.get("generation")
+            if raw_gen is not None:
+                try:
+                    if int(raw_gen) != archive_gen:
+                        raise RuntimeError(
+                            f"stale resurrection import event generation mismatch (expected {archive_gen}, got {raw_gen}): {task_id}"
+                        )
+                except (ValueError, TypeError) as exc:
+                    raise RuntimeError(
+                        f"stale resurrection import event generation invalid: {task_id}"
+                    ) from exc
+            raw_arch_gen = event.get("archive_generation")
+            if raw_arch_gen is not None:
+                try:
+                    if int(raw_arch_gen) != archive_gen:
+                        raise RuntimeError(
+                            f"stale resurrection import event archive_generation mismatch (expected {archive_gen}, got {raw_arch_gen}): {task_id}"
+                        )
+                except (ValueError, TypeError) as exc:
+                    raise RuntimeError(
+                        f"stale resurrection import event archive_generation invalid: {task_id}"
+                    ) from exc
+            ev_owner = canonical_agent_name(event.get("owner") or event.get("new_owner"))
+            if ev_owner and ev_owner != archive_owner:
+                raise RuntimeError(
+                    f"stale resurrection import event owner mismatch (expected {archive_owner!r}, got {ev_owner!r}): {task_id}"
+                )
+            ev_reviewer = canonical_agent_name(event.get("reviewer") or event.get("new_reviewer"))
+            if ev_reviewer and ev_reviewer != archive_reviewer:
+                raise RuntimeError(
+                    f"stale resurrection import event reviewer mismatch (expected {archive_reviewer!r}, got {ev_reviewer!r}): {task_id}"
+                )
+            ev_archive_digest = str(event.get("archive_snapshot_sha256") or "").strip()
+            if ev_archive_digest and ev_archive_digest != archive_sha256:
+                raise RuntimeError(
+                    f"stale resurrection import event archive digest mismatch: {task_id}"
+                )
+            import_events.append((ev_ts, event))
 
     if not import_events:
         raise RuntimeError(
