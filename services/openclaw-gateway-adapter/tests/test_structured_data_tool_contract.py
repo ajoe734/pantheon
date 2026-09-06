@@ -450,6 +450,72 @@ class TestValidateExtractionArgumentsSchemaCoverage:
             _validate_extraction_arguments({"amount": -1}, schema)
         assert excinfo.value.error_code == "OPENCLAW_TOOL_ARGS_SCHEMA_MISMATCH"
 
+    def test_nested_const_boolean_does_not_satisfy_numeric_const(self):
+        """SIMPLIFY-OPENCLAW-001 reviewer defect (fourth corrective pass):
+        `_json_schema_value_equal` was type-sensitive for a boolean-vs-number
+        mismatch only at the top level. Python's own `==` recurses into
+        nested dict/list members using plain `==`, which reintroduces the
+        exact `True == 1` confusion one level down — a nested boolean must
+        still not satisfy a nested numeric `const`/`enum`."""
+        schema = {
+            "type": "object",
+            "properties": {"x": {"const": {"x": 1}}},
+            "required": ["x"],
+        }
+        with pytest.raises(OpenClawProviderError) as excinfo:
+            _validate_extraction_arguments({"x": {"x": True}}, schema)
+        assert excinfo.value.error_code == "OPENCLAW_TOOL_ARGS_SCHEMA_MISMATCH"
+        _validate_extraction_arguments({"x": {"x": 1}}, schema)
+
+    def test_nested_enum_boolean_does_not_satisfy_numeric_enum(self):
+        schema = {
+            "type": "object",
+            "properties": {"x": {"enum": [{"x": [1]}]}},
+            "required": ["x"],
+        }
+        with pytest.raises(OpenClawProviderError) as excinfo:
+            _validate_extraction_arguments({"x": {"x": [True]}}, schema)
+        assert excinfo.value.error_code == "OPENCLAW_TOOL_ARGS_SCHEMA_MISMATCH"
+        _validate_extraction_arguments({"x": {"x": [1]}}, schema)
+
+    def test_untyped_property_still_enforces_numeric_minimum(self):
+        """SIMPLIFY-OPENCLAW-001 reviewer defect (fourth corrective pass):
+        omitting `type` on a property previously returned before enforcing
+        any constraint keyed off the value's actual runtime type — a
+        property with only `minimum` (no `type`) accepted an out-of-range
+        value unconditionally."""
+        schema = {
+            "type": "object",
+            "properties": {"x": {"minimum": 0}},
+            "required": ["x"],
+        }
+        with pytest.raises(OpenClawProviderError) as excinfo:
+            _validate_extraction_arguments({"x": -1}, schema)
+        assert excinfo.value.error_code == "OPENCLAW_TOOL_ARGS_SCHEMA_MISMATCH"
+        _validate_extraction_arguments({"x": 0}, schema)
+
+    def test_untyped_property_still_enforces_min_length(self):
+        schema = {
+            "type": "object",
+            "properties": {"x": {"minLength": 1}},
+            "required": ["x"],
+        }
+        with pytest.raises(OpenClawProviderError) as excinfo:
+            _validate_extraction_arguments({"x": ""}, schema)
+        assert excinfo.value.error_code == "OPENCLAW_TOOL_ARGS_SCHEMA_MISMATCH"
+        _validate_extraction_arguments({"x": "a"}, schema)
+
+    def test_untyped_property_still_enforces_additional_properties_false(self):
+        schema = {
+            "type": "object",
+            "properties": {"x": {"additionalProperties": False}},
+            "required": ["x"],
+        }
+        with pytest.raises(OpenClawProviderError) as excinfo:
+            _validate_extraction_arguments({"x": {"extra": 1}}, schema)
+        assert excinfo.value.error_code == "OPENCLAW_TOOL_ARGS_SCHEMA_MISMATCH"
+        _validate_extraction_arguments({"x": {}}, schema)
+
     def test_required_list_with_non_string_entry_is_a_typed_rejection_not_a_crash(self):
         """SIMPLIFY-OPENCLAW-001 second corrective pass (reviewer finding 6):
         `required: [{}]` (a non-string entry) previously crashed with an

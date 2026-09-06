@@ -1051,3 +1051,127 @@ class TestRealLocalHttpServerRegressions:
         assert elapsed_c < 1.0, f"unrelated follow-up request took {elapsed_c:.3f}s, suggesting a stale deadline leaked in"
         assert events_c[0]["type"] == "error"
         assert events_c[0]["error_code"] == "OPENCLAW_RESPONSES_EMPTY"
+
+
+class _SlowDripHTTPSServer:
+    """A real local HTTPS (TLS) server, same slow-drip shape as
+    `_SlowDripHTTPServer`, used to prove the post-handshake deadline
+    enforcement fix on `_DeadlineBoundedHTTPSConnection`/
+    `_DeadlineBoundedSSLSocket`: reads over `ssl.SSLSocket` happen through a
+    genuine TLS record layer, which a mocked `urlopen` cannot exercise at
+    all, and which the plain-HTTP `_DeadlineBoundedSocket` path never
+    touches (it only rebinds the pre-TLS TCP socket)."""
+
+    def __init__(self, *, chunk_delay: float, num_chunks: int, chunk: bytes = b": keep-alive\n\n"):
+        import http.server
+        import ssl as _ssl
+        import subprocess
+        import tempfile
+        import threading
+
+        self._chunk_delay = chunk_delay
+        self._num_chunks = num_chunks
+        self._chunk = chunk
+        outer = self
+
+        self._tmpdir = tempfile.TemporaryDirectory()
+        key_path = f"{self._tmpdir.name}/key.pem"
+        cert_path = f"{self._tmpdir.name}/cert.pem"
+        subprocess.run(
+            [
+                "openssl", "req", "-x509", "-newkey", "rsa:2048", "-days", "1", "-nodes",
+                "-subj", "/CN=127.0.0.1",
+                "-keyout", key_path, "-out", cert_path,
+            ],
+            check=True,
+            capture_output=True,
+        )
+
+        class _Handler(http.server.BaseHTTPRequestHandler):
+            def log_message(self, *_a):  # noqa: D401 - silence test server logging
+                pass
+
+            def do_POST(self):  # noqa: N802
+                length = int(self.headers.get("Content-Length", "0"))
+                self.rfile.read(length)
+                self.send_response(200)
+                self.send_header("Content-Type", "text/event-stream")
+                self.end_headers()
+                import time as _time
+
+                for _ in range(outer._num_chunks):
+                    try:
+                        self.wfile.write(outer._chunk)
+                        self.wfile.flush()
+                    except (BrokenPipeError, ConnectionError):
+                        return
+                    _time.sleep(outer._chunk_delay)
+
+        server_context = _ssl.SSLContext(_ssl.PROTOCOL_TLS_SERVER)
+        server_context.load_cert_chain(certfile=cert_path, keyfile=key_path)
+        self._server = http.server.HTTPServer(("127.0.0.1", 0), _Handler)
+        self._server.socket = server_context.wrap_socket(self._server.socket, server_side=True)
+        self._thread = threading.Thread(target=self._server.serve_forever, daemon=True)
+
+    @property
+    def port(self) -> int:
+        return self._server.server_address[1]
+
+    def __enter__(self):
+        self._thread.start()
+        return self
+
+    def __exit__(self, *_exc):
+        self._server.shutdown()
+        self._server.server_close()
+        self._tmpdir.cleanup()
+
+
+class TestRealLocalHttpsServerRegressions:
+    """SIMPLIFY-OPENCLAW-001 reviewer defect (fifth corrective pass): the
+    total-deadline enforcement only rebound the pre-TLS TCP socket, so once
+    the TLS handshake completed, header parsing and body reads went through
+    `ssl.SSLSocket`'s own reads and were bounded only by the connection's
+    static per-read `timeout=` again -- exactly the "slow drip past a static
+    per-read timeout" bug the plain-HTTP path had already fixed, reopened on
+    the HTTPS path. These tests run against a genuine local TLS server; a
+    mocked `urlopen` cannot exercise real TLS record-layer read semantics."""
+
+    def test_https_slow_drip_response_is_bounded_by_total_deadline(self, monkeypatch):
+        import ssl as _ssl
+
+        # Test-only: the local server's cert is self-signed for 127.0.0.1,
+        # so the client context must not require a trusted CA chain. The
+        # adapter builds its HTTPS context through `urllib.request`'s
+        # standard `HTTPSHandler.__init__` path, which resolves a default
+        # context via `http.client._create_https_context()` ->
+        # `ssl._create_default_https_context()` *before* the adapter's own
+        # `context = self._context or ssl.create_default_context()` line
+        # ever runs (`self._context` is already set by then) — so this
+        # patches the actual function the stdlib calls for that default
+        # policy, not the adapter's own (here dead-code) fallback call. This
+        # only relaxes verification for this test's own client context, not
+        # any behavior the adapter applies against a real Gateway.
+        def _insecure_default_https_context():
+            ctx = _ssl.SSLContext(_ssl.PROTOCOL_TLS_CLIENT)
+            ctx.check_hostname = False
+            ctx.verify_mode = _ssl.CERT_NONE
+            return ctx
+
+        monkeypatch.setattr(_ssl, "_create_default_https_context", _insecure_default_https_context)
+
+        with _SlowDripHTTPSServer(chunk_delay=0.05, num_chunks=40) as server:
+            provider = AssistantOpenClawProvider(
+                gateway_url=f"wss://127.0.0.1:{server.port}",
+                agent_id="main",
+                token="test-token",
+                _which_func=lambda _: None,
+                _run_func=_forbidden_run,
+            )
+            started = __import__("time").monotonic()
+            events = list(provider.stream("hi", operator_id="op-1", timeout_seconds=0.3))
+            elapsed = __import__("time").monotonic() - started
+        assert elapsed < 1.0, f"total HTTPS streaming time {elapsed:.3f}s was not bounded near the 0.3s budget"
+        assert len(events) == 1
+        assert events[0]["type"] == "error"
+        assert events[0]["error_code"] == "OPENCLAW_RESPONSES_TIMEOUT"

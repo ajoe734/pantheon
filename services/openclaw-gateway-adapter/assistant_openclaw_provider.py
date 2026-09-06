@@ -359,18 +359,31 @@ def _validate_extraction_array(value: Any, schema: Dict[str, Any], path: str) ->
 
 
 def _json_schema_value_equal(value: Any, candidate: Any) -> bool:
-    """Type-sensitive equality for `enum`/`const` comparison.
+    """Type-sensitive, recursive equality for `enum`/`const` comparison.
 
     Plain Python `==` treats `True == 1` and `False == 0` as truthy, which
     would let a boolean silently satisfy a numeric `enum`/`const` (and vice
     versa). JSON Schema treats `true`/`false` as a distinct type from
     numbers, so a boolean and a non-boolean number must never compare equal
-    here even though Python's own `==` would say so.
+    here even though Python's own `==` would say so. Python's `==` on
+    `dict`/`list` recurses using plain `==` on the members, which reintroduces
+    the exact same bool/number confusion one level down (e.g.
+    `{"x": True} == {"x": 1}` is `True` in Python) — object and array members
+    are therefore compared recursively through this same function instead of
+    delegating to `==`.
     """
     if isinstance(value, bool) or isinstance(candidate, bool):
         return isinstance(value, bool) and isinstance(candidate, bool) and value == candidate
     if isinstance(value, (int, float)) and isinstance(candidate, (int, float)):
         return value == candidate
+    if isinstance(value, dict) and isinstance(candidate, dict):
+        return value.keys() == candidate.keys() and all(
+            _json_schema_value_equal(value[key], candidate[key]) for key in value
+        )
+    if isinstance(value, list) and isinstance(candidate, list):
+        return len(value) == len(candidate) and all(
+            _json_schema_value_equal(item, other) for item, other in zip(value, candidate)
+        )
     return type(value) is type(candidate) and value == candidate
 
 
@@ -426,43 +439,29 @@ def _validate_extraction_value(value: Any, schema: Dict[str, Any], path: str) ->
             raise _schema_mismatch(path, f"is not one of the declared enum values {enum_values!r}")
 
     declared_type = schema.get("type")
-    if declared_type is None:
-        # No declared type: still recurse into nested object/array schemas
-        # that only declare `properties`/`required`/`items` without an
-        # explicit `type`.
-        if isinstance(value, dict) and ("properties" in schema or "required" in schema):
-            _validate_extraction_object(value, schema, path)
-        elif isinstance(value, list) and "items" in schema:
-            _validate_extraction_array(value, schema, path)
-        return
+    if declared_type is not None:
+        types = declared_type if isinstance(declared_type, list) else [declared_type]
+        if not isinstance(declared_type, (str, list)) or any(not isinstance(t, str) for t in types):
+            raise _schema_mismatch(path or "root", f"declares an unsupported type {declared_type!r}")
+        if not _json_value_matches_type(value, declared_type):
+            raise _schema_mismatch(path, f"expected type {declared_type!r}")
 
-    types = declared_type if isinstance(declared_type, list) else [declared_type]
-    if not isinstance(declared_type, (str, list)) or any(not isinstance(t, str) for t in types):
-        raise _schema_mismatch(path or "root", f"declares an unsupported type {declared_type!r}")
-    if "object" in types and isinstance(value, dict):
+    # Constraints below key off the *actual runtime type of `value`*, not the
+    # declared `type` — a schema that omits `type` entirely (e.g. only
+    # `properties`/`minimum`/`minLength`/`additionalProperties`) still
+    # constrains whatever value actually shows up, per plain JSON Schema
+    # semantics; returning early here previously let a value satisfy every
+    # keyword except an omitted `type` unconditionally. `value is None` is
+    # only reached for an actual JSON null (either an untyped schema or a
+    # matched nullable union member) and no constraint below applies to it
+    # (e.g. `type: ["number","null"], minimum: 0` with value `None` must
+    # pass, not crash comparing `None < 0`).
+    if value is None or isinstance(value, bool):
+        return
+    if isinstance(value, dict):
         _validate_extraction_object(value, schema, path)
-        return
-    if "array" in types and isinstance(value, list):
+    elif isinstance(value, list):
         _validate_extraction_array(value, schema, path)
-        return
-    if not _json_value_matches_type(value, declared_type):
-        raise _schema_mismatch(path, f"expected type {declared_type!r}")
-    # `value is None` here means a nullable `type: [<t>, "null"]` union
-    # matched via its "null" member — the numeric/string bound checks below
-    # only apply to an actual number/string value, never to the valid `null`
-    # member of the union (e.g. `type: ["number","null"], minimum: 0` with
-    # value `None` must pass, not crash comparing `None < 0`).
-    if value is None:
-        return
-    # Bound checks key off the *actual runtime type of `value`*, never off
-    # the declared type union. For a union type like
-    # `type: ["string", "number"], minimum: 0`, a string value must not
-    # reach the numeric bound check (comparing `str < int` raises
-    # `TypeError`), and a numeric value must not reach the string-length
-    # check (`len()` on an int raises `TypeError`) — each branch below only
-    # fires for the value shape it can actually handle.
-    if isinstance(value, bool):
-        pass
     elif isinstance(value, (int, float)):
         _validate_extraction_numeric_bounds(value, schema, path)
     elif isinstance(value, str):
@@ -633,20 +632,47 @@ class _DeadlineBoundedHTTPConnection(http.client.HTTPConnection):
         self.sock = _rebind_socket_to_deadline(self.sock, self._pantheon_deadline)
 
 
-class _DeadlineBoundedHTTPSConnection(http.client.HTTPSConnection):
-    """HTTPS connection whose pre-TLS TCP socket is deadline-bound.
+class _DeadlineBoundedSSLSocket(ssl.SSLSocket):
+    """`ssl.SSLSocket` subclass whose `recv`/`recv_into` enforce the same
+    absolute deadline as `_DeadlineBoundedSocket`.
 
-    CAVEAT (documented, not silently claimed as fully fixed): once the TLS
-    handshake wraps this socket in `ssl.SSLSocket`, actual record-layer
-    reads happen inside the C-level `_ssl` module rather than through this
-    class's Python-level `recv`/`recv_into`, so this cannot enforce a
-    byte-level deadline the way the plain-HTTP path does. HTTPS reads
-    remain bounded only by the connection's static `timeout=` -- closing
-    that gap fully would require a custom memory-BIO TLS implementation,
-    which is out of scope here. The adapter's actual gateway URL is
-    `ws://`/`http://` by default (`_DEFAULT_GATEWAY_WS_URL`); this class
-    exists for completeness when an operator configures an `https://`
-    gateway URL.
+    `ssl.SSLSocket.recv`/`recv_into` are plain Python methods (they call
+    into the C-level `_ssl` module themselves, but the methods a caller
+    actually invokes are overridable Python methods on this class), so
+    installing this subclass as `SSLContext.sslsocket_class` before
+    `wrap_socket()` — rather than trying to patch the post-handshake
+    instance in place — is enough to bound every post-handshake read the
+    same way the plain-HTTP path already bounds its reads.
+    """
+
+    _pantheon_deadline: float = float("inf")
+
+    def _pantheon_check_deadline(self) -> None:
+        remaining = self._pantheon_deadline - time.monotonic()
+        if remaining <= 0:
+            raise TimeoutError("bounded deadline exceeded while reading the response")
+        self.settimeout(remaining)
+
+    def recv(self, *args: Any, **kwargs: Any) -> bytes:
+        self._pantheon_check_deadline()
+        return super().recv(*args, **kwargs)
+
+    def recv_into(self, *args: Any, **kwargs: Any) -> int:
+        self._pantheon_check_deadline()
+        return super().recv_into(*args, **kwargs)
+
+
+class _DeadlineBoundedHTTPSConnection(http.client.HTTPSConnection):
+    """HTTPS connection whose socket is deadline-bound end-to-end.
+
+    The pre-TLS TCP socket is deadline-bound the same way the plain-HTTP
+    path is. The post-handshake socket is deadline-bound too: `wrap_socket()`
+    is asked to produce a `_DeadlineBoundedSSLSocket` instance (via
+    `SSLContext.sslsocket_class`, the documented extension point for this
+    since Python 3.7) instead of the default `ssl.SSLSocket`, so header
+    parsing and body reads over TLS share the same absolute deadline as
+    connection establishment -- closing the "slow drip past the static
+    per-read timeout" gap this class used to leave open on the HTTPS path.
     """
 
     _pantheon_deadline: float = float("inf")
@@ -659,7 +685,14 @@ class _DeadlineBoundedHTTPSConnection(http.client.HTTPSConnection):
         if getattr(self, "_tunnel_host", None):
             self._tunnel()
         context = self._context or ssl.create_default_context()
-        self.sock = context.wrap_socket(self.sock, server_hostname=self.host)
+        # Setting this to the same class on every call is idempotent even if
+        # `context` is a shared/reused `SSLContext` across concurrent calls;
+        # the actual per-call deadline is set on the returned instance below,
+        # never on the class or the context, so it cannot leak between calls.
+        context.sslsocket_class = _DeadlineBoundedSSLSocket
+        wrapped = context.wrap_socket(self.sock, server_hostname=self.host)
+        wrapped._pantheon_deadline = self._pantheon_deadline
+        self.sock = wrapped
 
 
 def _deadline_bound_http_connection_factory(deadline: float):
@@ -716,6 +749,22 @@ class _DeadlineBoundedHTTPHandler(urllib.request.HTTPHandler):
 
 
 class _DeadlineBoundedHTTPSHandler(urllib.request.HTTPSHandler):
+    """SIMPLIFY-OPENCLAW-001 reviewer defect (fifth corrective pass): this
+    previously passed `check_hostname=self._check_hostname` to `do_open()`,
+    which forwards its `**http_conn_args` straight to the connection class
+    constructor. `HTTPSHandler` never sets a `self._check_hostname`
+    attribute (that only exists on the base `urllib.request.HTTPSHandler` in
+    some stdlib versions as a local `__init__` variable, never as an
+    instance attribute) and `http.client.HTTPSConnection.__init__` does not
+    accept a `check_hostname` keyword at all — every real HTTPS request hit
+    an unconditional `AttributeError` before ever reaching the network,
+    which the caller's broad exception handling then misreported as
+    `OPENCLAW_RESPONSES_UNREACHABLE` instead of surfacing the real defect.
+    Hostname verification is controlled entirely through `self._context`
+    (an `ssl.SSLContext`'s own `check_hostname`/`verify_mode`), which is
+    already passed through below.
+    """
+
     def __init__(self, deadline: float, context: Optional[ssl.SSLContext] = None) -> None:
         super().__init__(context=context)
         self._factory = _deadline_bound_https_connection_factory(deadline)
@@ -725,7 +774,6 @@ class _DeadlineBoundedHTTPSHandler(urllib.request.HTTPSHandler):
             self._factory,
             req,
             context=self._context,
-            check_hostname=self._check_hostname,
         )
 
 
