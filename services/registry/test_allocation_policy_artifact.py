@@ -27,6 +27,7 @@ if _GOVERNANCE_DIR not in sys.path:
     sys.path.insert(0, _GOVERNANCE_DIR)
 
 import pytest
+from services.governance.test_approval_authority import (advance_registry_http, advance_registry_unit, registry_unit_headers, configure_registry_unit_auth)
 from fastapi.testclient import TestClient
 
 from .models import ArtifactState, ArtifactType
@@ -49,13 +50,14 @@ from approval_decision import (
 # -- Fixtures -----------------------------------------------------------------
 
 @pytest.fixture(autouse=True)
-def clean_store():
+def clean_store(monkeypatch):
+    configure_registry_unit_auth(monkeypatch)
     reset_store()
     yield
     reset_store()
 
 
-client = TestClient(app, headers={"Authorization": "Bearer test-operator:operator"})
+client = TestClient(app, headers=registry_unit_headers())
 
 
 def _minimal_artifact(
@@ -194,8 +196,8 @@ class TestAllocationPolicyLifecycle:
         )
         assert reg_resp.status_code == 200
 
-        adv_resp = client.post(
-            "/api/registry/allocation-policy-artifacts/reg-alloc-lc-001/advance",
+        adv_resp = advance_registry_http(
+            client, "/api/registry/allocation-policy-artifacts/reg-alloc-lc-001/advance",
             json={"target_state": "approved", "expected_artifact_state": "candidate", "approver": "governance-bot"},
         )
         assert adv_resp.status_code == 200, adv_resp.text
@@ -208,8 +210,8 @@ class TestAllocationPolicyLifecycle:
             "/api/registry/allocation-policy-artifacts",
             json=_register_payload(registry_id="reg-alloc-dep-001"),
         )
-        adv_resp = client.post(
-            "/api/registry/allocation-policy-artifacts/reg-alloc-dep-001/advance",
+        adv_resp = advance_registry_http(
+            client, "/api/registry/allocation-policy-artifacts/reg-alloc-dep-001/advance",
             json={"target_state": "approved", "expected_artifact_state": "candidate", "approver": "ops"},
         )
         entry = adv_resp.json()["entry"]
@@ -283,8 +285,8 @@ class TestAllocationPolicyRead:
             json=_register_payload(version="1.1.0", registry_id="reg-filter-002",
                                    artifact=_minimal_artifact(capital_pool_id="pool-gamma")),
         )
-        client.post(
-            "/api/registry/allocation-policy-artifacts/reg-filter-001/advance",
+        advance_registry_http(
+            client, "/api/registry/allocation-policy-artifacts/reg-filter-001/advance",
             json={"target_state": "approved", "expected_artifact_state": "candidate", "approver": "ops"},
         )
 

@@ -186,5 +186,25 @@
     "semantics": "AllocationPolicyArtifact creation is exclusively admitted through its canonical typed validator; generic keyed and unkeyed creation rejects the kind even with otherwise valid content. Generic reads and legal transitions of validated entries remain available.",
     "proof": "services/registry/test_owner_durability_real_process.py::test_allocation_typed_admission_and_restart",
     "consumer_handoff": "DOMAIN-WRITERS-DURABILITY-CORRECTIVE-001 owns optimizer/research callers; use the existing allocation-policy-artifacts DTO and verified caller credentials. No production Python generic allocation writer was found in the current source inventory; mounted HTTP rejection and typed positive/replay/restart tests enforce the boundary."
+  },
+  "approval_authority": {
+    "owner": "governance",
+    "reader": "services.governance.approval_authority.ApprovalReader",
+    "required_command_fields": [
+      "approval_decision_id",
+      "command_key",
+      "expected_artifact_state",
+      "expected_version",
+      "expected_updated_at"
+    ],
+    "retired_input": "approver",
+    "bound_fields": [
+      "tenant_id",
+      "target_type",
+      "target_id",
+      "target_version",
+      "candidate_digest"
+    ],
+    "receipt": "atomic original transition and verified provenance; downstream revalidates current Governance at use time"
   }
 }

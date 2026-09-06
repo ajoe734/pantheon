@@ -25,6 +25,7 @@ import shutil
 import subprocess
 import sys
 import unittest
+import urllib.error
 from pathlib import Path
 from unittest.mock import patch
 
@@ -33,6 +34,66 @@ if _ADAPTER_DIR not in sys.path:
     sys.path.insert(0, _ADAPTER_DIR)
 
 from assistant_openclaw_provider import AssistantOpenClawProvider, OpenClawProviderError
+
+
+def _sse_bytes(events: list) -> list:
+    lines = [("data: " + json.dumps(evt) + "\n").encode("utf-8") for evt in events]
+    lines.append(b"data: [DONE]\n")
+    return lines
+
+
+class _FakeSSEResponse:
+    """Minimal fake of the `urlopen()` response object, iterable over SSE lines."""
+
+    def __init__(self, events: list) -> None:
+        self._lines = _sse_bytes(events)
+
+    def __iter__(self):
+        return iter(self._lines)
+
+    def close(self) -> None:
+        pass
+
+
+def _answer_events(text: str) -> list:
+    """SSE events for a plain-text `/v1/responses` reply (no tool calls)."""
+    return [
+        {"type": "response.output_text.done", "text": text},
+        {"type": "response.completed", "response": {"status": "completed"}},
+    ]
+
+
+def _http_error_urlopen(status_code: int, body: str = ""):
+    def fake_urlopen(req, timeout=None, deadline=None):
+        raise urllib.error.HTTPError(req.full_url, status_code, body, {}, None)
+
+    return fake_urlopen
+
+
+def _model_dispatch_urlopen(handlers: dict, calls: list):
+    """Return a fake `urlopen` that dispatches on the request's requested model.
+
+    The JSON `model` field is always the fixed `openclaw/<agentId>` alias (the
+    pinned Gateway's model resolver rejects a raw provider id there); the
+    actual requested provider/model candidate travels in the `x-openclaw-model`
+    header instead. `handlers[model]` is a callable `(timeout) ->
+    _FakeSSEResponse` (or one that raises). Every call is recorded into
+    `calls` as `{"model", "timeout", "body"}` so tests can assert
+    per-candidate timeout budgets and payload shape without any subprocess
+    involved.
+    """
+
+    def fake_urlopen(req, timeout=None, deadline=None):
+        body = json.loads(req.data.decode("utf-8"))
+        headers = {k.lower(): v for k, v in req.header_items()}
+        model = headers.get("x-openclaw-model")
+        calls.append({"model": model, "timeout": timeout, "body": body})
+        handler = handlers.get(model)
+        if handler is None:
+            raise AssertionError(f"unexpected model requested: {model!r}")
+        return handler(timeout)
+
+    return fake_urlopen
 
 
 def _gateway_available() -> bool:
@@ -88,7 +149,11 @@ class TestAssistantOpenClawProviderLive(unittest.TestCase):
             reply_text,
             f"Expected sentinel 'OPENCLAW_LIVE' in agent reply but got: {reply_text!r}",
         )
-        self.assertEqual(result.output.get("transport"), "cli", "Transport must be 'cli' (not mock/REST)")
+        self.assertEqual(
+            result.output.get("transport"),
+            "responses_http",
+            "Ordinary turns must go through the unified HTTP /v1/responses transport",
+        )
 
     def test_live_turn_redaction_envelope(self) -> None:
         """Verify the result envelope structure expected by the BFF."""
@@ -282,16 +347,26 @@ class TestAssistantOpenClawProviderUnit(unittest.TestCase):
         self.assertEqual(ctx.exception.status_code, 403)
         self.assertEqual(calls, [])
 
-    def test_readiness_no_binary_auth_probe(self) -> None:
-        """auth_probe=True checks binary existence and returns degraded if missing."""
+    def test_readiness_ignores_missing_cli_binary(self) -> None:
+        """The HTTP answer-probe never needs the `openclaw` CLI binary.
+
+        Ordinary turns (invoke/stream/readiness) are unified on HTTP; a
+        missing/unresolvable CLI binary must not block the answer probe.
+        """
+        calls: list = []
+        fake_urlopen = _model_dispatch_urlopen(
+            {"anthropic/claude-opus-4-8": lambda _t: _FakeSSEResponse(_answer_events("PANTHEON_PROVIDER_READY"))},
+            calls,
+        )
         provider = AssistantOpenClawProvider(
             gateway_url="ws://openclaw-gateway:18789",
             token="tok",
             _which_func=lambda _: None,
         )
-        info = provider.readiness(auth_probe=True)
-        self.assertFalse(info["ready"])
-        self.assertIn("binary", info["reason"])
+        with patch("assistant_openclaw_provider._urlopen_with_deadline", fake_urlopen):
+            info = provider.readiness(auth_probe=True)
+        self.assertTrue(info["ready"])
+        self.assertNotIn("binary_path", info)
 
     def test_readiness_no_token_auth_probe(self) -> None:
         """auth_probe=True checks token and returns degraded if missing."""
@@ -311,198 +386,168 @@ class TestAssistantOpenClawProviderUnit(unittest.TestCase):
         self.assertEqual(info["reason"], "answer_probe_not_run")
 
     def test_readiness_auth_probe_requires_bounded_agent_answer(self) -> None:
-        captured: dict[str, object] = {}
+        calls: list = []
+        fake_urlopen = _model_dispatch_urlopen(
+            {"anthropic/claude-opus-4-8": lambda _t: _FakeSSEResponse(_answer_events("PANTHEON_PROVIDER_READY"))},
+            calls,
+        )
 
-        def fake_run(cmd, **kwargs):
-            captured["cmd"] = list(cmd)
-            captured["timeout"] = kwargs["timeout"]
-
-            class R:
-                returncode = 0
-                stdout = TestAssistantOpenClawProviderUnit._agent_json(
-                    "PANTHEON_PROVIDER_READY"
-                )
-                stderr = ""
-
-            return R()
-
-        provider = self._make_provider(run_func=fake_run)
-        info = provider.readiness(auth_probe=True)
+        provider = self._make_provider()
+        with patch("assistant_openclaw_provider._urlopen_with_deadline", fake_urlopen):
+            info = provider.readiness(auth_probe=True)
 
         self.assertTrue(info["ready"])
         self.assertEqual(info["status"], "ready")
         self.assertEqual(info["answer_probe"]["status"], "completed")
         self.assertEqual(info["answer_probe"]["deadline_seconds"], 20.0)
-        self.assertLessEqual(captured["timeout"], 20.0)
-        self.assertGreaterEqual(captured["timeout"], 1.0)
-        command = captured["cmd"]
-        self.assertEqual(command[1], "agent")
-        self.assertIn("PANTHEON_PROVIDER_READY", command[command.index("--message") + 1])
+        self.assertEqual(len(calls), 1)
+        self.assertLessEqual(calls[0]["timeout"], 20.0)
+        self.assertGreaterEqual(calls[0]["timeout"], 1.0)
+        self.assertIn("PANTHEON_PROVIDER_READY", json.dumps(calls[0]["body"]))
 
-    def test_readiness_auth_probe_converges_via_fallback_when_primary_claude_fails(self) -> None:
-        calls: list[list[str]] = []
-        call_timeouts: list[float] = []
+    def test_readiness_auth_probe_does_not_fallback_via_fallback_when_primary_claude_fails(self) -> None:
+        calls: list = []
+        fake_urlopen = _model_dispatch_urlopen(
+            {
+                "anthropic/claude-opus-4-8": lambda _t: (_ for _ in ()).throw(
+                    urllib.error.URLError(TimeoutError("timed out"))
+                ),
+                "openai/gpt-5.6-sol": lambda _t: _FakeSSEResponse(_answer_events("PANTHEON_PROVIDER_READY")),
+            },
+            calls,
+        )
 
-        def fake_run(cmd, **kwargs):
-            calls.append(list(cmd))
-            call_timeouts.append(kwargs.get("timeout", 0.0))
-            # First call is primary (anthropic/claude-opus-4-8) which fails with timeout
-            if len(calls) == 1:
-                raise subprocess.TimeoutExpired(cmd="openclaw agent", timeout=kwargs["timeout"])
-            # Second call is fallback (openai/gpt-5.6-sol) which succeeds
-            class R:
-                returncode = 0
-                stdout = TestAssistantOpenClawProviderUnit._agent_json("PANTHEON_PROVIDER_READY")
-                stderr = ""
-            return R()
+        provider = self._make_provider()
+        with patch("assistant_openclaw_provider._urlopen_with_deadline", fake_urlopen):
+            info = provider.readiness(auth_probe=True)
 
-        provider = self._make_provider(run_func=fake_run)
-        info = provider.readiness(auth_probe=True)
+        self.assertFalse(info["ready"])
+        self.assertEqual(info["status"], "degraded")
+        self.assertEqual(len(calls), 1)
+        self.assertEqual(calls[0]["model"], "anthropic/claude-opus-4-8")
+        self.assertNotIn("fallback_used", info)
 
-        self.assertTrue(info["ready"])
-        self.assertEqual(info["status"], "ready")
-        self.assertEqual(info["active_model"], "openai/gpt-5.6-sol")
-        self.assertEqual(info["primary_model"], "anthropic/claude-opus-4-8")
-        self.assertTrue(info["fallback_used"])
-        self.assertEqual(info["primary_unavailable"]["model"], "anthropic/claude-opus-4-8")
-        self.assertEqual(info["primary_unavailable"]["status"], "unavailable")
-        self.assertEqual(info["primary_unavailable"]["reason"], "OPENCLAW_GATEWAY_TIMEOUT")
-        self.assertEqual(info["answer_probe"]["status"], "completed")
-        self.assertEqual(info["answer_probe"]["active_model"], "openai/gpt-5.6-sol")
-        self.assertEqual(len(calls), 2)
-        self.assertEqual(calls[0][calls[0].index("--model") + 1], "anthropic/claude-opus-4-8")
-        self.assertEqual(calls[1][calls[1].index("--model") + 1], "openai/gpt-5.6-sol")
-        self.assertGreaterEqual(call_timeouts[0], 4.0)
-        self.assertLessEqual(call_timeouts[0], 5.0)
-        self.assertGreaterEqual(call_timeouts[1], 8.0)
+    def test_readiness_auth_probe_does_not_fallback_via_second_fallback_when_primary_and_fallback_one_fail(self) -> None:
+        calls: list = []
+        fake_urlopen = _model_dispatch_urlopen(
+            {
+                "anthropic/claude-opus-4-8": lambda _t: (_ for _ in ()).throw(
+                    urllib.error.URLError(TimeoutError("timed out"))
+                ),
+                "openai/gpt-5.6-sol": lambda _t: (_ for _ in ()).throw(
+                    urllib.error.URLError(TimeoutError("timed out"))
+                ),
+                "openai/gpt-5.5": lambda _t: _FakeSSEResponse(_answer_events("PANTHEON_PROVIDER_READY")),
+            },
+            calls,
+        )
 
-    def test_readiness_auth_probe_converges_via_second_fallback_when_primary_and_fallback_one_fail(self) -> None:
-        calls: list[list[str]] = []
-        call_timeouts: list[float] = []
+        provider = self._make_provider()
+        with patch("assistant_openclaw_provider._urlopen_with_deadline", fake_urlopen):
+            info = provider.readiness(auth_probe=True)
 
-        def fake_run(cmd, **kwargs):
-            calls.append(list(cmd))
-            call_timeouts.append(kwargs.get("timeout", 0.0))
-            if len(calls) == 1:
-                raise subprocess.TimeoutExpired(cmd="openclaw agent", timeout=kwargs["timeout"])
-            if len(calls) == 2:
-                raise subprocess.TimeoutExpired(cmd="openclaw agent", timeout=kwargs["timeout"])
-            class R:
-                returncode = 0
-                stdout = TestAssistantOpenClawProviderUnit._agent_json("PANTHEON_PROVIDER_READY")
-                stderr = ""
-            return R()
-
-        provider = self._make_provider(run_func=fake_run)
-        info = provider.readiness(auth_probe=True)
-
-        self.assertTrue(info["ready"])
-        self.assertEqual(info["status"], "ready")
-        self.assertEqual(info["active_model"], "openai/gpt-5.5")
-        self.assertEqual(info["primary_model"], "anthropic/claude-opus-4-8")
-        self.assertTrue(info["fallback_used"])
-        self.assertEqual(info["fallback_model"], "openai/gpt-5.5")
-        self.assertEqual(info["primary_unavailable"]["model"], "anthropic/claude-opus-4-8")
-        self.assertEqual(info["primary_unavailable"]["status"], "unavailable")
-        self.assertEqual(info["primary_unavailable"]["reason"], "OPENCLAW_GATEWAY_TIMEOUT")
-        self.assertEqual(info["answer_probe"]["status"], "completed")
-        self.assertEqual(info["answer_probe"]["active_model"], "openai/gpt-5.5")
-        self.assertEqual(len(calls), 3)
-        self.assertEqual(calls[0][calls[0].index("--model") + 1], "anthropic/claude-opus-4-8")
-        self.assertEqual(calls[1][calls[1].index("--model") + 1], "openai/gpt-5.6-sol")
-        self.assertEqual(calls[2][calls[2].index("--model") + 1], "openai/gpt-5.5")
-        self.assertGreaterEqual(call_timeouts[0], 4.0)
-        self.assertLessEqual(call_timeouts[0], 5.0)
-        self.assertGreaterEqual(call_timeouts[1], 8.0)
-        self.assertGreaterEqual(call_timeouts[2], 8.0)
+        self.assertFalse(info["ready"])
+        self.assertEqual(info["status"], "degraded")
+        self.assertEqual(len(calls), 1)
+        self.assertEqual(calls[0]["model"], "anthropic/claude-opus-4-8")
+        self.assertNotIn("fallback_used", info)
 
     def test_readiness_primary_candidate_gets_more_than_gateway_queue_wait_budget(self) -> None:
         """OPGAP-OPENCLAW-READINESS-QUEUE-BUDGET-20260901 regression.
 
         The gateway's own internal request-lane queueing has been observed to
-        add several real seconds of wait before a CLI turn even starts
+        add several real seconds of wait before an HTTP turn even starts
         (independent of model latency). A primary-candidate budget that is
         capped near or below that queueing delay means the primary is killed
         by "no output" before it ever gets a chance to run, on every probe,
         not just under exceptional load. This asserts the primary candidate's
         requested timeout has real headroom above a 1.5s-scale queueing delay.
         """
-        calls: list[list[str]] = []
-        call_timeouts: list[float] = []
+        calls: list = []
+        fake_urlopen = _model_dispatch_urlopen(
+            {"anthropic/claude-opus-4-8": lambda _t: _FakeSSEResponse(_answer_events("PANTHEON_PROVIDER_READY"))},
+            calls,
+        )
 
-        def fake_run(cmd, **kwargs):
-            calls.append(list(cmd))
-            call_timeouts.append(kwargs.get("timeout", 0.0))
-            class R:
-                returncode = 0
-                stdout = TestAssistantOpenClawProviderUnit._agent_json("PANTHEON_PROVIDER_READY")
-                stderr = ""
-            return R()
-
-        provider = self._make_provider(run_func=fake_run)
-        info = provider.readiness(auth_probe=True)
+        provider = self._make_provider()
+        with patch("assistant_openclaw_provider._urlopen_with_deadline", fake_urlopen):
+            info = provider.readiness(auth_probe=True)
 
         self.assertTrue(info["ready"])
         self.assertEqual(info["active_model"], "anthropic/claude-opus-4-8")
         self.assertGreater(
-            call_timeouts[0],
+            calls[0]["timeout"],
             1.5,
             "primary candidate must get more than the old 1.5s cap so it survives "
             "realistic gateway queueing delay instead of being killed before it starts",
         )
 
     def test_readiness_auth_probe_fails_closed_when_all_models_fail(self) -> None:
-        calls: list[list[str]] = []
+        calls: list = []
+        fake_urlopen = _model_dispatch_urlopen(
+            {
+                "anthropic/claude-opus-4-8": lambda _t: (_ for _ in ()).throw(
+                    urllib.error.HTTPError("url", 401, "auth session expired", {}, None)
+                ),
+                "openai/gpt-5.6-sol": lambda _t: (_ for _ in ()).throw(
+                    urllib.error.HTTPError("url", 401, "auth session expired", {}, None)
+                ),
+                "openai/gpt-5.5": lambda _t: (_ for _ in ()).throw(
+                    urllib.error.HTTPError("url", 401, "auth session expired", {}, None)
+                ),
+            },
+            calls,
+        )
 
-        def fake_run(cmd, **kwargs):
-            calls.append(list(cmd))
-            class R:
-                returncode = 1
-                stdout = ""
-                stderr = "auth session expired"
-            return R()
-
-        provider = self._make_provider(run_func=fake_run)
-        info = provider.readiness(auth_probe=True)
+        provider = self._make_provider()
+        with patch("assistant_openclaw_provider._urlopen_with_deadline", fake_urlopen):
+            info = provider.readiness(auth_probe=True)
 
         self.assertFalse(info["ready"])
         self.assertEqual(info["status"], "degraded")
-        self.assertEqual(info["reason"], "OPENCLAW_AUTH_UNAVAILABLE")
+        self.assertEqual(info["reason"], "OPENCLAW_RESPONSES_HTTP_ERROR")
         self.assertEqual(info["primary_unavailable"]["model"], "anthropic/claude-opus-4-8")
         self.assertEqual(info["primary_unavailable"]["status"], "unavailable")
-        self.assertEqual(info["primary_unavailable"]["reason"], "OPENCLAW_AUTH_UNAVAILABLE")
+        self.assertEqual(info["primary_unavailable"]["reason"], "OPENCLAW_RESPONSES_HTTP_ERROR")
         self.assertEqual(info["answer_probe"]["status"], "failed")
-        self.assertEqual(len(calls), 3)  # primary + 2 fallbacks
+        self.assertEqual(len(calls), 1)  # no automatic model fallback
 
     def test_readiness_primary_unavailable_evidence_is_sanitized(self) -> None:
-        def fake_run(cmd, **kwargs):
-            class R:
-                returncode = 1
-                stdout = ""
-                stderr = "error with token=sk-ant-secret-key-12345 login expired"
-            return R()
+        calls: list = []
+        fake_urlopen = _model_dispatch_urlopen(
+            {
+                model: (lambda _t: (_ for _ in ()).throw(
+                    urllib.error.HTTPError(
+                        "url", 401, "error with token=sk-ant-secret-key-12345 login expired", {}, None
+                    )
+                ))
+                for model in ("anthropic/claude-opus-4-8", "openai/gpt-5.6-sol", "openai/gpt-5.5")
+            },
+            calls,
+        )
 
-        provider = self._make_provider(run_func=fake_run)
-        info = provider.readiness(auth_probe=True)
+        provider = self._make_provider()
+        with patch("assistant_openclaw_provider._urlopen_with_deadline", fake_urlopen):
+            info = provider.readiness(auth_probe=True)
 
         sanitized_reason = info["primary_unavailable"]["reason"]
         self.assertNotIn("secret", sanitized_reason)
         self.assertNotIn("12345", sanitized_reason)
-        self.assertEqual(sanitized_reason, "OPENCLAW_AUTH_UNAVAILABLE")
+        self.assertEqual(sanitized_reason, "OPENCLAW_RESPONSES_HTTP_ERROR")
 
     def test_readiness_auth_probe_fails_when_reply_has_wrong_sentinel(self) -> None:
-        calls: list[list[str]] = []
+        calls: list = []
+        fake_urlopen = _model_dispatch_urlopen(
+            {
+                model: (lambda _t: _FakeSSEResponse(_answer_events("WRONG_SENTINEL")))
+                for model in ("anthropic/claude-opus-4-8", "openai/gpt-5.6-sol", "openai/gpt-5.5")
+            },
+            calls,
+        )
 
-        def fake_run(cmd, **kwargs):
-            calls.append(list(cmd))
-            class R:
-                returncode = 0
-                stdout = TestAssistantOpenClawProviderUnit._agent_json("WRONG_SENTINEL")
-                stderr = ""
-            return R()
-
-        provider = self._make_provider(run_func=fake_run)
-        info = provider.readiness(auth_probe=True)
+        provider = self._make_provider()
+        with patch("assistant_openclaw_provider._urlopen_with_deadline", fake_urlopen):
+            info = provider.readiness(auth_probe=True)
 
         self.assertFalse(info["ready"])
         self.assertEqual(info["status"], "degraded")
@@ -511,74 +556,66 @@ class TestAssistantOpenClawProviderUnit(unittest.TestCase):
         self.assertEqual(info["primary_unavailable"]["status"], "unavailable")
         self.assertEqual(info["primary_unavailable"]["reason"], "openclaw_answer_probe_sentinel_mismatch")
         self.assertEqual(info["answer_probe"]["status"], "failed")
-        self.assertEqual(len(calls), 3)  # primary + 2 fallbacks
+        self.assertEqual(len(calls), 1)  # no automatic model fallback
 
-    def test_readiness_auth_probe_converges_when_primary_returns_wrong_sentinel_and_fallback_succeeds(self) -> None:
-        calls: list[list[str]] = []
+    def test_readiness_auth_probe_does_not_fallback_when_primary_returns_wrong_sentinel_and_fallback_succeeds(self) -> None:
+        calls: list = []
+        fake_urlopen = _model_dispatch_urlopen(
+            {
+                "anthropic/claude-opus-4-8": lambda _t: _FakeSSEResponse(_answer_events("WRONG_SENTINEL")),
+                "openai/gpt-5.6-sol": lambda _t: _FakeSSEResponse(_answer_events("PANTHEON_PROVIDER_READY")),
+            },
+            calls,
+        )
 
-        def fake_run(cmd, **kwargs):
-            calls.append(list(cmd))
-            if len(calls) == 1:
-                class R1:
-                    returncode = 0
-                    stdout = TestAssistantOpenClawProviderUnit._agent_json("WRONG_SENTINEL")
-                    stderr = ""
-                return R1()
-            class R2:
-                returncode = 0
-                stdout = TestAssistantOpenClawProviderUnit._agent_json("PANTHEON_PROVIDER_READY")
-                stderr = ""
-            return R2()
+        provider = self._make_provider()
+        with patch("assistant_openclaw_provider._urlopen_with_deadline", fake_urlopen):
+            info = provider.readiness(auth_probe=True)
 
-        provider = self._make_provider(run_func=fake_run)
-        info = provider.readiness(auth_probe=True)
-
-        self.assertTrue(info["ready"])
-        self.assertEqual(info["status"], "ready")
-        self.assertEqual(info["active_model"], "openai/gpt-5.6-sol")
-        self.assertEqual(info["primary_model"], "anthropic/claude-opus-4-8")
-        self.assertTrue(info["fallback_used"])
-        self.assertEqual(info["primary_unavailable"]["model"], "anthropic/claude-opus-4-8")
-        self.assertEqual(info["primary_unavailable"]["status"], "unavailable")
-        self.assertEqual(info["primary_unavailable"]["reason"], "openclaw_answer_probe_sentinel_mismatch")
-        self.assertEqual(info["answer_probe"]["status"], "completed")
-        self.assertEqual(info["answer_probe"]["active_model"], "openai/gpt-5.6-sol")
-        self.assertEqual(len(calls), 2)
+        self.assertFalse(info["ready"])
+        self.assertEqual(info["status"], "degraded")
+        self.assertEqual(len(calls), 1)
+        self.assertEqual(calls[0]["model"], "anthropic/claude-opus-4-8")
+        self.assertNotIn("fallback_used", info)
 
     def test_readiness_auth_probe_fails_when_reply_is_empty(self) -> None:
-        calls: list[list[str]] = []
+        """An upstream reply with no text (and no function calls) raises
+        OPENCLAW_RESPONSES_EMPTY from `_invoke_via_http`, which readiness
+        treats as a per-candidate failure (not the empty-but-successful path
+        the old CLI transport used, since HTTP raises before returning)."""
+        calls: list = []
+        fake_urlopen = _model_dispatch_urlopen(
+            {
+                model: (lambda _t: _FakeSSEResponse([{"type": "response.completed", "response": {"status": "completed"}}]))
+                for model in ("anthropic/claude-opus-4-8", "openai/gpt-5.6-sol", "openai/gpt-5.5")
+            },
+            calls,
+        )
 
-        def fake_run(cmd, **kwargs):
-            calls.append(list(cmd))
-            class R:
-                returncode = 0
-                stdout = TestAssistantOpenClawProviderUnit._agent_json("")
-                stderr = ""
-            return R()
-
-        provider = self._make_provider(run_func=fake_run)
-        info = provider.readiness(auth_probe=True)
+        provider = self._make_provider()
+        with patch("assistant_openclaw_provider._urlopen_with_deadline", fake_urlopen):
+            info = provider.readiness(auth_probe=True)
 
         self.assertFalse(info["ready"])
         self.assertEqual(info["status"], "degraded")
-        self.assertEqual(info["reason"], "openclaw_answer_probe_empty")
-        self.assertEqual(info["primary_unavailable"]["reason"], "openclaw_answer_probe_empty")
+        self.assertEqual(info["reason"], "OPENCLAW_RESPONSES_EMPTY")
+        self.assertEqual(info["primary_unavailable"]["reason"], "OPENCLAW_RESPONSES_EMPTY")
         self.assertEqual(info["answer_probe"]["status"], "failed")
-        self.assertEqual(len(calls), 3)
+        self.assertEqual(len(calls), 1)
 
     def test_readiness_auth_probe_rejects_substring_sentinel(self) -> None:
-        calls: list[list[str]] = []
+        calls: list = []
+        fake_urlopen = _model_dispatch_urlopen(
+            {
+                model: (lambda _t: _FakeSSEResponse(_answer_events("prefix PANTHEON_PROVIDER_READY suffix")))
+                for model in ("anthropic/claude-opus-4-8", "openai/gpt-5.6-sol", "openai/gpt-5.5")
+            },
+            calls,
+        )
 
-        def fake_run(cmd, **kwargs):
-            calls.append(list(cmd))
-            class R:
-                returncode = 0
-                stdout = TestAssistantOpenClawProviderUnit._agent_json("prefix PANTHEON_PROVIDER_READY suffix")
-                stderr = ""
-            return R()
-
-        provider = self._make_provider(run_func=fake_run)
-        info = provider.readiness(auth_probe=True)
+        provider = self._make_provider()
+        with patch("assistant_openclaw_provider._urlopen_with_deadline", fake_urlopen):
+            info = provider.readiness(auth_probe=True)
 
         self.assertFalse(info["ready"])
         self.assertEqual(info["status"], "degraded")
@@ -587,99 +624,72 @@ class TestAssistantOpenClawProviderUnit(unittest.TestCase):
         self.assertEqual(info["primary_unavailable"]["status"], "unavailable")
         self.assertEqual(info["primary_unavailable"]["reason"], "openclaw_answer_probe_sentinel_mismatch")
         self.assertEqual(info["answer_probe"]["status"], "failed")
-        self.assertEqual(len(calls), 3)
-
-    def test_invoke_does_not_retry_on_auth_failure_making_exactly_one_call(self) -> None:
-        calls: list[list[str]] = []
-
-        def fake_run(cmd, **kwargs):
-            calls.append(list(cmd))
-            class R:
-                returncode = 1
-                stdout = ""
-                stderr = "Claude OAuth login session expired (401 unauthorized)"
-            return R()
-
-        provider = self._make_provider(run_func=fake_run)
-        with self.assertRaises(OpenClawProviderError) as ctx:
-            provider.invoke("test", mode="user", operator_id="op-1")
-
-        self.assertEqual(ctx.exception.status_code, 502)
-        self.assertEqual(ctx.exception.error_code, "OPENCLAW_AUTH_UNAVAILABLE")
         self.assertEqual(len(calls), 1)
 
-    def test_invoke_does_not_retry_after_generic_invocation_failure(self) -> None:
-        calls: list[list[str]] = []
+    def test_invoke_does_not_retry_on_http_401_making_exactly_one_call(self) -> None:
+        calls: list = []
 
-        def fake_run(cmd, **kwargs):
-            calls.append(list(cmd))
-            class R:
-                returncode = 1
-                stdout = ""
-                stderr = "generic post-execution error in tool call"
-            return R()
+        def fake_urlopen(req, timeout=None, deadline=None):
+            calls.append(req)
+            raise urllib.error.HTTPError(req.full_url, 401, "unauthorized", {}, None)
 
-        provider = self._make_provider(run_func=fake_run)
-        with self.assertRaises(OpenClawProviderError) as ctx:
-            provider.invoke("test ambiguous generic failure", mode="user", operator_id="op-1")
+        provider = self._make_provider()
+        with patch("assistant_openclaw_provider._urlopen_with_deadline", fake_urlopen):
+            with self.assertRaises(OpenClawProviderError) as ctx:
+                provider.invoke("test", mode="user", operator_id="op-1")
 
-        self.assertEqual(ctx.exception.status_code, 502)
-        self.assertEqual(ctx.exception.error_code, "OPENCLAW_GATEWAY_INVOCATION_FAILED")
-        # Must NOT attempt fallback on generic post-execution failure to satisfy unambiguous-pre-execution-only contract
+        self.assertEqual(ctx.exception.status_code, 401)
+        self.assertEqual(ctx.exception.error_code, "OPENCLAW_RESPONSES_HTTP_ERROR")
         self.assertEqual(len(calls), 1)
 
-    def test_invoke_does_not_retry_when_post_execution_stderr_contains_auth_text(self) -> None:
-        calls: list[list[str]] = []
+    def test_invoke_does_not_retry_after_generic_connection_failure(self) -> None:
+        calls: list = []
 
-        def fake_run(cmd, **kwargs):
-            calls.append(list(cmd))
-            class R:
-                returncode = 1
-                stdout = ""
-                stderr = "post-execution authorization failure in tool call: 401 unauthorized returned from third-party API"
-            return R()
+        def fake_urlopen(req, timeout=None, deadline=None):
+            calls.append(req)
+            raise ConnectionResetError("connection reset")
 
-        provider = self._make_provider(run_func=fake_run)
-        with self.assertRaises(OpenClawProviderError) as ctx:
-            provider.invoke("test post-execution auth failure", mode="user", operator_id="op-1")
+        provider = self._make_provider()
+        with patch("assistant_openclaw_provider._urlopen_with_deadline", fake_urlopen):
+            with self.assertRaises(OpenClawProviderError) as ctx:
+                provider.invoke("test ambiguous generic failure", mode="user", operator_id="op-1")
 
-        self.assertEqual(ctx.exception.status_code, 502)
-        self.assertEqual(ctx.exception.error_code, "OPENCLAW_AUTH_UNAVAILABLE")
-        # Must fail closed on post-execution error even if stderr mentions auth, asserting exactly one call
+        self.assertEqual(ctx.exception.status_code, 503)
+        self.assertEqual(ctx.exception.error_code, "OPENCLAW_RESPONSES_UNREACHABLE")
+        # Must NOT attempt any retry/fallback on an ambiguous connection failure.
         self.assertEqual(len(calls), 1)
 
-    def test_invoke_does_not_retry_when_stdout_has_output_even_if_stderr_mentions_auth(self) -> None:
-        calls: list[list[str]] = []
+    def test_invoke_does_not_retry_on_http_5xx_error(self) -> None:
+        calls: list = []
 
-        def fake_run(cmd, **kwargs):
-            calls.append(list(cmd))
-            class R:
-                returncode = 1
-                stdout = json.dumps({"runId": "run_123", "status": "failed"})
-                stderr = "Claude OAuth login session expired (401 unauthorized)"
-            return R()
+        def fake_urlopen(req, timeout=None, deadline=None):
+            calls.append(req)
+            raise urllib.error.HTTPError(req.full_url, 503, "service unavailable", {}, None)
 
-        provider = self._make_provider(run_func=fake_run)
-        with self.assertRaises(OpenClawProviderError) as ctx:
-            provider.invoke("test partial run output", mode="user", operator_id="op-1")
+        provider = self._make_provider()
+        with patch("assistant_openclaw_provider._urlopen_with_deadline", fake_urlopen):
+            with self.assertRaises(OpenClawProviderError) as ctx:
+                provider.invoke("test post-execution auth failure", mode="user", operator_id="op-1")
 
-        self.assertEqual(ctx.exception.status_code, 502)
-        self.assertEqual(ctx.exception.error_code, "OPENCLAW_AUTH_UNAVAILABLE")
+        self.assertEqual(ctx.exception.status_code, 503)
+        self.assertEqual(ctx.exception.error_code, "OPENCLAW_RESPONSES_HTTP_ERROR")
+        # Must fail closed with exactly one HTTP call, no automatic model swap/CLI fallback.
         self.assertEqual(len(calls), 1)
 
     def test_invoke_does_not_retry_after_timeout(self) -> None:
-        calls: list[list[str]] = []
+        calls: list = []
 
-        def fake_run(cmd, **kwargs):
-            calls.append(list(cmd))
-            raise subprocess.TimeoutExpired(cmd="openclaw agent", timeout=kwargs["timeout"])
+        def fake_urlopen(req, timeout=None, deadline=None):
+            calls.append(req)
+            raise urllib.error.URLError(TimeoutError("timed out"))
 
-        provider = self._make_provider(run_func=fake_run)
-        with self.assertRaises(OpenClawProviderError) as ctx:
-            provider.invoke("test ambiguous turn", mode="user", operator_id="op-1")
+        provider = self._make_provider()
+        with patch("assistant_openclaw_provider._urlopen_with_deadline", fake_urlopen):
+            with self.assertRaises(OpenClawProviderError) as ctx:
+                provider.invoke("test ambiguous turn", mode="user", operator_id="op-1")
 
         self.assertEqual(ctx.exception.status_code, 504)
-        self.assertEqual(ctx.exception.error_code, "OPENCLAW_GATEWAY_TIMEOUT")
+        self.assertEqual(ctx.exception.error_code, "OPENCLAW_RESPONSES_TIMEOUT")
         # Must NOT attempt fallback on ambiguous timeout to prevent running side-effects twice
         self.assertEqual(len(calls), 1)
 
@@ -699,248 +709,171 @@ class TestAssistantOpenClawProviderUnit(unittest.TestCase):
 
     def test_invoke_success(self) -> None:
         reply = "Hello from mock OpenClaw agent"
+        calls: list = []
+        fake_urlopen = _model_dispatch_urlopen(
+            {"anthropic/claude-opus-4-8": lambda _t: _FakeSSEResponse(_answer_events(reply))},
+            calls,
+        )
 
-        def fake_run(cmd, **_kw):
-            class R:
-                returncode = 0
-                stdout = TestAssistantOpenClawProviderUnit._agent_json(reply)
-                stderr = ""
-            return R()
-
-        provider = self._make_provider(run_func=fake_run)
-        result = provider.invoke("Say hello", mode="user", operator_id="op-1")
+        provider = self._make_provider()
+        with patch("assistant_openclaw_provider._urlopen_with_deadline", fake_urlopen):
+            result = provider.invoke("Say hello", mode="user", operator_id="op-1")
         self.assertEqual(result.status, "completed")
         self.assertEqual(result.provider, "openclaw")
         events = result.output.get("json_events", [])
         self.assertTrue(events)
         self.assertEqual(events[0]["item"]["text"], reply)
-        self.assertEqual(result.output["transport"], "cli")
+        self.assertEqual(result.output["transport"], "responses_http")
 
     def test_invoke_selects_validated_per_request_agent_and_reports_it(self) -> None:
-        captured: list[list[str]] = []
+        captured: dict = {}
 
-        def fake_run(cmd, **_kw):
-            captured.append(list(cmd))
-            class R:
-                returncode = 0
-                stdout = TestAssistantOpenClawProviderUnit._agent_json("persona result")
-                stderr = ""
-            return R()
+        def fake_urlopen(req, timeout=None, deadline=None):
+            captured["url"] = req.full_url
+            headers = {k.lower(): v for k, v in req.header_items()}
+            captured["agent_id"] = headers.get("x-openclaw-agent-id")
+            captured["model_header"] = headers.get("x-openclaw-model")
+            captured["body"] = json.loads(req.data.decode("utf-8"))
+            return _FakeSSEResponse(_answer_events("persona result"))
 
-        provider = self._make_provider(run_func=fake_run)
-        result = provider.invoke(
-            "Return opinion JSON",
-            agent_id="persona-opinion-0123456789abcdef01234567",
-            session_id="fresh-persona-session-1",
-            operator_id="op-1",
-        )
+        provider = self._make_provider()
+        with patch("assistant_openclaw_provider._urlopen_with_deadline", fake_urlopen):
+            result = provider.invoke(
+                "Return opinion JSON",
+                agent_id="persona-opinion-0123456789abcdef01234567",
+                session_id="fresh-persona-session-1",
+                operator_id="op-1",
+            )
 
-        cmd = captured[0]
+        self.assertEqual(captured["agent_id"], "persona-opinion-0123456789abcdef01234567")
+        # `user` is derived from authenticated actor + conversation, not the
+        # raw caller-supplied session_id verbatim (tenant isolation). All
+        # three slots (tenant, actor, conversation) are always encoded by
+        # position -- an absent tenant is an empty leading component, not
+        # simply omitted (that would collapse distinct identity shapes onto
+        # the same joined string; see derive_session_user()).
+        self.assertEqual(captured["body"]["user"], "|op-1|fresh-persona-session-1")
+        # A non-default agent with no explicit model override must NOT request
+        # one of the primary/fallback models; it uses the agent's own config.
         self.assertEqual(
-            cmd[cmd.index("--agent") + 1],
-            "persona-opinion-0123456789abcdef01234567",
+            captured["body"]["model"], "openclaw/persona-opinion-0123456789abcdef01234567"
         )
-        self.assertEqual(cmd[cmd.index("--session-id") + 1], "fresh-persona-session-1")
-        self.assertNotIn("--model", cmd)
+        self.assertIsNone(captured["model_header"])
         self.assertEqual(
             result.output["agent_id"],
             "persona-opinion-0123456789abcdef01234567",
         )
 
     def test_invoke_persona_agent_does_not_override_model(self) -> None:
-        captured: list[list[str]] = []
+        captured: dict = {}
 
-        def fake_run(cmd, **_kw):
-            captured.append(list(cmd))
-            class R:
-                returncode = 0
-                stdout = TestAssistantOpenClawProviderUnit._agent_json("persona opinion text")
-                stderr = ""
-            return R()
+        def fake_urlopen(req, timeout=None, deadline=None):
+            headers = {k.lower(): v for k, v in req.header_items()}
+            captured["agent_id"] = headers.get("x-openclaw-agent-id")
+            captured["model_header"] = headers.get("x-openclaw-model")
+            captured["body"] = json.loads(req.data.decode("utf-8"))
+            return _FakeSSEResponse(_answer_events("persona opinion text"))
 
-        provider = self._make_provider(run_func=fake_run)
-        result = provider.invoke(
-            "Return persona opinion",
-            agent_id="persona-opinion-a",
-            mode="user",
-            operator_id="op-1",
-        )
+        provider = self._make_provider()
+        with patch("assistant_openclaw_provider._urlopen_with_deadline", fake_urlopen):
+            result = provider.invoke(
+                "Return persona opinion",
+                agent_id="persona-opinion-a",
+                mode="user",
+                operator_id="op-1",
+            )
 
         self.assertEqual(result.status, "completed")
-        cmd = captured[0]
-        self.assertEqual(cmd[cmd.index("--agent") + 1], "persona-opinion-a")
-        self.assertNotIn("--model", cmd)
+        self.assertEqual(captured["agent_id"], "persona-opinion-a")
+        self.assertEqual(captured["body"]["model"], "openclaw/persona-opinion-a")
+        self.assertIsNone(captured["model_header"])
         self.assertEqual(result.output["agent_id"], "persona-opinion-a")
         self.assertNotIn("active_model", result.output)
 
-    def test_readiness_to_single_invoke_end_to_end_uses_probed_fallback(self) -> None:
-        calls: list[list[str]] = []
+    def test_explicit_model_does_not_change_next_ordinary_turn_model(self) -> None:
+        calls = []
+        fake = _model_dispatch_urlopen({
+            "fixture/explicit": lambda _t: _FakeSSEResponse(_answer_events("answer")),
+            "anthropic/claude-opus-4-8": lambda _t: _FakeSSEResponse(_answer_events("answer")),
+        }, calls)
+        provider = self._make_provider()
+        with patch("assistant_openclaw_provider._urlopen_with_deadline", fake):
+            provider.invoke("explicit", model="fixture/explicit")
+            provider.invoke("ordinary")
+        self.assertEqual([c["model"] for c in calls],
+                         ["fixture/explicit", "anthropic/claude-opus-4-8"])
 
-        def fake_run(cmd, **kwargs):
-            calls.append(list(cmd))
-            if "--model" in cmd and cmd[cmd.index("--model") + 1] == "anthropic/claude-opus-4-8":
-                raise subprocess.TimeoutExpired(cmd="openclaw agent", timeout=kwargs.get("timeout", 5))
-            class R:
-                returncode = 0
-                stdout = TestAssistantOpenClawProviderUnit._agent_json(
-                    "PANTHEON_PROVIDER_READY" if "PANTHEON_PROVIDER_READY" in " ".join(cmd) else "live answer"
-                )
-                stderr = ""
-            return R()
+    def test_invoke_never_spawns_a_subprocess(self) -> None:
+        """Ordinary invoke() must go through HTTP only — no CLI subprocess.
 
-        provider = self._make_provider(run_func=fake_run)
+        `_run_func` is set to raise if ever called, and the HTTP layer is
+        mocked to succeed; the assertion is that invoke() succeeds without
+        ever touching the subprocess spy.
+        """
 
-        # 1. Readiness probe runs: primary hangs/times out, fallback openai/gpt-5.6-sol succeeds
-        info = provider.readiness(auth_probe=True)
-        self.assertTrue(info["ready"])
-        self.assertEqual(info["status"], "ready")
-        self.assertEqual(info["active_model"], "openai/gpt-5.6-sol")
-        self.assertTrue(info["fallback_used"])
-        self.assertEqual(len(calls), 2)
+        def forbidden_run(*_args, **_kwargs):
+            raise AssertionError("must not spawn subprocess for ordinary turn")
 
-        # 2. Single invoke runs next: MUST select the already-probed eligible model directly
-        # and not attempt the timed-out primary again.
-        result = provider.invoke("Reply with exactly: OPENCLAW_LIVE", mode="user", operator_id="smoke-test")
-        self.assertEqual(result.status, "completed")
-        self.assertEqual(result.output["active_model"], "openai/gpt-5.6-sol")
-        self.assertTrue(result.output["fallback_used"])
-        self.assertEqual(result.output["transport"], "cli")
-        self.assertEqual(len(calls), 3)
-        self.assertEqual(calls[2][calls[2].index("--model") + 1], "openai/gpt-5.6-sol")
-
-    def test_invoke_does_not_retry_after_post_execution_authorization_error(self) -> None:
-        calls: list[list[str]] = []
-
-        def fake_run(cmd, **kwargs):
-            calls.append(list(cmd))
-            class R:
-                returncode = 1
-                stdout = ""
-                stderr = "generic post-execution error in tool call"
-            return R()
-
-        provider = self._make_provider(run_func=fake_run)
-        with self.assertRaises(OpenClawProviderError) as ctx:
-            provider.invoke("test post-execution error", mode="user", operator_id="op-1")
-
-        self.assertEqual(ctx.exception.status_code, 502)
-        self.assertEqual(ctx.exception.error_code, "OPENCLAW_GATEWAY_INVOCATION_FAILED")
-        self.assertEqual(len(calls), 1)
-
-    def test_invoke_cli_args_and_env(self) -> None:
-        """CLI gets `agent --agent --message <prompt> --json` (no --url/--token);
-        the prompt travels as the argv `--message` VALUE (the CLI has no stdin
-        mode — `--message -` is taken literally and yields HEARTBEAT_OK), and the
-        ws URL + token are supplied via the subprocess env the CLI reads."""
-        captured: list[list[str]] = []
-        captured_env: list[dict] = []
-        captured_input: list = []
-
-        def fake_run(cmd, **kw):
-            captured.append(list(cmd))
-            captured_env.append(dict(kw.get("env") or {}))
-            captured_input.append(kw.get("input"))
-            class R:
-                returncode = 0
-                stdout = TestAssistantOpenClawProviderUnit._agent_json("response")
-                stderr = ""
-            return R()
-
+        provider = AssistantOpenClawProvider(
+            gateway_url="ws://openclaw-gateway:18789",
+            agent_id="main",
+            token="test-token",
+            _which_func=lambda _: "/usr/local/bin/openclaw",
+            _run_func=forbidden_run,
+        )
         prompt = "Reply with exactly: OPENCLAW_LIVE"
-        provider = self._make_provider(run_func=fake_run)
-        with patch.dict(
-            os.environ,
-            {"PANTHEON_OPENCLAW_GATEWAY_STATE_DIR": "/home/node/.openclaw"},
-            clear=False,
-        ):
-            provider.invoke(prompt, operator_id="op-1")
-        self.assertTrue(captured, "subprocess.run was never called")
-        cmd = captured[0]
-        self.assertIn("agent", cmd)
-        self.assertIn("--agent", cmd)
-        self.assertIn("main", cmd)
-        self.assertIn("--json", cmd)
-        # The prompt is the argv value immediately after --message, NOT stdin
-        # and NOT a literal "-".
-        self.assertIn("--message", cmd)
-        self.assertEqual(cmd[cmd.index("--message") + 1], prompt)
-        self.assertNotEqual(cmd[cmd.index("--message") + 1], "-")
-        # No stdin is fed (the CLI does not read it).
-        self.assertIsNone(captured_input[0])
-        # The agent subcommand does NOT accept --url/--token.
-        self.assertNotIn("--url", cmd)
-        self.assertNotIn("--token", cmd)
-        # URL + token travel via the environment instead.
-        env = captured_env[0]
-        self.assertEqual(env.get("OPENCLAW_GATEWAY_URL"), "ws://openclaw-gateway:18789")
-        self.assertEqual(env.get("OPENCLAW_GATEWAY_TOKEN"), "test-token")
-        self.assertEqual(env.get("OPENCLAW_STATE_DIR"), "/home/node/.openclaw")
-        self.assertEqual(env.get("HOME"), "/home/node")
+        calls: list = []
+        fake_urlopen = _model_dispatch_urlopen(
+            {"anthropic/claude-opus-4-8": lambda _t: _FakeSSEResponse(_answer_events("response"))},
+            calls,
+        )
+        with patch("assistant_openclaw_provider._urlopen_with_deadline", fake_urlopen):
+            result = provider.invoke(prompt, operator_id="op-1")
+        self.assertEqual(result.status, "completed")
+        self.assertEqual(len(calls), 1)
+        self.assertEqual(calls[0]["body"]["input"], prompt)
+        self.assertEqual(calls[0]["model"], "anthropic/claude-opus-4-8")
 
-    def test_invoke_oversized_prompt_uses_responses_http_transport(self) -> None:
-        """Large Management AI context uses the body-based Responses transport.
+    def test_invoke_oversized_prompt_behaves_identically_to_short_prompt(self) -> None:
+        """A >96KiB prompt must use the exact same HTTP transport as a short one.
 
-        The complete prompt must be preserved; the CLI cannot safely accept it
-        as one argv value.  This prevents a BFF deterministic fallback caused
-        solely by the adapter's argv transport limit.
+        Ordinary-turn transport selection never depends on prompt length —
+        there is no separate "oversized" code path anymore.
         """
         calls: list = []
-        captured: dict = {}
-
-        def fake_run(cmd, **kw):
-            calls.append(cmd)
-            class R:
-                returncode = 0
-                stdout = TestAssistantOpenClawProviderUnit._agent_json("response")
-                stderr = ""
-            return R()
-
-        class FakeResp:
-            def __iter__(self):
-                return iter([
-                    b'data: {"type":"response.output_text.done","text":"large provider answer"}\n',
-                    b'data: {"type":"response.completed"}\n',
-                    b"data: [DONE]\n",
-                ])
-
-            def close(self):
-                pass
-
-        def fake_urlopen(req, timeout=None):
-            captured["url"] = req.full_url
-            captured["body"] = req.data
-            return FakeResp()
+        fake_urlopen = _model_dispatch_urlopen(
+            {"anthropic/claude-opus-4-8": lambda _t: _FakeSSEResponse(_answer_events("large provider answer"))},
+            calls,
+        )
 
         big_prompt = "x" * (96 * 1024 + 1)
-        provider = self._make_provider(run_func=fake_run)
-        with patch("urllib.request.urlopen", fake_urlopen):
+        provider = self._make_provider()
+        with patch("assistant_openclaw_provider._urlopen_with_deadline", fake_urlopen):
             result = provider.invoke(
                 big_prompt,
                 operator_id="op-1",
                 session_id="session-large-prompt",
             )
 
-        self.assertFalse(calls, "CLI must not receive an oversized argv prompt")
-        self.assertEqual(captured["url"], "http://openclaw-gateway:18789/v1/responses")
-        body = json.loads(captured["body"].decode("utf-8"))
-        self.assertEqual(body["input"], big_prompt)
-        self.assertTrue(body["stream"])
-        self.assertEqual(body["user"], "session-large-prompt")
+        self.assertEqual(len(calls), 1)
+        self.assertEqual(calls[0]["body"]["input"], big_prompt)
+        self.assertTrue(calls[0]["body"]["stream"])
+        # See derive_session_user(): an absent tenant is an empty leading
+        # component, not omitted.
+        self.assertEqual(calls[0]["body"]["user"], "|op-1|session-large-prompt")
         self.assertEqual(result.status, "completed")
         self.assertEqual(result.output["transport"], "responses_http")
-        self.assertEqual(result.output["transport_reason"], "argv_prompt_exceeds_safe_limit")
         self.assertEqual(
             result.output["json_events"][0]["item"]["text"],
             "large provider answer",
         )
 
     def test_oversized_prompt_unreachable_responses_is_typed(self) -> None:
-        """The normal invoke fallback keeps the Responses unreachable contract."""
-        import urllib.error
-
-        provider = self._make_provider(run_func=lambda *_args, **_kwargs: None)
+        """The normal invoke path keeps the Responses unreachable contract
+        regardless of prompt size."""
+        provider = self._make_provider()
         with patch(
-            "urllib.request.urlopen",
+            "assistant_openclaw_provider._urlopen_with_deadline",
             side_effect=urllib.error.URLError(ConnectionRefusedError("refused")),
         ), self.assertRaises(OpenClawProviderError) as ctx:
             provider.invoke("x" * (96 * 1024 + 1), operator_id="op-1")
@@ -949,17 +882,14 @@ class TestAssistantOpenClawProviderUnit(unittest.TestCase):
         self.assertEqual(ctx.exception.status_code, 503)
 
     def test_invoke_non_zero_exit_raises(self) -> None:
-        def fake_run(cmd, **_kw):
-            class R:
-                returncode = 1
-                stdout = ""
-                stderr = "generic failure"
-            return R()
-
-        provider = self._make_provider(run_func=fake_run)
-        with self.assertRaises(OpenClawProviderError) as ctx:
-            provider.invoke("test", operator_id="op-1")
-        self.assertEqual(ctx.exception.error_code, "OPENCLAW_GATEWAY_INVOCATION_FAILED")
+        provider = self._make_provider()
+        with patch(
+            "assistant_openclaw_provider._urlopen_with_deadline",
+            side_effect=urllib.error.HTTPError("url", 500, "generic failure", {}, None),
+        ):
+            with self.assertRaises(OpenClawProviderError) as ctx:
+                provider.invoke("test", operator_id="op-1")
+        self.assertEqual(ctx.exception.error_code, "OPENCLAW_RESPONSES_HTTP_ERROR")
 
     def test_http_url_converted_to_ws(self) -> None:
         """If an http:// URL was set (old broken config), normalize it to ws://."""
@@ -970,34 +900,34 @@ class TestAssistantOpenClawProviderUnit(unittest.TestCase):
         )
         self.assertTrue(provider._gateway_url.startswith("ws://"))
 
-    def test_no_gateway_url_invoke_uses_default(self) -> None:
-        """When no URL is set explicitly, invoke falls back to the canonical WS address."""
-        captured: list[list[str]] = []
-        captured_env: list[dict] = []
+    def test_no_gateway_url_uses_default_http_base(self) -> None:
+        """When no URL is configured, the derived HTTP base for `/v1/responses`
+        still resolves to the canonical default WS address's HTTP equivalent.
 
-        def fake_run(cmd, **kw):
-            captured.append(list(cmd))
-            captured_env.append(dict(kw.get("env") or {}))
-            class R:
-                returncode = 0
-                stdout = TestAssistantOpenClawProviderUnit._agent_json("ok")
-                stderr = ""
-            return R()
-
+        `stream()`/`invoke()` still require an explicitly configured gateway
+        URL to actually make a request (see `test_stream_requires_gateway_url`
+        below); this only pins the fallback base-URL derivation used once a
+        URL is configured.
+        """
         provider = AssistantOpenClawProvider(
             gateway_url="",
             token="tok",
             _which_func=lambda _: "/usr/local/bin/openclaw",
-            _run_func=fake_run,
         )
         self.assertFalse(provider.configured)
-        provider.invoke("test", operator_id="op-1")
-        # URL is not a CLI arg; the default WS address is exported via env.
-        self.assertEqual(
-            captured_env[0].get("OPENCLAW_GATEWAY_URL"),
-            "ws://openclaw-gateway:18789",
-            "Default WS URL must be exported to the CLI env",
+        self.assertEqual(provider._http_base(), "http://openclaw-gateway:18789")
+
+    def test_stream_requires_gateway_url(self) -> None:
+        """Ordinary turns must not silently proceed without a configured
+        gateway URL — stream()/invoke() surface a typed error instead."""
+        provider = AssistantOpenClawProvider(
+            gateway_url="",
+            token="tok",
+            _which_func=lambda _: "/usr/local/bin/openclaw",
         )
+        with self.assertRaises(OpenClawProviderError) as ctx:
+            provider.invoke("test", operator_id="op-1")
+        self.assertEqual(ctx.exception.error_code, "OPENCLAW_GATEWAY_URL_NOT_SET")
 
 
 if __name__ == "__main__":
@@ -1039,7 +969,7 @@ class TestAssistantOpenClawProviderStream(unittest.TestCase):
 
         captured = {}
 
-        def fake_urlopen(req, timeout=None):
+        def fake_urlopen(req, timeout=None, deadline=None):
             captured["url"] = req.full_url
             captured["body"] = req.data
             captured["auth"] = req.headers.get("Authorization")
@@ -1047,14 +977,14 @@ class TestAssistantOpenClawProviderStream(unittest.TestCase):
             return FakeResp()
 
         provider = self._provider()
-        with mock.patch("urllib.request.urlopen", fake_urlopen):
+        with mock.patch("assistant_openclaw_provider._urlopen_with_deadline", fake_urlopen):
             events = list(provider.stream("hi", operator_id="op-1", session_user="sess-1"))
 
         # URL + auth + payload shape
         self.assertEqual(captured["url"], "http://openclaw-gateway:18789/v1/responses")
         self.assertEqual(captured["auth"], "Bearer test-token")
         body = json.loads(captured["body"].decode("utf-8"))
-        self.assertEqual(body["model"], "openclaw")
+        self.assertEqual(body["model"], "openclaw/main")
         self.assertTrue(body["stream"])
         self.assertEqual(body["user"], "sess-1")
         self.assertEqual(captured["agent_id"], "main")
@@ -1070,11 +1000,11 @@ class TestAssistantOpenClawProviderStream(unittest.TestCase):
         import urllib.error
         from unittest import mock
 
-        def fake_urlopen(req, timeout=None):
+        def fake_urlopen(req, timeout=None, deadline=None):
             raise urllib.error.HTTPError(req.full_url, 404, "Not Found", {}, None)
 
         provider = self._provider()
-        with mock.patch("urllib.request.urlopen", fake_urlopen):
+        with mock.patch("assistant_openclaw_provider._urlopen_with_deadline", fake_urlopen):
             events = list(provider.stream("hi", operator_id="op-1"))
         self.assertEqual(events[-1]["type"], "error")
         self.assertEqual(events[-1]["error_code"], "OPENCLAW_RESPONSES_DISABLED")
@@ -1090,7 +1020,7 @@ class TestAssistantOpenClawProviderStream(unittest.TestCase):
                 pass
 
         provider = self._provider()
-        with mock.patch("urllib.request.urlopen", return_value=FakeResp()):
+        with mock.patch("assistant_openclaw_provider._urlopen_with_deadline", return_value=FakeResp()):
             events = list(provider.stream("hi", operator_id="op-1"))
 
         self.assertEqual(events[-1]["type"], "error")
@@ -1111,7 +1041,7 @@ class TestAssistantOpenClawProviderStream(unittest.TestCase):
                 pass
 
         provider = self._provider()
-        with mock.patch("urllib.request.urlopen", return_value=FakeResp()):
+        with mock.patch("assistant_openclaw_provider._urlopen_with_deadline", return_value=FakeResp()):
             events = list(provider.stream("hi", operator_id="op-1"))
 
         done = [event for event in events if event["type"] == "done"]
@@ -1125,7 +1055,7 @@ class TestAssistantOpenClawProviderStream(unittest.TestCase):
 
         provider = self._provider()
         with mock.patch(
-            "urllib.request.urlopen",
+            "assistant_openclaw_provider._urlopen_with_deadline",
             side_effect=urllib.error.URLError(ConnectionRefusedError("refused")),
         ):
             events = list(provider.stream("hi", operator_id="op-1"))
@@ -1140,7 +1070,7 @@ class TestAssistantOpenClawProviderStream(unittest.TestCase):
 
         provider = self._provider()
         with mock.patch(
-            "urllib.request.urlopen",
+            "assistant_openclaw_provider._urlopen_with_deadline",
             side_effect=urllib.error.URLError(socket.timeout("timed out")),
         ):
             events = list(provider.stream("hi", operator_id="op-1"))
@@ -1160,7 +1090,7 @@ class TestAssistantOpenClawProviderStream(unittest.TestCase):
                 pass
 
         provider = self._provider()
-        with mock.patch("urllib.request.urlopen", return_value=FakeResp()):
+        with mock.patch("assistant_openclaw_provider._urlopen_with_deadline", return_value=FakeResp()):
             events = list(provider.stream("hi", operator_id="op-1"))
 
         self.assertEqual(events[-1]["type"], "error")
@@ -1191,13 +1121,13 @@ class TestAssistantOpenClawProviderStream(unittest.TestCase):
             def close(self):
                 pass
 
-        def fake_urlopen(req, timeout=None):
+        def fake_urlopen(req, timeout=None, deadline=None):
             body = json.loads(req.data.decode("utf-8"))
             calls.append(body)
             return FakeResp()
 
         provider = self._provider()
-        with mock.patch("urllib.request.urlopen", fake_urlopen):
+        with mock.patch("assistant_openclaw_provider._urlopen_with_deadline", fake_urlopen):
             events = list(provider.stream("hi", operator_id="op-1"))
 
         done = [event for event in events if event["type"] == "done"]
@@ -1205,18 +1135,19 @@ class TestAssistantOpenClawProviderStream(unittest.TestCase):
         self.assertEqual(done[0]["text"], "streamed answer")
         self.assertEqual(done[0]["transport"], "responses_http")
         self.assertEqual(len(calls), 1)
-        # Upstream OpenClaw v2026.7.1 contract requires model="openclaw"
-        self.assertEqual(calls[0]["model"], "openclaw")
+        # Upstream OpenClaw v2026.7.1 contract requires an `openclaw`/
+        # `openclaw/<agentId>` alias, never a raw provider id, in `model`.
+        self.assertEqual(calls[0]["model"], "openclaw/main")
 
     def test_stream_surfaces_http_400_as_typed_error(self) -> None:
         import urllib.error
         from unittest import mock
 
-        def fake_urlopen(req, timeout=None):
+        def fake_urlopen(req, timeout=None, deadline=None):
             raise urllib.error.HTTPError(req.full_url, 400, "Bad Request", {}, None)
 
         provider = self._provider()
-        with mock.patch("urllib.request.urlopen", fake_urlopen):
+        with mock.patch("assistant_openclaw_provider._urlopen_with_deadline", fake_urlopen):
             events = list(provider.stream("hi", operator_id="op-1"))
 
         self.assertEqual(len(events), 1)

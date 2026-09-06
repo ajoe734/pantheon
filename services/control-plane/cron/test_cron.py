@@ -6,10 +6,10 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from models import OpenClawRuntimePin
-from openclaw_client import OpenClawCronClient
-from service import CronOrchestrator, PromotionError
-from workflows import PERSONA_FIRST_EVALUATION_WORKFLOW_ID, WORKFLOW_CATALOG
+from services.control_plane.cron.models import OpenClawRuntimePin
+from services.control_plane.cron.openclaw_client import OpenClawCronClient
+from services.control_plane.cron.service import CronOrchestrator, PromotionError
+from services.control_plane.cron.workflows import PERSONA_FIRST_EVALUATION_WORKFLOW_ID, WORKFLOW_CATALOG
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 if str(REPO_ROOT) not in sys.path:
