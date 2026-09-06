@@ -1507,6 +1507,7 @@ def _persona_opinion_admission_error(
             "message": "Governed Persona opinion invocation has an empty tool allowlist.",
         }
     metadata.update({
+        "tenant_id": req.persona_admission.tenant_id,
         "allowed_tools": [],
         "execution_authority": "none",
         "order_submitted": False,
@@ -1520,23 +1521,18 @@ def _persona_opinion_admission_error(
     return None
 
 
-def _invoke_persona_opinion_idempotently(
-    req: AssistantProviderInvokeRequest,
-    *,
-    idempotency_key: str,
-    invoke_fn: Any,
-) -> tuple[int, Dict[str, Any]]:
-    """Fence and replay an exact governed Persona provider attempt.
+def _claim_persona_opinion_invocation(
+    req: AssistantProviderInvokeRequest, *, idempotency_key: str, operator_id: str = "",
+) -> tuple[str, Optional[tuple[int, Dict[str, Any]]]]:
+    """Commit one exact-attempt claim, or return its durable terminal replay.
 
-    The running claim is committed before the upstream CLI is called.  If the
-    adapter dies after OpenClaw has accepted the call but before the terminal
-    response is committed, a restart returns ``in_doubt`` and never calls the
-    provider again.  This deliberately prefers an honest missing opinion over
-    duplicate provider work.
+    Both routes use the same actor-bound fingerprint and existing ledger.
+    Legacy unbound fingerprints fail closed on conflict rather than replaying
+    an opinion to a different actor or silently submitting another attempt.
     """
-
     fingerprint = hashlib.sha256(
-        json.dumps(req.model_dump(mode="json"), sort_keys=True, separators=(",", ":")).encode("utf-8")
+        json.dumps({"request": req.model_dump(mode="json"), "operator_id": operator_id},
+                   sort_keys=True, separators=(",", ":")).encode("utf-8")
     ).hexdigest()
     _OPENCLAW_AGENT_IDEMPOTENCY_DB.parent.mkdir(parents=True, exist_ok=True)
     with sqlite3.connect(str(_OPENCLAW_AGENT_IDEMPOTENCY_DB), timeout=10.0) as connection:
@@ -1551,6 +1547,9 @@ def _invoke_persona_opinion_idempotently(
                 completed_at TEXT
             )
         """)
+        # Serialize lookup plus insert across connections/processes. Release the
+        # transaction before upstream I/O so competing callers see running.
+        connection.execute("BEGIN IMMEDIATE")
         row = connection.execute(
             "SELECT request_fingerprint,state,http_status,response_json "
             "FROM persona_opinion_invocation_replays WHERE idempotency_key=?",
@@ -1562,7 +1561,7 @@ def _invoke_persona_opinion_idempotently(
                     "Idempotency-Key was already used for different Persona invocation content"
                 )
             if row[1] == "completed" and row[2] is not None and row[3]:
-                return int(row[2]), json.loads(str(row[3]))
+                return fingerprint, (int(row[2]), json.loads(str(row[3])))
             raise _PersonaOpinionInvocationInDoubt(
                 "The exact provider attempt was already claimed and has no terminal replay; duplicate invocation is fenced"
             )
@@ -1573,7 +1572,12 @@ def _invoke_persona_opinion_idempotently(
         )
         connection.commit()
 
-    payload = invoke_fn()
+    return fingerprint, None
+
+
+def _complete_persona_opinion_invocation(
+    *, idempotency_key: str, fingerprint: str, payload: Dict[str, Any],
+) -> None:
     response_json = json.dumps(payload, sort_keys=True, separators=(",", ":"))
     with sqlite3.connect(str(_OPENCLAW_AGENT_IDEMPOTENCY_DB), timeout=10.0) as connection:
         updated = connection.execute(
@@ -1586,7 +1590,103 @@ def _invoke_persona_opinion_idempotently(
                 "Provider returned but its durable invocation claim could not be finalized"
             )
         connection.commit()
+
+
+def _invoke_persona_opinion_idempotently(
+    req: AssistantProviderInvokeRequest,
+    *,
+    idempotency_key: str,
+    invoke_fn: Any,
+    operator_id: str = "",
+) -> tuple[int, Dict[str, Any]]:
+    """Fence a crash/in-doubt attempt instead of resubmitting upstream work."""
+    fingerprint, replay = _claim_persona_opinion_invocation(
+        req, idempotency_key=idempotency_key, operator_id=operator_id,
+    )
+    if replay is not None:
+        return replay
+    payload = invoke_fn()
+    _complete_persona_opinion_invocation(
+        idempotency_key=idempotency_key, fingerprint=fingerprint, payload=payload,
+    )
     return 200, payload
+
+
+def _persona_opinion_session_id(idempotency_key: str) -> str:
+    return "pint-" + hashlib.sha256(idempotency_key.strip().encode("utf-8")).hexdigest()[:32]
+
+
+def _persona_opinion_replay_event(payload: Dict[str, Any]) -> Dict[str, Any]:
+    data = payload["data"]
+    output = data["output"]
+    if data["status"] != "completed":
+        return {"type": "error", "error_code": output["reason"], "message": output["message"]}
+    text = next((item["item"]["text"] for item in output.get("json_events", [])
+                 if isinstance(item.get("item"), dict) and "text" in item["item"]), "")
+    event = {
+        "type": "done", "text": text,
+        "elapsed_ms": output.get("duration_ms", 0), "transport": "responses_http",
+    }
+    for key in ("usage", "response_id", "function_calls"):
+        if key in output:
+            event[key] = output[key]
+    return event
+
+
+def _persona_opinion_stream_payload(
+    req: AssistantProviderInvokeRequest, event: Dict[str, Any],
+) -> Dict[str, Any]:
+    """Store stream terminals in the invoke envelope for cross-route replay."""
+    if event["type"] == "error":
+        status = "degraded"
+        output = {"json_events": [], "reason": event["error_code"], "message": event["message"]}
+    else:
+        status = "completed"
+        output = AssistantOpenClawProvider._build_output(
+            text=str(event.get("text") or ""), request_id=str(uuid.uuid4()),
+            elapsed_ms=max(0, int(event.get("elapsed_ms") or 0)), stderr="",
+            agent_id=req.agent_id or OPENCLAW_DEFAULT_AGENT_ID,
+        )
+        output["transport"] = "responses_http"
+        if req.model:
+            output["active_model"] = req.model
+        for key in ("usage", "response_id", "function_calls"):
+            if key in event:
+                output[key] = event[key]
+    return {"status": "ok", "data": {
+        "provider": "openclaw", "mode": "user", "status": status, "output": output,
+        "redaction": {"provider_invocation": {"redacted_fields": 0}},
+    }}
+
+
+def _stream_persona_opinion_idempotently(
+    req: AssistantProviderInvokeRequest, *, idempotency_key: str, operator_id: str,
+    stream_fn: Any,
+) -> Iterator[Dict[str, Any]]:
+    fingerprint, replay = _claim_persona_opinion_invocation(
+        req, idempotency_key=idempotency_key, operator_id=operator_id,
+    )
+    if replay is not None:
+        yield _persona_opinion_replay_event(replay[1])
+        return
+    events = stream_fn()
+    try:
+        for event in events:
+            if event.get("type") in ("done", "error"):
+                # Persist before publishing the terminal event. A disconnect,
+                # crash or failed commit before here leaves a running claim.
+                _complete_persona_opinion_invocation(
+                    idempotency_key=idempotency_key, fingerprint=fingerprint,
+                    payload=_persona_opinion_stream_payload(req, event),
+                )
+                yield event
+                return
+            yield event
+        raise _PersonaOpinionInvocationInDoubt("Provider stream ended without a durable terminal result")
+    finally:
+        close = getattr(events, "close", None)
+        if close is not None:
+            close()
 
 
 @app.post("/api/openclaw-adapter/assistant/providers/openclaw/invoke")
@@ -1664,9 +1764,7 @@ def invoke_openclaw_provider(
             # A deterministic session identity makes the upstream attempt
             # auditable.  The invocation ledger below fences a crash/in-doubt
             # attempt instead of invoking the provider a second time.
-            invoke_kwargs["session_id"] = "pint-" + hashlib.sha256(
-                str(idempotency_key).encode("utf-8")
-            ).hexdigest()[:32]
+            invoke_kwargs["session_id"] = _persona_opinion_session_id(str(idempotency_key))
         try:
             result = _OPENCLAW_AGENT_PROVIDER.invoke(req.prompt, **invoke_kwargs)
         except GatewayOpenClawProviderError as exc:
@@ -1695,6 +1793,7 @@ def invoke_openclaw_provider(
                 req,
                 idempotency_key=str(idempotency_key).strip(),
                 invoke_fn=_invoke_upstream,
+                operator_id=x_operator_id.strip(),
             )
         except _PersonaOpinionInvocationConflict as exc:
             return JSONResponse(status_code=409, content={
@@ -1875,20 +1974,48 @@ def invoke_openclaw_provider_stream(
                 }) + "\n\n"
             yield "data: [DONE]\n\n"
             return
-        try:
-            for evt in _OPENCLAW_AGENT_PROVIDER.stream(
+        def upstream_stream():
+            scoped_session = session_user
+            if req.persona_admission is not None:
+                scoped_session = derive_session_user(
+                    operator_id=operator, metadata=metadata,
+                    session_id=_persona_opinion_session_id(str(idempotency_key)),
+                )
+            return _OPENCLAW_AGENT_PROVIDER.stream(
                 req.prompt,
                 mode=mode,
                 operator_id=operator,
                 trace_id=x_trace_id,
-                session_user=session_user,
+                session_user=scoped_session,
                 model=req.model,
                 agent_id=req.agent_id,
                 messages=req.messages,
                 attachments=req.attachments,
                 context_pack=req.context_pack,
-            ):
-                yield "data: " + json.dumps(evt, ensure_ascii=False) + "\n\n"
+            )
+
+        try:
+            if req.persona_admission is not None:
+                events = _stream_persona_opinion_idempotently(
+                    req, idempotency_key=str(idempotency_key).strip(),
+                    operator_id=operator, stream_fn=upstream_stream,
+                )
+            else:
+                events = upstream_stream()
+            try:
+                for evt in events:
+                    yield "data: " + json.dumps(evt, ensure_ascii=False) + "\n\n"
+            finally:
+                close = getattr(events, "close", None)
+                if close is not None:
+                    close()
+        except (_PersonaOpinionInvocationConflict, _PersonaOpinionInvocationInDoubt) as exc:
+            code = ("PERSONA_OPINION_IDEMPOTENCY_CONFLICT"
+                    if isinstance(exc, _PersonaOpinionInvocationConflict)
+                    else "PERSONA_OPINION_INVOCATION_IN_DOUBT")
+            yield "data: " + json.dumps({
+                "type": "error", "error_code": code, "message": str(exc), "status_code": 409,
+            }) + "\n\n"
         except Exception as exc:  # noqa: BLE001
             yield "data: " + json.dumps({
                 "type": "error", "error_code": "ADAPTER_STREAM_ERROR",

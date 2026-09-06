@@ -12,6 +12,7 @@ import threading
 import time
 import types
 import unittest
+from contextlib import contextmanager
 from concurrent.futures import ThreadPoolExecutor
 from unittest.mock import MagicMock, patch
 
@@ -2297,6 +2298,186 @@ class TestGovernedServantAgentSync(unittest.TestCase):
             self.assertEqual([row.get("x-openclaw-model") for row in captured],
                              [None, None, "fixture/explicit-model", "fixture/explicit-model"])
             self.assertTrue(all(row["x-openclaw-agent-id"] == payload["agent_id"] for row in captured))
+
+    @contextmanager
+    def _admitted_replay_case(self, *, before_response=None, failure=False):
+        from assistant_openclaw_provider import AssistantOpenClawProvider
+
+        payload = self._opinion_payload()
+        admission = {key: payload[key] for key in adapter_main.PersonaOpinionInvocationAdmission.model_fields}
+        body = {"prompt": "Return the exact opinion", "agent_id": payload["agent_id"],
+                "persona_admission": admission, "metadata": {"allowed_tools": []}}
+        headers = {"X-Pantheon-Service-Token": "adapter-secret", "X-Operator-Id": "operator-1"}
+        captured = []
+
+        def http_response(request, **kwargs):
+            captured.append(json.loads(request.data))
+            if before_response is not None:
+                before_response()
+
+            class Response:
+                def __iter__(self):
+                    yield b'data: {"type":"response.output_text.delta","delta":"opinion"}\n\n'
+                    if failure:
+                        yield b'data: {"type":"response.failed","message":"fixture failure"}\n\n'
+                    else:
+                        yield (b'data: {"type":"response.completed","response":{"status":"completed",'
+                               b'"id":"fixture-response","usage":{"input_tokens":10,"output_tokens":2}}}\n\n')
+
+                def close(self):
+                    pass
+
+            return Response()
+
+        provider = AssistantOpenClawProvider(
+            gateway_url="ws://fixture:18789", token="synthetic-token",
+            _run_func=lambda *a, **k: self.fail("ordinary turn spawned CLI"),
+            _which_func=lambda _: None,
+        )
+        with (
+            self._auth_config(),
+            patch.object(adapter_main, "_OPENCLAW_AGENT_PROVIDER", provider),
+            patch.object(adapter_main, "_sync_persona_opinion_agent", return_value={
+                "status": "created", "agent_id": payload["agent_id"], "workspace_ref": payload["workspace_ref"],
+            }),
+            patch.object(adapter_main, "_assert_persona_opinion_runtime_policy", return_value={}),
+            patch.object(provider, "gateway_agents_list", return_value=[{"id": payload["agent_id"]}]),
+            patch("assistant_openclaw_provider._urlopen_with_deadline", side_effect=http_response),
+        ):
+            ensured = client.post(
+                "/api/openclaw-adapter/agents/persona-opinion/ensure", json=payload,
+                headers={**self._HEADERS, "Idempotency-Key": "replay-ensure"},
+            )
+            self.assertIn(ensured.status_code, (200, 201), ensured.text)
+            yield body, headers, captured
+
+    def _post_opinion(self, suffix, body, headers, key):
+        return client.post(
+            "/api/openclaw-adapter/assistant/providers/openclaw/invoke" + suffix,
+            json=body, headers={**headers, "Idempotency-Key": key},
+        )
+
+    def _opinion_terminal(self, response, suffix):
+        if not suffix:
+            return adapter_main._persona_opinion_replay_event(response.json())
+        self.assertEqual(response.text.count("data: [DONE]"), 1)
+        events = [json.loads(line[6:]) for line in response.text.splitlines() if line.startswith("data: {")]
+        terminals = [event for event in events if event["type"] in ("done", "error")]
+        self.assertEqual(len(terminals), 1, response.text)
+        return terminals[0]
+
+    def test_persona_exact_attempt_replays_across_both_mounted_routes(self):
+        from assistant_openclaw_provider import derive_session_user
+
+        with self._admitted_replay_case() as (body, headers, captured):
+            for first_route in ("", "/stream"):
+                for replay_route in ("", "/stream"):
+                    with self.subTest(first=first_route, replay=replay_route):
+                        key = f"exact-{first_route}-{replay_route}"
+                        before = len(captured)
+                        first = self._post_opinion(first_route, body, headers, " " + key + " ")
+                        replay = self._post_opinion(replay_route, body, headers, key)
+                        self.assertEqual(first.status_code, 200, first.text)
+                        self.assertEqual(replay.status_code, 200, replay.text)
+                        self.assertEqual(len(captured), before + 1)
+                        terminal = self._opinion_terminal(first, first_route)
+                        self.assertEqual(self._opinion_terminal(replay, replay_route), terminal)
+                        self.assertEqual(terminal["text"], "opinion")
+                        self.assertEqual(terminal["usage"], {"input_tokens": 10, "output_tokens": 2})
+                        self.assertEqual(terminal["response_id"], "fixture-response")
+                        self.assertEqual(captured[-1]["user"], derive_session_user(
+                            operator_id="operator-1", metadata={"tenant_id": body["persona_admission"]["tenant_id"]},
+                            session_id=adapter_main._persona_opinion_session_id(key),
+                        ))
+                        if first_route:
+                            self.assertIn('"type": "delta"', first.text)
+
+    def test_persona_changed_content_or_actor_conflicts_across_routes(self):
+        with self._admitted_replay_case() as (body, headers, captured):
+            for first_route in ("", "/stream"):
+                key = "conflict-" + first_route
+                self.assertEqual(self._post_opinion(first_route, body, headers, key).status_code, 200)
+                for replay_route in ("", "/stream"):
+                    for changed_body, changed_headers in (
+                        ({**body, "prompt": "different opinion"}, headers),
+                        (body, {**headers, "X-Operator-Id": "another-actor"}),
+                    ):
+                        response = self._post_opinion(replay_route, changed_body, changed_headers, key)
+                        if replay_route:
+                            error = self._opinion_terminal(response, replay_route)
+                        else:
+                            self.assertEqual(response.status_code, 409, response.text)
+                            error = response.json()
+                        self.assertEqual(error["error_code"], "PERSONA_OPINION_IDEMPOTENCY_CONFLICT")
+            self.assertEqual(len(captured), 2)
+
+    def test_persona_failed_terminal_replays_without_false_done(self):
+        with self._admitted_replay_case(failure=True) as (body, headers, captured):
+            for first_route in ("", "/stream"):
+                key = "failed-" + first_route
+                first = self._post_opinion(first_route, body, headers, key)
+                terminal = self._opinion_terminal(first, first_route)
+                self.assertEqual(terminal["type"], "error")
+                for replay_route in ("", "/stream"):
+                    replay = self._post_opinion(replay_route, body, headers, key)
+                    self.assertEqual(self._opinion_terminal(replay, replay_route), terminal)
+            self.assertEqual(len(captured), 2)
+
+    def test_persona_crash_or_cancel_keeps_both_routes_in_doubt(self):
+        with self._admitted_replay_case() as (body, headers, captured):
+            request = adapter_main.AssistantProviderInvokeRequest(**body)
+            closed = []
+
+            def interrupted():
+                try:
+                    yield {"type": "delta", "text": "partial"}
+                    raise RuntimeError("process died before terminal persistence")
+                finally:
+                    closed.append(True)
+
+            for cancel in (False, True):
+                key = f"interrupted-{cancel}"
+                events = adapter_main._stream_persona_opinion_idempotently(
+                    request, idempotency_key=key, operator_id="operator-1", stream_fn=interrupted,
+                )
+                self.assertEqual(next(events)["type"], "delta")
+                if cancel:
+                    events.close()
+                else:
+                    with self.assertRaisesRegex(RuntimeError, "process died"):
+                        next(events)
+                for route in ("", "/stream"):
+                    replay = self._post_opinion(route, body, headers, key)
+                    error = self._opinion_terminal(replay, route) if route else replay.json()
+                    self.assertEqual(error["error_code"], "PERSONA_OPINION_INVOCATION_IN_DOUBT")
+            self.assertEqual(closed, [True, True])
+            self.assertEqual(captured, [])
+
+    def test_persona_concurrent_mounted_attempts_are_fenced_across_routes(self):
+        entered, release = threading.Event(), threading.Event()
+
+        def pause_response():
+            entered.set()
+            if not release.wait(10):
+                raise AssertionError("test did not release upstream")
+
+        with self._admitted_replay_case(before_response=pause_response) as (body, headers, captured):
+            for first_route in ("", "/stream"):
+                for second_route in ("", "/stream"):
+                    entered.clear()
+                    release.clear()
+                    key = f"concurrent-{first_route}-{second_route}"
+                    with ThreadPoolExecutor(max_workers=1) as executor:
+                        first = executor.submit(self._post_opinion, first_route, body, headers, key)
+                        try:
+                            self.assertTrue(entered.wait(5))
+                            second = self._post_opinion(second_route, body, headers, key)
+                            error = self._opinion_terminal(second, second_route) if second_route else second.json()
+                            self.assertEqual(error["error_code"], "PERSONA_OPINION_INVOCATION_IN_DOUBT")
+                        finally:
+                            release.set()
+                        self.assertEqual(self._opinion_terminal(first.result(timeout=5), first_route)["type"], "done")
+            self.assertEqual(len(captured), 4)
 
     def test_default_agent_explicit_model_is_rejected(self):
         """Without a governed non-default `agent_id` + `persona_admission`,
