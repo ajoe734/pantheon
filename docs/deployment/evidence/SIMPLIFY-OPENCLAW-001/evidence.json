@@ -27,7 +27,8 @@
       "Mounted HTTP regressions prove conversation continuity/isolation, session alias precedence, identical default model headers including readiness, and preservation of admitted explicit/agent-configured models.",
       "P1 correction for b643c5fa: invoke and stream now share the durable Persona ledger with atomic actor-bound claims, cross-route terminal replay, in-doubt fencing, and admitted tenant/actor/pint session identity. Streaming persists its terminal envelope before publishing it and forwards first-attempt deltas.",
       "Structured endpoint reads config.get on the same authenticated Gateway before every dispatch; valid exact-agent tools.deny=[\"*\"] is required. Missing, ambiguous, malformed or unavailable policy denies before model execution. Policy RPC and HTTP share one total deadline.",
-      "Replaced fixed replay spawn values with actual CPython Popen audit events attributed to each concurrent arm/case; extra real subprocesses fail the replay count gate. Executed a fresh complete 100-pair replay with frozen inputs."
+      "Replaced fixed replay spawn values with actual CPython Popen audit events attributed to each concurrent arm/case; extra real subprocesses fail the replay count gate. Executed a fresh complete 100-pair replay with frozen inputs.",
+      "Policy config.get now receives the remaining configured turn budget instead of an independent ten-second cap; HTTP receives only the remainder. Native deny-before-dispatch and no retries remain unchanged."
     ],
     "measured_provider_sha256": "95db5140fa79fc60aeac907717f278a4b0cfbf7d2f4bae264029bc7ee0e3d8da",
     "final_provider_sha256": "95db5140fa79fc60aeac907717f278a4b0cfbf7d2f4bae264029bc7ee0e3d8da",
@@ -41,7 +42,8 @@
     "persona_error_replay_anchor": "bf3c58836511888a80382809317c84b87c393f68",
     "ownership_recovery": "Canonical supervisor recovery on 2026-09-06 reassigned owner to Codex2 and reviewer to Codex. Earlier source authors and historical reviewer findings remain identified by their original commits.",
     "structured_policy_anchor": "d2b58415a157fb7b34634104c7684d5448230bf2",
-    "subprocess_observation_anchor": "d78ad0ef1475abed7caf85ee3867c7ba762e8f7a"
+    "subprocess_observation_anchor": "d78ad0ef1475abed7caf85ee3867c7ba762e8f7a",
+    "policy_deadline_anchor": "bacedb4aec093c745b8cdd6050de8620b90acb8d"
   },
   "validation": [
     {
@@ -111,6 +113,18 @@
       "result": "100 complete pairs / 200 measured rows; CLI 100 observed Popen events; HTTP 0 observed events; both arms zero errors; all timing/usage/count gates passed; fixture cleanup exit 0",
       "exit_code": 0,
       "report_sha256": "d5b6e47c45d1017d912ef246afe706361dfcda2d5bb92f1bf8a9107d83510cdd"
+    },
+    {
+      "command": "timeout 120 /tmp/gov-approval-venv/bin/python -m pytest -q services/openclaw-gateway-adapter/tests/test_structured_data_tool_contract.py",
+      "result": "48 passed, 2 warnings in 11.45s",
+      "exit_code": 0,
+      "source_commit": "bacedb4aec093c745b8cdd6050de8620b90acb8d"
+    },
+    {
+      "command": "timeout 360 /tmp/gov-approval-venv/bin/python -m pytest -q -rs services/openclaw-gateway-adapter/ services/control-plane/cron/test_exact_run_wait.py services/control-plane/cron/test_cron.py services/control-plane/cron/test_service.py",
+      "result": "606 passed, 4 legacy external-account smoke skipped, 5 warnings, 26 subtests passed in 137.21s",
+      "exit_code": 0,
+      "source_commit": "bacedb4aec093c745b8cdd6050de8620b90acb8d"
     }
   ],
   "local_gateway_evidence": {
@@ -4980,5 +4994,101 @@
       "The audit hook records process-creation attempts. An OS creation failure aborts acceptance rather than becoming a successful spawn count.",
       "Synthetic model usage and local transport timings do not establish external model costs, model quality or hosted readiness."
     ]
+  },
+  "policy_deadline_correction": {
+    "rejected_head": "716885d9e06defc3b4da644e326a35513d4f9ed4",
+    "reviewer": "Codex",
+    "review_event_time": "2026-09-06T17:33:31Z",
+    "review_failure": {
+      "source": "Canonical reviewer reopen event; not a newly executed owner result",
+      "results": "Missing and verified mounted pinned-Gateway probes each exited 1 with cleanup 0; a third instrumented verified run exited 1 / cleanup 0 and observed config.get subprocess.TimeoutExpired at 10.009s.",
+      "actual_error": "503 OPENCLAW_STRUCTURED_POLICY_UNAVAILABLE",
+      "safety": "Failed closed; reviewer did not observe unsafe native execution."
+    },
+    "owner_baseline_rerun": {
+      "command": "SIMPLIFY_POLICY_PROBE=verified timeout 100 /tmp/gov-approval-venv/bin/python services/openclaw-gateway-adapter/tests/test_openresponses_transport_contract.py",
+      "source_commit": "716885d9e06defc3b4da644e326a35513d4f9ed4",
+      "exit_code": 0,
+      "cleanup_exit_code": 0,
+      "result": "Positive 200; attempted native exec 502 OPENCLAW_RESPONSES_FAILED; three synthetic model requests; no native exec advertised or marker. The prior cap failure is sensitive to CLI startup time, not universal."
+    },
+    "source_commit": "bacedb4aec093c745b8cdd6050de8620b90acb8d",
+    "correction": "Remove only the separate ten-second policy cap. Use deadline - monotonic() for the existing bounded administrative RPC, then pass only the remaining total budget to the unchanged HTTP provider. No policy cache, bypass, retry, model/auth change or increased fixture deadline.",
+    "fixture_turn_deadline_seconds": 15,
+    "mounted_probes": [
+      {
+        "command": "SIMPLIFY_POLICY_PROBE=missing timeout 100 /tmp/gov-approval-venv/bin/python services/openclaw-gateway-adapter/tests/test_openresponses_transport_contract.py",
+        "exit_code": 0,
+        "cleanup_exit_code": 0,
+        "results": [
+          {
+            "case": "denied",
+            "http_status": 503,
+            "error_code": "OPENCLAW_STRUCTURED_POLICY_DENIED",
+            "elapsed_seconds": 7.283184266008902
+          }
+        ],
+        "policy_reads": [
+          {
+            "elapsed_seconds": 7.257392117986456,
+            "budget_seconds": 14.999992059951182
+          }
+        ],
+        "model_requests": 0,
+        "native_exec_advertised": false,
+        "marker_exists": false
+      },
+      {
+        "command": "SIMPLIFY_POLICY_PROBE=verified timeout 100 /tmp/gov-approval-venv/bin/python services/openclaw-gateway-adapter/tests/test_openresponses_transport_contract.py",
+        "exit_code": 0,
+        "cleanup_exit_code": 0,
+        "results": [
+          {
+            "case": "positive",
+            "http_status": 200,
+            "error_code": null,
+            "elapsed_seconds": 8.939435322012287
+          },
+          {
+            "case": "denied",
+            "http_status": 502,
+            "error_code": "OPENCLAW_RESPONSES_FAILED",
+            "elapsed_seconds": 7.659550921001937
+          }
+        ],
+        "policy_reads": [
+          {
+            "elapsed_seconds": 6.7315110539784655,
+            "budget_seconds": 14.999991489981767
+          },
+          {
+            "elapsed_seconds": 6.244290467991959,
+            "budget_seconds": 14.999994059966411
+          }
+        ],
+        "model_requests": 3,
+        "native_exec_advertised": false,
+        "marker_exists": false
+      }
+    ],
+    "image_id": "sha256:f435502b113f873768b64cd7f5f2a63f44d0a236ae3a5647ff42716652c74c31",
+    "benchmark_disposition": "Existing 100-pair observed replay retained unchanged. assistant_openclaw_provider.py bytes and benchmark arms/inputs are unchanged. Only mounted structured admission budgeting and policy-probe timing changed; no new ordinary-turn performance claim.",
+    "limits": "A Gateway that exceeds the configured total deadline still fails closed. Passing local probes do not prove hosted readiness or guarantee availability under arbitrary host load.",
+    "independent_review": "pending fresh exact-head handoff; no approval asserted",
+    "source_sha256": {
+      "services/openclaw-gateway-adapter/main.py": "774e42ccb00c162ef9db9f5bb6d4a2ee73ad860fa34a260df9a6ee9f2497c125",
+      "services/openclaw-gateway-adapter/assistant_openclaw_provider.py": "95db5140fa79fc60aeac907717f278a4b0cfbf7d2f4bae264029bc7ee0e3d8da",
+      "services/openclaw-gateway-adapter/tests/test_structured_data_tool_contract.py": "41d47f40b9081759e0ea695f1ccba0f966d2b1b96bd548f17ceeb7fc8541773f",
+      "services/openclaw-gateway-adapter/tests/test_openresponses_transport_contract.py": "ee5cd100a58d5f1544d2bb0ee9adffa1f7e882ebb44a72be47ce5f96eabd69ce",
+      "integrations/openclaw/integration.md": "e62a365ec7eea69234cb3c680305e03d0df5a16c980b143dbaf6f8731ea4bf95"
+    },
+    "negative_control": {
+      "command": "timeout 60 /tmp/gov-approval-venv/bin/python /tmp/simplify-policy-budget-negative.py",
+      "method": "Load only _assert_structured_gateway_policy from rejected head using git show and AST; replace that function in memory in pytest_runtest_call after repository module isolation. Run the committed policy_startup_over_ten_seconds test. No repository source edits.",
+      "result": "1 expected failure, 47 deselected in 3.01s: old policy RPC cap supplies 10.0 seconds when 15.0 remain.",
+      "exit_code": 1,
+      "classification": "Expected rejected-source failure, not candidate acceptance.",
+      "discarded_harness_attempts": "Two earlier negative-control executions exited 0 because repository test module isolation replaced the old module before the test. They are invalid negative controls and are excluded from acceptance."
+    }
   }
 }
