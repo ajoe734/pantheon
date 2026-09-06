@@ -29,10 +29,19 @@ from common import (  # noqa: E402 - worker_runner must bootstrap its sibling mo
     STATUS_COMMAND_REMOTE_ENV,
     STATUS_COMMAND_ROOT_ENV,
     STATUS_COMMAND_SHA_ENV,
+    TASK_STATE_EVENT_LOG_ENV,
+    TASK_STATE_STORE_MODE_ENV,
+    canonical_task_state_identity_from_environment,
+    canonical_task_state_lock_file,
+    read_regular_file_bytes,
+    worker_process_generation_id,
     first_symlink_component as _first_symlink_component,
     git_toplevel as _git_toplevel,
     validate_status_command_runtime as _validate_status_command_runtime,
 )
+import execution_authorization  # noqa: E402 - see sys.path bootstrap above
+from rewrite.task_state_store import load_snapshot  # noqa: E402
+from rewrite.task_identity import task_generation as canonical_task_generation  # noqa: E402
 
 
 def utc_now() -> str:
@@ -477,6 +486,7 @@ def bind_worker_sandbox(
     coordination_root: Path | None = None,
     extra_readonly_roots: Iterable[Path | str] | None = None,
     sandbox_binary: str | None = None,
+    read_only_worktree: bool = False,
 ) -> list[str]:
     """Wrap one provider command in a mount namespace with a leased-worktree write boundary.
 
@@ -581,7 +591,7 @@ def bind_worker_sandbox(
 
     # 6. Leased delivery worktree is explicitly writable
     if ws_resolved:
-        bwrap_cmd.extend(["--bind", str(ws_resolved), str(ws_resolved)])
+        bwrap_cmd.extend(["--ro-bind" if read_only_worktree else "--bind", str(ws_resolved), str(ws_resolved)])
 
     # 7. Governed coordination state interfaces
     if coord_resolved and (ws_resolved is None or coord_resolved != ws_resolved):
@@ -611,8 +621,12 @@ def bind_worker_sandbox(
     # after coordination mounts have been applied.  Keeping this last is
     # required for worker_commit to create commits without exposing other
     # branches, tags, or linked worktrees.
-    if ws_resolved:
+    if ws_resolved and not read_only_worktree:
         _append_leased_git_metadata_mounts(bwrap_cmd, ws_resolved)
+
+    # /tmp and provider cache mounts above can otherwise reopen a command
+    # runtime located below them. Seal the exact pinned runtime last.
+    bwrap_cmd.extend(["--ro-bind", str(root), str(root)])
 
     # 8. Procfs and user command
     bwrap_cmd.extend([
@@ -707,24 +721,249 @@ def derive_task_id(cmd):
     return m.group(1) if m else None
 
 
+def _get_task_record(coordination_root: Path | None, task_id: str | None) -> dict[str, Any] | None:
+    if coordination_root is None or not task_id:
+        raise RuntimeError("worker_runner: canonical coordination root and task identity are required")
+    identity = _task_store_identity(coordination_root)
+    with canonical_task_state_lock_file(coordination_root / "ai-status.json", shared=True):
+        snapshot = load_snapshot(identity["event_log"])
+    if not snapshot.get("event_count") or not isinstance(snapshot.get("state"), dict):
+        raise RuntimeError("worker_runner: authoritative TaskStore is empty or unavailable")
+    tasks = snapshot["state"].get("tasks")
+    if not isinstance(tasks, list):
+        raise RuntimeError("worker_runner: authoritative task collection is malformed")
+    matches = [task for task in tasks if isinstance(task, dict) and task.get("id") == task_id]
+    if len(matches) != 1:
+        raise RuntimeError("worker_runner: canonical task is missing or ambiguous")
+    return matches[0]
+
+
+def _task_store_identity(coordination_root: Path) -> dict[str, Any]:
+    if os.environ.get(TASK_STATE_STORE_MODE_ENV) != "authoritative":
+        raise RuntimeError("worker_runner: authoritative TaskStore mode is required")
+    raw = os.environ.get(TASK_STATE_EVENT_LOG_ENV, "")
+    if not raw or not Path(raw).is_absolute():
+        raise RuntimeError("worker_runner: absolute authoritative TaskStore journal is required")
+    return canonical_task_state_identity_from_environment(
+        status_root=coordination_root, event_log=Path(raw)
+    )
+
+
+def _own_process_start_ticks() -> int:
+    raw = Path("/proc/self/stat").read_text(encoding="utf-8")
+    return int(raw[raw.rfind(")") + 2:].split()[19])
+
+
+def _runtime_worker_receipt(coordination_root: Path, run_id: str) -> dict[str, Any] | None:
+    state = json.loads(read_regular_file_bytes(
+        coordination_root / ".orchestrator" / "state.json", source="worker launch receipt"
+    ))
+    if not isinstance(state, dict):
+        raise RuntimeError("worker_runner: runtime launch state is malformed")
+    workers = state.get("workers", {})
+    if not isinstance(workers, dict):
+        raise RuntimeError("worker_runner: runtime worker collection is malformed")
+    if run_id in workers:
+        worker = workers[run_id]
+        if not isinstance(worker, dict):
+            raise RuntimeError("worker_runner: canonical worker receipt is malformed")
+        return worker
+    supervisor = state.get("supervisor", {})
+    if not isinstance(supervisor, dict):
+        raise RuntimeError("worker_runner: runtime supervisor state is malformed")
+    reservations = supervisor.get("runtime_phase_reservations", {})
+    if not isinstance(reservations, dict):
+        raise RuntimeError("worker_runner: runtime phase reservations are malformed")
+    matches = []
+    for reservation in reservations.values():
+        if not isinstance(reservation, dict):
+            continue
+        receipt = reservation.get("launch_receipt")
+        worker = receipt.get("worker") if isinstance(receipt, dict) else None
+        if isinstance(worker, dict) and worker.get("run_id") == run_id:
+            matches.append(worker)
+    if len(matches) > 1:
+        raise RuntimeError("worker_runner: ambiguous canonical launch receipt")
+    return matches[0] if matches else None
+
+
+def validate_worker_entry_binding(
+    coordination_root: Path | None,
+    *,
+    run_id: str,
+    command: list[str],
+    workspace_path: Path | None,
+    heartbeat_path: Path,
+    status_path: Path,
+    command_runtime: dict[str, Any],
+    wait_seconds: float = 0,
+    entry: bool = True,
+) -> dict[str, Any]:
+    """Resolve launch authority from the existing supervisor process receipt.
+
+    An adapter starts this wrapper before publishing its durable worker/phase
+    receipt. Wait only for that publication; no provider, sandbox, marker or
+    workspace mutation occurs first. A copied receipt cannot authorize a
+    second process because both Linux PID and immutable start ticks must match.
+    """
+    if coordination_root is None:
+        raise RuntimeError("worker_runner: canonical coordination root is required")
+    deadline = time.monotonic() + max(0, wait_seconds)
+    while True:
+        worker = _runtime_worker_receipt(coordination_root, run_id)
+        if worker is not None:
+            break
+        if time.monotonic() >= deadline:
+            raise RuntimeError("worker_runner: canonical worker launch receipt is missing")
+        time.sleep(min(0.05, max(0, deadline - time.monotonic())))
+    task_id = worker.get("task_id")
+    queue_id = worker.get("queue_event_id")
+    pid = worker.get("pid")
+    ticks = worker.get("pid_start_ticks")
+    if (worker.get("run_id") != run_id or not task_id or not queue_id
+            or type(pid) is not int or pid != os.getpid()
+            or type(ticks) is not int or ticks != _own_process_start_ticks()
+            or worker.get("process_generation") != worker_process_generation_id(
+                task_id=task_id, worker_run_id=run_id, queue_event_id=queue_id,
+                pid=pid, pid_start_ticks=ticks)):
+        raise RuntimeError("worker_runner: canonical dispatch/run/process identity mismatch")
+    if worker.get("status") not in {"starting", "running"}:
+        raise RuntimeError("worker_runner: canonical worker lease is not active")
+    expires = execution_authorization._parse_utc(worker.get("lease_expires_at"))
+    if expires is None or datetime.now(timezone.utc) >= expires:
+        raise RuntimeError("worker_runner: canonical worker lease is expired or missing")
+    if (worker.get("command") != command
+            or worker.get("workspace_path") != (str(workspace_path) if workspace_path else None)
+            or worker.get("heartbeat_path") != str(heartbeat_path)
+            or worker.get("runner_status_path") != str(status_path)
+            or worker.get("status_command_runtime") != command_runtime):
+        raise RuntimeError("worker_runner: command/workspace/runtime does not match canonical receipt")
+    if worker.get("task_state_identity") != _task_store_identity(coordination_root):
+        raise RuntimeError("worker_runner: canonical TaskStore receipt binding mismatch")
+    task = _get_task_record(coordination_root, task_id)
+    assert task is not None
+    generation = canonical_task_generation(task)
+    snapshot = worker.get("request_snapshot")
+    if (generation < 1
+            or ("generation" in task and type(task["generation"]) is not int)
+            or worker.get("task_generation") != generation
+            or not isinstance(snapshot, dict)
+            or snapshot.get("task_id") != task_id
+            or snapshot.get("task_generation") != generation
+            or snapshot.get("agent_id") != worker.get("agent_id")):
+        raise RuntimeError("worker_runner: canonical task generation or dispatch identity mismatch")
+    metadata = snapshot.get("metadata")
+    if not isinstance(metadata, dict):
+        raise RuntimeError("worker_runner: canonical dispatch metadata is missing")
+    agent = str(worker.get("logical_agent_id") or worker.get("agent_id") or "")
+    owner = str(task.get("owner") or "")
+    reviewer = str(task.get("reviewer") or "")
+    reason = snapshot.get("reason")
+    role = ""
+    if reason in {"owned_ready_dispatch", "owned_in_progress_dispatch"}:
+        if agent.casefold() == owner.casefold() and (not entry or task.get("status") in {"todo", "in_progress"}):
+            role = "owner"
+    elif reason == "review_ready_dispatch":
+        if agent.casefold() == reviewer.casefold() and (not entry or task.get("status") == "review"):
+            role = "reviewer"
+    elif reason == "owned_finalize_dispatch":
+        if agent.casefold() == owner.casefold() and (not entry or task.get("status") == "review_approved"):
+            role = "owner_finalize"
+    if not role or not agent:
+        raise RuntimeError("worker_runner: canonical purpose/assignment is not current")
+    authorization_run_id = str(metadata.get("execution_authorization_run_id") or "")
+    ensure_execution_authorized_before_launch(
+        coordination_root, task_id, active_role=role, run_id=authorization_run_id
+    )
+    authorization = task.get("execution_authorization")
+    policy = authorization.get("policy") if isinstance(authorization, dict) else None
+    source_root = worker.get("workspace_source_root")
+    source_readonly_roots = []
+    if source_root:
+        source = Path(str(source_root))
+        if not source.is_absolute() or _first_symlink_component(source) is not None:
+            raise RuntimeError("worker_runner: canonical workspace source root is invalid")
+        source_readonly_roots.append(source)
+    return {"task_id": task_id, "agent": agent, "role": role,
+            "owner": owner, "reviewer": reviewer,
+            "authorization_run_id": authorization_run_id,
+            "source_readonly_roots": source_readonly_roots,
+            "read_only_worktree": role != "owner" and (
+                execution_authorization.task_privileged_by_source(task)
+                or (isinstance(policy, dict) and bool(policy.get("requires_execution_authorization"))))}
+
+
 def _get_task_roles(coordination_root: Path | None, task_id: str | None) -> dict[str, str]:
     roles = {"owner": "", "reviewer": ""}
-    if not coordination_root or not task_id:
-        return roles
-    status_file = coordination_root / "ai-status.json"
-    if not status_file.exists():
-        return roles
-    try:
-        data = json.loads(status_file.read_text(encoding="utf-8"))
-        if isinstance(data, dict):
-            for t in data.get("tasks", []):
-                if isinstance(t, dict) and t.get("id") == task_id:
-                    roles["owner"] = str(t.get("owner") or "").strip()
-                    roles["reviewer"] = str(t.get("reviewer") or "").strip()
-                    break
-    except Exception:
-        pass
+    task = _get_task_record(coordination_root, task_id)
+    if isinstance(task, dict):
+        roles["owner"] = str(task.get("owner") or "").strip()
+        roles["reviewer"] = str(task.get("reviewer") or "").strip()
     return roles
+
+
+def ensure_execution_authorized_before_launch(
+    coordination_root: Path | None,
+    task_id: str | None,
+    *,
+    active_role: str,
+    run_id: str,
+) -> None:
+    """Direct worker-entry execution-authorization barrier (SA/SD 4).
+
+    ``worker_runner`` is the actual process-launch boundary: a direct
+    invocation (bypassing ``supervisor.start_worker_for_request``'s planned
+    dispatch), a replayed queue event, or a stale run id must never launch a
+    privileged owner-execution attempt just because it reached this binary.
+    Only the owner-execution purpose spends/requires the grant; a reviewer or
+    finalize invocation is read-only and is intentionally not checked here,
+    matching the purpose-scoped gate in ``rewrite/dispatch_admission.py`` and
+    ``supervisor.start_worker_for_request``.
+
+    Raises :class:`RuntimeError` before any subprocess is created if the
+    canonical task is privileged and this exact run is not a live, current,
+    unexpired ``STATE_RESERVED`` binding for ``run_id``.
+    """
+
+    task = _get_task_record(coordination_root, task_id)
+    if active_role in {"reviewer", "owner_finalize"}:
+        return
+    if active_role != "owner" or task is None:
+        raise RuntimeError("worker_runner: canonical execution purpose is missing")
+    now = datetime.now(timezone.utc)
+    if not execution_authorization.reservation_is_current(task, run_id=run_id, now=now):
+        raise RuntimeError(
+            f"worker_runner: task {task_id} is not currently execution-authorized "
+            f"for run {run_id!r}; refusing to launch owner-execution process"
+        )
+
+
+def execution_authorization_still_current(
+    coordination_root: Path | None,
+    task_id: str | None,
+    *,
+    active_role: str,
+    run_id: str,
+) -> bool:
+    """Running-loop counterpart to :func:`ensure_execution_authorized_before_launch`.
+
+    A revoked or expired reservation only prevents *new* effects (SA/SD 4);
+    it does not retroactively undo a process already launched. This is the
+    safe-stop boundary that enforces that half of the contract for an
+    already-running owner-execution attempt: the running loop re-reads the
+    canonical task on every heartbeat tick and, once this returns ``False``,
+    the caller must move to terminate the child rather than let it keep
+    running unobserved for the rest of its lifetime. Non-owner purposes are
+    never gated, matching :func:`ensure_execution_authorized_before_launch`.
+    """
+
+    try:
+        ensure_execution_authorized_before_launch(
+            coordination_root, task_id, active_role=active_role, run_id=run_id
+        )
+    except (RuntimeError, ValueError, OSError):
+        return False
+    return True
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -740,9 +979,6 @@ def main(argv: list[str] | None = None) -> int:
     if not command:
         print("worker_runner: missing command after --", file=sys.stderr)
         return 2
-
-    agent = derive_agent(args.run_id)
-    task_id = derive_task_id(command)
 
     raw_heartbeat_path = Path(args.heartbeat_path)
     raw_status_path = Path(args.status_path)
@@ -787,6 +1023,20 @@ def main(argv: list[str] | None = None) -> int:
             "PANTHEON_COMMAND_ROOT must be separate from PANTHEON_STATUS_ROOT "
             "so the provider runtime can be mounted read-only"
         )
+    entry_arguments = {
+        "run_id": args.run_id, "command": list(command),
+        "workspace_path": workspace_path,
+        "heartbeat_path": heartbeat_path, "status_path": status_path,
+        "command_runtime": command_runtime,
+    }
+    binding = validate_worker_entry_binding(
+        coordination_root, **entry_arguments, wait_seconds=10.0
+    )
+    agent = binding["agent"]
+    task_id = binding["task_id"]
+    active_role = binding["role"]
+    task_roles = {"owner": binding["owner"], "reviewer": binding["reviewer"]}
+    authorization_run_id = binding["authorization_run_id"]
     command = bind_relative_command_to_runtime(
         command,
         command_root,
@@ -796,6 +1046,8 @@ def main(argv: list[str] | None = None) -> int:
         command_root=command_root,
         workspace_path=workspace_path if isinstance(workspace_path, Path) else None,
         coordination_root=coordination_root,
+        read_only_worktree=binding["read_only_worktree"],
+        extra_readonly_roots=binding["source_readonly_roots"],
     )
     if workspace_path:
         try:
@@ -804,19 +1056,8 @@ def main(argv: list[str] | None = None) -> int:
         except OSError as exc:
             print(f"worker_runner: failed to isolate working directory to {workspace_path}: {exc}", file=sys.stderr)
 
-    task_roles = _get_task_roles(coordination_root, task_id)
-    active_role = ""
-    if agent:
-        agent_lower = agent.lower()
-        normalized_agent = agent_lower.split("-")[0]
-        owner_lower = task_roles["owner"].lower() if task_roles["owner"] else ""
-        reviewer_lower = task_roles["reviewer"].lower() if task_roles["reviewer"] else ""
-        if normalized_agent == owner_lower.split("-")[0] or agent_lower == owner_lower:
-            active_role = "owner"
-        elif normalized_agent == reviewer_lower.split("-")[0] or agent_lower == reviewer_lower:
-            active_role = "reviewer"
-
     interval = max(1.0, float(args.heartbeat_interval_seconds or 15.0))
+    authorization_interval = min(interval, 15.0)
     started_at = utc_now()
     child: subprocess.Popen[str] | None = None
     terminating_signal: int | None = None
@@ -882,16 +1123,20 @@ def main(argv: list[str] | None = None) -> int:
     signal.signal(signal.SIGINT, forward_signal)
 
     try:
-        publish("starting")
-        child = subprocess.Popen(
-            sandboxed_command,
-            text=True,
-            cwd=str(workspace_path) if workspace_path else None,
-            start_new_session=True,
-        )
+        assert coordination_root is not None
+        with canonical_task_state_lock_file(coordination_root / "ai-status.json", shared=True):
+            validate_worker_entry_binding(coordination_root, **entry_arguments)
+            publish("starting")
+            child = subprocess.Popen(
+                sandboxed_command,
+                text=True,
+                cwd=str(workspace_path) if workspace_path else None,
+                start_new_session=True,
+            )
         status["child_pid"] = child.pid
         publish("running")
         next_heartbeat = time.monotonic() + interval
+        next_authorization_check = time.monotonic() + authorization_interval
         direct_exit_code: int | None = None
         while True:
             if direct_exit_code is None:
@@ -899,6 +1144,37 @@ def main(argv: list[str] | None = None) -> int:
                 if direct_exit_code is not None:
                     status["exit_code"] = direct_exit_code
                     status["finished_at"] = utc_now()
+
+            # Safe-stop boundary (SA/SD 4): an already-launched owner-execution
+            # attempt is re-checked against the canonical reservation on every
+            # cadence tick. Revocation only prevents *new* effects, so this
+            # cannot retroactively undo work already done -- it only moves
+            # this running process onto the same bounded termination path a
+            # forwarded SIGTERM already uses, instead of letting a revoked or
+            # expired attempt keep running unobserved for its full lifetime.
+            if (
+                direct_exit_code is None
+                and terminating_signal is None
+                and time.monotonic() >= next_authorization_check
+            ):
+                next_authorization_check = time.monotonic() + authorization_interval
+                try:
+                    validate_worker_entry_binding(coordination_root, **entry_arguments, entry=False)
+                    authorization_current = True
+                except (RuntimeError, ValueError, OSError):
+                    authorization_current = False
+                if not authorization_current:
+                    status["execution_authorization_revoked"] = True
+                    terminating_signal = signal.SIGTERM
+                    signal_received_at = time.monotonic()
+                    status["signal"] = signal.SIGTERM
+                    try:
+                        os.killpg(child.pid, signal.SIGTERM)
+                    except OSError:
+                        try:
+                            child.send_signal(signal.SIGTERM)
+                        except OSError:
+                            pass
 
             # Normal path: child exited and we aren't terminating
             if direct_exit_code is not None and terminating_signal is None:

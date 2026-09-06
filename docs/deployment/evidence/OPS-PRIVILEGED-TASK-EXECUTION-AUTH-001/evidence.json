@@ -1,0 +1,145 @@
+{
+  "schema_version": "pantheon.ops-privileged-task-execution-auth.v1",
+  "task": {
+    "id": "OPS-PRIVILEGED-TASK-EXECUTION-AUTH-001",
+    "title": "Separate privileged task intake from genuine MFA-bound execution authorization",
+    "owner": "Codex2",
+    "reviewer": "Codex",
+    "base_branch": "dev",
+    "task_branch": "task/OPS-PRIVILEGED-TASK-EXECUTION-AUTH-001"
+  },
+  "plan": {
+    "path": "docs/04/pantheon_first_release_closure_2026-09-06/EXECUTION_AUTHORIZATION_SA_SD.md",
+    "source_sha256": "dde7dfc27ca02bf5d8920c9e176d2d543904540a5103cf0c756b0d7b73372e66",
+    "packet_id": "pkt-privileged-execution-auth-20260906-v2",
+    "packet_digest": "325967d8df0c347544f5c23eb5749e377e1fe1f6382d51f79e47340f4a52fe18"
+  },
+  "revision_history": [
+    {
+      "head_sha": "a924749f813abb59d6c9ea100a247134241863aa",
+      "outcome": "rejected",
+      "reviewer": "Codex2"
+    },
+    {
+      "head_sha": "1780c40a5e070063a8fae28c74ab3a487a965be7",
+      "outcome": "rejected",
+      "reviewer": "Codex2"
+    },
+    {
+      "head_sha": "7b3954e4e6eedc7433bfaa57f2cf3142cca1b880",
+      "outcome": "partial_repair",
+      "note": "Prior owner commit explicitly left P1-1/2/3/8 and P2 open."
+    },
+    {
+      "outcome": "owner_repair",
+      "owner": "Codex2",
+      "reviewer": "Codex",
+      "note": "Canonical generation 6 assignment supersedes original plan assignment; no independent approval claimed by implementation helpers."
+    }
+  ],
+  "changes": [
+    "Full verified signed task_spec hash and work_class are part of immutable policy digest. Current contract, assignment, generation and target are checked before submission, reserve and entry; reopen/reassignment preserve policy and restore pending hold.",
+    "Verified MFA issuer public-key fingerprint binds nonce replay identity, so unsigned key aliases cannot reuse the same assertion. Public source signing trust and MFA issuer trust remain separate; absent genuine issuer stays closed.",
+    "Authoritative spend reloads regardless of a stale queue snapshot and binds exactly one event attempt. Reservation is rechecked under the canonical read lock through adapter launch; crash/replay never replenishes the grant.",
+    "Existing worker/phase launch receipt binds Linux PID/start ticks, run/queue, command, task/generation/role, workspace, command runtime and authoritative journal identity. Entry and heartbeat read the journal without mirror fallback. Legacy absent generation follows canonical generation 1.",
+    "Worker final Popen repeats authorization under canonical shared lock. Revocation requests termination at existing heartbeat boundary (maximum 15 seconds) then bounded five-second SIGTERM grace; no rollback completion is asserted.",
+    "Privileged review/finalization does not consume a grant and uses a read-only task worktree. Existing sandbox now explicitly seals command runtime and canonical workspace source roots after the broad temporary-directory mount.",
+    "Runtime promotion/discover-only executes the chosen candidate interpreter in isolation, proves both intake/execution behavior, verifies actual runner entry and guard wiring, and records candidate module paths/hashes. Unsafe older candidates fail closed.",
+    "Approved SA/SD is byte-identical to immutable source including trailing blank line. Operational commands live in current runbook; first-release entrypoint and supplemental manifest distinguish source, runtime and hosted gates.",
+    "show derives admitted_pending_authorization/authorization_ready/reserved_attempt/expired/revoked/invalid without changing input state or claiming overall runnable/running. The shared dispatch wrapper recognizes only the authorization-owned legacy wait fence; genuine operator holds and pending review intents remain enforced, including grant/revoke maintenance."
+  ],
+  "verification": {
+    "status": "passed",
+    "base_sha": "5d15c7b821a846d24b76ce4f653f990482da0518",
+    "plan_baseline_sha": "55cd327b9200648e5d42360907dedc17ddf6f5fc",
+    "commands": [
+      {
+        "name": "bridge_cli",
+        "command": "PYTHONPATH=.orchestrator PYTHONDONTWRITEBYTECODE=1 timeout 240s .venv-pantheon/bin/python3 -m pytest -q .orchestrator/development_bridge/tests/test_dev_bridge.py .orchestrator/development_bridge/tests/test_dev_bridge_dispatch_cli.py .orchestrator/development_bridge/tests/test_dev_bridge_inbox.py .orchestrator/development_bridge/tests/test_dev_bridge_inbox_cli.py .orchestrator/development_bridge/tests/test_dev_bridge_materialize.py .orchestrator/development_bridge/tests/test_dev_bridge_reliability.py scripts/test_ai_status.py",
+        "source_head": "ba730509ef8a465248b2bd10219ddce6b29162dd",
+        "exit_code": 0,
+        "passed": 541,
+        "subtests_passed": 119,
+        "failed": 0,
+        "skipped": 0,
+        "xfail": 0,
+        "terminal_output_sha256": "99844d53d42b8c2b41bd48e09b99c82c5c20342d4f2f51d0dd3196cd244b9495",
+        "terminal_summary": "541 passed, 119 subtests passed in 204.57s (0:03:24)"
+      },
+      {
+        "name": "supervisor_worker",
+        "command": "PYTHONPATH=.orchestrator PYTHONDONTWRITEBYTECODE=1 timeout 300s .venv-pantheon/bin/python3 -m pytest -q .orchestrator/test_supervisor.py .orchestrator/test_worker_runner_heartbeat.py",
+        "source_head": "ba730509ef8a465248b2bd10219ddce6b29162dd",
+        "exit_code": 0,
+        "passed": 316,
+        "subtests_passed": 55,
+        "failed": 0,
+        "skipped": 0,
+        "xfail": 0,
+        "terminal_output_sha256": "ebf4ca64c5fcf49386d1ea502e914b0243eb835ee9ac21735f92f77731f98bab",
+        "terminal_summary": "316 passed, 55 subtests passed in 154.05s (0:02:34)"
+      },
+      {
+        "name": "policy_runtime",
+        "command": "PYTHONPATH=.orchestrator PYTHONDONTWRITEBYTECODE=1 timeout 240s .venv-pantheon/bin/python3 -m pytest -q .orchestrator/test_execution_authorization.py .orchestrator/rewrite/test_dispatch_admission.py .orchestrator/test_dispatch_policy.py .orchestrator/rewrite/test_task_machine.py .orchestrator/test_runtime_state.py .orchestrator/test_common.py scripts/test_promote_supervisor_runtime.py scripts/test_provision_live_supervisor_config.py scripts/test_status_command_runtime_pin.py",
+        "source_head": "ba730509ef8a465248b2bd10219ddce6b29162dd",
+        "exit_code": 0,
+        "passed": 368,
+        "subtests_passed": 147,
+        "failed": 0,
+        "skipped": 0,
+        "xfail": 0,
+        "terminal_output_sha256": "383187590b0373b150b8a0a7712573c74e50abc79d62aaf885fe3bff7dc4d86c",
+        "terminal_summary": "368 passed, 147 subtests passed in 134.94s (0:02:14)"
+      }
+    ],
+    "full_batch_totals": {
+      "passed": 1225,
+      "subtests_passed": 321,
+      "failed": 0,
+      "skipped": 0,
+      "xfail": 0
+    },
+    "provenance_validation": {
+      "source_copy_byte_identical": true,
+      "manifest_hashes_verified": 36,
+      "task_changed_paths_all_declared": 29
+    },
+    "note": "All three complete bounded batches were rerun on the clean final source commit ba730509ef8a465248b2bd10219ddce6b29162dd after the readback/hold refinements. Every terminal output and exit status was collected. The following review-evidence commit changes only this JSON manifest; exact PR head is frozen in canonical delivery_binding."
+  },
+  "delivery": {
+    "repository": "ajoe734/pantheon",
+    "pr": 5627,
+    "pr_url": "https://github.com/ajoe734/pantheon/pull/5627",
+    "independent_review": "pending_fresh_exact_head_handoff",
+    "merge_commit": null,
+    "runtime_acceptance": null,
+    "source_verified_commit": "ba730509ef8a465248b2bd10219ddce6b29162dd",
+    "review_head_reference": "Canonical handoff delivery_binding binds the exact PR head and this committed manifest blob."
+  },
+  "remaining_coordinator_acceptance": [
+    "Assigned reviewer independently reviews the frozen exact PR head and this manifest; existing canonical integrator merges after approval/checks.",
+    "Coordinator uses existing qualified runtime discover-only preflight/promotion with explicit current roots, selected Python, public verifier binding and preserved workers/leases. Record actual live both-barrier/no-MFA-no-launch evidence; source merge alone is insufficient.",
+    "Only after accepted source and qualified runtime, deduplicate and submit the three original unsigned hosted tasks through signed bridge as pending authorization; update only obsolete MFA-at-intake wording in the not-yet-signed source draft."
+  ],
+  "hosted_intake": {
+    "source_draft": "/tmp/pantheon-dispatch-dedup-20260906.0T4kBq/hosted-packet.pending-genuine-authorization.json",
+    "task_ids": [
+      "DEV-RELEASE-HOSTED-001",
+      "L12-HOSTED-001",
+      "MGMT-AGORA-E2E-001"
+    ],
+    "receipts": [],
+    "status": "not_submitted_by_this_source_worker",
+    "required_preservation": "original IDs, hosted class, pantheon-dev resource, full acceptance/artifacts/dependencies; STRUCT remains sole product source join"
+  },
+  "not_claimed": [
+    "genuine MFA proof or live grant",
+    "live runtime acceptance",
+    "hosted task admission",
+    "product/Management/Agora/OpenClaw/all12-loop acceptance",
+    "FE/BFF exact-pair deployment or rollback success"
+  ],
+  "test_boundary": "All synthetic principals, keys, TaskStores, runtime receipts and subprocess effects are isolated local fixtures. They are not live credentials, operator evidence or hosted proof.",
+  "prior_failed_batches": "Earlier partial repair evidence labelled some nonzero test runs as pass. This revision replaces those claims with terminal clean-head batch results; intermediate failed runs remain failure diagnostics, never accepted verification."
+}
