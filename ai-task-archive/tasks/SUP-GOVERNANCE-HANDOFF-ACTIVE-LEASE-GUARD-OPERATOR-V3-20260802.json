@@ -1,0 +1,143 @@
+{
+  "version": 1,
+  "task_id": "SUP-GOVERNANCE-HANDOFF-ACTIVE-LEASE-GUARD-OPERATOR-V3-20260802",
+  "archived_at": "2026-08-02T09:57:29Z",
+  "terminal_status": "done",
+  "terminal_outcome": "superseded",
+  "task": {
+    "acceptance": [
+      "Explicit operator constraint remains authoritative: Codex and Codex2 may use different accounts; keep configured quota groups distinct and add no global mutual-review prohibition.",
+      "Dependency-only replacement after a stale post-merge coordinator race. PR #4499 was approved and merged as c8bfca4f3e40559c5d04b3eec4c2e6ae69681c65; do not restore the invalid shared-account V5 policy.",
+      "Explicit operator constraint is authoritative: Codex and Codex2 may use different accounts; do not merge configured quota groups, hardcode account equivalence, or add a global mutual-review prohibition.",
+      "Owner Codex and reviewer Human/Ops are task-scoped live-provider fallbacks because the current Antigravity lane reports quota_reached and Codex2 reports token_revoked. This does not change provider/account/reviewer policy.",
+      "Start from current origin/dev in a clean governed worktree and deliver only through commit, PR to dev, exact-head checks/review, merge, and canonical archive. Do not reuse the superseded task state or approval binding.",
+      "Reproduce the 01:44 to 01:48 Human/Ops exact-head handoff incident",
+      "A governance-only assign or reopen cannot supersede a healthy active implementation lease",
+      "Explicit cancel eligible preemption or terminal task truth may end the lease",
+      "Execution responsibility and review handoff provenance remain separately auditable",
+      "Lease decisions use exact task run process generation and canonical event ordering",
+      "Concurrent owner mutation fails closed without killing unrelated work",
+      "Focused supervisor and ai_status regressions pass",
+      "No account-group or reviewer-policy changes",
+      "All task evidence, commit trailers, PR binding, and rollback records use exact replacement Task-ID SUP-GOVERNANCE-HANDOFF-ACTIVE-LEASE-GUARD-OPERATOR-V3-20260802; the superseded source Task-ID is evidence only."
+    ],
+    "artifacts": [
+      ".orchestrator/supervisor.py",
+      ".orchestrator/test_supervisor.py",
+      "scripts/ai_status.py",
+      "scripts/test_ai_status.py",
+      "docs/deployment/evidence/supervisor/SUP-GOVERNANCE-HANDOFF-ACTIVE-LEASE-GUARD-OPERATOR-V3-20260802/"
+    ],
+    "depends_on": [
+      "SUP-ASSIGNMENT-FALLBACK-ATOMIC-REBINDS-OPERATOR-V4-20260802",
+      "SUP-ASSISTANT-DEV-BRIDGE-ASSIGN-LOCK-TIMEOUT-OPERATOR-V3-20260802"
+    ],
+    "dev_bridge": {
+      "actor": {
+        "capabilities": [
+          "assistant.kernel.repair",
+          "dev-task.dispatch",
+          "fleet.dispatch"
+        ],
+        "id": "Human/Ops",
+        "roles": [
+          "operator"
+        ]
+      },
+      "audit_conversation_href": "codex://root/supervisor-autoworker-complete-audit-20260802#corrected-bridge-scheduler-canary-chain-v3",
+      "conversation_id": "codex-root-supervisor-autoworker-complete-audit-20260802",
+      "documents": [
+        {
+          "kind": "EXPLICIT_OPERATOR_CONSTRAINT",
+          "path": "codex://root/supervisor-autoworker-complete-audit-20260802#operator-account-constraint",
+          "sourceRefs": [
+            "keep Codex/Codex2 quota groups distinct",
+            "no global mutual-review ban",
+            "complete remaining remediation"
+          ]
+        },
+        {
+          "kind": "MERGED_ACCOUNT_NEUTRAL_GOVERNANCE",
+          "path": "https://github.com/ajoe734/pantheon/pull/4499",
+          "sourceRefs": [
+            "merge c8bfca4f3e40559c5d04b3eec4c2e6ae69681c65",
+            "precedes invalid V5 admission"
+          ]
+        },
+        {
+          "kind": "CORRECTED_ATOMIC_DEPENDENCY",
+          "path": "ai-status://SUP-ASSIGNMENT-FALLBACK-ATOMIC-REBINDS-OPERATOR-V4-20260802",
+          "sourceRefs": [
+            "signed receipt pkt-operator-atomic-fallback-after-postmerge-race-v4-20260802T0917Z"
+          ]
+        },
+        {
+          "kind": "UNCHANGED_RUNTIME_MATRIX",
+          "path": "ai-status://SUP-RUNTIME-PROMOTION-FAILURE-MATRIX-INTEGRATION-OPERATOR-V2-20260802",
+          "sourceRefs": [
+            "remains dependent on active rollback transaction V2"
+          ]
+        }
+      ],
+      "emitted_at": "2026-08-02T09:19:30Z",
+      "intent": "repair_postmerge_dependency_chain_for_bridge_handoff_scheduler_and_live_canary",
+      "mode": "kernel_repair",
+      "packet_digest": "76b04f8630e0b3fb41a3ad3fabe5583682f79a9aebd27b0337f7795240c63b14",
+      "packet_id": "pkt-operator-corrected-bridge-scheduler-canary-chain-v3-20260802T0919Z",
+      "source_turn_ids": [
+        "operator-do-not-merge-codex-quota-groups-20260802",
+        "operator-other-remediation-continues-20260802",
+        "postmerge-dependency-chain-repair-20260802"
+      ],
+      "task_spec": {
+        "acceptance": [
+          "Explicit operator constraint remains authoritative: Codex and Codex2 may use different accounts; keep configured quota groups distinct and add no global mutual-review prohibition.",
+          "Dependency-only replacement after a stale post-merge coordinator race. PR #4499 was approved and merged as c8bfca4f3e40559c5d04b3eec4c2e6ae69681c65; do not restore the invalid shared-account V5 policy.",
+          "Explicit operator constraint is authoritative: Codex and Codex2 may use different accounts; do not merge configured quota groups, hardcode account equivalence, or add a global mutual-review prohibition.",
+          "Owner Codex and reviewer Human/Ops are task-scoped live-provider fallbacks because the current Antigravity lane reports quota_reached and Codex2 reports token_revoked. This does not change provider/account/reviewer policy.",
+          "Start from current origin/dev in a clean governed worktree and deliver only through commit, PR to dev, exact-head checks/review, merge, and canonical archive. Do not reuse the superseded task state or approval binding.",
+          "Reproduce the 01:44 to 01:48 Human/Ops exact-head handoff incident",
+          "A governance-only assign or reopen cannot supersede a healthy active implementation lease",
+          "Explicit cancel eligible preemption or terminal task truth may end the lease",
+          "Execution responsibility and review handoff provenance remain separately auditable",
+          "Lease decisions use exact task run process generation and canonical event ordering",
+          "Concurrent owner mutation fails closed without killing unrelated work",
+          "Focused supervisor and ai_status regressions pass",
+          "No account-group or reviewer-policy changes",
+          "All task evidence, commit trailers, PR binding, and rollback records use exact replacement Task-ID SUP-GOVERNANCE-HANDOFF-ACTIVE-LEASE-GUARD-OPERATOR-V3-20260802; the superseded source Task-ID is evidence only."
+        ],
+        "artifacts": [
+          ".orchestrator/supervisor.py",
+          ".orchestrator/test_supervisor.py",
+          "scripts/ai_status.py",
+          "scripts/test_ai_status.py",
+          "docs/deployment/evidence/supervisor/SUP-GOVERNANCE-HANDOFF-ACTIVE-LEASE-GUARD-OPERATOR-V3-20260802/"
+        ],
+        "depends_on": [
+          "SUP-ASSIGNMENT-FALLBACK-ATOMIC-REBINDS-OPERATOR-V4-20260802",
+          "SUP-ASSISTANT-DEV-BRIDGE-ASSIGN-LOCK-TIMEOUT-OPERATOR-V3-20260802"
+        ],
+        "id": "SUP-GOVERNANCE-HANDOFF-ACTIVE-LEASE-GUARD-OPERATOR-V3-20260802",
+        "owner": "Codex",
+        "phase": "Supervisor reliability / execution lease ownership / operator V2",
+        "reviewer": "Human/Ops",
+        "summary": "治理用 assign/reopen 不得被當成取消 active implementation worker；只有明確 cancel 或合法 preemption 才能終止 lease。",
+        "title": "Guard governance handoff against active worker leases"
+      },
+      "task_spec_hash": "071d93ca61357456bae32ceaecdff68bb4eca7ba28addad66c9d4540dd65cd8d"
+    },
+    "id": "SUP-GOVERNANCE-HANDOFF-ACTIVE-LEASE-GUARD-OPERATOR-V3-20260802",
+    "last_update": "2026-08-02T09:57:29Z",
+    "next": "Superseded to replace its permanently blocked bridge V3 dependency with bridge V4. Scope and account-neutral operator constraint are unchanged.",
+    "owner": "Codex",
+    "phase": "Supervisor reliability / execution lease ownership / operator V2",
+    "reviewer": "Human/Ops",
+    "status": "done",
+    "summary_zh": "治理用 assign/reopen 不得被當成取消 active implementation worker；只有明確 cancel 或合法 preemption 才能終止 lease。",
+    "title": "Guard governance handoff against active worker leases",
+    "terminal_outcome": "superseded",
+    "superseded_by": "SUP-GOVERNANCE-HANDOFF-ACTIVE-LEASE-GUARD-OPERATOR-V4-20260802"
+  },
+  "handoffs": [],
+  "blockers": []
+}

@@ -1,0 +1,348 @@
+{
+  "version": 1,
+  "task_id": "SUP-PREEMPTION-EXACT-HEAD-REVIEW-20260731",
+  "archived_at": "2026-08-13T02:01:00Z",
+  "terminal_status": "done",
+  "terminal_outcome": "superseded",
+  "task": {
+    "acceptance": [
+      "Independently inspect PR #4399 exact head a924a6f3c0c54982d7efe145750cc99c57bc7f2e and do not rely only on its PR description",
+      "Verify preemption and dispatch consume the same lifecycle candidate decision, including provider readiness, cooldown, failure-loop triage, dependency and worker-capacity eligibility",
+      "Verify a five-minute new-worker grace cannot be bypassed by ordinary priority preemption and does not block legitimate terminal cleanup",
+      "Reproduce focused tests for dispatch policy and supervisor, plus py_compile and diff checks, and inspect the actual post-#4397 four-second SIGTERM evidence",
+      "If and only if accepted, bind canonical review to PR 4399 and the exact head with REVIEW_PR=4399 and REVIEW_HEAD_SHA=a924a6f3c0c54982d7efe145750cc99c57bc7f2e",
+      "On any defect, reopen with exact file, line, failing command, and required correction; do not merge or modify implementation as reviewer",
+      "Do not edit .orchestrator/config.json, do not impersonate Human/Ops, and do not claim live canary success before exact merged code is promoted and a real auto worker survives the grace window or legitimately terminates"
+    ],
+    "artifacts": [
+      "PR#4399",
+      "docs/deployment/evidence/twelve-loop-gap/SUP-PREEMPTION-DISPATCH-ELIGIBILITY-20260731"
+    ],
+    "depends_on": [],
+    "dev_bridge": {
+      "actor": {
+        "capabilities": [
+          "fleet.dispatch",
+          "dev-task.dispatch"
+        ],
+        "id": "Codex",
+        "roles": [
+          "operator-delegate"
+        ]
+      },
+      "audit_conversation_href": "codex://root/l12-current-gap-supervisor-dispatch-20260731#scheduler-exact-head-review-live-rescue",
+      "conversation_id": "codex-root-l12-current-gap-supervisor-dispatch-20260731",
+      "documents": [
+        {
+          "kind": "PR_EXACT_HEAD_REVIEW_TARGET",
+          "path": "https://github.com/ajoe734/pantheon/pull/4399",
+          "sourceRefs": [
+            "head a924a6f3c0c54982d7efe145750cc99c57bc7f2e",
+            "Branch CI success",
+            "486 focused tests plus 4 subtests reported",
+            "live post-#4397 replay still SIGTERM-kills workers in four seconds"
+          ]
+        },
+        {
+          "kind": "SCHEDULER_LIVE_RESCUE_EVIDENCE",
+          "path": "docs/deployment/evidence/twelve-loop-gap/SUP-PREEMPTION-DISPATCH-ELIGIBILITY-20260731",
+          "sourceRefs": [
+            "#4397 merge cf6a8fed7baeb102330bf32af3f59cc347d1e92a live-promoted",
+            "worker runs codex-20260731T141614Z-62ed770a and codex-20260731T141730Z-d2604461 exited signal 15 before closeout"
+          ]
+        }
+      ],
+      "emitted_at": "2026-07-31T14:20:00Z",
+      "intent": "supervisor_dispatch_independent_exact_head_review_for_scheduler_live_rescue",
+      "mode": "kernel_repair",
+      "packet_digest": "b58b055181f5c57d56ce4ed3791a19e69e8c69067d848909cf82175cbeb16fdd",
+      "packet_id": "pkt-sup-preemption-exact-head-review-20260731T1420Z",
+      "source_turn_ids": [
+        "user-authorized-root-freeze-and-full-sequence",
+        "codex-live-replay-proved-preemption-catch22-20260731T1417Z",
+        "codex-emergency-exact-head-review-dispatch-20260731T1420Z"
+      ],
+      "task_spec": {
+        "acceptance": [
+          "Independently inspect PR #4399 exact head a924a6f3c0c54982d7efe145750cc99c57bc7f2e and do not rely only on its PR description",
+          "Verify preemption and dispatch consume the same lifecycle candidate decision, including provider readiness, cooldown, failure-loop triage, dependency and worker-capacity eligibility",
+          "Verify a five-minute new-worker grace cannot be bypassed by ordinary priority preemption and does not block legitimate terminal cleanup",
+          "Reproduce focused tests for dispatch policy and supervisor, plus py_compile and diff checks, and inspect the actual post-#4397 four-second SIGTERM evidence",
+          "If and only if accepted, bind canonical review to PR 4399 and the exact head with REVIEW_PR=4399 and REVIEW_HEAD_SHA=a924a6f3c0c54982d7efe145750cc99c57bc7f2e",
+          "On any defect, reopen with exact file, line, failing command, and required correction; do not merge or modify implementation as reviewer",
+          "Do not edit .orchestrator/config.json, do not impersonate Human/Ops, and do not claim live canary success before exact merged code is promoted and a real auto worker survives the grace window or legitimately terminates"
+        ],
+        "artifacts": [
+          "PR#4399",
+          "docs/deployment/evidence/twelve-loop-gap/SUP-PREEMPTION-DISPATCH-ELIGIBILITY-20260731"
+        ],
+        "depends_on": [],
+        "id": "SUP-PREEMPTION-EXACT-HEAD-REVIEW-20260731",
+        "owner": "Human/Ops",
+        "phase": "Supervisor Runtime Repair / Wave 0 Emergency Exact-Head Review",
+        "reviewer": "Antigravity",
+        "summary": "Emergency independent review lane for the already implemented #4399 scheduler architecture fix. Human/Ops hands this review-only task to Antigravity so the true supervisor launches the reviewer without waiting on the closeout task that the old scheduler itself keeps killing.",
+        "title": "Independently review scheduler eligibility and grace exact head for live rescue"
+      },
+      "task_spec_hash": "5f6d44403fab72307ea7452f9e66610a477897be591122b8d4c22404b80755ee"
+    },
+    "generation": 1,
+    "github": {
+      "base": "dev",
+      "head_branch": "task/SUP-PREEMPTION-DISPATCH-ELIGIBILITY-20260731",
+      "head_sha": "a924a6f3c0c54982d7efe145750cc99c57bc7f2e",
+      "pr": 4399
+    },
+    "github_review_bridge": {
+      "actor": "Codex2",
+      "base": "dev",
+      "decision": "reopen",
+      "head_branch": "task/SUP-PREEMPTION-EXACT-HEAD-REVIEW-20260731",
+      "head_sha": "17d5665f57c302d71f522f9a6e9b0f95c77473e3",
+      "mode": "required_commit_status",
+      "pr": 4402,
+      "pr_url": "https://github.com/ajoe734/pantheon/pull/4402",
+      "recorded_at": "2026-08-08T14:58:03Z",
+      "repository": "ajoe734/pantheon",
+      "review_error": "gh: Unprocessable Entity (HTTP 422)",
+      "review_proof_ref": "refs/tags/pantheon-review/reopen/17d5665f57c302d71f522f9a6e9b0f95c77473e3",
+      "status_context": "Pantheon canonical review gate",
+      "status_id": 51884560246,
+      "status_state": "failure"
+    },
+    "id": "SUP-PREEMPTION-EXACT-HEAD-REVIEW-20260731",
+    "last_update": "2026-08-13T02:01:00Z",
+    "next": "Retired during the Supervisor Authority V2 board reset: this legacy control, routing, rollout, or verification row is no longer an execution authority; merged source and archive evidence remain preserved.",
+    "owner": "Codex",
+    "phase": "Supervisor Runtime Repair / Wave 0 Emergency Exact-Head Review",
+    "review_binding": {
+      "base": "dev",
+      "head_branch": "task/SUP-PREEMPTION-EXACT-HEAD-REVIEW-20260731",
+      "head_sha": "2554fe7b96ef108061a1836dbc8944ca1122f534",
+      "pr": 4402
+    },
+    "review_file": "docs/deployment/evidence/twelve-loop-gap/SUP-PREEMPTION-DISPATCH-ELIGIBILITY-20260731/evidence.json",
+    "reviewer": "Codex2",
+    "status": "done",
+    "summary_zh": "Emergency independent review lane for the already implemented #4399 scheduler architecture fix. Human/Ops hands this review-only task to Antigravity so the true supervisor launches the reviewer without waiting on the closeout task that the old scheduler itself keeps killing.",
+    "title": "Independently review scheduler eligibility and grace exact head for live rescue",
+    "terminal_outcome": "superseded"
+  },
+  "handoffs": [
+    {
+      "created_at": "2026-07-31T14:21:29Z",
+      "from": "Human/Ops",
+      "message": "Auto-reassigned SUP-PREEMPTION-EXACT-HEAD-REVIEW-20260731 away from unavailable lane Human/Ops (disabled, paused, sidecar-only, or auth-down); owner Human/Ops -> Codex.",
+      "resolved_at": "2026-07-31T14:22:42Z",
+      "status": "done",
+      "task_id": "SUP-PREEMPTION-EXACT-HEAD-REVIEW-20260731",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-07-31T14:25:13Z",
+      "from": "Codex2",
+      "message": "Helper-claimed by idle Codex; previous owner Codex2 becomes reviewer.",
+      "resolved_at": "2026-07-31T14:29:25Z",
+      "status": "done",
+      "task_id": "SUP-PREEMPTION-EXACT-HEAD-REVIEW-20260731",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-07-31T14:29:25Z",
+      "from": "Human/Ops",
+      "message": "Independently review PR #4399 exact head a924a6f3c0c54982d7efe145750cc99c57bc7f2e; run the acceptance tests and bind exact-head canonical review only if all checks pass.",
+      "resolved_at": "2026-07-31T14:34:38Z",
+      "status": "done",
+      "task_id": "SUP-PREEMPTION-EXACT-HEAD-REVIEW-20260731",
+      "to": "Antigravity"
+    },
+    {
+      "created_at": "2026-07-31T14:30:09Z",
+      "from": "Human/Ops",
+      "message": "Auto-reassigned SUP-PREEMPTION-EXACT-HEAD-REVIEW-20260731 away from unavailable lane Human/Ops (disabled, paused, sidecar-only, or auth-down); owner Human/Ops -> Codex.",
+      "resolved_at": "2026-07-31T14:34:46Z",
+      "status": "done",
+      "task_id": "SUP-PREEMPTION-EXACT-HEAD-REVIEW-20260731",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-07-31T14:34:46Z",
+      "from": "Human/Ops",
+      "message": "Retry on clean temporary command root 4fca442188ecf32caba2a0d818987ca0c7d99199. Independently review PR #4399 exact head a924a6f3c0c54982d7efe145750cc99c57bc7f2e and bind canonical review only after acceptance tests pass.",
+      "resolved_at": "2026-07-31T14:41:18Z",
+      "status": "done",
+      "task_id": "SUP-PREEMPTION-EXACT-HEAD-REVIEW-20260731",
+      "to": "Antigravity"
+    },
+    {
+      "created_at": "2026-07-31T14:35:16Z",
+      "from": "Human/Ops",
+      "message": "Auto-reassigned SUP-PREEMPTION-EXACT-HEAD-REVIEW-20260731 away from unavailable lane Human/Ops (disabled, paused, sidecar-only, or auth-down); owner Human/Ops -> Codex.",
+      "resolved_at": "2026-07-31T14:45:16Z",
+      "status": "done",
+      "task_id": "SUP-PREEMPTION-EXACT-HEAD-REVIEW-20260731",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-07-31T14:45:16Z",
+      "from": "Human/Ops",
+      "message": "Human/Ops re-triggered exact-head review after planned scheduler rescue restart; independently review PR #4399 exact head a924a6f3c0c54982d7efe145750cc99c57bc7f2e and bind canonical review only if accepted.",
+      "resolved_at": "2026-07-31T14:48:04Z",
+      "status": "done",
+      "task_id": "SUP-PREEMPTION-EXACT-HEAD-REVIEW-20260731",
+      "to": "Antigravity"
+    },
+    {
+      "created_at": "2026-07-31T14:45:33Z",
+      "from": "Human/Ops",
+      "message": "Independently verified PR #4399 exact head a924a6f3c0c54982d7efe145750cc99c57bc7f2e. Preemption & dispatch now consume identical candidate eligibility, failure-loop triage, unchanged task cooldown, and new worker 5-min grace window without blocking terminal cleanup. 487/487 tests passed in 58s, py_compile clean.",
+      "resolved_at": "2026-07-31T14:58:28Z",
+      "status": "done",
+      "task_id": "SUP-PREEMPTION-EXACT-HEAD-REVIEW-20260731",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-07-31T14:58:28Z",
+      "from": "Codex",
+      "message": "Closeout evidence is committed and published in PR #4402 at exact head 2554fe7b96ef108061a1836dbc8944ca1122f534. Please review the task brief plus docs/deployment/evidence/twelve-loop-gap/SUP-PREEMPTION-DISPATCH-ELIGIBILITY-20260731/{README.md,evidence.json}; confirm it preserves the a924-only approval boundary, does not approve PR #4399 current head 6f391c, and binds REVIEW_FILE to the evidence manifest if accepted.",
+      "resolved_at": "2026-07-31T15:19:58Z",
+      "status": "done",
+      "task_id": "SUP-PREEMPTION-EXACT-HEAD-REVIEW-20260731",
+      "to": "Antigravity"
+    },
+    {
+      "created_at": "2026-07-31T15:19:58Z",
+      "from": "Antigravity",
+      "message": "Independently verified PR #4399 exact head a924a6f3c0c54982d7efe145750cc99c57bc7f2e and closeout evidence manifest PR #4402; approval boundary remains strictly on a924a6f3c0c54982d7efe145750cc99c57bc7f2e.",
+      "resolved_at": "2026-07-31T15:20:29Z",
+      "status": "done",
+      "task_id": "SUP-PREEMPTION-EXACT-HEAD-REVIEW-20260731",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-07-31T15:21:17Z",
+      "from": "Antigravity",
+      "message": "Supervisor resumed SUP-PREEMPTION-EXACT-HEAD-REVIEW-20260731 for finalize after successful dispatch.",
+      "resolved_at": "2026-07-31T15:30:55Z",
+      "status": "done",
+      "task_id": "SUP-PREEMPTION-EXACT-HEAD-REVIEW-20260731",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-08-01T14:47:30Z",
+      "from": "Codex2",
+      "message": "Auto-reassigned SUP-PREEMPTION-EXACT-HEAD-REVIEW-20260731 away from unavailable lane Codex2 (disabled, paused, sidecar-only, or auth-down); owner Codex2 -> Codex.",
+      "resolved_at": "2026-08-01T14:49:31Z",
+      "status": "done",
+      "task_id": "SUP-PREEMPTION-EXACT-HEAD-REVIEW-20260731",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-08-01T15:25:53Z",
+      "from": "Codex",
+      "message": "Auto-reassigned SUP-PREEMPTION-EXACT-HEAD-REVIEW-20260731 away from unavailable lane Codex (disabled, paused, sidecar-only, or auth-down); owner Codex -> Codex2.",
+      "resolved_at": "2026-08-01T15:27:03Z",
+      "status": "done",
+      "task_id": "SUP-PREEMPTION-EXACT-HEAD-REVIEW-20260731",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-08-01T16:19:50Z",
+      "from": "Antigravity",
+      "message": "Auto-reassigned SUP-PREEMPTION-EXACT-HEAD-REVIEW-20260731 away from unavailable lane Antigravity (disabled, paused, sidecar-only, or auth-down); reviewer Antigravity -> Codex.",
+      "resolved_at": "2026-08-01T16:21:52Z",
+      "status": "done",
+      "task_id": "SUP-PREEMPTION-EXACT-HEAD-REVIEW-20260731",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-08-06T12:07:28Z",
+      "from": "Antigravity",
+      "message": "Submitting independent review evidence for review_approved gate.",
+      "resolved_at": "2026-08-06T12:08:09Z",
+      "status": "done",
+      "task_id": "SUP-PREEMPTION-EXACT-HEAD-REVIEW-20260731",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-08-06T12:09:50Z",
+      "from": "Codex",
+      "message": "Auto-reassigned SUP-PREEMPTION-EXACT-HEAD-REVIEW-20260731 away from unavailable lane Codex (disabled, paused, sidecar-only, or auth-down); reviewer Codex -> Claude.",
+      "resolved_at": "2026-08-06T12:10:33Z",
+      "status": "done",
+      "task_id": "SUP-PREEMPTION-EXACT-HEAD-REVIEW-20260731",
+      "to": "Claude"
+    },
+    {
+      "created_at": "2026-08-08T14:12:45Z",
+      "from": "Antigravity",
+      "message": "Chair reassigned owner from Antigravity to Codex2: The task remains blocked on stale lane assignment even though referenced PR #4399 merged to dev as 894eb813c7cb5609ae517103a727d93ba8cbd1ed; Codex2 is auth-ready, unpaused, distinct from reviewer Claude, and can reconcile the exact merged evidence without reimplementing scope. Task returned to todo for a blocked-owner rescue dispatch.",
+      "resolved_at": "2026-08-08T14:13:37Z",
+      "status": "done",
+      "task_id": "SUP-PREEMPTION-EXACT-HEAD-REVIEW-20260731",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-08-08T14:13:09Z",
+      "from": "Codex2",
+      "message": "Helper-claimed by idle Codex previous owner Codex2 becomes reviewer.",
+      "resolved_at": "2026-08-08T14:14:33Z",
+      "status": "done",
+      "task_id": "SUP-PREEMPTION-EXACT-HEAD-REVIEW-20260731",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-08-08T14:28:07Z",
+      "from": "Codex",
+      "message": "Review PR #4402 exact head 17d5665f57c302d71f522f9a6e9b0f95c77473e3 and REVIEW_FILE docs/deployment/evidence/twelve-loop-gap/SUP-PREEMPTION-DISPATCH-ELIGIBILITY-20260731/exact-head-re-review-20260808.json. Independently run repro_provider_readiness_gap.py against a924. If confirmed, accept this review task evidence but do not approve PR #4399; source task is archived and needs a new corrective follow-up. Also note PR #4402 still carries pushed commit aae0e2cb with a 74-char subject, so merge remains blocked unless Human/Ops authorizes a clean recut/rewrite.",
+      "resolved_at": "2026-08-08T14:58:03Z",
+      "status": "done",
+      "task_id": "SUP-PREEMPTION-EXACT-HEAD-REVIEW-20260731",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-08-08T14:58:03Z",
+      "from": "Codex2",
+      "message": "Review rejected: PR #4402 head 17d5665f correctly records the provider-readiness counterexample, but required Commit trailers checks fail because aae0e2cb4da0a0ae9f049bbdf166c13f2c09daee has a 74-character subject; Smoke acceptance is skipped. Create an authorized non-rewrite replacement delivery path or otherwise resolve the pushed-history trailer gate without changing PR #4399, then request a new exact-head review.",
+      "resolved_at": "2026-08-08T14:58:03Z",
+      "status": "done",
+      "task_id": "SUP-PREEMPTION-EXACT-HEAD-REVIEW-20260731",
+      "to": "Codex"
+    }
+  ],
+  "blockers": [
+    {
+      "created_at": "2026-07-31T15:30:55Z",
+      "message": "Owner closeout verification passed and PR #4402 was refreshed onto origin/dev at exact head 669bd069c0c6f5fceedf02042cee971b50bf1ef8, but the governed integrator fails closed with declared_head_branch_mismatch: canonical github.head_branch names task/SUP-PREEMPTION-DISPATCH-ELIGIBILITY-20260731 while the task PR/review binding names task/SUP-PREEMPTION-EXACT-HEAD-REVIEW-20260731. Reconcile task metadata or the governed merge path without bypass; then Antigravity must review the final exact head before merge and Codex2 done.",
+      "owner": "Codex2",
+      "resolved_at": "2026-08-06T10:18:18Z",
+      "status": "resolved",
+      "task_id": "SUP-PREEMPTION-EXACT-HEAD-REVIEW-20260731",
+      "waiting_for": "Human/Ops"
+    },
+    {
+      "created_at": "2026-08-06T12:08:09Z",
+      "message": "Task SUP-PREEMPTION-EXACT-HEAD-REVIEW-20260731 status is currently 'review' with owner=Antigravity and reviewer=Codex. Under worker status lease validation (validate_active_status_command_lease), commands issued by this worker must use AI_NAME=Antigravity. However, 'ai-status.sh approve' strictly requires AI_NAME equal to the reviewer (Codex), creating an identity validation deadlock. Furthermore, PR #4399 and review PR #4402 are already merged into dev. Re-assignment or supervisor/human status reconciliation is needed to transition this row.",
+      "owner": "Antigravity",
+      "resolution_ref": "chair_reassignment:SUP-PREEMPTION-EXACT-HEAD-REVIEW-20260731",
+      "resolved_at": "2026-08-08T14:12:45Z",
+      "status": "resolved",
+      "task_id": "SUP-PREEMPTION-EXACT-HEAD-REVIEW-20260731",
+      "waiting_for": "Human/Ops"
+    },
+    {
+      "check_kind": "task_dependency",
+      "check_params": {
+        "required_status": "done",
+        "task_id": "SUP-PREEMPTION-REVIEW-EVIDENCE-R2-20260808"
+      },
+      "created_at": "2026-08-08T15:11:03Z",
+      "message": "Waiting for governed replacement task SUP-PREEMPTION-REVIEW-EVIDENCE-R2-20260808 to merge the rejection evidence before PR #4402 can be closed as superseded and this source lane can be terminally reconciled.",
+      "owner": "Codex",
+      "status": "resolved",
+      "task_id": "SUP-PREEMPTION-EXACT-HEAD-REVIEW-20260731",
+      "waiting_for": "Codex",
+      "resolved_at": "2026-08-13T02:01:00Z"
+    }
+  ]
+}

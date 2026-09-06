@@ -1,0 +1,173 @@
+{
+  "version": 1,
+  "task_id": "OPS-REVIEWER-APPROVAL-BINDING-GUIDANCE-20260807",
+  "archived_at": "2026-08-13T02:01:35Z",
+  "terminal_status": "done",
+  "terminal_outcome": "superseded",
+  "task": {
+    "acceptance": [
+      "`ai_status.py approve` 在缺少 REVIEW_PR/REVIEW_HEAD_SHA 時的 usage/警告訊息，明確列出這兩個環境變數是 PR-backed 任務審查的必要輸入，並示範怎麼取得(例如 `gh pr view <pr> --json headRefOid -q .headRefOid`)",
+      "新增一份 reviewer 導向的 skill 文件(建議路徑 .orchestrator/skills/reviewer-approval-binding.md)，清楚說明 independent reviewer 在執行 `approve` 前必須設定 REVIEW_PR/REVIEW_HEAD_SHA(可選 REVIEW_BASE)，並解釋不設定會發生什麼(unbound approval，之後被退回重審)",
+      "現有會被 reviewer 角色讀到的 skill/task-brief 模板(例如涉及 review→approve 流程的既有 skill)加入對這份新 skill 的引用或至少一行提示，確保 dispatch 時 reviewer 看得到，不是只存在一份沒人連結的文件",
+      "scripts/test_ai_status.py 全數通過；新增至少一個測試驗證 usage/警告輸出包含 REVIEW_PR 提示字樣",
+      "不修改 resolve_approval_binding 的核心綁定判斷邏輯本身(這次只做文件/提示強化)"
+    ],
+    "artifacts": [
+      "scripts/ai_status.py",
+      ".orchestrator/skills/reviewer-approval-binding.md"
+    ],
+    "depends_on": [],
+    "generation": 1,
+    "id": "OPS-REVIEWER-APPROVAL-BINDING-GUIDANCE-20260807",
+    "last_update": "2026-08-13T02:01:35Z",
+    "next": "Retired during the Supervisor Authority V2 board reset: this legacy control, routing, rollout, or verification row is no longer an execution authority; merged source and archive evidence remain preserved.",
+    "owner": "Antigravity",
+    "phase": "Supervisor Runtime Repair / Review Gate Reliability",
+    "reviewer": "Codex",
+    "status": "done",
+    "summary_zh": "根因調查(2026-08-06/07,操作者在追查 dispatch 吞吐偏低時發現):`scripts/ai_status.py` 的 `approve` 指令依賴環境變數 REVIEW_PR/REVIEW_HEAD_SHA (resolve_approval_binding, ai_status.py:7090) 才能把 review_approved 事件綁定到 reviewer 實際審查的 exact PR head；沒有這個綁定，approve 只在 task_has_pr_review_target() 判定該任務『已知有 PR』時才會硬擋，否則只印一行 stderr warning 就放行成『unbound』核准，之後被 merge gate 或下一輪 worker 發現、退回重審。這個要求完全沒有文件化：approve 的 usage 字串只有 `Usage: approve <task-id> <message>`，`.orchestrator/skills/` 底下也沒有任何一份 文件提到 REVIEW_PR/REVIEW_HEAD_SHA，reviewer worker 沒有管道知道這件事存在。抽樣 2026-08-05 00:12 ~ 2026-08-06 14:42 這段窗口的 5 個代表任務(OPS-GITHUB-CANONICAL-REVIEW-ENFORCEMENT-001、SUP-L12-POST-4380-GAP-REVIEW-20260729、LIFECYCLE-PROJ-PLAN-COMPOSED-HEAD-REVIEW-20260801、OPS-CLOSEOUT-OWNER-REASSIGN-NO-HUMAN-SIGNOFF-20260805、SUP-L12-STALE-PR-RETIRE-20260729)，其中 4/5 都出現至少一次『approve 落地後才發現 unbound、要求 reviewer 重新 approve』的 handoff，是這段時間 review_approved 次數(43 次)遠高於實際 done 數(18 個)的主要成因。這次先只做文件/提示層的修復，不動 resolve_approval_binding 本身的判斷邏輯，降低回歸風險。",
+    "title": "Surface the REVIEW_PR/REVIEW_HEAD_SHA approval-binding requirement so reviewer workers stop landing unbound approves",
+    "terminal_outcome": "superseded"
+  },
+  "handoffs": [
+    {
+      "created_at": "2026-08-07T12:19:14Z",
+      "from": "Claude",
+      "message": "Helper-claimed by idle Codex previous owner Claude becomes reviewer.",
+      "resolved_at": "2026-08-07T12:20:17Z",
+      "status": "done",
+      "task_id": "OPS-REVIEWER-APPROVAL-BINDING-GUIDANCE-20260807",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-08-07T12:26:53Z",
+      "from": "Codex",
+      "message": "PR #4606 is ready for independent review. Please read .orchestrator/skills/reviewer-approval-binding.md, verify the guidance-only boundary and scripts/test_ai_status.py result, then approve exact PR head 2b642373a455a071701de8ea7c2012a571e0228f with REVIEW_PR=4606 and REVIEW_HEAD_SHA.",
+      "resolved_at": "2026-08-07T12:29:53Z",
+      "status": "done",
+      "task_id": "OPS-REVIEWER-APPROVAL-BINDING-GUIDANCE-20260807",
+      "to": "Claude"
+    },
+    {
+      "created_at": "2026-08-07T12:29:53Z",
+      "from": "Claude",
+      "message": "Auto-reassigned OPS-REVIEWER-APPROVAL-BINDING-GUIDANCE-20260807 away from unavailable lane Claude (disabled, paused, sidecar-only, or auth-down); reviewer Claude -> Antigravity.",
+      "resolved_at": "2026-08-07T12:31:39Z",
+      "status": "done",
+      "task_id": "OPS-REVIEWER-APPROVAL-BINDING-GUIDANCE-20260807",
+      "to": "Antigravity"
+    },
+    {
+      "created_at": "2026-08-07T12:31:39Z",
+      "from": "Antigravity",
+      "message": "審查通過：核對 commit 2b642373a 已完整補充 reviewer 導引文件 (.orchestrator/skills/reviewer-approval-binding.md、chairman-review.md) 與 ai_status.py/test_ai_status.py 提示訊息，且單元測試全數通過。",
+      "resolved_at": "2026-08-07T12:41:30Z",
+      "status": "done",
+      "task_id": "OPS-REVIEWER-APPROVAL-BINDING-GUIDANCE-20260807",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-08-08T14:26:00Z",
+      "from": "Antigravity",
+      "message": "Auto-reassigned OPS-REVIEWER-APPROVAL-BINDING-GUIDANCE-20260807 away from unavailable lane Antigravity (disabled, paused, sidecar-only, or auth-down); reviewer Antigravity -> Codex2.",
+      "resolved_at": "2026-08-08T14:27:57Z",
+      "status": "done",
+      "task_id": "OPS-REVIEWER-APPROVAL-BINDING-GUIDANCE-20260807",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-08-09T10:11:55Z",
+      "from": "Codex2",
+      "message": "Auto-reassigned OPS-REVIEWER-APPROVAL-BINDING-GUIDANCE-20260807 away from unavailable lane Codex2 (disabled, paused, sidecar-only, or auth-down); reviewer Codex2 -> Claude.",
+      "resolved_at": "2026-08-09T10:13:16Z",
+      "status": "done",
+      "task_id": "OPS-REVIEWER-APPROVAL-BINDING-GUIDANCE-20260807",
+      "to": "Claude"
+    },
+    {
+      "created_at": "2026-08-09T10:41:39Z",
+      "from": "Claude",
+      "message": "Auto-reassigned OPS-REVIEWER-APPROVAL-BINDING-GUIDANCE-20260807 away from unavailable lane Claude (disabled, paused, sidecar-only, or auth-down); reviewer Claude -> Antigravity.",
+      "resolved_at": "2026-08-09T10:47:11Z",
+      "status": "done",
+      "task_id": "OPS-REVIEWER-APPROVAL-BINDING-GUIDANCE-20260807",
+      "to": "Antigravity"
+    },
+    {
+      "created_at": "2026-08-09T15:09:59Z",
+      "from": "Codex",
+      "message": "Auto-reassigned OPS-REVIEWER-APPROVAL-BINDING-GUIDANCE-20260807 away from unavailable lane Codex (disabled, paused, sidecar-only, or auth-down); owner Codex -> Codex2.",
+      "resolved_at": "2026-08-09T15:41:00Z",
+      "status": "done",
+      "task_id": "OPS-REVIEWER-APPROVAL-BINDING-GUIDANCE-20260807",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-08-10T09:58:03Z",
+      "from": "Codex2",
+      "message": "Chair reassigned owner from Codex2 to Codex: The supervisor lists Codex as the viable blocked-owner rescue target; the task has no human-gate or non-dispatchable marker, Codex is auth-ready and unpaused, and reviewer Antigravity remains independent. Task returned to todo for a blocked-owner rescue dispatch.",
+      "resolved_at": "2026-08-10T10:03:43Z",
+      "status": "done",
+      "task_id": "OPS-REVIEWER-APPROVAL-BINDING-GUIDANCE-20260807",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-08-10T13:09:33Z",
+      "from": "Codex",
+      "message": "Chair reassigned owner from Codex to Codex2: The blocked task is not a human gate, its implementation is durable in PR #4606, and Codex2 is auth-ready, unpaused, distinct from reviewer Antigravity, and can safely rerun the handoff on a clean replacement task branch with normal non-force push and PR flow; this does not authorize rewriting the published branch. Task returned to todo for a blocked-owner rescue dispatch.",
+      "resolved_at": "2026-08-10T13:11:10Z",
+      "status": "done",
+      "task_id": "OPS-REVIEWER-APPROVAL-BINDING-GUIDANCE-20260807",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-08-12T02:58:46Z",
+      "from": "Codex2",
+      "message": "Auto-reassigned OPS-REVIEWER-APPROVAL-BINDING-GUIDANCE-20260807 away from unavailable lane Codex2 (disabled, paused, sidecar-only, or auth-down); owner Codex2 -> Antigravity, reviewer Antigravity -> Claude.",
+      "resolved_at": "2026-08-13T02:00:40Z",
+      "status": "done",
+      "task_id": "OPS-REVIEWER-APPROVAL-BINDING-GUIDANCE-20260807",
+      "to": "Antigravity"
+    },
+    {
+      "created_at": "2026-08-12T04:32:54Z",
+      "from": "Claude",
+      "message": "Auto-reassigned OPS-REVIEWER-APPROVAL-BINDING-GUIDANCE-20260807 away from unavailable lane Claude (disabled, paused, sidecar-only, or auth-down); reviewer Claude -> Codex.",
+      "resolved_at": "2026-08-13T02:00:40Z",
+      "status": "done",
+      "task_id": "OPS-REVIEWER-APPROVAL-BINDING-GUIDANCE-20260807",
+      "to": "Codex"
+    }
+  ],
+  "blockers": [
+    {
+      "created_at": "2026-08-07T12:41:30Z",
+      "message": "Closeout blocked: PR #4606 is OPEN/BLOCKED at 2b642373a455a071701de8ea7c2012a571e0228f, not merged; CI rejects its 73-character subject, and the canonical review gate has no exact-head review-proof tag. The row has neither review binding nor review_file. A supervised replacement/rewrite plus a committed manifest and Antigravity exact-head re-review are required; do not run done.",
+      "owner": "Codex",
+      "resolution_ref": "chair_reassignment:OPS-REVIEWER-APPROVAL-BINDING-GUIDANCE-20260807",
+      "resolved_at": "2026-08-10T09:58:03Z",
+      "status": "resolved",
+      "task_id": "OPS-REVIEWER-APPROVAL-BINDING-GUIDANCE-20260807",
+      "waiting_for": "Human/Ops"
+    },
+    {
+      "created_at": "2026-08-10T10:13:52Z",
+      "message": "Implementation and pre-review evidence are complete at PR #4606 head 101d0dba21c9dba543d36e88ac2d43c29b330523; scripts/test_ai_status.py passes 208 tests plus 31 subtests and the worker-context regression passes. Commit trailers fails only because already-pushed anchor 2b642373a455a071701de8ea7c2012a571e0228f has a 73-character subject (limit 72). Repair requires authorized published-history rewrite/force-push or an approved replacement-branch recovery. Do not approve the current exact head because recovery will invalidate it.",
+      "owner": "Codex",
+      "resolution_ref": "chair_reassignment:OPS-REVIEWER-APPROVAL-BINDING-GUIDANCE-20260807",
+      "resolved_at": "2026-08-10T13:09:33Z",
+      "status": "resolved",
+      "task_id": "OPS-REVIEWER-APPROVAL-BINDING-GUIDANCE-20260807",
+      "waiting_for": "Human/Ops"
+    },
+    {
+      "created_at": "2026-08-10T13:17:45Z",
+      "message": "PR #4606 cannot pass trailer CI without rewriting published commit 2b642373a (73-char subject); a new commit cannot repair a range scan, and a nonstandard replacement branch fails the exact task/<TASK-ID> merge gate. Materialize a replacement task/ID and clean canonical branch through the supervisor; preserve #4606.",
+      "owner": "Codex2",
+      "status": "resolved",
+      "task_id": "OPS-REVIEWER-APPROVAL-BINDING-GUIDANCE-20260807",
+      "waiting_for": "Human/Ops",
+      "resolved_at": "2026-08-13T02:01:35Z"
+    }
+  ]
+}

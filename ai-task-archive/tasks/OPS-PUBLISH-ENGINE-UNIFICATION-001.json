@@ -1,0 +1,128 @@
+{
+  "version": 1,
+  "task_id": "OPS-PUBLISH-ENGINE-UNIFICATION-001",
+  "archived_at": "2026-07-27T16:09:19Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "acceptance": [
+      "Both pantheon and execute-plans use one equivalent publish helper contract with no early-closing consumer surfacing SIGPIPE/141 under set -euo pipefail.",
+      "A deterministic many-tag regression reproduces the old git for-each-ref head failure and proves repeated publish cuts are stable and idempotent.",
+      "Publish workflows no longer dispatch dev deployment for candidates that cannot pass exact accepted FE/BFF pair admission.",
+      "Frontend changes are made only in /home/lupin/code/execute-plans on base dev; no execute-plans source is copied into pantheon.",
+      "All changes go through task branches, PRs, visible checks, review, merge, and evidence; no hosted deployment is run for each intermediate fix."
+    ],
+    "artifacts": [
+      "scripts/git/nightly_publish.sh",
+      ".github/workflows/nightly-publish-cut.yml",
+      "execute-plans:scripts/git/nightly_publish.sh",
+      "execute-plans:.github/workflows/*publish*",
+      "docs/deployment/evidence/release-platform/OPS-PUBLISH-ENGINE-UNIFICATION-001"
+    ],
+    "auto_created_by": "codex-root-canonical-command-runtime-20260727",
+    "depends_on": [
+      "OPS-ASSISTANT-DEV-BRIDGE-DRAIN-001"
+    ],
+    "id": "OPS-PUBLISH-ENGINE-UNIFICATION-001",
+    "last_update": "2026-07-27T16:09:19Z",
+    "mutates_canonical": true,
+    "next": "Finalized reviewed publish-engine unification: execute-plans PR #557 merged at cbc16830a096077f978b4efe499dd8fa85f166f2; Pantheon PR #4255 merged at 33e1c4d64e4accceab4d803e7b4ce2324f44306a; closeout evidence PR #4256 merged at e1512d207d9b5df3739ac7b7d0cac202b2798ac8. Both 12,000-tag regressions, Pantheon 78 tests, execute-plans 4+19 tests, typecheck, build, and dev ancestry passed; no hosted deployment was run.",
+    "owner": "Codex",
+    "phase": "Release Platform / Publish Cut",
+    "review_file": "docs/deployment/evidence/release-platform/OPS-PUBLISH-ENGINE-UNIFICATION-001/evidence.json",
+    "review_notes_zh": [
+      "已核對 Pantheon PR #4255 exact head 885f9c34d2d83d08e1564089395fe337ea99b033 與 execute-plans PR #557 exact head ec9ca4d7eb255b72366c43076ad477a3daa77fcf；兩者皆 OPEN、CLEAN、MERGEABLE，所有必要可見 checks 成功。",
+      "獨立重跑兩個 12,000-tag regression，均重現 historical rc=141 並證明首次 cut、重複 now no-op、重複 check rc=10；Pantheon 78 tests、execute-plans 4+19 tests、typecheck 與 production build 全通過。",
+      "確認兩 repo producer 都以 for-each-ref --count=1 消除 early-closing pipeline，consumer 使用無 pipeline read loop，輸出 publish_branch/release_tag 契約一致；nightly workflows 無 gh workflow run 或 deploy dispatch。",
+      "本 task 為 publish-only boundary，未執行 hosted deployment；owner closeout 仍須合併兩個 PR並把 merge evidence／review decision 做成 durable artifact 後才能 done。"
+    ],
+    "reviewer": "Codex2",
+    "source_packet_ids": [
+      "pkt_pantheon_batch_architecture_20260727_supervisor_autodrain_001"
+    ],
+    "status": "done",
+    "summary_zh": "把 pantheon 與 execute-plans 的 nightly publish helper 收斂成同一份契約，修掉 pipefail/SIGPIPE 141 與 inadmissible publish-to-deploy dispatch。",
+    "target_repo": "pantheon",
+    "title": "Unify nightly publish cut engine across Pantheon and execute-plans",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-07-27T16:09:19Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/ops-publish-engine-unification-001",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/OPS-PUBLISH-ENGINE-UNIFICATION-001",
+      "git_clean_required": false,
+      "status_command_runtime": {
+        "command_root": "/home/lupin/pantheon-ci-deploy/dev-root-6692d51c9bc5",
+        "source_sha": "6692d51c9bc5a48ffcbaac8cf817b635351a7c9a",
+        "base_ref": "origin/dev",
+        "remote": "ajoe734/pantheon",
+        "status_root": "/home/lupin/pantheon",
+        "delivery_root": "/tmp/pantheon-worker-worktrees/pantheon/ops-publish-engine-unification-001",
+        "wrapper_root": "/home/lupin/pantheon-ci-deploy/dev-root-6692d51c9bc5"
+      },
+      "repository_fallback": {
+        "from_repository_id": "execute_plans",
+        "missing_repository_path": "/home/lupin/pantheon-ci-deploy/execute-plans",
+        "reason": "non-Pantheon artifact repository local_path is unavailable; using Pantheon because the task also has Pantheon artifacts"
+      },
+      "commit": "5bf0529fb29c9edb8353be7f6ffe9acc8633c950",
+      "commit_subject": "OPS-PUBLISH-ENGINE-UNIFICATION-001: record merge evidence",
+      "commit_author": {
+        "name": "pantheon-dev",
+        "email": "bjoe734@gmail.com"
+      },
+      "commit_metadata": {
+        "Owned layer": "task brief and release-platform closeout evidence.",
+        "Not changing": "publish helper behavior, deploy admission, or hosted state.",
+        "Composes with": "Pantheon PR #4255 and execute-plans PR #557.",
+        "LLM-Agent": "Codex",
+        "Task-ID": "OPS-PUBLISH-ENGINE-UNIFICATION-001",
+        "Reviewer": "Codex2",
+        "Verified": "both 12,000-tag regressions; Pantheon 78 tests; execute-plans 4+19 tests, typecheck, build; exact-head and merge ancestry"
+      },
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "e1512d207d9b5df3739ac7b7d0cac202b2798ac8",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "created_at": "2026-07-27T14:29:44Z",
+      "from": "Claude",
+      "message": "Auto-reassigned OPS-PUBLISH-ENGINE-UNIFICATION-001 away from unavailable lane Claude (disabled, paused, sidecar-only, or auth-down); reviewer Claude -> Codex2.",
+      "resolved_at": "2026-07-27T15:13:52Z",
+      "status": "done",
+      "task_id": "OPS-PUBLISH-ENGINE-UNIFICATION-001",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-07-27T15:48:53Z",
+      "from": "Codex",
+      "message": "Review exact heads: Pantheon 885f9c34d2d83d08e1564089395fe337ea99b033 (PR #4255) and execute-plans ec9ca4d7eb255b72366c43076ad477a3daa77fcf (PR #557). Both PRs ready, mergeable CLEAN, all visible checks pass. Evidence: docs/deployment/evidence/release-platform/OPS-PUBLISH-ENGINE-UNIFICATION-001/evidence.json. Scope is publish-only cut contract: bounded for-each-ref lookup eliminates SIGPIPE/141, 12000-tag regression proves old 141 plus first cut/repeat no-op/check rc10, workflow does not dispatch deploy; exact FE/BFF admission remains downstream. Local validation: Pantheon 78 pytest pass plus shell/YAML/JSON; execute-plans helper regression, 4 publish tests, 19 safe-default tests, typecheck and production build pass. No hosted deployment performed.",
+      "resolved_at": "2026-07-27T15:55:56Z",
+      "status": "done",
+      "task_id": "OPS-PUBLISH-ENGINE-UNIFICATION-001",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-07-27T15:55:56Z",
+      "from": "Codex2",
+      "message": "Codex2 exact-head review approved: Pantheon PR #4255 at 885f9c34d2d83d08e1564089395fe337ea99b033 and execute-plans PR #557 at ec9ca4d7eb255b72366c43076ad477a3daa77fcf are OPEN/CLEAN/MERGEABLE with required visible checks successful. Independent validation passed both 12,000-tag rc141/idempotency regressions, Pantheon 78 tests, execute-plans 4+19 tests, typecheck and production build; producer --count=1, pipeline-free consumers, matched output contract, no deploy dispatch, tracked evidence, and no hosted deployment verified. Owner must merge both PRs and finalize durable merge evidence before done.",
+      "status": "done",
+      "task_id": "OPS-PUBLISH-ENGINE-UNIFICATION-001",
+      "to": "Codex",
+      "resolved_at": "2026-07-27T16:09:20Z"
+    }
+  ],
+  "blockers": []
+}

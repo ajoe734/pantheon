@@ -1,0 +1,91 @@
+{
+  "version": 1,
+  "task_id": "SUP-ASSISTANT-DEV-BRIDGE-RETRY-STARVATION-20260808",
+  "archived_at": "2026-08-13T02:01:41Z",
+  "terminal_status": "done",
+  "terminal_outcome": "superseded",
+  "task": {
+    "acceptance": [
+      "Reproduce the observed case where four retryable bridge packets exhaust one drain limit and starve a newer signed packet in processing",
+      "Guarantee bounded retry fairness so a signed processing packet gains an admission attempt without bypassing signature verification fences or replay protection",
+      "Keep canonical task-state locks and all mutation commands fail closed with no duplicate task materialization",
+      "Add focused regression tests plus a pre-review evidence manifest",
+      "Source-only task with no live config process signal checkout packet deletion or runtime promotion",
+      "Rollout of this repair is a later governed promotion transaction"
+    ],
+    "artifacts": [
+      ".orchestrator/supervisor.py",
+      "services/control-plane/bff/assistant/dev_bridge_inbox.py",
+      "services/control-plane/bff/assistant/dev_bridge_dispatcher.py",
+      ".orchestrator/test_supervisor.py",
+      "services/control-plane/bff/assistant/tests/test_dev_bridge_inbox.py",
+      "docs/deployment/evidence/supervisor/SUP-ASSISTANT-DEV-BRIDGE-RETRY-STARVATION-20260808/"
+    ],
+    "block_reason": {
+      "kind": "legacy_task_quarantine",
+      "required_action": "operator_reopen_after_diagnosis"
+    },
+    "depends_on": [],
+    "generation": 1,
+    "id": "SUP-ASSISTANT-DEV-BRIDGE-RETRY-STARVATION-20260808",
+    "last_update": "2026-08-13T02:01:41Z",
+    "next": "Retired during the Supervisor Authority V2 board reset: this legacy control, routing, rollout, or verification row is no longer an execution authority; merged source and archive evidence remain preserved.",
+    "owner": "Codex",
+    "phase": "Supervisor Bridge / Retry Fairness Recovery",
+    "resume_status": "in_progress",
+    "reviewer": "Codex2",
+    "status": "done",
+    "summary_zh": "修復 assistant dev bridge 的 retry starvation：目前四個舊 packet 因 ai_status assign 2 秒 timeout 反覆佔滿 drain limit，使新簽署 packet 卡在 processing 而沒有 canonical receipt。只修 retry 公平性與 bounded admission；保留簽章、fence、replay 與 canonical lock fail-closed，不直接改 live state。",
+    "title": "Prevent bridge retry starvation of signed task packets",
+    "terminal_outcome": "superseded"
+  },
+  "handoffs": [
+    {
+      "created_at": "2026-08-08T13:59:51Z",
+      "from": "Codex",
+      "message": "Helper-claimed by idle Codex2 previous owner Codex becomes reviewer.",
+      "resolved_at": "2026-08-08T14:00:43Z",
+      "status": "done",
+      "task_id": "SUP-ASSISTANT-DEV-BRIDGE-RETRY-STARVATION-20260808",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-08-08T14:13:37Z",
+      "from": "Codex2",
+      "message": "PR #4636 is ready for exact-head review at 2f62af3d30f33d7d382552ab5ad28a2c9e4448a0. Review docs/deployment/evidence/supervisor/SUP-ASSISTANT-DEV-BRIDGE-RETRY-STARVATION-20260808/evidence.json; exact-head focused validation passed: 49 bridge tests plus py_compile and diff check. The broader assistant suite has one unrelated baseline failure because /tmp/ai-status.json makes the empty-dir status test discover project=pantheon.",
+      "resolved_at": "2026-08-08T14:13:41Z",
+      "status": "done",
+      "task_id": "SUP-ASSISTANT-DEV-BRIDGE-RETRY-STARVATION-20260808",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-08-08T14:13:41Z",
+      "from": "Codex2",
+      "message": "PR #4636 is ready for exact-head review at 2f62af3d30f33d7d382552ab5ad28a2c9e4448a0. Review docs/deployment/evidence/supervisor/SUP-ASSISTANT-DEV-BRIDGE-RETRY-STARVATION-20260808/evidence.json; exact-head focused validation passed: 49 bridge tests plus py_compile and diff check. The broader assistant suite has one unrelated baseline failure because /tmp/ai-status.json makes the empty-dir status test discover project=pantheon.",
+      "resolved_at": "2026-08-08T14:16:09Z",
+      "status": "done",
+      "task_id": "SUP-ASSISTANT-DEV-BRIDGE-RETRY-STARVATION-20260808",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-08-08T14:36:10Z",
+      "from": "Codex2",
+      "message": "Helper-claimed by Codex while Codex2 is dispatch-paused previous owner Codex2 becomes reviewer.",
+      "resolved_at": "2026-08-08T14:36:48Z",
+      "status": "done",
+      "task_id": "SUP-ASSISTANT-DEV-BRIDGE-RETRY-STARVATION-20260808",
+      "to": "Codex"
+    }
+  ],
+  "blockers": [
+    {
+      "created_at": "2026-08-08T14:16:09Z",
+      "message": "PR #4636 cannot pass Commit trailers because pushed anchor 329fc4c0d has a 73-character subject; the gate rejects the full origin/dev..head range. A later commit cannot repair it, and policy forbids amend or force-push of the published task branch. Human/Ops must authorize an exact task-branch force-with-lease recovery or materially reissue a replacement task.",
+      "owner": "Codex2",
+      "resolved_at": "2026-08-08T14:35:17Z",
+      "status": "resolved",
+      "task_id": "SUP-ASSISTANT-DEV-BRIDGE-RETRY-STARVATION-20260808",
+      "waiting_for": "Human/Ops"
+    }
+  ]
+}

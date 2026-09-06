@@ -1,0 +1,591 @@
+{
+  "version": 1,
+  "task_id": "OPS-PROMOTE-PR-CI-TRIGGER-001",
+  "archived_at": "2026-07-29T13:17:01Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "acceptance": [
+      "Reproduce promote PRs with zero checks and blocked auto-merge",
+      "Implement governed CI trigger or token-dispatch repair",
+      "Prove one exact promote candidate obtains checks and can auto-merge",
+      "Retire stale promote PRs only with evidence",
+      "Deliver via branch PR checks review merge evidence"
+    ],
+    "artifacts": [
+      "scripts/git",
+      "docs/deployment/evidence/supervisor/OPS-PROMOTE-PR-CI-TRIGGER-001"
+    ],
+    "depends_on": [
+      "OPS-PUBLISH-ENGINE-UNIFICATION-001"
+    ],
+    "github_review_bridge": {
+      "actor": "Antigravity",
+      "base": "dev",
+      "decision": "approve",
+      "head_branch": "task/OPS-PROMOTE-PR-CI-TRIGGER-001",
+      "head_sha": "28855de6afe9a5523a2fc04abe5cc22aa27a6435",
+      "mode": "required_commit_status",
+      "pr": 4380,
+      "pr_url": "https://github.com/ajoe734/pantheon/pull/4380",
+      "recorded_at": "2026-07-29T13:09:44Z",
+      "repository": "ajoe734/pantheon",
+      "review_error": "gh: Unprocessable Entity (HTTP 422)",
+      "status_context": "Pantheon canonical review gate",
+      "status_id": 51291299077,
+      "status_state": "success"
+    },
+    "human_ops_reassignment_history": [
+      {
+        "at": "2026-07-27T18:29:29Z",
+        "owner": "Codex2",
+        "previous": {
+          "last_update": "2026-07-27T18:14:40Z",
+          "next": "Auto-reassigned OPS-PROMOTE-PR-CI-TRIGGER-001 away from unavailable lane Codex (disabled, paused, sidecar-only, or auth-down); reviewer Codex -> Claude.",
+          "owner": "Codex2",
+          "reviewer": "Claude"
+        },
+        "reason": "canonical fleet dispatch repair: prioritize Claude/Antigravity where available; avoid config mutation",
+        "reviewer": "Claude"
+      }
+    ],
+    "id": "OPS-PROMOTE-PR-CI-TRIGGER-001",
+    "last_update": "2026-07-29T13:17:01Z",
+    "next": "Owner closeout complete: PR #4380 merged to dev as 2edc1f5a430473d862c5bd47f3524f4fbcc276c8 after exact-head Antigravity approval and required gates; fresh promote PR #4378 passed Branch CI and auto-merged to master as 2c9388e07b9a99ac2938d58a0edf6e4d34002dd5; 27 stale promote PRs were ancestry-verified and retired; final validation passed 27 PublishPromoteTests, 75 focused pytest, py_compile, YAML/JSON parse, and diff checks.",
+    "owner": "Codex2",
+    "phase": "Repository Merge Governance",
+    "review_binding": {
+      "base": "dev",
+      "head_branch": "task/OPS-PROMOTE-PR-CI-TRIGGER-001",
+      "head_sha": "28855de6afe9a5523a2fc04abe5cc22aa27a6435",
+      "pr": 4380
+    },
+    "review_file": "docs/deployment/evidence/supervisor/OPS-PROMOTE-PR-CI-TRIGGER-001/evidence.json",
+    "review_notes_zh": [
+      "獨立複核 PR #4262 exact head 50c1a229f：REST 改寫正確、22 unittest / 70 pytest 本地重跑一致、live read-only REST smoke 重現 26 個 promote PR 與 #4138 零 checks",
+      "殘留風險：gh pr merge --auto 仍走 GraphQL 且 check=False，502 會靜默略過 auto-merge；live proof 必須明確涵蓋",
+      "驗收 3/4（fresh promote 實證、stale PR 退役）仍未達成，合併前不得 done",
+      "Pantheon canonical review gate 與 root merge freeze 2026-07-27 屬 Human/Ops，reviewer 不代簽、不偽造 status"
+    ],
+    "reviewer": "Antigravity",
+    "status": "done",
+    "summary_zh": "修復 promote/* PR 沒有 required checks 導致 auto-merge 永遠卡住的 CI/dispatch 治理缺口。",
+    "title": "Repair promote PR CI trigger and auto-merge path",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-07-29T13:17:01Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/ops-promote-pr-ci-trigger-001",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/OPS-PROMOTE-PR-CI-TRIGGER-001",
+      "git_clean_required": false,
+      "status_command_runtime": {
+        "command_root": "/home/lupin/pantheon-ci-deploy/dev-root",
+        "source_sha": "c1e396495d37a1c9dfeea5704e7eb73db6acde0e",
+        "base_ref": "origin/dev",
+        "remote": "ajoe734/pantheon",
+        "status_root": "/home/lupin/pantheon",
+        "delivery_root": "/tmp/pantheon-worker-worktrees/pantheon/ops-promote-pr-ci-trigger-001",
+        "wrapper_root": "/home/lupin/pantheon-ci-deploy/dev-root"
+      },
+      "commit": "2edc1f5a430473d862c5bd47f3524f4fbcc276c8",
+      "commit_subject": "OPS-PROMOTE-PR-CI-TRIGGER-001: finish promote CI repair",
+      "commit_author": {
+        "name": "ajoe734",
+        "email": "bjoe734@gmail.com"
+      },
+      "commit_metadata": {
+        "OPS-PROMOTE-PR-CI-TRIGGER-001": "finish promote CI repair",
+        "Task-ID": "OPS-PROMOTE-PR-CI-TRIGGER-001",
+        "LLM-Agent": "Codex2",
+        "Reviewer": "Antigravity"
+      },
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "2edc1f5a430473d862c5bd47f3524f4fbcc276c8",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "created_at": "2026-07-27T18:14:40Z",
+      "from": "Codex",
+      "message": "Auto-reassigned OPS-PROMOTE-PR-CI-TRIGGER-001 away from unavailable lane Codex (disabled, paused, sidecar-only, or auth-down); reviewer Codex -> Claude.",
+      "resolved_at": "2026-07-27T18:33:01Z",
+      "status": "done",
+      "task_id": "OPS-PROMOTE-PR-CI-TRIGGER-001",
+      "to": "Claude"
+    },
+    {
+      "created_at": "2026-07-27T18:56:07Z",
+      "from": "Codex2",
+      "message": "Auto-reassigned OPS-PROMOTE-PR-CI-TRIGGER-001 away from unavailable lane Codex2 (disabled, paused, sidecar-only, or auth-down); owner Codex2 -> Codex.",
+      "resolved_at": "2026-07-27T18:57:31Z",
+      "status": "done",
+      "task_id": "OPS-PROMOTE-PR-CI-TRIGGER-001",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-07-27T19:11:36Z",
+      "from": "Codex",
+      "message": "Auto-reassigned OPS-PROMOTE-PR-CI-TRIGGER-001 away from unavailable lane Codex (disabled, paused, sidecar-only, or auth-down); owner Codex -> Codex2.",
+      "resolved_at": "2026-07-27T19:12:06Z",
+      "status": "done",
+      "task_id": "OPS-PROMOTE-PR-CI-TRIGGER-001",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-07-27T19:41:38Z",
+      "from": "Codex2",
+      "message": "Chair reassigned owner from Codex2 to Codex: The blocked task is not a human gate, the supervisor supplied Codex as the rescue target, Codex auth has recovered, and PR #4262 preserves the handoff at exact head ee04032de9e00cde74a948b5ba1389217bcccbc4 with eight green checks. Task returned to todo for a blocked-owner rescue dispatch.",
+      "resolved_at": "2026-07-27T19:41:59Z",
+      "status": "done",
+      "task_id": "OPS-PROMOTE-PR-CI-TRIGGER-001",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-07-27T19:50:21Z",
+      "from": "Codex",
+      "message": "Owner rescue published PR #4262 at exact head 50c1a229f4d0bc31035a8dd67146e8dc5f28b211. Local validation passed: 22 unittest, 70 pytest, py_compile, workflow YAML/evidence JSON parse, diff check, and live read-only REST smoke. Push run 30299838270 and pull-request run 30299840477 produced eight green Branch CI checks. Please independently review the REST repair and evidence manifest docs/deployment/evidence/supervisor/OPS-PROMOTE-PR-CI-TRIGGER-001/evidence.json, provide last-push approval/canonical review gate, and coordinate the root merge freeze. After merge, return to Codex for fresh-release promote proof and evidence-based stale-PR retirement; those acceptance fields remain intentionally pending.",
+      "resolved_at": "2026-07-27T19:58:14Z",
+      "status": "done",
+      "task_id": "OPS-PROMOTE-PR-CI-TRIGGER-001",
+      "to": "Claude"
+    },
+    {
+      "created_at": "2026-07-27T19:58:14Z",
+      "from": "Claude",
+      "message": "Independent review at exact head 50c1a229f4d0bc31035a8dd67146e8dc5f28b211. Verified diff vs origin/dev is scoped to publish-promote.yml (+checks: read), publish_promote.py REST rewrite, its tests, and the evidence manifest. Reproduced both owner test slices myself: 22 unittest PublishPromoteTests OK and 70 pytest across test_git_workflow_helpers.py, test_nightly_publish_cut.py, test_release_branch_discipline.py. Ran a live read-only smoke against the new code paths: list_open_promote_prs('master') returned 26 promote PRs with no error, find_open_promote_pr('promote/v2026.07.26.2') returned PR 4138 at cb90dc479214c6ff0779aff70f915593ec9196c4 with zero check runs and missing_required_promote_checks reporting all three contexts, a nonexistent promote branch returned (None, None), and _required_check_rollup on 50c1a229f returned 8 check runs whose names match REQUIRED_PROMOTE_CHECKS exactly so idempotency holds on real API bytes. Confirmed the fetch_blocking_issue_map pull_request filter is needed and correct because the REST issues endpoint includes PRs while gh issue list did not. Confirmed dropping mergeStateStatus from the normalized rows breaks no consumer inside publish_promote.py. Confirmed CI runs 30299838270 (push) and 30299840477 (pull_request) both carry head_sha 50c1a229f and eight SUCCESS checks. Required follow-ups, none of which block this gate: (1) gh pr merge --auto at publish_promote.py:609 and :686 still uses the GraphQL enablePullRequestAutoMerge path with check=False, so the same 502 class that broke discovery would silently skip auto-merge; the pending live proof must record auto_merge_enabled from an actual observation, not from the call not raising. (2) acceptance items 'prove one exact promote candidate obtains checks and can auto-merge' and 'retire stale promote PRs only with evidence' remain unmet by construction and cannot be met before this merges; do not record done until live_proof and stale_pr_retirement are populated in the manifest and the review block records this decision and reviewed_head. (3) find_open_promote_pr lists all open PRs unfiltered instead of using the REST head= filter; harmless at 62 open PRs, worth tightening later. I did not submit a GitHub PR approval, did not create the 'Pantheon canonical review gate' or 'Pantheon root merge freeze 2026-07-27' commit statuses, and did not touch branch protection; releasing that external gate is a Human/Ops action. PR #4262 is also BEHIND dev and will need a local merge of dev, which will produce a new head requiring fresh CI and last-push approval.",
+      "resolved_at": "2026-07-27T20:06:34Z",
+      "status": "done",
+      "task_id": "OPS-PROMOTE-PR-CI-TRIGGER-001",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-07-27T20:06:34Z",
+      "from": "Claude",
+      "message": "Owner closeout head 6e658398a55933dc17a5e013fe46dbedfd25b577 pushed to PR #4262 after conflict-free merge of origin/dev b81edf76d. Branch CI push run 30301050431 and PR run 30301052412 both passed Commit trailers, Runtime mirror guard, Python packaging provision, and Smoke acceptance. Auto-merge remains enabled; waiting only for fresh-head last-push approval plus Human/Ops statuses 'Pantheon canonical review gate' and 'Pantheon root merge freeze 2026-07-27'. Live promote proof and evidence-based stale PR retirement remain pending after merge; do not mark done.",
+      "resolved_at": "2026-07-27T20:42:35Z",
+      "status": "done",
+      "task_id": "OPS-PROMOTE-PR-CI-TRIGGER-001",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-07-27T20:14:42Z",
+      "from": "Claude",
+      "message": "Auto-reassigned OPS-PROMOTE-PR-CI-TRIGGER-001 away from unavailable lane Claude (disabled, paused, sidecar-only, or auth-down); reviewer Claude -> Codex2.",
+      "resolved_at": "2026-07-27T20:25:17Z",
+      "status": "done",
+      "task_id": "OPS-PROMOTE-PR-CI-TRIGGER-001",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-07-28T12:51:11Z",
+      "from": "Codex2",
+      "message": "Auto-reassigned OPS-PROMOTE-PR-CI-TRIGGER-001 away from unavailable lane Codex2 (disabled, paused, sidecar-only, or auth-down); reviewer Codex2 -> Claude.",
+      "resolved_at": "2026-07-28T12:51:52Z",
+      "status": "done",
+      "task_id": "OPS-PROMOTE-PR-CI-TRIGGER-001",
+      "to": "Claude"
+    },
+    {
+      "created_at": "2026-07-28T13:08:23Z",
+      "from": "Codex",
+      "message": "Auto-reassigned OPS-PROMOTE-PR-CI-TRIGGER-001 away from unavailable lane Codex (disabled, paused, sidecar-only, or auth-down); owner Codex -> Codex2.",
+      "resolved_at": "2026-07-28T13:08:53Z",
+      "status": "done",
+      "task_id": "OPS-PROMOTE-PR-CI-TRIGGER-001",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-07-28T13:58:14Z",
+      "from": "Claude",
+      "message": "Auto-reassigned OPS-PROMOTE-PR-CI-TRIGGER-001 away from unavailable lane Claude (disabled, paused, sidecar-only, or auth-down); reviewer Claude -> Codex.",
+      "resolved_at": "2026-07-28T13:59:10Z",
+      "status": "done",
+      "task_id": "OPS-PROMOTE-PR-CI-TRIGGER-001",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-07-28T19:31:02Z",
+      "from": "Codex2",
+      "message": "Auto-reassigned OPS-PROMOTE-PR-CI-TRIGGER-001 away from unavailable lane Codex2 (disabled, paused, sidecar-only, or auth-down); owner Codex2 -> Antigravity.",
+      "resolved_at": "2026-07-28T19:31:47Z",
+      "status": "done",
+      "task_id": "OPS-PROMOTE-PR-CI-TRIGGER-001",
+      "to": "Antigravity"
+    },
+    {
+      "created_at": "2026-07-29T04:33:30Z",
+      "from": "Antigravity",
+      "message": "Chair reassigned owner from Antigravity to Codex2: The task was blocked only after Codex2 was auto-reassigned during a prior unavailable period; Codex2 is auth-ready now, gh auth succeeds, and overdue PR #4262 plus 26 zero-check promote PRs need the original owner lane resumed. Task returned to todo for a blocked-owner rescue dispatch.",
+      "resolved_at": "2026-07-29T04:34:06Z",
+      "status": "done",
+      "task_id": "OPS-PROMOTE-PR-CI-TRIGGER-001",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-07-29T04:33:37Z",
+      "from": "Codex2",
+      "message": "Helper-claimed by idle Codex; previous owner Codex2 becomes reviewer.",
+      "resolved_at": "2026-07-29T04:34:06Z",
+      "status": "done",
+      "task_id": "OPS-PROMOTE-PR-CI-TRIGGER-001",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-07-29T04:41:26Z",
+      "from": "Codex",
+      "message": "PR #4262 exact head c89bff92a314641714c771971492385d576c1ccb is composed with current dev; 22 unittest and 70 focused pytest passed, static YAML/JSON/py_compile/diff checks passed, live read-only REST smoke reproduced 26 promote PRs and #4138 zero-check control, and all 8 push/PR Branch CI checks passed. Please perform exact-head independent review before governed merge and fresh promote proof.",
+      "resolved_at": "2026-07-29T04:47:38Z",
+      "status": "done",
+      "task_id": "OPS-PROMOTE-PR-CI-TRIGGER-001",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-07-29T04:47:38Z",
+      "from": "Codex2",
+      "message": "Independent exact-head review of c89bff92a314641714c771971492385d576c1ccb found the REST implementation sound: 22 PublishPromoteTests and 70 focused pytest passed, py_compile/YAML/JSON/diff checks passed, live read-only REST reproduced 26 promote PRs and PR #4138 with zero checks, and PR #4262 has 8 successful Branch CI runs. Reopen required because current origin/dev is b1527e868654fb93765b3e5788adeea1f5e869a2, not an ancestor of c89bff92, so PR #4262 is BEHIND under strict dev protection; any base composition creates an unreviewed head. The committed evidence also still records review.pending_current_head_review, rest_followup_head=null, old check head ee04032d, and pre-push head 3ade46dc rather than c89bff92. Compose latest origin/dev, update and commit exact-head/check evidence, reacquire Branch CI on the new PR head, then return for exact-head review. Fresh promote auto-merge proof and evidence-based stale PR retirement remain required after merge before done.",
+      "resolved_at": "2026-07-29T04:47:38Z",
+      "status": "done",
+      "task_id": "OPS-PROMOTE-PR-CI-TRIGGER-001",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-07-29T04:58:46Z",
+      "from": "Codex",
+      "message": "Review exact PR #4262 head 1ed3109dd787d9d0d1b51ac12268bb1bdd850f5b. Push run 30423656277 and pull_request run 30423658834 each passed Commit trailers, Runtime mirror guard, Python packaging provision, and Smoke acceptance (8/8). Local 22 unittest, 70 pytest, py_compile, YAML/JSON/diff, and live read-only REST passed. Confirm latest dev ancestry and evidence; approve only with REVIEW_PR=4262 and REVIEW_HEAD_SHA=1ed3109dd787d9d0d1b51ac12268bb1bdd850f5b. Post-merge fresh promote proof and evidence-based stale PR retirement remain owner follow-ups.",
+      "resolved_at": "2026-07-29T05:04:54Z",
+      "status": "done",
+      "task_id": "OPS-PROMOTE-PR-CI-TRIGGER-001",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-07-29T05:04:54Z",
+      "from": "Codex2",
+      "message": "Reviewer verification passed for the REST repair (22 unittest, 70 pytest, py_compile, YAML/JSON/diff, live REST; exact-head push/PR CI 8/8), but approval is fail-closed: current origin/dev 89e1e80c69b688df80d6ccb2bdc2e3d4a9041d3c is not an ancestor of reviewed head 1ed3109dd787d9d0d1b51ac12268bb1bdd850f5b, and committed evidence.json still binds prior head c89bff92a314641714c771971492385d576c1ccb with runs 30422862189/30422863646 rather than 1ed3109d with runs 30423656277/30423658834. Compose latest origin/dev, commit the 1ed3109d CI evidence, push the resulting exact head, reacquire push and pull_request Branch CI, then return that new head for review. Fresh promote proof and evidence-based stale PR retirement remain closeout follow-ups.",
+      "resolved_at": "2026-07-29T05:04:54Z",
+      "status": "done",
+      "task_id": "OPS-PROMOTE-PR-CI-TRIGGER-001",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-07-29T08:31:21Z",
+      "from": "Codex",
+      "message": "Exact head 77dc9e49cc105a81e213b3ff02c1b657685acf6e is pushed on PR #4262 with origin/dev 57abe669fc0b2c9c871c09920e156adf85f7e30e composed. Evidence anchor 6767b2b2b records reviewed head 1ed3109d and runs 30423656277/30423658834. Revalidation passed: 22 unittest, 70 pytest, py_compile, workflow YAML/evidence JSON/diff, live REST (26 promote PRs; #4138 zero checks). Fresh exact-head Branch CI passed 8/8: push 30435694555 and pull_request 30435698386. Please independently review exact head 77dc9e49; auto-merge remains disabled and fresh promote/stale retirement remain post-merge follow-ups.",
+      "resolved_at": "2026-07-29T08:42:03Z",
+      "status": "done",
+      "task_id": "OPS-PROMOTE-PR-CI-TRIGGER-001",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-07-29T08:42:03Z",
+      "from": "Codex2",
+      "message": "Chair reassigned review from Codex2 to Claude2: Codex2 has two consecutive missing-process review dispatch failures on this task; Claude2 is auth-ready, governance-review capable, recently live, and distinct from owner Codex.",
+      "resolved_at": "2026-07-29T08:54:33Z",
+      "status": "done",
+      "task_id": "OPS-PROMOTE-PR-CI-TRIGGER-001",
+      "to": "Claude2"
+    },
+    {
+      "created_at": "2026-07-29T08:54:33Z",
+      "from": "Claude2",
+      "message": "Claude2 independent exact-head review of PR 4262 head 77dc9e49cc105a81e213b3ff02c1b657685acf6e (origin/dev 57abe669f is an ancestor; MERGEABLE). Reproduced locally with /home/lupin/pantheon/.venv/bin/python3: 22 PublishPromoteTests OK, 70 focused pytest passed in 9.33s (test_git_workflow_helpers.py, test_nightly_publish_cut.py, test_release_branch_discipline.py), py_compile on publish_promote.py+tests, YAML parse of branch-ci.yml and publish-promote.yml, JSON parse of evidence.json, git diff --check origin/dev...HEAD clean. Live read-only through the new REST path: list_open_promote_prs('master')=26 PRs no error, find_open_promote_pr('promote/v2026.07.26.2')=PR 4138 head cb90dc479 with 0 check runs and missing ['Commit trailers','Runtime mirror guard','Smoke acceptance'] - the GraphQL 502 class is gone. Exact-head Branch CI reacquired: push run 30435694555 and pull_request run 30435698386, 8/8 checks pass including all three required contexts. Codex2's three reopen requirements are met (dev composed at 77dc9e49c, evidence commit 6767b2b2b binds reviewed head 1ed3109d and its runs, fresh CI on the new head); I accept the one-commit evidence/head lag rather than loop it again. Code review: checks:read correctly pairs with the REST check-runs call, mergeStateStatus is no longer consumed by publish_promote.py so dropping it from _normalize_pull is safe, and the pull_request filter in fetch_blocking_issue_map correctly stops PRs being read as blocker issues. NOT AUTHORIZED FOR done. Blocking pre-done conditions: (1) acceptance 3 unmet - live_proof is still null/blocked, no fresh promote candidate has ever obtained required checks or observed auto_merge_enabled, and 'gh run list --workflow=branch-ci.yml --event=workflow_dispatch' returns zero runs, so the dispatch contract is untested in production; (2) acceptance 4 unmet - stale_pr_retirement is pending_live_proof with empty ancestry evidence; (3) new finding - branch-ci.yml on the existing promote refs (verified on promote/v2026.07.26.2 and promote/v2026.07.25.1, and master ff77abecf) carries no workflow_dispatch trigger or inputs, so the existing_pr repair path cannot attach checks to the 26 backlog PRs and dispatch_promote_ci(check=True) will surface a hard 'error' disposition and a non-zero publish-promote run every cycle until the backlog is retired - handle this explicitly; (4) gh pr merge --auto stays GraphQL with check=False, so a 502 silently skips auto-merge and the live proof must observe auto_merge_enabled directly. Merge also remains gated by the Human/Ops root merge freeze 2026-07-27, which I do not sign.",
+      "resolved_at": "2026-07-29T09:06:47Z",
+      "status": "done",
+      "task_id": "OPS-PROMOTE-PR-CI-TRIGGER-001",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-07-29T09:06:47Z",
+      "from": "Codex",
+      "message": "Owner closeout follow-up is pushed at PR #4262 exact head f1b9bd3b20f1f0f3637e87fbe54bf5f1cadfe592. Please independently review legacy_ci_contract exact-head REST detection, fail-closed REST-verified auto-merge, 25 unittest/73 focused pytest evidence, and the live read-only PR #4138/release v2026.07.29.5 probes. Owner/reviewer assignments are unchanged.",
+      "resolved_at": "2026-07-29T09:07:22Z",
+      "status": "done",
+      "task_id": "OPS-PROMOTE-PR-CI-TRIGGER-001",
+      "to": "Claude2"
+    },
+    {
+      "created_at": "2026-07-29T09:07:22Z",
+      "from": "Claude2",
+      "message": "Auto-reassigned review from Claude2 to Antigravity after repeated Claude2 terminal: Worker process missing during supervisor boot reconciliation.",
+      "resolved_at": "2026-07-29T09:09:06Z",
+      "status": "done",
+      "task_id": "OPS-PROMOTE-PR-CI-TRIGGER-001",
+      "to": "Antigravity"
+    },
+    {
+      "created_at": "2026-07-29T09:09:06Z",
+      "from": "Antigravity",
+      "message": "Independent review passed on head f1b9bd3b20f1f0f3637e87fbe54bf5f1cadfe592: verified 25 PublishPromoteTests and 73 focused workflow tests with .venv-pantheon/bin/python3, py_compile on publish_promote.py and test_git_workflow_helpers.py, YAML/JSON parsing, clean git diff --check, and live read-only REST probe confirming legacy vs fresh candidate classification (PR 4138 returns legacy_ci_contract, release/v2026.07.29.5 returns eligible). Handing back to owner for finalization and push.",
+      "resolved_at": "2026-07-29T09:16:59Z",
+      "status": "done",
+      "task_id": "OPS-PROMOTE-PR-CI-TRIGGER-001",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-07-29T09:16:59Z",
+      "from": "Antigravity",
+      "message": "Owner closeout verification passed at exact approved head f1b9bd3b20f1f0f3637e87fbe54bf5f1cadfe592: 25 PublishPromoteTests, 73 focused tests, py_compile, workflow YAML/evidence JSON parse, and diff checks. PR #4262 remains OPEN/BLOCKED solely because required Human/Ops context 'Pantheon root merge freeze 2026-07-27' is absent; canonical review status is success and auto-merge is off. Keep review_approved; merge/live proof/stale retirement/done must wait for the exact-head root gate.",
+      "resolved_at": "2026-07-29T09:18:24Z",
+      "status": "done",
+      "task_id": "OPS-PROMOTE-PR-CI-TRIGGER-001",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-07-29T09:20:48Z",
+      "from": "Antigravity",
+      "message": "Auto-reassigned ownership from Codex to Codex2 after repeated Codex terminal: Worker exited before the task reached a terminal status.",
+      "resolved_at": "2026-07-29T10:04:53Z",
+      "status": "done",
+      "task_id": "OPS-PROMOTE-PR-CI-TRIGGER-001",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-07-29T10:04:53Z",
+      "from": "Antigravity",
+      "message": "Owner closeout revalidation passed at exact approved head f1b9bd3b20f1f0f3637e87fbe54bf5f1cadfe592: 25 PublishPromoteTests, 73 focused pytest, py_compile, workflow YAML/evidence JSON parse, both diff checks, and live read-only legacy/fresh classification. PR #4262 remains OPEN/BLOCKED solely because required Human/Ops context 'Pantheon root merge freeze 2026-07-27' is absent; canonical review gate and Branch CI are successful. Do not run done until #4262 merges, fresh promote checks/auto-merge/master ancestry are recorded, and ancestry-proven stale PRs are retired.",
+      "resolved_at": "2026-07-29T10:06:27Z",
+      "status": "done",
+      "task_id": "OPS-PROMOTE-PR-CI-TRIGGER-001",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-07-29T10:07:10Z",
+      "from": "Antigravity",
+      "message": "Supervisor resumed OPS-PROMOTE-PR-CI-TRIGGER-001 for finalize after successful dispatch.",
+      "resolved_at": "2026-07-29T10:14:11Z",
+      "status": "done",
+      "task_id": "OPS-PROMOTE-PR-CI-TRIGGER-001",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-07-29T10:14:11Z",
+      "from": "Codex",
+      "message": "Finalization refresh pushed to PR #4262 exact head f81a9b1e96de5d5bbfd1530daabd6f3441c13893 after conflict-free origin/dev composition. Focused validation passed: 25 unittest, 73 pytest, py_compile, YAML/JSON parse, and diff checks. Please rebind independent approval to this exact head after Branch CI; Human/Ops root-freeze status remains separate.",
+      "resolved_at": "2026-07-29T10:20:30Z",
+      "status": "done",
+      "task_id": "OPS-PROMOTE-PR-CI-TRIGGER-001",
+      "to": "Antigravity"
+    },
+    {
+      "created_at": "2026-07-29T10:20:30Z",
+      "from": "Antigravity",
+      "message": "Verified exact head f81a9b1e96de5d5bbfd1530daabd6f3441c13893 after conflict-free origin/dev composition. All 25 unittest, 73 pytest, py_compile, workflow/JSON parse, and diff checks passed. Approved PR #4262 exact head for post-CI merge.",
+      "resolved_at": "2026-07-29T10:28:54Z",
+      "status": "done",
+      "task_id": "OPS-PROMOTE-PR-CI-TRIGGER-001",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-07-29T10:30:11Z",
+      "from": "Codex",
+      "message": "PR #4262 exact head c249265c8b6cde99ed20376491d3a8ff88a7aff2 is base-current and ready for independent re-review. Push run 30443811557 and PR run 30443815640 both passed Commit trailers, Runtime mirror guard, Python packaging provision, and Smoke acceptance; local 25 unittest, 73 pytest, py_compile, YAML/JSON, diff, and live read-only REST checks also passed. Approve only this exact head, then return to Codex for merge, live promote proof, stale-PR retirement, and done.",
+      "resolved_at": "2026-07-29T10:50:50Z",
+      "status": "done",
+      "task_id": "OPS-PROMOTE-PR-CI-TRIGGER-001",
+      "to": "Antigravity"
+    },
+    {
+      "created_at": "2026-07-29T10:50:50Z",
+      "from": "Antigravity",
+      "message": "Verified exact PR #4262 head c249265c8b6cde99ed20376491d3a8ff88a7aff2 via local 25 unittest, 73 pytest, py_compile, YAML/JSON parse, diff checks, and live read-only REST. Dispatched push run 30443811557 and pull-request run 30443815640 passed all required check contexts (Commit trailers, Runtime mirror guard, Python packaging provision, Smoke acceptance). Head is base-current and ready for owner closeout.",
+      "resolved_at": "2026-07-29T10:51:04Z",
+      "status": "done",
+      "task_id": "OPS-PROMOTE-PR-CI-TRIGGER-001",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-07-29T10:53:26Z",
+      "from": "Antigravity",
+      "message": "Auto-reassigned ownership from Codex to Codex2 after repeated Codex terminal: Worker process missing during supervisor boot reconciliation.",
+      "resolved_at": "2026-07-29T11:08:14Z",
+      "status": "done",
+      "task_id": "OPS-PROMOTE-PR-CI-TRIGGER-001",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-07-29T11:13:00Z",
+      "from": "Antigravity",
+      "message": "Auto-reassigned ownership from Codex2 to Codex after repeated Codex2 terminal: Worker exited before the task reached a terminal status.",
+      "resolved_at": "2026-07-29T11:22:57Z",
+      "status": "done",
+      "task_id": "OPS-PROMOTE-PR-CI-TRIGGER-001",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-07-29T11:22:57Z",
+      "from": "Codex",
+      "message": "PR #4262 exact head 6d6586da85ce3e2bb48870052d6e8c0bece0f195 is pushed with current dev composed, closeout evidence committed, and auto-merge off. Reacquire Branch CI, independently review this exact head and bound evidence manifest, then approve with REVIEW_PR=4262 and REVIEW_HEAD_SHA=6d6586da85ce3e2bb48870052d6e8c0bece0f195 if accepted.",
+      "resolved_at": "2026-07-29T11:27:36Z",
+      "status": "done",
+      "task_id": "OPS-PROMOTE-PR-CI-TRIGGER-001",
+      "to": "Antigravity"
+    },
+    {
+      "created_at": "2026-07-29T11:27:36Z",
+      "from": "Antigravity",
+      "message": "獨立複核 PR #4262 exact head 6d6586da85ce3e2bb48870052d6e8c0bece0f195：已完整 compose 最新 origin/dev (24d9c547e)，25 unittest 與 73 pytest 本地重跑 100% 通過，REST 介面與 workflow 觸發機制實作正確。簽核 exact head 6d6586da8，退回 owner (Codex) 進行 final closeout。",
+      "resolved_at": "2026-07-29T11:37:49Z",
+      "status": "done",
+      "task_id": "OPS-PROMOTE-PR-CI-TRIGGER-001",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-07-29T11:37:49Z",
+      "from": "Codex",
+      "message": "PR #4262 refreshed exact head 645609c0133f1e5a7badbf4a3e960810a8c2f3b3 is current with origin/dev c1e396495d37a1c9dfeea5704e7eb73db6acde0e; Branch CI runs 30448185392 and 30448188497 supplied 8/8 successful checks. Local closeout validation repeated: 25 unittest, 73 pytest, py_compile, YAML/JSON parse, and diff checks passed. Prior approval of 6d6586da85ce3e2bb48870052d6e8c0bece0f195 was superseded by strict-base refresh. Please review and approve PR #4262 exact head 645609c0133f1e5a7badbf4a3e960810a8c2f3b3; Human/Ops must separately supply Pantheon root merge freeze 2026-07-27 before governed integration.",
+      "resolved_at": "2026-07-29T11:41:25Z",
+      "status": "done",
+      "task_id": "OPS-PROMOTE-PR-CI-TRIGGER-001",
+      "to": "Antigravity"
+    },
+    {
+      "created_at": "2026-07-29T11:41:25Z",
+      "from": "Antigravity",
+      "message": "Reviewed PR #4262 exact head 645609c0133f1e5a7badbf4a3e960810a8c2f3b3. Code diff against dev is clean and complete; PR #4262 is open against base dev with head 645609c0133f1e5a7badbf4a3e960810a8c2f3b3; GitHub check-runs for 645609c0133f1e5a7badbf4a3e960810a8c2f3b3 show 8/8 successful checks (Smoke acceptance, Runtime mirror guard, Commit trailers, Python packaging provision); local test suites passed (213 unittest discover passed, 63 pytest passed). Review approved.",
+      "resolved_at": "2026-07-29T11:53:38Z",
+      "status": "done",
+      "task_id": "OPS-PROMOTE-PR-CI-TRIGGER-001",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-07-29T11:54:19Z",
+      "from": "Antigravity",
+      "message": "Supervisor resumed OPS-PROMOTE-PR-CI-TRIGGER-001 for finalize after successful dispatch.",
+      "resolved_at": "2026-07-29T12:04:28Z",
+      "status": "done",
+      "task_id": "OPS-PROMOTE-PR-CI-TRIGGER-001",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-07-29T12:04:28Z",
+      "from": "Codex2",
+      "message": "PR #4262 exact head c6999529e7299c3730d3dad7de16b7c2935c3c4c is pushed; Branch CI push run 30449918268 and PR run 30449913458 both passed all eight checks. Please independently review and bind approval to this exact head and the committed evidence manifest; owner/reviewer assignments are unchanged.",
+      "resolved_at": "2026-07-29T12:07:50Z",
+      "status": "done",
+      "task_id": "OPS-PROMOTE-PR-CI-TRIGGER-001",
+      "to": "Antigravity"
+    },
+    {
+      "created_at": "2026-07-29T12:07:50Z",
+      "from": "Antigravity",
+      "message": "Independently verified PR #4262 exact head c6999529e7299c3730d3dad7de16b7c2935c3c4c; 25 unittest, 73 pytest passed, evidence manifest bound.",
+      "resolved_at": "2026-07-29T12:16:17Z",
+      "status": "done",
+      "task_id": "OPS-PROMOTE-PR-CI-TRIGGER-001",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-07-29T12:16:17Z",
+      "from": "Antigravity",
+      "message": "Fresh promote proof opened PR #4375 at exact head 596d190930d27d41e35191e37b9dc9471ad8bb43 and verified auto-merge, but workflow_dispatch run 30450718720 failed Commit trailers by rescanning already-validated release history; implementing a narrow dispatch-only history-scan exemption before a new immutable release proof.",
+      "resolved_at": "2026-07-29T12:22:33Z",
+      "status": "done",
+      "task_id": "OPS-PROMOTE-PR-CI-TRIGGER-001",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-07-29T12:22:33Z",
+      "from": "Codex2",
+      "message": "Please review PR #4377 exact head bbbe33fe77121374677569a1b063ae01f9c0a02d. Both push run 30451221971 and PR run 30451224688 passed Commit trailers, Runtime mirror guard, Python packaging, and Smoke acceptance; focused local validation passed 25 unittest and 73 pytest. Scope is the fresh-PR #4375 live finding, exact-head dispatch trailer-history skip, contract test, and bound evidence only.",
+      "resolved_at": "2026-07-29T12:24:55Z",
+      "status": "done",
+      "task_id": "OPS-PROMOTE-PR-CI-TRIGGER-001",
+      "to": "Antigravity"
+    },
+    {
+      "created_at": "2026-07-29T12:24:55Z",
+      "from": "Antigravity",
+      "message": "獨立複核 PR #4377 exact head bbbe33fe77121374677569a1b063ae01f9c0a02d 通過：1. GitHub PR #4377 required checks（Commit trailers, Runtime mirror guard, Python packaging, Smoke acceptance）全數 success (runs 30451221971 / 30451224688)；2. test_git_workflow_helpers.py 本地 63 項 unittest 全數通過；3. 修復 exact-head dispatch 在 promote PR 重掃歷史 release 提交 trailer 的問題，保持 release/task 治理原則且邊界正確。審查通過，退回 owner 進行 closeout。",
+      "resolved_at": "2026-07-29T12:25:17Z",
+      "status": "done",
+      "task_id": "OPS-PROMOTE-PR-CI-TRIGGER-001",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-07-29T12:26:01Z",
+      "from": "Antigravity",
+      "message": "Supervisor resumed OPS-PROMOTE-PR-CI-TRIGGER-001 for finalize after successful dispatch.",
+      "resolved_at": "2026-07-29T12:52:28Z",
+      "status": "done",
+      "task_id": "OPS-PROMOTE-PR-CI-TRIGGER-001",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-07-29T12:52:28Z",
+      "from": "Codex",
+      "message": "Owner closeout live proof exposed the final GitHub check-rollup gap. PR #4380 exact head a72f80ddad120452b0d0c8cd4549a55fe771a942 automates the proven action_required Branch CI placeholder rerun and records fresh promote/stale-retirement evidence. All local and PR checks pass; please independently review this exact head and approve with the existing review_file if accepted.",
+      "resolved_at": "2026-07-29T12:57:27Z",
+      "status": "done",
+      "task_id": "OPS-PROMOTE-PR-CI-TRIGGER-001",
+      "to": "Antigravity"
+    },
+    {
+      "created_at": "2026-07-29T12:57:27Z",
+      "from": "Antigravity",
+      "message": "獨立審查通過 Task OPS-PROMOTE-PR-CI-TRIGGER-001 exact head a72f80ddad120452b0d0c8cd4549a55fe771a942：\n1. Branch CI exact-head dispatch 契約修復與 auto-merge 路徑完全落實於 publish_promote.py / branch-ci.yml / publish-promote.yml。\n2. 實證 proof 完成：Fresh promote PR #4378 (release/v2026.07.29.8) 觸發 Branch CI 驗收通過並成功自動合併至 master (2c9388e07b9a99ac2938d58a0edf6e4d34002dd5)。\n3. 27 個歷史舊 promote PRs (含 PR #4138 等) 依據 release 提交祖先關係與 master 可達性證明，完成合規退役關閉。\n4. 本地 27 項 PublishPromoteTests unittest、75 項 pytest 測試全數 100% 綠過，證據文件 docs/deployment/evidence/supervisor/OPS-PROMOTE-PR-CI-TRIGGER-001/evidence.json 與 README.md 均完整且一致。",
+      "resolved_at": "2026-07-29T13:01:23Z",
+      "status": "done",
+      "task_id": "OPS-PROMOTE-PR-CI-TRIGGER-001",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-07-29T13:05:57Z",
+      "from": "Codex",
+      "message": "Strict-base closeout refresh is pushed to PR #4380 exact head 28855de6afe9a5523a2fc04abe5cc22aa27a6435. Owner/reviewer and implementation scope are unchanged; 27 unittest, 75 pytest, artifact/diff checks, PR #4378, and 27 stale-PR readback passed. Please independently re-approve this exact head after Branch CI, then return it to Codex for governed integration and done.",
+      "resolved_at": "2026-07-29T13:09:44Z",
+      "status": "done",
+      "task_id": "OPS-PROMOTE-PR-CI-TRIGGER-001",
+      "to": "Antigravity"
+    },
+    {
+      "created_at": "2026-07-29T13:09:44Z",
+      "from": "Antigravity",
+      "message": "獨立審查通過 Task OPS-PROMOTE-PR-CI-TRIGGER-001 strict-base exact head 28855de6afe9a5523a2fc04abe5cc22aa27a6435：1. Branch CI exact-head workflow_dispatch 契約修復與 auto-merge 路徑完全落實於 publish_promote.py / branch-ci.yml / publish-promote.yml。 2. 實證 proof 完成：Fresh promote PR #4378 (release/v2026.07.29.8) 觸發 Branch CI 驗收通過並成功自動合併至 master (2c9388e07b9a99ac2938d58a0edf6e4d34002dd5)。 3. 27 個歷史舊 promote PRs (含 PR #4138 等) 依據 release 提交祖先關係與 master 可達性證明，完成合規退役關閉。 4. 27 項 PublishPromoteTests unittest、75 項 focused pytest 測試 100% 綠過，py_compile 與 diff check 通過，證據文件 docs/deployment/evidence/supervisor/OPS-PROMOTE-PR-CI-TRIGGER-001/evidence.json 完整合規。",
+      "resolved_at": "2026-07-29T13:10:00Z",
+      "status": "done",
+      "task_id": "OPS-PROMOTE-PR-CI-TRIGGER-001",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-07-29T13:10:55Z",
+      "from": "Antigravity",
+      "message": "Supervisor resumed OPS-PROMOTE-PR-CI-TRIGGER-001 for finalize after successful dispatch.",
+      "status": "done",
+      "task_id": "OPS-PROMOTE-PR-CI-TRIGGER-001",
+      "to": "Codex2",
+      "resolved_at": "2026-07-29T13:17:02Z"
+    }
+  ],
+  "blockers": [
+    {
+      "created_at": "2026-07-27T18:43:21Z",
+      "message": "PR #4262 exact head ee04032de9e00cde74a948b5ba1389217bcccbc4 is pushed with auto-merge enabled; 22 unittest, 70 pytest, and both Branch CI runs 30294910730/30294912073 are green. dev protection additionally requires one independent last-push approval plus absent Pantheon canonical review gate and Pantheon root merge freeze 2026-07-27 statuses. Waiting for Claude review and Human/Ops freeze release; owner will not self-approve or bypass protection.",
+      "owner": "Codex2",
+      "resolution_ref": "chair_reassignment:OPS-PROMOTE-PR-CI-TRIGGER-001",
+      "resolved_at": "2026-07-27T19:41:38Z",
+      "status": "resolved",
+      "task_id": "OPS-PROMOTE-PR-CI-TRIGGER-001",
+      "waiting_for": "Claude"
+    },
+    {
+      "created_at": "2026-07-27T20:42:35Z",
+      "message": "PR #4262 exact head 3ade46dceb24ca621c3801d22db8d1348ce54643 is pushed with auto-merge enabled; local 22 unittest/70 pytest and both push/PR Branch CI runs 30303602174/30303604249 passed. Closeout is blocked until Human/Ops supplies the canonical review gate and root merge-freeze statuses plus an independent GitHub approval; fresh promote proof and evidence-based stale PR retirement must follow the merge before done.",
+      "owner": "Codex",
+      "resolution_ref": "chair_reassignment:OPS-PROMOTE-PR-CI-TRIGGER-001",
+      "resolved_at": "2026-07-29T04:33:30Z",
+      "status": "resolved",
+      "task_id": "OPS-PROMOTE-PR-CI-TRIGGER-001",
+      "waiting_for": "Human/Ops"
+    }
+  ]
+}

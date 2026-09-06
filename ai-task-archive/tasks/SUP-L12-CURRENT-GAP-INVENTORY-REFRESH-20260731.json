@@ -1,0 +1,134 @@
+{
+  "version": 1,
+  "task_id": "SUP-L12-CURRENT-GAP-INVENTORY-REFRESH-20260731",
+  "archived_at": "2026-08-13T02:01:16Z",
+  "terminal_status": "done",
+  "terminal_outcome": "superseded",
+  "task": {
+    "acceptance": [
+      "Write one evidence-backed current gap inventory covering the exact immutable 28-task catalog and all orchestration glue",
+      "Pass one independently structured audit of specification catalog DAG loop coverage and artifact topology",
+      "Pass one independently structured audit of live supervisor provider readiness dispatch closeout config hash and actual concurrency",
+      "Pass one independently structured audit of downstream verifier hosted deployment successor edges and protected L12 closeout",
+      "Record source PR heads merge and live runtime SHAs catalog file and canonical SHAs event checkpoint and hosted FE BFF identities",
+      "Distinguish 25 parallel-ready tasks from the actual one-owner one-reviewer account concurrency",
+      "Enumerate alias guard overlap guard reviewer lease initial admission wave advancer post-DAG topology and closeout assignment tasks with exact dependency order",
+      "Record every discovered missing development and missing validation without claiming completion",
+      "Archive the three pass findings and execution task mapping in reviewed evidence with checksum",
+      "Deliver through clean branch PR exact-head independent review protected merge and live promotion",
+      "Do not edit .orchestrator/config.json source code or product task state and do not materialize the 28 catalog tasks"
+    ],
+    "artifacts": [
+      "docs/bff/execution-tasks/2026-07-31-l12-current-gap-supervisor-dispatch/CURRENT_GAP_INVENTORY.md",
+      "docs/deployment/evidence/twelve-loop-gap/SUP-L12-CURRENT-GAP-INVENTORY-REFRESH-20260731"
+    ],
+    "depends_on": [
+      "SUP-AGENT-ALIAS-REASSIGN-GUARD-20260731",
+      "SUP-L12-HELD-CLOSE-OVERLAP-GUARD-20260731"
+    ],
+    "generation": 1,
+    "id": "SUP-L12-CURRENT-GAP-INVENTORY-REFRESH-20260731",
+    "last_update": "2026-08-13T02:01:16Z",
+    "next": "Retired during the Supervisor Authority V2 board reset: this legacy control, routing, rollout, or verification row is no longer an execution authority; merged source and archive evidence remain preserved.",
+    "owner": "Antigravity",
+    "phase": "L12 current-gap audited inventory",
+    "reviewer": "Codex",
+    "status": "done",
+    "summary_zh": null,
+    "title": "Publish the consolidated three-pass current L12 gap inventory",
+    "terminal_outcome": "superseded"
+  },
+  "handoffs": [
+    {
+      "created_at": "2026-08-01T14:22:34Z",
+      "from": "Human/Ops",
+      "message": "Auto-reassigned SUP-L12-CURRENT-GAP-INVENTORY-REFRESH-20260731 away from unavailable lane Human/Ops (disabled, paused, sidecar-only, or auth-down); reviewer Human/Ops -> Codex.",
+      "resolved_at": "2026-08-01T15:29:23Z",
+      "status": "done",
+      "task_id": "SUP-L12-CURRENT-GAP-INVENTORY-REFRESH-20260731",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-08-01T15:29:23Z",
+      "from": "Codex",
+      "message": "Auto-reassigned SUP-L12-CURRENT-GAP-INVENTORY-REFRESH-20260731 away from unavailable lane Codex (disabled, paused, sidecar-only, or auth-down); reviewer Codex -> Codex2.",
+      "resolved_at": "2026-08-04T13:30:22Z",
+      "status": "done",
+      "task_id": "SUP-L12-CURRENT-GAP-INVENTORY-REFRESH-20260731",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-08-04T13:23:34Z",
+      "from": "Antigravity",
+      "message": "Auto-reassigned SUP-L12-CURRENT-GAP-INVENTORY-REFRESH-20260731 away from unavailable lane Antigravity (disabled, paused, sidecar-only, or auth-down); owner Antigravity -> Codex2, reviewer Codex2 -> Codex.",
+      "resolved_at": "2026-08-05T01:25:10Z",
+      "status": "done",
+      "task_id": "SUP-L12-CURRENT-GAP-INVENTORY-REFRESH-20260731",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-08-07T12:23:58Z",
+      "from": "Claude",
+      "message": "Auto-reassigned SUP-L12-CURRENT-GAP-INVENTORY-REFRESH-20260731 away from unavailable lane Claude (disabled, paused, sidecar-only, or auth-down); reviewer Claude -> Codex2.",
+      "resolved_at": "2026-08-07T13:11:50Z",
+      "status": "done",
+      "task_id": "SUP-L12-CURRENT-GAP-INVENTORY-REFRESH-20260731",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-08-07T13:11:50Z",
+      "from": "Codex2",
+      "message": "Auto-reassigned SUP-L12-CURRENT-GAP-INVENTORY-REFRESH-20260731 away from unavailable lane Codex2 (disabled, paused, sidecar-only, or auth-down); reviewer Codex2 -> Codex.",
+      "resolved_at": "2026-08-08T14:27:57Z",
+      "status": "done",
+      "task_id": "SUP-L12-CURRENT-GAP-INVENTORY-REFRESH-20260731",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-08-08T14:23:30Z",
+      "from": "Antigravity",
+      "message": "Auto-reassigned SUP-L12-CURRENT-GAP-INVENTORY-REFRESH-20260731 away from unavailable lane Antigravity (disabled, paused, sidecar-only, or auth-down); owner Antigravity -> Codex2.",
+      "resolved_at": "2026-08-09T10:09:23Z",
+      "status": "done",
+      "task_id": "SUP-L12-CURRENT-GAP-INVENTORY-REFRESH-20260731",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-08-09T10:09:23Z",
+      "from": "Codex2",
+      "message": "Auto-reassigned SUP-L12-CURRENT-GAP-INVENTORY-REFRESH-20260731 away from unavailable lane Codex2 (disabled, paused, sidecar-only, or auth-down); owner Codex2 -> Codex, reviewer Codex -> Antigravity.",
+      "resolved_at": "2026-08-09T15:07:14Z",
+      "status": "done",
+      "task_id": "SUP-L12-CURRENT-GAP-INVENTORY-REFRESH-20260731",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-08-09T15:07:14Z",
+      "from": "Codex",
+      "message": "Auto-reassigned SUP-L12-CURRENT-GAP-INVENTORY-REFRESH-20260731 away from unavailable lane Codex (disabled, paused, sidecar-only, or auth-down); owner Codex -> Codex2.",
+      "resolved_at": "2026-08-12T02:55:43Z",
+      "status": "done",
+      "task_id": "SUP-L12-CURRENT-GAP-INVENTORY-REFRESH-20260731",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-08-12T02:55:43Z",
+      "from": "Codex2",
+      "message": "Auto-reassigned SUP-L12-CURRENT-GAP-INVENTORY-REFRESH-20260731 away from unavailable lane Codex2 (disabled, paused, sidecar-only, or auth-down); owner Codex2 -> Antigravity, reviewer Antigravity -> Claude.",
+      "resolved_at": "2026-08-13T02:00:40Z",
+      "status": "done",
+      "task_id": "SUP-L12-CURRENT-GAP-INVENTORY-REFRESH-20260731",
+      "to": "Antigravity"
+    },
+    {
+      "created_at": "2026-08-12T04:29:54Z",
+      "from": "Claude",
+      "message": "Auto-reassigned SUP-L12-CURRENT-GAP-INVENTORY-REFRESH-20260731 away from unavailable lane Claude (disabled, paused, sidecar-only, or auth-down); reviewer Claude -> Codex.",
+      "status": "done",
+      "task_id": "SUP-L12-CURRENT-GAP-INVENTORY-REFRESH-20260731",
+      "to": "Codex",
+      "resolved_at": "2026-08-13T02:01:16Z"
+    }
+  ],
+  "blockers": []
+}

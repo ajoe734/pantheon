@@ -1,0 +1,220 @@
+{
+  "version": 1,
+  "task_id": "SUP-AI-CHECK-FILTER-20260811",
+  "archived_at": "2026-08-11T04:13:33Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "acceptance": [
+      "Reproduce the current dry-run for SUP-PROVIDER-REPORT-CALL-SIGNATURE-20260811 / PR #4741 and capture the exact classification input that incorrectly treats the explicitly non-required issuer audit as blocking.",
+      "Implement a data-driven required-versus-diagnostic status classifier in auto_integrator. A check may be ignored only when it is positively identified as non-required; missing, ambiguous, required, stale-head, review, trailer, or actual CI failures must continue to block fail closed.",
+      "Do not add a broad name-only ignore, direct gh merge bypass, branch-protection change, reviewer impersonation, or canonical task-state workaround.",
+      "Add focused regression tests for PR #4741-shaped diagnostic failure, required failure, ambiguous requiredness, failing trailer, canonical review gate, and exact-head drift; update the integrator contract.",
+      "Record exact-head evidence. Every new commit subject must be at most 72 characters with required trailers. Deliver through a clean branch, PR, independent exact-head review, required checks, and protected merge.",
+      "No live runtime promotion or manual merge is in scope; after merge, the supervisor-owned integrator must perform a fresh governed dry-run and merge attempt."
+    ],
+    "artifacts": [
+      "scripts/git/auto_integrator.py",
+      "scripts/git/test_auto_integrator.py",
+      "scripts/git/auto_integrator_contract.md",
+      "docs/deployment/evidence/supervisor/SUP-AI-CHECK-FILTER-20260811/"
+    ],
+    "depends_on": [],
+    "dev_bridge": {
+      "actor": {
+        "capabilities": [
+          "integration",
+          "delivery-governance",
+          "acceptance"
+        ],
+        "id": "Human/Ops",
+        "roles": [
+          "operator",
+          "integration"
+        ]
+      },
+      "audit_conversation_href": "task:SUPERVISOR-FLEET-THROUGHPUT-20260811",
+      "conversation_id": "SUPERVISOR-FLEET-THROUGHPUT-20260811",
+      "documents": [],
+      "emitted_at": "2026-08-11T02:31:21.885059Z",
+      "intent": "source_only_remediation_dispatch",
+      "mode": "supervisor_source_only",
+      "packet_digest": "1b3564c917e1c91d97ed4ba9cf5c551d995605e080c3140ad781d73c4c8d9dfb",
+      "packet_id": "sup-ai-check-filter-20260811-0232",
+      "source_turn_ids": [
+        "auto-integrator-dry-run-4741-20260811",
+        "root-cause-remediation-execution-20260811"
+      ],
+      "task_spec": {
+        "acceptance": [
+          "Reproduce the current dry-run for SUP-PROVIDER-REPORT-CALL-SIGNATURE-20260811 / PR #4741 and capture the exact classification input that incorrectly treats the explicitly non-required issuer audit as blocking.",
+          "Implement a data-driven required-versus-diagnostic status classifier in auto_integrator. A check may be ignored only when it is positively identified as non-required; missing, ambiguous, required, stale-head, review, trailer, or actual CI failures must continue to block fail closed.",
+          "Do not add a broad name-only ignore, direct gh merge bypass, branch-protection change, reviewer impersonation, or canonical task-state workaround.",
+          "Add focused regression tests for PR #4741-shaped diagnostic failure, required failure, ambiguous requiredness, failing trailer, canonical review gate, and exact-head drift; update the integrator contract.",
+          "Record exact-head evidence. Every new commit subject must be at most 72 characters with required trailers. Deliver through a clean branch, PR, independent exact-head review, required checks, and protected merge.",
+          "No live runtime promotion or manual merge is in scope; after merge, the supervisor-owned integrator must perform a fresh governed dry-run and merge attempt."
+        ],
+        "artifacts": [
+          "scripts/git/auto_integrator.py",
+          "scripts/git/test_auto_integrator.py",
+          "scripts/git/auto_integrator_contract.md",
+          "docs/deployment/evidence/supervisor/SUP-AI-CHECK-FILTER-20260811/"
+        ],
+        "depends_on": [],
+        "id": "SUP-AI-CHECK-FILTER-20260811",
+        "owner": "Antigravity2",
+        "phase": "Supervisor Delivery / Auto-integrator required-check classification",
+        "reviewer": "Codex2",
+        "summary": "The governed dry-run for PR #4741 fails only because auto_integrator treats the diagnostic check Audit signed canonical review (not required issuer) as a merge-blocking failure. Implement a narrow required-versus-diagnostic check classifier so an explicitly non-required status cannot block a protected merge, while every required, unknown-requiredness, stale-head, review-binding, trailer, or actual CI failure remains fail closed. Source-only; do not direct-merge #4741 or change branch protection.",
+        "title": "Classify optional PR diagnostics without blocking merges"
+      },
+      "task_spec_hash": "a0fcdb8b1508bb4c496bdadfc6f6092f6bea68ea685bb961c0965b28f74b9e60"
+    },
+    "failure_streak": 0,
+    "github_review_bridge": {
+      "actor": "Antigravity2",
+      "base": "dev",
+      "decision": "approve",
+      "head_branch": "task/SUP-AI-CHECK-FILTER-20260811",
+      "head_sha": "07e8161173f9527926d26b2249581de749bb5a18",
+      "mode": "required_commit_status",
+      "pr": 4744,
+      "pr_url": "https://github.com/ajoe734/pantheon/pull/4744",
+      "recorded_at": "2026-08-11T03:33:14Z",
+      "repository": "ajoe734/pantheon",
+      "review_error": "gh: Unprocessable Entity (HTTP 422)",
+      "review_proof_ref": "refs/tags/pantheon-review/approve/07e8161173f9527926d26b2249581de749bb5a18",
+      "status_context": "Pantheon canonical review gate",
+      "status_id": 51997481617,
+      "status_state": "success"
+    },
+    "id": "SUP-AI-CHECK-FILTER-20260811",
+    "last_update": "2026-08-11T04:13:33Z",
+    "next": "Auto-integrator merged PR #4744 into dev; task branch is integrated.",
+    "owner": "Codex",
+    "phase": "Supervisor Delivery / Auto-integrator required-check classification",
+    "review_binding": {
+      "base": "dev",
+      "head_branch": "task/SUP-AI-CHECK-FILTER-20260811",
+      "head_sha": "07e8161173f9527926d26b2249581de749bb5a18",
+      "pr": 4744
+    },
+    "review_file": "docs/deployment/evidence/supervisor/SUP-AI-CHECK-FILTER-20260811/evidence.json",
+    "reviewer": "Antigravity2",
+    "status": "done",
+    "summary_zh": "The governed dry-run for PR #4741 fails only because auto_integrator treats the diagnostic check Audit signed canonical review (not required issuer) as a merge-blocking failure. Implement a narrow required-versus-diagnostic check classifier so an explicitly non-required status cannot block a protected merge, while every required, unknown-requiredness, stale-head, review-binding, trailer, or actual CI failure remains fail closed. Source-only; do not direct-merge #4741 or change branch protection.",
+    "title": "Classify optional PR diagnostics without blocking merges",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-08-11T04:13:33Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/sup-ai-check-filter-20260811",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/SUP-AI-CHECK-FILTER-20260811",
+      "git_clean_required": false,
+      "status_command_runtime": {
+        "command_root": "/home/lupin/pantheon-ci-deploy/command-runtimes/0bd7cf8842a622fb40eca125f490d4073b3a1044",
+        "source_sha": "0bd7cf8842a622fb40eca125f490d4073b3a1044",
+        "base_ref": "origin/dev",
+        "remote": "ajoe734/pantheon",
+        "status_root": "/home/lupin/pantheon",
+        "delivery_root": "/tmp/pantheon-worker-worktrees/pantheon/sup-ai-check-filter-20260811",
+        "worker_lease": {
+          "schema_version": 1,
+          "task_id": "SUP-AI-CHECK-FILTER-20260811",
+          "worker_run_id": "codex-20260811T040702Z-eeed6ecb",
+          "queue_event_id": "evt-20260811T040636Z-2526b1d2",
+          "pid": 2930252,
+          "pid_start_ticks": 26027024,
+          "process_generation": "worker-process-generation-sha256:4c218611bb2a3139738fd340c2347da64ee8240cc878fd439eb37332de5c79ee"
+        }
+      },
+      "commit": "07e8161173f9527926d26b2249581de749bb5a18",
+      "commit_subject": "SUP-AI-CHECK-FILTER-20260811: finalize classifier evidence",
+      "commit_author": {
+        "name": "pantheon-dev",
+        "email": "bjoe734@gmail.com"
+      },
+      "commit_metadata": {
+        "Owned layer": "current-dev composition and final pre-review verification record for the optional diagnostic classifier",
+        "Not changing": "review authority, branch protection, canonical task state, live runtime, or PR #4741 disposition",
+        "Composes with": "PR #4744 independent exact-head review and the supervisor-owned post-merge integration pass",
+        "LLM-Agent": "Codex",
+        "Task-ID": "SUP-AI-CHECK-FILTER-20260811",
+        "Reviewer": "Antigravity2",
+        "Verified": "30 auto-integrator unit tests after current-dev composition; py_compile; jq; git diff --check"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 1,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/SUP-AI-CHECK-FILTER-20260811",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "8714db876c4ec9638127f551beeea4b8a27dd37d",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "created_at": "2026-08-11T02:43:29Z",
+      "from": "Antigravity2",
+      "message": "Implementation and evidence complete for SUP-AI-CHECK-FILTER-20260811; PR #4744 opened for review.",
+      "resolved_at": "2026-08-11T02:47:20Z",
+      "status": "done",
+      "task_id": "SUP-AI-CHECK-FILTER-20260811",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-08-11T02:47:20Z",
+      "from": "Codex2",
+      "message": "Review not approved: PR #4744 required Commit trailers check fails because commit 9307b55e9e9ee3ccd30b52329c7e5bc4fc3408a8 subject is 74 characters (limit 72). Rewrite that task commit with a <=72-character subject, retain required trailers and reviewed evidence, force-push the task branch through the governed workflow, and wait for required checks to pass before fresh exact-head review. Classifier logic, focused tests (24/24), GraphQL requiredness for PR #4741, and governed dry-run otherwise passed independent review.",
+      "resolved_at": "2026-08-11T02:47:20Z",
+      "status": "done",
+      "task_id": "SUP-AI-CHECK-FILTER-20260811",
+      "to": "Antigravity2"
+    },
+    {
+      "created_at": "2026-08-11T02:50:18Z",
+      "from": "Antigravity2",
+      "message": "Rewrote task commit subject to <=72 chars (3ffa3f494fe7d092c71fa45acb7d21be121a0f75, length 61), force-pushed task branch, and verified all required Branch CI Gate status checks passed on PR #4744. Handing off for exact-head review approval.",
+      "resolved_at": "2026-08-11T03:06:38Z",
+      "status": "done",
+      "task_id": "SUP-AI-CHECK-FILTER-20260811",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-08-11T03:10:53Z",
+      "from": "Antigravity2",
+      "message": "Helper-claimed by Codex while Antigravity2 is dispatch-paused previous owner Antigravity2 becomes reviewer.",
+      "resolved_at": "2026-08-11T03:12:11Z",
+      "status": "done",
+      "task_id": "SUP-AI-CHECK-FILTER-20260811",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-08-11T03:26:34Z",
+      "from": "Codex",
+      "message": "PR #4744 is ready for independent exact-head review at 07e8161173f9527926d26b2249581de749bb5a18. Bind REVIEW_FILE=docs/deployment/evidence/supervisor/SUP-AI-CHECK-FILTER-20260811/evidence.json. Verify the GraphQL requiredness enrichment, two-factor isRequired=false plus Canonical Review Attestation Audit provenance, optional actual Branch CI fail-closed regression, required/ambiguous/trailer/canonical-review/exact-head blockers, and UNSTABLE gating. Local verification: 30 tests passed after composing dev; py_compile, jq, and diff checks passed. PR required Branch CI checks are green; auto-merge is off.",
+      "resolved_at": "2026-08-11T03:33:14Z",
+      "status": "done",
+      "task_id": "SUP-AI-CHECK-FILTER-20260811",
+      "to": "Antigravity2"
+    },
+    {
+      "created_at": "2026-08-11T03:33:14Z",
+      "from": "Antigravity2",
+      "message": "Independent review approved at PR #4744 exact head 07e8161173f9527926d26b2249581de749bb5a18. Verified GraphQL isRequired enrichment, two-factor non-required (isRequired=false) plus Canonical Review Attestation Audit workflow provenance check classifier, UNSTABLE eligibility under enriched rollup, fail-closed behavior for optional actual CI / ambiguous requiredness / trailer / canonical review / exact-head drift, updated contract, 30 passing unit tests in test_auto_integrator.py, py_compile, jq, and git diff checks. Bound REVIEW_FILE=docs/deployment/evidence/supervisor/SUP-AI-CHECK-FILTER-20260811/evidence.json.",
+      "status": "done",
+      "task_id": "SUP-AI-CHECK-FILTER-20260811",
+      "to": "Codex",
+      "resolved_at": "2026-08-11T04:13:34Z"
+    }
+  ],
+  "blockers": []
+}

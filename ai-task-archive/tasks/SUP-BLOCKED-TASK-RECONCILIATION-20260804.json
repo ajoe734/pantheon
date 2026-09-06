@@ -1,0 +1,355 @@
+{
+  "version": 1,
+  "task_id": "SUP-BLOCKED-TASK-RECONCILIATION-20260804",
+  "archived_at": "2026-08-08T10:47:37Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "acceptance": [
+      "Read docs/04/supervisor_dispatch_refactor_proposal_2026-08-04.md section 'Problem 5' in full before starting -- it contains the confirmed root cause, the live repro (four separate blocked tasks fixed by hand on 2026-08-04, none of which the supervisor would have noticed on its own), and the exact design shape. Do not deviate from that shape without discussing first.",
+      "Confirmed live fact, do not re-derive: dispatch_ready_tasks's owned_statuses/review_statuses/finalize_statuses (ready_dispatcher config) never include 'blocked' -- a blocked task is structurally invisible to the entire dispatch scan until an explicit reopen/assign-class command fires. This is the root cause; do not treat it as a per-task bug.",
+      "Confirmed live fact: SUP-L12-STALE-PR-RETIRE-20260729, SUP-L12-STALE-FAILURE-STREAK-REAPER-20260729, SUP-L12-STALE-REAPER-EXACT-HEAD-RECONCILE-20260731, SUP-L12-STALE-REAPER-EVIDENCE-ANCHOR-REPAIR-20260731(+V2), SUP-L12-HELD-CLOSE-OVERLAP-GUARD-20260731 are prior point-patch attempts at this same problem shape; every one of them is itself sitting blocked on Human/Ops as of 2026-08-04, and none landed a generic mechanism in supervisor.py ('reaper' in code today only prunes stale worktree directories, an unrelated concept).",
+      "Extend the blocker record (command_blocker / state['blockers']) with an OPTIONAL check_kind field plus kind-specific params, e.g. {\"check_kind\": \"github_pr_ci\", \"pr_number\": N} or {\"check_kind\": \"task_dependency\", \"task_id\": X, \"required_status\": \"done\"}. Omitting check_kind must behave exactly as today (a pure human-judgment block nothing auto-clears) -- this field is purely additive and opt-in.",
+      "Add a new function (e.g. reconcile_blocked_tasks(config, state)) that runs on its OWN interval, separate from and much less frequent than the ~30s main dispatch tick, since it makes external GitHub API calls and must not add latency or rate-limit pressure to the hot dispatch cycle. For each open blocker with a check_kind set, re-sample the real current fact and, if resolved, drive the task through the exact same transition reopen already performs today -- do not invent a new state-machine path, only an automatic trigger for the existing one.",
+      "github_pr_ci check_kind: resolve via the same mechanism scripts/git/github_review_bridge.py or gh already uses to read PR status-check-rollup; resolved means all required contexts are SUCCESS.",
+      "task_dependency check_kind: resolved means the referenced task_id's status equals required_status.",
+      "Explicit success criterion: this change must be able to retire SUP-L12-STALE-PR-RETIRE-20260729, SUP-L12-STALE-FAILURE-STREAK-REAPER-20260729, SUP-L12-STALE-REAPER-EXACT-HEAD-RECONCILE-20260731, SUP-L12-STALE-REAPER-EVIDENCE-ANCHOR-REPAIR-20260731(+V2), and SUP-L12-HELD-CLOSE-OVERLAP-GUARD-20260731 as superseded by this generic mechanism. If it cannot absorb what those tasks were trying to do, the design is still too narrow -- go back to the proposal doc, do not ship a sixth point patch.",
+      "Add tests: a github_pr_ci blocker that resolves after CI flips green auto-reopens the task; a task_dependency blocker resolves when the dependency reaches required_status; a check_kind-less (legacy) blocker is never auto-touched; the reconciliation pass does not run on the hot dispatch tick.",
+      "Shadow-verify per rewrite/shadow.py discipline before cutover; ship behind a flag, incumbent one flag away, consistent with every other SUPERVISOR-REWRITE phase.",
+      "Do not touch poll_workers, process_queue, or reconcile_queue_records."
+    ],
+    "artifacts": [
+      ".orchestrator/supervisor.py",
+      "scripts/ai_status.py"
+    ],
+    "depends_on": [
+      "SUP-TASK-FAILURE-STREAK-SCHEMA-20260804"
+    ],
+    "dev_bridge": {
+      "actor": {
+        "capabilities": [
+          "fleet.dispatch",
+          "dev-task.dispatch"
+        ],
+        "id": "Claude",
+        "roles": [
+          "operator-delegate"
+        ]
+      },
+      "audit_conversation_href": null,
+      "conversation_id": "claude-root-blocked-reconciliation-20260804",
+      "documents": [
+        {
+          "kind": "REFACTOR_PROPOSAL",
+          "path": "docs/04/supervisor_dispatch_refactor_proposal_2026-08-04.md",
+          "sourceRefs": [
+            "Problem 5 section, added 2026-08-04 after a second live debugging session"
+          ]
+        }
+      ],
+      "emitted_at": "2026-08-04T10:00:00Z",
+      "intent": "supervisor_blocked_task_reconciliation",
+      "mode": "kernel_repair",
+      "packet_digest": "f3ca083eedff44dda26e78364125a3e5c106b4e764a2de212a502de8ade80306",
+      "packet_id": "pkt-sup-blocked-task-reconciliation-20260804T1000Z",
+      "source_turn_ids": [
+        "user-asked-why-board-doesnt-sense-ci-fixed",
+        "claude-found-owned-statuses-excludes-blocked",
+        "user-demanded-real-design-not-point-patch",
+        "claude-found-reaper-graveyard-confirming-pattern"
+      ],
+      "task_spec": {
+        "acceptance": [
+          "Read docs/04/supervisor_dispatch_refactor_proposal_2026-08-04.md section 'Problem 5' in full before starting -- it contains the confirmed root cause, the live repro (four separate blocked tasks fixed by hand on 2026-08-04, none of which the supervisor would have noticed on its own), and the exact design shape. Do not deviate from that shape without discussing first.",
+          "Confirmed live fact, do not re-derive: dispatch_ready_tasks's owned_statuses/review_statuses/finalize_statuses (ready_dispatcher config) never include 'blocked' -- a blocked task is structurally invisible to the entire dispatch scan until an explicit reopen/assign-class command fires. This is the root cause; do not treat it as a per-task bug.",
+          "Confirmed live fact: SUP-L12-STALE-PR-RETIRE-20260729, SUP-L12-STALE-FAILURE-STREAK-REAPER-20260729, SUP-L12-STALE-REAPER-EXACT-HEAD-RECONCILE-20260731, SUP-L12-STALE-REAPER-EVIDENCE-ANCHOR-REPAIR-20260731(+V2), SUP-L12-HELD-CLOSE-OVERLAP-GUARD-20260731 are prior point-patch attempts at this same problem shape; every one of them is itself sitting blocked on Human/Ops as of 2026-08-04, and none landed a generic mechanism in supervisor.py ('reaper' in code today only prunes stale worktree directories, an unrelated concept).",
+          "Extend the blocker record (command_blocker / state['blockers']) with an OPTIONAL check_kind field plus kind-specific params, e.g. {\"check_kind\": \"github_pr_ci\", \"pr_number\": N} or {\"check_kind\": \"task_dependency\", \"task_id\": X, \"required_status\": \"done\"}. Omitting check_kind must behave exactly as today (a pure human-judgment block nothing auto-clears) -- this field is purely additive and opt-in.",
+          "Add a new function (e.g. reconcile_blocked_tasks(config, state)) that runs on its OWN interval, separate from and much less frequent than the ~30s main dispatch tick, since it makes external GitHub API calls and must not add latency or rate-limit pressure to the hot dispatch cycle. For each open blocker with a check_kind set, re-sample the real current fact and, if resolved, drive the task through the exact same transition reopen already performs today -- do not invent a new state-machine path, only an automatic trigger for the existing one.",
+          "github_pr_ci check_kind: resolve via the same mechanism scripts/git/github_review_bridge.py or gh already uses to read PR status-check-rollup; resolved means all required contexts are SUCCESS.",
+          "task_dependency check_kind: resolved means the referenced task_id's status equals required_status.",
+          "Explicit success criterion: this change must be able to retire SUP-L12-STALE-PR-RETIRE-20260729, SUP-L12-STALE-FAILURE-STREAK-REAPER-20260729, SUP-L12-STALE-REAPER-EXACT-HEAD-RECONCILE-20260731, SUP-L12-STALE-REAPER-EVIDENCE-ANCHOR-REPAIR-20260731(+V2), and SUP-L12-HELD-CLOSE-OVERLAP-GUARD-20260731 as superseded by this generic mechanism. If it cannot absorb what those tasks were trying to do, the design is still too narrow -- go back to the proposal doc, do not ship a sixth point patch.",
+          "Add tests: a github_pr_ci blocker that resolves after CI flips green auto-reopens the task; a task_dependency blocker resolves when the dependency reaches required_status; a check_kind-less (legacy) blocker is never auto-touched; the reconciliation pass does not run on the hot dispatch tick.",
+          "Shadow-verify per rewrite/shadow.py discipline before cutover; ship behind a flag, incumbent one flag away, consistent with every other SUPERVISOR-REWRITE phase.",
+          "Do not touch poll_workers, process_queue, or reconcile_queue_records."
+        ],
+        "artifacts": [
+          ".orchestrator/supervisor.py",
+          "scripts/ai_status.py"
+        ],
+        "depends_on": [
+          "SUP-TASK-FAILURE-STREAK-SCHEMA-20260804"
+        ],
+        "id": "SUP-BLOCKED-TASK-RECONCILIATION-20260804",
+        "owner": "Antigravity",
+        "phase": "Supervisor Dispatch Reliability",
+        "reviewer": "Claude2",
+        "summary": "Root-cause fix for a pattern hit four separate times live on 2026-08-04: blocked is a one-way door in dispatch_ready_tasks (owned/review/finalize status lists never include it), so a task whose blocking condition later resolves (CI turns green, a dependency finishes) stays frozen until a human manually reopens it. The codebase already has five prior one-off 'reaper' tasks attempting fragments of this same fix, and all five are themselves stuck blocked as of today -- proof point patches don't compose. This task builds the one generic mechanism instead and must be able to retire all five as superseded.",
+        "title": "Add structured, checkable blockers and a generic blocked-task reconciliation pass"
+      },
+      "task_spec_hash": "0719a515a333202b5e93817c3912f4a4b06fe88861dcb571f1fac75cc750183f"
+    },
+    "failure_streak": 0,
+    "github_review_bridge": {
+      "actor": "Antigravity",
+      "base": "dev",
+      "decision": "approve",
+      "head_branch": "task/SUP-BLOCKED-TASK-RECONCILIATION-20260804",
+      "head_sha": "e0f41a889bf5a60125e4d988aea52d2aece9fe08",
+      "mode": "required_commit_status",
+      "pr": 4582,
+      "pr_url": "https://github.com/ajoe734/pantheon/pull/4582",
+      "recorded_at": "2026-08-08T10:40:55Z",
+      "repository": "ajoe734/pantheon",
+      "review_error": "gh: Unprocessable Entity (HTTP 422)",
+      "review_proof_ref": "refs/tags/pantheon-review/approve/e0f41a889bf5a60125e4d988aea52d2aece9fe08",
+      "status_context": "Pantheon canonical review gate",
+      "status_id": 51880377538,
+      "status_state": "success"
+    },
+    "id": "SUP-BLOCKED-TASK-RECONCILIATION-20260804",
+    "last_update": "2026-08-08T10:47:37Z",
+    "next": "PR #4582 merged into dev as 85b09fee92f1c0aa7cb49baa4add320735e4e063 from reviewed head e0f41a889bf5a60125e4d988aea52d2aece9fe08; focused 7/7 unittest, py_compile, jq, full diff-check, commit trailers, and shadow comparisons passed with zero mismatches. Subject gate override used because the reviewed and merged commit abbreviates the subject as SUP-BLOCKED-RECON-20260804 while its full Task-ID trailer is exact.",
+    "owner": "Codex",
+    "phase": "Supervisor Dispatch Reliability",
+    "review_binding": {
+      "base": "dev",
+      "head_branch": "task/SUP-BLOCKED-TASK-RECONCILIATION-20260804",
+      "head_sha": "e0f41a889bf5a60125e4d988aea52d2aece9fe08",
+      "pr": 4582
+    },
+    "review_file": "docs/deployment/evidence/supervisor/SUP-BLOCKED-TASK-RECONCILIATION-20260804/evidence.json",
+    "reviewer": "Antigravity",
+    "status": "done",
+    "summary_zh": "Root-cause fix for a pattern hit four separate times live on 2026-08-04: blocked is a one-way door in dispatch_ready_tasks (owned/review/finalize status lists never include it), so a task whose blocking condition later resolves (CI turns green, a dependency finishes) stays frozen until a human manually reopens it. The codebase already has five prior one-off 'reaper' tasks attempting fragments of this same fix, and all five are themselves stuck blocked as of today -- proof point patches don't compose. This task builds the one generic mechanism instead and must be able to retire all five as superseded.",
+    "title": "Add structured, checkable blockers and a generic blocked-task reconciliation pass",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-08-08T10:47:37Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/sup-blocked-task-reconciliation-20260804",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/SUP-BLOCKED-TASK-RECONCILIATION-20260804",
+      "git_clean_required": false,
+      "status_command_runtime": {
+        "command_root": "/home/lupin/pantheon-ci-deploy/dev-root",
+        "source_sha": "a55721bce2a7bc0a4dc01dd6eba1b48a58b78312",
+        "base_ref": "origin/dev",
+        "remote": "ajoe734/pantheon",
+        "status_root": "/home/lupin/pantheon",
+        "delivery_root": "/tmp/pantheon-worker-worktrees/pantheon/sup-blocked-task-reconciliation-20260804",
+        "wrapper_root": "/home/lupin/pantheon-ci-deploy/dev-root",
+        "worker_lease": {
+          "schema_version": 1,
+          "task_id": "SUP-BLOCKED-TASK-RECONCILIATION-20260804",
+          "worker_run_id": "codex-20260808T104133Z-5f65e765",
+          "queue_event_id": "evt-20260808T104125Z-8cf10730",
+          "pid": 2507451,
+          "pid_start_ticks": 2474178,
+          "process_generation": "worker-process-generation-sha256:ca562341a2c867fd002746ac457f3cc71acdd526bf4ea6bdfb5727692fdd04f5"
+        }
+      },
+      "commit": "e0f41a889bf5a60125e4d988aea52d2aece9fe08",
+      "commit_subject": "SUP-BLOCKED-RECON-20260804: add review evidence",
+      "commit_author": {
+        "name": "pantheon-dev",
+        "email": "bjoe734@gmail.com"
+      },
+      "commit_metadata": {
+        "Owned layer": "task-scoped review evidence manifest for the structured blocker",
+        "Not changing": "supervisor behavior, status transitions, deployment policy, or",
+        "Composes with": "Antigravity's independent exact-head review of PR #4582.",
+        "LLM-Agent": "Codex",
+        "Task-ID": "SUP-BLOCKED-TASK-RECONCILIATION-20260804",
+        "Reviewer": "Antigravity",
+        "Verified": "jq empty docs/deployment/evidence/supervisor/SUP-BLOCKED-TASK-RECONCILIATION-20260804/evidence.json; git diff --check"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 1,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "85b09fee92f1c0aa7cb49baa4add320735e4e063",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "created_at": "2026-08-04T13:18:55Z",
+      "from": "Antigravity",
+      "message": "Auto-reassigned SUP-BLOCKED-TASK-RECONCILIATION-20260804 away from unavailable lane Antigravity (disabled, paused, sidecar-only, or auth-down); owner Antigravity -> Codex2.",
+      "resolved_at": "2026-08-04T13:30:22Z",
+      "status": "done",
+      "task_id": "SUP-BLOCKED-TASK-RECONCILIATION-20260804",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-08-04T13:25:32Z",
+      "from": "Claude2",
+      "message": "Auto-reassigned SUP-BLOCKED-TASK-RECONCILIATION-20260804 away from unavailable lane Claude2 (disabled, paused, sidecar-only, or auth-down); reviewer Claude2 -> Codex.",
+      "resolved_at": "2026-08-05T01:39:51Z",
+      "status": "done",
+      "task_id": "SUP-BLOCKED-TASK-RECONCILIATION-20260804",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-08-06T02:20:02Z",
+      "from": "Antigravity",
+      "message": "PR #4582 opened with generic blocked task reconciliation implementation in supervisor.py. Please review PR #4582.",
+      "resolved_at": "2026-08-06T02:23:45Z",
+      "status": "done",
+      "task_id": "SUP-BLOCKED-TASK-RECONCILIATION-20260804",
+      "to": "Claude"
+    },
+    {
+      "created_at": "2026-08-06T02:23:45Z",
+      "from": "Claude",
+      "message": "Reviewer Claude: PR #4582 (head 88cf2725e) does not implement the specified design. (1) No check_kind anywhere in the tree - grep for check_kind returns zero hits; scripts/ai_status.py (a declared artifact) is untouched and command_blocker at line 6074 still appends only {task_id,owner,waiting_for,message,status,created_at}. (2) github_pr_ci and task_dependency checks are absent - reconcile_blocked_tasks re-samples no external fact and makes no gh/API call, so the acceptance-named live repro (CI turns green -> auto-reopen) is not fixed. (3) It is wired unconditionally into _run_once_locked at supervisor.py:20516 on the ~30s hot tick, with no separate interval and no feature flag - violating both 'own interval, much less frequent' and 'ship behind a flag / shadow-verify per rewrite/shadow.py'. (4) The branch is dead in practice: command_blocker always appends an open blocker row AND sets waiting_for, and the new function skips on either; against live ai-status.json this is 27 blocked tasks / 27 open blocker rows / 0 candidates, so it can never fire. (5) Semantics are inverted vs acceptance: a check_kind-less blocker must NEVER be auto-touched, but this auto-reopens exactly the tasks that have no structured blocker. (6) All four required tests are missing (github_pr_ci flips green; task_dependency reaches required_status; legacy blocker untouched; pass does not run on the hot tick) - the 4 added ReconcileBlockedTasksTests pass (verified: pytest -k ReconcileBlockedTasksTests, 4 passed) but assert the wrong contract. (7) No evidence the five SUP-L12 reaper tasks can be retired as superseded. Also note docs/04/supervisor_dispatch_refactor_proposal_2026-08-04.md does not exist in the repo - raise that instead of proceeding without the design shape. Minor: persist_task_reassignment(new_reviewer=reviewer or owner) silently installs self-review when reviewer is empty.",
+      "resolved_at": "2026-08-06T02:23:45Z",
+      "status": "done",
+      "task_id": "SUP-BLOCKED-TASK-RECONCILIATION-20260804",
+      "to": "Antigravity"
+    },
+    {
+      "created_at": "2026-08-07T12:05:40Z",
+      "from": "Antigravity",
+      "message": "Task implementation & anchor commit a50a90c7e pushed to PR #4582. Unit tests verified (4 passed). Ready for reviewer approval.",
+      "resolved_at": "2026-08-07T12:21:47Z",
+      "status": "done",
+      "task_id": "SUP-BLOCKED-TASK-RECONCILIATION-20260804",
+      "to": "Claude"
+    },
+    {
+      "created_at": "2026-08-07T12:21:47Z",
+      "from": "Claude",
+      "message": "Auto-reassigned review from Claude to Codex2 after repeated Claude terminal: {\"is_error\":true,\"duration_api_ms\":0,\"num_turns\":1,\"stop_reason\":\"stop_sequence\",\"session_id\":\"e488162e-05a6-4717-8c53-ad3107637c7e\",\"total_cost_usd\":0,\"usage\":{\"input_tokens\":0,\"c",
+      "resolved_at": "2026-08-07T12:31:21Z",
+      "status": "done",
+      "task_id": "SUP-BLOCKED-TASK-RECONCILIATION-20260804",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-08-07T12:31:21Z",
+      "from": "Codex2",
+      "message": "Independent review rejected for PR #4582 head a50a90c7: add opt-in check_kind plus params in command_blocker/state blockers; reconcile only open structured blockers and re-sample github_pr_ci (all required contexts SUCCESS) and task_dependency (required status). Do not skip normal open/waiting blockers; use the exact reopen transition rather than todo/persist_task_reassignment. Run reconciliation on a separate low-frequency flagged/shadow-verified schedule, not every hot dispatch tick. Add the four required tests, a committed review evidence manifest before re-review, rebase on current dev, and fix CI subjects 88cf2725/a50a90c7 exceeding 72 chars.",
+      "resolved_at": "2026-08-07T12:31:21Z",
+      "status": "done",
+      "task_id": "SUP-BLOCKED-TASK-RECONCILIATION-20260804",
+      "to": "Antigravity"
+    },
+    {
+      "created_at": "2026-08-07T12:39:07Z",
+      "from": "Antigravity",
+      "message": "Helper-claimed by Codex while Antigravity is dispatch-paused previous owner Antigravity becomes reviewer.",
+      "resolved_at": "2026-08-07T12:39:43Z",
+      "status": "done",
+      "task_id": "SUP-BLOCKED-TASK-RECONCILIATION-20260804",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-08-08T04:06:00Z",
+      "from": "Codex",
+      "message": "Please independently review PR #4582 at exact head e0f41a889bf5a60125e4d988aea52d2aece9fe08. Bind REVIEW_FILE=docs/deployment/evidence/supervisor/SUP-BLOCKED-TASK-RECONCILIATION-20260804/evidence.json if approved. Focused ReconcileBlockedTasksTests (5), status schema tests (2), compile/JSON/diff checks, commit trailers, and shadow checks pass; feature remains disabled with shadow_only default.",
+      "resolved_at": "2026-08-08T04:10:03Z",
+      "status": "done",
+      "task_id": "SUP-BLOCKED-TASK-RECONCILIATION-20260804",
+      "to": "Antigravity"
+    },
+    {
+      "created_at": "2026-08-08T04:10:03Z",
+      "from": "Antigravity",
+      "message": "Independently verified PR #4582 at exact head e0f41a889bf5a60125e4d988aea52d2aece9fe08: unit test suite (5 supervisor reconciliation tests, 2 status schema tests), JSON validity, commit trailers, git diff whitespace, and shadow-mode defaults pass. Bound evidence manifest and moved task to review_approved.",
+      "resolved_at": "2026-08-08T04:22:09Z",
+      "status": "done",
+      "task_id": "SUP-BLOCKED-TASK-RECONCILIATION-20260804",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-08-08T04:22:09Z",
+      "from": "Codex",
+      "message": "PR #4582 exact head e0f41a889bf5a60125e4d988aea52d2aece9fe08 has no pantheon-review approve proof tag, so canonical review gate fails and merge is blocked. Owner closeout verification passed: 7 focused tests, py_compile, jq config validation, and rewrite.shadow (0 mismatches). Please independently re-review this exact head and run governed approve with the already-committed review manifest docs/deployment/evidence/supervisor/SUP-BLOCKED-TASK-RECONCILIATION-20260804/evidence.json; do not change owner or reviewer.",
+      "resolved_at": "2026-08-08T04:25:29Z",
+      "status": "done",
+      "task_id": "SUP-BLOCKED-TASK-RECONCILIATION-20260804",
+      "to": "Antigravity"
+    },
+    {
+      "created_at": "2026-08-08T04:25:29Z",
+      "from": "Antigravity",
+      "message": "Review approved: PR #4582 head commit e0f41a889bf5a60125e4d988aea52d2aece9fe08 independently verified with review evidence manifest docs/deployment/evidence/supervisor/SUP-BLOCKED-TASK-RECONCILIATION-20260804/evidence.json and exact unit test suite execution.",
+      "resolved_at": "2026-08-08T04:33:24Z",
+      "status": "done",
+      "task_id": "SUP-BLOCKED-TASK-RECONCILIATION-20260804",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-08-08T10:23:55Z",
+      "from": "Codex",
+      "message": "PR #4582 head e0f41a889bf5 is review-ready. Branch CI is green; focused 7/7 blocker reconciliation tests, py_compile, config/diff/trailer checks, and rewrite shadow comparisons all passed. Please independently review the exact head and bind docs/deployment/evidence/supervisor/SUP-BLOCKED-TASK-RECONCILIATION-20260804/evidence.json.",
+      "resolved_at": "2026-08-08T10:31:33Z",
+      "status": "done",
+      "task_id": "SUP-BLOCKED-TASK-RECONCILIATION-20260804",
+      "to": "Antigravity"
+    },
+    {
+      "created_at": "2026-08-08T10:31:33Z",
+      "from": "Antigravity",
+      "message": "PR #4582 head e0f41a889bf5 verified: 7/7 focused tests pass, commit trailers pass, evidence manifest committed and bound.",
+      "resolved_at": "2026-08-08T10:37:47Z",
+      "status": "done",
+      "task_id": "SUP-BLOCKED-TASK-RECONCILIATION-20260804",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-08-08T10:37:47Z",
+      "from": "Codex",
+      "message": "Owner closeout re-verification passed on unchanged PR #4582 head e0f41a889bf5a60125e4d988aea52d2aece9fe08 (7/7 focused tests, py_compile, jq, diff-check, shadow zero mismatches). Prior approval omitted review_binding, so canonical review gate remains failed and PR cannot merge. Re-approve this exact unchanged head with REVIEW_PR=4582 REVIEW_HEAD_SHA=e0f41a889bf5a60125e4d988aea52d2aece9fe08 REVIEW_BASE=dev REVIEW_HEAD_BRANCH=task/SUP-BLOCKED-TASK-RECONCILIATION-20260804 and the already-bound REVIEW_FILE; do not change the PR head.",
+      "resolved_at": "2026-08-08T10:40:55Z",
+      "status": "done",
+      "task_id": "SUP-BLOCKED-TASK-RECONCILIATION-20260804",
+      "to": "Antigravity"
+    },
+    {
+      "created_at": "2026-08-08T10:40:55Z",
+      "from": "Antigravity",
+      "message": "Review approved: PR #4582 head e0f41a889bf5a60125e4d988aea52d2aece9fe08 verified (7/7 focused tests pass, py_compile, jq, diff-check, shadow zero mismatches). Bound evidence manifest docs/deployment/evidence/supervisor/SUP-BLOCKED-TASK-RECONCILIATION-20260804/evidence.json.",
+      "status": "done",
+      "task_id": "SUP-BLOCKED-TASK-RECONCILIATION-20260804",
+      "to": "Codex",
+      "resolved_at": "2026-08-08T10:47:38Z"
+    }
+  ],
+  "blockers": [
+    {
+      "created_at": "2026-08-06T02:25:13Z",
+      "message": "Design document docs/04/supervisor_dispatch_refactor_proposal_2026-08-04.md missing from repository; detailed reviewer rejection feedback requires structured blocker schema design (check_kind) and proposal spec.",
+      "owner": "Antigravity",
+      "resolved_at": "2026-08-07T12:01:52Z",
+      "status": "resolved",
+      "task_id": "SUP-BLOCKED-TASK-RECONCILIATION-20260804",
+      "waiting_for": "Claude"
+    },
+    {
+      "created_at": "2026-08-07T12:54:59Z",
+      "message": "PR #4582 cannot pass Branch CI Gate because pushed commits 88cf2725e and a50a90c7e exceed the 72-character subject limit; the gate scans origin/dev..HEAD, so a new normal commit cannot repair it. Repair requires Human/Ops authorization for a replacement PR branch or a lease-protected rewrite of the mandated task branch. Anchor 321fdd281 contains the corrected structured-blocker implementation and focused tests.",
+      "owner": "Codex",
+      "resolved_at": "2026-08-07T14:12:37Z",
+      "status": "resolved",
+      "task_id": "SUP-BLOCKED-TASK-RECONCILIATION-20260804",
+      "waiting_for": "Human/Ops"
+    },
+    {
+      "created_at": "2026-08-08T04:33:24Z",
+      "message": "PR #4582 canonical review gate is failing because exact-head review-proof tag pantheon-review/approve/e0f41a889bf5a60125e4d988aea52d2aece9fe08 is absent; focused verification passed; awaiting Antigravity reviewer re-binding approval for the unchanged reviewed head.",
+      "owner": "Codex",
+      "resolved_at": "2026-08-08T10:18:42Z",
+      "status": "resolved",
+      "task_id": "SUP-BLOCKED-TASK-RECONCILIATION-20260804",
+      "waiting_for": "Antigravity"
+    }
+  ]
+}

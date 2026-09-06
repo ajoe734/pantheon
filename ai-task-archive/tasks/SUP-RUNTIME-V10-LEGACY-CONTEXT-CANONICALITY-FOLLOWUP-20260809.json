@@ -1,0 +1,308 @@
+{
+  "version": 1,
+  "task_id": "SUP-RUNTIME-V10-LEGACY-CONTEXT-CANONICALITY-FOLLOWUP-20260809",
+  "archived_at": "2026-08-09T14:59:48Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "acceptance": [
+      "Reproduce the f7933594 governed-bootstrap rejection against the active mutable incumbent: only legacy tracked task-brief modifications are considered, and the first path sup_dispatch_refactor_proposal_doc_commit_20260806.md fails the current canonical-rendered-byte comparison before any baseline, config, signal, launch, or rollback action.",
+      "Design a source-only, history-bounded provenance proof for task-brief residue generated before the fixed command-checkout boundary. It must not treat arbitrary current task-brief bytes, a filename-only allowlist, or a current renderer mismatch as sufficient authority.",
+      "Continue to reject staged or index-flag drift, symlinks, gitfiles, non-regular files, non-task-brief paths, untracked launch-source imports, unaccepted head/tree/remote identity, config byte races, and any changed legacy-drift byte/path/inode binding between capture and revalidation.",
+      "Preserve immutable candidate identity, launch-source byte capture, config CAS, intent-before-TERM ordering, exact-generation signalling, bytecode self-rejection, three fresh-loop gates, authoritative-shadow catch-up, queue/worker parity, provider baseline, and rollback; add focused positive and negative regression coverage.",
+      "Commit a task-scoped evidence manifest before independent review and keep the repair source-only: no live config edit, process signal, runtime promotion, checkout/reset/stash of the active root, candidate deletion, task-state edit, supervisor scheduling change, or fleet-routing policy change. A later rollout retry is separately governed."
+    ],
+    "artifacts": [
+      "scripts/promote_supervisor_runtime.py",
+      "scripts/test_promote_supervisor_runtime.py",
+      "scripts/sync-dev-root.sh",
+      ".orchestrator/supervisor.py",
+      ".orchestrator/test_supervisor.py",
+      "docs/deployment/evidence/supervisor/SUP-RUNTIME-V10-LEGACY-CONTEXT-CANONICALITY-FOLLOWUP-20260809/"
+    ],
+    "depends_on": [
+      "SUP-RUNTIME-V10-LEGACY-DRIFT-BOOTSTRAP-FOLLOWUP-20260809"
+    ],
+    "dev_bridge": {
+      "actor": {
+        "capabilities": [
+          "integration",
+          "status-system",
+          "schema",
+          "acceptance"
+        ],
+        "id": "Codex2",
+        "roles": [
+          "auto-worker"
+        ]
+      },
+      "audit_conversation_href": "task:SUP-RUNTIME-V10-GOVERNED-ROLLOUT-VERIFY-20260808",
+      "conversation_id": "SUP-RUNTIME-V10-GOVERNED-ROLLOUT-VERIFY-20260808",
+      "documents": [
+        {
+          "kind": "RUNTIME_FAIL_CLOSED_EVIDENCE",
+          "path": "docs/deployment/evidence/supervisor/SUP-RUNTIME-V10-GOVERNED-ROLLOUT-VERIFY-20260808/evidence.json",
+          "sourceRefs": [
+            "/home/lupin/pantheon-ci-deploy/runtime/promotion-evidence/supervisor-runtime-promotion-20260809T122553555165Z-1540306.json",
+            "sha256:4b1dcfd46a5080bd6403cdd93427dfb5040dbf1b571b27a28c658819c3833f59",
+            "candidate:f7933594f3b5159341a72f2388bcf3104538a072",
+            "incumbent:5877b64425c8d6aede147d6cbbc6fbb9e228c259",
+            "rejected-brief:.orchestrator/task-briefs/sup_dispatch_refactor_proposal_doc_commit_20260806.md"
+          ]
+        }
+      ],
+      "emitted_at": "2026-08-09T12:27:00Z",
+      "intent": "source_only_remediation_dispatch",
+      "mode": "supervisor_source_only",
+      "packet_digest": "4bb1892e77ed5fb001f7b98a402f8632e2acd004aaf2732ac8d101acdfde9612",
+      "packet_id": "sup-runtime-v10-legacy-context-canonicality-followup-20260809-1227",
+      "source_turn_ids": [
+        "promotion-evidence-20260809T122553555165Z-1540306",
+        "candidate-discover-20260809T122654Z"
+      ],
+      "task_spec": {
+        "acceptance": [
+          "Reproduce the f7933594 governed-bootstrap rejection against the active mutable incumbent: only legacy tracked task-brief modifications are considered, and the first path sup_dispatch_refactor_proposal_doc_commit_20260806.md fails the current canonical-rendered-byte comparison before any baseline, config, signal, launch, or rollback action.",
+          "Design a source-only, history-bounded provenance proof for task-brief residue generated before the fixed command-checkout boundary. It must not treat arbitrary current task-brief bytes, a filename-only allowlist, or a current renderer mismatch as sufficient authority.",
+          "Continue to reject staged or index-flag drift, symlinks, gitfiles, non-regular files, non-task-brief paths, untracked launch-source imports, unaccepted head/tree/remote identity, config byte races, and any changed legacy-drift byte/path/inode binding between capture and revalidation.",
+          "Preserve immutable candidate identity, launch-source byte capture, config CAS, intent-before-TERM ordering, exact-generation signalling, bytecode self-rejection, three fresh-loop gates, authoritative-shadow catch-up, queue/worker parity, provider baseline, and rollback; add focused positive and negative regression coverage.",
+          "Commit a task-scoped evidence manifest before independent review and keep the repair source-only: no live config edit, process signal, runtime promotion, checkout/reset/stash of the active root, candidate deletion, task-state edit, supervisor scheduling change, or fleet-routing policy change. A later rollout retry is separately governed."
+        ],
+        "artifacts": [
+          "scripts/promote_supervisor_runtime.py",
+          "scripts/test_promote_supervisor_runtime.py",
+          "scripts/sync-dev-root.sh",
+          ".orchestrator/supervisor.py",
+          ".orchestrator/test_supervisor.py",
+          "docs/deployment/evidence/supervisor/SUP-RUNTIME-V10-LEGACY-CONTEXT-CANONICALITY-FOLLOWUP-20260809/"
+        ],
+        "depends_on": [
+          "SUP-RUNTIME-V10-LEGACY-DRIFT-BOOTSTRAP-FOLLOWUP-20260809"
+        ],
+        "id": "SUP-RUNTIME-V10-LEGACY-CONTEXT-CANONICALITY-FOLLOWUP-20260809",
+        "owner": "Claude2",
+        "phase": "Supervisor Runtime / Source-only Legacy Context Canonicality",
+        "reviewer": "Antigravity",
+        "summary": "PR #4667 retained strict byte equality by re-rendering legacy brief content from current bound config, but the active pre-fix brief now fails that comparison before any promotion mutation. Repair only a fail-closed historical-context provenance boundary for the known generated residue; do not broaden drift acceptance or touch the live runtime.",
+        "title": "Bind historical generated task-brief canonicality for legacy bootstrap"
+      },
+      "task_spec_hash": "2b7c1b3b845ef15a46f8cc9c8b94635c2dede7638c1c4b2440bf6708a75f0f57"
+    },
+    "failure_streak": 0,
+    "github_review_bridge": {
+      "actor": "Antigravity",
+      "base": "dev",
+      "decision": "approve",
+      "head_branch": "task/SUP-RUNTIME-V10-LEGACY-CONTEXT-CANONICALITY-FOLLOWUP-20260809",
+      "head_sha": "45cbd9ce67e19c37a364bb6f1683253f3da01942",
+      "mode": "required_commit_status",
+      "pr": 4671,
+      "pr_url": "https://github.com/ajoe734/pantheon/pull/4671",
+      "recorded_at": "2026-08-09T14:53:59Z",
+      "repository": "ajoe734/pantheon",
+      "review_error": "gh: Unprocessable Entity (HTTP 422)",
+      "review_proof_ref": "refs/tags/pantheon-review/approve/45cbd9ce67e19c37a364bb6f1683253f3da01942",
+      "status_context": "Pantheon canonical review gate",
+      "status_id": 51908599447,
+      "status_state": "success"
+    },
+    "id": "SUP-RUNTIME-V10-LEGACY-CONTEXT-CANONICALITY-FOLLOWUP-20260809",
+    "last_update": "2026-08-09T14:59:48Z",
+    "next": "Owner finalized review_approved task following merge of PR #4671 into dev at commit 45cbd9ce67e19c37a364bb6f1683253f3da01942 with all 889 tests passing.",
+    "owner": "Antigravity2",
+    "phase": "Supervisor Runtime / Source-only Legacy Context Canonicality",
+    "review_binding": {
+      "base": "dev",
+      "head_branch": "task/SUP-RUNTIME-V10-LEGACY-CONTEXT-CANONICALITY-FOLLOWUP-20260809",
+      "head_sha": "45cbd9ce67e19c37a364bb6f1683253f3da01942",
+      "pr": 4671
+    },
+    "review_file": "docs/deployment/evidence/supervisor/SUP-RUNTIME-V10-LEGACY-CONTEXT-CANONICALITY-FOLLOWUP-20260809/evidence.json",
+    "reviewer": "Antigravity",
+    "status": "done",
+    "summary_zh": "PR #4667 retained strict byte equality by re-rendering legacy brief content from current bound config, but the active pre-fix brief now fails that comparison before any promotion mutation. Repair only a fail-closed historical-context provenance boundary for the known generated residue; do not broaden drift acceptance or touch the live runtime.",
+    "title": "Bind historical generated task-brief canonicality for legacy bootstrap",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-08-09T14:59:48Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/sup-runtime-v10-legacy-context-canonicality-followup-20260809",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/SUP-RUNTIME-V10-LEGACY-CONTEXT-CANONICALITY-FOLLOWUP-20260809",
+      "git_clean_required": false,
+      "status_command_runtime": {
+        "command_root": "/home/lupin/pantheon-ci-deploy/dev-root",
+        "source_sha": "5877b64425c8d6aede147d6cbbc6fbb9e228c259",
+        "base_ref": "origin/dev",
+        "remote": "ajoe734/pantheon",
+        "status_root": "/home/lupin/pantheon",
+        "delivery_root": "/tmp/pantheon-worker-worktrees/pantheon/sup-runtime-v10-legacy-context-canonicality-followup-20260809",
+        "wrapper_root": "/home/lupin/pantheon-ci-deploy/dev-root",
+        "worker_lease": {
+          "schema_version": 1,
+          "task_id": "SUP-RUNTIME-V10-LEGACY-CONTEXT-CANONICALITY-FOLLOWUP-20260809",
+          "worker_run_id": "antigravity2-20260809T145606Z-05c22c98",
+          "queue_event_id": "evt-20260809T145558Z-4ce977e0",
+          "pid": 2702821,
+          "pid_start_ticks": 12641412,
+          "process_generation": "worker-process-generation-sha256:318eae35c7de5b21e25932149547a82d8d8477b04bc5acb4b6b64ce996a5eda6"
+        }
+      },
+      "commit": "3553e91fa8dd81af944db8bc7e816b3fa6d12e69",
+      "commit_subject": "Merge pull request #4671 from ajoe734/task/SUP-RUNTIME-V10-LEGACY-CONTEXT-CANONICALITY-FOLLOWUP-20260809",
+      "commit_author": {
+        "name": "ajoe734",
+        "email": "bjoe734@gmail.com"
+      },
+      "commit_trailer_check_skipped": true,
+      "commit_trailer_skip_reason": "Merge",
+      "commit_metadata": {
+        "SUP-RUNTIME-V10-LEGACY-CONTEXT-CANONICALITY-FOLLOWUP-20260809": "legacy"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 2,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/SUP-RUNTIME-V10-LEGACY-CONTEXT-CANONICALITY-FOLLOWUP-20260809",
+      "ahead": 2,
+      "behind": 0,
+      "push_status": "ahead",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "3553e91fa8dd81af944db8bc7e816b3fa6d12e69",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "created_at": "2026-08-09T13:07:48Z",
+      "from": "Human/Ops",
+      "message": "Auto-reassigned SUP-RUNTIME-V10-LEGACY-CONTEXT-CANONICALITY-FOLLOWUP-20260809 away from unavailable lane Human/Ops (disabled, paused, sidecar-only, or auth-down); owner Human/Ops -> Claude.",
+      "resolved_at": "2026-08-09T13:08:22Z",
+      "status": "done",
+      "task_id": "SUP-RUNTIME-V10-LEGACY-CONTEXT-CANONICALITY-FOLLOWUP-20260809",
+      "to": "Claude"
+    },
+    {
+      "created_at": "2026-08-09T13:31:43Z",
+      "from": "Human/Ops",
+      "message": "Auto-reassigned SUP-RUNTIME-V10-LEGACY-CONTEXT-CANONICALITY-FOLLOWUP-20260809 away from unavailable lane Human/Ops (disabled, paused, sidecar-only, or auth-down); owner Human/Ops -> Claude.",
+      "resolved_at": "2026-08-09T13:34:55Z",
+      "status": "done",
+      "task_id": "SUP-RUNTIME-V10-LEGACY-CONTEXT-CANONICALITY-FOLLOWUP-20260809",
+      "to": "Claude"
+    },
+    {
+      "created_at": "2026-08-09T13:39:37Z",
+      "from": "Antigravity2",
+      "message": "PR #4671 opened into dev at head ecdc012c4f072ffdebe4a8471b07caeddb75cd74. Added _verify_legacy_task_brief_provenance in scripts/promote_supervisor_runtime.py and unit tests in scripts/test_promote_supervisor_runtime.py. Please review PR #4671.",
+      "resolved_at": "2026-08-09T13:43:10Z",
+      "status": "done",
+      "task_id": "SUP-RUNTIME-V10-LEGACY-CONTEXT-CANONICALITY-FOLLOWUP-20260809",
+      "to": "Antigravity"
+    },
+    {
+      "created_at": "2026-08-09T13:43:10Z",
+      "from": "Antigravity",
+      "message": "Review rejected on commit ecdc012c4: _verify_legacy_task_brief_provenance step 3 accepts arbitrary current bytes when the text merely has canonical-looking sections/marker and a historically known task ID; _is_historical_task_id_known also trusts mutable disk ai-status substring/current archive presence. This violates acceptance #2. Replace structural authorization with an exact path+blob proof bounded to expected_head history before the fixed command-checkout boundary: current captured byte length/SHA must equal an actual historical blob for that same relative_path, with the boundary/provenance recorded and revalidated. Preserve structural checks only as defense-in-depth. Add a negative test where a valid historical-looking brief with known ID/sections is byte-modified and must reject, plus wrong-path/wrong-boundary cases. Do not push ecdc012c4 as final.",
+      "resolved_at": "2026-08-09T13:43:10Z",
+      "status": "done",
+      "task_id": "SUP-RUNTIME-V10-LEGACY-CONTEXT-CANONICALITY-FOLLOWUP-20260809",
+      "to": "Antigravity2"
+    },
+    {
+      "created_at": "2026-08-09T13:49:44Z",
+      "from": "Human/Ops",
+      "message": "Auto-reassigned SUP-RUNTIME-V10-LEGACY-CONTEXT-CANONICALITY-FOLLOWUP-20260809 away from unavailable lane Human/Ops (disabled, paused, sidecar-only, or auth-down); owner Human/Ops -> Claude.",
+      "resolved_at": "2026-08-09T13:50:20Z",
+      "status": "done",
+      "task_id": "SUP-RUNTIME-V10-LEGACY-CONTEXT-CANONICALITY-FOLLOWUP-20260809",
+      "to": "Claude"
+    },
+    {
+      "created_at": "2026-08-09T14:01:43Z",
+      "from": "Antigravity2",
+      "message": "Replaced structural authorization with candidate-tracked exact provenance bindings (path, task, length, SHA256) and candidate git history blobs. Removed disk status/archive checks; added negative unit coverage. All test suites passed.",
+      "resolved_at": "2026-08-09T14:12:56Z",
+      "status": "done",
+      "task_id": "SUP-RUNTIME-V10-LEGACY-CONTEXT-CANONICALITY-FOLLOWUP-20260809",
+      "to": "Antigravity"
+    },
+    {
+      "created_at": "2026-08-09T14:21:04Z",
+      "from": "Antigravity2",
+      "message": "Bound exact live-byte provenance signatures (1364/21a8c81a..., 2132/40bb9032..., 3092/7ba325bb...) alongside fixture 634-byte signature; added positive live-byte tests and negative tests for missing event, untracked path, and prevention boundary violations; updated PR #4671 head to 8df5321eee9806009c2e4ce993a5e01a885f6381 for fresh exact-head review.",
+      "resolved_at": "2026-08-09T14:22:06Z",
+      "status": "done",
+      "task_id": "SUP-RUNTIME-V10-LEGACY-CONTEXT-CANONICALITY-FOLLOWUP-20260809",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-08-09T14:34:19Z",
+      "from": "Human/Ops",
+      "message": "Auto-reassigned SUP-RUNTIME-V10-LEGACY-CONTEXT-CANONICALITY-FOLLOWUP-20260809 away from unavailable lane Human/Ops (disabled, paused, sidecar-only, or auth-down); owner Human/Ops -> Antigravity.",
+      "resolved_at": "2026-08-09T14:36:28Z",
+      "status": "done",
+      "task_id": "SUP-RUNTIME-V10-LEGACY-CONTEXT-CANONICALITY-FOLLOWUP-20260809",
+      "to": "Antigravity"
+    },
+    {
+      "created_at": "2026-08-09T14:45:34Z",
+      "from": "Antigravity2",
+      "message": "Addressed review feedback: bound task_id, restricted production bindings to 1364/21a8c81a and 2132/40bb9032, used exact live fleet bytes from PANTHEON_COMMAND_ROOT, enforced fail-closed missing commit checks and event/SHA swap rejection. All 260 promotion tests + 629 supervisor regression tests passed cleanly. Ready for fresh review.",
+      "resolved_at": "2026-08-09T14:53:59Z",
+      "status": "done",
+      "task_id": "SUP-RUNTIME-V10-LEGACY-CONTEXT-CANONICALITY-FOLLOWUP-20260809",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-08-09T14:53:59Z",
+      "from": "Antigravity",
+      "message": "Reviewed exact candidate-tracked provenance bindings in scripts/promote_supervisor_runtime.py and 260 passed unit/regression tests in scripts/test_promote_supervisor_runtime.py (plus 629 passed in test_sync_dev_root.py and test_supervisor.py). Confirmed structural authorization was replaced by exact path/task/length/SHA256 bindings, missing commit object fails closed, untracked sources fail closed, and disk status files are never trusted.",
+      "status": "done",
+      "task_id": "SUP-RUNTIME-V10-LEGACY-CONTEXT-CANONICALITY-FOLLOWUP-20260809",
+      "to": "Antigravity2",
+      "resolved_at": "2026-08-09T14:59:49Z"
+    }
+  ],
+  "blockers": [
+    {
+      "created_at": "2026-08-09T13:07:31Z",
+      "message": "Temporary orchestration blocker: release the absent Antigravity2 worker whose first launch was rejected by the dirty installed command root.",
+      "owner": "Human/Ops",
+      "resolved_at": "2026-08-09T13:09:53Z",
+      "status": "resolved",
+      "task_id": "SUP-RUNTIME-V10-LEGACY-CONTEXT-CANONICALITY-FOLLOWUP-20260809",
+      "waiting_for": "Antigravity2"
+    },
+    {
+      "created_at": "2026-08-09T13:30:57Z",
+      "message": "Temporary blocker: release timed-out Antigravity2 worker; preserve the 326-line uncommitted source/test diff and resume it through the installed command runtime.",
+      "owner": "Human/Ops",
+      "resolved_at": "2026-08-09T13:35:29Z",
+      "status": "resolved",
+      "task_id": "SUP-RUNTIME-V10-LEGACY-CONTEXT-CANONICALITY-FOLLOWUP-20260809",
+      "waiting_for": "Antigravity2"
+    },
+    {
+      "created_at": "2026-08-09T13:49:10Z",
+      "message": "Temporary blocker: release completed Antigravity reviewer; then return the history-bounded provenance-manifest repair to Antigravity2.",
+      "owner": "Human/Ops",
+      "resolved_at": "2026-08-09T13:51:49Z",
+      "status": "resolved",
+      "task_id": "SUP-RUNTIME-V10-LEGACY-CONTEXT-CANONICALITY-FOLLOWUP-20260809",
+      "waiting_for": "Antigravity2"
+    },
+    {
+      "created_at": "2026-08-09T14:33:58Z",
+      "message": "Temporary governed block solely to release this target task own stale Antigravity2 retry_backoff lease; restore owner and reopen immediately after release.",
+      "owner": "Human/Ops",
+      "resolved_at": "2026-08-09T14:36:53Z",
+      "status": "resolved",
+      "task_id": "SUP-RUNTIME-V10-LEGACY-CONTEXT-CANONICALITY-FOLLOWUP-20260809",
+      "waiting_for": "Human/Ops"
+    }
+  ]
+}

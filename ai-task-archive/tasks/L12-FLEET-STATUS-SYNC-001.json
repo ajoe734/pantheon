@@ -1,0 +1,355 @@
+{
+  "version": 1,
+  "task_id": "L12-FLEET-STATUS-SYNC-001",
+  "archived_at": "2026-08-05T02:07:35Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "acceptance": [
+      "ai_status.py show and generated current-work/dashboard agree on task existence;ghost assignment events do not appear as active tasks unless committed to authoritative journal;PR source_ref/head_sha in dashboard matches GitHub exact head or is explicitly marked stale;regression test covers assignment followed by authoritative projection refresh"
+    ],
+    "artifacts": [
+      "scripts/ai_status.py",
+      "dashboard-bundle.json",
+      "current-work.md",
+      "docs-site/dashboard-bundle.json",
+      "docs-site/current-work.md",
+      "docs/deployment/evidence/supervisor/L12-FLEET-STATUS-SYNC-001"
+    ],
+    "depends_on": [
+      "OPS-PR-REVIEW-BEFORE-MERGE-GATE-001"
+    ],
+    "dispatch_mode": "supervisor_auto_worker",
+    "github_review_bridge": {
+      "actor": "Antigravity",
+      "base": "dev",
+      "decision": "approve",
+      "head_branch": "task/L12-FLEET-STATUS-SYNC-001",
+      "head_sha": "38057216e8e2a02f2acb3f375a119286af6e01b2",
+      "mode": "required_commit_status",
+      "pr": 4297,
+      "pr_url": "https://github.com/ajoe734/pantheon/pull/4297",
+      "recorded_at": "2026-07-29T11:05:57Z",
+      "repository": "ajoe734/pantheon",
+      "review_error": "gh: Unprocessable Entity (HTTP 422)",
+      "status_context": "Pantheon canonical review gate",
+      "status_id": 51284662304,
+      "status_state": "success"
+    },
+    "id": "L12-FLEET-STATUS-SYNC-001",
+    "lane_fallback_reason": "Antigravity/Claude not observed as healthy admitted supervisor workers at dispatch time",
+    "last_update": "2026-08-05T02:07:35Z",
+    "next": "Owner closeout: PR #4297 merged into dev at 2026-08-05T01:28:05Z (merge 5c3f2dd9f9c2bdf4065e3751edfe39518bd5fa61, branch HEAD ancestor of origin/dev). Reviewer-bound review_file docs/deployment/evidence/supervisor/L12-FLEET-STATUS-SYNC-001/evidence.json is committed at that merge and preserved unchanged. Implementation PR #4282 head e806affaa279f8b9d4b41bae6117a9431c99b90e and merge a0020c5ac50e510467a5e80c412c7703245cf4dd re-confirmed as ancestors of origin/dev. Verified: pytest -q scripts/test_ai_status.py -k 'dashboard_flags_merged_delivery_that_still_needs_closeout or dashboard_uses_structured_delivery_evidence_for_closeout_drift or derived_views_skip_a_stale_projection or authoritative_load_ignores_divergent_file_and_save_advances_journal' -> 4 passed; git diff --check pass. No new closeout commit created: all deliverables were already durable at the approved head; only the orchestrator-regenerated task-brief mirror is dirty and is intentionally left uncommitted.",
+    "owner": "Claude",
+    "phase": "Fleet control",
+    "preferred_lane_order": [
+      "Antigravity",
+      "Claude",
+      "Codex2",
+      "Codex"
+    ],
+    "review_binding": {
+      "base": "dev",
+      "head_branch": "task/L12-FLEET-STATUS-SYNC-001",
+      "head_sha": "38057216e8e2a02f2acb3f375a119286af6e01b2",
+      "pr": 4297
+    },
+    "review_file": "docs/deployment/evidence/supervisor/L12-FLEET-STATUS-SYNC-001/evidence.json",
+    "review_notes_zh": [
+      "PR #4297 exact head 6b2fd109a885d7eb26a985d621ef3ef9d3e26753 僅含 task brief 與 task-scoped evidence，diff/checks 通過",
+      "PR #4282 exact implementation head e806affaa279f8b9d4b41bae6117a9431c99b90e 已以 a0020c5ac50e510467a5e80c412c7703245cf4dd 合併至 dev，兩者 ancestry 與 GitHub checks 已核對",
+      "Reviewer 獨立重跑 168 status/guard tests、4 targeted regressions 與 1 authoritative projection refresh test 全部通過；live show/current-work/dashboard 及三組 mirrors 一致"
+    ],
+    "reviewer": "Antigravity",
+    "source_head": "2a2d6b7c50d60a940a891d9e18e0ea8a1e7a961e",
+    "source_pr": "https://github.com/ajoe734/pantheon/pull/4277",
+    "status": "done",
+    "summary_zh": "Stop stale supervisor status/source_ref regressions",
+    "title": "Re-bind task owner to Codex with reviewer Antigravity to align commit trailers with canonical task row",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-08-05T02:07:35Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/l12-fleet-status-sync-001",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/L12-FLEET-STATUS-SYNC-001",
+      "git_clean_required": false,
+      "status_command_runtime": {
+        "command_root": "/home/lupin/pantheon-ci-deploy/dev-root",
+        "source_sha": "4361a26ad9ff375ae61667ceb689b6fa28ff8058",
+        "base_ref": "origin/dev",
+        "remote": "ajoe734/pantheon",
+        "status_root": "/home/lupin/pantheon",
+        "delivery_root": "/tmp/pantheon-worker-worktrees/pantheon/l12-fleet-status-sync-001",
+        "wrapper_root": "/home/lupin/pantheon-ci-deploy/dev-root",
+        "worker_lease": {
+          "schema_version": 1,
+          "task_id": "L12-FLEET-STATUS-SYNC-001",
+          "worker_run_id": "claude1-2-20260805T020532Z-b65d6b7e",
+          "queue_event_id": "evt-20260805T020517Z-05f674c1",
+          "pid": 696113,
+          "pid_start_ticks": 33258425,
+          "process_generation": "worker-process-generation-sha256:3cd0667e69feccc126b8326fcb2e6b5ef15f7fa6fcb14f01cf02132a6ee50b2c"
+        }
+      },
+      "commit": "5c3f2dd9f9c2bdf4065e3751edfe39518bd5fa61",
+      "commit_subject": "L12-FLEET-STATUS-SYNC-001: anchor closeout evidence (#4297)",
+      "commit_author": {
+        "name": "ajoe734",
+        "email": "bjoe734@gmail.com"
+      },
+      "commit_owner_reassignment": {
+        "event_id": "supervisor-reassign-a11426edac1f74f8e1c7e7b1cbe1d2cb4744e03bef94e54ec347bf8f97182421",
+        "ts": "2026-08-05T02:03:33Z",
+        "old_owner": "Codex",
+        "new_owner": "Claude",
+        "reviewer": "Antigravity",
+        "message": "Auto-reassigned L12-FLEET-STATUS-SYNC-001 away from unavailable lane Codex (disabled, paused, sidecar-only, or auth-down); owner Codex -> Claude.",
+        "commit_timestamp": "2026-08-05T01:28:05+00:00"
+      },
+      "commit_metadata": {
+        "* L12-FLEET-STATUS-SYNC-001": "refresh current-dev verification",
+        "Owned layer": "task-scoped closeout evidence after the latest dev refresh.",
+        "Not changing": "merged ai_status implementation, generated state mirrors, supervisor runtime, or review-gate policy.",
+        "Composes with": "PR #4282 delivery, PR #4297 closeout branch, and Antigravity exact-head review.",
+        "LLM-Agent": "Codex",
+        "Task-ID": "L12-FLEET-STATUS-SYNC-001",
+        "Reviewer": "Antigravity",
+        "Verified": "168 status/guard tests and 31 subtests; 1 bridge refresh regression; jq and git diff --check"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 1,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "9cb030dc1b6944334f3717af6c0d5f2fc5f10cd9",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "created_at": "2026-07-28T12:51:18Z",
+      "from": "Codex2",
+      "message": "Auto-reassigned L12-FLEET-STATUS-SYNC-001 away from unavailable lane Codex2 (disabled, paused, sidecar-only, or auth-down); reviewer Codex2 -> Claude.",
+      "resolved_at": "2026-07-28T13:08:53Z",
+      "status": "done",
+      "task_id": "L12-FLEET-STATUS-SYNC-001",
+      "to": "Claude"
+    },
+    {
+      "created_at": "2026-07-28T13:08:35Z",
+      "from": "Codex",
+      "message": "Auto-reassigned L12-FLEET-STATUS-SYNC-001 away from unavailable lane Codex (disabled, paused, sidecar-only, or auth-down); reviewer Codex -> Codex2.",
+      "resolved_at": "2026-07-28T13:46:13Z",
+      "status": "done",
+      "task_id": "L12-FLEET-STATUS-SYNC-001",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-07-28T13:46:13Z",
+      "from": "Claude",
+      "message": "Helper-claimed by Codex while Claude is dispatch-paused.",
+      "resolved_at": "2026-07-28T13:46:40Z",
+      "status": "done",
+      "task_id": "L12-FLEET-STATUS-SYNC-001",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-07-28T13:55:36Z",
+      "from": "Codex",
+      "message": "Closeout evidence PR #4297 is ready at exact head b24b454108dc2137f2b24d226c57ec1192bcf026 with auto-merge off. Review docs/deployment/evidence/supervisor/L12-FLEET-STATUS-SYNC-001/evidence.json and evidence.md; verify PR #4282 merged head/merge ancestry, focused tests, and the documented legacy source_pr/source_head note. Approve only with REVIEW_PR=4297 REVIEW_HEAD_SHA=b24b454108dc2137f2b24d226c57ec1192bcf026 REVIEW_BASE=dev REVIEW_FILE=docs/deployment/evidence/supervisor/L12-FLEET-STATUS-SYNC-001/evidence.json, or reopen with concrete findings.",
+      "resolved_at": "2026-07-28T13:58:20Z",
+      "status": "done",
+      "task_id": "L12-FLEET-STATUS-SYNC-001",
+      "to": "Claude"
+    },
+    {
+      "created_at": "2026-07-28T13:58:20Z",
+      "from": "Claude",
+      "message": "Auto-reassigned L12-FLEET-STATUS-SYNC-001 away from unavailable lane Claude (disabled, paused, sidecar-only, or auth-down); reviewer Claude -> Codex2.",
+      "resolved_at": "2026-07-28T14:05:03Z",
+      "status": "done",
+      "task_id": "L12-FLEET-STATUS-SYNC-001",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-07-28T14:05:03Z",
+      "from": "Codex2",
+      "message": "Review failed on live acceptance despite green focused tests and merged PR #4282. Governed show returns the active task, but command-root ai-status.json/current-work.md/dashboard-bundle.json and all docs-site mirrors contain zero L12-FLEET-STATUS-SYNC-001 rows, so AC1 is false. Also the actual canonical row still exposes legacy source_pr #4277/source_head 2a2d6b7c50d60a940a891d9e18e0ea8a1e7a961e while PR #4282 exact head is e806affaa279f8b9d4b41bae6117a9431c99b90e; merged_delivery_evidence and delivery_binding_stale_evidence both return null for that live row, so it is neither aligned nor explicitly marked stale. Required: refresh authoritative projection so governed show and all generated views agree; normalize/migrate the legacy source fields or extend detection with a regression using the real live row shape; then update the task evidence snapshot/reviewer metadata for Codex2 and re-handoff. Independent checks: PR #4282 exact head/merge ancestry and all visible checks pass; 168 status/guard tests plus 4 targeted and 1 bridge projection test pass.",
+      "resolved_at": "2026-07-28T14:05:03Z",
+      "status": "done",
+      "task_id": "L12-FLEET-STATUS-SYNC-001",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-07-28T18:49:35Z",
+      "from": "Codex",
+      "message": "Review PR #4297 exact head 6b2fd109a885d7eb26a985d621ef3ef9d3e26753 against docs/deployment/evidence/supervisor/L12-FLEET-STATUS-SYNC-001/evidence.json. PR #4282 exact implementation head e806affaa279f8b9d4b41bae6117a9431c99b90e merged as a0020c5ac50e510467a5e80c412c7703245cf4dd; 4 focused status regressions and 1 projection refresh test pass; JSON binding, mirror digest snapshot, ancestry, and diff checks pass. Approve with REVIEW_FILE, REVIEW_PR=4297, and this exact REVIEW_HEAD_SHA, or reopen with concrete findings.",
+      "resolved_at": "2026-07-28T18:55:18Z",
+      "status": "done",
+      "task_id": "L12-FLEET-STATUS-SYNC-001",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-07-28T18:55:18Z",
+      "from": "Codex2",
+      "message": "Independent review approved for PR #4297 exact head 6b2fd109a885d7eb26a985d621ef3ef9d3e26753: evidence-only three-file scope is clean; PR #4282 head e806affaa279f8b9d4b41bae6117a9431c99b90e and merge a0020c5ac50e510467a5e80c412c7703245cf4dd are on origin/dev with green checks; 168 status/guard tests, 4 targeted regressions, and 1 projection-refresh test pass; governed show/current-work/dashboard and root/docs-site mirrors agree. Owner may perform formal closeout without restarting implementation.",
+      "resolved_at": "2026-07-28T19:33:21Z",
+      "status": "done",
+      "task_id": "L12-FLEET-STATUS-SYNC-001",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-07-28T19:31:08Z",
+      "from": "Codex2",
+      "message": "Auto-reassigned L12-FLEET-STATUS-SYNC-001 away from unavailable lane Codex2 (disabled, paused, sidecar-only, or auth-down); reviewer Codex2 -> Antigravity.",
+      "resolved_at": "2026-07-28T19:31:47Z",
+      "status": "done",
+      "task_id": "L12-FLEET-STATUS-SYNC-001",
+      "to": "Antigravity"
+    },
+    {
+      "created_at": "2026-07-28T19:34:08Z",
+      "from": "Antigravity",
+      "message": "Auto-reassigned ownership from Codex2 to Codex after repeated Codex2 terminal: fatal: ambiguous argument 'origin/task/L12-FLEET-STATUS-SYNC-001': unknown revision or path not in the working tree.",
+      "resolved_at": "2026-07-28T19:40:09Z",
+      "status": "done",
+      "task_id": "L12-FLEET-STATUS-SYNC-001",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-07-29T09:19:22Z",
+      "from": "Codex",
+      "message": "Auto-reassigned L12-FLEET-STATUS-SYNC-001 away from unavailable lane Codex (disabled, paused, sidecar-only, or auth-down); owner Codex -> Codex2.",
+      "resolved_at": "2026-07-29T09:20:48Z",
+      "status": "done",
+      "task_id": "L12-FLEET-STATUS-SYNC-001",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-07-29T10:27:28Z",
+      "from": "Codex2",
+      "message": "Chair reassigned owner from Codex2 to Codex: The supervisor lists this non-human blocked task as an owner rescue candidate; Codex is now auth-ready, unpaused, live, and distinct from reviewer Antigravity, so the handoff can safely return to todo for fresh dispatch. Task returned to todo for a blocked-owner rescue dispatch.",
+      "resolved_at": "2026-07-29T10:28:34Z",
+      "status": "done",
+      "task_id": "L12-FLEET-STATUS-SYNC-001",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-07-29T11:00:21Z",
+      "from": "Codex",
+      "message": "PR #4297 refreshed at exact head fc7516d956f6845901294fceb11865b4fecb5318. PR #4282 remains merged at implementation head e806affaa279f8b9d4b41bae6117a9431c99b90e / merge a0020c5ac50e510467a5e80c412c7703245cf4dd. AC1 projection is restored across governed show, current-work, dashboard, and mirrors; 168 status/guard tests + 31 subtests and bridge refresh regression pass. Please independently review this exact head and bind the committed evidence manifest when approving.",
+      "resolved_at": "2026-07-29T11:05:57Z",
+      "status": "done",
+      "task_id": "L12-FLEET-STATUS-SYNC-001",
+      "to": "Antigravity"
+    },
+    {
+      "created_at": "2026-07-29T11:05:57Z",
+      "from": "Antigravity",
+      "message": "Reviewed task L12-FLEET-STATUS-SYNC-001 closeout evidence: implementation PR #4282 exact head e806affaa279f8b9d4b41bae6117a9431c99b90e / merge a0020c5ac50e510467a5e80c412c7703245cf4dd verified ancestor of dev; PR #4297 task branch HEAD 38057216e8e2a02f2acb3f375a119286af6e01b2 and evidence manifest bound. Focused status tests passed cleanly.",
+      "resolved_at": "2026-08-01T15:23:43Z",
+      "status": "done",
+      "task_id": "L12-FLEET-STATUS-SYNC-001",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-08-01T15:23:43Z",
+      "from": "Codex",
+      "message": "Auto-reassigned L12-FLEET-STATUS-SYNC-001 away from unavailable lane Codex (disabled, paused, sidecar-only, or auth-down); owner Codex -> Codex2.",
+      "resolved_at": "2026-08-05T01:13:01Z",
+      "status": "done",
+      "task_id": "L12-FLEET-STATUS-SYNC-001",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-08-01T16:18:07Z",
+      "from": "Antigravity",
+      "message": "Auto-reassigned L12-FLEET-STATUS-SYNC-001 away from unavailable lane Antigravity (disabled, paused, sidecar-only, or auth-down); reviewer Antigravity -> Codex.",
+      "resolved_at": "2026-08-01T16:21:52Z",
+      "status": "done",
+      "task_id": "L12-FLEET-STATUS-SYNC-001",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-08-03T23:43:04Z",
+      "from": "Codex",
+      "message": "Auto-reassigned L12-FLEET-STATUS-SYNC-001 away from unavailable lane Codex (disabled, paused, sidecar-only, or auth-down); reviewer Codex -> Antigravity.",
+      "resolved_at": "2026-08-04T01:06:28Z",
+      "status": "done",
+      "task_id": "L12-FLEET-STATUS-SYNC-001",
+      "to": "Antigravity"
+    },
+    {
+      "created_at": "2026-08-04T03:30:47Z",
+      "from": "Antigravity",
+      "message": "Auto-reassigned L12-FLEET-STATUS-SYNC-001 away from unavailable lane Antigravity (disabled, paused, sidecar-only, or auth-down); reviewer Antigravity -> Codex.",
+      "resolved_at": "2026-08-04T03:31:41Z",
+      "status": "done",
+      "task_id": "L12-FLEET-STATUS-SYNC-001",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-08-05T01:17:25Z",
+      "from": "Claude",
+      "message": "Supervisor resumed L12-FLEET-STATUS-SYNC-001 for finalize after successful dispatch.",
+      "resolved_at": "2026-08-05T01:31:19Z",
+      "status": "done",
+      "task_id": "L12-FLEET-STATUS-SYNC-001",
+      "to": "Antigravity"
+    },
+    {
+      "created_at": "2026-08-05T01:31:19Z",
+      "from": "Claude",
+      "message": "Ownership updated",
+      "resolved_at": "2026-08-05T01:31:38Z",
+      "status": "done",
+      "task_id": "L12-FLEET-STATUS-SYNC-001",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-08-05T01:31:38Z",
+      "from": "Claude",
+      "message": "Ownership updated",
+      "resolved_at": "2026-08-05T01:32:09Z",
+      "status": "done",
+      "task_id": "L12-FLEET-STATUS-SYNC-001",
+      "to": "Antigravity"
+    },
+    {
+      "created_at": "2026-08-05T01:32:09Z",
+      "from": "Antigravity",
+      "message": "Ownership updated",
+      "resolved_at": "2026-08-05T02:03:33Z",
+      "status": "done",
+      "task_id": "L12-FLEET-STATUS-SYNC-001",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-08-05T02:03:33Z",
+      "from": "Codex",
+      "message": "Auto-reassigned L12-FLEET-STATUS-SYNC-001 away from unavailable lane Codex (disabled, paused, sidecar-only, or auth-down); owner Codex -> Claude.",
+      "status": "done",
+      "task_id": "L12-FLEET-STATUS-SYNC-001",
+      "to": "Claude",
+      "resolved_at": "2026-08-05T02:07:36Z"
+    }
+  ],
+  "blockers": [
+    {
+      "created_at": "2026-07-28T19:40:09Z",
+      "message": "PR #4297 exact head 6b2fd109a885d7eb26a985d621ef3ef9d3e26753 cannot merge: canonical reviewer was auto-reassigned Codex2 -> Antigravity after Codex2 approval, so auto_integrator fails closed with approval_reviewer_mismatch. Antigravity must independently re-approve the unchanged exact head; then Human/Ops must restore required context 'Pantheon root merge freeze 2026-07-27'. Owner must not impersonate either role or mark done before merge.",
+      "owner": "Codex",
+      "resolution_ref": "chair_reassignment:L12-FLEET-STATUS-SYNC-001",
+      "resolved_at": "2026-07-29T10:27:28Z",
+      "status": "resolved",
+      "task_id": "L12-FLEET-STATUS-SYNC-001",
+      "waiting_for": "Antigravity"
+    }
+  ]
+}

@@ -1,0 +1,200 @@
+{
+  "version": 1,
+  "task_id": "SUP-AI-STATUS-AUDIT-EVENT-ID-COMPAT-20260811",
+  "archived_at": "2026-08-11T01:54:46Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "acceptance": [
+      "Reproduce the existing fail-closed closeout blocker where a genuine Orchestrator task_reassigned audit event uses supervisor-task-reassigned-<digest> while the verifier currently accepts only supervisor-reassign-<digest>.",
+      "Change only the bounded event-id compatibility predicate so both canonical prefixes are accepted when and only when the digest over the event payload matches exactly; retain the Orchestrator actor, task identity, owner/reviewer fields, timestamp parsing, chain continuity, ordering, archive integrity, and all fail-closed behavior.",
+      "Add focused positive tests for both canonical prefixes and negative tests for wrong digest, wrong prefix, forged actor, missing fields, cross-task event, and ambiguous chain; run the complete relevant ai_status test suite.",
+      "Record exact-head evidence and a task-scoped manifest before independent review; preserve existing audit/state data and do not add a manual reconciliation bypass.",
+      "Keep this task source-only: no live runtime mutation, no supervisor restart or signal, no canonical task-state edit outside governed commands, no provider/account change, and no rollout retry. Delivery requires clean branch, commit, PR, independent review, checks, and protected merge."
+    ],
+    "artifacts": [
+      "scripts/ai_status.py",
+      "scripts/test_ai_status.py",
+      "docs/deployment/evidence/supervisor/SUP-AI-STATUS-AUDIT-EVENT-ID-COMPAT-20260811/"
+    ],
+    "depends_on": [],
+    "dev_bridge": {
+      "actor": {
+        "capabilities": [
+          "integration",
+          "status-system",
+          "schema",
+          "acceptance"
+        ],
+        "id": "Human/Ops",
+        "roles": [
+          "operator",
+          "integration"
+        ]
+      },
+      "audit_conversation_href": "task:OPS-GITHUB-CANONICAL-REVIEW-ENFORCEMENT-001",
+      "conversation_id": "OPS-GITHUB-CANONICAL-REVIEW-ENFORCEMENT-001",
+      "documents": [
+        {
+          "kind": "RUNTIME_AUDIT_COMPATIBILITY_BLOCKER",
+          "path": "docs/deployment/evidence/supervisor/OPS-GITHUB-CANONICAL-REVIEW-ENFORCEMENT-001/evidence.json",
+          "sourceRefs": [
+            "canonical:OPS-GITHUB-CANONICAL-REVIEW-ENFORCEMENT-001",
+            "runtime:0bd7cf8842a622fb40eca125f490d4073b3a1044",
+            "backup-sha256:f591c6c85b924362f5ac3f60b3f01cd73b459e90c44b2e6f1def9787adb05cdf",
+            "patch-sha256:cae847110ed3f866db99a8091c3baa0e968b0c9bdf908bac74b17f0a63fbf495"
+          ]
+        }
+      ],
+      "emitted_at": "2026-08-11T00:40:00Z",
+      "intent": "source_only_remediation_dispatch",
+      "mode": "supervisor_source_only",
+      "packet_digest": "db7ee1bc4889ba735cff962d31ef0d86ba2235a7cde8ff222518afe02eed8ebe",
+      "packet_id": "sup-ai-status-audit-event-id-compat-20260811-0040",
+      "source_turn_ids": [
+        "temporary-live-rescue-20260811",
+        "incumbent-ai-status-diff-f591c6c8",
+        "canonical-audit-event-prefix-blocker-20260811"
+      ],
+      "task_spec": {
+        "acceptance": [
+          "Reproduce the existing fail-closed closeout blocker where a genuine Orchestrator task_reassigned audit event uses supervisor-task-reassigned-<digest> while the verifier currently accepts only supervisor-reassign-<digest>.",
+          "Change only the bounded event-id compatibility predicate so both canonical prefixes are accepted when and only when the digest over the event payload matches exactly; retain the Orchestrator actor, task identity, owner/reviewer fields, timestamp parsing, chain continuity, ordering, archive integrity, and all fail-closed behavior.",
+          "Add focused positive tests for both canonical prefixes and negative tests for wrong digest, wrong prefix, forged actor, missing fields, cross-task event, and ambiguous chain; run the complete relevant ai_status test suite.",
+          "Record exact-head evidence and a task-scoped manifest before independent review; preserve existing audit/state data and do not add a manual reconciliation bypass.",
+          "Keep this task source-only: no live runtime mutation, no supervisor restart or signal, no canonical task-state edit outside governed commands, no provider/account change, and no rollout retry. Delivery requires clean branch, commit, PR, independent review, checks, and protected merge."
+        ],
+        "artifacts": [
+          "scripts/ai_status.py",
+          "scripts/test_ai_status.py",
+          "docs/deployment/evidence/supervisor/SUP-AI-STATUS-AUDIT-EVENT-ID-COMPAT-20260811/"
+        ],
+        "depends_on": [],
+        "id": "SUP-AI-STATUS-AUDIT-EVENT-ID-COMPAT-20260811",
+        "owner": "Antigravity2",
+        "phase": "Status Governance / Audit Event Compatibility",
+        "reviewer": "Codex2",
+        "summary": "The approved temporary rescue removed an uncommitted runtime-only compatibility diff after preserving it. Deliver the same narrow fix through the governed source flow so reassigned-task closeout and worker dispatch can recognize existing canonical event IDs without weakening verification.",
+        "title": "Accept canonical supervisor task-reassigned event-id prefixes without weakening audit verification"
+      },
+      "task_spec_hash": "3951c036d75eb91c7e077432a2a302d03b6b953e4f7f38e9d9f40636ee8271c3"
+    },
+    "failure_streak": 0,
+    "github_review_bridge": {
+      "actor": "Antigravity2",
+      "base": "dev",
+      "decision": "approve",
+      "head_branch": "task/SUP-AI-STATUS-AUDIT-EVENT-ID-COMPAT-20260811",
+      "head_sha": "2da016b9892e3dda12ce8f01b4822d88f09c9633",
+      "mode": "required_commit_status",
+      "pr": 4738,
+      "pr_url": "https://github.com/ajoe734/pantheon/pull/4738",
+      "recorded_at": "2026-08-11T01:37:44Z",
+      "repository": "ajoe734/pantheon",
+      "review_error": "gh: Unprocessable Entity (HTTP 422)",
+      "review_proof_ref": "refs/tags/pantheon-review/approve/2da016b9892e3dda12ce8f01b4822d88f09c9633",
+      "status_context": "Pantheon canonical review gate",
+      "status_id": 51993886884,
+      "status_state": "success"
+    },
+    "id": "SUP-AI-STATUS-AUDIT-EVENT-ID-COMPAT-20260811",
+    "last_update": "2026-08-11T01:54:46Z",
+    "next": "Owner finalized reviewed exact head 2da016b9892e3dda12ce8f01b4822d88f09c9633 after PR #4738 protected-merged into dev as 8b7624999310a211591143c7da61801061a5afd8. Revalidated focused compatibility tests (7 passed, 8 subtests), complete scripts/test_ai_status.py (214 passed, 39 subtests), py_compile, and git diff --check; source-only scope preserved with no runtime mutation or rollout retry.",
+    "owner": "Codex",
+    "phase": "Status Governance / Audit Event Compatibility",
+    "review_binding": {
+      "base": "dev",
+      "head_branch": "task/SUP-AI-STATUS-AUDIT-EVENT-ID-COMPAT-20260811",
+      "head_sha": "2da016b9892e3dda12ce8f01b4822d88f09c9633",
+      "pr": 4738
+    },
+    "review_file": "docs/deployment/evidence/supervisor/SUP-AI-STATUS-AUDIT-EVENT-ID-COMPAT-20260811/evidence.json",
+    "reviewer": "Antigravity2",
+    "status": "done",
+    "summary_zh": "The approved temporary rescue removed an uncommitted runtime-only compatibility diff after preserving it. Deliver the same narrow fix through the governed source flow so reassigned-task closeout and worker dispatch can recognize existing canonical event IDs without weakening verification.",
+    "title": "Accept canonical supervisor task-reassigned event-id prefixes without weakening audit verification",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-08-11T01:54:46Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/sup-ai-status-audit-event-id-compat-20260811",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/SUP-AI-STATUS-AUDIT-EVENT-ID-COMPAT-20260811",
+      "git_clean_required": false,
+      "status_command_runtime": {
+        "command_root": "/home/lupin/pantheon-ci-deploy/command-runtimes/0bd7cf8842a622fb40eca125f490d4073b3a1044",
+        "source_sha": "0bd7cf8842a622fb40eca125f490d4073b3a1044",
+        "base_ref": "origin/dev",
+        "remote": "ajoe734/pantheon",
+        "status_root": "/home/lupin/pantheon",
+        "delivery_root": "/tmp/pantheon-worker-worktrees/pantheon/sup-ai-status-audit-event-id-compat-20260811",
+        "wrapper_root": "/home/lupin/pantheon-ci-deploy/command-runtimes/0bd7cf8842a622fb40eca125f490d4073b3a1044",
+        "worker_lease": {
+          "schema_version": 1,
+          "task_id": "SUP-AI-STATUS-AUDIT-EVENT-ID-COMPAT-20260811",
+          "worker_run_id": "codex-20260811T014823Z-06ed7a23",
+          "queue_event_id": "evt-20260811T014814Z-f1ee535a",
+          "pid": 1842831,
+          "pid_start_ticks": 25195177,
+          "process_generation": "worker-process-generation-sha256:22127bc1472847c4cb24f857acd4c72c92d1bb47b833d72ec3d93f7955a82d14"
+        }
+      },
+      "commit": "2da016b9892e3dda12ce8f01b4822d88f09c9633",
+      "commit_subject": "SUP-AI-STATUS-AUDIT-EVENT-ID-COMPAT-20260811: add evidence",
+      "commit_author": {
+        "name": "pantheon-dev",
+        "email": "bjoe734@gmail.com"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex",
+        "Task-ID": "SUP-AI-STATUS-AUDIT-EVENT-ID-COMPAT-20260811",
+        "Reviewer": "Antigravity2",
+        "Verified": "214 ai_status tests and 39 subtests; focused 7 tests and 8 subtests; py_compile; git diff --check"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 1,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/SUP-AI-STATUS-AUDIT-EVENT-ID-COMPAT-20260811",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "8b7624999310a211591143c7da61801061a5afd8",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "created_at": "2026-08-11T01:09:19Z",
+      "from": "Antigravity2",
+      "message": "Helper-claimed by Codex while Antigravity2 is dispatch-paused previous owner Antigravity2 becomes reviewer.",
+      "resolved_at": "2026-08-11T01:13:18Z",
+      "status": "done",
+      "task_id": "SUP-AI-STATUS-AUDIT-EVENT-ID-COMPAT-20260811",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-08-11T01:23:42Z",
+      "from": "Codex",
+      "message": "PR #4738 is ready for independent exact-head review at 2da016b9892e3dda12ce8f01b4822d88f09c9633. Review scripts/ai_status.py, scripts/test_ai_status.py, and committed manifest docs/deployment/evidence/supervisor/SUP-AI-STATUS-AUDIT-EVENT-ID-COMPAT-20260811/evidence.json; verify both canonical prefixes retain the exact payload digest and all negative fail-closed cases.",
+      "resolved_at": "2026-08-11T01:37:44Z",
+      "status": "done",
+      "task_id": "SUP-AI-STATUS-AUDIT-EVENT-ID-COMPAT-20260811",
+      "to": "Antigravity2"
+    },
+    {
+      "created_at": "2026-08-11T01:37:44Z",
+      "from": "Antigravity2",
+      "message": "Independent exact-head review of PR #4738 (2da016b9892e3dda12ce8f01b4822d88f09c9633) passed. Verified _supervisor_reassignment_event_id_matches accepts both supervisor-reassign- and supervisor-task-reassigned- event-ID prefixes for the exact SHA256 digest while rejecting invalid digests, invalid prefixes, forged non-Orchestrator actors, missing fields, cross-task events, and ambiguous chains. Verified authentic blocker fixture OPS-GITHUB-CANONICAL-REVIEW-ENFORCEMENT-001 passes. All 214 ai_status tests and 39 subtests passed.",
+      "status": "done",
+      "task_id": "SUP-AI-STATUS-AUDIT-EVENT-ID-COMPAT-20260811",
+      "to": "Codex",
+      "resolved_at": "2026-08-11T01:54:48Z"
+    }
+  ],
+  "blockers": []
+}

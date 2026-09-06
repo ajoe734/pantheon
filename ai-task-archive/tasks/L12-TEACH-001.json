@@ -1,0 +1,249 @@
+{
+  "version": 1,
+  "task_id": "L12-TEACH-001",
+  "archived_at": "2026-07-26T18:19:34Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "acceptance": [
+      "Teaching mutations authenticate actor service and tenant",
+      "Session job replay and persona target state are authoritative HA storage",
+      "Health is degraded when evaluation or commit cannot complete",
+      "Evaluation failure performs no persona mutation",
+      "Two workers and process restart produce one terminal persona commit"
+    ],
+    "actual_state_sources": [
+      "TeachingEvent and evaluation result",
+      "persona before and after controller record"
+    ],
+    "artifact_conflict_guard": {
+      "allowed_overlap_task_ids": [],
+      "artifact_scope": [
+        {
+          "path": "docs/deployment/evidence/twelve-loop-gap/L12-TEACH-001",
+          "repo": "pantheon"
+        },
+        {
+          "path": "services/training-session",
+          "repo": "pantheon"
+        }
+      ],
+      "catalog_sha256": "8c7610b0e6bbba31c36cb0ecd1ddce4bf843fc6de89dcaecc4a5e3154af8933d",
+      "program_id": "pantheon-twelve-loop-gap-2026-07-26",
+      "schema_version": 1,
+      "task_id": "L12-TEACH-001"
+    },
+    "artifacts": [
+      "services/training-session",
+      "docs/deployment/evidence/twelve-loop-gap/L12-TEACH-001"
+    ],
+    "auto_created_by": "dispatch_twelve_loop_gap_2026_07_26",
+    "catalog_task_contract_sha256": "027eb00deaab1278d5730990a0d32aa5001c81b8fe7b427521b877678ca80ecc",
+    "current_maturity": "integrated",
+    "depends_on": [
+      "L12-FLEET-001"
+    ],
+    "desired_state_sources": [
+      "authenticated TeachingSession",
+      "evaluation and persona mutation policy"
+    ],
+    "dispatch_rules": [
+      "Preserve existing evaluation gate",
+      "Do not use alive marker as functional success",
+      "Commit once after durable evaluation"
+    ],
+    "evidence_root": "docs/deployment/evidence/twelve-loop-gap/L12-TEACH-001",
+    "fleet_lane": "teaching",
+    "id": "L12-TEACH-001",
+    "last_update": "2026-07-26T18:19:34Z",
+    "loop_ids": [
+      "persona_teaching"
+    ],
+    "merge_target": "dev",
+    "mutates_canonical": true,
+    "next": "Owner closeout: teaching authority + HA delivery merged to dev (PRs #4149, #4166, #4176, #4182, #4198) and brief owner sync merged via PR #4208 (HEAD 21ddad533, ancestor of origin/dev). Reviewed evidence manifest docs/deployment/evidence/twelve-loop-gap/L12-TEACH-001/evidence.json unchanged since Codex review_approved (sha256 e3c658ae9d638fca9ce8db8cae7f30b9284b98d74466402461fe2aee26e427b9, matches evidence.sha256). Verified: pytest services/training-session = 127 passed, 2 skipped; pytest services/training-session/tests = 118 passed, 2 skipped; scripts/loop_done_guardrail.py --task-id L12-TEACH-001 flagged only the missing canonical review_file, bound here. Hosted persona terminal readback remains delegated to L12-VERIFY-LEARN-001 / L12-HOSTED-001 per proof_ownership; no hosted activation or maturity promotion claimed.",
+    "non_goals": [
+      "No panel-only closure",
+      "No seed fixture as live proof",
+      "No approval gate bypass",
+      "No direct execution-plane mutation"
+    ],
+    "owner": "Claude",
+    "phase": "Twelve Loop Remediation / Teaching",
+    "product_level_required": true,
+    "program_id": "pantheon-twelve-loop-gap-2026-07-26",
+    "proof_ownership": {
+      "attached_at": "2026-07-26T13:17:55Z",
+      "attached_by": "Human/Ops",
+      "base_catalog_sha256": "a7fbbaa560bd7f2d97750b25cd20af69b64d4f522b293689849b0e1b1763717f",
+      "delegations": [
+        {
+          "final_witness_task_id": "L12-HOSTED-001",
+          "owner_task_id": "L12-VERIFY-LEARN-001",
+          "proof": "hosted persona terminal readback",
+          "reason": "The teaching domain task owns authenticated HA behavior and real authoritative-store terminal convergence. The hosted terminal record requires the runtime activation and cross-service drill that are dependency-ordered after that domain implementation, so production of this proof is owned by the downstream learning drill and witnessed again by the exact hosted candidate.",
+          "source_task_id": "L12-TEACH-001"
+        }
+      ],
+      "program_id": "pantheon-twelve-loop-gap-2026-07-26",
+      "proof_ownership_file": "docs/bff/execution-tasks/2026-07-26-twelve-loop-gap/proof-ownership.json",
+      "proof_ownership_sha256": "776fbfd95840a20754e08514b9aab03cb8f44a71fdf7c2bbbd213fb4eb55a370",
+      "reason": "Formal catalog-bound proof ownership: the domain task closes on real authoritative Postgres convergence; hosted persona terminal readback is produced by L12-VERIFY-LEARN-001 and witnessed by L12-HOSTED-001.",
+      "schema_version": 1
+    },
+    "proof_required": [
+      "auth tenant and MFA negatives",
+      "two-worker and restart tests",
+      "eval-fail no-mutation proof",
+      "hosted persona terminal readback"
+    ],
+    "requires_human_ops_signoff": false,
+    "reviewer": "Codex",
+    "status": "done",
+    "summary_zh": "為 teaching API/worker 加 inbound authority 與 tenant，將 session/job/replay 移入 authoritative store，讓 functional health 與真正 eval/commit 結果一致。",
+    "target_maturity": "reconciled",
+    "target_repo": "pantheon",
+    "task_doc": "docs/bff/execution-tasks/2026-07-26-twelve-loop-gap/L12-TEACH-001.md",
+    "title": "Make Persona Teaching authenticated, tenant-safe, and HA",
+    "wave": 2,
+    "review_file": "docs/deployment/evidence/twelve-loop-gap/L12-TEACH-001/evidence.json",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-07-26T18:19:34Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/l12-teach-001",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/L12-TEACH-001",
+      "git_clean_required": false,
+      "status_command_runtime": {
+        "command_root": "/home/lupin/pantheon-ci-deploy/dev-root-bdbd0a99bf68",
+        "source_sha": "bdbd0a99bf68e6a635d9bd936782c659298b7bb7",
+        "base_ref": "origin/dev",
+        "remote": "ajoe734/pantheon",
+        "status_root": "/home/lupin/pantheon",
+        "delivery_root": "/tmp/pantheon-worker-worktrees/pantheon/l12-teach-001",
+        "wrapper_root": "/home/lupin/pantheon-ci-deploy/dev-root-bdbd0a99bf68"
+      },
+      "commit": "21ddad5335792ad0ee3680669ab9c5934ee803c5",
+      "commit_subject": "L12-TEACH-001: sync task brief owner to canonical row",
+      "commit_author": {
+        "name": "pantheon-dev",
+        "email": "bjoe734@gmail.com"
+      },
+      "commit_metadata": {
+        "Owned layer": "L12-TEACH-001 task brief header only. Regenerated owner and",
+        "Not changing": "services/training-session implementation and tests, and the",
+        "Composes with": "dev integration tip 312caaf6c and the owner closeout that",
+        "LLM-Agent": "Claude",
+        "Task-ID": "L12-TEACH-001",
+        "Reviewer": "Codex",
+        "Verified": "pytest services/training-session (127 passed, 2 skipped);"
+      },
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "71fffcdccc9a2d851f2857b85312dd4c6878e3bc",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "created_at": "2026-07-26T10:15:37Z",
+      "from": "Codex2",
+      "message": "Merged PR #4149 into dev at 6636507f274ffcaf4b6d42b1c3cb8adb09dd49f5. Evidence: docs/deployment/evidence/twelve-loop-gap/L12-TEACH-001/{README.md,evidence.json,evidence.sha256}. Validation: training-session 123 passed, 1 skipped; opt-in real Postgres two-worker/restart proof 1 passed; py_compile, SHA-256, diff check, Commit trailers, Runtime mirror guard, and Smoke acceptance passed. Please independently review auth/tenant/MFA negatives, authoritative Postgres convergence, evaluation-failure no-mutation/readiness degradation, and exact tenant-bound persona terminal authority. Hosted terminal readback remains explicitly delegated to L12-MANIFEST-001/L12-VERIFY-LEARN-001/L12-HOSTED-001.",
+      "resolved_at": "2026-07-26T10:31:08Z",
+      "status": "done",
+      "task_id": "L12-TEACH-001",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-07-26T10:31:08Z",
+      "from": "Codex",
+      "message": "Review failed after independent validation of merged PR #4149. Required fixes: (1) strict JWTs without an explicit training-service role must be rejected; current probe creates a session with HTTP 201 because inbound_authority hard-codes the privileged default role. Add missing/wrong-role negatives. (2) commit/discard must not accept an arbitrary syntactically valid six-digit X-MFA-Token as verified MFA; current no-MFA-claim JWT plus 123456 reaches the route boundary (HTTP 404). Require claim-bound or otherwise authoritative upstream-verifiable MFA and add a well-formed-but-unverified negative. (3) make Postgres TeachingEvent/session append conflict-safe across workers: current duplicate event_id with different payload returns the second payload as success while Postgres retains the first, and session append has no cross-instance mutation lock. Reject mismatched duplicates or return the durable prior record, serialize sequence/session mutation, and add a two-instance real-Postgres no-lost-update/conflict test. Existing positives independently passed: 123 passed, 1 skipped; real Postgres worker/restart 1 passed; evidence SHA-256 and PR checks passed.",
+      "resolved_at": "2026-07-26T10:31:08Z",
+      "status": "done",
+      "task_id": "L12-TEACH-001",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-07-26T12:36:06Z",
+      "from": "Codex2",
+      "message": "Reviewer hardening is merged via PR #4166 (022bb35f4cd93c82571fcaf2799905a7043efcd2); merge-bound evidence refresh is merged via PR #4176 (26bf434f2ebab5c47af4692cb1eb71440a74d839). Owner revalidation passed: 129 tests with both real-Postgres concurrency cases, plus py_compile, JSON, SHA-256, and diff checks. Please independently re-review docs/deployment/evidence/twelve-loop-gap/L12-TEACH-001/evidence.json and bind it as REVIEW_FILE on approval.",
+      "resolved_at": "2026-07-26T12:49:46Z",
+      "status": "done",
+      "task_id": "L12-TEACH-001",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-07-26T12:49:46Z",
+      "from": "Codex",
+      "message": "Independent review verified PR #4149 (6636507f274ffcaf4b6d42b1c3cb8adb09dd49f5), hardening PR #4166 (022bb35f4cd93c82571fcaf2799905a7043efcd2), and evidence refresh PR #4176 (26bf434f2ebab5c47af4692cb1eb71440a74d839) are merged to dev with green gates; reviewer reran the full training-session suite with both real-Postgres cases: 129 passed, 1 warning, and confirmed syntax, JSON, SHA-256, diff checks, and zero leftover l12_teach_* tables. Reopen because canonical tasks.json/task doc require hosted persona terminal readback, while evidence.json explicitly records hosted_terminal_readback.status=not_claimed and acceptance.hosted_proof=deferred_to_downstream_activation_and_verification. Provide merged task-scoped proof binding the exact deployed commit to a real owner-service terminal persona record (no local/mock/seed substitution), or have the supervisor formally revise the canonical task contract/ownership before returning to review.",
+      "resolved_at": "2026-07-26T12:49:46Z",
+      "status": "done",
+      "task_id": "L12-TEACH-001",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-07-26T13:42:07Z",
+      "from": "Antigravity",
+      "message": "Auto-reassigned L12-TEACH-001 away from unavailable lane Antigravity (disabled, paused, sidecar-only, or auth-down); owner Antigravity -> Codex2.",
+      "resolved_at": "2026-07-26T13:44:10Z",
+      "status": "done",
+      "task_id": "L12-TEACH-001",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-07-26T15:03:04Z",
+      "from": "Antigravity",
+      "message": "Implementation and reviewer-hardening follow-up (PR #4166) are merged into dev; task-scoped anchor commit created. Ready for reviewer inspection or approval.",
+      "resolved_at": "2026-07-26T15:21:15Z",
+      "status": "done",
+      "task_id": "L12-TEACH-001",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-07-26T15:21:15Z",
+      "from": "Codex",
+      "message": "Independent re-review passed: PR #4149 merge 6636507f274ffcaf4b6d42b1c3cb8adb09dd49f5, hardening PR #4166 merge 022bb35f4cd93c82571fcaf2799905a7043efcd2, evidence PR #4176 merge 26bf434f2ebab5c47af4692cb1eb71440a74d839, and blocker-observation PR #4182 merge 902584bef7448b92cbf0686fd9c655481763b2bd are ancestors of origin/dev with required checks green. Reviewer reran the full training-session suite against real local Postgres: 129 passed, 1 warning, no skips; the two-worker/restart and concurrent append/conflict cases passed, no l12_teach_* tables remained. Auth/tenant/explicit-role/claim-bound-MFA negatives, eval-fail zero persona mutation with readyz 503, commit-failure functional degradation, evidence SHA-256, JSON, py_compile, and diff checks all passed. Authoritative proof_ownership attached at 2026-07-26T13:17:55Z delegates hosted terminal readback to L12-VERIFY-LEARN-001 with L12-HOSTED-001 as final witness, resolving the prior hosted-proof ordering blocker.",
+      "resolved_at": "2026-07-26T16:23:51Z",
+      "status": "done",
+      "task_id": "L12-TEACH-001",
+      "to": "Antigravity"
+    },
+    {
+      "created_at": "2026-07-26T16:30:20Z",
+      "from": "Codex",
+      "message": "Auto-reassigned ownership from Antigravity to Claude after repeated Antigravity terminal: Error: timeout waiting for response",
+      "resolved_at": "2026-07-26T17:51:57Z",
+      "status": "done",
+      "task_id": "L12-TEACH-001",
+      "to": "Claude"
+    },
+    {
+      "created_at": "2026-07-26T17:59:09Z",
+      "from": "Codex",
+      "message": "Auto-reassigned ownership from Claude to Antigravity after repeated Claude terminal: {\"type\":\"rate_limit_event\",\"rate_limit_info\":{\"status\":\"allowed_warning\",\"resetsAt\":1785153600,\"rateLimitType\":\"seven_day\",\"utilization\":0.79,\"isUsingOverage\":false,\"surpassedThres",
+      "resolved_at": "2026-07-26T18:07:00Z",
+      "status": "done",
+      "task_id": "L12-TEACH-001",
+      "to": "Antigravity"
+    },
+    {
+      "created_at": "2026-07-26T18:07:00Z",
+      "from": "Antigravity",
+      "message": "Auto-reassigned L12-TEACH-001 away from unavailable lane Antigravity (disabled, paused, sidecar-only, or auth-down); owner Antigravity -> Claude.",
+      "status": "done",
+      "task_id": "L12-TEACH-001",
+      "to": "Claude",
+      "resolved_at": "2026-07-26T18:19:35Z"
+    }
+  ],
+  "blockers": []
+}

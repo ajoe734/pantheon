@@ -1,0 +1,86 @@
+{
+  "actor": {
+    "capabilities": [
+      "assistant.kernel.repair",
+      "assistant.dev-task.dispatch",
+      "fleet.dispatch"
+    ],
+    "id": "Human/Ops",
+    "roles": [
+      "operator"
+    ]
+  },
+  "admission_record_path": "ai-task-archive/tasks/assistant-dev-bridge-admissions/supervisor-command-root-split-hotfix-review-20260801-v2--0003c445eb8c0a32.json",
+  "admitted_at": "2026-08-01T14:45:21Z",
+  "audit_conversation_href": "https://github.com/ajoe734/pantheon/pull/4451",
+  "constraints": {
+    "allowedRepos": [
+      "pantheon"
+    ],
+    "noDirectShellFromWeb": true,
+    "requiresBranchPrMerge": true
+  },
+  "conversation_id": "codex-supervisor-command-root-incident-20260801",
+  "dispatch_records": [
+    {
+      "error": null,
+      "owner": "Codex",
+      "reviewer": "Antigravity",
+      "status": "dispatched",
+      "taskId": "SUP-COMMAND-ROOT-SPLIT-HOTFIX-REVIEW-R2-20260801"
+    }
+  ],
+  "documents": [
+    {
+      "kind": "INCIDENT_HOTFIX",
+      "path": "scripts/sync-dev-root.sh",
+      "sourceRefs": [
+        "https://github.com/ajoe734/pantheon/pull/4451",
+        "671a15e7dbf4ba278482fa7764a07d3972ae7237"
+      ]
+    }
+  ],
+  "durable": true,
+  "emitted_at": "2026-08-01T14:45:00Z",
+  "intent": "independent_exact_head_review_merge_and_validate_supervisor_command_root_split_hotfix",
+  "mode": "kernel_repair",
+  "packet_digest": "0003c445eb8c0a32d52b43998979cf7d9038953941f0069d800baa7649beab60",
+  "packet_id": "supervisor-command-root-split-hotfix-review-20260801-v2",
+  "packet_version": "pantheon.assistant.dev-task.v1",
+  "record_kind": "assistant_dev_bridge_admission",
+  "record_payload_sha256": "55c1c15a6bd2c974511632cbe735f0fa96a6c891cc81e55120d743ced56158b5",
+  "schema": "pantheon.assistant-dev-bridge-admission.v1",
+  "source_turn_ids": [
+    "temporary-live-rescue",
+    "permanent-hotfix-pr-4451",
+    "exact-head-review-r2"
+  ],
+  "tasks": [
+    {
+      "task_id": "SUP-COMMAND-ROOT-SPLIT-HOTFIX-REVIEW-R2-20260801",
+      "task_spec": {
+        "acceptance": [
+          "Review exact PR #4451 head 671a15e7dbf4ba278482fa7764a07d3972ae7237 independently; Codex and Codex2 are the same identity and are ineligible reviewers.",
+          "Confirm the diff is bounded to scripts/sync-dev-root.sh and scripts/test_sync_dev_root.py and treats an active-root/dev-root mismatch as an intentional-restart condition even when code and config are unchanged.",
+          "Confirm restart intent remains PID-bound and is recorded before SIGTERM, while a matching active root with no code/config change remains a no-op.",
+          "Confirm the regression fixtures are isolated from the review checkout and stay deterministic after origin/dev advances; run bash syntax validation and the full focused sync-dev-root test suite and publish exact results.",
+          "Require every GitHub check on PR #4451 to pass and ensure the exact reviewed head remains 671a15e7dbf4ba278482fa7764a07d3972ae7237.",
+          "If accepted, independently approve the exact head for merge to dev and record the verdict; do not broaden this hotfix into supervisor scheduling or fleet-policy redesign."
+        ],
+        "artifacts": [
+          "scripts/sync-dev-root.sh",
+          "scripts/test_sync_dev_root.py",
+          "docs/deployment/evidence/supervisor/SUP-COMMAND-ROOT-SPLIT-HOTFIX-REVIEW-R2-20260801/"
+        ],
+        "depends_on": [],
+        "id": "SUP-COMMAND-ROOT-SPLIT-HOTFIX-REVIEW-R2-20260801",
+        "owner": "Codex",
+        "phase": "incident-hotfix-review",
+        "reviewer": "Antigravity",
+        "summary": "Replacement exact-head review handoff after the original review found and the owner corrected a test-isolation race caused by origin/dev advancing.",
+        "title": "Independently review and merge the corrected supervisor command-root split hotfix"
+      },
+      "task_spec_hash": "b2b661ded5e057724d46f9fcda400b3ed68170cf85a85a518192dea278b44577"
+    }
+  ]
+}

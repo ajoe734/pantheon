@@ -1,0 +1,82 @@
+{
+  "actor": {
+    "capabilities": [
+      "dev-task.dispatch",
+      "live-repair"
+    ],
+    "id": "Codex",
+    "roles": [
+      "live-repair-agent"
+    ]
+  },
+  "admission_record_path": "ai-task-archive/tasks/assistant-dev-bridge-admissions/pkt-sup-assistant-dev-bridge-timeout-10s-20260808--a4d9c7d8168b6410.json",
+  "admitted_at": "2026-08-08T10:17:42Z",
+  "audit_conversation_href": null,
+  "constraints": {
+    "allowedRepos": [
+      "pantheon"
+    ],
+    "liveRepairPermanentFollowup": true,
+    "noDirectShellFromWeb": true,
+    "requiresBranchPrMerge": true
+  },
+  "conversation_id": "codex-root-l12-minimum-functional-closure-20260808",
+  "dispatch_records": [
+    {
+      "error": null,
+      "owner": "Codex",
+      "reviewer": "Antigravity",
+      "status": "dispatched",
+      "taskId": "SUP-ASSISTANT-DEV-BRIDGE-TIMEOUT-10S-20260808"
+    }
+  ],
+  "documents": [
+    {
+      "kind": "LIVE_REPAIR_SOURCE",
+      "path": "docs/bff/execution-tasks/2026-08-08-l12-minimum-functional-closure/INDEX.md",
+      "sourceRefs": [
+        "PR-4621",
+        "99a57cd0f"
+      ]
+    }
+  ],
+  "durable": true,
+  "emitted_at": "2026-08-08T10:08:00Z",
+  "intent": "generate_sa_sd_and_dispatch",
+  "mode": "kernel_repair",
+  "packet_digest": "a4d9c7d8168b6410530cbc092893c804c5f04bbb31bcc769f3150c27c2feb9e4",
+  "packet_id": "pkt-sup-assistant-dev-bridge-timeout-10s-20260808",
+  "packet_version": "pantheon.assistant.dev-task.v1",
+  "record_kind": "assistant_dev_bridge_admission",
+  "record_payload_sha256": "de8897be27e876ae307f88bc2fc00e26b344946b9782ea477da6e4b7cbbf5484",
+  "schema": "pantheon.assistant-dev-bridge-admission.v1",
+  "source_turn_ids": [
+    "user-authorized-agents-live-repair-rule-20260808"
+  ],
+  "tasks": [
+    {
+      "task_id": "SUP-ASSISTANT-DEV-BRIDGE-TIMEOUT-10S-20260808",
+      "task_spec": {
+        "acceptance": [
+          "Set the default and maximum assistant dev bridge assign/readback timeout to exactly ten seconds without editing orchestrator config.",
+          "Preserve lower per-run timeout overrides and retryable fail-closed behavior.",
+          "Pass the focused reliability and bridge CLI suites.",
+          "Deliver through clean task branch, reviewed PR to dev, checks, and merge."
+        ],
+        "artifacts": [
+          "services/control-plane/bff/assistant/dev_bridge_dispatcher.py",
+          "services/control-plane/bff/assistant/dev_bridge_models.py",
+          "services/control-plane/bff/assistant/tests/test_dev_bridge_reliability.py"
+        ],
+        "depends_on": [],
+        "id": "SUP-ASSISTANT-DEV-BRIDGE-TIMEOUT-10S-20260808",
+        "owner": "Codex",
+        "phase": "Live Repair permanent follow-up",
+        "reviewer": "Antigravity",
+        "summary": null,
+        "title": "Raise assistant dev bridge assign and readback timeout to ten seconds"
+      },
+      "task_spec_hash": "78493f4f4c3953f28462fb69418bc364e41033b1c43b668432e2430afc73d7ab"
+    }
+  ]
+}

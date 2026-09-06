@@ -1,0 +1,106 @@
+{
+  "actor": {
+    "capabilities": [
+      "assistant.kernel.repair",
+      "dev-task.dispatch",
+      "fleet.dispatch"
+    ],
+    "id": "Human/Ops",
+    "roles": [
+      "operator"
+    ]
+  },
+  "admission_record_path": "ai-task-archive/tasks/assistant-dev-bridge-admissions/pkt-ops-codex-chatbox-routing-rules-review-v3-20260802T0852Z--dc0c3b1bc7652e77.json",
+  "admitted_at": "2026-08-02T08:52:27Z",
+  "audit_conversation_href": "codex://root/l12-current-gap-auto-sequence-20260731#dispatch-authority-source-truth-v3",
+  "constraints": {
+    "allowedRepos": [
+      "pantheon"
+    ],
+    "noDirectShellFromWeb": true,
+    "requiresBranchPrMerge": true
+  },
+  "conversation_id": "codex-root-l12-current-gap-auto-sequence-20260731",
+  "dispatch_records": [
+    {
+      "error": null,
+      "owner": "Codex",
+      "reviewer": "Human/Ops",
+      "status": "dispatched",
+      "taskId": "OPS-CODEX-CHATBOX-ROUTING-RULES-REVIEW-V3-20260802"
+    }
+  ],
+  "documents": [
+    {
+      "kind": "EXISTING_POLICY_PR",
+      "path": "https://github.com/ajoe734/pantheon/pull/4401",
+      "sourceRefs": [
+        "exact AGENTS.md +74 policy patch",
+        "single supervisor dispatch authority",
+        "Codex and Codex2 shared-account review independence"
+      ]
+    },
+    {
+      "kind": "STALE_REVIEW_TASK",
+      "path": "ai-status://OPS-CODEX-CHATBOX-ROUTING-RULES-REVIEW-20260731-V2",
+      "sourceRefs": [
+        "blocked",
+        "invalid Codex2/Codex review pair",
+        "PR #4405 stale evidence wrapper"
+      ]
+    },
+    {
+      "kind": "SHARED_CHECKOUT_POLICY",
+      "path": "AGENTS.md",
+      "sourceRefs": [
+        "current shared checkout patch is byte-for-byte PR #4401 diff"
+      ]
+    }
+  ],
+  "durable": true,
+  "emitted_at": "2026-08-02T08:52:00Z",
+  "intent": "land_existing_single_dispatch_authority_policy_before_further_assignment_planner_work",
+  "mode": "kernel_repair",
+  "packet_digest": "dc0c3b1bc7652e778830cffbd68806cd02622ba83dfaafbc329b73e83c105969",
+  "packet_id": "pkt-ops-codex-chatbox-routing-rules-review-v3-20260802T0852Z",
+  "packet_version": "pantheon.assistant.dev-task.v1",
+  "record_kind": "assistant_dev_bridge_admission",
+  "record_payload_sha256": "1b88afd3a53e2f5809e8c57b87dcb74b96eb097ccda8e08348c4fc669a7d2d06",
+  "schema": "pantheon.assistant-dev-bridge-admission.v1",
+  "source_turn_ids": [
+    "operator-require-supervisor-auto-worker-dispatch",
+    "root-cause-clean-worktrees-missing-unmerged-agents-policy-20260802"
+  ],
+  "tasks": [
+    {
+      "task_id": "OPS-CODEX-CHATBOX-ROUTING-RULES-REVIEW-V3-20260802",
+      "task_spec": {
+        "acceptance": [
+          "This is a governed source-of-truth repair for the already-authored PR #4401 policy patch. Do not design a different policy and do not modify supervisor code, config, runtime state, product code, or the 28-task catalog.",
+          "Start from current origin/dev in a clean governed task worktree and materialize exactly the AGENTS.md +74 patch currently carried by PR #4401. The patch classifies direct repair versus integration/coordination, makes the Pantheon supervisor the sole routine implementation dispatcher, prohibits chatbox parallel implementation fleets, and records that Codex/Codex2 currently share one ChatGPT account and are not independent capacity or review identities.",
+          "Do not treat the dirty shared checkout as a delivery branch. Compare its AGENTS.md delta and PR #4401 patch byte-for-byte, then deliver from the clean task worktree.",
+          "If PR #4401 can be safely refreshed to current dev without altering the policy patch, use a non-force current-dev merge and bind the final exact head. Otherwise create the exact V3 task branch and PR; never merge two duplicate policy PRs.",
+          "After a valid replacement/current PR exists, close or supersede stale evidence PR #4405 and leave a traceable link. Do not delete branches or history.",
+          "Add or run deterministic assertions for every required clause, including the exact Codex/Codex2 shared-account paragraph, no direct patching of pantheon-ci-deploy/dev-root, supervisor-only dispatch, governed packet requirement, and read-only-only chatbox subagent boundary.",
+          "Verify the diff contains only AGENTS.md plus V3 task brief/review evidence if needed; no .orchestrator/config.json, canonical state, runtime, queue, product, or deployment changes.",
+          "Run git diff --check, policy text assertions, commit-trailer validation, and all exact-head GitHub checks.",
+          "Evidence must identify PR #4401 head, final delivery head, current origin/dev, exact file hashes, stale #4405 disposition, and remain review_pending until Human/Ops exact-head approval.",
+          "Deliver commit(s), correctly titled PR to dev, all checks, independent Human/Ops exact-head approval, governed merge, and canonical done/archive. Rollback is revert of the policy merge commit."
+        ],
+        "artifacts": [
+          "AGENTS.md",
+          ".orchestrator/task-briefs/ops_codex_chatbox_routing_rules_review_v3_20260802.md",
+          "docs/reviews/ops-codex-chatbox-routing-rules-review-v3-20260802.md"
+        ],
+        "depends_on": [],
+        "id": "OPS-CODEX-CHATBOX-ROUTING-RULES-REVIEW-V3-20260802",
+        "owner": "Codex",
+        "phase": "Repository governance / dispatch authority source of truth",
+        "reviewer": "Human/Ops",
+        "summary": "Move the already-reviewed chatbox/supervisor dispatch rules from a dirty shared checkout and stale PR into origin/dev so every clean auto-worker sees the same governance.",
+        "title": "Land single-dispatch and shared-account review policy"
+      },
+      "task_spec_hash": "af525412801190b5e42b7a0f2e622a8a0ea5f7406c23e8398b643c56537222e5"
+    }
+  ]
+}

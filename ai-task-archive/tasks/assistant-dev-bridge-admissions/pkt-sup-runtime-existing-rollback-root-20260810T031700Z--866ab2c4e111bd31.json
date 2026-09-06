@@ -1,0 +1,88 @@
+{
+  "actor": {
+    "capabilities": [
+      "integration",
+      "supervisor-runtime",
+      "release-coordination"
+    ],
+    "id": "Human/Ops",
+    "roles": [
+      "operator"
+    ]
+  },
+  "admission_record_path": "ai-task-archive/tasks/assistant-dev-bridge-admissions/pkt-sup-runtime-existing-rollback-root-20260810T031700Z--866ab2c4e111bd31.json",
+  "admitted_at": "2026-08-10T03:21:12Z",
+  "audit_conversation_href": "task:SUP-RUNTIME-V10-PROMOTION-GIT-DIR-ENOTDIR-20260808",
+  "constraints": {
+    "allowedRepos": [
+      "pantheon"
+    ],
+    "noDirectShellFromWeb": true,
+    "requiresBranchPrMerge": true
+  },
+  "conversation_id": "codex-operator-runtime-promotion-20260810",
+  "dispatch_records": [
+    {
+      "error": null,
+      "owner": "Antigravity",
+      "reviewer": "Codex",
+      "status": "dispatched",
+      "taskId": "SUP-RUNTIME-PROMOTION-EXISTING-ROLLBACK-ROOT-20260810"
+    }
+  ],
+  "documents": [
+    {
+      "kind": "PROMOTION_TRANSACTION_EVIDENCE",
+      "path": "docs/deployment/evidence/supervisor/SUP-RUNTIME-PROMOTION-IGNORE-LOGS-ROLLBACK-CLEAN-20260810/evidence.json",
+      "sourceRefs": [
+        "pr:4704",
+        "merge:f8c212d522191ede34c76015940b81fbe01ac6da",
+        "promotion-evidence:/home/lupin/pantheon-ci-deploy/runtime/promotion-evidence/supervisor-runtime-promotion-20260810T031415268036Z-3633691.json"
+      ]
+    }
+  ],
+  "durable": true,
+  "emitted_at": "2026-08-10T03:17:00Z",
+  "intent": "governed_runtime_promotion_existing_rollback_root_repair",
+  "mode": "supervisor_source_only",
+  "packet_digest": "866ab2c4e111bd3194d282f5105211cf67f2f0ea74f9fb8e8f38f6a7acb21eab",
+  "packet_id": "pkt-sup-runtime-existing-rollback-root-20260810T031700Z",
+  "packet_version": "pantheon.assistant.dev-task.v1",
+  "record_kind": "assistant_dev_bridge_admission",
+  "record_payload_sha256": "673a4f1bae93bea7010a5d779cc0df87cb4dbe58f930c9ebd95a05c6c2030767",
+  "schema": "pantheon.assistant-dev-bridge-admission.v1",
+  "source_turn_ids": [
+    "operator-authorization:2026-08-10",
+    "source-merge:PR-4704/f8c212d522191ede34c76015940b81fbe01ac6da",
+    "promotion-evidence:supervisor-runtime-promotion-20260810T031415268036Z-3633691"
+  ],
+  "tasks": [
+    {
+      "task_id": "SUP-RUNTIME-PROMOTION-EXISTING-ROLLBACK-ROOT-20260810",
+      "task_spec": {
+        "acceptance": [
+          "Reproduce from durable evidence /home/lupin/pantheon-ci-deploy/runtime/promotion-evidence/supervisor-runtime-promotion-20260810T031415268036Z-3633691.json: the transaction aborts with Fresh rollback runtime destination already exists at command-runtimes/5877b64425c8d6aede147d6cbbc6fbb9e228c259. Explain why moving the running root is unsafe and why arbitrary existing destinations must remain rejected.",
+          "Work only on scripts/promote_supervisor_runtime.py, scripts/test_promote_supervisor_runtime.py, and docs/deployment/evidence/supervisor/SUP-RUNTIME-PROMOTION-EXISTING-ROLLBACK-ROOT-20260810/evidence.json. Start from clean current origin/dev on branch task/SUP-RUNTIME-PROMOTION-EXISTING-ROLLBACK-ROOT-20260810; target a protected PR to dev. Do not modify supervisor.py, configs, queue/state files, command runtimes, dev-root, services, provider/account settings, or a live process.",
+          "Permit reuse only when the already-existing destination is the exact descriptor-bound mutable snapshot root for the same 40-hex commit and independently builds/verifies as the expected candidate identity: direct trusted command-runtime child; no symlink; matching head, tracked tree, accepted origin/dev commit, repository slug, config binding, and complete immutable-cleanliness proof. Never overwrite, rename, or accept a sibling/path alias/different root merely because its basename matches.",
+          "Preserve fail-closed behavior for every non-identical existing destination, missing or divergent Git identity, dirty tracked tree, unknown ignored file, unsafe log leaf, symlink, process/config/admission-lock mismatch, source drift, and any failure of the three-fresh-loop acceptance or rollback transaction. Do not weaken the FLOCK-only legacy normalization introduced by PR #4704.",
+          "Add focused regression tests for exact same-root reuse, same-SHA different-root rejection, and identity/cleanliness failure in the reuse path; retain coverage proving fresh rollback materialization still occurs when the destination is absent. Run focused tests, the complete promotion test suite, and git diff --check from a clean task worktree.",
+          "Before review, commit a task-scoped immutable evidence manifest recording changed paths, exact head, test commands/results, PR/check identities, dependency PR #4704 merge f8c212d522191ede34c76015940b81fbe01ac6da, merge order, no source-task live rollout, and rollback as a normal revert of this new PR. Obtain independent Codex exact-head review and merge only after required checks pass.",
+          "After merge, do not call the original task done from this source task. Hand off the exact merge/evidence to a separate controlled runtime-promotion validation that verifies active PID/CWD, watchdog command, durable transaction outcome, and three fresh loops before closing SUP-RUNTIME-V10-PROMOTION-GIT-DIR-ENOTDIR-20260808."
+        ],
+        "artifacts": [
+          "scripts/promote_supervisor_runtime.py",
+          "scripts/test_promote_supervisor_runtime.py",
+          "docs/deployment/evidence/supervisor/SUP-RUNTIME-PROMOTION-EXISTING-ROLLBACK-ROOT-20260810/evidence.json"
+        ],
+        "depends_on": [],
+        "id": "SUP-RUNTIME-PROMOTION-EXISTING-ROLLBACK-ROOT-20260810",
+        "owner": "Antigravity",
+        "phase": "Supervisor Runtime / Promotion Recovery",
+        "reviewer": "Codex",
+        "summary": "A controlled promotion of dev merge f8c212d5 aborts before changing config because the legacy mutable incumbent already occupies command-runtimes/5877...; the rollback materializer requires a fresh destination. Repair only this exact same-root bootstrap case, preserving all integrity checks and promotion gates.",
+        "title": "Repair promotion bootstrap when rollback root already exists"
+      },
+      "task_spec_hash": "78bb6fac8dc0e186b4b1668878146b073b52bf73a1087fcf993823358cf55479"
+    }
+  ]
+}

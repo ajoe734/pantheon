@@ -1,0 +1,230 @@
+{
+  "version": 1,
+  "task_id": "SUP-RUNTIME-V10-IMMUTABLE-INCUMBENT-ADMISSION-LOCK-20260810",
+  "archived_at": "2026-08-11T00:17:01Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "acceptance": [
+      "Reproduce transaction c036f5bc15eb2c88: clean accepted candidate c2abb4fc/tree 09758fce and clean immutable incumbent 0bd7cf88 have exact -B, PYTHONDONTWRITEBYTECODE=1, cwd/argv/command-root/runtime-SHA, PID/starttime, and config binding, but normal immutable-incumbent preparation aborts before baseline/config/signal/launch/rollback with Supervisor process admission lock generation mismatch.",
+      "Compose the already-reviewed PR #4704 verified-FLOCK normalization into only the normal immutable-incumbent capture and transaction revalidation paths. The opt-in may normalize only kernel_lock_id when both observations retain the exact FLOCK/ADVISORY/WRITE/0..EOF shape; every path, device, inode, byte length/digest, mtime/ctime, lock class/mode/range, owner PID/starttime, process generation, root/Git identity, argv/environment, config identity, and candidate revalidation field must remain exact and fail closed.",
+      "Do not broad-normalize SupervisorAdmissionLockIdentity or weaken default discover/process checks. Prove normal immutable promotion preparation and locked revalidation accept FLOCK ID-only churn, while non-FLOCK ID churn and any owner/content/time/path/inode/range/mode/class/process/config/root drift still fail before TERM.",
+      "Deduplicate against the merged PR #4704 implementation and the historical remote branches task/SUP-RUNTIME-V10-PROMOTION-GIT-DIR-ENOTDIR-20260808-admission-lock and -process-generation. Reuse only behavior that is already on dev or is independently re-proved; do not merge zombie branch history or revive the mutable-only workaround.",
+      "Preserve immutable candidate cleanliness, config CAS, promotion-lock ordering, restart-intent-before-TERM, exact process-generation signalling, PYTHONDONTWRITEBYTECODE=1 and python -B launch, status-child zero-bytecode proof, three fresh-loop gates, authoritative-shadow catch-up, queue/worker parity, provider baseline, rollback identity/cleanup, split-entrypoint provenance, and every existing legacy-residue guard. Run focused adversarial tests plus the complete promotion and sync suites and commit a task-scoped evidence manifest before independent review.",
+      "Keep this task source-only: no live config edit, direct process signal, runtime promotion, candidate/incumbent mutation or deletion, canonical state edit outside governed status commands, scheduling change, provider/account change, or fleet-routing policy change. Any rollout retry remains a separately governed supervisor dispatch after protected PR merge."
+    ],
+    "artifacts": [
+      "scripts/promote_supervisor_runtime.py",
+      "scripts/test_promote_supervisor_runtime.py",
+      "docs/deployment/evidence/supervisor/SUP-RUNTIME-V10-IMMUTABLE-INCUMBENT-ADMISSION-LOCK-20260810/"
+    ],
+    "depends_on": [
+      "SUP-RUNTIME-PROMOTION-IGNORE-LOGS-ROLLBACK-CLEAN-20260810",
+      "SUP-RUNTIME-V10-MUTABLE-INCUMBENT-SPLIT-ENTRYPOINT-20260810"
+    ],
+    "dev_bridge": {
+      "actor": {
+        "capabilities": [
+          "integration",
+          "status-system",
+          "schema",
+          "acceptance"
+        ],
+        "id": "Codex",
+        "roles": [
+          "auto-worker"
+        ]
+      },
+      "audit_conversation_href": "task:SUP-RUNTIME-V10-GOVERNED-ROLLOUT-VERIFY-20260808",
+      "conversation_id": "SUP-RUNTIME-V10-GOVERNED-ROLLOUT-VERIFY-20260808",
+      "documents": [
+        {
+          "kind": "RUNTIME_FAIL_CLOSED_EVIDENCE",
+          "path": "docs/deployment/evidence/supervisor/SUP-RUNTIME-V10-GOVERNED-ROLLOUT-VERIFY-20260808/evidence.json",
+          "sourceRefs": [
+            "/home/lupin/pantheon-ci-deploy/runtime/promotion-evidence/supervisor-runtime-promotion-20260810T234119692381Z-837926.json",
+            "sha256:c036f5bc15eb2c88f80718ee64af5f9ccd7a240da31acbb84d064aa692c75d09",
+            "candidate:c2abb4fcb7f27b7fe777cd0c9f0eb33231ecee24",
+            "candidate-tree:09758fce8d2206f879f8f16cde87436f05834db4",
+            "incumbent:0bd7cf8842a622fb40eca125f490d4073b3a1044",
+            "incumbent-pid:3301275",
+            "incumbent-starttime-ticks:22907439",
+            "live-config-sha256:54ec4bef83549339a323c66b57b7af4d37dcef92ef009a5663d42451752643b6",
+            "failure:Supervisor process admission lock generation mismatch",
+            "prior-repair-pr:4704",
+            "prerequisite-pr:4724"
+          ]
+        }
+      ],
+      "emitted_at": "2026-08-10T23:45:23Z",
+      "intent": "source_only_remediation_dispatch",
+      "mode": "supervisor_source_only",
+      "packet_digest": "15b2e5bcb7aba9fba670bee73cf13abf5b090d3dc136f06b97ee96fdb7fc4b3f",
+      "packet_id": "sup-runtime-v10-immutable-incumbent-admission-lock-20260810-2345",
+      "source_turn_ids": [
+        "promotion-evidence-20260810T234119692381Z-837926",
+        "post-abort-readback-20260810T234200Z",
+        "source-dedupe-20260810T234523Z"
+      ],
+      "task_spec": {
+        "acceptance": [
+          "Reproduce transaction c036f5bc15eb2c88: clean accepted candidate c2abb4fc/tree 09758fce and clean immutable incumbent 0bd7cf88 have exact -B, PYTHONDONTWRITEBYTECODE=1, cwd/argv/command-root/runtime-SHA, PID/starttime, and config binding, but normal immutable-incumbent preparation aborts before baseline/config/signal/launch/rollback with Supervisor process admission lock generation mismatch.",
+          "Compose the already-reviewed PR #4704 verified-FLOCK normalization into only the normal immutable-incumbent capture and transaction revalidation paths. The opt-in may normalize only kernel_lock_id when both observations retain the exact FLOCK/ADVISORY/WRITE/0..EOF shape; every path, device, inode, byte length/digest, mtime/ctime, lock class/mode/range, owner PID/starttime, process generation, root/Git identity, argv/environment, config identity, and candidate revalidation field must remain exact and fail closed.",
+          "Do not broad-normalize SupervisorAdmissionLockIdentity or weaken default discover/process checks. Prove normal immutable promotion preparation and locked revalidation accept FLOCK ID-only churn, while non-FLOCK ID churn and any owner/content/time/path/inode/range/mode/class/process/config/root drift still fail before TERM.",
+          "Deduplicate against the merged PR #4704 implementation and the historical remote branches task/SUP-RUNTIME-V10-PROMOTION-GIT-DIR-ENOTDIR-20260808-admission-lock and -process-generation. Reuse only behavior that is already on dev or is independently re-proved; do not merge zombie branch history or revive the mutable-only workaround.",
+          "Preserve immutable candidate cleanliness, config CAS, promotion-lock ordering, restart-intent-before-TERM, exact process-generation signalling, PYTHONDONTWRITEBYTECODE=1 and python -B launch, status-child zero-bytecode proof, three fresh-loop gates, authoritative-shadow catch-up, queue/worker parity, provider baseline, rollback identity/cleanup, split-entrypoint provenance, and every existing legacy-residue guard. Run focused adversarial tests plus the complete promotion and sync suites and commit a task-scoped evidence manifest before independent review.",
+          "Keep this task source-only: no live config edit, direct process signal, runtime promotion, candidate/incumbent mutation or deletion, canonical state edit outside governed status commands, scheduling change, provider/account change, or fleet-routing policy change. Any rollout retry remains a separately governed supervisor dispatch after protected PR merge."
+        ],
+        "artifacts": [
+          "scripts/promote_supervisor_runtime.py",
+          "scripts/test_promote_supervisor_runtime.py",
+          "docs/deployment/evidence/supervisor/SUP-RUNTIME-V10-IMMUTABLE-INCUMBENT-ADMISSION-LOCK-20260810/"
+        ],
+        "depends_on": [
+          "SUP-RUNTIME-PROMOTION-IGNORE-LOGS-ROLLBACK-CLEAN-20260810",
+          "SUP-RUNTIME-V10-MUTABLE-INCUMBENT-SPLIT-ENTRYPOINT-20260810"
+        ],
+        "id": "SUP-RUNTIME-V10-IMMUTABLE-INCUMBENT-ADMISSION-LOCK-20260810",
+        "owner": "Antigravity2",
+        "phase": "Supervisor Runtime / Source-only Immutable Incumbent Admission Lock",
+        "reviewer": "Claude2",
+        "summary": "The guarded FLOCK row-ID normalization merged in PR #4704 is present, but immutable OSPromotionBackend prepare/revalidate omit its explicit opt-in. Wire that already-narrow comparison into only the clean immutable-incumbent transaction path, retain every durable lock/process/config/root check, and leave live rollout to a later governed task.",
+        "title": "Wire verified FLOCK normalization for immutable incumbent promotion"
+      },
+      "task_spec_hash": "32b3524dc2611442e77ae1cb120eaacd90e8ca5fedee5fb95a5bca1fae961f44"
+    },
+    "failure_streak": 0,
+    "github_review_bridge": {
+      "actor": "Antigravity",
+      "base": "dev",
+      "decision": "approve",
+      "head_branch": "task/SUP-RUNTIME-V10-IMMUTABLE-INCUMBENT-ADMISSION-LOCK-20260810",
+      "head_sha": "8a4538196ff63b6bb8237348b617c491de1f8410",
+      "mode": "required_commit_status",
+      "pr": 4734,
+      "pr_url": "https://github.com/ajoe734/pantheon/pull/4734",
+      "recorded_at": "2026-08-11T00:09:30Z",
+      "repository": "ajoe734/pantheon",
+      "review_error": "gh: Unprocessable Entity (HTTP 422)",
+      "review_proof_ref": "refs/tags/pantheon-review/approve/8a4538196ff63b6bb8237348b617c491de1f8410",
+      "status_context": "Pantheon canonical review gate",
+      "status_id": 51990701659,
+      "status_state": "success"
+    },
+    "id": "SUP-RUNTIME-V10-IMMUTABLE-INCUMBENT-ADMISSION-LOCK-20260810",
+    "last_update": "2026-08-11T00:17:01Z",
+    "next": "PR #4734 merged into dev (head 8a4538196ff63b6bb8237348b617c491de1f8410). FLOCK normalization opt-in for immutable incumbent promotion verified and closed.",
+    "owner": "Antigravity2",
+    "phase": "Supervisor Runtime / Source-only Immutable Incumbent Admission Lock",
+    "review_binding": {
+      "base": "dev",
+      "head_branch": "task/SUP-RUNTIME-V10-IMMUTABLE-INCUMBENT-ADMISSION-LOCK-20260810",
+      "head_sha": "8a4538196ff63b6bb8237348b617c491de1f8410",
+      "pr": 4734
+    },
+    "review_file": "docs/deployment/evidence/supervisor/SUP-RUNTIME-V10-IMMUTABLE-INCUMBENT-ADMISSION-LOCK-20260810/evidence.json",
+    "review_notes_zh": [
+      "獨立審查通過",
+      "變更僅在 immutable OSPromotionBackend prepare/revalidate/observe 路徑中顯式啟用 allow_legacy_admission_lock_id_churn=True",
+      "所有 fail-closed 驗證規則與安全控制均完整保留",
+      "新增 3 個單元測試全數通過，336 個 promotion 測試全數通過"
+    ],
+    "reviewer": "Antigravity",
+    "status": "done",
+    "summary_zh": "The guarded FLOCK row-ID normalization merged in PR #4704 is present, but immutable OSPromotionBackend prepare/revalidate omit its explicit opt-in. Wire that already-narrow comparison into only the clean immutable-incumbent transaction path, retain every durable lock/process/config/root check, and leave live rollout to a later governed task.",
+    "title": "Wire verified FLOCK normalization for immutable incumbent promotion",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-08-11T00:17:01Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/sup-runtime-v10-immutable-incumbent-admission-lock-20260810",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/SUP-RUNTIME-V10-IMMUTABLE-INCUMBENT-ADMISSION-LOCK-20260810",
+      "git_clean_required": false,
+      "status_command_runtime": {
+        "command_root": "/home/lupin/pantheon-ci-deploy/command-runtimes/0bd7cf8842a622fb40eca125f490d4073b3a1044",
+        "source_sha": "0bd7cf8842a622fb40eca125f490d4073b3a1044",
+        "base_ref": "origin/dev",
+        "remote": "ajoe734/pantheon",
+        "status_root": "/home/lupin/pantheon",
+        "delivery_root": "/tmp/pantheon-worker-worktrees/pantheon/sup-runtime-v10-immutable-incumbent-admission-lock-20260810",
+        "wrapper_root": "/home/lupin/pantheon-ci-deploy/command-runtimes/0bd7cf8842a622fb40eca125f490d4073b3a1044",
+        "worker_lease": {
+          "schema_version": 1,
+          "task_id": "SUP-RUNTIME-V10-IMMUTABLE-INCUMBENT-ADMISSION-LOCK-20260810",
+          "worker_run_id": "antigravity2-20260811T001331Z-a94e164d",
+          "queue_event_id": "evt-20260811T001235Z-80e698a5",
+          "pid": 1101036,
+          "pid_start_ticks": 24625912,
+          "process_generation": "worker-process-generation-sha256:fa007e9153965692e3bcdd3c8d0174f7e567d76993165073aa5f777a71fa0ba0"
+        }
+      },
+      "commit": "8a4538196ff63b6bb8237348b617c491de1f8410",
+      "commit_subject": "SUP-RUNTIME-V10-IMMUTABLE-INCUMBENT-ADMISSION-LOCK-20260810: wire FLOCK",
+      "commit_author": {
+        "name": "pantheon-dev",
+        "email": "bjoe734@gmail.com"
+      },
+      "commit_reviewer_reassignment": {
+        "event_id": "supervisor-task-reassigned-4cac2623524cef3d75406383372eb5867be550c5a50551c0b1b6c6f6d0727a14",
+        "ts": "2026-08-11T00:06:52Z",
+        "old_reviewer": "Claude2",
+        "new_reviewer": "Antigravity",
+        "hops": 1,
+        "owner": "Antigravity2",
+        "message": "Auto-reassigned SUP-RUNTIME-V10-IMMUTABLE-INCUMBENT-ADMISSION-LOCK-20260810 away from unavailable lane Claude2 (disabled, paused, sidecar-only, or auth-down); reviewer Claude2 -> Antigravity.",
+        "commit_timestamp": "2026-08-11T00:02:22+00:00"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Antigravity2",
+        "Task-ID": "SUP-RUNTIME-V10-IMMUTABLE-INCUMBENT-ADMISSION-LOCK-20260810",
+        "Reviewer": "Claude2",
+        "Verified": ".venv-pantheon/bin/python3 -m pytest scripts/test_promote_supervisor_runtime.py (336 passed)"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 1,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/SUP-RUNTIME-V10-IMMUTABLE-INCUMBENT-ADMISSION-LOCK-20260810",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "e2cdc4d4d00ff43d3e57bd569a37a405ae6cda77",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "created_at": "2026-08-11T00:02:43Z",
+      "from": "Antigravity2",
+      "message": "Wired verified FLOCK row-ID normalization for immutable incumbent promotion into prepare, revalidate, and observe paths in OSPromotionBackend. PR #4734 opened at HEAD 8a4538196ff63b6bb8237348b617c491de1f8410. Evidence manifest committed at docs/deployment/evidence/supervisor/SUP-RUNTIME-V10-IMMUTABLE-INCUMBENT-ADMISSION-LOCK-20260810/evidence.json. Handed off to Claude2 for review.",
+      "resolved_at": "2026-08-11T00:06:52Z",
+      "status": "done",
+      "task_id": "SUP-RUNTIME-V10-IMMUTABLE-INCUMBENT-ADMISSION-LOCK-20260810",
+      "to": "Claude2"
+    },
+    {
+      "created_at": "2026-08-11T00:06:52Z",
+      "from": "Claude2",
+      "message": "Auto-reassigned SUP-RUNTIME-V10-IMMUTABLE-INCUMBENT-ADMISSION-LOCK-20260810 away from unavailable lane Claude2 (disabled, paused, sidecar-only, or auth-down); reviewer Claude2 -> Antigravity.",
+      "resolved_at": "2026-08-11T00:09:30Z",
+      "status": "done",
+      "task_id": "SUP-RUNTIME-V10-IMMUTABLE-INCUMBENT-ADMISSION-LOCK-20260810",
+      "to": "Antigravity"
+    },
+    {
+      "created_at": "2026-08-11T00:09:30Z",
+      "from": "Antigravity",
+      "message": "Independent review verified FLOCK normalization opt-in wiring in OSPromotionBackend immutable paths. 336/336 tests passed cleanly.",
+      "status": "done",
+      "task_id": "SUP-RUNTIME-V10-IMMUTABLE-INCUMBENT-ADMISSION-LOCK-20260810",
+      "to": "Antigravity2",
+      "resolved_at": "2026-08-11T00:17:08Z"
+    }
+  ],
+  "blockers": []
+}

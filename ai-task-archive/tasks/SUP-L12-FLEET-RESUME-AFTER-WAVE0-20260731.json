@@ -1,0 +1,45 @@
+{
+  "version": 1,
+  "task_id": "SUP-L12-FLEET-RESUME-AFTER-WAVE0-20260731",
+  "archived_at": "2026-07-31T20:54:04Z",
+  "terminal_status": "done",
+  "terminal_outcome": "superseded",
+  "task": {
+    "acceptance": [
+      "assistant-dev bridge readback is verified before any new packet is admitted",
+      "worker dispatch records workspace_source_root=/home/lupin/pantheon-ci-deploy/dev-root",
+      "no dispatch_blocked_worktree_lease .git/worktrees read-only failure remains",
+      "L12-FE-TRUTH-001 L12-VERIFY-KNOW-001 L12-VERIFY-LEARN-001 L12-VERIFY-RUNTIME-001 L12-VERIFY-OBS-001 L12-HOSTED-001 L12-CLOSE-001 each has a fresh owner/reviewer next_action or active worker",
+      "Claude/Claude2 unavailable lanes are either live-auth ready or explicitly reassigned to ready provider-first alternatives",
+      "old pkt-l12-actionable-gap-execution activity-only false-positive is not reused as completion evidence"
+    ],
+    "artifacts": [
+      "docs/deployment/evidence/twelve-loop-gap/SUP-L12-FLEET-RESUME-AFTER-WAVE0-20260731"
+    ],
+    "control_plane_wave": "wave1_fleet_resume",
+    "depends_on": [
+      "SUP-ASSISTANT-DEV-BRIDGE-MATERIALIZATION-20260730",
+      "SUP-WORKER-WORKTREE-SOURCE-ROOT-20260730",
+      "SUP-L12-STALE-FAILURE-STREAK-REAPER-20260729"
+    ],
+    "dispatch_after_wave0": true,
+    "id": "SUP-L12-FLEET-RESUME-AFTER-WAVE0-20260731",
+    "last_update": "2026-07-31T20:54:04Z",
+    "next": "Superseded by the guarded V2 admission path and current exact infrastructure dependencies; do not revive the older resume task whose source-root/reaper prerequisites remain nonterminal.",
+    "owner": "Antigravity",
+    "phase": "Supervisor Runtime Repair / Fleet Resume",
+    "product_scope": [
+      "Pantheon L12",
+      "Agora learning verifier"
+    ],
+    "reviewer": "Human/Ops",
+    "status": "done",
+    "summary_zh": "在 dev bridge、worker source-root、stale failure-streak reaper 合併並 live promoted 後，重新讓 supervisor/fleets 接手既有 L12 Pantheon/Agora verifier、hosted 與 final closeout tasks。",
+    "target_repo": "pantheon",
+    "title": "Resume L12 Pantheon/Agora fleet execution after Wave0 control-plane unblock",
+    "terminal_outcome": "superseded",
+    "superseded_by": "SUP-L12-CURRENT-GAP-SUPERVISOR-DISPATCH-V2-20260731"
+  },
+  "handoffs": [],
+  "blockers": []
+}

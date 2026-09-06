@@ -1,0 +1,90 @@
+{
+  "actor": {
+    "capabilities": [
+      "assistant.kernel.repair",
+      "assistant.dev-task.dispatch",
+      "fleet.dispatch"
+    ],
+    "id": "Human/Ops",
+    "roles": [
+      "operator"
+    ]
+  },
+  "admission_record_path": "ai-task-archive/tasks/assistant-dev-bridge-admissions/lifecycle-projector-hotfix-composed-head-review-20260801-v1--75ec943377c14d1a.json",
+  "admitted_at": "2026-08-01T14:55:33Z",
+  "audit_conversation_href": "https://github.com/ajoe734/pantheon/pull/4448",
+  "constraints": {
+    "allowedRepos": [
+      "pantheon"
+    ],
+    "noDirectShellFromWeb": true,
+    "requiresBranchPrMerge": true
+  },
+  "conversation_id": "codex-lifecycle-projector-incident-20260801",
+  "dispatch_records": [
+    {
+      "error": null,
+      "owner": "Codex",
+      "reviewer": "Antigravity",
+      "status": "dispatched",
+      "taskId": "LIFECYCLE-PROJ-HOTFIX-COMPOSED-HEAD-REVIEW-20260801"
+    }
+  ],
+  "documents": [
+    {
+      "kind": "INCIDENT_HOTFIX",
+      "path": "docker-compose.yml",
+      "sourceRefs": [
+        "https://github.com/ajoe734/pantheon/pull/4448",
+        "reviewed-implementation:85e835448f7b86ce77ad9e4e0cc80961879b29c0",
+        "composed-head:c3bb0fe5e23e9ed2c8e334c214050f2dd2229faa",
+        "composed-base:76bbb04b569331a81916330d1cf713d068527c89"
+      ]
+    }
+  ],
+  "durable": true,
+  "emitted_at": "2026-08-01T14:54:00Z",
+  "intent": "independently_revalidate_and_merge_strict_base_composed_lifecycle_projector_hotfix",
+  "mode": "kernel_repair",
+  "packet_digest": "75ec943377c14d1af96109d03f08d757690eaa72c85bd187f8dc55039d888af8",
+  "packet_id": "lifecycle-projector-hotfix-composed-head-review-20260801-v1",
+  "packet_version": "pantheon.assistant.dev-task.v1",
+  "record_kind": "assistant_dev_bridge_admission",
+  "record_payload_sha256": "f6d08043d2623ed925aaeca61e18692a1263c9601b72105f8497b9ea1ab856ac",
+  "schema": "pantheon.assistant-dev-bridge-admission.v1",
+  "source_turn_ids": [
+    "exact-head-review-approved",
+    "strict-base-update-branch",
+    "composed-head-revalidation"
+  ],
+  "tasks": [
+    {
+      "task_id": "LIFECYCLE-PROJ-HOTFIX-COMPOSED-HEAD-REVIEW-20260801",
+      "task_spec": {
+        "acceptance": [
+          "Independently review exact PR #4448 composed head c3bb0fe5e23e9ed2c8e334c214050f2dd2229faa; Codex and Codex2 are the same identity and are ineligible reviewers.",
+          "Confirm c3bb0fe5e23e9ed2c8e334c214050f2dd2229faa contains independently approved implementation commit 85e835448f7b86ce77ad9e4e0cc80961879b29c0 and current dev base 76bbb04b569331a81916330d1cf713d068527c89, with no conflict resolution or new authored implementation.",
+          "Confirm the PR delta against the composed dev base remains exactly docker-compose.yml and services/trade_journey/test_lifecycle_projector_compose.py and preserves restart=no, 16 GiB ceiling, retention 4, BFF last-atomic-read availability, and fail-stopped readiness truth.",
+          "Require all GitHub checks on the composed head to pass, rerun the focused projector and Compose validation, and publish the independent verdict.",
+          "If accepted, bind the canonical review gate to c3bb0fe5e23e9ed2c8e334c214050f2dd2229faa so Human/Ops can supply the exact-head root-freeze context and merge PR #4448.",
+          "Do not restart the stopped projector, delete projection data, or broaden this task into the incremental redesign."
+        ],
+        "artifacts": [
+          "docker-compose.yml",
+          "services/trade_journey/test_lifecycle_projector_compose.py",
+          "docs/deployment/evidence/lifecycle-projector/LIFECYCLE-PROJ-HOTFIX-REVIEW-20260801/"
+        ],
+        "depends_on": [
+          "LIFECYCLE-PROJ-HOTFIX-REVIEW-20260801"
+        ],
+        "id": "LIFECYCLE-PROJ-HOTFIX-COMPOSED-HEAD-REVIEW-20260801",
+        "owner": "Codex",
+        "phase": "incident-hotfix-review",
+        "reviewer": "Antigravity",
+        "summary": "Strict branch protection required a merge-only update after the implementation head was approved; this packet independently validates the exact composed head before merge.",
+        "title": "Review and merge the strict-base-composed lifecycle projector containment head"
+      },
+      "task_spec_hash": "12c91b17def124a2984beb5f76fd98fdfcdccbe4dfea528cea11413877fa27ac"
+    }
+  ]
+}

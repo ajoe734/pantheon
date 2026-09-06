@@ -1,0 +1,214 @@
+{
+  "version": 1,
+  "task_id": "SUP-PREEMPTION-REVIEW-EVIDENCE-R2-20260808",
+  "archived_at": "2026-08-08T16:18:05Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "acceptance": [
+      "Create task/SUP-PREEMPTION-REVIEW-EVIDENCE-R2-20260808 from current dev and publish one replacement PR to dev.",
+      "Preserve PR #4402 and its branch history without amend, force push, deletion, or ref recreation.",
+      "Keep PR #4399 implementation, .orchestrator/config.json, runtime, and generated canonical state untouched.",
+      "Reproduce the a924 provider-readiness counterexample and run JSON, diff, trailer, runtime-mirror, and smoke validation.",
+      "Commit the rejection manifest before requesting review; Codex2 independently reviews and binds only the replacement PR exact head.",
+      "Merge the replacement before closing PR #4402 as superseded; rollback is a revert of the replacement merge."
+    ],
+    "artifacts": [
+      ".orchestrator/task-briefs/sup_preemption_review_evidence_r2_20260808.md",
+      ".orchestrator/task-briefs/sup_preemption_exact_head_review_20260731.md",
+      "docs/deployment/evidence/twelve-loop-gap/SUP-PREEMPTION-DISPATCH-ELIGIBILITY-20260731/README.md",
+      "docs/deployment/evidence/twelve-loop-gap/SUP-PREEMPTION-DISPATCH-ELIGIBILITY-20260731/exact-head-re-review-20260808.json",
+      "docs/deployment/evidence/twelve-loop-gap/SUP-PREEMPTION-DISPATCH-ELIGIBILITY-20260731/exact-head-re-review-20260808.md",
+      "docs/deployment/evidence/twelve-loop-gap/SUP-PREEMPTION-DISPATCH-ELIGIBILITY-20260731/repro_provider_readiness_gap.py"
+    ],
+    "depends_on": [],
+    "dev_bridge": {
+      "actor": {
+        "capabilities": [
+          "fleet.dispatch",
+          "dev-task.dispatch"
+        ],
+        "id": "Codex",
+        "roles": [
+          "operator-delegate"
+        ]
+      },
+      "audit_conversation_href": "codex://auto-worker/SUP-PREEMPTION-EXACT-HEAD-REVIEW-20260731#nonrewrite-replacement",
+      "conversation_id": "auto-worker-sup-preemption-exact-head-review-20260731",
+      "documents": [
+        {
+          "kind": "STALE_DELIVERY_PR",
+          "path": "https://github.com/ajoe734/pantheon/pull/4402",
+          "sourceRefs": [
+            "exact head 17d5665f57c302d71f522f9a6e9b0f95c77473e3",
+            "commit aae0e2cb4da0a0ae9f049bbdf166c13f2c09daee has a 74-character subject",
+            "preserve PR and branch history without rewrite"
+          ]
+        },
+        {
+          "kind": "REVIEW_EVIDENCE_MANIFEST",
+          "path": "docs/deployment/evidence/twelve-loop-gap/SUP-PREEMPTION-DISPATCH-ELIGIBILITY-20260731/exact-head-re-review-20260808.json",
+          "sourceRefs": [
+            "PREEMPT-PROVIDER-READINESS-001",
+            "PR #4399 implementation remains unchanged",
+            "Codex2 must independently review replacement PR exact head"
+          ]
+        },
+        {
+          "kind": "SOURCE_TASK_BRIEF",
+          "path": ".orchestrator/task-briefs/sup_preemption_exact_head_review_20260731.md",
+          "sourceRefs": [
+            "current owner Codex",
+            "current reviewer Codex2",
+            "authorized non-rewrite replacement delivery required"
+          ]
+        }
+      ],
+      "emitted_at": "2026-08-08T15:07:20.723Z",
+      "intent": "supervisor_dispatch_nonrewrite_replacement_for_failed_evidence_pr",
+      "mode": "kernel_repair",
+      "packet_digest": "6370d149413fd4196ce7b3a97bee37ee14287cd4946815180060fb24fab1bcad",
+      "packet_id": "pkt-sup-preemption-review-evidence-r2-20260808T1512Z",
+      "source_turn_ids": [
+        "user-owned-in-progress-dispatch-20260808",
+        "canonical-task-lease-rejected-cross-task-assign",
+        "pr-4402-pushed-history-trailer-failure"
+      ],
+      "task_spec": {
+        "acceptance": [
+          "Create task/SUP-PREEMPTION-REVIEW-EVIDENCE-R2-20260808 from current dev and publish one replacement PR to dev.",
+          "Preserve PR #4402 and its branch history without amend, force push, deletion, or ref recreation.",
+          "Keep PR #4399 implementation, .orchestrator/config.json, runtime, and generated canonical state untouched.",
+          "Reproduce the a924 provider-readiness counterexample and run JSON, diff, trailer, runtime-mirror, and smoke validation.",
+          "Commit the rejection manifest before requesting review; Codex2 independently reviews and binds only the replacement PR exact head.",
+          "Merge the replacement before closing PR #4402 as superseded; rollback is a revert of the replacement merge."
+        ],
+        "artifacts": [
+          ".orchestrator/task-briefs/sup_preemption_review_evidence_r2_20260808.md",
+          ".orchestrator/task-briefs/sup_preemption_exact_head_review_20260731.md",
+          "docs/deployment/evidence/twelve-loop-gap/SUP-PREEMPTION-DISPATCH-ELIGIBILITY-20260731/README.md",
+          "docs/deployment/evidence/twelve-loop-gap/SUP-PREEMPTION-DISPATCH-ELIGIBILITY-20260731/exact-head-re-review-20260808.json",
+          "docs/deployment/evidence/twelve-loop-gap/SUP-PREEMPTION-DISPATCH-ELIGIBILITY-20260731/exact-head-re-review-20260808.md",
+          "docs/deployment/evidence/twelve-loop-gap/SUP-PREEMPTION-DISPATCH-ELIGIBILITY-20260731/repro_provider_readiness_gap.py"
+        ],
+        "depends_on": [],
+        "id": "SUP-PREEMPTION-REVIEW-EVIDENCE-R2-20260808",
+        "owner": "Codex",
+        "phase": "Supervisor Runtime Repair / Rejection Evidence Redelivery",
+        "reviewer": "Codex2",
+        "summary": "Publish the exact rejection-evidence net delta from failed PR #4402 through a fresh governed task branch and independent exact-head review, without rewriting stale history or touching PR #4399.",
+        "title": "Redeliver exact-head rejection evidence without rewriting PR #4402"
+      },
+      "task_spec_hash": "8c16b84696e1c55e7963f7b7ad29df79ec46cb5893c56a2780f1eb0621f59b25"
+    },
+    "failure_streak": 0,
+    "github_review_bridge": {
+      "actor": "Codex2",
+      "base": "dev",
+      "decision": "approve",
+      "head_branch": "task/SUP-PREEMPTION-REVIEW-EVIDENCE-R2-20260808",
+      "head_sha": "e1341c87f99f7ee5edb5915ddeb260cea1f57c15",
+      "mode": "required_commit_status",
+      "pr": 4643,
+      "pr_url": "https://github.com/ajoe734/pantheon/pull/4643",
+      "recorded_at": "2026-08-08T16:12:05Z",
+      "repository": "ajoe734/pantheon",
+      "review_error": "gh: Unprocessable Entity (HTTP 422)",
+      "review_proof_ref": "refs/tags/pantheon-review/approve/e1341c87f99f7ee5edb5915ddeb260cea1f57c15",
+      "status_context": "Pantheon canonical review gate",
+      "status_id": 51885994996,
+      "status_state": "success"
+    },
+    "id": "SUP-PREEMPTION-REVIEW-EVIDENCE-R2-20260808",
+    "last_update": "2026-08-08T16:18:05Z",
+    "next": "Owner closeout complete: Codex2 approved PR #4643 exact head e1341c87f99f7ee5edb5915ddeb260cea1f57c15 with committed review manifest; canonical review rerun 31265968660, trailers, runtime-mirror, packaging, smoke, coordination checks, JSON parse, py_compile, diff check, and preserved-source blob equality passed. PR #4643 merged to dev as b35930ec2acd9b67ad3228108f551f4bfd611814; superseded PR #4402 was then closed without branch deletion or history rewrite, and source evidence cut 17d5665f remains its ancestor.",
+    "owner": "Codex",
+    "phase": "Supervisor Runtime Repair / Rejection Evidence Redelivery",
+    "review_binding": {
+      "base": "dev",
+      "head_branch": "task/SUP-PREEMPTION-REVIEW-EVIDENCE-R2-20260808",
+      "head_sha": "e1341c87f99f7ee5edb5915ddeb260cea1f57c15",
+      "pr": 4643
+    },
+    "review_file": "docs/deployment/evidence/twelve-loop-gap/SUP-PREEMPTION-DISPATCH-ELIGIBILITY-20260731/exact-head-re-review-20260808.json",
+    "reviewer": "Codex2",
+    "status": "done",
+    "summary_zh": "Publish the exact rejection-evidence net delta from failed PR #4402 through a fresh governed task branch and independent exact-head review, without rewriting stale history or touching PR #4399.",
+    "title": "Redeliver exact-head rejection evidence without rewriting PR #4402",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-08-08T16:18:05Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/sup-preemption-review-evidence-r2-20260808",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/SUP-PREEMPTION-REVIEW-EVIDENCE-R2-20260808",
+      "git_clean_required": false,
+      "status_command_runtime": {
+        "command_root": "/home/lupin/pantheon-ci-deploy/dev-root",
+        "source_sha": "619acd04184e8d3fc3aef322d160e7c9106670ad",
+        "base_ref": "origin/dev",
+        "remote": "ajoe734/pantheon",
+        "status_root": "/home/lupin/pantheon",
+        "delivery_root": "/tmp/pantheon-worker-worktrees/pantheon/sup-preemption-review-evidence-r2-20260808",
+        "wrapper_root": "/home/lupin/pantheon-ci-deploy/dev-root",
+        "worker_lease": {
+          "schema_version": 1,
+          "task_id": "SUP-PREEMPTION-REVIEW-EVIDENCE-R2-20260808",
+          "worker_run_id": "codex-20260808T161329Z-f58e1c32",
+          "queue_event_id": "evt-20260808T161315Z-c0dfa23c",
+          "pid": 813985,
+          "pid_start_ticks": 4465707,
+          "process_generation": "worker-process-generation-sha256:e3c6e9b95ee3d8db4240d1b941de64aa16ca7b640e7de0d5ba6d8fb0a7f3a542"
+        }
+      },
+      "commit": "e1341c87f99f7ee5edb5915ddeb260cea1f57c15",
+      "commit_subject": "SUP-PREEMPTION-REVIEW-EVIDENCE-R2-20260808: prepare review",
+      "commit_author": {
+        "name": "pantheon-dev",
+        "email": "bjoe734@gmail.com"
+      },
+      "commit_metadata": {
+        "Owned layer": "replacement task boundary and owner verification record.",
+        "Not changing": "PR #4399 implementation, PR #4402 history, config, runtime, or generated state.",
+        "Composes with": "anchor 59b18f791 and Codex2 exact-head review of the replacement PR.",
+        "LLM-Agent": "Codex",
+        "Task-ID": "SUP-PREEMPTION-REVIEW-EVIDENCE-R2-20260808",
+        "Reviewer": "Codex2",
+        "Verified": "a924 suite 486 passed + 4 subtests; expected counterexample; JSON/diff/runtime-mirror/smoke passed"
+      },
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "b35930ec2acd9b67ad3228108f551f4bfd611814",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "created_at": "2026-08-08T16:02:32Z",
+      "from": "Codex",
+      "message": "Replacement PR #4643 is ready for independent exact-head review at e1341c87f99f7ee5edb5915ddeb260cea1f57c15. Bind REVIEW_FILE=docs/deployment/evidence/twelve-loop-gap/SUP-PREEMPTION-DISPATCH-ELIGIBILITY-20260731/exact-head-re-review-20260808.json only after independently verifying the preserved PR #4402 evidence delta, a924 provider-readiness counterexample, and green replacement checks. Owner validation: 486 passed + 4 subtests; py_compile, JSON, source blobs, diff, trailers, runtime-mirror, embedded-FE guard, and smoke passed. Do not modify or approve PR #4399; do not rewrite or close PR #4402 before #4643 merges.",
+      "resolved_at": "2026-08-08T16:12:05Z",
+      "status": "done",
+      "task_id": "SUP-PREEMPTION-REVIEW-EVIDENCE-R2-20260808",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-08-08T16:12:05Z",
+      "from": "Codex2",
+      "message": "Independent exact-head review of PR #4643 at e1341c87f99f7ee5edb5915ddeb260cea1f57c15: the README, JSON, Markdown, and reproducer blobs exactly match preserved PR #4402 evidence cut 17d5665f57c302d71f522f9a6e9b0f95c77473e3; PR scope leaves PR #4399 implementation, config, runtime, and generated state untouched. Against isolated a924a6f3c0c54982d7efe145750cc99c57bc7f2e, py_compile and focused supervisor/dispatch-policy tests passed; the committed reproducer returned the expected dispatch refusal 'codex local CLI worker is not ready', preemption=true, and assertion exit 1. PR CI trailers, runtime-mirror, packaging, and smoke checks are green; the only pre-approval canonical-gate failure was the expected missing proof tag.",
+      "status": "done",
+      "task_id": "SUP-PREEMPTION-REVIEW-EVIDENCE-R2-20260808",
+      "to": "Codex",
+      "resolved_at": "2026-08-08T16:18:06Z"
+    }
+  ],
+  "blockers": []
+}

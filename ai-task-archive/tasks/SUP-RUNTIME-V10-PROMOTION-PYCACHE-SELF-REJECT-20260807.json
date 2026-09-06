@@ -1,0 +1,157 @@
+{
+  "version": 1,
+  "task_id": "SUP-RUNTIME-V10-PROMOTION-PYCACHE-SELF-REJECT-20260807",
+  "archived_at": "2026-08-08T13:37:00Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "acceptance": [],
+    "artifacts": [],
+    "depends_on": [],
+    "description": "scripts/promote_supervisor_runtime.py materializes an immutable candidate root at command-runtimes/<sha> then imports its own promote_supervisor_runtime/supervisor_runtime_health modules from within that path, generating scripts/__pycache__/*.pyc as a side effect -- and its own git-status-based cleanliness guard (verify_working_tree_cleanliness, git status --ignored=matching) then rejects the candidate for containing that freshly-generated, self-inflicted __pycache__ directory. This makes governed promotion via sync-dev-root.sh fail 100% of the time on a from-scratch candidate root. Reproduced 2026-08-06/07 while deploying PR #4599 (dev-branch content restore) -- worked around manually via chmod-readonly + direct git checkout + supervisor_watchdog.py --record-intent + SIGTERM, bypassing governed promotion entirely. This is very likely also why the live dev-root checkout was stuck at commit f90e0aae6 (2026-08-05T20:19:43Z) for ~28h with no automated sync ever succeeding. Fix: either exclude __pycache__/*.pyc from the ignored-path rejection in promote_supervisor_runtime.py, or ensure PYTHONDONTWRITEBYTECODE=1 / sys.dont_write_bytecode is set for every subprocess/import that touches the candidate root before the cleanliness check runs, or run the cleanliness check before any python execution against that path. A second, separate failure was also observed on retry: ValueError(\"Candidate Git directory is a symlink or has the wrong type: [Errno 20] Not a directory: '.git'\") from the governed supervisor promotion transaction step -- worth reproducing and root-causing too.",
+    "failure_streak": 0,
+    "github_review_bridge": {
+      "actor": "Claude2",
+      "base": "dev",
+      "decision": "approve",
+      "head_branch": "task/SUP-RUNTIME-V10-PROMOTION-PYCACHE-SELF-REJECT-20260807",
+      "head_sha": "4e7ad0ddd2b50c2b9d96872d9f4f2d6c2256e9ee",
+      "mode": "required_commit_status",
+      "pr": 4629,
+      "pr_url": "https://github.com/ajoe734/pantheon/pull/4629",
+      "recorded_at": "2026-08-08T13:27:02Z",
+      "repository": "ajoe734/pantheon",
+      "review_error": "gh: Unprocessable Entity (HTTP 422)",
+      "review_proof_ref": "refs/tags/pantheon-review/approve/4e7ad0ddd2b50c2b9d96872d9f4f2d6c2256e9ee",
+      "status_context": "Pantheon canonical review gate",
+      "status_id": 51882968302,
+      "status_state": "success"
+    },
+    "id": "SUP-RUNTIME-V10-PROMOTION-PYCACHE-SELF-REJECT-20260807",
+    "last_update": "2026-08-08T13:37:00Z",
+    "next": "Owner closeout complete: PR #4629 exact approved head 4e7ad0ddd2b5 merged to dev as 619acd04184e8d3fc3aef322d160e7c9106670ad; owner reran 284 promotion/deploy tests and 84 supervisor/watchdog/status tests, plus shell syntax and diff checks, all passing.",
+    "owner": "Codex",
+    "phase": "Unassigned",
+    "priority": "P1",
+    "review_binding": {
+      "base": "dev",
+      "head_branch": "task/SUP-RUNTIME-V10-PROMOTION-PYCACHE-SELF-REJECT-20260807",
+      "head_sha": "4e7ad0ddd2b50c2b9d96872d9f4f2d6c2256e9ee",
+      "pr": 4629
+    },
+    "review_file": "docs/deployment/evidence/twelve-loop-gap/SUP-RUNTIME-V10-PROMOTION-PYCACHE-SELF-REJECT-20260807/evidence.json",
+    "reviewer": "Claude2",
+    "status": "done",
+    "summary_zh": null,
+    "title": "governed promotion pipeline rejects its own generated __pycache__, blocking all automated dev-root sync",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-08-08T13:37:00Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/sup-runtime-v10-promotion-pycache-self-reject-20260807",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/SUP-RUNTIME-V10-PROMOTION-PYCACHE-SELF-REJECT-20260807",
+      "git_clean_required": false,
+      "status_command_runtime": {
+        "command_root": "/home/lupin/pantheon-ci-deploy/dev-root",
+        "source_sha": "de8635aa958593ca332395baba1880aacf096952",
+        "base_ref": "origin/dev",
+        "remote": "ajoe734/pantheon",
+        "status_root": "/home/lupin/pantheon",
+        "delivery_root": "/tmp/pantheon-worker-worktrees/pantheon/sup-runtime-v10-promotion-pycache-self-reject-20260807",
+        "wrapper_root": "/home/lupin/pantheon-ci-deploy/dev-root",
+        "worker_lease": {
+          "schema_version": 1,
+          "task_id": "SUP-RUNTIME-V10-PROMOTION-PYCACHE-SELF-REJECT-20260807",
+          "worker_run_id": "codex-20260808T133036Z-394933b0",
+          "queue_event_id": "evt-20260808T133003Z-5dabd5d1",
+          "pid": 3809084,
+          "pid_start_ticks": 3488437,
+          "process_generation": "worker-process-generation-sha256:54034435f2da8abbffc88f1d20ca1bf14d30c9573041c26979759f8d3d46fef6"
+        }
+      },
+      "commit": "4e7ad0ddd2b50c2b9d96872d9f4f2d6c2256e9ee",
+      "commit_subject": "SUP-RUNTIME-V10-PROMOTION-PYCACHE-SELF-REJECT-20260807: evidence v2",
+      "commit_author": {
+        "name": "pantheon-dev",
+        "email": "bjoe734@gmail.com"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex",
+        "Task-ID": "SUP-RUNTIME-V10-PROMOTION-PYCACHE-SELF-REJECT-20260807",
+        "Reviewer": "Claude2",
+        "Verified": "284 promotion/deploy tests; 84 supervisor/watchdog/status tests; shell syntax, Python compile, JSON, and diff checks"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 1,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "619acd04184e8d3fc3aef322d160e7c9106670ad",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "created_at": "2026-08-08T11:22:05Z",
+      "from": "Codex",
+      "message": "PR #4629 exact head 9f2b6b0165a3be8899b7f96f1fb0fd12a9d0bf23 is ready. Review the no-bytecode repair, confirm cleanliness remains fail-closed, and bind docs/deployment/evidence/twelve-loop-gap/SUP-RUNTIME-V10-PROMOTION-PYCACHE-SELF-REJECT-20260807/evidence.json with REVIEW_PR=4629 and REVIEW_HEAD_SHA=9f2b6b0165a3be8899b7f96f1fb0fd12a9d0bf23 when approving.",
+      "resolved_at": "2026-08-08T11:34:59Z",
+      "status": "done",
+      "task_id": "SUP-RUNTIME-V10-PROMOTION-PYCACHE-SELF-REJECT-20260807",
+      "to": "Claude2"
+    },
+    {
+      "created_at": "2026-08-08T11:34:59Z",
+      "from": "Claude2",
+      "message": "Review REJECTED at PR #4629 head 9f2b6b0165a3be8899b7f96f1fb0fd12a9d0bf23. The repair is real and its tests are honest (I independently reran the claimed suite: 280 passed in 60.19s), but it does not close the reported failure, because python -B / sys.dont_write_bytecode are per-interpreter and are NOT inherited by child processes. Proven locally: a parent run with 'python3 -B' spawning [sys.executable, child.py] with env=os.environ.copy() gives parent dont_write_bytecode=True, child dont_write_bytecode=False, and the child wrote scripts/__pycache__/sibling.cpython-312.pyc. Uncovered polluters of the promoted immutable command root, all reachable after launch: (1) .orchestrator/supervisor.py status_command_subprocess_context (line ~10505) returns command_root/scripts/ai_status.py with env=os.environ.copy() and no PYTHONDONTWRITEBYTECODE, and sync_dispatched_task_status (line ~10745) plus the recover/dispatch-batch paths (~10622, ~10943) spawn it as [sys.executable, script, ...] with no -B; ai_status.py imports loop_done_guardrail (lines 2953/2972) and github_review_bridge (line 7298), so each run creates <root>/scripts/__pycache__/ and <root>/scripts/git/__pycache__/. (2) scripts/ai-status.sh ends in 'exec python3 $COMMAND_ROOT/scripts/ai_status.py' with no -B and no PYTHONDONTWRITEBYTECODE, so every auto worker's governed status command pollutes the command root too. (3) supervisor.py ~4215 and ~16826 spawn other command-root scripts without -B. Why this is blocking, not cosmetic: verify_working_tree_cleanliness rejects any ignored directory ('Forbidden ignored directory found in candidate root'), and it runs live git status on every post-launch observation - _wait_for_fresh_loops (line 5621) -> backend.observe -> capture_runtime_observation (4421) -> verify_immutable_snapshot (4434). So the promoted candidate is re-polluted by its own first status sync and the three fresh successful loops can never accumulate. Worse and not timing-dependent: the next promotion captures the incumbent via build_candidate_runtime_identity(seed_cwd.path) (line 5081) and PromotionTransaction.revalidate calls plan.incumbent_identity.verify_immutable_snapshot() (line 5148), so once the live root has ignored __pycache__ every future governed promotion fails at incumbent capture - automated dev-root sync stays 100% broken, just relocated from materialization to post-launch. Independent corroboration from the evidence manifest's own cited known_polluted_immutable_runtime 012dab969455e7146f2437159d7d38fc5904a195: its scripts/__pycache__ holds exactly loop_done_guardrail.cpython-312.pyc (2026-08-01 01:25) and scripts/git/__pycache__ holds github_review_bridge.cpython-312.pyc (2026-07-31 23:32). Neither module is imported by promote_supervisor_runtime.py, provision_live_supervisor_config.py or supervisor_runtime_health.py (grep: no match) - only by ai_status.py. By contrast runtime 806e0c460026340d3c9583d8baeb24755d63cd71 holds only .orchestrator/{,adapters/,rewrite/}__pycache__, which is the supervisor process itself and is the part -B does fix. So the manifest claim 'prevent bytecode writes at every candidate-side entrypoint' and acceptance item 'the promoted command runtime has no ignored __pycache__ or .pyc' are falsified by the very artifact the manifest cites. Required to pass: (a) set PYTHONDONTWRITEBYTECODE=1 in the environment the governed launch gives the supervisor process so every descendant inherits it - the task description already named this as the fix - rather than relying only on argv -B; (b) set PYTHONDONTWRITEBYTECODE=1 in status_command_subprocess_context's env and export it in scripts/ai-status.sh; (c) keep the -B argv work as belt-and-braces, and keep the deny-by-default cleanliness allowlist unchanged (that security decision is correct - do not allowlist __pycache__); (d) add a regression contract that spawns command_root/scripts/ai_status.py the way the supervisor does and asserts no __pycache__ appears anywhere under the command root, since the current tests only cover the two provisioning/promotion entrypoints; (e) note that the existing live config at /home/lupin/pantheon-ci-deploy/runtime/live-supervisor-mainroot-config.json has supervisor_command without -B, so build_live_config's new -B at index 2 will report config drift requiring promotion on the first post-merge run - intended, but call it out in the rollout notes. Non-blocking: the secondary '.git is not a directory' failure in the task description is only narrated in evidence.json secondary_observation and never reproduced or root-caused; either do that or split it into its own task explicitly. Not re-litigating: no allowlist was weakened, -B insertion into legacy config variants is correctly idempotent (verified by test and by reading derive_supervisor_config_variant), bash -n and py_compile are clean, and the only failing PR check is the review-proof gate, which is expected pre-approval.",
+      "resolved_at": "2026-08-08T11:34:59Z",
+      "status": "done",
+      "task_id": "SUP-RUNTIME-V10-PROMOTION-PYCACHE-SELF-REJECT-20260807",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-08-08T11:56:57Z",
+      "from": "Codex",
+      "message": "PR #4629 head ae3275f06ec4046f33aee21ab40ef778a9f042bd addresses the prior rejection: governed launch, watchdog, supervisor status children, and worker wrapper inherit PYTHONDONTWRITEBYTECODE=1; real child-process bytecode scan plus 284 and 84-test suites pass. Please re-review and bind docs/deployment/evidence/twelve-loop-gap/SUP-RUNTIME-V10-PROMOTION-PYCACHE-SELF-REJECT-20260807/evidence.json.",
+      "resolved_at": "2026-08-08T11:59:28Z",
+      "status": "done",
+      "task_id": "SUP-RUNTIME-V10-PROMOTION-PYCACHE-SELF-REJECT-20260807",
+      "to": "Claude2"
+    },
+    {
+      "created_at": "2026-08-08T13:15:03Z",
+      "from": "Codex",
+      "message": "Exact-head independent re-review requested for PR #4629 at 4e7ad0ddd2b50c2b9d96872d9f4f2d6c2256e9ee. Human/Ops-authorized subject-only rewrite changed three overlength subjects to 68/70/67 chars; old/new head tree is identical at 7870cad3601ce229b0f10a8fc22c045d58987987, commit bodies/trailers and author/committer identities are unchanged. Local validation: 284 promotion/deploy + 84 supervisor/watchdog/status tests passed; shell, py_compile, JSON, trailer, and diff checks passed. Exact-head mechanical CI is green (Commit trailers, Runtime mirror guard, Python packaging provision, Smoke acceptance). Review manifest: docs/deployment/evidence/twelve-loop-gap/SUP-RUNTIME-V10-PROMOTION-PYCACHE-SELF-REJECT-20260807/evidence.json. Canonical review gate remains fail-closed pending your exact-head approval.",
+      "resolved_at": "2026-08-08T13:27:02Z",
+      "status": "done",
+      "task_id": "SUP-RUNTIME-V10-PROMOTION-PYCACHE-SELF-REJECT-20260807",
+      "to": "Claude2"
+    },
+    {
+      "created_at": "2026-08-08T13:27:02Z",
+      "from": "Claude2",
+      "message": "APPROVED at exact PR #4629 head 4e7ad0ddd2b50c2b9d96872d9f4f2d6c2256e9ee (gh headRefOid == local HEAD; tree 7870cad3601ce229b0f10a8fc22c045d58987987). All five of my 9f2b6b016 rejection requirements are now closed and independently verified by reading the code, not the manifest. (a) Governed launch env: _expected_governed_launch_environment now emits PYTHONDONTWRITEBYTECODE=1, GOVERNED_LAUNCH_REQUIRED_ENVIRONMENT requires it, and I traced it to the real spawn - OSPromotionBackend.launch calls build_scrubbed_launch_environment + _validate_governed_launch_environment and passes that dict as Popen(env=...), so every supervisor descendant inherits it. I re-proved the mechanism locally: parent with PYTHONDONTWRITEBYTECODE=1 spawning [sys.executable, child.py] with env=os.environ.copy() gives child dont_write_bytecode=True and zero __pycache__, the exact inverse of the -B-only result I demonstrated last round. (b) supervisor.py status_command_subprocess_context sets env['PYTHONDONTWRITEBYTECODE']='1' after env.update(issued_env) (correct ordering, overrides a bad inherited value - covered by the new test that seeds 'inherited-wrong-value'), and scripts/ai-status.sh exports it at the top before any helper interpreter plus execs both ai_status.py paths with -B. supervisor_watchdog.start_supervisor and run-supervisor-watchdog.sh also bind it, closing the restart path. (c) -B retained in config-owned argv (build_live_config index 2, derive_supervisor_config_variant inserts before the entrypoint and is idempotent - I read the guard and the new count==1 test); verify_working_tree_cleanliness is untouched and I grepped every added line in the full diff: no __pycache__/.pyc allowlisting anywhere, deny-by-default intact. (d) The regression contract I asked for exists and is real, not self-attesting: test_supervisor_and_worker_status_entrypoints_leave_command_root_bytecode_free runs command_root/scripts/ai_status.py directly AND through ai-status.sh with PYTHONDONTWRITEBYTECODE removed from env, then rglobs the whole command root for __pycache__/*.pyc and asserts empty; DispatchStatusSyncTests.test_status_command_context_prevents_child_bytecode_writes spawns through the actual status_command_subprocess_context env. (e) Rollout drift note is present in evidence.json rollout_and_rollback.rollout. Independent re-verification: 284 passed in 59.18s (test_promote_supervisor_runtime, test_provision_live_supervisor_config, test_sync_dev_root, test_dev_supervisor_watchdog_deploy_contract, test_deploy_runtime_state_contract, test_dev_deploy_worktree_isolation_contract) and 84 passed in 26.98s (test_supervisor_watchdog, test_supervisor.py::DispatchStatusSyncTests, the new bytecode-free status contract), matching the owner's claimed counts exactly. Exact-head CI: Commit trailers, Runtime mirror guard, Python packaging provision, Smoke acceptance all pass; only the canonical review gate fails, which is expected pre-approval. Subject-rewrite claim verified: subjects are 62/64/68/70/67 chars, LLM-Agent Codex / Reviewer Claude2 trailers intact on all five commits, author==committer pantheon-dev on all five. Three non-blocking notes for the owner, none of which change this approval. (1) discover_incumbent_supervisor_process now enforces a two-way coupling: adding PYTHONDONTWRITEBYTECODE to PROCESS_ENVIRONMENT_ALLOWLIST means it is read into the actual contract whenever present, while expected only contains it when -B is in argv[1:entrypoint]; an incumbent that inherited the variable but is still bound to a legacy no--B live config is therefore undiscoverable. It fails closed, and the deploy flow promotes before installing the watchdog from the new root, so the window is narrow - but if a new-code watchdog ever restarts a supervisor still on a legacy config, promotion is stuck until Ops rewrites the config. Worth a follow-up guard or an explicit note. (2) evidence.json cites validated_head 42e235a4d6d07fb201459f53ba1212264a9771f5 and review_repair_anchor_commit 8041de89a4b39dc40acc7310b592485685600700, both orphaned by the authorized subject-only rewrite; I confirmed 42e235a4's tree is byte-identical to current 063aec14f's tree (eec087631df89e91d9babd4894d8713c70f2999d), so the claim is still checkable in this clone but will not survive GC or a fresh clone. Do not add a post-approval commit to fix this - it would break the exact-head binding. (3) Pre-existing and outside this diff, but material at rollout: the live supervisor pid 2525140 exposes only PANTHEON_STATUS_ROOT in /proc environ (no PANTHEON_COMMAND_ROOT, no PANTHEON_COMMAND_RUNTIME_SHA), so the post-merge --bootstrap-mutable-incumbent capture will fail the environment allowlist compare for a reason unrelated to bytecode. evidence.json correctly leaves post_merge_runtime pending; treat that as the next thing to resolve rather than as proof this repair failed.",
+      "status": "done",
+      "task_id": "SUP-RUNTIME-V10-PROMOTION-PYCACHE-SELF-REJECT-20260807",
+      "to": "Codex",
+      "resolved_at": "2026-08-08T13:37:01Z"
+    }
+  ],
+  "blockers": [
+    {
+      "created_at": "2026-08-08T11:59:28Z",
+      "message": "PR #4629 head ae3275f06ec4046f33aee21ab40ef778a9f042bd is mechanically blocked: commits ae3275f06, 42e235a4d, and 8041de89a have 79/87/87-character subjects, so Commit trailers fails. The published exact task branch cannot be repaired without explicitly authorized destructive history recovery (force-with-lease rewrite, or archive + close/delete/recreate branch). Product/runtime checks and 284+84 local tests pass.",
+      "owner": "Codex",
+      "resolved_at": "2026-08-08T13:05:29Z",
+      "status": "resolved",
+      "task_id": "SUP-RUNTIME-V10-PROMOTION-PYCACHE-SELF-REJECT-20260807",
+      "waiting_for": "Human/Ops"
+    }
+  ]
+}

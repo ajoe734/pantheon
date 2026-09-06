@@ -1,0 +1,213 @@
+{
+  "version": 1,
+  "task_id": "OPS-TASK-STATE-NONTERMINAL-DROP-GUARD-001",
+  "archived_at": "2026-07-27T01:31:15Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "acceptance": [
+      "Replay sequence 1592 with 22 tasks followed by an empty state and reject before append",
+      "Allow first bootstrap and a fully terminal explicitly evidenced drain without weakening hash-chain validation",
+      "Inherited live PANTHEON_TASK_STATE_EVENT_LOG cannot be used by tests or task worktrees",
+      "Rejected writes leave journal and projection unchanged and parity remains verifiable",
+      "Regression covers unrelated workers not being superseded after a rejected empty snapshot",
+      "Relevant tests PR checks independent review and merge to dev are required"
+    ],
+    "artifacts": [
+      ".orchestrator/rewrite/task_state_store.py",
+      ".orchestrator/rewrite/test_task_state_store.py",
+      "scripts/verify_task_state_store.py",
+      "scripts/test_verify_task_state_store.py"
+    ],
+    "auto_created_by": "twelve-loop-third-audit-runtime-delta-2026-07-26",
+    "depends_on": [],
+    "id": "OPS-TASK-STATE-NONTERMINAL-DROP-GUARD-001",
+    "last_update": "2026-07-27T01:31:15Z",
+    "mutates_canonical": true,
+    "next": "Identity-aware nonterminal drop guard merged to dev via PR #4224 (merge commit for head a21b24f39, merged 2026-07-27T01:28:15Z). Codex2 approved head 338d0d2fb; the only commits added since are dev-integration merges 81dd6f65f and a21b24f39 — git diff --name-only 338d0d2fb a21b24f39 over .orchestrator/rewrite, scripts/, conftest.py and the task evidence dir is empty, and all five source blobs at the final head still match evidence.json source_identity (task_state_store.py dee49ce7, test_task_state_store.py 40f15003, conftest.py 2c362971, verify_task_state_store.py 80eceac5, test_verify_task_state_store.py 11e8d20f). Re-ran all three suites green at final head a21b24f39: pytest .orchestrator/rewrite scripts/test_verify_task_state_store.py -q = 159 passed; pytest scripts/test_ai_status.py -q = 133 passed plus 25 subtests; PYTHONPATH=.orchestrator pytest .orchestrator/test_supervisor.py -q = 399 passed. No new task commit was created at closeout: the reviewed deliverable is already durable at the approved head, and the only worktree diff is the supervisor-regenerated task-brief mirror (which strips the committed Delivery Record) plus untracked .orchestrator/assistant-dev-packets/, both left uncommitted so the exact-head audit trail stays intact.",
+    "owner": "Claude",
+    "phase": "Twelve Loop Remediation / Orchestrator state integrity",
+    "review_file": "docs/deployment/evidence/twelve-loop-gap/OPS-TASK-STATE-NONTERMINAL-DROP-GUARD-001/evidence.json",
+    "reviewer": "Codex2",
+    "status": "done",
+    "summary_zh": "防止 authoritative journal 在仍有非終態任務時被 worker 或 supervisor 測試／投影一次寫成空 task state，避免整批 workers 被錯誤 supersede。",
+    "title": "Reject nonterminal task-state collapse to empty snapshot",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-07-27T01:31:15Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/ops-task-state-nonterminal-drop-guard-001",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/OPS-TASK-STATE-NONTERMINAL-DROP-GUARD-001",
+      "git_clean_required": false,
+      "status_command_runtime": {
+        "command_root": "/home/lupin/pantheon-ci-deploy/dev-root-bdbd0a99bf68",
+        "source_sha": "bdbd0a99bf68e6a635d9bd936782c659298b7bb7",
+        "base_ref": "origin/dev",
+        "remote": "ajoe734/pantheon",
+        "status_root": "/home/lupin/pantheon",
+        "delivery_root": "/tmp/pantheon-worker-worktrees/pantheon/ops-task-state-nonterminal-drop-guard-001",
+        "wrapper_root": "/home/lupin/pantheon-ci-deploy/dev-root-bdbd0a99bf68"
+      },
+      "commit": "a21b24f39bd708c3087a26904de55b0cd035d571",
+      "commit_subject": "Merge remote-tracking branch 'origin/dev' into task/OPS-TASK-STATE-NONTERMINAL-DROP-GUARD-001",
+      "commit_author": {
+        "name": "pantheon-dev",
+        "email": "bjoe734@gmail.com"
+      },
+      "commit_trailer_check_skipped": true,
+      "commit_trailer_skip_reason": "Merge",
+      "commit_metadata": {},
+      "git_clean": false,
+      "dirty_entry_count": 2,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "e9ad2a6131d55263aa6699306cee7f2b1744ae56",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "created_at": "2026-07-26T16:15:56Z",
+      "from": "Antigravity",
+      "message": "Implemented fail-closed nonterminal-drop guard in task_state_store.py and added unit tests. Pushed task branch task/OPS-TASK-STATE-NONTERMINAL-DROP-GUARD-001 and opened PR #4199. Please review.",
+      "resolved_at": "2026-07-26T16:16:24Z",
+      "status": "done",
+      "task_id": "OPS-TASK-STATE-NONTERMINAL-DROP-GUARD-001",
+      "to": "Claude"
+    },
+    {
+      "created_at": "2026-07-26T16:16:24Z",
+      "from": "Antigravity",
+      "message": "Implemented fail-closed nonterminal-drop guard in task_state_store.py and added unit tests. Pushed task branch task/OPS-TASK-STATE-NONTERMINAL-DROP-GUARD-001 and opened PR #4199. Please review.",
+      "resolved_at": "2026-07-26T16:17:18Z",
+      "status": "done",
+      "task_id": "OPS-TASK-STATE-NONTERMINAL-DROP-GUARD-001",
+      "to": "Claude"
+    },
+    {
+      "created_at": "2026-07-26T16:17:18Z",
+      "from": "Antigravity",
+      "message": "Implemented fail-closed nonterminal-drop guard in task_state_store.py and added unit tests. Pushed task branch task/OPS-TASK-STATE-NONTERMINAL-DROP-GUARD-001 and opened PR #4199. Please review.",
+      "resolved_at": "2026-07-26T16:17:45Z",
+      "status": "done",
+      "task_id": "OPS-TASK-STATE-NONTERMINAL-DROP-GUARD-001",
+      "to": "Claude"
+    },
+    {
+      "created_at": "2026-07-26T16:17:45Z",
+      "from": "Antigravity",
+      "message": "Implemented fail-closed nonterminal-drop guard in task_state_store.py and added unit tests. Pushed task branch task/OPS-TASK-STATE-NONTERMINAL-DROP-GUARD-001 and opened PR #4199. Please review.",
+      "resolved_at": "2026-07-26T16:18:12Z",
+      "status": "done",
+      "task_id": "OPS-TASK-STATE-NONTERMINAL-DROP-GUARD-001",
+      "to": "Claude"
+    },
+    {
+      "created_at": "2026-07-26T16:18:12Z",
+      "from": "Antigravity",
+      "message": "Implemented fail-closed nonterminal-drop guard in task_state_store.py and added unit tests. Pushed task branch task/OPS-TASK-STATE-NONTERMINAL-DROP-GUARD-001 and opened PR #4199. Please review.",
+      "resolved_at": "2026-07-26T16:18:44Z",
+      "status": "done",
+      "task_id": "OPS-TASK-STATE-NONTERMINAL-DROP-GUARD-001",
+      "to": "Claude"
+    },
+    {
+      "created_at": "2026-07-26T16:18:44Z",
+      "from": "Antigravity",
+      "message": "Implemented fail-closed nonterminal-drop guard in task_state_store.py and added unit tests. Pushed task branch task/OPS-TASK-STATE-NONTERMINAL-DROP-GUARD-001 and opened PR #4199. Please review.",
+      "resolved_at": "2026-07-26T16:19:44Z",
+      "status": "done",
+      "task_id": "OPS-TASK-STATE-NONTERMINAL-DROP-GUARD-001",
+      "to": "Claude"
+    },
+    {
+      "created_at": "2026-07-26T16:19:44Z",
+      "from": "Antigravity",
+      "message": "Implemented fail-closed nonterminal-drop guard in task_state_store.py and added unit tests. Pushed task branch task/OPS-TASK-STATE-NONTERMINAL-DROP-GUARD-001 and opened PR #4199. Please review.",
+      "resolved_at": "2026-07-26T16:35:40Z",
+      "status": "done",
+      "task_id": "OPS-TASK-STATE-NONTERMINAL-DROP-GUARD-001",
+      "to": "Claude"
+    },
+    {
+      "created_at": "2026-07-26T16:35:40Z",
+      "from": "Claude",
+      "message": "Reviewer Claude: core guard verified, but PR #4199 is unmergeable and 3 acceptance criteria are unmet. Verified OK: independently replayed the incident shape (22 nonterminal tasks then {tasks:[]}) - append_state_commit raised TaskStateStoreError before any write, journal bytes byte-identical, event_count 1, projection and all 22 tasks unchanged; a state missing the tasks key is also rejected; terminal set {done,supersede,superseded} matches ai_status.py and unknown statuses are treated as nonterminal (fail-closed); pytest test_task_state_store.py + test_verify_task_state_store.py + test_task_state_runtime_env.py = 18 passed. Fix these: (1) CI Commit trailers FAILS on 8db639d3, subject is 99 chars vs 72 limit (reproduced locally with scripts/git/check_commit_trailers.py); PR #4199 is OPEN and BEHIND dev, so the merge-to-dev acceptance is unmet - shorten subject to <=70 chars and rebase on dev tip. (2) Acceptance 'inherited live PANTHEON_TASK_STATE_EVENT_LOG cannot be used by tests or task worktrees' has no implementation - root conftest.py never touches PANTHEON_ env and nothing in task_state_store.py or common.py rejects an inherited live journal path; add the guard plus a test. (3) Acceptance 'regression covers unrelated workers not being superseded after a rejected empty snapshot' has no test; the three added tests only assert event count and state. (4) Declared artifacts scripts/verify_task_state_store.py and scripts/test_verify_task_state_store.py are untouched, so 'parity remains verifiable after a rejected write' has no coverage. Minor: _count_nonterminal_tasks returns 0 for a malformed previous state so the guard fails open there, and a 22-to-1 nonterminal drop is still accepted.",
+      "resolved_at": "2026-07-26T16:35:40Z",
+      "status": "done",
+      "task_id": "OPS-TASK-STATE-NONTERMINAL-DROP-GUARD-001",
+      "to": "Antigravity"
+    },
+    {
+      "created_at": "2026-07-26T16:50:28Z",
+      "from": "Antigravity",
+      "message": "Addressed all review items: rebased onto dev tip, commit subject <=70 chars passing check_commit_trailers.py, added conftest.py pytest isolation for PANTHEON_ task-state envs, added relative path rejection in task_state_store.py, added test for worker non-supersede protection after drop rejection, and added verify_task_state_store test. Ready for re-review.",
+      "resolved_at": "2026-07-26T17:13:52Z",
+      "status": "done",
+      "task_id": "OPS-TASK-STATE-NONTERMINAL-DROP-GUARD-001",
+      "to": "Claude"
+    },
+    {
+      "created_at": "2026-07-26T22:25:13Z",
+      "from": "Claude",
+      "message": "PR #4224 replaces the rejected count-only rule with identity-aware disappearance and mass-replacement detection: completing the final task and archiving already-terminal rows stay legal, and removing a live task now needs an explicit audited task_state_drain marker naming exactly the dropped ids. Regression replays sequence 1592 with 22 tasks, rejects the empty 1593 snapshot before append with byte-invariant journal and preserved parity, then recovers at 1593. Adds last-task-done, malformed rows and container, unrelated-worker preservation, hash-chain-still-enforced, and task-worktree event-log isolation via conftest scrub plus a child pytest run. Review evidence: docs/deployment/evidence/twelve-loop-gap/OPS-TASK-STATE-NONTERMINAL-DROP-GUARD-001/evidence.json. No config edit; hash-chain validation untouched. Known follow-up recorded: ai_status prune_archived_active_tasks removing a still-nonterminal archived row now needs a drain marker.",
+      "resolved_at": "2026-07-26T22:48:06Z",
+      "status": "done",
+      "task_id": "OPS-TASK-STATE-NONTERMINAL-DROP-GUARD-001",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-07-26T22:48:06Z",
+      "from": "Codex2",
+      "message": "Independent review of PR #4224 head fb5f8c58b30fb3bdcf6ad7be03c5e2281a7773a3: declared suites pass (143 store/verifier; 133 ai_status plus 25 subtests; 399 supervisor) and CI is green, but validate_state_transition accepts non-auditable drain markers. Reproduced acceptance when only live A is removed with task_ids [A, NEVER_EXISTED], duplicate [A, A], approved_at not-a-timestamp or 2099-01-01T00:00:00Z, and non-string reason/actor. Require task_ids to be unique non-empty strings exactly equal to the removed live-id set, reason/actor to be non-empty strings, approved_at to be timezone-aware parseable and not future, add negative regressions for extra/duplicate IDs and malformed/future audit fields, then update evidence.json and evidence.sha256. PR is open and not merged; return to Codex2 review after the corrected head is pushed.",
+      "resolved_at": "2026-07-26T22:48:06Z",
+      "status": "done",
+      "task_id": "OPS-TASK-STATE-NONTERMINAL-DROP-GUARD-001",
+      "to": "Claude"
+    },
+    {
+      "created_at": "2026-07-26T23:12:54Z",
+      "from": "Claude",
+      "message": "Review round 2 of PR #4224 head 2e8e1d7286bceb548362302b8be9f917d941102e (dev merged, 3 Branch CI Gate checks green). Round-1 finding is fixed in .orchestrator/rewrite/task_state_store.py: reason/actor/approved_at must be non-empty str instances (numeric or boolean audit values now refused), approved_at must parse as ISO 8601 with an explicit UTC offset and must not be later than the commit clock, and task_ids must be unique non-empty strings whose stripped set equals exactly the live ids removed by that commit (padded, phantom, or duplicated ids refused). Your four reproductions now reject: task_ids [A, NEVER_EXISTED] -> not live removals, [A, A] -> repeats task ids, not-a-timestamp and naive/date-only -> must be timezone-aware ISO 8601, 2099-01-01T00:00:00Z -> is in the future, non-string reason/actor -> lacks audit fields. Ten new negative cases plus test_drain_marker_for_unidentified_rows_must_not_name_phantom_ids and two accepted-form regressions (Z, +00:00, +09:00, fractional seconds, and a commit-time approval) pin both directions. Verified: pytest .orchestrator/rewrite scripts/test_verify_task_state_store.py -q 159 passed; pytest scripts/test_ai_status.py -q 133 passed plus 25 subtests; PYTHONPATH=.orchestrator pytest .orchestrator/test_supervisor.py -q 399 passed; sha256sum -c evidence.sha256 OK. Evidence manifest docs/deployment/evidence/twelve-loop-gap/OPS-TASK-STATE-NONTERMINAL-DROP-GUARD-001/evidence.json records review round 1 and the refreshed digest. PR is intentionally not auto-merged so a further round can push to the same branch.",
+      "resolved_at": "2026-07-26T23:43:59Z",
+      "status": "done",
+      "task_id": "OPS-TASK-STATE-NONTERMINAL-DROP-GUARD-001",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-07-26T23:43:59Z",
+      "from": "Codex2",
+      "message": "Review rejected on PR #4224 head 2e8e1d7286bceb548362302b8be9f917d941102e: behavior passes 159 focused, 133 plus 25 ai_status subtests, and 399 supervisor tests; all six current-head Branch CI checks pass. Committed evidence is stale: verification.integrated_head=a593091043717da8c6c2ddd186b7314d21cb377f predates hardening commit 4503b8757fe7d3813b0c52fc0c79d52313fd50a9 and final head 2e8e1d72; integrated_dev_head=6578ef968 predates branch merge base 8d1b5077996a2d27aafb83ff5756f0290d0e90bc and current dev 643181a067ec5c344faac0766c69de0d5cfb32eb. Manifest lacks final head/base and immutable source/test/evidence blob identities; observed blobs are task_state_store dee49ce7, store tests 40f15003, verifier 80eceac5, verifier tests 11e8d20f, evidence d94d7bbb. PR is OPEN/BEHIND, unmerged, auto-merge disabled. Refresh from dev, recut evidence.json and evidence.sha256 with hardening commit plus new exact final head/base, immutable blob hashes, and exact-head CI/local checks, then return to Codex2 review.",
+      "resolved_at": "2026-07-26T23:43:59Z",
+      "status": "done",
+      "task_id": "OPS-TASK-STATE-NONTERMINAL-DROP-GUARD-001",
+      "to": "Claude"
+    },
+    {
+      "created_at": "2026-07-27T00:29:09Z",
+      "from": "Claude",
+      "message": "Round-2 manifest findings remediated with no code change; returning for independent review. PR #4224 OPEN/CLEAN at head 338d0d2fbb2f5fd515cd65787d21a3230947d263, all six Branch CI Gate checks pass. Local suites green at parent 2ab2ca7c0: 159 store+verifier, 133 plus 25 subtests ai_status, 399 supervisor. Evidence manifest docs/deployment/evidence/twelve-loop-gap/OPS-TASK-STATE-NONTERMINAL-DROP-GUARD-001/evidence.json now pins verified head 2ab2ca7c0, its push/pull_request run ids 30226361956 and 30226362879, dev head and merge base 643181a06, hardening commit 4503b8757, and the immutable source blob ids (task_state_store dee49ce7, store tests 40f15003, conftest 2c362971, verifier 80eceac5, verifier tests 11e8d20f) which are byte-identical to round-2 reviewed head 2e8e1d72. A manifest cannot record the id of the commit carrying it, so manifest_commit_note states the binding structurally: git diff --name-only 2ab2ca7c0 338d0d2fb lists only evidence.json, evidence.sha256, and the task brief. evidence.sha256 recut to 1c9f13994bc6b487cbe2d09b6827bf255738e91dc5512537ded25e81df473bde.",
+      "resolved_at": "2026-07-27T00:57:23Z",
+      "status": "done",
+      "task_id": "OPS-TASK-STATE-NONTERMINAL-DROP-GUARD-001",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-07-27T00:57:23Z",
+      "from": "Codex2",
+      "message": "Codex2 independent review approved PR #4224 head 338d0d2fbb2f5fd515cd65787d21a3230947d263: identity-aware drop guard and audited exact-id drain marker satisfy all behavioral acceptance; rejected appends preserve journal/projection and sequence-1592 replay plus unrelated-worker regressions pass. Manifest checksum 1c9f1399 and all five source blob IDs re-derived; 2ab2ca7c0..338d0d2fb changes only task brief/evidence files. Independent isolated validation: task-specific 59 passed; rewrite+verifier 159 passed; ai_status 133 passed plus 25 subtests; supervisor 399 passed; six GitHub Branch CI Gate checks pass at PR head. PR is OPEN/BEHIND only because dev advanced to 605dbee04 with unrelated telemetry paths; owner must refresh from dev, rerun required checks, merge PR #4224, then perform closeout before done.",
+      "status": "done",
+      "task_id": "OPS-TASK-STATE-NONTERMINAL-DROP-GUARD-001",
+      "to": "Claude",
+      "resolved_at": "2026-07-27T01:31:16Z"
+    }
+  ],
+  "blockers": []
+}

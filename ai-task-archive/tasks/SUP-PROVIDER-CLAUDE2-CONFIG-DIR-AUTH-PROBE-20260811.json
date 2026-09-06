@@ -1,0 +1,199 @@
+{
+  "version": 1,
+  "task_id": "SUP-PROVIDER-CLAUDE2-CONFIG-DIR-AUTH-PROBE-20260811",
+  "archived_at": "2026-08-11T01:32:34Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "acceptance": [
+      "Reproduce the live false negative: claude2 runtime sets HOME=/home/lupin/.claude2 but omits CLAUDE_CONFIG_DIR, so the provider probe reads /home/lupin/.claude2/.claude/.credentials.json while the authenticated credentials are /home/lupin/.claude2/.credentials.json.",
+      "Add CLAUDE_CONFIG_DIR=/home/lupin/.claude2 to the claude2 runtime environment in source config, preserving account isolation from Claude and without copying, exposing, or editing credentials.",
+      "Add regression coverage proving the configured claude2 probe environment resolves the intended credentials path and reports ready when the isolated auth material is present; prove Claude continues using its own config directory.",
+      "Run focused provider-permission tests, relevant supervisor tests, JSON validation, and git diff --check; commit evidence with all subjects <=72 characters and required trailers.",
+      "Keep this source-only: no live config edit, no direct auth pause clearing, no credential rotation, no provider/account regrouping, no reviewer-policy or scheduler change. After merge, supervisor must perform the live auth probe and clear the stale pause transactionally."
+    ],
+    "artifacts": [
+      ".orchestrator/config.json",
+      ".orchestrator/test_provider_permissions.py",
+      "docs/deployment/evidence/supervisor/SUP-PROVIDER-CLAUDE2-CONFIG-DIR-AUTH-PROBE-20260811/"
+    ],
+    "depends_on": [],
+    "dev_bridge": {
+      "actor": {
+        "capabilities": [
+          "integration",
+          "status-system",
+          "acceptance"
+        ],
+        "id": "Human/Ops",
+        "roles": [
+          "operator"
+        ]
+      },
+      "audit_conversation_href": "task:SUP-RUNTIME-V10-GOVERNED-ROLLOUT-VERIFY-20260808",
+      "conversation_id": "SUP-RUNTIME-V10-GOVERNED-ROLLOUT-VERIFY-20260808",
+      "documents": [
+        {
+          "kind": "CLAUDE2_AUTH_PATH_EVIDENCE",
+          "path": ".orchestrator/config.json",
+          "sourceRefs": [
+            "live config claude2 runtime home=/home/lupin/.claude2 without CLAUDE_CONFIG_DIR",
+            "probe resolves /home/lupin/.claude2/.claude/.credentials.json and reports auth_not_ready",
+            "explicit CLAUDE_CONFIG_DIR=/home/lupin/.claude2 auth status loggedIn=true"
+          ]
+        }
+      ],
+      "emitted_at": "2026-08-11T00:07:00Z",
+      "intent": "source_only_remediation_dispatch",
+      "mode": "supervisor_source_only",
+      "packet_digest": "5ffcc75dc918327f28ff10f8e133462a0931cb25e7f49782b44cf23d3c3ae191",
+      "packet_id": "sup-provider-claude2-config-dir-auth-probe-20260811-0007",
+      "source_turn_ids": [
+        "live-auth-probe-20260811T000338Z",
+        "claude2-auth-path-readback-20260811T0005Z"
+      ],
+      "task_spec": {
+        "acceptance": [
+          "Reproduce the live false negative: claude2 runtime sets HOME=/home/lupin/.claude2 but omits CLAUDE_CONFIG_DIR, so the provider probe reads /home/lupin/.claude2/.claude/.credentials.json while the authenticated credentials are /home/lupin/.claude2/.credentials.json.",
+          "Add CLAUDE_CONFIG_DIR=/home/lupin/.claude2 to the claude2 runtime environment in source config, preserving account isolation from Claude and without copying, exposing, or editing credentials.",
+          "Add regression coverage proving the configured claude2 probe environment resolves the intended credentials path and reports ready when the isolated auth material is present; prove Claude continues using its own config directory.",
+          "Run focused provider-permission tests, relevant supervisor tests, JSON validation, and git diff --check; commit evidence with all subjects <=72 characters and required trailers.",
+          "Keep this source-only: no live config edit, no direct auth pause clearing, no credential rotation, no provider/account regrouping, no reviewer-policy or scheduler change. After merge, supervisor must perform the live auth probe and clear the stale pause transactionally."
+        ],
+        "artifacts": [
+          ".orchestrator/config.json",
+          ".orchestrator/test_provider_permissions.py",
+          "docs/deployment/evidence/supervisor/SUP-PROVIDER-CLAUDE2-CONFIG-DIR-AUTH-PROBE-20260811/"
+        ],
+        "depends_on": [],
+        "id": "SUP-PROVIDER-CLAUDE2-CONFIG-DIR-AUTH-PROBE-20260811",
+        "owner": "Antigravity2",
+        "phase": "Supervisor Provider Auth / Claude2 Config Isolation",
+        "reviewer": "Codex2",
+        "summary": "The account is logged in, but supervisor auth probe uses the wrong Claude2 config path because runtime HOME is set without CLAUDE_CONFIG_DIR. Bind the explicit config directory in source and let supervisor clear the pause only after a fresh live probe.",
+        "title": "Bind Claude2 config directory for live auth probe"
+      },
+      "task_spec_hash": "a71304301ffe1a6f0048b16289acb77a930e46f7e1cddf4ff6d49187496eba75"
+    },
+    "failure_streak": 0,
+    "github_review_bridge": {
+      "actor": "Antigravity2",
+      "base": "dev",
+      "decision": "approve",
+      "head_branch": "task/SUP-PROVIDER-CLAUDE2-CONFIG-DIR-AUTH-PROBE-20260811",
+      "head_sha": "fc6b036713ab005da24fa3415db1f948523ce690",
+      "mode": "required_commit_status",
+      "pr": 4736,
+      "pr_url": "https://github.com/ajoe734/pantheon/pull/4736",
+      "recorded_at": "2026-08-11T01:21:17Z",
+      "repository": "ajoe734/pantheon",
+      "review_error": "gh: Unprocessable Entity (HTTP 422)",
+      "review_proof_ref": "refs/tags/pantheon-review/approve/fc6b036713ab005da24fa3415db1f948523ce690",
+      "status_context": "Pantheon canonical review gate",
+      "status_id": 51993351034,
+      "status_state": "success"
+    },
+    "id": "SUP-PROVIDER-CLAUDE2-CONFIG-DIR-AUTH-PROBE-20260811",
+    "last_update": "2026-08-11T01:32:34Z",
+    "next": "Owner finalized PR #4736 after exact-head approval and merge commit 3c3eb52be2e38d3a62f8a3ddd5f9e1b77f5a0802; reran 3 focused provider tests, 21 supervisor tests, py_compile, JSON validation, and git diff --check. Source-only rollout remains for supervisor fresh live Claude2 auth probe before clearing any stale pause.",
+    "owner": "Codex",
+    "phase": "Supervisor Provider Auth / Claude2 Config Isolation",
+    "review_binding": {
+      "base": "dev",
+      "head_branch": "task/SUP-PROVIDER-CLAUDE2-CONFIG-DIR-AUTH-PROBE-20260811",
+      "head_sha": "fc6b036713ab005da24fa3415db1f948523ce690",
+      "pr": 4736
+    },
+    "review_file": "docs/deployment/evidence/supervisor/SUP-PROVIDER-CLAUDE2-CONFIG-DIR-AUTH-PROBE-20260811/evidence.json",
+    "reviewer": "Antigravity2",
+    "status": "done",
+    "summary_zh": "The account is logged in, but supervisor auth probe uses the wrong Claude2 config path because runtime HOME is set without CLAUDE_CONFIG_DIR. Bind the explicit config directory in source and let supervisor clear the pause only after a fresh live probe.",
+    "title": "Bind Claude2 config directory for live auth probe",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-08-11T01:32:34Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/sup-provider-claude2-config-dir-auth-probe-20260811",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/SUP-PROVIDER-CLAUDE2-CONFIG-DIR-AUTH-PROBE-20260811",
+      "git_clean_required": false,
+      "status_command_runtime": {
+        "command_root": "/home/lupin/pantheon-ci-deploy/command-runtimes/0bd7cf8842a622fb40eca125f490d4073b3a1044",
+        "source_sha": "0bd7cf8842a622fb40eca125f490d4073b3a1044",
+        "base_ref": "origin/dev",
+        "remote": "ajoe734/pantheon",
+        "status_root": "/home/lupin/pantheon",
+        "delivery_root": "/tmp/pantheon-worker-worktrees/pantheon/sup-provider-claude2-config-dir-auth-probe-20260811",
+        "wrapper_root": "/home/lupin/pantheon-ci-deploy/command-runtimes/0bd7cf8842a622fb40eca125f490d4073b3a1044",
+        "worker_lease": {
+          "schema_version": 1,
+          "task_id": "SUP-PROVIDER-CLAUDE2-CONFIG-DIR-AUTH-PROBE-20260811",
+          "worker_run_id": "codex-20260811T012349Z-c7fe007f",
+          "queue_event_id": "evt-20260811T012315Z-959e03c5",
+          "pid": 1636947,
+          "pid_start_ticks": 25047765,
+          "process_generation": "worker-process-generation-sha256:ea3a3792cd02433e65f6a4a72e59f9a2083488d5f642c566cbaceb6aca09d45d"
+        }
+      },
+      "commit": "fc6b036713ab005da24fa3415db1f948523ce690",
+      "commit_subject": "SUP-PROVIDER-CLAUDE2-CONFIG-DIR-AUTH-PROBE-20260811: evidence",
+      "commit_author": {
+        "name": "pantheon-dev",
+        "email": "bjoe734@gmail.com"
+      },
+      "commit_metadata": {
+        "Owned layer": "Task-scoped source binding, regression, and review evidence.",
+        "Not changing": "Live config, credentials, provider pauses, account grouping, scheduling, or reviewer policy.",
+        "Composes with": "Antigravity2 exact-head review and the supervisor's post-merge live auth probe.",
+        "LLM-Agent": "Codex",
+        "Task-ID": "SUP-PROVIDER-CLAUDE2-CONFIG-DIR-AUTH-PROBE-20260811",
+        "Reviewer": "Antigravity2",
+        "Verified": "3 focused and 21 supervisor tests passed; 4 suite failures reproduce at base; JSON, py_compile, and diff checks passed"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 1,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/SUP-PROVIDER-CLAUDE2-CONFIG-DIR-AUTH-PROBE-20260811",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "4ac55d166f481131954fa4b21ce55c932f793b23",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "created_at": "2026-08-11T00:18:49Z",
+      "from": "Antigravity2",
+      "message": "Helper-claimed by idle Codex previous owner Antigravity2 becomes reviewer.",
+      "resolved_at": "2026-08-11T00:19:52Z",
+      "status": "done",
+      "task_id": "SUP-PROVIDER-CLAUDE2-CONFIG-DIR-AUTH-PROBE-20260811",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-08-11T01:14:01Z",
+      "from": "Codex",
+      "message": "PR #4736 is ready for independent exact-head review at fc6b036713ab005da24fa3415db1f948523ce690. Bind REVIEW_PR=4736, REVIEW_HEAD_SHA=fc6b036713ab005da24fa3415db1f948523ce690, and REVIEW_FILE=docs/deployment/evidence/supervisor/SUP-PROVIDER-CLAUDE2-CONFIG-DIR-AUTH-PROBE-20260811/evidence.json. Verify the source-only Claude2 config-dir binding, synthetic auth-path tests, Claude profile isolation, and the documented base-reproduced fixture failures; no live config, credential, pause, account, or scheduler mutation is authorized.",
+      "resolved_at": "2026-08-11T01:21:17Z",
+      "status": "done",
+      "task_id": "SUP-PROVIDER-CLAUDE2-CONFIG-DIR-AUTH-PROBE-20260811",
+      "to": "Antigravity2"
+    },
+    {
+      "created_at": "2026-08-11T01:21:17Z",
+      "from": "Antigravity2",
+      "message": "Independent exact-head review passed at fc6b036713ab005da24fa3415db1f948523ce690 for PR #4736. Verified source config sets CLAUDE_CONFIG_DIR=/home/lupin/.claude2 for Claude2 profile isolation; 3 focused provider permission tests passed, 21 supervisor tests passed, py_compile and JSON schema valid, and scope is strictly source-only with evidence manifest bound.",
+      "status": "done",
+      "task_id": "SUP-PROVIDER-CLAUDE2-CONFIG-DIR-AUTH-PROBE-20260811",
+      "to": "Codex",
+      "resolved_at": "2026-08-11T01:32:35Z"
+    }
+  ],
+  "blockers": []
+}

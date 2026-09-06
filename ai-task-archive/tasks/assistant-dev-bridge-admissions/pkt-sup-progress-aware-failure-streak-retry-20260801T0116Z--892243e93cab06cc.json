@@ -1,0 +1,101 @@
+{
+  "actor": {
+    "capabilities": [
+      "dev-task.dispatch",
+      "fleet.dispatch"
+    ],
+    "id": "Human/Ops",
+    "roles": [
+      "operator"
+    ]
+  },
+  "admission_record_path": "ai-task-archive/tasks/assistant-dev-bridge-admissions/pkt-sup-progress-aware-failure-streak-retry-20260801T0116Z--892243e93cab06cc.json",
+  "admitted_at": "2026-08-01T01:16:50Z",
+  "audit_conversation_href": "codex://root/l12-current-gap-auto-sequence-20260731#progress-aware-failure-streak-retry",
+  "constraints": {
+    "allowedRepos": [
+      "pantheon"
+    ],
+    "noDirectShellFromWeb": true,
+    "requiresBranchPrMerge": true
+  },
+  "conversation_id": "codex-root-l12-current-gap-auto-sequence-20260731",
+  "dispatch_records": [
+    {
+      "error": null,
+      "owner": "Antigravity",
+      "reviewer": "Human/Ops",
+      "status": "dispatched",
+      "taskId": "SUP-PROGRESS-AWARE-FAILURE-STREAK-RETRY-20260801"
+    }
+  ],
+  "documents": [
+    {
+      "kind": "INCIDENT_EVIDENCE",
+      "path": ".orchestrator/state.json",
+      "sourceRefs": [
+        "SUP-RUNTIME-PROMOTION-SNAPSHOT-INVARIANTS-20260801:antigravity count=2 generic_exit at 2026-08-01T01:01:42Z",
+        "reviewer reopen exact head f58dc7636f595239311fa876a1c92b46879bf53e at 2026-08-01T01:08:08Z",
+        "no redispatch until bounded Human/Ops live repair at 2026-08-01T01:14Z"
+      ]
+    },
+    {
+      "kind": "SUPERSEDED_OVERLAP",
+      "path": "docs/deployment/evidence/twelve-loop-gap/SUP-L12-STALE-FAILURE-STREAK-REAPER-20260729/evidence.json",
+      "sourceRefs": [
+        "PR #4385 is stale/BEHIND and only handles L12 missing_process; approved SHA 86dd900 differs from open head f5e70e"
+      ]
+    }
+  ],
+  "durable": true,
+  "emitted_at": "2026-08-01T01:16:16.108628Z",
+  "intent": "repair_progress_aware_same_owner_retry_after_nonterminal_worker_exit",
+  "mode": "kernel_repair",
+  "packet_digest": "892243e93cab06cc207196c9a0e113704dfe6bf13d72cdf6b446bbab465a2d00",
+  "packet_id": "pkt-sup-progress-aware-failure-streak-retry-20260801T0116Z",
+  "packet_version": "pantheon.assistant.dev-task.v1",
+  "record_kind": "assistant_dev_bridge_admission",
+  "record_payload_sha256": "fbb5399e3f15ed8fa4c4b2b32a2c623796c4af91f8d6ace56cec4a656f57747c",
+  "schema": "pantheon.assistant-dev-bridge-admission.v1",
+  "source_turn_ids": [
+    "user-auto-sequence-4397-4399-antigravity-dag-hosted-l12-close",
+    "human-ops-temporary-single-streak-live-repair-20260801T0114Z"
+  ],
+  "tasks": [
+    {
+      "task_id": "SUP-PROGRESS-AWARE-FAILURE-STREAK-RETRY-20260801",
+      "task_spec": {
+        "acceptance": [
+          "Reproduce the exact incident: Antigravity task remains in_progress, two generic_exit records reach the chair threshold, no active worker/queue/lease exists, then Human/Ops records a newer exact-head reviewer reopen; current code never redispatches despite live-ready Antigravity.",
+          "Design and implement one bounded progress-aware eligibility/reaper policy in supervisor source; do not add an unconditional counter reset and do not mutate canonical task state.",
+          "Permit a same-owner retry only when authoritative task owner is unchanged, status is eligible, a newer governed reviewer reopen/handoff or verified commit/head progress postdates the recorded failure, and there is no active worker, queue event, or worktree lease for the task.",
+          "Limit automatic recovery to explicitly classified non-terminal generic_exit or missing_process records. Auth, quota, policy, overlap, dirty-worktree, wrong-branch, wrong-task, and provider-unready failures remain fail-closed.",
+          "Consume or bind the recovery to the exact task/provider/progress generation so one reviewer event cannot create an infinite retry loop; a subsequent exit without newer progress must again reach and retain the threshold.",
+          "Emit a durable activity audit containing task, logical provider, prior count/kind/timestamp, qualifying progress evidence, decision, and resulting dispatch event; never log secrets.",
+          "If an operator recovery interface is added, it must be an exact task plus logical-provider command under runtime_state_lock, fail closed on changed/missing records, preserve all other streaks, and audit before/after. It is not a substitute for the automatic bounded policy.",
+          "Add deterministic tests for the incident, newer reviewer reopen, newer commit progress, stale/no progress, changed owner, active worker, pending queue, active lease, provider unavailable, excluded failure kinds, replay of the same recovery generation, and unrelated streak preservation.",
+          "Run focused tests plus the full relevant supervisor regression. No live process signals, no direct runtime-state fixture outside temporary test roots, and no config edits.",
+          "Supersede stale PR #4385 only after the new clean PR exists and explicitly records why its L12-only missing_process behavior and stale approval cannot be merged as the generic fix; do not reuse its branch or approved SHA.",
+          "Use a clean governed task worktree from current origin/dev, branch task/SUP-PROGRESS-AWARE-FAILURE-STREAK-RETRY-20260801, PR target dev, and keep scope to declared artifacts.",
+          "Deliver focused commits with LLM-Agent: Antigravity, exact Task-ID, Reviewer: Human/Ops and Verified trailers; wait for all checks and exact-head Human/Ops review before merge.",
+          "Rollout is source merge followed by a separate governed supervisor runtime canary after the promotion transaction chain is accepted. Rollback is revert of the merge; no config migration is allowed."
+        ],
+        "artifacts": [
+          ".orchestrator/supervisor.py",
+          ".orchestrator/test_supervisor.py",
+          "docs/deployment/evidence/supervisor/SUP-PROGRESS-AWARE-FAILURE-STREAK-RETRY-20260801/"
+        ],
+        "depends_on": [
+          "SUP-RUNTIME-PROMOTION-SNAPSHOT-INVARIANTS-20260801"
+        ],
+        "id": "SUP-PROGRESS-AWARE-FAILURE-STREAK-RETRY-20260801",
+        "owner": "Antigravity",
+        "phase": "Supervisor dispatch reliability / progress-aware retry",
+        "reviewer": "Human/Ops",
+        "summary": "Close the durable dispatch gap exposed by PR #4434: a canonical exact-head reviewer reopen with new work must not remain permanently suppressed by historical same-owner generic exits, while genuine repeated failures, auth/quota faults, and live leases remain fail-closed.",
+        "title": "Make same-owner reviewer retries progress-aware and bounded"
+      },
+      "task_spec_hash": "80fd89d3ed4e7feaec98e403854bbc646fb31a4c5322ca4840b4fd07cb6cca9a"
+    }
+  ]
+}

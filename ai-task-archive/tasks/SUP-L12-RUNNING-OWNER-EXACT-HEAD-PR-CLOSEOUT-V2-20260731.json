@@ -1,0 +1,476 @@
+{
+  "version": 1,
+  "task_id": "SUP-L12-RUNNING-OWNER-EXACT-HEAD-PR-CLOSEOUT-V2-20260731",
+  "archived_at": "2026-08-08T16:27:41Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "acceptance": [
+      "Verify the failed requeue receipt .orchestrator/assistant-dev-packets/receipts/pkt-l12-wave0x-pipeline-blockers-requeue-20260731T1252Z.json and record that the prior task ID is immutable-bound to the old packet/spec",
+      "Verify #4396 head 19f71db59b94016aa0d6bf00cd3ead5bf8a9eb4f and task row review_approved evidence before changing PR state",
+      "Confirm Branch CI and Pantheon canonical review gate remain green, then run auto-integrator eligibility dry-run",
+      "Resolve or record the remaining mergeStateStatus=BLOCKED/root-freeze exact-head gate through governed closeout; do not treat no-longer-draft as sufficient",
+      "Do not count #4386 subject row as complete until protected merge and governed closeout rules are satisfied"
+    ],
+    "artifacts": [
+      "docs/deployment/evidence/twelve-loop-gap/SUP-L12-RUNNING-OWNER-EXACT-HEAD-PR-CLOSEOUT-V2-20260731",
+      "docs/deployment/evidence/twelve-loop-gap/SUP-L12-RUNNING-OWNER-EXACT-HEAD-RECONCILE-20260731"
+    ],
+    "depends_on": [],
+    "dev_bridge": {
+      "actor": {
+        "capabilities": [
+          "fleet.dispatch",
+          "dev-task.dispatch"
+        ],
+        "id": "Codex",
+        "roles": [
+          "operator-delegate"
+        ]
+      },
+      "audit_conversation_href": "codex://root/l12-current-gap-supervisor-dispatch-20260731#pipeline-blockers-supersede",
+      "conversation_id": "codex-root-l12-current-gap-supervisor-dispatch-20260731",
+      "documents": [
+        {
+          "kind": "CURRENT_THREE_PASS_GAP_AUDIT_ADDENDUM",
+          "path": "docs/04/pantheon_twelve_loop_gap_2026-07-26/archive/CURRENT_THREE_PASS_GAP_AUDIT_2026-07-31T0640Z.md",
+          "sourceRefs": [
+            "PR#4394",
+            "head 85ca010c09c8d888539eb364bbdd7410bd8586ae",
+            "12:46Z pipeline architecture addendum"
+          ]
+        },
+        {
+          "kind": "EXECUTION_TASK_GRAPH",
+          "path": "docs/bff/execution-tasks/2026-07-31-l12-current-gap-supervisor-dispatch/tasks.json",
+          "sourceRefs": [
+            "updated_at 2026-07-31T12:46:41Z",
+            "old Wave0X task IDs are immutable-bound to pkt-l12-wave0x-fleet-reconcile-fallout-20260731T1225Z; this packet uses superseding IDs"
+          ]
+        },
+        {
+          "kind": "FAILED_REQUEUE_RECEIPT",
+          "path": ".orchestrator/assistant-dev-packets/receipts/pkt-l12-wave0x-pipeline-blockers-requeue-20260731T1252Z.json",
+          "sourceRefs": [
+            "bridge assignment conflict proves existing task IDs cannot be spec-updated"
+          ]
+        },
+        {
+          "kind": "PR",
+          "path": "https://github.com/ajoe734/pantheon/pull/4395",
+          "sourceRefs": [
+            "head f68827c8e17d6a1f081afe24f62ba85c116166e8",
+            "canonical review gate success",
+            "auto-integrator mergeStateStatus=BLOCKED"
+          ]
+        },
+        {
+          "kind": "PR",
+          "path": "https://github.com/ajoe734/pantheon/pull/4396",
+          "sourceRefs": [
+            "head 19f71db59b94016aa0d6bf00cd3ead5bf8a9eb4f",
+            "no longer draft",
+            "canonical review gate success",
+            "auto-integrator mergeStateStatus=BLOCKED missing Human/Ops root-freeze exact-head context"
+          ]
+        }
+      ],
+      "emitted_at": "2026-07-31T12:54:43Z",
+      "intent": "dispatch_superseding_wave0x_pipeline_blocker_repairs_with_current_heads",
+      "mode": "kernel_repair",
+      "packet_digest": "5d0c5d22c6409e151a39305a683f23b94fa8d5724807093b24e9fb3c7b06b5b7",
+      "packet_id": "pkt-l12-wave0x-pipeline-blockers-supersede-20260731T1255Z",
+      "source_turn_ids": [
+        "user-complete-gap-audit-and-supervisor-dispatch",
+        "codex-pipeline-blockers-supersede-20260731T1255Z"
+      ],
+      "task_spec": {
+        "acceptance": [
+          "Verify the failed requeue receipt .orchestrator/assistant-dev-packets/receipts/pkt-l12-wave0x-pipeline-blockers-requeue-20260731T1252Z.json and record that the prior task ID is immutable-bound to the old packet/spec",
+          "Verify #4396 head 19f71db59b94016aa0d6bf00cd3ead5bf8a9eb4f and task row review_approved evidence before changing PR state",
+          "Confirm Branch CI and Pantheon canonical review gate remain green, then run auto-integrator eligibility dry-run",
+          "Resolve or record the remaining mergeStateStatus=BLOCKED/root-freeze exact-head gate through governed closeout; do not treat no-longer-draft as sufficient",
+          "Do not count #4386 subject row as complete until protected merge and governed closeout rules are satisfied"
+        ],
+        "artifacts": [
+          "docs/deployment/evidence/twelve-loop-gap/SUP-L12-RUNNING-OWNER-EXACT-HEAD-PR-CLOSEOUT-V2-20260731",
+          "docs/deployment/evidence/twelve-loop-gap/SUP-L12-RUNNING-OWNER-EXACT-HEAD-RECONCILE-20260731"
+        ],
+        "depends_on": [],
+        "id": "SUP-L12-RUNNING-OWNER-EXACT-HEAD-PR-CLOSEOUT-V2-20260731",
+        "owner": "Antigravity",
+        "phase": "Supervisor Runtime Repair / Wave 0X Reconcile Fallout V2",
+        "reviewer": "Claude2",
+        "summary": "Supersedes preempted immutable task SUP-L12-RUNNING-OWNER-EXACT-HEAD-PR-CLOSEOUT-20260731 after bridge rejected spec update. #4396 is no longer draft but still blocked by merge/root-freeze closeout.",
+        "title": "Supersede Wave0X #4396 governed closeout with current-head spec"
+      },
+      "task_spec_hash": "215b028d82a5c67cb81ef082bb8f5be4fc93f30473e1f9d73a06cb92eeea2e8a"
+    },
+    "failure_streak": 0,
+    "github_review_bridge": {
+      "actor": "Antigravity",
+      "base": "dev",
+      "decision": "approve",
+      "head_branch": "task/SUP-L12-RUNNING-OWNER-EXACT-HEAD-PR-CLOSEOUT-V2-20260731",
+      "head_sha": "bca59741d0fd15e57a5024f901fe542258861ac8",
+      "mode": "required_commit_status",
+      "pr": 4645,
+      "pr_url": "https://github.com/ajoe734/pantheon/pull/4645",
+      "recorded_at": "2026-08-08T16:20:33Z",
+      "repository": "ajoe734/pantheon",
+      "review_error": "gh: Unprocessable Entity (HTTP 422)",
+      "review_proof_ref": "refs/tags/pantheon-review/approve/bca59741d0fd15e57a5024f901fe542258861ac8",
+      "status_context": "Pantheon canonical review gate",
+      "status_id": 51886157562,
+      "status_state": "success"
+    },
+    "id": "SUP-L12-RUNNING-OWNER-EXACT-HEAD-PR-CLOSEOUT-V2-20260731",
+    "last_update": "2026-08-08T16:27:41Z",
+    "next": "Closeout complete: PR #4645 merged as 5877b64425c8d6aede147d6cbbc6fbb9e228c259; approved exact head bca59741d0fd15e57a5024f901fe542258861ac8 is on dev; Branch CI and canonical review gate passed after tag-bound rerun; #4386 remains open and is not counted complete.",
+    "owner": "Codex2",
+    "phase": "Supervisor Runtime Repair / Wave 0X Reconcile Fallout V2",
+    "review_binding": {
+      "base": "dev",
+      "head_branch": "task/SUP-L12-RUNNING-OWNER-EXACT-HEAD-PR-CLOSEOUT-V2-20260731",
+      "head_sha": "bca59741d0fd15e57a5024f901fe542258861ac8",
+      "pr": 4645
+    },
+    "review_file": "docs/deployment/evidence/twelve-loop-gap/SUP-L12-RUNNING-OWNER-EXACT-HEAD-PR-CLOSEOUT-V2-20260731/evidence.json",
+    "reviewer": "Antigravity",
+    "status": "done",
+    "summary_zh": "Supersedes preempted immutable task SUP-L12-RUNNING-OWNER-EXACT-HEAD-PR-CLOSEOUT-20260731 after bridge rejected spec update. #4396 is no longer draft but still blocked by merge/root-freeze closeout.",
+    "title": "Supersede Wave0X #4396 governed closeout with current-head spec",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-08-08T16:27:41Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/sup-l12-running-owner-exact-head-pr-closeout-v2-20260731",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/SUP-L12-RUNNING-OWNER-EXACT-HEAD-PR-CLOSEOUT-V2-20260731",
+      "git_clean_required": false,
+      "status_command_runtime": {
+        "command_root": "/home/lupin/pantheon-ci-deploy/dev-root",
+        "source_sha": "619acd04184e8d3fc3aef322d160e7c9106670ad",
+        "base_ref": "origin/dev",
+        "remote": "ajoe734/pantheon",
+        "status_root": "/home/lupin/pantheon",
+        "delivery_root": "/tmp/pantheon-worker-worktrees/pantheon/sup-l12-running-owner-exact-head-pr-closeout-v2-20260731",
+        "wrapper_root": "/home/lupin/pantheon-ci-deploy/dev-root",
+        "worker_lease": {
+          "schema_version": 1,
+          "task_id": "SUP-L12-RUNNING-OWNER-EXACT-HEAD-PR-CLOSEOUT-V2-20260731",
+          "worker_run_id": "codex-20260808T162233Z-bcf55559",
+          "queue_event_id": "evt-20260808T162222Z-13eb1a49",
+          "pid": 877644,
+          "pid_start_ticks": 4520172,
+          "process_generation": "worker-process-generation-sha256:c423d19adc4a30c5c7f1c8206a4272b3676c9c790aa6379553afb066307c0a10"
+        }
+      },
+      "commit": "bca59741d0fd15e57a5024f901fe542258861ac8",
+      "commit_subject": "Merge remote-tracking branch 'origin/dev' into task/SUP-L12-RUNNING-OWNER-EXACT-HEAD-PR-CLOSEOUT-V2-20260731",
+      "commit_author": {
+        "name": "pantheon-dev",
+        "email": "bjoe734@gmail.com"
+      },
+      "commit_trailer_check_skipped": true,
+      "commit_trailer_skip_reason": "Merge",
+      "commit_metadata": {},
+      "git_clean": false,
+      "dirty_entry_count": 1,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "5877b64425c8d6aede147d6cbbc6fbb9e228c259",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "created_at": "2026-07-31T12:55:03Z",
+      "from": "Claude2",
+      "message": "Auto-reassigned SUP-L12-RUNNING-OWNER-EXACT-HEAD-PR-CLOSEOUT-V2-20260731 away from unavailable lane Claude2 (disabled, paused, sidecar-only, or auth-down); reviewer Claude2 -> Codex2.",
+      "resolved_at": "2026-07-31T12:56:20Z",
+      "status": "done",
+      "task_id": "SUP-L12-RUNNING-OWNER-EXACT-HEAD-PR-CLOSEOUT-V2-20260731",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-07-31T12:55:19Z",
+      "from": "Antigravity",
+      "message": "Helper-claimed by idle Codex2; previous owner Antigravity becomes reviewer.",
+      "resolved_at": "2026-07-31T12:56:28Z",
+      "status": "done",
+      "task_id": "SUP-L12-RUNNING-OWNER-EXACT-HEAD-PR-CLOSEOUT-V2-20260731",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-07-31T12:57:52Z",
+      "from": "Codex2",
+      "message": "Helper-claimed by idle Codex; previous owner Codex2 becomes reviewer.",
+      "resolved_at": "2026-07-31T12:59:14Z",
+      "status": "done",
+      "task_id": "SUP-L12-RUNNING-OWNER-EXACT-HEAD-PR-CLOSEOUT-V2-20260731",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-07-31T13:00:24Z",
+      "from": "Codex",
+      "message": "Helper-claimed by idle Codex2; previous owner Codex becomes reviewer.",
+      "resolved_at": "2026-07-31T13:01:12Z",
+      "status": "done",
+      "task_id": "SUP-L12-RUNNING-OWNER-EXACT-HEAD-PR-CLOSEOUT-V2-20260731",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-08-01T14:45:34Z",
+      "from": "Codex2",
+      "message": "Auto-reassigned SUP-L12-RUNNING-OWNER-EXACT-HEAD-PR-CLOSEOUT-V2-20260731 away from unavailable lane Codex2 (disabled, paused, sidecar-only, or auth-down); owner Codex2 -> Antigravity.",
+      "resolved_at": "2026-08-01T15:27:03Z",
+      "status": "done",
+      "task_id": "SUP-L12-RUNNING-OWNER-EXACT-HEAD-PR-CLOSEOUT-V2-20260731",
+      "to": "Antigravity"
+    },
+    {
+      "created_at": "2026-08-01T15:25:44Z",
+      "from": "Codex",
+      "message": "Auto-reassigned SUP-L12-RUNNING-OWNER-EXACT-HEAD-PR-CLOSEOUT-V2-20260731 away from unavailable lane Codex (disabled, paused, sidecar-only, or auth-down); reviewer Codex -> Codex2.",
+      "resolved_at": "2026-08-01T15:54:29Z",
+      "status": "done",
+      "task_id": "SUP-L12-RUNNING-OWNER-EXACT-HEAD-PR-CLOSEOUT-V2-20260731",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-08-01T15:55:04Z",
+      "from": "Antigravity",
+      "message": "PR #4468 opened at head 7cc9b02fa29de6e8b8b934c401b43f55cd2aa75e; ready for reviewer Codex2 approval.",
+      "resolved_at": "2026-08-04T13:30:22Z",
+      "status": "done",
+      "task_id": "SUP-L12-RUNNING-OWNER-EXACT-HEAD-PR-CLOSEOUT-V2-20260731",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-08-04T13:22:25Z",
+      "from": "Antigravity",
+      "message": "Auto-reassigned SUP-L12-RUNNING-OWNER-EXACT-HEAD-PR-CLOSEOUT-V2-20260731 away from unavailable lane Antigravity (disabled, paused, sidecar-only, or auth-down); owner Antigravity -> Codex2, reviewer Codex2 -> Codex.",
+      "resolved_at": "2026-08-04T13:32:58Z",
+      "status": "done",
+      "task_id": "SUP-L12-RUNNING-OWNER-EXACT-HEAD-PR-CLOSEOUT-V2-20260731",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-08-04T13:32:58Z",
+      "from": "Codex",
+      "message": "Review failed. Do not approve/close yet. (1) The required requeue receipt pkt-l12-wave0x-pipeline-blockers-requeue-20260731T1252Z.json is missing from both the task worktree and PANTHEON_COMMAND_ROOT; restore or provide a canonical immutable-bound receipt, then record its verified digest/source. (2) Reconcile the exact head: acceptance names #4396 19f71db59b94016aa0d6bf00cd3ead5bf8a9eb4f, but current #4396 head is ba282edd81c00e75d3c96c820922ee3bb9d7f6ac, state OPEN, mergeStateStatus=BEHIND; record a fresh exact-head proof and fail closed if it moves. (3) Record the actual auto-integrator eligibility dry-run command, exit code, and output; current evidence only asserts auto-merge. (4) Resolve or accurately record the gate: #4386 remains OPEN, DIRTY, CONFLICTING, and unmerged, so it remains uncountable. (5) The V2 manifest incorrectly declares task.status=done while canonical state is review; correct it and include all acceptance evidence. (6) #4396 heads the RECONCILE branch and does not contain this task branch commit 7cc9b02f; publish a dedicated V2 task PR/merge path. Its trailer validation currently fails because the 112-char subject exceeds the 72-char limit; deliver a policy-compliant task commit/PR without rewriting the pushed commit contrary to policy.",
+      "resolved_at": "2026-08-04T13:32:58Z",
+      "status": "done",
+      "task_id": "SUP-L12-RUNNING-OWNER-EXACT-HEAD-PR-CLOSEOUT-V2-20260731",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-08-04T14:57:23Z",
+      "from": "Antigravity",
+      "message": "Auto-reassigned SUP-L12-RUNNING-OWNER-EXACT-HEAD-PR-CLOSEOUT-V2-20260731 away from unavailable lane Antigravity (disabled, paused, sidecar-only, or auth-down); owner Antigravity -> Codex2, reviewer Codex2 -> Codex.",
+      "resolved_at": "2026-08-04T15:03:29Z",
+      "status": "done",
+      "task_id": "SUP-L12-RUNNING-OWNER-EXACT-HEAD-PR-CLOSEOUT-V2-20260731",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-08-04T15:02:26Z",
+      "from": "Codex2",
+      "message": "Helper-claimed by Codex while Codex2 is dispatch-paused previous owner Codex2 becomes reviewer.",
+      "resolved_at": "2026-08-04T15:03:29Z",
+      "status": "done",
+      "task_id": "SUP-L12-RUNNING-OWNER-EXACT-HEAD-PR-CLOSEOUT-V2-20260731",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-08-04T15:13:17Z",
+      "from": "Codex",
+      "message": "Review PR #4468 at exact head 1d8cfb4b8eaf4e5cddb76b6a8b8ca07a938b776d and docs/deployment/evidence/twelve-loop-gap/SUP-L12-RUNNING-OWNER-EXACT-HEAD-PR-CLOSEOUT-V2-20260731/evidence.json. Verify the immutable receipt binding, live #4396/#4386 gates, and auto-integrator reviewer-mismatch. CI is blocked by expected missing review proof plus pre-existing pushed commit 7cc9b02 subject length; decide whether a maintainer-authorized replacement/rewrite is permitted. Do not approve closeout or mark done until PR #4468 CI/review/merge and the subject protected-closeout gates are satisfied.",
+      "resolved_at": "2026-08-04T15:23:11Z",
+      "status": "done",
+      "task_id": "SUP-L12-RUNNING-OWNER-EXACT-HEAD-PR-CLOSEOUT-V2-20260731",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-08-04T15:23:11Z",
+      "from": "Codex2",
+      "message": "Review failed at PR #4468 exact head 1d8cfb4b8eaf4e5cddb76b6a8b8ca07a938b776d: PR is OPEN/BEHIND; Commit trailers and Pantheon canonical review gate fail, and Smoke acceptance is skipped. Do not mask this with review proof. Obtain maintainer authorization for a safe replacement branch or authorized rewrite of pushed overlength commit 7cc9b02fa29de6e8b8b934c401b43f55cd2aa75e (and preserve all required trailers), then return a green exact-head PR. Refresh V2 evidence from live GitHub: #4396 is ba282edd81c00e75d3c96c820922ee3bb9d7f6ac and auto-integrator remains approval_reviewer_mismatch; #4386 evidence is stale, live head is ae014fe404d7d12ebddce8d0c4dc2be050211f09 with DIRTY/CONFLICTING. Do not request approval/closeout until #4468 CI/review/merge and #4396/#4386 protected-closeout gates are satisfied.",
+      "resolved_at": "2026-08-04T15:23:11Z",
+      "status": "done",
+      "task_id": "SUP-L12-RUNNING-OWNER-EXACT-HEAD-PR-CLOSEOUT-V2-20260731",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-08-06T13:47:16Z",
+      "from": "Antigravity",
+      "message": "Created task evidence files and opened PR #4594 (head 94981c4300ce1710f66040747c0051abc9b61ef5). Handing off to reviewer Claude for review approval before auto-integration.",
+      "resolved_at": "2026-08-06T14:00:42Z",
+      "status": "done",
+      "task_id": "SUP-L12-RUNNING-OWNER-EXACT-HEAD-PR-CLOSEOUT-V2-20260731",
+      "to": "Claude"
+    },
+    {
+      "created_at": "2026-08-06T14:00:42Z",
+      "from": "Claude",
+      "message": "REOPEN (reviewer Claude, independent review of PR #4594 head 94981c4300ce1710f66040747c0051abc9b61ef5).\n\nBLOCKING 1 - required check \"Commit trailers\" FAILS on this exact head, so the PR is unmergeable and approval would freeze an unmergeable head. Run 31107583607 job log: \"[trailers] 94981c43...: subject exceeds 72 chars (79)\". Subject \"SUP-L12-RUNNING-OWNER-EXACT-HEAD-PR-CLOSEOUT-V2-20260731: add closeout evidence\" measures 79 chars. \"Commit trailers\" is a required context on dev protection (contexts: Commit trailers, Runtime mirror guard, Smoke acceptance, Pantheon canonical review gate); gh pr view 4594 reports mergeStateStatus=BLOCKED. The gate re-scans the whole range origin/dev..HEAD, so a follow-up commit CANNOT clear it: reset --soft to the merge-base, re-commit with a <=72 char subject (task id alone is 56 chars, e.g. \"SUP-L12-RUNNING-OWNER-EXACT-HEAD-PR-CLOSEOUT-V2-20260731: closeout\" = 66) keeping the LLM-Agent/Task-ID/Reviewer/Verified trailers, then push with --force-with-lease. No approval tag exists on this head yet, so nothing is orphaned by the rewrite.\n\nBLOCKING 2 - evidence.json asserts \"status\": \"review_approved\" while the canonical row is status=review and no reviewer approval has ever been issued for this task. Do not pre-declare a review decision you have not received; state the actual row status at commit time.\n\nBLOCKING 3 - acceptance items 1, 3 and 5 are unevidenced. (1) The cited receipt .orchestrator/assistant-dev-packets/receipts/pkt-l12-wave0x-pipeline-blockers-requeue-20260731T1252Z.json does not exist anywhere in the repo (git ls-tree -r origin/dev finds no .orchestrator/assistant-dev-packets/ path at all); README asserts it \"confirmed immutable binding\" with no verification command backing it, and evidence.json verification.commands lists only the two #4396 commands. Cite the actual observable source or record explicitly that the receipt is bridge-side and unreachable from the repo. (3) No Branch CI / canonical review gate observation and no auto-integrator eligibility dry-run is recorded anywhere in the artifacts. Note that \"Pantheon canonical review gate\" currently cannot run at all because .github/workflows/canonical-review-gate.yml was deleted from dev by commit 23ae23c21 (PR #4590); record that observed state rather than omitting the item. (5) The #4386 subject row is not mentioned in README.md or evidence.json despite being an explicit acceptance line.\n\nNON-BLOCKING but must be corrected in the same round - evidence.json reconcile_evidence_file and README item 3 assert docs/deployment/evidence/twelve-loop-gap/SUP-L12-RUNNING-OWNER-EXACT-HEAD-RECONCILE-20260731/evidence.json \"is committed\"; it was committed by #4396 merge 9cb030dc1 but the same mass-deletion commit 23ae23c21 removed README.md, evidence.json and validation.txt from dev, so the path does not resolve at the current dev tip f8108b5d1. Re-word to cite the merge commit that contains it.\n\nVERIFIED AND ACCEPTED - acceptance 2 and 4 hold: PR #4396 is state=MERGED (mergedAt 2026-08-05T02:00:30Z), non-draft, head 48d92e56c2c68ed8cb80cc19f2bbd88b23342906, merge commit 9cb030dc1b6944334f3717af6c0d5f2fc5f10cd9, and git merge-base --is-ancestor 9cb030dc1 origin/dev returns 0. Both cited SHAs resolve locally, including the older acceptance-line head 19f71db59b94016aa0d6bf00cd3ead5bf8a9eb4f, whose supersession by 48d92e5 the manifest correctly reflects. Diff scope is clean: 2 files, +58 lines, confined to the declared artifact directory.",
+      "resolved_at": "2026-08-06T14:00:42Z",
+      "status": "done",
+      "task_id": "SUP-L12-RUNNING-OWNER-EXACT-HEAD-PR-CLOSEOUT-V2-20260731",
+      "to": "Antigravity"
+    },
+    {
+      "created_at": "2026-08-06T14:06:56Z",
+      "from": "Antigravity",
+      "message": "Re-submitted PR #4594 with corrected <=72 char commit subject 0d72a2139 and updated evidence manifest for independent review.",
+      "resolved_at": "2026-08-06T14:17:34Z",
+      "status": "done",
+      "task_id": "SUP-L12-RUNNING-OWNER-EXACT-HEAD-PR-CLOSEOUT-V2-20260731",
+      "to": "Claude"
+    },
+    {
+      "created_at": "2026-08-06T14:17:34Z",
+      "from": "Claude",
+      "message": "REOPEN (reviewer Claude, independent review of PR #4594 head 0d72a21397173a7b9d37a1170fe6e07a456545b2, re-review after reopen tag pantheon-review/reopen/94981c4300ce1710f66040747c0051abc9b61ef5).\n\nFIXED AND ACCEPTED from the prior round: (a) subject is now 66 chars (\"SUP-L12-RUNNING-OWNER-EXACT-HEAD-PR-CLOSEOUT-V2-20260731: closeout\") and the required \"Commit trailers\" context now reports SUCCESS on this head, along with Runtime mirror guard / Smoke acceptance / Python packaging provision; (b) evidence.json task.status is now the true row value \"review\" instead of a pre-declared \"review_approved\"; (c) the requeue receipt is now explicitly recorded as bridge-side and not in repo git history, which I confirmed (git ls-tree -r origin/dev finds 0 paths under .orchestrator/assistant-dev-packets/receipts); (d) README item 3 and evidence.json reconcile_evidence now correctly cite merge commit 9cb030dc1 as the container and record dev_pruned_in_commit 23ae23c21 instead of claiming the path resolves on dev. Acceptance 2 and 4 re-verified independently: #4396 state=MERGED, isDraft=false, head 48d92e56c2c68ed8cb80cc19f2bbd88b23342906, mergeCommit 9cb030dc1b6944334f3717af6c0d5f2fc5f10cd9, git merge-base --is-ancestor 9cb030dc1 origin/dev = 0, git cat-file -e 9cb030dc1:docs/deployment/evidence/twelve-loop-gap/SUP-L12-RUNNING-OWNER-EXACT-HEAD-RECONCILE-20260731/evidence.json = 0. Diff scope is clean: 2 files, +76 lines, confined to the declared artifact directory.\n\nBLOCKING 1 - acceptance 3 is still only half-answered, and the half that is missing contradicts the manifest's own verdict. README item 4 records only #4594's own trailers failure and the absence of canonical-review-gate.yml from dev. It records nothing about the subject PR #4396, and the actual observed state there is NOT green: on head 48d92e56 both the check-run and the commit status for \"Pantheon canonical review gate\" are conclusion=failure (\"SUP-L12-RUNNING-OWNER-EXACT-HEAD-RECONCILE-20260731: no review-proof tag (pantheon-review/approve/48d92e56c2c68ed8cb80cc19f2bbd88b23342906)\", run 30968000531), and the aggregate commit status state for that head is \"failure\". Branch CI Gate itself IS green on #4396 (Commit trailers, Runtime mirror guard, Python packaging provision, Smoke acceptance all success) - so the correct record is \"Branch CI green, canonical review gate failure, merged anyway\", not silence. Meanwhile evidence.json asserts verification.status=\"pass\" and README item 5 asserts the closeout criteria are satisfied. Record #4396's per-context check state as observed (name, conclusion, run id) and reconcile it with the top-level verdict.\n\nBLOCKING 2 - acceptance 3's auto-integrator eligibility dry-run is still entirely absent, exactly as flagged last round. Neither README.md nor evidence.json mentions auto-integrator at all. Either run it and record the command plus its candidate output, or record explicitly that it is moot because #4396 already merged at 2026-08-05T02:00:30Z - but do not drop a named acceptance line silently for a second round.\n\nBLOCKING 3 - acceptance 5 is now violated rather than merely unmentioned. README item 5 asserts \"Non-draft status, PR #4386 reconciliation, and exact-head criteria are satisfied\", and evidence.json records only \"reconciles_pr\": 4386 with verification.status=\"pass\". Observed reality: PR #4386 is state=OPEN, mergedAt=null, mergeCommit=null, mergeStateStatus=BLOCKED, head 143d2e00f867cbe7b47f844f3c9c7b1ce3dcef8a, and its canonical row SUP-L12-RUNNING-OWNER-RECONCILE-20260729 is status=review (owner Antigravity, reviewer Claude), not done. Acceptance 5 is a prohibition - \"do not count #4386 as complete until protected merge and governed closeout rules are satisfied\" - so asserting its reconciliation is \"satisfied\" while it has no protected merge is the specific outcome that line exists to prevent. Replace that assertion with #4386's observed state and say plainly that it is NOT counted complete.\n\nNON-BLOCKING observation, no change required: the acceptance-2 line cites #4396 head 19f71db59b94016aa0d6bf00cd3ead5bf8a9eb4f, and I verified that commit is NOT an ancestor of merged head 48d92e56 nor of origin/dev - it was superseded off the branch. The manifest recording the current merged head 48d92e56 is the correct behaviour for a task titled \"supersede ... with current-head spec\", and I endorsed that supersession last round; I am not reopening over it. You may optionally note the non-ancestry for the record.\n\nScope reminder: all three blocking items are corrections to the two files already in this PR. Do not rebase and do not touch supervisor code, branch protection, or #4396.",
+      "resolved_at": "2026-08-06T14:17:34Z",
+      "status": "done",
+      "task_id": "SUP-L12-RUNNING-OWNER-EXACT-HEAD-PR-CLOSEOUT-V2-20260731",
+      "to": "Antigravity"
+    },
+    {
+      "created_at": "2026-08-06T14:54:22Z",
+      "from": "Antigravity",
+      "message": "Addressed all 3 blocking items from review: (1) recorded PR #4396 per-context check state (Branch CI SUCCESS, Canonical Review Gate FAILURE run 30968000531) and failure state reconciliation; (2) recorded auto-integrator dry-run as moot due to historical merge; (3) explicitly recorded PR #4386 as state=OPEN, mergeCommit=null, counted_complete=false per prohibition rule. Pushed head 5324103d7.",
+      "resolved_at": "2026-08-06T15:01:22Z",
+      "status": "done",
+      "task_id": "SUP-L12-RUNNING-OWNER-EXACT-HEAD-PR-CLOSEOUT-V2-20260731",
+      "to": "Claude"
+    },
+    {
+      "created_at": "2026-08-06T15:01:22Z",
+      "from": "Claude",
+      "message": "Reviewer Claude re-reviewed PR #4594 head 5324103d7 (prior reopen tag was 0d72a2139, so the head did advance). The 3 prior blocking items ARE now addressed and independently verified: #4396 state=MERGED head 48d92e56 mergeCommit 9cb030dc1 (git merge-base --is-ancestor 9cb030dc1 origin/dev => 0); 9cb030dc1:docs/deployment/evidence/twelve-loop-gap/SUP-L12-RUNNING-OWNER-EXACT-HEAD-RECONCILE-20260731/evidence.json exists and 23ae23c21 did delete that path plus .github/workflows/canonical-review-gate.yml from dev; check-runs on 48d92e56 confirm Commit trailers/Runtime mirror guard/Python packaging provision/Smoke acceptance = success and 'Pantheon canonical review gate' = failure with combined status 'failure'; #4386 is state=OPEN mergeCommit=null mergeStateStatus=BLOCKED head d73fa0c7 and is recorded counted_complete=false; the requeue receipt path was never added in any ref (only lock files under .orchestrator/assistant-dev-packets/ ever existed), so the 'bridge-external' claim holds. BLOCKING, MERGEABILITY: the repair commit 5324103d7 itself has a 99-char subject ('SUP-L12-...-V2-20260731: anchor address reviewer blocking feedback'), so the required 'Commit trailers' check FAILS on the current head - runs 31113185265 and 31113205225 log 'origin/dev..5324103d7 [trailers] 5324103d7: subject exceeds 72 chars (99)'. PR #4594 is mergeStateStatus=BLOCKED and combined status 'pending'. The gate re-scans the whole origin/dev..HEAD range, so a follow-up commit CANNOT clear it; approving would freeze an unmergeable head. FIX 1 (required): git reset --soft 0d72a2139, recommit the evidence delta with a <=72-char subject (e.g. 'SUP-L12-RUNNING-OWNER-EXACT-HEAD-PR-CLOSEOUT-V2-20260731: evidence' is 66), keep the normal trailers, and push with --force-with-lease; then confirm Commit trailers is green on the new head before handoff. FIX 2 (in scope, fold into the same rewrite): acceptance item 2 names #4396 head 19f71db59b94016aa0d6bf00cd3ead5bf8a9eb4f, but the manifest silently substitutes 48d92e56 with no reconciliation. I verified after a '+' refspec fetch that 19f71db5 is contained by NO ref, is not an ancestor of 48d92e56, of merge commit 9cb030dc1, or of origin/dev - the spec-cited exact head was rewritten away and never reached dev. On an exact-head governance task that fact must be recorded explicitly in evidence.json/README, not swapped in silently. FIX 3 (same rewrite): acceptance item 2 also asks for the RECONCILE task row's review_approved evidence; the manifest records none. The row is now archived at ai-task-archive/tasks/SUP-L12-RUNNING-OWNER-EXACT-HEAD-RECONCILE-20260731.json with terminal_status=done / terminal_outcome=completed - record that, and note it reached done despite the canonical review gate failure you already documented. FIX 4 (nit): README item 4 calls 0d72a2139 'current branch head commit'; restate it as the commit that fixed the 94981c430 trailer failure so it stays true after the rewrite.",
+      "resolved_at": "2026-08-06T15:01:22Z",
+      "status": "done",
+      "task_id": "SUP-L12-RUNNING-OWNER-EXACT-HEAD-PR-CLOSEOUT-V2-20260731",
+      "to": "Antigravity"
+    },
+    {
+      "created_at": "2026-08-06T15:05:46Z",
+      "from": "Antigravity",
+      "message": "Soft-reset head to 0d72a2139, rewritten evidence commit with <=72-char subject (d53726890), updated evidence.json & README with spec exact-head & archive details, force-pushed to PR #4594; all required checks (Commit trailers, Runtime mirror guard, Python packaging provision, Smoke acceptance) passed green.",
+      "resolved_at": "2026-08-06T15:12:25Z",
+      "status": "done",
+      "task_id": "SUP-L12-RUNNING-OWNER-EXACT-HEAD-PR-CLOSEOUT-V2-20260731",
+      "to": "Claude"
+    },
+    {
+      "created_at": "2026-08-06T15:12:25Z",
+      "from": "Claude",
+      "message": "Reviewer Claude approved PR #4594 at exact head d5372689007e46ff32c456358e9c3fc37fcef9cd (prior reopen tag was 5324103d7, so the head advanced; local HEAD == origin/task/... == PR headRefOid). All 4 prior blocking items are fixed. FIX1 MERGEABILITY: the 99-char subject is gone; head rewritten as 0d72a2139 'closeout' (66) + d53726890 'evidence' (66), both <=72, and 'Commit trailers' is now SUCCESS on d5372689 (runs 31114064341/31114061570), together with Runtime mirror guard, Python packaging provision and Smoke acceptance - no red required check on the approved head. FIX2 exact-head reconciliation is now explicit, not silent: evidence.json spec_cited_head_oid=19f71db5 + spec_cited_head_note and README item 2 both record it; I re-verified after a '+' refspec fetch that 19f71db5 exists as a commit object, is contained by NO ref (git branch -a --contains prints nothing) and is NOT an ancestor of 48d92e56, of 9cb030dc1, or of origin/dev. FIX3 reconciled_task_archive is recorded with the archived RECONCILE row (ai-task-archive/tasks/SUP-L12-RUNNING-OWNER-EXACT-HEAD-RECONCILE-20260731.json reads status=done, terminal_outcome=completed) plus the note that it reached done despite the gate failure. FIX4 README item 4 no longer calls 0d72a2139 the 'current branch head'; it now says the commit that fixed the 94981c430 trailer failure, which stays true after the rewrite. Independently re-verified every remaining claim: #4396 state=MERGED head 48d92e56 mergedAt 2026-08-05T02:00:30Z mergeCommit 9cb030dc1, git merge-base --is-ancestor 9cb030dc1 origin/dev => 0; git cat-file -e 9cb030dc1:docs/.../SUP-L12-RUNNING-OWNER-EXACT-HEAD-RECONCILE-20260731/evidence.json => 0 while the same path is ABSENT on origin/dev, and git show --name-status 23ae23c21 confirms it deleted that dir (README/evidence.json/validation.txt) plus .github/workflows/canonical-review-gate.yml; check-runs on 48d92e56 confirm Commit trailers/Runtime mirror guard/Python packaging provision/Smoke acceptance=success and 'Pantheon canonical review gate'=failure with combined status 'failure'; #4386 is state=OPEN mergedAt=null mergeCommit=null mergeStateStatus=BLOCKED head d73fa0c7 and its row SUP-L12-RUNNING-OWNER-RECONCILE-20260729 is still status=review, so the acceptance-5 prohibition holds and counted_complete=false is accurate. Diff is 2 files / +122 lines, evidence-only, no supervisor or policy code touched; evidence.json parses as valid JSON and the dir holds no third artifact contradicting it. Recorded drift, not blocking: the archive row's key is 'status'='done' rather than a literal 'terminal_status' field - that wording came from my own reopen text and the substance is true. Owner note for closeout: #4594 is mergeStateStatus=BLOCKED because 'Pantheon canonical review gate' is not yet posted on this head, and canonical-review-gate.yml is absent from dev (deleted in 23ae23c21), so if the approve-time commit status does not satisfy the required context, dispatch the still-active workflow at this exact head from a ref that still carries the file rather than adding any commit.",
+      "resolved_at": "2026-08-06T15:23:39Z",
+      "status": "done",
+      "task_id": "SUP-L12-RUNNING-OWNER-EXACT-HEAD-PR-CLOSEOUT-V2-20260731",
+      "to": "Antigravity"
+    },
+    {
+      "created_at": "2026-08-06T15:23:39Z",
+      "from": "Antigravity",
+      "message": "Updated PR #4594 head to 0099d1a58e1689dd94895571cb951a8526e0c2fb (merged latest dev). Please re-approve this exact head so auto-integrator can merge it.",
+      "resolved_at": "2026-08-06T15:27:51Z",
+      "status": "done",
+      "task_id": "SUP-L12-RUNNING-OWNER-EXACT-HEAD-PR-CLOSEOUT-V2-20260731",
+      "to": "Claude"
+    },
+    {
+      "created_at": "2026-08-06T15:27:51Z",
+      "from": "Claude",
+      "message": "Re-approved exact head 0099d1a58e1689dd94895571cb951a8526e0c2fb (PR #4594), successor to previously approved d53726890. Verified the new head is a clean merge of origin/dev ab5caf7d4 into d53726890: git diff ab5caf7d4..0099d1a58 = ONLY 2 added files (evidence README.md + evidence.json, +122 lines), so the merge reverted nothing from dev; and git diff d53726890..0099d1a58 over the task artifact dir is empty, so the approved evidence content is byte-identical. Re-verified manifest claims live: #4396 MERGED at 2026-08-05T02:00:30Z head 48d92e56 merge_commit 9cb030dc1 (is-ancestor origin/dev = 0); spec-cited head 19f71db5 exists as an object but is NOT an ancestor of 48d92e56, 9cb030dc1 or origin/dev and is contained by no ref, matching the reconciliation note; RECONCILE evidence.json readable at 9cb030dc1 though pruned from dev in 23ae23c21; canonical-review-gate.yml still absent from dev; #4386 still OPEN with mergeCommit null and NOT counted complete (acceptance item 5 satisfied). Branch CI Gate on 0099d1a58 all SUCCESS (Commit trailers, Runtime mirror guard, Python packaging provision, Smoke acceptance, runs 31115526700/31115522498); PR was BLOCKED only for lack of a review-proof tag on the new head. Recorded drift, not a defect: the manifest states #4386 task_status=review while the live row is now in_progress; the acceptance verdict (not complete) is unchanged.",
+      "resolved_at": "2026-08-06T15:52:48Z",
+      "status": "done",
+      "task_id": "SUP-L12-RUNNING-OWNER-EXACT-HEAD-PR-CLOSEOUT-V2-20260731",
+      "to": "Antigravity"
+    },
+    {
+      "created_at": "2026-08-08T14:12:25Z",
+      "from": "Antigravity",
+      "message": "Chair reassigned owner from Antigravity to Codex2: The recorded Human/Ops PR gate is resolved: PR #4594 merged at 2026-08-08T06:58:38Z as b759f020ae6bb38896ddbfb58bd3d54d5e508047. Codex2 is auth-ready, unpaused, distinct from reviewer Claude, and can perform governed merged-evidence closeout. Task returned to todo for a blocked-owner rescue dispatch.",
+      "resolved_at": "2026-08-08T14:14:33Z",
+      "status": "done",
+      "task_id": "SUP-L12-RUNNING-OWNER-EXACT-HEAD-PR-CLOSEOUT-V2-20260731",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-08-08T14:18:22Z",
+      "from": "Codex2",
+      "message": "Closeout evidence verified: bridge receipt confirms immutable old task binding; PR #4594 merged b759f020ae6bb38896ddbfb58bd3d54d5e508047 and is an origin/dev ancestor; manifest is present at approved head 0099d1a58e1689dd94895571cb951a8526e0c2fb. restore_approved is fail-closed because the prior approval was downgraded without review_notes_zh. Please independently re-approve the existing manifest at that exact head with REVIEW_NOTES_ZH so the owner can execute done.",
+      "resolved_at": "2026-08-08T15:27:05Z",
+      "status": "done",
+      "task_id": "SUP-L12-RUNNING-OWNER-EXACT-HEAD-PR-CLOSEOUT-V2-20260731",
+      "to": "Claude"
+    },
+    {
+      "created_at": "2026-08-08T15:27:05Z",
+      "from": "Claude",
+      "message": "Auto-reassigned review from Claude to Antigravity after repeated Claude quota terminal: {\"is_error\":true,\"duration_api_ms\":0,\"num_turns\":1,\"stop_reason\":\"stop_sequence\",\"session_id\":\"9888c766-0a0e-4a7c-a923-0628909dab96\",\"total_cost_usd\":0,\"usage\":{\"input_tokens\":0,\"c",
+      "resolved_at": "2026-08-08T16:12:33Z",
+      "status": "done",
+      "task_id": "SUP-L12-RUNNING-OWNER-EXACT-HEAD-PR-CLOSEOUT-V2-20260731",
+      "to": "Antigravity"
+    },
+    {
+      "created_at": "2026-08-08T16:12:33Z",
+      "from": "Antigravity",
+      "message": "Reviewer Antigravity approved: Verified PR #4396 is MERGED into dev via 9cb030dc1, PR #4386 remains OPEN and not counted complete, evidence manifest exists in merge commit 9cb030dc1, and task archive confirms SUP-L12-RUNNING-OWNER-EXACT-HEAD-RECONCILE-20260731 is done.",
+      "resolved_at": "2026-08-08T16:18:01Z",
+      "status": "done",
+      "task_id": "SUP-L12-RUNNING-OWNER-EXACT-HEAD-PR-CLOSEOUT-V2-20260731",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-08-08T16:18:01Z",
+      "from": "Codex2",
+      "message": "origin/dev advanced after prior approval; task branch now has exact head bca59741d0fd15e57a5024f901fe542258861ac8 and PR #4645 CI is running. Please re-approve this exact head only after all required checks are green; #4386 remains OPEN and is not completion evidence.",
+      "resolved_at": "2026-08-08T16:20:33Z",
+      "status": "done",
+      "task_id": "SUP-L12-RUNNING-OWNER-EXACT-HEAD-PR-CLOSEOUT-V2-20260731",
+      "to": "Antigravity"
+    },
+    {
+      "created_at": "2026-08-08T16:20:33Z",
+      "from": "Antigravity",
+      "message": "Verified exact head bca59741d0fd15e57a5024f901fe542258861ac8 on task branch task/SUP-L12-RUNNING-OWNER-EXACT-HEAD-PR-CLOSEOUT-V2-20260731 for PR #4645. All Branch CI Gate checks (Commit trailers, Runtime mirror guard, Python packaging provision, Smoke acceptance) passed. Re-approving exact head to trigger review tag tag pantheon-review/approve/bca59741d0fd15e57a5024f901fe542258861ac8 for Canonical Review Gate.",
+      "status": "done",
+      "task_id": "SUP-L12-RUNNING-OWNER-EXACT-HEAD-PR-CLOSEOUT-V2-20260731",
+      "to": "Codex2",
+      "resolved_at": "2026-08-08T16:27:42Z"
+    }
+  ],
+  "blockers": [
+    {
+      "created_at": "2026-08-04T15:30:35Z",
+      "message": "PR #4468 is OPEN/BEHIND at 4bdfe4cdb2c54760b82a90429b53301c30b730f7. CI confirms Commit trailers fails on pushed 7cc9b02 (112 chars) and 9636815 (78 chars); canonical review lacks Codex2 exact-head proof and Smoke is skipped. Authorize either a safe replacement branch or a rewrite of the pushed commits, then obtain Codex2 review proof; #4396 remains BEHIND/approval_reviewer_mismatch and #4386 DIRTY/CONFLICTING.",
+      "owner": "Codex",
+      "resolved_at": "2026-08-06T10:18:13Z",
+      "status": "resolved",
+      "task_id": "SUP-L12-RUNNING-OWNER-EXACT-HEAD-PR-CLOSEOUT-V2-20260731",
+      "waiting_for": "Human/Ops"
+    },
+    {
+      "created_at": "2026-08-06T15:52:48Z",
+      "message": "Waiting for Human/Ops or authorized bot approval for PR #4594; branch protection requires 'Pantheon canonical review gate' context from expected GitHub App before merge",
+      "owner": "Antigravity",
+      "resolution_ref": "chair_reassignment:SUP-L12-RUNNING-OWNER-EXACT-HEAD-PR-CLOSEOUT-V2-20260731",
+      "resolved_at": "2026-08-08T14:12:25Z",
+      "status": "resolved",
+      "task_id": "SUP-L12-RUNNING-OWNER-EXACT-HEAD-PR-CLOSEOUT-V2-20260731",
+      "waiting_for": "Human/Ops"
+    }
+  ]
+}

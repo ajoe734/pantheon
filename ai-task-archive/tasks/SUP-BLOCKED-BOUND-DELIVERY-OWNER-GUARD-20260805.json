@@ -1,0 +1,122 @@
+{
+  "version": 1,
+  "task_id": "SUP-BLOCKED-BOUND-DELIVERY-OWNER-GUARD-20260805",
+  "archived_at": "2026-08-05T16:29:22Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "acceptance": [
+      "Codex2 獨立審查 PR #4575 的邏輯與測試，確認兩處守門檢查提前到 eligible_statuses 判斷之前、且拿掉 explicit_human_reviewer 限制是正確的，審查通過後核准 merge"
+    ],
+    "artifacts": [
+      ".orchestrator/supervisor.py",
+      ".orchestrator/test_supervisor.py"
+    ],
+    "depends_on": [],
+    "failure_streak": 0,
+    "github_review_bridge": {
+      "actor": "Antigravity",
+      "base": "dev",
+      "decision": "approve",
+      "head_branch": "task/SUP-BLOCKED-BOUND-DELIVERY-OWNER-GUARD-20260805",
+      "head_sha": "f8e68bbc3eaa3de7b9682a64317a9e4dc91ccda0",
+      "mode": "required_commit_status",
+      "pr": 4575,
+      "pr_url": "https://github.com/ajoe734/pantheon/pull/4575",
+      "recorded_at": "2026-08-05T15:57:12Z",
+      "repository": "ajoe734/pantheon",
+      "review_error": "gh: Unprocessable Entity (HTTP 422)",
+      "review_proof_ref": "refs/tags/pantheon-review/approve/f8e68bbc3eaa3de7b9682a64317a9e4dc91ccda0",
+      "status_context": "Pantheon canonical review gate",
+      "status_id": 51703328706,
+      "status_state": "success"
+    },
+    "id": "SUP-BLOCKED-BOUND-DELIVERY-OWNER-GUARD-20260805",
+    "last_update": "2026-08-05T16:29:22Z",
+    "next": "PR #4575 已 merge 進 dev (delivery commit f8e68bbc, merge commit cd98dbf9a)；task worktree ff-merge 到 origin/dev 後確認交付範圍與審查時完全一致 (git diff f8e68bbc..HEAD 對兩個 artifact 為空)。驗證: PYTHONPATH=.orchestrator .venv/bin/pytest .orchestrator/test_supervisor.py -q -> 597 passed, 158 subtests passed。normalize_mainline_task_assignment 與 maybe_reassign_task_after_worker_failure 兩處 bound-delivery-identity 守門已涵蓋 blocked 狀態。review_file 未綁定: 審查前 PR diff 內沒有 evidence manifest，依 task-closeout-finalization 不得在核准後補 evidence commit。worktree 僅剩未追蹤的 worker 端 task-brief 鏡像 (.orchestrator/task-briefs/sup_blocked_bound_delivery_owner_guard_20260805.md)，未併入任何 commit。",
+    "owner": "Claude",
+    "phase": "Supervisor Runtime Repair / Closeout Automation",
+    "priority": "P0",
+    "review_binding": {
+      "base": "dev",
+      "head_branch": "task/SUP-BLOCKED-BOUND-DELIVERY-OWNER-GUARD-20260805",
+      "head_sha": "f8e68bbc3eaa3de7b9682a64317a9e4dc91ccda0",
+      "pr": 4575
+    },
+    "reviewer": "Antigravity",
+    "status": "done",
+    "summary_zh": "修復 normalize_mainline_task_assignment 與 maybe_reassign_task_after_worker_failure 兩處轉派保護只在 review_approved 生效、沒覆蓋 blocked 狀態的漏洞。今天 Codex 額度用盡時，SUP-REVIEW-HANDOFF-OWNER-STABILITY-20260731 等多筆已綁定 PR 的任務因此被自動轉派 owner。PR #4575 已開，CI 全綠，補了 2 個新測試（含修復前會失敗、修復後通過的對照驗證），594->597 supervisor 測試全過。跟已合併的 #4573（收尾自動驗證鏈)互補。",
+    "title": "Close the blocked-status gap in the two bound-delivery-identity reassignment guards (PR #4575)",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-08-05T16:29:22Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/sup-blocked-bound-delivery-owner-guard-20260805",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/SUP-BLOCKED-BOUND-DELIVERY-OWNER-GUARD-20260805",
+      "git_clean_required": false,
+      "status_command_runtime": {
+        "command_root": "/home/lupin/pantheon-ci-deploy/dev-root",
+        "source_sha": "f90e0aae6cb5e86f18b20db9f30bc834f6115745",
+        "base_ref": "origin/dev",
+        "remote": "ajoe734/pantheon",
+        "status_root": "/home/lupin/pantheon",
+        "delivery_root": "/tmp/pantheon-worker-worktrees/pantheon/sup-blocked-bound-delivery-owner-guard-20260805",
+        "wrapper_root": "/home/lupin/pantheon-ci-deploy/dev-root",
+        "worker_lease": {
+          "schema_version": 1,
+          "task_id": "SUP-BLOCKED-BOUND-DELIVERY-OWNER-GUARD-20260805",
+          "worker_run_id": "claude1-2-20260805T162235Z-2d4e2abd",
+          "queue_event_id": "evt-20260805T162230Z-9fc56fa0",
+          "pid": 804743,
+          "pid_start_ticks": 38400715,
+          "process_generation": "worker-process-generation-sha256:be2bc930f878b49a353e55f95589d9641466393e95d9d4fc11f4343f16c773ae"
+        }
+      },
+      "commit": "cd98dbf9a85ab77257f417080b514fc137b8e5c2",
+      "commit_subject": "Merge pull request #4575 from ajoe734/task/SUP-BLOCKED-BOUND-DELIVERY-OWNER-GUARD-20260805",
+      "commit_author": {
+        "name": "ajoe734",
+        "email": "bjoe734@gmail.com"
+      },
+      "commit_trailer_check_skipped": true,
+      "commit_trailer_skip_reason": "Merge",
+      "commit_metadata": {
+        "SUP-BLOCKED-BOUND-DELIVERY-OWNER-GUARD-20260805": "close blocked gap"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 1,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "cd98dbf9a85ab77257f417080b514fc137b8e5c2",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "created_at": "2026-08-05T15:55:37Z",
+      "from": "Codex2",
+      "message": "Auto-reassigned SUP-BLOCKED-BOUND-DELIVERY-OWNER-GUARD-20260805 away from unavailable lane Codex2 (disabled, paused, sidecar-only, or auth-down); reviewer Codex2 -> Antigravity.",
+      "resolved_at": "2026-08-05T15:57:12Z",
+      "status": "done",
+      "task_id": "SUP-BLOCKED-BOUND-DELIVERY-OWNER-GUARD-20260805",
+      "to": "Antigravity"
+    },
+    {
+      "created_at": "2026-08-05T15:57:12Z",
+      "from": "Antigravity",
+      "message": "Review approved: PR #4575 diff correctly closes the blocked-status gap in both supervisor reassignment guards. When bound finalize delivery identity is present, owner reassignment is prevented across all statuses including blocked. Includes two dedicated unit tests and all 597 supervisor tests pass.",
+      "status": "done",
+      "task_id": "SUP-BLOCKED-BOUND-DELIVERY-OWNER-GUARD-20260805",
+      "to": "Claude",
+      "resolved_at": "2026-08-05T16:29:23Z"
+    }
+  ],
+  "blockers": []
+}

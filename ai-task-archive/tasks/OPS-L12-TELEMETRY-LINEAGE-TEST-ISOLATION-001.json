@@ -1,0 +1,97 @@
+{
+  "version": 1,
+  "task_id": "OPS-L12-TELEMETRY-LINEAGE-TEST-ISOLATION-001",
+  "archived_at": "2026-07-26T21:59:49Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "acceptance": [
+      "Exact failing test passes in a clean origin/dev-derived workspace without ambient PANTHEON_RUNTIME_MANAGER_URL;production RuntimeManagerClient still rejects missing URL unless allow_local=True is explicit;full services/telemetry suite has no new failures and records exact pass/skip/warning counts;test proves fixture cleanup and no process-global env leakage;branch commit push PR checks independent review merge archive evidence are complete"
+    ],
+    "artifacts": [
+      "services/telemetry/test_lineage_write_path.py",
+      "docs/deployment/evidence/twelve-loop-gap/OPS-L12-TELEMETRY-LINEAGE-TEST-ISOLATION-001"
+    ],
+    "depends_on": [],
+    "id": "OPS-L12-TELEMETRY-LINEAGE-TEST-ISOLATION-001",
+    "last_update": "2026-07-26T21:59:49Z",
+    "next": "Owner closeout after Codex2 approval. Deliverable is merged to dev: task branch tip 70d657917 is an ancestor of origin/dev via PRs #4213, #4214, #4216; worktree services/telemetry/test_lineage_write_path.py and docs/deployment/evidence/twelve-loop-gap/OPS-L12-TELEMETRY-LINEAGE-TEST-ISOLATION-001 are byte-identical to origin/dev. Owner re-verification on the merged artifact: (1) env -u PANTHEON_RUNTIME_MANAGER_URL -u PANTHEON_RUNTIME_MANAGER_TOKEN_FILE python3 -m unittest services.telemetry.test_lineage_write_path -> Ran 7 tests, OK; (2) PANTHEON_RUNTIME_MANAGER_URL=http://198.51.100.7:8099 PANTHEON_RUNTIME_MANAGER_TOKEN_FILE=/nonexistent/token INCIDENTS_DATA_DIR=/nonexistent/ambient/incidents python3 -m unittest services.telemetry.test_lineage_write_path -> Ran 7 tests, OK, proving the isolated runtime-manager binding overrides hostile ambient configuration; (3) sha256sum -c evidence.sha256 -> README.md OK, evidence.json OK; (4) manifest source digest 12e1159b8ad9b7ebc05b50ce466ba98cdf7ac84d2b2d1a53b6e6e14edb294b4c matches sha256sum of the merged test file; (5) evidence.json validates against schemas/product-evidence.schema.json under Draft 2020-12. No product file changed at closeout and the reviewer-bound review_file is preserved unchanged. No closeout commit was created: the only remaining change was a task-brief bookkeeping sync whose PR #4220 cannot pass the required Commit trailers check because pushed commit 71be12a91 has a 74-char subject and the check re-scans the full PR range, which no follow-up commit can clear and which a background worker may not repair by force-push; PR #4220 is closed with that rationale and the verification record is carried here instead. Chair note: branch task/OPS-L12-TELEMETRY-LINEAGE-TEST-ISOLATION-001 remains on origin at 71be12a91 with no open PR and is safe to delete.",
+    "owner": "Claude",
+    "phase": "Twelve-loop verification hardening",
+    "review_file": "docs/deployment/evidence/twelve-loop-gap/OPS-L12-TELEMETRY-LINEAGE-TEST-ISOLATION-001/evidence.json",
+    "review_notes_zh": [
+      "Codex2 在乾淨 origin/dev worktree 獨立重跑：清空 runtime-manager 與 incidents ambient 設定時 7/7 OK；完整 hostile URL/token/token-file/timeout/store/single-runtime/incidents 設定時 7/7 OK。",
+      "獨立重現基線 193 tests/3 errors/1 skip（189 pass-equivalent）與合併版 197 tests/2 errors/1 skip（194 pass-equivalent）；只剩既有 test_capture/test_feedback_adapter loader errors。合併版觀察到 3 個 deprecation warnings 與 1 個既有 unclosed-event-loop ResourceWarning。",
+      "RuntimeManagerClient production 檔未變且 fail-closed regression guard 通過；fixture environment/tempdir cleanup 測試通過；evidence schema 與 README/evidence.json SHA-256 均通過；PR #4213/#4214/#4216 已合併 dev 且 required checks 全綠。"
+    ],
+    "reviewer": "Codex2",
+    "status": "done",
+    "summary_zh": "修正 telemetry lineage full-stack 測試對 ambient PANTHEON_RUNTIME_MANAGER_URL 的隱性依賴；測試必須自行建立明確、隔離、fail-closed 相容的 runtime-manager fixture，讓乾淨環境可重現且不得降低 production fail-closed 行為。",
+    "title": "Isolate telemetry lineage full-stack test from ambient runtime-manager configuration",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-07-26T21:59:49Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/ops-l12-telemetry-lineage-test-isolation-001",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/OPS-L12-TELEMETRY-LINEAGE-TEST-ISOLATION-001",
+      "git_clean_required": false,
+      "status_command_runtime": {
+        "command_root": "/home/lupin/pantheon-ci-deploy/dev-root-bdbd0a99bf68",
+        "source_sha": "bdbd0a99bf68e6a635d9bd936782c659298b7bb7",
+        "base_ref": "origin/dev",
+        "remote": "ajoe734/pantheon",
+        "status_root": "/home/lupin/pantheon",
+        "delivery_root": "/tmp/pantheon-worker-worktrees/pantheon/ops-l12-telemetry-lineage-test-isolation-001",
+        "wrapper_root": "/home/lupin/pantheon-ci-deploy/dev-root-bdbd0a99bf68"
+      },
+      "commit": "70d657917ece9129d2876bab6ee8311d3789bba7",
+      "commit_subject": "OPS-L12-TELEMETRY-LINEAGE-TEST-ISOLATION-001: rebind evidence reviewer",
+      "commit_author": {
+        "name": "pantheon-dev",
+        "email": "bjoe734@gmail.com"
+      },
+      "commit_metadata": {
+        "Human/Ops reassigned the reviewer to Codex2 at 2026-07-26T20": "24:36Z, after",
+        "history. The two remaining Antigravity references are deliberate": "they",
+        "LLM-Agent": "Claude",
+        "Task-ID": "OPS-L12-TELEMETRY-LINEAGE-TEST-ISOLATION-001",
+        "Reviewer": "Codex2",
+        "Verified": "services.telemetry.test_lineage_write_path 7 tests OK in clean env and 7 tests OK under full hostile ambient env; unittest discover -s services/telemetry 197 tests/2 errors/1 skip (both errors pre-existing test_capture and test_feedback_adapter loader failures); evidence.json validates against schemas/product-evidence.schema.json; sha256sum -c evidence.sha256 OK"
+      },
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "71aea154b8a1ab6e652e02018f47c57f26513de0",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "created_at": "2026-07-26T20:58:00Z",
+      "from": "Claude",
+      "message": "Delivery complete and merged to dev; handing off for independent review. Merged: PR #4213 as 0410a89f0 (test isolation), #4214 as f687d7aeb (evidence re-cut), #4216 as f9b6760d6 (reviewer rebind); all checks green. Bind REVIEW_FILE=docs/deployment/evidence/twelve-loop-gap/OPS-L12-TELEMETRY-LINEAGE-TEST-ISOLATION-001/evidence.json on approve; it validates against schemas/product-evidence.schema.json and sha256sum -c evidence.sha256 passes. The manifest originally named Antigravity because Human/Ops reassigned the reviewer to you at 2026-07-26T20:24:36Z after both cuts; PR #4216 rebinds task.reviewer, the two_person_approval proof, and the AC5 blocking condition to Codex2 and records the reassignment in record_log, so the two remaining Antigravity mentions are deliberate history. Fix is test-owned only: RuntimeManagerClient(allow_local=True), per-test tempdir for binding store, token and INCIDENTS_DATA_DIR, ambient URL/TOKEN_FILE/TIMEOUT_SECONDS cleared, inert unroutable URL bound only for the services.incidents.main import. No production file changed. Owner re-verified on merged dev tip f687d7aeb: 7 tests OK clean and 7 OK under hostile ambient env; services/telemetry discover 197 tests/2 errors/1 skip, both residual errors pre-existing test_capture and test_feedback_adapter loader failures. Environment fact recorded in the manifest: the full-stack case needs the project venv, so a bare /usr/bin/python3 run fails on missing fastapi.",
+      "resolved_at": "2026-07-26T21:21:22Z",
+      "status": "done",
+      "task_id": "OPS-L12-TELEMETRY-LINEAGE-TEST-ISOLATION-001",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-07-26T21:21:22Z",
+      "from": "Codex2",
+      "message": "Codex2 independent review approved: clean and hostile ambient runs each pass 7/7; baseline 193 tests/3 errors/1 skip versus merged 197 tests/2 pre-existing loader errors/1 skip, with 194 pass-equivalent and 3 deprecation plus 1 ResourceWarning observed; production RuntimeManagerClient remains unchanged and fail-closed guard passes; env/tempdir cleanup passes; test SHA matches manifest; schema and checksums pass; PRs #4213, #4214, #4216 are merged to dev with all required checks green.",
+      "status": "done",
+      "task_id": "OPS-L12-TELEMETRY-LINEAGE-TEST-ISOLATION-001",
+      "to": "Claude",
+      "resolved_at": "2026-07-26T21:59:50Z"
+    }
+  ],
+  "blockers": []
+}

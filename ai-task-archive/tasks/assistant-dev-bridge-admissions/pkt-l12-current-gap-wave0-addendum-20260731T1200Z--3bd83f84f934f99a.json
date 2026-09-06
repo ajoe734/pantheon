@@ -1,0 +1,106 @@
+{
+  "actor": {
+    "capabilities": [
+      "fleet.dispatch",
+      "dev-task.dispatch"
+    ],
+    "id": "Codex",
+    "roles": [
+      "operator-delegate"
+    ]
+  },
+  "admission_record_path": "ai-task-archive/tasks/assistant-dev-bridge-admissions/pkt-l12-current-gap-wave0-addendum-20260731T1200Z--3bd83f84f934f99a.json",
+  "admitted_at": "2026-07-31T12:06:36Z",
+  "audit_conversation_href": "codex://root/l12-current-gap-supervisor-dispatch-20260731#wave0-addendum",
+  "constraints": {
+    "allowedRepos": [
+      "pantheon"
+    ],
+    "noDirectShellFromWeb": true,
+    "requiresBranchPrMerge": true
+  },
+  "conversation_id": "codex-root-l12-current-gap-supervisor-dispatch-20260731",
+  "dispatch_records": [
+    {
+      "error": null,
+      "owner": "Antigravity",
+      "reviewer": "Codex2",
+      "status": "dispatched",
+      "taskId": "SUP-L12-CURRENT-GAP-WAVE0-ADDENDUM-20260731"
+    }
+  ],
+  "documents": [
+    {
+      "kind": "CURRENT_THREE_PASS_GAP_AUDIT_ADDENDUM",
+      "path": "docs/04/pantheon_twelve_loop_gap_2026-07-26/archive/CURRENT_THREE_PASS_GAP_AUDIT_2026-07-31T0640Z.md",
+      "sourceRefs": [
+        "PR#4394",
+        "head a8c2691f3af4b06bc0805721b040008bcae2b7b4",
+        "2026-07-31T11:59Z addendum"
+      ]
+    },
+    {
+      "kind": "EXECUTION_TASK_GRAPH_ADDENDUM",
+      "path": "docs/bff/execution-tasks/2026-07-31-l12-current-gap-supervisor-dispatch/tasks.json",
+      "sourceRefs": [
+        "PR#4394",
+        "head a8c2691f3af4b06bc0805721b040008bcae2b7b4",
+        "adds SUP-WORKER-WORKTREE-SOURCE-ROOT-20260730 and SUP-L12-STALE-FAILURE-STREAK-REAPER-20260729 as Wave 0 gates"
+      ]
+    },
+    {
+      "kind": "EVIDENCE_ADDENDUM",
+      "path": "docs/deployment/evidence/twelve-loop-gap/L12-CURRENT-GAP-SUPERVISOR-DISPATCH-20260731/README.md",
+      "sourceRefs": [
+        "PR#4394",
+        "head a8c2691f3af4b06bc0805721b040008bcae2b7b4"
+      ]
+    }
+  ],
+  "durable": true,
+  "emitted_at": "2026-07-31T12:05:59Z",
+  "intent": "dispatch_supervisor_controller_wave0_addendum_for_current_l12_gap_graph",
+  "mode": "kernel_repair",
+  "packet_digest": "3bd83f84f934f99a48a89c296f427408191fb2bef5cc0aa124d161ce68085794",
+  "packet_id": "pkt-l12-current-gap-wave0-addendum-20260731T1200Z",
+  "packet_version": "pantheon.assistant.dev-task.v1",
+  "record_kind": "assistant_dev_bridge_admission",
+  "record_payload_sha256": "99b573cd28f5445882e03ab92d6da9f522bd3248949e11c514f97ff8ffdbad91",
+  "schema": "pantheon.assistant-dev-bridge-admission.v1",
+  "source_turn_ids": [
+    "user-complete-gap-audit-and-supervisor-dispatch",
+    "codex-current-gap-wave0-addendum-pr-4394-a8c2691f3"
+  ],
+  "tasks": [
+    {
+      "task_id": "SUP-L12-CURRENT-GAP-WAVE0-ADDENDUM-20260731",
+      "task_spec": {
+        "acceptance": [
+          "Use supervisor and auto-workers only; do not use Codex conversation subagents as fleets",
+          "Do not edit .orchestrator/config.json",
+          "Review PR #4394 exact head a8c2691f3af4b06bc0805721b040008bcae2b7b4 or supersede it with concrete findings",
+          "Treat Wave 0 as three gates: SUP-ASSISTANT-DEV-BRIDGE-MATERIALIZATION-20260730, SUP-WORKER-WORKTREE-SOURCE-ROOT-20260730, and SUP-L12-STALE-FAILURE-STREAK-REAPER-20260729",
+          "Only after Wave 0 is proven, run SUP-L12-FLEET-RESUME-AFTER-WAVE0-20260731 through real supervisor/auto-workers",
+          "For every downstream task, verify canonical ai-status.json and authoritative task-state checkpoint materialization; receipt/admission alone is not success",
+          "Record active auto-worker run ids/PIDs or exact blocker if no worker starts",
+          "Do not claim the twelve loops are operational until L12-CLOSE-001 is archived done with hosted/verifier evidence"
+        ],
+        "artifacts": [
+          "docs/deployment/evidence/twelve-loop-gap/L12-CURRENT-GAP-SUPERVISOR-DISPATCH-20260731"
+        ],
+        "depends_on": [
+          "SUP-ASSISTANT-DEV-BRIDGE-MATERIALIZATION-20260730",
+          "SUP-WORKER-WORKTREE-SOURCE-ROOT-20260730",
+          "SUP-L12-STALE-FAILURE-STREAK-REAPER-20260729"
+        ],
+        "id": "SUP-L12-CURRENT-GAP-WAVE0-ADDENDUM-20260731",
+        "owner": "Antigravity",
+        "phase": "Twelve Loop Current Gap / Supervisor Dispatch Controller",
+        "reviewer": "Codex2",
+        "summary": "Follow-up addendum for PR #4394: current fleet-resume depends on dev-bridge materialization, worker source-root repair, and stale failure-streak reaper closeout, not dev-bridge alone.",
+        "title": "Supervisor-dispatch Wave 0 addendum for current L12 gap graph"
+      },
+      "task_spec_hash": "a64d33e2a8ac6bebbe53a3ef9f219e9b0e8415b1059defbd83da409c1d15af46"
+    }
+  ]
+}

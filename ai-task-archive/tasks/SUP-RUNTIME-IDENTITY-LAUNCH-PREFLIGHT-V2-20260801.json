@@ -1,0 +1,227 @@
+{
+  "version": 1,
+  "task_id": "SUP-RUNTIME-IDENTITY-LAUNCH-PREFLIGHT-V2-20260801",
+  "archived_at": "2026-08-02T08:58:35Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "acceptance": [
+      "Read and compose the actual sync-dev-root, command-runtime refresh, watchdog intentional-restart, status-command runtime pinning, worktree cleanup, interpreter, cwd, scrubbed environment, and durable stdout/stderr log contracts. Do not merely return descriptive strings.",
+      "Fail closed when the governed interpreter is absent/non-executable, cwd differs, required environment is missing/mismatched, forbidden inherited variables remain, or durable log target is unsafe/unwritable under the injected test filesystem.",
+      "The full snapshot/preflight must use the immutable config identity and revalidate it after root/Git discovery, process discovery, and launch-contract assembly; any later drift makes the result ineligible.",
+      "Implement discover-only as the complete read-only preflight path. It must reject a realistic temporary reviewer worktree matching rejected PR #4433 behavior and accept only a valid persistent command runtime fixture.",
+      "Run the full V2 identity matrix plus snapshot and runtime-health regressions. Tests use fixtures/mocks and prove no process signal, launch, rollback, config write, or live service mutation occurs.",
+      "Create a clean replacement PR from current dev. Only after it exists, mark PR #4437 superseded with links to all three V2 tasks; never merge or reuse #4437.",
+      "After exact-head review and merge, hand off evidence to Human/Ops. Human/Ops will supersede the blocked original wrapper so the already-governed rollback transaction may proceed.",
+      "Rollout is source merge only; no live runtime promotion in this task. Rollback reverts the three V2 merge commits in reverse order.",
+      "Use a clean governed task worktree from current origin/dev on the exact task branch; do not reuse, cherry-pick, or amend rejected PR #4437 or #4438 commits.",
+      "No edits to .orchestrator/config.json, live-supervisor-mainroot-config.json, canonical JSON, provider policy, product controllers, or live services.",
+      "Keep generated task briefs, dashboard bundles, assistant packets, runtime state, and unrelated files out of the implementation commit.",
+      "Commit subjects must be at most 72 characters; use exact LLM-Agent: Antigravity, Task-ID, Reviewer: Human/Ops, and truthful Verified trailers.",
+      "Push the exact task branch, open a PR to dev, wait for all repository checks, and require independent exact-head Human/Ops approval before merge.",
+      "Evidence must remain review_pending until Human/Ops approval; do not self-write review_approved, invented test counts, or unsupported live claims."
+    ],
+    "artifacts": [
+      "scripts/promote_supervisor_runtime.py",
+      "scripts/promote-supervisor-runtime.sh",
+      "scripts/test_promote_supervisor_runtime.py",
+      "docs/deployment/evidence/supervisor/SUP-RUNTIME-IDENTITY-LAUNCH-PREFLIGHT-V2-20260801/"
+    ],
+    "depends_on": [
+      "SUP-RUNTIME-IDENTITY-PROCESS-BINDING-V2-20260801"
+    ],
+    "dev_bridge": {
+      "actor": {
+        "capabilities": [
+          "assistant.kernel.repair",
+          "dev-task.dispatch",
+          "fleet.dispatch"
+        ],
+        "id": "Human/Ops",
+        "roles": [
+          "operator"
+        ]
+      },
+      "audit_conversation_href": "codex://root/l12-current-gap-auto-sequence-20260731#v2-split-after-stale-review",
+      "conversation_id": "codex-root-l12-current-gap-auto-sequence-20260731",
+      "documents": [
+        {
+          "kind": "SUPERSEDED_IDENTITY_MONOLITH",
+          "path": ".orchestrator/assistant-dev-packets/processed/pkt-sup-runtime-promotion-split-chain-20260801T0000Z.json",
+          "sourceRefs": [
+            "PR #4437 rejected heads 07316c73 and 77af55015",
+            "same rejected 77af55015 replayed without code changes",
+            "GitHub review comments 5148931145, 5148948795, 5149092858"
+          ]
+        },
+        {
+          "kind": "SUPERSEDED_RETRY_MONOLITH",
+          "path": ".orchestrator/assistant-dev-packets/processed/pkt-sup-progress-aware-failure-streak-retry-20260801T0116Z.json",
+          "sourceRefs": [
+            "PR #4438 rejected heads 94e3b6f3, d616beaa and 35056b71",
+            "real owner/reviewer probe returned false",
+            "15-minute owner run timed out and same trees replayed",
+            "GitHub review comments 5148942746, 5149044158, 5149078704"
+          ]
+        }
+      ],
+      "emitted_at": "2026-08-01T02:18:00Z",
+      "intent": "split_repeated_stale_review_monoliths_into_governed_v2_chains",
+      "mode": "kernel_repair",
+      "packet_digest": "355ad2d403cceefb30b138a1399e95d7024427643f80c7aae422463aecf1f1e0",
+      "packet_id": "pkt-sup-runtime-identity-retry-v2-split-20260801T0218Z",
+      "source_turn_ids": [
+        "user-auto-sequence-4397-4399-antigravity-dag-hosted-l12-close",
+        "human-ops-pr4437-three-exact-head-rejections",
+        "human-ops-pr4438-three-exact-head-rejections-and-timeout"
+      ],
+      "task_spec": {
+        "acceptance": [
+          "Read and compose the actual sync-dev-root, command-runtime refresh, watchdog intentional-restart, status-command runtime pinning, worktree cleanup, interpreter, cwd, scrubbed environment, and durable stdout/stderr log contracts. Do not merely return descriptive strings.",
+          "Fail closed when the governed interpreter is absent/non-executable, cwd differs, required environment is missing/mismatched, forbidden inherited variables remain, or durable log target is unsafe/unwritable under the injected test filesystem.",
+          "The full snapshot/preflight must use the immutable config identity and revalidate it after root/Git discovery, process discovery, and launch-contract assembly; any later drift makes the result ineligible.",
+          "Implement discover-only as the complete read-only preflight path. It must reject a realistic temporary reviewer worktree matching rejected PR #4433 behavior and accept only a valid persistent command runtime fixture.",
+          "Run the full V2 identity matrix plus snapshot and runtime-health regressions. Tests use fixtures/mocks and prove no process signal, launch, rollback, config write, or live service mutation occurs.",
+          "Create a clean replacement PR from current dev. Only after it exists, mark PR #4437 superseded with links to all three V2 tasks; never merge or reuse #4437.",
+          "After exact-head review and merge, hand off evidence to Human/Ops. Human/Ops will supersede the blocked original wrapper so the already-governed rollback transaction may proceed.",
+          "Rollout is source merge only; no live runtime promotion in this task. Rollback reverts the three V2 merge commits in reverse order.",
+          "Use a clean governed task worktree from current origin/dev on the exact task branch; do not reuse, cherry-pick, or amend rejected PR #4437 or #4438 commits.",
+          "No edits to .orchestrator/config.json, live-supervisor-mainroot-config.json, canonical JSON, provider policy, product controllers, or live services.",
+          "Keep generated task briefs, dashboard bundles, assistant packets, runtime state, and unrelated files out of the implementation commit.",
+          "Commit subjects must be at most 72 characters; use exact LLM-Agent: Antigravity, Task-ID, Reviewer: Human/Ops, and truthful Verified trailers.",
+          "Push the exact task branch, open a PR to dev, wait for all repository checks, and require independent exact-head Human/Ops approval before merge.",
+          "Evidence must remain review_pending until Human/Ops approval; do not self-write review_approved, invented test counts, or unsupported live claims."
+        ],
+        "artifacts": [
+          "scripts/promote_supervisor_runtime.py",
+          "scripts/promote-supervisor-runtime.sh",
+          "scripts/test_promote_supervisor_runtime.py",
+          "docs/deployment/evidence/supervisor/SUP-RUNTIME-IDENTITY-LAUNCH-PREFLIGHT-V2-20260801/"
+        ],
+        "depends_on": [
+          "SUP-RUNTIME-IDENTITY-PROCESS-BINDING-V2-20260801"
+        ],
+        "id": "SUP-RUNTIME-IDENTITY-LAUNCH-PREFLIGHT-V2-20260801",
+        "owner": "Antigravity",
+        "phase": "Supervisor Runtime Identity V2 / 3 Launch Preflight",
+        "reviewer": "Human/Ops",
+        "summary": "Integrate the two merged V2 identity layers with the real governed launch sources and deliver the accepted replacement for blocked wrapper SUP-RUNTIME-PROMOTION-IDENTITY-GUARD-20260801.",
+        "title": "Compose governed launch identity and full discover-only preflight"
+      },
+      "task_spec_hash": "71b4b4bd94ebb0b8744c3ac6ade4985f9fa1464efa34fa9687940a8daaffb079"
+    },
+    "github_review_bridge": {
+      "actor": "Human/Ops",
+      "base": "dev",
+      "decision": "approve",
+      "head_branch": "task/SUP-RUNTIME-IDENTITY-LAUNCH-PREFLIGHT-V2-20260801",
+      "head_sha": "5eb39cdd0782decc3ea7f504740e8cb5758fdbd5",
+      "mode": "required_commit_status",
+      "pr": 4497,
+      "pr_url": "https://github.com/ajoe734/pantheon/pull/4497",
+      "recorded_at": "2026-08-02T08:54:34Z",
+      "repository": "ajoe734/pantheon",
+      "review_error": "gh: Unprocessable Entity (HTTP 422)",
+      "status_context": "Pantheon canonical review gate",
+      "status_id": 51499994049,
+      "status_state": "success"
+    },
+    "id": "SUP-RUNTIME-IDENTITY-LAUNCH-PREFLIGHT-V2-20260801",
+    "last_update": "2026-08-02T08:58:35Z",
+    "next": "Owner closeout complete: PR #4497 exact approved head 5eb39cdd0782decc3ea7f504740e8cb5758fdbd5 merged to dev as 79e02ee059387044eec1d21a283e4848f814f49a; reran 244 tests + 14 subtests, 21 worktree tests, compile/shell/help/JSON/diff/hash and rejected-ancestry verification. Source merge only; no live runtime promotion.",
+    "owner": "Codex",
+    "phase": "Supervisor Runtime Identity V2 / 3 Launch Preflight",
+    "review_binding": {
+      "base": "dev",
+      "head_branch": "task/SUP-RUNTIME-IDENTITY-LAUNCH-PREFLIGHT-V2-20260801",
+      "head_sha": "5eb39cdd0782decc3ea7f504740e8cb5758fdbd5",
+      "pr": 4497
+    },
+    "review_file": "docs/deployment/evidence/supervisor/SUP-RUNTIME-IDENTITY-LAUNCH-PREFLIGHT-V2-20260801/evidence.json",
+    "reviewer": "Human/Ops",
+    "status": "done",
+    "summary_zh": "Integrate the two merged V2 identity layers with the real governed launch sources and deliver the accepted replacement for blocked wrapper SUP-RUNTIME-PROMOTION-IDENTITY-GUARD-20260801.",
+    "title": "Compose governed launch identity and full discover-only preflight",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-08-02T08:58:35Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/sup-runtime-identity-launch-preflight-v2-20260801",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/SUP-RUNTIME-IDENTITY-LAUNCH-PREFLIGHT-V2-20260801",
+      "git_clean_required": false,
+      "status_command_runtime": {
+        "command_root": "/home/lupin/pantheon-ci-deploy/dev-root",
+        "source_sha": "941c15a34208e54e96cdd148ba3a5bfcd339abab",
+        "base_ref": "origin/dev",
+        "remote": "ajoe734/pantheon",
+        "status_root": "/home/lupin/pantheon",
+        "delivery_root": "/tmp/pantheon-worker-worktrees/pantheon/sup-runtime-identity-launch-preflight-v2-20260801",
+        "wrapper_root": "/home/lupin/pantheon-ci-deploy/dev-root"
+      },
+      "commit": "5eb39cdd0782decc3ea7f504740e8cb5758fdbd5",
+      "commit_subject": "SUP-RUNTIME-IDENTITY-LAUNCH-PREFLIGHT-V2-20260801: bind PR",
+      "commit_author": {
+        "name": "pantheon-dev",
+        "email": "bjoe734@gmail.com"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex",
+        "Task-ID": "SUP-RUNTIME-IDENTITY-LAUNCH-PREFLIGHT-V2-20260801",
+        "Reviewer": "Human/Ops",
+        "Verified": "evidence JSON; artifact hashes; git diff --check"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 1,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "79e02ee059387044eec1d21a283e4848f814f49a",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "created_at": "2026-08-01T14:25:02Z",
+      "from": "Human/Ops",
+      "message": "Auto-reassigned SUP-RUNTIME-IDENTITY-LAUNCH-PREFLIGHT-V2-20260801 away from unavailable lane Human/Ops (disabled, paused, sidecar-only, or auth-down); reviewer Human/Ops -> Codex.",
+      "resolved_at": "2026-08-01T15:30:15Z",
+      "status": "done",
+      "task_id": "SUP-RUNTIME-IDENTITY-LAUNCH-PREFLIGHT-V2-20260801",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-08-01T15:30:15Z",
+      "from": "Codex",
+      "message": "Auto-reassigned SUP-RUNTIME-IDENTITY-LAUNCH-PREFLIGHT-V2-20260801 away from unavailable lane Codex (disabled, paused, sidecar-only, or auth-down); reviewer Codex -> Codex2.",
+      "resolved_at": "2026-08-02T08:27:57Z",
+      "status": "done",
+      "task_id": "SUP-RUNTIME-IDENTITY-LAUNCH-PREFLIGHT-V2-20260801",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-08-02T08:53:17Z",
+      "from": "Codex",
+      "message": "Review replacement PR #4497 at exact head 5eb39cdd0782decc3ea7f504740e8cb5758fdbd5. All 8 GitHub checks are green; auto-merge is disabled; rejected PR #4437 is closed as superseded. Evidence: docs/deployment/evidence/supervisor/SUP-RUNTIME-IDENTITY-LAUNCH-PREFLIGHT-V2-20260801/evidence.json (review_pending). Validate source-only launch preflight and, if accepted, approve with REVIEW_PR=4497 and REVIEW_HEAD_SHA=5eb39cdd0782decc3ea7f504740e8cb5758fdbd5. No live promotion is authorized or claimed.",
+      "resolved_at": "2026-08-02T08:54:34Z",
+      "status": "done",
+      "task_id": "SUP-RUNTIME-IDENTITY-LAUNCH-PREFLIGHT-V2-20260801",
+      "to": "Human/Ops"
+    },
+    {
+      "created_at": "2026-08-02T08:54:34Z",
+      "from": "Human/Ops",
+      "message": "Human/Ops exact-head review approved PR #4497 at 5eb39cdd0782decc3ea7f504740e8cb5758fdbd5 after 8 green GitHub checks, independent 244-test/14-subtest runtime suite, 21 worktree tests, compile/shell/JSON/diff/hash verification, and rejected-ancestry review. Source merge only; no live promotion.",
+      "status": "done",
+      "task_id": "SUP-RUNTIME-IDENTITY-LAUNCH-PREFLIGHT-V2-20260801",
+      "to": "Codex",
+      "resolved_at": "2026-08-02T08:58:36Z"
+    }
+  ],
+  "blockers": []
+}

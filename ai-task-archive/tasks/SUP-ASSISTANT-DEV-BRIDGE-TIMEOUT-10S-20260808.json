@@ -1,0 +1,237 @@
+{
+  "version": 1,
+  "task_id": "SUP-ASSISTANT-DEV-BRIDGE-TIMEOUT-10S-20260808",
+  "archived_at": "2026-08-08T10:54:10Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "acceptance": [
+      "Set the default and maximum assistant dev bridge assign/readback timeout to exactly ten seconds without editing orchestrator config.",
+      "Preserve lower per-run timeout overrides and retryable fail-closed behavior.",
+      "Pass the focused reliability and bridge CLI suites.",
+      "Deliver through clean task branch, reviewed PR to dev, checks, and merge."
+    ],
+    "artifacts": [
+      "services/control-plane/bff/assistant/dev_bridge_dispatcher.py",
+      "services/control-plane/bff/assistant/dev_bridge_models.py",
+      "services/control-plane/bff/assistant/tests/test_dev_bridge_reliability.py"
+    ],
+    "depends_on": [],
+    "dev_bridge": {
+      "actor": {
+        "capabilities": [
+          "dev-task.dispatch",
+          "live-repair"
+        ],
+        "id": "Codex",
+        "roles": [
+          "live-repair-agent"
+        ]
+      },
+      "audit_conversation_href": null,
+      "conversation_id": "codex-root-l12-minimum-functional-closure-20260808",
+      "documents": [
+        {
+          "kind": "LIVE_REPAIR_SOURCE",
+          "path": "docs/bff/execution-tasks/2026-08-08-l12-minimum-functional-closure/INDEX.md",
+          "sourceRefs": [
+            "PR-4621",
+            "99a57cd0f"
+          ]
+        }
+      ],
+      "emitted_at": "2026-08-08T10:08:00Z",
+      "intent": "generate_sa_sd_and_dispatch",
+      "mode": "kernel_repair",
+      "packet_digest": "a4d9c7d8168b6410530cbc092893c804c5f04bbb31bcc769f3150c27c2feb9e4",
+      "packet_id": "pkt-sup-assistant-dev-bridge-timeout-10s-20260808",
+      "source_turn_ids": [
+        "user-authorized-agents-live-repair-rule-20260808"
+      ],
+      "task_spec": {
+        "acceptance": [
+          "Set the default and maximum assistant dev bridge assign/readback timeout to exactly ten seconds without editing orchestrator config.",
+          "Preserve lower per-run timeout overrides and retryable fail-closed behavior.",
+          "Pass the focused reliability and bridge CLI suites.",
+          "Deliver through clean task branch, reviewed PR to dev, checks, and merge."
+        ],
+        "artifacts": [
+          "services/control-plane/bff/assistant/dev_bridge_dispatcher.py",
+          "services/control-plane/bff/assistant/dev_bridge_models.py",
+          "services/control-plane/bff/assistant/tests/test_dev_bridge_reliability.py"
+        ],
+        "depends_on": [],
+        "id": "SUP-ASSISTANT-DEV-BRIDGE-TIMEOUT-10S-20260808",
+        "owner": "Codex",
+        "phase": "Live Repair permanent follow-up",
+        "reviewer": "Antigravity",
+        "summary": null,
+        "title": "Raise assistant dev bridge assign and readback timeout to ten seconds"
+      },
+      "task_spec_hash": "78493f4f4c3953f28462fb69418bc364e41033b1c43b668432e2430afc73d7ab"
+    },
+    "failure_streak": 0,
+    "github_review_bridge": {
+      "actor": "Antigravity",
+      "base": "dev",
+      "decision": "approve",
+      "head_branch": "task/SUP-ASSISTANT-DEV-BRIDGE-TIMEOUT-10S-20260808",
+      "head_sha": "37d0a320a3b5113243fc6880af559ad79e794d42",
+      "mode": "required_commit_status",
+      "pr": 4625,
+      "pr_url": "https://github.com/ajoe734/pantheon/pull/4625",
+      "recorded_at": "2026-08-08T10:49:09Z",
+      "repository": "ajoe734/pantheon",
+      "review_error": "gh: Unprocessable Entity (HTTP 422)",
+      "review_proof_ref": "refs/tags/pantheon-review/approve/37d0a320a3b5113243fc6880af559ad79e794d42",
+      "status_context": "Pantheon canonical review gate",
+      "status_id": 51880495750,
+      "status_state": "success"
+    },
+    "id": "SUP-ASSISTANT-DEV-BRIDGE-TIMEOUT-10S-20260808",
+    "last_update": "2026-08-08T10:54:10Z",
+    "next": "Owner closeout complete: PR #4625 merged as 52f545ec2e64515b50e4ca7e901d1251dda937da; approved HEAD 37d0a320a3b5113243fc6880af559ad79e794d42 is on origin/dev; focused reliability plus inbox/dispatch CLI suites passed, 55 tests in 19.70s; all required GitHub checks passed.",
+    "owner": "Codex",
+    "phase": "Live Repair permanent follow-up",
+    "review_binding": {
+      "base": "dev",
+      "head_branch": "task/SUP-ASSISTANT-DEV-BRIDGE-TIMEOUT-10S-20260808",
+      "head_sha": "37d0a320a3b5113243fc6880af559ad79e794d42",
+      "pr": 4625
+    },
+    "review_file": ".orchestrator/task-briefs/sup_assistant_dev_bridge_timeout_10s_20260808.md",
+    "reviewer": "Antigravity",
+    "status": "done",
+    "summary_zh": null,
+    "title": "Raise assistant dev bridge assign and readback timeout to ten seconds",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-08-08T10:54:10Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-bridge-timeout-10s-20260808",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/SUP-ASSISTANT-DEV-BRIDGE-TIMEOUT-10S-20260808",
+      "git_clean_required": false,
+      "status_command_runtime": {
+        "command_root": "/home/lupin/pantheon-ci-deploy/dev-root",
+        "source_sha": "a55721bce2a7bc0a4dc01dd6eba1b48a58b78312",
+        "base_ref": "origin/dev",
+        "remote": "ajoe734/pantheon",
+        "status_root": "/home/lupin/pantheon",
+        "delivery_root": "/tmp/pantheon-bridge-timeout-10s-20260808",
+        "wrapper_root": "/home/lupin/pantheon-ci-deploy/dev-root",
+        "worker_lease": {
+          "schema_version": 1,
+          "task_id": "SUP-ASSISTANT-DEV-BRIDGE-TIMEOUT-10S-20260808",
+          "worker_run_id": "codex-20260808T105014Z-7099aebc",
+          "queue_event_id": "evt-20260808T104957Z-7fff9de0",
+          "pid": 2568199,
+          "pid_start_ticks": 2526237,
+          "process_generation": "worker-process-generation-sha256:d73533ca8d97595373420d5fdfb6ee815a63390d86be8fcafa8e84a6a189c91c"
+        }
+      },
+      "commit": "37d0a320a3b5113243fc6880af559ad79e794d42",
+      "commit_subject": "SUP-ASSISTANT-DEV-BRIDGE-TIMEOUT-10S-20260808: add evidence",
+      "commit_author": {
+        "name": "pantheon-dev",
+        "email": "bjoe734@gmail.com"
+      },
+      "commit_metadata": {
+        "Owned layer": "task-scoped closeout and review evidence.",
+        "Not changing": "the approved timeout implementation or orchestrator config.",
+        "Composes with": "PR #4625 and Antigravity fresh exact-head review.",
+        "LLM-Agent": "Codex",
+        "Task-ID": "SUP-ASSISTANT-DEV-BRIDGE-TIMEOUT-10S-20260808",
+        "Reviewer": "Antigravity",
+        "Verified": "focused assistant dev bridge suites, 55 passed in 21.48s; git diff --check"
+      },
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "52f545ec2e64515b50e4ca7e901d1251dda937da",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "created_at": "2026-08-08T10:21:47Z",
+      "from": "Codex",
+      "message": "Ready for independent review: PR #4625 at 313faeecec69de9f9556c8537858cd5848eef221 raises default/max assign-readback timeout to 10s; lower override remains supported. Verified /tmp/pantheon-bridge-timeout-10s-20260808/.venv-pantheon/bin/python3 -m pytest -q reliability + dispatch/inbox CLI: 55 passed in 25.71s. Canonical review gate is intentionally awaiting your exact-head approval tag.",
+      "resolved_at": "2026-08-08T10:28:26Z",
+      "status": "done",
+      "task_id": "SUP-ASSISTANT-DEV-BRIDGE-TIMEOUT-10S-20260808",
+      "to": "Antigravity"
+    },
+    {
+      "created_at": "2026-08-08T10:28:26Z",
+      "from": "Antigravity",
+      "message": "Reviewed PR #4625 (commit 313faeecec69de9f9556c8537858cd5848eef221). Default and max assign/readback timeouts raised from 2s/5s to 10s/10s in dev_bridge_dispatcher.py, comment updated in dev_bridge_models.py, and unit test test_assign_timeout_defaults_and_caps_at_ten_seconds added in test_dev_bridge_reliability.py. Verified test suite pass: 45 passed in test_dev_bridge_reliability.py, 39 passed in CLI tests. Acceptance criteria met.",
+      "resolved_at": "2026-08-08T10:28:45Z",
+      "status": "done",
+      "task_id": "SUP-ASSISTANT-DEV-BRIDGE-TIMEOUT-10S-20260808",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-08-08T10:28:45Z",
+      "from": "Antigravity",
+      "message": "Re-opening temporarily to bind PR #4625 exact head SHA 313faeecec69de9f9556c8537858cd5848eef221 for strict review gate",
+      "resolved_at": "2026-08-08T10:28:45Z",
+      "status": "done",
+      "task_id": "SUP-ASSISTANT-DEV-BRIDGE-TIMEOUT-10S-20260808",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-08-08T10:29:07Z",
+      "from": "Antigravity",
+      "message": "PR #4625 code and tests verified. Returning to owner Codex to perform handoff so exact-head review binding can be applied.",
+      "resolved_at": "2026-08-08T10:29:07Z",
+      "status": "done",
+      "task_id": "SUP-ASSISTANT-DEV-BRIDGE-TIMEOUT-10S-20260808",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-08-08T10:32:52Z",
+      "from": "Codex",
+      "message": "PR #4625 exact head 313faeecec69de9f9556c8537858cd5848eef221 is pushed and ready for independent exact-head review. Verified locally: test_dev_bridge_reliability.py 45 passed; test_dev_bridge_dispatch_cli.py plus test_dev_bridge_inbox_cli.py 10 passed. Branch CI Commit trailers, Runtime mirror guard, Python packaging provision, and Smoke acceptance are green; canonical review gate is waiting only for the reviewer-bound review-proof tag.",
+      "resolved_at": "2026-08-08T10:36:50Z",
+      "status": "done",
+      "task_id": "SUP-ASSISTANT-DEV-BRIDGE-TIMEOUT-10S-20260808",
+      "to": "Antigravity"
+    },
+    {
+      "created_at": "2026-08-08T10:36:50Z",
+      "from": "Antigravity",
+      "message": "Verified exact HEAD 313faeecec69de9f9556c8537858cd5848eef221 for PR #4625. Verified default & cap raise to 10.0s in dev_bridge_dispatcher.py, comment sync in dev_bridge_models.py, and new test in test_dev_bridge_reliability.py. All 55 tests passed locally.",
+      "resolved_at": "2026-08-08T10:44:40Z",
+      "status": "done",
+      "task_id": "SUP-ASSISTANT-DEV-BRIDGE-TIMEOUT-10S-20260808",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-08-08T10:45:52Z",
+      "from": "Codex",
+      "message": "PR #4625 now includes the supervisor-generated review manifest at .orchestrator/task-briefs/sup_assistant_dev_bridge_timeout_10s_20260808.md; new exact HEAD is 37d0a320a3b5113243fc6880af559ad79e794d42. Focused suites passed 55/55 and diff check is clean. Please independently review this exact head and approve with REVIEW_PR=4625, REVIEW_HEAD_SHA=37d0a320a3b5113243fc6880af559ad79e794d42, and REVIEW_FILE=.orchestrator/task-briefs/sup_assistant_dev_bridge_timeout_10s_20260808.md so the canonical binding, proof, and evidence gate all materialize; owner/reviewer stay unchanged.",
+      "resolved_at": "2026-08-08T10:49:09Z",
+      "status": "done",
+      "task_id": "SUP-ASSISTANT-DEV-BRIDGE-TIMEOUT-10S-20260808",
+      "to": "Antigravity"
+    },
+    {
+      "created_at": "2026-08-08T10:49:09Z",
+      "from": "Antigravity",
+      "message": "Independently verified exact HEAD 37d0a320a3b5113243fc6880af559ad79e794d42 for PR #4625. Checked dev_bridge_dispatcher.py default & max timeout raised to 10.0s, dev_bridge_models.py doc comment update, and test_dev_bridge_reliability.py test_assign_timeout_defaults_and_caps_at_ten_seconds pass. All 55 focused assistant dev bridge tests passed.",
+      "status": "done",
+      "task_id": "SUP-ASSISTANT-DEV-BRIDGE-TIMEOUT-10S-20260808",
+      "to": "Codex",
+      "resolved_at": "2026-08-08T10:54:11Z"
+    }
+  ],
+  "blockers": []
+}

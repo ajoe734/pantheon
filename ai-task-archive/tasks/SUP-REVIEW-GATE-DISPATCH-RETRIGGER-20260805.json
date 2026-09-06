@@ -1,0 +1,160 @@
+{
+  "version": 1,
+  "task_id": "SUP-REVIEW-GATE-DISPATCH-RETRIGGER-20260805",
+  "archived_at": "2026-08-05T15:50:06Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "acceptance": [
+      "Restoring the canonical review gate to dev required_status_checks (already done directly by Human/Ops) was necessary but not sufficient: GitHub pins that required context to the workflow's own GITHUB_TOKEN-authenticated run identity",
+      "not a personal-token status post",
+      "verified empirically.",
+      "Add workflow_dispatch (head_ref/head_sha inputs) to canonical-review-gate.yml so it can be re-triggered outside a pull_request event.",
+      "bridge_review_decision must dispatch that workflow right after the review-proof tag is pushed on approve",
+      "best-effort (a dispatch failure must not turn a real recorded approval into an error).",
+      "Regression tests: dispatch fires exactly once on approve with correct ref/inputs",
+      "does not fire on reopen",
+      "and a failed dispatch does not break the approve result."
+    ],
+    "artifacts": [
+      ".github/workflows/canonical-review-gate.yml",
+      "scripts/git/github_review_bridge.py",
+      "scripts/git/test_github_review_bridge.py"
+    ],
+    "depends_on": [
+      "SUP-REASSIGNMENT-VERIFIER-ARCHIVE-FALLBACK-20260805"
+    ],
+    "failure_streak": 0,
+    "github_review_bridge": {
+      "actor": "Antigravity",
+      "base": "dev",
+      "decision": "approve",
+      "head_branch": "task/SUP-REVIEW-GATE-DISPATCH-RETRIGGER-20260805",
+      "head_sha": "f802a8434324ed68a132fecce2fa2834fcc87885",
+      "mode": "required_commit_status",
+      "pr": 4576,
+      "pr_url": "https://github.com/ajoe734/pantheon/pull/4576",
+      "recorded_at": "2026-08-05T15:46:16Z",
+      "repository": "ajoe734/pantheon",
+      "review_error": "gh: Unprocessable Entity (HTTP 422)",
+      "review_proof_ref": "refs/tags/pantheon-review/approve/f802a8434324ed68a132fecce2fa2834fcc87885",
+      "status_context": "Pantheon canonical review gate",
+      "status_id": 51702506780,
+      "status_state": "success"
+    },
+    "id": "SUP-REVIEW-GATE-DISPATCH-RETRIGGER-20260805",
+    "last_update": "2026-08-05T15:50:06Z",
+    "next": "PR #4576 merged into dev as 51c349d19 at the approved exact head f802a8434. Verified: pytest scripts/git/test_github_review_bridge.py scripts/git/test_canonical_review_gate_workflow.py scripts/git/test_task_review_merge_gate.py -> 127 passed, 2 subtests passed. Reviewer-bound evidence manifest docs/deployment/evidence/supervisor/SUP-REVIEW-GATE-DISPATCH-RETRIGGER-20260805/evidence.json is in the merged diff. Merge executed via auto_integrator.py --execute; its inline done failed only because the delivery commit subject truncated the task id, so the task branch was fast-forwarded to merged origin/dev before closeout.",
+    "owner": "Claude",
+    "phase": "Supervisor Dispatch Reliability",
+    "review_binding": {
+      "base": "dev",
+      "head_branch": "task/SUP-REVIEW-GATE-DISPATCH-RETRIGGER-20260805",
+      "head_sha": "f802a8434324ed68a132fecce2fa2834fcc87885",
+      "pr": 4576
+    },
+    "review_file": "docs/deployment/evidence/supervisor/SUP-REVIEW-GATE-DISPATCH-RETRIGGER-20260805/evidence.json",
+    "reviewer": "Antigravity",
+    "status": "done",
+    "summary_zh": null,
+    "title": "Wake canonical-review-gate CI after the review-proof tag lands on approve",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-08-05T15:50:06Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/claude-1002/-home-lupin-pantheon/2aa7998c-b94d-4f58-9f72-94b05e83b830/scratchpad/worktrees/sup-review-gate-dispatch-retrigger",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/SUP-REVIEW-GATE-DISPATCH-RETRIGGER-20260805",
+      "git_clean_required": false,
+      "status_command_runtime": {
+        "command_root": "/home/lupin/pantheon-ci-deploy/dev-root",
+        "source_sha": "f90e0aae6cb5e86f18b20db9f30bc834f6115745",
+        "base_ref": "origin/dev",
+        "remote": "ajoe734/pantheon",
+        "status_root": "/home/lupin/pantheon",
+        "delivery_root": "/tmp/claude-1002/-home-lupin-pantheon/2aa7998c-b94d-4f58-9f72-94b05e83b830/scratchpad/worktrees/sup-review-gate-dispatch-retrigger",
+        "wrapper_root": "/home/lupin/pantheon-ci-deploy/dev-root",
+        "worker_lease": {
+          "schema_version": 1,
+          "task_id": "SUP-REVIEW-GATE-DISPATCH-RETRIGGER-20260805",
+          "worker_run_id": "claude1-1-20260805T154705Z-f1884f6b",
+          "queue_event_id": "evt-20260805T154701Z-1e712b23",
+          "pid": 629010,
+          "pid_start_ticks": 38187690,
+          "process_generation": "worker-process-generation-sha256:3a850aab6cd9aa89e013a18b1d4e8bca63418462881a0fee65b1dbac72f427dd"
+        }
+      },
+      "commit": "51c349d192f773dcad933b5b7a5e90811bbe69f7",
+      "commit_subject": "Merge pull request #4576 from ajoe734/task/SUP-REVIEW-GATE-DISPATCH-RETRIGGER-20260805",
+      "commit_author": {
+        "name": "ajoe734",
+        "email": "bjoe734@gmail.com"
+      },
+      "commit_trailer_check_skipped": true,
+      "commit_trailer_skip_reason": "Merge",
+      "commit_metadata": {
+        "SUP-REVIEW-GATE-DISPATCH-RETRIGGER": "wake canonical-review-gate CI after tag push"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 1,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "51c349d192f773dcad933b5b7a5e90811bbe69f7",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "created_at": "2026-08-05T14:26:55Z",
+      "from": "Claude2",
+      "message": "Auto-reassigned SUP-REVIEW-GATE-DISPATCH-RETRIGGER-20260805 away from unavailable lane Claude2 (disabled, paused, sidecar-only, or auth-down); reviewer Claude2 -> Antigravity.",
+      "resolved_at": "2026-08-05T15:28:59Z",
+      "status": "done",
+      "task_id": "SUP-REVIEW-GATE-DISPATCH-RETRIGGER-20260805",
+      "to": "Antigravity"
+    },
+    {
+      "created_at": "2026-08-05T15:36:16Z",
+      "from": "Claude",
+      "message": "Ready for exact-head review. PR #4576, head f802a8434324ed68a132fecce2fa2834fcc87885, base dev. All CI green except 'Pantheon canonical review gate', which is correctly FAILURE until your approve pushes the review-proof tag -- that is the gate working, not a defect. Scope: e19b8e86a adds workflow_dispatch (head_ref/head_sha inputs) to .github/workflows/canonical-review-gate.yml and makes bridge_review_decision dispatch it right after the approve tag lands, best-effort; f802a8434 pins the bridge<->workflow dispatch contract in tests and adds the evidence manifest. Verified: pytest scripts/git/test_github_review_bridge.py scripts/git/test_canonical_review_gate_workflow.py scripts/git/test_task_review_merge_gate.py -> 122 passed, 2 subtests. Known limit recorded in the manifest: GitHub only honours workflow_dispatch for a workflow present on the default branch (dev), so the dispatch 404s (silently, by design) until this merges; the first approval it actually wakes is the next one. Approve with AI_NAME=Antigravity REVIEW_PR=4576 REVIEW_HEAD_SHA=f802a8434324ed68a132fecce2fa2834fcc87885 REVIEW_FILE=docs/deployment/evidence/supervisor/SUP-REVIEW-GATE-DISPATCH-RETRIGGER-20260805/evidence.json",
+      "resolved_at": "2026-08-05T15:38:33Z",
+      "status": "done",
+      "task_id": "SUP-REVIEW-GATE-DISPATCH-RETRIGGER-20260805",
+      "to": "Antigravity"
+    },
+    {
+      "created_at": "2026-08-05T15:38:33Z",
+      "from": "Antigravity",
+      "message": "Review approved: exact-head review passed on PR #4576 (head f802a8434324ed68a132fecce2fa2834fcc87885, base dev). Verified workflow_dispatch added to .github/workflows/canonical-review-gate.yml and best-effort dispatch wired in scripts/git/github_review_bridge.py after tag push on approve. All 127 test cases in test_github_review_bridge.py, test_canonical_review_gate_workflow.py, and test_task_review_merge_gate.py passed cleanly.",
+      "resolved_at": "2026-08-05T15:43:40Z",
+      "status": "done",
+      "task_id": "SUP-REVIEW-GATE-DISPATCH-RETRIGGER-20260805",
+      "to": "Claude"
+    },
+    {
+      "created_at": "2026-08-05T15:43:40Z",
+      "from": "Claude",
+      "message": "Closeout blocked on an unbound approval, not on the diff. PR #4576 head f802a8434324ed68a132fecce2fa2834fcc87885 is unchanged and MERGEABLE; all 127 tests still pass (pytest scripts/git/test_github_review_bridge.py scripts/git/test_canonical_review_gate_workflow.py scripts/git/test_task_review_merge_gate.py -q). But the 2026-08-05T15:38:33Z review_approved record carries no PR/head/base binding: task_review_merge_gate.py check returns allow_merge=false, reason=approval_head_binding_missing, and the canonical row also has no review_file. Because the approve ran unbound, the bridge never fired: there is no pantheon-review/approve/f802a843... tag on origin, no review, and no success status on the head, so the required \"Pantheon canonical review gate\" is still the pre-approval FAILURE from run 31020996195 and the PR is BLOCKED. Owner cannot self-approve and must not add a commit (that would move the head and force a fresh review cycle). Please re-approve with the exact-head binding, no new commit needed: AI_NAME=Antigravity REVIEW_PR=4576 REVIEW_HEAD_SHA=f802a8434324ed68a132fecce2fa2834fcc87885 REVIEW_FILE=docs/deployment/evidence/supervisor/SUP-REVIEW-GATE-DISPATCH-RETRIGGER-20260805/evidence.json \"$PANTHEON_COMMAND_ROOT/scripts/ai-status.sh\" approve SUP-REVIEW-GATE-DISPATCH-RETRIGGER-20260805 \"<your evidence>\". That manifest is already committed and in the PR diff, so binding it is not new evidence. After the tag lands, the gate still needs its own github-actions[bot] run (that identity gap is exactly what this task automates, and the automation only takes effect once it is on dev): run \"gh run rerun 31020996195\" on the same head to clear the stale FAILURE without touching the binding. I will then run done.",
+      "resolved_at": "2026-08-05T15:46:16Z",
+      "status": "done",
+      "task_id": "SUP-REVIEW-GATE-DISPATCH-RETRIGGER-20260805",
+      "to": "Antigravity"
+    },
+    {
+      "created_at": "2026-08-05T15:46:16Z",
+      "from": "Antigravity",
+      "message": "Review approved: verified head f802a8434324ed68a132fecce2fa2834fcc87885, diff, and all 127 review gate unit tests green. Approved with exact PR and head binding.",
+      "status": "done",
+      "task_id": "SUP-REVIEW-GATE-DISPATCH-RETRIGGER-20260805",
+      "to": "Claude",
+      "resolved_at": "2026-08-05T15:50:07Z"
+    }
+  ],
+  "blockers": []
+}

@@ -1,0 +1,103 @@
+{
+  "version": 1,
+  "task_id": "L12-VERIFY-RUNTIME-001",
+  "archived_at": "2026-08-13T02:00:47Z",
+  "terminal_status": "done",
+  "terminal_outcome": "superseded",
+  "task": {
+    "acceptance": [
+      "Immutable approved artifact reaches one RuntimeBinding and one paper worker",
+      "Duplicate and crash-after-side-effect paths create no duplicate binding or order",
+      "Kill one pause retire and full restart converge correctly",
+      "Missing or mismatched signal scope is rejected and durable-DLQ'd",
+      "Order fill position heartbeat and BFF stage truth share authoritative correlation"
+    ],
+    "actual_state_sources": [
+      "deployment saga and RuntimeBinding",
+      "paper worker order fill position and heartbeat"
+    ],
+    "artifact_conflict_guard": {
+      "allowed_overlap_task_ids": [],
+      "artifact_scope": [
+        {
+          "path": "docs/deployment/evidence/twelve-loop-gap/L12-VERIFY-RUNTIME-001",
+          "repo": "pantheon"
+        },
+        {
+          "path": "scripts/verify_twelve_loop_runtime.py",
+          "repo": "pantheon"
+        }
+      ],
+      "catalog_sha256": "8c7610b0e6bbba31c36cb0ecd1ddce4bf843fc6de89dcaecc4a5e3154af8933d",
+      "program_id": "pantheon-twelve-loop-gap-2026-07-26",
+      "schema_version": 1,
+      "task_id": "L12-VERIFY-RUNTIME-001"
+    },
+    "artifacts": [
+      "scripts/verify_twelve_loop_runtime.py",
+      "docs/deployment/evidence/twelve-loop-gap/L12-VERIFY-RUNTIME-001"
+    ],
+    "auto_created_by": "dispatch_twelve_loop_gap_2026_07_26",
+    "block_reason": {
+      "kind": "legacy_task_quarantine",
+      "required_action": "operator_reopen_after_diagnosis"
+    },
+    "catalog_task_contract_sha256": "f4aa224b183319f6e0bdf6661cf4870bb267fd56a2936f4091896cde3f2870dd",
+    "current_maturity": "reconciled",
+    "depends_on": [
+      "L12-CAP-001",
+      "L12-MANIFEST-001",
+      "L12-TRUTH-001"
+    ],
+    "desired_state_sources": [
+      "immutable approved deployment command",
+      "active governed-paper RuntimeBinding"
+    ],
+    "dispatch_rules": [
+      "Paper only",
+      "Kill switch has priority",
+      "Archive exact before receipt and terminal state"
+    ],
+    "evidence_root": "docs/deployment/evidence/twelve-loop-gap/L12-VERIFY-RUNTIME-001",
+    "fleet_lane": "verify-runtime",
+    "generation": 1,
+    "id": "L12-VERIFY-RUNTIME-001",
+    "last_update": "2026-08-13T02:00:47Z",
+    "loop_ids": [
+      "promotion_deployment",
+      "capital_pool_execution"
+    ],
+    "merge_target": "dev",
+    "mutates_canonical": true,
+    "next": "Retired during the Supervisor Authority V2 board reset: this legacy control, routing, rollout, or verification row is no longer an execution authority; merged source and archive evidence remain preserved.",
+    "non_goals": [
+      "No panel-only closure",
+      "No seed fixture as live proof",
+      "No approval gate bypass",
+      "No live-capital activation"
+    ],
+    "owner": "Claude",
+    "phase": "Twelve Loop Remediation / Product Drills",
+    "product_level_required": true,
+    "program_id": "pantheon-twelve-loop-gap-2026-07-26",
+    "proof_required": [
+      "EP4 governed-paper drill",
+      "kill pause retire and full restart",
+      "signal isolation and lossless retry",
+      "formal reviewed evidence manifest"
+    ],
+    "requires_human_ops_signoff": false,
+    "resume_status": "in_progress",
+    "reviewer": "Antigravity",
+    "status": "done",
+    "summary_zh": "驗證 immutable approval→DeploymentPlan→RuntimeBinding→exactly-one worker→signal/order/fill/heartbeat，含 kill、pause、retire、full restart、scope isolation與 compensation。",
+    "target_maturity": "product-level",
+    "target_repo": "pantheon",
+    "task_doc": "docs/bff/execution-tasks/2026-07-26-twelve-loop-gap/L12-VERIFY-RUNTIME-001.md",
+    "title": "Verify deployment and governed paper-capital runtime proof",
+    "wave": 4,
+    "terminal_outcome": "superseded"
+  },
+  "handoffs": [],
+  "blockers": []
+}

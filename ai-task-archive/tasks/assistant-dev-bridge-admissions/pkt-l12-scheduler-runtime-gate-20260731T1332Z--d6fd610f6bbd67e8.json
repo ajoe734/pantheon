@@ -1,0 +1,115 @@
+{
+  "actor": {
+    "capabilities": [
+      "fleet.dispatch",
+      "dev-task.dispatch"
+    ],
+    "id": "Codex",
+    "roles": [
+      "operator-delegate"
+    ]
+  },
+  "admission_record_path": "ai-task-archive/tasks/assistant-dev-bridge-admissions/pkt-l12-scheduler-runtime-gate-20260731T1332Z--d6fd610f6bbd67e8.json",
+  "admitted_at": "2026-07-31T13:32:08Z",
+  "audit_conversation_href": "codex://root/l12-current-gap-supervisor-dispatch-20260731#scheduler-runtime-gate",
+  "constraints": {
+    "allowedRepos": [
+      "pantheon"
+    ],
+    "noDirectShellFromWeb": true,
+    "requiresBranchPrMerge": true
+  },
+  "conversation_id": "codex-root-l12-current-gap-supervisor-dispatch-20260731",
+  "dispatch_records": [
+    {
+      "error": null,
+      "owner": "Antigravity",
+      "reviewer": "Claude2",
+      "status": "dispatched",
+      "taskId": "SUP-PREEMPTION-DISPATCH-ELIGIBILITY-20260731"
+    }
+  ],
+  "documents": [
+    {
+      "kind": "CURRENT_THREE_PASS_GAP_AUDIT_ADDENDUM",
+      "path": "docs/04/pantheon_twelve_loop_gap_2026-07-26/archive/CURRENT_THREE_PASS_GAP_AUDIT_2026-07-31T0640Z.md",
+      "sourceRefs": [
+        "PR#4394",
+        "head 3154ef5205d3e527018a459f43cff88385b93bdf",
+        "13:25Z scheduler root-cause addendum"
+      ]
+    },
+    {
+      "kind": "EXECUTION_TASK_GRAPH",
+      "path": "docs/bff/execution-tasks/2026-07-31-l12-current-gap-supervisor-dispatch/tasks.json",
+      "sourceRefs": [
+        "updated_at 2026-07-31T13:25:39Z",
+        "Wave 0 runtime prerequisites #4397 and #4399"
+      ]
+    },
+    {
+      "kind": "PR",
+      "path": "https://github.com/ajoe734/pantheon/pull/4399",
+      "sourceRefs": [
+        "exact head a924a6f3c0c54982d7efe145750cc99c57bc7f2e",
+        "486 tests pass",
+        "Branch CI success",
+        "ready but mergeStateStatus=BLOCKED"
+      ]
+    },
+    {
+      "kind": "PR_DEPENDENCY",
+      "path": "https://github.com/ajoe734/pantheon/pull/4397",
+      "sourceRefs": [
+        "exact head fd67904e2c1adb7256d4d9d9dc618105346be424",
+        "Branch CI and canonical review success",
+        "open/BLOCKED and not live-promoted"
+      ]
+    }
+  ],
+  "durable": true,
+  "emitted_at": "2026-07-31T13:32:00Z",
+  "intent": "supervisor_review_merge_live_promote_scheduler_runtime_gate",
+  "mode": "kernel_repair",
+  "packet_digest": "d6fd610f6bbd67e8a088fc5022028e9804ddbf90a9e52e5e47a6e3737d4aa29c",
+  "packet_id": "pkt-l12-scheduler-runtime-gate-20260731T1332Z",
+  "packet_version": "pantheon.assistant.dev-task.v1",
+  "record_kind": "assistant_dev_bridge_admission",
+  "record_payload_sha256": "1dbae9925c373b9ee22cc507724e85fda07cc5ce73c6517a85e901e17a46f715",
+  "schema": "pantheon.assistant-dev-bridge-admission.v1",
+  "source_turn_ids": [
+    "user-complete-gap-audit-and-supervisor-dispatch",
+    "codex-scheduler-runtime-gate-20260731T1332Z"
+  ],
+  "tasks": [
+    {
+      "task_id": "SUP-PREEMPTION-DISPATCH-ELIGIBILITY-20260731",
+      "task_spec": {
+        "acceptance": [
+          "Treat PR #4399 head a924a6f3c0c54982d7efe145750cc99c57bc7f2e as the implementation under review; do not create a parallel rewrite unless exact-head review finds a concrete defect",
+          "Verify the 486-test result and actual 13:01Z replay evidence, then complete canonical exact-head review",
+          "Require PR #4397 legacy seen-event normalization to be merged/live-promoted before fleet canary acceptance",
+          "Move #4399 through protected merge only when authorized; do not impersonate Human/Ops or root-freeze approval",
+          "After merge, promote the exact merged code to the live command root and verify supervisor/watchdog restart or reload from authoritative state",
+          "Run a real auto-worker canary and record task ID, lane, run ID, PID, start/end timestamps, scan logs, and survival beyond the five-minute grace unless it reaches a legitimate terminal state",
+          "Prove provider-ineligible, cooldown-blocked, and failure-loop-blocked tasks cannot priority-preempt the canary",
+          "Do not edit .orchestrator/config.json and do not release Wave D/E before governed canary closeout"
+        ],
+        "artifacts": [
+          "PR#4399",
+          "docs/deployment/evidence/twelve-loop-gap/SUP-PREEMPTION-DISPATCH-ELIGIBILITY-20260731"
+        ],
+        "depends_on": [
+          "SUP-SEEN-EVENT-KEYS-NONNULL-20260731"
+        ],
+        "id": "SUP-PREEMPTION-DISPATCH-ELIGIBILITY-20260731",
+        "owner": "Antigravity",
+        "phase": "Supervisor Runtime Repair / Wave 0 Scheduler Gate",
+        "reviewer": "Claude2",
+        "summary": "Review and close out the existing #4399 architecture fix. It makes preemption and dispatch share the same eligibility ladder and protects new workers for five minutes; live acceptance waits for #4397 and a real canary.",
+        "title": "Govern exact-head scheduler eligibility fix through live canary"
+      },
+      "task_spec_hash": "6c755adf7f4eb60ebb4bb019541afbfe8205caf6c073414eebcb74315dd4d4aa"
+    }
+  ]
+}

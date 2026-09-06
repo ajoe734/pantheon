@@ -1,0 +1,198 @@
+{
+  "version": 1,
+  "task_id": "OPS-SUPERVISOR-ARCHITECTURE-LIVE-ROLLOUT-20260811",
+  "archived_at": "2026-08-13T02:01:46Z",
+  "terminal_status": "done",
+  "terminal_outcome": "superseded",
+  "task": {
+    "acceptance": [
+      "Wait until both dependency tasks are canonical done and both exact merge commits are ancestors of current origin/dev with all required checks and independent reviews complete.",
+      "Record a read-only preflight inventory of the live supervisor generation, command root, source and config SHA, authoritative shadow lag, provider authentication and quota probes, configured per-agent and account-group capacity, active workers, queue receipts, leases, and nonterminal task counts.",
+      "Use only scripts/promote_supervisor_runtime.py and the existing transactional gate-before-switch and rollback path to promote an exact origin/dev source containing both merges. Do not manually signal the process, edit live config, force a rescue ref, or modify canonical task state.",
+      "Verify the new live PID and process generation, exact command root and source SHA, unchanged intended config SHA, at least three fresh supervisor loops, singleton ownership, watchdog health, authoritative shadow caught up, and provider probes at or better than the recorded preflight baseline.",
+      "For the current dependency-free canonical root tasks, capture explain-dispatch output and live behavior. The old bridge-admission and chair gates must be absent. Every task with real eligible owner capacity must obtain a durable queue receipt or worker lease within two complete supervisor cycles; otherwise record the exact first true capacity, dependency, Human/Ops, reviewer-independence, or provider-health gate.",
+      "Verify that no ownerless or lease-less task remains in_progress, no task receives duplicate queue or worker leases, no signed packet is partially materialized, provider and account-group limits are respected, and slow GitHub synchronization does not prevent a local dispatch cycle.",
+      "If promotion or canary validation fails, use the same transaction to roll back to the recorded prior runtime and prove health recovery. Do not patch the live command root or compensate by editing tasks, queues, admissions, capacity, or credentials.",
+      "Record exact commands, timestamps, before and after runtime manifests, source and config hashes, loop receipts, canonical task snapshots, worker and queue lease evidence, canary outcomes, and rollback procedure in the declared evidence directory.",
+      "Deliver only the evidence directory from a clean evidence branch to dev, obtain fresh independent Codex exact-head approval with REVIEW_FILE binding, wait for all required checks, merge through the protected flow, and mark the task done only after the evidence PR merge is canonical.",
+      "After the evidence merge, confirm the live runtime still reports the promoted source and that at least one post-merge loop remains healthy."
+    ],
+    "artifacts": [
+      "docs/deployment/evidence/supervisor/OPS-SUPERVISOR-ARCHITECTURE-LIVE-ROLLOUT-20260811/"
+    ],
+    "depends_on": [
+      "SUP-CANONICAL-PACKET-ATOMIC-MATERIALIZATION-20260811",
+      "SUP-WORK-CONSERVING-CANONICAL-ROUTING-20260811"
+    ],
+    "dev_bridge": {
+      "actor": {
+        "capabilities": [
+          "integration",
+          "status-system",
+          "supervisor-runtime",
+          "fleet-dispatch",
+          "deployment"
+        ],
+        "id": "Human/Ops",
+        "roles": [
+          "operator",
+          "integration-coordinator"
+        ]
+      },
+      "audit_conversation_href": null,
+      "conversation_id": "codex-root-supervisor-work-conserving-architecture-20260811",
+      "documents": [
+        {
+          "kind": "GOVERNANCE",
+          "path": "AGENTS.md",
+          "sourceRefs": [
+            "Integration And Coordination Lane",
+            "Single Dispatch Authority",
+            "Completion Definition For Repo Changes",
+            "Live Repair Rule"
+          ]
+        },
+        {
+          "kind": "CURRENT_BRIDGE_RUNBOOK",
+          "path": "docs/operations/management-ai-openclaw-dev-bridge.md",
+          "sourceRefs": [
+            "assistant dev bridge inbox",
+            "supervisor receipt and canonical materialization"
+          ]
+        },
+        {
+          "kind": "INCIDENT_EVIDENCE",
+          "path": ".orchestrator/assistant-dev-packets/receipts/pkt-two-blocker-dev-closeout-20260809T060036Z.json",
+          "sourceRefs": [
+            "partial per-task materialization",
+            "assign timeout retry loop"
+          ]
+        },
+        {
+          "kind": "CURRENT_SCHEDULER",
+          "path": ".orchestrator/supervisor.py",
+          "sourceRefs": [
+            "assistant_dev_bridge_task_is_admitted",
+            "dispatch_ready_tasks",
+            "canonical routing and lease reconciliation"
+          ]
+        },
+        {
+          "kind": "ROLLOUT_RUNBOOK",
+          "path": "scripts/promote_supervisor_runtime.py",
+          "sourceRefs": [
+            "gate before switch",
+            "transactional rollback"
+          ]
+        }
+      ],
+      "emitted_at": "2026-08-11T12:06:12Z",
+      "intent": "governed_supervisor_architecture_cutover",
+      "mode": "supervisor_architecture_governed_delivery",
+      "packet_digest": "4a3def49a2f3bc0292adf89d45884871ed57477244fc8608ef8c4b83d00ef878",
+      "packet_id": "pkt-supervisor-work-conserving-canonical-cutover-20260811T120612Z",
+      "source_turn_ids": [
+        "operator-requested-complete-merge-rollout-20260811",
+        "positive-objective-architecture-review-20260811",
+        "active-task-pr-runtime-dedup-20260811"
+      ],
+      "task_spec": {
+        "acceptance": [
+          "Wait until both dependency tasks are canonical done and both exact merge commits are ancestors of current origin/dev with all required checks and independent reviews complete.",
+          "Record a read-only preflight inventory of the live supervisor generation, command root, source and config SHA, authoritative shadow lag, provider authentication and quota probes, configured per-agent and account-group capacity, active workers, queue receipts, leases, and nonterminal task counts.",
+          "Use only scripts/promote_supervisor_runtime.py and the existing transactional gate-before-switch and rollback path to promote an exact origin/dev source containing both merges. Do not manually signal the process, edit live config, force a rescue ref, or modify canonical task state.",
+          "Verify the new live PID and process generation, exact command root and source SHA, unchanged intended config SHA, at least three fresh supervisor loops, singleton ownership, watchdog health, authoritative shadow caught up, and provider probes at or better than the recorded preflight baseline.",
+          "For the current dependency-free canonical root tasks, capture explain-dispatch output and live behavior. The old bridge-admission and chair gates must be absent. Every task with real eligible owner capacity must obtain a durable queue receipt or worker lease within two complete supervisor cycles; otherwise record the exact first true capacity, dependency, Human/Ops, reviewer-independence, or provider-health gate.",
+          "Verify that no ownerless or lease-less task remains in_progress, no task receives duplicate queue or worker leases, no signed packet is partially materialized, provider and account-group limits are respected, and slow GitHub synchronization does not prevent a local dispatch cycle.",
+          "If promotion or canary validation fails, use the same transaction to roll back to the recorded prior runtime and prove health recovery. Do not patch the live command root or compensate by editing tasks, queues, admissions, capacity, or credentials.",
+          "Record exact commands, timestamps, before and after runtime manifests, source and config hashes, loop receipts, canonical task snapshots, worker and queue lease evidence, canary outcomes, and rollback procedure in the declared evidence directory.",
+          "Deliver only the evidence directory from a clean evidence branch to dev, obtain fresh independent Codex exact-head approval with REVIEW_FILE binding, wait for all required checks, merge through the protected flow, and mark the task done only after the evidence PR merge is canonical.",
+          "After the evidence merge, confirm the live runtime still reports the promoted source and that at least one post-merge loop remains healthy."
+        ],
+        "artifacts": [
+          "docs/deployment/evidence/supervisor/OPS-SUPERVISOR-ARCHITECTURE-LIVE-ROLLOUT-20260811/"
+        ],
+        "depends_on": [
+          "SUP-CANONICAL-PACKET-ATOMIC-MATERIALIZATION-20260811",
+          "SUP-WORK-CONSERVING-CANONICAL-ROUTING-20260811"
+        ],
+        "id": "OPS-SUPERVISOR-ARCHITECTURE-LIVE-ROLLOUT-20260811",
+        "owner": "Codex2",
+        "phase": "Supervisor Runtime / Governed Architecture Rollout",
+        "reviewer": "Codex",
+        "summary": "After both source changes merge, promote the exact dev source through the existing transactional supervisor runtime path, verify generation and state convergence, and prove with live canaries that runnable roots dispatch without chair or admission gates while real capacity and dependency gates remain enforced.",
+        "title": "Promote and verify the canonical work-conserving supervisor"
+      },
+      "task_spec_hash": "2843e9271088bceeec6d2fd55bcea81c74612529d4c69a49f9f610e8467db6ff"
+    },
+    "generation": 1,
+    "id": "OPS-SUPERVISOR-ARCHITECTURE-LIVE-ROLLOUT-20260811",
+    "last_update": "2026-08-13T02:01:46Z",
+    "next": "Retired during the Supervisor Authority V2 board reset: this legacy control, routing, rollout, or verification row is no longer an execution authority; merged source and archive evidence remain preserved.",
+    "owner": "Antigravity",
+    "phase": "Supervisor Runtime / Governed Architecture Rollout",
+    "reviewer": "Codex",
+    "status": "done",
+    "summary_zh": "After both source changes merge, promote the exact dev source through the existing transactional supervisor runtime path, verify generation and state convergence, and prove with live canaries that runnable roots dispatch without chair or admission gates while real capacity and dependency gates remain enforced.",
+    "title": "Promote and verify the canonical work-conserving supervisor",
+    "terminal_outcome": "superseded"
+  },
+  "handoffs": [
+    {
+      "created_at": "2026-08-11T17:49:20Z",
+      "from": "Codex2",
+      "message": "Helper-claimed by idle Codex previous owner Codex2 becomes reviewer.",
+      "resolved_at": "2026-08-11T17:50:12Z",
+      "status": "done",
+      "task_id": "OPS-SUPERVISOR-ARCHITECTURE-LIVE-ROLLOUT-20260811",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-08-11T18:30:17Z",
+      "from": "Codex",
+      "message": "Helper-claimed by idle Claude previous owner Codex becomes reviewer.",
+      "resolved_at": "2026-08-11T18:33:48Z",
+      "status": "done",
+      "task_id": "OPS-SUPERVISOR-ARCHITECTURE-LIVE-ROLLOUT-20260811",
+      "to": "Claude"
+    },
+    {
+      "created_at": "2026-08-11T18:43:11Z",
+      "from": "Claude",
+      "message": "Auto-reassigned OPS-SUPERVISOR-ARCHITECTURE-LIVE-ROLLOUT-20260811 away from unavailable lane Claude (disabled, paused, sidecar-only, or auth-down); owner Claude -> Antigravity.",
+      "resolved_at": "2026-08-11T18:44:03Z",
+      "status": "done",
+      "task_id": "OPS-SUPERVISOR-ARCHITECTURE-LIVE-ROLLOUT-20260811",
+      "to": "Antigravity"
+    },
+    {
+      "created_at": "2026-08-12T03:13:47Z",
+      "from": "Codex",
+      "message": "Auto-reassigned OPS-SUPERVISOR-ARCHITECTURE-LIVE-ROLLOUT-20260811 away from unavailable lane Codex (disabled, paused, sidecar-only, or auth-down); reviewer Codex -> Claude.",
+      "resolved_at": "2026-08-12T04:44:16Z",
+      "status": "done",
+      "task_id": "OPS-SUPERVISOR-ARCHITECTURE-LIVE-ROLLOUT-20260811",
+      "to": "Claude"
+    },
+    {
+      "created_at": "2026-08-12T04:44:16Z",
+      "from": "Claude",
+      "message": "Auto-reassigned OPS-SUPERVISOR-ARCHITECTURE-LIVE-ROLLOUT-20260811 away from unavailable lane Claude (disabled, paused, sidecar-only, or auth-down); reviewer Claude -> Codex.",
+      "resolved_at": "2026-08-13T02:00:40Z",
+      "status": "done",
+      "task_id": "OPS-SUPERVISOR-ARCHITECTURE-LIVE-ROLLOUT-20260811",
+      "to": "Codex"
+    }
+  ],
+  "blockers": [
+    {
+      "created_at": "2026-08-11T18:40:40Z",
+      "message": "Preflight-only evidence committed and pushed (task/OPS-SUPERVISOR-ARCHITECTURE-LIVE-ROLLOUT-20260811 @ 9e8d54bc1, PR pending): discover-only preflight confirms the live supervisor (pid 3811421) is healthy and its bound PANTHEON_COMMAND_ROOT/SHA already equals 9e023f7ee (current origin/dev tip containing both required dependency merges), most likely via an existing unrelated automated promotion pipeline, not this task. The remaining acceptance work needs either (a) confirmation that this already-observed state satisfies the promotion requirement, or (b) an explicit scripts/promote_supervisor_runtime.py --promote run plus >=3 supervisor-loop live canary observation. --promote sends SIGTERM/SIGKILL to the live incumbent supervisor PID as part of its transactional swap -- the same live production process-control action class the harness permission classifier denied to background auto workers in SUP-COMMAND-RUNTIME-REFRESH-001, and this task explicitly forbids manually signaling the process as a workaround. This task's own two prior worker dispatches (Codex, then Codex helper-claim) were also each preempted ~15-20 minutes in, before completing any live-canary verification, so sustained live observation windows are not surviving this task's dispatch churn either. See docs/deployment/evidence/supervisor/OPS-SUPERVISOR-ARCHITECTURE-LIVE-ROLLOUT-20260811/README.md for full detail.",
+      "owner": "Claude",
+      "status": "resolved",
+      "task_id": "OPS-SUPERVISOR-ARCHITECTURE-LIVE-ROLLOUT-20260811",
+      "waiting_for": "Human/Ops",
+      "resolved_at": "2026-08-13T02:01:46Z"
+    }
+  ]
+}

@@ -1,0 +1,242 @@
+{
+  "version": 1,
+  "task_id": "L12-IMIT-001",
+  "archived_at": "2026-07-27T16:58:04Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "acceptance": [
+      "Default product path discovers tenant-scoped Agora DatasetVersions regardless of policy-store backend",
+      "Dataset lookup failure is degraded and never substitutes seed data",
+      "Scheduler and worker use claim lease and survive duplicate ticks and restart",
+      "Authoritative training evaluation and candidate artifacts retain dataset lineage",
+      "Candidate cannot affect runtime before experiment approval and deployment gates"
+    ],
+    "actual_state_sources": [
+      "training evaluation run",
+      "ShadowImitationCandidate",
+      "candidate backlog and DLQ"
+    ],
+    "artifact_conflict_guard": {
+      "allowed_overlap_task_ids": [],
+      "artifact_scope": [
+        {
+          "path": "docs/deployment/evidence/twelve-loop-gap/L12-IMIT-001",
+          "repo": "pantheon"
+        },
+        {
+          "path": "services/policy-learning",
+          "repo": "pantheon"
+        },
+        {
+          "path": "services/research/imitation",
+          "repo": "pantheon"
+        }
+      ],
+      "catalog_sha256": "8c7610b0e6bbba31c36cb0ecd1ddce4bf843fc6de89dcaecc4a5e3154af8933d",
+      "program_id": "pantheon-twelve-loop-gap-2026-07-26",
+      "schema_version": 1,
+      "task_id": "L12-IMIT-001"
+    },
+    "artifacts": [
+      "services/policy-learning",
+      "services/research/imitation",
+      "docs/deployment/evidence/twelve-loop-gap/L12-IMIT-001"
+    ],
+    "auto_created_by": "dispatch_twelve_loop_gap_2026_07_26",
+    "catalog_task_contract_sha256": "b86e469bbf9b1755180ec6e47c86a42edd8024b93584274bf10b301bbc3eba37",
+    "current_maturity": "api-only",
+    "depends_on": [
+      "L12-AGORA-001",
+      "L12-TEL-001"
+    ],
+    "desired_state_sources": [
+      "Agora DatasetVersion",
+      "shadow evaluation schedule and policy"
+    ],
+    "dispatch_rules": [
+      "Fail closed when dataset authority is unavailable",
+      "Do not train synchronously per Agora message",
+      "Keep candidates non-runtime-affecting"
+    ],
+    "evidence_root": "docs/deployment/evidence/twelve-loop-gap/L12-IMIT-001",
+    "fleet_lane": "imitation",
+    "id": "L12-IMIT-001",
+    "last_update": "2026-07-27T16:58:04Z",
+    "loop_ids": [
+      "human_imitation_shadow_evaluation"
+    ],
+    "merge_target": "dev",
+    "mutates_canonical": true,
+    "next": "Owner closeout complete: PR #4260 merged as b79d3a540a797fe69851f4dbb3a119ddb647cf9a; review-bound head 23e3fdd18f82938c8cca1d75119e909a56288fc2 is on origin/dev; revalidated evidence checksum/schema, 15/15 source hashes, git diff --check, and focused suite (185 passed, 5 expected real-Postgres skips; Codex2 review evidence records 190 passed with PostgreSQL).",
+    "non_goals": [
+      "No panel-only closure",
+      "No seed fixture as live proof",
+      "No approval gate bypass",
+      "No direct running-artifact mutation"
+    ],
+    "owner": "Codex",
+    "phase": "Twelve Loop Remediation / Imitation",
+    "product_level_required": true,
+    "program_id": "pantheon-twelve-loop-gap-2026-07-26",
+    "proof_required": [
+      "default-compose real dataset test",
+      "tenant isolation and no-seed negative",
+      "two-worker restart and replay",
+      "candidate governance gate proof"
+    ],
+    "requires_human_ops_signoff": false,
+    "review_binding": {
+      "base": "dev",
+      "head_branch": "task/L12-IMIT-001",
+      "head_sha": "23e3fdd18f82938c8cca1d75119e909a56288fc2",
+      "pr": 4260
+    },
+    "review_file": "docs/deployment/evidence/twelve-loop-gap/L12-IMIT-001/evidence.json",
+    "review_notes_zh": [
+      "獨立核對 PR #4235/#4236/#4237/#4238/#4242/#4245 均已 merge dev，所有 merge SHA 與 task HEAD ca620a618 皆為 origin/dev 祖先",
+      "production placeholder 於 enforced posture 回報未配置並以 401 AUTH_TOKEN_FORMAT 拒絕；minted secret positive control 與 default-compose credential/tenant render 均通過",
+      "localhost throwaway PostgreSQL 16 完整 suite 190 passed, 1 warning；ProductEvidenceManifest schema、15 個 source hashes、evidence.sha256、git diff --check 均通過"
+    ],
+    "reviewer": "Codex2",
+    "status": "done",
+    "summary_zh": "讓 scheduler 從 tenant-scoped Agora DatasetVersion 取數，product mode 禁止 seed fallback，加入 backlog claim/lease並產生具 lineage 的 authoritative candidate。",
+    "target_maturity": "reconciled",
+    "target_repo": "pantheon",
+    "task_doc": "docs/bff/execution-tasks/2026-07-26-twelve-loop-gap/L12-IMIT-001.md",
+    "title": "Prove tenant-safe imitation loop authority and failure recovery",
+    "wave": 2,
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-07-27T16:58:04Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/l12-imit-001",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/L12-IMIT-001",
+      "git_clean_required": false,
+      "status_command_runtime": {
+        "command_root": "/home/lupin/pantheon-ci-deploy/dev-root-29054ab270d5",
+        "source_sha": "29054ab270d552a56ed071cedf3f45150e948b6a",
+        "base_ref": "origin/dev",
+        "remote": "ajoe734/pantheon",
+        "status_root": "/home/lupin/pantheon",
+        "delivery_root": "/tmp/pantheon-worker-worktrees/pantheon/l12-imit-001",
+        "wrapper_root": "/home/lupin/pantheon-ci-deploy/dev-root-29054ab270d5"
+      },
+      "commit": "23e3fdd18f82938c8cca1d75119e909a56288fc2",
+      "commit_subject": "Merge remote-tracking branch 'origin/dev' into task/L12-IMIT-001",
+      "commit_author": {
+        "name": "pantheon-dev",
+        "email": "bjoe734@gmail.com"
+      },
+      "commit_trailer_check_skipped": true,
+      "commit_trailer_skip_reason": "Merge",
+      "commit_metadata": {},
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "4974824687ef5c3acf665fa22a4306e5d3d664f1",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "created_at": "2026-07-26T13:42:37Z",
+      "from": "Claude",
+      "message": "Auto-reassigned L12-IMIT-001 away from unavailable lane Claude (disabled, paused, sidecar-only, or auth-down); owner Claude -> Codex.",
+      "resolved_at": "2026-07-26T15:20:49Z",
+      "status": "done",
+      "task_id": "L12-IMIT-001",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-07-27T01:43:05Z",
+      "from": "Claude",
+      "message": "Ready for independent review at dev 4cb436f80. Delivered in two merged PRs: #4235 implementation (merge 7ae3adbb) and #4236 owner-found tenant-isolation fix plus evidence (merge 4cb436f8). Evidence manifest docs/deployment/evidence/twelve-loop-gap/L12-IMIT-001/evidence.json validates against schemas/product-evidence.schema.json and its checksums verify byte-identical on dev. All six preserved blockers are closed and mapped to named tests in the packet README. Verification: 171 passed against a throwaway postgres:16-alpine covering real two-process SIGKILL crash-restart-reclaim, real cross-tenant claims, real read-only Agora resolution and real default-authority resolution; 167 passed 4 skipped without a DSN where the 4 skips are exactly those Postgres proofs. No config, compose or live-state change; proof container removed. Two non-blocking residual risks recorded with containment and expiry. Final branch commit 3eefc3fe3 is a dev integration merge with no task content; last task commit is e7c6ed96b.",
+      "resolved_at": "2026-07-27T02:13:03Z",
+      "status": "done",
+      "task_id": "L12-IMIT-001",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-07-27T02:13:03Z",
+      "from": "Codex2",
+      "message": "Review failed on required default-compose proof. Independent command 'docker compose --profile policy-learning-shadow-eval-scheduler config --format json' shows POLICY_LEARNING_SERVICE_TOKEN, POLICY_LEARNING_SERVICE_TENANTS, and POLICY_LEARNING_AGORA_TENANT_ID absent from both API and scheduler (and no scheduler API token). Default strict authority reports configured=false, while scheduler sends neither Authorization nor X-Tenant-Id, so startup restart and ticks receive 401 and the compose product loop cannot discover/train on Agora data. The named default-product test injects an in-memory authority plus autouse token/tenants; the compose test does not assert this wiring. Required: wire API and scheduler to the same secret-safe service credential and explicit tenant scope, add a compose-level/default-compose end-to-end proof that reaches real tenant-scoped Agora data through auth, then refresh evidence/checksums and merged PR/check evidence. Existing implementation proofs otherwise reproduced: 171 passed with throwaway PostgreSQL, 167 passed/4 skipped without DSN; schema, checksums, 11 artifact hashes, and both merge ancestries verified.",
+      "resolved_at": "2026-07-27T02:13:03Z",
+      "status": "done",
+      "task_id": "L12-IMIT-001",
+      "to": "Claude"
+    },
+    {
+      "created_at": "2026-07-27T03:08:49Z",
+      "from": "Claude",
+      "message": "Default-compose gap remediated and merged; please re-review at head a4ba66855a224ea1843f5954a5ae28ba9e67248b. PR #4237 (head 6c76909f, merged to dev as d8c925f3 at 02:48:13Z, Branch CI Gate green on runs 30232997381 push / 30232999094 pull_request) wires policy-learning-svc and the shadow-eval scheduler sidecar to one interpolated service credential and one Agora tenant scope, derives POLICY_LEARNING_SERVICE_TENANTS from the scheduler tenant, passes AGORA_DATASET_STORE_* through, refuses the published compose token under a staging/prod persistence posture, and makes the sidecar fail closed at start-up instead of looping 401s. Your command 'docker compose --profile policy-learning-shadow-eval-scheduler config' now renders POLICY_LEARNING_SERVICE_TOKEN=pantheon-local-policy-learning-service, POLICY_LEARNING_AGORA_TENANT_ID=pantheon-local and PANTHEON_PERSISTENCE_POSTURE=dev for BOTH services, plus POLICY_LEARNING_SERVICE_TENANTS=pantheon-local on the API. New proof module services/policy-learning/tests/test_l12_imit_001_default_compose_loop.py cancels the package autouse credential fixture and drives the sidecar startup restart, tick and claim cycle through the real FastAPI routes on compose-rendered env only; with PANTHEON_TEST_POSTGRES_DSN it trains on real tenant-scoped agora_dataset_records rows while a neighbouring tenant's rows in the same table stay excluded. Negative control: reverting only docker-compose.yml fails 6 of the 7 new cases. 180 passed with throwaway postgres:16-alpine; 175 passed / 5 skipped without a DSN. Evidence refreshed and merged in PR #4238 (merged as d65b87ee at 02:55:03Z): review_file docs/deployment/evidence/twelve-loop-gap/L12-IMIT-001/evidence.json, schema-validated, checksums regenerated over evidence.json and README.md, 15 artifact hashes, all three merged PRs and their CI runs recorded. The worker-generated .orchestrator/task-briefs/l12_imit_001.md mirror is intentionally left uncommitted.",
+      "resolved_at": "2026-07-27T03:34:26Z",
+      "status": "done",
+      "task_id": "L12-IMIT-001",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-07-27T03:34:26Z",
+      "from": "Codex2",
+      "message": "Independent re-review at a4ba6685: PRs #4235-#4238 are merged to dev with green required checks; ProductEvidenceManifest schema, companion checksums, all 15 source hashes, docker compose rendered credential/tenant scope, and a fresh throwaway-PostgreSQL suite (180 passed, 1 warning in 47.38s) verified. One production-authority blocker remains: .env.example publishes POLICY_LEARNING_SERVICE_TOKEN=replace-me-policy-learning-service-token, while inbound_authority.py rejects only LOCAL_DEV_SERVICE_TOKEN under staging/prod. Reproduced with PANTHEON_PERSISTENCE_POSTURE=production, that exact published placeholder, and POLICY_LEARNING_SERVICE_TENANTS=pantheon-local: authority_configuration reports configured=true/service_token_scope=deployment_secret and resolve_authority accepts it as policy-learning-service for pantheon-local. This contradicts the trusted direct-route and fail-closed deployment authority claim. Required: reject repository-published/default/placeholder policy-learning tokens under enforced posture (at minimum the exact .env.example value) as unconfigured; add a route-level staging/prod negative using that exact example token plus a positive operator-secret control; refresh evidence source hashes, manifest/checksum, validation and merged PR evidence before re-review.",
+      "resolved_at": "2026-07-27T03:34:26Z",
+      "status": "done",
+      "task_id": "L12-IMIT-001",
+      "to": "Claude"
+    },
+    {
+      "created_at": "2026-07-27T13:17:50Z",
+      "from": "Claude",
+      "message": "Re-review request after the second returned review. The production-authority blocker is closed: inbound_authority now treats every repository-published or unedited-placeholder POLICY_LEARNING_SERVICE_TOKEN as unconfigured under an enforced posture. Code PR #4242 merged (ddd8dc570); evidence PR #4245 merged (3330e7ae9); task branch HEAD ca620a618 is an ancestor of origin/dev. Re-verified on this head just now: your exact repro (PANTHEON_PERSISTENCE_POSTURE=production, POLICY_LEARNING_SERVICE_TOKEN=replace-me-policy-learning-service-token) reports service_token_configured=false / service_token_scope=none / configured=false and resolve_authority refuses 401 AUTH_TOKEN_FORMAT; the compose default pantheon-local-policy-learning-service refuses identically; positive control my-real-minted-secret-9f2 is still accepted as deployment_secret; dev posture still accepts the placeholder as published_placeholder so the local loop is unaffected. pytest services/policy-learning services/research/imitation services/foundation/tests/test_persistence_posture.py -q => 185 passed, 5 skipped (the five skips are the real-Postgres proofs, recorded as executed with a throwaway container in evidence validation). sha256sum -c evidence.sha256 => evidence.json OK, README.md OK. Evidence manifest for approval binding: docs/deployment/evidence/twelve-loop-gap/L12-IMIT-001/evidence.json (record_log sequence 8 owner_evidence_ready). Worktree carries only the untracked generated brief .orchestrator/task-briefs/l12_imit_001.md, intentionally uncommitted.",
+      "resolved_at": "2026-07-27T14:18:01Z",
+      "status": "done",
+      "task_id": "L12-IMIT-001",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-07-27T14:18:01Z",
+      "from": "Codex2",
+      "message": "Codex2 independent review approved: inspected tenant-bound authority, Agora discovery/no-seed degradation, atomic candidate identity, claim/lease/restart/replay fencing, lineage and fail-closed promotion gates; reproduced production placeholder refusal plus minted-secret positive control; throwaway PostgreSQL 16 suite 190 passed; ProductEvidenceManifest schema, 15 source hashes, evidence.sha256, PR #4235/#4236/#4237/#4238/#4242/#4245 merge ancestry and green #4242/#4245 checks verified.",
+      "resolved_at": "2026-07-27T16:22:08Z",
+      "status": "done",
+      "task_id": "L12-IMIT-001",
+      "to": "Claude"
+    },
+    {
+      "created_at": "2026-07-27T16:22:08Z",
+      "from": "Codex2",
+      "message": "Human/Ops fleet recovery: owner closeout reassigned to active supervisor lane after Codex2 review_approved state. Verify merge/archive/evidence consistency and complete governed done only if protected closeout gates pass.",
+      "resolved_at": "2026-07-27T16:42:08Z",
+      "status": "done",
+      "task_id": "L12-IMIT-001",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-07-27T16:42:08Z",
+      "from": "Codex",
+      "message": "Closeout reconciliation PR #4260 merged as b79d3a540a797fe69851f4dbb3a119ddb647cf9a; please formally review exact head 23e3fdd18f82938c8cca1d75119e909a56288fc2 and bind REVIEW_PR=4260, REVIEW_HEAD_SHA=23e3fdd18f82938c8cca1d75119e909a56288fc2. Scope is only task brief/README/evidence/checksum reconciliation to canonical owner Codex and existing approval event; product bytes unchanged. Owner validation: 185 passed, 5 skipped; 15/15 source hashes; schema/checksum; canonical loop guardrail 1/1 OK.",
+      "resolved_at": "2026-07-27T16:49:04Z",
+      "status": "done",
+      "task_id": "L12-IMIT-001",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-07-27T16:49:04Z",
+      "from": "Codex2",
+      "message": "Codex2 exact-head review approved: PR #4260 head 23e3fdd18f82938c8cca1d75119e909a56288fc2 merged as b79d3a540a797fe69851f4dbb3a119ddb647cf9a; reconciliation changes only task brief, README, evidence manifest, and checksum, with zero product-byte delta from approved head ca620a6182e12b8a64ee8b4a2bffc51a42acf838. Independently reverified all six prior delivery PR heads/merge SHAs and green required checks, 185 passed/5 skipped, focused published-placeholder refusal plus minted-secret positive control, ProductEvidenceManifest schema, companion checksums, 15/15 source hashes, default-compose credential/tenant render, and canonical loop guardrail 1/1.",
+      "status": "done",
+      "task_id": "L12-IMIT-001",
+      "to": "Codex",
+      "resolved_at": "2026-07-27T16:58:05Z"
+    }
+  ],
+  "blockers": []
+}

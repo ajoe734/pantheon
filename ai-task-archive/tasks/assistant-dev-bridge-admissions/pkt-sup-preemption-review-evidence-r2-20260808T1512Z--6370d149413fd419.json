@@ -1,0 +1,107 @@
+{
+  "actor": {
+    "capabilities": [
+      "fleet.dispatch",
+      "dev-task.dispatch"
+    ],
+    "id": "Codex",
+    "roles": [
+      "operator-delegate"
+    ]
+  },
+  "admission_record_path": "ai-task-archive/tasks/assistant-dev-bridge-admissions/pkt-sup-preemption-review-evidence-r2-20260808T1512Z--6370d149413fd419.json",
+  "admitted_at": "2026-08-08T15:07:54Z",
+  "audit_conversation_href": "codex://auto-worker/SUP-PREEMPTION-EXACT-HEAD-REVIEW-20260731#nonrewrite-replacement",
+  "constraints": {
+    "allowedRepos": [
+      "pantheon"
+    ],
+    "noDirectShellFromWeb": true,
+    "requiresBranchPrMerge": true
+  },
+  "conversation_id": "auto-worker-sup-preemption-exact-head-review-20260731",
+  "dispatch_records": [
+    {
+      "error": null,
+      "owner": "Codex",
+      "reviewer": "Codex2",
+      "status": "dispatched",
+      "taskId": "SUP-PREEMPTION-REVIEW-EVIDENCE-R2-20260808"
+    }
+  ],
+  "documents": [
+    {
+      "kind": "STALE_DELIVERY_PR",
+      "path": "https://github.com/ajoe734/pantheon/pull/4402",
+      "sourceRefs": [
+        "exact head 17d5665f57c302d71f522f9a6e9b0f95c77473e3",
+        "commit aae0e2cb4da0a0ae9f049bbdf166c13f2c09daee has a 74-character subject",
+        "preserve PR and branch history without rewrite"
+      ]
+    },
+    {
+      "kind": "REVIEW_EVIDENCE_MANIFEST",
+      "path": "docs/deployment/evidence/twelve-loop-gap/SUP-PREEMPTION-DISPATCH-ELIGIBILITY-20260731/exact-head-re-review-20260808.json",
+      "sourceRefs": [
+        "PREEMPT-PROVIDER-READINESS-001",
+        "PR #4399 implementation remains unchanged",
+        "Codex2 must independently review replacement PR exact head"
+      ]
+    },
+    {
+      "kind": "SOURCE_TASK_BRIEF",
+      "path": ".orchestrator/task-briefs/sup_preemption_exact_head_review_20260731.md",
+      "sourceRefs": [
+        "current owner Codex",
+        "current reviewer Codex2",
+        "authorized non-rewrite replacement delivery required"
+      ]
+    }
+  ],
+  "durable": true,
+  "emitted_at": "2026-08-08T15:07:20.723Z",
+  "intent": "supervisor_dispatch_nonrewrite_replacement_for_failed_evidence_pr",
+  "mode": "kernel_repair",
+  "packet_digest": "6370d149413fd4196ce7b3a97bee37ee14287cd4946815180060fb24fab1bcad",
+  "packet_id": "pkt-sup-preemption-review-evidence-r2-20260808T1512Z",
+  "packet_version": "pantheon.assistant.dev-task.v1",
+  "record_kind": "assistant_dev_bridge_admission",
+  "record_payload_sha256": "bd8972c7a9a39e4c00bcd81d8f01eebc7698415510350f194c2c54e9a720d8b5",
+  "schema": "pantheon.assistant-dev-bridge-admission.v1",
+  "source_turn_ids": [
+    "user-owned-in-progress-dispatch-20260808",
+    "canonical-task-lease-rejected-cross-task-assign",
+    "pr-4402-pushed-history-trailer-failure"
+  ],
+  "tasks": [
+    {
+      "task_id": "SUP-PREEMPTION-REVIEW-EVIDENCE-R2-20260808",
+      "task_spec": {
+        "acceptance": [
+          "Create task/SUP-PREEMPTION-REVIEW-EVIDENCE-R2-20260808 from current dev and publish one replacement PR to dev.",
+          "Preserve PR #4402 and its branch history without amend, force push, deletion, or ref recreation.",
+          "Keep PR #4399 implementation, .orchestrator/config.json, runtime, and generated canonical state untouched.",
+          "Reproduce the a924 provider-readiness counterexample and run JSON, diff, trailer, runtime-mirror, and smoke validation.",
+          "Commit the rejection manifest before requesting review; Codex2 independently reviews and binds only the replacement PR exact head.",
+          "Merge the replacement before closing PR #4402 as superseded; rollback is a revert of the replacement merge."
+        ],
+        "artifacts": [
+          ".orchestrator/task-briefs/sup_preemption_review_evidence_r2_20260808.md",
+          ".orchestrator/task-briefs/sup_preemption_exact_head_review_20260731.md",
+          "docs/deployment/evidence/twelve-loop-gap/SUP-PREEMPTION-DISPATCH-ELIGIBILITY-20260731/README.md",
+          "docs/deployment/evidence/twelve-loop-gap/SUP-PREEMPTION-DISPATCH-ELIGIBILITY-20260731/exact-head-re-review-20260808.json",
+          "docs/deployment/evidence/twelve-loop-gap/SUP-PREEMPTION-DISPATCH-ELIGIBILITY-20260731/exact-head-re-review-20260808.md",
+          "docs/deployment/evidence/twelve-loop-gap/SUP-PREEMPTION-DISPATCH-ELIGIBILITY-20260731/repro_provider_readiness_gap.py"
+        ],
+        "depends_on": [],
+        "id": "SUP-PREEMPTION-REVIEW-EVIDENCE-R2-20260808",
+        "owner": "Codex",
+        "phase": "Supervisor Runtime Repair / Rejection Evidence Redelivery",
+        "reviewer": "Codex2",
+        "summary": "Publish the exact rejection-evidence net delta from failed PR #4402 through a fresh governed task branch and independent exact-head review, without rewriting stale history or touching PR #4399.",
+        "title": "Redeliver exact-head rejection evidence without rewriting PR #4402"
+      },
+      "task_spec_hash": "8c16b84696e1c55e7963f7b7ad29df79ec46cb5893c56a2780f1eb0621f59b25"
+    }
+  ]
+}

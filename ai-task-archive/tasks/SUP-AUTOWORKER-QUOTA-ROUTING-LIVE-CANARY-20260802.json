@@ -1,0 +1,69 @@
+{
+  "version": 1,
+  "task_id": "SUP-AUTOWORKER-QUOTA-ROUTING-LIVE-CANARY-20260802",
+  "archived_at": "2026-08-02T09:02:15Z",
+  "terminal_status": "done",
+  "terminal_outcome": "superseded",
+  "task": {
+    "acceptance": [
+      "Bind every accepted source task to exact merged dev commits and green checks",
+      "Promote through the reviewed supervisor runtime transaction with gate-before-switch",
+      "Prove captured quota fixture lines cannot pause Codex or Codex2",
+      "Prove a healthy post-cooldown Antigravity live probe clears quota pause without manual state edits",
+      "Prove stale eligible missing_process streak recovery is bounded and auth quota failures remain fail closed",
+      "Prove the stranded fallback fixture yields a legal pair without changing account policy",
+      "Prove governance handoff does not kill an active lease",
+      "Observe at least thirty scheduler intervals near configured cadence with no lock hold over 30 seconds",
+      "Record worker start completion supersede retry and reassignment deltas",
+      "Rollback automatically on any failed invariant",
+      "Do not enable real writes trading capital or product controllers"
+    ],
+    "artifacts": [
+      "docs/deployment/evidence/supervisor/SUP-AUTOWORKER-QUOTA-ROUTING-LIVE-CANARY-20260802/"
+    ],
+    "coordination_packet": {
+      "expected_branch": "task/SUP-AUTOWORKER-QUOTA-ROUTING-LIVE-CANARY-20260802",
+      "independent_reviewer_capability": "Human/Ops exact-head independent reviewer",
+      "merge_target": "dev",
+      "objective": "Perform the governed release and live canary for all accepted repairs with exact rollback evidence.",
+      "out_of_scope": "Codex and Codex2 account or reviewer policy changes; credentials; product implementations; real trading; capital-affecting writes.",
+      "owner_capability": "supervisor runtime reliability implementer",
+      "remote": "ajoe734/pantheon",
+      "required_artifacts": [
+        "branch",
+        "commits",
+        "PR",
+        "checks",
+        "exact-head review",
+        "merge commit",
+        "live evidence when rollout task"
+      ],
+      "rollback": "Automatically restore the pre-promotion supervisor manifest process generation and runtime SHA then verify heartbeat and queue integrity.",
+      "rollout": "Use the existing reviewed runtime promotion transaction and switch only after all gates pass.",
+      "schema_version": 1,
+      "source": "codex_chatbox_readonly_audit_20260802"
+    },
+    "depends_on": [
+      "SUP-WORKER-FAILURE-ENVELOPE-GATE-20260802",
+      "SUP-PROVIDER-PAUSE-RECOVERY-PROBE-20260802",
+      "SUP-FAILURE-STREAK-DISPATCH-CONSUMPTION-V2-20260801",
+      "SUP-ASSIGNMENT-FALLBACK-ATOMIC-REBINDS-20260802",
+      "SUP-GOVERNANCE-HANDOFF-ACTIVE-LEASE-GUARD-20260802",
+      "SUP-SCHEDULER-FIXED-CADENCE-BATCH-MUTATIONS-20260802",
+      "SUP-RUNTIME-PROMOTION-FAILURE-MATRIX-INTEGRATION-20260801"
+    ],
+    "id": "SUP-AUTOWORKER-QUOTA-ROUTING-LIVE-CANARY-20260802",
+    "last_update": "2026-08-02T09:02:15Z",
+    "next": "Superseded to repair stale dependency IDs, sequence overlapping source scopes, and use task-scoped live provider availability. The replacement preserves configured Codex/Codex2 quota groups and adds no global mutual-review prohibition.",
+    "owner": "Codex",
+    "phase": "Supervisor reliability / governed live promotion",
+    "reviewer": "Human/Ops",
+    "status": "done",
+    "summary_zh": "在所有 source 修補與既有 streak chain 完成後，以交易式 promotion 驗證真實 Supervisor 與 auto-worker 恢復。",
+    "title": "Promote and canary quota routing and scheduler repairs",
+    "terminal_outcome": "superseded",
+    "superseded_by": "SUP-AUTOWORKER-QUOTA-ROUTING-LIVE-CANARY-OPERATOR-V2-20260802"
+  },
+  "handoffs": [],
+  "blockers": []
+}

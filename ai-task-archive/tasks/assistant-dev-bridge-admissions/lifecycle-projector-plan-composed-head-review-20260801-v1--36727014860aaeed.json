@@ -1,0 +1,89 @@
+{
+  "actor": {
+    "capabilities": [
+      "assistant.kernel.repair",
+      "assistant.dev-task.dispatch",
+      "fleet.dispatch"
+    ],
+    "id": "Human/Ops",
+    "roles": [
+      "operator"
+    ]
+  },
+  "admission_record_path": "ai-task-archive/tasks/assistant-dev-bridge-admissions/lifecycle-projector-plan-composed-head-review-20260801-v1--36727014860aaeed.json",
+  "admitted_at": "2026-08-01T15:19:08Z",
+  "audit_conversation_href": "https://github.com/ajoe734/pantheon/pull/4449",
+  "constraints": {
+    "allowedRepos": [
+      "pantheon"
+    ],
+    "noDirectShellFromWeb": true,
+    "requiresBranchPrMerge": true
+  },
+  "conversation_id": "codex-lifecycle-projector-incident-20260801",
+  "dispatch_records": [
+    {
+      "error": null,
+      "owner": "Codex",
+      "reviewer": "Antigravity",
+      "status": "dispatched",
+      "taskId": "LIFECYCLE-PROJ-PLAN-COMPOSED-HEAD-REVIEW-20260801"
+    }
+  ],
+  "documents": [
+    {
+      "kind": "SA_SD_PLAN",
+      "path": "docs/04/pantheon_lifecycle_projector_incremental_redesign_2026-08-01/archive/LIFECYCLE_PROJECTOR_INCREMENTAL_REDESIGN_PLAN_2026-08-01.md",
+      "sourceRefs": [
+        "https://github.com/ajoe734/pantheon/pull/4449",
+        "reviewed-plan:32528f8232d14b3eaf5a2fab51c4ae532de5a4c7",
+        "composed-head:34a86e4f8e8ca9502d7a96f5753a98645a7bb46a",
+        "composed-base:d2a9a6079789b6da1f15978ff7310c22a129f379",
+        "source-packet-sha256:815ef31260eede4aebabab4528865a45471f4708efbda9e7208fa175a1ac8b7f"
+      ]
+    }
+  ],
+  "durable": true,
+  "emitted_at": "2026-08-01T15:18:00Z",
+  "intent": "independently_revalidate_and_merge_strict_base_composed_projector_redesign_plan",
+  "mode": "kernel_repair",
+  "packet_digest": "36727014860aaeedde52ab03b79c0eca25baf1fa0e353d3df317630e4054098d",
+  "packet_id": "lifecycle-projector-plan-composed-head-review-20260801-v1",
+  "packet_version": "pantheon.assistant.dev-task.v1",
+  "record_kind": "assistant_dev_bridge_admission",
+  "record_payload_sha256": "5a112456831910dc3f6e60e2f340c228e4caf269af8a9bf8bd6c1fb5d92e811f",
+  "schema": "pantheon.assistant-dev-bridge-admission.v1",
+  "source_turn_ids": [
+    "plan-exact-head-review-approved",
+    "containment-pr-merged",
+    "plan-strict-base-update-branch"
+  ],
+  "tasks": [
+    {
+      "task_id": "LIFECYCLE-PROJ-PLAN-COMPOSED-HEAD-REVIEW-20260801",
+      "task_spec": {
+        "acceptance": [
+          "Independently review exact PR #4449 composed head 34a86e4f8e8ca9502d7a96f5753a98645a7bb46a; Codex and Codex2 are the same identity and are ineligible reviewers.",
+          "Confirm the composed head contains independently approved plan commit 32528f8232d14b3eaf5a2fab51c4ae532de5a4c7 and current dev d2a9a6079789b6da1f15978ff7310c22a129f379 without conflict resolution or newly authored plan content.",
+          "Confirm the PR delta remains limited to the archived design, seven governed execution task cards/indexes/manifests, and incident evidence, and that the seven-task dependency DAG and acceptance boundaries are unchanged.",
+          "Confirm task-packet.source.json still has SHA-256 815ef31260eede4aebabab4528865a45471f4708efbda9e7208fa175a1ac8b7f, contains exactly seven schema-valid tasks, and remains signature=null until after merge.",
+          "Require all GitHub checks on the composed head to pass and publish an independent exact-head verdict before Human/Ops supplies the root-freeze context and merges PR #4449.",
+          "Do not dispatch the unsigned source packet, grant production/live-capital authority, restart the projector, or delete projection state."
+        ],
+        "artifacts": [
+          "docs/04/pantheon_lifecycle_projector_incremental_redesign_2026-08-01/",
+          "docs/bff/execution-tasks/2026-08-01-lifecycle-projector-incremental-redesign/",
+          "docs/deployment/evidence/lifecycle-projector/LIFECYCLE-PROJ-INCIDENT-20260801/"
+        ],
+        "depends_on": [],
+        "id": "LIFECYCLE-PROJ-PLAN-COMPOSED-HEAD-REVIEW-20260801",
+        "owner": "Codex",
+        "phase": "incident-design-review",
+        "reviewer": "Antigravity",
+        "summary": "Strict branch protection required a merge-only update after independent plan approval and containment merge; this packet validates the final composed design head before archival merge and signing.",
+        "title": "Review and merge the strict-base-composed lifecycle projector redesign plan"
+      },
+      "task_spec_hash": "3c2ce93e31321527020a2960103f38dd1421fa7bc029b6a04536e3a134127cd3"
+    }
+  ]
+}

@@ -1,0 +1,132 @@
+{
+  "actor": {
+    "capabilities": [
+      "dev-task.dispatch",
+      "fleet.dispatch"
+    ],
+    "id": "Codex",
+    "roles": [
+      "coordination-agent"
+    ]
+  },
+  "admission_record_path": "ai-task-archive/tasks/assistant-dev-bridge-admissions/pkt-l12-minimum-functional-b-20260808-f56e2bc91--2c36f24f0e2e3648.json",
+  "admitted_at": "2026-08-08T10:17:30Z",
+  "audit_conversation_href": null,
+  "constraints": {
+    "allowedRepos": [
+      "pantheon"
+    ],
+    "minimumFunctionalScopeOnly": true,
+    "noDirectShellFromWeb": true,
+    "noOrchestratorConfigEdits": true,
+    "requiresBranchPrMerge": true,
+    "supervisorOnlyDispatcher": true
+  },
+  "conversation_id": "codex-root-l12-minimum-functional-closure-20260808",
+  "dispatch_records": [
+    {
+      "error": null,
+      "owner": "Claude",
+      "reviewer": "Antigravity",
+      "status": "dispatched",
+      "taskId": "L12-MIN-HOSTED-20260808"
+    },
+    {
+      "error": null,
+      "owner": "Antigravity",
+      "reviewer": "Claude",
+      "status": "dispatched",
+      "taskId": "L12-MIN-CLOSE-20260808"
+    }
+  ],
+  "documents": [
+    {
+      "kind": "MINIMUM_FUNCTIONAL_GAP_DESIGN",
+      "path": "docs/bff/execution-tasks/2026-08-08-l12-minimum-functional-closure/INDEX.md",
+      "sourceRefs": [
+        "https://github.com/ajoe734/pantheon/pull/4621",
+        "f56e2bc91",
+        "a55721bce2a7bc0a4dc01dd6eba1b48a58b78312"
+      ]
+    },
+    {
+      "kind": "EXECUTION_TASK_DAG",
+      "path": "docs/bff/execution-tasks/2026-08-08-l12-minimum-functional-closure/execution-tasks.json",
+      "sourceRefs": [
+        "packet_b",
+        "pantheon-twelve-loop-minimum-functional-closure-2026-08-08"
+      ]
+    },
+    {
+      "kind": "LEGACY_DAG_RECONCILIATION",
+      "path": "docs/bff/execution-tasks/2026-08-08-l12-minimum-functional-closure/legacy-28-reconciliation.json",
+      "sourceRefs": [
+        "28-old-ids-zero-materialized-at-snapshot"
+      ]
+    }
+  ],
+  "durable": true,
+  "emitted_at": "2026-08-08T09:23:01Z",
+  "intent": "generate_sa_sd_and_dispatch",
+  "mode": "kernel_repair",
+  "packet_digest": "2c36f24f0e2e3648d68d92d0e140e8346544f2fdaf8c928e4ebd680dfb530c77",
+  "packet_id": "pkt-l12-minimum-functional-b-20260808-f56e2bc91",
+  "packet_version": "pantheon.assistant.dev-task.v1",
+  "record_kind": "assistant_dev_bridge_admission",
+  "record_payload_sha256": "f8ae18e856c21e1497e91f6b3d6529ae853b951b964ec8b6f2339bf62690f492",
+  "schema": "pantheon.assistant-dev-bridge-admission.v1",
+  "source_turn_ids": [
+    "user-explicit-l12-minimum-functional-closure-dispatch-20260808"
+  ],
+  "tasks": [
+    {
+      "task_id": "L12-MIN-HOSTED-20260808",
+      "task_spec": {
+        "acceptance": [
+          "Deploy the exact merged Pantheon dev source through the existing dev deployment path without editing deployment authority.",
+          "Record the actually served FE and BFF identities and require BFF readiness 200.",
+          "Repeat the twelve minimum terminal readbacks against hosted dev and require 12/12 pass.",
+          "Keep the previous served release if any hosted probe fails."
+        ],
+        "artifacts": [
+          "docs/deployment/evidence/twelve-loop-gap/L12-MIN-HOSTED-20260808/"
+        ],
+        "depends_on": [
+          "L12-MIN-E2E-20260808",
+          "LIFECYCLE-PROJ-RETIRE-001"
+        ],
+        "id": "L12-MIN-HOSTED-20260808",
+        "owner": "Claude",
+        "phase": "M4 hosted delivery",
+        "reviewer": "Antigravity",
+        "summary": null,
+        "title": "Deploy merged dev and prove twelve hosted terminal readbacks"
+      },
+      "task_spec_hash": "1af031a1be4dd70e226b5b81828c03067758c5f71a2410bc463524802df92a81"
+    },
+    {
+      "task_id": "L12-MIN-CLOSE-20260808",
+      "task_spec": {
+        "acceptance": [
+          "Publish one twelve-row result table with trigger, terminal output, next-consumer readback, source merge, and hosted identity for every loop.",
+          "Close only when every row is pass and the hosted deployment still serves the reviewed source.",
+          "Do not require the retired evidence-only tasks, security hardening, HA, load, or live-capital work.",
+          "Record any deferred non-minimum work separately without reopening this functional milestone."
+        ],
+        "artifacts": [
+          "docs/deployment/evidence/twelve-loop-gap/L12-MIN-CLOSE-20260808/"
+        ],
+        "depends_on": [
+          "L12-MIN-HOSTED-20260808"
+        ],
+        "id": "L12-MIN-CLOSE-20260808",
+        "owner": "Antigravity",
+        "phase": "M5 closeout",
+        "reviewer": "Claude",
+        "summary": null,
+        "title": "Close the minimum twelve-loop functional milestone"
+      },
+      "task_spec_hash": "0a2e0dabcfb144fe1099dd3a5c0c3cc738f48c126b451df57b0f07116ef33131"
+    }
+  ]
+}

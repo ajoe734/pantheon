@@ -1,0 +1,328 @@
+{
+  "actor": {
+    "capabilities": [
+      "dev-task.dispatch",
+      "fleet.dispatch"
+    ],
+    "id": "Codex",
+    "roles": [
+      "coordination-agent"
+    ]
+  },
+  "admission_record_path": "ai-task-archive/tasks/assistant-dev-bridge-admissions/pkt-agora-current-environment-gap-20260808-e765bcbed--e32265e892a924d6.json",
+  "admitted_at": "2026-08-08T14:38:54Z",
+  "audit_conversation_href": "codex://root/agora-current-gap-execution-20260808",
+  "constraints": {
+    "allowedRepos": [
+      "pantheon"
+    ],
+    "noDirectCanonicalStateEdits": true,
+    "noDirectShellFromWeb": true,
+    "noLiveCapital": true,
+    "noOrchestratorConfigEdits": true,
+    "requiresBranchPrMerge": true,
+    "safeWriteDefaults": true,
+    "supervisorOnlyDispatcher": true
+  },
+  "conversation_id": "codex-root-agora-current-gap-execution-20260808",
+  "dispatch_records": [
+    {
+      "error": null,
+      "owner": "Antigravity",
+      "reviewer": "Claude",
+      "status": "dispatched",
+      "taskId": "AGORA-CURRENT-GAP-EXECUTION-20260808"
+    },
+    {
+      "error": null,
+      "owner": "Claude",
+      "reviewer": "Antigravity",
+      "status": "dispatched",
+      "taskId": "AGORA-DEV-DEPLOY-RECOVERY-20260808"
+    },
+    {
+      "error": null,
+      "owner": "Antigravity",
+      "reviewer": "Claude",
+      "status": "dispatched",
+      "taskId": "AGORA-L12-CROSS-LOOP-INTEGRATE-20260808"
+    },
+    {
+      "error": null,
+      "owner": "Claude",
+      "reviewer": "Antigravity",
+      "status": "dispatched",
+      "taskId": "AGORA-L12-REAL-VERIFIER-20260808"
+    },
+    {
+      "error": null,
+      "owner": "Antigravity",
+      "reviewer": "Claude",
+      "status": "dispatched",
+      "taskId": "AGORA-CURRENT-HOSTED-REACCEPT-20260808"
+    },
+    {
+      "error": null,
+      "owner": "Claude",
+      "reviewer": "Antigravity",
+      "status": "dispatched",
+      "taskId": "AGORA-UI-LIFECYCLE-RECONCILE-20260808"
+    },
+    {
+      "error": null,
+      "owner": "Antigravity",
+      "reviewer": "Claude",
+      "status": "dispatched",
+      "taskId": "AGORA-CURRENT-CLOSE-20260808"
+    }
+  ],
+  "documents": [
+    {
+      "kind": "AGORA_CURRENT_GAP_AUDIT",
+      "path": "docs/bff/execution-tasks/2026-08-08-agora-current-environment-gap/GAP-AUDIT.md",
+      "sourceRefs": [
+        "https://github.com/ajoe734/pantheon/pull/4628",
+        "e765bcbed",
+        "deployment run 31250996848"
+      ]
+    },
+    {
+      "kind": "AGORA_CURRENT_GAP_PLAN",
+      "path": "docs/bff/execution-tasks/2026-08-08-agora-current-environment-gap/INDEX.md",
+      "sourceRefs": [
+        "https://github.com/ajoe734/pantheon/pull/4628",
+        "origin/dev 0f2ab06f8"
+      ]
+    },
+    {
+      "kind": "EXECUTION_TASK_DAG",
+      "path": "docs/bff/execution-tasks/2026-08-08-agora-current-environment-gap/execution-tasks.json",
+      "sourceRefs": [
+        "seven unique addendum tasks",
+        "unique sink AGORA-CURRENT-CLOSE-20260808"
+      ]
+    }
+  ],
+  "durable": true,
+  "emitted_at": "2026-08-08T10:50:00Z",
+  "intent": "generate_sa_sd_and_dispatch",
+  "mode": "kernel_repair",
+  "packet_digest": "e32265e892a924d69b69ce3de5d83d0ea8c5ccad56114a0638299192686a41c6",
+  "packet_id": "pkt-agora-current-environment-gap-20260808-e765bcbed",
+  "packet_version": "pantheon.assistant.dev-task.v1",
+  "record_kind": "assistant_dev_bridge_admission",
+  "record_payload_sha256": "dc0137f4766ce2a938134c8514933171c0468761c06ab6ff8b791d0f4fab5b2b",
+  "schema": "pantheon.assistant-dev-bridge-admission.v1",
+  "source_turn_ids": [
+    "user-request-agora-gap-and-execution-tasks-for-supervisor",
+    "codex-readonly-agora-current-state-audit-20260808"
+  ],
+  "tasks": [
+    {
+      "task_id": "AGORA-CURRENT-GAP-EXECUTION-20260808",
+      "task_spec": {
+        "acceptance": [
+          "Start from current origin/dev and authoritative task-state checkpoint; do not rely only on the shared checkout.",
+          "Verify the seven addendum task IDs are absent from active and archived task state, open PRs, branches, and worktrees before admission.",
+          "Verify every external L12-MIN dependency, owner/reviewer assignment, task-spec hash, and current status from authoritative state.",
+          "Reconcile packet A invalid_materialization against later canonical task rows without replaying or redispatching any existing L12-MIN ID.",
+          "Validate dependency reachability, unique final sink, artifact overlap ordering, declared branches/worktrees, merge target, rollout, and rollback.",
+          "Publish review_pending evidence and obtain independent exact-head review before declaring the gate done."
+        ],
+        "artifacts": [
+          "docs/deployment/evidence/agora/AGORA-CURRENT-GAP-EXECUTION-20260808/"
+        ],
+        "depends_on": [],
+        "id": "AGORA-CURRENT-GAP-EXECUTION-20260808",
+        "owner": "Antigravity",
+        "phase": "A0 coordination admission",
+        "reviewer": "Claude",
+        "summary": "Verify canonical dependency and artifact truth, resolve the minimum packet-A receipt/readback ambiguity without replay, and release only non-duplicate addendum work.",
+        "title": "Reconcile and admit the Agora current-environment addendum"
+      },
+      "task_spec_hash": "129ddbf0bd25bf1136b59ec4250c4cbc14ec5866fbcd25400fc5dcc9e217deb7"
+    },
+    {
+      "task_id": "AGORA-DEV-DEPLOY-RECOVERY-20260808",
+      "task_spec": {
+        "acceptance": [
+          "Record the exact current 502/container/manifest state and deployment run 31250996848 before mutation.",
+          "Use only the existing dev environment lease and deployment authority for the smallest temporary recovery; label it temporary and restore a public BFF readiness and version 200 without changing safe write defaults.",
+          "Do not repair Source Ingestion product code in this task; route a reproduced service-code defect to L12-MIN-SRC-20260808.",
+          "Make an unhealthy dependency or candidate fail before the serving incumbent is lost, or automatically restore the captured incumbent BFF and exact manifest before releasing the lease.",
+          "A failed candidate must not leave operator-bff unserved in Created state and must not publish a new deployment manifest.",
+          "Add deterministic failure-injection coverage for source-ingest unhealthy, candidate BFF readiness failure, rollback success, rollback failure, and unchanged manifest.",
+          "Deliver the permanent source change through PR, independent exact-head review, merge, and one bounded dev deployment; record served FE/BFF identities, rollback baseline, readiness, and safe posture."
+        ],
+        "artifacts": [
+          ".github/workflows/nonprod-deploy.yml",
+          "scripts/deploy_nonprod_vm.sh",
+          "scripts/test_source_ingest_deploy_diagnostics_contract.py",
+          "scripts/test_dev_environment_lease_deploy_contract.py",
+          "docs/deployment/evidence/agora/AGORA-DEV-DEPLOY-RECOVERY-20260808/"
+        ],
+        "depends_on": [
+          "AGORA-CURRENT-GAP-EXECUTION-20260808"
+        ],
+        "id": "AGORA-DEV-DEPLOY-RECOVERY-20260808",
+        "owner": "Claude",
+        "phase": "A1 P0 dev recovery",
+        "reviewer": "Antigravity",
+        "summary": "Recover the current public BFF through governed dev authority and make dependency or candidate failure preserve or restore the last accepted serving pair.",
+        "title": "Restore dev BFF and make failed candidate deployment incumbent-safe"
+      },
+      "task_spec_hash": "2f31a57f29a047d9e104a7918bf026aba232489910fe1fec7048c3d7a4ddd0f8"
+    },
+    {
+      "task_id": "AGORA-L12-CROSS-LOOP-INTEGRATE-20260808",
+      "task_spec": {
+        "acceptance": [
+          "Use the outputs of the three predecessor L12-MIN component tasks; do not reimplement their happy paths.",
+          "Persist one tenant-scoped Agora interaction, evidence record, DatasetVersion, and downstream handoff with correlated identifiers.",
+          "Acknowledge the handoff only after durable Policy Learning ingestion and make retry or duplicate delivery idempotent.",
+          "Produce one terminal shadow candidate linked to the DatasetVersion without seed fallback or live execution authority.",
+          "Create one governed Consultation request from the terminal candidate and persist a terminal memo or handoff linked to the same chain.",
+          "Prove a second tenant cannot read, acknowledge, replay, or correlate the first tenant's records.",
+          "Record before/after backlog counts and preserve historical pending rows unless their own durable consumer receipts justify acknowledgement."
+        ],
+        "artifacts": [
+          "services/control-plane/bff/agora/dataset_extraction/",
+          "services/control-plane/bff/agora/router.py",
+          "services/control-plane/bff/tests/test_agora_persona_interactions.py",
+          "services/policy-learning/",
+          "services/consultation/",
+          "docs/deployment/evidence/agora/AGORA-L12-CROSS-LOOP-INTEGRATE-20260808/"
+        ],
+        "depends_on": [
+          "AGORA-CURRENT-GAP-EXECUTION-20260808",
+          "L12-MIN-AGORA-20260808",
+          "L12-MIN-IMIT-20260808",
+          "L12-MIN-CONS-20260808"
+        ],
+        "id": "AGORA-L12-CROSS-LOOP-INTEGRATE-20260808",
+        "owner": "Antigravity",
+        "phase": "A2 cross-loop integration",
+        "reviewer": "Claude",
+        "summary": "Connect durable Agora dataset handoff consumption, terminal shadow candidate generation, and governed Consultation memo production with correlated identifiers.",
+        "title": "Complete the tenant-safe Agora to Imitation and Consultation chain"
+      },
+      "task_spec_hash": "e1563e3eab8ce24f15e2bae2ab65e2b6fc9fde88f6347aad15fd2562fd89de22"
+    },
+    {
+      "task_id": "AGORA-L12-REAL-VERIFIER-20260808",
+      "task_spec": {
+        "acceptance": [
+          "Invoke actual authenticated service routes and durable API or database readbacks; fail closed when any required service is absent.",
+          "Capture exact interaction, evidence, dataset version, handoff, acknowledgement, candidate, consultation request, and memo identifiers in one correlated result.",
+          "Verify duplicate/idempotency conflict behavior, acknowledgement ordering, tenant isolation, restart readback, failure-to-DLQ, and replay to successful terminal output.",
+          "Record safe write posture and prove unauthorized or disallowed writes fail without weakening strict authentication.",
+          "Record aggregate backlog counts before and after the test and never purge or bulk-acknowledge historical rows.",
+          "The verifier must return nonzero for a missing service, mismatched tenant, missing durable readback, unacknowledged handoff, missing candidate, or missing consultation memo.",
+          "Independent review must inspect the verifier source and raw evidence; owner-authored review_approved is invalid."
+        ],
+        "artifacts": [
+          "scripts/verify_agora_learning_cross_loop.py",
+          "scripts/test_verify_agora_learning_cross_loop.py",
+          "docs/deployment/evidence/agora/AGORA-L12-REAL-VERIFIER-20260808/"
+        ],
+        "depends_on": [
+          "AGORA-L12-CROSS-LOOP-INTEGRATE-20260808",
+          "L12-MIN-E2E-20260808"
+        ],
+        "id": "AGORA-L12-REAL-VERIFIER-20260808",
+        "owner": "Claude",
+        "phase": "A3 real verifier",
+        "reviewer": "Antigravity",
+        "summary": "Verify the correlated tenant-safe chain with real service calls, durable readbacks, restart and negative controls rather than literal pass output.",
+        "title": "Build a non-self-attesting Agora cross-loop verifier"
+      },
+      "task_spec_hash": "c35fc2bcba3ebb43dea7a2bda9202398cfafef63496eeff3f5fed765ba133a81"
+    },
+    {
+      "task_id": "AGORA-CURRENT-HOSTED-REACCEPT-20260808",
+      "task_spec": {
+        "acceptance": [
+          "Require public BFF /readyz and /bff/version HTTP 200 and capture the actually served BFF revision.",
+          "Require exact equality among served FE SHA, served BFF SHA, pair ID, deployment manifest, Agora v1.13 compatibility manifest, and independently reviewed source commits.",
+          "Run AGORA-L12-REAL-VERIFIER-20260808 against hosted dev and require the correlated chain and all negative controls to pass.",
+          "Restart the BFF through governed dev authority and prove the same durable records and exact pair remain readable afterward.",
+          "Prove live mode, strict fallback, no embedded token, read-only profile, real writes false, stub writes false, unauthorized failures, and governed write rejection.",
+          "Reject stale, historical, fallback, local-only, self-attested, unreviewed, or manifest-only evidence.",
+          "On any failure, keep or restore the last accepted exact pair and leave the candidate unaccepted."
+        ],
+        "artifacts": [
+          "scripts/verify_agora_current_hosted_acceptance.py",
+          "scripts/test_verify_agora_current_hosted_acceptance.py",
+          "docs/deployment/evidence/agora/AGORA-CURRENT-HOSTED-REACCEPT-20260808/"
+        ],
+        "depends_on": [
+          "AGORA-DEV-DEPLOY-RECOVERY-20260808",
+          "AGORA-L12-REAL-VERIFIER-20260808",
+          "L12-MIN-HOSTED-20260808"
+        ],
+        "id": "AGORA-CURRENT-HOSTED-REACCEPT-20260808",
+        "owner": "Antigravity",
+        "phase": "A4 hosted reacceptance",
+        "reviewer": "Claude",
+        "summary": "Bind served FE/BFF identities to reviewed source and rerun current Agora cross-loop, restart, compatibility, auth, and safe-write acceptance.",
+        "title": "Reaccept the current Agora hosted exact pair"
+      },
+      "task_spec_hash": "81c80be8b4a439bd6a977aef7b187b5c9d7a1125b3f2f7ac81cac5ca6326bead"
+    },
+    {
+      "task_id": "AGORA-UI-LIFECYCLE-RECONCILE-20260808",
+      "task_spec": {
+        "acceptance": [
+          "Build a complete UI polish 001-011 matrix from exact execute-plans and Pantheon PRs, merge SHAs, checks, and hosted evidence.",
+          "Distinguish exact task-scoped hosted proof from proof that a task merge is merely an ancestor of a later accepted frontend.",
+          "Record UI polish 010 as source-delivered and present in later hosted ancestry, but do not claim an equivalent standalone task-specific hosted closeout unless new evidence proves it.",
+          "Remove stale draft labels only where canonical merge/evidence truth supports the transition.",
+          "Update the remaining-work index to distinguish historical completion from the newly accepted current pair and cross-loop result.",
+          "Keep evidence review_pending until independent exact-head review."
+        ],
+        "artifacts": [
+          "docs/bff/execution-tasks/2026-07-13-agora-ui-polish/",
+          "docs/bff/execution-tasks/2026-07-22-pantheon-agora-remaining-work/INDEX.md",
+          "docs/deployment/evidence/agora/AGORA-UI-LIFECYCLE-RECONCILE-20260808/"
+        ],
+        "depends_on": [
+          "AGORA-CURRENT-HOSTED-REACCEPT-20260808"
+        ],
+        "id": "AGORA-UI-LIFECYCLE-RECONCILE-20260808",
+        "owner": "Claude",
+        "phase": "A5 documentation truth",
+        "reviewer": "Antigravity",
+        "summary": "Synchronize stale draft/index state with exact merged and hosted evidence while preserving the UI polish 010 task-specific evidence limitation.",
+        "title": "Reconcile Agora UI polish and current lifecycle truth"
+      },
+      "task_spec_hash": "7561a5fd8f1834ab00582dfa1d758414b490ea0bdf56431185b4c0bdcc8ec11f"
+    },
+    {
+      "task_id": "AGORA-CURRENT-CLOSE-20260808",
+      "task_spec": {
+        "acceptance": [
+          "Publish one gap-by-gap table linking task IDs, implementation PRs, merge SHAs, independent exact-head reviews, required checks, deployed FE/BFF identities, runtime readbacks, and rollback evidence.",
+          "Verify every predecessor is canonical done/archived and no accepted evidence points to a superseded or unserved pair.",
+          "Re-probe public BFF readiness/version and the deployment manifest at closeout time.",
+          "Require the hosted correlated Agora-to-Imitation-to-Consultation result, tenant and auth negatives, restart readback, and safe write posture.",
+          "Record residual non-blocking work separately with owner and expiry; do not relabel a blocker as residual risk.",
+          "Close only after independent reviewer approval; owner self-approval or historical exact-pair evidence is insufficient."
+        ],
+        "artifacts": [
+          "docs/deployment/evidence/agora/AGORA-CURRENT-CLOSE-20260808/"
+        ],
+        "depends_on": [
+          "AGORA-CURRENT-HOSTED-REACCEPT-20260808",
+          "AGORA-UI-LIFECYCLE-RECONCILE-20260808"
+        ],
+        "id": "AGORA-CURRENT-CLOSE-20260808",
+        "owner": "Antigravity",
+        "phase": "A6 closeout",
+        "reviewer": "Claude",
+        "summary": "Publish the final exact evidence matrix and close only when serving deployment, cross-loop chain, safety posture, and lifecycle truth all pass.",
+        "title": "Close the Agora current-environment milestone"
+      },
+      "task_spec_hash": "898b407537ee2cb50511b64a25e73adec786812352f1e0f17037999ec1f1fef8"
+    }
+  ]
+}

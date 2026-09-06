@@ -1,0 +1,293 @@
+{
+  "version": 1,
+  "task_id": "SUP-RUNTIME-V10-IMMUTABLE-INCUMBENT-PYCACHE-RESIDUE-20260810",
+  "archived_at": "2026-08-10T15:25:26Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "acceptance": [
+      "Reproduce the 6607b6a7 governed retry exactly: the clean SHA-named candidate at tree 5eb3d3a1 has zero ignored bytecode paths, while capture of live incumbent PID 2272245 at accepted dev ancestor 5877b644 aborts before baseline, config, signal, launch, or rollback on .orchestrator/__pycache__/ created at 2026-08-10T11:41:53Z through 11:41:54Z.",
+      "Keep candidate cleanliness deny-by-default. Do not add __pycache__, pyc, pyo, .orchestrator, or an arbitrary prefix to the candidate/generated-runtime allowlist, and do not weaken post-launch status-child bytecode absence or the three-fresh-loop gate.",
+      "If the incumbent must be captured despite historical bytecode, add a separate explicit capture-only legacy boundary. Bind exact PID/starttime/cwd/commit/tree/remote/config/environment, every admitted directory and file path, descriptor metadata, regular-file and single-link status, CPython cache tag/header, source-path relation, byte digest, and a stable revalidation digest before signalling authority. Reject symlinks, hard links, executable/importable source additions, pyo, source-less or foreign-tag pyc, unknown directories, staged/tracked drift, and every post-capture race.",
+      "Never trust or relaunch the incumbent bytecode. Rollback must use a separately materialized and fully clean immutable checkout at the captured incumbent commit/tree, and the rollback launch source must prove zero __pycache__, pyc, or pyo before and after its own status-child exercise. The live incumbent root must not be reset, cleaned, stashed, checked out, edited, renamed, copied as rollback source, or otherwise mutated.",
+      "Preserve immutable candidate Git and launch-source identity, config CAS, restart-intent-before-TERM, exact process-generation signalling, PYTHONDONTWRITEBYTECODE=1 and -B launch, authoritative-shadow catch-up, queue/worker parity, provider baseline, rollback cleanup, and all previously merged FLOCK, log-leaf, same-root, and task-brief provenance guards.",
+      "Add focused positive and negative regressions for the exact incumbent/candidate distinction, stable capture-only bytecode provenance, unknown or changed bytecode rejection, clean rollback materialization, and candidate/status-child zero-bytecode enforcement. Run the complete promotion suite and commit a task-scoped evidence manifest before independent review.",
+      "Keep this task source-only: no live config edit, direct process signal, runtime promotion, candidate or incumbent deletion, canonical state edit, scheduling change, provider/account change, or fleet-routing policy change. Any rollout retry remains a separately governed dispatch."
+    ],
+    "artifacts": [
+      "scripts/promote_supervisor_runtime.py",
+      "scripts/test_promote_supervisor_runtime.py",
+      "docs/deployment/evidence/supervisor/SUP-RUNTIME-V10-IMMUTABLE-INCUMBENT-PYCACHE-RESIDUE-20260810/"
+    ],
+    "depends_on": [
+      "SUP-RUNTIME-V10-IMMUTABLE-INCUMBENT-LEGACY-RESIDUE-20260810"
+    ],
+    "dev_bridge": {
+      "actor": {
+        "capabilities": [
+          "integration",
+          "status-system",
+          "schema",
+          "acceptance"
+        ],
+        "id": "Codex",
+        "roles": [
+          "auto-worker"
+        ]
+      },
+      "audit_conversation_href": "task:SUP-RUNTIME-V10-GOVERNED-ROLLOUT-VERIFY-20260808",
+      "conversation_id": "SUP-RUNTIME-V10-GOVERNED-ROLLOUT-VERIFY-20260808",
+      "documents": [
+        {
+          "kind": "RUNTIME_FAIL_CLOSED_EVIDENCE",
+          "path": "docs/deployment/evidence/supervisor/SUP-RUNTIME-V10-GOVERNED-ROLLOUT-VERIFY-20260808/evidence.json",
+          "sourceRefs": [
+            "/home/lupin/pantheon-ci-deploy/runtime/promotion-evidence/supervisor-runtime-promotion-20260810T140901039717Z-636096.json",
+            "sha256:bbd2b6f09587225682b5ac90070a49f14f72eb230cde154c6ae9f2943fe377ec",
+            "candidate:6607b6a706b59670009965375e0a5dd6b5824fcf",
+            "candidate-tree:5eb3d3a18ba01bb2e2f53e442842aa7c86fec23c",
+            "incumbent:5877b64425c8d6aede147d6cbbc6fbb9e228c259",
+            "incumbent-pid:2272245",
+            "rejected-directory:.orchestrator/__pycache__/",
+            "incumbent-pycache-directories:3",
+            "incumbent-bytecode-files:36",
+            "incumbent-bytecode-manifest-sha256:6e00789da019c1a8243e67ab5e97827421834025df12edca218bcb844ebaf3e2"
+          ]
+        }
+      ],
+      "emitted_at": "2026-08-10T14:13:17Z",
+      "intent": "source_only_remediation_dispatch",
+      "mode": "supervisor_source_only",
+      "packet_digest": "8bb5cb9c24c12fcf7d4aa1428c4c8d14f0520021dc8fa2ff3eb8f6c0e7fb3fa3",
+      "packet_id": "sup-runtime-v10-immutable-incumbent-pycache-residue-20260810-1413",
+      "source_turn_ids": [
+        "promotion-evidence-20260810T140901039717Z-636096",
+        "post-abort-readback-20260810T141200Z"
+      ],
+      "task_spec": {
+        "acceptance": [
+          "Reproduce the 6607b6a7 governed retry exactly: the clean SHA-named candidate at tree 5eb3d3a1 has zero ignored bytecode paths, while capture of live incumbent PID 2272245 at accepted dev ancestor 5877b644 aborts before baseline, config, signal, launch, or rollback on .orchestrator/__pycache__/ created at 2026-08-10T11:41:53Z through 11:41:54Z.",
+          "Keep candidate cleanliness deny-by-default. Do not add __pycache__, pyc, pyo, .orchestrator, or an arbitrary prefix to the candidate/generated-runtime allowlist, and do not weaken post-launch status-child bytecode absence or the three-fresh-loop gate.",
+          "If the incumbent must be captured despite historical bytecode, add a separate explicit capture-only legacy boundary. Bind exact PID/starttime/cwd/commit/tree/remote/config/environment, every admitted directory and file path, descriptor metadata, regular-file and single-link status, CPython cache tag/header, source-path relation, byte digest, and a stable revalidation digest before signalling authority. Reject symlinks, hard links, executable/importable source additions, pyo, source-less or foreign-tag pyc, unknown directories, staged/tracked drift, and every post-capture race.",
+          "Never trust or relaunch the incumbent bytecode. Rollback must use a separately materialized and fully clean immutable checkout at the captured incumbent commit/tree, and the rollback launch source must prove zero __pycache__, pyc, or pyo before and after its own status-child exercise. The live incumbent root must not be reset, cleaned, stashed, checked out, edited, renamed, copied as rollback source, or otherwise mutated.",
+          "Preserve immutable candidate Git and launch-source identity, config CAS, restart-intent-before-TERM, exact process-generation signalling, PYTHONDONTWRITEBYTECODE=1 and -B launch, authoritative-shadow catch-up, queue/worker parity, provider baseline, rollback cleanup, and all previously merged FLOCK, log-leaf, same-root, and task-brief provenance guards.",
+          "Add focused positive and negative regressions for the exact incumbent/candidate distinction, stable capture-only bytecode provenance, unknown or changed bytecode rejection, clean rollback materialization, and candidate/status-child zero-bytecode enforcement. Run the complete promotion suite and commit a task-scoped evidence manifest before independent review.",
+          "Keep this task source-only: no live config edit, direct process signal, runtime promotion, candidate or incumbent deletion, canonical state edit, scheduling change, provider/account change, or fleet-routing policy change. Any rollout retry remains a separately governed dispatch."
+        ],
+        "artifacts": [
+          "scripts/promote_supervisor_runtime.py",
+          "scripts/test_promote_supervisor_runtime.py",
+          "docs/deployment/evidence/supervisor/SUP-RUNTIME-V10-IMMUTABLE-INCUMBENT-PYCACHE-RESIDUE-20260810/"
+        ],
+        "depends_on": [
+          "SUP-RUNTIME-V10-IMMUTABLE-INCUMBENT-LEGACY-RESIDUE-20260810"
+        ],
+        "id": "SUP-RUNTIME-V10-IMMUTABLE-INCUMBENT-PYCACHE-RESIDUE-20260810",
+        "owner": "Antigravity2",
+        "phase": "Supervisor Runtime / Source-only Incumbent Bytecode Bootstrap",
+        "reviewer": "Codex2",
+        "summary": "The accepted 6607b6a7 candidate is clean, but the governed transaction now reaches an older ignored-bytecode residue in the SHA-named incumbent and correctly aborts before mutation. Repair only a provenance-bound, capture-only incumbent compatibility boundary backed by a clean rollback checkout; never allow or trust bytecode in the candidate or rollback launch roots.",
+        "title": "Bind immutable incumbent bytecode residue without trusting it"
+      },
+      "task_spec_hash": "df7432f6be5a7f37c6e5e7d7055c5b9feaae2fa8df1f798883bb0f3ae6849c44"
+    },
+    "failure_streak": 0,
+    "github_review_bridge": {
+      "actor": "Codex2",
+      "base": "dev",
+      "decision": "approve",
+      "head_branch": "task/SUP-RUNTIME-V10-IMMUTABLE-INCUMBENT-PYCACHE-RESIDUE-20260810",
+      "head_sha": "3584029a7aa005c8ff0de8ba96c294cf55b1428e",
+      "mode": "required_commit_status",
+      "pr": 4718,
+      "pr_url": "https://github.com/ajoe734/pantheon/pull/4718",
+      "recorded_at": "2026-08-10T15:21:19Z",
+      "repository": "ajoe734/pantheon",
+      "review_error": "gh: Unprocessable Entity (HTTP 422)",
+      "review_proof_ref": "refs/tags/pantheon-review/approve/3584029a7aa005c8ff0de8ba96c294cf55b1428e",
+      "status_context": "Pantheon canonical review gate",
+      "status_id": 51958076520,
+      "status_state": "success"
+    },
+    "id": "SUP-RUNTIME-V10-IMMUTABLE-INCUMBENT-PYCACHE-RESIDUE-20260810",
+    "last_update": "2026-08-10T15:25:26Z",
+    "next": "Owner finalized approved task SUP-RUNTIME-V10-IMMUTABLE-INCUMBENT-PYCACHE-RESIDUE-20260810 after PR #4718 (merge commit 69ad33f3d23bdd1a4686ef69408a3898d481e65f) merged into dev and 322 promotion suite tests passed.",
+    "owner": "Antigravity2",
+    "phase": "Supervisor Runtime / Source-only Incumbent Bytecode Bootstrap",
+    "review_binding": {
+      "base": "dev",
+      "head_branch": "task/SUP-RUNTIME-V10-IMMUTABLE-INCUMBENT-PYCACHE-RESIDUE-20260810",
+      "head_sha": "3584029a7aa005c8ff0de8ba96c294cf55b1428e",
+      "pr": 4718
+    },
+    "review_file": "docs/deployment/evidence/supervisor/SUP-RUNTIME-V10-IMMUTABLE-INCUMBENT-PYCACHE-RESIDUE-20260810/evidence.json",
+    "reviewer": "Codex2",
+    "status": "done",
+    "summary_zh": "The accepted 6607b6a7 candidate is clean, but the governed transaction now reaches an older ignored-bytecode residue in the SHA-named incumbent and correctly aborts before mutation. Repair only a provenance-bound, capture-only incumbent compatibility boundary backed by a clean rollback checkout; never allow or trust bytecode in the candidate or rollback launch roots.",
+    "title": "Bind immutable incumbent bytecode residue without trusting it",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-08-10T15:25:26Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/sup-runtime-v10-immutable-incumbent-pycache-residue-20260810",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/SUP-RUNTIME-V10-IMMUTABLE-INCUMBENT-PYCACHE-RESIDUE-20260810",
+      "git_clean_required": false,
+      "status_command_runtime": {
+        "command_root": "/home/lupin/pantheon-ci-deploy/command-runtimes/5877b64425c8d6aede147d6cbbc6fbb9e228c259",
+        "source_sha": "5877b64425c8d6aede147d6cbbc6fbb9e228c259",
+        "base_ref": "origin/dev",
+        "remote": "ajoe734/pantheon",
+        "status_root": "/home/lupin/pantheon",
+        "delivery_root": "/tmp/pantheon-worker-worktrees/pantheon/sup-runtime-v10-immutable-incumbent-pycache-residue-20260810",
+        "wrapper_root": "/home/lupin/pantheon-ci-deploy/command-runtimes/5877b64425c8d6aede147d6cbbc6fbb9e228c259",
+        "worker_lease": {
+          "schema_version": 1,
+          "task_id": "SUP-RUNTIME-V10-IMMUTABLE-INCUMBENT-PYCACHE-RESIDUE-20260810",
+          "worker_run_id": "antigravity2-20260810T152256Z-1ad6e64c",
+          "queue_event_id": "evt-20260810T152226Z-9e47955d",
+          "pid": 1340047,
+          "pid_start_ticks": 21442406,
+          "process_generation": "worker-process-generation-sha256:586b901e42dc2d97379ab049d1c04a7e9be63157415f835f50261bffb4cf059e"
+        }
+      },
+      "commit": "3584029a7aa005c8ff0de8ba96c294cf55b1428e",
+      "commit_subject": "SUP-RUNTIME-V10-IMMUTABLE-INCUMBENT-PYCACHE-RESIDUE-20260810: pyc",
+      "commit_author": {
+        "name": "pantheon-dev",
+        "email": "bjoe734@gmail.com"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Antigravity2",
+        "Task-ID": "SUP-RUNTIME-V10-IMMUTABLE-INCUMBENT-PYCACHE-RESIDUE-20260810",
+        "Reviewer": "Codex2",
+        "Verified": ".venv-pantheon/bin/python3 -m pytest -v scripts/test_promote_supervisor_runtime.py (322 passed)"
+      },
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/SUP-RUNTIME-V10-IMMUTABLE-INCUMBENT-PYCACHE-RESIDUE-20260810",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "69ad33f3d23bdd1a4686ef69408a3898d481e65f",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "created_at": "2026-08-10T14:41:45Z",
+      "from": "Antigravity2",
+      "message": "PR #4718 updated with exact HEAD 3dc69340a99fed6c6877594889a62b253bfc4b68; ready for independent reviewer approval",
+      "resolved_at": "2026-08-10T14:49:38Z",
+      "status": "done",
+      "task_id": "SUP-RUNTIME-V10-IMMUTABLE-INCUMBENT-PYCACHE-RESIDUE-20260810",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-08-10T14:49:38Z",
+      "from": "Codex2",
+      "message": "Review failed at PR #4718 HEAD 3dc69340: legacy capture admits an ignored pkg/__pycache__/ whose nested __pycache__ is a symlink; _is_allowed_incumbent_bytecode_residue_path returns True and _capture_legacy_incumbent_bytecode_residue returns (), so it violates required symlink/unknown-directory fail-closed provenance. Bind and revalidate every admitted directory descriptor (no nested/empty bypass), reject all symlinks, and add regressions for symlink, unknown/nested directory, hardlink, foreign tag/magic, and post-capture mutation before re-review.",
+      "resolved_at": "2026-08-10T14:49:38Z",
+      "status": "done",
+      "task_id": "SUP-RUNTIME-V10-IMMUTABLE-INCUMBENT-PYCACHE-RESIDUE-20260810",
+      "to": "Antigravity2"
+    },
+    {
+      "created_at": "2026-08-10T14:54:49Z",
+      "from": "Antigravity2",
+      "message": "Updated PR #4718 HEAD to 85d052ed8 with descriptor-bound incumbent bytecode residue validation, fail-closed symlink/empty/nested dir rejection, and 7 new regression tests (129 passed). Ready for re-review.",
+      "resolved_at": "2026-08-10T14:54:55Z",
+      "status": "done",
+      "task_id": "SUP-RUNTIME-V10-IMMUTABLE-INCUMBENT-PYCACHE-RESIDUE-20260810",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-08-10T14:54:55Z",
+      "from": "Antigravity2",
+      "message": "Updated PR #4718 HEAD to c5f0d8feb with patched test fixtures for descriptor-bound incumbent bytecode residue validation suite (321 passed). Ready for re-review.",
+      "resolved_at": "2026-08-10T14:55:44Z",
+      "status": "done",
+      "task_id": "SUP-RUNTIME-V10-IMMUTABLE-INCUMBENT-PYCACHE-RESIDUE-20260810",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-08-10T14:55:44Z",
+      "from": "Antigravity2",
+      "message": "Updated PR #4718 HEAD to abf32dba5 with Mock CandidateRootHandle test fix for incumbent bytecode residue regression suite (321 passed). Ready for re-review.",
+      "resolved_at": "2026-08-10T14:57:00Z",
+      "status": "done",
+      "task_id": "SUP-RUNTIME-V10-IMMUTABLE-INCUMBENT-PYCACHE-RESIDUE-20260810",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-08-10T14:57:00Z",
+      "from": "Antigravity2",
+      "message": "Updated PR #4718 HEAD to 64b7f964c with read_head_tree mock patch for post-capture mutation regression test (321 passed). Ready for re-review.",
+      "resolved_at": "2026-08-10T15:02:26Z",
+      "status": "done",
+      "task_id": "SUP-RUNTIME-V10-IMMUTABLE-INCUMBENT-PYCACHE-RESIDUE-20260810",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-08-10T15:02:26Z",
+      "from": "Codex2",
+      "message": "Re-review rejected at PR #4718 HEAD 64b7f964c. (1) Required safety gap: legacy residue identity captures only .pyc metadata; it opens each admitted __pycache__ directory but never stores/revalidates its path/device/inode/mode descriptor identity. Bind every admitted directory as well as each file, and add a regression that replaces the admitted directory after capture while retaining the same .pyc path/inode/digest; revalidation must abort before signalling. (2) git diff --check fails at scripts/test_promote_supervisor_runtime.py:7959 (new blank line at EOF); fix and record a passing result. (3) PR CI is BLOCKED: Commit trailers rejects anchor commits 85d052ed8, c5f0d8feb, abf32dba5, 64b7f964c for subjects over 72 chars. Deliver the repair on a valid clean task PR/commit history without force-amending the pushed branch. (4) Update the task evidence manifest for the repaired exact HEAD with current complete-suite and diff-check evidence before requesting a fresh independent review.",
+      "resolved_at": "2026-08-10T15:02:26Z",
+      "status": "done",
+      "task_id": "SUP-RUNTIME-V10-IMMUTABLE-INCUMBENT-PYCACHE-RESIDUE-20260810",
+      "to": "Antigravity2"
+    },
+    {
+      "created_at": "2026-08-10T15:12:47Z",
+      "from": "Antigravity2",
+      "message": "Repaired safety gap with descriptor-bound directory identity (device/inode/mode), fixed git diff --check, delivered clean commit 3584029a7 on PR #4718, updated evidence manifest, and verified 322 test suite passes.",
+      "resolved_at": "2026-08-10T15:13:00Z",
+      "status": "done",
+      "task_id": "SUP-RUNTIME-V10-IMMUTABLE-INCUMBENT-PYCACHE-RESIDUE-20260810",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-08-10T15:13:00Z",
+      "from": "Antigravity2",
+      "message": "Repaired safety gap with descriptor-bound directory identity (device/inode/mode), fixed git diff --check, delivered clean commit 3584029a7 on PR #4718, updated evidence manifest, and verified 322 test suite passes.",
+      "resolved_at": "2026-08-10T15:13:13Z",
+      "status": "done",
+      "task_id": "SUP-RUNTIME-V10-IMMUTABLE-INCUMBENT-PYCACHE-RESIDUE-20260810",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-08-10T15:13:13Z",
+      "from": "Antigravity2",
+      "message": "Repaired safety gap with descriptor-bound directory identity (device/inode/mode), fixed git diff --check, delivered clean commit 3584029a7 on PR #4718, updated evidence manifest, and verified 322 test suite passes.",
+      "resolved_at": "2026-08-10T15:13:26Z",
+      "status": "done",
+      "task_id": "SUP-RUNTIME-V10-IMMUTABLE-INCUMBENT-PYCACHE-RESIDUE-20260810",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-08-10T15:13:26Z",
+      "from": "Antigravity2",
+      "message": "Repaired safety gap with descriptor-bound directory identity (device/inode/mode), fixed git diff --check, delivered clean commit 3584029a7 on PR #4718, updated evidence manifest, and verified 322 test suite passes.",
+      "resolved_at": "2026-08-10T15:21:19Z",
+      "status": "done",
+      "task_id": "SUP-RUNTIME-V10-IMMUTABLE-INCUMBENT-PYCACHE-RESIDUE-20260810",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-08-10T15:21:19Z",
+      "from": "Codex2",
+      "message": "Independent review of PR #4718 exact head 3584029a7aa005c8ff0de8ba96c294cf55b1428e: directory device/inode/mode is captured and revalidated alongside bound .pyc identity; candidate and rollback paths remain deny-by-default clean; directory-replacement regression and full 322-test suite pass; PR diff-check and required CI checks are clean.",
+      "status": "done",
+      "task_id": "SUP-RUNTIME-V10-IMMUTABLE-INCUMBENT-PYCACHE-RESIDUE-20260810",
+      "to": "Antigravity2",
+      "resolved_at": "2026-08-10T15:25:27Z"
+    }
+  ],
+  "blockers": []
+}

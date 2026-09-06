@@ -1,0 +1,191 @@
+{
+  "version": 1,
+  "task_id": "L12-FLEET-001",
+  "archived_at": "2026-07-26T09:24:44Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "acceptance": [
+      "Repository and live ready-dispatcher capacity policies agree after provisioning",
+      "Supervisor and watchdog restart under the governed intent path without losing task state",
+      "Codex and Codex2 expose four eligible slots each and a guarded catalog dry-run succeeds",
+      "No active deploy lease, approval, queue item, or existing task is lost or duplicated"
+    ],
+    "actual_state_sources": [
+      "live supervisor config",
+      "supervisor runtime state",
+      "watchdog health and provider readiness"
+    ],
+    "artifact_conflict_guard": {
+      "allowed_overlap_task_ids": [],
+      "artifact_scope": [
+        {
+          "path": "docs/deployment/evidence/twelve-loop-gap/L12-FLEET-001",
+          "repo": "pantheon"
+        },
+        {
+          "path": "scripts/check_config_drift.py",
+          "repo": "pantheon"
+        },
+        {
+          "path": "scripts/provision_live_supervisor_config.py",
+          "repo": "pantheon"
+        },
+        {
+          "path": "scripts/test_check_config_drift.py",
+          "repo": "pantheon"
+        },
+        {
+          "path": "scripts/test_provision_live_supervisor_config.py",
+          "repo": "pantheon"
+        }
+      ],
+      "catalog_sha256": "a7fbbaa560bd7f2d97750b25cd20af69b64d4f522b293689849b0e1b1763717f",
+      "program_id": "pantheon-twelve-loop-gap-2026-07-26",
+      "schema_version": 1,
+      "task_id": "L12-FLEET-001"
+    },
+    "artifacts": [
+      "scripts/provision_live_supervisor_config.py",
+      "scripts/check_config_drift.py",
+      "scripts/test_provision_live_supervisor_config.py",
+      "scripts/test_check_config_drift.py",
+      "docs/deployment/evidence/twelve-loop-gap/L12-FLEET-001"
+    ],
+    "auto_created_by": "dispatch_twelve_loop_gap_2026_07_26",
+    "catalog_task_contract_sha256": "0dbee63ce9c43eb80d56c0e86868b0ee4102e9f102bf441f6c7984aa1f5ed5a6",
+    "current_maturity": "contract",
+    "depends_on": [],
+    "desired_state_sources": [
+      ".orchestrator/config.json ready_dispatcher policy"
+    ],
+    "dispatch_rules": [
+      "Do not restart while a dev deployment lease is active",
+      "Do not hand-edit the live config",
+      "Preserve the blocked PPL-ALLOC-009 task and all runtime journals"
+    ],
+    "evidence_root": "docs/deployment/evidence/twelve-loop-gap/L12-FLEET-001",
+    "fleet_lane": "fleet-capacity",
+    "id": "L12-FLEET-001",
+    "last_update": "2026-07-26T09:24:44Z",
+    "loop_ids": [
+      "source_ingestion",
+      "strategy_distillation",
+      "alpha_replication",
+      "persona_teaching",
+      "agora_interaction_evidence",
+      "human_imitation_shadow_evaluation",
+      "consultation",
+      "promotion_deployment",
+      "capital_pool_execution",
+      "telemetry_reconciliation",
+      "evolution",
+      "bff_health_monitoring"
+    ],
+    "merge_target": "dev",
+    "mutates_canonical": true,
+    "next": "Owner closeout complete: PR #4135 merge 09159159 delivered fleet guard/tests; PR #4140 merge 91ff33b70 delivered independently approved runtime evidence; PR #4141 merge 6f2164ffd recorded closeout verification; PR #4142 merge 1827cce2e added the product evidence manifest. Reverified 82+2 pytest, py_compile, both evidence digests, drift=[], healthy supervisor/watchdog, and 8/8 Codex slots ready.",
+    "non_goals": [
+      "No panel-only closure",
+      "No seed fixture as live proof",
+      "No approval gate bypass",
+      "No live-capital activation"
+    ],
+    "owner": "Codex",
+    "phase": "Twelve Loop Remediation / Fleet Bootstrap",
+    "product_level_required": true,
+    "program_id": "pantheon-twelve-loop-gap-2026-07-26",
+    "proof_required": [
+      "config drift unit tests",
+      "governed supervisor restart evidence",
+      "provider and slot readiness readback",
+      "mutation-free dispatcher dry-run"
+    ],
+    "requires_human_ops_signoff": false,
+    "reviewer": "Codex2",
+    "status": "done",
+    "summary_zh": "讓受審查的 repo fleet policy 覆蓋陳舊 live overlay，安全重載 supervisor，證明 Codex/Codex2 各四個 slot 可派工且 watchdog、queue、approval 維持健康。",
+    "target_maturity": "reconciled",
+    "target_repo": "pantheon",
+    "task_doc": "docs/bff/execution-tasks/2026-07-26-twelve-loop-gap/L12-FLEET-001.md",
+    "title": "Restore and prove the eight-slot Codex fleet frontier",
+    "wave": 0,
+    "review_file": "docs/deployment/evidence/twelve-loop-gap/L12-FLEET-001/closeout/evidence.json",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-07-26T09:24:44Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/l12-fleet-001",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/L12-FLEET-001",
+      "git_clean_required": false,
+      "status_command_runtime": {
+        "command_root": "/home/lupin/pantheon-ci-deploy/dev-root",
+        "source_sha": "09159159fbac9b43d3e97011a12a224699677620",
+        "base_ref": "origin/dev",
+        "remote": "ajoe734/pantheon",
+        "status_root": "/home/lupin/pantheon",
+        "delivery_root": "/tmp/pantheon-worker-worktrees/pantheon/l12-fleet-001",
+        "wrapper_root": "/home/lupin/pantheon-ci-deploy/dev-root"
+      },
+      "commit": "e729c8607f3608000146d030b42069e7e6744919",
+      "commit_subject": "L12-FLEET-001: add product closeout manifest",
+      "commit_author": {
+        "name": "pantheon-dev",
+        "email": "bjoe734@gmail.com"
+      },
+      "commit_metadata": {
+        "Owned layer": "task product-evidence admission and immutable delivery references",
+        "Not changing": "reviewed fleet implementation, live runtime, or source receipt",
+        "Composes with": "Codex2 approval, PR #4135, PR #4140, and PR #4141",
+        "LLM-Agent": "Codex",
+        "Task-ID": "L12-FLEET-001",
+        "Reviewer": "Codex2",
+        "Verified": "product schema/guardrail; closeout checksum; 82+2 pytest and live readback"
+      },
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "1827cce2e9d6c31f7b57ec4400f3c5d1b3bede29",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "created_at": "2026-07-26T08:50:48Z",
+      "from": "Codex",
+      "message": "PR #4140 open with auto-merge; review commits e5fe75bcc and 6ccb63133 plus docs/deployment/evidence/twelve-loop-gap/L12-FLEET-001. Acceptance proof: lease-safe watchdog restart to PID 1579402 at 09159159, exact pre/post task queue approval journal parity, Codex/Codex2 capacity 4 each with eight ready slots, drift 0, health true, guarded dry-run mutation-free; 82 + 2 tests passed and py_compile passed.",
+      "resolved_at": "2026-07-26T09:04:23Z",
+      "status": "done",
+      "task_id": "L12-FLEET-001",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-07-26T09:04:23Z",
+      "from": "Codex2",
+      "message": "獨立審查通過：PR #4135 merge 09159159 已納入 provisioner/drift guard 與 tests；PR #4140 merge 91ff33b70 已納入 e5fe75bcc/6ccb63133 evidence。重跑 82+2 pytest、py_compile、evidence digest 均通過；repo/live policy 相等且 drift=[]，installed capacity Codex/Codex2=4/4，8 個 slot fresh auth/verified，PID 1579402、watchdog、heartbeat 健康。journal 前 1203 筆 byte/projection hash與 1205 projection/event ID逐項吻合；run 30194930965 於 restart 後 47 秒才取得 lease 並正常釋放；guarded dry-run仍為21 exact/4 create且六個 governed surfaces hash前後不變。現時 command root 因本 evidence merge及後續 PR 比 origin/dev 落後5 commits，但無 config drift，不影響重啟當下與 exact source 09159159 的 acceptance。",
+      "status": "done",
+      "task_id": "L12-FLEET-001",
+      "to": "Codex",
+      "resolved_at": "2026-07-26T09:24:45Z"
+    }
+  ],
+  "blockers": [],
+  "correction_context": {
+    "version": 1,
+    "corrected_at": "2026-07-26T12:53:50Z",
+    "actor": "Human/Ops",
+    "reason": "Replace disposable worker path with the merged ProductEvidence manifest after checksum and done-guard replay.",
+    "field": "task.review_file",
+    "from": "/tmp/pantheon-worker-worktrees/pantheon/l12-fleet-001/docs/deployment/evidence/twelve-loop-gap/L12-FLEET-001/closeout/evidence.json",
+    "to": "docs/deployment/evidence/twelve-loop-gap/L12-FLEET-001/closeout/evidence.json",
+    "evidence_sha256": "d2441d12c90ff2ae44bc231e69e5fb1ac67a98f880c8fae133c600aed2eda3da"
+  }
+}

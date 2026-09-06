@@ -1,0 +1,122 @@
+{
+  "version": 1,
+  "task_id": "L12-VERIFY-LEARN-REAL-VERIFIER-001",
+  "archived_at": "2026-08-09T11:44:42Z",
+  "terminal_status": "done",
+  "terminal_outcome": "superseded",
+  "task": {
+    "acceptance": [
+      "Materialize this existing planned ID only if absent; block on a conflicting canonical hash and never create AGORA-L12-REAL-VERIFIER-20260808.",
+      "Invoke actual authenticated Teaching, Agora, Policy Learning, and Consultation routes and durable API/database readbacks; fail closed when any required service is absent.",
+      "Capture one non-fixture chain of teaching/session, interaction/evidence, learn dataset version, handoff/ack, terminal candidate, Consultation request, memo/handoff, tenant/user, and trace identifiers.",
+      "Verify duplicate/idempotency conflict, two-worker behavior, ack ordering, tenant isolation, RBAC/auth rejection, restart durability, failure-to-DLQ, and replay to one terminal result.",
+      "Prove no seed fallback, no runtime mutation, no candidate promotion, safe write defaults, and no historical-row purge or bulk acknowledgement.",
+      "Return nonzero for missing/mismatched lineage, unavailable service, foreign tenant, absent durable readback, missing ack/candidate/memo, unsafe posture, or self-attested evidence.",
+      "Independent reviewer must inspect verifier source and raw checksummed evidence; owner self-approval is invalid."
+    ],
+    "artifacts": [
+      "scripts/verify_twelve_loop_learning.py",
+      "scripts/test_verify_twelve_loop_learning.py",
+      "docs/deployment/evidence/twelve-loop-gap/L12-VERIFY-LEARN-REAL-VERIFIER-001/"
+    ],
+    "depends_on": [
+      "AGORA-LEARNING-CROSS-LOOP-BIND-20260808",
+      "L12-MIN-TEACH-20260808",
+      "L12-MIN-E2E-20260808"
+    ],
+    "dev_bridge": {
+      "actor": {
+        "capabilities": [
+          "dev-task.dispatch",
+          "fleet.dispatch"
+        ],
+        "id": "Codex",
+        "roles": [
+          "coordination-agent"
+        ]
+      },
+      "audit_conversation_href": "codex://root/agora-current-gap-execution-20260808",
+      "conversation_id": "codex-root-agora-current-gap-execution-20260808",
+      "documents": [
+        {
+          "kind": "AGORA_CURRENT_GAP_AUDIT",
+          "path": "docs/bff/execution-tasks/2026-08-08-agora-current-environment-gap/GAP-AUDIT.md",
+          "sourceRefs": [
+            "https://github.com/ajoe734/pantheon/pull/4628",
+            "2d1f16b1ab3c9fc0f89b2648e93c496365bbb03b",
+            "frozen origin/dev de8635aa958593ca332395baba1880aacf096952",
+            "deployment run 31250996848"
+          ]
+        },
+        {
+          "kind": "AGORA_CURRENT_GAP_PLAN",
+          "path": "docs/bff/execution-tasks/2026-08-08-agora-current-environment-gap/INDEX.md",
+          "sourceRefs": [
+            "https://github.com/ajoe734/pantheon/pull/4628",
+            "exact head 2d1f16b1ab3c9fc0f89b2648e93c496365bbb03b",
+            "origin/dev de8635aa958593ca332395baba1880aacf096952"
+          ]
+        },
+        {
+          "kind": "EXECUTION_TASK_DAG",
+          "path": "docs/bff/execution-tasks/2026-08-08-agora-current-environment-gap/execution-tasks.json",
+          "sourceRefs": [
+            "nine unique governed tasks",
+            "reuse L12-VERIFY-LEARN-REAL-VERIFIER-001",
+            "unique sink AGORA-CURRENT-CLOSE-20260808"
+          ]
+        }
+      ],
+      "emitted_at": "2026-08-08T11:54:00Z",
+      "intent": "generate_sa_sd_and_dispatch",
+      "mode": "kernel_repair",
+      "packet_digest": "ecd0e13cb8cc306cd8414e6c559a2e16f7c6ceaacfec2f2dceb5cb45d24595cb",
+      "packet_id": "pkt-agora-current-environment-gap-final-20260808-2d1f16b1a",
+      "source_turn_ids": [
+        "user-request-agora-gap-and-execution-tasks-for-supervisor",
+        "codex-readonly-agora-current-state-audit-20260808"
+      ],
+      "task_spec": {
+        "acceptance": [
+          "Materialize this existing planned ID only if absent; block on a conflicting canonical hash and never create AGORA-L12-REAL-VERIFIER-20260808.",
+          "Invoke actual authenticated Teaching, Agora, Policy Learning, and Consultation routes and durable API/database readbacks; fail closed when any required service is absent.",
+          "Capture one non-fixture chain of teaching/session, interaction/evidence, learn dataset version, handoff/ack, terminal candidate, Consultation request, memo/handoff, tenant/user, and trace identifiers.",
+          "Verify duplicate/idempotency conflict, two-worker behavior, ack ordering, tenant isolation, RBAC/auth rejection, restart durability, failure-to-DLQ, and replay to one terminal result.",
+          "Prove no seed fallback, no runtime mutation, no candidate promotion, safe write defaults, and no historical-row purge or bulk acknowledgement.",
+          "Return nonzero for missing/mismatched lineage, unavailable service, foreign tenant, absent durable readback, missing ack/candidate/memo, unsafe posture, or self-attested evidence.",
+          "Independent reviewer must inspect verifier source and raw checksummed evidence; owner self-approval is invalid."
+        ],
+        "artifacts": [
+          "scripts/verify_twelve_loop_learning.py",
+          "scripts/test_verify_twelve_loop_learning.py",
+          "docs/deployment/evidence/twelve-loop-gap/L12-VERIFY-LEARN-REAL-VERIFIER-001/"
+        ],
+        "depends_on": [
+          "AGORA-LEARNING-CROSS-LOOP-BIND-20260808",
+          "L12-MIN-TEACH-20260808",
+          "L12-MIN-E2E-20260808"
+        ],
+        "id": "L12-VERIFY-LEARN-REAL-VERIFIER-001",
+        "owner": "Antigravity",
+        "phase": "A3 real Learning verifier",
+        "reviewer": "Claude2",
+        "summary": "Reuse the planned successor ID and verify Teaching, Agora, Imitation, and Consultation through actual service boundaries and durable readbacks.",
+        "title": "Materialize and execute the real Learning product verifier"
+      },
+      "task_spec_hash": "a8fecdee6f9263d7e2dccce803bcf3ea7211cb9f7e6546fc20722cf9dc039c3f"
+    },
+    "id": "L12-VERIFY-LEARN-REAL-VERIFIER-001",
+    "last_update": "2026-08-09T11:44:42Z",
+    "next": "Superseded by the signed minimum functional closure contract L12-MIN-E2E-20260808; the late-materialized legacy verifier row must not coexist with the accepted successor DAG.",
+    "owner": "Human/Ops",
+    "phase": "A3 real Learning verifier",
+    "reviewer": "Antigravity",
+    "status": "done",
+    "summary_zh": "Reuse the planned successor ID and verify Teaching, Agora, Imitation, and Consultation through actual service boundaries and durable readbacks.",
+    "title": "Materialize and execute the real Learning product verifier",
+    "terminal_outcome": "superseded",
+    "superseded_by": "L12-MIN-E2E-20260808"
+  },
+  "handoffs": [],
+  "blockers": []
+}

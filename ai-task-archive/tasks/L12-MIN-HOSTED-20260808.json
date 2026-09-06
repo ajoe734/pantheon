@@ -1,0 +1,160 @@
+{
+  "version": 1,
+  "task_id": "L12-MIN-HOSTED-20260808",
+  "archived_at": "2026-08-13T02:59:41Z",
+  "terminal_status": "done",
+  "terminal_outcome": "superseded",
+  "task": {
+    "acceptance": [
+      "Deploy the exact merged Pantheon dev source through the existing dev deployment path without editing deployment authority.",
+      "Record the actually served FE and BFF identities and require BFF readiness 200.",
+      "Repeat the twelve minimum terminal readbacks against hosted dev and require 12/12 pass.",
+      "Keep the previous served release if any hosted probe fails."
+    ],
+    "artifacts": [
+      "docs/deployment/evidence/twelve-loop-gap/L12-MIN-HOSTED-20260808/"
+    ],
+    "depends_on": [
+      "L12-MIN-E2E-20260808",
+      "LIFECYCLE-PROJ-RETIRE-001"
+    ],
+    "dev_bridge": {
+      "actor": {
+        "capabilities": [
+          "dev-task.dispatch",
+          "fleet.dispatch"
+        ],
+        "id": "Codex",
+        "roles": [
+          "coordination-agent"
+        ]
+      },
+      "audit_conversation_href": null,
+      "conversation_id": "codex-root-l12-minimum-functional-closure-20260808",
+      "documents": [
+        {
+          "kind": "MINIMUM_FUNCTIONAL_GAP_DESIGN",
+          "path": "docs/bff/execution-tasks/2026-08-08-l12-minimum-functional-closure/INDEX.md",
+          "sourceRefs": [
+            "https://github.com/ajoe734/pantheon/pull/4621",
+            "f56e2bc91",
+            "a55721bce2a7bc0a4dc01dd6eba1b48a58b78312"
+          ]
+        },
+        {
+          "kind": "EXECUTION_TASK_DAG",
+          "path": "docs/bff/execution-tasks/2026-08-08-l12-minimum-functional-closure/execution-tasks.json",
+          "sourceRefs": [
+            "packet_b",
+            "pantheon-twelve-loop-minimum-functional-closure-2026-08-08"
+          ]
+        },
+        {
+          "kind": "LEGACY_DAG_RECONCILIATION",
+          "path": "docs/bff/execution-tasks/2026-08-08-l12-minimum-functional-closure/legacy-28-reconciliation.json",
+          "sourceRefs": [
+            "28-old-ids-zero-materialized-at-snapshot"
+          ]
+        }
+      ],
+      "emitted_at": "2026-08-08T09:23:01Z",
+      "intent": "generate_sa_sd_and_dispatch",
+      "mode": "kernel_repair",
+      "packet_digest": "2c36f24f0e2e3648d68d92d0e140e8346544f2fdaf8c928e4ebd680dfb530c77",
+      "packet_id": "pkt-l12-minimum-functional-b-20260808-f56e2bc91",
+      "source_turn_ids": [
+        "user-explicit-l12-minimum-functional-closure-dispatch-20260808"
+      ],
+      "task_spec": {
+        "acceptance": [
+          "Deploy the exact merged Pantheon dev source through the existing dev deployment path without editing deployment authority.",
+          "Record the actually served FE and BFF identities and require BFF readiness 200.",
+          "Repeat the twelve minimum terminal readbacks against hosted dev and require 12/12 pass.",
+          "Keep the previous served release if any hosted probe fails."
+        ],
+        "artifacts": [
+          "docs/deployment/evidence/twelve-loop-gap/L12-MIN-HOSTED-20260808/"
+        ],
+        "depends_on": [
+          "L12-MIN-E2E-20260808",
+          "LIFECYCLE-PROJ-RETIRE-001"
+        ],
+        "id": "L12-MIN-HOSTED-20260808",
+        "owner": "Claude",
+        "phase": "M4 hosted delivery",
+        "reviewer": "Antigravity",
+        "summary": null,
+        "title": "Deploy merged dev and prove twelve hosted terminal readbacks"
+      },
+      "task_spec_hash": "1af031a1be4dd70e226b5b81828c03067758c5f71a2410bc463524802df92a81"
+    },
+    "generation": 1,
+    "id": "L12-MIN-HOSTED-20260808",
+    "last_update": "2026-08-13T02:59:41Z",
+    "next": "Superseded by the 2026-08-13 V2 board reset. Preserve merged/archive evidence; remaining product work is rematerialized as dependency-free, current-source V2 roots.",
+    "owner": "Antigravity",
+    "phase": "M4 hosted delivery",
+    "reviewer": "Codex",
+    "status": "done",
+    "summary_zh": null,
+    "title": "Deploy merged dev and prove twelve hosted terminal readbacks",
+    "terminal_outcome": "superseded"
+  },
+  "handoffs": [
+    {
+      "created_at": "2026-08-08T10:17:57Z",
+      "from": "Claude",
+      "message": "Auto-reassigned L12-MIN-HOSTED-20260808 away from unavailable lane Claude (disabled, paused, sidecar-only, or auth-down); owner Claude -> Antigravity, reviewer Antigravity -> Codex.",
+      "resolved_at": "2026-08-08T14:26:52Z",
+      "status": "done",
+      "task_id": "L12-MIN-HOSTED-20260808",
+      "to": "Antigravity"
+    },
+    {
+      "created_at": "2026-08-08T14:26:52Z",
+      "from": "Antigravity",
+      "message": "Auto-reassigned L12-MIN-HOSTED-20260808 away from unavailable lane Antigravity (disabled, paused, sidecar-only, or auth-down); owner Antigravity -> Codex2.",
+      "resolved_at": "2026-08-09T10:17:48Z",
+      "status": "done",
+      "task_id": "L12-MIN-HOSTED-20260808",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-08-09T10:17:48Z",
+      "from": "Codex2",
+      "message": "Auto-reassigned L12-MIN-HOSTED-20260808 away from unavailable lane Codex2 (disabled, paused, sidecar-only, or auth-down); owner Codex2 -> Codex, reviewer Codex -> Antigravity.",
+      "resolved_at": "2026-08-09T15:16:57Z",
+      "status": "done",
+      "task_id": "L12-MIN-HOSTED-20260808",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-08-09T15:16:57Z",
+      "from": "Codex",
+      "message": "Auto-reassigned L12-MIN-HOSTED-20260808 away from unavailable lane Codex (disabled, paused, sidecar-only, or auth-down); owner Codex -> Codex2.",
+      "resolved_at": "2026-08-12T03:03:28Z",
+      "status": "done",
+      "task_id": "L12-MIN-HOSTED-20260808",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-08-12T03:03:28Z",
+      "from": "Codex2",
+      "message": "Auto-reassigned L12-MIN-HOSTED-20260808 away from unavailable lane Codex2 (disabled, paused, sidecar-only, or auth-down); owner Codex2 -> Antigravity, reviewer Antigravity -> Claude.",
+      "resolved_at": "2026-08-13T02:00:40Z",
+      "status": "done",
+      "task_id": "L12-MIN-HOSTED-20260808",
+      "to": "Antigravity"
+    },
+    {
+      "created_at": "2026-08-12T04:37:29Z",
+      "from": "Claude",
+      "message": "Auto-reassigned L12-MIN-HOSTED-20260808 away from unavailable lane Claude (disabled, paused, sidecar-only, or auth-down); reviewer Claude -> Codex.",
+      "status": "done",
+      "task_id": "L12-MIN-HOSTED-20260808",
+      "to": "Codex",
+      "resolved_at": "2026-08-13T02:59:41Z"
+    }
+  ],
+  "blockers": []
+}

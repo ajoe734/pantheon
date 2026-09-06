@@ -1,0 +1,91 @@
+{
+  "actor": {
+    "capabilities": [
+      "fleet.dispatch",
+      "dev-task.dispatch"
+    ],
+    "id": "Codex",
+    "roles": [
+      "operator-delegate"
+    ]
+  },
+  "admission_record_path": "ai-task-archive/tasks/assistant-dev-bridge-admissions/pkt-sup-preemption-post-merge-live-canary-20260731T1510Z--58d15e3463eb50d2.json",
+  "admitted_at": "2026-07-31T15:10:20Z",
+  "audit_conversation_href": "codex://root/l12-current-gap-supervisor-dispatch-20260731#post-merge-live-canary",
+  "constraints": {
+    "allowedRepos": [
+      "pantheon"
+    ],
+    "noDirectShellFromWeb": true,
+    "requiresBranchPrMerge": true
+  },
+  "conversation_id": "codex-root-l12-current-gap-supervisor-dispatch-20260731",
+  "dispatch_records": [
+    {
+      "error": null,
+      "owner": "Antigravity",
+      "reviewer": "Codex2",
+      "status": "dispatched",
+      "taskId": "SUP-PREEMPTION-POST-MERGE-LIVE-CANARY-20260731"
+    }
+  ],
+  "documents": [
+    {
+      "kind": "MERGED_SCHEDULER_REPAIR",
+      "path": "https://github.com/ajoe734/pantheon/pull/4399",
+      "sourceRefs": [
+        "merge 894eb813c7cb5609ae517103a727d93ba8cbd1ed",
+        "Branch CI 30641372627 success"
+      ]
+    },
+    {
+      "kind": "LIVE_CANARY_EVIDENCE_TARGET",
+      "path": "docs/deployment/evidence/twelve-loop-gap/SUP-PREEMPTION-DISPATCH-ELIGIBILITY-20260731",
+      "sourceRefs": [
+        "live command root 894eb813c7cb5609ae517103a727d93ba8cbd1ed",
+        "supervisor PID 614854 planned watchdog restart"
+      ]
+    }
+  ],
+  "durable": true,
+  "emitted_at": "2026-07-31T15:10:03Z",
+  "intent": "supervisor_dispatch_post_merge_live_scheduler_canary",
+  "mode": "kernel_debug",
+  "packet_digest": "58d15e3463eb50d28eb7cf20d476cad7eae22be68371338cada85cb91746e9a6",
+  "packet_id": "pkt-sup-preemption-post-merge-live-canary-20260731T1510Z",
+  "packet_version": "pantheon.assistant.dev-task.v1",
+  "record_kind": "assistant_dev_bridge_admission",
+  "record_payload_sha256": "ae764a53be1e3aac3333b9ecd801d999736a4846c0849bb647c58ade961220d2",
+  "schema": "pantheon.assistant-dev-bridge-admission.v1",
+  "source_turn_ids": [
+    "user-authorized-full-sequence",
+    "pr-4399-merged-894eb813",
+    "official-live-promotion-894eb813"
+  ],
+  "tasks": [
+    {
+      "task_id": "SUP-PREEMPTION-POST-MERGE-LIVE-CANARY-20260731",
+      "task_spec": {
+        "acceptance": [
+          "Confirm the live command root is exact merge 894eb813c7cb5609ae517103a727d93ba8cbd1ed and supervisor lifecycle is running before sampling",
+          "Remain a live supervisor-dispatched auto worker for at least 330 seconds; do not self-complete early",
+          "At intervals no longer than 60 seconds record UTC time, run ID, worker runner PID, provider child PID, heartbeat timestamp, supervisor PID, and task status",
+          "Do not modify repository files or .orchestrator/config.json; this is a read-only runtime canary",
+          "During the interval inspect scheduler/activity evidence and confirm provider-ineligible, cooldown-blocked, and failure-loop-blocked candidates do not priority-preempt this worker",
+          "After at least 330 seconds, hand off to Codex2 with exact start/end timestamps, elapsed seconds, run ID, PIDs, heartbeat samples, scan-log references, and any legitimate terminal event"
+        ],
+        "artifacts": [
+          "docs/deployment/evidence/twelve-loop-gap/SUP-PREEMPTION-DISPATCH-ELIGIBILITY-20260731"
+        ],
+        "depends_on": [],
+        "id": "SUP-PREEMPTION-POST-MERGE-LIVE-CANARY-20260731",
+        "owner": "Antigravity",
+        "phase": "Supervisor Runtime Repair / Wave 0 Post-Merge Canary",
+        "reviewer": "Codex2",
+        "summary": "A dedicated supervisor-dispatched Antigravity worker must remain alive beyond the new five-minute grace on the officially merged and live-promoted scheduler code. It records runtime evidence only and makes no code/config changes.",
+        "title": "Run five-minute live scheduler worker canary"
+      },
+      "task_spec_hash": "fcf7c3f899fe8c4e6d8ef78c68ea98946e289d12ef4517dff576c7717830abcf"
+    }
+  ]
+}

@@ -1,0 +1,157 @@
+{
+  "version": 1,
+  "task_id": "AGORA-CURRENT-GAP-EXECUTION-20260808",
+  "archived_at": "2026-08-13T02:59:44Z",
+  "terminal_status": "done",
+  "terminal_outcome": "superseded",
+  "task": {
+    "acceptance": [
+      "Start from current origin/dev and authoritative task-state checkpoint; do not rely only on the shared checkout.",
+      "Verify the seven addendum task IDs are absent from active and archived task state, open PRs, branches, and worktrees before admission.",
+      "Verify every external L12-MIN dependency, owner/reviewer assignment, task-spec hash, and current status from authoritative state.",
+      "Reconcile packet A invalid_materialization against later canonical task rows without replaying or redispatching any existing L12-MIN ID.",
+      "Validate dependency reachability, unique final sink, artifact overlap ordering, declared branches/worktrees, merge target, rollout, and rollback.",
+      "Publish review_pending evidence and obtain independent exact-head review before declaring the gate done."
+    ],
+    "artifacts": [
+      "docs/deployment/evidence/agora/AGORA-CURRENT-GAP-EXECUTION-20260808/"
+    ],
+    "block_reason": {
+      "kind": "legacy_task_quarantine",
+      "required_action": "operator_reopen_after_diagnosis"
+    },
+    "depends_on": [],
+    "dev_bridge": {
+      "actor": {
+        "capabilities": [
+          "dev-task.dispatch",
+          "fleet.dispatch"
+        ],
+        "id": "Codex",
+        "roles": [
+          "coordination-agent"
+        ]
+      },
+      "audit_conversation_href": "codex://root/agora-current-gap-execution-20260808",
+      "conversation_id": "codex-root-agora-current-gap-execution-20260808",
+      "documents": [
+        {
+          "kind": "AGORA_CURRENT_GAP_AUDIT",
+          "path": "docs/bff/execution-tasks/2026-08-08-agora-current-environment-gap/GAP-AUDIT.md",
+          "sourceRefs": [
+            "https://github.com/ajoe734/pantheon/pull/4628",
+            "e765bcbed",
+            "deployment run 31250996848"
+          ]
+        },
+        {
+          "kind": "AGORA_CURRENT_GAP_PLAN",
+          "path": "docs/bff/execution-tasks/2026-08-08-agora-current-environment-gap/INDEX.md",
+          "sourceRefs": [
+            "https://github.com/ajoe734/pantheon/pull/4628",
+            "origin/dev 0f2ab06f8"
+          ]
+        },
+        {
+          "kind": "EXECUTION_TASK_DAG",
+          "path": "docs/bff/execution-tasks/2026-08-08-agora-current-environment-gap/execution-tasks.json",
+          "sourceRefs": [
+            "seven unique addendum tasks",
+            "unique sink AGORA-CURRENT-CLOSE-20260808"
+          ]
+        }
+      ],
+      "emitted_at": "2026-08-08T10:50:00Z",
+      "intent": "generate_sa_sd_and_dispatch",
+      "mode": "kernel_repair",
+      "packet_digest": "e32265e892a924d69b69ce3de5d83d0ea8c5ccad56114a0638299192686a41c6",
+      "packet_id": "pkt-agora-current-environment-gap-20260808-e765bcbed",
+      "source_turn_ids": [
+        "user-request-agora-gap-and-execution-tasks-for-supervisor",
+        "codex-readonly-agora-current-state-audit-20260808"
+      ],
+      "task_spec": {
+        "acceptance": [
+          "Start from current origin/dev and authoritative task-state checkpoint; do not rely only on the shared checkout.",
+          "Verify the seven addendum task IDs are absent from active and archived task state, open PRs, branches, and worktrees before admission.",
+          "Verify every external L12-MIN dependency, owner/reviewer assignment, task-spec hash, and current status from authoritative state.",
+          "Reconcile packet A invalid_materialization against later canonical task rows without replaying or redispatching any existing L12-MIN ID.",
+          "Validate dependency reachability, unique final sink, artifact overlap ordering, declared branches/worktrees, merge target, rollout, and rollback.",
+          "Publish review_pending evidence and obtain independent exact-head review before declaring the gate done."
+        ],
+        "artifacts": [
+          "docs/deployment/evidence/agora/AGORA-CURRENT-GAP-EXECUTION-20260808/"
+        ],
+        "depends_on": [],
+        "id": "AGORA-CURRENT-GAP-EXECUTION-20260808",
+        "owner": "Antigravity",
+        "phase": "A0 coordination admission",
+        "reviewer": "Claude",
+        "summary": "Verify canonical dependency and artifact truth, resolve the minimum packet-A receipt/readback ambiguity without replay, and release only non-duplicate addendum work.",
+        "title": "Reconcile and admit the Agora current-environment addendum"
+      },
+      "task_spec_hash": "129ddbf0bd25bf1136b59ec4250c4cbc14ec5866fbcd25400fc5dcc9e217deb7"
+    },
+    "generation": 1,
+    "id": "AGORA-CURRENT-GAP-EXECUTION-20260808",
+    "last_update": "2026-08-13T02:59:44Z",
+    "next": "Superseded by the 2026-08-13 V2 board reset. Preserve merged/archive evidence; remaining product work is rematerialized as dependency-free, current-source V2 roots.",
+    "owner": "Codex",
+    "phase": "A0 coordination admission",
+    "resume_status": "in_progress",
+    "reviewer": "Codex2",
+    "status": "done",
+    "summary_zh": "Verify canonical dependency and artifact truth, resolve the minimum packet-A receipt/readback ambiguity without replay, and release only non-duplicate addendum work.",
+    "title": "Reconcile and admit the Agora current-environment addendum",
+    "terminal_outcome": "superseded"
+  },
+  "handoffs": [
+    {
+      "created_at": "2026-08-08T14:43:14Z",
+      "from": "Antigravity",
+      "message": "Auto-reassigned AGORA-CURRENT-GAP-EXECUTION-20260808 away from unavailable lane Antigravity, Claude (disabled, paused, sidecar-only, or auth-down); owner Antigravity -> Codex2, reviewer Claude -> Codex.",
+      "resolved_at": "2026-08-08T14:46:01Z",
+      "status": "done",
+      "task_id": "AGORA-CURRENT-GAP-EXECUTION-20260808",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-08-08T14:45:28Z",
+      "from": "Codex2",
+      "message": "Helper-claimed by idle Codex previous owner Codex2 becomes reviewer.",
+      "resolved_at": "2026-08-08T14:46:01Z",
+      "status": "done",
+      "task_id": "AGORA-CURRENT-GAP-EXECUTION-20260808",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-08-08T14:57:47Z",
+      "from": "Codex",
+      "message": "Review PR #4628 exact head 2add60662ad3e8dd1af4ebeaeec5525e011eb77b and docs/deployment/evidence/agora/AGORA-CURRENT-GAP-EXECUTION-20260808/evidence.json. Independently verify both receipts, 4 exact/5 conflicting hashes, absent final admission record, obsolete rows, and the two-sink canonical graph. This is a fail-closed finding, not successful admission: reopen with the concrete governed immutable-state reconciliation requirement unless the evidence is wrong; do not authorize downstream release or done while the conflict remains.",
+      "resolved_at": "2026-08-08T15:03:22Z",
+      "status": "done",
+      "task_id": "AGORA-CURRENT-GAP-EXECUTION-20260808",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-08-08T15:03:22Z",
+      "from": "Codex2",
+      "message": "Independent exact-head review rejected PR #4628 at 2add60662ad3e8dd1af4ebeaeec5525e011eb77b. The preliminary receipt durably admitted 7 rows, but the final receipt failed with 5 immutable same-ID task-spec conflicts and no final admission record; 4 exact final rows therefore lack a final-packet admission. Canonical state still has obsolete AGORA-L12-CROSS-LOOP-INTEGRATE-20260808 and AGORA-L12-REAL-VERIFIER-20260808; hosted reacceptance depends on the obsolete verifier, producing two sinks (AGORA-CURRENT-CLOSE-20260808 and L12-VERIFY-LEARN-REAL-VERIFIER-001). Required: preserve both receipts/provenance; do not replay packets or hand-edit state; use an independently reviewed governed immutable-state reconciliation transaction (unique successor IDs or first-class partial admission) to retire/replace obsolete/conflicting revisions, record durable admission for exact rows, and revalidate one sink plus hosted dependency on L12-VERIFY-LEARN-REAL-VERIFIER-001. Also fix git diff --check EOF whitespace. No downstream release or done until this succeeds and receives a new exact-head review.",
+      "resolved_at": "2026-08-08T15:03:22Z",
+      "status": "done",
+      "task_id": "AGORA-CURRENT-GAP-EXECUTION-20260808",
+      "to": "Codex"
+    }
+  ],
+  "blockers": [
+    {
+      "created_at": "2026-08-08T14:56:44Z",
+      "message": "PR #4628 head 2add60662ad3e8dd1af4ebeaeec5525e011eb77b records the fail-closed admission readback: preliminary packet admitted seven immutable rows; final packet stranded four exact rows without an admission record and hit five same-ID hash conflicts; canonical graph has two sinks and hosted still references the obsolete verifier. No replay or downstream release is safe. Waiting for Codex2 independent exact-head evidence review and a governed immutable-state reconciliation path.",
+      "owner": "Codex",
+      "resolved_at": "2026-08-08T14:57:47Z",
+      "status": "resolved",
+      "task_id": "AGORA-CURRENT-GAP-EXECUTION-20260808",
+      "waiting_for": "Codex2"
+    }
+  ]
+}

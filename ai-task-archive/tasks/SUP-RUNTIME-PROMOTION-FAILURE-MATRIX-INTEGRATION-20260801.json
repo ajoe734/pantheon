@@ -1,0 +1,140 @@
+{
+  "version": 1,
+  "task_id": "SUP-RUNTIME-PROMOTION-FAILURE-MATRIX-INTEGRATION-20260801",
+  "archived_at": "2026-08-02T09:02:09Z",
+  "terminal_status": "done",
+  "terminal_outcome": "superseded",
+  "task": {
+    "acceptance": [
+      "Review the complete architecture across sync-dev-root, command-runtime refresh helpers, watchdog intentional restart, status-command runtime pinning, task-worktree cleanup, authoritative projection, worker and queue leases and provider readiness; document the failure chain from the deleted-cwd incident and how each invariant closes it.",
+      "Run a deterministic matrix covering successful promotion plus every negative required by the three predecessor tasks. Tests use fixtures/mocks only and prove the live supervisor PID is never signalled.",
+      "Run focused promotion tests, watchdog deployment contract tests and the full relevant supervisor and ai_status regression. Record exact commands, counts and outputs; no claimed test count may disagree with collected output.",
+      "Evidence must state review pending until Human/Ops approval and must not self-write review_approved. Runtime evidence defaults outside executable source and cannot dirty a candidate command root.",
+      "Create one clean integration PR from current dev with correct title/body and only this task ancestry; every commit and PR body uses the exact Task-ID, LLM-Agent Antigravity, Reviewer Human/Ops and validation trailers.",
+      "Close polluted PR #4433 only after the clean integration PR exists and links the supersession. Do not reuse or approve any prior #4433 head.",
+      "All repository checks and root merge-freeze status must be green on the exact reviewed head before Human/Ops approval and protected merge.",
+      "After merge, do not promote live automatically. Hand off the merged helper to SUP-AGENT-ALIAS-GUARD-LIVE-PROMOTION-20260731 as the resolved rollback-contract dependency and use the next already-governed runtime promotion as canary.",
+      "No edits to .orchestrator/config.json, live-supervisor-mainroot-config.json, canonical JSON, provider policy, product controllers, or live services.",
+      "Work only in a clean governed task worktree on the exact task branch, target dev, and keep unrelated or generated task-brief changes out of commits.",
+      "Deliver focused commits with LLM-Agent: Antigravity, exact Task-ID, Reviewer: Human/Ops and Verified trailers; push, open a correctly titled PR to dev, wait for all checks, and require exact-head Human/Ops review before merge.",
+      "Rollout: merge source, then separate Human/Ops-governed live canary with gate-before-switch. Rollback: revert the integration and predecessor merge commits in reverse order; live canary rollback restores its captured incumbent."
+    ],
+    "artifacts": [
+      "scripts/promote_supervisor_runtime.py",
+      "scripts/promote-supervisor-runtime.sh",
+      "scripts/test_promote_supervisor_runtime.py",
+      "docs/deployment/evidence/supervisor/SUP-RUNTIME-PROMOTION-FAILURE-MATRIX-INTEGRATION-20260801/"
+    ],
+    "depends_on": [
+      "SUP-RUNTIME-PROMOTION-ROLLBACK-TRANSACTION-20260801"
+    ],
+    "dev_bridge": {
+      "actor": {
+        "capabilities": [
+          "assistant.kernel.repair",
+          "dev-task.dispatch",
+          "fleet.dispatch"
+        ],
+        "id": "Human/Ops",
+        "roles": [
+          "operator"
+        ]
+      },
+      "audit_conversation_href": "codex://root/l12-current-gap-auto-sequence-20260731#runtime-promotion-split-chain",
+      "conversation_id": "codex-root-l12-current-gap-auto-sequence-20260731",
+      "documents": [
+        {
+          "kind": "INCIDENT_EVIDENCE",
+          "path": "docs/deployment/evidence/supervisor/SUP-AGENT-ALIAS-GUARD-LIVE-PROMOTION-20260731/evidence.json",
+          "sourceRefs": [
+            "deleted task-worktree cwd incident",
+            "manual Human/Ops rollback",
+            "persistent 012dab runtime recovery"
+          ]
+        },
+        {
+          "kind": "SUPERSEDED_MONOLITH_PACKET",
+          "path": ".orchestrator/assistant-dev-packets/processed/pkt-sup-runtime-promotion-auto-rollback-guard-20260731T2335Z.json",
+          "sourceRefs": [
+            "PR #4433 rejected heads fa91abfd, 165779d0 and 3d679cc0",
+            "repeated worker exits before complete implementation"
+          ]
+        }
+      ],
+      "emitted_at": "2026-08-01T00:01:25.395559Z",
+      "intent": "split_failed_monolith_into_governed_sequential_runtime_promotion_tasks",
+      "mode": "kernel_repair",
+      "packet_digest": "0fe55babcfb9777e6a4f6b55424994d38be2341fab000e2fe81cb8c594f78c5a",
+      "packet_id": "pkt-sup-runtime-promotion-split-chain-20260801T0000Z",
+      "source_turn_ids": [
+        "user-auto-sequence-4397-4399-antigravity-dag-hosted-l12-close",
+        "human-ops-pr4433-exact-head-rejection-3d679cc",
+        "antigravity-repeated-evidence-only-handoffs"
+      ],
+      "task_spec": {
+        "acceptance": [
+          "Review the complete architecture across sync-dev-root, command-runtime refresh helpers, watchdog intentional restart, status-command runtime pinning, task-worktree cleanup, authoritative projection, worker and queue leases and provider readiness; document the failure chain from the deleted-cwd incident and how each invariant closes it.",
+          "Run a deterministic matrix covering successful promotion plus every negative required by the three predecessor tasks. Tests use fixtures/mocks only and prove the live supervisor PID is never signalled.",
+          "Run focused promotion tests, watchdog deployment contract tests and the full relevant supervisor and ai_status regression. Record exact commands, counts and outputs; no claimed test count may disagree with collected output.",
+          "Evidence must state review pending until Human/Ops approval and must not self-write review_approved. Runtime evidence defaults outside executable source and cannot dirty a candidate command root.",
+          "Create one clean integration PR from current dev with correct title/body and only this task ancestry; every commit and PR body uses the exact Task-ID, LLM-Agent Antigravity, Reviewer Human/Ops and validation trailers.",
+          "Close polluted PR #4433 only after the clean integration PR exists and links the supersession. Do not reuse or approve any prior #4433 head.",
+          "All repository checks and root merge-freeze status must be green on the exact reviewed head before Human/Ops approval and protected merge.",
+          "After merge, do not promote live automatically. Hand off the merged helper to SUP-AGENT-ALIAS-GUARD-LIVE-PROMOTION-20260731 as the resolved rollback-contract dependency and use the next already-governed runtime promotion as canary.",
+          "No edits to .orchestrator/config.json, live-supervisor-mainroot-config.json, canonical JSON, provider policy, product controllers, or live services.",
+          "Work only in a clean governed task worktree on the exact task branch, target dev, and keep unrelated or generated task-brief changes out of commits.",
+          "Deliver focused commits with LLM-Agent: Antigravity, exact Task-ID, Reviewer: Human/Ops and Verified trailers; push, open a correctly titled PR to dev, wait for all checks, and require exact-head Human/Ops review before merge.",
+          "Rollout: merge source, then separate Human/Ops-governed live canary with gate-before-switch. Rollback: revert the integration and predecessor merge commits in reverse order; live canary rollback restores its captured incumbent."
+        ],
+        "artifacts": [
+          "scripts/promote_supervisor_runtime.py",
+          "scripts/promote-supervisor-runtime.sh",
+          "scripts/test_promote_supervisor_runtime.py",
+          "docs/deployment/evidence/supervisor/SUP-RUNTIME-PROMOTION-FAILURE-MATRIX-INTEGRATION-20260801/"
+        ],
+        "depends_on": [
+          "SUP-RUNTIME-PROMOTION-ROLLBACK-TRANSACTION-20260801"
+        ],
+        "id": "SUP-RUNTIME-PROMOTION-FAILURE-MATRIX-INTEGRATION-20260801",
+        "owner": "Antigravity",
+        "phase": "Supervisor Runtime Promotion / 4 Qualification",
+        "reviewer": "Human/Ops",
+        "summary": "Perform the final architecture integration and qualification, retire polluted PR #4433, and produce the exact reviewed source contract for the next governed live canary.",
+        "title": "Integrate and qualify the supervisor promotion transaction"
+      },
+      "task_spec_hash": "4a2dad053f94012fcbf325c68e5f7180c6cf99d9d1668079161f4d1228319dd6"
+    },
+    "id": "SUP-RUNTIME-PROMOTION-FAILURE-MATRIX-INTEGRATION-20260801",
+    "last_update": "2026-08-02T09:02:09Z",
+    "next": "Superseded to repair stale dependency IDs, sequence overlapping source scopes, and use task-scoped live provider availability. The replacement preserves configured Codex/Codex2 quota groups and adds no global mutual-review prohibition.",
+    "owner": "Codex",
+    "phase": "Supervisor Runtime Promotion / 4 Qualification",
+    "reviewer": "Human/Ops",
+    "status": "done",
+    "summary_zh": "Perform the final architecture integration and qualification, retire polluted PR #4433, and produce the exact reviewed source contract for the next governed live canary.",
+    "title": "Integrate and qualify the supervisor promotion transaction",
+    "terminal_outcome": "superseded",
+    "superseded_by": "SUP-RUNTIME-PROMOTION-FAILURE-MATRIX-INTEGRATION-OPERATOR-V2-20260802"
+  },
+  "handoffs": [
+    {
+      "created_at": "2026-08-01T14:23:07Z",
+      "from": "Human/Ops",
+      "message": "Auto-reassigned SUP-RUNTIME-PROMOTION-FAILURE-MATRIX-INTEGRATION-20260801 away from unavailable lane Human/Ops (disabled, paused, sidecar-only, or auth-down); reviewer Human/Ops -> Codex.",
+      "resolved_at": "2026-08-01T15:29:47Z",
+      "status": "done",
+      "task_id": "SUP-RUNTIME-PROMOTION-FAILURE-MATRIX-INTEGRATION-20260801",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-08-01T15:29:47Z",
+      "from": "Codex",
+      "message": "Auto-reassigned SUP-RUNTIME-PROMOTION-FAILURE-MATRIX-INTEGRATION-20260801 away from unavailable lane Codex (disabled, paused, sidecar-only, or auth-down); reviewer Codex -> Codex2.",
+      "status": "done",
+      "task_id": "SUP-RUNTIME-PROMOTION-FAILURE-MATRIX-INTEGRATION-20260801",
+      "to": "Codex2",
+      "resolved_at": "2026-08-02T09:02:09Z"
+    }
+  ],
+  "blockers": []
+}

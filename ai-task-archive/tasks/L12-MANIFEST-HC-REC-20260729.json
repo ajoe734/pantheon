@@ -1,0 +1,176 @@
+{
+  "version": 1,
+  "task_id": "L12-MANIFEST-HC-REC-20260729",
+  "archived_at": "2026-07-29T04:47:57Z",
+  "terminal_status": "done",
+  "terminal_outcome": "superseded",
+  "task": {
+    "acceptance": [
+      "reconciliation-drift-consumer health heartbeat gap closed or waived",
+      "reconciliation-drift-scheduler health heartbeat gap closed or waived",
+      "reconciliation-drift-incident-listener health heartbeat gap closed or waived",
+      "workstream output is integrable by L12-MANIFEST-001 owner"
+    ],
+    "artifacts": [],
+    "depends_on": [],
+    "github_review_bridge": {
+      "actor": "Codex",
+      "base": "dev",
+      "decision": "approve",
+      "head_branch": "task/L12-MANIFEST-HC-REC-20260729",
+      "head_sha": "bc62ec840be7a0a5c4ec78809caa0920748ba243",
+      "mode": "required_commit_status",
+      "pr": 4341,
+      "pr_url": "https://github.com/ajoe734/pantheon/pull/4341",
+      "recorded_at": "2026-07-29T04:18:37Z",
+      "repository": "ajoe734/pantheon",
+      "review_error": "gh: Unprocessable Entity (HTTP 422)",
+      "status_context": "Pantheon canonical review gate",
+      "status_id": 51266892073,
+      "status_state": "success"
+    },
+    "id": "L12-MANIFEST-HC-REC-20260729",
+    "last_update": "2026-07-29T04:47:57Z",
+    "next": "Superseded by merged parent L12-MANIFEST-001 PR #4342/#4343; stale workstream PR was closed unmerged by PR-drain.",
+    "owner": "Human/Ops",
+    "phase": "Twelve Loop Remediation / Manifest Workstream",
+    "review_binding": {
+      "base": "dev",
+      "head_branch": "task/L12-MANIFEST-HC-REC-20260729",
+      "head_sha": "bc62ec840be7a0a5c4ec78809caa0920748ba243",
+      "pr": 4341
+    },
+    "review_file": "docs/deployment/evidence/twelve-loop-gap/L12-MANIFEST-HC-REC-20260729/evidence.json",
+    "review_notes_zh": [
+      "PR #4332 exact head b41df54daaf9476046dd2a89d4f5e52b2f028309 的 11-file scope 對齊四項 acceptance，三個 reconciliation worker 皆具 identity/freshness fail-closed heartbeat 與 Compose healthcheck。",
+      "獨立重跑 107 reconciliation/foundation tests 與 10 adjacent regression tests 全通過；schema、README/evidence checksum、py_compile、docker compose config、三個 resolved healthcheck commands 與 separate-process negative-downstream probes均通過。",
+      "validated_base_sha 6fe626252d10af27eed0aba79530506d192857ca 可解析且是 implementation anchor 982f224a2953d948fcc46d0342c611f3d0b22389 的 parent/merge-base；9 個 PR checks 全綠。Hosted deployment/restart proof 明確未主張，留給 L12-MANIFEST-001/L12-HOSTED-001。"
+    ],
+    "reviewer": "Codex",
+    "status": "done",
+    "summary_zh": "補三個 reconciliation drift worker 的 health/heartbeat 證據或 waiver，輸出給 L12-MANIFEST-001 owner 整合。",
+    "title": "Supersede stale manifest workstream row",
+    "terminal_outcome": "superseded",
+    "superseded_by": "L12-MANIFEST-001"
+  },
+  "handoffs": [
+    {
+      "created_at": "2026-07-29T02:53:38Z",
+      "from": "Codex2",
+      "message": "PR #4332 exact head a73d583502b382c4d64f7d0d09e258c3b5ddedfe is ready for independent review. Review file: docs/deployment/evidence/twelve-loop-gap/L12-MANIFEST-HC-REC-20260729/evidence.json. Validate atomic identity/freshness heartbeat semantics, three Compose probes, 107+10 test evidence, and the explicit no-hosted-proof boundary. Approve only with REVIEW_PR=4332 and REVIEW_HEAD_SHA=a73d583502b382c4d64f7d0d09e258c3b5ddedfe; auto-merge is off.",
+      "resolved_at": "2026-07-29T03:02:53Z",
+      "status": "done",
+      "task_id": "L12-MANIFEST-HC-REC-20260729",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-07-29T03:02:53Z",
+      "from": "Codex",
+      "message": "Exact-head review of PR #4332 at a73d583502b382c4d64f7d0d09e258c3b5ddedfe requires one evidence correction: evidence.json records validation.validated_base_sha=6fe626252f19adf9223c5f35268ef43dc74ec445, which is not a repository object and contradicts the actual implementation anchor 982f224a2953d948fcc46d0342c611f3d0b22389 parent/PR merge-base 6fe626252d10af27eed0aba79530506d192857ca. The manifest says contradicted proof fails closed. Correct the base SHA, reseal evidence.sha256, append a correction record, resync/push the PR, and request fresh exact-head review. Independent reruns otherwise passed: ProductEvidenceManifest schema and both checksums; 107 reconciliation/foundation tests; 10 adjacent worker/Compose tests; py_compile; docker compose config; all three resolved healthcheck commands and separate-process heartbeat probes. Preserve the explicit no-hosted-proof boundary.",
+      "resolved_at": "2026-07-29T03:02:53Z",
+      "status": "done",
+      "task_id": "L12-MANIFEST-HC-REC-20260729",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-07-29T03:08:53Z",
+      "from": "Codex2",
+      "message": "Fresh exact-head review requested for PR #4332 at b41df54daaf9476046dd2a89d4f5e52b2f028309. Corrected validation.validated_base_sha to the resolvable implementation-anchor parent 6fe626252d10af27eed0aba79530506d192857ca, appended correction record sequence 2, and resealed both evidence.sha256 entries. Focused revalidation passed: ProductEvidenceManifest schema, README/evidence checksums, exact base ancestry/object resolution, and git diff --check. Preserve the explicit no-hosted-proof boundary; hosted deployment/restart evidence remains unclaimed.",
+      "resolved_at": "2026-07-29T03:16:33Z",
+      "status": "done",
+      "task_id": "L12-MANIFEST-HC-REC-20260729",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-07-29T03:16:33Z",
+      "from": "Codex",
+      "message": "Approved PR #4332 exact head b41df54daaf9476046dd2a89d4f5e52b2f028309: all four acceptance items satisfied; independent 107+10 tests, ProductEvidenceManifest schema/checksums, exact anchor ancestry, Compose resolution, separate-process heartbeat probes, git diff --check, and 9 GitHub checks pass. No hosted deployment/restart proof is claimed.",
+      "resolved_at": "2026-07-29T03:16:37Z",
+      "status": "done",
+      "task_id": "L12-MANIFEST-HC-REC-20260729",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-07-29T03:18:58Z",
+      "from": "Codex",
+      "message": "Auto-reassigned ownership from Codex2 to Antigravity after repeated Codex2 tool auth: GitHub CLI auth unavailable",
+      "resolved_at": "2026-07-29T03:43:18Z",
+      "status": "done",
+      "task_id": "L12-MANIFEST-HC-REC-20260729",
+      "to": "Antigravity"
+    },
+    {
+      "created_at": "2026-07-29T03:44:07Z",
+      "from": "Codex",
+      "message": "Supervisor resumed L12-MANIFEST-HC-REC-20260729 for finalize after successful dispatch.",
+      "resolved_at": "2026-07-29T03:54:16Z",
+      "status": "done",
+      "task_id": "L12-MANIFEST-HC-REC-20260729",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-07-29T03:54:16Z",
+      "from": "Codex2",
+      "message": "Closeout-only follow-up PR #4341 is ready at exact head 0b250b710b70739f9c651a257f2e63aa4cc2a933, containing current origin/dev 5b3bc8aa82e91b422a8bb1cc0c63a5960a0a362a. The only task delta is the four task-owned brief/README/evidence/checksum files: it transcribes Codex governed approval event sequence 4456 for PR #4332, records merge 31d7eaebcb012a9beb5f5f0057db401d378b5beb, advances the four acceptance rows to review-approved, and preserves the no-hosted-proof boundary. ProductEvidenceManifest schema, README/evidence checksum, PR merge identity/ancestry, and git diff --check pass; task artifact blob identities stayed unchanged across the dev refresh. Please approve only this exact head with REVIEW_PR=4341 REVIEW_HEAD_SHA=0b250b710b70739f9c651a257f2e63aa4cc2a933 REVIEW_BASE=dev REVIEW_FILE=docs/deployment/evidence/twelve-loop-gap/L12-MANIFEST-HC-REC-20260729/evidence.json, then run the normal integrator.",
+      "resolved_at": "2026-07-29T04:01:45Z",
+      "status": "done",
+      "task_id": "L12-MANIFEST-HC-REC-20260729",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-07-29T04:01:45Z",
+      "from": "Codex",
+      "message": "Approved PR #4341 exact head 0b250b710b70739f9c651a257f2e63aa4cc2a933: exact four-file closeout scope on dev base 5b3bc8aa82e91b422a8bb1cc0c63a5960a0a362a; authoritative approval event sequence 4456/event task-state-072cd08f918f29e8398210c10e873ea595a7d6b8ee254bb13610766b0ae12d53 matches the manifest; PR #4332 final head 604ded86efcaee003fc0f2c9ff485fd9da0fa5ba merged as 31d7eaebcb012a9beb5f5f0057db401d378b5beb and is on origin/dev; ProductEvidenceManifest schema, README/evidence checksum, four acceptance rows, no-hosted-proof boundary, reconciliation-owned source/Compose keys, closeout artifact stability, git diff --check, and all 8 current PR checks independently pass.",
+      "resolved_at": "2026-07-29T04:09:07Z",
+      "status": "done",
+      "task_id": "L12-MANIFEST-HC-REC-20260729",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-07-29T04:09:07Z",
+      "from": "Codex2",
+      "message": "Dev advanced while the Human/Ops root gate was pending. Refreshed PR #4341 without task-artifact conflicts; please re-approve exact head bc62ec840be7a0a5c4ec78809caa0920748ba243 after the current checks pass. Scope remains the same four closeout files, with the reviewed ProductEvidenceManifest/checksums and no-hosted-proof boundary unchanged.",
+      "resolved_at": "2026-07-29T04:18:37Z",
+      "status": "done",
+      "task_id": "L12-MANIFEST-HC-REC-20260729",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-07-29T04:18:37Z",
+      "from": "Codex",
+      "message": "Approved PR #4341 exact head bc62ec840be7a0a5c4ec78809caa0920748ba243: four closeout artifacts are unchanged from prior reviewed head 0b250b710b70739f9c651a257f2e63aa4cc2a933; ProductEvidenceManifest schema and README/evidence checksums pass; independently reran 107 reconciliation/foundation tests and 10 adjacent regressions plus py_compile and docker compose config; PR #4332 final-head blobs match squash merge 31d7eaebcb012a9beb5f5f0057db401d378b5beb on origin/dev; all eight current PR checks pass; hosted deployment/restart proof remains explicitly unclaimed.",
+      "resolved_at": "2026-07-29T04:18:45Z",
+      "status": "done",
+      "task_id": "L12-MANIFEST-HC-REC-20260729",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-07-29T04:19:09Z",
+      "from": "Codex",
+      "message": "Auto-reassigned ownership from Codex2 to Antigravity after repeated Codex2 terminal: Worker process missing during supervisor boot reconciliation.",
+      "resolved_at": "2026-07-29T04:28:40Z",
+      "status": "done",
+      "task_id": "L12-MANIFEST-HC-REC-20260729",
+      "to": "Antigravity"
+    },
+    {
+      "created_at": "2026-07-29T04:29:10Z",
+      "from": "Codex",
+      "message": "Auto-reassigned ownership from Antigravity to Codex2 after repeated Antigravity terminal: Error: timeout waiting for response",
+      "resolved_at": "2026-07-29T04:35:06Z",
+      "status": "done",
+      "task_id": "L12-MANIFEST-HC-REC-20260729",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-07-29T04:35:06Z",
+      "from": "Codex2",
+      "message": "PR #4341 final head dcac30d5b2d13326540a16d425f9c911d23fbed8 is pushed and clean. Re-review exact head after post-approval dev sync plus one task-brief dispatch-truth line; product evidence/schema/checksum and merged PR #4332 ancestry remain unchanged and pass. Approve with REVIEW_PR=4341 and REVIEW_HEAD_SHA=dcac30d5b2d13326540a16d425f9c911d23fbed8, then integrate PR #4341.",
+      "status": "done",
+      "task_id": "L12-MANIFEST-HC-REC-20260729",
+      "to": "Codex",
+      "resolved_at": "2026-07-29T04:47:57Z"
+    }
+  ],
+  "blockers": []
+}

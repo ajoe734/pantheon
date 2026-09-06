@@ -1,0 +1,148 @@
+{
+  "version": 1,
+  "task_id": "SUP-REVIEW-IDENTITY-BOUND-REASSIGN-GUARD-V3-20260802",
+  "archived_at": "2026-08-02T10:15:36Z",
+  "terminal_status": "done",
+  "terminal_outcome": "superseded",
+  "task": {
+    "acceptance": [
+      "Replace falsely archived V2 and unsafe merged #4501 behavior only after authority V7 merges; archived V2 is evidence, not implementation.",
+      "Start from current origin/dev after the policy dependency merges; treat archived SUP-REVIEW-IDENTITY-BOUND-REASSIGN-GUARD-20260802 and PR #4488 as evidence only, never as delivered code or valid done proof.",
+      "Treat merged PR #4501 exact head 931e1df08880bd3fa0818de373187cfdc4d9db51 and merge 66621e3484a690921032d93e26ec2c9867708d2a as the unsafe current-base behavior that this task must correct, not as accepted reviewer policy.",
+      "Implement one canonical shared reviewer-eligibility and review-identity predicate and consume it in catalog-locked normalization, helper claim, owner-failure planning, reviewer-failure planning, reassignment persistence, governed approval, closeout, merged-done reconciliation, safe-PR merge authorization, and merge gate.",
+      "Reject Codex owner with Codex2 reviewer and Codex2 owner with Codex reviewer in both bound and unbound flows. Replan only to a genuinely independent ready reviewer; if none exists, fail closed with zero canonical mutation and no approval or merge-ready state.",
+      "Preserve configured provider and quota groups; shared review identity must not merge capacity accounting, change config, or disable either execution lane.",
+      "Preserve exact-head reviewer bindings and pending Human/Ops handoffs across provider recovery; unavailable protected review cannot be silently replaced.",
+      "Positive regressions prove a genuinely independent configured owner/reviewer pair remains valid and ordinary unbound reassignment still works.",
+      "Negative regressions cover both Codex/Codex2 directions, no legal pair, cyclic fallback, stale CAS, forged or stale binding, owner failure, reviewer failure, approval, closeout, merged-done, and merge authorization.",
+      "Run focused and complete supervisor, ai-status, integrator/finalize/safe-PR/merge-gate suites, py_compile, evidence JSON parse, git diff --check, exact scope/trailers, and exact-head CI.",
+      "No config, live runtime JSON, retry threshold, provider readiness, deployment, V3 failure-record schema, product task, or catalog changes.",
+      "Require independent exact-head Human/Ops review and protected merge. No command-runtime promotion or live canary may include merge 66621e3 until this corrective merge is present.",
+      "Rollout is source merge followed by separately governed runtime promotion; rollback is revert of this corrective merge only together with fail-closed suspension of the unsafe planner."
+    ],
+    "artifacts": [
+      ".orchestrator/review_identity.py",
+      ".orchestrator/supervisor.py",
+      ".orchestrator/test_supervisor.py",
+      "scripts/ai_status.py",
+      "scripts/test_ai_status.py",
+      "scripts/git/task_review_merge_gate.py",
+      "scripts/git/test_task_review_merge_gate.py",
+      "docs/deployment/evidence/supervisor/SUP-REVIEW-IDENTITY-BOUND-REASSIGN-GUARD-V3-20260802/"
+    ],
+    "depends_on": [
+      "OPS-CHATBOX-DISPATCH-AUTHORITY-RESTORE-V7-20260802"
+    ],
+    "dev_bridge": {
+      "actor": {
+        "capabilities": [
+          "fleet.dispatch",
+          "dev-task.dispatch"
+        ],
+        "id": "Human/Ops",
+        "roles": [
+          "operator"
+        ]
+      },
+      "audit_conversation_href": "codex://root/l12-shared-review-dispatch-recovery-v7-20260802",
+      "conversation_id": "codex-root-l12-three-pass-gap-20260802",
+      "documents": [
+        {
+          "kind": "ACTIVE_REPOSITORY_AUTHORITY",
+          "path": "AGENTS.md",
+          "sourceRefs": [
+            "Codex and Codex2 currently share one ChatGPT account and are not independent review identities",
+            "Pantheon supervisor is the only routine implementation dispatcher"
+          ]
+        },
+        {
+          "kind": "FALSE_STALE_SESSION_ARCHIVES",
+          "path": "ai-task-archive/tasks/",
+          "sourceRefs": [
+            "OPS-CHATBOX-DISPATCH-AUTHORITY-RESTORE-V6-20260802",
+            "SUP-REVIEW-IDENTITY-BOUND-REASSIGN-GUARD-V2-20260802",
+            "SUP-L12-DISPATCHER-REVIEW-IDENTITY-ELIGIBILITY-V2-20260802",
+            "SUP-ASSISTANT-DEV-BRIDGE-ASSIGN-LOCK-TIMEOUT-OPERATOR-V6-20260802",
+            "SUP-GOVERNANCE-HANDOFF-ACTIVE-LEASE-GUARD-OPERATOR-V6-20260802",
+            "SUP-SCHEDULER-FIXED-CADENCE-BATCH-MUTATIONS-OPERATOR-V6-20260802"
+          ]
+        },
+        {
+          "kind": "THREE_PASS_GAP_AUDIT",
+          "path": "docs/reviews/archive/2026-08-01-l12-current-three-pass-gap-reaudit.md",
+          "sourceRefs": [
+            "PR #4494",
+            "merge 0a2bd446952936998996ba6ecc89b1cbacd55bce"
+          ]
+        },
+        {
+          "kind": "IMMUTABLE_28_TASK_CATALOG",
+          "path": "docs/bff/execution-tasks/2026-07-31-l12-current-gap-supervisor-dispatch/guarded-remediation-tasks.json",
+          "sourceRefs": [
+            "sha256 7f67b32555341de19feaa46b98fd09ad69de2a5b2f6767c40287626d9c01fdca",
+            "G1=25 G2=2 G3=1; G1 remains unmaterialized until corrected canary and dispatcher bootstrap"
+          ]
+        }
+      ],
+      "emitted_at": "2026-08-02T10:12:34.337312Z",
+      "intent": "restore_active_shared_review_identity_and_recover_dispatch_closeout_chain_after_stale_v6",
+      "mode": "kernel_repair",
+      "packet_digest": "7139578cd964356cfc690c823d24d30277b29f8fb8cf042872030358228bbbf4",
+      "packet_id": "pkt-sup-shared-review-dispatch-recovery-v7-20260802T1015Z",
+      "source_turn_ids": [
+        "user-requires-three-pass-gap-audit",
+        "user-requires-supervisor-autoworker-dispatch",
+        "stale-operator-v6-worker-prompt-contradicted-active-agents"
+      ],
+      "task_spec": {
+        "acceptance": [
+          "Replace falsely archived V2 and unsafe merged #4501 behavior only after authority V7 merges; archived V2 is evidence, not implementation.",
+          "Start from current origin/dev after the policy dependency merges; treat archived SUP-REVIEW-IDENTITY-BOUND-REASSIGN-GUARD-20260802 and PR #4488 as evidence only, never as delivered code or valid done proof.",
+          "Treat merged PR #4501 exact head 931e1df08880bd3fa0818de373187cfdc4d9db51 and merge 66621e3484a690921032d93e26ec2c9867708d2a as the unsafe current-base behavior that this task must correct, not as accepted reviewer policy.",
+          "Implement one canonical shared reviewer-eligibility and review-identity predicate and consume it in catalog-locked normalization, helper claim, owner-failure planning, reviewer-failure planning, reassignment persistence, governed approval, closeout, merged-done reconciliation, safe-PR merge authorization, and merge gate.",
+          "Reject Codex owner with Codex2 reviewer and Codex2 owner with Codex reviewer in both bound and unbound flows. Replan only to a genuinely independent ready reviewer; if none exists, fail closed with zero canonical mutation and no approval or merge-ready state.",
+          "Preserve configured provider and quota groups; shared review identity must not merge capacity accounting, change config, or disable either execution lane.",
+          "Preserve exact-head reviewer bindings and pending Human/Ops handoffs across provider recovery; unavailable protected review cannot be silently replaced.",
+          "Positive regressions prove a genuinely independent configured owner/reviewer pair remains valid and ordinary unbound reassignment still works.",
+          "Negative regressions cover both Codex/Codex2 directions, no legal pair, cyclic fallback, stale CAS, forged or stale binding, owner failure, reviewer failure, approval, closeout, merged-done, and merge authorization.",
+          "Run focused and complete supervisor, ai-status, integrator/finalize/safe-PR/merge-gate suites, py_compile, evidence JSON parse, git diff --check, exact scope/trailers, and exact-head CI.",
+          "No config, live runtime JSON, retry threshold, provider readiness, deployment, V3 failure-record schema, product task, or catalog changes.",
+          "Require independent exact-head Human/Ops review and protected merge. No command-runtime promotion or live canary may include merge 66621e3 until this corrective merge is present.",
+          "Rollout is source merge followed by separately governed runtime promotion; rollback is revert of this corrective merge only together with fail-closed suspension of the unsafe planner."
+        ],
+        "artifacts": [
+          ".orchestrator/review_identity.py",
+          ".orchestrator/supervisor.py",
+          ".orchestrator/test_supervisor.py",
+          "scripts/ai_status.py",
+          "scripts/test_ai_status.py",
+          "scripts/git/task_review_merge_gate.py",
+          "scripts/git/test_task_review_merge_gate.py",
+          "docs/deployment/evidence/supervisor/SUP-REVIEW-IDENTITY-BOUND-REASSIGN-GUARD-V3-20260802/"
+        ],
+        "depends_on": [
+          "OPS-CHATBOX-DISPATCH-AUTHORITY-RESTORE-V7-20260802"
+        ],
+        "id": "SUP-REVIEW-IDENTITY-BOUND-REASSIGN-GUARD-V3-20260802",
+        "owner": "Antigravity",
+        "phase": "Supervisor Runtime Repair / Review Identity V2",
+        "reviewer": "Human/Ops",
+        "summary": "Replace the falsely archived identity guard and correct the already-merged #4501 planner across every assignment, approval, closeout, and merge boundary.",
+        "title": "Correct merged assignment planner and all review gates with one shared identity predicate"
+      },
+      "task_spec_hash": "08927e30f8471c93aa2a6407e47abd66fc898ccc4e555892998d4f807ad85862"
+    },
+    "id": "SUP-REVIEW-IDENTITY-BOUND-REASSIGN-GUARD-V3-20260802",
+    "last_update": "2026-08-02T10:15:36Z",
+    "next": "Operator rejected hardcoded account/reviewer equivalence. Local AGENTS workspace drift is now synchronized to merged PR #4499 account-neutral source. Preserve distinct configured identities and quota groups; use only task-scoped live auth/quota evidence.",
+    "owner": "Antigravity",
+    "phase": "Supervisor Runtime Repair / Review Identity V2",
+    "reviewer": "Human/Ops",
+    "status": "done",
+    "summary_zh": "Replace the falsely archived identity guard and correct the already-merged #4501 planner across every assignment, approval, closeout, and merge boundary.",
+    "title": "Correct merged assignment planner and all review gates with one shared identity predicate",
+    "terminal_outcome": "superseded"
+  },
+  "handoffs": [],
+  "blockers": []
+}

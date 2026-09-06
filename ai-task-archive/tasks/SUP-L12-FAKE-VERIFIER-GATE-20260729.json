@@ -1,0 +1,48 @@
+{
+  "version": 1,
+  "task_id": "SUP-L12-FAKE-VERIFIER-GATE-20260729",
+  "archived_at": "2026-07-29T07:49:14Z",
+  "terminal_status": "done",
+  "terminal_outcome": "superseded",
+  "task": {
+    "acceptance": [
+      "Monitor open L12 verifier PR heads for self-attesting pass-printers;Fail closed if verifier constructs status pass without service calls/readbacks;Fail closed if evidence uses synthetic UUIDs as proof;Comment/close invalid PRs and reopen canonical task rows with exact head ids;Record every action in task-scoped evidence"
+    ],
+    "artifacts": [
+      "docs/deployment/evidence/twelve-loop-gap/SUP-L12-FAKE-VERIFIER-GATE-20260729"
+    ],
+    "depends_on": [],
+    "id": "SUP-L12-FAKE-VERIFIER-GATE-20260729",
+    "last_update": "2026-07-29T07:49:14Z",
+    "next": "Superseded by Human/Ops live repair: this row was contaminated by Codex/Codex2 helper/direct dispatch and must not be active. Guard behavior is covered by PR #4362 and live repair; do not redispatch this task id.",
+    "owner": "Human/Ops",
+    "phase": "Twelve Loop Remediation / Supervisor Guardrails",
+    "reviewer": "Antigravity",
+    "status": "done",
+    "summary_zh": "監控 L12 verifier PR，阻止 self-attesting pass-printer 與 synthetic UUID proof 被當成完成證據。",
+    "title": "Retired unsafe SUP-L12 fake verifier guard row",
+    "terminal_outcome": "superseded",
+    "superseded_by": "SUP-PROVIDER-FIRST-HELPER-GUARD-20260729"
+  },
+  "handoffs": [
+    {
+      "created_at": "2026-07-29T07:08:05Z",
+      "from": "Claude2",
+      "message": "Helper-claimed by Codex while Claude2 is dispatch-paused.",
+      "resolved_at": "2026-07-29T07:09:22Z",
+      "status": "done",
+      "task_id": "SUP-L12-FAKE-VERIFIER-GATE-20260729",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-07-29T07:11:03Z",
+      "from": "Claude2",
+      "message": "Helper-claimed by Codex while Claude2 is dispatch-paused.",
+      "resolved_at": "2026-07-29T07:12:03Z",
+      "status": "done",
+      "task_id": "SUP-L12-FAKE-VERIFIER-GATE-20260729",
+      "to": "Codex"
+    }
+  ],
+  "blockers": []
+}

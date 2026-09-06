@@ -1,0 +1,62 @@
+{
+  "version": 1,
+  "task_id": "L12-BFF-001-EXACT-HEAD-REVIEW-20260728",
+  "archived_at": "2026-07-28T21:27:29Z",
+  "terminal_status": "done",
+  "terminal_outcome": "superseded",
+  "task": {
+    "acceptance": [
+      "PR #4316 exact head d76e27f0894bd41e7e656cb80ff8608448ebaf82 reviewed; Pantheon canonical review gate written only after real review"
+    ],
+    "artifacts": [],
+    "depends_on": [],
+    "github": {
+      "base": "dev",
+      "head_branch": "task/L12-BFF-001",
+      "head_sha": "d76e27f0894bd41e7e656cb80ff8608448ebaf82",
+      "pr": 4316,
+      "pull_request": 4316,
+      "repository": "ajoe734/pantheon"
+    },
+    "id": "L12-BFF-001-EXACT-HEAD-REVIEW-20260728",
+    "last_update": "2026-07-28T21:27:29Z",
+    "next": "Superseded: ReviewBus rejects this review-only task because it declares PR branch task/L12-BFF-001 while exact task branch is task/L12-BFF-001-EXACT-HEAD-REVIEW-20260728. Continue on original L12-BFF-001 row; do not edit .orchestrator/config.json.",
+    "owner": "Human/Ops",
+    "phase": "Twelve Loop Remediation / BFF Exact Head Review Refresh",
+    "review_only": true,
+    "reviewer": "Antigravity",
+    "source_ref": {
+      "base": "dev",
+      "head_branch": "task/L12-BFF-001",
+      "head_sha": "d76e27f0894bd41e7e656cb80ff8608448ebaf82",
+      "pr": 4316,
+      "pull_request": 4316
+    },
+    "status": "done",
+    "summary_zh": "PR #4316 更新到最新 dev 後，重新做 exact-head review gate；不改產品檔、不碰 config。",
+    "title": "Supersede invalid branch-mismatched review-only row",
+    "terminal_outcome": "superseded",
+    "superseded_by": "L12-BFF-001"
+  },
+  "handoffs": [
+    {
+      "created_at": "2026-07-28T21:05:26Z",
+      "from": "Human/Ops",
+      "message": "Please perform independent exact-head review of PR #4316 head d76e27f0894bd41e7e656cb80ff8608448ebaf82 and approve/reopen through governed status command with REVIEW_PR=4316 REVIEW_HEAD_SHA=d76e27f0894bd41e7e656cb80ff8608448ebaf82 REVIEW_HEAD_BRANCH=task/L12-BFF-001 REVIEW_BASE=dev. Root merge freeze remains separate and will be exact-head only after review.",
+      "resolved_at": "2026-07-28T21:08:48Z",
+      "status": "done",
+      "task_id": "L12-BFF-001-EXACT-HEAD-REVIEW-20260728",
+      "to": "Antigravity"
+    },
+    {
+      "created_at": "2026-07-28T21:05:28Z",
+      "from": "Human/Ops",
+      "message": "Auto-reassigned L12-BFF-001-EXACT-HEAD-REVIEW-20260728 away from unavailable lane Human/Ops (disabled, paused, sidecar-only, or auth-down); owner Human/Ops -> Claude2.",
+      "status": "done",
+      "task_id": "L12-BFF-001-EXACT-HEAD-REVIEW-20260728",
+      "to": "Claude2",
+      "resolved_at": "2026-07-28T21:27:29Z"
+    }
+  ],
+  "blockers": []
+}

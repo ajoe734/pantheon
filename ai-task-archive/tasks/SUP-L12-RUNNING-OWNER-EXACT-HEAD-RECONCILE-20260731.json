@@ -1,0 +1,314 @@
+{
+  "version": 1,
+  "task_id": "SUP-L12-RUNNING-OWNER-EXACT-HEAD-RECONCILE-20260731",
+  "archived_at": "2026-08-05T02:04:15Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "acceptance": [
+      "Do not count SUP-L12-RUNNING-OWNER-RECONCILE-20260729 review_approved row alone as done",
+      "Inspect PR #4386 exact current head 2d5f692e960a22eef7c4b6d63002996a68468079 against canonical reviewed head 0528e5cab1df5386adfdb3113b8653411635fe86",
+      "Classify all added files since the reviewed head and verify whether they are metadata-only or require re-review",
+      "Either produce an exact-head review approval bound to 2d5f692e960a22eef7c4b6d63002996a68468079 or reopen/supersede with concrete changes",
+      "If approved, ensure protected merge/root-freeze and governed closeout are still required before downstream L12 closeout counts it",
+      "Archive evidence in this task-specific artifact directory and keep .orchestrator/config.json untouched"
+    ],
+    "artifacts": [
+      "docs/deployment/evidence/twelve-loop-gap/SUP-L12-RUNNING-OWNER-EXACT-HEAD-RECONCILE-20260731"
+    ],
+    "depends_on": [],
+    "dev_bridge": {
+      "actor": {
+        "capabilities": [
+          "fleet.dispatch",
+          "dev-task.dispatch"
+        ],
+        "id": "Codex",
+        "roles": [
+          "operator-delegate"
+        ]
+      },
+      "audit_conversation_href": "codex://root/l12-current-gap-supervisor-dispatch-20260731#wave0-exact-head-reconcile",
+      "conversation_id": "codex-root-l12-current-gap-supervisor-dispatch-20260731",
+      "documents": [
+        {
+          "kind": "CURRENT_THREE_PASS_GAP_AUDIT_ADDENDUM",
+          "path": "docs/04/pantheon_twelve_loop_gap_2026-07-26/archive/CURRENT_THREE_PASS_GAP_AUDIT_2026-07-31T0640Z.md",
+          "sourceRefs": [
+            "PR#4394",
+            "head a8c2691f35c103d8be6e51e468b9e34c81e379cf"
+          ]
+        },
+        {
+          "kind": "PR_COMMENT_EVIDENCE",
+          "path": "https://github.com/ajoe734/pantheon/pull/4385#issuecomment-5142713899",
+          "sourceRefs": [
+            "#4385 current head f5e70e86e01bde005dae5fed94b151c9bc07f389 differs from canonical reviewed 86dd9006b15bba67a83886e4a2d672e511aa8709"
+          ]
+        },
+        {
+          "kind": "PR_COMMENT_EVIDENCE",
+          "path": "https://github.com/ajoe734/pantheon/pull/4386#issuecomment-5142713897",
+          "sourceRefs": [
+            "#4386 current head 2d5f692e960a22eef7c4b6d63002996a68468079 differs from canonical reviewed 0528e5cab1df5386adfdb3113b8653411635fe86"
+          ]
+        }
+      ],
+      "emitted_at": "2026-07-31T12:11:38Z",
+      "intent": "dispatch_parallel_wave0_exact_head_reconcile_tasks",
+      "mode": "kernel_repair",
+      "packet_digest": "0d0f43f50af6a92fd7af9c0e705776978aafa8cc79e983d1f1ae4e8ed2e6f44e",
+      "packet_id": "pkt-l12-wave0-exact-head-reconcile-20260731T1213Z",
+      "source_turn_ids": [
+        "user-complete-gap-audit-and-supervisor-dispatch",
+        "codex-wave0-exact-head-mismatch-4385-4386"
+      ],
+      "task_spec": {
+        "acceptance": [
+          "Do not count SUP-L12-RUNNING-OWNER-RECONCILE-20260729 review_approved row alone as done",
+          "Inspect PR #4386 exact current head 2d5f692e960a22eef7c4b6d63002996a68468079 against canonical reviewed head 0528e5cab1df5386adfdb3113b8653411635fe86",
+          "Classify all added files since the reviewed head and verify whether they are metadata-only or require re-review",
+          "Either produce an exact-head review approval bound to 2d5f692e960a22eef7c4b6d63002996a68468079 or reopen/supersede with concrete changes",
+          "If approved, ensure protected merge/root-freeze and governed closeout are still required before downstream L12 closeout counts it",
+          "Archive evidence in this task-specific artifact directory and keep .orchestrator/config.json untouched"
+        ],
+        "artifacts": [
+          "docs/deployment/evidence/twelve-loop-gap/SUP-L12-RUNNING-OWNER-EXACT-HEAD-RECONCILE-20260731"
+        ],
+        "depends_on": [],
+        "id": "SUP-L12-RUNNING-OWNER-EXACT-HEAD-RECONCILE-20260731",
+        "owner": "Antigravity",
+        "phase": "Supervisor Runtime Repair / Support Exact-Head Reconcile",
+        "reviewer": "Claude2",
+        "summary": "PR #4386 current head differs from the reviewed task row head; reconcile exact-head proof before treating running-owner reconcile as support evidence.",
+        "title": "Reconcile running-owner PR exact head before support closeout is counted"
+      },
+      "task_spec_hash": "151faafafefa288e2c004f5200484839602f7a0e8addde3c7fc1c300c9ccf86b"
+    },
+    "github_review_bridge": {
+      "actor": "Antigravity",
+      "base": "dev",
+      "decision": "approve",
+      "head_branch": "task/SUP-L12-RUNNING-OWNER-EXACT-HEAD-RECONCILE-20260731",
+      "head_sha": "9d7dfadbcd929e95a0ec1ddf1787ad236c94470d",
+      "mode": "required_commit_status",
+      "pr": 4396,
+      "pr_url": "https://github.com/ajoe734/pantheon/pull/4396",
+      "recorded_at": "2026-08-01T15:06:47Z",
+      "repository": "ajoe734/pantheon",
+      "review_error": "gh: Unprocessable Entity (HTTP 422)",
+      "status_context": "Pantheon canonical review gate",
+      "status_id": 51483060736,
+      "status_state": "success"
+    },
+    "id": "SUP-L12-RUNNING-OWNER-EXACT-HEAD-RECONCILE-20260731",
+    "last_update": "2026-08-05T02:04:15Z",
+    "next": "Owner finalized approved task after PR #4396 squash-merged into dev as 9cb030dc1b6944334f3717af6c0d5f2fc5f10cd9.",
+    "owner": "Antigravity",
+    "phase": "Supervisor Runtime Repair / Support Exact-Head Reconcile",
+    "review_binding": {
+      "base": "dev",
+      "head_branch": "task/SUP-L12-RUNNING-OWNER-EXACT-HEAD-RECONCILE-20260731",
+      "head_sha": "9d7dfadbcd929e95a0ec1ddf1787ad236c94470d",
+      "pr": 4396
+    },
+    "review_file": "docs/deployment/evidence/twelve-loop-gap/SUP-L12-RUNNING-OWNER-EXACT-HEAD-RECONCILE-20260731/evidence.json",
+    "reviewer": "Claude",
+    "status": "done",
+    "summary_zh": "PR #4386 current head differs from the reviewed task row head; reconcile exact-head proof before treating running-owner reconcile as support evidence.",
+    "title": "Reconcile running-owner PR exact head before support closeout is counted",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-08-05T02:04:15Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/sup-l12-running-owner-exact-head-reconcile-20260731",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "HEAD",
+      "git_clean_required": false,
+      "status_command_runtime": {
+        "command_root": "/home/lupin/pantheon-ci-deploy/dev-root",
+        "source_sha": "4361a26ad9ff375ae61667ceb689b6fa28ff8058",
+        "base_ref": "origin/dev",
+        "remote": "ajoe734/pantheon",
+        "status_root": "/home/lupin/pantheon",
+        "delivery_root": "/tmp/pantheon-worker-worktrees/pantheon/sup-l12-running-owner-exact-head-reconcile-20260731",
+        "wrapper_root": "/home/lupin/pantheon-ci-deploy/dev-root",
+        "worker_lease": {
+          "schema_version": 1,
+          "task_id": "SUP-L12-RUNNING-OWNER-EXACT-HEAD-RECONCILE-20260731",
+          "worker_run_id": "antigravity1-1-20260805T015801Z-7f5f5994",
+          "queue_event_id": "evt-20260805T015741Z-b469b020",
+          "pid": 654467,
+          "pid_start_ticks": 33213357,
+          "process_generation": "worker-process-generation-sha256:df70bb669f8976268286f1428ba5b992f07911e1cf101c6181eeaee72e7d2c58"
+        }
+      },
+      "commit": "9cb030dc1b6944334f3717af6c0d5f2fc5f10cd9",
+      "commit_subject": "[ReviewBus] SUP-L12-RUNNING-OWNER-EXACT-HEAD-RECONCILE-20260731 Reconcile running-owner PR exact head before support closeout is counted (#4396)",
+      "commit_author": {
+        "name": "ajoe734",
+        "email": "bjoe734@gmail.com"
+      },
+      "commit_metadata": {
+        "* SUP-L12-RUNNING-OWNER-EXACT-HEAD-RECONCILE-20260731": "owner closeout",
+        "Owned layer": "task closeout commit trailers for owner finalization.",
+        "Not changing": "exact-head evidence manifest, PR #4386 runtime code, protected merge policy.",
+        "Composes with": "merged PR #4396 and exact-head reconciliation evidence.",
+        "LLM-Agent": "Antigravity",
+        "Task-ID": "SUP-L12-RUNNING-OWNER-EXACT-HEAD-RECONCILE-20260731",
+        "Reviewer": "Claude",
+        "Verified": "task evidence manifest, git status check, PR ancestry check"
+      },
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "9cb030dc1b6944334f3717af6c0d5f2fc5f10cd9",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "created_at": "2026-07-31T12:12:01Z",
+      "from": "Claude2",
+      "message": "Auto-reassigned SUP-L12-RUNNING-OWNER-EXACT-HEAD-RECONCILE-20260731 away from unavailable lane Claude2 (disabled, paused, sidecar-only, or auth-down); reviewer Claude2 -> Codex2.",
+      "resolved_at": "2026-07-31T12:12:59Z",
+      "status": "done",
+      "task_id": "SUP-L12-RUNNING-OWNER-EXACT-HEAD-RECONCILE-20260731",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-07-31T12:12:17Z",
+      "from": "Antigravity",
+      "message": "Helper-claimed by idle Codex2; previous owner Antigravity becomes reviewer.",
+      "resolved_at": "2026-07-31T12:13:03Z",
+      "status": "done",
+      "task_id": "SUP-L12-RUNNING-OWNER-EXACT-HEAD-RECONCILE-20260731",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-07-31T12:20:48Z",
+      "from": "Codex2",
+      "message": "Review commit c4346b8d53941d665acd931d32a98b3802b1e7b2 and docs/deployment/evidence/twelve-loop-gap/SUP-L12-RUNNING-OWNER-EXACT-HEAD-RECONCILE-20260731/evidence.json. Independently verify PR #4386 still has exact head 2d5f692e960a22eef7c4b6d63002996a68468079; approve only that head or reopen with concrete changes if it moved or the classification is contradicted. Do not count the original review_approved row as done before protected merge and governed closeout.",
+      "resolved_at": "2026-07-31T12:22:57Z",
+      "status": "done",
+      "task_id": "SUP-L12-RUNNING-OWNER-EXACT-HEAD-RECONCILE-20260731",
+      "to": "Antigravity"
+    },
+    {
+      "created_at": "2026-07-31T12:22:57Z",
+      "from": "Antigravity",
+      "message": "Independently verified PR #4386 head 2d5f692e960a22eef7c4b6d63002996a68468079 and exact-head reconciliation evidence manifest. Local supervisor unit tests (299 passed) and commit trailer checks passed cleanly.",
+      "resolved_at": "2026-07-31T12:31:29Z",
+      "status": "done",
+      "task_id": "SUP-L12-RUNNING-OWNER-EXACT-HEAD-RECONCILE-20260731",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-07-31T12:31:29Z",
+      "from": "Codex2",
+      "message": "Closeout artifact commit pushed to PR #4396 at exact head 19f71db59b94016aa0d6bf00cd3ead5bf8a9eb4f. Re-review only the closeout metadata delta from approved anchor c4346b8d53941d665acd931d32a98b3802b1e7b2; verify the manifest accurately records your 2026-07-31T12:22:57Z decision, PR #4386 remains at 2d5f692e960a22eef7c4b6d63002996a68468079, downstream support remains fail-closed pending #4386 protected merge and original-owner closeout, and .orchestrator/config.json is unchanged. If valid, approve with REVIEW_PR=4396 and REVIEW_HEAD_SHA=19f71db59b94016aa0d6bf00cd3ead5bf8a9eb4f; otherwise reopen with concrete changes.",
+      "resolved_at": "2026-07-31T12:35:07Z",
+      "status": "done",
+      "task_id": "SUP-L12-RUNNING-OWNER-EXACT-HEAD-RECONCILE-20260731",
+      "to": "Antigravity"
+    },
+    {
+      "created_at": "2026-07-31T12:35:07Z",
+      "from": "Antigravity",
+      "message": "Verified closeout commit 19f71db59b94016aa0d6bf00cd3ead5bf8a9eb4f on PR #4396. Evidence accurately records prior approval decision, PR #4386 remains at 2d5f692e960a22eef7c4b6d63002996a68468079, downstream support remains fail-closed pending #4386 protected merge and original-owner closeout, and .orchestrator/config.json is unchanged.",
+      "resolved_at": "2026-07-31T12:40:10Z",
+      "status": "done",
+      "task_id": "SUP-L12-RUNNING-OWNER-EXACT-HEAD-RECONCILE-20260731",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-07-31T12:40:10Z",
+      "from": "Antigravity",
+      "message": "Owner closeout verified PR #4396 exact approved head 19f71db59b94016aa0d6bf00cd3ead5bf8a9eb4f, marked the PR ready, and confirmed all Branch CI plus Pantheon canonical review gate checks pass. Governed auto-integrator remains fail-closed because required Human/Ops context 'Pantheon root merge freeze 2026-07-27' is absent; keep review_approved until that exact-head status is supplied, PR merges to dev, and governed done can run.",
+      "resolved_at": "2026-08-01T14:43:28Z",
+      "status": "done",
+      "task_id": "SUP-L12-RUNNING-OWNER-EXACT-HEAD-RECONCILE-20260731",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-08-01T14:43:28Z",
+      "from": "Codex2",
+      "message": "Auto-reassigned SUP-L12-RUNNING-OWNER-EXACT-HEAD-RECONCILE-20260731 away from unavailable lane Codex2 (disabled, paused, sidecar-only, or auth-down); owner Codex2 -> Codex.",
+      "resolved_at": "2026-08-01T14:57:18Z",
+      "status": "done",
+      "task_id": "SUP-L12-RUNNING-OWNER-EXACT-HEAD-RECONCILE-20260731",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-08-01T14:57:18Z",
+      "from": "Codex",
+      "message": "PR #4396 refreshed without force by merging origin/dev; exact new head 9d7dfadbcd929e95a0ec1ddf1787ad236c94470d. Task-owned evidence is unchanged. Revalidation passed: evidence jq assertions, PR #4386 remains exact head 2d5f692e960a22eef7c4b6d63002996a68468079, commit trailers, diff hygiene, config boundary, and detached subject-head RunningWorkerOwnerReconciliationTests (7 passed). Please re-approve this exact PR head with the existing evidence manifest.",
+      "resolved_at": "2026-08-01T15:06:47Z",
+      "status": "done",
+      "task_id": "SUP-L12-RUNNING-OWNER-EXACT-HEAD-RECONCILE-20260731",
+      "to": "Antigravity"
+    },
+    {
+      "created_at": "2026-08-01T15:06:47Z",
+      "from": "Antigravity",
+      "message": "Re-approved PR #4396 refreshed head 9d7dfadbcd929e95a0ec1ddf1787ad236c94470d after non-force merge with origin/dev. Verified evidence manifest, subject PR #4386 exact head 2d5f692e960a22eef7c4b6d63002996a68468079, commit trailers, diff hygiene, config boundary, and supervisor Reconciliation unit tests.",
+      "resolved_at": "2026-08-01T15:13:14Z",
+      "status": "done",
+      "task_id": "SUP-L12-RUNNING-OWNER-EXACT-HEAD-RECONCILE-20260731",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-08-01T15:13:14Z",
+      "from": "Antigravity",
+      "message": "Owner closeout validation passed at reviewed PR #4396 head 9d7dfadbcd929e95a0ec1ddf1787ad236c94470d: evidence assertions, PR #4386 exact head 2d5f692e960a22eef7c4b6d63002996a68468079, trailers, diff/config boundary, and 7 detached exact-head supervisor tests. PR #4396 remains OPEN/BLOCKED solely because required Human/Ops context 'Pantheon root merge freeze 2026-07-27' is absent; keep review_approved and run protected integration plus governed done only after that exact-head gate succeeds.",
+      "resolved_at": "2026-08-01T15:21:11Z",
+      "status": "done",
+      "task_id": "SUP-L12-RUNNING-OWNER-EXACT-HEAD-RECONCILE-20260731",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-08-01T15:21:11Z",
+      "from": "Antigravity",
+      "message": "Owner refreshed PR #4396 by non-force merge with origin/dev and pushed new head ba282edd81c00e75d3c96c820922ee3bb9d7f6ac. Prior review binding 9d7dfadbcd929e95a0ec1ddf1787ad236c94470d is intentionally stale; keep review_approved, require Antigravity exact-head re-approval plus all required checks including Pantheon root merge freeze 2026-07-27 before protected integration and governed done.",
+      "resolved_at": "2026-08-01T15:28:38Z",
+      "status": "done",
+      "task_id": "SUP-L12-RUNNING-OWNER-EXACT-HEAD-RECONCILE-20260731",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-08-01T15:28:38Z",
+      "from": "Codex",
+      "message": "Auto-reassigned SUP-L12-RUNNING-OWNER-EXACT-HEAD-RECONCILE-20260731 away from unavailable lane Codex (disabled, paused, sidecar-only, or auth-down); owner Codex -> Codex2.",
+      "resolved_at": "2026-08-05T01:18:48Z",
+      "status": "done",
+      "task_id": "SUP-L12-RUNNING-OWNER-EXACT-HEAD-RECONCILE-20260731",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-08-01T16:19:22Z",
+      "from": "Antigravity",
+      "message": "Auto-reassigned SUP-L12-RUNNING-OWNER-EXACT-HEAD-RECONCILE-20260731 away from unavailable lane Antigravity (disabled, paused, sidecar-only, or auth-down); reviewer Antigravity -> Codex.",
+      "resolved_at": "2026-08-01T16:21:52Z",
+      "status": "done",
+      "task_id": "SUP-L12-RUNNING-OWNER-EXACT-HEAD-RECONCILE-20260731",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-08-05T01:20:47Z",
+      "from": "Claude",
+      "message": "Codex quota exhausted 2026-08-05: reassigned Codex2->Antigravity / Codex->Claude to keep fleet moving",
+      "status": "done",
+      "task_id": "SUP-L12-RUNNING-OWNER-EXACT-HEAD-RECONCILE-20260731",
+      "to": "Antigravity",
+      "resolved_at": "2026-08-05T02:04:16Z"
+    }
+  ],
+  "blockers": []
+}

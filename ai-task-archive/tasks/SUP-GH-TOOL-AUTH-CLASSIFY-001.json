@@ -1,0 +1,103 @@
+{
+  "version": 1,
+  "task_id": "SUP-GH-TOOL-AUTH-CLASSIFY-001",
+  "archived_at": "2026-07-27T20:54:30Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "acceptance": [
+      "Require authenticated gh session classified as tool_auth",
+      "tool_auth does not pause provider dispatch",
+      "existing auth/quota classification remains passing"
+    ],
+    "artifacts": [
+      ".orchestrator/common.py",
+      ".orchestrator/test_supervisor.py"
+    ],
+    "depends_on": [],
+    "id": "SUP-GH-TOOL-AUTH-CLASSIFY-001",
+    "last_update": "2026-07-27T20:54:30Z",
+    "next": "Owner finalized Codex2-approved supervisor guardrail. Implementation PR #4276 merged as 852da0aa71d4e0d0293d5fcc8b5dff6d886386f7; task closeout evidence PR #4278 merged as 7f545a33bf41e5682dc67f50333c84b42f09d17e. Focused pytest: 20 passed plus 2 subtests; full supervisor pytest: 440 passed plus 4 subtests; JSON, diff, Branch CI, exact-head gates, and Orchestrator Sync passed; branch protection restored.",
+    "owner": "Codex",
+    "phase": "Supervisor / Provider Guardrail",
+    "reviewer": "Codex2",
+    "status": "done",
+    "summary_zh": "修正 supervisor 對 GitHub CLI tool-auth 失敗字串的分類，避免 Require authenticated gh session 被誤判為 LLM provider auth 而 pause Codex/Codex2 fleet。",
+    "title": "Classify GitHub CLI auth errors as tool auth, not provider auth",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-07-27T20:54:30Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-sup-gh-auth.6kz0Bj/worktree",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/SUP-GH-TOOL-AUTH-CLASSIFY-001",
+      "git_clean_required": false,
+      "status_command_runtime": {
+        "command_root": "/home/lupin/pantheon-ci-deploy/dev-root",
+        "source_sha": "b81edf76dfc14087dd7d5e3a6599448cb9d0bb09",
+        "base_ref": "origin/dev",
+        "remote": "ajoe734/pantheon",
+        "status_root": "/home/lupin/pantheon",
+        "delivery_root": "/tmp/pantheon-sup-gh-auth.6kz0Bj/worktree",
+        "wrapper_root": "/home/lupin/pantheon-ci-deploy/dev-root"
+      },
+      "commit": "8f016cd7458c21755545323510922f95b87e4df1",
+      "commit_subject": "SUP-GH-TOOL-AUTH-CLASSIFY-001: finalize reviewed delivery",
+      "commit_author": {
+        "name": "pantheon-dev",
+        "email": "bjoe734@gmail.com"
+      },
+      "commit_metadata": {
+        "Owned layer": "Task-scoped supervisor guardrail closeout evidence and durable",
+        "Not changing": "Supervisor runtime behavior, provider auth or quota",
+        "Composes with": "PR #4276 at reviewed head dfb3484dfb45b627cb9e5266ac5261f8369a3f5e",
+        "LLM-Agent": "Codex",
+        "Task-ID": "SUP-GH-TOOL-AUTH-CLASSIFY-001",
+        "Reviewer": "Codex2",
+        "Verified": "focused pytest 20 passed plus 2 subtests; full supervisor pytest 440 passed plus 4 subtests; git diff --check; GitHub checks passed"
+      },
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "7f545a33bf41e5682dc67f50333c84b42f09d17e",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "created_at": "2026-07-27T20:34:50Z",
+      "from": "Codex",
+      "message": "PR #4276 is ready for independent review. GitHub CLI failure markers now classify 'Require authenticated gh session' as tool_auth; focused supervisor regression passed (20 tests, 2 subtests), git diff --check is clean, and all visible PR checks are green. Please verify provider auth/quota behavior remains unchanged and approve or reopen with concrete findings.",
+      "resolved_at": "2026-07-27T20:35:37Z",
+      "status": "done",
+      "task_id": "SUP-GH-TOOL-AUTH-CLASSIFY-001",
+      "to": "Claude"
+    },
+    {
+      "created_at": "2026-07-27T20:35:37Z",
+      "from": "Claude",
+      "message": "Auto-reassigned SUP-GH-TOOL-AUTH-CLASSIFY-001 away from unavailable lane Claude (disabled, paused, sidecar-only, or auth-down); reviewer Claude -> Codex2.",
+      "resolved_at": "2026-07-27T20:39:07Z",
+      "status": "done",
+      "task_id": "SUP-GH-TOOL-AUTH-CLASSIFY-001",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-07-27T20:39:07Z",
+      "from": "Codex2",
+      "message": "Independent review approved PR #4276 at dfb3484dfb45b627cb9e5266ac5261f8369a3f5e: diff is limited to .orchestrator/common.py and .orchestrator/test_supervisor.py; exact plain/backticked gh-session failures classify as tool_auth and should_pause_dispatch_for_failure_kind is false; existing auth/quota behavior remains covered. Verified git diff --check, focused pytest 20 passed + 2 subtests, full .orchestrator/test_supervisor.py 440 passed + 4 subtests, and all 8 visible Branch CI checks succeeded. PR is mergeable into dev and awaits owner closeout/merge.",
+      "status": "done",
+      "task_id": "SUP-GH-TOOL-AUTH-CLASSIFY-001",
+      "to": "Codex",
+      "resolved_at": "2026-07-27T20:54:31Z"
+    }
+  ],
+  "blockers": []
+}

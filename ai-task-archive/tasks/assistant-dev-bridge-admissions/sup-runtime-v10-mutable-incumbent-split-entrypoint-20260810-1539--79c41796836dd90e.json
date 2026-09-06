@@ -1,0 +1,97 @@
+{
+  "actor": {
+    "capabilities": [
+      "integration",
+      "status-system",
+      "schema",
+      "acceptance"
+    ],
+    "id": "Codex",
+    "roles": [
+      "auto-worker"
+    ]
+  },
+  "admission_record_path": "ai-task-archive/tasks/assistant-dev-bridge-admissions/sup-runtime-v10-mutable-incumbent-split-entrypoint-20260810-1539--79c41796836dd90e.json",
+  "admitted_at": "2026-08-10T15:43:44Z",
+  "audit_conversation_href": "task:SUP-RUNTIME-V10-GOVERNED-ROLLOUT-VERIFY-20260808",
+  "constraints": {
+    "allowedRepos": [
+      "pantheon"
+    ],
+    "noDirectShellFromWeb": true,
+    "requiresBranchPrMerge": true
+  },
+  "conversation_id": "SUP-RUNTIME-V10-GOVERNED-ROLLOUT-VERIFY-20260808",
+  "dispatch_records": [
+    {
+      "error": null,
+      "owner": "Antigravity2",
+      "reviewer": "Codex2",
+      "status": "dispatched",
+      "taskId": "SUP-RUNTIME-V10-MUTABLE-INCUMBENT-SPLIT-ENTRYPOINT-20260810"
+    }
+  ],
+  "documents": [
+    {
+      "kind": "RUNTIME_FAIL_CLOSED_EVIDENCE",
+      "path": "docs/deployment/evidence/supervisor/SUP-RUNTIME-V10-GOVERNED-ROLLOUT-VERIFY-20260808/evidence.json",
+      "sourceRefs": [
+        "/home/lupin/pantheon-ci-deploy/runtime/promotion-evidence/supervisor-runtime-promotion-20260810T153550063892Z-1438136.json",
+        "sha256:abb8b9095026b5261f989e2b8ab0c49683732218c056b348765a309db0b55459",
+        "candidate:0305c861f54c4082060120afdfbc012622e5ac0a",
+        "candidate-tree:249eecac3a5a1a3eb41e80006afee566bfabdd92",
+        "incumbent-pid:1393542",
+        "incumbent-starttime-ticks:21477145",
+        "incumbent-cwd:/home/lupin/pantheon-ci-deploy/dev-root",
+        "incumbent-entrypoint-root:/home/lupin/pantheon-ci-deploy/command-runtimes/5877b64425c8d6aede147d6cbbc6fbb9e228c259",
+        "failure:Mutable incumbent argv does not bind its exact cwd entrypoint"
+      ]
+    }
+  ],
+  "durable": true,
+  "emitted_at": "2026-08-10T15:39:20Z",
+  "intent": "source_only_remediation_dispatch",
+  "mode": "supervisor_source_only",
+  "packet_digest": "79c41796836dd90ea3a15851b433c6687812a8a1d540d0232366b47edb863f7b",
+  "packet_id": "sup-runtime-v10-mutable-incumbent-split-entrypoint-20260810-1539",
+  "packet_version": "pantheon.assistant.dev-task.v1",
+  "record_kind": "assistant_dev_bridge_admission",
+  "record_payload_sha256": "a04ab60fb95a2ffa5befd1ffbcc5b764507b1a5261d281980af2217d7a85cf84",
+  "schema": "pantheon.assistant-dev-bridge-admission.v1",
+  "source_turn_ids": [
+    "promotion-evidence-20260810T153550063892Z-1438136",
+    "post-abort-readback-20260810T153900Z"
+  ],
+  "tasks": [
+    {
+      "task_id": "SUP-RUNTIME-V10-MUTABLE-INCUMBENT-SPLIT-ENTRYPOINT-20260810",
+      "task_spec": {
+        "acceptance": [
+          "Reproduce transaction abb8b9095026b526 exactly: clean candidate 0305c861/tree 249eecac has zero ignored bytecode, while live PID 1393542/starttime 21477145 has cwd /home/lupin/pantheon-ci-deploy/dev-root but its exact argv and watchdog command execute command-runtimes/5877b644/.orchestrator/supervisor.py; current preparation aborts before baseline, config, signal, launch, or rollback.",
+          "Keep scripts/sync-dev-root.sh non-signalling. Do not revive or compose the obsolete direct restart-intent hotfix from SUP-COMMAND-ROOT-SPLIT-HOTFIX-REVIEW-20260801; promote_supervisor_runtime.py remains the only authority for intent, config CAS, exact-generation TERM, launch, postchecks, and rollback.",
+          "Add only an explicit legacy mutable-incumbent split-entrypoint capture boundary. Bind PID/starttime/executable/full argv/live config, the cwd and argv-derived entrypoint root as separate descriptor identities, every path component, device/inode/mode, canonical non-symlink layout, Git HEAD/tree/remote/accepted-dev ancestry, and exact governed launch-source file identities. Require the two roots to prove the same Pantheon repository and captured commit/tree for this compatibility path, and revalidate every binding before signalling authority.",
+          "Reject relative or repeated entrypoints, path traversal, symlink substitution, repository/commit/tree/remote mismatch, changed launch-source bytes, tracked/staged governed-source drift, config-command mismatch, PID generation change, unknown environment expansion, and every cwd or entrypoint-root race. Do not infer entrypoint_root from cwd and do not treat a SHA-shaped directory name as Git identity.",
+          "The compatibility path may tolerate only already-governed legacy mutable-incumbent environment and generated-residue boundaries. Candidate and all newly launched candidate/rollback processes must still bind one exact cwd/entrypoint/command root, PANTHEON_COMMAND_ROOT, PANTHEON_COMMAND_RUNTIME_SHA, PYTHONDONTWRITEBYTECODE=1, and python -B; candidate cleanliness and status-child zero-bytecode checks remain deny-by-default.",
+          "Never relaunch from either dirty live root. Materialize a separately clean immutable rollback checkout from the descriptor-bound accepted commit/tree, preserve candidate/rollback path and config distinction even when the accepted commit equals the candidate commit, and fail closed if a non-aliasing clean rollback identity cannot be proved.",
+          "Preserve config CAS, restart-intent-before-TERM, exact process-generation signalling, child absence proofs, three fresh loops, authoritative-shadow catch-up, queue/worker parity, provider baseline, rollback cleanup, and all merged Git-layout, log-leaf, task-brief provenance, and incumbent-bytecode residue guards. Add focused positive and adversarial split-root regressions plus the complete promotion suite, and commit a task-scoped evidence manifest before independent review.",
+          "Keep this task source-only: no live config edit, direct process signal, runtime promotion, candidate/incumbent cleanup or deletion, canonical state edit, scheduling change, provider/account change, or fleet-routing policy change. Any rollout retry remains a separately governed supervisor dispatch."
+        ],
+        "artifacts": [
+          "scripts/promote_supervisor_runtime.py",
+          "scripts/test_promote_supervisor_runtime.py",
+          "docs/deployment/evidence/supervisor/SUP-RUNTIME-V10-MUTABLE-INCUMBENT-SPLIT-ENTRYPOINT-20260810/"
+        ],
+        "depends_on": [
+          "SUP-RUNTIME-V10-IMMUTABLE-INCUMBENT-PYCACHE-RESIDUE-20260810"
+        ],
+        "id": "SUP-RUNTIME-V10-MUTABLE-INCUMBENT-SPLIT-ENTRYPOINT-20260810",
+        "owner": "Antigravity2",
+        "phase": "Supervisor Runtime / Source-only Split Incumbent Bootstrap",
+        "reviewer": "Codex2",
+        "summary": "The 0305c861 candidate is clean, but the live legacy supervisor has mutable dev-root as cwd while its exact configured argv entrypoint comes from a different command runtime. Implement only descriptor-bound split-root provenance capture plus a clean rollback boundary inside the existing transaction; do not revive sync-script signalling or weaken new-runtime identity.",
+        "title": "Bind split mutable incumbent entrypoint provenance"
+      },
+      "task_spec_hash": "1799c310cb188b73e83976229243da7f1a701c59847c4098eac1b5749916a1e1"
+    }
+  ]
+}

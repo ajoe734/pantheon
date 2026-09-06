@@ -1,0 +1,48 @@
+{
+  "version": 1,
+  "task_id": "SUP-L12-LIVE-WORKER-RECON-20260729",
+  "archived_at": "2026-07-29T07:49:20Z",
+  "terminal_status": "done",
+  "terminal_outcome": "superseded",
+  "task": {
+    "acceptance": [
+      "Compare authoritative task rows against live worker_runner processes;List fake in_progress stale review and missing live-worker rows;Confirm supervisor uses /home/lupin/pantheon-ci-deploy/dev-root;Confirm active Claude2 and Antigravity lanes by run id;Do not edit .orchestrator/config.json;Produce dispatch-health evidence record"
+    ],
+    "artifacts": [
+      "docs/deployment/evidence/twelve-loop-gap/SUP-L12-LIVE-WORKER-RECON-20260729"
+    ],
+    "depends_on": [],
+    "id": "SUP-L12-LIVE-WORKER-RECON-20260729",
+    "last_update": "2026-07-29T07:49:20Z",
+    "next": "Superseded by Human/Ops live repair: this row was contaminated by Codex/Codex2 helper/direct dispatch and must not be active. Live worker health is now verified directly during supervisor restart; do not redispatch this task id.",
+    "owner": "Human/Ops",
+    "phase": "Twelve Loop Remediation / Supervisor Guardrails",
+    "reviewer": "Antigravity",
+    "status": "done",
+    "summary_zh": "比對 task board 與 live worker process，找出假的 in_progress/review 與沒有 live worker 的行。",
+    "title": "Retired unsafe SUP-L12 live worker recon row",
+    "terminal_outcome": "superseded",
+    "superseded_by": "SUP-PROVIDER-FIRST-HELPER-GUARD-20260729"
+  },
+  "handoffs": [
+    {
+      "created_at": "2026-07-29T07:08:13Z",
+      "from": "Antigravity",
+      "message": "Helper-claimed by Codex2 while Antigravity is dispatch-paused.",
+      "resolved_at": "2026-07-29T07:09:27Z",
+      "status": "done",
+      "task_id": "SUP-L12-LIVE-WORKER-RECON-20260729",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-07-29T07:11:13Z",
+      "from": "Antigravity",
+      "message": "Helper-claimed by Codex2 while Antigravity is dispatch-paused.",
+      "resolved_at": "2026-07-29T07:12:03Z",
+      "status": "done",
+      "task_id": "SUP-L12-LIVE-WORKER-RECON-20260729",
+      "to": "Codex2"
+    }
+  ],
+  "blockers": []
+}

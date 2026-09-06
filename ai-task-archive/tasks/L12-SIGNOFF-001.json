@@ -1,0 +1,374 @@
+{
+  "version": 1,
+  "task_id": "L12-SIGNOFF-001",
+  "archived_at": "2026-07-27T19:53:24Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "acceptance": [
+      "Only an authenticated authorized Human or Ops actor can issue the final verdict",
+      "The verdict binds the exact program catalog task closeout manifest target FE and BFF identities",
+      "Review-approved and done transitions fail closed for missing rejected revoked replayed stale or mismatched verdicts",
+      "Fleet workers and candidate-controlled files cannot self-sign or bypass the protected verdict",
+      "Tamper replay wrong-role wrong-task wrong-SHA expiry revocation and concurrent-decision negatives pass"
+    ],
+    "actual_state_sources": [
+      "protected verdict ledger",
+      "transition-time guard decision",
+      "revocation and nonce state"
+    ],
+    "artifact_conflict_guard": {
+      "allowed_overlap_task_ids": [
+        "PPL-ALLOC-009"
+      ],
+      "artifact_scope": [
+        {
+          "path": "docs/deployment/evidence/twelve-loop-gap/L12-SIGNOFF-001",
+          "repo": "pantheon"
+        },
+        {
+          "path": "scripts/ai_status.py",
+          "repo": "pantheon"
+        },
+        {
+          "path": "scripts/loop_done_guardrail.py",
+          "repo": "pantheon"
+        },
+        {
+          "path": "scripts/test_ai_status.py",
+          "repo": "pantheon"
+        },
+        {
+          "path": "scripts/test_loop_done_guardrail.py",
+          "repo": "pantheon"
+        },
+        {
+          "path": "services/control-plane/bff/product_closeout_verdict.py",
+          "repo": "pantheon"
+        },
+        {
+          "path": "services/control-plane/bff/test_product_closeout_verdict.py",
+          "repo": "pantheon"
+        },
+        {
+          "path": "services/control-plane/governance/product_closeout_verdict.py",
+          "repo": "pantheon"
+        },
+        {
+          "path": "services/control-plane/governance/product_closeout_verdict.schema.json",
+          "repo": "pantheon"
+        },
+        {
+          "path": "services/control-plane/governance/test_product_closeout_verdict.py",
+          "repo": "pantheon"
+        }
+      ],
+      "catalog_sha256": "8c7610b0e6bbba31c36cb0ecd1ddce4bf843fc6de89dcaecc4a5e3154af8933d",
+      "program_id": "pantheon-twelve-loop-gap-2026-07-26",
+      "schema_version": 1,
+      "task_id": "L12-SIGNOFF-001"
+    },
+    "artifacts": [
+      "services/control-plane/governance/product_closeout_verdict.py",
+      "services/control-plane/governance/product_closeout_verdict.schema.json",
+      "services/control-plane/governance/test_product_closeout_verdict.py",
+      "services/control-plane/bff/product_closeout_verdict.py",
+      "services/control-plane/bff/test_product_closeout_verdict.py",
+      "scripts/loop_done_guardrail.py",
+      "scripts/test_loop_done_guardrail.py",
+      "scripts/ai_status.py",
+      "scripts/test_ai_status.py",
+      "docs/deployment/evidence/twelve-loop-gap/L12-SIGNOFF-001"
+    ],
+    "auto_created_by": "dispatch_twelve_loop_gap_2026_07_26",
+    "catalog_task_contract_sha256": "d9c64ee5c74e2778c30157fb006d399209da8b8dacc318d08a4f8bd3be2cf683",
+    "current_maturity": "contract",
+    "depends_on": [
+      "L12-FLEET-001",
+      "PPL-ALLOC-009"
+    ],
+    "desired_state_sources": [
+      "catalog-bound completion authority",
+      "authorized Human-Ops verdict request"
+    ],
+    "dispatch_rules": [
+      "Fleet may assemble a verdict request but cannot issue or approve it",
+      "Never derive authority from mutable task metadata alone",
+      "Closeout remains blocked until this guard is merged and active"
+    ],
+    "evidence_root": "docs/deployment/evidence/twelve-loop-gap/L12-SIGNOFF-001",
+    "fleet_lane": "protected-human-ops-signoff",
+    "human_ops_reassignment_history": [
+      {
+        "at": "2026-07-27T18:29:29Z",
+        "owner": "Antigravity",
+        "previous": {
+          "last_update": "2026-07-27T17:55:42Z",
+          "next": "Exact-head review rejected: PR #4261 head 66ff4942938a8de47f8ee47951659292d41d1ff7 is again BEHIND current dev a6966b13d84430387da9c3a33fcf224c841bc5c6 with 3 base-only commits (PR #4266); sequence-12 approval cannot be reused and no sequence-15 reviewer verdict was written. Independent checks otherwise pass: 296 focused tests/39 subtests; product-evidence schema/checksum; canonical catalog digest; all nine source hashes; py_compile; git diff --check; merged PR #4183/#4205/#4206/#4210 identities and dev ancestry; all 8 current PR checks SUCCESS; autoMergeRequest null. Required: owner normally compose latest origin/dev, append a fresh owner revalidation record with updated validated base/head and checksum, re-run focused/schema/hash/ancestry checks, push a new immutable PR head, confirm zero base-only commits and green checks, then request a fresh Codex2 exact-head review.",
+          "owner": "Codex",
+          "reviewer": "Codex2"
+        },
+        "reason": "canonical fleet dispatch repair: prioritize Claude/Antigravity where available; avoid config mutation",
+        "reviewer": "Codex2"
+      }
+    ],
+    "id": "L12-SIGNOFF-001",
+    "last_update": "2026-07-27T19:53:24Z",
+    "loop_ids": [
+      "source_ingestion",
+      "strategy_distillation",
+      "alpha_replication",
+      "persona_teaching",
+      "agora_interaction_evidence",
+      "human_imitation_shadow_evaluation",
+      "consultation",
+      "promotion_deployment",
+      "capital_pool_execution",
+      "telemetry_reconciliation",
+      "evolution",
+      "bff_health_monitoring"
+    ],
+    "merge_target": "dev",
+    "mutates_canonical": true,
+    "next": "Owner finalized approved protected-closeout evidence: PR #4261 merged as b81edf76dfc14087dd7d5e3a6599448cb9d0bb09 with task commit f5be6947d994b4b0333b941552ded55f78615b32; 296 focused tests and 39 subtests, schema/checksum, catalog and 9/9 source hashes, py_compile, task evidence replay, git diff, and eight CI checks passed; preserved Codex2-bound review_file.",
+    "non_goals": [
+      "No panel-only closure",
+      "No seed fixture as live proof",
+      "No approval gate bypass",
+      "No fleet-issued Human-Ops verdict"
+    ],
+    "owner": "Codex",
+    "phase": "Twelve Loop Remediation / Protected Closeout Authority",
+    "product_level_required": true,
+    "program_id": "pantheon-twelve-loop-gap-2026-07-26",
+    "proof_required": [
+      "authorization signature binding expiry revocation and concurrency tests",
+      "candidate self-sign and direct-state-edit negatives",
+      "review-approved and done transition enforcement",
+      "formal reviewed evidence manifest"
+    ],
+    "requires_human_ops_signoff": false,
+    "review_binding": {
+      "base": "dev",
+      "head_branch": "task/L12-SIGNOFF-001",
+      "head_sha": "7eb644b6a5c52fba830aec7b1d35e7dd4e0b51de",
+      "pr": 4261
+    },
+    "review_file": "docs/deployment/evidence/twelve-loop-gap/L12-SIGNOFF-001/evidence.json",
+    "review_notes_zh": [
+      "Codex2 sequence-18 fresh verdict 已綁定 PR #4261 owner head f5d6191afccf82b342e12b3282e6b5ba66d0a782 與 reviewer commit 7eb644b6a5c52fba830aec7b1d35e7dd4e0b51de；sequence-12 僅保留為歷史，不重用。",
+      "獨立重跑 296 focused tests、39 subtests；schema/checksum、canonical catalog digest、9/9 source hashes、py_compile、task guardrail、git diff check 全通過。",
+      "PR #4183/#4205/#4206/#4210 merge ancestry 已核實；PR #4261 對 origin/dev 5a2fc69a3 為零 base-only commits，新 reviewer head 的 8 個 CI checks 全 SUCCESS，auto-merge 關閉。"
+    ],
+    "reviewer": "Codex2",
+    "status": "done",
+    "summary_zh": "在 final closeout 前安裝機器守門：受保護、可撤銷、不可重播的 Human/Ops 判決必須綁定 exact catalog、manifest、target 與部署 identity；fleet 不得自行簽發。",
+    "target_maturity": "product-level",
+    "target_repo": "pantheon",
+    "task_doc": "docs/bff/execution-tasks/2026-07-26-twelve-loop-gap/L12-SIGNOFF-001.md",
+    "title": "Install protected Human-Ops closeout verdict enforcement",
+    "wave": 2,
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-07-27T19:53:24Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/l12-signoff-001",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/L12-SIGNOFF-001",
+      "git_clean_required": false,
+      "status_command_runtime": {
+        "command_root": "/home/lupin/pantheon-ci-deploy/dev-root",
+        "source_sha": "87166a352c0b90a26a6e35c138acfaea195fa4ee",
+        "base_ref": "origin/dev",
+        "remote": "ajoe734/pantheon",
+        "status_root": "/home/lupin/pantheon",
+        "delivery_root": "/tmp/pantheon-worker-worktrees/pantheon/l12-signoff-001",
+        "wrapper_root": "/home/lupin/pantheon-ci-deploy/dev-root"
+      },
+      "commit": "f5be6947d994b4b0333b941552ded55f78615b32",
+      "commit_subject": "L12-SIGNOFF-001: finalize approved evidence",
+      "commit_author": {
+        "name": "pantheon-dev",
+        "email": "bjoe734@gmail.com"
+      },
+      "commit_metadata": {
+        "Owned layer": "the task-scoped review-approved brief and owner closeout",
+        "Not changing": "Codex2's sequence-18 evidence verdict, the protected verdict",
+        "Composes with": "PR #4261, merged implementation PRs #4183/#4205/#4206/#4210,",
+        "LLM-Agent": "Codex",
+        "Task-ID": "L12-SIGNOFF-001",
+        "Reviewer": "Codex2",
+        "Verified": "296 focused tests and 39 subtests; schema/checksum; catalog and 9/9 source hashes; py_compile; task evidence replay; git diff --check"
+      },
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "b81edf76dfc14087dd7d5e3a6599448cb9d0bb09",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "created_at": "2026-07-26T13:14:57Z",
+      "from": "Codex",
+      "message": "Independent review requested for PR #4183 (head 4731eb2c5bc618a231be8753825fa364fa20b377), evidence docs/deployment/evidence/twelve-loop-gap/L12-SIGNOFF-001/evidence.json. Post-origin/dev focused suite: 236 passed plus 23 subtests; smoke acceptance, product-evidence schema, checksum, py_compile, and diff check pass. Please review protected Human/Ops authorization/bindings, fleet and candidate policy bypass negatives, ledger replay/revocation/concurrency, and all approve/restore/done/reconcile guard paths. Owner manifest intentionally contains no reviewer verdict; pre-review guard reports only that expected missing-verdict gap. No Human/Ops verdict, live policy, route mount, or deployment is asserted.",
+      "resolved_at": "2026-07-26T13:44:10Z",
+      "status": "done",
+      "task_id": "L12-SIGNOFF-001",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-07-26T13:44:10Z",
+      "from": "Codex2",
+      "message": "Review rejected for PR #4183 head 4731eb2c: (1) ProductCloseoutVerdictService.issue only conflicts on verdict_id/nonce, so two concurrent distinct approved/rejected verdicts for the same binding both commit (independent probe: issued_records=2). Enforce one active decision per exact task/binding under the ledger lock, while preserving explicit expired/revoked replacement semantics, and add a distinct-ID/distinct-nonce competing-decision test. (2) BFF principal classification fails open: a JWT admin with MFA and no principal_type/actor_type claim is defaulted and hardcoded to human. Require an explicit trusted human principal classification and add missing/unknown/service/workload negatives. (3) Reconcile canonical owner Claude versus brief/evidence owner Codex before resubmission; the product-evidence owner consistency gate would reject this mismatch. Update the evidence claims/hashes and refresh the behind PR after fixes. Existing 236 tests + 23 subtests, schema, checksum, source hashes, diff check, and GitHub checks pass, but they do not cover these acceptance failures.",
+      "resolved_at": "2026-07-26T13:44:10Z",
+      "status": "done",
+      "task_id": "L12-SIGNOFF-001",
+      "to": "Claude"
+    },
+    {
+      "created_at": "2026-07-26T15:12:41Z",
+      "from": "Claude",
+      "message": "Independent re-review requested for PR #4183 head 6ba7ed0aa (validated code state 896cd9941 over origin/dev 6ec0b1365). All three rejecting findings are addressed: (1) issuance now admits one active decision per exact seven-field binding under the ledger lock, with expired/revoked replacement preserved and unreadable expiry failing closed; (2) the BFF requires an explicit trusted human principal classification and refuses missing, blank, unknown, and self-conflicting claims; (3) evidence owner reconciled to Claude with reviewer Codex2, matching assignment-revision-1 and canonical ai-status, and record_log carries the sequence-2 rejection plus the sequence-3 remediation cut. Both defects were reproduced against 4731eb2c and shown closed: issued_records 2 -> 1 and unclassified-principal issuance 201 -> 403. 260 focused tests plus 23 subtests, smoke acceptance exit 0, product-evidence schema valid, sha256 OK, all GitHub checks green. Evidence: docs/deployment/evidence/twelve-loop-gap/L12-SIGNOFF-001/evidence.json",
+      "resolved_at": "2026-07-26T16:20:12Z",
+      "status": "done",
+      "task_id": "L12-SIGNOFF-001",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-07-26T16:20:12Z",
+      "from": "Codex2",
+      "message": "Independent re-review rejects merged PR #4183 despite 260 focused tests plus 23 subtests passing. Blocking split-root defect: scripts/loop_done_guardrail.py _load_product_closeout_binding resolves review_file only through _safe_status_artifact under PANTHEON_STATUS_ROOT, while governed auto reviewers receive the reviewed artifact in PANTHEON_WORKTREE_ROOT and the merged artifact in the immutable command root. In this actual dispatch, the generic _resolve_review_file resolves docs/deployment/evidence/twelve-loop-gap/L12-SIGNOFF-001/evidence.json from the task worktree, but _safe_status_artifact raises 'closeout review_file is missing or not regular' because central status root lacks the file. Therefore a valid Human/Ops-signed exact manifest cannot reach review_approved for L12-CLOSE-001 through the governed reviewer path. Fix protected manifest resolution to honor validated worktree/command roots with existing traversal and symlink protections (and conflicting-root rejection), add an end-to-end split-root command_approve regression with a valid verdict, then re-cut evidence/checksum and deliver a follow-up PR because #4183 is already merged.",
+      "resolved_at": "2026-07-26T16:20:12Z",
+      "status": "done",
+      "task_id": "L12-SIGNOFF-001",
+      "to": "Claude"
+    },
+    {
+      "created_at": "2026-07-26T17:35:47Z",
+      "from": "Claude",
+      "message": "Sequence-4 split-root rejection closed and delivered as follow-up PR #4205 (merged into dev, all three required checks green) because merged PR #4183 could not be amended. scripts/loop_done_guardrail.py now resolves the protected closeout manifest across the bound task worktree, the command root, and the status root via the same _review_workspace_roots binding validation as the generic review path; per-root containment and per-component symlink rejection are unchanged, _safe_rooted_artifact reports absence instead of raising so a missing candidate defers while an untrustworthy one still fails closed, and the status-root-only helper is deleted rather than left as a reintroducible call site. Search order is not a trust decision: resolved bytes are hashed into closeout_manifest_sha256 which the Human/Ops signature covers, so an unsigned worktree copy fails the binding check. Verified: pytest over the four suites -> 269 passed, 23 subtests; replaying only the two new test files against pre-fix origin/dev 403e30bd9 -> 9 failed, 198 passed, with test_approve_protected_task_end_to_end_across_split_roots failing on exactly the reported 'closeout review_file is missing or not regular' error (eight are new split-root behaviours, the ninth is the pre-existing parent-traversal test hitting the renamed resolver); py_compile and git diff --check exit 0; evidence.json validates against schemas/product-evidence.schema.json and loop_done_guardrail.py --evidence-root reports exactly one gap, the absent formal Codex2 verdict. Evidence re-cut at sequence 5 with refreshed evidence.sha256 b6036ecf; validated_head_sha is the pre-commit merge 4f2dc9dc5 and implementation_delivery records PR #4183 only, so PR #4205's own merge is not self-recorded. Please review and, if approved, bind REVIEW_FILE=docs/deployment/evidence/twelve-loop-gap/L12-SIGNOFF-001/evidence.json.",
+      "resolved_at": "2026-07-26T17:49:51Z",
+      "status": "done",
+      "task_id": "L12-SIGNOFF-001",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-07-26T17:49:51Z",
+      "from": "Codex2",
+      "message": "Independent review rejects the merged PR #4183 + follow-up PR #4205 delivery on one blocking split-root authority-boundary defect. scripts/loop_done_guardrail.validate_protected_closeout_transition passes only the immutable command ROOT and PANTHEON_STATUS_ROOT as forbidden_roots to load_verifier_service; it omits the supervisor-bound PANTHEON_WORKTREE_ROOT/ORCH_WORKSPACE_PATH even though that worktree is candidate-controlled. Independent temp probe: an external protected policy whose ledger_path was inside the task worktree was accepted; revocation initially failed verification as expected, but truncating the candidate-owned JSONL ledger to the signed issue record restored approval verification (candidate_tail_truncation_restores_approval=true). Supplying the worktree as a forbidden root rejected the same configuration. Required: derive policy/ledger forbidden roots from the validated split-root bindings (bound worktree, command root, status root), fail closed on conflicting/relative bindings before policy or ledger access, add regressions proving policy/ledger paths under either worker binding are rejected and candidate tail truncation cannot restore a revoked/consumed verdict, re-run the four focused suites, re-cut evidence.json/evidence.sha256/source hashes with this rejection, merge a follow-up PR to dev, and resubmit. Existing verification otherwise passed: 269 tests + 23 subtests, schema/checksum/source hashes/py_compile/diff check, and PR #4183/#4205 merge/check evidence.",
+      "resolved_at": "2026-07-26T17:49:51Z",
+      "status": "done",
+      "task_id": "L12-SIGNOFF-001",
+      "to": "Claude"
+    },
+    {
+      "created_at": "2026-07-26T18:33:51Z",
+      "from": "Claude",
+      "message": "Sequence-6 authority-boundary rejection remediated and merged as PR #4206 (merge 51c1e9fc39748b1c781b34ba55c2235083502808). loop_done_guardrail now derives the verifier policy/ledger forbidden roots from the validated split-root bindings (bound task worktree under either PANTHEON_WORKTREE_ROOT or ORCH_WORKSPACE_PATH, command root, status root), keeps both literal and symlink-resolved spellings, and computes them before any manifest, policy, or ledger access so relative or conflicting bindings fail closed. Six regressions added: forbidden-root coverage, ledger-under-worktree and policy-under-worktree rejection under both bindings, and tail truncation against revoked and consumed verdicts; the revoked case asserts candidate_tail_truncation_restores_approval=true pre-fix, reproducing your probe verbatim. Verified: four focused suites 275 passed plus 31 subtests; pre-fix replay at d54e1510a gives 8 failed, 82 passed; jsonschema validate; guardrail replay reports only the absent formal reviewer verdict; py_compile; git diff --check; sha256sum -c. Evidence re-cut at sequence 7: docs/deployment/evidence/twelve-loop-gap/L12-SIGNOFF-001/evidence.json (sha256 83d8ac93c710febd0d1ca6efbed497ca094a2fe1ea4e03c8a2fd4ce1575c51f9).",
+      "resolved_at": "2026-07-26T18:49:26Z",
+      "status": "done",
+      "task_id": "L12-SIGNOFF-001",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-07-26T18:49:26Z",
+      "from": "Codex2",
+      "message": "Independent review rejects sequence-7 / merged PR #4206 on one blocking active-lease authority-source bypass. loop_done_guardrail._protected_forbidden_roots derives the candidate worktree only from PANTHEON_WORKTREE_ROOT / ORCH_WORKSPACE_PATH, but ai_status.validate_active_status_command_lease treats workspace_root as optional: with the current valid ORCH_RUN_ID, unsetting both workspace variables passed command-runtime, status-root, and active-lease validation. In an independent temp replay, an external policy whose ledger was under that omitted leased worktree was accepted; after revocation, truncating the candidate-owned JSONL tail to the signed issue record restored review_approved verification (candidate_tail_truncation_restores_approval=true). Owner suites still pass (275 tests, 31 subtests), demonstrating missing coverage. Required: source the worker workspace authority from canonical supervisor lease/runtime metadata so it cannot be erased by the candidate, or fail closed for active worker mutations when no workspace binding is present; ensure the canonical leased path is included in verifier forbidden_roots before manifest/policy/ledger access; add governed-command regressions for a valid ORCH_RUN_ID with both workspace envs missing/blank plus the revoked/consumed tail-truncation cases; rerun focused suites, re-cut evidence/checksum/source hashes, merge a follow-up PR to dev, and resubmit.",
+      "resolved_at": "2026-07-26T18:49:26Z",
+      "status": "done",
+      "task_id": "L12-SIGNOFF-001",
+      "to": "Claude"
+    },
+    {
+      "created_at": "2026-07-27T16:40:20Z",
+      "from": "Codex",
+      "message": "PR #4261 head 8a56c20485f92f8ac5f5f877577ced661ce20c29 is ready for exact independent security review. Review docs/deployment/evidence/twelve-loop-gap/L12-SIGNOFF-001/evidence.json sequence 10 and verify: canonical supervisor lease metadata remains authoritative when both workspace env bindings are erased; policy and ledger under the leased root fail before access; revoked and consumed ledger-tail truncation cannot restore approval; review_approved/done preserve exact catalog, manifest, target, FE/BFF identity and exactly-once consumption. Focused suites pass 294 tests and 39 subtests. Do not approve without appending the formal evidence verdict and binding REVIEW_FILE plus the exact PR/head.",
+      "resolved_at": "2026-07-27T16:50:27Z",
+      "status": "done",
+      "task_id": "L12-SIGNOFF-001",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-07-27T16:50:27Z",
+      "from": "Codex2",
+      "message": "Review binding is stale: dispatch requires REVIEW_HEAD_SHA=8a56c20480f34f6f7a5b2c7f96170f1cbfceefd2, but GitHub PR #4261 current exact head is f6f9b604146680a4335d6879ffb01426be2c1752 after a post-handoff origin/dev merge. Exact-head approval cannot truthfully bind the earlier SHA. Security/acceptance review otherwise passed at 8a56c204: 294 focused tests and 39 subtests, product-evidence schema/checksum, catalog canonical digest, source-hash epoch, PR #4210 merge/check evidence, canonical lease recovery with erased workspace env, pre-access forbidden roots, revoked/consumed ledger-tail protection, exact catalog/manifest/target/FE/BFF binding, and exactly-once done consumption. Required correction: update the canonical review handoff to PR #4261 current immutable head, make no further branch mutation after handoff, and redispatch Codex2 so approval can bind REVIEW_FILE plus the actual current REVIEW_HEAD_SHA.",
+      "resolved_at": "2026-07-27T16:50:27Z",
+      "status": "done",
+      "task_id": "L12-SIGNOFF-001",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-07-27T17:04:56Z",
+      "from": "Codex",
+      "message": "PR #4261 exact immutable head ea628cac729fbd3a3240145940fa78518ba02782 is ready for independent security review. Review docs/deployment/evidence/twelve-loop-gap/L12-SIGNOFF-001/evidence.json sequence 11. Owner composed origin/dev 4974824687ef5c3acf665fa22a4306e5d3d664f1 before the final evidence commit, then made no further branch mutation. Local verification: 296 focused tests and 39 subtests; product-evidence schema, companion checksum, catalog canonical digest, nine file-backed source hashes, and git diff --check pass; the L12 guardrail reports only the intentionally absent formal Codex2 verdict. GitHub checks at this exact head are green: both Commit trailers, Runtime mirror guard, Python packaging provision, and Smoke acceptance runs. Re-verify canonical supervisor lease recovery with erased workspace env, pre-access forbidden roots, revoked/consumed ledger-tail protection, exact catalog/manifest/target/FE/BFF binding, and exactly-once done consumption. Append the formal Codex2 verdict to the committed evidence manifest, preserve its checksum, and approve only with REVIEW_FILE=docs/deployment/evidence/twelve-loop-gap/L12-SIGNOFF-001/evidence.json REVIEW_PR=4261 REVIEW_HEAD_SHA=ea628cac729fbd3a3240145940fa78518ba02782 (or the exact post-verdict head if the reviewer must commit the formal verdict before approval).",
+      "resolved_at": "2026-07-27T17:18:16Z",
+      "status": "done",
+      "task_id": "L12-SIGNOFF-001",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-07-27T17:18:16Z",
+      "from": "Codex2",
+      "message": "Independent security review approved PR #4261 exact head 7d53f9b37f67759062113d82ca9b684ed735a42e; sequence-12 formal verdict is committed and all focused, integrity, merge-ancestry, canonical-lease, forbidden-root, revocation, replay, exact-binding, and exactly-once checks passed.",
+      "resolved_at": "2026-07-27T17:26:47Z",
+      "status": "done",
+      "task_id": "L12-SIGNOFF-001",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-07-27T17:44:27Z",
+      "from": "Codex",
+      "message": "Fresh exact-head review required for PR #4261. Owner head 66ff4942938a8de47f8ee47951659292d41d1ff7 is based on dev 4688bd252911b91ea0459a38a694c5faa53e3bbd with 0 base-only commits; autoMergeRequest is null; all 8 GitHub CI checks are SUCCESS. Review docs/deployment/evidence/twelve-loop-gap/L12-SIGNOFF-001/evidence.json sequence 14, verify the unchanged canonical catalog digest and nine source hashes plus 296 focused tests/39 subtests, append a sequence-15 formal independent_review verdict and refresh evidence.sha256, push that reviewer-only commit, then approve using REVIEW_FILE=docs/deployment/evidence/twelve-loop-gap/L12-SIGNOFF-001/evidence.json REVIEW_PR=4261 REVIEW_HEAD_SHA=<actual post-verdict PR head> REVIEW_BASE=dev. Do not reuse sequence-12 approval and do not enable auto-merge.",
+      "resolved_at": "2026-07-27T17:55:42Z",
+      "status": "done",
+      "task_id": "L12-SIGNOFF-001",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-07-27T17:55:42Z",
+      "from": "Codex2",
+      "message": "Exact-head review rejected: PR #4261 head 66ff4942938a8de47f8ee47951659292d41d1ff7 is again BEHIND current dev a6966b13d84430387da9c3a33fcf224c841bc5c6 with 3 base-only commits (PR #4266); sequence-12 approval cannot be reused and no sequence-15 reviewer verdict was written. Independent checks otherwise pass: 296 focused tests/39 subtests; product-evidence schema/checksum; canonical catalog digest; all nine source hashes; py_compile; git diff --check; merged PR #4183/#4205/#4206/#4210 identities and dev ancestry; all 8 current PR checks SUCCESS; autoMergeRequest null. Required: owner normally compose latest origin/dev, append a fresh owner revalidation record with updated validated base/head and checksum, re-run focused/schema/hash/ancestry checks, push a new immutable PR head, confirm zero base-only commits and green checks, then request a fresh Codex2 exact-head review.",
+      "resolved_at": "2026-07-27T17:55:42Z",
+      "status": "done",
+      "task_id": "L12-SIGNOFF-001",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-07-27T19:00:44Z",
+      "from": "Codex",
+      "message": "Sequence-17 exact-head owner evidence is ready on PR #4261 at f5d6191afccf82b342e12b3282e6b5ba66d0a782 against origin/dev 5a2fc69a3b432e0d1bc528981d66a2ee32defa71 with zero base-only commits. Independent review required: append a fresh verdict bound to this immutable head; sequence-12 approval must not be reused. Owner verification passed 296 focused tests and 39 subtests, py_compile, product-evidence schema/checksum, canonical catalog digest, all nine source hashes, task guardrail, git diff check, and all 8 GitHub CI checks. Auto-merge remains disabled.",
+      "resolved_at": "2026-07-27T19:22:10Z",
+      "status": "done",
+      "task_id": "L12-SIGNOFF-001",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-07-27T19:22:10Z",
+      "from": "Codex2",
+      "message": "Codex2 sequence-18 independent review approved: PR #4261 exact owner head f5d6191af and reviewer evidence head 7eb644b6a; 296 tests/39 subtests, schema/checksum/catalog/9 source hashes, four merged delivery PRs, zero base-only commits, and all 8 fresh CI checks verified. Return to Codex for merge and owner closeout.",
+      "status": "done",
+      "task_id": "L12-SIGNOFF-001",
+      "to": "Codex",
+      "resolved_at": "2026-07-27T19:53:25Z"
+    }
+  ],
+  "blockers": [
+    {
+      "created_at": "2026-07-26T12:08:08Z",
+      "message": "Temporary live repair: block redispatch until authoritative test-state isolation is merged and installed; preserve anchor 195df06a2 and archived WIP.",
+      "owner": "Codex",
+      "resolved_at": "2026-07-26T12:28:01Z",
+      "status": "resolved",
+      "task_id": "L12-SIGNOFF-001",
+      "waiting_for": "Human/Ops"
+    }
+  ]
+}

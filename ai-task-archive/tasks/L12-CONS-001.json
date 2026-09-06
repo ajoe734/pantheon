@@ -1,0 +1,163 @@
+{
+  "version": 1,
+  "task_id": "L12-CONS-001",
+  "archived_at": "2026-07-26T11:02:06Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "acceptance": [
+      "Executor obtains real qualified committee or red-team contributions",
+      "API and worker enforce service/operator identity and tenant scope",
+      "Pending work uses durable claim lease and bounded blocked attempts",
+      "Participant memo publish and handoff uniqueness survive concurrent workers",
+      "Crash retry DLQ replay and downstream acknowledgement are proved"
+    ],
+    "actual_state_sources": [
+      "qualified participant contributions",
+      "ConsultMemo",
+      "governance handoff"
+    ],
+    "artifact_conflict_guard": {
+      "allowed_overlap_task_ids": [],
+      "artifact_scope": [
+        {
+          "path": "docs/deployment/evidence/twelve-loop-gap/L12-CONS-001",
+          "repo": "pantheon"
+        },
+        {
+          "path": "services/consultation",
+          "repo": "pantheon"
+        }
+      ],
+      "catalog_sha256": "a7fbbaa560bd7f2d97750b25cd20af69b64d4f522b293689849b0e1b1763717f",
+      "program_id": "pantheon-twelve-loop-gap-2026-07-26",
+      "schema_version": 1,
+      "task_id": "L12-CONS-001"
+    },
+    "artifacts": [
+      "services/consultation",
+      "docs/deployment/evidence/twelve-loop-gap/L12-CONS-001"
+    ],
+    "auto_created_by": "dispatch_twelve_loop_gap_2026_07_26",
+    "catalog_task_contract_sha256": "f7d373386ea8ce492d6075cc3be4cf828f5027b177d18ff557bd86bab737e1e6",
+    "current_maturity": "api-only",
+    "depends_on": [
+      "L12-FLEET-001"
+    ],
+    "desired_state_sources": [
+      "ConsultRequest",
+      "committee and red-team workflow policy"
+    ],
+    "dispatch_rules": [
+      "Consultation remains advisory or review-bound",
+      "Do not synthesize a successful participant",
+      "Blocked work must terminate visibly"
+    ],
+    "evidence_root": "docs/deployment/evidence/twelve-loop-gap/L12-CONS-001",
+    "fleet_lane": "consultation",
+    "id": "L12-CONS-001",
+    "last_update": "2026-07-26T11:02:06Z",
+    "loop_ids": [
+      "consultation"
+    ],
+    "merge_target": "dev",
+    "mutates_canonical": true,
+    "next": "Owner finalized merged Consultation delivery: implementation PR #4145 merged at 45735b401cd3e99f0ff6da88dda05def5f607949 and formal closeout manifest PR #4158 merged at 185d5f25676b85ab7ba8acfbfa08856b194ae837. Codex2 independently approved; owner reran consultation pytest (56 passed, 11 warnings), repository smoke acceptance, diff-check, py_compile, JSON/schema/checksum, and exact product done guardrail. Auth/tenant, leased CAS fencing, race/crash recovery, exact handoff acknowledgement, bounded DLQ, and operator-only replay are accepted; shared activation remains delegated to L12-MANIFEST-001.",
+    "non_goals": [
+      "No panel-only closure",
+      "No seed fixture as live proof",
+      "No approval gate bypass",
+      "No direct deployment from consultation"
+    ],
+    "owner": "Codex",
+    "phase": "Twelve Loop Remediation / Consultation",
+    "product_level_required": true,
+    "program_id": "pantheon-twelve-loop-gap-2026-07-26",
+    "proof_required": [
+      "real provider service-boundary test",
+      "multi-executor race test",
+      "phase-by-phase crash recovery",
+      "auth tenant and DLQ proof"
+    ],
+    "requires_human_ops_signoff": false,
+    "reviewer": "Codex2",
+    "status": "done",
+    "summary_zh": "讓 committee/red-team executor 真正取得 provider/participant contribution，加入 auth/tenant、claim lease、bounded blocked/DLQ、unique handoff，並成為受監督 worker。",
+    "target_maturity": "reconciled",
+    "target_repo": "pantheon",
+    "task_doc": "docs/bff/execution-tasks/2026-07-26-twelve-loop-gap/L12-CONS-001.md",
+    "title": "Deploy a real durable Consultation workflow executor",
+    "wave": 1,
+    "review_file": "docs/deployment/evidence/twelve-loop-gap/L12-CONS-001/evidence.json",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-07-26T11:02:06Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/l12-cons-001",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/L12-CONS-001",
+      "git_clean_required": false,
+      "status_command_runtime": {
+        "command_root": "/home/lupin/pantheon-ci-deploy/dev-root",
+        "source_sha": "09159159fbac9b43d3e97011a12a224699677620",
+        "base_ref": "origin/dev",
+        "remote": "ajoe734/pantheon",
+        "status_root": "/home/lupin/pantheon",
+        "delivery_root": "/tmp/pantheon-worker-worktrees/pantheon/l12-cons-001",
+        "wrapper_root": "/home/lupin/pantheon-ci-deploy/dev-root"
+      },
+      "commit": "1e051800821095bf4efc816b0f409475afe04639",
+      "commit_subject": "Merge remote-tracking branch 'origin/dev' into task/L12-CONS-001",
+      "commit_author": {
+        "name": "pantheon-dev",
+        "email": "bjoe734@gmail.com"
+      },
+      "commit_trailer_check_skipped": true,
+      "commit_trailer_skip_reason": "Merge",
+      "commit_metadata": {},
+      "git_clean": false,
+      "dirty_entry_count": 1,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "185d5f25676b85ab7ba8acfbfa08856b194ae837",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "created_at": "2026-07-26T10:01:33Z",
+      "from": "Codex",
+      "message": "PR #4145 merged into dev at 45735b401cd3e99f0ff6da88dda05def5f607949; durable Consultation executor and evidence are ready for independent review. Verify 56-test consultation suite, repository smoke gate, auth/tenant negatives, race uniqueness, eight phase-crash recovery cases, and operator-only DLQ replay.",
+      "resolved_at": "2026-07-26T10:36:00Z",
+      "status": "done",
+      "task_id": "L12-CONS-001",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-07-26T10:36:00Z",
+      "from": "Codex2",
+      "message": "Independent review approved: PR #4145 is MERGED to dev at 45735b401cd3e99f0ff6da88dda05def5f607949 with all visible Branch CI gates successful and merge ancestry verified. Re-ran /home/lupin/pantheon/.venv/bin/python -m pytest services/consultation -q (56 passed, 11 warnings in 34.64s) and repository smoke acceptance (stage0 validate + baseline passed); diff-check, py_compile, and verification.json parse passed. Code/test inspection verified authenticated service/operator roles and tenant-scoped 404 negatives, SQLite WAL/FULL leased CAS fencing, two-executor one-provider/participant/memo/handoff race uniqueness, eight phase crash recoveries, qualified non-system provider evidence, external exact-handoff acknowledgement, bounded dead-letter transition, and service-denied/operator-approved replay. Compose/auth/provider activation remains correctly delegated to L12-MANIFEST-001.",
+      "status": "done",
+      "task_id": "L12-CONS-001",
+      "to": "Codex",
+      "resolved_at": "2026-07-26T11:02:07Z"
+    }
+  ],
+  "blockers": [],
+  "correction_context": {
+    "version": 1,
+    "corrected_at": "2026-07-26T12:52:46Z",
+    "actor": "Human/Ops",
+    "reason": "Replace disposable worker path with the merged ProductEvidence manifest after checksum and done-guard replay.",
+    "field": "task.review_file",
+    "from": "/tmp/pantheon-worker-worktrees/pantheon/l12-cons-001/docs/deployment/evidence/twelve-loop-gap/L12-CONS-001/evidence.json",
+    "to": "docs/deployment/evidence/twelve-loop-gap/L12-CONS-001/evidence.json",
+    "evidence_sha256": "6d13a8a26fa79eb1d07ad876967ab0e3d881106e0a47007edc4adb3c7461bd30"
+  }
+}

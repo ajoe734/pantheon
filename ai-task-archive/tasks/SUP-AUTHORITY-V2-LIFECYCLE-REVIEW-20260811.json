@@ -1,0 +1,165 @@
+{
+  "version": 1,
+  "task_id": "SUP-AUTHORITY-V2-LIFECYCLE-REVIEW-20260811",
+  "archived_at": "2026-08-13T02:01:48Z",
+  "terminal_status": "done",
+  "terminal_outcome": "superseded",
+  "task": {
+    "acceptance": [
+      "Make the v2 task machine the only production lifecycle authority used by every ai-status command and supervisor mutation. Allowed transitions are create to todo, execution_started to in_progress, submit to review, changes_requested to in_progress, exact-head approve to review_approved, finalize to done, structured block/unblock and audited cancel/supersede.",
+      "Treat ready as derived eligibility, not stored lifecycle. Replace quarantined lifecycle use with structured blocked or runtime waiting reason as specified. Account auth and quota pauses must not mutate task lifecycle.",
+      "Separate immutable task scope, dependency and acceptance provenance from mutable audited owner/reviewer routing. Catalog materialization must not permanently freeze routing fields.",
+      "Run GitHub discovery, evidence lookup and review bridge calls outside task-state and runtime locks. Commit only a short exact task-generation, reviewer, PR and head CAS transaction; timeout or stale evidence leaves canonical lifecycle unchanged.",
+      "Finalize must consume already-recorded approval evidence and must not perform network I/O inside the canonical transaction.",
+      "Delete direct status assignment in command_start, command_progress, command_reopen, command_handoff, command_approve and command_done; delete restore_approved and all duplicate transition ladders after callers move to the machine.",
+      "Add an invariant test that fails if subprocess, GitHub or provider network calls execute while canonical or runtime exclusive locks are held. Cover invalid transitions, exact-head races, reviewer fallback, reassignment and crash boundaries.",
+      "No rewrite versus legacy feature flag or exception fallback may remain. Deliver by clean PR, independent exact-head review and required checks."
+    ],
+    "artifacts": [
+      ".orchestrator/rewrite/task_machine.py",
+      ".orchestrator/rewrite/test_task_machine.py",
+      "scripts/ai_status.py",
+      "scripts/test_ai_status.py",
+      "scripts/git/github_review_bridge.py",
+      "scripts/git/test_github_review_bridge.py"
+    ],
+    "block_reason": {
+      "kind": "legacy_task_quarantine",
+      "required_action": "operator_reopen_after_diagnosis"
+    },
+    "depends_on": [
+      "SUP-AUTHORITY-V2-TASK-STORE-20260811"
+    ],
+    "dev_bridge": {
+      "actor": {
+        "capabilities": [
+          "integration",
+          "status-system",
+          "supervisor-runtime",
+          "fleet-dispatch",
+          "deployment"
+        ],
+        "id": "Human/Ops",
+        "roles": [
+          "operator",
+          "integration-coordinator"
+        ]
+      },
+      "audit_conversation_href": null,
+      "conversation_id": "codex-root-supervisor-authority-v2-20260811",
+      "documents": [
+        {
+          "kind": "GOVERNANCE",
+          "path": "AGENTS.md",
+          "sourceRefs": [
+            "Integration And Coordination Lane",
+            "Single Dispatch Authority",
+            "Completion Definition For Repo Changes"
+          ]
+        },
+        {
+          "kind": "CURRENT_IMPLEMENTATION",
+          "path": ".orchestrator/supervisor.py",
+          "sourceRefs": [
+            "run_once",
+            "dispatch_ready_tasks",
+            "process_queue",
+            "persist_task_reassignment",
+            "chair_reassignment_triage_needed_for_task"
+          ]
+        },
+        {
+          "kind": "CURRENT_IMPLEMENTATION",
+          "path": ".orchestrator/rewrite/task_state_store.py",
+          "sourceRefs": [
+            "append_state_commit",
+            "load_snapshot",
+            "full-state journal"
+          ]
+        },
+        {
+          "kind": "CURRENT_IMPLEMENTATION",
+          "path": "scripts/ai_status.py",
+          "sourceRefs": [
+            "command_start",
+            "command_reopen",
+            "command_approve",
+            "command_done",
+            "canonical task-state lock"
+          ]
+        },
+        {
+          "kind": "CURRENT_IMPLEMENTATION",
+          "path": "scripts/promote_supervisor_runtime.py",
+          "sourceRefs": [
+            "PromotionTransaction",
+            "mutable incumbent compatibility",
+            "rollback"
+          ]
+        },
+        {
+          "kind": "HISTORICAL_NONAUTHORITATIVE_PLAN",
+          "path": "docs/02-architecture/SUPERVISOR_REWRITE_PLAN.md",
+          "sourceRefs": [
+            "retain useful findings only",
+            "do not preserve dual paths"
+          ]
+        }
+      ],
+      "emitted_at": "2026-08-11T15:08:43Z",
+      "intent": "replace_conflicting_supervisor_control_paths",
+      "mode": "supervisor_architecture_governed_delivery",
+      "packet_digest": "1dae7fbc85c31410e339ec68a992fc2f46df94a5ced0798136240dbe23480f40",
+      "packet_id": "pkt-supervisor-authority-v2-cutover-20260811T150843Z",
+      "source_turn_ids": [
+        "operator-approved-authoritative-supervisor-spec-20260811",
+        "operator-approved-complete-implementation-20260811",
+        "function-level-call-path-and-deletion-map-20260811"
+      ],
+      "task_spec": {
+        "acceptance": [
+          "Make the v2 task machine the only production lifecycle authority used by every ai-status command and supervisor mutation. Allowed transitions are create to todo, execution_started to in_progress, submit to review, changes_requested to in_progress, exact-head approve to review_approved, finalize to done, structured block/unblock and audited cancel/supersede.",
+          "Treat ready as derived eligibility, not stored lifecycle. Replace quarantined lifecycle use with structured blocked or runtime waiting reason as specified. Account auth and quota pauses must not mutate task lifecycle.",
+          "Separate immutable task scope, dependency and acceptance provenance from mutable audited owner/reviewer routing. Catalog materialization must not permanently freeze routing fields.",
+          "Run GitHub discovery, evidence lookup and review bridge calls outside task-state and runtime locks. Commit only a short exact task-generation, reviewer, PR and head CAS transaction; timeout or stale evidence leaves canonical lifecycle unchanged.",
+          "Finalize must consume already-recorded approval evidence and must not perform network I/O inside the canonical transaction.",
+          "Delete direct status assignment in command_start, command_progress, command_reopen, command_handoff, command_approve and command_done; delete restore_approved and all duplicate transition ladders after callers move to the machine.",
+          "Add an invariant test that fails if subprocess, GitHub or provider network calls execute while canonical or runtime exclusive locks are held. Cover invalid transitions, exact-head races, reviewer fallback, reassignment and crash boundaries.",
+          "No rewrite versus legacy feature flag or exception fallback may remain. Deliver by clean PR, independent exact-head review and required checks."
+        ],
+        "artifacts": [
+          ".orchestrator/rewrite/task_machine.py",
+          ".orchestrator/rewrite/test_task_machine.py",
+          "scripts/ai_status.py",
+          "scripts/test_ai_status.py",
+          "scripts/git/github_review_bridge.py",
+          "scripts/git/test_github_review_bridge.py"
+        ],
+        "depends_on": [
+          "SUP-AUTHORITY-V2-TASK-STORE-20260811"
+        ],
+        "id": "SUP-AUTHORITY-V2-LIFECYCLE-REVIEW-20260811",
+        "owner": "Codex",
+        "phase": "Supervisor Authority V2 / Lifecycle and Review",
+        "reviewer": "Codex2",
+        "summary": "Replace permissive direct task-row mutations with one real lifecycle authority, mutable audited routing, and exact-head review evidence acquired outside short canonical transactions.",
+        "title": "Make one task lifecycle and move review I/O outside canonical transactions"
+      },
+      "task_spec_hash": "02d89971a1b6990b3eac5e24b7db9112c794d60443c5822f53a8ad6991e35d6a"
+    },
+    "generation": 1,
+    "id": "SUP-AUTHORITY-V2-LIFECYCLE-REVIEW-20260811",
+    "last_update": "2026-08-13T02:01:48Z",
+    "next": "Retired during the Supervisor Authority V2 board reset: this legacy control, routing, rollout, or verification row is no longer an execution authority; merged source and archive evidence remain preserved.",
+    "owner": "Codex",
+    "phase": "Supervisor Authority V2 / Lifecycle and Review",
+    "resume_status": "in_progress",
+    "reviewer": "Codex2",
+    "status": "done",
+    "summary_zh": "Replace permissive direct task-row mutations with one real lifecycle authority, mutable audited routing, and exact-head review evidence acquired outside short canonical transactions.",
+    "title": "Make one task lifecycle and move review I/O outside canonical transactions",
+    "terminal_outcome": "superseded"
+  },
+  "handoffs": [],
+  "blockers": []
+}
