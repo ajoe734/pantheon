@@ -1738,6 +1738,16 @@ services:
     environment:
       PORT: "8087"
       DATABASE_URL: ${DATABASE_URL:-postgresql://pantheon_app:pantheon_app@postgres:5432/pantheon}
+      # Hard-enforce Postgres in staging/prod; override to memory only for local
+      # dev rollback. Memory is a test double injected directly by unit tests,
+      # never a missing-config fallback for a deployment that selected postgres.
+      REGISTRY_STORE_BACKEND: ${REGISTRY_STORE_BACKEND:-postgres}
+      REGISTRY_STORE_DSN: ${REGISTRY_STORE_DSN:-}
+      PANTHEON_REGISTRY_AUTH_MODE: ${PANTHEON_REGISTRY_AUTH_MODE:-strict}
+      PANTHEON_REGISTRY_JWT_SECRET: ${PANTHEON_BFF_JWT_SECRET:-}
+      PANTHEON_REGISTRY_JWT_ISSUER: ${PANTHEON_BFF_JWT_ISSUER:-}
+      PANTHEON_REGISTRY_JWT_AUDIENCE: ${PANTHEON_BFF_JWT_AUDIENCE:-}
+      PANTHEON_REGISTRY_ROLE_CLAIMS: ${PANTHEON_BFF_ROLE_CLAIMS:-roles,role}
       PANTHEON_S3_ENDPOINT: ${PANTHEON_S3_ENDPOINT:-http://minio:9000}
       PANTHEON_S3_ACCESS_KEY: ${PANTHEON_S3_ACCESS_KEY:-pantheon}
       PANTHEON_S3_SECRET_KEY: ${PANTHEON_S3_SECRET_KEY:-pantheonminio}
