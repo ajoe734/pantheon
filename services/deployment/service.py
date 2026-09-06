@@ -203,10 +203,7 @@ DATA_DIR = _resolve_governance_dir()
 PLAN_STORE_PATH = DATA_DIR / "deployment_plans.json"
 SAGA_STORE_PATH = DATA_DIR / "deployment_sagas.json"
 OUTBOX_LEASE_STORE_PATH = DATA_DIR / "deployment_outbox_leases.json"
-APPROVAL_STORE_PATH = DATA_DIR / "approval_decisions.json"
 RUNTIME_BINDING_STORE_PATH = _resolve_runtime_binding_store_path()
-_REGISTRY_SNAPSHOT_ENV = os.getenv("PANTHEON_DEPLOYMENT_REGISTRY_SNAPSHOT_PATH", "").strip()
-REGISTRY_SNAPSHOT_PATH = Path(_REGISTRY_SNAPSHOT_ENV).expanduser() if _REGISTRY_SNAPSHOT_ENV else None
 
 
 def _resolve_capital_pool_store_path() -> Path | None:
@@ -368,12 +365,12 @@ class DeploymentPlannerService:
         self,
         *,
         plan_store: DeploymentPlanStore,
-        approval_store_path: Path,
-        registry_snapshot_path: Path | None = None,
+        registry_reader=None,
+        approval_reader=None,
     ) -> None:
         self.plan_store = plan_store
-        self.approval_store_path = approval_store_path
-        self.registry_snapshot_path = registry_snapshot_path
+        self.registry_reader = registry_reader
+        self.approval_reader = approval_reader
         self.planner = StagePlanner()
 
     def create_plan(
@@ -385,7 +382,11 @@ class DeploymentPlannerService:
         tenant_id: str,
     ) -> DeploymentPlan:
         registry_entry = self._resolve_registry_entry(request)
-        approval_decision = self._resolve_approval_decision(request)
+        approval_decision = self._resolve_approval_decision(request, registry_entry, tenant_id)
+        if registry_entry.get('owner_tenant') != tenant_id:
+            raise DeploymentPlanError('Registry artifact belongs to a different tenant')
+        if registry_entry.get('artifact_state') != 'approved' or registry_entry.get('approval_decision_id') != request.approval_decision_id:
+            raise DeploymentPlanError('Registry requires artifact_state=approved and matching approval decision reference')
         approval_tenant_id = str(approval_decision.get("tenant_id") or "").strip()
         if not approval_tenant_id:
             raise DeploymentPlanError(
@@ -639,36 +640,38 @@ class DeploymentPlannerService:
         )
 
     def _resolve_registry_entry(self, request: CreateDeploymentPlanRequest) -> Mapping[str, Any]:
-        if request.registry_entry is not None:
-            return request.registry_entry
-        if request.registry_id and self.registry_snapshot_path and self.registry_snapshot_path.exists():
-            record = _load_record(
-                self.registry_snapshot_path,
-                key_candidates=("registry_id", "id"),
-                target_key=request.registry_id,
-            )
-            if record is not None:
-                return record
-        raise DeploymentPlanError(
-            "registry_entry payload is required unless registry_id resolves from "
-            "PANTHEON_DEPLOYMENT_REGISTRY_SNAPSHOT_PATH"
-        )
+        if self.registry_reader is not None:
+            return self.registry_reader(request.registry_id)
+        import httpx
+        from urllib.parse import quote
+        url = os.getenv('DEPLOYMENT_REGISTRY_BASE_URL', '').rstrip('/')
+        token = os.getenv('DEPLOYMENT_REGISTRY_SERVICE_TOKEN', '')
+        if not url or not token:
+            raise DeploymentPlanError('Registry owner URL and scoped read principal required')
+        try:
+            response = httpx.get(url + '/api/registry/entries/' + quote(request.registry_id, safe=''),
+                                 headers={'Authorization': 'Bearer ' + token, 'Accept': 'application/json'},
+                                 timeout=float(os.getenv('DEPLOYMENT_REGISTRY_TIMEOUT_SECONDS', '5')),
+                                 follow_redirects=False)
+            response.raise_for_status()
+            entry = response.json()['entry']
+            if not isinstance(entry, dict) or entry.get('registry_id') != request.registry_id:
+                raise ValueError('Wrong Registry identity')
+            return entry
+        except (httpx.HTTPError, ValueError, KeyError, TypeError) as exc:
+            raise DeploymentPlanError('Registry exact owner read unavailable or malformed') from exc
 
-    def _resolve_approval_decision(self, request: CreateDeploymentPlanRequest) -> Mapping[str, Any]:
-        if request.approval_decision is not None:
-            return request.approval_decision
-        if self.approval_store_path.exists():
-            record = _load_record(
-                self.approval_store_path,
-                key_candidates=("decision_id", "id"),
-                target_key=request.approval_decision_id,
-            )
-            if record is not None:
-                return record
-        raise DeploymentPlanError(
-            "approval_decision payload is required unless approval_decision_id resolves from "
-            f"{self.approval_store_path}"
-        )
+    def _resolve_approval_decision(self, request, registry_entry, tenant_id) -> Mapping[str, Any]:
+        from services.governance.approval_authority import configured_approval_reader, ApprovalInvalid
+        try:
+            reader = self.approval_reader or configured_approval_reader('deployment')
+            return reader.verify(request.approval_decision_id, expected={
+                'tenant_id': tenant_id, 'target_type': 'registry_entry',
+                'target_id': request.registry_id, 'target_version': registry_entry.get('version'),
+                'candidate_digest': registry_entry.get('checksum'),
+            }).model_dump()
+        except ApprovalInvalid as exc:
+            raise DeploymentPlanError(str(exc)) from exc
 
 
 class DeploymentProjectionReadModelService:
@@ -679,14 +682,10 @@ class DeploymentProjectionReadModelService:
         *,
         planner_service: DeploymentPlannerService,
         saga_store: DeploymentSagaStore,
-        approval_store_path: Path,
-        registry_snapshot_path: Path | None,
         runtime_binding_store_path: Path,
     ) -> None:
         self.planner_service = planner_service
         self.saga_store = saga_store
-        self.approval_store_path = approval_store_path
-        self.registry_snapshot_path = registry_snapshot_path
         self.runtime_binding_store_path = runtime_binding_store_path
 
     def list_projections(
@@ -766,7 +765,7 @@ class DeploymentProjectionReadModelService:
             deployment_saga_status=saga_status,
         )
         summary: Dict[str, Any] = {
-            "has_approval_authority": approval_outcome in {"approved", "approved_with_conditions"},
+            "has_approval_authority": self._has_approval_authority(plan, registry_entry, approval_decision),
             "runtime_backing_present": runtime_binding is not None,
             "execution_projection_available": execution_projection is not None,
             "rollback_action_type": _rollback_action_type(plan),
@@ -813,23 +812,34 @@ class DeploymentProjectionReadModelService:
             execution_projection=execution_projection,
         )
 
+    def _has_approval_authority(self, plan, entry, decision) -> bool:
+        from services.governance.approval_authority import ApprovalEvidence, ApprovalInvalid
+        if not entry or not decision:
+            return False
+        try:
+            ApprovalEvidence.model_validate(decision).require_valid(expected={
+                'tenant_id': _plan_tenant_id(plan), 'target_type': 'registry_entry',
+                'target_id': plan.artifact_id, 'target_version': plan.artifact_version,
+                'candidate_digest': entry.get('checksum'),
+            })
+            return True
+        except (ApprovalInvalid, ValueError):
+            return False
+
     def _find_approval_decision(self, approval_decision_id: str) -> Optional[Dict[str, Any]]:
-        if not self.approval_store_path.exists():
+        from services.governance.approval_authority import configured_approval_reader, ApprovalInvalid
+        try:
+            reader = self.planner_service.approval_reader or configured_approval_reader('deployment')
+            return reader.get(approval_decision_id).model_dump()
+        except ApprovalInvalid:
             return None
-        return _load_record(
-            self.approval_store_path,
-            key_candidates=("decision_id", "id"),
-            target_key=approval_decision_id,
-        )
 
     def _find_registry_entry(self, artifact_id: str) -> Optional[Dict[str, Any]]:
-        if self.registry_snapshot_path is None or not self.registry_snapshot_path.exists():
+        from types import SimpleNamespace
+        try:
+            return dict(self.planner_service._resolve_registry_entry(SimpleNamespace(registry_id=artifact_id)))
+        except DeploymentPlanError:
             return None
-        return _load_record(
-            self.registry_snapshot_path,
-            key_candidates=("registry_id", "id", "artifact_id"),
-            target_key=artifact_id,
-        )
 
     def _find_runtime_binding_for_plan(self, plan_id: str) -> Optional[Dict[str, Any]]:
         for record in _load_records(self.runtime_binding_store_path):
@@ -1048,7 +1058,7 @@ class DeploymentOrchestrationService:
                 reason=f"DeploymentPlan '{plan_id}' must be approved before dispatch; got '{plan.status}'",
             )
 
-        registry_entry = self._resolve_registry_entry_for_plan(plan, request.registry_entry)
+        registry_entry = self._resolve_registry_entry_for_plan(plan)
         projection = self.planner_service.planner.build_execution_projection(plan, registry_entry)
 
         if existing is not None:
@@ -1356,26 +1366,18 @@ class DeploymentOrchestrationService:
             raise DeploymentSagaError(f"Unknown saga: {saga_id}")
         return saga
 
-    def _resolve_registry_entry_for_plan(
-        self,
-        plan: DeploymentPlan,
-        explicit_registry_entry: Mapping[str, Any] | None,
-    ) -> Mapping[str, Any]:
-        if explicit_registry_entry is not None:
-            return explicit_registry_entry
-        snapshot_path = self.planner_service.registry_snapshot_path
-        if snapshot_path and snapshot_path.exists():
-            record = _load_record(
-                snapshot_path,
-                key_candidates=("registry_id", "id"),
-                target_key=plan.artifact_id,
-            )
-            if record is not None:
-                return record
-        raise DeploymentPlanError(
-            "dispatch requires registry_entry payload unless artifact_id resolves from "
-            "PANTHEON_DEPLOYMENT_REGISTRY_SNAPSHOT_PATH"
-        )
+    def _resolve_registry_entry_for_plan(self, plan: DeploymentPlan) -> Mapping[str, Any]:
+        from types import SimpleNamespace
+        reference = SimpleNamespace(registry_id=plan.artifact_id,
+                                    approval_decision_id=plan.approval_decision_id)
+        entry = self.planner_service._resolve_registry_entry(reference)
+        if (entry.get('owner_tenant') != _plan_tenant_id(plan)
+                or entry.get('version') != plan.artifact_version
+                or entry.get('artifact_state') != 'approved'
+                or entry.get('approval_decision_id') != plan.approval_decision_id):
+            raise DeploymentPlanError('Registry authority no longer matches the approved plan')
+        self.planner_service._resolve_approval_decision(reference, entry, _plan_tenant_id(plan))
+        return entry
 
     def _find_outbox_event(self, saga_id: str, *, sequence_no: int) -> OutboxRecord | None:
         for record in self.saga_store.outbox_records():
@@ -1932,8 +1934,6 @@ def _execution_context_for_stage(target_stage: DeploymentStage | str) -> str:
 
 planner_service = DeploymentPlannerService(
     plan_store=store,
-    approval_store_path=APPROVAL_STORE_PATH,
-    registry_snapshot_path=REGISTRY_SNAPSHOT_PATH,
 )
 orchestration_service = DeploymentOrchestrationService(
     planner_service=planner_service,
@@ -1942,8 +1942,6 @@ orchestration_service = DeploymentOrchestrationService(
 projection_service = DeploymentProjectionReadModelService(
     planner_service=planner_service,
     saga_store=saga_store,
-    approval_store_path=APPROVAL_STORE_PATH,
-    registry_snapshot_path=REGISTRY_SNAPSHOT_PATH,
     runtime_binding_store_path=RUNTIME_BINDING_STORE_PATH,
 )
 compatibility_service = PoolRuntimeCompatibilityService(
