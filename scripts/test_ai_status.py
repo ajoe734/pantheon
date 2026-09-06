@@ -1886,6 +1886,24 @@ class DevBridgeMaterializeBatchTests(unittest.TestCase):
         self.assertFalse(state.get("execution_authorization_consumed_grants"))
         self.assertEqual(ai_status.get_task(state, task_id)["execution_authorization"]["policy"], policy)
 
+    def test_grant_and_revoke_preserve_genuine_human_ops_blocker(self) -> None:
+        task_id = "AUTH-WITH-SEPARATE-BLOCKER"
+        grant, config = self._synthetic_execution_grant(task_id)
+        state = ai_status.load_state()
+        task = ai_status.get_task(state, task_id)
+        with mock.patch.dict(os.environ, {"AI_NAME": task["owner"]}, clear=False), mock.patch.object(ai_status, "append_log"):
+            ai_status.command_blocker(state, [task_id, "Independent operator hold", "Human/Ops"])
+        self.assertEqual(task["status"], "blocked")
+        self.assertFalse(task["execution_authorization"]["old_runtime_hold"])
+        ai_status.save_state(state)
+        self.assertEqual(self._run_execution_grant_cli(grant, config, "execution-grant-submit", task_id), 0)
+        self.assertEqual(self._run_execution_grant_cli(grant, config, "execution-grant-revoke", task_id, "Revoke only grant"), 0)
+        task = ai_status.get_task(ai_status.load_state(), task_id)
+        self.assertEqual(task["waiting_for"], "Human/Ops")
+        self.assertEqual(task["status"], "blocked")
+        self.assertFalse(task["execution_authorization"]["old_runtime_hold"])
+        self.assertFalse(execution_authorization.is_execution_authorization_hold(task))
+
     def test_execution_grant_revoke_restores_old_runtime_hold(self) -> None:
         # OPS-PRIVILEGED-TASK-EXECUTION-AUTH-001, Codex2 exact-head REJECT
         # P1-5: revoking a granted execution-authorization record must
@@ -11895,6 +11913,46 @@ class TaskMetadataTests(unittest.TestCase):
         payload = json.loads(buf.getvalue())
         self.assertEqual(payload["source"], "active")
         self.assertEqual(payload["task"]["execution_resources"], ["pantheon-dev"])
+
+    def test_command_show_reports_current_authorization_without_mutating_task(self) -> None:
+        from test_execution_authorization import ExecutionAuthorizationTestCase
+
+        fixture = ExecutionAuthorizationTestCase()
+        fixture.setUp()
+        base = deepcopy(fixture._granted_task())
+        base["status"] = "in_progress"
+        pending = deepcopy(base)
+        pending["execution_authorization"] = execution_authorization.pending_authorization_hold(fixture.policy)
+        pending["waiting_for"] = "Human/Ops"
+        reserved = deepcopy(base)
+        reserved["execution_authorization"] = execution_authorization.reserve_execution_authorization(base, run_id="show-reserved-run", now=fixture.now)
+        revoked = deepcopy(base)
+        revoked["execution_authorization"] = execution_authorization.revoked_execution_authorization(base, actor="Human/Ops", now=fixture.now)
+        invalid = deepcopy(base)
+        invalid["acceptance"] = ["Revised after grant"]
+        for task, now, expected, ready in (
+            (pending, fixture.now, "admitted_pending_authorization", False),
+            (base, fixture.now, "authorization_ready", True),
+            (base, fixture.now + timedelta(seconds=121), "expired", False),
+            (reserved, fixture.now + timedelta(seconds=121), "reserved_attempt", False),
+            (reserved, fixture.now + timedelta(seconds=1801), "expired", False),
+            (revoked, fixture.now, "revoked", False),
+            (invalid, fixture.now, "invalid", False),
+        ):
+            with self.subTest(expected=expected, now=now):
+                state = {**self.state, "tasks": [task]}
+                before = deepcopy(state)
+                buf = io.StringIO()
+                with mock.patch("sys.stdout", buf), mock.patch.object(ai_status, "datetime") as clock:
+                    clock.now.return_value = now
+                    ai_status.command_show(state, [task["id"]])
+                output = json.loads(buf.getvalue())
+                readback = output["execution_authorization_status"]
+                self.assertEqual(readback["status"], expected)
+                self.assertEqual(readback["authorizes_new_attempt"], ready)
+                self.assertEqual(readback["reservation_current"], expected == "reserved_attempt")
+                self.assertEqual(output["task"], task)
+                self.assertEqual(state, before)
 
     def test_assign_preserves_antigravity_runtime_agent_names(self) -> None:
         ai_status.command_assign(self.state, ["APP-002-SIDECAR-REVIEW", "Antigravity2", "Claude"])

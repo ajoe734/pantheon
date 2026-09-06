@@ -48,8 +48,63 @@
     "Approved SA/SD is byte-identical to immutable source including trailing blank line. Operational commands live in current runbook; first-release entrypoint and supplemental manifest distinguish source, runtime and hosted gates."
   ],
   "verification": {
-    "status": "pending_final_clean_head_batches",
-    "commands": []
+    "status": "full_clean_head_passed_pending_final_readback_regression",
+    "base_sha": "5d15c7b821a846d24b76ce4f653f990482da0518",
+    "plan_baseline_sha": "55cd327b9200648e5d42360907dedc17ddf6f5fc",
+    "commands": [
+      {
+        "name": "bridge_cli",
+        "command": "PYTHONPATH=.orchestrator PYTHONDONTWRITEBYTECODE=1 timeout 240s .venv-pantheon/bin/python3 -m pytest -q .orchestrator/development_bridge/tests/test_dev_bridge.py .orchestrator/development_bridge/tests/test_dev_bridge_dispatch_cli.py .orchestrator/development_bridge/tests/test_dev_bridge_inbox.py .orchestrator/development_bridge/tests/test_dev_bridge_inbox_cli.py .orchestrator/development_bridge/tests/test_dev_bridge_materialize.py .orchestrator/development_bridge/tests/test_dev_bridge_reliability.py scripts/test_ai_status.py",
+        "source_head": "1860e5b7409c87c3026a278b0bc20d5a77367810",
+        "exit_code": 0,
+        "passed": 539,
+        "subtests_passed": 112,
+        "failed": 0,
+        "skipped": 0,
+        "xfail": 0,
+        "terminal_output_sha256": "d5f1c60975a42675d32299d07ffd4e432acbb4cb2af6aab340bd29ebe4d53ce0",
+        "terminal_summary": "539 passed, 112 subtests passed in 209.12s (0:03:29)"
+      },
+      {
+        "name": "supervisor_worker",
+        "command": "PYTHONPATH=.orchestrator PYTHONDONTWRITEBYTECODE=1 timeout 300s .venv-pantheon/bin/python3 -m pytest -q .orchestrator/test_supervisor.py .orchestrator/test_worker_runner_heartbeat.py",
+        "source_head": "1860e5b7409c87c3026a278b0bc20d5a77367810",
+        "exit_code": 0,
+        "passed": 316,
+        "subtests_passed": 55,
+        "failed": 0,
+        "skipped": 0,
+        "xfail": 0,
+        "terminal_output_sha256": "1d3f9b23b6377862be946fa6b4fcbf3b7665508e0c11c1ef6a08bbd7f7914086",
+        "terminal_summary": "316 passed, 55 subtests passed in 161.67s (0:02:41)"
+      },
+      {
+        "name": "policy_runtime",
+        "command": "PYTHONPATH=.orchestrator PYTHONDONTWRITEBYTECODE=1 timeout 240s .venv-pantheon/bin/python3 -m pytest -q .orchestrator/test_execution_authorization.py .orchestrator/rewrite/test_dispatch_admission.py .orchestrator/test_dispatch_policy.py .orchestrator/rewrite/test_task_machine.py .orchestrator/test_runtime_state.py .orchestrator/test_common.py scripts/test_promote_supervisor_runtime.py scripts/test_provision_live_supervisor_config.py scripts/test_status_command_runtime_pin.py",
+        "source_head": "1860e5b7409c87c3026a278b0bc20d5a77367810",
+        "exit_code": 0,
+        "passed": 359,
+        "subtests_passed": 147,
+        "failed": 0,
+        "skipped": 0,
+        "xfail": 0,
+        "terminal_output_sha256": "c28874c3c4f8a5b73e91557fce05c0bab54b491fe063266b749379a846b2e003",
+        "terminal_summary": "359 passed, 147 subtests passed in 145.31s (0:02:25)"
+      }
+    ],
+    "full_batch_totals": {
+      "passed": 1214,
+      "subtests_passed": 314,
+      "failed": 0,
+      "skipped": 0,
+      "xfail": 0
+    },
+    "provenance_validation": {
+      "source_copy_byte_identical": true,
+      "manifest_hashes_verified": 36,
+      "task_changed_paths_all_declared": 28
+    },
+    "note": "Every bounded batch terminal output and exit status was collected. Later readback/hold refinements are validated separately below before handoff."
   },
   "delivery": {
     "repository": "ajoe734/pantheon",

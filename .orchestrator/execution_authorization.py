@@ -739,6 +739,81 @@ def reservation_is_current(
     return True
 
 
+def is_execution_authorization_hold(task: Mapping[str, Any]) -> bool:
+    """Identify only the old-runtime fence owned by this authorization record.
+
+    An explicit blocker transfers ownership away from this fence. Normalizing
+    it for the current dispatch predicate does not remove its persisted value.
+    """
+    record = task.get("execution_authorization")
+    return bool(
+        task.get("waiting_for") == "Human/Ops"
+        and isinstance(task.get("status"), str)
+        and task["status"] in {"todo", "in_progress", "review", "review_approved"}
+        and isinstance(record, Mapping)
+        and record.get("old_runtime_hold") is True
+        and isinstance(record.get("state"), str)
+        and record["state"] in {STATE_PENDING, STATE_GRANTED, STATE_RESERVED, STATE_REVOKED}
+        and execution_policy_matches_task(task, policy=record.get("policy"))
+    )
+
+
+def execution_authorization_status(task: Mapping[str, Any], *, now: datetime) -> dict[str, Any]:
+    """Read-only authorization readback; never infer runnable or running state."""
+    result = {
+        "status": "invalid",
+        "reason": "authorization_record_invalid",
+        "checked_at": now.isoformat().replace("+00:00", "Z"),
+        "authorizes_new_attempt": False,
+        "reservation_current": False,
+    }
+    record = task.get("execution_authorization")
+    if record is None:
+        if not task_privileged_by_source(task):
+            result.update(status="not_required", reason="ordinary_work", authorizes_new_attempt=True)
+        else:
+            result["reason"] = "authorization_record_missing"
+        return result
+    if not isinstance(record, Mapping):
+        return result
+    policy = record.get("policy")
+    if not execution_policy_matches_task(task, policy=policy):
+        result["reason"] = "signed_policy_or_current_task_contract_invalid"
+        return result
+    state = record.get("state")
+    if not isinstance(state, str):
+        return result
+    if state == STATE_PENDING:
+        result.update(status="admitted_pending_authorization", reason="genuine_execution_grant_required")
+    elif state == STATE_REVOKED:
+        result.update(status="revoked", reason="execution_grant_revoked")
+    elif state == STATE_GRANTED and is_execution_authorized(task, now=now):
+        result.update(status="authorization_ready", reason="fresh_grant_for_one_attempt", authorizes_new_attempt=True)
+    elif state == STATE_RESERVED and reservation_is_current(task, run_id=record.get("reserved_run_id"), now=now):
+        result.update(status="reserved_attempt", reason="reservation_current_without_process_evidence", reservation_current=True)
+    elif state in {STATE_GRANTED, STATE_RESERVED}:
+        grant = record.get("grant")
+        if not isinstance(grant, Mapping) or not _grant_matches_current_scope(task, policy=policy, grant=grant):
+            result["reason"] = "grant_binding_invalid"
+        elif state == STATE_GRANTED:
+            issued = _parse_utc(grant.get("issued_at"))
+            expires = _parse_utc(grant.get("expires_at"))
+            if issued is not None and expires is not None and issued < expires and now >= expires:
+                result.update(status="expired", reason="grant_start_window_expired")
+            elif issued is not None and now < issued:
+                result["reason"] = "grant_not_yet_valid"
+            else:
+                result["reason"] = "grant_lifetime_invalid"
+        else:
+            reserved_at = _parse_utc(record.get("reserved_at"))
+            ttl = grant.get("run_ttl_seconds")
+            if reserved_at is not None and type(ttl) is int and 0 < ttl <= MAX_RUN_TTL_SECONDS and (now - reserved_at).total_seconds() >= ttl:
+                result.update(status="expired", reason="reserved_run_lifetime_expired")
+            else:
+                result["reason"] = "reservation_binding_or_lifetime_invalid"
+    return result
+
+
 def reserve_execution_authorization(
     task: Mapping[str, Any],
     *,

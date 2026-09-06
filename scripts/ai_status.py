@@ -5573,6 +5573,11 @@ def command_blocker(state: dict[str, Any], args: list[str]) -> None:
     timestamp = iso_now()
     apply_task_lifecycle_transition(task, "block")
     task["waiting_for"] = waiting_for
+    authorization = task.get("execution_authorization")
+    if isinstance(authorization, dict):
+        # A genuine blocker owns this wait; an existing authorization record
+        # must not make the shared dispatch predicate ignore it later.
+        authorization["old_runtime_hold"] = False
     task["last_update"] = timestamp
     task["next"] = message
     mark_handoffs_done_for_actor(state, task_id, actor)
@@ -5659,6 +5664,7 @@ def command_execution_grant_submit(state: dict[str, Any], args: list[str]) -> No
         raise SystemExit(f"Unknown task: {task_id}")
     record = _execution_authorization_record(task)
     policy = record["policy"]
+    release_authorization_hold = execution_authorization.is_execution_authorization_hold(task)
 
     grant = parse_json_env("EXECUTION_GRANT_JSON")
     if not grant:
@@ -5700,7 +5706,10 @@ def command_execution_grant_submit(state: dict[str, Any], args: list[str]) -> No
     # Release the old-runtime-recognized intake hold (SA/SD 2, 6) now that a
     # genuine grant is bound. The ongoing execution-authorization gate itself
     # -- scoped to owner-execution dispatch only -- takes over from here.
-    task.pop("waiting_for", None)
+    if release_authorization_hold:
+        task.pop("waiting_for", None)
+    elif task.get("waiting_for"):
+        task["execution_authorization"]["old_runtime_hold"] = False
     timestamp = iso_now()
     task["last_update"] = timestamp
     append_log(
@@ -5736,6 +5745,7 @@ def command_execution_grant_revoke(state: dict[str, Any], args: list[str]) -> No
     if task is None:
         raise SystemExit(f"Unknown task: {task_id}")
     _execution_authorization_record(task)
+    preserve_unrelated_hold = bool(task.get("waiting_for")) and not execution_authorization.is_execution_authorization_hold(task)
     now = datetime.now(timezone.utc)
     try:
         task["execution_authorization"] = execution_authorization.revoked_execution_authorization(
@@ -5747,7 +5757,9 @@ def command_execution_grant_revoke(state: dict[str, Any], args: list[str]) -> No
     # grant is once again non-executable, so an old runtime that predates
     # execution_authorization.py entirely must still see this task as
     # dispatch-blocked, exactly like at fresh intake and after reopen.
-    task["waiting_for"] = "Human/Ops"
+    if not preserve_unrelated_hold:
+        task["waiting_for"] = "Human/Ops"
+    task["execution_authorization"]["old_runtime_hold"] = not preserve_unrelated_hold
     timestamp = iso_now()
     task["last_update"] = timestamp
     append_log(
@@ -8926,7 +8938,7 @@ def command_show(state: dict[str, Any], args: list[str]) -> None:
     if len(args) < 1:
         raise SystemExit("Usage: show <task-id>")
     task_id = args[0]
-    resolver = task_resolver(state)
+    resolver = task_resolver(deepcopy(state))
     source = resolver.source(task_id)
     active_task = resolver.get(task_id) if source == "active" else None
     if active_task is not None:
@@ -8935,6 +8947,9 @@ def command_show(state: dict[str, Any], args: list[str]) -> None:
                 {
                     "source": "active",
                     "task": active_task,
+                    "execution_authorization_status": execution_authorization.execution_authorization_status(
+                        active_task, now=datetime.now(timezone.utc)
+                    ),
                 },
                 indent=2,
                 ensure_ascii=False,

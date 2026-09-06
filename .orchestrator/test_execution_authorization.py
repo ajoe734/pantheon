@@ -738,6 +738,19 @@ class ExecutionAuthorizationTestCase(unittest.TestCase):
         task["execution_authorization"]["grant"]["run_ttl_seconds"] = ea.MAX_RUN_TTL_SECONDS + 1
         self.assertFalse(ea.reservation_is_current(task, run_id="run-1", now=self.now))
 
+    def test_readback_missing_corrupt_and_ordinary_authorization_is_honest(self) -> None:
+        ordinary = {"id": "ordinary"}
+        self.assertEqual(ea.execution_authorization_status(ordinary, now=self.now)["status"], "not_required")
+        for corruption in (None, [], {"state": []}, {"state": ea.STATE_PENDING, "policy": {}}):
+            task = deepcopy(self._granted_task())
+            task["execution_authorization"] = corruption
+            before = deepcopy(task)
+            result = ea.execution_authorization_status(task, now=self.now)
+            self.assertEqual(result["status"], "invalid")
+            self.assertFalse(result["authorizes_new_attempt"])
+            self.assertFalse(ea.is_execution_authorization_hold(task))
+            self.assertEqual(task, before)
+
 
 if __name__ == "__main__":
     unittest.main()

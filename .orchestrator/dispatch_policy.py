@@ -450,7 +450,10 @@ def evaluate_task_delivery_admission(
             normalized_status_set(settings.get("dependency_done_statuses"), ["done"]),
         ),
         human_ops_hold=bool(
-            str(task.get("waiting_for") or "").strip()
+            (
+                str(task.get("waiting_for") or "").strip()
+                and not execution_authorization.is_execution_authorization_hold(task)
+            )
             or (
                 task.get("review_decision_intent") not in (None, {}, [])
                 and not review_decision_intent_replay_eligible(

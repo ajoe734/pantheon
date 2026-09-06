@@ -104,6 +104,14 @@ redacted state using its actual identity, for example:
 AI_NAME=Codex2 "$PANTHEON_COMMAND_ROOT/scripts/ai-status.sh" show <task-id>
 ```
 
+The derived `execution_authorization_status` reports
+`admitted_pending_authorization`, `authorization_ready`, `reserved_attempt`,
+`expired`, `revoked`, or `invalid` with a reason. Authorization readiness does
+not assert scheduler readiness; a reservation does not assert a running
+process. Readback does not mutate canonical state. The current dispatch
+predicate recognizes the authorization-owned legacy wait fence separately
+from unrelated operator holds, retaining read-only review/finalization access.
+
 Human/Ops submits an independently issued assertion through the existing local
 operator ingress (the example reads an already-issued grant; it creates no
 credentials):
