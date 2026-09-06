@@ -120,7 +120,6 @@ class StrategyRouteContext:
     normalize_risk_level: Callable[[Any], str] = lambda r: str(r or "medium")
     strategy_persona_idempotency_check: Callable[..., Optional[Dict[str, Any]]] = lambda k, h: None
     strategy_persona_action_command: Optional[Callable[..., Any]] = None
-    strategy_overlay: Dict[str, Dict[str, Any]] = field(default_factory=dict)
     strategy_persona_idempotency: Dict[str, Dict[str, Any]] = field(default_factory=dict)
     strategy_seed_replication_idempotency: Dict[str, Dict[str, Any]] = field(default_factory=dict)
     strategy_seed_review_idempotency: Dict[str, Dict[str, Any]] = field(default_factory=dict)
@@ -151,7 +150,21 @@ class StrategyRouteContext:
 
     def ensure_strategy_exists(self, strategy_id: str) -> None:
         read_store = self.get_read_store_port()
-        if read_store.get_strategy_spec(strategy_id) or strategy_id in self.strategy_overlay:
+        found = False
+        getter = getattr(read_store, "get_strategy_spec", None)
+        if callable(getter):
+            try:
+                found = bool(getter(strategy_id))
+            except Exception:
+                pass
+        if not found:
+            getter = getattr(read_store, "get_strategy", None)
+            if callable(getter):
+                try:
+                    found = bool(getter(strategy_id))
+                except Exception:
+                    pass
+        if found:
             return
         raise self.bff_error(
             404,
@@ -168,9 +181,16 @@ class StrategyRouteContext:
         overlay: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         strategy_id = str(summary.get("strategy_id") or summary.get("id") or "")
-        title = summary.get("title") or summary.get("name") or strategy_id
+        title = summary.get("title") or summary.get("name")
+        if not title and isinstance(summary.get("versions"), list):
+            for v in summary.get("versions") or []:
+                if isinstance(v, dict) and (v.get("name") or v.get("title")):
+                    title = v.get("name") or v.get("title")
+                    break
+        title = title or strategy_id
         lifecycle_raw = (detail or summary).get("lifecycle_state") or summary.get("lifecycle_state")
         governance = (detail or {}).get("governance") if detail else {}
+        governance = governance if isinstance(governance, dict) else (summary.get("governance") or {})
         governance = governance if isinstance(governance, dict) else {}
         market_scope = (detail or {}).get("market_scope") if detail else {}
         market_scope = market_scope if isinstance(market_scope, dict) else {}
@@ -195,6 +215,7 @@ class StrategyRouteContext:
         available_actions: List[str] = []
         if isinstance(allowed, dict):
             available_actions = sorted([k for k, v in allowed.items() if v])
+        risk_raw = governance.get("risk_level") or summary.get("risk") or (detail or {}).get("risk")
         dto: Dict[str, Any] = {
             "id": strategy_id,
             "name": title,
@@ -204,7 +225,7 @@ class StrategyRouteContext:
             or (detail or {}).get("created_at")
             or self.utc_now(),
             "state": self.normalize_lifecycle_state(lifecycle_raw),
-            "risk": self.normalize_risk_level(governance.get("risk_level")),
+            "risk": self.normalize_risk_level(risk_raw),
             "alpha": alpha,
             "capitalPoolId": capital_pool_id,
             "personaIds": persona_ids,

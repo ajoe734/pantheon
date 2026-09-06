@@ -10203,6 +10203,7 @@ def _list_persona_records(tenant_id: Optional[str] = None) -> List[Dict[str, Any
         )
     )
     return result
+@dataclass(frozen=True)
 class PersonaDirectorySnapshot:
     tenant_id: str
     snapshot_at: str

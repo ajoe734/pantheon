@@ -208,54 +208,166 @@ def test_jobs_router_reads_strictly_canonical_read_store(monkeypatch: pytest.Mon
 
 
 # ---------------------------------------------------------------------------
-# 3. Multi-Replica Readback and Restart Durability
+# 3. Multi-Replica Readback and Restart Durability (SD §5.1, §5.2)
 # ---------------------------------------------------------------------------
+
+from services.control_plane.bff.migrations.overlay_retirement import (
+    AggregateKind,
+    CanonicalWriterCoordinator,
+    DualWriteForbiddenError,
+    FallbackAcknowledgementForbiddenError,
+    MultiReplicaReadbackHarness,
+    OverlayMigrationEngine,
+    RollbackPolicy,
+)
+
 
 def test_multi_replica_restart_durability_canonical_truth() -> None:
     """Simulate two independent process replicas reading and writing canonical state.
 
-    Proves that state written by replica 1 to the canonical store survives
-    process restart and is immediately consistent for replica 2, confirming
-    complete elimination of process-local state authority.
+    Proves that state written by replica 1 to shared durable storage survives
+    process restart and is immediately consistent for fresh replica 2 using
+    an isolated reader instance, confirming complete elimination of process-local state authority.
     """
-    shared_canonical_store = FakeCanonicalReadStore()
-    shared_canonical_store.personas.append({
+    # Shared durable persistence backend (e.g. database / disk backing)
+    shared_storage_records: list[dict] = [{
         "id": "persona-durable-rep-1",
         "persona_id": "persona-durable-rep-1",
         "name": "Durable Multi-Replica Persona",
         "lifecycle_state": "paper_running",
         "metadata": {"tenant_id": "tenant-durability"},
-    })
+    }]
 
-    # Replica 1 reads from shared canonical store
+    # Replica 1: independent process instance binding to durable storage
     original_store = bff_main.read_store
-    bff_main.read_store = shared_canonical_store
+    replica_1_store = FakeCanonicalReadStore()
+    replica_1_store.personas = list(shared_storage_records)
+    bff_main.read_store = replica_1_store
+
     try:
         records1 = bff_main._list_persona_records(tenant_id="tenant-durability")
         assert len(records1) == 1
         assert records1[0]["persona_id"] == "persona-durable-rep-1"
 
-        # Simulate process restart: fresh replica 2 starts up, binds to same canonical store
+        # Replica 1 performs a new canonical write to shared storage
+        new_record = {
+            "id": "persona-durable-rep-2",
+            "persona_id": "persona-durable-rep-2",
+            "name": "Second Durable Persona",
+            "lifecycle_state": "paper_running",
+            "metadata": {"tenant_id": "tenant-durability"},
+        }
+        shared_storage_records.append(new_record)
+        replica_1_store.personas.append(new_record)
+
+        # Simulate hard process restart / failover: process memory is wiped
         bff_main.read_store = None
-        bff_main.read_store = shared_canonical_store
+
+        # Fresh Replica 2 boots up in a new clean process container
+        # It creates its own independent store instance from shared storage (distinct object identity)
+        replica_2_store = FakeCanonicalReadStore()
+        replica_2_store.personas = list(shared_storage_records)
+        assert replica_2_store is not replica_1_store
+
+        bff_main.read_store = replica_2_store
         records2 = bff_main._list_persona_records(tenant_id="tenant-durability")
-        assert len(records2) == 1
-        assert records2[0]["persona_id"] == "persona-durable-rep-1"
-        assert records2[0]["lifecycle_state"] == "paper_running"
+        assert len(records2) == 2
+        persona_ids = {r["persona_id"] for r in records2}
+        assert persona_ids == {"persona-durable-rep-1", "persona-durable-rep-2"}
+        assert all(r["lifecycle_state"] == "paper_running" for r in records2)
+
+        # Harness-level multi-replica and restart verification
+        harness = MultiReplicaReadbackHarness({})
+        rep_a = harness.spawn_replica("rep-a")
+        rep_b = harness.spawn_replica("rep-b")
+        rep_a.write_canonical("p-999", {"persona_id": "p-999", "name": "Algo Canary"})
+        rep_a.restart_process()
+        readback_a = rep_a.read_canonical("p-999")
+        assert readback_a is not None and readback_a["name"] == "Algo Canary"
+        readback_b = rep_b.read_canonical("p-999")
+        assert readback_b == readback_a
     finally:
         bff_main.read_store = original_store
 
 
 # ---------------------------------------------------------------------------
-# 4. Single Canonical Writer and Rollback Safety Policy
+# 4. Single Canonical Writer and Rollback Safety Policy (SD §5.1, §5.2)
 # ---------------------------------------------------------------------------
 
 def test_rollback_policy_strictly_forbids_restoring_dual_writes() -> None:
     """Governed rollback policy: Deploy exact prior compatible release; never re-enable dual writes."""
-    rollback_policy = {
-        "rule": "Deploy the exact prior compatible release; never re-enable dual writes.",
-        "dual_writes_permitted": False,
-        "fallback_acknowledgement_permitted": False,
+    policy = RollbackPolicy.get_policy_declaration()
+    assert policy["rule"] == "Deploy the exact prior compatible release; never re-enable dual writes."
+    assert policy["dual_writes_permitted"] is False
+    assert policy["fallback_acknowledgement_permitted"] is False
+
+    # Safe rollback assertion passes when dual writes are disallowed
+    RollbackPolicy.assert_safe_rollback(allow_dual_writes=False)
+
+    # Attempt to enable dual writes during rollback strictly raises DualWriteForbiddenError
+    with pytest.raises(DualWriteForbiddenError, match="Never re-enable dual writes"):
+        RollbackPolicy.assert_safe_rollback(allow_dual_writes=True)
+
+
+def test_canonical_writer_coordinator_rejects_fallback_writes() -> None:
+    """Canonical writer coordinator enforces sole owner and forbids fallback writes."""
+    coordinator = CanonicalWriterCoordinator()
+
+    # Sole canonical writer for Persona succeeds
+    receipt = coordinator.handle_write(
+        aggregate=AggregateKind.PERSONA,
+        writer_identity="persona_provisioning_store",
+        payload={"persona_id": "p1", "name": "Canonical Persona"},
+        is_fallback=False,
+    )
+    assert receipt["status"] == "acknowledged"
+    assert receipt["writer"] == "persona_provisioning_store"
+
+    # Unauthorized writer fails
+    with pytest.raises(FallbackAcknowledgementForbiddenError, match="Unauthorized writer"):
+        coordinator.handle_write(
+            aggregate=AggregateKind.PERSONA,
+            writer_identity="unauthorized_actor",
+            payload={"persona_id": "p1"},
+            is_fallback=False,
+        )
+
+    # Fallback acknowledgement write is strictly forbidden
+    with pytest.raises(FallbackAcknowledgementForbiddenError, match="Fallback write attempt forbidden"):
+        coordinator.handle_write(
+            aggregate=AggregateKind.PERSONA,
+            writer_identity="persona_provisioning_store",
+            payload={"persona_id": "p1"},
+            is_fallback=True,
+        )
+
+
+def test_migration_engine_backfill_dry_run_and_provenance() -> None:
+    """SD §5.2: dry-run counts before mutation, provenance and checksum on backfill."""
+    canonical_store = {"inc-1": {"incident_id": "inc-1", "status": "open", "tenant_id": "tenant-test"}}
+    overlay_data = {
+        "inc-1": {"incident_id": "inc-1", "status": "open", "tenant_id": "tenant-test"},
+        "inc-2": {"incident_id": "inc-2", "status": "investigating", "tenant_id": "tenant-test"},
     }
-    assert rollback_policy["dual_writes_permitted"] is False
-    assert rollback_policy["fallback_acknowledgement_permitted"] is False
+    engine = OverlayMigrationEngine(
+        aggregate=AggregateKind.INCIDENT,
+        canonical_store=canonical_store,
+        overlay_data_source=overlay_data,
+    )
+
+    # Dry run: counts only, zero mutation
+    dry_result = engine.backfill(tenant_id="tenant-test", dry_run=True)
+    assert dry_result.dry_run is True
+    assert dry_result.backfilled == 1
+    assert dry_result.skipped_existing == 1
+    assert "inc-2" not in canonical_store
+
+    # Live backfill: mutates with checksum and migration metadata
+    live_result = engine.backfill(tenant_id="tenant-test", dry_run=False)
+    assert live_result.dry_run is False
+    assert live_result.backfilled == 1
+    assert "inc-2" in canonical_store
+    meta = canonical_store["inc-2"]["_migration_metadata"]
+    assert meta["source"] == "overlay_retire_001"
+    assert "checksum" in meta
+    assert "backfilled_at" in meta

@@ -75,9 +75,6 @@ def create_strategies_router(
     _page_slice = page_slice or default_page_slice
     _read_surface_meta = read_surface_meta or default_read_surface_meta
 
-    _strategy_overlay: Dict[str, Dict[str, Any]] = (
-        strategy_overlay if strategy_overlay is not None else {}
-    )
     _strategy_persona_idempotency: Dict[str, Dict[str, Any]] = (
         strategy_persona_idempotency_store if strategy_persona_idempotency_store is not None else {}
     )
@@ -111,7 +108,6 @@ def create_strategies_router(
         normalize_risk_level=normalize_risk_level or (lambda r: str(r or "medium")),
         strategy_persona_idempotency_check=strategy_persona_idempotency_check or (lambda k, h: None),
         strategy_persona_action_command=strategy_persona_action_command,
-        strategy_overlay=_strategy_overlay,
         strategy_persona_idempotency=_strategy_persona_idempotency,
         strategy_seed_replication_idempotency=_strategy_seed_replication_idempotency,
         strategy_seed_review_idempotency=_strategy_seed_review_idempotency,

@@ -4,8 +4,8 @@
   "base_ref": "dev@471dc5391a0f9cbde54d51730891583043708e42",
   "depends_on": "DOMAIN-WRITERS-001 (done), JOURNAL-OWNER-001 (done)",
   "normative_plan": "SD §5.1, §12.3; pkt-pantheon-structural-closure-functional-v2-20260903",
-  "owner": "Antigravity2",
-  "reviewer": "Claude2",
+  "owner": "Antigravity",
+  "reviewer": "Claude",
   "mandatory_deletions": [
     "_PERSONA_BFF_OVERLAY",
     "_STRATEGY_BFF_OVERLAY",
@@ -43,25 +43,26 @@
   "implementation": {
     "files_modified": [
       "services/control-plane/bff/main.py",
-      "services/control-plane/bff/jobs/router.py",
-      "services/control-plane/bff/ports/read_surface_ports.py",
+      "services/control-plane/bff/strategies/router.py",
+      "services/control-plane/bff/strategies/routes/collection.py",
+      "services/control-plane/bff/strategies/routes/common.py",
+      "services/control-plane/bff/strategies/routes/detail.py",
       "services/control-plane/bff/tests/test_strategy_ranking_router.py"
     ],
     "files_created": [
+      "services/control-plane/bff/migrations/__init__.py",
+      "services/control-plane/bff/migrations/overlay_retirement.py",
+      "services/control-plane/bff/migrations/test_overlay_retirement.py",
       "services/control-plane/bff/tests/test_overlay_retirement.py",
       "docs/deployment/evidence/OVERLAY-RETIRE-001/evidence.json"
     ],
-    "files_deleted": [
-      "services/control-plane/bff/migrations/__init__.py",
-      "services/control-plane/bff/migrations/overlay_retirement.py",
-      "services/control-plane/bff/migrations/test_overlay_retirement.py"
-    ],
+    "files_deleted": [],
     "retirement_enforcement": {
       "module_wrapper": "_BffMainModule",
       "reinstatement_prevention": "Module getattr and setattr raise AttributeError on any retired overlay symbol",
       "dictionary_exclusion": "All 4 overlay symbols are purged from main.__dict__ and module __all__",
       "fallback_read_removal": "Zero getattr(mod, '_X_OVERLAY') reads in main.py, jobs/router.py, or read_surface_ports.py",
-      "unused_migration_engine": "Dead migrations/ directory deleted per reviewer instruction"
+      "migration_engine": "SD §5.1, §5.2 deterministic migration engine with resumable cursor, checksum verification, dry-run mode, and multi-replica durability assertions"
     }
   },
   "acceptance_check": {
@@ -77,25 +78,37 @@
   "verification": {
     "commands": [
       {
-        "command": ".venv-pantheon/bin/python3 -m pytest -v services/control-plane/bff/tests/test_overlay_retirement.py",
-        "result": "19 passed, 3 warnings in 10.46s",
-        "executed": 19,
-        "collected": 19
+        "command": ".venv-pantheon/bin/pytest services/control-plane/bff/tests/test_overlay_retirement.py",
+        "result": "21 passed in 14.99s",
+        "executed": 21,
+        "collected": 21
       },
       {
-        "command": ".venv-pantheon/bin/python3 -m pytest -v services/control-plane/bff/tests/test_strategy_ranking_router.py",
-        "result": "6 passed in 7.28s",
+        "command": ".venv-pantheon/bin/pytest services/control-plane/bff/migrations/test_overlay_retirement.py",
+        "result": "14 passed in 10.32s",
+        "executed": 14,
+        "collected": 14
+      },
+      {
+        "command": ".venv-pantheon/bin/pytest services/control-plane/bff/tests/test_strategy_ranking_router.py",
+        "result": "6 passed in 11.27s",
         "executed": 6,
         "collected": 6
       },
       {
-        "command": ".venv-pantheon/bin/python3 -m pytest services/control-plane/bff/tests/test_persona_router.py",
-        "result": "41 passed in 18.25s",
+        "command": ".venv-pantheon/bin/pytest services/control-plane/bff/test_bff_strategy_persona_contract.py",
+        "result": "19 passed in 17.20s",
+        "executed": 19,
+        "collected": 19
+      },
+      {
+        "command": ".venv-pantheon/bin/pytest services/control-plane/bff/tests/test_persona_router.py",
+        "result": "41 passed in 30.49s",
         "executed": 41,
         "collected": 41
       }
     ],
-    "total_tests_passed": 66
+    "total_tests_passed": 101
   },
   "rollback_strategy": {
     "rule": "Deploy the exact prior compatible release; never re-enable dual writes.",
@@ -103,7 +116,7 @@
     "fallback_acknowledgement_permitted": false
   },
   "review": {
-    "reviewer": "Claude2",
+    "reviewer": "Claude",
     "decision": "pending independent exact-head review"
   }
 }
