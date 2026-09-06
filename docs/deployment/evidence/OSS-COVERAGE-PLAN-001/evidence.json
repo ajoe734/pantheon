@@ -59,7 +59,25 @@
     "unassigned_task_id_rows": 0
   },
   "reconciliation_against_current_dev": {
-    "method": "For each inventory category, counted the same signal directly in the current worktree (Pantheon task branch task/OSS-COVERAGE-PLAN-001 at 55cd327b9200648e5d42360907dedc17ddf6f5fc, cut from dev) and, for npm, in the sibling execute-plans dev checkout at 4fd6088d5478d32911029628d5047b5e37c6bbdf, then compared to the frozen packet counts.",
+    "method": "For each inventory category, counted the same signal directly in the current worktree (Pantheon task branch task/OSS-COVERAGE-PLAN-001 at 55cd327b9200648e5d42360907dedc17ddf6f5fc, cut from dev) and, for npm, against the live GitHub execute-plans dev branch head, then compared to the frozen packet counts. A prior draft of this file cited a stale sibling execute-plans checkout at 4fd6088d5478d32911029628d5047b5e37c6bbdf (46 commits behind); that citation was corrected after independent reviewer Codex's 2026-09-06 finding to use the exact live dev identity below.",
+    "npm_current_dev_identity": {
+      "verified_command_1": "gh api repos/ajoe734/execute-plans/branches/dev --jq '.commit.sha'",
+      "verified_output_1": "5d4f385284b44a30e10764426a47fd808a7ae3cb",
+      "verified_command_2": "gh api repos/ajoe734/execute-plans/contents/package.json?ref=5d4f385284b44a30e10764426a47fd808a7ae3cb --jq '.sha'",
+      "verified_output_2": "547732398eeef0c45950abfb56d60c64420ae5a7",
+      "verified_command_3": "gh api repos/ajoe734/execute-plans/git/blobs/547732398eeef0c45950abfb56d60c64420ae5a7 --jq '.content' | base64 -d | sha256sum",
+      "verified_output_3": "d11e3b573d10cc32de05cb9d861c610ee97c1bfe36588ee8d3ee489249badaf8",
+      "note": "This blob/SHA matches execute-plans audit_baseline_execute_plans already recorded in source_packet above; the frozen audit baseline was current-dev-accurate, the earlier reconciliation citation was not."
+    },
+    "npm_declared_name_version_diff": {
+      "verified_command": "python3 comparison of dependencies+devDependencies keys/values in the blob above against every npm_package row in docs/plans/system-simplification-20260906/oss-version-disposition.csv",
+      "ledger_npm_rows": 94,
+      "current_npm_names": 94,
+      "missing_from_ledger": [],
+      "extra_in_ledger": [],
+      "version_mismatches": [],
+      "result": "exact match: all 94 npm names and declared versions in the ledger match the live execute-plans dev package.json"
+    },
     "pypi_declaration_rows": {
       "frozen_count": 195,
       "current_count": 195,
@@ -81,7 +99,7 @@
       "frozen_count": 94,
       "current_count": 94,
       "match": true,
-      "checked_in": "execute-plans dev (4fd6088d5478d32911029628d5047b5e37c6bbdf) package.json dependencies+devDependencies",
+      "checked_in": "execute-plans dev (5d4f385284b44a30e10764426a47fd808a7ae3cb, live GitHub dev branch head, verified via gh api repos/ajoe734/execute-plans/branches/dev) package.json dependencies+devDependencies",
       "package_name_diff": "none"
     },
     "image_declaration_rows": {
@@ -103,6 +121,10 @@
   "verified_commands": [
     "diff -q <source packet file> <copied docs/plans file>  (5 files, all identical)",
     "python3 -c \"...\" to append the status=planned column to oss-version-disposition.csv (447 rows, 0 unassigned task_id)",
-    "grep -vE '^\\s*(#|$)' <requirements files>; find -iname Dockerfile*; find -iname docker-compose*.yml; python3 -c to read execute-plans package.json dependencies"
+    "grep -vE '^\\s*(#|$)' <requirements files>; find -iname Dockerfile*; find -iname docker-compose*.yml; python3 -c to read execute-plans package.json dependencies",
+    "gh api repos/ajoe734/execute-plans/branches/dev --jq '.commit.sha'",
+    "gh api repos/ajoe734/execute-plans/contents/package.json?ref=<dev-sha> --jq '.sha'",
+    "gh api repos/ajoe734/execute-plans/git/blobs/<blob-sha> --jq '.content' | base64 -d | sha256sum",
+    "python3 diff of dependencies+devDependencies keys/values against every npm_package row in oss-version-disposition.csv"
   ]
 }
