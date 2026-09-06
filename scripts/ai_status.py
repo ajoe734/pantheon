@@ -6689,54 +6689,82 @@ def _assert_no_active_execution(
     if ORCHESTRATOR_STATE_FILE.exists():
         try:
             orc_state = json.loads(ORCHESTRATOR_STATE_FILE.read_text(encoding="utf-8"))
-        except Exception:
-            orc_state = None
-        if isinstance(orc_state, Mapping):
-            workers = orc_state.get("workers")
-            if isinstance(workers, Mapping):
-                for run_id, worker in workers.items():
-                    if isinstance(worker, Mapping) and str(worker.get("task_id") or "").strip() == task_id:
-                        status = str(worker.get("status") or "").strip()
-                        if status in {
-                            "running",
+        except Exception as exc:
+            raise RuntimeError(
+                f"orchestrator runtime state is unavailable or malformed: {exc}"
+            ) from exc
+        if not isinstance(orc_state, Mapping):
+            raise RuntimeError(
+                "orchestrator runtime state is not a valid JSON object"
+            )
+        workers = orc_state.get("workers")
+        if isinstance(workers, Mapping):
+            for run_id, worker in workers.items():
+                if isinstance(worker, Mapping) and str(worker.get("task_id") or "").strip() == task_id:
+                    status = str(worker.get("status") or "").strip()
+                    if status in {
+                        "running",
+                        "started",
+                        "waiting_approval",
+                        "suspended_approval",
+                        "retry_backoff",
+                        "stalled",
+                    }:
+                        raise RuntimeError(
+                            f"cannot reconcile stale resurrected task with active worker {run_id} ({status}): {task_id}"
+                        )
+        queue = orc_state.get("queue")
+        if isinstance(queue, Mapping):
+            events = queue.get("events")
+            if isinstance(events, Mapping):
+                for ev_id, ev in events.items():
+                    if isinstance(ev, Mapping) and str(ev.get("task_id") or "").strip() == task_id:
+                        q_status = str(ev.get("status") or "").strip()
+                        if q_status in {
+                            "queued",
                             "started",
+                            "running",
                             "waiting_approval",
                             "suspended_approval",
                             "retry_backoff",
                             "stalled",
+                            "admitted",
                         }:
                             raise RuntimeError(
-                                f"cannot reconcile stale resurrected task with active worker {run_id} ({status}): {task_id}"
+                                f"cannot reconcile stale resurrected task with active queue event {ev_id} ({q_status}): {task_id}"
                             )
-            queue = orc_state.get("queue")
-            if isinstance(queue, Mapping):
-                events = queue.get("events")
-                if isinstance(events, Mapping):
-                    for ev_id, ev in events.items():
-                        if isinstance(ev, Mapping) and str(ev.get("task_id") or "").strip() == task_id:
-                            q_status = str(ev.get("status") or "").strip()
-                            if q_status in {
-                                "queued",
-                                "started",
-                                "running",
-                                "waiting_approval",
-                                "suspended_approval",
-                                "retry_backoff",
-                                "stalled",
-                                "admitted",
-                            }:
-                                raise RuntimeError(
-                                    f"cannot reconcile stale resurrected task with active queue event {ev_id} ({q_status}): {task_id}"
-                                )
-            worktrees = orc_state.get("worker_worktrees")
-            if isinstance(worktrees, Mapping):
-                leases = worktrees.get("leases")
-                if isinstance(leases, Mapping):
-                    for lease_key, lease in leases.items():
-                        if isinstance(lease, Mapping) and str(lease.get("task_id") or "").strip() == task_id:
-                            raise RuntimeError(
-                                f"cannot reconcile stale resurrected task with active worktree lease {lease_key}: {task_id}"
-                            )
+        worktrees = orc_state.get("worker_worktrees")
+        if isinstance(worktrees, Mapping):
+            leases = worktrees.get("leases")
+            if isinstance(leases, Mapping):
+                for lease_key, lease in leases.items():
+                    if isinstance(lease, Mapping) and str(lease.get("task_id") or "").strip() == task_id:
+                        raise RuntimeError(
+                            f"cannot reconcile stale resurrected task with active worktree lease {lease_key}: {task_id}"
+                        )
+
+
+def _compute_audit_proof_digest(events: list[Mapping[str, Any]], task_id: str, archived_at: datetime) -> str:
+    task_events = [
+        e for e in events
+        if str(e.get("task_id") or "").strip() == task_id
+        and (_parse_utc_timestamp(str(e.get("ts") or "")) or datetime.min) >= archived_at
+    ]
+    payload = json.dumps(
+        [
+            {
+                "event_id": str(e.get("event_id") or ""),
+                "ts": str(e.get("ts") or ""),
+                "type": str(e.get("type") or ""),
+                "agent": str(e.get("agent") or ""),
+                "message": str(e.get("message") or ""),
+            }
+            for e in task_events
+        ],
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    return hashlib.sha256(payload).hexdigest()
 
 
 def _assert_audit_proof_range_valid(task_id: str, proof: Mapping[str, Any]) -> None:
@@ -6766,13 +6794,25 @@ def _assert_audit_proof_range_valid(task_id: str, proof: Mapping[str, Any]) -> N
     for ev_id in expected_event_ids:
         if ev_id not in events_by_id:
             raise RuntimeError(
-                f"reassignment event {ev_id} missing from activity audit during reconciliation: {task_id}"
+                f"lineage event {ev_id} missing from activity audit during reconciliation: {task_id}"
             )
-        validated = task_machine.validate_assignment_activity_event(events_by_id[ev_id])
-        if validated is None or validated.task_id != task_id:
-            raise RuntimeError(
-                f"reassignment event {ev_id} failed revalidation during reconciliation: {task_id}"
-            )
+        ev = events_by_id[ev_id]
+        if str(ev.get("type") or "").strip() == "task_reassigned":
+            validated = task_machine.validate_assignment_activity_event(ev)
+            if validated is None or validated.task_id != task_id:
+                raise RuntimeError(
+                    f"reassignment event {ev_id} failed revalidation during reconciliation: {task_id}"
+                )
+
+    expected_digest = proof_range.get("audit_proof_digest")
+    if expected_digest:
+        archived_at = _parse_utc_timestamp(str(proof.get("archived_at") or ""))
+        if archived_at is not None:
+            current_digest = _compute_audit_proof_digest(events, task_id, archived_at)
+            if current_digest != expected_digest:
+                raise RuntimeError(
+                    f"activity audit changed after preflight: proof digest mismatch: {task_id}"
+                )
 
 
 def verify_stale_archive_resurrection_proof(
@@ -6813,6 +6853,7 @@ def verify_stale_archive_resurrection_proof(
         "phase",
         "depends_on",
         "dependency_tracks",
+        "execution_resources",
         "artifacts",
         "acceptance",
         "target_repo",
@@ -6833,6 +6874,26 @@ def verify_stale_archive_resurrection_proof(
         )
     for field in ("repository_id", "repository_slug", "commit"):
         if str(archived_delivery.get(field) or "").strip() != str(delivery.get(field) or "").strip():
+            raise RuntimeError(
+                f"existing archive snapshot conflicts with terminal task: {task_id}"
+            )
+
+    active_delivery = active_task.get("delivery")
+    if active_delivery is not None:
+        if not isinstance(active_delivery, Mapping):
+            raise RuntimeError(
+                f"existing archive snapshot conflicts with terminal task: {task_id}"
+            )
+        for field in ("repository_id", "repository_slug", "commit"):
+            if str(active_delivery.get(field) or "").strip() != str(delivery.get(field) or "").strip():
+                raise RuntimeError(
+                    f"existing archive snapshot conflicts with terminal task: {task_id}"
+                )
+
+    archived_binding = archived_task.get("delivery_binding")
+    active_binding = active_task.get("delivery_binding")
+    if active_binding is not None:
+        if archived_binding is None or deepcopy(active_binding) != deepcopy(archived_binding):
             raise RuntimeError(
                 f"existing archive snapshot conflicts with terminal task: {task_id}"
             )
@@ -6877,23 +6938,60 @@ def verify_stale_archive_resurrection_proof(
             f"Cannot reconcile stale resurrected task: activity audit is unavailable: {task_id}"
         ) from exc
 
+    new_work_types = {
+        "start",
+        "reopen",
+        "progress",
+        "handoff",
+        "approve",
+        "review_approved",
+        "commit",
+        "task_started",
+        "task_reopened",
+        "task_review_approved",
+        "done",
+        "reconcile_merged_done",
+        "reconcile_done",
+        "artifact_contract_revised",
+        "dependency_track_revised",
+        "execution_resource_revised",
+        "execution_grant_submitted",
+        "execution_grant_revoked",
+    }
     for event in events:
         if str(event.get("task_id") or "").strip() != task_id:
             continue
         ev_ts = _parse_utc_timestamp(str(event.get("ts") or ""))
         if ev_ts is not None and archived_at is not None and ev_ts >= archived_at:
             ev_type = str(event.get("type") or "").strip()
-            if ev_type in {
-                "task_reopened",
-                "task_started",
-                "commit",
-                "task_review_approved",
-                "done",
-                "reconcile_merged_done",
-            }:
+            if ev_type in new_work_types:
                 raise RuntimeError(
                     f"Cannot reconcile stale resurrected task: intervening {ev_type} event detected: {task_id}"
                 )
+
+    import_events: list[tuple[datetime, dict[str, Any]]] = []
+    for event in events:
+        if str(event.get("task_id") or "").strip() != task_id:
+            continue
+        ev_ts = _parse_utc_timestamp(str(event.get("ts") or ""))
+        if ev_ts is None or archived_at is None or ev_ts < archived_at:
+            continue
+        ev_type = str(event.get("type") or "").strip()
+        if ev_type in {"assign", "task_imported", "import", "task_reentered"}:
+            actor = str(event.get("agent") or "").strip()
+            op_mode = str(event.get("operator_mode") or "").strip()
+            if actor == "Human/Ops" or op_mode == "local_human_ops":
+                import_events.append((ev_ts, event))
+
+    if not import_events:
+        raise RuntimeError(
+            f"stale resurrection lineage missing authoritative import/re-entry event: {task_id}"
+        )
+    if len(import_events) > 1:
+        raise RuntimeError(
+            f"stale resurrection lineage fork: multiple import/re-entry events detected: {task_id}"
+        )
+    import_ts, import_ev = import_events[0]
 
     reassignment_events: list[tuple[datetime, dict[str, Any]]] = []
     for event in events:
@@ -6914,7 +7012,7 @@ def verify_stale_archive_resurrection_proof(
     current_owner = archive_owner
     current_reviewer = archive_reviewer
     chain: list[dict[str, Any]] = []
-    last_ts: datetime | None = archived_at
+    last_ts: datetime | None = import_ts
 
     for g in range(archive_gen, active_gen):
         matching = [
@@ -6931,9 +7029,19 @@ def verify_stale_archive_resurrection_proof(
                 f"stale resurrection lineage fork: ambiguous multiple reassignment events for generation {g} -> {g+1}: {task_id}"
             )
         ev_ts, ev = matching[0]
+        if ev_ts < import_ts:
+            raise RuntimeError(
+                f"stale resurrection lineage timestamp ordering is ambiguous: reassignment preceded import: {task_id}"
+            )
         if last_ts is not None and ev_ts < last_ts:
             raise RuntimeError(
                 f"stale resurrection lineage timestamp ordering is ambiguous: {task_id}"
+            )
+        reassign_actor = str(ev.get("agent") or "").strip()
+        reassign_op_mode = str(ev.get("operator_mode") or "").strip()
+        if reassign_actor != "Human/Ops" and reassign_op_mode != "local_human_ops":
+            raise RuntimeError(
+                f"stale resurrection lineage reassignment event {ev.get('event_id')} unauthorized (expected Human/Ops, got {reassign_actor!r}): {task_id}"
             )
         old_owner = canonical_agent_name(ev.get("old_owner"))
         old_reviewer = canonical_agent_name(ev.get("old_reviewer"))
@@ -6979,12 +7087,17 @@ def verify_stale_archive_resurrection_proof(
     spec_hash = task_spec_hash(active_task)
     cas_digest = task_mutation_cas_digest(active_task)
     archive_sha256 = _canonical_json_sha256(archived)
+    audit_proof_digest = _compute_audit_proof_digest(events, task_id, archived_at)
+
+    import_event_id = str(import_ev.get("event_id") or "")
+    all_event_ids = ([import_event_id] if import_event_id else []) + [item["event_id"] for item in chain]
 
     proof = {
         "proof_kind": "stale_role_recovery_archive_resurrection",
         "task_id": task_id,
         "archive_generation": archive_gen,
         "active_generation": active_gen,
+        "archived_at": archived_at_str,
         "archive_snapshot_sha256": archive_sha256,
         "active_task_cas_digest": cas_digest,
         "spec_hash": spec_hash,
@@ -7000,12 +7113,14 @@ def verify_stale_archive_resurrection_proof(
             "digest": cas_digest,
         },
         "audit_proof_range": {
-            "start_event_id": chain[0]["event_id"],
-            "end_event_id": chain[-1]["event_id"],
-            "start_timestamp": chain[0]["ts"],
-            "end_timestamp": chain[-1]["ts"],
+            "import_event_id": import_event_id,
+            "start_event_id": chain[0]["event_id"] if chain else import_event_id,
+            "end_event_id": chain[-1]["event_id"] if chain else import_event_id,
+            "start_timestamp": str(import_ev.get("ts") or ""),
+            "end_timestamp": chain[-1]["ts"] if chain else str(import_ev.get("ts") or ""),
             "hops": len(chain),
-            "event_ids": [item["event_id"] for item in chain],
+            "event_ids": all_event_ids,
+            "audit_proof_digest": audit_proof_digest,
         },
         "reassignment_chain": [
             {
@@ -7283,6 +7398,19 @@ def command_reconcile_merged_done(state: dict[str, Any], args: list[str]) -> Non
                 )
             _assert_no_active_execution(task_id, active_task=task)
             _assert_audit_proof_range_valid(task_id, resurrection_proof)
+            current_proof = verify_stale_archive_resurrection_proof(
+                task,
+                current_archive,
+                delivery,
+            )
+            if current_proof["active_task_cas_digest"] != resurrection_proof["active_task_cas_digest"]:
+                raise RuntimeError(
+                    f"stale archive resurrection proof changed during reconciliation: {task_id}"
+                )
+            if current_proof["audit_proof_range"] != resurrection_proof["audit_proof_range"]:
+                raise RuntimeError(
+                    f"stale archive resurrection audit proof changed during reconciliation: {task_id}"
+                )
 
     timestamp = iso_now()
     delivery["recorded_at"] = timestamp
@@ -8110,14 +8238,27 @@ def prepare_external_mutation_preflight(
             verdict_ref = None
         else:
             existing_archive = load_archived_snapshot(task_id)
-            target_task = (
-                existing_archive["task"]
-                if existing_archive is not None
+            is_cross_gen = (
+                existing_archive is not None
                 and isinstance(existing_archive.get("task"), Mapping)
                 and task_assignment_generation(task) > task_assignment_generation(existing_archive["task"])
+            )
+            target_task = (
+                existing_archive["task"]
+                if is_cross_gen
                 else task
             )
             delivery = validate_merged_done_evidence(target_task)
+            if is_cross_gen and task.get("delivery") is not None:
+                if not isinstance(task["delivery"], Mapping):
+                    raise RuntimeError(
+                        f"existing archive snapshot conflicts with terminal task: {task_id}"
+                    )
+                for field in ("repository_id", "repository_slug", "commit"):
+                    if str(task["delivery"].get(field) or "").strip() != str(delivery.get(field) or "").strip():
+                        raise RuntimeError(
+                            f"existing archive snapshot conflicts with terminal task: {task_id}"
+                        )
             recovered_archive = (
                 _validated_same_delivery_archive_recovery(
                     task,

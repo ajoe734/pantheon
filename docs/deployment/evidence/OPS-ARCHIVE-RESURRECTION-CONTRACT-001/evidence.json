@@ -46,23 +46,23 @@
     },
     "clause_8_positive_fixtures_and_crash_recovery": {
       "status": "satisfied",
-      "detail": "Positive fixtures with genuine fixture git ancestry and authenticated lineage g1 -> g2, cross-process tests, restart/crash outbox recovery tested in scripts/test_ai_status.py."
+      "detail": "Positive fixtures with genuine fixture git ancestry, authenticated import event and reassignment lineage g1 -> g2, cross-process tests, restart/crash outbox recovery tested in scripts/test_ai_status.py."
     },
     "clause_9_zero_effect_negatives": {
       "status": "satisfied",
-      "detail": "Zero-effect negatives verified for missing/forged/forked/reordered lineage, altered scope/policy, real new work, active worker, nonoperator, corrupt archive, and CAS drift."
+      "detail": "Zero-effect negatives verified for missing import lineage, missing/forged/forked/reordered lineage, altered scope/policy/execution resources, active delivery mismatch, real new work (all lifecycle writers), active worker/lease/corrupt runtime, nonoperator, and post-preflight CAS/proof forks."
     },
     "clause_10_clean_worktree_base": {
       "status": "satisfied",
       "detail": "Task worktree based on dev tip e9d1a1e50b4f098db6e62c1c4e247f1f40f36827 with clean scoped artifacts."
     },
     "clause_11_governed_delivery": {
-      "status": "satisfied",
-      "detail": "Commit, push branch task/OPS-ARCHIVE-RESURRECTION-CONTRACT-001, PR, independent review by Codex2, required checks, dev merge."
+      "status": "pending",
+      "detail": "Commit, push branch task/OPS-ARCHIVE-RESURRECTION-CONTRACT-001, PR #5634, independent review by Codex2, required checks, dev merge."
     },
     "clause_12_ppl_alloc_007_ground_truth_hold": {
       "status": "satisfied",
-      "detail": "Live canonical task PPL-ALLOC-007 evaluated against canonical state and archive: reports eligible: false, reason: 'stale resurrection lineage role mismatch at generation 1 -> 2: expected old reviewer Codex2, got Claude: PPL-ALLOC-007', perfectly preserving the hold without live mutation."
+      "detail": "Live canonical task PPL-ALLOC-007 evaluated against canonical state and archive: reports eligible: false, reason: 'stale resurrection lineage missing authoritative import/re-entry event: PPL-ALLOC-007', perfectly preserving the hold without live mutation."
     },
     "clause_13_ppl_alloc_009_hold_preserved": {
       "status": "satisfied",
@@ -75,7 +75,7 @@
       "archive_generation": 1,
       "active_generation": 2,
       "eligible": false,
-      "reason": "stale resurrection lineage role mismatch at generation 1 -> 2: expected old reviewer 'Codex2', got 'Claude': PPL-ALLOC-007",
+      "reason": "stale resurrection lineage missing authoritative import/re-entry event: PPL-ALLOC-007",
       "hold_preserved": true
     }
   },
@@ -85,8 +85,8 @@
       {
         "name": "archive_resurrection_contract_tests",
         "command": "AI_NAME=Antigravity2 uv run --no-project --with pytest --with cryptography python -m pytest -q scripts/test_ai_status.py -k TestStaleArchiveResurrectionContract",
-        "passed": 14,
-        "subtests_passed": 8,
+        "passed": 19,
+        "subtests_passed": 19,
         "failed": 0,
         "exit_code": 0
       },
@@ -117,15 +117,15 @@
       {
         "name": "focused_ai_status_tests",
         "command": "AI_NAME=Antigravity2 uv run --no-project --with pytest --with cryptography python -m pytest -q scripts/test_ai_status.py -k 'assign or reopen or reconcile or archive'",
-        "passed": 132,
-        "subtests_passed": 45,
+        "passed": 137,
+        "subtests_passed": 56,
         "failed": 0,
         "exit_code": 0
       }
     ],
     "totals": {
-      "passed": 478,
-      "subtests_passed": 112,
+      "passed": 488,
+      "subtests_passed": 134,
       "failed": 0
     }
   },
