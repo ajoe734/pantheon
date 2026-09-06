@@ -233,9 +233,19 @@ The adapter retains the function-call identity and reported usage.
 The Gateway agent's own native-tool policy remains a necessary server-side
 boundary: configure the extraction agent with `tools.deny: ["*"]` so only the
 request's data-emission client tool is offered. A client `tool_choice` or
-post-response validation alone cannot prevent native execution. The local
-fixture proves the pinned Gateway enforces that policy; it does not attest to
-any hosted deployment's configuration.
+post-response validation alone cannot prevent native execution. Before each
+mounted extraction request, the adapter reads `config.get` through its existing
+administrative Gateway RPC, using the same URL and credential as the HTTP turn.
+The snapshot must be valid and contain exactly one selected default agent with
+`tools.deny: ["*"]`. Missing, mismatched, malformed or unavailable policy returns
+a typed 503 before any model request. No local mirror or prior successful probe
+substitutes for this check. Policy RPC time (at most ten seconds) and the HTTP
+turn share one deadline. This administrative read requires the CLI; ordinary
+invoke/stream/readiness still use only HTTP. No policy is written automatically.
+The pinned local fixture verifies both pre-dispatch rejection without policy
+and native execution denial with policy. Configuration administrators must keep
+the denial in force during admitted extraction turns; this source change does
+not attest to any hosted deployment's configuration.
 
 Cron completion in `services/control-plane/cron/openclaw_client.py` requires
 both `jobId` and `runId` to match. The pinned Gateway's exact `{id, runId}`

@@ -1482,6 +1482,7 @@ def run_pinned_gateway_replay():
                 gateway_url=f"ws://127.0.0.1:{p}", token="local-fixture-only", timeout_seconds=15
             )
             if policy_probe:
+                sys.path.insert(0, str(ROOT))
                 import main as adapter_main
                 from fastapi.testclient import TestClient
                 from unittest.mock import patch

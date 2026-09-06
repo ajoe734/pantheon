@@ -584,6 +584,29 @@ class TestStructuredEndpointRejectsCallerSuppliedTools:
         assert response.json()["error_code"] == "OPENCLAW_STRUCTURED_POLICY_UNAVAILABLE"
         invoke.assert_not_called()
 
+    def test_policy_read_cannot_restart_the_total_deadline(self, gateway_policy):
+        import time
+        client, adapter_main = self._client()
+        snapshot = gateway_policy.return_value
+
+        def slow_policy(*args, **kwargs):
+            time.sleep(0.02)
+            return snapshot
+
+        gateway_policy.side_effect = slow_policy
+        with (
+            patch.object(adapter_main._OPENCLAW_AGENT_PROVIDER, "_timeout", 0.01),
+            patch.object(adapter_main._OPENCLAW_AGENT_PROVIDER, "invoke_structured") as invoke,
+        ):
+            response = client.post(
+                "/api/openclaw-adapter/assistant/providers/openclaw/structured",
+                json={"prompt": "extract", "extraction_schema": EXTRACTION_SCHEMA},
+                headers={"X-Operator-Id": "operator-1"},
+            )
+        assert response.status_code == 504
+        assert response.json()["error_code"] == "OPENCLAW_STRUCTURED_POLICY_UNAVAILABLE"
+        invoke.assert_not_called()
+
     @staticmethod
     def _client():
         import main as adapter_main  # noqa: PLC0415
