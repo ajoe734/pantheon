@@ -165,7 +165,8 @@ class TestExactRunCorrelation:
         assert result["runId"] == target_run_id
         assert result["status"] == "failed"
 
-    def test_end_to_end_call_raises_on_target_run_failure_not_unrelated_ok(self):
+    @pytest.mark.parametrize("status", ["failed", "cancelled", "canceled", "timed_out", "skipped"])
+    def test_end_to_end_call_raises_on_target_run_failure_not_unrelated_ok(self, status):
         """Full `__call__` dispatch path: our run fails while an unrelated
         run of the same job is `ok` — the unrelated `ok` must never surface
         as our result."""
@@ -181,7 +182,7 @@ class TestExactRunCorrelation:
             if method == "cron.runs":
                 entries = [
                     {"jobId": "job-1", "runId": "run-unrelated", "status": "ok"},
-                    {"jobId": "job-1", "runId": "run-ours", "status": "failed"},
+                    {"jobId": "job-1", "runId": "run-ours", "status": status},
                 ]
                 return _run_result(_cron_runs_stdout(entries))
             raise AssertionError(f"unexpected method: {method}")
@@ -190,6 +191,25 @@ class TestExactRunCorrelation:
         request = _build_dispatch_request()
         with pytest.raises(RuntimeError, match="run-ours"):
             transport(request)
+
+    def test_hung_dispatch_process_is_killed_without_resubmission(self):
+        import subprocess
+        import time
+
+        calls = []
+
+        def runner(cmd, **kwargs):
+            calls.append(cmd[3])
+            if cmd[3] == "cron.add":
+                return _run_result('{"id":"job-1"}')
+            return subprocess.run([sys.executable, "-c", "import time; time.sleep(10)"], **kwargs)
+
+        transport = _make_transport(run_func=runner, poll_timeout=0.1)
+        started = time.monotonic()
+        with pytest.raises(subprocess.TimeoutExpired):
+            transport(_build_dispatch_request())
+        assert time.monotonic() - started < 1.0
+        assert calls == ["cron.add", "cron.run"]
 
     def test_rpc_that_never_returns_terminal_status_hits_timeout_not_wrong_run(self):
         """The target run never reaches a terminal status within the

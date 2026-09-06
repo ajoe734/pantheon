@@ -1183,155 +1183,423 @@ class TestRealLocalHttpsServerRegressions:
 import contextlib, hashlib, http.server, importlib.util, json, os, pathlib, socket, subprocess, sys, tempfile, threading, time, urllib.request
 
 ROOT = pathlib.Path(__file__).resolve().parents[3]
-sys.path.insert(0, str(ROOT / 'services/openclaw-gateway-adapter'))
+sys.path.insert(0, str(ROOT / "services/openclaw-gateway-adapter"))
 from assistant_openclaw_provider import AssistantOpenClawProvider, OpenClawProviderError
+
 
 class Model(http.server.BaseHTTPRequestHandler):
     records = []
     emitted_cases = set()
-    def log_message(self, *args): pass
+
+    def log_message(self, *args):
+        pass
+
     def do_POST(self):
-        body = json.loads(self.rfile.read(int(self.headers['Content-Length'])))
-        messages = body.get('messages', [])
-        last = next((m.get('content', '') for m in reversed(messages) if m.get('role') == 'user'), '')
+        body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
+        messages = body.get("messages", [])
+        last = next(
+            (m.get("content", "") for m in reversed(messages) if m.get("role") == "user"), ""
+        )
         prompt = json.dumps(last)
-        tools = [t['function']['name'] for t in body.get('tools', [])]
-        self.records.append({'tools': tools, 'prompt': prompt, 'at': time.monotonic(), 'model': body.get('model')})
-        case = next((c for c in ['invalid', 'wrong', 'missing', 'denied', 'positive'] if 'CASE_' + c in prompt), 'text')
-        delta = {'role': 'assistant', 'content': 'FIXTURE_OK'}
-        finish = 'stop'
-        if case in ('positive', 'invalid', 'wrong', 'denied') and case not in self.emitted_cases:
+        tools = [t["function"]["name"] for t in body.get("tools", [])]
+        self.records.append(
+            {"tools": tools, "prompt": prompt, "at": time.monotonic(), "model": body.get("model")}
+        )
+        case = next(
+            (
+                c
+                for c in ["invalid", "wrong", "missing", "denied", "positive"]
+                if "CASE_" + c in prompt
+            ),
+            "text",
+        )
+        delta = {"role": "assistant", "content": "FIXTURE_OK"}
+        finish = "stop"
+        if case in ("positive", "invalid", "wrong", "denied") and case not in self.emitted_cases:
             self.emitted_cases.add(case)
-            name = 'exec' if case == 'denied' else 'wrong_tool' if case == 'wrong' else 'emit_extraction'
-            args = '{"value":7}' if case != 'invalid' else '{"value":"bad"}'
-            if case == 'denied': args = '{"command":"touch /tmp/SIMPLIFY_FORBIDDEN"}'
-            delta = {'role':'assistant','content':None,'tool_calls':[{'index':0,'id':'call_fixture','type':'function','function':{'name':name,'arguments':args}}]}
-            finish = 'tool_calls'
-        usage = {'prompt_tokens':100,'completion_tokens':10,'total_tokens':110}
+            name = (
+                "exec"
+                if case == "denied"
+                else "wrong_tool" if case == "wrong" else "emit_extraction"
+            )
+            args = '{"value":7}' if case != "invalid" else '{"value":"bad"}'
+            if case == "denied":
+                args = '{"command":"touch /tmp/SIMPLIFY_FORBIDDEN"}'
+            delta = {
+                "role": "assistant",
+                "content": None,
+                "tool_calls": [
+                    {
+                        "index": 0,
+                        "id": "call_fixture",
+                        "type": "function",
+                        "function": {"name": name, "arguments": args},
+                    }
+                ],
+            }
+            finish = "tool_calls"
+        usage = {"prompt_tokens": 100, "completion_tokens": 10, "total_tokens": 110}
         self.send_response(200)
-        self.send_header('Content-Type', 'text/event-stream' if body.get('stream') else 'application/json')
+        self.send_header(
+            "Content-Type", "text/event-stream" if body.get("stream") else "application/json"
+        )
         self.end_headers()
-        if body.get('stream'):
-            for d, f, u in [(delta,None,None),({},finish,usage)]:
-                payload = {'id':'chatcmpl-fixture','object':'chat.completion.chunk','created':1,'model':'fixture-model','choices':[{'index':0,'delta':d,'finish_reason':f}]}
-                if u: payload['usage']=u
-                self.wfile.write(('data: '+json.dumps(payload)+'\n\n').encode()); self.wfile.flush()
-            self.wfile.write(b'data: [DONE]\n\n')
+        if body.get("stream"):
+            for d, f, u in [(delta, None, None), ({}, finish, usage)]:
+                payload = {
+                    "id": "chatcmpl-fixture",
+                    "object": "chat.completion.chunk",
+                    "created": 1,
+                    "model": "fixture-model",
+                    "choices": [{"index": 0, "delta": d, "finish_reason": f}],
+                }
+                if u:
+                    payload["usage"] = u
+                self.wfile.write(("data: " + json.dumps(payload) + "\n\n").encode())
+                self.wfile.flush()
+            self.wfile.write(b"data: [DONE]\n\n")
         else:
-            self.wfile.write(json.dumps({'id':'chatcmpl-fixture','object':'chat.completion','created':1,'model':'fixture-model','choices':[{'index':0,'message':delta,'finish_reason':finish}],'usage':usage}).encode())
+            self.wfile.write(
+                json.dumps(
+                    {
+                        "id": "chatcmpl-fixture",
+                        "object": "chat.completion",
+                        "created": 1,
+                        "model": "fixture-model",
+                        "choices": [{"index": 0, "message": delta, "finish_reason": finish}],
+                        "usage": usage,
+                    }
+                ).encode()
+            )
+
 
 def port():
     with socket.socket() as s:
-        s.bind(('127.0.0.1',0)); return s.getsockname()[1]
+        s.bind(("127.0.0.1", 0))
+        return s.getsockname()[1]
+
 
 def run_pinned_gateway_replay():
-    image='sha256:f435502b113f873768b64cd7f5f2a63f44d0a236ae3a5647ff42716652c74c31'
-    name=f'simplify-openclaw-001-fixture-{os.getpid()}'
-    with tempfile.TemporaryDirectory(prefix='simplify-openclaw-') as tmp:
-        tmp=pathlib.Path(tmp); p=port()
-        server=http.server.ThreadingHTTPServer(('127.0.0.1',0),Model)
-        thread=threading.Thread(target=server.serve_forever,daemon=True); thread.start()
-        config={'gateway':{'mode':'local','bind':'loopback','port':p,'auth':{'mode':'token','token':'local-fixture-only'},'http':{'endpoints':{'responses':{'enabled':True}}}},'agents':{'defaults':{'workspace':'/fixture/workspace','model':{'primary':'fixture/fixture-model'},'skipBootstrap':True,'thinkingDefault':'off'},'list':[{'id':agent,'tools':{'deny':['*']}} for agent in ['main']+[f'bench-{i}' for i in range(10)]]},'models':{'providers':{'fixture':{'baseUrl':f'http://127.0.0.1:{server.server_port}/v1','apiKey':'synthetic-fixture-only','api':'openai-completions','models':[{'id':'fixture-model','name':'Fixture','reasoning':False,'input':['text'],'contextWindow':200000,'maxTokens':1024,'cost':{'input':0,'output':0,'cacheRead':0,'cacheWrite':0}}]}}}}
-        (tmp/'config.json').write_text(json.dumps(config)); (tmp/'workspace').mkdir()
+    image = "sha256:f435502b113f873768b64cd7f5f2a63f44d0a236ae3a5647ff42716652c74c31"
+    name = f"simplify-openclaw-001-fixture-{os.getpid()}"
+    with tempfile.TemporaryDirectory(prefix="simplify-openclaw-") as tmp:
+        tmp = pathlib.Path(tmp)
+        p = port()
+        server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Model)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        config = {
+            "gateway": {
+                "mode": "local",
+                "bind": "loopback",
+                "port": p,
+                "auth": {"mode": "token", "token": "local-fixture-only"},
+                "http": {"endpoints": {"responses": {"enabled": True}}},
+            },
+            "agents": {
+                "defaults": {
+                    "workspace": "/fixture/workspace",
+                    "model": {"primary": "fixture/fixture-model"},
+                    "skipBootstrap": True,
+                    "thinkingDefault": "off",
+                },
+                "list": [
+                    {"id": agent, "tools": {"deny": ["*"]}}
+                    for agent in ["main"] + [f"bench-{i}" for i in range(10)]
+                ],
+            },
+            "models": {
+                "providers": {
+                    "fixture": {
+                        "baseUrl": f"http://127.0.0.1:{server.server_port}/v1",
+                        "apiKey": "synthetic-fixture-only",
+                        "api": "openai-completions",
+                        "models": [
+                            {
+                                "id": "fixture-model",
+                                "name": "Fixture",
+                                "reasoning": False,
+                                "input": ["text"],
+                                "contextWindow": 200000,
+                                "maxTokens": 1024,
+                                "cost": {"input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0},
+                            }
+                        ],
+                    }
+                }
+            },
+        }
+        (tmp / "config.json").write_text(json.dumps(config))
+        (tmp / "workspace").mkdir()
+
         def docker(*args, **kw):
-            return subprocess.run(['docker',*args],capture_output=True,text=True,timeout=kw.pop('timeout',30),**kw)
+            return subprocess.run(
+                ["docker", *args],
+                capture_output=True,
+                text=True,
+                timeout=kw.pop("timeout", 30),
+                **kw,
+            )
+
         try:
-            started=docker('run','-d','--name',name,'--network','host','--user',f'{os.getuid()}:{os.getgid()}','-v',f'{tmp}:/fixture','-e','OPENCLAW_CONFIG_PATH=/fixture/config.json','-e','OPENCLAW_STATE_DIR=/fixture/state',image,'node','openclaw.mjs','gateway','--allow-unconfigured')
-            assert started.returncode==0, started.stderr
+            started = docker(
+                "run",
+                "-d",
+                "--name",
+                name,
+                "--network",
+                "host",
+                "--user",
+                f"{os.getuid()}:{os.getgid()}",
+                "-v",
+                f"{tmp}:/fixture",
+                "-e",
+                "OPENCLAW_CONFIG_PATH=/fixture/config.json",
+                "-e",
+                "OPENCLAW_STATE_DIR=/fixture/state",
+                image,
+                "node",
+                "openclaw.mjs",
+                "gateway",
+                "--allow-unconfigured",
+            )
+            assert started.returncode == 0, started.stderr
             for _ in range(60):
                 try:
-                    urllib.request.urlopen(f'http://127.0.0.1:{p}/healthz',timeout=1).close(); break
-                except Exception: time.sleep(.5)
-            else: raise RuntimeError(docker('logs','--tail','30',name).stdout)
-            provider=AssistantOpenClawProvider(gateway_url=f'ws://127.0.0.1:{p}',token='local-fixture-only',timeout_seconds=15)
+                    urllib.request.urlopen(f"http://127.0.0.1:{p}/healthz", timeout=1).close()
+                    break
+                except Exception:
+                    time.sleep(0.5)
+            else:
+                raise RuntimeError(docker("logs", "--tail", "30", name).stdout)
+            provider = AssistantOpenClawProvider(
+                gateway_url=f"ws://127.0.0.1:{p}", token="local-fixture-only", timeout_seconds=15
+            )
             capability = {}
-            for case in ['positive','invalid','wrong','missing','denied']:
+            for case in ["positive", "invalid", "wrong", "missing", "denied"]:
                 try:
-                    result=provider.invoke_structured('CASE_'+case,model='fixture/fixture-model',session_id='case-'+case,timeout_seconds=5,extraction_schema={'type':'object','properties':{'value':{'type':'integer'}},'required':['value'],'additionalProperties':False})
-                    assert case == 'positive', (case, result.to_dict())
-                    assert result.output['structured_data'] == {'value':7}
+                    result = provider.invoke_structured(
+                        "CASE_" + case,
+                        model="fixture/fixture-model",
+                        session_id="case-" + case,
+                        timeout_seconds=5,
+                        extraction_schema={
+                            "type": "object",
+                            "properties": {"value": {"type": "integer"}},
+                            "required": ["value"],
+                            "additionalProperties": False,
+                        },
+                    )
+                    assert case == "positive", (case, result.to_dict())
+                    assert result.output["structured_data"] == {"value": 7}
                     capability[case] = result.to_dict()
-                    print(case, 'passed', flush=True)
+                    print(case, "passed", flush=True)
                 except OpenClawProviderError as exc:
-                    assert case != 'positive', exc.to_payload()
-                    assert exc.error_code == 'OPENCLAW_RESPONSES_FAILED', exc.to_payload()
+                    assert case != "positive", exc.to_payload()
+                    assert exc.error_code == "OPENCLAW_RESPONSES_FAILED", exc.to_payload()
                     capability[case] = exc.to_payload()
                     print(case, exc.error_code, flush=True)
-            assert all(r['tools'] == ['emit_extraction'] for r in Model.records)
-            assert docker('exec',name,'test','-e','/tmp/SIMPLIFY_FORBIDDEN').returncode == 1
-            gateway_logs = docker('logs', name)
+            assert all(r["tools"] == ["emit_extraction"] for r in Model.records)
+            assert docker("exec", name, "test", "-e", "/tmp/SIMPLIFY_FORBIDDEN").returncode == 1
+            gateway_logs = docker("logs", name)
             logs = gateway_logs.stdout + gateway_logs.stderr
-            assert 'tool policy removed' in logs and 'exec' in logs
-            capability['native_denial'] = {'advertised_tools': ['emit_extraction'], 'attempted_tool': 'exec', 'marker_exists':False, 'gateway_denial_logged':True}
-            count = int(os.environ.get('SIMPLIFY_REPLAY_COUNT','100'))
-            base_sha = subprocess.check_output(['git','rev-parse','origin/dev'],text=True).strip()
-            base_source = subprocess.check_output(['git','show',base_sha+':services/openclaw-gateway-adapter/assistant_openclaw_provider.py'])
-            (tmp/'baseline.py').write_bytes(base_source)
-            spec = importlib.util.spec_from_file_location('simplify_baseline',tmp/'baseline.py')
-            baseline = importlib.util.module_from_spec(spec);sys.modules[spec.name]=baseline;spec.loader.exec_module(baseline)
+            assert "tool policy removed" in logs and "exec" in logs
+            capability["native_denial"] = {
+                "advertised_tools": ["emit_extraction"],
+                "attempted_tool": "exec",
+                "marker_exists": False,
+                "gateway_denial_logged": True,
+            }
+            count = int(os.environ.get("SIMPLIFY_REPLAY_COUNT", "100"))
+            # Freeze the measured CLI baseline so this runner remains reproducible
+            # after the candidate merges and origin/dev starts using HTTP itself.
+            base_sha = "a9557a6002e8170eb92415cc61e9d6a584cc610f"
+            base_source = subprocess.check_output(
+                [
+                    "git",
+                    "show",
+                    base_sha + ":services/openclaw-gateway-adapter/assistant_openclaw_provider.py",
+                ]
+            )
+            (tmp / "baseline.py").write_bytes(base_source)
+            spec = importlib.util.spec_from_file_location("simplify_baseline", tmp / "baseline.py")
+            baseline = importlib.util.module_from_spec(spec)
+            sys.modules[spec.name] = baseline
+            spec.loader.exec_module(baseline)
             cli_local = threading.local()
+
             def cli_runner(cmd, **kw):
-                proc = docker('exec', name, 'node', 'openclaw.mjs', *cmd[1:], timeout=kw['timeout'])
+                proc = docker("exec", name, "node", "openclaw.mjs", *cmd[1:], timeout=kw["timeout"])
                 cli_local.result = proc
                 return proc
-            old = baseline.AssistantOpenClawProvider(gateway_url=f'ws://127.0.0.1:{p}',token='local-fixture-only',_which_func=lambda _: 'openclaw',_run_func=cli_runner)
-            prompts = [f'Replay item {i:03d}: Return exactly FIXTURE_OK.' for i in range(count)]
-            manifest = {'base_sha':base_sha,'base_provider_sha256':hashlib.sha256(base_source).hexdigest(),'candidate_provider_sha256':hashlib.sha256((ROOT/'services/openclaw-gateway-adapter/assistant_openclaw_provider.py').read_bytes()).hexdigest(),'image_id':image,'gateway_version':'2026.7.1','model':'fixture/fixture-model','auth_route':'isolated loopback Gateway, synthetic test token; local deterministic OpenAI-completions model','count_per_arm':count,'prompt_sha256':hashlib.sha256(json.dumps(prompts).encode()).hexdigest(),'session_design':'10 independent admitted agents, each with 10 sequential turns per arm; first is session-cold, next 9 warm; four concurrent sequences, one shared Gateway, no process-cold claim','concurrency':4,'deadline_seconds':30,'usage_semantics':'model fixture reports fixed input=100/output=10/total=110, not a tokenizer or production cost measurement','ttft_semantics':'CLI buffered invoke first text available on return; HTTP first normalized delta; full includes invocation and normalization','latency_limitation':'CLI transport includes docker exec overhead; local fixture measures transport and Gateway, not external model quality or latency','config_sha256':hashlib.sha256(json.dumps(config).encode()).hexdigest()}
-            print('FROZEN',json.dumps(manifest),flush=True)
+
+            old = baseline.AssistantOpenClawProvider(
+                gateway_url=f"ws://127.0.0.1:{p}",
+                token="local-fixture-only",
+                _which_func=lambda _: "openclaw",
+                _run_func=cli_runner,
+            )
+            prompts = [f"Replay item {i:03d}: Return exactly FIXTURE_OK." for i in range(count)]
+            manifest = {
+                "base_sha": base_sha,
+                "base_provider_sha256": hashlib.sha256(base_source).hexdigest(),
+                "candidate_provider_sha256": hashlib.sha256(
+                    (
+                        ROOT / "services/openclaw-gateway-adapter/assistant_openclaw_provider.py"
+                    ).read_bytes()
+                ).hexdigest(),
+                "image_id": image,
+                "gateway_version": "2026.7.1",
+                "model": "fixture/fixture-model",
+                "auth_route": "isolated loopback Gateway, synthetic test token; local deterministic OpenAI-completions model",
+                "count_per_arm": count,
+                "prompt_sha256": hashlib.sha256(json.dumps(prompts).encode()).hexdigest(),
+                "session_design": "10 independent admitted agents, each with 10 sequential turns per arm; first is session-cold, next 9 warm; four concurrent sequences, one shared Gateway, no process-cold claim",
+                "concurrency": 4,
+                "deadline_seconds": 30,
+                "usage_semantics": "model fixture reports fixed input=100/output=10/total=110, not a tokenizer or production cost measurement",
+                "ttft_semantics": "CLI buffered invoke first text available on return; HTTP first normalized delta; full includes invocation and normalization",
+                "latency_limitation": "CLI transport includes docker exec overhead; local fixture measures transport and Gateway, not external model quality or latency",
+                "config_sha256": hashlib.sha256(json.dumps(config).encode()).hexdigest(),
+            }
+            print("FROZEN", json.dumps(manifest), flush=True)
+
             def replay_sequence(group):
-                rows=[]
-                for i in range(group*10, min(group*10+10,count)):
-                    prompt=prompts[i]
+                rows = []
+                for i in range(group * 10, min(group * 10 + 10, count)):
+                    prompt = prompts[i]
                     # Alternate order to avoid assigning all process warm-up to one arm.
-                    for arm in (['cli','http'] if i % 2 == 0 else ['http','cli']):
-                        started=time.monotonic();first=None
-                        if arm=='cli':
-                            result=old.invoke(prompt,model='fixture/fixture-model',agent_id=f'bench-{group}',session_id=f'cli-{group}',timeout_seconds=30)
-                            assert result.status=='completed'
-                            assert old._result_text(result)=='FIXTURE_OK'
-                            raw=json.loads(cli_local.result.stdout)
-                            meta=raw['result']['meta']['agentMeta']
-                            assert meta['provider']=='fixture' and meta['model']=='fixture-model'
-                            u=meta['usage']
-                            usage={'input_tokens':u['input'],'output_tokens':u['output'],'total_tokens':u['total']}
-                            spawns=1
+                    for arm in (["cli", "http"] if i % 2 == 0 else ["http", "cli"]):
+                        started = time.monotonic()
+                        first = None
+                        if arm == "cli":
+                            result = old.invoke(
+                                prompt,
+                                model="fixture/fixture-model",
+                                agent_id=f"bench-{group}",
+                                session_id=f"cli-{group}",
+                                timeout_seconds=30,
+                            )
+                            assert result.status == "completed"
+                            assert old._result_text(result) == "FIXTURE_OK"
+                            raw = json.loads(cli_local.result.stdout)
+                            meta = raw["result"]["meta"]["agentMeta"]
+                            assert (
+                                meta["provider"] == "fixture" and meta["model"] == "fixture-model"
+                            )
+                            u = meta["usage"]
+                            usage = {
+                                "input_tokens": u["input"],
+                                "output_tokens": u["output"],
+                                "total_tokens": u["total"],
+                            }
+                            spawns = 1
                             assert spawns == 1
                         else:
-                            events=[]
-                            for event in provider.stream(prompt,model='fixture/fixture-model',agent_id=f'bench-{group}',session_user=f'http-{group}',timeout_seconds=30):
+                            events = []
+                            for event in provider.stream(
+                                prompt,
+                                model="fixture/fixture-model",
+                                agent_id=f"bench-{group}",
+                                session_user=f"http-{group}",
+                                timeout_seconds=30,
+                            ):
                                 events.append(event)
-                                if event['type']=='delta' and first is None:first=time.monotonic()-started
-                            terminals=[e for e in events if e['type'] in ('done','error')]
-                            assert len(terminals)==1 and terminals[0]['type']=='done', events
-                            assert terminals[0]['text']=='FIXTURE_OK'
-                            usage=terminals[0]['usage'];spawns=0
-                        elapsed=time.monotonic()-started
-                        rows.append({'arm':arm,'case':i,'temperature':'cold' if i%10==0 else 'warm','full_ms':elapsed*1000,'ttft_ms':(first if first is not None else elapsed)*1000,'usage':usage,'errors':0,'subprocesses':spawns})
-                    if (i+1)%10==0:print('REPLAY',i+1,'pairs completed',flush=True)
+                                if event["type"] == "delta" and first is None:
+                                    first = time.monotonic() - started
+                            terminals = [e for e in events if e["type"] in ("done", "error")]
+                            assert len(terminals) == 1 and terminals[0]["type"] == "done", events
+                            assert terminals[0]["text"] == "FIXTURE_OK"
+                            usage = terminals[0]["usage"]
+                            spawns = 0
+                        elapsed = time.monotonic() - started
+                        rows.append(
+                            {
+                                "arm": arm,
+                                "case": i,
+                                "temperature": "cold" if i % 10 == 0 else "warm",
+                                "full_ms": elapsed * 1000,
+                                "ttft_ms": (first if first is not None else elapsed) * 1000,
+                                "usage": usage,
+                                "errors": 0,
+                                "subprocesses": spawns,
+                            }
+                        )
+                    if (i + 1) % 10 == 0:
+                        print("REPLAY", i + 1, "pairs completed", flush=True)
                 return rows
+
             from concurrent.futures import ThreadPoolExecutor
             import math
+
             with ThreadPoolExecutor(max_workers=4) as pool:
-                rows=[row for batch in pool.map(replay_sequence,range(math.ceil(count/10))) for row in batch]
+                rows = [
+                    row
+                    for batch in pool.map(replay_sequence, range(math.ceil(count / 10)))
+                    for row in batch
+                ]
             import statistics
+
             def summary(items):
-                def percentile(field,quantile):
-                    values=sorted(r[field] for r in items)
+                def percentile(field, quantile):
+                    values = sorted(r[field] for r in items)
                     import math
-                    return values[math.ceil(len(values)*quantile)-1]
-                return {'n':len(items),'full_p50_ms':percentile('full_ms',.5),'full_p95_ms':percentile('full_ms',.95),'ttft_p50_ms':percentile('ttft_ms',.5),'ttft_p95_ms':percentile('ttft_ms',.95),'mean_tokens':statistics.mean(r['usage']['total_tokens'] for r in items),'errors':sum(r['errors'] for r in items),'subprocesses':sum(r['subprocesses'] for r in items)}
-            summaries={arm:{temp:summary([r for r in rows if r['arm']==arm and (temp=='all' or r['temperature']==temp)]) for temp in ['all','cold','warm']} for arm in ['cli','http']}
-            gates={'no_new_errors':summaries['http']['all']['errors']==0,'full_p95_ratio':summaries['http']['all']['full_p95_ms']/summaries['cli']['all']['full_p95_ms'],'mean_token_ratio':summaries['http']['all']['mean_tokens']/summaries['cli']['all']['mean_tokens']}
-            report={'manifest':manifest,'capability':capability,'replay':summaries,'gates':gates,'rows':rows}
-            pathlib.Path(os.environ.get('SIMPLIFY_REPLAY_OUTPUT','/tmp/simplify-replay.json')).write_text(json.dumps(report,indent=2)+'\n')
-            assert gates['full_p95_ratio']<=1.10 and gates['mean_token_ratio']<=1.05
-            print('RESULT',json.dumps(summaries),flush=True)
+
+                    return values[math.ceil(len(values) * quantile) - 1]
+
+                return {
+                    "n": len(items),
+                    "full_p50_ms": percentile("full_ms", 0.5),
+                    "full_p95_ms": percentile("full_ms", 0.95),
+                    "ttft_p50_ms": percentile("ttft_ms", 0.5),
+                    "ttft_p95_ms": percentile("ttft_ms", 0.95),
+                    "mean_tokens": statistics.mean(r["usage"]["total_tokens"] for r in items),
+                    "errors": sum(r["errors"] for r in items),
+                    "subprocesses": sum(r["subprocesses"] for r in items),
+                }
+
+            summaries = {
+                arm: {
+                    temp: summary(
+                        [
+                            r
+                            for r in rows
+                            if r["arm"] == arm and (temp == "all" or r["temperature"] == temp)
+                        ]
+                    )
+                    for temp in ["all", "cold", "warm"]
+                }
+                for arm in ["cli", "http"]
+            }
+            gates = {
+                "no_new_errors": summaries["http"]["all"]["errors"] == 0,
+                "full_p95_ratio": summaries["http"]["all"]["full_p95_ms"]
+                / summaries["cli"]["all"]["full_p95_ms"],
+                "mean_token_ratio": summaries["http"]["all"]["mean_tokens"]
+                / summaries["cli"]["all"]["mean_tokens"],
+            }
+            report = {
+                "manifest": manifest,
+                "capability": capability,
+                "replay": summaries,
+                "gates": gates,
+                "rows": rows,
+            }
+            pathlib.Path(
+                os.environ.get("SIMPLIFY_REPLAY_OUTPUT", "/tmp/simplify-replay.json")
+            ).write_text(json.dumps(report, indent=2) + "\n")
+            assert gates["full_p95_ratio"] <= 1.10 and gates["mean_token_ratio"] <= 1.05
+            print("RESULT", json.dumps(summaries), flush=True)
 
         finally:
             # Only fixture-owned state is mounted; no credentials or existing service is changed.
-            cleanup=docker('rm','-f',name)
-            print('CLEANUP',cleanup.returncode,flush=True)
+            cleanup = docker("rm", "-f", name)
+            print("CLEANUP", cleanup.returncode, flush=True)
             assert cleanup.returncode == 0, cleanup.stderr
-            server.shutdown();server.server_close();thread.join()
-if __name__ == '__main__':
+            server.shutdown()
+            server.server_close()
+            thread.join()
+
+
+if __name__ == "__main__":
     run_pinned_gateway_replay()

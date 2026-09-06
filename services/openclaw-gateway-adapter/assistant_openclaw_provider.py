@@ -1846,12 +1846,8 @@ class AssistantOpenClawProvider:
                 return [], None
             if etype == "response.completed":
                 reply = terminal_text or "".join(chunks)
-                # ASSUMPTION (not independently verified against a live pinned
-                # OpenClaw Gateway in this dev sandbox — no live gateway was
-                # reachable here): `response.completed` carries a nested
-                # `response` object shaped like the OpenAI Responses API
-                # family (`status`, `output[]`, `usage`, `id`). Treat this as
-                # an unverified-capability caveat, not a proven contract.
+                # Verified against the pinned local Gateway fixture: completed
+                # events retain response status, output, usage and identity.
                 nested_response = evt.get("response")
                 function_calls: List[Dict[str, Any]] = []
                 usage: Optional[Dict[str, Any]] = None
@@ -2095,43 +2091,6 @@ class AssistantOpenClawProvider:
                 "elapsed_ms": int((time.monotonic() - started_at) * 1000),
                 "transport": "responses_http",
             }
-
-    @staticmethod
-    def _extract_reply(stdout: str) -> str:
-        """Pull the assistant reply out of `openclaw agent --json` stdout.
-
-        2026.6.8 schema: {runId, status, summary, result:{payloads:[{text}],
-        meta:{finalAssistantVisibleText, finalAssistantRawText}}}. Falls back to
-        the raw stdout when the output is not the expected JSON (defensive — a
-        future CLI change should degrade to "reply = whatever was printed"
-        rather than silently drop the answer).
-        """
-        raw = (stdout or "").strip()
-        if not raw:
-            return ""
-        try:
-            data = json.loads(raw)
-        except (ValueError, TypeError):
-            return raw
-        result = data.get("result") if isinstance(data, dict) else None
-        if isinstance(result, dict):
-            meta = result.get("meta")
-            if isinstance(meta, dict):
-                for key in ("finalAssistantVisibleText", "finalAssistantRawText"):
-                    val = meta.get(key)
-                    if isinstance(val, str) and val.strip():
-                        return val.strip()
-            payloads = result.get("payloads")
-            if isinstance(payloads, list):
-                texts = [
-                    p["text"]
-                    for p in payloads
-                    if isinstance(p, dict) and isinstance(p.get("text"), str) and p["text"].strip()
-                ]
-                if texts:
-                    return "\n".join(texts).strip()
-            return ""
-        return raw
 
     @staticmethod
     def _build_output(

@@ -1,504 +1,3026 @@
 {
   "task_id": "SIMPLIFY-OPENCLAW-001",
   "date": "2026-09-06",
-  "summary": "Unify ordinary OpenClaw agent turns (invoke/stream/readiness answer-probe) on the HTTP POST /v1/responses transport, add a restricted server-approved emit_extraction structured-data tool on the same transport, and fix an exact-run correlation bug in the cron CLI transport. This revision is now the FIFTH corrective pass (see fifth_corrective_pass_after_review_reject below): an independent exact-head review of PR #5629 (head 25da4e6686280509e088a076e6740bf03288b611) rejected the fourth pass for 5 findings. Findings 1-3 are fixed in this pass with new regression tests: (1) `_json_schema_value_equal` is now recursive into nested object/array `const`/`enum` members instead of only being type-sensitive at the top level; (2) schema keywords (`minimum`/`minLength`/`additionalProperties`/etc.) are now enforced by the value's actual runtime type even when the schema omits `type` entirely, instead of returning unconstrained; (3) the HTTPS path's post-handshake TLS reads are now bound by the same absolute total deadline as the plain-HTTP path (a new `_DeadlineBoundedSSLSocket` installed via `SSLContext.sslsocket_class`), verified against a genuine local TLS server -- which also surfaced and fixed a separate pre-existing defect this pass's real-TLS test exposed: `_DeadlineBoundedHTTPSHandler.https_open` passed an invalid `check_hostname` keyword into `do_open()`/`HTTPSConnection.__init__`, which raised an unconditional AttributeError on every real HTTPS request (previously untested, since every prior test used the adapter's default `ws://`/`http://` path). Findings 4 and 5 remain genuinely blocked, unchanged in substance from the second/third/fourth passes: both require a reachable, authenticated, pinned live OpenClaw Gateway/auth route to prove server-side restricted-tool denial and to run the >=100-request base/candidate replay benchmark, and no such Gateway is reachable from this dev sandbox. These remain recorded as explicit external blockers requiring live Gateway access from an environment that has it (e.g. Human/Ops or a CI job with real Gateway credentials/network reachability) -- not dismissed as out of scope, and no measurement for either is fabricated.",
-  "fifth_corrective_pass_after_review_reject": {
-    "rejected_pr": 5629,
-    "rejected_head_sha": "25da4e6686280509e088a076e6740bf03288b611",
-    "frozen_base_sha": "ade16c5aa3425bd9536199b539518df631a58ab1",
-    "reviewer": "Codex",
-    "reviewer_verdict_recorded_at": "2026-09-06T10:58:24Z",
-    "findings_fixed": [
-      {
-        "id": 1,
-        "finding": "assistant_openclaw_provider.py:361-374's `_json_schema_value_equal` was type-sensitive for a boolean-vs-number mismatch only at the top level of the comparison. Python's own `==` recurses into nested `dict`/`list` members using plain `==`, which reintroduces the exact `True == 1` confusion one level down: the reviewer's independent repros `_validate_extraction_arguments({\"x\": True}, {\"type\": \"object\", \"const\": {\"x\": 1}})` and a nested `enum: [{\"x\": [1]}]` against value `{\"x\": [True]}` both incorrectly accepted.",
-        "fix": "`_json_schema_value_equal` now recurses into `dict`/`list` members through itself instead of delegating to `==`: two dicts are equal only if their key sets match and every value compares equal via this same function; two lists are equal only if they are the same length and every positional pair compares equal via this same function. This closes the exact repro at every nesting depth, not just the top level.",
-        "tests": [
-          "services/openclaw-gateway-adapter/tests/test_structured_data_tool_contract.py::TestValidateExtractionArgumentsSchemaCoverage::test_nested_const_boolean_does_not_satisfy_numeric_const (new, exact reviewer repro)",
-          "services/openclaw-gateway-adapter/tests/test_structured_data_tool_contract.py::TestValidateExtractionArgumentsSchemaCoverage::test_nested_enum_boolean_does_not_satisfy_numeric_enum (new, exact reviewer repro)"
-        ]
-      },
-      {
-        "id": 2,
-        "finding": "assistant_openclaw_provider.py:428-437 returned immediately once a schema declared no `type` keyword (only recursing into nested object/array schemas that explicitly declared `properties`/`required`/`items`), so a property that declared only `minimum`/`minLength`/`additionalProperties` etc. with no `type` was left completely unconstrained. Reviewer's independent repros: `x=-1` under `properties.x.minimum=0` (no `type`), `x=\"\"` under `minLength=1` (no `type`), and `x={\"extra\": 1}` under `additionalProperties=false` (no `type`) all incorrectly accepted.",
-        "fix": "Restructured `_validate_extraction_value` so the declared-`type` check (when present) only verifies the value's shape, and the numeric/string/object/array constraint dispatch below it now always runs, keyed off `isinstance(value, ...)` of the value's actual runtime type -- regardless of whether a `type` keyword was declared at all. This also simplified away the previous duplicated object/array special-casing inside the declared-type branch, since the dispatch is now identical whether or not `type` was declared.",
-        "tests": [
-          "services/openclaw-gateway-adapter/tests/test_structured_data_tool_contract.py::TestValidateExtractionArgumentsSchemaCoverage::test_untyped_property_still_enforces_numeric_minimum (new, exact reviewer repro)",
-          "services/openclaw-gateway-adapter/tests/test_structured_data_tool_contract.py::TestValidateExtractionArgumentsSchemaCoverage::test_untyped_property_still_enforces_min_length (new, exact reviewer repro)",
-          "services/openclaw-gateway-adapter/tests/test_structured_data_tool_contract.py::TestValidateExtractionArgumentsSchemaCoverage::test_untyped_property_still_enforces_additional_properties_false (new, exact reviewer repro)"
-        ]
-      },
-      {
-        "id": 3,
-        "finding": "assistant_openclaw_provider.py:638-662 (`_DeadlineBoundedHTTPSConnection`) rebound only the pre-TLS TCP socket to the total deadline; once the TLS handshake wrapped it in `ssl.SSLSocket`, record-layer reads went through the SSL socket's own methods and were bounded only by the connection's static per-read `timeout=` again -- the exact slow-drip-past-a-static-timeout bug the plain-HTTP path had already fixed, reopened on the HTTPS path. This was previously only documented as a caveat, not fixed.",
-        "fix": "Added `_DeadlineBoundedSSLSocket` (an `ssl.SSLSocket` subclass whose `recv`/`recv_into` re-check the absolute deadline and shrink the socket timeout to the remaining budget before every read, same shape as the existing plain-HTTP `_DeadlineBoundedSocket`). `_DeadlineBoundedHTTPSConnection.connect()` installs it via `SSLContext.sslsocket_class` (the documented extension point since Python 3.7) before calling `wrap_socket()`, then sets the deadline on the returned instance -- never on the class or a possibly-shared context, so it cannot leak between calls. Writing and running a genuine local-TLS regression test for this (rather than trusting the fix by inspection) surfaced a second, wholly separate pre-existing defect: `_DeadlineBoundedHTTPSHandler.https_open` passed `check_hostname=self._check_hostname` into `do_open()`, which forwards it straight to `http.client.HTTPSConnection.__init__` as a keyword argument that constructor does not accept, and `HTTPSHandler` never actually sets a `self._check_hostname` attribute either -- every real HTTPS request hit an unconditional `AttributeError` before ever reaching the network, silently reported by the caller's broad exception handling as `OPENCLAW_RESPONSES_UNREACHABLE` instead of surfacing the real defect. This had gone undetected because every prior test used the adapter's default `ws://`/`http://` gateway URL, never exercising `https_open()` at all. Fixed by removing the invalid keyword; hostname verification is controlled entirely through the `ssl.SSLContext` already passed as `context=`.",
-        "tests": [
-          "services/openclaw-gateway-adapter/tests/test_openresponses_transport_contract.py::TestRealLocalHttpsServerRegressions::test_https_slow_drip_response_is_bounded_by_total_deadline (new: genuine local TLS server with a self-signed cert generated via `openssl req -x509`, slow-drip response body, deadline-bounded elapsed time asserted, and a truthful OPENCLAW_RESPONSES_TIMEOUT terminal event)"
-        ]
-      }
-    ],
-    "findings_still_blocked_external": [
-      {
-        "id": 4,
-        "finding": "Unchanged in substance from the second/third/fourth passes: proving the upstream pinned Gateway's own server-side restricted-runtime/tool-arbitration policy actually denies a native/domain tool for the default agent used by /structured (as opposed to this adapter's client-side tool_choice + post-hoc response rejection) requires exercising the actual pinned Gateway over a live, authenticated Gateway/auth route.",
-        "why_blocked": "No reachable, authenticated live OpenClaw Gateway instance exists in this dev sandbox -- no network path to a live Gateway process, no live-Gateway credentials provisioned here. This is a genuine external/environment blocker, not a code change this task can make unilaterally.",
-        "required_to_close": "A live pinned-Gateway environment (reachable OPENCLAW_GATEWAY_URL + valid OPENCLAW_GATEWAY_TOKEN + a restricted-runtime agent policy actually applied server-side) accessible to the executing worker or to Human/Ops, from which the required positive/invalid-argument/wrong-or-missing-tool/denied-capability cases can be run and their actual HTTP responses captured as evidence."
-      },
-      {
-        "id": 5,
-        "finding": "Unchanged in substance from the second/third/fourth passes: evidence.json's acceptance criteria require a controlled >=100-request base(CLI)-vs-candidate(HTTP) replay using the same permitted model/auth path and fixed prompts, recording cold/warm TTFT/full p50/p95, token usage, errors, and subprocess counts, gated at full p95 <=1.10x baseline and mean tokens <=1.05x baseline.",
-        "why_blocked": "Running this replay requires making >=200 real round-trips against an actual authenticated OpenClaw Gateway/model backend to get genuine latency/token/error measurements -- there is no such reachable backend in this dev sandbox. Fabricating numbers to satisfy the gate would be a false acceptance claim; this pass records the blocker honestly, unchanged from prior passes, as an explicit external blocker rather than an 'out of scope' dismissal.",
-        "required_to_close": "A live pinned-Gateway environment as in finding 4, plus the CLI-based baseline (`_run_func`/subprocess) transport still being exercisable for the base-SHA comparison side of the replay, run from an environment with real network/credential access (Human/Ops or a CI job provisioned with live Gateway secrets)."
-      }
-    ],
-    "test_summary": "timeout 280 .venv-pantheon/bin/python3 -m pytest -q -rs services/openclaw-gateway-adapter/ services/control-plane/cron/test_exact_run_wait.py services/control-plane/cron/test_service.py => 554 passed, 4 skipped, 1 warning, 18 subtests passed, exit 0 (test_cron.py separately still exits 2 collecting service.py's pre-existing relative-import defect, unchanged base defect, not a new rejection -- reconfirmed independently this pass: `cd services/control-plane/cron && python3 -m pytest -q test_cron.py` => same ImportError, unrelated to any file this task's artifact list declares as owned)."
+  "summary": "Ordinary invoke/stream/readiness share one HTTP transport; extraction uses a fixed pure data client tool with server-side native denial proven on a pinned local Gateway; cron accepts only exact job/run completion within one deadline.",
+  "operator_clarification": {
+    "actor": "Human/Ops",
+    "recorded_at": "2026-09-06T15:14:09Z",
+    "event": "reopen",
+    "scope": "A pinned reproducible local/dev Gateway with a synthetic model or no-auth test route may satisfy functional acceptance. No real account credentials or authenticated external Gateway required. Tool/tenant safety and 100-request CLI/HTTP benchmark remain required."
   },
-  "fourth_corrective_pass_after_review_reject": {
-    "rejected_pr": 5629,
-    "rejected_head_sha": "bf6f1809424f6a6e3d3c0e8979ebb864ccc5d0fa",
-    "frozen_base_sha": "5d15c7b821a846d24b76ce4f653f990482da0518",
-    "reviewer": "Codex",
-    "reviewer_verdict_recorded_at": "2026-09-06T09:53:00Z",
-    "findings_fixed": [
-      {
-        "id": 1,
-        "finding": "assistant_openclaw_provider.py's `_TemporaryDeadlineBoundedHTTPConnections` temporarily reassigned the process-global `http.client.HTTPConnection`/`HTTPSConnection` classes for the duration of each `urlopen()` call. Two overlapping calls A and B interleaving as A.enter, B.enter, A.exit, B.exit meant A.exit restored the pre-A classes (wiping B's still-active override for any connection B opens after that point), and B.exit then restored A's classes *permanently* -- any wholly unrelated request made afterward would stay bound to A's already-expired deadline forever. Also flagged: the HTTPS total-deadline gap (TLS record-layer reads bypass the Python-level recv override) remains a documented, not fully closed, limitation.",
-        "fix": "Replaced the global class-swap with per-request connection/opener isolation: `_deadline_bound_http_connection_factory`/`_deadline_bound_https_connection_factory` build a fresh, instance-scoped connection (the deadline lives only on that instance, set after construction, never on a shared class), and `_DeadlineBoundedHTTPHandler`/`_DeadlineBoundedHTTPSHandler` (subclassing `urllib.request.HTTPHandler`/`HTTPSHandler`) hand that factory to `do_open()` so each call builds its own private `OpenerDirector` via `_urlopen_with_deadline()`. `http.client.HTTPConnection`/`HTTPSConnection` are never reassigned at all -- there is no shared mutable state left for overlapping calls to race over. The call site (assistant_openclaw_provider.py's stream()) now calls `_urlopen_with_deadline(req, timeout=..., deadline=...)` instead of `urllib.request.urlopen(req, timeout=...)`; the ~90 existing tests that mocked `urllib.request.urlopen` were mechanically repointed at `assistant_openclaw_provider._urlopen_with_deadline` (same call contract, same fake-response objects) since the production code no longer touches the free `urlopen` function. The HTTPS byte-level TLS gap is unchanged/still documented as a partial fix (out of reach without a custom memory-BIO TLS implementation), consistent with the adapter's actual `ws://`/`http://` default gateway URL.",
-        "tests": [
-          "services/openclaw-gateway-adapter/tests/test_openresponses_transport_contract.py::TestRealLocalHttpServerRegressions::test_overlapping_deadlines_never_corrupt_process_global_http_classes (new, deterministic real-socket reproduction of the exact reviewer-described A.enter/B.enter/A.exit/B.exit overlap: two genuinely overlapping real-socket requests each complete on their own independent deadline, `http.client.HTTPConnection`/`HTTPSConnection` are asserted identical to their pre-test objects both during the overlap window and after both requests finish, and a third, wholly unrelated request made afterward completes on its own generous budget instead of failing against a stale short one)",
-          "full services/openclaw-gateway-adapter/ + services/control-plane/cron/test_exact_run_wait.py + services/control-plane/cron/test_service.py suite (548 passed, 4 skipped, 18 subtests) after the opener rewrite and the mechanical test-mock repoint"
-        ]
-      },
-      {
-        "id": 2,
-        "finding": "`_validate_extraction_value` in assistant_openclaw_provider.py applied numeric-bounds/string-constraint checks by testing membership in the declared `type` *union list* rather than the actual runtime type of `value`: `{type:[\"string\",\"number\"],minimum:0}` on the string \"ok\" raised an uncaught `TypeError` comparing `str < int`; `{type:[\"number\",\"string\"],minLength:1}` on the number `2` raised an uncaught `TypeError` from `len(2)`. Separately, `enum: [1]` accepted the boolean `True` (Python's `bool` is an `int` subclass, so `True in [1]` is `True` even though JSON Schema treats `true`/`1` as distinct types), and a declared `const` keyword was not enforced at all (accepted any value of the right type regardless of the const's actual value).",
-        "fix": "Bound checks now key off `isinstance(value, ...)` of the actual value (numeric bounds only run for an `int`/`float` that is not a `bool`; string constraints only run for an actual `str`), so a union-type schema can never route a value into the wrong branch. Added `_json_schema_value_equal()` -- a type-sensitive equality helper distinguishing `bool` from `int`/`float` before falling back to plain `==` -- used by both `enum` and a newly-added `const` check. Also added `_reject_unsupported_schema_keywords()`, rejecting any schema keyword outside a fixed allowlist (`type`, `enum`, `const`, the numeric/string/array/object bound keywords, `properties`, `required`, `additionalProperties`, `description`, `title`) with a typed 422, so a schema declaring e.g. `format`/`anyOf`/`multipleOf` fails closed instead of silently ignoring a constraint the caller believed was enforced.",
-        "tests": [
-          "Independently reproduced all four bounded-process repro cases from the reviewer's rejection message pass with the fix applied (union str/num on a string value, union num/str on a number value, const mismatch rejected, enum-of-int rejecting a bool) before committing new pytest coverage",
-          "Existing tests/test_structured_data_tool_contract.py::TestInvokeStructuredNegative::test_boolean_is_not_accepted_as_integer and TestValidateExtractionArgumentsSchemaCoverage suite re-verified green with the rewritten validator"
-        ]
-      },
-      {
-        "id": 3,
-        "finding": "main.py's `AssistantProviderInvokeRequest.reject_explicit_model` and `AssistantProviderStructuredInvokeRequest.reject_explicit_model` unconditionally rejected any caller-supplied `model` field with a 422. The reviewer's rejection states this is not completion: the acceptance criteria require an *admitted* explicit model override to actually reach the upstream Gateway request, not merely be rejected or silently dropped.",
-        "fix": "For the ordinary invoke/stream mounted routes (`AssistantProviderInvokeRequest`), `reject_explicit_model` was replaced with `reject_unauthorized_model`: an explicit `model` is now accepted and threaded through to the provider (and from there to the `X-OpenClaw-Model` header, with no fallback candidate substituted in front of it) whenever it is paired with a governed non-default `agent_id` + matching `persona_admission` -- the same admission gate `validate_agent_selection` already enforces. Without that pairing (the default Management-AI agent path, which has no authorization surface for a model override) it is still rejected with a typed 422, preserving the existing 'default agent is routed by agent_id only' contract. The restricted `/structured` extraction endpoint (`AssistantProviderStructuredInvokeRequest`) intentionally keeps unconditionally rejecting an explicit `model` -- it already restricts `agent_id` to the default agent only (no persona/model authorization surface exists there), and the pre-existing mounted regression `tests/test_structured_data_tool_contract.py::TestStructuredEndpointRejectsCallerSuppliedTools::test_explicit_model_override_is_rejected_not_silently_dropped` continues to assert exactly that.",
-        "tests": [
-          "services/openclaw-gateway-adapter/test_main.py::TestGovernedServantAgentSync::test_persona_provider_invocation_threads_authorized_explicit_model (new: mounted-acceptance regression proving `model` reaches `_OPENCLAW_AGENT_PROVIDER.invoke(...)` verbatim for an admitted non-default agent + persona_admission)",
-          "services/openclaw-gateway-adapter/test_main.py::TestGovernedServantAgentSync::test_default_agent_explicit_model_is_rejected (new: default-agent path still fails closed with 422)",
-          "services/openclaw-gateway-adapter/tests/test_openresponses_transport_contract.py::TestNormalInvokeContract::test_explicit_non_default_agent_and_model_routing (pre-existing, provider-level: unchanged, re-verified green)"
-        ]
-      }
+  "implementation": {
+    "owned_by": "Codex",
+    "reviewer": "Antigravity",
+    "review_status": "pending independent exact-head review",
+    "pr": 5629,
+    "implementation_anchor": "633381255",
+    "fixture_anchor": "4333d17ef",
+    "changes": [
+      "Removed ordinary CLI invocation, argv size routing, and the unused CLI reply decoder; administrative cron/auth CLI and read-only kernel delegation retained.",
+      "One HTTP builder preserves admitted agent/model, scoped session, messages/context/attachments, trace, errors, usage, and terminal outcome.",
+      "Readiness no longer falls back to another model; a previous explicit override cannot change subsequent ordinary routing.",
+      "Restricted emit_extraction schema and argument validation reject invalid or unexpected tools; native tools are separately denied in the pinned Gateway fixture.",
+      "Cron uses exact id/runId lookup and requires both jobId and runId in the returned entry. Missing run ID, late results, failed/cancelled/skipped runs and real hung subprocess fail without resubmission.",
+      "Fixed test_cron.py canonical package imports so the previously excluded cron suite now runs."
     ],
-    "findings_still_blocked_external": [
-      {
-        "id": 4,
-        "finding": "main.py:1719-1734 (invoke_openclaw_structured_provider docstring) documents, but this adapter cannot enforce, the restricted native/domain-tool boundary: forcing `tool_choice={\"type\":\"function\",\"name\":\"emit_extraction\"}` on the outbound request and rejecting a response containing more than one function call or the wrong tool name are both client-side request shaping / post-hoc response checks, not proof that the upstream pinned Gateway's own server-side restricted-runtime/tool-arbitration policy actually disables the agent's native/domain tools for this call.",
-        "why_blocked": "Proving genuine server-side denial (as opposed to this adapter merely rejecting a response that arrived with an unexpected tool call) requires exercising the actual pinned Gateway over a live, authenticated Gateway/auth route with a verified restricted-runtime policy applied to the target agent, then running positive (correct emit_extraction call succeeds), invalid-argument, wrong/missing-tool, and denied-capability cases against it. No such reachable, authenticated Gateway instance exists in this dev sandbox -- there is no network path to a live OpenClaw Gateway process, and no live-Gateway credentials are provisioned here. This is a genuine external/environment blocker, not a code change this task can make unilaterally.",
-        "required_to_close": "A live pinned-Gateway environment (reachable OPENCLAW_GATEWAY_URL + valid OPENCLAW_GATEWAY_TOKEN + a restricted-runtime agent policy actually applied server-side) accessible to the executing worker or to Human/Ops, from which the four required Gateway-side cases can be run and their actual HTTP responses captured as evidence."
-      },
-      {
-        "id": 5,
-        "finding": "evidence.json's acceptance criteria require a controlled >=100-request base(CLI)-vs-candidate(HTTP) replay using the same permitted model/auth path and fixed prompts, recording cold/warm TTFT/full p50/p95, token usage, errors, and subprocess counts, gated at full p95 <=1.10x baseline and mean tokens <=1.05x baseline.",
-        "why_blocked": "Running this replay requires making >=200 real round-trips (100 base + 100 candidate) against an actual authenticated OpenClaw Gateway/model backend to get genuine latency/token/error measurements -- there is no such reachable backend in this dev sandbox. Fabricating numbers to satisfy the gate would be a false acceptance claim; this pass instead records the blocker honestly, unchanged in substance from the second and third corrective passes' `not_done_or_unverifiable` entries (see below), but reframed here as an explicit external blocker rather than an 'out of scope' dismissal per this pass's rejection feedback.",
-        "required_to_close": "A live pinned-Gateway environment as in finding 4, plus the CLI-based baseline (`_run_func`/subprocess) transport still being exercisable for the base-SHA comparison side of the replay, run from an environment with real network/credential access (Human/Ops or a CI job provisioned with live Gateway secrets)."
-      }
-    ],
-    "test_summary": "timeout 300 .venv-pantheon/bin/python3 -m pytest -q services/openclaw-gateway-adapter/ services/control-plane/cron/test_exact_run_wait.py services/control-plane/cron/test_service.py => 548 passed, 4 skipped, 18 subtests passed, exit 0"
+    "measured_provider_sha256": "3fe4605e0b40a25fd0f499e49e017c834fa249a2a2a88ef551b70b1dcabafa9d",
+    "final_provider_sha256": "bdb202a634a799370796078c47b7eba8c65a0428511e83ca98dc9aec1aa59928",
+    "post_measurement_change": "Removed only the uncalled _extract_reply legacy CLI decoder and updated a stale comment. Programmatically verified the complete final provider AST equals anchor 633381255 after deleting that one unused method; no measured transport code changed. Runner formatting preserved its full AST; its baseline reference was frozen to the same measured a9557a6 SHA for repeatability after merge."
   },
-  "third_corrective_pass_after_review_reject": {
-    "rejected_pr": 5629,
-    "reviewer": "Codex",
-    "findings_fixed": [
-      {
-        "id": 1,
-        "finding": "main.py's mounted /invoke/stream forwarded req.agent_id straight to the provider's stream() without ever running /invoke's Persona admission/runtime-policy/live-agent/idempotency fencing (_assert_persona_opinion_admitted / _assert_persona_opinion_runtime_policy / _require_live_persona_opinion_agent, plus the Idempotency-Key/mode=user/tool-allowlist checks). A syntactically valid persona_admission request with an empty admission DB reached the requested persona agent and emitted `done` on /invoke/stream while /invoke correctly returned 403 PERSONA_OPINION_ADMISSION_DENIED for the identical request.",
-        "fix": "Extracted the entire admission/runtime-policy/live-agent/idempotency-key/mode/tool-allowlist check block from /invoke into a shared `_persona_opinion_admission_error()` helper returning `(status_code, content)` on rejection (or None + in-place metadata mutation on success). Both /invoke and the new Idempotency-Key-accepting /invoke/stream now call this identical helper before any upstream dispatch; the stream route maps a rejection to an SSE error event with the same error_code/message /invoke would have returned as JSON.",
-        "tests": [
-          "services/openclaw-gateway-adapter/test_main.py::TestOpenClawAssistantProvider::test_invoke_stream_applies_same_persona_admission_fencing_as_invoke (new, exact reviewer repro: empty admission DB denied identically on both routes, provider invoke()/stream() never reached)"
-        ]
-      },
-      {
-        "id": 2,
-        "finding": "assistant_openclaw_provider.py's response.completed handler treated any nested status of \"incomplete\" as a hard failure (502 OPENCLAW_RESPONSES_INCOMPLETE) even when the output contained a function_call -- but the real pinned OpenClaw Gateway (v2026.7.1) emits status=\"incomplete\" as the *normal* tool-call yield, not truncation/refusal.",
-        "fix": "The incomplete-status check now only errors when there is no function_call in the output; an incomplete status with a function_call present falls through to the normal done/function_calls path (with usage/response_id passthrough preserved).",
-        "tests": [
-          "tests/test_openresponses_transport_contract.py::TestErrorInjectionContract::test_incomplete_status_with_function_call_is_treated_as_normal_completion (new)",
-          "tests/test_openresponses_transport_contract.py::TestErrorInjectionContract::test_incomplete_status_with_no_function_call_still_errors (new, genuine truncation still rejected)"
-        ]
-      },
-      {
-        "id": 3,
-        "finding": "main.py:invoke_structured/invoke_openclaw_structured_provider's native-tool-denial boundary (pinned client tool_choice + reject-more-than-one-call) was already implemented from the prior pass, but the endpoint's docstring did not clearly separate what is enforced locally from what requires the actual upstream Gateway's own server-side restricted-runtime policy.",
-        "fix": "No behavior change (the local enforcement -- forced tool_choice, reject >1 function call, reject wrong tool name -- was already correct on inspection). Added an explicit docstring section on invoke_openclaw_structured_provider precisely documenting what this adapter enforces locally versus the genuine external/config blocker (the upstream Gateway's own restricted-runtime tool-arbitration for the agent), so this boundary is not overstated as fully closed.",
-        "tests": [
-          "No new test needed -- existing OPENCLAW_TOOL_MISMATCH coverage (test_structured_data_tool_contract.py::TestInvokeStructuredNegative) already exercises the enforced-locally half."
-        ]
-      },
-      {
-        "id": 4,
-        "finding": "derive_session_user() filtered empty tenant/actor/conversation components out of `parts` before joining, which collapses distinct identity shapes onto the same string: (tenant=\"alice\", actor=\"bob\", conversation=\"\") and (tenant=\"\", actor=\"alice\", conversation=\"bob\") both reduce to the same two present parts and join identically, losing which slot was absent.",
-        "fix": "All three slots (tenant, actor, conversation) are now always joined by position (using \"\" for a genuinely-absent slot, still individually escaped), so an absent tenant is distinguishable from an absent conversation. Returns None only when all three are absent.",
-        "tests": [
-          "tests/test_openresponses_transport_contract.py::TestNormalInvokeContract::test_absent_tenant_vs_absent_conversation_do_not_collide (new, exact reviewer repro)",
-          "tests/test_openresponses_transport_contract.py::TestNormalInvokeContract::test_all_three_slots_absent_returns_none (new)"
-        ],
-        "caveat": "Two pre-existing test_assistant_openclaw_provider_live.py assertions of the old collapsed `\"op-1|session-id\"` derived-user format were updated to the corrected `\"|op-1|session-id\"` (leading empty-tenant slot) shape -- this is fixing an assertion of the previously-buggy behavior, not weakening a passing correctness check."
-      },
-      {
-        "id": 5,
-        "finding": "context_pack was serialized only into the `metadata` field and silently truncated at 4000 characters -- but the real Gateway builds model context only from `input`/`instructions` and never reads arbitrary `metadata`, so the model never saw context_pack at all, truncated or not.",
-        "fix": "context_pack is now folded into the actual model-visible `input` array as a prepended system-role message (untruncated, up to a new _CONTEXT_PACK_MAX_CHARS=200_000 hard bound); an over-budget pack yields an explicit typed 413 OPENCLAW_CONTEXT_PACK_TOO_LARGE rejection instead of a silently truncated success. `metadata` no longer carries context_pack at all (trace_id still does, since the Gateway's metadata field is genuinely the only slot for that).",
-        "tests": [
-          "tests/test_openresponses_transport_contract.py::TestNormalInvokeContract::test_context_pack_is_folded_into_model_visible_input_not_metadata (new: multi-thousand-char pack with a trailing required fact verified present in the outbound payload's input)",
-          "tests/test_openresponses_transport_contract.py::TestNormalInvokeContract::test_oversized_context_pack_is_explicitly_rejected_not_truncated (new)",
-          "tests/test_openresponses_transport_contract.py::TestNormalInvokeContract::test_trace_id_reaches_metadata (updated from the old combined trace_id+context_pack-in-metadata test)"
-        ]
-      },
-      {
-        "id": 6,
-        "finding": "Four schema-validation gaps: (a) a root-level `enum` combined with `type: object` was never enforced because `_validate_extraction_arguments` called `_validate_extraction_object` directly instead of `_validate_extraction_value` (which is where the enum check lives), skipping it entirely at the root; (b) `minLength`/`maxLength`/`pattern` string constraints were declared but never checked; (c) a nullable `type: [\"number\",\"null\"], minimum: 0` with value `null` raised an uncaught TypeError (`None < 0`) because the numeric-bounds check ran unconditionally after the type-union match succeeded via the \"null\" member; (d) `required: [{}]` (a non-string entry) crashed with an uncaught TypeError (`{} not in value_dict` -- unhashable dict) instead of a typed rejection.",
-        "fix": "Root validation now goes through `_validate_extraction_value` (enum is checked before object recursion). Added `_validate_extraction_string_constraints()` for minLength/maxLength/pattern. Numeric/string bound checks are now skipped when the matched value is the `null` member of a type union. `_validate_extraction_object`'s required-list loop now rejects a non-string entry via `_schema_mismatch` instead of using it as a dict key/membership check.",
-        "tests": [
-          "tests/test_structured_data_tool_contract.py::TestValidateExtractionArgumentsSchemaCoverage::test_root_level_enum_is_enforced_even_when_type_is_object (new, exact reviewer repro)",
-          "tests/test_structured_data_tool_contract.py::TestValidateExtractionArgumentsSchemaCoverage::test_min_length_and_max_length_are_enforced (new)",
-          "tests/test_structured_data_tool_contract.py::TestValidateExtractionArgumentsSchemaCoverage::test_nullable_numeric_with_null_value_does_not_raise (new, exact reviewer repro)",
-          "tests/test_structured_data_tool_contract.py::TestValidateExtractionArgumentsSchemaCoverage::test_required_list_with_non_string_entry_is_a_typed_rejection_not_a_crash (new, exact reviewer repro)",
-          "tests/test_structured_data_tool_contract.py::TestStructuredEndpointRejectsCallerSuppliedTools::test_schema_invalid_tool_call_is_typed_422_never_500 (new, HTTP-level: typed 422, never an uncaught 500)"
-        ]
-      },
-      {
-        "id": 7,
-        "finding": "The total read deadline in assistant_openclaw_provider.py's stream() only bounded the per-SSE-line body read loop; blocking header parsing inside urlopen() and HTTPError.read() on an error body were NOT bounded by it -- a slow-drip response could hold the connection well past the configured budget (measured by the reviewer: 0.418s under a 0.1s deadline for an HTTP500 slow-drip body, 0.407s for a header slow-drip).",
-        "fix": "Added `_DeadlineBoundedSocket` (a `socket.socket` subclass whose recv/recv_into re-check the absolute deadline and shrink their own timeout to the remaining budget before every blocking call) plus `_DeadlineBoundedHTTPConnection`/`_DeadlineBoundedHTTPSConnection` (re-home the socket to this subclass right after connect()). `_TemporaryDeadlineBoundedHTTPConnections` temporarily swaps `http.client.HTTPConnection`/`HTTPSConnection` for the duration of one `urllib.request.urlopen()` call (restored immediately after), so connection establishment, header parsing, and the resulting response/HTTPError object's later body reads (success or error) all share the same absolute deadline as the existing per-line check. The call site is still `urllib.request.urlopen()` (unchanged), so none of the ~127 existing `patch(\"urllib.request.urlopen\", ...)`-based tests needed to change. CAVEAT: HTTPS record-layer reads happen inside the C-level `ssl` module and bypass this Python-level recv override, so the byte-level deadline bound only fully covers plain HTTP (the adapter's actual gateway URL is ws://\"/http:// by default); this is documented in `_DeadlineBoundedHTTPSConnection`'s docstring, not silently claimed as fixed for HTTPS. A second caveat: this briefly mutates process-global `http.client` classes, so a genuinely concurrent in-flight request from another thread inside the exact same connect+header-parse window could transiently see this call's deadline instead of its own -- documented as an accepted trade-off since the worst case is still a bounded deadline, never the previous unbounded slow-drip.",
-        "tests": [
-          "Verified via two ad-hoc real-socket repro scripts during this pass (not committed as a distinct file, mirroring the existing real-socket test style in TestRealLocalHttpServerRegressions): a byte-at-a-time slow-drip HTTP header (0.03s/byte) against a 0.1s deadline now returns OPENCLAW_RESPONSES_TIMEOUT at ~0.102s elapsed (previously would have blocked until the full header arrived); a byte-at-a-time slow-drip HTTP 500 error body against the same 0.1s deadline now returns OPENCLAW_RESPONSES_HTTP_ERROR at ~0.101s elapsed. Existing TestRealLocalHttpServerRegressions real-socket tests (body-read slow-drip, partial-EOF) re-verified green with the new connection classes in place."
-        ]
-      },
-      {
-        "id": 8,
-        "finding": "response.completed with a nested status of \"cancelled\" (or \"in_progress\") and partial text/output was treated as a successful `done`, since the handler only special-cased \"failed\"/\"incomplete\" and fell through to building a done event for everything else.",
-        "fix": "Any nested status other than `None`/\"completed\"/\"incomplete\" (which has its own tool-call-aware handling per finding 2) now yields a typed OPENCLAW_RESPONSES_NOT_TERMINAL error instead of a fabricated done, even when partial text was accumulated.",
-        "tests": [
-          "tests/test_openresponses_transport_contract.py::TestErrorInjectionContract::test_nested_response_status_cancelled_with_partial_text_is_rejected (new, exact reviewer repro)",
-          "tests/test_openresponses_transport_contract.py::TestErrorInjectionContract::test_nested_response_status_in_progress_is_rejected (new)"
-        ]
-      },
-      {
-        "id": 9,
-        "finding": "Mounted-acceptance gap: _normalize_input_item only normalized top-level `attachments` into the pinned Gateway's content-part shapes; a `messages[]` entry's own Chat-Completions-style `content` array (`{\"type\": \"text\", ...}` / `{\"type\": \"image_url\", ...}`) was forwarded unnormalized, which the Gateway's `.strict()` schema would reject.",
-        "fix": "Added `_normalize_message_content()`, reusing `_normalize_attachment_content_part()` for image/file parts and converting `{\"type\":\"text\"}` to `{\"type\":\"input_text\"}`; `_normalize_input_item()` now runs every message's `content` through it.",
-        "tests": [
-          "tests/test_openresponses_transport_contract.py::TestNormalInvokeContract::test_chat_format_content_parts_in_messages_are_normalized (new, multi-turn history with an image_url part)"
-        ]
-      },
-      {
-        "id": 10,
-        "finding": "Mounted-acceptance gap: an explicit `model` field on the mounted /invoke and /structured request bodies was silently dropped (neither request model declared it, so pydantic discarded it) rather than honored or explicitly rejected.",
-        "fix": "Both `AssistantProviderInvokeRequest` and `AssistantProviderStructuredInvokeRequest` now declare `model: Optional[str]` and a model_validator (`reject_explicit_model`) that fails closed with a 422 if a caller supplies one -- consistent with this codebase's existing pattern of failing closed on unsupported overrides (e.g. /structured's agent_id restriction, tools/tool_choice rejection) rather than silently accepting or dropping them. Routing on these mounted routes remains agent_id-only; an explicit model override still has no threaded path from either mounted route to the provider.",
-        "tests": [
-          "tests/test_structured_data_tool_contract.py::TestStructuredEndpointRejectsCallerSuppliedTools::test_explicit_model_override_is_rejected_not_silently_dropped (new)"
-        ]
-      }
-    ],
-    "test_commands": [
-      {
-        "command": "THIRD CORRECTIVE PASS (this revision) -- .venv-pantheon/bin/python3 -m pytest -q services/openclaw-gateway-adapter/ services/control-plane/cron/test_exact_run_wait.py services/control-plane/cron/test_service.py",
-        "result": "545 passed, 4 skipped, 1 warning, 18 subtests passed",
-        "exit_code": 0
-      }
-    ],
-    "not_fixed_or_external": [
-      "Reviewer's own numbered item 9 (the live-Gateway >=100-request replay benchmark and required pinned-Gateway structured-capability cases) was explicitly out of scope for this pass per instruction and was left untouched -- see the pre-existing second_corrective_pass_after_review_reject entry and not_done_or_unverifiable below, both still accurate and unchanged.",
-      "Finding 3's genuine external boundary (proving the upstream Gateway itself, not just this adapter's post-hoc check, denies a native/domain tool for the restricted-extraction agent) is unchanged from the prior pass's caveat -- it requires the same live, authenticated Gateway/auth route access blocked by the item above; only the documentation of that boundary was strengthened this pass, not the boundary itself.",
-      "Finding 7's HTTPS byte-level deadline bound is a documented partial fix (plain HTTP is fully bounded; HTTPS record-layer reads inside the `ssl` module are not) -- see the finding's own caveat above.",
-      "Finding 7's process-global `http.client` class swap has a narrow, documented concurrency caveat rather than fully race-free per-request isolation -- see the finding's own caveat above."
-    ]
-  },
-  "second_corrective_pass_after_review_reject": {
-    "rejected_pr": 5629,
-    "rejected_head_sha": "7248a1505e2e666654fce45d9dee67aff2e271e3",
-    "reviewer": "Codex",
-    "reviewer_verdict_recorded_at": "2026-09-06T08:03:00Z",
-    "findings_fixed": [
-      {
-        "id": 1,
-        "finding": "assistant_openclaw_provider.py:1382-1396 stream() emitted a fabricated `done` event whenever the connection ended (real EOF, no [DONE] sentinel, no response.completed) as long as some partial delta/output_text.done text had been accumulated -- a cancelled/disconnected/truncated run was reported as a real success using whatever partial text happened to arrive first. The existing test (`test_partial_data_then_cancellation_yields_single_terminal`) explicitly asserted this as intended behavior.",
-        "fix": "Added a `stream_terminated_cleanly` flag set only when an explicit end-of-stream signal (`[DONE]` sentinel or a `response.completed` event) is actually observed. A real EOF without either now yields `OPENCLAW_RESPONSES_STREAM_INTERRUPTED` (if partial text was salvaged) or `OPENCLAW_RESPONSES_EMPTY` (if none was), never a fabricated `done`. A legitimate `[DONE]` with no `response.completed` still returns the salvaged text as a real `done` (new coverage added for that case).",
-        "tests": [
-          "services/openclaw-gateway-adapter/tests/test_openresponses_transport_contract.py::TestErrorInjectionContract::test_partial_data_then_cancellation_yields_single_terminal (updated: now asserts error/STREAM_INTERRUPTED)",
-          "services/openclaw-gateway-adapter/tests/test_openresponses_transport_contract.py::TestErrorInjectionContract::test_missing_done_marker_and_no_completed_event_still_single_terminal (updated: now asserts error/STREAM_INTERRUPTED)",
-          "services/openclaw-gateway-adapter/tests/test_openresponses_transport_contract.py::TestErrorInjectionContract::test_done_marker_with_no_completed_event_is_accepted_terminal (new: legitimate [DONE] still succeeds)"
-        ]
-      },
-      {
-        "id": 2,
-        "finding": "provider.py:1310 checked the total read deadline only once per fully-received SSE line (`for raw in resp:` calls one atomic readline()-equivalent per iteration). A real local HTTP server sending 12 newline-free bytes 30ms apart returned only after 0.404s for a 0.1s budget, because nothing re-checked the clock mid-line while data kept trickling in well inside any single recv's own timeout.",
-        "fix": "Added `_iter_deadline_bounded_lines()`: when the response object exposes a real `.read(1)` (a genuine socket, not this module's line-only test doubles), it reads one byte at a time and rechecks the absolute deadline before every single byte, so a byte-by-byte drip with no newline is now bounded by the total deadline instead of by however long one full line takes to arrive. Test doubles lacking `.read` fall back to the previous per-line check (they never block in real time, so this is unaffected).",
-        "tests": [
-          "services/openclaw-gateway-adapter/tests/test_openresponses_transport_contract.py::TestRealLocalHttpServerRegressions::test_newline_free_slow_drip_is_bounded_by_total_deadline (new, real socket, not mocked urlopen)"
-        ]
-      },
-      {
-        "id": 3,
-        "finding": "provider.py:1337-1347 discarded a still-incomplete buffered multi-line SSE event whenever a later physical line happened to parse as valid JSON *on its own* (e.g. a bare JSON string half of a legally split value like `{\"type\":...,\"text\":` / `\"joined reply\"` / `}`), because the code reset `data_buffer = []` before ever trying to join it with the new line. This raised `AttributeError: 'str' object has no attribute 'get'` inside `_handle_event`, surfacing as `OPENCLAW_RESPONSES_STREAM_INTERRUPTED`.",
-        "fix": "The fragment-assembly logic now tries joining the buffered fragment(s) with the new line FIRST (and only accepts that join if it parses as a JSON *object*, via a new `_parse_event()` helper that rejects non-dict JSON values); only if the join fails does it fall back to treating the new line as a fresh standalone event (discarding the buffer as genuinely orphaned/malformed).",
-        "tests": [
-          "services/openclaw-gateway-adapter/tests/test_openresponses_transport_contract.py::TestErrorInjectionContract::test_standalone_parseable_fragment_does_not_discard_buffered_multiline_event (new, exact reviewer repro)"
-        ]
-      },
-      {
-        "id": 4,
-        "finding": "derive_session_user()'s plain `\"|\".join(parts)` let a boundary-shifting caller-chosen component collide with a different tenant/actor/conversation split onto the identical joined string: (tenant=\"tenant\", actor=\"alice\", conversation=\"bob|shared\") and (tenant=\"tenant|alice\", actor=\"bob\", conversation=\"shared\") both produced \"tenant|alice|bob|shared\".",
-        "fix": "Each component is now escaped (`\\\\` -> `\\\\\\\\`, `|` -> `\\\\|`) before joining, so an unescaped `|` in the final string only ever marks a genuine component boundary.",
-        "tests": [
-          "services/openclaw-gateway-adapter/tests/test_openresponses_transport_contract.py::TestNormalInvokeContract::test_boundary_shifting_session_components_do_not_collide (new, exact reviewer repro)"
-        ],
-        "caveat": "The reviewer's related note that structured invoke has no tenant input at all, and that ordinary `metadata.tenant_id` is caller-supplied rather than cryptographically authenticated, is accurate and unchanged by this fix -- adding real tenant authentication is a separate, materially larger change (out of scope for a collision-safety fix) and is not claimed as done here."
-      },
-      {
-        "id": 5,
-        "finding": "main.py's mounted stream route (`/invoke/stream`) dropped `req.messages` entirely and never forwarded `req.attachments`/`req.context_pack` to the provider at all; the mounted invoke route forwarded `context_pack`/`messages` but also silently dropped `req.attachments`. Additionally, `stream()`/`_invoke_via_http()` accepted `trace_id`/`context_pack` parameters but never actually serialized them anywhere in the outbound HTTP payload -- they were silently discarded at the transport boundary.",
-        "fix": "`stream()` now accepts `attachments`/`context_pack`, converts Chat-Completions-style attachments (the same shape used elsewhere in this adapter, e.g. assistant_codex_provider.py) into the pinned Gateway's `input_image`/`input_file` content parts attached to the trailing user message, and serializes `trace_id`/`context_pack` into the Gateway's `metadata: Record<string,string>` field (the only strict-schema slot for opaque caller context). `_invoke_via_http()`/`invoke()` forward `attachments` through to `stream()`. main.py's stream route now forwards `agent_id`/`messages`/`attachments`/`context_pack`; the invoke route now forwards `attachments`. `stream()` also gained the same `_AGENT_ID_PATTERN` validation `invoke()` already had, since a caller-declared `agent_id` is now actually honored on this path.",
-        "tests": [
-          "services/openclaw-gateway-adapter/tests/test_openresponses_transport_contract.py::TestNormalInvokeContract::test_trace_id_and_context_pack_reach_metadata (new)",
-          "services/openclaw-gateway-adapter/tests/test_openresponses_transport_contract.py::TestNormalInvokeContract::test_attachments_are_normalized_into_input_content_parts (new)",
-          "services/openclaw-gateway-adapter/tests/test_openresponses_transport_contract.py::TestNormalInvokeContract::test_attachments_attach_to_trailing_message_with_history (new)",
-          "services/openclaw-gateway-adapter/test_main.py::TestOpenClawAssistantProvider::test_openclaw_ordinary_stream_forwards_full_mounted_contract (new)",
-          "services/openclaw-gateway-adapter/test_main.py::TestOpenClawAssistantProvider::test_openclaw_invoke_forwards_attachments (new)"
-        ],
-        "caveat": "Admitted `agent_id` forwarding through the governed persona-opinion admission flow (agent_id + persona_admission paired, per AssistantProviderInvokeRequest.validate_agent_selection) is exercised by the existing TestGovernedServantAgentSync persona-opinion invoke coverage, which requires the full admission fixture; the new mounted-contract test above deliberately omits agent_id/persona_admission to keep the test focused on messages/attachments/context_pack/trace_id and avoid duplicating that heavier fixture."
-      },
-      {
-        "id": 6,
-        "finding": "_validate_extraction_arguments never validated array `items` at all (records[].amount=\"not-an-integer\" was accepted for an integer-typed array item schema), never enforced `additionalProperties: false` (an extra field alongside a closed schema was silently accepted), never enforced numeric `minimum`/`maximum`/`exclusiveMinimum`/`exclusiveMaximum` bounds, and crashed with an unhandled `TypeError` (surfacing as an unhandled HTTP 500, uncaught by the `except GatewayOpenClawProviderError` handler) on a malformed schema like `required: 17` (a non-list), since `for field in required` was never guarded.",
-        "fix": "Added `_validate_extraction_array()` (items/minItems/maxItems recursion) and `_validate_extraction_numeric_bounds()` (minimum/maximum/exclusiveMinimum/exclusiveMaximum), and `_validate_extraction_object()` now enforces `additionalProperties: false` (rejecting undeclared fields) while permissively allowing them (or validating them against a schema) when `additionalProperties` is omitted/true/a schema. Every malformed schema shape (`required`, `properties`, `items`, `enum`, `type` not the expected JSON-schema shape) now raises a typed 422 `OPENCLAW_TOOL_ARGS_SCHEMA_MISMATCH` via `_schema_mismatch()` instead of crashing with an unguarded Python exception.",
-        "tests": [
-          "services/openclaw-gateway-adapter/tests/test_structured_data_tool_contract.py::TestValidateExtractionArgumentsSchemaCoverage::test_array_item_type_mismatch_is_rejected (new, exact reviewer repro)",
-          "services/openclaw-gateway-adapter/tests/test_structured_data_tool_contract.py::TestValidateExtractionArgumentsSchemaCoverage::test_additional_properties_false_rejects_extra_field (new, exact reviewer repro)",
-          "services/openclaw-gateway-adapter/tests/test_structured_data_tool_contract.py::TestValidateExtractionArgumentsSchemaCoverage::test_numeric_bounds_are_enforced (new)",
-          "services/openclaw-gateway-adapter/tests/test_structured_data_tool_contract.py::TestValidateExtractionArgumentsSchemaCoverage::test_malformed_required_declaration_is_a_typed_rejection_not_a_crash (new, exact reviewer repro: required=17)"
-        ]
-      },
-      {
-        "id": 7,
-        "finding": "invoke_structured() only checked `function_calls[0]`'s name against `emit_extraction` -- a pinned client-side `tool_choice` is a request, not proof the upstream Gateway enforced a single-tool policy, so a model emitting a second, unauthorized tool call (e.g. a native/domain tool) alongside the requested `emit_extraction` would have that second call silently ignored rather than failing closed.",
-        "fix": "invoke_structured() now rejects the response with `OPENCLAW_TOOL_MISMATCH` whenever more than one function call is present, not only when the first one has the wrong name.",
-        "tests": [
-          "services/openclaw-gateway-adapter/tests/test_structured_data_tool_contract.py::TestInvokeStructuredNegative::test_extra_tool_call_alongside_emit_extraction_is_rejected (new, exact reviewer repro)"
-        ],
-        "caveat": "Demonstrating this against the actual pinned Gateway/auth route (proving the Gateway itself denies native/domain tools, not just that this adapter would reject a second call if one arrived) requires a live, authenticated Gateway and is part of the same external blocker as finding 9 below -- not independently re-claimed here."
-      },
-      {
-        "id": 8,
-        "finding": "cron/openclaw_client.py's `__call__` gave `cron.add` and `cron.run` each their own independent up-to-30s RPC timeout (via `_call`'s `timeout_seconds=None` default), then `_wait_for_terminal_run` started a BRAND NEW poll deadline from `time.monotonic()` at that point -- so a caller-supplied 1s total budget could still spend .75s on cron.add + .75s on cron.run + .1s polling and return \"accepted\" at 1.6s elapsed, ignoring the caller's actual budget entirely.",
-        "fix": "`__call__` now computes ONE deadline up front (`time.monotonic() + self._poll_timeout`) and threads it through: `cron.add`'s and `cron.run`'s `_call()` invocations now receive only the time remaining until that deadline (raising immediately, before even attempting the RPC, if the deadline has already elapsed -- with a job-accepted-but-not-dispatched message for the cron.run case so the in-doubt state is clear), and `_wait_for_terminal_run` now accepts that same deadline instead of computing a fresh one (falling back to computing its own, for backward compatibility with direct unit-test callers that exercise it standalone).",
-        "tests": [
-          "services/control-plane/cron/test_exact_run_wait.py::TestExactRunLookupAndSharedDeadline::test_rpc_and_sleep_share_one_total_deadline_not_a_fixed_subprocess_timeout (pre-existing, still green -- exercises _wait_for_terminal_run's own standalone-deadline fallback path)",
-          "All 13 test_exact_run_wait.py cases re-verified green with the shared-deadline `__call__` plumbing in place."
-        ],
-        "caveat": "A dedicated end-to-end `__call__`-level test asserting the exact `.75s add + .75s run + .1s poll -> 1.6s` clock repro from the reviewer's finding was not added as a new named test in this pass (the existing per-phase and _wait_for_terminal_run-level deadline tests already cover the mechanism this fix relies on); the fix itself was verified by code inspection of the new `_remaining()` helper and by all existing tests remaining green."
-      },
-      {
-        "id": 9,
-        "finding": "Required pinned-Gateway structured-capability cases and the controlled >=100-request base/candidate replay benchmark (cold/warm TTFT/full p50/p95, usage, errors, subprocess counts, acceptance thresholds) remain unexecuted; this cannot be waived via an evidence caveat per the reviewer.",
-        "fix": "Unchanged from the first corrective pass: no live, authenticated OpenClaw Gateway/model backend was reachable in this sandbox at any point in this task's execution. This is a genuine external blocker, reported honestly here and in not_done_or_unverifiable below, not fabricated or waived."
-      }
-    ]
-  },
-  "corrective_pass_after_review_reject": {
-    "rejected_pr": 5629,
-    "rejected_head_sha": "4a103a1df2f5c0a9822800647f6669965791aeef",
-    "reviewer": "Codex",
-    "findings_fixed": [
-      {
-        "id": 1,
-        "finding": "assistant_openclaw_provider.py stream()'s JSON `model` field sent a raw provider id (e.g. anthropic/claude-opus-4-8) directly; the pinned Gateway's resolveOpenAiCompatModelOverride (src/gateway/http-utils.ts) only accepts `openclaw`/`openclaw/<agentId>` there and rejects anything else with HTTP 400.",
-        "fix": "`model` is now always `openclaw/<effective_agent_id>`; a requested provider/model override travels in the `x-openclaw-model` header instead (validated by the Gateway against its model-visibility policy).",
-        "verified_against": "static review of the pinned Gateway source (resolveAgentIdFromModel/resolveOpenAiCompatModelOverride in the operator-provided pinned http-utils.ts) -- no live Gateway round-trip was possible in this sandbox (see caveats).",
-        "tests": [
-          "services/openclaw-gateway-adapter/tests/test_openresponses_transport_contract.py::TestNormalInvokeContract::test_explicit_non_default_agent_and_model_routing",
-          "services/openclaw-gateway-adapter/tests/test_openresponses_transport_contract.py::TestNormalInvokeContract::test_default_agent_no_model_override_sends_openclaw_alias_only",
-          "services/openclaw-gateway-adapter/test_assistant_openclaw_provider_live.py (all `_model_dispatch_urlopen`-based readiness fallback tests, now dispatching on the x-openclaw-model header)"
-        ]
-      },
-      {
-        "id": 2,
-        "finding": "Forwarded/appended multi-turn history entries were plain {role, content} dicts; the pinned MessageItemSchema (src/gateway/open-responses.schema.ts) is `.strict()` and requires a discriminating `type: \"message\"`, so these were rejected.",
-        "fix": "New `_normalize_input_item()` adds `type: \"message\"` to every input[] entry before it is sent.",
-        "tests": [
-          "services/openclaw-gateway-adapter/tests/test_openresponses_transport_contract.py::TestNormalInvokeContract::test_multiturn_messages_are_normalized_to_message_items"
-        ]
-      },
-      {
-        "id": 3,
-        "finding": "A caller-supplied session_id overrode tenant/actor isolation: two different callers (e.g. alice/tenant-a and bob/tenant-b) reusing the same session_id=\"shared\" both produced upstream user=\"shared\", cross-pollinating warm session routing.",
-        "fix": "New `derive_session_user()` mixes authenticated tenant (metadata.tenant_id) and actor (operator_id) ahead of the caller's conversation name; used by both `_invoke_via_http` and main.py's raw SSE stream endpoint (which previously had its own separate, equally-unsafe derivation).",
-        "tests": [
-          "services/openclaw-gateway-adapter/tests/test_openresponses_transport_contract.py::TestNormalInvokeContract::test_same_named_conversation_isolates_by_authenticated_tenant_and_actor",
-          "services/openclaw-gateway-adapter/test_assistant_openclaw_provider_live.py::TestAssistantOpenClawProviderUnit::test_invoke_selects_validated_per_request_agent_and_reports_it (updated to assert the derived 'op-1|...' user)"
-        ]
-      },
-      {
-        "id": 4,
-        "finding": "main.py's /structured endpoint accepted an arbitrary agent_id with zero admission/runtime-policy checks (ordinary invoke pairs agent_id with a governed persona_admission and enforces runtime policy; /structured has no equivalent mechanism at all).",
-        "fix": "The endpoint now rejects any agent_id other than the default agent with 422 OPENCLAW_STRUCTURED_AGENT_NOT_ALLOWED, and never calls the provider in that case.",
-        "tests": [
-          "services/openclaw-gateway-adapter/tests/test_structured_data_tool_contract.py::TestStructuredEndpointRejectsCallerSuppliedTools::test_arbitrary_agent_id_is_rejected_without_admission_or_policy_check",
-          "services/openclaw-gateway-adapter/tests/test_structured_data_tool_contract.py::TestStructuredEndpointRejectsCallerSuppliedTools::test_explicit_default_agent_id_is_still_accepted"
-        ],
-        "caveat": "The reviewer's related point that 'pinned client tool_choice alone does not disable native agent tools' concerns the upstream Gateway's own tool-arbitration behavior, which cannot be independently verified without a live pinned Gateway in this sandbox; the adapter-side admission gap (the concretely fixable half of this finding) is fixed and tested."
-      },
-      {
-        "id": 5,
-        "finding": "_validate_extraction_arguments ignored `enum` and nested-object `required`, and crashed with an unhandled TypeError on a nullable `type: [\"string\", \"null\"]` union (a list is unhashable and cannot key `_JSON_TYPE_TO_PYTHON.get(...)`).",
-        "fix": "Rewrote as a small recursive validator (`_validate_extraction_object`/`_validate_extraction_value`/`_json_value_matches_type`) that checks enum membership, recurses into nested object properties/required, and treats a type union as 'matches any member type' without crashing; an unsupported/malformed type declaration is rejected explicitly rather than silently ignored.",
-        "tests": [
-          "services/openclaw-gateway-adapter/tests/test_structured_data_tool_contract.py::TestValidateExtractionArgumentsSchemaCoverage::test_enum_violation_is_rejected",
-          "services/openclaw-gateway-adapter/tests/test_structured_data_tool_contract.py::TestValidateExtractionArgumentsSchemaCoverage::test_nested_object_required_violation_is_rejected",
-          "services/openclaw-gateway-adapter/tests/test_structured_data_tool_contract.py::TestValidateExtractionArgumentsSchemaCoverage::test_nullable_type_list_does_not_raise_and_validates"
-        ]
-      },
-      {
-        "id": 6,
-        "finding": "Three real SSE-parsing defects reproduced against a genuine local HTTP server: (a) a duplicate response.completed re-emitted a second done event (no `return` after the first); (b) a legal multi-line SSE event (one JSON object legally split across consecutive data: lines with no blank-line separator) was silently dropped as unparseable fragments, surfacing as OPENCLAW_RESPONSES_EMPTY; (c) a genuine mid-frame connection close needed to yield exactly one truthful terminal event.",
-        "fix": "The stream() SSE reader now buffers unparseable data: fragments and joins them at the next blank line or end-of-stream (supporting legitimate multi-line events) while still trying each new line standalone first (preserving the existing single-line-per-event and malformed-line-is-skipped behaviors); the response.completed handler now returns immediately after yielding its done event.",
-        "tests": [
-          "services/openclaw-gateway-adapter/tests/test_openresponses_transport_contract.py::TestErrorInjectionContract::test_duplicate_response_completed_yields_only_one_done_event",
-          "services/openclaw-gateway-adapter/tests/test_openresponses_transport_contract.py::TestErrorInjectionContract::test_legal_multiline_single_event_split_across_data_lines",
-          "services/openclaw-gateway-adapter/tests/test_openresponses_transport_contract.py::TestRealLocalHttpServerRegressions::test_real_partial_eof_mid_event_yields_single_truthful_terminal (real socket, not mocked urlopen)"
-        ]
-      },
-      {
-        "id": 7,
-        "finding": "No shared total deadline: `urlopen(timeout=...)` only bounds each individual socket read, so a 'slow drip' that stays under that per-read timeout on every chunk can keep the read loop going far past the intended total budget (reproduced: a 0.05s budget completed only after 0.266s against a real slow server). Same class of bug in cron's _wait_for_terminal_run: a fixed timeout=30 subprocess call plus an uncapped sleep meant a 1s deadline could accept an RPC result arriving at 2s.",
-        "fix": "stream() now checks one shared `read_deadline` before processing each SSE line. cron's `_call` now accepts an explicit `timeout_seconds` and `_wait_for_terminal_run` gives it only the remaining budget (never the old fixed 30s), caps the inter-poll sleep to the remaining time, and rejects a result that only arrives after the deadline has already elapsed as unknown (timeout) rather than a late success.",
-        "tests": [
-          "services/openclaw-gateway-adapter/tests/test_openresponses_transport_contract.py::TestRealLocalHttpServerRegressions::test_slow_drip_response_is_bounded_by_total_deadline_not_per_read_timeout (real socket, not mocked urlopen)",
-          "services/control-plane/cron/test_exact_run_wait.py::TestExactRunLookupAndSharedDeadline::test_rpc_and_sleep_share_one_total_deadline_not_a_fixed_subprocess_timeout",
-          "services/control-plane/cron/test_exact_run_wait.py::TestExactRunLookupAndSharedDeadline::test_rpc_result_arriving_after_deadline_is_rejected_not_accepted_as_late_success"
-        ]
-      },
-      {
-        "id": 8,
-        "finding": "cron.runs was called with a fixed {id, limit:20} page and filtered client-side; the pinned Gateway supports an exact {id, runId} lookup ahead of pagination, and a job with more than 20 newer runs ahead of the target caused a false timeout even though the target run existed and had already completed.",
-        "fix": "`_wait_for_terminal_run` now requests `{id: job_id, runId: run_id}` (exact lookup); client-side exact-match filtering on `entries` is kept as defense-in-depth for a Gateway build that ignores the runId filter and returns an unfiltered page (and so the existing test doubles that stub the RPC without honoring runId remain correct).",
-        "tests": [
-          "services/control-plane/cron/test_exact_run_wait.py::TestExactRunLookupAndSharedDeadline::test_cron_runs_call_requests_exact_runid_lookup",
-          "services/control-plane/cron/test_exact_run_wait.py::TestExactRunLookupAndSharedDeadline::test_target_run_behind_more_than_old_fixed_limit_is_still_found"
-        ]
-      },
-      {
-        "id": 9,
-        "finding": "The prior evidence.json's caveats (no live Gateway reachable) were judged insufficient given that concrete pinned-schema defects (findings 1-2 above) were independently found and are staticly verifiable without a live Gateway.",
-        "fix": "This revision cites the pinned Gateway TypeScript sources directly for findings 1-2 (static verification), and adds real local-HTTP-server (not mocked urlopen) regression tests for the streaming/deadline defects (findings 6-7), which is the same class of evidence the review itself used. The one acceptance clause that genuinely requires a live, authenticated, answering Gateway/model backend -- the >=100-request base-vs-candidate replay benchmark with TTFT/p50/p95 -- remains a concrete external blocker in this sandbox; see not_done_or_unverifiable below. This is reported honestly, not fabricated."
-      }
-    ]
-  },
-  "files_changed": [
+  "validation": [
     {
-      "path": "services/openclaw-gateway-adapter/assistant_openclaw_provider.py",
-      "why": "Removed the general-turn CLI subprocess path (_invoke_single_model) and the 96 KiB argv-size branch; generalized the old oversized-prompt-only HTTP path into _invoke_via_http(), the single request builder now used by invoke(), readiness()'s answer-probe, and the new invoke_structured(). Extended stream() with model/agent_id/messages/tools/tool_choice/timeout_seconds and nested response.completed parsing (status/output/usage/id) for function-call and usage extraction. Added EMIT_EXTRACTION_TOOL_NAME, emit_extraction_tool_schema(), a rewritten recursive schema validator, and invoke_structured(). Corrective pass: fixed model/header contract (finding 1), input[] message normalization (finding 2), derive_session_user() tenant/actor isolation (finding 3), enum/nested/nullable schema validation (finding 5), SSE parsing (duplicate-completed return, legal multi-line join) (finding 6), and a shared read_deadline for the streaming loop (finding 7). Left _openclaw_bin, gateway_cron_call, _gateway_call, gateway_agents_list, _probe_gateway, _extract_gateway_json, delegates_kernel_mode_to_codex, CODEX_DELEGATED_KERNEL_MODES, and _openclaw_cli_state_env untouched (still used by the preserved cron/gateway-admin CLI proxy). SECOND corrective pass: reworked the stream() read loop's terminal-state logic to only accept `done` when an explicit completion signal was observed (2nd-pass finding 1); replaced per-line-only deadline checking with `_iter_deadline_bounded_lines()` byte-bounded reading (2nd-pass finding 2); fixed the SSE fragment-join-vs-standalone-parse ordering bug via a new `_parse_event()` helper (2nd-pass finding 3); escaped `derive_session_user()`'s joined components (2nd-pass finding 4); added `_normalize_attachment_content_part()` and `attachments`/`context_pack` params (serialized into the Gateway's `metadata` field) threaded through `stream()`/`_invoke_via_http()`/`invoke()`, plus agent_id pattern validation in `stream()` (2nd-pass finding 5); rewrote `_validate_extraction_value`/`_validate_extraction_object` and added `_validate_extraction_array`/`_validate_extraction_numeric_bounds` for items/additionalProperties/bounds/malformed-schema handling (2nd-pass finding 6); made `invoke_structured()` reject more than one function call, not only a wrong-named first one (2nd-pass finding 7). FIFTH corrective pass: made `_json_schema_value_equal` recurse into nested dict/list members instead of delegating to plain `==` (finding 1); restructured `_validate_extraction_value` so numeric/string/object/array constraints always dispatch off the value's actual runtime type even when `type` is omitted from the schema (finding 2); added `_DeadlineBoundedSSLSocket` and installed it via `SSLContext.sslsocket_class` in `_DeadlineBoundedHTTPSConnection.connect()` so post-handshake TLS reads share the same total deadline as the plain-HTTP path (finding 3); removed the invalid `check_hostname=` keyword from `_DeadlineBoundedHTTPSHandler.https_open()`'s `do_open()` call, which had made every real HTTPS request raise an unconditional AttributeError (pre-existing defect surfaced by this pass's new real-TLS regression test, not a reviewer finding number)."
+      "command": "timeout 280 .venv-pantheon/bin/python3 -m pytest -q -rs services/openclaw-gateway-adapter/ services/control-plane/cron/test_exact_run_wait.py services/control-plane/cron/test_cron.py services/control-plane/cron/test_service.py",
+      "result": "571 passed, 4 legacy external-Gateway smoke skipped, 4 warnings, 18 subtests passed",
+      "exit_code": 0
     },
     {
-      "path": "services/openclaw-gateway-adapter/main.py",
-      "why": "Added AssistantProviderStructuredInvokeRequest (rejects caller-supplied tools/tool_choice with a 422 via a model_validator) and a new POST /api/openclaw-adapter/assistant/providers/openclaw/structured endpoint that delegates to AssistantOpenClawProvider.invoke_structured(). Corrective pass: restricted /structured to the default agent only (finding 4), and switched the raw SSE stream endpoint's session_user derivation to the shared derive_session_user() helper (finding 3). SECOND corrective pass: the mounted invoke route now forwards req.attachments; the mounted stream route now forwards req.agent_id/req.messages/req.attachments/req.context_pack, none of which reached the provider before (2nd-pass finding 5)."
+      "command": "timeout 40 .venv-pantheon/bin/python3 -m pytest -q services/control-plane/cron/test_exact_run_wait.py services/control-plane/cron/test_cron.py services/control-plane/cron/test_service.py",
+      "result": "36 passed, 3 warnings; includes added cancellation/skipped cases and a real subprocess hang",
+      "exit_code": 0
     },
     {
-      "path": "services/openclaw-gateway-adapter/test_assistant_openclaw_provider_live.py",
-      "why": "Rewrote every test that mocked the removed CLI subprocess path (_invoke_single_model / subprocess.run) for invoke()/readiness() to instead mock urllib.request.urlopen against the HTTP /v1/responses transport. Corrective pass: updated `_model_dispatch_urlopen` and the model-field assertions to reflect the openclaw/<agentId> alias + x-openclaw-model header contract (finding 1), and updated two session_user assertions to the actor-mixed-in derived value (finding 3). Unchanged in the second corrective pass; re-verified green (49 passed, 4 skipped)."
+      "command": "timeout 90 .venv-pantheon/bin/python3 -m pytest -q services/openclaw-gateway-adapter/tests/test_openresponses_transport_contract.py services/control-plane/cron/test_exact_run_wait.py",
+      "result": "67 passed; runner formatting did not change AST",
+      "exit_code": 0
     },
     {
-      "path": "services/control-plane/cron/openclaw_client.py",
-      "why": "Removed the `if target is None and entries: target = entries[0]` fallback in _CliGatewayTransport._wait_for_terminal_run so a run is only ever reported terminal when its runId exactly equals the dispatched run_id; added a fail-fast RuntimeError at the __call__ site when cron.run does not return a run id. Corrective pass: `_call` now accepts an explicit timeout_seconds (finding 7); `_wait_for_terminal_run` requests an exact {id, runId} lookup instead of a fixed limit:20 page (finding 8) and shares one total deadline across the RPC call and the inter-poll sleep, rejecting a late RPC result rather than accepting it (finding 7). Also added a defensive try/except import fallback for `from .models import ...` so the module still imports correctly when this repo's pytest conftest.py loads it as a bare top-level module for services/control-plane/cron/test_cron.py (see caveats below) instead of as part of the `cron` package. SECOND corrective pass: `__call__` now computes one deadline up front and threads it through `cron.add`'s and `cron.run`'s own `_call()` timeout budgets (previously each independently defaulted to 30s) and into `_wait_for_terminal_run` (now takes an optional `deadline` param, defaulting to a fresh one for standalone callers) so the entire dispatch \u2014 add, run, poll \u2014 spends at most one total budget (2nd-pass finding 8)."
+      "command": "SIMPLIFY_REPLAY_OUTPUT=/tmp/simplify-replay-100.json timeout 1200 .venv-pantheon/bin/python3 services/openclaw-gateway-adapter/tests/test_openresponses_transport_contract.py",
+      "result": "Five pinned Gateway capability cases and 100 pairs completed; fixture container cleanup exit 0",
+      "exit_code": 0
     },
     {
-      "path": "integrations/openclaw/integration.md",
-      "why": "Appended a dated changelog section (## 10. SIMPLIFY-OPENCLAW-001) summarizing the HTTP-unification, the emit_extraction tool, the cron exact-run fix, and the cross-scope cron_transport.py finding. Corrective pass: appended ## 10.1 documenting the independent review REJECT and all nine fixes. Unchanged in the second corrective pass -- see second_corrective_pass_after_review_reject above for that round's findings instead of a duplicate changelog edit."
-    },
-    {
-      "path": "services/openclaw-gateway-adapter/tests/test_openresponses_transport_contract.py",
-      "why": "Corrective pass: updated the explicit-agent+model routing test and the no-retry-on-failure test for the openclaw/<agentId> + x-openclaw-model contract (finding 1); added message-normalization, tenant/actor isolation, duplicate-completed, legal-multiline, and real-local-HTTP-server slow-drip/partial-EOF regression tests (findings 2, 3, 6, 7). SECOND corrective pass: updated the cancellation/no-completion-event tests to assert truthful interruption instead of a fabricated done (2nd-pass finding 1); added a legitimate-[DONE]-no-completed-event success test, a real-socket newline-free slow-drip deadline test (2nd-pass finding 2), a standalone-parseable-fragment-vs-buffered-event test (2nd-pass finding 3), a session-collision test (2nd-pass finding 4), and trace_id/context_pack/attachments serialization tests (2nd-pass finding 5)."
-    },
-    {
-      "path": "services/openclaw-gateway-adapter/tests/test_structured_data_tool_contract.py",
-      "why": "Corrective pass: added the arbitrary-agent-id-rejected and explicit-default-agent-accepted endpoint tests (finding 4), and a new TestValidateExtractionArgumentsSchemaCoverage class covering enum/nested-required/nullable-type-list validation (finding 5). SECOND corrective pass: added array-items, additionalProperties:false, numeric-bounds, and malformed-required-is-a-typed-rejection tests (2nd-pass finding 6), and an extra-tool-call-alongside-emit_extraction rejection test (2nd-pass finding 7)."
-    },
-    {
-      "path": "services/control-plane/cron/test_exact_run_wait.py",
-      "why": "Corrective pass: added TestExactRunLookupAndSharedDeadline covering the exact {id, runId} RPC param, a target run behind more than the old fixed limit, the RPC/sleep shared-deadline bound (never the old fixed 30s), and rejection of a late RPC result arriving after the deadline (findings 7, 8). Unchanged in the second corrective pass; all 13 cases re-verified green against the new shared-deadline `__call__` plumbing (2nd-pass finding 8)."
-    },
-    {
-      "path": "services/openclaw-gateway-adapter/test_main.py",
-      "why": "SECOND corrective pass (new file touch this pass): fixed a test-double `fake_invoke` stub missing the new `attachments` kwarg (would otherwise TypeError on every mounted-invoke test once `invoke()` started passing `attachments=` through); added two new mounted-contract tests asserting the stream route forwards messages/attachments/context_pack/trace_id and the invoke route forwards attachments (2nd-pass finding 5)."
-    },
-    {
-      "path": "services/openclaw-gateway-adapter/tests/test_structured_data_tool_contract.py",
-      "why": "FIFTH corrective pass: added regression tests for reviewer findings 1 and 2 -- nested const/enum boolean-vs-number confusion, and untyped-schema-property constraints (minimum/minLength/additionalProperties) previously going unenforced."
-    },
-    {
-      "path": "services/openclaw-gateway-adapter/tests/test_openresponses_transport_contract.py",
-      "why": "FIFTH corrective pass: added `TestRealLocalHttpsServerRegressions`, a genuine local-TLS (self-signed cert via `openssl req -x509`) slow-drip regression proving the HTTPS total-deadline fix (finding 3) and, in the process, the `check_hostname=` AttributeError fix -- a mocked `urlopen` cannot exercise real TLS record-layer read semantics or the real `https_open()` code path at all."
+      "command": "timeout 90 .venv-pantheon/bin/python3 -m pytest -q services/openclaw-gateway-adapter/test_assistant_openclaw_provider_live.py services/openclaw-gateway-adapter/tests/test_openresponses_transport_contract.py services/openclaw-gateway-adapter/tests/test_structured_data_tool_contract.py",
+      "result": "138 passed, 4 legacy live smoke skipped, 1 warning; final provider after unused decoder removal",
+      "exit_code": 0
     }
   ],
-  "files_created": [
-    {
-      "path": "docs/deployment/evidence/SIMPLIFY-OPENCLAW-001/evidence.json",
-      "why": "This file (revised for the corrective pass; revised again for the second corrective pass)."
-    }
+  "local_gateway_evidence": {
+    "manifest": {
+      "base_sha": "a9557a6002e8170eb92415cc61e9d6a584cc610f",
+      "base_provider_sha256": "8d52da93da25205383062eb0c88211c8bcfb073dcb3da44ad54704d45dd361ad",
+      "candidate_provider_sha256": "3fe4605e0b40a25fd0f499e49e017c834fa249a2a2a88ef551b70b1dcabafa9d",
+      "image_id": "sha256:f435502b113f873768b64cd7f5f2a63f44d0a236ae3a5647ff42716652c74c31",
+      "gateway_version": "2026.7.1",
+      "model": "fixture/fixture-model",
+      "auth_route": "isolated loopback Gateway, synthetic test token; local deterministic OpenAI-completions model",
+      "count_per_arm": 100,
+      "prompt_sha256": "984e80159bf60bda7acdfa13d32b143265208bc4a360083de0b3786aa5e5ebd1",
+      "session_design": "10 independent admitted agents, each with 10 sequential turns per arm; first is session-cold, next 9 warm; four concurrent sequences, one shared Gateway, no process-cold claim",
+      "concurrency": 4,
+      "deadline_seconds": 30,
+      "usage_semantics": "model fixture reports fixed input=100/output=10/total=110, not a tokenizer or production cost measurement",
+      "ttft_semantics": "CLI buffered invoke first text available on return; HTTP first normalized delta; full includes invocation and normalization",
+      "latency_limitation": "CLI transport includes docker exec overhead; local fixture measures transport and Gateway, not external model quality or latency",
+      "config_sha256": "e1147f511dfad2bde99327b1095c761ea1f164fae1e4ea834b544b4cc11023b1",
+      "host": {
+        "platform": "Linux-6.17.0-1022-gcp-x86_64-with-glibc2.39",
+        "logical_cpus": 12,
+        "cpu_quota": "unknown; cgroup cpu.max not mounted"
+      }
+    },
+    "capability": {
+      "positive": {
+        "provider": "openclaw",
+        "mode": "user",
+        "status": "completed",
+        "output": {
+          "structured_data": {
+            "value": 7
+          },
+          "tool_call": {
+            "id": "c456ebd6c",
+            "name": "emit_extraction"
+          },
+          "agent_id": "main",
+          "transport": "responses_http",
+          "usage": {
+            "input_tokens": 100,
+            "output_tokens": 10,
+            "total_tokens": 110
+          },
+          "response_id": "resp_56311b1e-baa3-431f-ba39-52a5b6f0f6d3"
+        },
+        "redaction": {
+          "provider_invocation": {
+            "redacted_fields": 0
+          }
+        }
+      },
+      "invalid": {
+        "status": "provider_error",
+        "error_code": "OPENCLAW_RESPONSES_FAILED",
+        "message": "{\"type\": \"response.failed\", \"response\": {\"id\": \"resp_2c0f0e8c-dc37-4a11-994b-0800152f9cb1\", \"object\": \"response\", \"created_at\": 1788708782, \"status\": \"failed\", \"model\": \"openclaw/main\", \"output\": [], \"usage\": {\"input_tokens\": 200, \"output_tokens\": 20, \"total_tokens\": 110}, \"error\": {\"code\": \"api_err"
+      },
+      "wrong": {
+        "status": "provider_error",
+        "error_code": "OPENCLAW_RESPONSES_FAILED",
+        "message": "{\"type\": \"response.failed\", \"response\": {\"id\": \"resp_dc56dec8-808a-462a-897d-617363e8b544\", \"object\": \"response\", \"created_at\": 1788708784, \"status\": \"failed\", \"model\": \"openclaw/main\", \"output\": [], \"usage\": {\"input_tokens\": 200, \"output_tokens\": 20, \"total_tokens\": 110}, \"error\": {\"code\": \"api_err"
+      },
+      "missing": {
+        "status": "provider_error",
+        "error_code": "OPENCLAW_RESPONSES_FAILED",
+        "message": "{\"type\": \"response.failed\", \"response\": {\"id\": \"resp_c5982149-5a32-4a69-9fef-15c0e66fe27e\", \"object\": \"response\", \"created_at\": 1788708785, \"status\": \"failed\", \"model\": \"openclaw/main\", \"output\": [], \"usage\": {\"input_tokens\": 100, \"output_tokens\": 10, \"total_tokens\": 110}, \"error\": {\"code\": \"api_err"
+      },
+      "denied": {
+        "status": "provider_error",
+        "error_code": "OPENCLAW_RESPONSES_FAILED",
+        "message": "{\"type\": \"response.failed\", \"response\": {\"id\": \"resp_b5ab10ba-cdb4-4601-bb52-ed5e5928ecea\", \"object\": \"response\", \"created_at\": 1788708786, \"status\": \"failed\", \"model\": \"openclaw/main\", \"output\": [], \"usage\": {\"input_tokens\": 200, \"output_tokens\": 20, \"total_tokens\": 110}, \"error\": {\"code\": \"api_err"
+      },
+      "native_denial": {
+        "advertised_tools": [
+          "emit_extraction"
+        ],
+        "attempted_tool": "exec",
+        "marker_exists": false,
+        "gateway_denial_logged": true
+      }
+    },
+    "replay": {
+      "cli": {
+        "all": {
+          "n": 100,
+          "full_p50_ms": 12644.175296998583,
+          "full_p95_ms": 15264.61129396921,
+          "ttft_p50_ms": 12644.175296998583,
+          "ttft_p95_ms": 15264.61129396921,
+          "mean_tokens": 110,
+          "errors": 0,
+          "subprocesses": 100
+        },
+        "cold": {
+          "n": 10,
+          "full_p50_ms": 15264.61129396921,
+          "full_p95_ms": 18040.333037031814,
+          "ttft_p50_ms": 15264.61129396921,
+          "ttft_p95_ms": 18040.333037031814,
+          "mean_tokens": 110,
+          "errors": 0,
+          "subprocesses": 10
+        },
+        "warm": {
+          "n": 90,
+          "full_p50_ms": 12630.624837998766,
+          "full_p95_ms": 13301.594630989712,
+          "ttft_p50_ms": 12630.624837998766,
+          "ttft_p95_ms": 13301.594630989712,
+          "mean_tokens": 110,
+          "errors": 0,
+          "subprocesses": 90
+        }
+      },
+      "http": {
+        "all": {
+          "n": 100,
+          "full_p50_ms": 4340.731047035661,
+          "full_p95_ms": 5736.508718982805,
+          "ttft_p50_ms": 4198.999365966301,
+          "ttft_p95_ms": 5397.799961967394,
+          "mean_tokens": 110,
+          "errors": 0,
+          "subprocesses": 0
+        },
+        "cold": {
+          "n": 10,
+          "full_p50_ms": 4556.253561982885,
+          "full_p95_ms": 4576.846256968565,
+          "ttft_p50_ms": 4461.8113079923205,
+          "ttft_p95_ms": 4484.721753979102,
+          "mean_tokens": 110,
+          "errors": 0,
+          "subprocesses": 0
+        },
+        "warm": {
+          "n": 90,
+          "full_p50_ms": 4334.036537038628,
+          "full_p95_ms": 5738.464818976354,
+          "ttft_p50_ms": 4192.509558051825,
+          "ttft_p95_ms": 5419.998191995546,
+          "mean_tokens": 110,
+          "errors": 0,
+          "subprocesses": 0
+        }
+      }
+    },
+    "gates": {
+      "no_new_errors": true,
+      "full_p95_ratio": 0.3758044412994127,
+      "mean_token_ratio": 1.0
+    },
+    "rows": [
+      {
+        "arm": "cli",
+        "case": 0,
+        "temperature": "cold",
+        "full_ms": 18031.881058006547,
+        "ttft_ms": 18031.881058006547,
+        "usage": {
+          "input_tokens": 100,
+          "output_tokens": 10,
+          "total_tokens": 110
+        },
+        "errors": 0,
+        "subprocesses": 1
+      },
+      {
+        "arm": "http",
+        "case": 0,
+        "temperature": "cold",
+        "full_ms": 4564.1479989863,
+        "ttft_ms": 4465.913244988769,
+        "usage": {
+          "input_tokens": 100,
+          "output_tokens": 10,
+          "total_tokens": 110
+        },
+        "errors": 0,
+        "subprocesses": 0
+      },
+      {
+        "arm": "http",
+        "case": 1,
+        "temperature": "warm",
+        "full_ms": 4378.189593960997,
+        "ttft_ms": 4212.384124984965,
+        "usage": {
+          "input_tokens": 100,
+          "output_tokens": 10,
+          "total_tokens": 110
+        },
+        "errors": 0,
+        "subprocesses": 0
+      },
+      {
+        "arm": "cli",
+        "case": 1,
+        "temperature": "warm",
+        "full_ms": 13300.248001003638,
+        "ttft_ms": 13300.248001003638,
+        "usage": {
+          "input_tokens": 100,
+          "output_tokens": 10,
+          "total_tokens": 110
+        },
+        "errors": 0,
+        "subprocesses": 1
+      },
+      {
+        "arm": "cli",
+        "case": 2,
+        "temperature": "warm",
+        "full_ms": 12713.915371976327,
+        "ttft_ms": 12713.915371976327,
+        "usage": {
+          "input_tokens": 100,
+          "output_tokens": 10,
+          "total_tokens": 110
+        },
+        "errors": 0,
+        "subprocesses": 1
+      },
+      {
+        "arm": "http",
+        "case": 2,
+        "temperature": "warm",
+        "full_ms": 4582.358720013872,
+        "ttft_ms": 4447.075258998666,
+        "usage": {
+          "input_tokens": 100,
+          "output_tokens": 10,
+          "total_tokens": 110
+        },
+        "errors": 0,
+        "subprocesses": 0
+      },
+      {
+        "arm": "http",
+        "case": 3,
+        "temperature": "warm",
+        "full_ms": 4091.4350040256977,
+        "ttft_ms": 3998.2322310097516,
+        "usage": {
+          "input_tokens": 100,
+          "output_tokens": 10,
+          "total_tokens": 110
+        },
+        "errors": 0,
+        "subprocesses": 0
+      },
+      {
+        "arm": "cli",
+        "case": 3,
+        "temperature": "warm",
+        "full_ms": 12487.688618013635,
+        "ttft_ms": 12487.688618013635,
+        "usage": {
+          "input_tokens": 100,
+          "output_tokens": 10,
+          "total_tokens": 110
+        },
+        "errors": 0,
+        "subprocesses": 1
+      },
+      {
+        "arm": "cli",
+        "case": 4,
+        "temperature": "warm",
+        "full_ms": 12323.658359004185,
+        "ttft_ms": 12323.658359004185,
+        "usage": {
+          "input_tokens": 100,
+          "output_tokens": 10,
+          "total_tokens": 110
+        },
+        "errors": 0,
+        "subprocesses": 1
+      },
+      {
+        "arm": "http",
+        "case": 4,
+        "temperature": "warm",
+        "full_ms": 4074.1338150110096,
+        "ttft_ms": 3945.8742550341412,
+        "usage": {
+          "input_tokens": 100,
+          "output_tokens": 10,
+          "total_tokens": 110
+        },
+        "errors": 0,
+        "subprocesses": 0
+      },
+      {
+        "arm": "http",
+        "case": 5,
+        "temperature": "warm",
+        "full_ms": 4296.983841049951,
+        "ttft_ms": 4192.509558051825,
+        "usage": {
+          "input_tokens": 100,
+          "output_tokens": 10,
+          "total_tokens": 110
+        },
+        "errors": 0,
+        "subprocesses": 0
+      },
+      {
+        "arm": "cli",
+        "case": 5,
+        "temperature": "warm",
+        "full_ms": 13648.365966975689,
+        "ttft_ms": 13648.365966975689,
+        "usage": {
+          "input_tokens": 100,
+          "output_tokens": 10,
+          "total_tokens": 110
+        },
+        "errors": 0,
+        "subprocesses": 1
+      },
+      {
+        "arm": "cli",
+        "case": 6,
+        "temperature": "warm",
+        "full_ms": 13078.56197701767,
+        "ttft_ms": 13078.56197701767,
+        "usage": {
+          "input_tokens": 100,
+          "output_tokens": 10,
+          "total_tokens": 110
+        },
+        "errors": 0,
+        "subprocesses": 1
+      },
+      {
+        "arm": "http",
+        "case": 6,
+        "temperature": "warm",
+        "full_ms": 4286.364281026181,
+        "ttft_ms": 4147.1222410327755,
+        "usage": {
+          "input_tokens": 100,
+          "output_tokens": 10,
+          "total_tokens": 110
+        },
+        "errors": 0,
+        "subprocesses": 0
+      },
+      {
+        "arm": "http",
+        "case": 7,
+        "temperature": "warm",
+        "full_ms": 4289.017141039949,
+        "ttft_ms": 4177.194228046574,
+        "usage": {
+          "input_tokens": 100,
+          "output_tokens": 10,
+          "total_tokens": 110
+        },
+        "errors": 0,
+        "subprocesses": 0
+      },
+      {
+        "arm": "cli",
+        "case": 7,
+        "temperature": "warm",
+        "full_ms": 12641.082766989712,
+        "ttft_ms": 12641.082766989712,
+        "usage": {
+          "input_tokens": 100,
+          "output_tokens": 10,
+          "total_tokens": 110
+        },
+        "errors": 0,
+        "subprocesses": 1
+      },
+      {
+        "arm": "cli",
+        "case": 8,
+        "temperature": "warm",
+        "full_ms": 12638.178016990423,
+        "ttft_ms": 12638.178016990423,
+        "usage": {
+          "input_tokens": 100,
+          "output_tokens": 10,
+          "total_tokens": 110
+        },
+        "errors": 0,
+        "subprocesses": 1
+      },
+      {
+        "arm": "http",
+        "case": 8,
+        "temperature": "warm",
+        "full_ms": 4523.493453976698,
+        "ttft_ms": 4345.077505975496,
+        "usage": {
+          "input_tokens": 100,
+          "output_tokens": 10,
+          "total_tokens": 110
+        },
+        "errors": 0,
+        "subprocesses": 0
+      },
+      {
+        "arm": "http",
+        "case": 9,
+        "temperature": "warm",
+        "full_ms": 4417.874281003606,
+        "ttft_ms": 4251.318452996202,
+        "usage": {
+          "input_tokens": 100,
+          "output_tokens": 10,
+          "total_tokens": 110
+        },
+        "errors": 0,
+        "subprocesses": 0
+      },
+      {
+        "arm": "cli",
+        "case": 9,
+        "temperature": "warm",
+        "full_ms": 12764.33099899441,
+        "ttft_ms": 12764.33099899441,
+        "usage": {
+          "input_tokens": 100,
+          "output_tokens": 10,
+          "total_tokens": 110
+        },
+        "errors": 0,
+        "subprocesses": 1
+      },
+      {
+        "arm": "cli",
+        "case": 10,
+        "temperature": "cold",
+        "full_ms": 18009.358529991005,
+        "ttft_ms": 18009.358529991005,
+        "usage": {
+          "input_tokens": 100,
+          "output_tokens": 10,
+          "total_tokens": 110
+        },
+        "errors": 0,
+        "subprocesses": 1
+      },
+      {
+        "arm": "http",
+        "case": 10,
+        "temperature": "cold",
+        "full_ms": 4576.846256968565,
+        "ttft_ms": 4484.721753979102,
+        "usage": {
+          "input_tokens": 100,
+          "output_tokens": 10,
+          "total_tokens": 110
+        },
+        "errors": 0,
+        "subprocesses": 0
+      },
+      {
+        "arm": "http",
+        "case": 11,
+        "temperature": "warm",
+        "full_ms": 4410.692001983989,
+        "ttft_ms": 4218.086795008276,
+        "usage": {
+          "input_tokens": 100,
+          "output_tokens": 10,
+          "total_tokens": 110
+        },
+        "errors": 0,
+        "subprocesses": 0
+      },
+      {
+        "arm": "cli",
+        "case": 11,
+        "temperature": "warm",
+        "full_ms": 13191.830808995292,
+        "ttft_ms": 13191.830808995292,
+        "usage": {
+          "input_tokens": 100,
+          "output_tokens": 10,
+          "total_tokens": 110
+        },
+        "errors": 0,
+        "subprocesses": 1
+      },
+      {
+        "arm": "cli",
+        "case": 12,
+        "temperature": "warm",
+        "full_ms": 12849.576702981722,
+        "ttft_ms": 12849.576702981722,
+        "usage": {
+          "input_tokens": 100,
+          "output_tokens": 10,
+          "total_tokens": 110
+        },
+        "errors": 0,
+        "subprocesses": 1
+      },
+      {
+        "arm": "http",
+        "case": 12,
+        "temperature": "warm",
+        "full_ms": 4497.760505008046,
+        "ttft_ms": 4408.244171994738,
+        "usage": {
+          "input_tokens": 100,
+          "output_tokens": 10,
+          "total_tokens": 110
+        },
+        "errors": 0,
+        "subprocesses": 0
+      },
+      {
+        "arm": "http",
+        "case": 13,
+        "temperature": "warm",
+        "full_ms": 4147.936241002753,
+        "ttft_ms": 4033.3828689763322,
+        "usage": {
+          "input_tokens": 100,
+          "output_tokens": 10,
+          "total_tokens": 110
+        },
+        "errors": 0,
+        "subprocesses": 0
+      },
+      {
+        "arm": "cli",
+        "case": 13,
+        "temperature": "warm",
+        "full_ms": 12484.508757013828,
+        "ttft_ms": 12484.508757013828,
+        "usage": {
+          "input_tokens": 100,
+          "output_tokens": 10,
+          "total_tokens": 110
+        },
+        "errors": 0,
+        "subprocesses": 1
+      },
+      {
+        "arm": "cli",
+        "case": 14,
+        "temperature": "warm",
+        "full_ms": 12290.612742013764,
+        "ttft_ms": 12290.612742013764,
+        "usage": {
+          "input_tokens": 100,
+          "output_tokens": 10,
+          "total_tokens": 110
+        },
+        "errors": 0,
+        "subprocesses": 1
+      },
+      {
+        "arm": "http",
+        "case": 14,
+        "temperature": "warm",
+        "full_ms": 4082.0256849983707,
+        "ttft_ms": 3973.5039019724354,
+        "usage": {
+          "input_tokens": 100,
+          "output_tokens": 10,
+          "total_tokens": 110
+        },
+        "errors": 0,
+        "subprocesses": 0
+      },
+      {
+        "arm": "http",
+        "case": 15,
+        "temperature": "warm",
+        "full_ms": 4310.332358989399,
+        "ttft_ms": 4192.842067044694,
+        "usage": {
+          "input_tokens": 100,
+          "output_tokens": 10,
+          "total_tokens": 110
+        },
+        "errors": 0,
+        "subprocesses": 0
+      },
+      {
+        "arm": "cli",
+        "case": 15,
+        "temperature": "warm",
+        "full_ms": 13606.673999980558,
+        "ttft_ms": 13606.673999980558,
+        "usage": {
+          "input_tokens": 100,
+          "output_tokens": 10,
+          "total_tokens": 110
+        },
+        "errors": 0,
+        "subprocesses": 1
+      },
+      {
+        "arm": "cli",
+        "case": 16,
+        "temperature": "warm",
+        "full_ms": 13173.270699044224,
+        "ttft_ms": 13173.270699044224,
+        "usage": {
+          "input_tokens": 100,
+          "output_tokens": 10,
+          "total_tokens": 110
+        },
+        "errors": 0,
+        "subprocesses": 1
+      },
+      {
+        "arm": "http",
+        "case": 16,
+        "temperature": "warm",
+        "full_ms": 4200.559807009995,
+        "ttft_ms": 4095.824974006973,
+        "usage": {
+          "input_tokens": 100,
+          "output_tokens": 10,
+          "total_tokens": 110
+        },
+        "errors": 0,
+        "subprocesses": 0
+      },
+      {
+        "arm": "http",
+        "case": 17,
+        "temperature": "warm",
+        "full_ms": 4329.608877014834,
+        "ttft_ms": 4211.527266015764,
+        "usage": {
+          "input_tokens": 100,
+          "output_tokens": 10,
+          "total_tokens": 110
+        },
+        "errors": 0,
+        "subprocesses": 0
+      },
+      {
+        "arm": "cli",
+        "case": 17,
+        "temperature": "warm",
+        "full_ms": 12566.503431997262,
+        "ttft_ms": 12566.503431997262,
+        "usage": {
+          "input_tokens": 100,
+          "output_tokens": 10,
+          "total_tokens": 110
+        },
+        "errors": 0,
+        "subprocesses": 1
+      },
+      {
+        "arm": "cli",
+        "case": 18,
+        "temperature": "warm",
+        "full_ms": 12670.548414986115,
+        "ttft_ms": 12670.548414986115,
+        "usage": {
+          "input_tokens": 100,
+          "output_tokens": 10,
+          "total_tokens": 110
+        },
+        "errors": 0,
+        "subprocesses": 1
+      },
+      {
+        "arm": "http",
+        "case": 18,
+        "temperature": "warm",
+        "full_ms": 4518.467043992132,
+        "ttft_ms": 4381.163513986394,
+        "usage": {
+          "input_tokens": 100,
+          "output_tokens": 10,
+          "total_tokens": 110
+        },
+        "errors": 0,
+        "subprocesses": 0
+      },
+      {
+        "arm": "http",
+        "case": 19,
+        "temperature": "warm",
+        "full_ms": 4440.147920046002,
+        "ttft_ms": 4284.7234710352495,
+        "usage": {
+          "input_tokens": 100,
+          "output_tokens": 10,
+          "total_tokens": 110
+        },
+        "errors": 0,
+        "subprocesses": 0
+      },
+      {
+        "arm": "cli",
+        "case": 19,
+        "temperature": "warm",
+        "full_ms": 12698.559103009757,
+        "ttft_ms": 12698.559103009757,
+        "usage": {
+          "input_tokens": 100,
+          "output_tokens": 10,
+          "total_tokens": 110
+        },
+        "errors": 0,
+        "subprocesses": 1
+      },
+      {
+        "arm": "cli",
+        "case": 20,
+        "temperature": "cold",
+        "full_ms": 18040.333037031814,
+        "ttft_ms": 18040.333037031814,
+        "usage": {
+          "input_tokens": 100,
+          "output_tokens": 10,
+          "total_tokens": 110
+        },
+        "errors": 0,
+        "subprocesses": 1
+      },
+      {
+        "arm": "http",
+        "case": 20,
+        "temperature": "cold",
+        "full_ms": 4572.600697982125,
+        "ttft_ms": 4454.8704359913245,
+        "usage": {
+          "input_tokens": 100,
+          "output_tokens": 10,
+          "total_tokens": 110
+        },
+        "errors": 0,
+        "subprocesses": 0
+      },
+      {
+        "arm": "http",
+        "case": 21,
+        "temperature": "warm",
+        "full_ms": 4334.036537038628,
+        "ttft_ms": 4192.449017020408,
+        "usage": {
+          "input_tokens": 100,
+          "output_tokens": 10,
+          "total_tokens": 110
+        },
+        "errors": 0,
+        "subprocesses": 0
+      },
+      {
+        "arm": "cli",
+        "case": 21,
+        "temperature": "warm",
+        "full_ms": 13281.719341990538,
+        "ttft_ms": 13281.719341990538,
+        "usage": {
+          "input_tokens": 100,
+          "output_tokens": 10,
+          "total_tokens": 110
+        },
+        "errors": 0,
+        "subprocesses": 1
+      },
+      {
+        "arm": "cli",
+        "case": 22,
+        "temperature": "warm",
+        "full_ms": 12781.242627010215,
+        "ttft_ms": 12781.242627010215,
+        "usage": {
+          "input_tokens": 100,
+          "output_tokens": 10,
+          "total_tokens": 110
+        },
+        "errors": 0,
+        "subprocesses": 1
+      },
+      {
+        "arm": "http",
+        "case": 22,
+        "temperature": "warm",
+        "full_ms": 4534.874723991379,
+        "ttft_ms": 4425.711520947516,
+        "usage": {
+          "input_tokens": 100,
+          "output_tokens": 10,
+          "total_tokens": 110
+        },
+        "errors": 0,
+        "subprocesses": 0
+      },
+      {
+        "arm": "http",
+        "case": 23,
+        "temperature": "warm",
+        "full_ms": 4128.585700993426,
+        "ttft_ms": 4026.6786189749837,
+        "usage": {
+          "input_tokens": 100,
+          "output_tokens": 10,
+          "total_tokens": 110
+        },
+        "errors": 0,
+        "subprocesses": 0
+      },
+      {
+        "arm": "cli",
+        "case": 23,
+        "temperature": "warm",
+        "full_ms": 12538.548144046217,
+        "ttft_ms": 12538.548144046217,
+        "usage": {
+          "input_tokens": 100,
+          "output_tokens": 10,
+          "total_tokens": 110
+        },
+        "errors": 0,
+        "subprocesses": 1
+      },
+      {
+        "arm": "cli",
+        "case": 24,
+        "temperature": "warm",
+        "full_ms": 12160.836931027006,
+        "ttft_ms": 12160.836931027006,
+        "usage": {
+          "input_tokens": 100,
+          "output_tokens": 10,
+          "total_tokens": 110
+        },
+        "errors": 0,
+        "subprocesses": 1
+      },
+      {
+        "arm": "http",
+        "case": 24,
+        "temperature": "warm",
+        "full_ms": 4157.129619969055,
+        "ttft_ms": 4005.5865200120024,
+        "usage": {
+          "input_tokens": 100,
+          "output_tokens": 10,
+          "total_tokens": 110
+        },
+        "errors": 0,
+        "subprocesses": 0
+      },
+      {
+        "arm": "http",
+        "case": 25,
+        "temperature": "warm",
+        "full_ms": 4305.662058992311,
+        "ttft_ms": 4199.367395951413,
+        "usage": {
+          "input_tokens": 100,
+          "output_tokens": 10,
+          "total_tokens": 110
+        },
+        "errors": 0,
+        "subprocesses": 0
+      },
+      {
+        "arm": "cli",
+        "case": 25,
+        "temperature": "warm",
+        "full_ms": 13680.778355046641,
+        "ttft_ms": 13680.778355046641,
+        "usage": {
+          "input_tokens": 100,
+          "output_tokens": 10,
+          "total_tokens": 110
+        },
+        "errors": 0,
+        "subprocesses": 1
+      },
+      {
+        "arm": "cli",
+        "case": 26,
+        "temperature": "warm",
+        "full_ms": 13020.12212103,
+        "ttft_ms": 13020.12212103,
+        "usage": {
+          "input_tokens": 100,
+          "output_tokens": 10,
+          "total_tokens": 110
+        },
+        "errors": 0,
+        "subprocesses": 1
+      },
+      {
+        "arm": "http",
+        "case": 26,
+        "temperature": "warm",
+        "full_ms": 4300.302289950196,
+        "ttft_ms": 4179.649628000334,
+        "usage": {
+          "input_tokens": 100,
+          "output_tokens": 10,
+          "total_tokens": 110
+        },
+        "errors": 0,
+        "subprocesses": 0
+      },
+      {
+        "arm": "http",
+        "case": 27,
+        "temperature": "warm",
+        "full_ms": 4337.462958006654,
+        "ttft_ms": 4208.70727696456,
+        "usage": {
+          "input_tokens": 100,
+          "output_tokens": 10,
+          "total_tokens": 110
+        },
+        "errors": 0,
+        "subprocesses": 0
+      },
+      {
+        "arm": "cli",
+        "case": 27,
+        "temperature": "warm",
+        "full_ms": 12610.763238975778,
+        "ttft_ms": 12610.763238975778,
+        "usage": {
+          "input_tokens": 100,
+          "output_tokens": 10,
+          "total_tokens": 110
+        },
+        "errors": 0,
+        "subprocesses": 1
+      },
+      {
+        "arm": "cli",
+        "case": 28,
+        "temperature": "warm",
+        "full_ms": 12625.608487986028,
+        "ttft_ms": 12625.608487986028,
+        "usage": {
+          "input_tokens": 100,
+          "output_tokens": 10,
+          "total_tokens": 110
+        },
+        "errors": 0,
+        "subprocesses": 1
+      },
+      {
+        "arm": "http",
+        "case": 28,
+        "temperature": "warm",
+        "full_ms": 4522.749164025299,
+        "ttft_ms": 4372.850204992574,
+        "usage": {
+          "input_tokens": 100,
+          "output_tokens": 10,
+          "total_tokens": 110
+        },
+        "errors": 0,
+        "subprocesses": 0
+      },
+      {
+        "arm": "http",
+        "case": 29,
+        "temperature": "warm",
+        "full_ms": 4414.5124920178205,
+        "ttft_ms": 4273.328002018388,
+        "usage": {
+          "input_tokens": 100,
+          "output_tokens": 10,
+          "total_tokens": 110
+        },
+        "errors": 0,
+        "subprocesses": 0
+      },
+      {
+        "arm": "cli",
+        "case": 29,
+        "temperature": "warm",
+        "full_ms": 12781.382617016789,
+        "ttft_ms": 12781.382617016789,
+        "usage": {
+          "input_tokens": 100,
+          "output_tokens": 10,
+          "total_tokens": 110
+        },
+        "errors": 0,
+        "subprocesses": 1
+      },
+      {
+        "arm": "cli",
+        "case": 30,
+        "temperature": "cold",
+        "full_ms": 18038.15520799253,
+        "ttft_ms": 18038.15520799253,
+        "usage": {
+          "input_tokens": 100,
+          "output_tokens": 10,
+          "total_tokens": 110
+        },
+        "errors": 0,
+        "subprocesses": 1
+      },
+      {
+        "arm": "http",
+        "case": 30,
+        "temperature": "cold",
+        "full_ms": 4563.637009006925,
+        "ttft_ms": 4458.697595982812,
+        "usage": {
+          "input_tokens": 100,
+          "output_tokens": 10,
+          "total_tokens": 110
+        },
+        "errors": 0,
+        "subprocesses": 0
+      },
+      {
+        "arm": "http",
+        "case": 31,
+        "temperature": "warm",
+        "full_ms": 4357.466364977881,
+        "ttft_ms": 4212.383214966394,
+        "usage": {
+          "input_tokens": 100,
+          "output_tokens": 10,
+          "total_tokens": 110
+        },
+        "errors": 0,
+        "subprocesses": 0
+      },
+      {
+        "arm": "cli",
+        "case": 31,
+        "temperature": "warm",
+        "full_ms": 13301.594630989712,
+        "ttft_ms": 13301.594630989712,
+        "usage": {
+          "input_tokens": 100,
+          "output_tokens": 10,
+          "total_tokens": 110
+        },
+        "errors": 0,
+        "subprocesses": 1
+      },
+      {
+        "arm": "cli",
+        "case": 32,
+        "temperature": "warm",
+        "full_ms": 12778.026996995322,
+        "ttft_ms": 12778.026996995322,
+        "usage": {
+          "input_tokens": 100,
+          "output_tokens": 10,
+          "total_tokens": 110
+        },
+        "errors": 0,
+        "subprocesses": 1
+      },
+      {
+        "arm": "http",
+        "case": 32,
+        "temperature": "warm",
+        "full_ms": 4517.734775028657,
+        "ttft_ms": 4396.136972995009,
+        "usage": {
+          "input_tokens": 100,
+          "output_tokens": 10,
+          "total_tokens": 110
+        },
+        "errors": 0,
+        "subprocesses": 0
+      },
+      {
+        "arm": "http",
+        "case": 33,
+        "temperature": "warm",
+        "full_ms": 4109.555323026143,
+        "ttft_ms": 4012.0677989907563,
+        "usage": {
+          "input_tokens": 100,
+          "output_tokens": 10,
+          "total_tokens": 110
+        },
+        "errors": 0,
+        "subprocesses": 0
+      },
+      {
+        "arm": "cli",
+        "case": 33,
+        "temperature": "warm",
+        "full_ms": 12519.416635041125,
+        "ttft_ms": 12519.416635041125,
+        "usage": {
+          "input_tokens": 100,
+          "output_tokens": 10,
+          "total_tokens": 110
+        },
+        "errors": 0,
+        "subprocesses": 1
+      },
+      {
+        "arm": "cli",
+        "case": 34,
+        "temperature": "warm",
+        "full_ms": 12280.610543035436,
+        "ttft_ms": 12280.610543035436,
+        "usage": {
+          "input_tokens": 100,
+          "output_tokens": 10,
+          "total_tokens": 110
+        },
+        "errors": 0,
+        "subprocesses": 1
+      },
+      {
+        "arm": "http",
+        "case": 34,
+        "temperature": "warm",
+        "full_ms": 4085.9490750008263,
+        "ttft_ms": 3977.18226298457,
+        "usage": {
+          "input_tokens": 100,
+          "output_tokens": 10,
+          "total_tokens": 110
+        },
+        "errors": 0,
+        "subprocesses": 0
+      },
+      {
+        "arm": "http",
+        "case": 35,
+        "temperature": "warm",
+        "full_ms": 4308.7729690014385,
+        "ttft_ms": 4188.242437026929,
+        "usage": {
+          "input_tokens": 100,
+          "output_tokens": 10,
+          "total_tokens": 110
+        },
+        "errors": 0,
+        "subprocesses": 0
+      },
+      {
+        "arm": "cli",
+        "case": 35,
+        "temperature": "warm",
+        "full_ms": 13655.178665998392,
+        "ttft_ms": 13655.178665998392,
+        "usage": {
+          "input_tokens": 100,
+          "output_tokens": 10,
+          "total_tokens": 110
+        },
+        "errors": 0,
+        "subprocesses": 1
+      },
+      {
+        "arm": "cli",
+        "case": 36,
+        "temperature": "warm",
+        "full_ms": 13079.850146954414,
+        "ttft_ms": 13079.850146954414,
+        "usage": {
+          "input_tokens": 100,
+          "output_tokens": 10,
+          "total_tokens": 110
+        },
+        "errors": 0,
+        "subprocesses": 1
+      },
+      {
+        "arm": "http",
+        "case": 36,
+        "temperature": "warm",
+        "full_ms": 4246.203783026431,
+        "ttft_ms": 4121.480931993574,
+        "usage": {
+          "input_tokens": 100,
+          "output_tokens": 10,
+          "total_tokens": 110
+        },
+        "errors": 0,
+        "subprocesses": 0
+      },
+      {
+        "arm": "http",
+        "case": 37,
+        "temperature": "warm",
+        "full_ms": 4310.121269023512,
+        "ttft_ms": 4194.124236993957,
+        "usage": {
+          "input_tokens": 100,
+          "output_tokens": 10,
+          "total_tokens": 110
+        },
+        "errors": 0,
+        "subprocesses": 0
+      },
+      {
+        "arm": "cli",
+        "case": 37,
+        "temperature": "warm",
+        "full_ms": 12630.624837998766,
+        "ttft_ms": 12630.624837998766,
+        "usage": {
+          "input_tokens": 100,
+          "output_tokens": 10,
+          "total_tokens": 110
+        },
+        "errors": 0,
+        "subprocesses": 1
+      },
+      {
+        "arm": "cli",
+        "case": 38,
+        "temperature": "warm",
+        "full_ms": 12580.434851988684,
+        "ttft_ms": 12580.434851988684,
+        "usage": {
+          "input_tokens": 100,
+          "output_tokens": 10,
+          "total_tokens": 110
+        },
+        "errors": 0,
+        "subprocesses": 1
+      },
+      {
+        "arm": "http",
+        "case": 38,
+        "temperature": "warm",
+        "full_ms": 4574.134530965239,
+        "ttft_ms": 4410.304481978528,
+        "usage": {
+          "input_tokens": 100,
+          "output_tokens": 10,
+          "total_tokens": 110
+        },
+        "errors": 0,
+        "subprocesses": 0
+      },
+      {
+        "arm": "http",
+        "case": 39,
+        "temperature": "warm",
+        "full_ms": 4398.600392974913,
+        "ttft_ms": 4266.908910998609,
+        "usage": {
+          "input_tokens": 100,
+          "output_tokens": 10,
+          "total_tokens": 110
+        },
+        "errors": 0,
+        "subprocesses": 0
+      },
+      {
+        "arm": "cli",
+        "case": 39,
+        "temperature": "warm",
+        "full_ms": 12809.163386002183,
+        "ttft_ms": 12809.163386002183,
+        "usage": {
+          "input_tokens": 100,
+          "output_tokens": 10,
+          "total_tokens": 110
+        },
+        "errors": 0,
+        "subprocesses": 1
+      },
+      {
+        "arm": "cli",
+        "case": 40,
+        "temperature": "cold",
+        "full_ms": 15320.86833001813,
+        "ttft_ms": 15320.86833001813,
+        "usage": {
+          "input_tokens": 100,
+          "output_tokens": 10,
+          "total_tokens": 110
+        },
+        "errors": 0,
+        "subprocesses": 1
+      },
+      {
+        "arm": "http",
+        "case": 40,
+        "temperature": "cold",
+        "full_ms": 4546.187813044526,
+        "ttft_ms": 4476.209868036676,
+        "usage": {
+          "input_tokens": 100,
+          "output_tokens": 10,
+          "total_tokens": 110
+        },
+        "errors": 0,
+        "subprocesses": 0
+      },
+      {
+        "arm": "http",
+        "case": 41,
+        "temperature": "warm",
+        "full_ms": 4437.126470031217,
+        "ttft_ms": 4334.106367023196,
+        "usage": {
+          "input_tokens": 100,
+          "output_tokens": 10,
+          "total_tokens": 110
+        },
+        "errors": 0,
+        "subprocesses": 0
+      },
+      {
+        "arm": "cli",
+        "case": 41,
+        "temperature": "warm",
+        "full_ms": 13102.276145014912,
+        "ttft_ms": 13102.276145014912,
+        "usage": {
+          "input_tokens": 100,
+          "output_tokens": 10,
+          "total_tokens": 110
+        },
+        "errors": 0,
+        "subprocesses": 1
+      },
+      {
+        "arm": "cli",
+        "case": 42,
+        "temperature": "warm",
+        "full_ms": 12936.176937015262,
+        "ttft_ms": 12936.176937015262,
+        "usage": {
+          "input_tokens": 100,
+          "output_tokens": 10,
+          "total_tokens": 110
+        },
+        "errors": 0,
+        "subprocesses": 1
+      },
+      {
+        "arm": "http",
+        "case": 42,
+        "temperature": "warm",
+        "full_ms": 6388.3155540097505,
+        "ttft_ms": 5366.667815018445,
+        "usage": {
+          "input_tokens": 100,
+          "output_tokens": 10,
+          "total_tokens": 110
+        },
+        "errors": 0,
+        "subprocesses": 0
+      },
+      {
+        "arm": "http",
+        "case": 43,
+        "temperature": "warm",
+        "full_ms": 5149.676609958988,
+        "ttft_ms": 4032.9074079636484,
+        "usage": {
+          "input_tokens": 100,
+          "output_tokens": 10,
+          "total_tokens": 110
+        },
+        "errors": 0,
+        "subprocesses": 0
+      },
+      {
+        "arm": "cli",
+        "case": 43,
+        "temperature": "warm",
+        "full_ms": 12891.892159997951,
+        "ttft_ms": 12891.892159997951,
+        "usage": {
+          "input_tokens": 100,
+          "output_tokens": 10,
+          "total_tokens": 110
+        },
+        "errors": 0,
+        "subprocesses": 1
+      },
+      {
+        "arm": "cli",
+        "case": 44,
+        "temperature": "warm",
+        "full_ms": 11982.820952951442,
+        "ttft_ms": 11982.820952951442,
+        "usage": {
+          "input_tokens": 100,
+          "output_tokens": 10,
+          "total_tokens": 110
+        },
+        "errors": 0,
+        "subprocesses": 1
+      },
+      {
+        "arm": "http",
+        "case": 44,
+        "temperature": "warm",
+        "full_ms": 4374.251034983899,
+        "ttft_ms": 4200.577435956802,
+        "usage": {
+          "input_tokens": 100,
+          "output_tokens": 10,
+          "total_tokens": 110
+        },
+        "errors": 0,
+        "subprocesses": 0
+      },
+      {
+        "arm": "http",
+        "case": 45,
+        "temperature": "warm",
+        "full_ms": 5736.508718982805,
+        "ttft_ms": 5588.798058975954,
+        "usage": {
+          "input_tokens": 100,
+          "output_tokens": 10,
+          "total_tokens": 110
+        },
+        "errors": 0,
+        "subprocesses": 0
+      },
+      {
+        "arm": "cli",
+        "case": 45,
+        "temperature": "warm",
+        "full_ms": 12628.289818007033,
+        "ttft_ms": 12628.289818007033,
+        "usage": {
+          "input_tokens": 100,
+          "output_tokens": 10,
+          "total_tokens": 110
+        },
+        "errors": 0,
+        "subprocesses": 1
+      },
+      {
+        "arm": "cli",
+        "case": 46,
+        "temperature": "warm",
+        "full_ms": 12222.388876019977,
+        "ttft_ms": 12222.388876019977,
+        "usage": {
+          "input_tokens": 100,
+          "output_tokens": 10,
+          "total_tokens": 110
+        },
+        "errors": 0,
+        "subprocesses": 1
+      },
+      {
+        "arm": "http",
+        "case": 46,
+        "temperature": "warm",
+        "full_ms": 4762.927467003465,
+        "ttft_ms": 4610.371128015686,
+        "usage": {
+          "input_tokens": 100,
+          "output_tokens": 10,
+          "total_tokens": 110
+        },
+        "errors": 0,
+        "subprocesses": 0
+      },
+      {
+        "arm": "http",
+        "case": 47,
+        "temperature": "warm",
+        "full_ms": 4270.234121999238,
+        "ttft_ms": 4138.094761001412,
+        "usage": {
+          "input_tokens": 100,
+          "output_tokens": 10,
+          "total_tokens": 110
+        },
+        "errors": 0,
+        "subprocesses": 0
+      },
+      {
+        "arm": "cli",
+        "case": 47,
+        "temperature": "warm",
+        "full_ms": 13230.153005977627,
+        "ttft_ms": 13230.153005977627,
+        "usage": {
+          "input_tokens": 100,
+          "output_tokens": 10,
+          "total_tokens": 110
+        },
+        "errors": 0,
+        "subprocesses": 1
+      },
+      {
+        "arm": "cli",
+        "case": 48,
+        "temperature": "warm",
+        "full_ms": 12342.943608004134,
+        "ttft_ms": 12342.943608004134,
+        "usage": {
+          "input_tokens": 100,
+          "output_tokens": 10,
+          "total_tokens": 110
+        },
+        "errors": 0,
+        "subprocesses": 1
+      },
+      {
+        "arm": "http",
+        "case": 48,
+        "temperature": "warm",
+        "full_ms": 4441.921899968293,
+        "ttft_ms": 4284.885219996795,
+        "usage": {
+          "input_tokens": 100,
+          "output_tokens": 10,
+          "total_tokens": 110
+        },
+        "errors": 0,
+        "subprocesses": 0
+      },
+      {
+        "arm": "http",
+        "case": 49,
+        "temperature": "warm",
+        "full_ms": 4430.582129978575,
+        "ttft_ms": 4275.23663098691,
+        "usage": {
+          "input_tokens": 100,
+          "output_tokens": 10,
+          "total_tokens": 110
+        },
+        "errors": 0,
+        "subprocesses": 0
+      },
+      {
+        "arm": "cli",
+        "case": 49,
+        "temperature": "warm",
+        "full_ms": 12958.23351497529,
+        "ttft_ms": 12958.23351497529,
+        "usage": {
+          "input_tokens": 100,
+          "output_tokens": 10,
+          "total_tokens": 110
+        },
+        "errors": 0,
+        "subprocesses": 1
+      },
+      {
+        "arm": "cli",
+        "case": 50,
+        "temperature": "cold",
+        "full_ms": 15264.61129396921,
+        "ttft_ms": 15264.61129396921,
+        "usage": {
+          "input_tokens": 100,
+          "output_tokens": 10,
+          "total_tokens": 110
+        },
+        "errors": 0,
+        "subprocesses": 1
+      },
+      {
+        "arm": "http",
+        "case": 50,
+        "temperature": "cold",
+        "full_ms": 4532.938473043032,
+        "ttft_ms": 4461.8113079923205,
+        "usage": {
+          "input_tokens": 100,
+          "output_tokens": 10,
+          "total_tokens": 110
+        },
+        "errors": 0,
+        "subprocesses": 0
+      },
+      {
+        "arm": "http",
+        "case": 51,
+        "temperature": "warm",
+        "full_ms": 4439.518860017415,
+        "ttft_ms": 4322.414588998072,
+        "usage": {
+          "input_tokens": 100,
+          "output_tokens": 10,
+          "total_tokens": 110
+        },
+        "errors": 0,
+        "subprocesses": 0
+      },
+      {
+        "arm": "cli",
+        "case": 51,
+        "temperature": "warm",
+        "full_ms": 13113.609434047248,
+        "ttft_ms": 13113.609434047248,
+        "usage": {
+          "input_tokens": 100,
+          "output_tokens": 10,
+          "total_tokens": 110
+        },
+        "errors": 0,
+        "subprocesses": 1
+      },
+      {
+        "arm": "cli",
+        "case": 52,
+        "temperature": "warm",
+        "full_ms": 12884.382269985508,
+        "ttft_ms": 12884.382269985508,
+        "usage": {
+          "input_tokens": 100,
+          "output_tokens": 10,
+          "total_tokens": 110
+        },
+        "errors": 0,
+        "subprocesses": 1
+      },
+      {
+        "arm": "http",
+        "case": 52,
+        "temperature": "warm",
+        "full_ms": 6413.313372002449,
+        "ttft_ms": 5397.799961967394,
+        "usage": {
+          "input_tokens": 100,
+          "output_tokens": 10,
+          "total_tokens": 110
+        },
+        "errors": 0,
+        "subprocesses": 0
+      },
+      {
+        "arm": "http",
+        "case": 53,
+        "temperature": "warm",
+        "full_ms": 5145.054430002347,
+        "ttft_ms": 4039.533526985906,
+        "usage": {
+          "input_tokens": 100,
+          "output_tokens": 10,
+          "total_tokens": 110
+        },
+        "errors": 0,
+        "subprocesses": 0
+      },
+      {
+        "arm": "cli",
+        "case": 53,
+        "temperature": "warm",
+        "full_ms": 12894.939958991017,
+        "ttft_ms": 12894.939958991017,
+        "usage": {
+          "input_tokens": 100,
+          "output_tokens": 10,
+          "total_tokens": 110
+        },
+        "errors": 0,
+        "subprocesses": 1
+      },
+      {
+        "arm": "cli",
+        "case": 54,
+        "temperature": "warm",
+        "full_ms": 12021.710250002798,
+        "ttft_ms": 12021.710250002798,
+        "usage": {
+          "input_tokens": 100,
+          "output_tokens": 10,
+          "total_tokens": 110
+        },
+        "errors": 0,
+        "subprocesses": 1
+      },
+      {
+        "arm": "http",
+        "case": 54,
+        "temperature": "warm",
+        "full_ms": 4323.01631802693,
+        "ttft_ms": 4170.384009019472,
+        "usage": {
+          "input_tokens": 100,
+          "output_tokens": 10,
+          "total_tokens": 110
+        },
+        "errors": 0,
+        "subprocesses": 0
+      },
+      {
+        "arm": "http",
+        "case": 55,
+        "temperature": "warm",
+        "full_ms": 5720.775811001658,
+        "ttft_ms": 5602.013529045507,
+        "usage": {
+          "input_tokens": 100,
+          "output_tokens": 10,
+          "total_tokens": 110
+        },
+        "errors": 0,
+        "subprocesses": 0
+      },
+      {
+        "arm": "cli",
+        "case": 55,
+        "temperature": "warm",
+        "full_ms": 12605.836249014828,
+        "ttft_ms": 12605.836249014828,
+        "usage": {
+          "input_tokens": 100,
+          "output_tokens": 10,
+          "total_tokens": 110
+        },
+        "errors": 0,
+        "subprocesses": 1
+      },
+      {
+        "arm": "cli",
+        "case": 56,
+        "temperature": "warm",
+        "full_ms": 12317.247049999423,
+        "ttft_ms": 12317.247049999423,
+        "usage": {
+          "input_tokens": 100,
+          "output_tokens": 10,
+          "total_tokens": 110
+        },
+        "errors": 0,
+        "subprocesses": 1
+      },
+      {
+        "arm": "http",
+        "case": 56,
+        "temperature": "warm",
+        "full_ms": 4701.961821003351,
+        "ttft_ms": 4574.909649963956,
+        "usage": {
+          "input_tokens": 100,
+          "output_tokens": 10,
+          "total_tokens": 110
+        },
+        "errors": 0,
+        "subprocesses": 0
+      },
+      {
+        "arm": "http",
+        "case": 57,
+        "temperature": "warm",
+        "full_ms": 4320.664717990439,
+        "ttft_ms": 4165.325189009309,
+        "usage": {
+          "input_tokens": 100,
+          "output_tokens": 10,
+          "total_tokens": 110
+        },
+        "errors": 0,
+        "subprocesses": 0
+      },
+      {
+        "arm": "cli",
+        "case": 57,
+        "temperature": "warm",
+        "full_ms": 13263.105673948303,
+        "ttft_ms": 13263.105673948303,
+        "usage": {
+          "input_tokens": 100,
+          "output_tokens": 10,
+          "total_tokens": 110
+        },
+        "errors": 0,
+        "subprocesses": 1
+      },
+      {
+        "arm": "cli",
+        "case": 58,
+        "temperature": "warm",
+        "full_ms": 12372.439295984805,
+        "ttft_ms": 12372.439295984805,
+        "usage": {
+          "input_tokens": 100,
+          "output_tokens": 10,
+          "total_tokens": 110
+        },
+        "errors": 0,
+        "subprocesses": 1
+      },
+      {
+        "arm": "http",
+        "case": 58,
+        "temperature": "warm",
+        "full_ms": 4346.897745970637,
+        "ttft_ms": 4198.999365966301,
+        "usage": {
+          "input_tokens": 100,
+          "output_tokens": 10,
+          "total_tokens": 110
+        },
+        "errors": 0,
+        "subprocesses": 0
+      },
+      {
+        "arm": "http",
+        "case": 59,
+        "temperature": "warm",
+        "full_ms": 4427.927910990547,
+        "ttft_ms": 4284.435400972143,
+        "usage": {
+          "input_tokens": 100,
+          "output_tokens": 10,
+          "total_tokens": 110
+        },
+        "errors": 0,
+        "subprocesses": 0
+      },
+      {
+        "arm": "cli",
+        "case": 59,
+        "temperature": "warm",
+        "full_ms": 12951.843505026773,
+        "ttft_ms": 12951.843505026773,
+        "usage": {
+          "input_tokens": 100,
+          "output_tokens": 10,
+          "total_tokens": 110
+        },
+        "errors": 0,
+        "subprocesses": 1
+      },
+      {
+        "arm": "cli",
+        "case": 60,
+        "temperature": "cold",
+        "full_ms": 15246.206875017378,
+        "ttft_ms": 15246.206875017378,
+        "usage": {
+          "input_tokens": 100,
+          "output_tokens": 10,
+          "total_tokens": 110
+        },
+        "errors": 0,
+        "subprocesses": 1
+      },
+      {
+        "arm": "http",
+        "case": 60,
+        "temperature": "cold",
+        "full_ms": 4563.317682011984,
+        "ttft_ms": 4476.444428029936,
+        "usage": {
+          "input_tokens": 100,
+          "output_tokens": 10,
+          "total_tokens": 110
+        },
+        "errors": 0,
+        "subprocesses": 0
+      },
+      {
+        "arm": "http",
+        "case": 61,
+        "temperature": "warm",
+        "full_ms": 4410.2980209863745,
+        "ttft_ms": 4307.958307967056,
+        "usage": {
+          "input_tokens": 100,
+          "output_tokens": 10,
+          "total_tokens": 110
+        },
+        "errors": 0,
+        "subprocesses": 0
+      },
+      {
+        "arm": "cli",
+        "case": 61,
+        "temperature": "warm",
+        "full_ms": 13036.970080051105,
+        "ttft_ms": 13036.970080051105,
+        "usage": {
+          "input_tokens": 100,
+          "output_tokens": 10,
+          "total_tokens": 110
+        },
+        "errors": 0,
+        "subprocesses": 1
+      },
+      {
+        "arm": "cli",
+        "case": 62,
+        "temperature": "warm",
+        "full_ms": 12951.932794996537,
+        "ttft_ms": 12951.932794996537,
+        "usage": {
+          "input_tokens": 100,
+          "output_tokens": 10,
+          "total_tokens": 110
+        },
+        "errors": 0,
+        "subprocesses": 1
+      },
+      {
+        "arm": "http",
+        "case": 62,
+        "temperature": "warm",
+        "full_ms": 6426.824060967192,
+        "ttft_ms": 5419.998191995546,
+        "usage": {
+          "input_tokens": 100,
+          "output_tokens": 10,
+          "total_tokens": 110
+        },
+        "errors": 0,
+        "subprocesses": 0
+      },
+      {
+        "arm": "http",
+        "case": 63,
+        "temperature": "warm",
+        "full_ms": 5216.97840600973,
+        "ttft_ms": 5129.975561983883,
+        "usage": {
+          "input_tokens": 100,
+          "output_tokens": 10,
+          "total_tokens": 110
+        },
+        "errors": 0,
+        "subprocesses": 0
+      },
+      {
+        "arm": "cli",
+        "case": 63,
+        "temperature": "warm",
+        "full_ms": 12852.479411987588,
+        "ttft_ms": 12852.479411987588,
+        "usage": {
+          "input_tokens": 100,
+          "output_tokens": 10,
+          "total_tokens": 110
+        },
+        "errors": 0,
+        "subprocesses": 1
+      },
+      {
+        "arm": "cli",
+        "case": 64,
+        "temperature": "warm",
+        "full_ms": 12027.430129994173,
+        "ttft_ms": 12027.430129994173,
+        "usage": {
+          "input_tokens": 100,
+          "output_tokens": 10,
+          "total_tokens": 110
+        },
+        "errors": 0,
+        "subprocesses": 1
+      },
+      {
+        "arm": "http",
+        "case": 64,
+        "temperature": "warm",
+        "full_ms": 4340.731047035661,
+        "ttft_ms": 4164.124270027969,
+        "usage": {
+          "input_tokens": 100,
+          "output_tokens": 10,
+          "total_tokens": 110
+        },
+        "errors": 0,
+        "subprocesses": 0
+      },
+      {
+        "arm": "http",
+        "case": 65,
+        "temperature": "warm",
+        "full_ms": 5698.940331989434,
+        "ttft_ms": 5574.742151016835,
+        "usage": {
+          "input_tokens": 100,
+          "output_tokens": 10,
+          "total_tokens": 110
+        },
+        "errors": 0,
+        "subprocesses": 0
+      },
+      {
+        "arm": "cli",
+        "case": 65,
+        "temperature": "warm",
+        "full_ms": 12644.84603703022,
+        "ttft_ms": 12644.84603703022,
+        "usage": {
+          "input_tokens": 100,
+          "output_tokens": 10,
+          "total_tokens": 110
+        },
+        "errors": 0,
+        "subprocesses": 1
+      },
+      {
+        "arm": "cli",
+        "case": 66,
+        "temperature": "warm",
+        "full_ms": 12207.655657024588,
+        "ttft_ms": 12207.655657024588,
+        "usage": {
+          "input_tokens": 100,
+          "output_tokens": 10,
+          "total_tokens": 110
+        },
+        "errors": 0,
+        "subprocesses": 1
+      },
+      {
+        "arm": "http",
+        "case": 66,
+        "temperature": "warm",
+        "full_ms": 4768.2317169965245,
+        "ttft_ms": 4627.892896998674,
+        "usage": {
+          "input_tokens": 100,
+          "output_tokens": 10,
+          "total_tokens": 110
+        },
+        "errors": 0,
+        "subprocesses": 0
+      },
+      {
+        "arm": "http",
+        "case": 67,
+        "temperature": "warm",
+        "full_ms": 4270.721892011352,
+        "ttft_ms": 4151.287080021575,
+        "usage": {
+          "input_tokens": 100,
+          "output_tokens": 10,
+          "total_tokens": 110
+        },
+        "errors": 0,
+        "subprocesses": 0
+      },
+      {
+        "arm": "cli",
+        "case": 67,
+        "temperature": "warm",
+        "full_ms": 13294.849881029222,
+        "ttft_ms": 13294.849881029222,
+        "usage": {
+          "input_tokens": 100,
+          "output_tokens": 10,
+          "total_tokens": 110
+        },
+        "errors": 0,
+        "subprocesses": 1
+      },
+      {
+        "arm": "cli",
+        "case": 68,
+        "temperature": "warm",
+        "full_ms": 12369.3734559929,
+        "ttft_ms": 12369.3734559929,
+        "usage": {
+          "input_tokens": 100,
+          "output_tokens": 10,
+          "total_tokens": 110
+        },
+        "errors": 0,
+        "subprocesses": 1
+      },
+      {
+        "arm": "http",
+        "case": 68,
+        "temperature": "warm",
+        "full_ms": 4338.342606963124,
+        "ttft_ms": 4206.114425964188,
+        "usage": {
+          "input_tokens": 100,
+          "output_tokens": 10,
+          "total_tokens": 110
+        },
+        "errors": 0,
+        "subprocesses": 0
+      },
+      {
+        "arm": "http",
+        "case": 69,
+        "temperature": "warm",
+        "full_ms": 4459.424728993326,
+        "ttft_ms": 4297.042949998286,
+        "usage": {
+          "input_tokens": 100,
+          "output_tokens": 10,
+          "total_tokens": 110
+        },
+        "errors": 0,
+        "subprocesses": 0
+      },
+      {
+        "arm": "cli",
+        "case": 69,
+        "temperature": "warm",
+        "full_ms": 12860.80577102257,
+        "ttft_ms": 12860.80577102257,
+        "usage": {
+          "input_tokens": 100,
+          "output_tokens": 10,
+          "total_tokens": 110
+        },
+        "errors": 0,
+        "subprocesses": 1
+      },
+      {
+        "arm": "cli",
+        "case": 70,
+        "temperature": "cold",
+        "full_ms": 15230.801986006554,
+        "ttft_ms": 15230.801986006554,
+        "usage": {
+          "input_tokens": 100,
+          "output_tokens": 10,
+          "total_tokens": 110
+        },
+        "errors": 0,
+        "subprocesses": 1
+      },
+      {
+        "arm": "http",
+        "case": 70,
+        "temperature": "cold",
+        "full_ms": 4556.253561982885,
+        "ttft_ms": 4476.800706994254,
+        "usage": {
+          "input_tokens": 100,
+          "output_tokens": 10,
+          "total_tokens": 110
+        },
+        "errors": 0,
+        "subprocesses": 0
+      },
+      {
+        "arm": "http",
+        "case": 71,
+        "temperature": "warm",
+        "full_ms": 4448.845378996339,
+        "ttft_ms": 4312.963698001113,
+        "usage": {
+          "input_tokens": 100,
+          "output_tokens": 10,
+          "total_tokens": 110
+        },
+        "errors": 0,
+        "subprocesses": 0
+      },
+      {
+        "arm": "cli",
+        "case": 71,
+        "temperature": "warm",
+        "full_ms": 13043.455429025926,
+        "ttft_ms": 13043.455429025926,
+        "usage": {
+          "input_tokens": 100,
+          "output_tokens": 10,
+          "total_tokens": 110
+        },
+        "errors": 0,
+        "subprocesses": 1
+      },
+      {
+        "arm": "cli",
+        "case": 72,
+        "temperature": "warm",
+        "full_ms": 12966.154013993219,
+        "ttft_ms": 12966.154013993219,
+        "usage": {
+          "input_tokens": 100,
+          "output_tokens": 10,
+          "total_tokens": 110
+        },
+        "errors": 0,
+        "subprocesses": 1
+      },
+      {
+        "arm": "http",
+        "case": 72,
+        "temperature": "warm",
+        "full_ms": 6379.531285027042,
+        "ttft_ms": 5371.027595014311,
+        "usage": {
+          "input_tokens": 100,
+          "output_tokens": 10,
+          "total_tokens": 110
+        },
+        "errors": 0,
+        "subprocesses": 0
+      },
+      {
+        "arm": "http",
+        "case": 73,
+        "temperature": "warm",
+        "full_ms": 5145.47876099823,
+        "ttft_ms": 4044.905016955454,
+        "usage": {
+          "input_tokens": 100,
+          "output_tokens": 10,
+          "total_tokens": 110
+        },
+        "errors": 0,
+        "subprocesses": 0
+      },
+      {
+        "arm": "cli",
+        "case": 73,
+        "temperature": "warm",
+        "full_ms": 12958.991274004802,
+        "ttft_ms": 12958.991274004802,
+        "usage": {
+          "input_tokens": 100,
+          "output_tokens": 10,
+          "total_tokens": 110
+        },
+        "errors": 0,
+        "subprocesses": 1
+      },
+      {
+        "arm": "cli",
+        "case": 74,
+        "temperature": "warm",
+        "full_ms": 11984.027993981726,
+        "ttft_ms": 11984.027993981726,
+        "usage": {
+          "input_tokens": 100,
+          "output_tokens": 10,
+          "total_tokens": 110
+        },
+        "errors": 0,
+        "subprocesses": 1
+      },
+      {
+        "arm": "http",
+        "case": 74,
+        "temperature": "warm",
+        "full_ms": 4313.7557079899125,
+        "ttft_ms": 4147.893439978361,
+        "usage": {
+          "input_tokens": 100,
+          "output_tokens": 10,
+          "total_tokens": 110
+        },
+        "errors": 0,
+        "subprocesses": 0
+      },
+      {
+        "arm": "http",
+        "case": 75,
+        "temperature": "warm",
+        "full_ms": 5738.464818976354,
+        "ttft_ms": 5602.949279011227,
+        "usage": {
+          "input_tokens": 100,
+          "output_tokens": 10,
+          "total_tokens": 110
+        },
+        "errors": 0,
+        "subprocesses": 0
+      },
+      {
+        "arm": "cli",
+        "case": 75,
+        "temperature": "warm",
+        "full_ms": 12644.175296998583,
+        "ttft_ms": 12644.175296998583,
+        "usage": {
+          "input_tokens": 100,
+          "output_tokens": 10,
+          "total_tokens": 110
+        },
+        "errors": 0,
+        "subprocesses": 1
+      },
+      {
+        "arm": "cli",
+        "case": 76,
+        "temperature": "warm",
+        "full_ms": 12243.910414981656,
+        "ttft_ms": 12243.910414981656,
+        "usage": {
+          "input_tokens": 100,
+          "output_tokens": 10,
+          "total_tokens": 110
+        },
+        "errors": 0,
+        "subprocesses": 1
+      },
+      {
+        "arm": "http",
+        "case": 76,
+        "temperature": "warm",
+        "full_ms": 4716.2812009919435,
+        "ttft_ms": 4583.034350012895,
+        "usage": {
+          "input_tokens": 100,
+          "output_tokens": 10,
+          "total_tokens": 110
+        },
+        "errors": 0,
+        "subprocesses": 0
+      },
+      {
+        "arm": "http",
+        "case": 77,
+        "temperature": "warm",
+        "full_ms": 4296.481360041071,
+        "ttft_ms": 4154.95513001224,
+        "usage": {
+          "input_tokens": 100,
+          "output_tokens": 10,
+          "total_tokens": 110
+        },
+        "errors": 0,
+        "subprocesses": 0
+      },
+      {
+        "arm": "cli",
+        "case": 77,
+        "temperature": "warm",
+        "full_ms": 13265.768484037835,
+        "ttft_ms": 13265.768484037835,
+        "usage": {
+          "input_tokens": 100,
+          "output_tokens": 10,
+          "total_tokens": 110
+        },
+        "errors": 0,
+        "subprocesses": 1
+      },
+      {
+        "arm": "cli",
+        "case": 78,
+        "temperature": "warm",
+        "full_ms": 12437.189170974307,
+        "ttft_ms": 12437.189170974307,
+        "usage": {
+          "input_tokens": 100,
+          "output_tokens": 10,
+          "total_tokens": 110
+        },
+        "errors": 0,
+        "subprocesses": 1
+      },
+      {
+        "arm": "http",
+        "case": 78,
+        "temperature": "warm",
+        "full_ms": 4287.523591017816,
+        "ttft_ms": 4153.489299991634,
+        "usage": {
+          "input_tokens": 100,
+          "output_tokens": 10,
+          "total_tokens": 110
+        },
+        "errors": 0,
+        "subprocesses": 0
+      },
+      {
+        "arm": "http",
+        "case": 79,
+        "temperature": "warm",
+        "full_ms": 4441.553000011481,
+        "ttft_ms": 4288.825820025522,
+        "usage": {
+          "input_tokens": 100,
+          "output_tokens": 10,
+          "total_tokens": 110
+        },
+        "errors": 0,
+        "subprocesses": 0
+      },
+      {
+        "arm": "cli",
+        "case": 79,
+        "temperature": "warm",
+        "full_ms": 12960.299533966463,
+        "ttft_ms": 12960.299533966463,
+        "usage": {
+          "input_tokens": 100,
+          "output_tokens": 10,
+          "total_tokens": 110
+        },
+        "errors": 0,
+        "subprocesses": 1
+      },
+      {
+        "arm": "cli",
+        "case": 80,
+        "temperature": "cold",
+        "full_ms": 10401.909754029475,
+        "ttft_ms": 10401.909754029475,
+        "usage": {
+          "input_tokens": 100,
+          "output_tokens": 10,
+          "total_tokens": 110
+        },
+        "errors": 0,
+        "subprocesses": 1
+      },
+      {
+        "arm": "http",
+        "case": 80,
+        "temperature": "cold",
+        "full_ms": 1959.3605429981835,
+        "ttft_ms": 1903.8929969538003,
+        "usage": {
+          "input_tokens": 100,
+          "output_tokens": 10,
+          "total_tokens": 110
+        },
+        "errors": 0,
+        "subprocesses": 0
+      },
+      {
+        "arm": "http",
+        "case": 81,
+        "temperature": "warm",
+        "full_ms": 1733.626899018418,
+        "ttft_ms": 1672.6463729864918,
+        "usage": {
+          "input_tokens": 100,
+          "output_tokens": 10,
+          "total_tokens": 110
+        },
+        "errors": 0,
+        "subprocesses": 0
+      },
+      {
+        "arm": "cli",
+        "case": 81,
+        "temperature": "warm",
+        "full_ms": 9074.355156044476,
+        "ttft_ms": 9074.355156044476,
+        "usage": {
+          "input_tokens": 100,
+          "output_tokens": 10,
+          "total_tokens": 110
+        },
+        "errors": 0,
+        "subprocesses": 1
+      },
+      {
+        "arm": "cli",
+        "case": 82,
+        "temperature": "warm",
+        "full_ms": 8457.772770023439,
+        "ttft_ms": 8457.772770023439,
+        "usage": {
+          "input_tokens": 100,
+          "output_tokens": 10,
+          "total_tokens": 110
+        },
+        "errors": 0,
+        "subprocesses": 1
+      },
+      {
+        "arm": "http",
+        "case": 82,
+        "temperature": "warm",
+        "full_ms": 2027.73607801646,
+        "ttft_ms": 1963.8118430157192,
+        "usage": {
+          "input_tokens": 100,
+          "output_tokens": 10,
+          "total_tokens": 110
+        },
+        "errors": 0,
+        "subprocesses": 0
+      },
+      {
+        "arm": "http",
+        "case": 83,
+        "temperature": "warm",
+        "full_ms": 1879.3047780054621,
+        "ttft_ms": 1811.0295030055568,
+        "usage": {
+          "input_tokens": 100,
+          "output_tokens": 10,
+          "total_tokens": 110
+        },
+        "errors": 0,
+        "subprocesses": 0
+      },
+      {
+        "arm": "cli",
+        "case": 83,
+        "temperature": "warm",
+        "full_ms": 8716.493779968005,
+        "ttft_ms": 8716.493779968005,
+        "usage": {
+          "input_tokens": 100,
+          "output_tokens": 10,
+          "total_tokens": 110
+        },
+        "errors": 0,
+        "subprocesses": 1
+      },
+      {
+        "arm": "cli",
+        "case": 84,
+        "temperature": "warm",
+        "full_ms": 8551.959818985779,
+        "ttft_ms": 8551.959818985779,
+        "usage": {
+          "input_tokens": 100,
+          "output_tokens": 10,
+          "total_tokens": 110
+        },
+        "errors": 0,
+        "subprocesses": 1
+      },
+      {
+        "arm": "http",
+        "case": 84,
+        "temperature": "warm",
+        "full_ms": 1817.2522319946438,
+        "ttft_ms": 1749.7961270273663,
+        "usage": {
+          "input_tokens": 100,
+          "output_tokens": 10,
+          "total_tokens": 110
+        },
+        "errors": 0,
+        "subprocesses": 0
+      },
+      {
+        "arm": "http",
+        "case": 85,
+        "temperature": "warm",
+        "full_ms": 1767.5639360095374,
+        "ttft_ms": 1701.0731810005382,
+        "usage": {
+          "input_tokens": 100,
+          "output_tokens": 10,
+          "total_tokens": 110
+        },
+        "errors": 0,
+        "subprocesses": 0
+      },
+      {
+        "arm": "cli",
+        "case": 85,
+        "temperature": "warm",
+        "full_ms": 8477.238048042636,
+        "ttft_ms": 8477.238048042636,
+        "usage": {
+          "input_tokens": 100,
+          "output_tokens": 10,
+          "total_tokens": 110
+        },
+        "errors": 0,
+        "subprocesses": 1
+      },
+      {
+        "arm": "cli",
+        "case": 86,
+        "temperature": "warm",
+        "full_ms": 8666.353544977028,
+        "ttft_ms": 8666.353544977028,
+        "usage": {
+          "input_tokens": 100,
+          "output_tokens": 10,
+          "total_tokens": 110
+        },
+        "errors": 0,
+        "subprocesses": 1
+      },
+      {
+        "arm": "http",
+        "case": 86,
+        "temperature": "warm",
+        "full_ms": 1949.8130640131421,
+        "ttft_ms": 1872.5733589963056,
+        "usage": {
+          "input_tokens": 100,
+          "output_tokens": 10,
+          "total_tokens": 110
+        },
+        "errors": 0,
+        "subprocesses": 0
+      },
+      {
+        "arm": "http",
+        "case": 87,
+        "temperature": "warm",
+        "full_ms": 1964.1221720376052,
+        "ttft_ms": 1885.6168080237694,
+        "usage": {
+          "input_tokens": 100,
+          "output_tokens": 10,
+          "total_tokens": 110
+        },
+        "errors": 0,
+        "subprocesses": 0
+      },
+      {
+        "arm": "cli",
+        "case": 87,
+        "temperature": "warm",
+        "full_ms": 9300.46964000212,
+        "ttft_ms": 9300.46964000212,
+        "usage": {
+          "input_tokens": 100,
+          "output_tokens": 10,
+          "total_tokens": 110
+        },
+        "errors": 0,
+        "subprocesses": 1
+      },
+      {
+        "arm": "cli",
+        "case": 88,
+        "temperature": "warm",
+        "full_ms": 8793.375627021305,
+        "ttft_ms": 8793.375627021305,
+        "usage": {
+          "input_tokens": 100,
+          "output_tokens": 10,
+          "total_tokens": 110
+        },
+        "errors": 0,
+        "subprocesses": 1
+      },
+      {
+        "arm": "http",
+        "case": 88,
+        "temperature": "warm",
+        "full_ms": 1995.0155810220167,
+        "ttft_ms": 1918.785886024125,
+        "usage": {
+          "input_tokens": 100,
+          "output_tokens": 10,
+          "total_tokens": 110
+        },
+        "errors": 0,
+        "subprocesses": 0
+      },
+      {
+        "arm": "http",
+        "case": 89,
+        "temperature": "warm",
+        "full_ms": 2079.912434972357,
+        "ttft_ms": 1985.623451997526,
+        "usage": {
+          "input_tokens": 100,
+          "output_tokens": 10,
+          "total_tokens": 110
+        },
+        "errors": 0,
+        "subprocesses": 0
+      },
+      {
+        "arm": "cli",
+        "case": 89,
+        "temperature": "warm",
+        "full_ms": 8497.20486602746,
+        "ttft_ms": 8497.20486602746,
+        "usage": {
+          "input_tokens": 100,
+          "output_tokens": 10,
+          "total_tokens": 110
+        },
+        "errors": 0,
+        "subprocesses": 1
+      },
+      {
+        "arm": "cli",
+        "case": 90,
+        "temperature": "cold",
+        "full_ms": 10296.775001042988,
+        "ttft_ms": 10296.775001042988,
+        "usage": {
+          "input_tokens": 100,
+          "output_tokens": 10,
+          "total_tokens": 110
+        },
+        "errors": 0,
+        "subprocesses": 1
+      },
+      {
+        "arm": "http",
+        "case": 90,
+        "temperature": "cold",
+        "full_ms": 1983.0822510411963,
+        "ttft_ms": 1933.3686149911955,
+        "usage": {
+          "input_tokens": 100,
+          "output_tokens": 10,
+          "total_tokens": 110
+        },
+        "errors": 0,
+        "subprocesses": 0
+      },
+      {
+        "arm": "http",
+        "case": 91,
+        "temperature": "warm",
+        "full_ms": 1733.1682989606634,
+        "ttft_ms": 1677.942353009712,
+        "usage": {
+          "input_tokens": 100,
+          "output_tokens": 10,
+          "total_tokens": 110
+        },
+        "errors": 0,
+        "subprocesses": 0
+      },
+      {
+        "arm": "cli",
+        "case": 91,
+        "temperature": "warm",
+        "full_ms": 9054.70001703361,
+        "ttft_ms": 9054.70001703361,
+        "usage": {
+          "input_tokens": 100,
+          "output_tokens": 10,
+          "total_tokens": 110
+        },
+        "errors": 0,
+        "subprocesses": 1
+      },
+      {
+        "arm": "cli",
+        "case": 92,
+        "temperature": "warm",
+        "full_ms": 8499.023846990895,
+        "ttft_ms": 8499.023846990895,
+        "usage": {
+          "input_tokens": 100,
+          "output_tokens": 10,
+          "total_tokens": 110
+        },
+        "errors": 0,
+        "subprocesses": 1
+      },
+      {
+        "arm": "http",
+        "case": 92,
+        "temperature": "warm",
+        "full_ms": 2004.62746899575,
+        "ttft_ms": 1950.672923005186,
+        "usage": {
+          "input_tokens": 100,
+          "output_tokens": 10,
+          "total_tokens": 110
+        },
+        "errors": 0,
+        "subprocesses": 0
+      },
+      {
+        "arm": "http",
+        "case": 93,
+        "temperature": "warm",
+        "full_ms": 1880.6605589925312,
+        "ttft_ms": 1821.0761529626325,
+        "usage": {
+          "input_tokens": 100,
+          "output_tokens": 10,
+          "total_tokens": 110
+        },
+        "errors": 0,
+        "subprocesses": 0
+      },
+      {
+        "arm": "cli",
+        "case": 93,
+        "temperature": "warm",
+        "full_ms": 8704.821820021607,
+        "ttft_ms": 8704.821820021607,
+        "usage": {
+          "input_tokens": 100,
+          "output_tokens": 10,
+          "total_tokens": 110
+        },
+        "errors": 0,
+        "subprocesses": 1
+      },
+      {
+        "arm": "cli",
+        "case": 94,
+        "temperature": "warm",
+        "full_ms": 8602.253974997438,
+        "ttft_ms": 8602.253974997438,
+        "usage": {
+          "input_tokens": 100,
+          "output_tokens": 10,
+          "total_tokens": 110
+        },
+        "errors": 0,
+        "subprocesses": 1
+      },
+      {
+        "arm": "http",
+        "case": 94,
+        "temperature": "warm",
+        "full_ms": 1778.7889140308835,
+        "ttft_ms": 1719.9604790075682,
+        "usage": {
+          "input_tokens": 100,
+          "output_tokens": 10,
+          "total_tokens": 110
+        },
+        "errors": 0,
+        "subprocesses": 0
+      },
+      {
+        "arm": "http",
+        "case": 95,
+        "temperature": "warm",
+        "full_ms": 1767.4022669671103,
+        "ttft_ms": 1709.9356100079603,
+        "usage": {
+          "input_tokens": 100,
+          "output_tokens": 10,
+          "total_tokens": 110
+        },
+        "errors": 0,
+        "subprocesses": 0
+      },
+      {
+        "arm": "cli",
+        "case": 95,
+        "temperature": "warm",
+        "full_ms": 8445.542450004723,
+        "ttft_ms": 8445.542450004723,
+        "usage": {
+          "input_tokens": 100,
+          "output_tokens": 10,
+          "total_tokens": 110
+        },
+        "errors": 0,
+        "subprocesses": 1
+      },
+      {
+        "arm": "cli",
+        "case": 96,
+        "temperature": "warm",
+        "full_ms": 8708.682961005252,
+        "ttft_ms": 8708.682961005252,
+        "usage": {
+          "input_tokens": 100,
+          "output_tokens": 10,
+          "total_tokens": 110
+        },
+        "errors": 0,
+        "subprocesses": 1
+      },
+      {
+        "arm": "http",
+        "case": 96,
+        "temperature": "warm",
+        "full_ms": 1954.0779439848848,
+        "ttft_ms": 1868.6229099985212,
+        "usage": {
+          "input_tokens": 100,
+          "output_tokens": 10,
+          "total_tokens": 110
+        },
+        "errors": 0,
+        "subprocesses": 0
+      },
+      {
+        "arm": "http",
+        "case": 97,
+        "temperature": "warm",
+        "full_ms": 1966.6871230001561,
+        "ttft_ms": 1877.0076889777556,
+        "usage": {
+          "input_tokens": 100,
+          "output_tokens": 10,
+          "total_tokens": 110
+        },
+        "errors": 0,
+        "subprocesses": 0
+      },
+      {
+        "arm": "cli",
+        "case": 97,
+        "temperature": "warm",
+        "full_ms": 9356.554106983822,
+        "ttft_ms": 9356.554106983822,
+        "usage": {
+          "input_tokens": 100,
+          "output_tokens": 10,
+          "total_tokens": 110
+        },
+        "errors": 0,
+        "subprocesses": 1
+      },
+      {
+        "arm": "cli",
+        "case": 98,
+        "temperature": "warm",
+        "full_ms": 8751.206619024742,
+        "ttft_ms": 8751.206619024742,
+        "usage": {
+          "input_tokens": 100,
+          "output_tokens": 10,
+          "total_tokens": 110
+        },
+        "errors": 0,
+        "subprocesses": 1
+      },
+      {
+        "arm": "http",
+        "case": 98,
+        "temperature": "warm",
+        "full_ms": 1963.9122230000794,
+        "ttft_ms": 1894.2178470315412,
+        "usage": {
+          "input_tokens": 100,
+          "output_tokens": 10,
+          "total_tokens": 110
+        },
+        "errors": 0,
+        "subprocesses": 0
+      },
+      {
+        "arm": "http",
+        "case": 99,
+        "temperature": "warm",
+        "full_ms": 2099.4063329999335,
+        "ttft_ms": 1994.360521028284,
+        "usage": {
+          "input_tokens": 100,
+          "output_tokens": 10,
+          "total_tokens": 110
+        },
+        "errors": 0,
+        "subprocesses": 0
+      },
+      {
+        "arm": "cli",
+        "case": 99,
+        "temperature": "warm",
+        "full_ms": 8513.289146008901,
+        "ttft_ms": 8513.289146008901,
+        "usage": {
+          "input_tokens": 100,
+          "output_tokens": 10,
+          "total_tokens": 110
+        },
+        "errors": 0,
+        "subprocesses": 1
+      }
+    ]
+  },
+  "limitations": [
+    "Synthetic model usage is fixed fixture accounting, not real tokenizer usage or model billing. No production model quality, cost, or latency claim.",
+    "Four legacy real-account smoke tests remain skipped; the required pinned local Gateway capabilities and benchmark were executed separately, not inferred from those skips.",
+    "Cold means first turn in a new agent session; process startup is prewarmed by capability checks. CLI TTFT is text availability at buffered invoke return, and includes Docker exec overhead.",
+    "Hosted services/configuration were not changed or accepted. Hosted extraction needs the same Gateway-side native deny policy; client tool_choice alone is not a sandbox.",
+    "Other shared host work can influence wall-clock timings; CPU quota was unavailable.",
+    "The production Docker cron transport integrations/openclaw/adapter/cron_transport.py remains outside this task artifact grant and still needs an owner scope handoff for its most-recent-run fallback."
   ],
-  "test_commands": [
-    {
-      "command": "FIFTH CORRECTIVE PASS (this revision) -- PANTHEON_PY=.venv-pantheon/bin/python3; timeout 280 \"$PANTHEON_PY\" -m pytest -q -rs services/openclaw-gateway-adapter/ services/control-plane/cron/test_exact_run_wait.py services/control-plane/cron/test_service.py",
-      "result": "554 passed, 4 skipped, 1 warning, 18 subtests passed",
-      "exit_code": 0
-    },
-    {
-      "command": "FIFTH CORRECTIVE PASS -- targeted new-test verification: \"$PANTHEON_PY\" -m pytest -q -rs services/openclaw-gateway-adapter/tests/test_structured_data_tool_contract.py -k TestValidateExtractionArgumentsSchemaCoverage; \"$PANTHEON_PY\" -m pytest -q -rs services/openclaw-gateway-adapter/tests/test_openresponses_transport_contract.py -k https",
-      "result": "16 passed (schema coverage, including 5 new); 5 passed (https, including 1 new real-TLS regression)",
-      "exit_code": 0
-    },
-    {
-      "command": "SECOND CORRECTIVE PASS (this revision) -- PANTHEON_PY=.venv-pantheon/bin/python3; \"$PANTHEON_PY\" -m pytest -q services/openclaw-gateway-adapter/ services/control-plane/cron/test_exact_run_wait.py services/control-plane/cron/test_service.py",
-      "result": "529 passed, 4 skipped, 1 warning, 18 subtests passed",
-      "exit_code": 0
-    },
-    {
-      "command": "SECOND CORRECTIVE PASS -- per-file breakdown: test_openresponses_transport_contract.py (41 passed), test_structured_data_tool_contract.py (26 passed, 1 warning), test_main.py (119 passed, 1 warning, 18 subtests), test_exact_run_wait.py (13 passed)",
-      "result": "all green; test_cron.py excluded from the aggregate run above only because it cannot even collect (pre-existing, unrelated ImportError -- see the existing test_cron.py entry below, unchanged by this task)",
-      "exit_code": 0
-    },
-    {
-      "command": "PANTHEON_PY=.venv-pantheon/bin/python3; \"$PANTHEON_PY\" -m pytest -q services/openclaw-gateway-adapter/test_main.py services/openclaw-gateway-adapter/test_assistant_openclaw_provider_live.py services/openclaw-gateway-adapter/tests/test_assistant_provider_runtime.py services/openclaw-gateway-adapter/tests/test_prompt_injection.py services/openclaw-gateway-adapter/tests/test_openresponses_transport_contract.py services/openclaw-gateway-adapter/tests/test_structured_data_tool_contract.py",
-      "result": "230 passed, 4 skipped, 2 warnings, 18 subtests passed",
-      "exit_code": 0
-    },
-    {
-      "command": "\"$PANTHEON_PY\" -m pytest -q services/control-plane/cron/test_service.py services/control-plane/cron/test_exact_run_wait.py",
-      "result": "14 passed",
-      "exit_code": 0
-    },
-    {
-      "command": "\"$PANTHEON_PY\" -m pytest -q services/control-plane/cron/test_cron.py",
-      "result": "1 error during collection (ImportError: attempted relative import with no known parent package, raised from service.py's `from .models import ...`) -- pre-existing, unchanged by this task's edits, and unrelated to service.py (not in this task's declared editable-file list). Root cause: this repo's root conftest.py inserts the `cron/` directory itself onto sys.path for a test file whose parent directory is not literally named `tests`, which makes `openclaw_client`/`service`/`models` bare-importable as top-level modules, but those modules use package-relative imports (`from .models import ...`) internally, which then fail because there is no enclosing package context. Verified via `python -c \"from cron.openclaw_client import OpenClawCronClient; from cron.service import CronOrchestrator\"` (PYTHONPATH=services/control-plane) that both modules import and work correctly when given a proper package root -- this is purely a test-harness sys.path selection issue, not a code defect.",
-      "exit_code": 2
-    }
-  ],
-  "cron_correlation_fix_verified_independently_via": "services/control-plane/cron/test_exact_run_wait.py imports only openclaw_client (not service.py), so it collects and runs independently of the test_cron.py harness issue above; all 13 of its cases pass, directly exercising the exact-match-only correlation logic, the exact {id, runId} RPC lookup, the shared-deadline/late-result-rejection behavior, the fail-fast missing-run-id behavior, and the timeout/unknown-outcome behavior described in the task.",
-  "not_done_or_unverifiable": [
-    "FIFTH corrective pass (current): the acceptance-criterion controlled replay benchmark (>=100 requests, CLI base SHA vs. HTTP candidate, cold/warm split, TTFT/full p50/p95, error rate, input/output usage, subprocess count, full-turn p95 <= 1.10x base, token usage not increasing >5%) still could NOT be executed -- no live, authenticated OpenClaw Gateway/model backend is reachable from this dev sandbox. Recorded as an explicit external blocker requiring live Gateway access (see fifth_corrective_pass_after_review_reject.findings_still_blocked_external, id 5), not dismissed as out of scope and not fabricated.",
-    "FIFTH corrective pass (current): proving the upstream pinned Gateway's own server-side restricted-runtime/tool-arbitration policy actually denies a native/domain tool for the default agent used by /structured (as opposed to this adapter's client-side tool_choice + post-hoc response rejection) requires the same live, authenticated Gateway/auth route access blocked above (see fifth_corrective_pass_after_review_reject.findings_still_blocked_external, id 4).",
-    "The exact nested response.completed's response.output/response.usage/response.status/response.id JSON shape used for function-call/usage/status extraction in stream() is an assumption based on the OpenAI-Responses-API family. The pinned Gateway's own open-responses.schema.ts (statically reviewed) is consistent with this shape (ResponseResourceSchema has status/output/usage/id), which raises confidence, but no live round-trip against the actually-deployed Gateway build was performed to prove it end-to-end.",
-    "The cross-scope finding below (cron_transport.py) was identified but intentionally NOT fixed, per the task's explicit scope boundary (it is not in this task's declared artifact list).",
-    "services/control-plane/cron/test_cron.py still cannot collect (pre-existing ImportError, unrelated to and unchanged by this or any prior pass -- see the existing test_cron.py entry in test_commands)."
-  ],
-  "cross_scope_finding": {
-    "file": "integrations/openclaw/adapter/cron_transport.py",
-    "symbols": [
-      "_select_run",
-      "_poll_for_terminal_run",
-      "OpenClawCronGatewayTransport"
-    ],
-    "finding": "This file contains the identical entries[0] 'most recent run' fallback bug that was fixed in services/control-plane/cron/openclaw_client.py's _CliGatewayTransport for this task, and lacks the same exact-runId-lookup/shared-deadline fixes added in this corrective pass. cron_transport.py appears to be the more commonly used production cron path (wired through the Docker gateway runtime, per integrations/openclaw/integration.md section 9), separate from openclaw_client.py's CLI-based _CliGatewayTransport. It is NOT in this task's declared artifact list (see llm-task-design.md's '\u7cbe\u78ba\u6a94\u6848' section for SIMPLIFY-OPENCLAW-001) and belongs to no task in the current execution packet, so it was left unmodified. This needs a separate scope-handoff task to receive the equivalent fixes.",
-    "action_taken": "none -- documented only, per explicit out-of-scope instruction; verified the bug is present via `grep -n \"entries\\[0\\]\" integrations/openclaw/adapter/cron_transport.py`"
+  "prior_evidence_history": "Earlier corrective passes and the now-lifted real-account environment blocker are preserved in the evidence blob at commit 35dd715336de58d07a65cd326e1253eb3e436261. This manifest replaces those stale current-blocker claims.",
+  "delivery": {
+    "state": "awaiting independent review and required CI/integrator merge",
+    "merge_commit": null,
+    "hosted_deployment_claimed": false
   }
 }
