@@ -71,6 +71,15 @@ ALLOWED_ARTIFACT_TRANSITIONS: dict[ArtifactState, list[ArtifactState]] = {
     ArtifactState.RETIRED: [],
 }
 
+# Reserved tenant identity for checked-in bootstrap builtins (e.g. built-in
+# StrategyArtifacts registered at service startup) — architecture-resumption-
+# sa-sd.md §3.1/§3.3. No caller-supplied JWT/structured-token tenant claim may
+# ever resolve to this value; it is assigned only by the registry's own
+# bootstrap code path (services/registry/strategy_artifact.py) so a builtin's
+# owner identity can never be forged by a caller and a builtin can never be
+# mutated through a caller-facing route.
+BUILTIN_TENANT = "__builtin__"
+
 # ---------------------------------------------------------------------------
 # Sub-models
 # ---------------------------------------------------------------------------
@@ -231,6 +240,77 @@ class RegistryEntry:
     metadata: Optional[dict[str, Any]] = None
     created_at: Optional[str] = None
     updated_at: Optional[str] = None
+    last_actor: Optional[dict[str, Any]] = None
+    """Verified-caller audit binding for the most recent write (actor_id,
+    roles, tenant, token_kind) — see services.runtime_auth_inbound.AuthContext.
+    Not part of any StrategySpec/StrategyArtifact/AllocationPolicyArtifact
+    immutable payload; purely an audit projection of who last mutated this
+    row, so it is exempt from the reserved-key immutability check in
+    RegistryService.update_metadata."""
+    owner_tenant: Optional[str] = None
+    """Immutable owner-tenant identity bound at creation time from the
+    verified creating caller's tenant claim (never from a caller-supplied
+    body/header value — see services.runtime_auth_inbound.AuthContext).
+    Reads/writes are scoped against this field (see services/registry/service.py
+    ``_authorize_read``/``_authorize_write``); it is never reassigned by a
+    later mutation, unlike ``last_actor``. ``BUILTIN_TENANT`` marks a
+    checked-in bootstrap artifact — see that constant's docstring."""
+
+    def to_dict(self) -> dict:
+        """Durable JSONB payload for a Postgres owner store row.
+
+        Every field round-trips through :meth:`from_dict`; enum values are
+        serialized as their plain string value so the payload is a portable
+        JSON document rather than a Python-specific pickle.
+        """
+        return {
+            "registry_id": self.registry_id,
+            "artifact_type": self.artifact_type.value,
+            "strategy_id": self.strategy_id,
+            "version": self.version,
+            "artifact_state": self.artifact_state.value,
+            "lineage": self.lineage.to_dict(),
+            "storage_ref": self.storage_ref.to_dict(),
+            "checksum": self.checksum,
+            "producer_run_id": self.producer_run_id,
+            "evaluation_summary": self.evaluation_summary,
+            "approval_decision_id": self.approval_decision_id,
+            "approver": self.approver,
+            "approved_at": self.approved_at,
+            "rollback_target": self.rollback_target,
+            "deployment_summary": self.deployment_summary.to_dict() if self.deployment_summary else None,
+            "metadata": self.metadata,
+            "created_at": self.created_at,
+            "updated_at": self.updated_at,
+            "last_actor": self.last_actor,
+            "owner_tenant": self.owner_tenant,
+        }
+
+    @classmethod
+    def from_dict(cls, d: dict) -> "RegistryEntry":
+        deployment_summary = d.get("deployment_summary")
+        return cls(
+            registry_id=d["registry_id"],
+            artifact_type=ArtifactType(d["artifact_type"]),
+            strategy_id=d["strategy_id"],
+            version=d["version"],
+            artifact_state=ArtifactState(d["artifact_state"]),
+            lineage=Lineage.from_dict(d.get("lineage")),
+            storage_ref=StorageRef.from_dict(d["storage_ref"]),
+            checksum=d.get("checksum", ""),
+            producer_run_id=d.get("producer_run_id"),
+            evaluation_summary=d.get("evaluation_summary"),
+            approval_decision_id=d.get("approval_decision_id"),
+            approver=d.get("approver"),
+            approved_at=d.get("approved_at"),
+            rollback_target=d.get("rollback_target"),
+            deployment_summary=DeploymentSummary.from_dict(deployment_summary) if deployment_summary else None,
+            metadata=d.get("metadata"),
+            created_at=d.get("created_at"),
+            updated_at=d.get("updated_at"),
+            last_actor=d.get("last_actor"),
+            owner_tenant=d.get("owner_tenant"),
+        )
 
 
 @dataclass
