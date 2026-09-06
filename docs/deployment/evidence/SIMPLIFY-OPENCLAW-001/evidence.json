@@ -9,8 +9,8 @@
     "scope": "A pinned reproducible local/dev Gateway with a synthetic model or no-auth test route may satisfy functional acceptance. No real account credentials or authenticated external Gateway required. Tool/tenant safety and 100-request CLI/HTTP benchmark remain required."
   },
   "implementation": {
-    "owned_by": "Codex",
-    "reviewer": "Codex2",
+    "owned_by": "Codex2",
+    "reviewer": "Codex",
     "review_status": "pending independent exact-head review",
     "pr": 5629,
     "implementation_anchor": "633381255",
@@ -25,18 +25,21 @@
       "P1 correction: invoke and stream share conversation resolution: internal explicit session ID, metadata.session_user, then legacy metadata.session_id. Tenant/actor escaping and positional identity remain unchanged.",
       "P2 correction: one effective-model resolver is used by invoke, stream and readiness. Main-agent defaults resolve to OPENCLAW_PRIMARY_MODEL/provider default; non-default agents retain their Gateway model unless an admitted explicit override is supplied.",
       "Mounted HTTP regressions prove conversation continuity/isolation, session alias precedence, identical default model headers including readiness, and preservation of admitted explicit/agent-configured models.",
-      "P1 correction for b643c5fa: invoke and stream now share the durable Persona ledger with atomic actor-bound claims, cross-route terminal replay, in-doubt fencing, and admitted tenant/actor/pint session identity. Streaming persists its terminal envelope before publishing it and forwards first-attempt deltas."
+      "P1 correction for b643c5fa: invoke and stream now share the durable Persona ledger with atomic actor-bound claims, cross-route terminal replay, in-doubt fencing, and admitted tenant/actor/pint session identity. Streaming persists its terminal envelope before publishing it and forwards first-attempt deltas.",
+      "Structured endpoint reads config.get on the same authenticated Gateway before every dispatch; valid exact-agent tools.deny=[\"*\"] is required. Missing, ambiguous, malformed or unavailable policy denies before model execution. Policy RPC and HTTP share one total deadline."
     ],
     "measured_provider_sha256": "95db5140fa79fc60aeac907717f278a4b0cfbf7d2f4bae264029bc7ee0e3d8da",
     "final_provider_sha256": "95db5140fa79fc60aeac907717f278a4b0cfbf7d2f4bae264029bc7ee0e3d8da",
-    "post_measurement_change": "Provider bytes remain identical to the recorded 100-pair replay. main.py now shares the existing Persona durable ledger across mounted invoke/stream routes; those changes are validated by mounted real-provider HTTP fixtures and SQLite fault/concurrency regressions, not by the provider-only replay.",
+    "post_measurement_change": "Provider bytes remain identical to the recorded 100-pair replay. main.py now shares the existing Persona durable ledger across mounted invoke/stream routes; those changes are validated by mounted real-provider HTTP fixtures and SQLite fault/concurrency regressions, not by the provider-only replay. The mounted structured endpoint now also verifies live native-tool denial through administrative config.get before invoking the unchanged HTTP provider. This additional extraction admission is covered by mounted pinned-Gateway probes and full regressions, not by ordinary-turn benchmark timing.",
     "routing_anchor": "31ee9f1d7",
     "mounted_admission_anchor": "dc941f9ee",
-    "source_commit": "bf3c58836511888a80382809317c84b87c393f68",
+    "source_commit": "52d1f5911c73c3b9726dfd94328d2e92e6d9e86a",
     "integration_base": "96294dcf3c113e3b1cdc44f4d9d4069294259ac1",
     "persona_idempotency_anchor": "e828660f4",
     "persona_regression_anchor": "a8fd6b3dd",
-    "persona_error_replay_anchor": "bf3c58836511888a80382809317c84b87c393f68"
+    "persona_error_replay_anchor": "bf3c58836511888a80382809317c84b87c393f68",
+    "ownership_recovery": "Canonical supervisor recovery on 2026-09-06 reassigned owner to Codex2 and reviewer to Codex. Earlier source authors and historical reviewer findings remain identified by their original commits.",
+    "structured_policy_anchor": "d2b58415a157fb7b34634104c7684d5448230bf2"
   },
   "validation": [
     {
@@ -70,6 +73,26 @@
       "result": "132 passed, 1 warning, 26 subtests passed in 29.13s; final route code after preserving typed error status on replay",
       "exit_code": 0,
       "source_commit": "bf3c58836511888a80382809317c84b87c393f68"
+    },
+    {
+      "command": "timeout 120 /tmp/gov-approval-venv/bin/python -m pytest -q services/openclaw-gateway-adapter/tests/test_structured_data_tool_contract.py",
+      "result": "47 passed, 2 warnings in 12.18s",
+      "exit_code": 0
+    },
+    {
+      "command": "timeout 360 /tmp/gov-approval-venv/bin/python -m pytest -q -rs services/openclaw-gateway-adapter/ services/control-plane/cron/test_exact_run_wait.py services/control-plane/cron/test_cron.py services/control-plane/cron/test_service.py",
+      "result": "603 passed, 4 legacy external-account smoke skipped, 5 warnings, 26 subtests passed in 142.04s",
+      "exit_code": 0
+    },
+    {
+      "command": "SIMPLIFY_POLICY_PROBE=missing timeout 100 /tmp/gov-approval-venv/bin/python services/openclaw-gateway-adapter/tests/test_openresponses_transport_contract.py",
+      "result": "Two completed runs after adding assertion diagnostics: 503 OPENCLAW_STRUCTURED_POLICY_DENIED, zero model requests, no native exec advertised, no marker; fixture cleanup exit 0 on both runs",
+      "exit_code": 0
+    },
+    {
+      "command": "SIMPLIFY_POLICY_PROBE=verified timeout 100 /tmp/gov-approval-venv/bin/python services/openclaw-gateway-adapter/tests/test_openresponses_transport_contract.py",
+      "result": "200 extraction value=7; attempted native exec returns 502 OPENCLAW_RESPONSES_FAILED; three synthetic model requests advertised only emit_extraction; marker absent; fixture cleanup exit 0",
+      "exit_code": 0
     }
   ],
   "local_gateway_evidence": {
@@ -3089,6 +3112,65 @@
       "services/openclaw-gateway-adapter/test_main.py": "a2f2f798ddea22e163ef8a26b64aafd26e2762368010dc39af9b4243b48a4947"
     },
     "compatibility": "Existing fingerprints without authenticated actor binding are denied as conflicts, not retried or replayed to an unbound actor. No hosted ledger migration was performed.",
-    "independent_review": "pending exact-head handoff to configured Codex2 reviewer"
+    "independent_review": "pending exact-head handoff to currently configured Codex reviewer"
+  },
+  "structured_policy_admission_correction": {
+    "rejected_head": "bdc9512ec549fe7ddedc9d2cbc37ff27e26ac471",
+    "historical_reviewer": "Codex2",
+    "finding": "A fixture-only deny policy did not stop the mounted extraction endpoint from dispatching to a Gateway whose agent still allowed native tools.",
+    "implementation_owner": "Codex2",
+    "configured_reviewer": "Codex",
+    "independent_review": "pending; no approval asserted",
+    "validation": [
+      {
+        "command": "timeout 120 /tmp/gov-approval-venv/bin/python -m pytest -q services/openclaw-gateway-adapter/tests/test_structured_data_tool_contract.py",
+        "result": "47 passed, 2 warnings in 12.18s",
+        "exit_code": 0
+      },
+      {
+        "command": "timeout 360 /tmp/gov-approval-venv/bin/python -m pytest -q -rs services/openclaw-gateway-adapter/ services/control-plane/cron/test_exact_run_wait.py services/control-plane/cron/test_cron.py services/control-plane/cron/test_service.py",
+        "result": "603 passed, 4 legacy external-account smoke skipped, 5 warnings, 26 subtests passed in 142.04s",
+        "exit_code": 0
+      },
+      {
+        "command": "SIMPLIFY_POLICY_PROBE=missing timeout 100 /tmp/gov-approval-venv/bin/python services/openclaw-gateway-adapter/tests/test_openresponses_transport_contract.py",
+        "result": "Two completed runs after adding assertion diagnostics: 503 OPENCLAW_STRUCTURED_POLICY_DENIED, zero model requests, no native exec advertised, no marker; fixture cleanup exit 0 on both runs",
+        "exit_code": 0
+      },
+      {
+        "command": "SIMPLIFY_POLICY_PROBE=verified timeout 100 /tmp/gov-approval-venv/bin/python services/openclaw-gateway-adapter/tests/test_openresponses_transport_contract.py",
+        "result": "200 extraction value=7; attempted native exec returns 502 OPENCLAW_RESPONSES_FAILED; three synthetic model requests advertised only emit_extraction; marker absent; fixture cleanup exit 0",
+        "exit_code": 0
+      }
+    ],
+    "source_sha256": {
+      "services/openclaw-gateway-adapter/main.py": "fce1b2b8eab522eea230365248bfc673bdb88fdfd11d6712a5f647bfc4360cee",
+      "services/openclaw-gateway-adapter/assistant_openclaw_provider.py": "95db5140fa79fc60aeac907717f278a4b0cfbf7d2f4bae264029bc7ee0e3d8da",
+      "services/openclaw-gateway-adapter/tests/test_openresponses_transport_contract.py": "e4cf4337a83c01fff28dcd34f4abdc2cb6fe1c240ea6a4cf4f3801200c94138d",
+      "services/openclaw-gateway-adapter/tests/test_structured_data_tool_contract.py": "8be4d830e8901a87fc9dedd131e0172d0d9182b61b64ebf2eb0e9763b690de4f",
+      "integrations/openclaw/integration.md": "7e1cddbf3bf59615d6d1d14aa1b20aba783a4ade9a1788ceabb5d705c70c19c7"
+    },
+    "environment": {
+      "python": "3.12.3",
+      "pytest": "9.1.1",
+      "fastapi": "0.141.1",
+      "httpx": "0.28.1",
+      "pydantic": "2.13.5"
+    },
+    "gateway_image": "sha256:f435502b113f873768b64cd7f5f2a63f44d0a236ae3a5647ff42716652c74c31",
+    "failed_attempts": [
+      {
+        "command": "SIMPLIFY_POLICY_PROBE=missing timeout 100 /tmp/gov-approval-venv/bin/python services/openclaw-gateway-adapter/tests/test_openresponses_transport_contract.py",
+        "exit_code": 1,
+        "result": "Initial missing-policy probe returned expected 503 POLICY_DENIED but failed Model.records == []; cleanup exit 0.",
+        "disposition": "Preserved as failed, not acceptance. Added Model.records to assertion diagnostics without changing the predicate or product code. Two subsequent isolated fixture runs passed with zero requests. Initial extra-request contents were not captured; cause remains undetermined."
+      }
+    ],
+    "limitations": [
+      "Administrators must keep native denial in force during admitted turns; a policy snapshot does not make later configuration changes atomic with execution.",
+      "The config.get administrative read requires the adapter CLI and shares at most ten seconds of the total invocation budget. Ordinary invoke/stream/readiness answer probes remain HTTP-only.",
+      "The earlier 100-pair ordinary-turn replay remains applicable to byte-identical provider code. It does not measure extraction policy-read latency.",
+      "No hosted configuration, deployed runtime or external-account acceptance is claimed."
+    ]
   }
 }

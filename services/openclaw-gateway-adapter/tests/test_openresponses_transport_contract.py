@@ -1514,7 +1514,7 @@ def run_pinned_gateway_replay():
                         if policy_probe == "missing":
                             assert response.status_code == 503, response.text
                             assert response.json()["error_code"] == "OPENCLAW_STRUCTURED_POLICY_DENIED", response.text
-                            assert Model.records == []
+                            assert Model.records == [], Model.records
                         elif case == "positive":
                             assert response.status_code == 200, response.text
                             assert response.json()["data"]["output"]["structured_data"] == {"value": 7}
