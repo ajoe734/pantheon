@@ -9,7 +9,7 @@ from __future__ import annotations
 from enum import Enum
 from typing import Any, Dict, List, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ConfigDict
 
 
 # ---------------------------------------------------------------------------
@@ -68,7 +68,12 @@ class EvidenceRefBody(BaseModel):
 # Request bodies
 # ---------------------------------------------------------------------------
 
-class ProposeApprovalRequest(BaseModel):
+class ApprovalCommand(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    expected_version: int = Field(ge=0)
+
+
+class ProposeApprovalRequest(ApprovalCommand):
     decision_id: Optional[str] = None   # auto-generated when omitted
     target_type: TargetType
     target_id: str
@@ -76,8 +81,8 @@ class ProposeApprovalRequest(BaseModel):
     risk_level: RiskLevel = RiskLevel.LOW
     capital_pool_id: Optional[str] = None
     persona_id: Optional[str] = None
-    tenant_id: str = Field(default="pantheon-system", min_length=1)
-    owner_user_id: str = Field(default="pantheon-system", min_length=1)
+    tenant_id: str = Field(min_length=1)
+    owner_user_id: str = Field(min_length=1)
     proposal_id: Optional[str] = Field(default=None, min_length=1)
     proposal_revision: Optional[int] = Field(default=None, ge=1)
     proposal_content_digest: Optional[str] = Field(default=None, min_length=1)
@@ -88,12 +93,12 @@ class ProposeApprovalRequest(BaseModel):
     expires_at: Optional[str] = None
 
 
-class AcceptReviewRequest(BaseModel):
+class AcceptReviewRequest(ApprovalCommand):
     actor_role: ActorRole
     actor_id: str
 
 
-class DecideRequest(BaseModel):
+class DecideRequest(ApprovalCommand):
     actor_role: ActorRole
     outcome: DecisionOutcome
     rationale: str
@@ -106,7 +111,7 @@ class DecideRequest(BaseModel):
     expires_at: Optional[str] = None
 
 
-class RevokeRequest(BaseModel):
+class RevokeRequest(ApprovalCommand):
     actor_role: ActorRole
     actor_id: str
 
@@ -162,6 +167,8 @@ class ApprovalDecisionResponse(BaseModel):
     controller_record_ref: Optional[str] = None
     recorded_at: Optional[str] = None
     authority_status: Optional[str] = None
+    version: int
+    event_id: str
 
 
 class WriteAuthorityEntry(BaseModel):

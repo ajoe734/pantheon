@@ -84,13 +84,15 @@ class EvidenceRefType(str, Enum):
 # Owner Matrix
 # ---------------------------------------------------------------------------
 
-OWNER_MATRIX: Dict[RiskLevel, List[ActorRole]] = {
-    RiskLevel.LOW: [ActorRole.GOVERNANCE_REVIEWER, ActorRole.AUTOMATED_GATE],
-    RiskLevel.MEDIUM: [ActorRole.GOVERNANCE_REVIEWER, ActorRole.RISK_OWNER],
-    RiskLevel.HIGH: [ActorRole.RISK_OWNER, ActorRole.GOVERNANCE_COMMITTEE],
-    RiskLevel.CRITICAL: [ActorRole.GOVERNANCE_COMMITTEE],
+from services.governance.write_authority import (
+    WRITE_AUTHORITY_MATRIX, REVOKE_AUTHORITY, is_authorized_to_decide,
+)
+
+OWNER_MATRIX = {
+    RiskLevel(risk): [ActorRole(role) for role in roles]
+    for risk, roles in WRITE_AUTHORITY_MATRIX.items()
 }
-REVOKE_ROLES = {ActorRole.RISK_OWNER, ActorRole.GOVERNANCE_COMMITTEE}
+REVOKE_ROLES = {ActorRole(role) for role in REVOKE_AUTHORITY}
 
 
 class OwnerMatrix:
@@ -99,7 +101,7 @@ class OwnerMatrix:
     @staticmethod
     def is_authorized(role: ActorRole, risk: RiskLevel) -> bool:
         """Return True if *role* is authorized to decide at *risk* level."""
-        return role in OWNER_MATRIX.get(risk, [])
+        return is_authorized_to_decide(role, risk)
 
     @staticmethod
     def minimum_roles_for(risk: RiskLevel) -> List[ActorRole]:
@@ -263,6 +265,8 @@ class ApprovalDecision:
     controller_record_ref: Optional[str] = None
     recorded_at: Optional[str] = None
     authority_status: Optional[str] = None
+    version: int = 0
+    event_id: Optional[str] = None
 
     # -- factory helpers -----------------------------------------------------
 
@@ -557,6 +561,8 @@ class ApprovalDecision:
             controller_record_ref=data.get("controller_record_ref"),
             recorded_at=data.get("recorded_at"),
             authority_status=data.get("authority_status"),
+            version=data.get("version", 0),
+            event_id=data.get("event_id"),
         )
 
     @classmethod
