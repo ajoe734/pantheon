@@ -10151,9 +10151,21 @@ class ReviewDecisionIntentLeaseRecoveryTests(unittest.TestCase):
         self.assertEqual(task.get("last_update"), initial_last_update)
         self.assertNotIn(supervisor.WORKER_RECOVERY_TASK_KEY, task)
 
-    def test_reconcile_migrates_legacy_collision_from_journal_and_replays_intent(
+    def test_digest_mismatch_is_never_migrated_even_when_journal_has_exact_prior_state(
         self,
     ) -> None:
+        """The retired legacy collision migration must stay retired.
+
+        Regression coverage for OPS-LEGACY-REVIEW-RETIRE-001: even when the
+        authoritative journal holds an exact prior task state matching the
+        frozen intent's digest (the same shape that the old
+        ``reconcile_legacy_review_decision_intent_collision`` helper used to
+        restore), the supervisor must never rewrite the task row to
+        compensate for a stale intent digest. A digest mismatch is simply a
+        non-recoverable lease now: no mutation, no recovery receipt, no
+        eligible dispatch candidate for anyone.
+        """
+
         event_log = Path(self.config["task_state_store"]["event_log"])
         task_id = "FULL-OPERATION-GAP-SA-SD-PLAN-FREEZE-20260830"
         prior_task = task_fixture(
@@ -10189,7 +10201,7 @@ class ReviewDecisionIntentLeaseRecoveryTests(unittest.TestCase):
         intent["intent_sha256"] = supervisor.rewrite_task_state_store.sha256_json(unsigned)
         prior_task["review_decision_intent"] = copy.deepcopy(intent)
 
-        # Seed the valid state into the authoritative journal (reproducing Seq 9611)
+        # Seed the exact-prior-match state into the authoritative journal.
         valid_status = {"tasks": [self.task, prior_task], "blockers": [], "handoffs": []}
         supervisor.rewrite_task_state_store.append_state_commit(
             event_log,
@@ -10197,7 +10209,8 @@ class ReviewDecisionIntentLeaseRecoveryTests(unittest.TestCase):
             source="test-seq-9611",
         )
 
-        # Mutate the board to simulate the legacy lost-lease collision (reproducing Seq 9612)
+        # Mutate the board to simulate a generic worker-recovery collision
+        # (the same shape the retired migration used to repair).
         collided_task = copy.deepcopy(prior_task)
         collided_task["generation"] = 13
         collided_task["last_update"] = "2026-08-30T11:00:11Z"
@@ -10235,88 +10248,42 @@ class ReviewDecisionIntentLeaseRecoveryTests(unittest.TestCase):
             json.dumps(collided_status), encoding="utf-8"
         )
 
-        # Run reconciliation
+        # Run reconciliation. (``changed`` may still be True because the
+        # fixture's unrelated TASK-1 row -- whose digest matches -- is
+        # independently eligible for the ordinary, non-legacy lease-recovery
+        # receipt; that is not what this test is verifying.)
         state = self._state()
         with mock.patch.object(supervisor, "sync_status_pipeline", return_value=True):
-            changed = supervisor.reconcile_review_decision_intent_lease_recovery(
+            supervisor.reconcile_review_decision_intent_lease_recovery(
                 self.config, state
             )
-        self.assertTrue(changed)
 
-        # Verify state after reconciliation:
-        # 1. Task row was restored to prior generation and next, worker_recovery pointer removed
+        # The task row must stay exactly as collided: no restoration, no
+        # cleared fence, no minted recovery receipt.
         status_after = supervisor.load_status(self.config)
         task_after = supervisor.task_index_from_status(self.config, status_after)[task_id]
-        self.assertEqual(task_after["generation"], 12)
-        self.assertEqual(task_after["next"], prior_task["next"])
-        self.assertNotIn(supervisor.WORKER_RECOVERY_TASK_KEY, task_after)
-        self.assertEqual(
-            supervisor.review_intent_recovery_task_digest(task_after),
-            prior_digest,
-        )
+        self.assertEqual(task_after["generation"], 13)
+        self.assertIn(supervisor.WORKER_RECOVERY_TASK_KEY, task_after)
+        self.assertNotIn("review_decision_intent_recovery", task_after)
 
-        # 2. Generic lost-lease receipt was marked as resolved (not deleted)
+        # The generic lost-lease receipt is untouched (still pending, not
+        # silently resolved by a migration that no longer exists).
         receipts = status_after.get("worker_recovery_receipts", {})
         self.assertIn("lost-lease-45094bd7", receipts)
-        self.assertEqual(receipts["lost-lease-45094bd7"]["status"], "resolved")
+        self.assertEqual(receipts["lost-lease-45094bd7"]["status"], "pending")
 
-        # 3. Typed review_decision_intent_recovery receipt was minted
-        recovery_rec = task_after.get("review_decision_intent_recovery")
-        self.assertIsInstance(recovery_rec, dict)
-        self.assertEqual(recovery_rec["actor"], "Codex2")
-        self.assertEqual(recovery_rec["nonce"], "37ad9fe834fb2939e0e3039e6b082133")
-        self.assertEqual(recovery_rec["task_generation"], 12)
-        self.assertEqual(recovery_rec["task_digest"], prior_digest)
-
-        # 4. Only original actor Codex2 is eligible for dispatch
-        candidate = supervisor.task_execution_dispatch_candidate(
-            self.config, task_after, "Codex2", {task_id: task_after, "TASK-1": self.task}
+        # No one -- not even the original actor -- gets a dispatch candidate
+        # out of a digest-mismatched intent anymore.
+        self.assertIsNone(
+            supervisor.task_execution_dispatch_candidate(
+                self.config, task_after, "Codex2", {task_id: task_after, "TASK-1": self.task}
+            )
         )
-        self.assertIsNotNone(candidate)
         self.assertIsNone(
             supervisor.task_execution_dispatch_candidate(
                 self.config, task_after, "Antigravity2", {task_id: task_after, "TASK-1": self.task}
             )
         )
-
-        # 5. Codex2 executes reopen replay against the migrated board
-        from scripts import ai_status
-
-        external_result = {
-            "command": "reopen",
-            "task_id": task_id,
-            "intent_nonce": intent["nonce"],
-            ai_status.REVIEW_BINDING_MISMATCH_PREFLIGHT_KEY: "binding mismatch",
-        }
-        original_status_root = ai_status.STATUS_ROOT
-        self.addCleanup(ai_status.configure_status_root_paths, original_status_root)
-        ai_status.configure_status_root_paths(self.root)
-        # All lazy entrypoint imports must use this same isolated CLI module.
-        with mock.patch.dict(sys.modules, {"ai_status": ai_status}), mock.patch.dict(
-            os.environ,
-            {
-                "AI_NAME": "Codex2",
-                "PANTHEON_TASK_STATE_EVENT_LOG": str(event_log),
-                "PANTHEON_TASK_STATE_STORE_MODE": "authoritative",
-            },
-        ):
-            status_loaded = supervisor.load_status(self.config)
-            ai_status.finalize_review_decision_intent(
-                status_loaded,
-                command="reopen",
-                args=[task_id, "Independent review rejected: please rebase and fix findings."],
-                external_result=external_result,
-            )
-
-        # 6. Verify task transitioned to in_progress, returned to owner Antigravity2,
-        # and all review decision intent & recovery markers were cleared!
-        status_final = supervisor.load_status(self.config)
-        task_final = supervisor.task_index_from_status(self.config, status_final)[task_id]
-        self.assertEqual(task_final["status"], "in_progress")
-        self.assertEqual(task_final["owner"], "Antigravity2")
-        self.assertNotIn("review_decision_intent", task_final)
-        self.assertNotIn("review_decision_intent_recovery", task_final)
-        self.assertNotIn(supervisor.WORKER_RECOVERY_TASK_KEY, task_final)
 
     def test_legacy_collision_fails_closed_when_journal_is_missing_or_mismatched(
         self,
