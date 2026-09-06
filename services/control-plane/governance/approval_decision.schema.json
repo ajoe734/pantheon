@@ -27,7 +27,8 @@
         "model_artifact",
         "allocation_policy",
         "persona_capital_binding",
-        "evolution_proposal"
+        "evolution_proposal",
+        "persona_training_target"
       ],
       "description": "The type of object being approved. Must match a valid governance target."
     },
@@ -102,7 +103,10 @@
       "type": "array",
       "items": {
         "type": "object",
-        "required": ["ref_type", "ref_id"],
+        "required": [
+          "ref_type",
+          "ref_id"
+        ],
         "properties": {
           "ref_type": {
             "type": "string",
@@ -125,7 +129,12 @@
             "properties": {
               "backend": {
                 "type": "string",
-                "enum": ["object_store", "gcs", "db", "inline"]
+                "enum": [
+                  "object_store",
+                  "gcs",
+                  "db",
+                  "inline"
+                ]
               },
               "path": {
                 "type": "string"
@@ -220,12 +229,22 @@
     },
     "authority_status": {
       "type": "string",
-      "enum": ["authoritative"],
+      "enum": [
+        "authoritative"
+      ],
       "description": "Authoritative status flag."
     },
     "metadata": {
       "type": "object",
       "description": "Additional metadata for downstream consumers."
+    },
+    "version": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "event_id": {
+      "type": "string",
+      "minLength": 1
     }
   },
   "allOf": [
@@ -236,10 +255,14 @@
             "const": "approved_with_conditions"
           }
         },
-        "required": ["decision"]
+        "required": [
+          "decision"
+        ]
       },
       "then": {
-        "required": ["conditions"],
+        "required": [
+          "conditions"
+        ],
         "properties": {
           "conditions": {
             "minItems": 1
@@ -258,10 +281,15 @@
             ]
           }
         },
-        "required": ["decision_state"]
+        "required": [
+          "decision_state"
+        ]
       },
       "then": {
-        "required": ["actor_role", "actor_id"]
+        "required": [
+          "actor_role",
+          "actor_id"
+        ]
       }
     },
     {
@@ -271,10 +299,16 @@
             "const": "decided"
           }
         },
-        "required": ["decision_state"]
+        "required": [
+          "decision_state"
+        ]
       },
       "then": {
-        "required": ["decision", "rationale", "decided_at"]
+        "required": [
+          "decision",
+          "rationale",
+          "decided_at"
+        ]
       }
     }
   ]

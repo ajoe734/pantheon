@@ -240,6 +240,7 @@ class TrainingTargetApprovalVerifier(Protocol):
         *,
         approval_decision_id: str,
         approval_decision_ref: str,
+        target_version: str,
         persona_id: str,
         tenant_id: str,
         session_id: str,
@@ -272,77 +273,29 @@ class HttpGovernanceApprovalVerifier:
         *,
         approval_decision_id: str,
         approval_decision_ref: str,
+        target_version: str,
         persona_id: str,
         tenant_id: str,
         session_id: str,
         candidate_digest: str,
         proof_digest: str,
     ) -> bool:
-        url = f"{self._base_url}/api/governance/approvals/{approval_decision_id}"
-        request = UrllibRequest(
-            url,
-            headers={
-                "Accept": "application/json",
-                "Authorization": f"Bearer {self._service_token}",
-                "X-Tenant-Id": tenant_id,
-            },
-            method="GET",
-        )
-        try:
-            with urlopen(request, timeout=self._timeout_seconds) as response:  # noqa: S310
-                if int(response.status) != 200:
-                    return False
-                body = json.loads(response.read().decode("utf-8"))
-        except (HTTPError, URLError, TimeoutError, OSError, ValueError):
-            return False
-        if not isinstance(body, Mapping):
-            return False
-        decision = body.get("approval")
-        if not isinstance(decision, Mapping):
-            decision = body.get("approval_decision")
-        if not isinstance(decision, Mapping):
-            decision = body
-
-        lifecycle = str(decision.get("decision_state") or "").strip().lower()
-        outcome = str(decision.get("decision") or "").strip().lower()
-        if lifecycle not in {"decided", "approved"}:
-            return False
-        if outcome and outcome != "approved":
-            return False
-        if not outcome and lifecycle != "approved":
-            return False
-        if str(decision.get("persona_id") or "") != persona_id:
-            return False
-        if str(decision.get("tenant_id") or "") != tenant_id:
-            return False
-        if str(decision.get("session_id") or "") != session_id:
-            return False
-        if str(decision.get("candidate_digest") or "") != candidate_digest:
-            return False
-        if str(decision.get("proof_digest") or "") != proof_digest:
-            return False
-        declared_ref = decision.get("approval_decision_ref")
-        identity = decision.get("decision_id") or decision.get("approval_id")
-        if declared_ref is not None:
-            if str(declared_ref) != approval_decision_ref:
-                return False
-        elif str(identity or "") != approval_decision_ref:
-            return False
-        expires_at = decision.get("expires_at")
-        if not isinstance(expires_at, str) or not expires_at.strip():
+        from services.governance.approval_authority import ApprovalReader, ApprovalInvalid
+        if approval_decision_ref != approval_decision_id:
             return False
         try:
-            normalized = (
-                expires_at[:-1] + "+00:00" if expires_at.endswith("Z") else expires_at
-            )
-            parsed_expiry = datetime.fromisoformat(normalized)
-        except ValueError:
-            return False
-        if parsed_expiry.tzinfo is None:
-            return False
-        if parsed_expiry.astimezone(timezone.utc) <= datetime.now(timezone.utc):
+            ApprovalReader(base_url=self._base_url, service_token=self._service_token,
+                           timeout_seconds=self._timeout_seconds).verify(
+                approval_decision_id, expected={
+                    'tenant_id': tenant_id, 'persona_id': persona_id,
+                    'target_type': 'persona_training_target', 'target_id': persona_id,
+                    'target_version': target_version, 'session_id': session_id,
+                    'candidate_digest': candidate_digest, 'proof_digest': proof_digest,
+                })
+        except ApprovalInvalid:
             return False
         return True
+
 
 
 def _persona_auth_env() -> dict[str, str]:
@@ -1244,6 +1197,7 @@ class PersistentPersonaTrainingTargetOwner:
         verified = self._approval_verifier.verify_training_target_approval(
             approval_decision_id=request.approval_decision_id,
             approval_decision_ref=request.approval_decision_ref,
+            target_version=str(request.generation),
             persona_id=persona_id,
             tenant_id=tenant_id,
             session_id=request.session_id,
@@ -1505,8 +1459,7 @@ def build_training_target_approval_verifier() -> TrainingTargetApprovalVerifier 
         os.getenv("PERSONA_TRAINING_TARGET_GOVERNANCE_BASE_URL") or ""
     ).strip()
     service_token = str(
-        os.getenv("PANTHEON_GOVERNANCE_SERVICE_TOKEN")
-        or os.getenv("PANTHEON_PERSONA_SERVICE_TOKEN")
+        os.getenv("PERSONA_GOVERNANCE_SERVICE_TOKEN")
         or ""
     ).strip()
     if not base_url or not service_token:

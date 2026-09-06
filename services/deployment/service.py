@@ -370,10 +370,14 @@ class DeploymentPlannerService:
         plan_store: DeploymentPlanStore,
         approval_store_path: Path,
         registry_snapshot_path: Path | None = None,
+        registry_reader=None,
+        approval_reader=None,
     ) -> None:
         self.plan_store = plan_store
         self.approval_store_path = approval_store_path
         self.registry_snapshot_path = registry_snapshot_path
+        self.registry_reader = registry_reader
+        self.approval_reader = approval_reader
         self.planner = StagePlanner()
 
     def create_plan(
@@ -385,7 +389,11 @@ class DeploymentPlannerService:
         tenant_id: str,
     ) -> DeploymentPlan:
         registry_entry = self._resolve_registry_entry(request)
-        approval_decision = self._resolve_approval_decision(request)
+        approval_decision = self._resolve_approval_decision(request, registry_entry, tenant_id)
+        if registry_entry.get('owner_tenant') != tenant_id:
+            raise DeploymentPlanError('Registry artifact belongs to a different tenant')
+        if registry_entry.get('artifact_state') != 'approved' or registry_entry.get('approval_decision_id') != request.approval_decision_id:
+            raise DeploymentPlanError('Registry artifact must cite this approved decision')
         approval_tenant_id = str(approval_decision.get("tenant_id") or "").strip()
         if not approval_tenant_id:
             raise DeploymentPlanError(
@@ -639,36 +647,38 @@ class DeploymentPlannerService:
         )
 
     def _resolve_registry_entry(self, request: CreateDeploymentPlanRequest) -> Mapping[str, Any]:
-        if request.registry_entry is not None:
-            return request.registry_entry
-        if request.registry_id and self.registry_snapshot_path and self.registry_snapshot_path.exists():
-            record = _load_record(
-                self.registry_snapshot_path,
-                key_candidates=("registry_id", "id"),
-                target_key=request.registry_id,
-            )
-            if record is not None:
-                return record
-        raise DeploymentPlanError(
-            "registry_entry payload is required unless registry_id resolves from "
-            "PANTHEON_DEPLOYMENT_REGISTRY_SNAPSHOT_PATH"
-        )
+        if self.registry_reader is not None:
+            return self.registry_reader(request.registry_id)
+        import httpx
+        from urllib.parse import quote
+        url = os.getenv('DEPLOYMENT_REGISTRY_BASE_URL', '').rstrip('/')
+        token = os.getenv('DEPLOYMENT_REGISTRY_SERVICE_TOKEN', '')
+        if not url or not token:
+            raise DeploymentPlanError('Registry owner URL and scoped read principal required')
+        try:
+            response = httpx.get(url + '/api/registry/entries/' + quote(request.registry_id, safe=''),
+                                 headers={'Authorization': 'Bearer ' + token, 'Accept': 'application/json'},
+                                 timeout=float(os.getenv('DEPLOYMENT_REGISTRY_TIMEOUT_SECONDS', '5')),
+                                 follow_redirects=False)
+            response.raise_for_status()
+            entry = response.json()['entry']
+            if not isinstance(entry, dict) or entry.get('registry_id') != request.registry_id:
+                raise ValueError('Wrong Registry identity')
+            return entry
+        except (httpx.HTTPError, ValueError, KeyError, TypeError) as exc:
+            raise DeploymentPlanError('Registry exact owner read unavailable or malformed') from exc
 
-    def _resolve_approval_decision(self, request: CreateDeploymentPlanRequest) -> Mapping[str, Any]:
-        if request.approval_decision is not None:
-            return request.approval_decision
-        if self.approval_store_path.exists():
-            record = _load_record(
-                self.approval_store_path,
-                key_candidates=("decision_id", "id"),
-                target_key=request.approval_decision_id,
-            )
-            if record is not None:
-                return record
-        raise DeploymentPlanError(
-            "approval_decision payload is required unless approval_decision_id resolves from "
-            f"{self.approval_store_path}"
-        )
+    def _resolve_approval_decision(self, request, registry_entry, tenant_id) -> Mapping[str, Any]:
+        from services.governance.approval_authority import configured_approval_reader, ApprovalInvalid
+        try:
+            reader = self.approval_reader or configured_approval_reader('deployment')
+            return reader.verify(request.approval_decision_id, expected={
+                'tenant_id': tenant_id, 'target_type': 'registry_entry',
+                'target_id': request.registry_id, 'target_version': registry_entry.get('version'),
+                'candidate_digest': registry_entry.get('checksum'),
+            }).model_dump()
+        except ApprovalInvalid as exc:
+            raise DeploymentPlanError(str(exc)) from exc
 
 
 class DeploymentProjectionReadModelService:

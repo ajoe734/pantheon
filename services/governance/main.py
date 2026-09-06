@@ -1304,7 +1304,7 @@ def _approval_principal(authorization: Optional[str]) -> AuthContext:
     import math
     env = _governance_auth_env()
     env['PANTHEON_RUNTIME_AUTH_MODE'] = 'strict'
-    env['PANTHEON_RUNTIME_DEFAULT_ROLE'] = ''
+    env['PANTHEON_RUNTIME_DEFAULT_ROLE'] = '__missing_approval_role__'
     issuer = env.get('PANTHEON_RUNTIME_OIDC_ISSUER') or env.get('PANTHEON_RUNTIME_JWT_ISSUER')
     audience = env.get('PANTHEON_RUNTIME_OIDC_AUDIENCE') or env.get('PANTHEON_RUNTIME_JWT_AUDIENCE')
     if not issuer or not audience:
@@ -1317,7 +1317,7 @@ def _approval_principal(authorization: Optional[str]) -> AuthContext:
         if (ctx.token_kind != 'jwt' or not isinstance(claims.get('sub'), str)
                 or not claims['sub'].strip() or ctx.actor_id != claims['sub']
                 or not isinstance(claims.get('tenant_id'), str) or not claims['tenant_id'].strip()
-                or not ctx.roles or isinstance(exp, bool) or not isinstance(exp, (int, float))
+                or not ctx.roles or "__missing_approval_role__" in ctx.roles or isinstance(exp, bool) or not isinstance(exp, (int, float))
                 or not math.isfinite(exp) or exp <= datetime.now(timezone.utc).timestamp()):
             raise AuthError('AUTH_APPROVAL_CLAIMS_REQUIRED', 'Verified subject, tenant, roles and expiry required', 401)
         return ctx

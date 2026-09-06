@@ -9,7 +9,7 @@ from __future__ import annotations
 from enum import Enum
 from typing import Any, Dict, List, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ConfigDict
 
 
 class DeploymentStageBody(str, Enum):
@@ -102,13 +102,12 @@ class DeploymentPlanBody(BaseModel):
 
 
 class CreateDeploymentPlanRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
     plan_id: Optional[str] = None
     approval_decision_id: str
     capital_pool_id: Optional[str] = None
     target_stage: DeploymentStageBody
-    registry_id: Optional[str] = None
-    registry_entry: Optional[Dict[str, Any]] = None
-    approval_decision: Optional[Dict[str, Any]] = None
+    registry_id: str = Field(min_length=1)
     current_stage: Optional[DeploymentStageBody] = None
     created_by: Optional[str] = None
     sponsor_persona_id: Optional[str] = None

@@ -38,6 +38,7 @@ class ActorRole(str, Enum):
 
 
 class TargetType(str, Enum):
+    PERSONA_TRAINING_TARGET = "persona_training_target"
     REGISTRY_ENTRY = "registry_entry"
     STRATEGY_SPEC = "strategy_spec"
     STRATEGY_WORKSHOP = "strategy_workshop"
