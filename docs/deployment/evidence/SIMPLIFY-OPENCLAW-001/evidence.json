@@ -3172,5 +3172,15 @@
       "The earlier 100-pair ordinary-turn replay remains applicable to byte-identical provider code. It does not measure extraction policy-read latency.",
       "No hosted configuration, deployed runtime or external-account acceptance is claimed."
     ]
-  }
+  },
+  "subprocess_measurement_failed_attempts": [
+    {
+      "command": "SIMPLIFY_REPLAY_OUTPUT=/tmp/simplify-observed-replay-100.json timeout 1200 /tmp/gov-approval-venv/bin/python services/openclaw-gateway-adapter/tests/test_openresponses_transport_contract.py",
+      "source_commit": "d78ad0ef1",
+      "exit_code": 1,
+      "cleanup_exit_code": 0,
+      "error": "Baseline CLI bench-0 / cli-0 / Replay item 000 timed out after its original 30-second deadline. No complete report was emitted.",
+      "disposition": "Failed whole-batch attempt, not acceptance. Retry once with unchanged frozen setup and deadline; no inferred cause and no claim of zero failures across attempts."
+    }
+  ]
 }
