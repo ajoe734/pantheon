@@ -231,7 +231,13 @@ class RegistryEntry:
     metadata: Optional[dict[str, Any]] = None
     created_at: Optional[str] = None
     updated_at: Optional[str] = None
-
+    last_actor: Optional[dict[str, Any]] = None
+    """Verified-caller audit binding for the most recent write (actor_id,
+    roles, tenant, token_kind) — see services.runtime_auth_inbound.AuthContext.
+    Not part of any StrategySpec/StrategyArtifact/AllocationPolicyArtifact
+    immutable payload; purely an audit projection of who last mutated this
+    row, so it is exempt from the reserved-key immutability check in
+    RegistryService.update_metadata."""
 
     def to_dict(self) -> dict:
         """Durable JSONB payload for a Postgres owner store row.
@@ -259,6 +265,7 @@ class RegistryEntry:
             "metadata": self.metadata,
             "created_at": self.created_at,
             "updated_at": self.updated_at,
+            "last_actor": self.last_actor,
         }
 
     @classmethod
@@ -283,6 +290,7 @@ class RegistryEntry:
             metadata=d.get("metadata"),
             created_at=d.get("created_at"),
             updated_at=d.get("updated_at"),
+            last_actor=d.get("last_actor"),
         )
 
 

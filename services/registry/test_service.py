@@ -319,7 +319,7 @@ class TestDeploymentView:
 
 class TestFastAPIEndpoints:
     def setup_method(self):
-        self.client = TestClient(app)
+        self.client = TestClient(app, headers={"Authorization": "Bearer test-operator:operator"})
 
     def test_health(self):
         resp = self.client.get("/health")
@@ -741,7 +741,7 @@ class TestFastAPIEndpoints:
         assert len(resp.json()) == 1
 
         reset_store()
-        isolated_client = TestClient(app)
+        isolated_client = TestClient(app, headers={"Authorization": "Bearer test-operator:operator"})
         resp = isolated_client.get("/api/registry/strategies/isolation-test/entries")
         assert resp.status_code == 200
         assert resp.json() == []

@@ -3,10 +3,20 @@ durable readback, never fabricate a resulting_status.
 
 Prior behavior (architecture-resumption-sa-sd.md §2): _execute_strategy_action
 mapped action_id -> a static resulting_status and returned it as an
-"authoritative_readback" with zero owner I/O. This suite proves the fix:
-- update_params performs a real GET (base metadata) + PATCH (CAS) + GET
-  (readback) sequence against the Registry owner and returns the verified
-  readback, not the PATCH response body.
+"authoritative_readback" with zero owner I/O. A later fix made update_params
+perform real owner I/O but still had two defects (reviewer finding 6):
+it silently replaced the caller's ``expected_metadata`` CAS precondition
+with a freshly-fetched GET (defeating CAS), and it discarded the actual PATCH
+response in favor of a separate re-GET that could return stale/unrelated/
+empty data and still be reported as a "metadata_updated" success.
+
+This suite proves the current, corrected contract:
+- update_params performs exactly one HTTP call — a PATCH carrying the
+  caller's own ``expected_metadata`` unchanged — and builds its receipt from
+  that PATCH response (entry snapshot + ``X-Idempotent-Replay`` header), not
+  from a second GET.
+- A PATCH response with no confirmable entry payload raises explicitly
+  instead of manufacturing a false success.
 - submit_review/promote_paper/activate/pause/archive raise
   ActionUnavailableError naming the exact non-Registry owner from
   services.registry.command_contract, instead of returning a fabricated
@@ -41,13 +51,24 @@ def registry_url_env(monkeypatch):
     monkeypatch.setenv("PANTHEON_REGISTRY_API_URL", "http://registry-svc.internal")
 
 
-@patch("services.control_plane.bff.command_adapters.strategy_adapter.http_request_json")
-def test_update_params_calls_real_registry_owner_and_returns_verified_readback(mock_http, adapter):
-    mock_http.side_effect = [
-        {"entry": {"registry_id": "reg-001", "metadata": {"note": "old"}}},  # GET base
-        {"entry": {"registry_id": "reg-001", "metadata": {"note": "new"}}},  # PATCH response (ignored as truth)
-        {"entry": {"registry_id": "reg-001", "metadata": {"note": "new"}}},  # GET readback
-    ]
+@patch("services.control_plane.bff.command_adapters.strategy_adapter.http_request_json_with_headers")
+def test_update_params_preserves_callers_precondition_and_uses_patch_response_as_truth(mock_http, adapter):
+    """The caller's own expected_metadata (its real CAS precondition) must
+    reach the PATCH unchanged — never silently refreshed to "latest" via an
+    extra GET first — and the receipt must reflect the actual PATCH response,
+    not a separate re-GET."""
+    mock_http.return_value = (
+        200,
+        {"X-Idempotent-Replay": "false"},
+        {
+            "entry": {
+                "registry_id": "reg-001",
+                "metadata": {"note": "new"},
+                "updated_at": "2026-09-06T00:00:00Z",
+                "checksum": "sha256:abc",
+            }
+        },
+    )
 
     result = adapter.execute(
         "cmd-strat-001",
@@ -57,26 +78,74 @@ def test_update_params_calls_real_registry_owner_and_returns_verified_readback(m
             "strategy_id": "strat-alpha",
             "registry_id": "reg-001",
             "action_id": "update_params",
+            "expected_metadata": {"note": "old"},
             "metadata": {"note": "new"},
         },
         auth_token="test-token",
     )
 
     assert result["status"] == "metadata_updated"
-    # The authoritative_readback must be the *verified GET*, not the PATCH
-    # request/response body echoed back as truth.
+    # The authoritative_readback is the entry from the PATCH response itself.
     assert result["authoritative_readback"]["metadata"] == {"note": "new"}
     assert result["entity_id"] == "strat-alpha"
     assert result["domain_receipt"]["registry_id"] == "reg-001"
+    assert result["domain_receipt"]["checksum"] == "sha256:abc"
+    assert result["idempotent_replay"] is False
 
-    assert mock_http.call_count == 3
-    get_base_call, patch_call, get_readback_call = mock_http.call_args_list
-    assert get_base_call.kwargs["method"] == "GET"
-    assert get_readback_call.kwargs["method"] == "GET"
+    # Exactly one HTTP call: the PATCH itself, carrying the caller's own
+    # expected_metadata unchanged — no preceding "refresh to latest" GET.
+    assert mock_http.call_count == 1
+    patch_call = mock_http.call_args_list[0]
     assert patch_call.kwargs["method"] == "PATCH"
     assert patch_call.kwargs["payload"]["expected_metadata"] == {"note": "old"}
     assert patch_call.kwargs["payload"]["metadata"] == {"note": "new"}
     assert patch_call.kwargs["payload"]["command_key"] == "cmd-strat-001"
+
+
+@patch("services.control_plane.bff.command_adapters.strategy_adapter.http_request_json_with_headers")
+def test_update_params_idempotent_replay_header_is_surfaced(mock_http, adapter):
+    mock_http.return_value = (
+        200,
+        {"X-Idempotent-Replay": "true"},
+        {"entry": {"registry_id": "reg-001", "metadata": {"note": "v1"}, "updated_at": "t1"}},
+    )
+
+    result = adapter.execute(
+        "cmd-strat-005",
+        "StrategyAction",
+        {
+            "entity_type": "strategy",
+            "strategy_id": "strat-alpha",
+            "registry_id": "reg-001",
+            "action_id": "update_params",
+            "expected_metadata": None,
+            "metadata": {"note": "v1"},
+        },
+    )
+    assert result["idempotent_replay"] is True
+
+
+@patch("services.control_plane.bff.command_adapters.strategy_adapter.http_request_json_with_headers")
+def test_update_params_ambiguous_patch_response_never_fabricates_success(mock_http, adapter):
+    """A 200 response with no confirmable entry payload (e.g. an empty body)
+    must never be reported as metadata_updated — that would be exactly the
+    "wrong-version/empty GET manufactures a fake success" defect."""
+    mock_http.return_value = (200, {}, {})
+
+    with pytest.raises(ActionUnavailableError) as excinfo:
+        adapter.execute(
+            "cmd-strat-006",
+            "StrategyAction",
+            {
+                "entity_type": "strategy",
+                "strategy_id": "strat-alpha",
+                "registry_id": "reg-001",
+                "action_id": "update_params",
+                "expected_metadata": None,
+                "metadata": {"note": "v1"},
+            },
+        )
+    assert excinfo.value.error_code == "AMBIGUOUS_REGISTRY_RESPONSE"
 
 
 def test_update_params_requires_registry_id(adapter):
@@ -88,10 +157,29 @@ def test_update_params_requires_registry_id(adapter):
                 "entity_type": "strategy",
                 "strategy_id": "strat-alpha",
                 "action_id": "update_params",
+                "expected_metadata": None,
                 "metadata": {"note": "new"},
             },
         )
     assert excinfo.value.error_code == "MISSING_REGISTRY_ID"
+
+
+def test_update_params_requires_expected_metadata(adapter):
+    """Omitting expected_metadata entirely must fail explicitly rather than
+    the adapter silently treating it as None or fetching a fresh base."""
+    with pytest.raises(ActionUnavailableError) as excinfo:
+        adapter.execute(
+            "cmd-strat-007",
+            "StrategyAction",
+            {
+                "entity_type": "strategy",
+                "strategy_id": "strat-alpha",
+                "registry_id": "reg-001",
+                "action_id": "update_params",
+                "metadata": {"note": "new"},
+            },
+        )
+    assert excinfo.value.error_code == "MISSING_EXPECTED_METADATA"
 
 
 @pytest.mark.parametrize(
@@ -285,3 +373,96 @@ class TestHttpRequestJsonMethodDispatch:
         finally:
             listener.close()
             acceptor.join(timeout=5)
+
+
+class TestUpdateParamsOverRealSocket:
+    """End-to-end regression for update_params against a real HTTP server
+    standing in for the Registry owner — no mocking of http_request_json* —
+    so the CAS-precondition and receipt-fidelity fixes are proven against
+    what actually goes out on (and comes back over) the wire, not a mock
+    expectation that could silently drift from the real contract.
+    """
+
+    @pytest.fixture(autouse=True)
+    def _server(self, monkeypatch):
+        _CapturingHandler.received = None
+        _CapturingHandler.response_status = 200
+        _CapturingHandler.response_body = {"ok": True}
+        server = HTTPServer(("127.0.0.1", 0), _CapturingHandler)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        monkeypatch.setenv("PANTHEON_REGISTRY_API_URL", f"http://127.0.0.1:{server.server_port}")
+        yield
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)
+
+    def test_callers_base_precondition_is_sent_unchanged_over_the_wire(self, adapter):
+        _CapturingHandler.response_body = {
+            "entry": {
+                "registry_id": "reg-001",
+                "metadata": {"note": "new"},
+                "updated_at": "2026-09-06T00:00:00Z",
+                "checksum": "sha256:real",
+            }
+        }
+        adapter.execute(
+            "cmd-real-001",
+            "StrategyAction",
+            {
+                "entity_type": "strategy",
+                "strategy_id": "strat-alpha",
+                "registry_id": "reg-001",
+                "action_id": "update_params",
+                "expected_metadata": {"note": "callers-own-base"},
+                "metadata": {"note": "new"},
+            },
+        )
+        assert _CapturingHandler.received["method"] == "PATCH"
+        assert _CapturingHandler.received["body"]["expected_metadata"] == {"note": "callers-own-base"}
+
+    def test_correct_patch_result_produces_receipt_bound_to_that_exact_response(self, adapter):
+        _CapturingHandler.response_body = {
+            "entry": {
+                "registry_id": "reg-001",
+                "metadata": {"note": "new"},
+                "updated_at": "2026-09-06T01:23:45Z",
+                "checksum": "sha256:exact-version",
+            }
+        }
+        result = adapter.execute(
+            "cmd-real-002",
+            "StrategyAction",
+            {
+                "entity_type": "strategy",
+                "strategy_id": "strat-alpha",
+                "registry_id": "reg-001",
+                "action_id": "update_params",
+                "expected_metadata": None,
+                "metadata": {"note": "new"},
+            },
+        )
+        assert result["status"] == "metadata_updated"
+        assert result["domain_receipt"]["checksum"] == "sha256:exact-version"
+        assert result["domain_receipt"]["commit_time"] == "2026-09-06T01:23:45Z"
+        assert result["domain_receipt"]["correlation_id"] == "cmd-real-002"
+        assert result["authoritative_readback"]["updated_at"] == "2026-09-06T01:23:45Z"
+
+    def test_empty_response_body_cannot_manufacture_a_fake_success(self, adapter):
+        """A 200 with no entry payload (e.g. an unrelated/empty GET-shaped
+        body) must not be reported as metadata_updated."""
+        _CapturingHandler.response_body = {}
+        with pytest.raises(ActionUnavailableError) as excinfo:
+            adapter.execute(
+                "cmd-real-003",
+                "StrategyAction",
+                {
+                    "entity_type": "strategy",
+                    "strategy_id": "strat-alpha",
+                    "registry_id": "reg-001",
+                    "action_id": "update_params",
+                    "expected_metadata": None,
+                    "metadata": {"note": "new"},
+                },
+            )
+        assert excinfo.value.error_code == "AMBIGUOUS_REGISTRY_RESPONSE"

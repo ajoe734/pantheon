@@ -170,6 +170,63 @@ def http_request_json(
         raise
 
 
+def http_request_json_with_headers(
+    url: str,
+    method: str = "GET",
+    payload: Optional[Dict[str, Any]] = None,
+    auth_token: Optional[str] = None,
+    mfa_token: Optional[str] = None,
+    timeout: Optional[int] = None,
+) -> Tuple[int, Dict[str, str], Any]:
+    """Like :func:`http_request_json`, but returns ``(status_code, headers, body)``.
+
+    Some callers must inspect the response beyond the parsed JSON body — for
+    example the Registry metadata-CAS PATCH route's ``X-Idempotent-Replay``
+    header — so a caller can build a receipt from what the owner actually
+    returned instead of re-deriving it from a separate, potentially stale or
+    unrelated confirmatory GET. Always uses the raw ``urllib`` path (not the
+    ``command_executor._get_json``/``_post_json`` shortcuts, which discard
+    headers) so this works uniformly for every HTTP method.
+    """
+    req_timeout = timeout or _DEFAULT_REQUEST_TIMEOUT
+    headers: Dict[str, str] = {"Accept": "application/json"}
+    data: Optional[bytes] = None
+
+    if payload is not None:
+        data = json.dumps(payload).encode("utf-8")
+        headers["Content-Type"] = "application/json"
+
+    if auth_token:
+        headers["Authorization"] = f"Bearer {auth_token}" if not auth_token.startswith("Bearer ") else auth_token
+    if mfa_token:
+        headers["X-MFA-Token"] = mfa_token
+
+    req = urllib.request.Request(url, data=data, headers=headers, method=method.upper())
+    try:
+        with urllib.request.urlopen(req, timeout=req_timeout) as resp:
+            status_code = int(resp.status)
+            raw = resp.read()
+            body = json.loads(raw.decode("utf-8")) if raw else None
+            response_headers = {key: value for key, value in resp.headers.items()}
+            record_downstream_outcome(url, ok=True, status_code=status_code)
+            return status_code, response_headers, body
+    except urllib.error.HTTPError as exc:
+        record_downstream_outcome(url, ok=False, status_code=int(exc.code), detail=f"HTTP {exc.code}")
+        raise
+    except Exception as exc:
+        record_downstream_outcome(url, ok=False, status_code=-1, detail=str(exc))
+        raise
+
+
+def header_value(headers: Dict[str, str], name: str) -> Optional[str]:
+    """Case-insensitive header lookup against a plain ``dict`` of response headers."""
+    lowered = name.lower()
+    for key, value in headers.items():
+        if key.lower() == lowered:
+            return value
+    return None
+
+
 def build_domain_receipt(
     *,
     command_id: str,

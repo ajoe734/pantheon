@@ -58,7 +58,12 @@ class RegistryStore:
             self._strategy_index[entry.strategy_id].append(entry.registry_id)
 
     @staticmethod
-    def _new_entry(payload: RegistryEntryCreate, registry_id: str) -> RegistryEntry:
+    def _new_entry(
+        payload: RegistryEntryCreate,
+        registry_id: str,
+        *,
+        actor: Optional[dict] = None,
+    ) -> RegistryEntry:
         now = utc_now_iso()
         return RegistryEntry(
             registry_id=registry_id,
@@ -75,14 +80,21 @@ class RegistryStore:
             metadata=payload.metadata,
             created_at=now,
             updated_at=now,
+            last_actor=actor,
         )
 
     def put(self, entry: RegistryEntry) -> None:
         with self._lock:
             self._put_unlocked(entry)
 
-    def create(self, payload: RegistryEntryCreate, registry_id: str) -> RegistryEntry:
-        entry = self._new_entry(payload, registry_id)
+    def create(
+        self,
+        payload: RegistryEntryCreate,
+        registry_id: str,
+        *,
+        actor: Optional[dict] = None,
+    ) -> RegistryEntry:
+        entry = self._new_entry(payload, registry_id, actor=actor)
         self.put(entry)
         return RegistryEntry.from_dict(entry.to_dict())
 
@@ -90,17 +102,25 @@ class RegistryStore:
         self,
         payload: RegistryEntryCreate,
         registry_id: str,
+        *,
+        actor: Optional[dict] = None,
     ) -> tuple[RegistryEntry, bool]:
         """Atomically create an entry, or return the existing entry unchanged."""
         with self._lock:
             existing = self._entries.get(registry_id)
             if existing is not None:
                 return RegistryEntry.from_dict(existing.to_dict()), False
-            entry = self._new_entry(payload, registry_id)
+            entry = self._new_entry(payload, registry_id, actor=actor)
             self._put_unlocked(entry)
             return RegistryEntry.from_dict(entry.to_dict()), True
 
-    def update(self, entry: RegistryEntry, *, expected: Optional[dict] = None) -> RegistryEntry:
+    def update(
+        self,
+        entry: RegistryEntry,
+        *,
+        expected: Optional[dict] = None,
+        actor: Optional[dict] = None,
+    ) -> RegistryEntry:
         """Commit a mutation, optionally CAS-guarded against the caller's base snapshot.
 
         ``expected`` must be the ``to_dict()`` snapshot the caller read via
@@ -114,6 +134,8 @@ class RegistryStore:
                 if current is None or current.to_dict() != expected:
                     raise RegistryConcurrentUpdateError(entry.registry_id)
             entry.updated_at = utc_now_iso()
+            if actor is not None:
+                entry.last_actor = actor
             self._put_unlocked(entry)
             return RegistryEntry.from_dict(entry.to_dict())
 
@@ -204,6 +226,7 @@ class RegistryStore:
         current_stage: DeploymentStage,
         deployment_plan_id: Optional[str] = None,
         runtime_binding_id: Optional[str] = None,
+        actor: Optional[dict] = None,
     ) -> Optional[RegistryEntry]:
         """
         Updates the derived deployment_summary on a registry entry.
@@ -223,6 +246,8 @@ class RegistryStore:
                 last_transition_at=utc_now_iso(),
             )
             entry.updated_at = utc_now_iso()
+            if actor is not None:
+                entry.last_actor = actor
             return RegistryEntry.from_dict(entry.to_dict())
 
     # -- Metadata CAS update (parity with PostgresRegistryStore) -----------
@@ -234,27 +259,40 @@ class RegistryStore:
         base_snapshot: dict,
         new_metadata: Optional[dict],
         command_key: Optional[str] = None,
+        actor: Optional[dict] = None,
     ) -> tuple[RegistryEntry, bool]:
         """In-memory mirror of ``PostgresRegistryStore.commit_metadata_cas``.
 
         The receipt ledger here is process-local (not durable across
         restarts), which is why this backend is a test double only — the
         contract this method proves (CAS + idempotent replay + divergent-key
-        rejection) is identical to the Postgres backend so ``RegistryService``
-        can be tested against either.
+        rejection + returning the *originally* committed entry snapshot on
+        replay, never whatever the row has become since) is identical to the
+        Postgres backend so ``RegistryService`` can be tested against either.
+        The receipt key is scoped by tenant/actor/registry_id/command_key
+        (mirroring ``PostgresRegistryStore.receipt_key``) so the same
+        client-chosen ``command_key`` cannot collide across tenants/actors/
+        aggregates.
         """
+        from .pg_store import PostgresRegistryStore
+
+        scoped_key = (
+            PostgresRegistryStore.receipt_key(command_key, registry_id, actor=actor)
+            if command_key
+            else None
+        )
         with self._lock:
-            if command_key:
-                receipt = self._command_receipts.get(command_key)
+            if scoped_key:
+                receipt = self._command_receipts.get(scoped_key)
                 if receipt is not None:
                     if receipt["new_metadata"] != new_metadata:
                         from .pg_store import DivergentCommandReplayError
 
                         raise DivergentCommandReplayError(command_key)
-                    current = self._entries.get(registry_id)
-                    if current is None:
-                        raise RegistryConcurrentUpdateError(registry_id)
-                    return RegistryEntry.from_dict(current.to_dict()), True
+                    # Return the entry snapshot as it was at the moment this
+                    # command_key originally committed — not a fresh read of
+                    # the (possibly since-mutated-under-a-different-key) row.
+                    return RegistryEntry.from_dict(receipt["committed_entry"]), True
 
             current = self._entries.get(registry_id)
             if current is None or current.to_dict() != base_snapshot:
@@ -262,10 +300,16 @@ class RegistryStore:
             entry = RegistryEntry.from_dict(base_snapshot)
             entry.metadata = new_metadata
             entry.updated_at = utc_now_iso()
+            if actor is not None:
+                entry.last_actor = actor
             self._put_unlocked(entry)
-            if command_key:
-                self._command_receipts[command_key] = {"new_metadata": new_metadata}
-            return RegistryEntry.from_dict(entry.to_dict()), False
+            committed = entry.to_dict()
+            if scoped_key:
+                self._command_receipts[scoped_key] = {
+                    "new_metadata": new_metadata,
+                    "committed_entry": committed,
+                }
+            return RegistryEntry.from_dict(committed), False
 
 
 # Module-level singleton for API layer to share
@@ -277,15 +321,28 @@ def build_registry_store():
     """Select the registry storage backend from environment configuration.
 
     ``REGISTRY_STORE_BACKEND=postgres`` selects the durable production owner
-    store (``pg_store.PostgresRegistryStore``); anything else (including
-    unset) keeps the existing in-memory default so the current test suite is
-    unaffected. Production deployment config (docker-compose.yml,
-    docker-compose.control.yml) sets ``postgres`` explicitly — this default
-    is a local-dev/test convenience, not a missing-config fallback for a
-    deployment that asked for Postgres and didn't get it: an explicit
-    ``postgres`` selection with no reachable database fails closed inside
+    store (``pg_store.PostgresRegistryStore``). ``REGISTRY_STORE_BACKEND=memory``
+    (or unset, in dev posture) is an explicit, documented test/local-dev
+    opt-in into the in-memory test double — never a silent fallback for a
+    staging/production deployment that failed to configure Postgres.
+
+    Backend selection fails closed the same way
+    ``services.foundation.persistence_posture`` already does for every other
+    service: in an enforced posture (``PANTHEON_ENV``/``PANTHEON_PERSISTENCE_POSTURE``
+    in {stage, staging, prod, production, ...}), ``REGISTRY_STORE_BACKEND``
+    must resolve to ``postgres`` or this raises ``RuntimeError`` before a
+    request is ever served — an explicit ``postgres`` selection with no
+    reachable database then fails closed a second time inside
     ``build_postgres_registry_store()`` instead of silently downgrading here.
     """
+    from services.foundation.persistence_posture import require_persistence_posture
+
+    require_persistence_posture(
+        "registry",
+        backend_env_vars={"REGISTRY_STORE_BACKEND": "memory"},
+        require_object_store=False,
+    )
+
     backend = os.getenv("REGISTRY_STORE_BACKEND", "memory").strip().lower()
     if backend in ("", "memory"):
         return RegistryStore()

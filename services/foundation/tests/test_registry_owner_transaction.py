@@ -158,13 +158,17 @@ def test_metadata_cas_commit_and_receipt_are_one_atomic_transaction(pg_case):
     assert replayed is False
     assert updated.metadata == {"note": "first commit"}
 
-    receipt = store._receipts.get("cmd-abc")
+    receipt = store._receipts.get(store.receipt_key("cmd-abc", "reg-003"))
     assert receipt is not None
     assert receipt["registry_id"] == "reg-003"
+    assert receipt["committed_entry"]["metadata"] == {"note": "first commit"}
 
-    # A same-key identical replay must not re-run the mutation; it must
-    # return the original committed version even though the row has moved on
-    # since (proven by seeding a second, unrelated mutation first).
+    # A same-key identical replay must not re-run the mutation, AND must
+    # return the entry exactly as it was ORIGINALLY committed under this
+    # command_key — not whatever the row has become since under a different
+    # key (proven by seeding a second, unrelated mutation first). Returning
+    # the *current* row here would leak an unrelated later write into a
+    # caller's idempotent retry of an earlier command.
     stale_snapshot = updated.to_dict()
     store.commit_metadata_cas(
         registry_id="reg-003",
@@ -180,7 +184,11 @@ def test_metadata_cas_commit_and_receipt_are_one_atomic_transaction(pg_case):
         command_key="cmd-abc",
     )
     assert was_replay is True
-    assert replayed_result.metadata == {"note": "second commit, different key"}
+    assert replayed_result.metadata == {"note": "first commit"}
+
+    # The durable row itself reflects the later, unrelated command — the
+    # replay above must not have re-mutated it back to "first commit".
+    assert store.get("reg-003").metadata == {"note": "second commit, different key"}
 
 
 def test_metadata_cas_divergent_replay_under_same_key_fails_closed(pg_case):
@@ -204,6 +212,36 @@ def test_metadata_cas_divergent_replay_under_same_key_fails_closed(pg_case):
             new_metadata={"note": "a different request entirely"},
             command_key="cmd-shared",
         )
+
+
+def test_metadata_cas_receipt_is_scoped_by_tenant_and_actor(pg_case):
+    """The same client-chosen command_key from two different tenants/actors
+    against the same aggregate must not collide on one receipt row — each
+    must independently commit its own mutation instead of the second call
+    being misread as a replay of the first."""
+    store = _store(pg_case)
+    entry, _ = store.create_if_absent(_payload(), "reg-006")
+    base_snapshot = entry.to_dict()
+
+    first, first_replay = store.commit_metadata_cas(
+        registry_id="reg-006",
+        base_snapshot=base_snapshot,
+        new_metadata={"note": "tenant-a wrote this"},
+        command_key="cmd-shared-across-tenants",
+        actor={"actor_id": "alice", "tenant": "tenant-a"},
+    )
+    assert first_replay is False
+    assert first.metadata == {"note": "tenant-a wrote this"}
+
+    second, second_replay = store.commit_metadata_cas(
+        registry_id="reg-006",
+        base_snapshot=first.to_dict(),
+        new_metadata={"note": "tenant-b wrote this"},
+        command_key="cmd-shared-across-tenants",
+        actor={"actor_id": "bob", "tenant": "tenant-b"},
+    )
+    assert second_replay is False
+    assert second.metadata == {"note": "tenant-b wrote this"}
 
 
 def test_metadata_cas_rejects_stale_base_snapshot(pg_case):

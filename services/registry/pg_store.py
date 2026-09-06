@@ -55,7 +55,12 @@ def _request_digest(payload: dict[str, Any]) -> str:
     return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
 
 
-def _new_entry(payload: RegistryEntryCreate, registry_id: str) -> RegistryEntry:
+def _new_entry(
+    payload: RegistryEntryCreate,
+    registry_id: str,
+    *,
+    actor: Optional[dict[str, Any]] = None,
+) -> RegistryEntry:
     now = utc_now_iso()
     return RegistryEntry(
         registry_id=registry_id,
@@ -72,6 +77,7 @@ def _new_entry(payload: RegistryEntryCreate, registry_id: str) -> RegistryEntry:
         metadata=payload.metadata,
         created_at=now,
         updated_at=now,
+        last_actor=actor,
     )
 
 
@@ -97,12 +103,22 @@ class PostgresRegistryStore:
 
     # -- Write operations ---------------------------------------------------
 
-    def create(self, payload: RegistryEntryCreate, registry_id: str) -> RegistryEntry:
-        entry, _created = self.create_if_absent(payload, registry_id)
+    def create(
+        self,
+        payload: RegistryEntryCreate,
+        registry_id: str,
+        *,
+        actor: Optional[dict[str, Any]] = None,
+    ) -> RegistryEntry:
+        entry, _created = self.create_if_absent(payload, registry_id, actor=actor)
         return entry
 
     def create_if_absent(
-        self, payload: RegistryEntryCreate, registry_id: str,
+        self,
+        payload: RegistryEntryCreate,
+        registry_id: str,
+        *,
+        actor: Optional[dict[str, Any]] = None,
     ) -> tuple[RegistryEntry, bool]:
         """Atomically create an entry, or return the durable existing entry unchanged.
 
@@ -111,7 +127,7 @@ class PostgresRegistryStore:
         commit exactly one row; the loser gets back the winner's durable
         entry instead of silently overwriting it.
         """
-        entry = _new_entry(payload, registry_id)
+        entry = _new_entry(payload, registry_id, actor=actor)
         created, canonical = self._entries.insert_if_absent(registry_id, entry.to_dict())
         if created:
             return entry, True
@@ -122,7 +138,13 @@ class PostgresRegistryStore:
         registration at startup, never a caller-facing mutation path."""
         self._entries.put(entry.registry_id, entry.to_dict())
 
-    def update(self, entry: RegistryEntry, *, expected: Optional[dict[str, Any]] = None) -> RegistryEntry:
+    def update(
+        self,
+        entry: RegistryEntry,
+        *,
+        expected: Optional[dict[str, Any]] = None,
+        actor: Optional[dict[str, Any]] = None,
+    ) -> RegistryEntry:
         """Commit a mutation, optionally CAS-guarded against the caller's base snapshot.
 
         ``expected`` must be the exact ``to_dict()`` snapshot the caller read
@@ -133,6 +155,8 @@ class PostgresRegistryStore:
         that predate CAS enforcement); new mutation paths must always pass it.
         """
         entry.updated_at = utc_now_iso()
+        if actor is not None:
+            entry.last_actor = actor
         new_payload = entry.to_dict()
         ok, canonical = self._entries.compare_and_set(entry.registry_id, expected, new_payload)
         if not ok:
@@ -142,6 +166,25 @@ class PostgresRegistryStore:
             raise RegistryConcurrentUpdateError(entry.registry_id)
         return RegistryEntry.from_dict(canonical)
 
+    @staticmethod
+    def receipt_key(
+        command_key: str,
+        registry_id: str,
+        *,
+        actor: Optional[dict[str, Any]] = None,
+    ) -> str:
+        """Scope an idempotent command receipt by tenant/actor/command/aggregate.
+
+        A bare ``command_key`` is not a safe idempotency scope on its own: two
+        different tenants or actors could submit the same client-chosen key
+        against two different registry_ids and collide on one receipt row.
+        Scoping by tenant + actor + registry_id (the aggregate) + command_key
+        makes the receipt identity unambiguous.
+        """
+        tenant = str((actor or {}).get("tenant") or "unscoped").strip() or "unscoped"
+        actor_id = str((actor or {}).get("actor_id") or "unscoped").strip() or "unscoped"
+        return f"{tenant}:{actor_id}:{registry_id}:{command_key}"
+
     def commit_metadata_cas(
         self,
         *,
@@ -149,32 +192,65 @@ class PostgresRegistryStore:
         base_snapshot: dict[str, Any],
         new_metadata: Optional[dict[str, Any]],
         command_key: Optional[str] = None,
+        actor: Optional[dict[str, Any]] = None,
     ) -> tuple[RegistryEntry, bool]:
         """Atomically CAS the metadata field and record an idempotent receipt.
 
-        Both writes commit in one Postgres transaction. A ``command_key``
-        replay with an identical ``new_metadata`` returns the original
-        committed entry (``idempotent_replay=True``) without mutating the row
-        again; a replay with a *different* ``new_metadata`` under the same key
-        raises :class:`DivergentCommandReplayError` instead of silently
-        accepting a second version under one key.
+        Both writes commit in one Postgres transaction, using a single shared
+        connection (:meth:`PostgresJsonOwnerStore.transaction`) so the entry
+        mutation and its receipt land together or not at all.
+
+        The receipt row is reserved *before* the entry mutation via
+        ``insert_if_absent`` (which holds a table-level lock for the rest of
+        this transaction), and its ``created`` result is what decides the
+        control flow — not an assumption: a fresh reservation (``created``)
+        proceeds to CAS the entry and then fills in the receipt with the
+        entry snapshot this transaction actually commits; an existing
+        reservation (``not created``) is a replay (identical ``new_metadata``
+        digest) or a divergent reuse (different digest) of the same
+        tenant-scoped ``command_key``.
+
+        A replay always returns the entry snapshot captured in that original
+        receipt row (``idempotent_replay=True``) — never a fresh read of
+        whatever the entry has become since, which could reflect a later,
+        unrelated mutation under a *different* command_key. A replay with a
+        different ``new_metadata`` under the same key raises
+        :class:`DivergentCommandReplayError` instead of silently accepting a
+        second version under one key.
         """
         entry = RegistryEntry.from_dict(base_snapshot)
         entry.metadata = new_metadata
         entry.updated_at = utc_now_iso()
+        if actor is not None:
+            entry.last_actor = actor
         new_payload = entry.to_dict()
         request_digest = _request_digest({"registry_id": registry_id, "metadata": new_metadata})
+        scoped_key = self.receipt_key(command_key, registry_id, actor=actor) if command_key else None
 
         with self._entries.transaction() as conn:
-            if command_key:
-                existing_receipt = self._receipts.get(command_key)
-                if existing_receipt is not None:
-                    if existing_receipt.get("request_digest") != request_digest:
+            reservation: Optional[dict[str, Any]] = None
+            if scoped_key:
+                reservation = {
+                    "command_key": command_key,
+                    "receipt_key": scoped_key,
+                    "registry_id": registry_id,
+                    "request_digest": request_digest,
+                    "committed_entry": None,
+                    "committed_at": None,
+                }
+                reserved, receipt_payload = self._receipts.insert_if_absent(
+                    scoped_key, reservation, conn=conn,
+                )
+                if not reserved:
+                    if receipt_payload.get("request_digest") != request_digest:
                         raise DivergentCommandReplayError(command_key)
-                    committed_payload = self._entries.get(registry_id)
-                    if committed_payload is None:
+                    committed_entry = receipt_payload.get("committed_entry")
+                    if committed_entry is None:
+                        # Another in-flight transaction reserved this key but
+                        # has not yet committed the mutation it records —
+                        # fail closed rather than return an incomplete replay.
                         raise RegistryConcurrentUpdateError(registry_id)
-                    return RegistryEntry.from_dict(committed_payload), True
+                    return RegistryEntry.from_dict(committed_entry), True
 
             ok, canonical = self._entries.compare_and_set(
                 registry_id, base_snapshot, new_payload, conn=conn,
@@ -182,18 +258,15 @@ class PostgresRegistryStore:
             if not ok:
                 raise RegistryConcurrentUpdateError(registry_id)
 
-            if command_key:
-                self._receipts.insert_if_absent(
-                    command_key,
-                    {
-                        "command_key": command_key,
-                        "registry_id": registry_id,
-                        "request_digest": request_digest,
-                        "committed_version": canonical.get("updated_at"),
-                        "committed_at": utc_now_iso(),
-                    },
-                    conn=conn,
+            if scoped_key:
+                finalized = dict(reservation)
+                finalized["committed_entry"] = canonical
+                finalized["committed_at"] = utc_now_iso()
+                filled, _ = self._receipts.compare_and_set(
+                    scoped_key, reservation, finalized, conn=conn,
                 )
+                if not filled:
+                    raise RegistryConcurrentUpdateError(registry_id)
         return RegistryEntry.from_dict(canonical), False
 
     def update_deployment_summary(
@@ -203,6 +276,7 @@ class PostgresRegistryStore:
         current_stage: DeploymentStage,
         deployment_plan_id: Optional[str] = None,
         runtime_binding_id: Optional[str] = None,
+        actor: Optional[dict[str, Any]] = None,
     ) -> Optional[RegistryEntry]:
         raw = self._entries.get(registry_id)
         if raw is None:
@@ -215,7 +289,7 @@ class PostgresRegistryStore:
             last_transition_at=utc_now_iso(),
         )
         try:
-            return self.update(entry, expected=raw)
+            return self.update(entry, expected=raw, actor=actor)
         except RegistryConcurrentUpdateError:
             # A concurrent projection update lost a race; report the current
             # durable entry rather than silently dropping the caller's write.

@@ -15,7 +15,8 @@ from .base import (
     DomainCommandAdapter,
     build_domain_receipt,
     governance_url,
-    http_request_json,
+    header_value,
+    http_request_json_with_headers,
     registry_url,
     utc_now,
 )
@@ -141,8 +142,21 @@ class StrategyCommandAdapter(DomainCommandAdapter):
         auth_token: Optional[str] = None,
         mfa_token: Optional[str] = None,
     ) -> Dict[str, Any]:
-        """Real CAS metadata update against the Registry owner, with a
-        verified GET readback — the actual fix for the fabricated-status bug.
+        """Real CAS metadata update against the Registry owner.
+
+        Prior defect (architecture-resumption-sa-sd.md §2 / reviewer finding
+        6): this method silently replaced the caller's ``expected_metadata``
+        precondition with a freshly-fetched GET (defeating CAS — the whole
+        point of a precondition is to bind the write to the base the caller
+        actually observed, not "whatever is latest right now"), then
+        discarded the real PATCH response and manufactured a receipt from a
+        separate re-GET that could return stale, unrelated, or even empty
+        data regardless of what the PATCH actually did.
+
+        Fixed: the caller's own ``expected_metadata`` passes through
+        unchanged, and the receipt is built from the actual PATCH response
+        (entry snapshot + ``X-Idempotent-Replay`` header) — never a
+        second, independent GET.
         """
         registry_id = str(params.get("registry_id") or "").strip()
         if not registry_id:
@@ -154,17 +168,29 @@ class StrategyCommandAdapter(DomainCommandAdapter):
                 error_code="MISSING_REGISTRY_ID",
                 suggestion="Resolve the target registry_id via GET /api/registry/strategies/{strategy_id}/entries first.",
             )
+        if "expected_metadata" not in params:
+            raise ActionUnavailableError(
+                f"update_params on strategy {strategy_id!r} requires expected_metadata "
+                "(the caller's own CAS precondition — the metadata value it read before "
+                "deciding to write). Silently substituting a freshly-fetched value here "
+                "would defeat CAS/lost-update protection.",
+                action_id=action_id,
+                entity_type="Strategy",
+                error_code="MISSING_EXPECTED_METADATA",
+                suggestion="Resolve the current metadata via GET first and pass it back unchanged as expected_metadata.",
+            )
+        expected_metadata = params.get("expected_metadata")
+        if expected_metadata is not None and not isinstance(expected_metadata, dict):
+            raise ActionUnavailableError(
+                f"update_params on strategy {strategy_id!r} requires expected_metadata to be "
+                "an object or null, not a non-dict value.",
+                action_id=action_id,
+                entity_type="Strategy",
+                error_code="INVALID_EXPECTED_METADATA",
+            )
         new_metadata = params.get("metadata") if isinstance(params.get("metadata"), dict) else {}
 
-        current = http_request_json(
-            registry_url(f"/api/registry/entries/{registry_id}"),
-            method="GET",
-            auth_token=auth_token,
-            mfa_token=mfa_token,
-        )
-        expected_metadata = (current or {}).get("entry", {}).get("metadata")
-
-        http_request_json(
+        status_code, headers, body = http_request_json_with_headers(
             registry_url(f"/api/registry/entries/{registry_id}/metadata"),
             method="PATCH",
             payload={
@@ -176,15 +202,22 @@ class StrategyCommandAdapter(DomainCommandAdapter):
             mfa_token=mfa_token,
         )
 
-        # Real owner GET/readback proof — never trust the PATCH response body
-        # as authoritative on its own.
-        readback = http_request_json(
-            registry_url(f"/api/registry/entries/{registry_id}"),
-            method="GET",
-            auth_token=auth_token,
-            mfa_token=mfa_token,
-        )
-        readback_entry = (readback or {}).get("entry", {})
+        entry = body.get("entry") if isinstance(body, dict) else None
+        if not isinstance(entry, dict) or not entry.get("registry_id"):
+            # The PATCH nominally succeeded (no HTTPError was raised) but its
+            # body does not carry a confirmable entry snapshot — never
+            # fabricate a "metadata_updated" success from an ambiguous
+            # response; surface it explicitly instead.
+            raise ActionUnavailableError(
+                f"Registry metadata PATCH for registry_id={registry_id!r} returned an "
+                "ambiguous response with no entry payload; the write's outcome cannot be "
+                "confirmed from this response.",
+                action_id=action_id,
+                entity_type="Strategy",
+                error_code="AMBIGUOUS_REGISTRY_RESPONSE",
+            )
+
+        idempotent_replay = str(header_value(headers, "X-Idempotent-Replay") or "").strip().lower() == "true"
 
         return build_domain_receipt(
             command_id=command_id,
@@ -197,9 +230,14 @@ class StrategyCommandAdapter(DomainCommandAdapter):
                 "strategy_id": strategy_id,
                 "registry_id": registry_id,
                 "action": action_id,
-                "metadata": readback_entry.get("metadata"),
+                "metadata": entry.get("metadata"),
+                "version": entry.get("updated_at"),
+                "checksum": entry.get("checksum"),
+                "commit_time": entry.get("updated_at"),
+                "correlation_id": command_id,
             },
-            authoritative_readback=readback_entry,
+            authoritative_readback=entry,
+            idempotent_replay=idempotent_replay,
             extra={"strategy_id": strategy_id, "registry_id": registry_id, "action_id": action_id},
         )
 

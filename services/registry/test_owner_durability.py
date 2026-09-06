@@ -54,7 +54,7 @@ def pg_app():
     os.environ["REGISTRY_RECEIPTS_TABLE"] = f"{schema}.command_receipts"
     reset_store()
     try:
-        yield TestClient(service_module.app)
+        yield TestClient(service_module.app, headers=_AUTH_HEADERS)
     finally:
         reset_store()
         for key, value in prior_env.items():
@@ -86,7 +86,7 @@ def test_register_and_readback_survive_fresh_process_restart(pg_app):
 
     # Simulate a fresh process: drop the in-process singleton and reconnect.
     reset_store()
-    fresh_client = TestClient(service_module.app)
+    fresh_client = TestClient(service_module.app, headers=_AUTH_HEADERS)
     resp = fresh_client.get(f"/api/registry/entries/{registry_id}")
     assert resp.status_code == 200
     assert resp.json()["entry"]["strategy_id"] == "durability-strat"
@@ -173,11 +173,29 @@ def test_metadata_cas_update_rejects_unauthenticated_caller(pg_app):
     resp = pg_app.patch(
         f"/api/registry/entries/{registry_id}/metadata",
         json={"expected_metadata": None, "metadata": {"note": "no auth"}},
+        headers={"Authorization": ""},
     )
     assert resp.status_code == 401
 
     unchanged = pg_app.get(f"/api/registry/entries/{registry_id}")
     assert unchanged.json()["entry"]["metadata"] is None
+
+
+def test_register_entry_rejects_unauthenticated_caller(pg_app):
+    """POST /api/registry/entries must also fail closed without a verified
+    caller — not just the metadata PATCH route."""
+    resp = pg_app.post(
+        "/api/registry/entries",
+        json={
+            "artifact_type": "strategy_spec",
+            "strategy_id": "durability-strat",
+            "version": "1.0.0",
+            "artifact_state": "draft",
+            "checksum": "sha256:cafef00d",
+        },
+        headers={"Authorization": ""},
+    )
+    assert resp.status_code == 401
 
 
 def test_advance_state_conflict_is_409_not_silent_overwrite(pg_app):

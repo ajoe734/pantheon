@@ -41,16 +41,62 @@ class RegistryConflictError(RegistryError):
     """Raised when a CAS-guarded mutation's base snapshot is stale (maps to HTTP 409)."""
 
 
+# Metadata keys that hold an immutable, validated payload (StrategySpec,
+# StrategyArtifact, AllocationPolicyArtifact) or an immutable identity link
+# (source_seed_id). The generic metadata-replace path (update_metadata) is an
+# operator draft-note record kind — architecture-resumption-sa-sd.md §3.2 — it
+# must never be usable to silently overwrite or delete one of these once set,
+# which would corrupt an approved artifact while keeping its old
+# checksum/version untouched.
+_IMMUTABLE_METADATA_KEYS = (
+    "strategy_spec",
+    "strategy_artifact",
+    "allocation_policy_artifact",
+    "source_seed_id",
+)
+
+
+def _reject_immutable_metadata_mutation(
+    registry_id: str,
+    current_metadata: Optional[dict],
+    new_metadata: Optional[dict],
+) -> None:
+    """Fail closed if a metadata PATCH would change/remove a reserved key.
+
+    ``current_metadata`` already having the key set is what makes it
+    immutable here; a fresh entry that has never carried a
+    strategy_spec/strategy_artifact/allocation_policy_artifact still goes
+    through the generic path unaffected.
+    """
+    current = current_metadata or {}
+    for key in _IMMUTABLE_METADATA_KEYS:
+        if key not in current or current[key] is None:
+            continue
+        new_value = (new_metadata or {}).get(key)
+        if new_value != current[key]:
+            raise RegistryConflictError(
+                f"Registry entry {registry_id!r} metadata key {key!r} carries an immutable "
+                "artifact payload/identity link and cannot be changed or removed via the "
+                "generic metadata PATCH."
+            )
+
+
 class RegistryService:
     def __init__(self, store: RegistryStore):
         self.store = store
 
     # -- §8 operations ----------------------------------------------------
 
-    def register(self, payload: RegistryEntryCreate, registry_id: str) -> RegistryEntryView:
+    def register(
+        self,
+        payload: RegistryEntryCreate,
+        registry_id: str,
+        *,
+        actor: Optional[dict] = None,
+    ) -> RegistryEntryView:
         """Create a new draft or candidate entry."""
         self._validate_registration_state(payload)
-        entry = self.store.create(payload, registry_id)
+        entry = self.store.create(payload, registry_id, actor=actor)
         logger.info("Registered %s (state=%s)", entry.registry_id, entry.artifact_state.value)
         return self._to_view(entry)
 
@@ -58,10 +104,12 @@ class RegistryService:
         self,
         payload: RegistryEntryCreate,
         registry_id: str,
+        *,
+        actor: Optional[dict] = None,
     ) -> tuple[RegistryEntryView, bool]:
         """Atomically register an id, returning the existing view on collision."""
         self._validate_registration_state(payload)
-        entry, created = self.store.create_if_absent(payload, registry_id)
+        entry, created = self.store.create_if_absent(payload, registry_id, actor=actor)
         if created:
             logger.info(
                 "Registered %s (state=%s)",
@@ -97,6 +145,8 @@ class RegistryService:
         target_state: ArtifactState,
         approver: Optional[str] = None,
         approval_decision_id: Optional[str] = None,
+        *,
+        actor: Optional[dict] = None,
     ) -> RegistryEntryView:
         """
         Transition an entry through governed artifact-state checks.
@@ -132,7 +182,7 @@ class RegistryService:
                 entry.approval_decision_id = approval_decision_id
 
         try:
-            entry = self.store.update(entry, expected=base_snapshot)
+            entry = self.store.update(entry, expected=base_snapshot, actor=actor)
         except RegistryConcurrentUpdateError as exc:
             raise RegistryConflictError(str(exc)) from exc
         logger.info(
@@ -148,6 +198,7 @@ class RegistryService:
         expected_metadata: Optional[dict],
         new_metadata: Optional[dict],
         command_key: Optional[str] = None,
+        actor: Optional[dict] = None,
     ) -> tuple[RegistryEntryView, bool]:
         """Allowed metadata update with CAS — architecture-resumption-sa-sd.md §3.2.
 
@@ -162,6 +213,14 @@ class RegistryService:
         entry = self.store.get(registry_id)
         if entry is None:
             raise RegistryNotFoundError(f"Registry entry not found: {registry_id}")
+        # Reserved keys carrying an immutable validated payload (StrategySpec/
+        # StrategyArtifact/AllocationPolicyArtifact) or identity link
+        # (source_seed_id) must never be reachable through this generic
+        # operator metadata-replace path once set — checked against the
+        # actual durable entry, not the caller's claimed base, so a stale or
+        # forged expected_metadata cannot be used to smuggle a change past
+        # this guard.
+        _reject_immutable_metadata_mutation(registry_id, entry.metadata, new_metadata)
         # The CAS binds the caller's claimed base (their expected_metadata
         # against the entry's other fields as just re-read) rather than a
         # bare "is expected_metadata == current metadata" check performed
@@ -181,6 +240,7 @@ class RegistryService:
                 base_snapshot=base_snapshot,
                 new_metadata=new_metadata,
                 command_key=command_key,
+                actor=actor,
             )
         except RegistryConcurrentUpdateError as exc:
             raise RegistryConflictError(str(exc)) from exc
@@ -210,6 +270,7 @@ class RegistryService:
         current_stage: DeploymentStage,
         deployment_plan_id: Optional[str] = None,
         runtime_binding_id: Optional[str] = None,
+        actor: Optional[dict] = None,
     ) -> RegistryEntryView:
         """
         Update the derived deployment_summary on a registry entry.
@@ -229,6 +290,7 @@ class RegistryService:
                 current_stage=current_stage,
                 deployment_plan_id=deployment_plan_id,
                 runtime_binding_id=runtime_binding_id,
+                actor=actor,
             )
         except RegistryConcurrentUpdateError as exc:
             raise RegistryConflictError(str(exc)) from exc

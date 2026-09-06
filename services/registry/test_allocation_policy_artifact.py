@@ -55,7 +55,7 @@ def clean_store():
     reset_store()
 
 
-client = TestClient(app)
+client = TestClient(app, headers={"Authorization": "Bearer test-operator:operator"})
 
 
 def _minimal_artifact(
