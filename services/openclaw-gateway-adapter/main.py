@@ -1831,10 +1831,8 @@ def invoke_openclaw_structured_provider(
     `emit_extraction` tool via `invoke_structured`; this endpoint returns
     parsed structured data only and never executes a domain action.
 
-    The Gateway agent must separately deny native tools (tools.deny=["*"]).
-    The pinned local Gateway fixture verifies that policy, including attempted
-    exec denial; client tool_choice and response validation alone are not an
-    execution sandbox. Hosted policy/deployment acceptance is separate.
+    Read the selected Gateway's native-tool policy before dispatch. Missing,
+    mismatched or unavailable policy denies extraction before model execution.
     """
     if not x_operator_id or not x_operator_id.strip():
         return JSONResponse(
@@ -1874,6 +1872,7 @@ def invoke_openclaw_structured_provider(
             },
         )
     invoke_kwargs: Dict[str, Any] = {
+        "agent_id": OPENCLAW_DEFAULT_AGENT_ID,
         "extraction_schema": req.extraction_schema,
         "mode": mode,
         "messages": req.messages,
@@ -1885,10 +1884,50 @@ def invoke_openclaw_structured_provider(
     if req.session_id is not None:
         invoke_kwargs["session_id"] = req.session_id
     try:
+        deadline = time.monotonic() + _OPENCLAW_AGENT_PROVIDER._timeout
+        _assert_structured_gateway_policy(OPENCLAW_DEFAULT_AGENT_ID, deadline=deadline)
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise GatewayOpenClawProviderError(
+                "Structured policy verification exhausted the invocation deadline.",
+                status_code=504, error_code="OPENCLAW_STRUCTURED_POLICY_UNAVAILABLE",
+            )
+        invoke_kwargs["timeout_seconds"] = remaining
         result = _OPENCLAW_AGENT_PROVIDER.invoke_structured(req.prompt, **invoke_kwargs)
     except GatewayOpenClawProviderError as exc:
         return JSONResponse(status_code=exc.status_code, content=exc.to_payload())
     return JSONResponse(status_code=200, content={"status": "ok", "data": result.to_dict()})
+
+
+def _assert_structured_gateway_policy(agent_id: str, *, deadline: float) -> None:
+    """Read policy from the same authenticated Gateway as the HTTP turn.
+
+    This is an administrative, read-only RPC, not an agent CLI turn. Never
+    trust caller metadata, a local config mirror, or a cached successful probe.
+    No public arbitrary-RPC route is added. Deny-all takes precedence over
+    other tool profiles/allow lists in the pinned Gateway.
+    """
+    try:
+        snapshot = _OPENCLAW_AGENT_PROVIDER._gateway_call(
+            "config.get", timeout_seconds=min(10.0, deadline - time.monotonic()),
+        )
+    except GatewayOpenClawProviderError as exc:
+        raise GatewayOpenClawProviderError(
+            "Cannot verify native-tool denial on the extraction Gateway.",
+            status_code=503, error_code="OPENCLAW_STRUCTURED_POLICY_UNAVAILABLE",
+        ) from exc
+    config = snapshot.get("config") if isinstance(snapshot, dict) else None
+    agents = config.get("agents") if isinstance(config, dict) else None
+    entries = agents.get("list") if isinstance(agents, dict) else None
+    matches = ([item for item in entries if isinstance(item, dict) and item.get("id") == agent_id]
+               if isinstance(entries, list) else [])
+    tools = matches[0].get("tools") if len(matches) == 1 else None
+    if (not isinstance(snapshot, dict) or snapshot.get("valid") is not True or not isinstance(tools, dict)
+            or tools.get("deny") != ["*"]):
+        raise GatewayOpenClawProviderError(
+            "Extraction requires one verified Gateway agent with tools.deny=['*'].",
+            status_code=503, error_code="OPENCLAW_STRUCTURED_POLICY_DENIED",
+        )
 
 
 @app.post("/api/openclaw-adapter/assistant/providers/openclaw/invoke/stream")

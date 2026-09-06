@@ -1432,6 +1432,9 @@ def run_pinned_gateway_replay():
                 }
             },
         }
+        policy_probe = os.environ.get("SIMPLIFY_POLICY_PROBE")
+        if policy_probe == "missing":
+            config["agents"]["list"][0].pop("tools")
         (tmp / "config.json").write_text(json.dumps(config))
         (tmp / "workspace").mkdir()
 
@@ -1478,6 +1481,51 @@ def run_pinned_gateway_replay():
             provider = AssistantOpenClawProvider(
                 gateway_url=f"ws://127.0.0.1:{p}", token="local-fixture-only", timeout_seconds=15
             )
+            if policy_probe:
+                import main as adapter_main
+                from fastapi.testclient import TestClient
+                from unittest.mock import patch
+
+                def policy_rpc(cmd, **kw):
+                    assert cmd[1:4] == ["gateway", "call", "config.get"]
+                    return docker("exec", name, "node", "openclaw.mjs", *cmd[1:], timeout=kw["timeout"])
+
+                provider._run = policy_rpc
+                provider._which = lambda _: "openclaw"
+                with (
+                    patch.object(adapter_main, "_ASSISTANT_SERVICE_TOKEN", "synthetic-policy-token"),
+                    patch.object(adapter_main, "_ASSISTANT_SERVICE_AUTH_REQUIRED", True),
+                    patch.object(adapter_main, "_OPENCLAW_AGENT_PROVIDER", provider),
+                    patch.dict(os.environ, {"OPENCLAW_PRIMARY_MODEL": "fixture/fixture-model"}),
+                ):
+                    client = TestClient(adapter_main.app)
+                    results = []
+                    for case in (["denied"] if policy_probe == "missing" else ["positive", "denied"]):
+                        response = client.post(
+                            "/api/openclaw-adapter/assistant/providers/openclaw/structured",
+                            json={"prompt": "CASE_" + case, "session_id": "policy-" + case,
+                                  "extraction_schema": {"type": "object", "properties": {"value": {"type": "integer"}},
+                                                        "required": ["value"], "additionalProperties": False}},
+                            headers={"X-Operator-Id": "fixture", "X-Pantheon-Service-Token": "synthetic-policy-token"},
+                        )
+                        results.append({"case": case, "http_status": response.status_code,
+                                        "error_code": response.json().get("error_code")})
+                        if policy_probe == "missing":
+                            assert response.status_code == 503, response.text
+                            assert response.json()["error_code"] == "OPENCLAW_STRUCTURED_POLICY_DENIED", response.text
+                            assert Model.records == []
+                        elif case == "positive":
+                            assert response.status_code == 200, response.text
+                            assert response.json()["data"]["output"]["structured_data"] == {"value": 7}
+                        else:
+                            assert response.status_code == 502, response.text
+                            assert response.json()["error_code"] == "OPENCLAW_RESPONSES_FAILED"
+                    assert all(r["tools"] == ["emit_extraction"] for r in Model.records)
+                    assert docker("exec", name, "test", "-e", "/tmp/SIMPLIFY_FORBIDDEN").returncode == 1
+                    print("MOUNTED_POLICY_RESULT", json.dumps({"policy": policy_probe, "results": results,
+                          "model_requests": len(Model.records), "native_exec_advertised": False,
+                          "marker_exists": False, "image": image}), flush=True)
+                return
             capability = {}
             for case in ["positive", "invalid", "wrong", "missing", "denied"]:
                 try:

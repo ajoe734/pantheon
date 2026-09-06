@@ -534,6 +534,56 @@ class TestStructuredEndpointRejectsCallerSuppliedTools:
     be rejected (422), never silently accepted as an arbitrary tool
     definition."""
 
+    @pytest.fixture(autouse=True)
+    def gateway_policy(self):
+        import main as adapter_main
+        with patch.object(adapter_main._OPENCLAW_AGENT_PROVIDER, "_gateway_call", return_value={
+            "valid": True, "config": {"agents": {"list": [
+                {"id": adapter_main.OPENCLAW_DEFAULT_AGENT_ID, "tools": {"deny": ["*"]}},
+            ]}},
+        }) as rpc:
+            yield rpc
+
+    @pytest.mark.parametrize("snapshot", [
+        None, {}, {"valid": False},
+        {"valid": True, "config": {"agents": {"list": []}}},
+        {"valid": True, "config": {"agents": {"list": [{"id": "main"}]}}},
+        {"valid": True, "config": {"agents": {"list": [{"id": "other", "tools": {"deny": ["*"]}}]}}},
+        {"valid": True, "config": {"agents": {"list": [{"id": "main", "tools": {"deny": ["exec"]}}]}}},
+        {"valid": True, "config": {"agents": {"list": [
+            {"id": "main", "tools": {"deny": ["*"]}}, {"id": "main"},
+        ]}}},
+    ])
+    def test_unverified_policy_blocks_before_dispatch(self, gateway_policy, snapshot):
+        client, adapter_main = self._client()
+        gateway_policy.return_value = snapshot
+        with patch.object(adapter_main._OPENCLAW_AGENT_PROVIDER, "invoke_structured") as invoke:
+            response = client.post(
+                "/api/openclaw-adapter/assistant/providers/openclaw/structured",
+                json={"prompt": "CASE_denied", "extraction_schema": EXTRACTION_SCHEMA},
+                headers={"X-Operator-Id": "operator-1"},
+            )
+        assert response.status_code == 503
+        assert response.json()["error_code"] == "OPENCLAW_STRUCTURED_POLICY_DENIED"
+        invoke.assert_not_called()
+        assert gateway_policy.call_args.args == ("config.get",)
+        assert 0 < gateway_policy.call_args.kwargs["timeout_seconds"] <= 10
+
+    def test_unavailable_policy_blocks_before_dispatch(self, gateway_policy):
+        client, adapter_main = self._client()
+        gateway_policy.side_effect = OpenClawProviderError(
+            "unavailable", status_code=504, error_code="OPENCLAW_GATEWAY_TIMEOUT",
+        )
+        with patch.object(adapter_main._OPENCLAW_AGENT_PROVIDER, "invoke_structured") as invoke:
+            response = client.post(
+                "/api/openclaw-adapter/assistant/providers/openclaw/structured",
+                json={"prompt": "CASE_denied", "extraction_schema": EXTRACTION_SCHEMA},
+                headers={"X-Operator-Id": "operator-1"},
+            )
+        assert response.status_code == 503
+        assert response.json()["error_code"] == "OPENCLAW_STRUCTURED_POLICY_UNAVAILABLE"
+        invoke.assert_not_called()
+
     @staticmethod
     def _client():
         import main as adapter_main  # noqa: PLC0415
@@ -591,6 +641,8 @@ class TestStructuredEndpointRejectsCallerSuppliedTools:
         assert resp.status_code == 200, resp.text
         assert resp.json()["data"]["output"]["structured_data"] == {"title": "ok"}
         assert mocked.call_args.kwargs["extraction_schema"] == EXTRACTION_SCHEMA
+        assert mocked.call_args.kwargs["agent_id"] == adapter_main.OPENCLAW_DEFAULT_AGENT_ID
+        assert 0 < mocked.call_args.kwargs["timeout_seconds"] <= adapter_main._OPENCLAW_AGENT_PROVIDER._timeout
 
     def test_schema_invalid_tool_call_is_typed_422_never_500(self):
         """A schema-mismatched tool-call response must surface as a typed
