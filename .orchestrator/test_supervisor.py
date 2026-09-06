@@ -11,6 +11,8 @@ authoritative TaskStore projection.
 from __future__ import annotations
 
 import ast
+import base64
+import multiprocessing
 import copy
 import inspect
 import json
@@ -32,6 +34,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import supervisor
 import runtime_state
 import common
+import execution_authorization
 from adapters.base import DeliveryResult
 from rewrite import worker_workspace
 from scripts.git import auto_integrator
@@ -3493,6 +3496,306 @@ class SharedPlannerContractTests(unittest.TestCase):
         )
 
 
+def _synthetic_privileged_task(*, granted: bool = True) -> dict:
+    """Local synthetic issuer fixture; never uses live operator authority."""
+    from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+    from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
+
+    spec = {
+        "id": "TASK-1", "title": "Isolated execution probe",
+        "owner": "Codex", "reviewer": "Codex2", "summary": "Local stub only",
+        "phase": "test", "acceptance": ["Write a local test marker once"],
+        "depends_on": [], "dependency_tracks": {}, "artifacts": [],
+        "execution_resources": [], "target_repo": "pantheon",
+    }
+    task = task_fixture()
+    task.update({k: v for k, v in spec.items() if k != "summary"})
+    task["summary_zh"] = spec["summary"]
+    policy = execution_authorization.derive_execution_policy(
+        task_id="TASK-1", work_class="hosted", repository="pantheon",
+        task_spec=spec,
+    )
+    task["dev_bridge"] = {
+        "work_class": "hosted", "task_spec": spec,
+        "task_spec_hash": policy["task_spec_hash"],
+    }
+    task["execution_authorization"] = execution_authorization.pending_authorization_hold(policy)
+    if not granted:
+        task["waiting_for"] = "Human/Ops"
+        return task
+    now = datetime.now(timezone.utc)
+    key = Ed25519PrivateKey.generate()
+    b64 = lambda value: base64.urlsafe_b64encode(value).decode().rstrip("=")
+    grant = {
+        "task_id": "TASK-1", "generation": 1,
+        "policy_digest": policy["policy_digest"], "repository": "pantheon",
+        "environment": "pantheon-dev", "resources": [], "action_scope": "execute",
+        "purpose": execution_authorization.EXECUTION_GRANT_PURPOSE,
+        "capability": execution_authorization.EXECUTION_GRANT_CAPABILITY,
+        "audience": "TASK-1", "mfa_verified": True, "mfa_actor": "synthetic-local-operator",
+        "nonce": "synthetic-one-shot", "issued_at": now.isoformat(),
+        "expires_at": (now + timedelta(seconds=120)).isoformat(), "run_ttl_seconds": 60,
+    }
+    grant["signature"] = {
+        "key_id": "isolated-test-mfa", "algorithm": "Ed25519",
+        "value": b64(key.sign(execution_authorization._canonical_json(grant))),
+    }
+    execution_authorization.verify_execution_grant(
+        grant, policy=policy, task_id="TASK-1", generation=1, now=now,
+        trusted_issuers={"isolated-test-mfa": b64(key.public_key().public_bytes(Encoding.Raw, PublicFormat.Raw))},
+    )
+    task["execution_authorization"] = execution_authorization.build_granted_authorization(
+        policy=policy, grant=grant, task=task,
+    )
+    return task
+
+
+def _process_authorization_spend(config, run_id, marker, crash, gate):
+    if not gate.wait(10):
+        raise RuntimeError("isolated process race start timed out")
+    if crash == "before":
+        os._exit(23)
+    try:
+        supervisor.reserve_execution_authorization_for_launch(config, "TASK-1", run_id=run_id)
+    except supervisor.ExecutionAuthorizationSpendFailed:
+        raise SystemExit(7)
+    if crash == "after":
+        os._exit(24)
+    subprocess.run(
+        [sys.executable, "-c", "from pathlib import Path; import sys; Path(sys.argv[1]).write_text(sys.argv[2])", marker, run_id],
+        check=True, timeout=10,
+    )
+
+
+class ExecutionAuthorizationProcessTests(unittest.TestCase):
+    def setUp(self):
+        self.directory = tempfile.TemporaryDirectory()
+        self.addCleanup(self.directory.cleanup)
+        root = Path(self.directory.name)
+        status_root = root / "status"
+        (status_root / ".orchestrator").mkdir(parents=True)
+        self.config = config_fixture(status_root)
+        self.config["task_state_store"] = {"mode": "authoritative", "event_log": str(root / "runtime" / "tasks.jsonl")}
+        self.task = _synthetic_privileged_task()
+        supervisor.write_status(self.config, {"tasks": [self.task]}, source="isolated-synthetic-grant")
+        self.ctx = multiprocessing.get_context("fork")
+        self.marker = root / "effect"
+
+    def _run(self, attempts):
+        gate = self.ctx.Event()
+        processes = [self.ctx.Process(target=_process_authorization_spend, args=(self.config, run, str(self.marker), crash, gate)) for run, crash in attempts]
+        try:
+            for process in processes:
+                process.start()
+            gate.set()
+            for process in processes:
+                process.join(15)
+            self.assertFalse(any(process.is_alive() for process in processes), "authorization subprocess timed out")
+            return [process.exitcode for process in processes]
+        finally:
+            for process in processes:
+                if process.is_alive():
+                    process.terminate()
+                process.join(5)
+                if process.is_alive():
+                    process.kill()
+                    process.join(5)
+
+    def test_two_processes_cannot_spend_one_synthetic_grant(self):
+        codes = self._run([("attempt-a", None), ("attempt-b", None)])
+        self.assertEqual(sorted(codes), [0, 7])
+        task = supervisor.load_status(self.config)["tasks"][0]
+        self.assertEqual(task["execution_authorization"]["reserved_run_id"], self.marker.read_text())
+
+    def test_crash_before_consume_preserves_single_future_attempt(self):
+        self.assertEqual(self._run([("lost", "before")]), [23])
+        self.assertFalse(self.marker.exists())
+        self.assertEqual(self._run([("replacement", None)]), [0])
+
+    def test_crash_after_consume_and_restart_cannot_launch_replacement(self):
+        self.assertEqual(self._run([("lost", "after")]), [24])
+        self.assertFalse(self.marker.exists())
+        self.assertEqual(self._run([("replacement", None), ("lost", None)]), [7, 7])
+        self.assertFalse(self.marker.exists())
+
+    def test_pending_with_done_dependencies_cannot_launch_but_functional_can(self):
+        self.task = _synthetic_privileged_task(granted=False)
+        self.task["depends_on"] = ["DEP"]
+        supervisor.write_status(self.config, {"tasks": [self.task, task_fixture("DEP", status="done")]}, source="isolated-pending")
+        self.assertEqual(self._run([("pending", None)]), [7])
+        self.assertFalse(self.marker.exists())
+        supervisor.write_status(self.config, {"tasks": [task_fixture()]}, source="isolated-functional")
+        self.assertEqual(self._run([("functional", None)]), [0])
+
+    def test_recovery_preserves_exact_journal_and_attempt_identity(self):
+        identity = common.canonical_task_state_identity(self.config)
+        snapshot = {
+            "task_id": "TASK-1", "task_generation": 1,
+            "agent_id": "codex", "provider": "codex", "delivery_mode": "codex",
+            "reason": supervisor.REASON_OWNED_READY,
+            "metadata": {"task_generation": 1, "task_state_identity": identity,
+                         "execution_authorization_run_id": "event-attempt-1"},
+        }
+        intent = {"task_id": "TASK-1", "queue_event_id": "event", "agent_id": "codex",
+                  "provider": "codex", "request_snapshot": snapshot}
+        command = [sys.executable, "-c", "pass"]
+        marker = {"run_id": "actual-run", "pid": os.getpid(), "status": "running", "command": command}
+        worker = supervisor._worker_record_from_runtime_launch_marker(
+            self.config, intent, marker,
+            Path(self.config["paths"]["status_file"]).parent / ".orchestrator" / "worker-runtime" / "status" / "actual-run.json",
+        )
+        self.assertIsNotNone(worker)
+        self.assertEqual(worker["task_state_identity"], identity)
+        self.assertEqual(worker["command"], command)
+        self.assertEqual(worker["request_snapshot"]["metadata"]["execution_authorization_run_id"], "event-attempt-1")
+        self.assertEqual(worker["pid_start_ticks"], int(Path("/proc/self/stat").read_text().rsplit(")", 1)[1].split()[19]))
+
+    def test_revocation_between_spend_and_adapter_launch_has_zero_effects(self):
+        event = supervisor.build_dispatch_event(
+            self.task, "Codex", supervisor.REASON_OWNED_READY, {"TASK-1": self.task},
+        )
+        event.update({"event_id": "revocation-race", "target_agent": "codex", "message": "local probe"})
+        request = supervisor.build_request(self.config, event)
+        original_reserve = supervisor.reserve_execution_authorization_for_launch
+
+        def revoke_after_reservation(*args, **kwargs):
+            original_reserve(*args, **kwargs)
+            with supervisor.canonical_task_state_lock_file(Path(self.config["paths"]["status_file"]), shared=False, nonblocking=False):
+                status = supervisor.load_status(self.config)
+                task = status["tasks"][0]
+                task["execution_authorization"] = execution_authorization.revoked_execution_authorization(
+                    task, actor="synthetic-local-operator", now=datetime.now(timezone.utc),
+                )
+                supervisor.write_status(self.config, status, source="isolated-between-spend-and-launch")
+
+        def effect(_request):
+            subprocess.run([sys.executable, "-c", "from pathlib import Path; import sys; Path(sys.argv[1]).touch()", str(self.marker)], check=True, timeout=10)
+            return DeliveryResult(ok=False, adapter="local-probe", mode="local", target="Codex")
+
+        with (
+            mock.patch.object(supervisor, "reserve_execution_authorization_for_launch", side_effect=revoke_after_reservation),
+            mock.patch.object(supervisor, "build_adapter", return_value=mock.Mock(deliver=effect)),
+            mock.patch.object(supervisor, "status_command_runtime_env", return_value={}),
+            mock.patch.object(supervisor, "status_command_runtime_record_from_env", return_value={}),
+        ):
+            with self.assertRaises(supervisor.ExecutionAuthorizationSpendFailed):
+                supervisor.start_worker_for_request(
+                    self.config, runtime_state.default_state(), request, dispatch_event=event,
+                    queue_event_id="revocation-race", attempt_count=1, event_id_for_log="revocation-race",
+                    latest_task_map={"TASK-1": task_fixture()},
+                )
+        self.assertFalse(self.marker.exists())
+
+    def test_revoked_and_reassigned_grants_have_zero_process_effects(self):
+        for field, value in (("generation", 2), ("owner", "Codex2"), ("acceptance", ["Changed action"])):
+            with self.subTest(field=field):
+                task = copy.deepcopy(self.task)
+                task[field] = value
+                supervisor.write_status(self.config, {"tasks": [task]}, source="isolated-revision")
+                self.assertEqual(self._run([("stale", None)]), [7])
+                self.assertFalse(self.marker.exists())
+        task = copy.deepcopy(self.task)
+        task["execution_authorization"] = execution_authorization.revoked_execution_authorization(task, actor="synthetic-local-operator", now=datetime.now(timezone.utc))
+        supervisor.write_status(self.config, {"tasks": [task]}, source="isolated-revoked")
+        self.assertEqual(self._run([("revoked", None)]), [7])
+        self.assertFalse(self.marker.exists())
+
+
+class ExecutionAuthorizationLaunchReserveTests(unittest.TestCase):
+    """OPS-PRIVILEGED-TASK-EXECUTION-AUTH-001: the claim/lease boundary spend."""
+
+    @contextmanager
+    def _locked(self, status: dict[str, object]):
+        with (
+            mock.patch.object(supervisor, "config_path", return_value=Path("/runtime/ai-status.json")),
+            mock.patch.object(supervisor, "canonical_task_state_lock_file") as lock,
+            mock.patch.object(supervisor, "load_status", return_value=status),
+            mock.patch.object(supervisor, "write_status") as write,
+        ):
+            lock.return_value.__enter__.return_value = None
+            lock.return_value.__exit__.return_value = False
+            yield write
+
+    def test_non_privileged_task_is_a_no_op(self) -> None:
+        status = {"tasks": [task_fixture()]}
+        with self._locked(status) as write:
+            supervisor.reserve_execution_authorization_for_launch(
+                config_fixture(), "TASK-1", run_id="run-1"
+            )
+            write.assert_not_called()
+
+    def test_granted_task_reserves_and_commits(self) -> None:
+        task = _synthetic_privileged_task()
+        status = {"tasks": [task]}
+        with self._locked(status) as write:
+            supervisor.reserve_execution_authorization_for_launch(
+                config_fixture(), "TASK-1", run_id="run-1"
+            )
+            write.assert_called_once()
+            committed = write.call_args[0][1]
+        committed_task = supervisor.task_index_from_status(config_fixture(), committed)["TASK-1"]
+        self.assertEqual(
+            committed_task["execution_authorization"]["state"],
+            execution_authorization.STATE_RESERVED,
+        )
+        self.assertEqual(
+            committed_task["execution_authorization"]["reserved_run_id"], "run-1"
+        )
+
+    def test_already_reserved_task_raises_spend_failed(self) -> None:
+        policy = execution_authorization.derive_execution_policy(
+            task_id="TASK-1", work_class="security", repository="pantheon"
+        )
+        task = task_fixture()
+        task["execution_authorization"] = execution_authorization.pending_authorization_hold(policy)
+        task["execution_authorization"]["state"] = execution_authorization.STATE_RESERVED
+        status = {"tasks": [task]}
+        with self._locked(status) as write:
+            with self.assertRaises(supervisor.ExecutionAuthorizationSpendFailed):
+                supervisor.reserve_execution_authorization_for_launch(
+                    config_fixture(), "TASK-1", run_id="run-2"
+                )
+            write.assert_not_called()
+
+    def test_missing_task_fails_closed(self) -> None:
+        # Codex2 exact-head REJECT P1-7: an authoritative reload that cannot
+        # even find the task must not be treated as an ordinary,
+        # non-privileged no-op.
+        status = {"tasks": []}
+        with self._locked(status) as write:
+            with self.assertRaises(supervisor.ExecutionAuthorizationSpendFailed):
+                supervisor.reserve_execution_authorization_for_launch(
+                    config_fixture(), "TASK-1", run_id="run-1"
+                )
+            write.assert_not_called()
+
+    def test_privileged_source_with_missing_subrecord_fails_closed(self) -> None:
+        # Ground truth (dev_bridge.work_class) says this task is privileged,
+        # but its execution_authorization subrecord was dropped or never
+        # attached. Must refuse to reserve rather than silently no-op.
+        task = task_fixture()
+        task["dev_bridge"] = {"work_class": "hosted"}
+        status = {"tasks": [task]}
+        with self._locked(status) as write:
+            with self.assertRaises(supervisor.ExecutionAuthorizationSpendFailed):
+                supervisor.reserve_execution_authorization_for_launch(
+                    config_fixture(), "TASK-1", run_id="run-1"
+                )
+            write.assert_not_called()
+
+    def test_privileged_source_with_corrupt_policy_fails_closed(self) -> None:
+        task = task_fixture()
+        task["dev_bridge"] = {"work_class": "hosted"}
+        task["execution_authorization"] = {"policy": "corrupt"}
+        status = {"tasks": [task]}
+        with self._locked(status) as write:
+            with self.assertRaises(supervisor.ExecutionAuthorizationSpendFailed):
+                supervisor.reserve_execution_authorization_for_launch(
+                    config_fixture(), "TASK-1", run_id="run-1"
+                )
+            write.assert_not_called()
+
+
 class DurableQueueContractTests(unittest.TestCase):
     def setUp(self) -> None:
         self.config = config_fixture()
@@ -4148,6 +4451,7 @@ class DurableQueueContractTests(unittest.TestCase):
                             {"tasks": [self.task]},
                             {"tasks": [self.task]},
                             {"tasks": [stale_task]},
+                            {"tasks": [stale_task]},
                         ],
                     ),
                     mock.patch.object(
@@ -4242,12 +4546,7 @@ class DurableQueueContractTests(unittest.TestCase):
                 mock.patch.object(
                     supervisor,
                     "load_status",
-                    side_effect=[
-                        {"tasks": [self.task]},
-                        {"tasks": [self.task]},
-                        {"tasks": [self.task]},
-                        {"tasks": [self.task]},
-                    ],
+                    return_value={"tasks": [self.task]},
                 ),
                 mock.patch.object(
                     supervisor, "build_adapter", return_value=adapter
@@ -9989,8 +10288,11 @@ class ReviewDecisionIntentLeaseRecoveryTests(unittest.TestCase):
             "intent_nonce": intent["nonce"],
             ai_status.REVIEW_BINDING_MISMATCH_PREFLIGHT_KEY: "binding mismatch",
         }
+        original_status_root = ai_status.STATUS_ROOT
+        self.addCleanup(ai_status.configure_status_root_paths, original_status_root)
         ai_status.configure_status_root_paths(self.root)
-        with mock.patch.dict(
+        # All lazy entrypoint imports must use this same isolated CLI module.
+        with mock.patch.dict(sys.modules, {"ai_status": ai_status}), mock.patch.dict(
             os.environ,
             {
                 "AI_NAME": "Codex2",
