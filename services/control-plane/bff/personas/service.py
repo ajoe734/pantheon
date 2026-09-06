@@ -745,6 +745,7 @@ class _PersonaOwnerHttpTransport:
         claims: dict[str, Any] = {
             "sub": "control-plane-bff",
             "service": "control-plane-bff",
+            "tenant_id": self.tenant_id,
             "allowed_tenants": [self.tenant_id],
             "roles": [
                 "service",
