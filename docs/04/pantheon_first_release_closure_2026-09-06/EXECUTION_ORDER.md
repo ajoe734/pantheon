@@ -9,8 +9,8 @@ they ever diverge.
 | # | Task ID | Depends on | Scope |
 | --- | --- | --- | --- |
 | 1 | `DOC-FIRST-RELEASE-PLAN-DELIVERY-001` (this task) | `PLAN-ADMIT-001` (done) | Commit the previously-uncommitted planning/audit/registry sources; pure docs; independently executable. |
-| 2 | `GOV-APPROVAL-AUTHORITY-PREREQUISITE-001` | this task, `REGISTRY-STRATEGY-UNIFIED-CONTRACT-001` (Registry successor), `DOMAIN-WRITERS-001` | The exact approval-authority slice (§3 of `archive/APPROVAL_RELEASE_SA_SD.md`): common Governance inbound validation, one shared decision reader, typed HTTP/auth/DTO contract. Serialized after Registry, does not wait on Overlay/Domain corrective. |
-| 3 | `STRUCT-RETIRE-001` | docs task, authority slice, Registry successor, Domain corrective, `DEV-DELIVERY` | Actual canonical source-join: retirement of the 17 dead tails / 208 duplicate groups / 216 test files against real ownership/import/test/route gates. Not a new release controller. |
+| 2 | `GOV-APPROVAL-AUTHORITY-PREREQUISITE-001` (already materialized as `todo`, owner `Antigravity2`) | this task, `REGISTRY-STRATEGY-UNIFIED-CONTRACT-001` (Registry successor), `DOMAIN-WRITERS-001` | The exact approval-authority slice (§3 of `archive/APPROVAL_RELEASE_SA_SD.md`): common Governance inbound validation, one shared decision reader, typed HTTP/auth/DTO contract. Serialized after Registry, does not wait on Overlay/Domain corrective. |
+| 3 | `STRUCT-RETIRE-001` (already materialized as `todo`, owner `Antigravity`) | docs task, authority slice, Registry successor, `DOMAIN-WRITERS-DURABILITY-CORRECTIVE-001`, `DEV-DELIVERY-001` | Actual canonical source-join: retirement of the 17 dead tails / 208 duplicate groups / 216 test files against real ownership/import/test/route gates. Not a new release controller. |
 
 ## Three hosted tasks (gated behind the chain above, unchanged scope)
 

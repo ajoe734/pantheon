@@ -55,6 +55,13 @@ for the current synthesis.
   — the 5 Registry-resumption/report/preference sources from the
   2026-09-06 dev-closure artifact bundle (current verified state as of that
   date).
+- [archive/PLAN_ADMISSION_ERRATUM.md](archive/PLAN_ADMISSION_ERRATUM.md) —
+  historical correction note (2026-09-06) retracting an earlier, incorrect
+  in-conversation claim that the original six audit Markdown files were
+  never committed. It does not change `APPROVAL_RELEASE_SA_SD.md`'s
+  immutable acceptance, lifecycle, role, or dependency contract, and it is
+  not a second signed plan — it is a historical record of a corrected false
+  premise, preserved byte-identical to the operator-workstation original.
 
 ## Already-merged source (not duplicated here)
 
@@ -62,18 +69,35 @@ for the current synthesis.
   — the original six audit Markdown files (`INDEX.md`, `REPORT.md`, `SA.md`,
   `SD.md`, `TRACEABILITY.md`, `EXECUTION_TASKS.md`) plus the historical
   `tasks.json` catalog. These were already committed to `dev` by
-  `PLAN-ADMIT-001` (commit `7a741afd8`). This task does not recreate or
+  `PLAN-ADMIT-001` — PR
+  [#5551](https://github.com/ajoe734/pantheon/pull/5551), source head
+  `7a741afd811ba8cd31885a07bc783d32d5353161`, merge commit
+  `87134886b7438e2db4b698cedfa0eb4eff9cb202` (2026-09-04T00:47:22Z, base
+  `dev`, ancestor of current `dev`). This task does not recreate or
   duplicate that content; `SOURCE_MANIFEST.json` records its existing
   location and hash for traceability only.
 
 ## Rejected/unqueued draft (explicitly not admitted)
 
-`docs/04/pantheon_current_full_gap_audit_2026-09-03/task-packet.*.json` are
-signed executable task packets, not documentation sources, and are
-intentionally excluded from this delivery (see plan section 5 — no signed
-executable packets, canonical task/queue JSON, or runtime logs are copied).
-The four-task draft referenced by the original audit's `INDEX.md` remains a
-rejected/unqueued draft; nothing in this delivery re-admits it.
+Correction: the merged `docs/04/pantheon_current_full_gap_audit_2026-09-03/INDEX.md`
+does not reference any task packet or four-task draft — it only lists
+`REPORT.md`/`SA.md`/`SD.md`/`TRACEABILITY.md`/`EXECUTION_TASKS.md`/`tasks.json`,
+and no `task-packet.*.json` files exist in that merged directory. The
+pre-merge workstation original of that same INDEX did link three local
+`task-packet.*.json` files (16-task functional packet, already admitted;
+three-hosted-task packet, pending one-shot authorization; retirement packet,
+pending dependencies) — those three links were dropped when the file was
+merged because signed executable task packets are excluded from documentation
+delivery (plan section 5), not because they were rejected. None of those
+three is a "four-task draft".
+
+The actual four-task draft this section is about is
+[archive/supplemental-reconcile-20260905/FIRST_RELEASE_UNIFIED_ARCHITECTURE_SA_SD_20260906.md](archive/supplemental-reconcile-20260905/FIRST_RELEASE_UNIFIED_ARCHITECTURE_SA_SD_20260906.md),
+which its own header explicitly marks `文件狀態：未簽署草案，停止派發`
+("unsigned draft, dispatch stopped") because a separate collaboration session
+already admitted `REGISTRY-STRATEGY-UNIFIED-CONTRACT-001` and superseded the
+prior Registry prerequisite this draft assumed. It remains a rejected/unqueued
+draft; nothing in this delivery re-admits it.
 
 ## Boundary this task does not cross
 

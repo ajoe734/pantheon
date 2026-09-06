@@ -8,10 +8,10 @@
       "group": "original_gap_audit_2026-09-03",
       "classification": "already_merged_active_source",
       "destination": "docs/04/pantheon_current_full_gap_audit_2026-09-03/",
-      "provenance": "Original workstation snapshot /tmp/pantheon-current-gap-audit-20260903/docs/04/pantheon_current_full_gap_audit_2026-09-03/; merged into pantheon dev by PLAN-ADMIT-001 (commit 7a741afd8, 'PLAN-ADMIT-001: admit structural closure planning packet').",
+      "provenance": "Original workstation snapshot /tmp/pantheon-current-gap-audit-20260903/docs/04/pantheon_current_full_gap_audit_2026-09-03/; merged into pantheon dev by PLAN-ADMIT-001 via PR #5551 (source head 7a741afd811ba8cd31885a07bc783d32d5353161, 'PLAN-ADMIT-001: admit structural closure planning packet'; merge commit 87134886b7438e2db4b698cedfa0eb4eff9cb202, 2026-09-04T00:47:22Z, ancestor of current dev). Byte comparison against that pre-merge workstation snapshot: REPORT.md/SA.md/SD.md/TRACEABILITY.md/EXECUTION_TASKS.md/tasks.json (6 files) are byte-identical between the workstation original and the merged dev copy. INDEX.md is not byte-identical: the merged copy intentionally dropped 3 local links to task-packet.*.json files present in the pre-merge original (16-task functional packet already admitted elsewhere; 3-hosted-task packet pending one-shot authorization; retirement packet pending dependencies), because signed executable task packets are excluded from documentation delivery per plan section 5, not because they were rejected. This divergence is not a signature/byte violation of a signed source and is not rewritten here.",
       "status": "merged_to_dev",
       "files": [
-        {"path": "docs/04/pantheon_current_full_gap_audit_2026-09-03/INDEX.md", "sha256": "3959c4515f1b83790fa70fad637e31ab370b2a9509acf5d0845860e26055fc7a"},
+        {"path": "docs/04/pantheon_current_full_gap_audit_2026-09-03/INDEX.md", "sha256": "3959c4515f1b83790fa70fad637e31ab370b2a9509acf5d0845860e26055fc7a", "note": "diverges from the pre-merge workstation original by 3 dropped task-packet.*.json links; see group provenance"},
         {"path": "docs/04/pantheon_current_full_gap_audit_2026-09-03/REPORT.md", "sha256": "75709d429e012868941afe7d1e37a067cfeafa8bc49ea13bcf7250c718d5ecba"},
         {"path": "docs/04/pantheon_current_full_gap_audit_2026-09-03/SA.md", "sha256": "8b9b3d06a48f383e6b4b3330c28869cbdd6f7f08719d183a212c76ccb645160a"},
         {"path": "docs/04/pantheon_current_full_gap_audit_2026-09-03/SD.md", "sha256": "ef6f664aceffcb3a594517ec5027ed74927a775a5bad7a4b76479d8cb454f567"},
@@ -79,6 +79,16 @@
       "status": "newly_delivered_this_task",
       "files": [
         {"path": "docs/04/pantheon_first_release_closure_2026-09-06/archive/APPROVAL_RELEASE_SA_SD.md", "sha256": "6a6bbd28f45b7b052b19d09b2f0bc5b20e0e37ca2620f722e1a40cbbc9fa7157"}
+      ]
+    },
+    {
+      "group": "plan_admission_erratum_20260906",
+      "classification": "superseded_or_historical_signed_source",
+      "destination": "docs/04/pantheon_first_release_closure_2026-09-06/archive/PLAN_ADMISSION_ERRATUM.md",
+      "provenance": "/tmp/pantheon-approval-release-delivery-20260906.as2zQ6/PLAN_ADMISSION_ERRATUM.md; historical correction note dated 2026-09-06 retracting an earlier, incorrect in-conversation claim that the original six audit Markdown files were never committed/pushed/merged. Preserved byte-identical; does not change APPROVAL_RELEASE_SA_SD.md's immutable acceptance, lifecycle, role, or dependency contract and is not a second signed plan.",
+      "status": "newly_delivered_this_task",
+      "files": [
+        {"path": "docs/04/pantheon_first_release_closure_2026-09-06/archive/PLAN_ADMISSION_ERRATUM.md", "sha256": "43635b209d4704d03058a13fa40955ae576754f97ae37e46dfec55904dd6b549"}
       ]
     },
     {
