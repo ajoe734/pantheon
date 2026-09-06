@@ -776,7 +776,7 @@ class DeploymentProjectionReadModelService:
             deployment_saga_status=saga_status,
         )
         summary: Dict[str, Any] = {
-            "has_approval_authority": approval_outcome in {"approved", "approved_with_conditions"},
+            "has_approval_authority": self._has_approval_authority(plan, registry_entry, approval_decision),
             "runtime_backing_present": runtime_binding is not None,
             "execution_projection_available": execution_projection is not None,
             "rollback_action_type": _rollback_action_type(plan),
@@ -823,23 +823,34 @@ class DeploymentProjectionReadModelService:
             execution_projection=execution_projection,
         )
 
+    def _has_approval_authority(self, plan, entry, decision) -> bool:
+        from services.governance.approval_authority import ApprovalEvidence, ApprovalInvalid
+        if not entry or not decision:
+            return False
+        try:
+            ApprovalEvidence.model_validate(decision).require_valid(expected={
+                'tenant_id': _plan_tenant_id(plan), 'target_type': 'registry_entry',
+                'target_id': plan.artifact_id, 'target_version': plan.artifact_version,
+                'candidate_digest': entry.get('checksum'),
+            })
+            return True
+        except (ApprovalInvalid, ValueError):
+            return False
+
     def _find_approval_decision(self, approval_decision_id: str) -> Optional[Dict[str, Any]]:
-        if not self.approval_store_path.exists():
+        from services.governance.approval_authority import configured_approval_reader, ApprovalInvalid
+        try:
+            reader = self.planner_service.approval_reader or configured_approval_reader('deployment')
+            return reader.get(approval_decision_id).model_dump()
+        except ApprovalInvalid:
             return None
-        return _load_record(
-            self.approval_store_path,
-            key_candidates=("decision_id", "id"),
-            target_key=approval_decision_id,
-        )
 
     def _find_registry_entry(self, artifact_id: str) -> Optional[Dict[str, Any]]:
-        if self.registry_snapshot_path is None or not self.registry_snapshot_path.exists():
+        from types import SimpleNamespace
+        try:
+            return dict(self.planner_service._resolve_registry_entry(SimpleNamespace(registry_id=artifact_id)))
+        except DeploymentPlanError:
             return None
-        return _load_record(
-            self.registry_snapshot_path,
-            key_candidates=("registry_id", "id", "artifact_id"),
-            target_key=artifact_id,
-        )
 
     def _find_runtime_binding_for_plan(self, plan_id: str) -> Optional[Dict[str, Any]]:
         for record in _load_records(self.runtime_binding_store_path):
@@ -1058,7 +1069,7 @@ class DeploymentOrchestrationService:
                 reason=f"DeploymentPlan '{plan_id}' must be approved before dispatch; got '{plan.status}'",
             )
 
-        registry_entry = self._resolve_registry_entry_for_plan(plan, request.registry_entry)
+        registry_entry = self._resolve_registry_entry_for_plan(plan)
         projection = self.planner_service.planner.build_execution_projection(plan, registry_entry)
 
         if existing is not None:
@@ -1366,26 +1377,18 @@ class DeploymentOrchestrationService:
             raise DeploymentSagaError(f"Unknown saga: {saga_id}")
         return saga
 
-    def _resolve_registry_entry_for_plan(
-        self,
-        plan: DeploymentPlan,
-        explicit_registry_entry: Mapping[str, Any] | None,
-    ) -> Mapping[str, Any]:
-        if explicit_registry_entry is not None:
-            return explicit_registry_entry
-        snapshot_path = self.planner_service.registry_snapshot_path
-        if snapshot_path and snapshot_path.exists():
-            record = _load_record(
-                snapshot_path,
-                key_candidates=("registry_id", "id"),
-                target_key=plan.artifact_id,
-            )
-            if record is not None:
-                return record
-        raise DeploymentPlanError(
-            "dispatch requires registry_entry payload unless artifact_id resolves from "
-            "PANTHEON_DEPLOYMENT_REGISTRY_SNAPSHOT_PATH"
-        )
+    def _resolve_registry_entry_for_plan(self, plan: DeploymentPlan) -> Mapping[str, Any]:
+        from types import SimpleNamespace
+        reference = SimpleNamespace(registry_id=plan.artifact_id,
+                                    approval_decision_id=plan.approval_decision_id)
+        entry = self.planner_service._resolve_registry_entry(reference)
+        if (entry.get('owner_tenant') != _plan_tenant_id(plan)
+                or entry.get('version') != plan.artifact_version
+                or entry.get('artifact_state') != 'approved'
+                or entry.get('approval_decision_id') != plan.approval_decision_id):
+            raise DeploymentPlanError('Registry authority no longer matches the approved plan')
+        self.planner_service._resolve_approval_decision(reference, entry, _plan_tenant_id(plan))
+        return entry
 
     def _find_outbox_event(self, saga_id: str, *, sequence_no: int) -> OutboxRecord | None:
         for record in self.saga_store.outbox_records():

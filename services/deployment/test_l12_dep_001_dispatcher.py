@@ -10,6 +10,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 from fastapi.testclient import TestClient
+from services.governance.test_approval_authority_postgres import owner_env, approved_registry_owners
 
 from services.deployment.outbox_lease import (
     DeploymentOutboxLeaseStore,
@@ -258,7 +259,7 @@ def test_crash_after_runtime_binding_side_effect_recovers_without_duplicate(
 
 
 def test_approved_paper_command_reaches_terminal_plan_and_binding(
-    tmp_path, monkeypatch
+    tmp_path, monkeypatch, owner_env
 ) -> None:
     """Run the deployment worker's two-event paper path against real stores.
 
@@ -269,42 +270,7 @@ def test_approved_paper_command_reaches_terminal_plan_and_binding(
     """
     governance_dir = tmp_path / "governance"
     governance_dir.mkdir()
-    registry_path = tmp_path / "registry_entries.json"
     runtime_binding_store = tmp_path / "runtime_bindings.json"
-    (governance_dir / "approval_decisions.json").write_text(
-        json.dumps(
-            {
-                "approval-l12-dep": {
-                    "decision_id": "approval-l12-dep",
-                    "target_id": "artifact-l12-dep",
-                    "target_version": "1.0.0",
-                    "decision_state": "decided",
-                    "decision": "approved",
-                    "capital_pool_id": "pool-l12-dep",
-                    "persona_id": "persona-l12-dep",
-                    "tenant_id": "tenant-l12-dep",
-                }
-            }
-        ),
-        encoding="utf-8",
-    )
-    registry_path.write_text(
-        json.dumps(
-            {
-                "artifact-l12-dep": {
-                    "registry_id": "artifact-l12-dep",
-                    "artifact_type": "model_artifact",
-                    "strategy_id": "strategy-l12-dep",
-                    "version": "1.0.0",
-                    "artifact_state": "approved",
-                    "checksum": "sha256:l12-dep",
-                    "approval_decision_id": "approval-l12-dep",
-                    "deployment_summary": {"current_stage": "none"},
-                }
-            }
-        ),
-        encoding="utf-8",
-    )
     (governance_dir / "capital_pools.json").write_text(
         json.dumps(
             [
@@ -335,19 +301,22 @@ def test_approved_paper_command_reaches_terminal_plan_and_binding(
         encoding="utf-8",
     )
 
-    with monkeypatch.context() as environment:
+    with approved_registry_owners(owner_env) as owners, monkeypatch.context() as environment:
+        registry_id = owners["entry"]["registry_id"]
+        approval_id = owners["decision"]["decision_id"]
+        environment.setenv("DEPLOYMENT_REGISTRY_BASE_URL", owners["registry_url"])
+        environment.setenv("DEPLOYMENT_REGISTRY_SERVICE_TOKEN", owners["registry_token"])
+        environment.setenv("DEPLOYMENT_GOVERNANCE_BASE_URL", owners["governance_url"])
+        environment.setenv("DEPLOYMENT_GOVERNANCE_SERVICE_TOKEN", owners["governance_token"])
         environment.setenv("CAPITAL_DATA_DIR", str(governance_dir))
         environment.setenv("DEPLOYMENT_DATA_DIR", str(governance_dir))
         environment.setenv("PANTHEON_GOVERNANCE_DATA_DIR", str(governance_dir))
         environment.setenv(
             "PANTHEON_RUNTIME_BINDING_STORE_PATH", str(runtime_binding_store)
         )
-        environment.setenv(
-            "PANTHEON_DEPLOYMENT_REGISTRY_SNAPSHOT_PATH", str(registry_path)
-        )
         environment.setenv("PANTHEON_DEPLOYMENT_OUTBOX_LEASE_REQUIRED", "false")
         environment.setenv("PANTHEON_DEPLOYMENT_SERVICE_TOKEN", "l12:service")
-        environment.setenv("PANTHEON_DEPLOYMENT_TENANT_ID", "tenant-l12-dep")
+        environment.setenv("PANTHEON_DEPLOYMENT_TENANT_ID", "synthetic-tenant")
         environment.delenv("PANTHEON_PAPER_FLEET_RECONCILER_URL", raising=False)
         environment.delenv("PANTHEON_RUNTIME_MANAGER_URL", raising=False)
 
@@ -358,7 +327,7 @@ def test_approved_paper_command_reaches_terminal_plan_and_binding(
             deployment_service.app,
             headers={
                 "Authorization": "Bearer l12:operator,service",
-                "X-Tenant-Id": "tenant-l12-dep",
+                "X-Tenant-Id": "synthetic-tenant",
             },
         )
         try:
@@ -366,8 +335,8 @@ def test_approved_paper_command_reaches_terminal_plan_and_binding(
                 "/api/deployment/plans",
                 json={
                     "plan_id": "plan-l12-dep",
-                    "approval_decision_id": "approval-l12-dep",
-                    "registry_id": "artifact-l12-dep",
+                    "approval_decision_id": approval_id,
+                    "registry_id": registry_id,
                     "capital_pool_id": "pool-l12-dep",
                     "sponsor_persona_id": "persona-l12-dep",
                     "target_stage": "paper",

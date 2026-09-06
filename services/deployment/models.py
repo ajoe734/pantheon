@@ -429,6 +429,7 @@ class DeploymentProjectionReadModelResponse(BaseModel):
 
 
 class DispatchDeploymentPlanRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
     trace_id: Optional[str] = None
     correlation_id: Optional[str] = None
     idempotency_key: Optional[str] = None
@@ -436,7 +437,6 @@ class DispatchDeploymentPlanRequest(BaseModel):
     saga_id: Optional[str] = None
     source_task_id: Optional[str] = None
     workflow_id: Optional[str] = None
-    registry_entry: Optional[Dict[str, Any]] = None
     metadata: Optional[Dict[str, Any]] = None
 
 

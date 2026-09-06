@@ -59,13 +59,13 @@ def owner_env():
 
 
 @contextmanager
-def server(env):
+def server(env, app="services.governance.main:app"):
     with socket.socket() as sock:
         sock.bind(('127.0.0.1', 0))
         port = sock.getsockname()[1]
     # Capture bounded foreground child output; always wait and collect exit.
     with tempfile.TemporaryFile(mode='w+') as output:
-        process = subprocess.Popen([sys.executable, '-m', 'uvicorn', 'services.governance.main:app',
+        process = subprocess.Popen([sys.executable, '-m', 'uvicorn', app,
                                     '--host', '127.0.0.1', '--port', str(port), '--log-level', 'warning'],
                                    env=env, stdout=output, stderr=subprocess.STDOUT)
         url = f'http://127.0.0.1:{port}'
@@ -205,3 +205,58 @@ def test_atomic_rollback_on_audit_failure(mounted, owner_env):
         with psycopg.connect(dsn) as conn:
             conn.execute(sql.SQL('ALTER TABLE {} DROP CONSTRAINT reject_test').format(sql.Identifier(*table.split('.'))))
     assert post(mounted, '', owner_env, body, key).status_code == 201
+
+
+@contextmanager
+def approved_registry_owners(env, *, strategy_id='strategy-l12-dep',
+                             capital_pool_id='pool-l12-dep', persona_id='persona-l12-dep'):
+    """Real scoped Registry/Governance HTTP owners, on dedicated PG schemas.
+
+    Consumers receive owner URLs and read principals only. No caller-provided
+    approval object or local JSON snapshot authorizes the consumer.
+    """
+    registry_env = dict(env)
+    schema = 'registry_gov_test_' + uuid.uuid4().hex
+    registry_env.update(
+        REGISTRY_STORE_BACKEND='postgres', REGISTRY_STORE_DSN=env['GOVERNANCE_STORE_DSN'],
+        REGISTRY_ENTRIES_TABLE=schema+'.entries', REGISTRY_RECEIPTS_TABLE=schema+'.receipts',
+        PANTHEON_REGISTRY_AUTH_MODE='strict',
+        PANTHEON_REGISTRY_JWT_SECRET=env['PANTHEON_GOVERNANCE_JWT_SECRET'],
+        PANTHEON_REGISTRY_JWT_ISSUER='isolated-governance-test',
+        PANTHEON_REGISTRY_JWT_AUDIENCE='isolated-registry')
+    read_token = token(env['PANTHEON_GOVERNANCE_JWT_SECRET'], roles=['approval_reader'])
+    registry_token = token(env['PANTHEON_GOVERNANCE_JWT_SECRET'], roles=['operator'],
+                           tenant='synthetic-tenant', aud='isolated-registry')
+    with server(env) as governance_url:
+        registry_env.update(REGISTRY_GOVERNANCE_BASE_URL=governance_url,
+                            REGISTRY_GOVERNANCE_SERVICE_TOKEN=read_token)
+        with server(registry_env, 'services.registry.service:app') as registry_url:
+            with httpx.Client(base_url=registry_url, headers={'Authorization': 'Bearer '+registry_token}, timeout=10) as client:
+                r = client.post('/api/registry/entries', headers={'Idempotency-Key': uuid.uuid4().hex}, json={
+                    'artifact_type': 'model_artifact', 'strategy_id': strategy_id,
+                    'version': '1.0.0', 'artifact_state': 'draft', 'checksum': 'sha256:'+'a'*64,
+                    'lineage': {'source_run_ids': ['isolated-governance-proof']},
+                    'storage_ref': {'backend': 'object_store', 'path': 'isolated/model.bin'}})
+                assert r.status_code == 200, r.text
+                entry = r.json()['entry']
+                registry_id = entry['registry_id']
+                r = client.post(f'/api/registry/entries/{registry_id}/advance', json={
+                    'target_state': 'candidate', 'expected_artifact_state': 'draft',
+                    'expected_version': entry['version'], 'expected_updated_at': entry['updated_at'],
+                    'command_key': uuid.uuid4().hex})
+                assert r.status_code == 200, r.text
+                candidate = r.json()['entry']
+                decision = approved(governance_url, env, target_id=registry_id,
+                                    candidate_digest=entry['checksum'],
+                                    capital_pool_id=capital_pool_id, persona_id=persona_id)
+                r = client.post(f'/api/registry/entries/{registry_id}/advance', json={
+                    'target_state': 'approved', 'expected_artifact_state': 'candidate',
+                    'expected_version': candidate['version'], 'expected_updated_at': candidate['updated_at'],
+                    'command_key': uuid.uuid4().hex, 'approval_decision_id': decision['decision_id']})
+                assert r.status_code == 200, r.text
+                readback = client.get(f'/api/registry/entries/{registry_id}')
+                assert readback.status_code == 200, readback.text
+                assert readback.json() == r.json()
+                yield dict(registry_url=registry_url, governance_url=governance_url,
+                           registry_token=registry_token, governance_token=read_token,
+                           entry=readback.json()['entry'], decision=decision)
