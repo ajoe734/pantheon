@@ -1,0 +1,21 @@
+{
+  "audit_date": "2026-09-06",
+  "backend_dev": "471dc5391a0f9cbde54d51730891583043708e42",
+  "frontend_dev": "5d4f385284b44a30e10764426a47fd808a7ae3cb",
+  "lean_gitlink": "5ad0249432459c119f26718007e083808ef7995d",
+  "lean_upstream_master": "23b735d99a357807dc0df9f4c51d30f05fe0d277",
+  "lean_merge_base": "f00d02be834b461557c61fd73146f46a8d4a6b86",
+  "lean_fork_ahead": 3,
+  "lean_fork_behind": 206,
+  "lean_fork_added_paths": [
+    "Algorithm.Python/pantheon_algo/__init__.py",
+    "Algorithm.Python/pantheon_algo/base.py",
+    "Algorithm.Python/pantheon_algo/smoke_loader_test.py",
+    "Algorithm.Python/pantheon_algo/test_base.py"
+  ],
+  "method": "read-only git source/AST/manifest inventory; GitHub API dev identities and Lean comparison; official npm/PyPI and upstream docs",
+  "deployed_packages_inspected": false,
+  "tests_or_benchmarks_run": false,
+  "record_scope": "Read-only audit execution before documentation publication; flags below describe the audit, not the later docs commit.",
+  "audit_phase_repository_files_modified": false
+}

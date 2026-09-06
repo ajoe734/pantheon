@@ -1,0 +1,854 @@
+[
+  [
+    {
+      "path": "services/control-plane/bff/main.py",
+      "name": "_pm12_resolve_quarterly_recommendation_submit_params",
+      "line": 4790,
+      "lines": 231
+    },
+    {
+      "path": "services/control-plane/bff/personas/service.py",
+      "name": "_pm12_resolve_quarterly_recommendation_submit_params",
+      "line": 8966,
+      "lines": 231
+    }
+  ],
+  [
+    {
+      "path": "services/control-plane/bff/main.py",
+      "name": "_checkpoint_persona_provisioning_readback",
+      "line": 9051,
+      "lines": 164
+    },
+    {
+      "path": "services/control-plane/bff/personas/service.py",
+      "name": "_checkpoint_persona_provisioning_readback",
+      "line": 890,
+      "lines": 164
+    }
+  ],
+  [
+    {
+      "path": "services/control-plane/bff/main.py",
+      "name": "_project_persona_dto",
+      "line": 9984,
+      "lines": 148
+    },
+    {
+      "path": "services/control-plane/bff/personas/service.py",
+      "name": "_project_persona_dto",
+      "line": 1841,
+      "lines": 148
+    }
+  ],
+  [
+    {
+      "path": "services/control-plane/bff/main.py",
+      "name": "_pm12_quarterly_recommendation_item",
+      "line": 18049,
+      "lines": 138
+    },
+    {
+      "path": "services/control-plane/bff/personas/service.py",
+      "name": "_pm12_quarterly_recommendation_item",
+      "line": 12949,
+      "lines": 138
+    }
+  ],
+  [
+    {
+      "path": "services/control-plane/bff/main.py",
+      "name": "_extract_identity_jwt",
+      "line": 1230,
+      "lines": 120
+    },
+    {
+      "path": "services/control-plane/bff/personas/service.py",
+      "name": "_extract_identity_jwt",
+      "line": 8618,
+      "lines": 120
+    }
+  ],
+  [
+    {
+      "path": "services/control-plane/bff/main.py",
+      "name": "_persona_provisioning_metadata",
+      "line": 17653,
+      "lines": 116
+    },
+    {
+      "path": "services/control-plane/bff/personas/service.py",
+      "name": "_persona_provisioning_metadata",
+      "line": 11422,
+      "lines": 116
+    }
+  ],
+  [
+    {
+      "path": "services/control-plane/bff/main.py",
+      "name": "_filter_by_common_identifiers",
+      "line": 5882,
+      "lines": 110
+    },
+    {
+      "path": "services/control-plane/bff/personas/service.py",
+      "name": "_filter_by_common_identifiers",
+      "line": 10051,
+      "lines": 110
+    }
+  ],
+  [
+    {
+      "path": "services/control-plane/bff/main.py",
+      "name": "_human_inbox_sanitize_promotion_snapshot",
+      "line": 11766,
+      "lines": 95
+    },
+    {
+      "path": "services/control-plane/bff/personas/service.py",
+      "name": "_human_inbox_sanitize_promotion_snapshot",
+      "line": 11096,
+      "lines": 95
+    }
+  ],
+  [
+    {
+      "path": "services/control-plane/bff/main.py",
+      "name": "_persona_fleet_mutation_projection",
+      "line": 20696,
+      "lines": 84
+    },
+    {
+      "path": "services/control-plane/bff/personas/service.py",
+      "name": "_persona_fleet_mutation_projection",
+      "line": 6736,
+      "lines": 84
+    }
+  ],
+  [
+    {
+      "path": "services/control-plane/bff/main.py",
+      "name": "_overlay_source_health_truth",
+      "line": 20498,
+      "lines": 82
+    },
+    {
+      "path": "services/control-plane/bff/personas/service.py",
+      "name": "_overlay_source_health_truth",
+      "line": 13834,
+      "lines": 82
+    }
+  ],
+  [
+    {
+      "path": "services/control-plane/bff/main.py",
+      "name": "_register_persona_cron_required",
+      "line": 17496,
+      "lines": 80
+    },
+    {
+      "path": "services/control-plane/bff/personas/service.py",
+      "name": "_register_persona_cron_required",
+      "line": 3264,
+      "lines": 80
+    }
+  ],
+  [
+    {
+      "path": "services/control-plane/bff/main.py",
+      "name": "_extract_identity_stub",
+      "line": 1112,
+      "lines": 78
+    },
+    {
+      "path": "services/control-plane/bff/personas/service.py",
+      "name": "_extract_identity_stub",
+      "line": 8494,
+      "lines": 78
+    }
+  ],
+  [
+    {
+      "path": "services/control-plane/bff/management_read_models/ranking_router.py",
+      "name": "_default_bff_error",
+      "line": 45,
+      "lines": 24
+    },
+    {
+      "path": "services/control-plane/bff/management_read_models/service.py",
+      "name": "_default_bff_error",
+      "line": 73,
+      "lines": 24
+    },
+    {
+      "path": "services/control-plane/bff/management_read_models/router.py",
+      "name": "_default_bff_error",
+      "line": 174,
+      "lines": 24
+    },
+    {
+      "path": "services/control-plane/bff/events/router.py",
+      "name": "_default_bff_error",
+      "line": 88,
+      "lines": 24
+    }
+  ],
+  [
+    {
+      "path": "services/control-plane/bff/main.py",
+      "name": "_source_truth_projection",
+      "line": 20370,
+      "lines": 65
+    },
+    {
+      "path": "services/control-plane/bff/personas/service.py",
+      "name": "_source_truth_projection",
+      "line": 13696,
+      "lines": 65
+    }
+  ],
+  [
+    {
+      "path": "services/control-plane/bff/main.py",
+      "name": "_bff_me_tenant_payload",
+      "line": 5507,
+      "lines": 64
+    },
+    {
+      "path": "services/control-plane/bff/personas/service.py",
+      "name": "_bff_me_tenant_payload",
+      "line": 9650,
+      "lines": 64
+    }
+  ],
+  [
+    {
+      "path": "services/control-plane/bff/main.py",
+      "name": "_project_persona_fleet_health",
+      "line": 11031,
+      "lines": 58
+    },
+    {
+      "path": "services/control-plane/bff/personas/service.py",
+      "name": "_project_persona_fleet_health",
+      "line": 2535,
+      "lines": 58
+    }
+  ],
+  [
+    {
+      "path": "services/control-plane/bff/main.py",
+      "name": "_human_inbox_decision_recommendation_id",
+      "line": 11891,
+      "lines": 58
+    },
+    {
+      "path": "services/control-plane/bff/personas/service.py",
+      "name": "_human_inbox_decision_recommendation_id",
+      "line": 11194,
+      "lines": 58
+    }
+  ],
+  [
+    {
+      "path": "services/control-plane/bff/main.py",
+      "name": "_project_final_command_response",
+      "line": 7599,
+      "lines": 53
+    },
+    {
+      "path": "services/control-plane/bff/personas/service.py",
+      "name": "_project_final_command_response",
+      "line": 10518,
+      "lines": 53
+    }
+  ],
+  [
+    {
+      "path": "services/control-plane/bff/main.py",
+      "name": "_management_telemetry_rollup",
+      "line": 10344,
+      "lines": 53
+    },
+    {
+      "path": "services/control-plane/bff/personas/service.py",
+      "name": "_management_telemetry_rollup",
+      "line": 10949,
+      "lines": 53
+    }
+  ],
+  [
+    {
+      "path": "services/control-plane/bff/main.py",
+      "name": "_openclaw_agent_reconcile_request",
+      "line": 17605,
+      "lines": 48
+    },
+    {
+      "path": "services/control-plane/bff/personas/service.py",
+      "name": "_openclaw_agent_reconcile_request",
+      "line": 11371,
+      "lines": 48
+    }
+  ],
+  [
+    {
+      "path": "services/control-plane/bff/main.py",
+      "name": "_bff_error",
+      "line": 1350,
+      "lines": 47
+    },
+    {
+      "path": "services/control-plane/bff/personas/service.py",
+      "name": "_bff_error",
+      "line": 8740,
+      "lines": 47
+    }
+  ],
+  [
+    {
+      "path": "services/control-plane/bff/main.py",
+      "name": "_derive_runtime_state_row_health",
+      "line": 6204,
+      "lines": 46
+    },
+    {
+      "path": "services/control-plane/bff/management_read_models/service.py",
+      "name": "_derive_runtime_state_row_health",
+      "line": 1306,
+      "lines": 46
+    }
+  ],
+  [
+    {
+      "path": "services/control-plane/bff/main.py",
+      "name": "_human_inbox_decision_projection_from_record",
+      "line": 11949,
+      "lines": 46
+    },
+    {
+      "path": "services/control-plane/bff/personas/service.py",
+      "name": "_human_inbox_decision_projection_from_record",
+      "line": 11255,
+      "lines": 46
+    }
+  ],
+  [
+    {
+      "path": "services/control-plane/bff/main.py",
+      "name": "_foundation_audit_for_command_record",
+      "line": 1780,
+      "lines": 44
+    },
+    {
+      "path": "services/control-plane/bff/personas/service.py",
+      "name": "_foundation_audit_for_command_record",
+      "line": 8807,
+      "lines": 44
+    }
+  ],
+  [
+    {
+      "path": "services/control-plane/bff/main.py",
+      "name": "_loop_run_surface_status",
+      "line": 5703,
+      "lines": 43
+    },
+    {
+      "path": "services/control-plane/bff/personas/service.py",
+      "name": "_loop_run_surface_status",
+      "line": 9849,
+      "lines": 43
+    }
+  ],
+  [
+    {
+      "path": "services/control-plane/bff/main.py",
+      "name": "_validate_quarterly_ranking_recommendation_submit",
+      "line": 5021,
+      "lines": 42
+    },
+    {
+      "path": "services/control-plane/bff/personas/service.py",
+      "name": "_validate_quarterly_ranking_recommendation_submit",
+      "line": 9200,
+      "lines": 42
+    }
+  ],
+  [
+    {
+      "path": "services/control-plane/bff/main.py",
+      "name": "_pm12_recommendation_action_ids",
+      "line": 18008,
+      "lines": 41
+    },
+    {
+      "path": "services/control-plane/bff/personas/service.py",
+      "name": "_pm12_recommendation_action_ids",
+      "line": 12417,
+      "lines": 41
+    }
+  ],
+  [
+    {
+      "path": "services/control-plane/bff/main.py",
+      "name": "_promotion_review_stage_path",
+      "line": 18261,
+      "lines": 39
+    },
+    {
+      "path": "services/control-plane/bff/personas/service.py",
+      "name": "_promotion_review_stage_path",
+      "line": 13187,
+      "lines": 39
+    }
+  ],
+  [
+    {
+      "path": "services/control-plane/bff/main.py",
+      "name": "_deprecated_bff_path_response",
+      "line": 7652,
+      "lines": 38
+    },
+    {
+      "path": "services/control-plane/bff/personas/service.py",
+      "name": "_deprecated_bff_path_response",
+      "line": 10574,
+      "lines": 38
+    }
+  ],
+  [
+    {
+      "path": "services/control-plane/bff/main.py",
+      "name": "_promotion_review_submission_projection",
+      "line": 18308,
+      "lines": 38
+    },
+    {
+      "path": "services/control-plane/bff/personas/service.py",
+      "name": "_promotion_review_submission_projection",
+      "line": 13240,
+      "lines": 38
+    }
+  ],
+  [
+    {
+      "path": "services/control-plane/bff/main.py",
+      "name": "_reconcile_persona_provisioning_compensation",
+      "line": 9370,
+      "lines": 36
+    },
+    {
+      "path": "services/control-plane/bff/personas/service.py",
+      "name": "_reconcile_persona_provisioning_compensation",
+      "line": 1211,
+      "lines": 36
+    }
+  ],
+  [
+    {
+      "path": "services/control-plane/bff/main.py",
+      "name": "_source_health_bindings_from_requirements",
+      "line": 20444,
+      "lines": 36
+    },
+    {
+      "path": "services/control-plane/bff/personas/service.py",
+      "name": "_source_health_bindings_from_requirements",
+      "line": 13774,
+      "lines": 36
+    }
+  ],
+  [
+    {
+      "path": "services/control-plane/bff/main.py",
+      "name": "_persona_fleet_market_key",
+      "line": 20598,
+      "lines": 36
+    },
+    {
+      "path": "services/control-plane/bff/personas/service.py",
+      "name": "_persona_fleet_market_key",
+      "line": 6620,
+      "lines": 36
+    }
+  ],
+  [
+    {
+      "path": "services/control-plane/bff/main.py",
+      "name": "_dry_run_success_response",
+      "line": 8200,
+      "lines": 32
+    },
+    {
+      "path": "services/control-plane/bff/personas/service.py",
+      "name": "_dry_run_success_response",
+      "line": 10642,
+      "lines": 32
+    }
+  ],
+  [
+    {
+      "path": "services/control-plane/bff/main.py",
+      "name": "_project_runtime_state_monitoring_session",
+      "line": 6094,
+      "lines": 30
+    },
+    {
+      "path": "services/control-plane/bff/management_read_models/service.py",
+      "name": "_project_runtime_state_monitoring_session",
+      "line": 1421,
+      "lines": 30
+    }
+  ],
+  [
+    {
+      "path": "services/control-plane/bff/main.py",
+      "name": "_pm12_quarter_window",
+      "line": 17975,
+      "lines": 30
+    },
+    {
+      "path": "services/control-plane/bff/personas/service.py",
+      "name": "_pm12_quarter_window",
+      "line": 12378,
+      "lines": 30
+    }
+  ],
+  [
+    {
+      "path": "services/control-plane/bff/main.py",
+      "name": "_persona_fleet_paper_ledger_id",
+      "line": 21263,
+      "lines": 30
+    },
+    {
+      "path": "services/control-plane/bff/personas/service.py",
+      "name": "_persona_fleet_paper_ledger_id",
+      "line": 7089,
+      "lines": 30
+    }
+  ],
+  [
+    {
+      "path": "services/control-plane/bff/main.py",
+      "name": "_promotion_review_record_revision_id",
+      "line": 18227,
+      "lines": 29
+    },
+    {
+      "path": "services/control-plane/bff/personas/service.py",
+      "name": "_promotion_review_record_revision_id",
+      "line": 13147,
+      "lines": 29
+    }
+  ],
+  [
+    {
+      "path": "services/control-plane/bff/main.py",
+      "name": "_persona_fleet_live_capital_pool_id",
+      "line": 21235,
+      "lines": 28
+    },
+    {
+      "path": "services/control-plane/bff/personas/service.py",
+      "name": "_persona_fleet_live_capital_pool_id",
+      "line": 7058,
+      "lines": 28
+    }
+  ],
+  [
+    {
+      "path": "services/control-plane/bff/main.py",
+      "name": "_with_structured_identity_capabilities",
+      "line": 1203,
+      "lines": 27
+    },
+    {
+      "path": "services/control-plane/bff/personas/service.py",
+      "name": "_with_structured_identity_capabilities",
+      "line": 8589,
+      "lines": 27
+    }
+  ],
+  [
+    {
+      "path": "services/control-plane/bff/main.py",
+      "name": "_extract_identity",
+      "line": 1086,
+      "lines": 26
+    },
+    {
+      "path": "services/control-plane/bff/personas/service.py",
+      "name": "_extract_identity",
+      "line": 8457,
+      "lines": 26
+    }
+  ],
+  [
+    {
+      "path": "services/control-plane/bff/main.py",
+      "name": "_persona_fleet_paper_budget",
+      "line": 21293,
+      "lines": 26
+    },
+    {
+      "path": "services/control-plane/bff/personas/service.py",
+      "name": "_persona_fleet_paper_budget",
+      "line": 7122,
+      "lines": 26
+    }
+  ],
+  [
+    {
+      "path": "services/control-plane/bff/main.py",
+      "name": "_persona_fleet_paper_ledger",
+      "line": 21319,
+      "lines": 26
+    },
+    {
+      "path": "services/control-plane/bff/personas/service.py",
+      "name": "_persona_fleet_paper_ledger",
+      "line": 7151,
+      "lines": 26
+    }
+  ],
+  [
+    {
+      "path": "services/control-plane/bff/incidents/router.py",
+      "name": "_default_sse_stream",
+      "line": 234,
+      "lines": 25
+    },
+    {
+      "path": "services/control-plane/bff/events/router.py",
+      "name": "_default_sse_stream",
+      "line": 185,
+      "lines": 25
+    }
+  ],
+  [
+    {
+      "path": "services/control-plane/bff/main.py",
+      "name": "_derive_runtime_state_last_updated_at",
+      "line": 6250,
+      "lines": 24
+    },
+    {
+      "path": "services/control-plane/bff/management_read_models/service.py",
+      "name": "_derive_runtime_state_last_updated_at",
+      "line": 1354,
+      "lines": 24
+    }
+  ],
+  [
+    {
+      "path": "services/control-plane/bff/main.py",
+      "name": "_ppl_alloc_009_paper_environment_guard",
+      "line": 8668,
+      "lines": 24
+    },
+    {
+      "path": "services/control-plane/bff/personas/service.py",
+      "name": "_ppl_alloc_009_paper_environment_guard",
+      "line": 10677,
+      "lines": 24
+    }
+  ],
+  [
+    {
+      "path": "services/control-plane/bff/incidents/router.py",
+      "name": "_default_handle_sse_stream",
+      "line": 261,
+      "lines": 24
+    },
+    {
+      "path": "services/control-plane/bff/events/router.py",
+      "name": "_default_handle_sse_stream",
+      "line": 212,
+      "lines": 24
+    }
+  ],
+  [
+    {
+      "path": "services/control-plane/bff/main.py",
+      "name": "_runtime_state_monitoring_health_check",
+      "line": 6181,
+      "lines": 23
+    },
+    {
+      "path": "services/control-plane/bff/management_read_models/service.py",
+      "name": "_runtime_state_monitoring_health_check",
+      "line": 1281,
+      "lines": 23
+    }
+  ],
+  [
+    {
+      "path": "services/control-plane/bff/personas/service.py",
+      "name": "_project_affected_binding",
+      "line": 10226,
+      "lines": 23
+    },
+    {
+      "path": "services/control-plane/bff/incidents/service.py",
+      "name": "_project_affected_binding",
+      "line": 234,
+      "lines": 23
+    }
+  ],
+  [
+    {
+      "path": "services/control-plane/bff/main.py",
+      "name": "_resolve_final_idempotency_key",
+      "line": 2299,
+      "lines": 22
+    },
+    {
+      "path": "services/control-plane/bff/personas/service.py",
+      "name": "_resolve_final_idempotency_key",
+      "line": 8912,
+      "lines": 22
+    }
+  ],
+  [
+    {
+      "path": "services/control-plane/bff/main.py",
+      "name": "_project_runtime_state_latest_rollback",
+      "line": 6124,
+      "lines": 21
+    },
+    {
+      "path": "services/control-plane/bff/management_read_models/service.py",
+      "name": "_project_runtime_state_latest_rollback",
+      "line": 1453,
+      "lines": 21
+    }
+  ],
+  [
+    {
+      "path": "services/control-plane/bff/main.py",
+      "name": "_runtime_state_monitoring_terminal_reason",
+      "line": 6160,
+      "lines": 21
+    },
+    {
+      "path": "services/control-plane/bff/management_read_models/service.py",
+      "name": "_runtime_state_monitoring_terminal_reason",
+      "line": 1258,
+      "lines": 21
+    }
+  ],
+  [
+    {
+      "path": "services/control-plane/bff/main.py",
+      "name": "_persona_record_tenant_id",
+      "line": 17584,
+      "lines": 21
+    },
+    {
+      "path": "services/control-plane/bff/personas/service.py",
+      "name": "_persona_record_tenant_id",
+      "line": 3466,
+      "lines": 21
+    }
+  ],
+  [
+    {
+      "path": "services/control-plane/bff/main.py",
+      "name": "_project_bff_incident_case",
+      "line": 19377,
+      "lines": 21
+    },
+    {
+      "path": "services/control-plane/bff/management_read_models/service.py",
+      "name": "_project_bff_incident_case",
+      "line": 872,
+      "lines": 21
+    }
+  ],
+  [
+    {
+      "path": "services/control-plane/bff/main.py",
+      "name": "_persona_fleet_capital_mode",
+      "line": 21214,
+      "lines": 21
+    },
+    {
+      "path": "services/control-plane/bff/personas/service.py",
+      "name": "_persona_fleet_capital_mode",
+      "line": 7034,
+      "lines": 21
+    }
+  ],
+  [
+    {
+      "path": "services/control-plane/bff/main.py",
+      "name": "_capabilities_for_identity",
+      "line": 5413,
+      "lines": 20
+    },
+    {
+      "path": "services/control-plane/bff/personas/service.py",
+      "name": "_capabilities_for_identity",
+      "line": 9328,
+      "lines": 20
+    }
+  ],
+  [
+    {
+      "path": "services/control-plane/bff/main.py",
+      "name": "_extract_ids_from_item",
+      "line": 5862,
+      "lines": 20
+    },
+    {
+      "path": "services/control-plane/bff/personas/service.py",
+      "name": "_extract_ids_from_item",
+      "line": 10029,
+      "lines": 20
+    }
+  ],
+  [
+    {
+      "path": "services/control-plane/bff/main.py",
+      "name": "_decode_page_token",
+      "line": 6005,
+      "lines": 20
+    },
+    {
+      "path": "services/control-plane/bff/personas/service.py",
+      "name": "_decode_page_token",
+      "line": 10309,
+      "lines": 20
+    }
+  ],
+  [
+    {
+      "path": "services/control-plane/bff/main.py",
+      "name": "_aggregate_group_surface",
+      "line": 6375,
+      "lines": 20
+    },
+    {
+      "path": "services/control-plane/bff/personas/service.py",
+      "name": "_aggregate_group_surface",
+      "line": 10342,
+      "lines": 20
+    }
+  ],
+  [
+    {
+      "path": "services/control-plane/bff/main.py",
+      "name": "_persona_fleet_active_incidents_for_row",
+      "line": 21175,
+      "lines": 20
+    },
+    {
+      "path": "services/control-plane/bff/personas/service.py",
+      "name": "_persona_fleet_active_incidents_for_row",
+      "line": 6874,
+      "lines": 20
+    }
+  ]
+]
