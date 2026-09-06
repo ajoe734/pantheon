@@ -185,120 +185,81 @@ Smoke evidence captured on `2026-04-16`:
 - result: `ingest`, `review`, `retrain`, and `deploy` all passed against the
   pinned upstream runtime
 
-## 10. SIMPLIFY-OPENCLAW-001 (2026-09-06)
+## 10. Unified ordinary-turn transport (SIMPLIFY-OPENCLAW-001)
 
-Ordinary agent turns in `services/openclaw-gateway-adapter/assistant_openclaw_provider.py`
-are now unified on a single HTTP request builder against the existing Gateway
-`POST /v1/responses` endpoint:
+Ordinary `invoke`, `stream`, structured extraction, and readiness answer probes
+use the Gateway `POST /v1/responses` builder and terminal normalization in
+`assistant_openclaw_provider.py`. Small and large prompts follow the same path;
+ordinary turns require no CLI binary. Administrative cron/auth CLI and read-only
+kernel delegation retain their existing owners.
 
-- `invoke()`, `stream()`, and `readiness()`'s answer-probe all go through one
-  `_invoke_via_http()` helper. The general-turn CLI subprocess path
-  (`_invoke_single_model`) and the 96 KiB argv-size branch are removed
-  entirely — transport selection for an ordinary turn no longer depends on
-  prompt length, and ordinary turns never spawn the `openclaw` CLI binary.
-- Administrative/cron CLI paths (`gateway_cron_call`, `_gateway_call`,
-  `gateway_agents_list`, `_openclaw_bin`, `_openclaw_cli_state_env`) and
-  `kernel_debug` Codex delegation are unchanged and still use the `openclaw`
-  CLI — this cleanup only affects ordinary-turn invoke/stream/readiness.
-- `stream()` gained `model`, `agent_id`, `messages`, `tools`, `tool_choice`,
-  and `timeout_seconds` parameters, and now also reads a nested
-  `response.completed`'s `response` object (`status`, `output[]`, `usage`,
-  `id`) for function-call/usage/response-id extraction. **This nested-object
-  shape is an assumption based on the OpenAI-Responses-API family and was not
-  independently re-verified against a live pinned Gateway** (no live gateway
-  reachable in the dev sandbox that implemented this change).
-- A restricted, server-approved `emit_extraction` function tool
-  (`emit_extraction_tool_schema()` / `invoke_structured()`) was added on the
-  same transport: the caller supplies only a JSON-schema `parameters` body,
-  never a full tool/tool-list; the tool call is pinned via `tool_choice` and
-  never triggers a domain mutation. A new restricted endpoint
-  `POST /api/openclaw-adapter/assistant/providers/openclaw/structured` in
-  `main.py` exposes this for the (separate, later) SIMPLIFY-EXTRACTION-001
-  task to consume.
-- Cron exact-run correlation fix in
-  `services/control-plane/cron/openclaw_client.py`
-  (`_CliGatewayTransport._wait_for_terminal_run`): removed the
-  `entries[0]` "most recent run" fallback; a run is only ever reported
-  terminal when its `runId` exactly matches the dispatched `run_id`. A
-  missing `run_id` from `cron.run` now fails fast instead of polling blindly
-  or resubmitting `cron.run`. The `cron.runs` poll window was widened from
-  `limit: 5` to `limit: 20` to reduce (not fix on its own) the chance of a
-  target run falling outside the polled window; the exact-match check is
-  what actually prevents crossed-run false positives/negatives.
-- Known cross-scope finding (not fixed here, out of this task's declared
-  artifact list): `integrations/openclaw/adapter/cron_transport.py`
-  (`OpenClawCronGatewayTransport`, the production Docker-gateway cron path)
-  contains the same `entries[0]`-fallback pattern as the CLI transport did.
-  That file needs a separate scope-handoff task to receive the equivalent
-  fix.
+The request selects `openclaw/<agentId>` and carries an admitted explicit model
+in `X-OpenClaw-Model`. A successful explicit override does not change the next
+ordinary request's model. Readiness tries only the configured primary model;
+it neither retries on another model nor changes future routing. Tenant, actor,
+and conversation components are positionally encoded and escaped in the
+upstream session key. History, context, attachments, and trace use the same
+builder. Socket reads, TLS reads, and SSE consumption share a total deadline.
+Only one normalized terminal result is emitted, including interruption,
+timeout, refusal, incomplete output, and upstream failures.
 
-### 10.1 Corrective pass after independent review REJECT (2026-09-06)
+`POST /api/openclaw-adapter/assistant/providers/openclaw/structured` accepts a
+schema for the fixed data-only `emit_extraction` tool. Arbitrary caller tool
+names, tool definitions, tool choice, and unadmitted agents are rejected.
+Returned arguments undergo recursive schema validation; wrong/missing calls
+and invalid arguments are failures, never domain commands. The pinned Gateway
+normally yields a function call in `response.completed` with nested status
+`incomplete`; this tool handback differs from incomplete text generation.
+The adapter retains the function-call identity and reported usage.
 
-An independent exact-head review of PR #5629 rejected the above pass for nine
-functional defects, verified statically against the pinned upstream Gateway
-sources (`resolveOpenAiCompatModelOverride` in `gateway/http-utils.ts`,
-`MessageItemSchema`/`CreateResponseBodySchema` in
-`gateway/open-responses.schema.ts`) and, for the streaming/deadline defects,
-against a real local HTTP server (not a mocked `urlopen`). All nine are fixed
-in this corrective pass:
+The Gateway agent's own native-tool policy remains a necessary server-side
+boundary: configure the extraction agent with `tools.deny: ["*"]` so only the
+request's data-emission client tool is offered. A client `tool_choice` or
+post-response validation alone cannot prevent native execution. The local
+fixture proves the pinned Gateway enforces that policy; it does not attest to
+any hosted deployment's configuration.
 
-1. **Model field vs. provider override.** The pinned Gateway's
-   `resolveOpenAiCompatModelOverride` only accepts `openclaw`/
-   `openclaw/<agentId>` in the JSON `model` field and rejects a raw provider
-   id (e.g. `anthropic/claude-opus-4-8`) with HTTP 400. `stream()` now always
-   sends `model: "openclaw/<effective_agent_id>"`; a requested provider/model
-   override travels in the `x-openclaw-model` header instead.
-2. **`input[]` item shape.** The pinned `MessageItemSchema` is `.strict()`
-   and requires a discriminating `type: "message"`; a bare
-   `{"role", "content"}` dict is rejected. `_normalize_input_item()` now
-   normalizes every history/current-turn entry before it is sent.
-3. **Session/tenant isolation.** A caller-supplied `session_id` no longer
-   travels verbatim as the upstream `user` key — `derive_session_user()`
-   mixes in the authenticated actor (`operator_id`) and tenant
-   (`metadata.tenant_id`, when present) ahead of the caller's conversation
-   name, so two different callers reusing the same session name can never
-   collide onto the same upstream session. Used by both `_invoke_via_http`
-   and the raw SSE stream endpoint in `main.py`.
-4. **Structured endpoint agent admission gap.** `/structured` had no
-   Persona-admission mechanism at all (unlike ordinary invoke's
-   `agent_id`+`persona_admission` pairing), so an arbitrary `agent_id` was
-   silently accepted. It is now restricted to the default agent only
-   (`OPENCLAW_STRUCTURED_AGENT_NOT_ALLOWED`, 422, for anything else).
-5. **Extraction schema validation gaps.** `_validate_extraction_arguments`
-   now checks `enum` membership, recurses into nested-object
-   `required`/`properties`, and handles a nullable `type: [<t>, "null"]`
-   union without the previous unhandled `TypeError` (a list is unhashable
-   and cannot key a plain dict `.get()`).
-6. **SSE parsing.** Fixed three real defects reproduced against a genuine
-   socket connection: (a) a duplicate `response.completed` no longer
-   re-emits a second `done` event (a `return` now follows the first); (b) a
-   legal multi-line SSE event (one JSON object split across consecutive
-   `data:` lines with no blank-line separator) is now joined and parsed
-   instead of being silently dropped as unparseable fragments; (c) a
-   real mid-frame connection close now yields a single truthful
-   `OPENCLAW_RESPONSES_EMPTY` error rather than any risk of a fabricated
-   success.
-7. **Shared total deadline.** `urlopen(timeout=...)` only bounds each
-   individual socket read, not the whole streaming loop — a slow drip that
-   stays under that per-read timeout on every chunk can keep the loop going
-   far past the intended total budget (reproduced: a 0.05s budget completing
-   only after 0.266s against a real slow server). The stream loop now checks
-   one shared `read_deadline` before processing each line. The cron
-   `_wait_for_terminal_run` polling loop has the same fix: `_call` is now
-   given only the remaining budget (never a fixed 30s), the inter-poll sleep
-   is capped to the remaining time, and a result that only arrives after the
-   deadline has already passed is rejected as unknown rather than accepted
-   as a late success.
-8. **Cron exact-run lookup.** `cron.runs` now requests an exact `{id, runId}`
-   lookup (the pinned Gateway supports this ahead of pagination) instead of
-   a fixed `limit: 20` page — a sufficiently busy job with more than 20 newer
-   runs ahead of the target previously timed out even though the target run
-   existed and had already completed. Client-side exact-match filtering is
-   kept as defense-in-depth.
-9. **Evidence completeness.** See
-   `docs/deployment/evidence/SIMPLIFY-OPENCLAW-001/evidence.json` for what
-   is now verified (against the pinned Gateway TypeScript sources and real
-   local-socket regression tests) versus what remains a genuinely
-   unavailable-in-this-sandbox external blocker (the >=100-request live
-   base-vs-candidate replay benchmark, which needs a reachable authenticated
-   live Gateway/model backend that does not exist in this dev sandbox).
+Cron completion in `services/control-plane/cron/openclaw_client.py` requires
+both `jobId` and `runId` to match. The pinned Gateway's exact `{id, runId}`
+`cron.runs` lookup runs before pagination. Missing run IDs fail as unknown
+without replaying `cron.run`; add, dispatch, RPC polling and sleep consume one
+deadline. A late result is never accepted as success. Failed, cancelled, timed
+out, and skipped runs are terminal failures.
+
+### Reproduce local Gateway acceptance
+
+Human/Ops clarified on 2026-09-06 that a pinned, reproducible local Gateway and
+synthetic model fixture satisfy this task's functional acceptance; real account
+credentials are not required. The opt-in runner is embedded in the declared
+transport test file:
+
+```bash
+SIMPLIFY_REPLAY_OUTPUT=/tmp/simplify-replay-100.json timeout 1200 \
+  .venv-pantheon/bin/python3 \
+  services/openclaw-gateway-adapter/tests/test_openresponses_transport_contract.py
+```
+
+It uses the immutable local image ID recorded in `evidence.json` (built from
+`integrations/openclaw/gateway/Dockerfile`, upstream 2026.7.1). Docker must have
+that image available. The runner starts and removes its own uniquely named
+container, mounts only a temporary synthetic workspace, uses loopback ports
+and test-only tokens, and runs a deterministic local OpenAI-completions model.
+It never mounts real credentials or changes another container. Ordinary pytest
+collection does not start the container.
+
+The runner asserts positive extraction, invalid arguments, wrong/missing tool,
+and native `exec` denial against the actual Gateway. It then loads the CLI
+provider from the frozen dev SHA, runs 100 prompts per arm, and records session
+cold/warm TTFT/full p50/p95, model usage, errors, and transport subprocesses.
+Ten agent sessions each receive ten sequential turns; up to four sessions run
+concurrently. CLI TTFT means text availability from its buffered invoke API;
+HTTP TTFT is the first normalized delta. Usage comes from the synthetic model
+and does not measure tokenizer behavior or external model cost. CLI timing
+includes Docker exec overhead. These are local transport measurements, not
+production model quality, production latency, or hosted deployment proof.
+
+The task-scoped evidence manifest records exact identities, executed checks,
+results, and limitations. Earlier corrective-pass records remain in git history.
+The separate `integrations/openclaw/adapter/cron_transport.py` production Docker
+transport still has a most-recent-run fallback; that file is outside this task's
+artifact grant and needs an explicit scope handoff to its owner.

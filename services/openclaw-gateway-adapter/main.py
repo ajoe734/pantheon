@@ -1726,22 +1726,10 @@ def invoke_openclaw_structured_provider(
     `emit_extraction` tool via `invoke_structured`; this endpoint returns
     parsed structured data only and never executes a domain action.
 
-    Native-tool-denial boundary (what is enforced locally vs. externally):
-    this adapter forces `tool_choice={"type":"function","name":"emit_extraction"}`
-    on the outbound request (a client-side *request*, not a guarantee), and
-    `invoke_structured` fails closed if the upstream response contains more
-    than one function call or a call with the wrong name (rejecting the
-    whole turn rather than silently accepting the first matching call).
-    Neither of those is a substitute for the upstream Gateway's own
-    server-side restricted-runtime/tool-arbitration policy actually
-    disabling the agent's native/domain tools for this call: proving that
-    the pinned Gateway itself denies a native tool (rather than merely that
-    this adapter would reject a response that arrived with one) requires a
-    live, authenticated Gateway/auth route and permitted restricted-runtime
-    policy configuration that is not available in this sandbox. That
-    server-side enforcement is a genuine external/config blocker, not
-    something this adapter can close unilaterally, and is not claimed as
-    fully closed here.
+    The Gateway agent must separately deny native tools (tools.deny=["*"]).
+    The pinned local Gateway fixture verifies that policy, including attempted
+    exec denial; client tool_choice and response validation alone are not an
+    execution sandbox. Hosted policy/deployment acceptance is separate.
     """
     if not x_operator_id or not x_operator_id.strip():
         return JSONResponse(
