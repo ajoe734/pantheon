@@ -605,8 +605,10 @@ class TestFastAPIEndpoints:
             "version": "1.0.0",
             "storage_ref": {"backend": "object_store", "path": "s3://bucket/art.bin"},
             "checksum": "sha256:xyz",
+            "lineage": {"source_run_ids": ["run-get-entry"]},
         }
         create_resp = self.client.post("/api/registry/entries", json=payload)
+        assert create_resp.status_code == 200, create_resp.text
         registry_id = create_resp.json()["entry"]["registry_id"]
 
         # Then get

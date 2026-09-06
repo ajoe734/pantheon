@@ -304,6 +304,8 @@ def test_entry_survives_a_real_process_kill_and_restart(pg_schema):
                 "version": "1.0.0",
                 "artifact_state": "draft",
                 "checksum": "sha256:realproc",
+                "lineage": {"source_run_ids": ["run-realproc"]},
+                "storage_ref": {"backend": "object_store", "path": "spec.json"},
             },
         )
         assert status == 200, body
@@ -351,6 +353,8 @@ def test_two_real_concurrent_processes_share_correct_cas_and_replay_semantics(pg
                 "version": "1.0.0",
                 "artifact_state": "draft",
                 "checksum": "sha256:concurrent",
+                "lineage": {"source_run_ids": ["run-concurrent"]},
+                "storage_ref": {"backend": "object_store", "path": "spec.json"},
             },
         )
         assert status == 200, created
@@ -1538,3 +1542,154 @@ def test_name_only_draft_real_process_positive_and_durable_readback(pg_schema, k
         _stop(proc_b)
 
 
+
+@pytest.mark.parametrize("keyed", [False, True])
+def test_generic_typed_admission_and_restart(pg_schema, keyed):
+    """Generic and typed StrategySpec commands share content admission before
+    any entry/receipt commit, including references and malformed inline content."""
+    from services.registry.test_service import _valid_spec
+
+    dsn, schema = pg_schema
+    port = _free_port()
+    proc = _spawn_registry_process(port=port, dsn=dsn, schema=schema)
+    committed = []
+    cases = (
+        {},
+        {"lineage": {"source_run_ids": ["run"]}},
+        {"lineage": {"source_run_ids": ["run"]}, "checksum": "sha256:reference"},
+        {"lineage": {"source_run_ids": ["run"]},
+         "storage_ref": {"backend": "object_store", "path": "spec.json"}},
+        {"lineage": {"source_run_ids": ["run"]}, "checksum": "sha256:reference",
+         "storage_ref": {"backend": "object_store", "path": " "}},
+        {"lineage": {"source_run_ids": ["run"]}, "checksum": "sha256:reference",
+         "storage_ref": {"backend": "inline", "path": "$.entry.metadata.strategy_spec"}},
+        {"lineage": {"source_run_ids": ["run"]}, "metadata": {"strategy_spec": {}}},
+        {"lineage": {"source_run_ids": ["run"]}, "metadata": {"strategy_spec": "invalid"}},
+    )
+    token = _strict_jwt()
+    try:
+        _wait_for_health(port)
+        for index, invalid in enumerate(cases):
+            sid = f"admission-{uuid4().hex}"
+            body = {"artifact_type": "strategy_spec", "strategy_id": sid,
+                    "version": "1.0.0", **invalid}
+            headers = {"Idempotency-Key": sid} if keyed else {}
+            for route in ("/api/registry/entries", "/api/registry/strategy-specs"):
+                status, result = _http("POST", port, route, token=token,
+                                       payload=body, headers=headers)
+                assert status == 400, (route, result)
+            status, versions = _http("GET", port,
+                f"/api/registry/strategies/{sid}/strategy-specs", token=token)
+            assert status == 200 and versions == [], versions
+
+            # The rejected keyed command must not reserve the key or persist
+            # an entry. A valid command with that key can still commit.
+            valid = {"artifact_type": "strategy_spec", "strategy_id": sid,
+                     "version": "1.0.0", "lineage": {"source_run_ids": ["run"]}}
+            if index % 2:
+                valid.update(checksum="sha256:external-reference",
+                             storage_ref={"backend": "object_store", "path": "spec.json"})
+            else:
+                valid["metadata"] = {"strategy_spec": _valid_spec(sid)}
+            status, created = _http("POST", port, "/api/registry/entries",
+                                   token=token, payload=valid, headers=headers)
+            assert status == 200, created
+            entry = created["entry"]
+            assert entry["checksum"] == (
+                "sha256:external-reference" if index % 2 else _spec_checksum(_valid_spec(sid))
+            )
+            assert entry["lineage"]["source_run_ids"] == ["run"]
+            assert entry["storage_ref"]["path"]
+            committed.append((valid, headers, entry))
+    finally:
+        _stop(proc)
+
+    port = _free_port()
+    proc = _spawn_registry_process(port=port, dsn=dsn, schema=schema)
+    try:
+        _wait_for_health(port)
+        for valid, headers, entry in committed:
+            status, read = _http("GET", port,
+                f"/api/registry/strategy-specs/{entry['registry_id']}", token=token)
+            assert status == 200 and read["entry"] == entry, read
+            status, versions = _http("GET", port,
+                f"/api/registry/strategies/{entry['strategy_id']}/strategy-specs", token=token)
+            assert status == 200 and [v["entry"] for v in versions] == [entry], versions
+            if keyed:
+                status, replay = _http("POST", port, "/api/registry/entries",
+                                       token=token, payload=valid, headers=headers)
+                assert status == 200 and replay["entry"] == entry, replay
+    finally:
+        _stop(proc)
+
+
+@pytest.mark.parametrize("keyed", [False, True])
+def test_allocation_typed_admission_and_restart(pg_schema, keyed):
+    """Generic allocation creation is closed for valid and invalid input.
+    The canonical typed path still validates, commits, replays and advances."""
+    from services.registry.test_allocation_policy_artifact import _minimal_artifact
+
+    dsn, schema = pg_schema
+    port = _free_port()
+    proc = _spawn_registry_process(port=port, dsn=dsn, schema=schema)
+    token = _strict_jwt()
+    sid = f"allocation-admission-{uuid4().hex}"
+    rid = f"reg-{sid}"
+    artifact = _minimal_artifact(capital_pool_id=sid)
+    headers = {"Idempotency-Key": sid} if keyed else {}
+    valid = {"version": "1.0.0", "registry_id": rid,
+             "allocation_policy_artifact": artifact}
+    try:
+        _wait_for_health(port)
+        for content in ({"invalid": True}, artifact):
+            status, rejected = _http("POST", port, "/api/registry/entries",
+                token=token, headers=headers, payload={
+                    "artifact_type": "allocation_policy", "strategy_id": sid,
+                    "version": "1.0.0", "lineage": {"source_run_ids": ["run"]},
+                    "metadata": {"allocation_policy_artifact": content}})
+            assert status == 400, rejected
+            assert "/api/registry/allocation-policy-artifacts" in rejected["detail"]
+
+        status, rejected = _http("POST", port, "/api/registry/allocation-policy-artifacts",
+            token=token, headers=headers,
+            payload={**valid, "allocation_policy_artifact": {"invalid": True}})
+        assert status == 400, rejected
+        status, missing = _http("GET", port,
+            f"/api/registry/allocation-policy-artifacts/{rid}", token=token)
+        assert status == 404, missing
+        status, versions = _http("GET", port,
+            f"/api/registry/pools/{sid}/allocation-policy-artifacts", token=token)
+        assert status == 200 and versions == [], versions
+
+        status, created = _http("POST", port, "/api/registry/allocation-policy-artifacts",
+                                token=token, headers=headers, payload=valid)
+        assert status == 200, created
+        entry = created["entry"]
+        assert entry["metadata"]["allocation_policy_artifact"] == artifact
+        assert entry["checksum"] == _spec_checksum(artifact)
+        assert entry["lineage"]["source_run_ids"] == artifact["provenance_refs"]
+        assert entry["artifact_state"] == "candidate"
+        status, approved = _http("POST", port, f"/api/registry/entries/{rid}/advance",
+            token=token, payload={"target_state": "approved",
+                                 "expected_artifact_state": "candidate"})
+        assert status == 200 and approved["entry"]["artifact_state"] == "approved", approved
+    finally:
+        _stop(proc)
+
+    port = _free_port()
+    proc = _spawn_registry_process(port=port, dsn=dsn, schema=schema)
+    try:
+        _wait_for_health(port)
+        status, read = _http("GET", port,
+            f"/api/registry/allocation-policy-artifacts/{rid}", token=token)
+        assert status == 200 and read["entry"] == approved["entry"], read
+        status, replay = _http("POST", port, "/api/registry/allocation-policy-artifacts",
+                              token=token, headers=headers, payload=valid)
+        # The typed route's identity is registry_id; replay returns its original
+        # candidate receipt, while GET still returns the later approved entry.
+        assert status == 200 and replay["entry"] == entry, replay
+        status, read = _http("GET", port,
+            f"/api/registry/allocation-policy-artifacts/{rid}", token=token)
+        assert status == 200 and read["entry"] == approved["entry"], read
+    finally:
+        _stop(proc)

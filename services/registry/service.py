@@ -552,7 +552,14 @@ def _strategy_spec_register_payload(body: StrategySpecRegisterRequest) -> Regist
         )
 
     if body.storage_ref:
-        storage_ref = StorageRef.from_dict(body.storage_ref)
+        try:
+            storage_ref = StorageRef.from_dict(body.storage_ref)
+        except (KeyError, TypeError, ValueError) as exc:
+            raise RegistryError("StrategySpec storage_ref requires a valid backend and path.") from exc
+        if not isinstance(storage_ref.path, str) or not storage_ref.path.strip():
+            raise RegistryError("StrategySpec storage_ref requires a nonempty path.")
+        if strategy_spec is None and storage_ref.backend == StorageBackend.INLINE:
+            raise RegistryError("Inline StrategySpec storage requires strategy_spec content.")
     elif strategy_spec is not None:
         storage_ref = StorageRef(
             backend=StorageBackend.INLINE,
@@ -980,7 +987,7 @@ def _resolve_entry_or_draft_payload(
     stable strategy identity and registers as a minimal StrategySpec draft —
     architecture-resumption-sa-sd.md §3.2's "name-only draft creation with
     stable strategy identity". A full typed submission (artifact_type,
-    strategy_id, version all set) registers exactly as before. Supplying a
+    strategy_id, version all set) uses its canonical artifact admission. Supplying a
     mix of the two is rejected rather than guessing which one was intended.
     """
     name = str(payload.name or "").strip()
@@ -1024,68 +1031,24 @@ def _resolve_entry_or_draft_payload(
             "name-only draft entries must be created using the un-typed {'name': '...'} request."
         )
 
-    # Reviewer finding 2: the generic route stores a caller-supplied
-    # checksum verbatim without checking it against any actual content. A
-    # bare artifact_type=strategy_spec reference entry (checksum only, no
-    # embedded content — the pattern the existing generic-route tests use)
-    # is unaffected: there is nothing here for the registry to validate as a
-    # spec. But if the caller *does* embed an inline strategy_spec payload
-    # under metadata.strategy_spec through this generic path, it must be
-    # schema-valid and its checksum must actually match the embedded
-    # content — otherwise a caller could smuggle an unvalidated/mismatched
-    # strategy_spec through the generic route instead of the dedicated,
-    # fully-validated POST /api/registry/strategy-specs facade.
-    resolved_checksum = payload.checksum or ""
+    registry_id = f"reg-{payload.strategy_id}-{payload.version}-{uuid.uuid4().hex[:8]}"
+    if payload.artifact_type == ArtifactType.ALLOCATION_POLICY:
+        raise RegistryError(
+            "allocation_policy creation requires POST /api/registry/allocation-policy-artifacts."
+        )
     if payload.artifact_type == ArtifactType.STRATEGY_SPEC:
-        embedded_spec = (payload.metadata or {}).get("strategy_spec")
-        if embedded_spec is None and getattr(payload, "strategy_spec", None) is not None:
-            embedded_spec = payload.strategy_spec
-            if payload.metadata is None:
-                payload.metadata = {}
-            payload.metadata["strategy_spec"] = embedded_spec
-        if embedded_spec is not None:
-            # Reviewer finding 2: a caller registering a *full* StrategySpec
-            # through this generic route (an embedded metadata.strategy_spec,
-            # not just a bare checksum reference) must satisfy the same
-            # structural invariants as the dedicated
-            # POST /api/registry/strategy-specs facade — an embedded
-            # strategy_id must not disagree with the registry strategy_id,
-            # lineage must not be empty, and the checksum must be bound to
-            # the actual embedded content rather than an arbitrary caller
-            # value. Without this, the dedicated facade's "9.9.9 out-of-
-            # sequence revision" rejection could be bypassed entirely by
-            # posting the identical content through this route instead.
-            embedded_strategy_id = str(embedded_spec.get("strategy_id") or "").strip()
-            if embedded_strategy_id and embedded_strategy_id != payload.strategy_id:
-                raise RegistryError(
-                    "Inline StrategySpec strategy_id must match the registry strategy_id."
-                )
-            schema_errors = validate_strategy_spec(embedded_spec)
-            if schema_errors:
-                raise RegistryError(
-                    "metadata.strategy_spec failed schema validation: "
-                    + "; ".join(schema_errors)
-                )
-            computed_checksum = _strategy_spec_checksum(embedded_spec)
-            if payload.checksum and payload.checksum != computed_checksum:
-                raise RegistryError(
-                    "checksum does not match the computed checksum of the embedded "
-                    f"metadata.strategy_spec payload (expected {computed_checksum!r}, "
-                    f"got {payload.checksum!r})."
-                )
-            resolved_checksum = computed_checksum
-            if Lineage.from_dict(payload.lineage or {}).is_empty():
-                raise RegistryError(
-                    "StrategySpec registry entries with an embedded metadata.strategy_spec "
-                    "require lineage, even through the generic /api/registry/entries route."
-                )
+        # Both HTTP representations enter the same canonical content admission.
+        # Revision CAS and scoped receipts are applied by register_entry below.
+        body = StrategySpecRegisterRequest.model_validate(
+            payload.model_dump(exclude={"name", "artifact_type"})
+        )
+        return _strategy_spec_register_payload(body), registry_id
 
     meta = dict(payload.metadata) if payload.metadata is not None else None
     if payload.base_checksum:
         meta = dict(meta or {})
         meta.setdefault("base_checksum", payload.base_checksum)
 
-    registry_id = f"reg-{payload.strategy_id}-{payload.version}-{uuid.uuid4().hex[:8]}"
     create_payload = RegistryEntryCreate(
         artifact_type=payload.artifact_type,
         strategy_id=payload.strategy_id,
@@ -1093,7 +1056,7 @@ def _resolve_entry_or_draft_payload(
         artifact_state=payload.artifact_state,
         lineage=Lineage.from_dict(payload.lineage or {}),
         storage_ref=StorageRef.from_dict(payload.storage_ref) if payload.storage_ref else None,
-        checksum=resolved_checksum,
+        checksum=payload.checksum or "",
         producer_run_id=payload.producer_run_id,
         evaluation_summary=payload.evaluation_summary,
         rollback_target=payload.rollback_target,
