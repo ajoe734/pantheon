@@ -32,10 +32,11 @@
     "post_measurement_change": "Provider bytes remain identical to the recorded 100-pair replay. main.py now shares the existing Persona durable ledger across mounted invoke/stream routes; those changes are validated by mounted real-provider HTTP fixtures and SQLite fault/concurrency regressions, not by the provider-only replay.",
     "routing_anchor": "31ee9f1d7",
     "mounted_admission_anchor": "dc941f9ee",
-    "source_commit": "a8fd6b3dde8328c56aac4ffffdf3a047a83de007",
+    "source_commit": "bf3c58836511888a80382809317c84b87c393f68",
     "integration_base": "96294dcf3c113e3b1cdc44f4d9d4069294259ac1",
     "persona_idempotency_anchor": "e828660f4",
-    "persona_regression_anchor": "a8fd6b3dd"
+    "persona_regression_anchor": "a8fd6b3dd",
+    "persona_error_replay_anchor": "bf3c58836511888a80382809317c84b87c393f68"
   },
   "validation": [
     {
@@ -63,6 +64,12 @@
       "result": "592 passed, 4 legacy external-Gateway smoke skipped, 4 warnings, 26 subtests passed in 147.24s",
       "exit_code": 0,
       "source_commit": "a8fd6b3dde8328c56aac4ffffdf3a047a83de007"
+    },
+    {
+      "command": "timeout 120 .venv-pantheon/bin/python3 -m pytest -q services/openclaw-gateway-adapter/test_main.py",
+      "result": "132 passed, 1 warning, 26 subtests passed in 29.13s; final route code after preserving typed error status on replay",
+      "exit_code": 0,
+      "source_commit": "bf3c58836511888a80382809317c84b87c393f68"
     }
   ],
   "local_gateway_evidence": {
@@ -3064,8 +3071,8 @@
       "classification": "expected failure on rejected source, not candidate acceptance"
     },
     "focused_validation": {
-      "command": "timeout 90 .venv-pantheon/bin/python3 -m pytest -q services/openclaw-gateway-adapter/test_main.py -k 'persona_exact_attempt or persona_changed_content or persona_failed_terminal or persona_crash_or_cancel or persona_concurrent_mounted or persona_mounted_crash or persona_replay_preserves or persona_simultaneous'",
-      "result": "8 passed, 123 deselected, 4 subtests passed in 4.59s",
+      "command": "timeout 90 .venv-pantheon/bin/python3 -m pytest -q services/openclaw-gateway-adapter/test_main.py -k 'persona_exact_attempt or persona_changed_content or persona_failed_terminal or persona_crash_or_cancel or persona_concurrent_mounted or persona_mounted_crash or persona_replay_preserves or persona_simultaneous or persona_replays_typed'",
+      "result": "9 passed, 123 deselected, 4 subtests passed in 4.49s",
       "exit_code": 0
     },
     "coverage": [
@@ -3074,11 +3081,12 @@
       "Failed terminals replay as errors, never done; missing usage remains absent and JSON opinion text is replayed verbatim.",
       "Mounted generator crash and failed terminal persistence publish no done; both routes fence subsequent attempts in_doubt.",
       "Partial-stream generator cancellation closes its upstream iterator and leaves the persistent claim in_doubt.",
-      "Four cross-route concurrency combinations fence the competing request; four simultaneous SQLite claims yield one winner and three typed in_doubt results."
+      "Four cross-route concurrency combinations fence the competing request; four simultaneous SQLite claims yield one winner and three typed in_doubt results.",
+      "Typed 401/429/503/504 failures retain status code, error code and message across both routes without a second provider call."
     ],
     "source_sha256": {
-      "services/openclaw-gateway-adapter/main.py": "da9d2c019073520344da18135a90fb03e49f9f929d8894fbf895ba8a3b0be5fe",
-      "services/openclaw-gateway-adapter/test_main.py": "2ba640775c47f6a771aca76744ab09241c3ce526919dd265c45625913a3dcc38"
+      "services/openclaw-gateway-adapter/main.py": "ead2116f667fff1decae377c225a7464cd0c4794e7a8e148673d876df3e6ed07",
+      "services/openclaw-gateway-adapter/test_main.py": "a2f2f798ddea22e163ef8a26b64aafd26e2762368010dc39af9b4243b48a4947"
     },
     "compatibility": "Existing fingerprints without authenticated actor binding are denied as conflicts, not retried or replayed to an unbound actor. No hosted ledger migration was performed.",
     "independent_review": "pending exact-head handoff to configured Codex2 reviewer"
