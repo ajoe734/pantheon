@@ -1,0 +1,81 @@
+{
+  "schema_version": "retrieval_manifest.v1",
+  "task_id": "SIMPLIFY-RETRIEVAL-MEMORY-001",
+  "evaluated_at": "2026-09-06T08:09:16Z",
+  "backend_evaluated": "postgres_pgvector",
+  "model_metadata": {
+    "model_name": "intfloat/multilingual-e5-large",
+    "dimension": 1024,
+    "revision": "66076b8dc6e367337e3e90e6fb309fb0f3addaf6",
+    "manifest_hash": "a4fa9449f8bc7f836940026e632313ec9df34988"
+  },
+  "corpus_summary": {
+    "total_documents": 10000,
+    "traditional_chinese_count": 4500,
+    "english_count": 4500,
+    "memory_count": 800,
+    "negative_memory_count": 200,
+    "corpus_hash": "955897e09da006dbab04682c733071b36a40f3dbff4f6d838ecb0c1086aeb91b"
+  },
+  "query_suite_summary": {
+    "total_queries": 210,
+    "traditional_chinese_queries": 60,
+    "english_queries": 60,
+    "cross_language_queries": 50,
+    "negative_memory_queries": 40
+  },
+  "metrics": {
+    "recall_at_10": 1.0,
+    "ndcg_at_10": 0.9978,
+    "citation_identity_rate": 1.0,
+    "exact_negative_memory_recall": 1.0,
+    "semantic_warning_recall": 1.0,
+    "isolation_leakage_rate": 0.0,
+    "per_language_slice": {
+      "traditional_chinese": {
+        "recall_at_10": 1.0,
+        "ndcg_at_10": 1.0,
+        "query_count": 60
+      },
+      "english": {
+        "recall_at_10": 1.0,
+        "ndcg_at_10": 1.0,
+        "query_count": 60
+      },
+      "cross_language": {
+        "recall_at_10": 1.0,
+        "ndcg_at_10": 0.9926,
+        "query_count": 50
+      }
+    }
+  },
+  "performance_benchmarks": {
+    "concurrency": 4,
+    "total_requests": 1000,
+    "warm_p50_latency_ms": 188.57,
+    "warm_p95_latency_ms": 258.09,
+    "cold_start_latency_ms": 170.85,
+    "throughput_qps": 20.68,
+    "cpu_seconds_per_query": 0.01666,
+    "rss_memory_mb": 7531.3,
+    "external_inference_calls": 0
+  },
+  "quality_gates": {
+    "gate_recall_ge_0_90": true,
+    "gate_ndcg_ge_baseline": true,
+    "gate_citation_identity_100pct": true,
+    "gate_exact_negative_recall_100pct": true,
+    "gate_semantic_warning_ge_0_95": true,
+    "gate_zero_isolation_leakage": true,
+    "gate_p95_under_1s": true,
+    "gate_zero_external_inference": true
+  },
+  "candidate_comparison": {
+    "qdrant_baseline": {
+      "recall_at_10": 1.0,
+      "ndcg_at_10": 0.9978,
+      "warm_p50_latency_ms": 22.22,
+      "warm_p95_latency_ms": 35.93
+    }
+  }
+}

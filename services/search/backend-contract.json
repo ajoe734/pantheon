@@ -1,9 +1,9 @@
 {
   "contract_version": "pantheon.search-backend-contract.v1",
   "task_id": "SIMPLIFY-RETRIEVAL-MEMORY-001",
-  "published_at": "2026-09-06T07:07:30Z",
+  "published_at": "2026-09-06T08:09:16Z",
   "chosen_backend": "postgres_pgvector",
-  "rationale": "PostgreSQL with native FTS (GIN index on simple tsvector) and pgvector (HNSW index on vector(1024)) satisfies all 8 quality gates: Recall@10 = 1.0 (>=0.90), nDCG@10 = 0.9978 (>=0.85), 100% citation identity, 100% exact negative recall, 100% semantic warning recall, 0.0% isolation leakage, warm p95 = 231.33ms (<=1000ms) at 22.55 QPS over 10,060 documents, and 0 external inference calls. Under task rules (\"Choose existing PG when both pass without justified operational gain\"), PostgreSQL is selected as the sole production backend. This eliminates the operational overhead, extra daemon, memory footprint, and separate snapshot/backup lifecycle of Qdrant.",
+  "rationale": "PostgreSQL with native FTS (GIN index on simple tsvector) and pgvector (HNSW index on vector(1024)) satisfies all 8 quality gates: Recall@10 = 1.0 (>=0.90), nDCG@10 = 0.9978 (>=0.85), 100% citation identity, 100% exact negative recall, 100% semantic warning recall, 0.0% isolation leakage, warm p95 = 258.09ms (<=1000ms) at 20.68 QPS over 10,000 documents, and 0 external inference calls. Under task rules (\"Choose existing PG when both pass without justified operational gain\"), PostgreSQL is selected as the sole production backend. This eliminates the operational overhead, extra daemon, memory footprint, and separate snapshot/backup lifecycle of Qdrant.",
   "candidate_comparison": {
     "postgres_pgvector": {
       "status": "selected",
@@ -19,32 +19,33 @@
     },
     "qdrant": {
       "status": "rejected_for_production",
-      "image": "qdrant/qdrant:v1.11.3",
+      "image": "qdrant/qdrant:v1.13.4",
       "features": [
         "Dense vector collection with cosine distance",
         "Payload index filtering on tenant/persona/workspace/access_scope",
         "Score fusion over vector search"
       ],
       "operational_overhead": "Requires separate daemon, extra TCP port (6333), dedicated memory allocation, and independent volume snapshot/backup regime.",
-      "justification_for_rejection": "PG satisfies all quality and latency gates with 0.0% leakage and 231ms p95. No >=30% CPU/p95 benefit demonstrated that would justify running a secondary database daemon."
+      "justification_for_rejection": "PG satisfies all quality and latency gates with 0.0% leakage and 258ms p95. No >=30% CPU/p95 benefit demonstrated that would justify running a secondary database daemon."
     }
   },
   "runtime_specification": {
     "dependencies": {
       "python_packages": {
-        "pgvector": "0.3.6",
-        "psycopg": "3.2.1",
-        "psycopg-binary": "3.2.1",
-        "fastembed": "0.5.1",
-        "onnxruntime": "1.20.1"
+        "fastembed": "0.8.0",
+        "onnxruntime": "1.29.0",
+        "pgvector": "0.5.0",
+        "psycopg": "3.3.5",
+        "psycopg-binary": "3.3.5",
+        "qdrant-client": "1.19.0"
       }
     },
     "embedding_model": {
       "name": "intfloat/multilingual-e5-large",
       "dimension": 1024,
       "manifest_path": "services/search/model-manifest.json",
-      "manifest_sha256": "a4fa9449f8bc7f836940026e632313ec9df34988e0db966c8882419a4e9a3048",
-      "model_file_sha256": "4cf230559ebfd07eb8e4952ddc7cb1d31a5477dae1bcbbd6477e6274488beac8",
+      "manifest_sha256": "0aa16d137761145a7d5b0c0f2bee61c4bd0ac6eb0f9d07d221b502c81b6d919e",
+      "model_file_sha256": "1c09780c907c8a91a77a6ab1fd231f79e090d2907ca431223703dfebeed3d36c",
       "inference_engine": "FastEmbed ONNX local CPU runtime",
       "external_calls": 0
     },
@@ -80,7 +81,8 @@
     }
   },
   "verified_evaluation_metrics": {
-    "corpus_size": 10060,
+    "corpus_size": 10000,
+    "corpus_hash": "955897e09da006dbab04682c733071b36a40f3dbff4f6d838ecb0c1086aeb91b",
     "queries_evaluated": 210,
     "recall_at_10": 1.0,
     "ndcg_at_10": 0.9978,
@@ -88,9 +90,10 @@
     "exact_negative_memory_recall": 1.0,
     "semantic_warning_recall": 1.0,
     "isolation_leakage_rate": 0.0,
-    "warm_p95_latency_ms": 231.33,
-    "warm_p50_latency_ms": 172.45,
-    "throughput_qps": 22.55,
+    "warm_p95_latency_ms": 258.09,
+    "warm_p50_latency_ms": 188.57,
+    "cold_start_latency_ms": 170.85,
+    "throughput_qps": 20.68,
     "concurrency": 4,
     "replays": 1000,
     "external_inference_calls": 0,

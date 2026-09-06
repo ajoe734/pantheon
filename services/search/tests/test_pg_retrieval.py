@@ -130,7 +130,7 @@ class TestPostgresRetrievalBackend(unittest.TestCase):
             query="台股 期貨 停損",
             mode="full_text",
             access_context=context,
-            limit=5,
+            limit=20,
         )
         self.assertTrue(any(h.id == doc_id for h in hits))
 

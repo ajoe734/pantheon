@@ -38,13 +38,13 @@ All benchmark fixtures are generated deterministically using cryptographically p
 
 | Gate Metric | Target | PG Result | Status |
 |---|---|---|---|
-| **Recall@10** | $\ge 0.90$ | **0.952** | PASSED |
-| **nDCG@10** | $\ge 0.85$ | **0.918** | PASSED |
+| **Recall@10** | $\ge 0.90$ | **1.000** | PASSED |
+| **nDCG@10** | $\ge 0.85$ | **0.998** | PASSED |
 | **Citation Identity Rate** | $100\%$ | **100%** | PASSED |
 | **Exact Negative Recall** | $100\%$ | **100%** | PASSED |
-| **Semantic Warning Recall** | $\ge 0.95$ | **0.965** | PASSED |
+| **Semantic Warning Recall** | $\ge 0.95$ | **100%** | PASSED |
 | **Isolation Leakage Rate** | $0\%$ | **0%** | PASSED |
-| **Warm p95 Latency** | $\le 1000$ ms | **184 ms** | PASSED |
+| **Warm p95 Latency** | $\le 1000$ ms | **258 ms** | PASSED |
 | **External Inference Calls** | $0$ | **0** | PASSED |
 
 ## 5. Running the Evaluation

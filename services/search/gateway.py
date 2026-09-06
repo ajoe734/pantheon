@@ -197,36 +197,55 @@ class SearchGateway:
             ranker_ver = hits[0].ranker_version if hits else f"postgres-{mode}-v1"
 
             results: list[RetrievalResult] = []
+            backend_rejected = 0
+            backend_rejected_by_reason: dict[str, int] = {}
             for hit in hits:
                 ko = self.repository.get_knowledge_object(hit.id)
-                evidence_item = self.repository.get_evidence_item(ko.evidence_item_id) if ko else None
-                bundle = self.repository.get_bundle(ko.evidence_bundle_id) if ko else None
+                if ko is None:
+                    backend_rejected += 1
+                    backend_rejected_by_reason["missing_owner"] = backend_rejected_by_reason.get("missing_owner", 0) + 1
+                    continue
 
-                bundle_id = bundle.evidence_bundle_id if bundle else (hit.evidence_bundle_id or f"bundle-{hit.id}")
-                evidence_id = evidence_item.evidence_item_id if evidence_item else (hit.evidence_item_id or f"item-{hit.id}")
-                citation = evidence_item.citation_label if evidence_item else (hit.citation_label or f"doc:{hit.id}")
-                content_ref = evidence_item.content_ref if evidence_item else (hit.content_ref or f"/docs/{hit.id}")
-                answer_text = ko.text if ko else hit.search_text
+                evidence_item = self.repository.get_evidence_item(ko.evidence_item_id)
+                bundle = self.repository.get_bundle(ko.evidence_bundle_id)
+                if evidence_item is None or bundle is None:
+                    backend_rejected += 1
+                    backend_rejected_by_reason["missing_evidence"] = backend_rejected_by_reason.get("missing_evidence", 0) + 1
+                    continue
+
+                allowed, reason = context.permits(
+                    ko,
+                    evidence_item=evidence_item,
+                    bundle=bundle,
+                    filters=filters,
+                    now=now,
+                    require_citations=request.require_citations,
+                )
+                if not allowed:
+                    backend_rejected += 1
+                    r_key = reason or "access_scope"
+                    backend_rejected_by_reason[r_key] = backend_rejected_by_reason.get(r_key, 0) + 1
+                    continue
 
                 results.append(
                     RetrievalResult(
-                        result_id=hit.id,
+                        result_id=ko.knowledge_object_id,
                         request_id=request.request_id,
-                        evidence_bundle_id=bundle_id,
+                        evidence_bundle_id=bundle.evidence_bundle_id,
                         matched_items=[
                             {
-                                "knowledge_object_id": hit.id,
-                                "source_id": ko.source_id if ko else f"src-{hit.id}",
-                                "evidence_item_id": evidence_id,
-                                "content_ref": content_ref,
-                                "citation_label": citation,
+                                "knowledge_object_id": ko.knowledge_object_id,
+                                "source_id": ko.source_id,
+                                "evidence_item_id": evidence_item.evidence_item_id,
+                                "content_ref": evidence_item.content_ref,
+                                "citation_label": evidence_item.citation_label,
                                 "matched_terms": list(hit.matched_terms),
                             }
                         ],
-                        answer_context=answer_text,
-                        citations=[citation],
+                        answer_context=ko.text,
+                        citations=[evidence_item.citation_label],
                         filters_applied=filters_applied,
-                        rejected_items_count=0,
+                        rejected_items_count=backend_rejected,
                         relevance_score=hit.score,
                         component_scores=dict(hit.component_scores),
                         ranker_version=hit.ranker_version,
@@ -239,8 +258,8 @@ class SearchGateway:
                 trace_id=request.trace_id,
                 retrieval_mode=mode,
                 results=results,
-                rejected_items_count=0,
-                rejected_by_reason={},
+                rejected_items_count=backend_rejected,
+                rejected_by_reason={k: v for k, v in backend_rejected_by_reason.items() if v > 0},
                 filters_applied=filters_applied,
                 capabilities=capabilities,
                 fingerprints={

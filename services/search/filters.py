@@ -278,6 +278,7 @@ class SearchAccessContext:
     capital_pool_scopes: Sequence[str] = field(default_factory=tuple)
     entitlements: Sequence[str] = field(default_factory=tuple)
     as_of: datetime | str | None = None
+    tenant_id: str = "default"
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "environment", str(self.environment or "").strip() or "paper")
@@ -287,6 +288,7 @@ class SearchAccessContext:
         object.__setattr__(self, "sensitivity_scopes", _strings(self.sensitivity_scopes) or ("public", "internal"))
         object.__setattr__(self, "capital_pool_scopes", _strings(self.capital_pool_scopes))
         object.__setattr__(self, "entitlements", _strings(self.entitlements))
+        object.__setattr__(self, "tenant_id", str(self.tenant_id or "default").strip() or "default")
         if self.as_of is not None:
             object.__setattr__(self, "as_of", _format_iso(self.as_of))
 
@@ -303,6 +305,15 @@ class SearchAccessContext:
         now: datetime | None = None,
         require_citations: bool = True,
     ) -> tuple[bool, str | None]:
+        # 0. Tenant scope
+        metadata = dict(knowledge_object.metadata or {})
+        object_tenant = (
+            getattr(knowledge_object, "tenant_id", None)
+            or metadata.get("tenant_id")
+        )
+        if object_tenant and str(object_tenant).strip() != self.tenant_id:
+            return False, "tenant_scope"
+
         # 1. Environment scope
         object_environments = set(knowledge_object.environment_scope)
         if object_environments and self.environment not in object_environments:
@@ -404,6 +415,10 @@ class SearchAccessContext:
 
         # 14. Available time (cutoff & no future leak)
         effective_now = now or datetime.now(timezone.utc)
+        if self.as_of:
+            as_of_dt = _parse_iso_datetime(self.as_of)
+            if as_of_dt:
+                effective_now = min(effective_now, as_of_dt)
         cutoff_dt = effective_now
         if filters and filters.available_time_lte:
             user_cutoff = _parse_iso_datetime(filters.available_time_lte)

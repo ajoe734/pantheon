@@ -7,6 +7,7 @@ import os
 import re
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any, Mapping, Sequence
 
 import psycopg
@@ -175,6 +176,21 @@ class PostgresRetrievalBackend:
         with self._get_connection() as conn:
             with conn.cursor() as cur:
                 cur.execute(sql)
+                cur.execute("""
+                    DO $$
+                    BEGIN
+                        IF EXISTS (
+                            SELECT 1 FROM pg_constraint
+                            WHERE conrelid = 'search_retrieval_index'::regclass
+                              AND conname = 'search_retrieval_index_pkey'
+                              AND pg_get_constraintdef(oid) = 'PRIMARY KEY (id)'
+                        ) THEN
+                            ALTER TABLE search_retrieval_index DROP CONSTRAINT search_retrieval_index_pkey;
+                            ALTER TABLE search_retrieval_index ADD PRIMARY KEY (tenant_id, id);
+                        END IF;
+                    END $$;
+                """)
+                cur.execute("ALTER TABLE search_retrieval_index FORCE ROW LEVEL SECURITY;")
             conn.commit()
 
     def index_documents(self, records: Sequence[RetrievalIndexRecord]) -> int:
@@ -246,9 +262,8 @@ class PostgresRetrievalBackend:
             %(evidence_bundle_id)s, %(evidence_item_id)s, %(event_time)s, %(available_time)s,
             %(relevance_score)s, %(embedding)s, %(metadata)s, %(version)s, %(is_active)s
         )
-        ON CONFLICT (id) DO UPDATE SET
+        ON CONFLICT (tenant_id, id) DO UPDATE SET
             record_kind = EXCLUDED.record_kind,
-            tenant_id = EXCLUDED.tenant_id,
             persona_id = EXCLUDED.persona_id,
             workspace_id = EXCLUDED.workspace_id,
             environment_scope = EXCLUDED.environment_scope,
@@ -278,7 +293,12 @@ class PostgresRetrievalBackend:
 
         with self._get_connection() as conn:
             with conn.cursor() as cur:
+                current_tenant = None
                 for rec in records:
+                    rec_tenant = rec.tenant_id or "default"
+                    if rec_tenant != current_tenant:
+                        cur.execute("SELECT set_config('pantheon.current_tenant', %s, true)", (rec_tenant,))
+                        current_tenant = rec_tenant
                     params = {
                         "id": rec.id,
                         "record_kind": rec.record_kind,
@@ -312,16 +332,27 @@ class PostgresRetrievalBackend:
             conn.commit()
         return len(records)
 
-    def delete_document(self, document_id: str, hard_delete: bool = False, hard: bool = False) -> bool:
+    def delete_document(
+        self,
+        document_id: str,
+        tenant_id: str = "default",
+        hard_delete: bool = False,
+        hard: bool = False,
+    ) -> bool:
         is_hard = hard or hard_delete
+        effective_tenant = tenant_id or "default"
         with self._get_connection() as conn:
             with conn.cursor() as cur:
+                cur.execute("SELECT set_config('pantheon.current_tenant', %s, true)", (effective_tenant,))
                 if is_hard:
-                    cur.execute("DELETE FROM search_retrieval_index WHERE id = %s", (document_id,))
+                    cur.execute(
+                        "DELETE FROM search_retrieval_index WHERE id = %s AND tenant_id = %s",
+                        (document_id, effective_tenant),
+                    )
                 else:
                     cur.execute(
-                        "UPDATE search_retrieval_index SET is_active = FALSE, updated_at = NOW() WHERE id = %s",
-                        (document_id,),
+                        "UPDATE search_retrieval_index SET is_active = FALSE, updated_at = NOW() WHERE id = %s AND tenant_id = %s",
+                        (document_id, effective_tenant),
                     )
                 affected = cur.rowcount
             conn.commit()
@@ -350,6 +381,10 @@ class PostgresRetrievalBackend:
 
         now = datetime.now(timezone.utc)
         effective_now = now
+        if ctx.as_of:
+            ctx_as_of = _parse_iso(ctx.as_of)
+            if ctx_as_of:
+                effective_now = min(effective_now, ctx_as_of)
         cutoff_dt = effective_now
         if filters and filters.available_time_lte:
             user_cutoff = _parse_iso(filters.available_time_lte)
@@ -357,18 +392,48 @@ class PostgresRetrievalBackend:
                 cutoff_dt = min(cutoff_dt, user_cutoff)
 
         lex_query = _format_lexical_query(query)
+        effective_tenant = getattr(ctx, "tenant_id", "default") or "default"
+
+        # Body filters can ONLY narrow server identity context grants (ceiling)
+        effective_licenses = set(ctx.license_scopes)
+        if filters and filters.license_scopes:
+            effective_licenses = effective_licenses.intersection(set(filters.license_scopes))
+        if not effective_licenses:
+            return []
+
+        effective_sensitivities = set(ctx.sensitivity_scopes)
+        if filters and filters.sensitivity:
+            effective_sensitivities = effective_sensitivities.intersection(set(filters.sensitivity))
+        if not effective_sensitivities:
+            return []
+
+        effective_access = set(ctx.access_scopes)
+        if filters and hasattr(filters, "access_scopes") and getattr(filters, "access_scopes"):
+            effective_access = effective_access.intersection(set(getattr(filters, "access_scopes")))
+        if not effective_access:
+            return []
+
+        effective_pools = set(ctx.capital_pool_scopes) if ctx.capital_pool_scopes else None
+        if filters and filters.capital_pool_scope:
+            if effective_pools is not None:
+                effective_pools = effective_pools.intersection(set(filters.capital_pool_scope))
+                if not effective_pools:
+                    return []
+            else:
+                effective_pools = set(filters.capital_pool_scope)
 
         params: dict[str, Any] = {
             "query": query,
             "lexical_query": lex_query,
+            "tenant_id": effective_tenant,
             "environment": ctx.environment,
-            "allowed_access_scopes": list(ctx.access_scopes),
-            "license_scopes": list(filters.license_scopes) if (filters and filters.license_scopes) else list(ctx.license_scopes),
+            "allowed_access_scopes": list(effective_access),
+            "license_scopes": list(effective_licenses),
             "persona_id": ctx.persona_id,
             "workspace_id": ctx.workspace_id,
             "role_refs": list(ctx.role_refs),
-            "sensitivity": list(filters.sensitivity) if (filters and filters.sensitivity) else list(ctx.sensitivity_scopes),
-            "capital_pool_scope": list(filters.capital_pool_scope) if (filters and filters.capital_pool_scope) else (list(ctx.capital_pool_scopes) if ctx.capital_pool_scopes else None),
+            "sensitivity": list(effective_sensitivities),
+            "capital_pool_scope": list(effective_pools) if effective_pools is not None else None,
             "source_types": list(filters.source_types) if (filters and filters.source_types) else None,
             "asset_class": list(filters.asset_class) if (filters and filters.asset_class) else None,
             "strategy_id": filters.strategy_id if (filters and filters.strategy_id) else None,
@@ -381,14 +446,15 @@ class PostgresRetrievalBackend:
 
         where_clause = """
             is_active = TRUE
+            AND tenant_id = %(tenant_id)s::text
             AND (%(record_kind)s::text IS NULL OR record_kind = %(record_kind)s::text)
             AND (%(environment)s::text = ANY(environment_scope) OR environment_scope = '{}')
             AND ('public' = ANY(access_scope) OR access_scope && %(allowed_access_scopes)s::text[])
-            AND (%(license_scopes)s::text[] IS NULL OR license_scope = ANY(%(license_scopes)s::text[]))
-            AND (persona_id IS NULL OR %(persona_id)s::text IS NULL OR persona_id = %(persona_id)s::text)
-            AND (workspace_id IS NULL OR %(workspace_id)s::text IS NULL OR workspace_id = %(workspace_id)s::text)
+            AND (license_scope = ANY(%(license_scopes)s::text[]))
+            AND (persona_id IS NULL OR (%(persona_id)s::text IS NOT NULL AND persona_id = %(persona_id)s::text))
+            AND (workspace_id IS NULL OR (%(workspace_id)s::text IS NOT NULL AND workspace_id = %(workspace_id)s::text))
             AND (cardinality(role_scope) = 0 OR role_scope && %(role_refs)s::text[])
-            AND (%(sensitivity)s::text[] IS NULL OR sensitivity = ANY(%(sensitivity)s::text[]))
+            AND (sensitivity = ANY(%(sensitivity)s::text[]))
             AND (%(capital_pool_scope)s::text[] IS NULL OR capital_pool_scope && %(capital_pool_scope)s::text[])
             AND (%(source_types)s::text[] IS NULL OR source_type = ANY(%(source_types)s::text[]))
             AND (%(asset_class)s::text[] IS NULL OR asset_class && %(asset_class)s::text[])
@@ -486,7 +552,7 @@ class PostgresRetrievalBackend:
                    p.relevance_score, p.metadata, p.updated_at,
                    f.lex_score, f.sem_score, f.lex_rank, f.sem_rank, f.raw_rrf
             FROM fused f
-            JOIN search_retrieval_index p ON f.id = p.id
+            JOIN search_retrieval_index p ON f.id = p.id AND p.tenant_id = %(tenant_id)s::text
             ORDER BY f.raw_rrf DESC, p.updated_at DESC
             LIMIT %(top_k)s;
             """
@@ -494,6 +560,7 @@ class PostgresRetrievalBackend:
         hits: list[RetrievalHitItem] = []
         with self._get_connection() as conn:
             with conn.cursor() as cur:
+                cur.execute("SELECT set_config('pantheon.current_tenant', %s, true)", (effective_tenant,))
                 cur.execute(sql, params)
                 rows = cur.fetchall()
 

@@ -2,7 +2,7 @@
 CREATE EXTENSION IF NOT EXISTS vector;
 
 CREATE TABLE IF NOT EXISTS search_retrieval_index (
-    id VARCHAR(128) PRIMARY KEY,
+    id VARCHAR(128) NOT NULL,
     record_kind VARCHAR(64) NOT NULL,
     tenant_id VARCHAR(64) NOT NULL DEFAULT 'default',
     persona_id VARCHAR(64),
@@ -31,7 +31,8 @@ CREATE TABLE IF NOT EXISTS search_retrieval_index (
     version INT NOT NULL DEFAULT 1,
     is_active BOOLEAN NOT NULL DEFAULT TRUE,
     indexed_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (tenant_id, id)
 );
 
 -- Lexical Full-Text Search Index (GIN)
@@ -58,21 +59,15 @@ CREATE INDEX IF NOT EXISTS idx_search_retrieval_event_time
 CREATE INDEX IF NOT EXISTS idx_search_retrieval_available_time
     ON search_retrieval_index (available_time);
 
--- Row-Level Security (RLS)
+-- Fail-closed Row-Level Security (RLS)
 ALTER TABLE search_retrieval_index ENABLE ROW LEVEL SECURITY;
+ALTER TABLE search_retrieval_index FORCE ROW LEVEL SECURITY;
 
-DO $$
-BEGIN
-    IF NOT EXISTS (
-        SELECT 1 FROM pg_policies WHERE tablename = 'search_retrieval_index' AND policyname = 'tenant_isolation_policy'
-    ) THEN
-        CREATE POLICY tenant_isolation_policy ON search_retrieval_index
-        FOR ALL
-        USING (
-            tenant_id = current_setting('pantheon.current_tenant', true)
-            OR current_setting('pantheon.current_tenant', true) IS NULL
-            OR current_setting('pantheon.current_tenant', true) = ''
-            OR 'public' = ANY(access_scope)
-        );
-    END IF;
-END $$;
+DROP POLICY IF EXISTS tenant_isolation_policy ON search_retrieval_index;
+CREATE POLICY tenant_isolation_policy ON search_retrieval_index
+FOR ALL
+USING (
+    tenant_id = current_setting('pantheon.current_tenant', true)
+    AND current_setting('pantheon.current_tenant', true) IS NOT NULL
+    AND current_setting('pantheon.current_tenant', true) != ''
+);

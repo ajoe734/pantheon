@@ -198,7 +198,7 @@ def retrieve_institutional_with_backend(
         seen_ids.add(cand.id)
 
         entry = store.get(cand.id)
-        if entry is None or not entry.is_active:
+        if entry is None or not entry.is_active or entry.is_expired():
             continue
 
         if scope and entry.scope != scope:
@@ -218,23 +218,6 @@ def retrieve_institutional_with_backend(
         hits.append(RetrievalHit(entry=entry, relevance_score=final_score))
         if len(hits) >= limit:
             break
-
-    # If backend returned fewer than limit (e.g. out of vocabulary or fresh writes), augment from store
-    if len(hits) < limit:
-        store_hits = store.retrieve(
-            query=query,
-            knowledge_type=knowledge_type,
-            scope=scope,
-            scope_filter=scope_filter,
-            tags=tags,
-            limit=limit,
-        )
-        for sh in store_hits:
-            if sh.entry.entry_id not in seen_ids:
-                hits.append(sh)
-                seen_ids.add(sh.entry.entry_id)
-                if len(hits) >= limit:
-                    break
 
     hits.sort(
         key=lambda hit: (
@@ -323,22 +306,6 @@ def retrieve_persona_with_backend(
         hits.append(PersonaRetrievalHit(entry=entry, relevance_score=final_score))
         if len(hits) >= limit:
             break
-
-    if len(hits) < limit:
-        store_hits = store.retrieve(
-            persona_id=persona_id,
-            query=query,
-            memory_type=memory_type,
-            relevance_scope=relevance_scope,
-            tags=tags,
-            limit=limit,
-        )
-        for sh in store_hits:
-            if sh.entry.memory_id not in seen_ids:
-                hits.append(sh)
-                seen_ids.add(sh.entry.memory_id)
-                if len(hits) >= limit:
-                    break
 
     hits.sort(
         key=lambda hit: (

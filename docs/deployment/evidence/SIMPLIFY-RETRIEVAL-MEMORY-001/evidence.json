@@ -22,7 +22,7 @@
       "Unified institutional and persona memory retrieval bridged through PostgreSQL search index with owner hydration/revalidation",
       "Negative memory matching: 100% exact reference match retention and semantic similarity warning matching (>=0.95 recall)",
       "Isolated test environment via docker-compose.search.yml (PostgreSQL + pgvector on 25432, Qdrant on 26333)",
-      "Frozen evaluation corpus of 10,060 documents and 210 queries with 8/8 passing quality gates"
+      "Frozen evaluation corpus of 10,000 documents and 210 queries with 8/8 passing quality gates"
     ],
     "not_changing": [
       "Production database schemas or shared compose topology (owned by OSS-INFRA-PROFILES-001)",
@@ -38,7 +38,7 @@
     },
     {
       "criterion": "Compare existing PostgreSQL (FTS + pgvector) with local Qdrant on identical frozen data; select PostgreSQL.",
-      "evidence": "Both backends tested under identical 1024-dim vectors. PostgreSQL passed all 8 gates with warm p95=231.33ms and 0.0% isolation leakage. Decision published in services/search/backend-contract.json.",
+      "evidence": "Both backends tested under identical 1024-dim vectors. PostgreSQL passed all 8 gates with warm p95=258.09ms and 0.0% isolation leakage. Decision published in services/search/backend-contract.json.",
       "status": "passed"
     },
     {
@@ -53,12 +53,12 @@
     },
     {
       "criterion": "Evaluation on >=10k fixed documents and >=200 queries (>=50 TC, >=50 EN, >=50 cross): Recall@10 >= 0.90, nDCG@10 >= 0.85, citation identity 100%, negative memory recall 100%, semantic warning >= 0.95.",
-      "evidence": "run_retrieval_eval.py executed on 10,060 documents and 210 queries. Results: Recall@10=1.0 (pass), nDCG@10=0.9978 (pass), citation identity=100.0% (pass), exact negative recall=100.0% (pass), semantic warning recall=100.0% (pass). Manifest validated against schema.",
+      "evidence": "run_retrieval_eval.py executed on 10,000 documents and 210 queries. Results: Recall@10=1.0 (pass), nDCG@10=0.9978 (pass), citation identity=100.0% (pass), exact negative recall=100.0% (pass), semantic warning recall=100.0% (pass). Manifest validated against schema.",
       "status": "passed"
     },
     {
       "criterion": "Warm retrieval p95 <= 1000ms over >=1000 replays at concurrency 4 on 10k documents.",
-      "evidence": "1,000 concurrent replays benchmarked at concurrency 4: warm p50 = 172.45ms, warm p95 = 231.33ms (pass, <= 1000ms), throughput = 22.55 QPS.",
+      "evidence": "1,000 concurrent replays benchmarked at concurrency 4: warm p50 = 188.57ms, warm p95 = 258.09ms (pass, <= 1000ms), throughput = 20.68 QPS.",
       "status": "passed"
     }
   ],
@@ -72,12 +72,12 @@
       "./.venv-pantheon/bin/python3 -m unittest services/source_ingestion/tests/test_negative_memory_matcher.py (4 tests passed, OK)",
       "./.venv-pantheon/bin/python3 -m unittest integrations/openclaw/test_persona_memory_bridge.py (3 tests passed, OK)",
       "./.venv-pantheon/bin/python3 -m unittest services/search/test_index_pipeline.py (26 tests passed, OK)",
-      "./.venv-pantheon/bin/python3 services/search/evaluation/run_retrieval_eval.py (210 queries on 10,060 documents, 8/8 gates passed)",
+      "./.venv-pantheon/bin/python3 services/search/evaluation/run_retrieval_eval.py (210 queries on 10,000 documents, 8/8 gates passed)",
       "./.venv-pantheon/bin/python3 -c \"import json, jsonschema; jsonschema.validate(json.load(open(\"services/search/evaluation/retrieval_manifest.json\")), json.load(open(\"services/search/evaluation/retrieval_manifest.schema.json\"))); print(\"valid\")\" (manifest valid)"
     ]
   },
   "delivery": {
-    "pr": null,
+    "pr": 5630,
     "exact_head_sha": null,
     "merge_method_required": "MERGE",
     "merge_sha": null,

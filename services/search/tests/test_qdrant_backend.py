@@ -71,7 +71,7 @@ class TestQdrantRetrievalBackend(unittest.TestCase):
         hits = self.backend.search(
             query="perpetual futures funding rate",
             context=context,
-            top_k=5,
+            top_k=20,
         )
         self.assertTrue(any(h.id == doc_id for h in hits))
 

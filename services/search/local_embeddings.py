@@ -62,9 +62,12 @@ class LocalEmbeddingEngine:
             f"models--qdrant--{self.model_name.split('/')[-1]}-onnx",
             f"models--qdrant--multilingual-e5-large-onnx",
         ]
+        expected_rev = self.manifest.get("revision")
         for prefix in candidate_prefixes:
             target = self.cache_dir / prefix / "snapshots"
             if target.exists():
+                if expected_rev and (target / expected_rev).is_dir():
+                    return target / expected_rev
                 snapshots = [s for s in target.iterdir() if s.is_dir()]
                 if snapshots:
                     return sorted(snapshots)[-1]
@@ -72,20 +75,37 @@ class LocalEmbeddingEngine:
             if child.is_dir() and "multilingual-e5-large" in child.name:
                 snap_dir = child / "snapshots"
                 if snap_dir.exists():
+                    if expected_rev and (snap_dir / expected_rev).is_dir():
+                        return snap_dir / expected_rev
                     snaps = [s for s in snap_dir.iterdir() if s.is_dir()]
                     if snaps:
                         return sorted(snaps)[-1]
         return None
 
     def verify_integrity(self) -> bool:
-        """Verify cached ONNX artifacts against manifest digests."""
-        files_spec = self.manifest.get("files", {})
-        if not files_spec:
-            return True
-
+        """Verify cached ONNX artifacts against manifest digests, revision, and dimension."""
+        expected_rev = self.manifest.get("revision")
         target_dir = self._find_snapshot_dir()
         if target_dir is None:
             return False
+
+        if expected_rev and target_dir.name != expected_rev:
+            return False
+
+        # Verify dimension matches manifest
+        config_file = target_dir / "config.json"
+        if config_file.exists():
+            try:
+                cfg = json.loads(config_file.read_text(encoding="utf-8"))
+                hidden_size = cfg.get("hidden_size")
+                if hidden_size is not None and int(hidden_size) != self.dimension:
+                    return False
+            except Exception:
+                return False
+
+        files_spec = self.manifest.get("files", {})
+        if not files_spec:
+            return True
 
         for filename, spec in files_spec.items():
             expected_sha = spec.get("sha256")
@@ -102,6 +122,11 @@ class LocalEmbeddingEngine:
     def _ensure_loaded(self) -> Any:
         if self._embedder is not None:
             return self._embedder
+
+        if not self.verify_integrity():
+            raise SearchCapabilityUnavailableError(
+                f"Embedding model integrity check failed for '{self.model_name}' at {self.cache_dir}"
+            )
 
         try:
             from fastembed import TextEmbedding
@@ -124,6 +149,8 @@ class LocalEmbeddingEngine:
 
     def is_ready(self) -> bool:
         try:
+            if not self.verify_integrity():
+                return False
             self._ensure_loaded()
             return True
         except Exception:

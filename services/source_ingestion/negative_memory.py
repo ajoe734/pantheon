@@ -270,6 +270,38 @@ def match_negative_memory(
     outputs, or postmortem stores.
     """
 
+    records_to_evaluate = list(negative_memory_records)
+    if backend is not None:
+        if embedding_engine is None and hasattr(backend, "embedding_engine"):
+            embedding_engine = backend.embedding_engine
+        cand_text = " ".join(str(v) for v in seed_candidate.values() if isinstance(v, str))
+        if cand_text.strip():
+            try:
+                from services.search.filters import SearchAccessContext
+                ctx = SearchAccessContext(
+                    environment="paper",
+                    access_scopes=["operator", "research", "public"],
+                )
+                backend_hits = backend.search(
+                    query=cand_text[:500],
+                    context=ctx,
+                    top_k=20,
+                    mode="hybrid",
+                    record_kind="negative_memory",
+                )
+                for hit in backend_hits:
+                    rec_dict = {
+                        "negative_memory_id": hit.id,
+                        "title": hit.title,
+                        "summary": hit.search_text,
+                        "metadata": hit.metadata,
+                        "record_kind": hit.record_kind,
+                        **(hit.metadata or {}),
+                    }
+                    records_to_evaluate.append(rec_dict)
+            except Exception:
+                pass
+
     candidate = _profile(seed_candidate)
     cand_text = " ".join(str(v) for v in seed_candidate.values() if isinstance(v, str))
     cand_vec = None
@@ -280,7 +312,7 @@ def match_negative_memory(
             cand_vec = None
 
     best: _ScoredRecord | None = None
-    for raw_record in negative_memory_records:
+    for raw_record in records_to_evaluate:
         record = _to_mapping(raw_record)
         if not record:
             continue
