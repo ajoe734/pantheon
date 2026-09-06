@@ -58,6 +58,23 @@ every file enumerated by plan section 5.
   `75d9435610d38771795c79a1c76a27fff23db96eec029e36ca6cc8bef6f335c3`).
   This addition does not modify `SOURCE_MANIFEST.json`'s existing frozen hashes
   or this task's own evidence.
+- [REVIEW_HANDOFF_RECOVERY_SA_SD.md](REVIEW_HANDOFF_RECOVERY_SA_SD.md) — added
+  by task `OPS-REVIEW-HANDOFF-RECOVERY-CONTRACT-001` (not this document's own
+  task): the repository-readable copy of the separately operator-approved
+  reviewer-reopen/worker-recovery responsibility-transition classification
+  plan, preserved byte-identically (SHA256
+  `3fb778af7b4127b624d4b60d65bcd0471bfe181ee997ead78deb16a8c2484011`).
+- [REVIEW_HANDOFF_RECOVERY_RECHECK.md](REVIEW_HANDOFF_RECOVERY_RECHECK.md) —
+  added by task `OPS-REVIEW-HANDOFF-RECOVERY-CONTRACT-001` (not this
+  document's own task): the repository-readable copy of the source
+  reproduction/non-duplication recheck for that same plan, preserved
+  byte-identically (SHA256
+  `3711b0820dbee4e88d7036a4ddc0da0b85674c7ac36d79b0882c39a603a0ffc0`).
+  The [local tooling runbook](../../operations/management-ai-openclaw-dev-bridge.md)
+  and `docs/deployment/evidence/OPS-REVIEW-HANDOFF-RECOVERY-CONTRACT-001/evidence.json`
+  record its operational classifier-repair contract and verification.
+  This addition does not modify `SOURCE_MANIFEST.json`'s existing frozen hashes
+  or this task's own evidence.
 
 ## Historical source snapshots (`archive/`)
 

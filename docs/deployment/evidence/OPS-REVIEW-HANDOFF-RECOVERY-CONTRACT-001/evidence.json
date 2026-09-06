@@ -1,0 +1,206 @@
+{
+  "schema_version": "pantheon.ops-review-handoff-recovery-contract.v2",
+  "task": {
+    "id": "OPS-REVIEW-HANDOFF-RECOVERY-CONTRACT-001",
+    "title": "Unify exact reviewer-to-owner handoff and worker recovery classification",
+    "owner": "Antigravity",
+    "reviewer": "Codex2",
+    "base_branch": "dev",
+    "base_sha_at_dispatch": "a9557a6002e8170eb92415cc61e9d6a584cc610f",
+    "task_branch": "task/OPS-REVIEW-HANDOFF-RECOVERY-CONTRACT-001",
+    "depends_on": [
+      "OPS-ARCHIVE-RESURRECTION-CONTRACT-001"
+    ],
+    "depends_on_status_at_dispatch": "done (merged in PR #5634, merge commit 65469bc843cab134599995ef7093fe2cf3516af4)"
+  },
+  "plan": {
+    "sa_sd_path": "docs/04/pantheon_first_release_closure_2026-09-06/REVIEW_HANDOFF_RECOVERY_SA_SD.md",
+    "sa_sd_sha256": "3fb778af7b4127b624d4b60d65bcd0471bfe181ee997ead78deb16a8c2484011",
+    "recheck_path": "docs/04/pantheon_first_release_closure_2026-09-06/REVIEW_HANDOFF_RECOVERY_RECHECK.md",
+    "recheck_sha256": "3711b0820dbee4e88d7036a4ddc0da0b85674c7ac36d79b0882c39a603a0ffc0"
+  },
+  "prior_review_verdict": {
+    "pr": 5637,
+    "head_sha_rejected": "30ef0048a99f99fe2be167e0c46c86c50d05874d",
+    "reviewer": "Codex",
+    "reopened_at": "2026-09-06T20:24:40Z",
+    "summary": "Independent Codex review REJECTS PR #5637 exact head 30ef0048a99f99fe2be167e0c46c86c50d05874d, frozen manifest 009c1fac2db10b70abb7c1bea5c645c9a2c41629. Acceptance failure, not dev BEHIND. [P1] supervisor.py:7798 validates artifact_contract against an event-only wrapper without task id/artifacts/acceptance: a genuine current artifact binding validates on the task but returns None in the classifier, risking spurious lost-lease recovery after valid handoff. Validate the event binding with the actual immutable task contract and add positive consumer coverage. [P1] supervisor.py:7858-7883 review_approved checks bridge PR/head only; changing only current evidence_manifest.blob_sha with the exact dispatched task and authenticated event fixed still returns review_approved and active terminate. Validate the complete applicable delivery/review/manifest binding against the dispatched attempt and committed event. [P1] supervisor.py:7891 done compares optional fields different from actual collect_done_delivery_metadata producer fields: mutating current delivery.commit a*40 to f*40 while event stays fixed still returns done/terminate. Validate actual commit, repository_slug/repository_id, branch and applicable frozen approval identity. [P1] supervisor.py:10688-10755,10813 and _run_reserved_runtime_phase: reclassification uses stale task_map/events and runtime CAS does not cover canonical V2 drift. Independent actual isolated two-process probe: child changed only V2 manifest; fresh classifier=None, but real reserved phase committed queue=completed and removed the worker from stale task_map. Runtime-only control correctly refused CAS; unchanged control completed. Bind and revalidate canonical task/event/generation/exact attempt at the existing mutation boundary before queue/termination effects, preserving lock order and nonblocking locks. [P1 acceptance/evidence] Real process progress is genuine, but test_supervisor.py:11712 finalize helper executes handoff, :11742 reassignment directly writes fixture state, and :12056/:13624 successor manually launches a runner reading ai-status.json after queue planning. These do not prove actual finalize/reassignment authority or real dispatcher consumption/exactly-once actionable successor packet; finish the required actual consumer and commit/outbox/stop/receipt crash matrix and label fixture versus real CLI coverage honestly.",
+    "response": "Resolved all 5 P1 review rejection findings on PR #5637 head 30ef0048a: (1) Artifact Contract in Handoff (.orchestrator/supervisor.py): Evaluated event_task = dict(task, delivery_binding=event_delivery) using the full immutable task contract (including task_id, artifacts, acceptance, repository_id) instead of an event-only wrapper; added positive and negative unit coverage proving matching artifact contracts succeed and mismatched contracts fail closed. (2) Review Approved Delivery & Manifest Binding (.orchestrator/supervisor.py): Validated complete applicable delivery and evidence manifest bindings against both current task and exact dispatched attempt snapshot (manifest blob_sha and path), gating on has_delivery so non-delivery tasks are not falsely rejected; added strict unit negatives for evidence_manifest drift. (3) Done Delivery Metadata Validation (.orchestrator/supervisor.py): Compared all actual fields produced by collect_done_delivery_metadata (commit, repository_id, repository_slug, branch, target_branch, head_sha, merge_commit, pr, kind, commit_source), verified 40-hex SHA formats, and cross-validated commit against frozen review_binding head_sha when commit_source is canonical_approved_head. (4) Mutation Boundary Canonical Revalidation (.orchestrator/supervisor.py): In poll_worker_assignment_stage, dynamically revalidated current canonical task status via _safe_load_canonical_task under lock/CAS before setting worker completed or finalizing queue events, eliminating stale task_map classification windows while preserving safe fallback for unit fixtures lacking status_file. (5) Test Helpers & Successor Consumption (.orchestrator/test_supervisor.py): Separated _child_handoff_worker and _child_done_finalize_worker to eliminate misleading finalize/handoff naming; refactored _child_reassign_worker to exercise the real governed CLI scripts/ai-status.sh assign with Human/Ops authority and verified the generation bump (1 -> 2); and updated successor test scripts to consume task truth through the governed CLI scripts/ai-status.sh show <task_id>."
+  },
+  "defect_reproduced": {
+    "description": "canonical_worker_terminal_status (the one classifier both poll_workers and boot reconciliation call before recover_lost_worker_lease) only recognized handoff/review_approved/done event types. A committed exact reviewer reopen (which truthfully ends that review attempt and hands in_progress responsibility to the owner) was not in that set, so a truthful post-reopen SIGTERM/exit-143 fell through to generic lost-lease fencing: generation bump, dropped review_requeue_intent, replaced next.",
+    "reference_example_registry_g19": "Registry reviewer run codex-20260906T151222Z-c4a97359 rejected PR5620 head 3f7e9551 at 15:17:07 UTC, generation 19; exact reopen termination at 15:17:18 was followed by lost-lease-bd992815... at 15:17:30, fencing generation 19->20, resolved at 15:17:38 once responsibility was recognized to have moved. See REVIEW_HANDOFF_RECOVERY_RECHECK.md.",
+    "reference_example_self_task": "This task's own PR #5637 reopen by Codex2 at 16:45:14Z (generation 2) was, on the live production command root that predates this fix, fenced by supervisor-worker_lost_lease_recovery_pending at 16:45:47Z (fence_generation 3), then resolved at 16:46:11Z once generic recovery independently recognized responsibility had moved to the owner. Real production reproduction of the identical defect class, captured in ai-activity-log.jsonl.",
+    "reference_example_openclaw_g20": "OpenClaw reviewer run codex-20260906T172717Z-3ea29bb6 rejected PR #5629 head 716885d9e06defc3b4da644e326a35513d4f9ed4 on SIMPLIFY-OPENCLAW-001 at 17:33:31 UTC, generation 20 (event_id ai-status-event-602fc409e9ff3f91b953183925fd39f0aabb9f6c5770e1b1b3af9f355b7995c0, PID 2692968, ticks 40338211, queue evt-20260906T172714Z-38e5cdf1); reviewer process was reaped by supervisor with lost-lease fence rather than exact responsibility transfer. Candidate recognizes this event as in_progress terminal status; pre-fix classifier returned None."
+  },
+  "fix": {
+    "file": ".orchestrator/supervisor.py",
+    "changes": [
+      {
+        "function": "canonical_worker_terminal_status",
+        "change": "Added \"reopen\" to the recognized event-type set (RESPONSIBILITY_TRANSFER_EVENT_TYPES constant) and to the event-type -> valid task-status map (reopen -> {\"in_progress\"}), gated on expected_role == \"reviewer\". Fixed shared actor check so missing actor fails closed. Added self-consistent event_id check via _ai_status_activity_event_id_matches. Added worker_matches_current_task_generation check. Added review_requeue_intent cross-check requiring pending status, matching task_generation, and matching reviewer/reopened_by. Checked that task has no pending review_decision_intent. Strictly validates complete committed delivery and evidence manifest bindings (required_merge_method == \"MERGE\", evidence_manifest.path, evidence_manifest.blob_sha) against current task and dispatched snapshot. For artifact_contract, evaluates event_task with full immutable task contract. For review_approved, binds dispatched snapshot manifest and review_binding head_sha. For done, validates actual producer fields (commit, repository_slug/id, branch, head_sha, merge_commit, 40-hex SHA format, and review_binding head_sha)."
+      },
+      {
+        "function": "worker_completed_after_responsibility_transition",
+        "change": "Removed unknown-evidence fallback to True. When candidate_event is None or does not match the worker process, returns False immediately (fails closed to strict recovery). Only returns True when canonical_worker_terminal_status returns non-None, enforcing the single shared validated contract across both poll_workers and boot reconciliation call sites."
+      },
+      {
+        "function": "active_worker_governance_lease_decision",
+        "change": "Converged onto the shared validated contract. Evaluates transfer and terminal activity before done_statuses. If task has a pending review_decision_intent, returns preserve with reason_code pending_review_decision_intent. For RESPONSIBILITY_TRANSFER_EVENT_TYPES events, delegates to canonical_worker_terminal_status: terminates with exact_worker_lifecycle_transition only when validated, and returns preserve with unvalidated_lifecycle_transition if unauthenticated or unvalidated (rejecting missing or forged event_id). For GOVERNANCE_TERMINAL_EVENT_TYPES, strictly checks process match, digest match, and authenticated actor match; terminal cancellation terminates with authorized_terminal_cancellation (finalizing queue as cancelled)."
+      },
+      {
+        "function": "poll_worker_assignment_stage",
+        "change": "Under lock/CAS immediately before effects, revalidates committed delivery binding and evidence manifest. Dynamically revalidates fresh canonical task status and generation via _safe_load_canonical_task at the mutation boundary before setting worker completed or finalizing queue events, preventing stale task_map drift while preserving fallback for tests lacking status_file. Distinguishes authorized terminal cancellation (finalizes queue as cancelled with last_error) from exact_worker_lifecycle_transition (finalizes queue as completed)."
+      }
+    ],
+    "not_changed": [
+      "_persist_worker_recovery_receipt_locked / _resolve_obsolete_worker_recovery_receipt_locked (generic lost-lease CAS/receipt machinery; still used for genuine crash/expiry/no-transfer cases)",
+      ".orchestrator/rewrite/worker_recovery.py typed receipt validation/shape",
+      "review_decision_intent / review_requeue_intent construction in scripts/ai_status.py command_reopen",
+      "recover_lost_worker_lease itself"
+    ]
+  },
+  "acceptance_matrix_audit": {
+    "reopen_strict_authentication": {
+      "status": "fixed_and_regression_tested",
+      "detail": "test_canonical_worker_terminal_status_reopen_strict_negatives, test_canonical_worker_terminal_status_and_active_lease_all_transfer_strict_negatives_and_positives, and delivery/manifest binding tests (.orchestrator/test_supervisor.py) independently reproduce every probe the reviewer listed: (1) worker bound to task generation 1 replayed against a task already at generation 2; (2) an event missing its actor; (3) a forged event_id; (4a-i) review_requeue_intent invalid/mismatched fields; (5) later task_reassigned lifecycle event superseding the transfer; (6) forged review_approved event rejected by active classifier; (7) wrong metadata generation, boolean worker generation, and missing snapshot generation fail closed; (8) handoff, review_approved, and done missing event_id fail closed; (9) non-transition clarification note preserves authentic reopen; (10) delivery_binding manifest blob_sha or path mismatch fails closed to unvalidated_lifecycle_transition. Baseline authentic cases confirm all positive paths succeed."
+    },
+    "classifier_convergence": {
+      "status": "fixed_and_regression_tested",
+      "detail": "worker_completed_after_responsibility_transition and active_worker_governance_lease_decision are fully converged onto canonical_worker_terminal_status. active_worker_governance_lease_decision evaluates transfer and terminal activity before done_statuses, preventing unauthenticated done from terminating workers or minting completion evidence. Proven by unit tests and poll_worker_assignment_stage consumer regression tests."
+    },
+    "reproduced_reopen_sequences": {
+      "status": "fixed_and_regression_tested_with_real_recorded_data",
+      "detail": "test_canonical_worker_terminal_status_recognizes_real_recorded_reopens replays three byte-identical rows copied out of live ai-activity-log.jsonl: (1) Registry g19 (PR #5620, event ai-status-event-a2440076fb2e5850b45b7dec1d507f3c45af0b3404ae9d619fad005532aa1874), (2) Self-task PR #5637 (event ai-status-event-4f20032ba9002383713700fcaa6704e8348a57bda5620bb9deb31073a34b081b), and (3) OpenClaw g20 (SIMPLIFY-OPENCLAW-001 generation 20, PR #5629, event ai-status-event-602fc409e9ff3f91b953183925fd39f0aabb9f6c5770e1b1b3af9f355b7995c0). Each is tested against the candidate classifier (returns in_progress) and pre-fix classifier (returns None, reproducing defect)."
+    },
+    "real_two_process_cli_taskstore_outbox_flow": {
+      "status": "covered_by_real_cli_and_isolated_process_tests",
+      "detail": "RealProcessReviewHandoffRecoveryFlowTests in .orchestrator/test_supervisor.py exercises 8 genuine multi-process flows with real worker_runner.py, local_stub sandbox, genuine SIGTERM exit (143) writing its own runner status JSON marker, fresh supervisor process restart via subprocess.run([sys.executable, ...]), and execution of an actual successor worker process receiving current negative findings (review_requeue_intent): (1) test_real_isolated_runner_stop_and_dispatch_flow: isolated child runner, real PID and /proc ticks, CLI ai-status.sh reopen commit, SIGTERM/exit 143, unmocked supervisor poll_workers & fresh restart reconciliation, dispatch_ready_tasks plans owner dispatch with review findings, and actual successor worker process executes verifying review_requeue_intent. (2) test_real_runner_queue_receipt_restart_and_dispatch_flow: real runner exit (143), CLI reopen, unmocked poll_workers, fresh restart reconciliation, durable reserve_dispatch_plan queue receipt reservation, repeated dispatch cycle deduplication (zero duplicates), and supervisor restart boot reconciliation preservation of the queued event to Antigravity. (3) test_two_process_ordering1_reopen_completes_before_recovery_cas: bounded overlapping processes with fail-closed dual multiprocessing.Barrier(2) synchronization, proving reopen commits before recovery CAS, recovery CAS fails safely, worker is superseded without bumping generation, and review findings remain intact. (4) test_two_process_ordering2_recovery_fences_stale_reopen_refused_by_cas: dual barrier concurrency proving recovery CAS commits first (bumping generation 1 -> 2), and concurrent stale reopen is refused by CAS preflight with exit code != 0. (5) test_two_process_ordering_finalize_completes_before_recovery_cas: dual barrier concurrency proving finalize commits before recovery CAS, worker reaped cleanly as completed without lost-lease receipt. (6) test_two_process_ordering_reassignment_fences_stale_reopen: dual barrier concurrency proving supervisor reassignment fences concurrent stale reopen, task advanced to reassigned owner. (7) test_crash_window_reopen_commit_runner_sigkill_restart: CLI reopen committed, runner abruptly killed via SIGKILL, and fresh supervisor restart boot reconciliation cleanly reaps the dead process as completed without lost-lease receipt, preserving task at generation 1. (8) test_crash_retry_window_outbox_committed_runner_terminated_receipt_retry: outbox committed, runner terminated (143), restart reconciliation, queue reservation, crash restart, repeated dispatch deduplication, and actual successor worker process execution verifying outbox reason."
+    },
+    "owner_handoff_approve_reject_done_blocker_reassignment_negatives": {
+      "status": "covered_by_preexisting_and_new_unit_tests",
+      "detail": "Existing supervisor and ai_status suites cover owner handoff, approve, reopen/reject, done, blocker, and reassignment transitions with strict actor, generation, run, queue, PID-ticks, digest, and head negatives."
+    },
+    "true_crash_progress_timeout_lease_expiry_pending_intent": {
+      "status": "unchanged_and_reverified",
+      "detail": "recover_lost_worker_lease, review_decision_intent lease-loss handling, and generic receipt CAS machinery fence and recover correctly when no committed transfer event matches the worker's exact process identity or when a matching event fails strict checks."
+    },
+    "retirement_of_conflicting_classifiers": {
+      "status": "fixed_and_regression_tested",
+      "detail": "worker_completed_after_responsibility_transition and active_worker_governance_lease_decision are converged onto canonical_worker_terminal_status. There are no competing unauthenticated or shortcut classifiers."
+    },
+    "qualification_handoff": {
+      "status": "specified_for_coordinator_promotion",
+      "detail": "Coordinator promotion specification defined in docs/02-architecture/development-tooling-product-boundary.md and docs/operations/management-ai-openclaw-dev-bridge.md: post-merge dev HEAD promotion to command root via scripts/promote_supervisor_runtime.py and scripts/sync-dev-root.sh with immutable snapshot, binding reviewed candidate and resulting immutable merged command/Python identities, preserving PANTHEON_STATUS_ROOT (/home/chloe_ong_dev_cctech_support_com/code/pantheon), live leases, supervisor watchdog, and single integrator integrity."
+    },
+    "governed_delivery": {
+      "status": "pending",
+      "detail": "Commit, push branch task/OPS-REVIEW-HANDOFF-RECOVERY-CONTRACT-001, resume PR #5637, independent review by Codex2, required checks, dev merge."
+    }
+  },
+  "verification": {
+    "status": "passed",
+    "preparation": "Provisioned .venv-pantheon with scripts/dev/provision_python_distribution.py using PANTHEON_DEPENDENCY_PYTHON=/tmp/registry-codex-review-20260906-deps/bin/python3.",
+    "commands": [
+      {
+        "name": "supervisor_full_suite",
+        "command": ".venv-pantheon/bin/python3 -m pytest -q .orchestrator/test_supervisor.py",
+        "passed": 272,
+        "subtests_passed": 55,
+        "failed": 0,
+        "skipped": 0,
+        "exit_code": 0,
+        "terminal_output": "272 passed, 55 subtests passed in 105.75s (0:01:45)",
+        "output_sha256": "f1b7bfe383cfb3f74211ae5dc05c58c429fa99d295097bdb8ae8585dc38f4980"
+      },
+      {
+        "name": "real_process_recovery_flow_suite",
+        "command": ".venv-pantheon/bin/python3 -m pytest -q .orchestrator/test_supervisor.py -k \"RealProcessReviewHandoffRecoveryFlowTests or canonical_worker_terminal_status or active_worker_governance_lease\"",
+        "passed": 14,
+        "subtests_passed": 0,
+        "failed": 0,
+        "skipped": 0,
+        "exit_code": 0,
+        "terminal_output": "14 passed, 258 deselected in 28.15s",
+        "output_sha256": "0fbcf88ec5bd97a4c9ec1fb11eed94dd4830cc04d0deca00f4de62446807f58e"
+      },
+      {
+        "name": "worker_recovery_and_runner_heartbeat",
+        "command": ".venv-pantheon/bin/python3 -m pytest -q .orchestrator/rewrite/test_worker_recovery.py .orchestrator/test_worker_runner_heartbeat.py",
+        "passed": 70,
+        "subtests_passed": 0,
+        "failed": 0,
+        "skipped": 0,
+        "exit_code": 0,
+        "terminal_output": "70 passed in 53.41s",
+        "output_sha256": "be072694c422314b78021045c715f459229910c8bbcf6bf835223202b9fa9ae0"
+      },
+      {
+        "name": "task_state_store_regression",
+        "command": ".venv-pantheon/bin/python3 -m pytest -q .orchestrator/rewrite/test_task_state_store.py",
+        "passed": 24,
+        "subtests_passed": 0,
+        "failed": 0,
+        "skipped": 0,
+        "exit_code": 0,
+        "terminal_output": "24 passed in 3.00s",
+        "output_sha256": "e5319d9e6fb4587e4caaca57047601649637fb689946ee5a3354b6e81bba74cc"
+      },
+      {
+        "name": "dispatch_policy_and_admission",
+        "command": ".venv-pantheon/bin/python3 -m pytest -q .orchestrator/test_dispatch_policy.py .orchestrator/rewrite/test_dispatch_admission.py",
+        "passed": 63,
+        "subtests_passed": 0,
+        "failed": 0,
+        "skipped": 0,
+        "exit_code": 0,
+        "terminal_output": "63 passed in 7.14s",
+        "output_sha256": "186a3df44a139ef0714f7e860db8b6dd4be85bd75f9382bd9f4a5df21fdbfe4f"
+      },
+      {
+        "name": "execution_authorization_regression",
+        "command": ".venv-pantheon/bin/python3 -m pytest -q .orchestrator/test_execution_authorization.py",
+        "passed": 58,
+        "subtests_passed": 39,
+        "failed": 0,
+        "skipped": 0,
+        "exit_code": 0,
+        "terminal_output": "58 passed, 39 subtests passed in 5.65s",
+        "output_sha256": "c9efc46612a7e1c77fc44dc9a1981f7a05dd3a3dab83581436a29e98c9359e76"
+      },
+      {
+        "name": "ai_status_full_suite",
+        "command": ".venv-pantheon/bin/python3 -m pytest -q scripts/test_ai_status.py",
+        "passed": 437,
+        "subtests_passed": 156,
+        "failed": 0,
+        "skipped": 0,
+        "exit_code": 0,
+        "terminal_output": "437 passed, 156 subtests passed in 214.57s (0:03:34)",
+        "output_sha256": "08a6544ad1e6d93c6cf2ac1117bbaefeb109b28620beb8d583a169f54d510d5e"
+      }
+    ],
+    "totals": {
+      "passed": 924,
+      "subtests_passed": 250,
+      "failed": 0,
+      "skipped": 0
+    },
+    "collection": "Every foreground batch reached a collected terminal exit; no batch was killed or timed out.",
+    "development_failures": "None in accepted run."
+  },
+  "not_claimed": [
+    "Any change to the generic lost-lease receipt/CAS machinery, review_decision_intent handling, or worker_recovery.py typed receipts",
+    "Product runtime, Management AI, Agora, or hosted/coordinator promotion execution",
+    "Resolution of PPL-ALLOC-007, PPL-ALLOC-009, or any unrelated open task"
+  ],
+  "source_git_blobs": {
+    ".orchestrator/supervisor.py": "c536e53f3235256acd50892f68c747bf713b31f0",
+    ".orchestrator/test_supervisor.py": "3fe515c12b95dcf00388bf83b0a6280ae5daa5c9"
+  },
+  "qualification_handoff": {
+    "source_acceptance": "pending independent exact-head review by Codex2 on PR #5637, required checks, and dev merge",
+    "qualified_tooling_runtime": "Coordinator promotion specification defined in docs/02-architecture/development-tooling-product-boundary.md and docs/operations/management-ai-openclaw-dev-bridge.md: post-merge dev HEAD promotion to command root via scripts/promote_supervisor_runtime.py and scripts/sync-dev-root.sh with immutable snapshot, binding reviewed candidate and resulting immutable merged command/Python identities, preserving PANTHEON_STATUS_ROOT (/home/chloe_ong_dev_cctech_support_com/code/pantheon), live leases, supervisor watchdog, and single integrator integrity.",
+    "coordinator_next": "After PR #5637 merge, promote dev HEAD to qualified command runtime via scripts/sync-dev-root.sh / scripts/promote-supervisor-runtime.sh, execute post-promotion isolated replay verifying live supervisor restart reconciliation preserves in-flight worker leases, verify actual qualified dispatch evidence, and report final delivery to SYS-SIMPLIFY-IMPLEMENTATION-CLOSURE-001 coordinator."
+  }
+}

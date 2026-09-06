@@ -202,6 +202,44 @@ accompanied by [LEGACY_CLOSEOUT_RECONCILIATION.md](../04/pantheon_first_release_
 - Subsequent calls are idempotent; the task ID is protected against re-admission or resurrection
   at `assign` and `dev_bridge_materialize` boundaries.
 
+## Reviewer reopen / worker-recovery responsibility-transition classification
+
+A legitimate exact reviewer `reopen` finishes that reviewer's dispatched
+review attempt and hands `in_progress` responsibility back to the owner with
+the rejection recorded; it never approves or completes the task. The runner
+process still truthfully records its own exit/signal (typically SIGTERM /
+exit 143) once the supervisor stops it after that commit. Those are two
+independent outcomes -- process exit and task responsibility -- and only the
+canonical activity-log event bound to the worker's exact PID/process
+generation, run/queue identity, and dispatched role proves the latter.
+
+The approved architecture plan is
+[REVIEW_HANDOFF_RECOVERY_SA_SD.md](../04/pantheon_first_release_closure_2026-09-06/REVIEW_HANDOFF_RECOVERY_SA_SD.md),
+byte-identical to `/tmp/pantheon-review-handoff-contract-20260906.N5IA5r/SA_SD.md`
+(SHA256 `3fb778af7b4127b624d4b60d65bcd0471bfe181ee997ead78deb16a8c2484011`),
+accompanied by
+[REVIEW_HANDOFF_RECOVERY_RECHECK.md](../04/pantheon_first_release_closure_2026-09-06/REVIEW_HANDOFF_RECOVERY_RECHECK.md)
+(SHA256 `3711b0820dbee4e88d7036a4ddc0da0b85674c7ac36d79b0882c39a603a0ffc0`).
+
+`.orchestrator/supervisor.py`'s `canonical_worker_terminal_status` is the one
+authoritative classifier both normal polling (`poll_workers`) and supervisor
+boot reconciliation already call before falling back to generic lost-lease
+fencing (`recover_lost_worker_lease`). It now recognizes an exact `reopen`
+lifecycle event -- bound to the worker's process identity and actor, and
+requiring the reviewer role and a resulting `in_progress` task status -- as
+proof that the dispatched reviewer attempt already completed, exactly the
+same way it already recognized `handoff`/`review_approved`/`done` for other
+roles. This closes the gap where a truthful SIGTERM/143 after a committed
+reopen was misclassified as a lost lease, fencing the lease, bumping
+`generation`, and dropping the current `review_requeue_intent`. No new
+service, queue, registry, or second approval/completion path was added; the
+generic lost-lease receipt/CAS machinery in
+`_persist_worker_recovery_receipt_locked` and
+`.orchestrator/rewrite/worker_recovery.py` is unchanged and still applies to
+a genuine crash, expiry, or exit without a committed responsibility transfer.
+See `docs/deployment/evidence/OPS-REVIEW-HANDOFF-RECOVERY-CONTRACT-001/evidence.json`
+for the verification record and residual (not yet implemented) scope.
+
 ## Removing development tooling
 
 After product release, archive tasks and verify that no worker, lease, or queue
