@@ -14,6 +14,7 @@ import ast
 import base64
 import multiprocessing
 import copy
+import hashlib
 import inspect
 import json
 import os
@@ -814,6 +815,7 @@ def task_fixture(
     reviewer: str = "Codex2",
     depends_on: list[str] | None = None,
     execution_resources: list[str] | None = None,
+    review_requeue_intent: dict[str, object] | None = None,
 ) -> dict[str, object]:
     result = {
         "id": task_id,
@@ -826,7 +828,27 @@ def task_fixture(
     }
     if execution_resources is not None:
         result["execution_resources"] = list(execution_resources)
+    if review_requeue_intent is not None:
+        result["review_requeue_intent"] = review_requeue_intent
     return result
+
+
+# Two byte-identical real recorded reopen events from the live
+# ai-activity-log.jsonl (not reconstructed/synthetic), used by
+# RuntimeAndFailureSemanticsTests.test_canonical_worker_terminal_status_recognizes_two_real_recorded_reopens
+# for an old-vs-candidate proof against genuine production data:
+#
+# - REGISTRY-STRATEGY-UNIFIED-CONTRACT-001 generation 19,
+#   event_id ai-status-event-a2440076fb2e5850b45b7dec1d507f3c45af0b3404ae9d619fad005532aa1874
+#   at 2026-09-06T15:17:07Z ("Registry g19").
+# - OPS-REVIEW-HANDOFF-RECOVERY-CONTRACT-001's own reopen,
+#   event_id ai-status-event-4f20032ba9002383713700fcaa6704e8348a57bda5620bb9deb31073a34b081b
+#   at 2026-09-06T16:45:14Z -- the real production supervisor (running a
+#   command root that predates this fix) fenced/bumped/dropped the intent
+#   for this exact event before resolving it as stale: the live defect
+#   reproduction this task repairs.
+REAL_RECORDED_REOPEN_EVENT_REGISTRY_G19 = '{"ts": "2026-09-06T15:17:07Z", "agent": "Codex", "type": "reopen", "task_id": "REGISTRY-STRATEGY-UNIFIED-CONTRACT-001", "message": "Independent exact-head review REJECT for PR #5620 head 3f7e9551e33fc716645058f574c1c426ddc1d5fb, manifest blob fb1036313300c58bb6d9cef5be79a9e6af79c2c5. [P1] services/registry/service.py:1089-1100 generic POST /api/registry/entries accepts a fully typed strategy_spec with only artifact_type/strategy_id/version: both keyed and unkeyed real HTTP requests returned 200 and typed GET durably returned checksum empty, object_store path empty, no lineage or spec. Require the same typed StrategySpec content/reference/lineage prerequisites as the dedicated facade; preserve genuine name-only drafts. [P1] services/registry/service.py:1089-1100,1842-1849 generic create bypasses AllocationPolicyArtifact validation: metadata.allocation_policy_artifact={invalid:true} with artifact_type=allocation_policy and source_run_ids was stored, advanced draft->candidate->approved, and returned by GET /api/registry/allocation-policy-artifacts/{id} as approved. Constrain generic mutation kinds assigned to typed routes or enforce their canonical validators, and verify typed readbacks cannot expose invalid approved artifacts (SA/SD 3.2). Validation at this exact unchanged clean head: complete requested Registry/foundation/BFF PostgreSQL suite 394 passed, 3 warnings in 160.17s, terminal exit 0 (/tmp/registry-review-3f7e9551-suite.log). Independent strict-JWT real-process HTTP probes using isolated UUID schemas on local test PostgreSQL: PYTHONPATH=/tmp/pantheon-worker-worktrees/pantheon/registry-strategy-unified-contract-001 TEST_DATABASE_URL=<local-test-PostgreSQL> timeout 90 .venv-pantheon/bin/python3 -m pytest /tmp/test_registry_review_3f7e.py -q --tb=short -> 3 failed, 1 passed in 7.87s, terminal exit 1 (/tmp/registry-review-3f7e9551-probes.log); blank-role JWT correctly denied. Commit permanent keyed/unkeyed regressions and positive counterparts, reconcile frozen contract/evidence, and hand off a new exact head. Reopen is for reproduced acceptance defects, not base advancement.", "review_requeue_intent": {"schema_version": 1, "task_id": "REGISTRY-STRATEGY-UNIFIED-CONTRACT-001", "task_generation": 19, "owner": "Antigravity", "reviewer": "Codex", "reopened_at": "2026-09-06T15:17:07Z", "reopened_by": "Codex", "reason": "Independent exact-head review REJECT for PR #5620 head 3f7e9551e33fc716645058f574c1c426ddc1d5fb, manifest blob fb1036313300c58bb6d9cef5be79a9e6af79c2c5. [P1] services/registry/service.py:1089-1100 generic POST /api/registry/entries accepts a fully typed strategy_spec with only artifact_type/strategy_id/version: both keyed and unkeyed real HTTP requests returned 200 and typed GET durably returned checksum empty, object_store path empty, no lineage or spec. Require the same typed StrategySpec content/reference/lineage prerequisites as the dedicated facade; preserve genuine name-only drafts. [P1] services/registry/service.py:1089-1100,1842-1849 generic create bypasses AllocationPolicyArtifact validation: metadata.allocation_policy_artifact={invalid:true} with artifact_type=allocation_policy and source_run_ids was stored, advanced draft->candidate->approved, and returned by GET /api/registry/allocation-policy-artifacts/{id} as approved. Constrain generic mutation kinds assigned to typed routes or enforce their canonical validators, and verify typed readbacks cannot expose invalid approved artifacts (SA/SD 3.2). Validation at this exact unchanged clean head: complete requested Registry/foundation/BFF PostgreSQL suite 394 passed, 3 warnings in 160.17s, terminal exit 0 (/tmp/registry-review-3f7e9551-suite.log). Independent strict-JWT real-process HTTP probes using isolated UUID schemas on local test PostgreSQL: PYTHONPATH=/tmp/pantheon-worker-worktrees/pantheon/registry-strategy-unified-contract-001 TEST_DATABASE_URL=<local-test-PostgreSQL> timeout 90 .venv-pantheon/bin/python3 -m pytest /tmp/test_registry_review_3f7e.py -q --tb=short -> 3 failed, 1 passed in 7.87s, terminal exit 1 (/tmp/registry-review-3f7e9551-probes.log); blank-role JWT correctly denied. Commit permanent keyed/unkeyed regressions and positive counterparts, reconcile frozen contract/evidence, and hand off a new exact head. Reopen is for reproduced acceptance defects, not base advancement.", "intent_id": "review-requeue-61c199e788fc9e0493d940f199df1621083f51e20afaee30bb1685fe13cc387e", "status": "pending"}, "github_review_bridge": {"repository": "ajoe734/pantheon", "pr": 5620, "head_sha": "3f7e9551e33fc716645058f574c1c426ddc1d5fb", "head_branch": "task/REGISTRY-STRATEGY-UNIFIED-CONTRACT-001", "base": "dev", "decision": "reopen", "actor": "Codex", "mode": "required_commit_status", "status_id": 53630753623, "status_context": "Pantheon canonical review gate", "status_state": "failure", "review_proof_ref": "refs/tags/pantheon-review/reopen/3f7e9551e33fc716645058f574c1c426ddc1d5fb", "pr_url": "https://github.com/ajoe734/pantheon/pull/5620", "recorded_at": "2026-09-06T15:17:07Z", "intent_nonce": "8897f1343aad8039684967644019c278", "review_error": "gh: Unprocessable Entity (HTTP 422)"}, "status_command": {"command_root": "/home/chloe_ong_dev_cctech_support_com/pantheon-ci-deploy/command-runtimes/e9d1a1e50b4f098db6e62c1c4e247f1f40f36827", "source_sha": "e9d1a1e50b4f098db6e62c1c4e247f1f40f36827", "base_ref": "origin/dev", "remote": "ajoe734/pantheon", "status_root": "/home/chloe_ong_dev_cctech_support_com/code/pantheon", "delivery_root": "/tmp/pantheon-worker-worktrees/pantheon/registry-strategy-unified-contract-001", "wrapper_root": "/home/chloe_ong_dev_cctech_support_com/pantheon-ci-deploy/command-runtimes/e9d1a1e50b4f098db6e62c1c4e247f1f40f36827", "worker_lease": {"schema_version": 1, "task_id": "REGISTRY-STRATEGY-UNIFIED-CONTRACT-001", "worker_run_id": "codex-20260906T151222Z-c4a97359", "queue_event_id": "evt-20260906T151219Z-03f89ba8", "pid": 1556218, "pid_start_ticks": 39528704, "process_generation": "worker-process-generation-sha256:bbb1d1128acbb85bedcad884937e98403e77f76fe67bfbd111cb6167d917b9a1", "task_generation": 19, "actor": "Codex", "workspace_repository_id": "pantheon", "workspace_branch": "task/REGISTRY-STRATEGY-UNIFIED-CONTRACT-001", "workspace_source_root": "/home/chloe_ong_dev_cctech_support_com/pantheon-ci-deploy/dev-root"}}, "event_id": "ai-status-event-a2440076fb2e5850b45b7dec1d507f3c45af0b3404ae9d619fad005532aa1874"}'
+REAL_RECORDED_REOPEN_EVENT_SELF_TASK = '{"ts": "2026-09-06T16:45:14Z", "agent": "Codex2", "type": "reopen", "task_id": "OPS-REVIEW-HANDOFF-RECOVERY-CONTRACT-001", "message": "Independent exact-head review rejects PR #5637 at 7041e1d517053eba727c32b310e1f15246f3276d (manifest fde034be54edd4ac489eaae2ac8de9bfd4024623). Acceptance failure, not dev BEHIND. Required changes: (1) P1 supervisor.py:7648-7678 newly accepts reopen without current task/event/worker generation, authenticated event/required actor, latest relevant assignment/scope transition, delivery/digest and pending-intent validation. Independent in-memory probes using the submitted helpers: worker g1 plus current task g2 still returns in_progress; poll_workers with that stale attempt marks worker and queue completed and calls recovery zero times. Missing actor and forged event_id also return in_progress. These are unit-level defect observations, not real process proof. Add strict negatives and revalidate exact task/event/attempt under existing lock/CAS before effects. (2) P1 the planned classifier convergence is incomplete: worker_completed_after_responsibility_transition at 4983 remains an exit-success/status-responsibility shortcut ahead of canonical_worker_terminal_status at polling 10681 and boot 12339; active_worker_governance_lease_decision retains separate lifecycle policy. Inventory and converge callers on one validated transfer contract, preserving truthful 143 and genuine loss recovery; correct the manifest claim that no parallel classifier existed. (3) P1 required acceptance cannot be waived as not_claimed: implement two recorded old-versus-candidate reopen sequences including Registry g19, genuine isolated CLI/TaskStore/outbox and reviewer stop/exit through polling AND restart, exactly one successor owner dispatch carrying original current negative findings; real two-process recovery/claim/reassign/finalize races and crash/retry windows with authority/archive barriers. The two added mock tests do not provide this evidence. (4) Complete archive/TaskStore/dispatch/execution-authorization regression evidence and replace qualification_handoff not-applicable claim with the exact coordinator-owned immutable command/Python/root/watchdog/integrator promotion and postflight handoff required by acceptance; preserve separate source/activation/product claims. Verified independently: clean correct task branch, live PR/head/base binding and no auto-merge, manifest blob, both immutable document SHA256 values, diff whitespace; timeout 150 .venv-pantheon/bin/python3 -m pytest -q .orchestrator/test_supervisor.py collected terminal exit 0: 255 passed, 55 subtests passed in 82.93s, no skips or timeout. Green unit suite does not discharge the reproduced strict-negative defects or missing process acceptance. Owner Claude must repair full approved scope and re-handoff a fresh committed exact head/manifest.", "review_requeue_intent": {"schema_version": 1, "task_id": "OPS-REVIEW-HANDOFF-RECOVERY-CONTRACT-001", "task_generation": 2, "owner": "Claude", "reviewer": "Codex2", "reopened_at": "2026-09-06T16:45:14Z", "reopened_by": "Codex2", "reason": "Independent exact-head review rejects PR #5637 at 7041e1d517053eba727c32b310e1f15246f3276d (manifest fde034be54edd4ac489eaae2ac8de9bfd4024623). Acceptance failure, not dev BEHIND. Required changes: (1) P1 supervisor.py:7648-7678 newly accepts reopen without current task/event/worker generation, authenticated event/required actor, latest relevant assignment/scope transition, delivery/digest and pending-intent validation. Independent in-memory probes using the submitted helpers: worker g1 plus current task g2 still returns in_progress; poll_workers with that stale attempt marks worker and queue completed and calls recovery zero times. Missing actor and forged event_id also return in_progress. These are unit-level defect observations, not real process proof. Add strict negatives and revalidate exact task/event/attempt under existing lock/CAS before effects. (2) P1 the planned classifier convergence is incomplete: worker_completed_after_responsibility_transition at 4983 remains an exit-success/status-responsibility shortcut ahead of canonical_worker_terminal_status at polling 10681 and boot 12339; active_worker_governance_lease_decision retains separate lifecycle policy. Inventory and converge callers on one validated transfer contract, preserving truthful 143 and genuine loss recovery; correct the manifest claim that no parallel classifier existed. (3) P1 required acceptance cannot be waived as not_claimed: implement two recorded old-versus-candidate reopen sequences including Registry g19, genuine isolated CLI/TaskStore/outbox and reviewer stop/exit through polling AND restart, exactly one successor owner dispatch carrying original current negative findings; real two-process recovery/claim/reassign/finalize races and crash/retry windows with authority/archive barriers. The two added mock tests do not provide this evidence. (4) Complete archive/TaskStore/dispatch/execution-authorization regression evidence and replace qualification_handoff not-applicable claim with the exact coordinator-owned immutable command/Python/root/watchdog/integrator promotion and postflight handoff required by acceptance; preserve separate source/activation/product claims. Verified independently: clean correct task branch, live PR/head/base binding and no auto-merge, manifest blob, both immutable document SHA256 values, diff whitespace; timeout 150 .venv-pantheon/bin/python3 -m pytest -q .orchestrator/test_supervisor.py collected terminal exit 0: 255 passed, 55 subtests passed in 82.93s, no skips or timeout. Green unit suite does not discharge the reproduced strict-negative defects or missing process acceptance. Owner Claude must repair full approved scope and re-handoff a fresh committed exact head/manifest.", "intent_id": "review-requeue-160c012ded408b1be4ea25c6d74cc51ef72cd21a7573e83223a00a60faf79bc9", "status": "pending"}, "github_review_bridge": {"repository": "ajoe734/pantheon", "pr": 5637, "head_sha": "7041e1d517053eba727c32b310e1f15246f3276d", "head_branch": "task/OPS-REVIEW-HANDOFF-RECOVERY-CONTRACT-001", "base": "dev", "decision": "reopen", "actor": "Codex2", "mode": "required_commit_status", "status_id": 53632841237, "status_context": "Pantheon canonical review gate", "status_state": "failure", "review_proof_ref": "refs/tags/pantheon-review/reopen/7041e1d517053eba727c32b310e1f15246f3276d", "pr_url": "https://github.com/ajoe734/pantheon/pull/5637", "recorded_at": "2026-09-06T16:45:12Z", "intent_nonce": "8392d2ffd8e5b2fa90b06121352f4c38", "review_error": "gh: Unprocessable Entity (HTTP 422)"}, "status_command": {"command_root": "/home/chloe_ong_dev_cctech_support_com/pantheon-ci-deploy/command-runtimes/65469bc843cab134599995ef7093fe2cf3516af4", "source_sha": "65469bc843cab134599995ef7093fe2cf3516af4", "base_ref": "origin/dev", "remote": "ajoe734/pantheon", "status_root": "/home/chloe_ong_dev_cctech_support_com/code/pantheon", "delivery_root": "/tmp/pantheon-worker-worktrees/pantheon/ops-review-handoff-recovery-contract-001", "wrapper_root": "/home/chloe_ong_dev_cctech_support_com/pantheon-ci-deploy/command-runtimes/65469bc843cab134599995ef7093fe2cf3516af4", "worker_lease": {"schema_version": 1, "task_id": "OPS-REVIEW-HANDOFF-RECOVERY-CONTRACT-001", "worker_run_id": "codex-20260906T164216Z-2a75e22a", "queue_event_id": "evt-20260906T164213Z-6804edda", "pid": 2312869, "pid_start_ticks": 40068108, "process_generation": "worker-process-generation-sha256:d4a0b27f7a8c5b5d264a96a8147a2096f0f901ec194f38165169a43a2ff9ea4a", "task_generation": 2, "actor": "Codex2", "workspace_repository_id": "pantheon", "workspace_branch": "task/OPS-REVIEW-HANDOFF-RECOVERY-CONTRACT-001", "workspace_source_root": "/home/chloe_ong_dev_cctech_support_com/pantheon-ci-deploy/dev-root"}}, "event_id": "ai-status-event-4f20032ba9002383713700fcaa6704e8348a57bda5620bb9deb31073a34b081b"}'
 
 
 def review_admission_binding(
@@ -8074,15 +8096,43 @@ class RuntimeAndFailureSemanticsTests(unittest.TestCase):
         worker: dict[str, object],
         *,
         event_type: str,
+        agent: str | None = None,
     ) -> dict[str, object]:
-        return {
-            "event_id": f"event-{event_type}",
+        payload: dict[str, object] = {
             "task_id": "TASK-1",
             "type": event_type,
             "ts": "2026-08-15T04:01:00Z",
             "status_command": {
                 "worker_lease": supervisor.worker_process_identity(worker)
             },
+        }
+        if agent is not None:
+            payload["agent"] = agent
+        # ai_status.py stamps a self-consistent digest event_id on every
+        # unbespoke event; canonical_worker_terminal_status now verifies it
+        # (a forged/hand-edited event_id must not authorize a reopen), so the
+        # fixture has to produce a genuine one instead of a fixed string.
+        encoded = json.dumps(
+            payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False
+        ).encode("utf-8")
+        payload["event_id"] = "ai-status-event-" + hashlib.sha256(encoded).hexdigest()
+        return payload
+
+    @staticmethod
+    def _pending_review_requeue_intent(
+        *, task_generation: int, reviewer: str = "Codex2", reopened_by: str = "Codex2"
+    ) -> dict[str, object]:
+        return {
+            "schema_version": 1,
+            "task_id": "TASK-1",
+            "task_generation": task_generation,
+            "owner": "Codex",
+            "reviewer": reviewer,
+            "reopened_at": "2026-08-15T04:01:00Z",
+            "reopened_by": reopened_by,
+            "reason": "Independent exact-head review rejects this delivery.",
+            "intent_id": "review-requeue-" + ("a" * 64),
+            "status": "pending",
         }
 
     def test_review_handoff_cannot_preserve_a_stale_worker_generation(self) -> None:
@@ -8232,7 +8282,10 @@ class RuntimeAndFailureSemanticsTests(unittest.TestCase):
 
     def test_reviewer_reopen_ends_the_exact_worker_that_emitted_it(self) -> None:
         config = config_fixture()
-        task = task_fixture(status="in_progress")
+        task = task_fixture(
+            status="in_progress",
+            review_requeue_intent=self._pending_review_requeue_intent(task_generation=1),
+        )
         worker = self._owner_worker(generation=1)
         worker.update(
             {
@@ -8283,7 +8336,9 @@ class RuntimeAndFailureSemanticsTests(unittest.TestCase):
                 active_worker_statuses={"running"},
                 alive=True,
                 governance_activity_events=[
-                    self._exact_lifecycle_event(worker, event_type="reopen")
+                    self._exact_lifecycle_event(
+                        worker, event_type="reopen", agent="Codex2"
+                    )
                 ],
             )
 
@@ -8296,7 +8351,11 @@ class RuntimeAndFailureSemanticsTests(unittest.TestCase):
         self,
     ) -> None:
         config = config_fixture()
-        task = task_fixture(status="in_progress", reviewer="Codex2")
+        task = task_fixture(
+            status="in_progress",
+            reviewer="Codex2",
+            review_requeue_intent=self._pending_review_requeue_intent(task_generation=1),
+        )
         worker = self._owner_worker(generation=1)
         worker.update(
             {
@@ -8318,8 +8377,9 @@ class RuntimeAndFailureSemanticsTests(unittest.TestCase):
             pid=1234,
             pid_start_ticks=5678,
         )
-        reopen_event = self._exact_lifecycle_event(worker, event_type="reopen")
-        reopen_event["agent"] = "Codex2"
+        reopen_event = self._exact_lifecycle_event(
+            worker, event_type="reopen", agent="Codex2"
+        )
 
         self.assertEqual(
             supervisor.canonical_worker_terminal_status(
@@ -8369,6 +8429,232 @@ class RuntimeAndFailureSemanticsTests(unittest.TestCase):
                 required_role="owner",
             )
         )
+
+    def test_canonical_worker_terminal_status_reopen_strict_negatives(self) -> None:
+        """A committed exact reopen must still fail closed on every one of
+
+        the independent probes an adversarial reviewer raised: a worker
+        bound to an already-superseded task generation, an event missing its
+        actor, a hand-edited (forged) event_id, and a review_requeue_intent
+        that no longer matches (missing, resolved, wrong generation, or
+        pointing at a different reviewer). Each of these previously slipped
+        through because canonical_worker_terminal_status only checked
+        process-identity/status-set membership for the reopen path.
+        """
+
+        config = config_fixture()
+
+        def _task(**overrides: object) -> dict[str, object]:
+            base = task_fixture(
+                status="in_progress",
+                reviewer="Codex2",
+                review_requeue_intent=self._pending_review_requeue_intent(
+                    task_generation=1
+                ),
+            )
+            base.update(overrides)
+            return base
+
+        def _worker() -> dict[str, object]:
+            worker = self._owner_worker(generation=1)
+            worker.update(
+                {
+                    "run_id": "run-reviewer",
+                    "agent_id": "codex2",
+                    "logical_agent_id": "codex2",
+                    "queue_event_id": "evt-reviewer",
+                    "request_snapshot": {
+                        "reason": supervisor.REASON_REVIEW_READY,
+                        "task_generation": 1,
+                        "metadata": {"task_generation": 1},
+                    },
+                }
+            )
+            worker["process_generation"] = supervisor.worker_process_generation_id(
+                task_id="TASK-1",
+                worker_run_id="run-reviewer",
+                queue_event_id="evt-reviewer",
+                pid=1234,
+                pid_start_ticks=5678,
+            )
+            return worker
+
+        # Sanity: the fully authentic baseline still succeeds.
+        worker = _worker()
+        task = _task()
+        reopen_event = self._exact_lifecycle_event(
+            worker, event_type="reopen", agent="Codex2"
+        )
+        self.assertEqual(
+            supervisor.canonical_worker_terminal_status(
+                config, worker, task, activity_events=[reopen_event]
+            ),
+            "in_progress",
+        )
+
+        # (1) Worker g1 dispatched against task g1, but canonical task truth
+        # has since advanced to g2 (e.g. a later reassignment/reopen already
+        # superseded this exact attempt). The stale worker must not still be
+        # able to claim its own old reopen as current proof.
+        stale_worker = _worker()
+        stale_worker["task_generation"] = 1
+        stale_worker["request_snapshot"]["task_generation"] = 1
+        stale_worker["request_snapshot"]["metadata"]["task_generation"] = 1
+        advanced_task = _task(generation=2)
+        self.assertIsNone(
+            supervisor.canonical_worker_terminal_status(
+                config,
+                stale_worker,
+                advanced_task,
+                activity_events=[
+                    self._exact_lifecycle_event(
+                        stale_worker, event_type="reopen", agent="Codex2"
+                    )
+                ],
+            )
+        )
+
+        # (2) Missing actor on the event must fail closed, not fall back to
+        # treating the process-identity match alone as authentication.
+        no_actor_event = self._exact_lifecycle_event(worker, event_type="reopen")
+        self.assertIsNone(
+            supervisor.canonical_worker_terminal_status(
+                config, worker, task, activity_events=[no_actor_event]
+            )
+        )
+
+        # (3) A forged/hand-edited event_id (payload changed without
+        # recomputing the digest) must not be trusted even though every
+        # other field, including the process-identity lease, still matches.
+        forged_event = dict(reopen_event)
+        forged_event["event_id"] = "ai-status-event-" + ("0" * 64)
+        self.assertIsNone(
+            supervisor.canonical_worker_terminal_status(
+                config, worker, task, activity_events=[forged_event]
+            )
+        )
+
+        # (4a) No review_requeue_intent on the task at all (e.g. a later
+        # handoff already cleared it) -- the reopen event alone is not proof
+        # that the intent it committed is still the live one.
+        no_intent_task = dict(task)
+        no_intent_task.pop("review_requeue_intent", None)
+        self.assertIsNone(
+            supervisor.canonical_worker_terminal_status(
+                config, worker, no_intent_task, activity_events=[reopen_event]
+            )
+        )
+
+        # (4b) A resolved (non-pending) requeue intent means a later command
+        # already consumed this exact reopen; it must not authorize a second
+        # responsibility transfer.
+        resolved_task = _task()
+        resolved_task["review_requeue_intent"]["status"] = "resolved"
+        self.assertIsNone(
+            supervisor.canonical_worker_terminal_status(
+                config, worker, resolved_task, activity_events=[reopen_event]
+            )
+        )
+
+        # (4c) The requeue intent's own task_generation no longer matches
+        # canonical truth -- a stale intent surviving from an earlier
+        # generation must not authorize a transfer at the current one.
+        stale_intent_task = _task()
+        stale_intent_task["review_requeue_intent"]["task_generation"] = 99
+        self.assertIsNone(
+            supervisor.canonical_worker_terminal_status(
+                config, worker, stale_intent_task, activity_events=[reopen_event]
+            )
+        )
+
+        # (4d) The requeue intent names a different reviewer than the worker
+        # that emitted this event -- it belongs to someone else's attempt.
+        other_reviewer_task = _task(
+            review_requeue_intent=self._pending_review_requeue_intent(
+                task_generation=1, reviewer="SomeoneElse", reopened_by="SomeoneElse"
+            )
+        )
+        self.assertIsNone(
+            supervisor.canonical_worker_terminal_status(
+                config, worker, other_reviewer_task, activity_events=[reopen_event]
+            )
+        )
+
+    def test_canonical_worker_terminal_status_recognizes_two_real_recorded_reopens(
+        self,
+    ) -> None:
+        """Old-vs-candidate proof against two real recorded reopen sequences.
+
+        ``REAL_RECORDED_REOPEN_EVENT_REGISTRY_G19`` and
+        ``REAL_RECORDED_REOPEN_EVENT_SELF_TASK`` are byte-identical rows
+        copied out of the live ``ai-activity-log.jsonl`` (see the module
+        docstring above their definition for exact event_ids/timestamps),
+        not reconstructed fixtures. Each is replayed twice against the exact
+        real worker/task identity it was recorded with: once through the
+        candidate classifier unmodified (recognizes the reopen), and once
+        with ``RESPONSIBILITY_TRANSFER_EVENT_TYPES`` patched back to the
+        pre-fix set that excluded ``reopen`` (does not recognize it, so the
+        caller would fall through to generic lost-lease fencing) -- the
+        exact defect Registry g19 and this task's own reopen reproduced in
+        production.
+        """
+        config = config_fixture()
+        old_event_types = frozenset({"handoff", "review_approved", "done"})
+
+        for raw_event in (
+            REAL_RECORDED_REOPEN_EVENT_REGISTRY_G19,
+            REAL_RECORDED_REOPEN_EVENT_SELF_TASK,
+        ):
+            event = json.loads(raw_event)
+            lease = event["status_command"]["worker_lease"]
+            requeue_intent = event["review_requeue_intent"]
+            is_codex2 = requeue_intent["reviewer"] == "Codex2"
+            worker = {
+                "task_id": lease["task_id"],
+                "run_id": lease["worker_run_id"],
+                "queue_event_id": lease["queue_event_id"],
+                "pid": lease["pid"],
+                "pid_start_ticks": lease["pid_start_ticks"],
+                "process_generation": lease["process_generation"],
+                "task_generation": requeue_intent["task_generation"],
+                "lease_acquired_at": "2026-01-01T00:00:00Z",
+                "agent_id": "codex2" if is_codex2 else "codex",
+                "logical_agent_id": "codex2" if is_codex2 else "codex",
+                "provider": "codex",
+                "request_snapshot": {
+                    "reason": supervisor.REASON_REVIEW_READY,
+                    "task_generation": requeue_intent["task_generation"],
+                    "metadata": {"task_generation": requeue_intent["task_generation"]},
+                },
+            }
+            task = task_fixture(
+                task_id=lease["task_id"],
+                status="in_progress",
+                owner=requeue_intent["owner"],
+                reviewer=requeue_intent["reviewer"],
+                review_requeue_intent=requeue_intent,
+            )
+            task["generation"] = requeue_intent["task_generation"]
+
+            self.assertEqual(
+                supervisor.canonical_worker_terminal_status(
+                    config, worker, task, activity_events=[event]
+                ),
+                "in_progress",
+                f"candidate classifier must recognize the real reopen for {lease['task_id']}",
+            )
+
+            with mock.patch.object(
+                supervisor,
+                "RESPONSIBILITY_TRANSFER_EVENT_TYPES",
+                old_event_types,
+            ):
+                self.assertIsNone(
+                    supervisor.canonical_worker_terminal_status(
+                        config, worker, task, activity_events=[event]
+                    ),
+                    f"pre-fix classifier reproduces the real defect for {lease['task_id']}",
+                )
 
     def test_run_once_orders_launch_before_slow_maintenance(self) -> None:
         source = inspect.getsource(supervisor.run_once)
@@ -8888,7 +9174,15 @@ class WorkerLeaseApprovalWaitProgressTests(unittest.TestCase):
         dropped ``review_requeue_intent``).
         """
         config = config_fixture()
-        task = task_fixture(status="in_progress")
+        task = task_fixture(
+            status="in_progress",
+            reviewer="Codex2",
+            review_requeue_intent=(
+                RuntimeAndFailureSemanticsTests._pending_review_requeue_intent(
+                    task_generation=1
+                )
+            ),
+        )
         worker = RuntimeAndFailureSemanticsTests._owner_worker(generation=1)
         worker.update(
             {
@@ -8933,7 +9227,7 @@ class WorkerLeaseApprovalWaitProgressTests(unittest.TestCase):
             "stop": True,
         }
         reopen_event = RuntimeAndFailureSemanticsTests._exact_lifecycle_event(
-            worker, event_type="reopen"
+            worker, event_type="reopen", agent="Codex2"
         )
 
         with (
@@ -8961,6 +9255,99 @@ class WorkerLeaseApprovalWaitProgressTests(unittest.TestCase):
         self.assertEqual(state["queue"]["events"]["evt-reviewer"]["status"], "completed")
         # No generic fence: generation/next were never touched.
         self.assertEqual(task.get("generation", 1), 1)
+
+    def test_missing_process_reviewer_with_stale_reopen_still_uses_lost_lease_recovery(
+        self,
+    ) -> None:
+        """A reopen bound to an already-superseded task generation is not proof.
+
+        Same shape as the Registry g19 reproduction above, except the
+        canonical task has already moved to generation 2 by the time
+        ``poll_workers`` observes the dead reviewer process -- so this
+        worker's own (generation-1) reopen no longer speaks for current
+        truth. ``poll_workers`` must fall through to ordinary lost-lease
+        recovery instead of silently reaping it as an exact transition.
+        """
+        config = config_fixture()
+        task = task_fixture(
+            status="in_progress",
+            reviewer="Codex2",
+            review_requeue_intent=(
+                RuntimeAndFailureSemanticsTests._pending_review_requeue_intent(
+                    task_generation=1
+                )
+            ),
+        )
+        task["generation"] = 2
+        worker = RuntimeAndFailureSemanticsTests._owner_worker(generation=1)
+        worker.update(
+            {
+                "run_id": "run-reviewer",
+                "agent_id": "codex2",
+                "logical_agent_id": "codex2",
+                "queue_event_id": "evt-reviewer",
+                "runner_status": "failed",
+                "exit_code": 143,
+                "runner_signal": 15,
+                "request_snapshot": {
+                    "reason": supervisor.REASON_REVIEW_READY,
+                    "task_generation": 1,
+                    "metadata": {"task_generation": 1},
+                },
+            }
+        )
+        worker["process_generation"] = supervisor.worker_process_generation_id(
+            task_id="TASK-1",
+            worker_run_id="run-reviewer",
+            queue_event_id="evt-reviewer",
+            pid=1234,
+            pid_start_ticks=5678,
+        )
+        state = {
+            "workers": {"run-reviewer": worker},
+            "queue": {
+                "events": {
+                    "evt-reviewer": {
+                        "status": "started",
+                        "intent": {"event_id": "evt-reviewer"},
+                    }
+                }
+            },
+        }
+        observation = {
+            "changed": False,
+            "alive": False,
+            "meaningful_progress_advanced": False,
+            "commit_progress_advanced": False,
+            "lease_expired": False,
+            "stop": True,
+        }
+        reopen_event = RuntimeAndFailureSemanticsTests._exact_lifecycle_event(
+            worker, event_type="reopen", agent="Codex2"
+        )
+
+        with (
+            mock.patch.object(supervisor, "load_approval_state", return_value={}),
+            mock.patch.object(supervisor, "load_status", return_value={"tasks": [task]}),
+            mock.patch.object(supervisor, "retry_due_workers", return_value=False),
+            mock.patch.object(
+                supervisor,
+                "recent_governance_activity_events",
+                return_value=[reopen_event],
+            ),
+            mock.patch.object(
+                supervisor, "poll_worker_orphan_stage", return_value={"changed": False, "stop": False}
+            ),
+            mock.patch.object(supervisor, "poll_worker_observation_stage", return_value=observation),
+            mock.patch.object(supervisor, "recover_lost_worker_lease", return_value=True) as recover,
+            mock.patch.object(supervisor, "reconcile_pending_worker_recoveries", return_value=False),
+            mock.patch.object(supervisor, "write_activity_log"),
+            mock.patch.object(supervisor, "record_worker_runtime_measurement"),
+        ):
+            self.assertTrue(supervisor.poll_workers(config, state))
+
+        recover.assert_called_once()
+        self.assertNotEqual(worker["status"], "completed")
 
     def test_successful_dead_owner_without_handoff_keeps_lost_lease_recovery(self) -> None:
         config = config_fixture()
