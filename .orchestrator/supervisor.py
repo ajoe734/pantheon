@@ -7595,6 +7595,14 @@ def canonical_worker_terminal_status(
     process: the append-only lifecycle event must be bound to the worker's
     exact PID generation and actor. This reuses the existing activity log and
     status-command lease binding; it is not a second completion mechanism.
+
+    A reviewer's own exact ``reopen`` also proves the dispatched reviewer
+    attempt has already ended -- responsibility moved back to the owner with
+    the reviewer's rejection recorded -- independent of the runner's own
+    exit/signal. Returning that proof here, rather than only in the
+    already-alive lease decision, is what lets both normal polling and boot
+    reconciliation recognize the exact transfer before either falls back to
+    generic lost-lease fencing.
     """
 
     if not isinstance(task, Mapping):
@@ -7628,8 +7636,15 @@ def canonical_worker_terminal_status(
     review_statuses = normalized_status_set(settings.get("review_statuses"), ["review"])
     approved_statuses = normalized_status_set(settings.get("finalize_statuses"), ["review_approved"])
     done_statuses = normalized_status_set(settings.get("dependency_done_statuses"), ["done"])
+    # A committed exact reopen finishes the reviewer's dispatched attempt just
+    # as surely as a handoff/approve/done write does: it is the reviewer's own
+    # canonical verdict (rejection), and responsibility has already moved to
+    # the owner. The runner's own exit/signal after that commit is unrelated
+    # to whether the review attempt itself completed, so this must be proven
+    # here -- the one shared classifier -- and not re-derived per call site.
+    reopen_statuses = frozenset({"in_progress"})
     task_status = str(task.get("status") or "").strip().lower()
-    terminal_event_types = frozenset({"handoff", "review_approved", "done"})
+    terminal_event_types = frozenset({"handoff", "review_approved", "done", "reopen"})
     latest_terminal = _latest_task_governance_event(
         worker,
         activity_events,
@@ -7650,12 +7665,15 @@ def canonical_worker_terminal_status(
         "handoff": review_statuses,
         "review_approved": approved_statuses,
         "done": done_statuses,
+        "reopen": reopen_statuses,
     }.get(event_type, frozenset())
     if task_status not in valid_statuses:
         return None
     if event_type == "review_approved" and expected_role != "reviewer":
         return None
     if event_type in {"handoff", "done"} and expected_role != "owner":
+        return None
+    if event_type == "reopen" and expected_role != "reviewer":
         return None
     return task_status
 
