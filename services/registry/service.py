@@ -672,36 +672,13 @@ def _check_strategy_spec_version_lineage(
     latest = latest_entry.version
 
     parent_ids = lineage.parent_registry_ids or []
-    if not parent_ids and not base_checksum:
+    if not parent_ids:
         raise RegistryError(
             f"StrategySpec version {version!r} is not a valid next revision from latest "
             f"version {latest!r} for strategy_id={strategy_id!r}: noninitial revisions "
-            "must declare explicit caller parent/base identity (parent_registry_ids in lineage "
-            "and/or base_checksum) linking it to an existing entry; cannot infer base from "
-            "current latest version."
+            "must declare explicit caller parent/base identity (parent_registry_ids in lineage) "
+            "linking it to an existing entry; content checksum alone is not revision CAS."
         )
-
-    if not parent_ids:
-        # Caller provided base_checksum without parent_registry_ids: bind directly to latest base entry
-        if base_checksum != latest_entry.checksum:
-            raise RegistryConflictError(
-                f"StrategySpec version {version!r} declares base_checksum {base_checksum!r}, "
-                f"but current latest base {latest_entry.registry_id!r} (version {latest!r}) "
-                f"has checksum {latest_entry.checksum!r}."
-            )
-        major, minor, patch = _parse_ver(latest)
-        valid_next = {
-            (major + 1, 0, 0),
-            (major, minor + 1, 0),
-            (major, minor, patch + 1),
-        }
-        if _parse_ver(version) not in valid_next:
-            raise RegistryError(
-                f"StrategySpec version {version!r} is not a valid next revision from latest "
-                f"version {latest!r} for strategy_id={strategy_id!r}. Valid next versions: "
-                f"{sorted('.'.join(str(p) for p in v) for v in valid_next)}."
-            )
-        return
 
     valid_parents = {entry.registry_id: entry for entry in existing_specs}
     matching = [valid_parents[pid] for pid in parent_ids if pid in valid_parents]
@@ -1138,7 +1115,7 @@ async def register_entry(
         base_checksum = payload.base_checksum or (payload.metadata or {}).get("base_checksum")
         if (
             create_payload.artifact_type == ArtifactType.STRATEGY_SPEC
-            and (create_payload.metadata or {}).get("strategy_spec") is not None
+            and (create_payload.metadata or {}).get("draft_kind") != "name_only"
         ):
             precheck_kwargs = {"base_checksum": base_checksum} if base_checksum is not None else {}
             _validate_strategy_spec_version_lineage(
@@ -1158,10 +1135,7 @@ async def register_entry(
             validate_lineage = None
             if (
                 payload.artifact_type == ArtifactType.STRATEGY_SPEC
-                and (
-                    (payload.metadata or {}).get("strategy_spec") is not None
-                    or getattr(payload, "strategy_spec", None) is not None
-                )
+                and (payload.metadata or {}).get("draft_kind") != "name_only"
                 and target_strategy_id
                 and payload.version
             ):
@@ -1192,23 +1166,14 @@ async def register_entry(
         create_payload, registry_id = _build_payload()
         if (
             create_payload.artifact_type == ArtifactType.STRATEGY_SPEC
-            and (create_payload.metadata or {}).get("strategy_spec") is not None
+            and (create_payload.metadata or {}).get("draft_kind") != "name_only"
         ):
-            # Reviewer finding 2 (gen-8 review): a full StrategySpec (embedded
-            # metadata.strategy_spec content) submitted through this generic
-            # route must commit through the same per-strategy_id serialized
+            # Reviewer finding 2 (gen-8/gen-19 review): every StrategySpec
+            # representation (embedded metadata.strategy_spec content or
+            # storage_ref reference) submitted through this generic route
+            # must commit through the same per-strategy_id serialized
             # invariant as the dedicated POST /api/registry/strategy-specs
             # facade (RegistryService.register_strategy_spec_revision).
-            # Calling plain register() here only validated the version/
-            # lineage invariant via a separate, unlocked pre-check
-            # (_validate_strategy_spec_version_lineage above) and then
-            # inserted unconditionally — two concurrent requests for two
-            # different "next" versions of the same strategy_id could both
-            # pass that pre-check against the same stale "latest" and both
-            # commit, since the store's (strategy_id, version, artifact_type)
-            # unique_fields constraint only catches two requests targeting
-            # the *same* version, never "there must be exactly one next
-            # revision from the current latest".
             view, created = registry_service.register_strategy_spec_revision(
                 create_payload,
                 registry_id,

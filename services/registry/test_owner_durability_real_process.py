@@ -1271,3 +1271,124 @@ def test_revision_requires_caller_base(pg_schema, route):
     finally:
         _stop(proc)
 
+
+@pytest.mark.parametrize("route", ["/api/registry/strategy-specs", "/api/registry/entries"])
+def test_stale_digest_cannot_bind_a_different_revision(pg_schema, route):
+    """Prove that content checksum alone is not revision CAS: submitting a revision
+    with only base_checksum observed from 1.0.0 cannot adopt an intervening 1.0.1
+    having identical content; caller must bind an unambiguous parent_registry_ids."""
+    from services.registry.test_service import _valid_spec
+
+    dsn, schema = pg_schema
+    port = _free_port()
+    proc = _spawn_registry_process(port=port, dsn=dsn, schema=schema)
+    try:
+        _wait_for_health(port)
+        token = _strict_jwt()
+        sid = f"review-stale-{uuid4().hex[:8]}"
+        content = _valid_spec(sid)
+
+        def submit(version, **extra):
+            return _http(
+                "POST",
+                port,
+                route,
+                token=token,
+                payload={
+                    "artifact_type": "strategy_spec",
+                    "strategy_id": sid,
+                    "version": version,
+                    "lineage": {"source_run_ids": ["review-run"]},
+                    "strategy_spec": content,
+                    **extra,
+                },
+                headers={"Idempotency-Key": sid + version},
+            )
+
+        status, first = submit("1.0.0")
+        assert status == 200, first
+        digest = first["entry"]["checksum"]
+        status, second = submit(
+            "1.0.1",
+            base_checksum=digest,
+            lineage={"parent_registry_ids": [first["entry"]["registry_id"]]},
+        )
+        assert status == 200, second
+        assert second["entry"]["checksum"] == digest
+        # Request prepared against 1.0.0 before 1.0.1 committed. A digest
+        # alone cannot identify which of these immutable versions was read.
+        status, stale = submit("2.0.0", base_checksum=digest)
+        assert status in (400, 409, 422), (
+            "stale base-only revision accepted after an intervening same-content "
+            f'revision: status={status}, version={stale.get("entry", {}).get("version")}'
+        )
+    finally:
+        _stop(proc)
+
+
+@pytest.mark.parametrize("keyed", [False, True])
+def test_generic_reference_revision_cannot_skip_caller_base(pg_schema, keyed):
+    """Prove that noninitial StrategySpec reference revisions (e.g. object_store)
+    cannot bypass caller parent/base revision invariants on generic /entries
+    (both keyed and unkeyed), mirroring the dedicated /strategy-specs route."""
+    from services.registry.test_service import _valid_spec
+
+    dsn, schema = pg_schema
+    port = _free_port()
+    proc = _spawn_registry_process(port=port, dsn=dsn, schema=schema)
+    try:
+        _wait_for_health(port)
+        token = _strict_jwt()
+        sid = f"review-reference-{uuid4().hex[:8]}"
+        status, first = _http(
+            "POST",
+            port,
+            "/api/registry/strategy-specs",
+            token=token,
+            payload={
+                "strategy_id": sid,
+                "version": "1.0.0",
+                "lineage": {"source_run_ids": ["review-run"]},
+                "strategy_spec": _valid_spec(sid),
+            },
+        )
+        assert status == 200, first
+        reference = {
+            "artifact_type": "strategy_spec",
+            "strategy_id": sid,
+            "version": "9.9.9",
+            "checksum": first["entry"]["checksum"],
+            "storage_ref": {"backend": "object_store", "path": "review/spec.json"},
+            "lineage": {"source_run_ids": ["review-run"]},
+        }
+        typed_status, typed_body = _http(
+            "POST",
+            port,
+            "/api/registry/strategy-specs",
+            token=token,
+            payload=reference,
+        )
+        assert typed_status in (400, 409, 422), typed_body
+        status, second = _http(
+            "POST",
+            port,
+            "/api/registry/entries",
+            token=token,
+            payload=reference,
+            headers={"Idempotency-Key": sid} if keyed else {},
+        )
+        read_status, versions = _http(
+            "GET",
+            port,
+            f"/api/registry/strategies/{sid}/strategy-specs",
+            token=token,
+        )
+        assert read_status == 200, versions
+        assert status in (400, 409, 422), (
+            f"noninitial reference revision bypassed caller base: status={status}, "
+            f'version={second.get("entry", {}).get("version")}'
+        )
+    finally:
+        _stop(proc)
+
+

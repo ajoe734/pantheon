@@ -164,12 +164,12 @@ Minimum lineage subfields:
 
 | Field | Required | Description |
 |---|---|---|
-| `parent_registry_ids` | no | direct parents if this entry derives from earlier versions |
+| `parent_registry_ids` | no | direct parents if this entry derives from earlier versions; mandatory for noninitial StrategySpec revisions |
 | `source_run_ids` | no | training / optimization / replication runs |
 | `source_dataset_refs` | no | dataset or feature store references |
 | `source_strategy_spec_id` | no | originating StrategySpec when applicable |
 
-If an artifact reaches `approved`, lineage must not be empty.
+If an artifact reaches `approved`, lineage must not be empty. Every noninitial StrategySpec revision must declare explicit caller parent identity (`parent_registry_ids` in lineage) naming an existing StrategySpec entry for that strategy family, and must advance from the current latest revision (stale parent fails with 409 Conflict). Content checksum alone is not revision CAS.
 
 ---
 
@@ -336,6 +336,8 @@ supplying or trusting `artifact_type` themselves. It must still preserve:
 
 - lineage from source seed, source run, parent registry entry, dataset, or source StrategySpec
 - `storage_ref` and `checksum` on every registered StrategySpec artifact
+- mandatory caller parent identity (`parent_registry_ids`) on all noninitial revisions; checksum alone cannot identify parent revisions
+- identical atomic revision sequencing invariants across both the dedicated `/api/registry/strategy-specs` facade and the generic `/api/registry/entries` endpoint for all StrategySpec representations (inline or storage reference)
 - the same `artifact_state` / `deployment_stage` split as the generic registry entry API
 
 ### Evolvable StrategyArtifact facade
