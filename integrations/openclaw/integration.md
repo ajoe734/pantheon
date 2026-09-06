@@ -279,6 +279,17 @@ The runner asserts positive extraction, invalid arguments, wrong/missing tool,
 and native `exec` denial against the actual Gateway. It then loads the CLI
 provider from the frozen dev SHA, runs 100 prompts per arm, and records session
 cold/warm TTFT/full p50/p95, model usage, errors, and transport subprocesses.
+Subprocess counts come from actual CPython `subprocess.Popen` audit events
+inside each synchronous replay attempt, attributed by thread-local arm/case
+identity. Per-attempt event records include the executable basename and thread
+identity, excluding argv and environment. Concurrent attempts, fixture setup,
+and cleanup cannot contribute to another attempt's count. These are adapter
+process invocations (including CLI's `docker exec`), not descendants inside
+the shared Gateway. Failed process creation still counts as an attempted
+invocation and fails replay acceptance. Regression tests launch real children
+through captured subprocess aliases and inject an HTTP-side child to prove
+extra invocations are detected. Earlier fixed-count replay rows are historical
+and do not establish measured subprocess totals.
 Ten agent sessions each receive ten sequential turns; up to four sessions run
 concurrently. CLI TTFT means text availability from its buffered invoke API;
 HTTP TTFT is the first normalized delta. Usage comes from the synthetic model

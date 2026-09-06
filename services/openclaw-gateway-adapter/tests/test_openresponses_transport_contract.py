@@ -19,6 +19,8 @@ from __future__ import annotations
 import json
 import socket
 import sys
+import threading
+import time
 import urllib.error
 from pathlib import Path
 from unittest.mock import patch
@@ -33,6 +35,113 @@ from assistant_openclaw_provider import (  # noqa: E402
     AssistantOpenClawProvider,
     OpenClawProviderError,
 )
+
+
+_replay_attempt = threading.local()
+
+
+def _observe_replay_subprocess(event, args):
+    """Observe actual Popen calls, including pre-imported aliases, without mocks.
+
+    Each replay arm executes synchronously in its pool thread. Only that
+    thread's active attempt receives events; fixture setup/cleanup and other
+    concurrent requests cannot inflate its count. This measures adapter-side
+    Popen invocations, not descendants inside the shared Gateway container.
+    Arguments/environment are deliberately not recorded (they can hold auth).
+    """
+    observation = getattr(_replay_attempt, "active", None)
+    if event == "subprocess.Popen" and observation is not None:
+        observation.events.append({
+            "event": event,
+            "attempt_id": observation.attempt_id,
+            "thread_id": threading.get_ident(),
+            "executable": Path(args[0]).name,
+            "ordinal": len(observation.events) + 1,
+        })
+
+
+sys.addaudithook(_observe_replay_subprocess)
+
+
+class _ReplaySubprocessObservation:
+    def __init__(self, attempt_id):
+        self.attempt_id = attempt_id
+        self.events = []
+
+    def __enter__(self):
+        assert getattr(_replay_attempt, "active", None) is None, "nested replay attempt"
+        _replay_attempt.active = self
+        return self
+
+    def __exit__(self, *_exc):
+        _replay_attempt.active = None
+
+    def require_count(self, expected):
+        assert len(self.events) == expected, (self.attempt_id, expected, self.events)
+
+
+def test_replay_subprocess_observation_isolates_concurrent_attempts():
+    from concurrent.futures import ThreadPoolExecutor
+    import subprocess
+
+    # Capture aliases before observation; patching only subprocess.run would
+    # miss these genuine child processes.
+    run, check_output, popen = subprocess.run, subprocess.check_output, subprocess.Popen
+    barrier = threading.Barrier(4)
+
+    def attempt(count):
+        with _ReplaySubprocessObservation(f"parallel-{count}") as observed:
+            barrier.wait(timeout=5)
+            if count >= 1:
+                run([sys.executable, "-c", "pass"], check=True, timeout=5)
+            if count >= 2:
+                check_output([sys.executable, "-c", "pass"], timeout=5)
+            if count >= 3:
+                with popen([sys.executable, "-c", "pass"]) as child:
+                    assert child.wait(timeout=5) == 0
+            barrier.wait(timeout=5)
+        observed.require_count(count)
+        assert all(e["attempt_id"] == f"parallel-{count}" for e in observed.events)
+        assert [e["ordinal"] for e in observed.events] == list(range(1, count + 1))
+        # Work outside the observation must not alter the finished attempt.
+        run([sys.executable, "-c", "pass"], check=True, timeout=5)
+        observed.require_count(count)
+        with _ReplaySubprocessObservation(f"reuse-{count}") as reused:
+            pass
+        reused.require_count(0)
+        return observed
+
+    with ThreadPoolExecutor(max_workers=4) as pool:
+        observations = list(pool.map(attempt, range(4)))
+    assert len({o.events[0]["thread_id"] for o in observations if o.events}) == 3
+    # A second CLI invocation and any HTTP invocation fail the same count
+    # assertion used by the measured replay, rather than being normalized away.
+    with pytest.raises(AssertionError):
+        observations[2].require_count(1)
+    with pytest.raises(AssertionError):
+        observations[1].require_count(0)
+
+
+def test_replay_subprocess_observation_detects_http_side_effect(monkeypatch):
+    import subprocess
+
+    def unexpected_spawn(*_args, **_kwargs):
+        subprocess.run([sys.executable, "-c", "pass"], check=True, timeout=5)
+        return _FakeSSEResponse(_answer_events("FIXTURE_OK"))
+
+    monkeypatch.setattr("assistant_openclaw_provider._urlopen_with_deadline", unexpected_spawn)
+    with _ReplaySubprocessObservation("http-negative-control") as observed:
+        events = list(_make_provider().stream("hi"))
+    assert events[-1]["type"] == "done"
+    observed.require_count(1)
+    with pytest.raises(AssertionError):
+        observed.require_count(0)
+    # Exceptions must also release the thread's attribution slot.
+    with pytest.raises(RuntimeError), _ReplaySubprocessObservation("failed"):
+        raise RuntimeError("interrupted arm")
+    with _ReplaySubprocessObservation("after-failure") as cleared:
+        pass
+    cleared.require_count(0)
 
 
 def _sse_bytes(events: list) -> list:
@@ -1593,6 +1702,12 @@ def run_pinned_gateway_replay():
             )
             prompts = [f"Replay item {i:03d}: Return exactly FIXTURE_OK." for i in range(count)]
             manifest = {
+                "subprocess_measurement": {
+                    "mechanism": "CPython subprocess.Popen audit events; thread-local per-attempt scope",
+                    "scope": "synchronous adapter-side invocations, including docker exec for CLI; excludes Gateway descendants and fixture setup/cleanup",
+                    "failed_spawn_semantics": "audit events count attempted Popen calls even if OS creation fails; a failed replay is never accepted",
+                    "attribution": "unique arm/case attempt_id plus originating thread_id; raw argv/environment omitted",
+                },
                 "base_sha": base_sha,
                 "base_provider_sha256": hashlib.sha256(base_source).hexdigest(),
                 "candidate_provider_sha256": hashlib.sha256(
@@ -1622,49 +1737,48 @@ def run_pinned_gateway_replay():
                     prompt = prompts[i]
                     # Alternate order to avoid assigning all process warm-up to one arm.
                     for arm in (["cli", "http"] if i % 2 == 0 else ["http", "cli"]):
-                        started = time.monotonic()
-                        first = None
-                        if arm == "cli":
-                            result = old.invoke(
-                                prompt,
-                                model="fixture/fixture-model",
-                                agent_id=f"bench-{group}",
-                                session_id=f"cli-{group}",
-                                timeout_seconds=30,
-                            )
-                            assert result.status == "completed"
-                            assert old._result_text(result) == "FIXTURE_OK"
-                            raw = json.loads(cli_local.result.stdout)
-                            meta = raw["result"]["meta"]["agentMeta"]
-                            assert (
-                                meta["provider"] == "fixture" and meta["model"] == "fixture-model"
-                            )
-                            u = meta["usage"]
-                            usage = {
-                                "input_tokens": u["input"],
-                                "output_tokens": u["output"],
-                                "total_tokens": u["total"],
-                            }
-                            spawns = 1
-                            assert spawns == 1
-                        else:
-                            events = []
-                            for event in provider.stream(
-                                prompt,
-                                model="fixture/fixture-model",
-                                agent_id=f"bench-{group}",
-                                session_user=f"http-{group}",
-                                timeout_seconds=30,
-                            ):
-                                events.append(event)
-                                if event["type"] == "delta" and first is None:
-                                    first = time.monotonic() - started
-                            terminals = [e for e in events if e["type"] in ("done", "error")]
-                            assert len(terminals) == 1 and terminals[0]["type"] == "done", events
-                            assert terminals[0]["text"] == "FIXTURE_OK"
-                            usage = terminals[0]["usage"]
-                            spawns = 0
-                        elapsed = time.monotonic() - started
+                        with _ReplaySubprocessObservation(f"{arm}-{i:03d}") as observed:
+                            started = time.monotonic()
+                            first = None
+                            if arm == "cli":
+                                result = old.invoke(
+                                    prompt,
+                                    model="fixture/fixture-model",
+                                    agent_id=f"bench-{group}",
+                                    session_id=f"cli-{group}",
+                                    timeout_seconds=30,
+                                )
+                                assert result.status == "completed"
+                                assert old._result_text(result) == "FIXTURE_OK"
+                                raw = json.loads(cli_local.result.stdout)
+                                meta = raw["result"]["meta"]["agentMeta"]
+                                assert (
+                                    meta["provider"] == "fixture" and meta["model"] == "fixture-model"
+                                )
+                                u = meta["usage"]
+                                usage = {
+                                    "input_tokens": u["input"],
+                                    "output_tokens": u["output"],
+                                    "total_tokens": u["total"],
+                                }
+                            else:
+                                events = []
+                                for event in provider.stream(
+                                    prompt,
+                                    model="fixture/fixture-model",
+                                    agent_id=f"bench-{group}",
+                                    session_user=f"http-{group}",
+                                    timeout_seconds=30,
+                                ):
+                                    events.append(event)
+                                    if event["type"] == "delta" and first is None:
+                                        first = time.monotonic() - started
+                                terminals = [e for e in events if e["type"] in ("done", "error")]
+                                assert len(terminals) == 1 and terminals[0]["type"] == "done", events
+                                assert terminals[0]["text"] == "FIXTURE_OK"
+                                usage = terminals[0]["usage"]
+                            elapsed = time.monotonic() - started
+                        observed.require_count(1 if arm == "cli" else 0)
                         rows.append(
                             {
                                 "arm": arm,
@@ -1674,7 +1788,11 @@ def run_pinned_gateway_replay():
                                 "ttft_ms": (first if first is not None else elapsed) * 1000,
                                 "usage": usage,
                                 "errors": 0,
-                                "subprocesses": spawns,
+                                "subprocesses": len(observed.events),
+                                "subprocess_observation": {
+                                    "attempt_id": observed.attempt_id,
+                                    "events": observed.events,
+                                },
                             }
                         )
                     if (i + 1) % 10 == 0:
@@ -1724,7 +1842,12 @@ def run_pinned_gateway_replay():
                 for arm in ["cli", "http"]
             }
             gates = {
-                "no_new_errors": summaries["http"]["all"]["errors"] == 0,
+                "no_new_errors": all(summaries[a]["all"]["errors"] == 0 for a in ("cli", "http")),
+                "observed_subprocess_counts": all(
+                    r["subprocesses"] == len(r["subprocess_observation"]["events"])
+                    and r["subprocesses"] == (1 if r["arm"] == "cli" else 0)
+                    for r in rows
+                ),
                 "full_p95_ratio": summaries["http"]["all"]["full_p95_ms"]
                 / summaries["cli"]["all"]["full_p95_ms"],
                 "mean_token_ratio": summaries["http"]["all"]["mean_tokens"]
@@ -1740,6 +1863,7 @@ def run_pinned_gateway_replay():
             pathlib.Path(
                 os.environ.get("SIMPLIFY_REPLAY_OUTPUT", "/tmp/simplify-replay.json")
             ).write_text(json.dumps(report, indent=2) + "\n")
+            assert gates["no_new_errors"] and gates["observed_subprocess_counts"]
             assert gates["full_p95_ratio"] <= 1.10 and gates["mean_token_ratio"] <= 1.05
             print("RESULT", json.dumps(summaries), flush=True)
 
