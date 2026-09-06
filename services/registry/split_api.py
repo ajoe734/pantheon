@@ -12,7 +12,7 @@ Implements the §8 operations from contract.md:
 from __future__ import annotations
 
 import logging
-from typing import Optional
+from typing import Callable, Optional
 
 from .models import (
     ALLOWED_ARTIFACT_TRANSITIONS,
@@ -26,7 +26,7 @@ from .models import (
     utc_now_iso,
 )
 from .pg_store import DivergentCommandReplayError
-from .storage import RegistryConcurrentUpdateError, RegistryStore
+from .storage import RegistryConcurrentUpdateError, RegistryStore, RegistryUniqueViolationError
 
 # ``register_if_absent`` is called from two kinds of places: real API routes
 # (service.py), which always pass a verified caller's ``actor`` explicitly,
@@ -124,9 +124,47 @@ class RegistryService:
         """Create a new draft or candidate entry."""
         self._validate_registration_state(payload)
         self._reject_version_collision(payload, exclude_registry_id=registry_id)
-        entry = self.store.create(payload, registry_id, actor=actor)
+        try:
+            entry = self.store.create(
+                payload, registry_id, actor=actor, unique_fields=_REVISION_UNIQUE_FIELDS,
+            )
+        except RegistryUniqueViolationError as exc:
+            raise RegistryConflictError(str(exc)) from exc
         logger.info("Registered %s (state=%s)", entry.registry_id, entry.artifact_state.value)
         return self._to_view(entry)
+
+    def register_with_idempotency(
+        self,
+        payload_factory: Callable[[], tuple[RegistryEntryCreate, str]],
+        *,
+        command_key: str,
+        actor: Optional[dict] = None,
+    ) -> tuple[RegistryEntryView, bool]:
+        """Create a new entry, replaying the original result under a repeated
+        caller-scoped ``command_key`` instead of synthesizing a fresh
+        identity every retry — reviewer finding 4. ``payload_factory`` is
+        only invoked on a genuine first request; a replay never calls it.
+        """
+        def _validated_factory() -> tuple[RegistryEntryCreate, str]:
+            payload, registry_id = payload_factory()
+            self._validate_registration_state(payload)
+            return payload, registry_id
+
+        try:
+            entry, replayed = self.store.create_with_receipt(
+                _validated_factory,
+                command_key=command_key,
+                actor=actor,
+                unique_fields=_REVISION_UNIQUE_FIELDS,
+            )
+        except RegistryUniqueViolationError as exc:
+            raise RegistryConflictError(str(exc)) from exc
+        if not replayed:
+            logger.info(
+                "Registered %s (state=%s) via idempotent command_key",
+                entry.registry_id, entry.artifact_state.value,
+            )
+        return self._to_view(entry), replayed
 
     def register_if_absent(
         self,
@@ -324,20 +362,83 @@ class RegistryService:
             raise RegistryConflictError(str(exc)) from exc
         return self._to_view(updated), replayed
 
-    def resolve_latest_approved(self, strategy_id: str) -> Optional[RegistryEntryView]:
-        """Return the newest approved entry for a strategy family."""
-        entry = self.store.resolve_latest_approved(strategy_id)
-        if entry is None:
-            return None
-        return self._to_view(entry)
+    def resolve_latest_approved(
+        self,
+        strategy_id: str,
+        *,
+        visible: Optional["callable"] = None,
+    ) -> Optional[RegistryEntryView]:
+        """Return the newest approved entry for a strategy family.
 
-    def resolve_deployment_view(self, strategy_id: str) -> DeploymentView:
+        ``visible`` (an ``entry -> bool`` predicate) scopes resolution to the
+        entries a specific caller is authorized to see — architecture-
+        resumption-sa-sd.md §3.1 (reviewer finding 1): the aggregate resolve
+        must not surface another tenant's approved entry just because it is
+        the semver-latest across *all* tenants. When omitted (internal/
+        unscoped callers), this delegates to the store's own unscoped
+        implementation, preserving prior behavior.
+        """
+        if visible is None:
+            entry = self.store.resolve_latest_approved(strategy_id)
+            return self._to_view(entry) if entry is not None else None
+        entries = [v.entry for v in self.list_by_strategy(strategy_id) if visible(v.entry)]
+        approved = [e for e in entries if e.artifact_state == ArtifactState.APPROVED]
+        if not approved:
+            return None
+
+        def _parse_ver(v: str) -> tuple[int, ...]:
+            return tuple(int(x) for x in v.split("."))
+
+        approved.sort(key=lambda e: _parse_ver(e.version), reverse=True)
+        return self._to_view(approved[0])
+
+    def resolve_deployment_view(
+        self,
+        strategy_id: str,
+        *,
+        visible: Optional["callable"] = None,
+    ) -> DeploymentView:
         """
         Return the derived deployment-stage view from deployment/runtime objects.
 
         This is a composed read path, not a registry-only write authority.
+        ``visible`` scopes the composition to entries a specific caller is
+        authorized to see — see :meth:`resolve_latest_approved`.
         """
-        return self.store.resolve_deployment_view(strategy_id)
+        if visible is None:
+            return self.store.resolve_deployment_view(strategy_id)
+
+        entries = [v.entry for v in self.list_by_strategy(strategy_id) if visible(v.entry)]
+        approved = [e for e in entries if e.artifact_state == ArtifactState.APPROVED]
+        view = DeploymentView(strategy_id=strategy_id)
+        if not approved:
+            return view
+
+        def _parse_ver(v: str) -> tuple[int, ...]:
+            return tuple(int(x) for x in v.split("."))
+
+        approved_by_ver = sorted(approved, key=lambda e: _parse_ver(e.version), reverse=True)
+        latest = approved_by_ver[0]
+        view.latest_approved_registry_id = latest.registry_id
+        view.latest_approved_version = latest.version
+
+        deployed_candidates = [
+            e for e in approved
+            if e.deployment_summary is not None
+            and e.deployment_summary.current_stage is not None
+            and e.deployment_summary.current_stage != DeploymentStage.NONE
+        ]
+        if deployed_candidates:
+            deployed = max(
+                deployed_candidates,
+                key=lambda e: e.deployment_summary.last_transition_at or "",
+            )
+            ds = deployed.deployment_summary
+            view.current_stage = ds.current_stage
+            view.deployment_plan_id = ds.deployment_plan_id
+            view.runtime_binding_id = ds.runtime_binding_id
+            view.last_transition_at = ds.last_transition_at
+        return view
 
     # -- Deployment summary projection (called by deployment service) -------
 

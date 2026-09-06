@@ -47,6 +47,34 @@ def _lineage():
     return {"source_run_ids": ["run-1"]}
 
 
+def _valid_spec(strategy_id: str, **variant_metadata) -> dict:
+    """A minimal but schema-valid StrategySpec (services/control-plane/specs/
+    strategy_spec.schema.json) — reviewer finding 2 requires the dedicated
+    registration route to actually enforce this schema, so these tests must
+    submit schema-complete payloads to exercise the *other* behaviors
+    (checksum, version sequencing, immutable-metadata guard) they target.
+    ``variant_metadata`` lands under the schema's open ``metadata`` object so
+    tests can still distinguish otherwise-identical payload variants without
+    violating the schema's ``additionalProperties: false`` at the root.
+    """
+    spec = {
+        "spec_version": "1.0",
+        "strategy_id": strategy_id,
+        "title": "Positives probe strategy",
+        "hypothesis": "Deterministic probe hypothesis for registry positive-capability tests.",
+        "objective": "Prove real registry write-owner capability, not just route existence.",
+        "market_scope": {"symbols": ["TEST"], "frequency": "1d"},
+        "data_dependencies": [{"ref": "test-fixture", "kind": "note"}],
+        "execution_profile": {"signal_schema_version": "1.0", "quantity_type": "SHARES"},
+        "evaluation_plan": {"metrics": ["sharpe"]},
+        "governance": {"approval_required": True},
+        "provenance": {"source_kind": "manual", "created_at": "2026-01-01T00:00:00Z"},
+    }
+    if variant_metadata:
+        spec["metadata"] = dict(variant_metadata)
+    return spec
+
+
 def test_register_strategy_spec_rejects_name_only_draft_with_no_spec_lineage_or_checksum(client):
     """A bare {strategy_id, version} POST — no strategy_spec, no lineage, no
     checksum, no storage_ref — must be rejected explicitly, not accepted as
@@ -63,7 +91,7 @@ def test_register_strategy_spec_rejects_mismatched_checksum(client):
     does not match the computed digest of that payload must be rejected —
     this previously returned 200 because the caller-supplied checksum was
     accepted verbatim without verification."""
-    strategy_spec = {"strategy_id": "positives-checksum", "spec_version": "1.0"}
+    strategy_spec = _valid_spec("positives-checksum")
     resp = client.post(
         "/api/registry/strategy-specs",
         json={
@@ -81,7 +109,7 @@ def test_register_strategy_spec_rejects_mismatched_checksum(client):
 def test_register_strategy_spec_accepts_correct_checksum(client):
     """The positive counterpart: a correct checksum (or an omitted one,
     computed server-side) for the same payload must still succeed."""
-    strategy_spec = {"strategy_id": "positives-checksum-ok", "spec_version": "1.0"}
+    strategy_spec = _valid_spec("positives-checksum-ok")
     resp = client.post(
         "/api/registry/strategy-specs",
         json={
@@ -106,7 +134,7 @@ def test_register_strategy_spec_rejects_out_of_sequence_version_without_parent_l
             "strategy_id": strategy_id,
             "version": "1.0.0",
             "lineage": _lineage(),
-            "strategy_spec": {"strategy_id": strategy_id, "spec_version": "1.0"},
+            "strategy_spec": _valid_spec(strategy_id),
         },
     )
     assert first.status_code == 200, first.text
@@ -117,7 +145,7 @@ def test_register_strategy_spec_rejects_out_of_sequence_version_without_parent_l
             "strategy_id": strategy_id,
             "version": "9.9.9",
             "lineage": _lineage(),
-            "strategy_spec": {"strategy_id": strategy_id, "spec_version": "1.0", "v": 2},
+            "strategy_spec": _valid_spec(strategy_id, v=2),
         },
     )
     assert jump.status_code == 400, jump.text
@@ -132,7 +160,7 @@ def test_register_strategy_spec_accepts_valid_next_version(client):
             "strategy_id": strategy_id,
             "version": "1.0.0",
             "lineage": _lineage(),
-            "strategy_spec": {"strategy_id": strategy_id, "spec_version": "1.0"},
+            "strategy_spec": _valid_spec(strategy_id),
         },
     )
     assert first.status_code == 200, first.text
@@ -143,7 +171,7 @@ def test_register_strategy_spec_accepts_valid_next_version(client):
             "strategy_id": strategy_id,
             "version": "1.0.1",
             "lineage": _lineage(),
-            "strategy_spec": {"strategy_id": strategy_id, "spec_version": "1.0", "v": 2},
+            "strategy_spec": _valid_spec(strategy_id, v=2),
         },
     )
     assert next_patch.status_code == 200, next_patch.text
@@ -157,7 +185,7 @@ def test_register_strategy_spec_accepts_version_with_valid_parent_link(client):
             "strategy_id": strategy_id,
             "version": "1.0.0",
             "lineage": _lineage(),
-            "strategy_spec": {"strategy_id": strategy_id, "spec_version": "1.0"},
+            "strategy_spec": _valid_spec(strategy_id),
         },
     )
     assert first.status_code == 200, first.text
@@ -169,7 +197,7 @@ def test_register_strategy_spec_accepts_version_with_valid_parent_link(client):
             "strategy_id": strategy_id,
             "version": "9.9.9",
             "lineage": {"source_run_ids": ["run-1"], "parent_registry_ids": [parent_id]},
-            "strategy_spec": {"strategy_id": strategy_id, "spec_version": "1.0", "v": 3},
+            "strategy_spec": _valid_spec(strategy_id, v=3),
         },
     )
     assert jump_with_parent.status_code == 200, jump_with_parent.text
@@ -186,7 +214,7 @@ def test_metadata_patch_cannot_overwrite_immutable_strategy_spec_key(client):
             "strategy_id": strategy_id,
             "version": "1.0.0",
             "lineage": _lineage(),
-            "strategy_spec": {"strategy_id": strategy_id, "spec_version": "1.0"},
+            "strategy_spec": _valid_spec(strategy_id),
         },
     )
     assert created.status_code == 200, created.text
@@ -203,10 +231,7 @@ def test_metadata_patch_cannot_overwrite_immutable_strategy_spec_key(client):
     assert resp.status_code == 409, resp.text
 
     unchanged = client.get(f"/api/registry/entries/{registry_id}")
-    assert unchanged.json()["entry"]["metadata"]["strategy_spec"] == {
-        "strategy_id": strategy_id,
-        "spec_version": "1.0",
-    }
+    assert unchanged.json()["entry"]["metadata"]["strategy_spec"] == _valid_spec(strategy_id)
 
 
 def test_metadata_patch_cannot_drop_immutable_strategy_spec_key(client):
@@ -220,7 +245,7 @@ def test_metadata_patch_cannot_drop_immutable_strategy_spec_key(client):
             "strategy_id": strategy_id,
             "version": "1.0.0",
             "lineage": _lineage(),
-            "strategy_spec": {"strategy_id": strategy_id, "spec_version": "1.0"},
+            "strategy_spec": _valid_spec(strategy_id),
         },
     )
     assert created.status_code == 200, created.text
@@ -244,7 +269,7 @@ def test_metadata_patch_still_allows_non_reserved_metadata_updates(client):
             "strategy_id": strategy_id,
             "version": "1.0.0",
             "lineage": _lineage(),
-            "strategy_spec": {"strategy_id": strategy_id, "spec_version": "1.0"},
+            "strategy_spec": _valid_spec(strategy_id),
         },
     )
     assert created.status_code == 200, created.text
@@ -260,7 +285,4 @@ def test_metadata_patch_still_allows_non_reserved_metadata_updates(client):
     )
     assert resp.status_code == 200, resp.text
     assert resp.json()["entry"]["metadata"]["operator_note"] == "reviewed"
-    assert resp.json()["entry"]["metadata"]["strategy_spec"] == {
-        "strategy_id": strategy_id,
-        "spec_version": "1.0",
-    }
+    assert resp.json()["entry"]["metadata"]["strategy_spec"] == _valid_spec(strategy_id)

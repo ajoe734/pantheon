@@ -1960,8 +1960,8 @@ def execute_command_with_status(
             "entity_type": exc.entity_type,
             "started_at": started_at,
             "failed_at": _utc_now(),
-            "downstream_status": 422,
-            "retryable": False,
+            "downstream_status": exc.downstream_status,
+            "retryable": exc.retryable,
             "userActionable": False,
             "suggestion": exc.suggestion,
         }

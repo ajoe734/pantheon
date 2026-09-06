@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import os
 import threading
-from typing import Optional
+from typing import Callable, Optional
 
 from .models import (
     DeploymentStage,
@@ -22,6 +22,27 @@ from .models import (
     RegistryEntryCreate,
     utc_now_iso,
 )
+
+
+class RegistryUniqueViolationError(ValueError):
+    """Raised when a create would collide on a composite ``unique_fields``
+    identity (e.g. (strategy_id, version, artifact_type)) already held by a
+    *different* registry_id. Mirrors the equivalent Postgres-backend error so
+    ``RegistryService`` can catch one exception type regardless of backend."""
+
+    def __init__(
+        self,
+        registry_id: str,
+        unique_fields: tuple[str, ...],
+        other_registry_id: str,
+    ) -> None:
+        super().__init__(
+            f"Registry entry {registry_id} collides on {unique_fields} with the "
+            f"already-registered registry_id={other_registry_id}."
+        )
+        self.registry_id = registry_id
+        self.unique_fields = unique_fields
+        self.other_registry_id = other_registry_id
 
 
 class RegistryConcurrentUpdateError(ValueError):
@@ -94,9 +115,32 @@ class RegistryStore:
         registry_id: str,
         *,
         actor: Optional[dict] = None,
+        unique_fields: tuple[str, ...] = (),
     ) -> RegistryEntry:
+        """Create a new entry, atomically reserving ``unique_fields`` if given.
+
+        Reviewer finding 3: the plain (non-``create_if_absent``) create path
+        used to insert unconditionally with no composite-identity check at
+        all, so two concurrent ``register()`` calls for the same
+        (strategy_id, version, artifact_type) under two different
+        caller-generated ``registry_id``s could both commit — this closes
+        that race the same way ``create_if_absent`` does, under the same
+        lock held for the whole check-then-insert sequence.
+        """
         entry = self._new_entry(payload, registry_id, actor=actor)
-        self.put(entry)
+        with self._lock:
+            if unique_fields:
+                for other in self._entries.values():
+                    if other.registry_id == registry_id:
+                        continue
+                    if all(
+                        getattr(payload, field, None) == getattr(other, field, None)
+                        for field in unique_fields
+                    ):
+                        raise RegistryUniqueViolationError(
+                            registry_id, unique_fields, other.registry_id,
+                        )
+            self._put_unlocked(entry)
         return RegistryEntry.from_dict(entry.to_dict())
 
     def create_if_absent(
@@ -235,6 +279,53 @@ class RegistryStore:
             view.last_transition_at = ds.last_transition_at
 
         return view
+
+    def create_with_receipt(
+        self,
+        payload_factory: Callable[[], tuple[RegistryEntryCreate, str]],
+        *,
+        command_key: str,
+        actor: Optional[dict] = None,
+        unique_fields: tuple[str, ...] = (),
+    ) -> tuple[RegistryEntry, bool]:
+        """Atomically create-or-replay a caller-scoped idempotent creation.
+
+        Reviewer finding 4: the generic create routes (e.g. the name-only
+        draft path) previously had no idempotency concept at all — a
+        retried identical request under the same ``Idempotency-Key``
+        synthesized a *fresh* random identity every time instead of
+        returning the originally-created entry. ``payload_factory`` is only
+        invoked when this is genuinely the first request under this
+        tenant/actor-scoped key; a replay never generates a new identity,
+        it returns the entry snapshot committed the first time.
+        """
+        from .pg_store import PostgresRegistryStore
+
+        scoped_key = PostgresRegistryStore.receipt_key(
+            command_key, "register_entry", actor=actor,
+        )
+        with self._lock:
+            receipt = self._command_receipts.get(scoped_key)
+            if receipt is not None:
+                return RegistryEntry.from_dict(receipt["committed_entry"]), True
+
+            payload, registry_id = payload_factory()
+            if unique_fields:
+                for other in self._entries.values():
+                    if other.registry_id == registry_id:
+                        continue
+                    if all(
+                        getattr(payload, field, None) == getattr(other, field, None)
+                        for field in unique_fields
+                    ):
+                        raise RegistryUniqueViolationError(
+                            registry_id, unique_fields, other.registry_id,
+                        )
+            entry = self._new_entry(payload, registry_id, actor=actor)
+            self._put_unlocked(entry)
+            committed = entry.to_dict()
+            self._command_receipts[scoped_key] = {"committed_entry": committed}
+            return RegistryEntry.from_dict(committed), False
 
     # -- Deployment summary update (called by deployment service) -----------
 

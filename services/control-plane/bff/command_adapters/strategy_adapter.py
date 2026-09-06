@@ -205,22 +205,51 @@ class StrategyCommandAdapter(DomainCommandAdapter):
         entry = body.get("entry") if isinstance(body, dict) else None
         idempotent_replay = str(header_value(headers, "X-Idempotent-Replay") or "").strip().lower() == "true"
 
-        # Never trust the PATCH response alone as proof of what committed —
-        # architecture-resumption-sa-sd.md §3.3 / reviewer finding 5. Always
-        # perform a genuine scoped owner GET keyed by the same registry_id
-        # and verify it against what was requested; "POST/PATCH accepted"
-        # does not constitute owner GET/reload proof.
-        readback_entry = self._readback_entry(registry_id, auth_token=auth_token, mfa_token=mfa_token)
+        def _belongs_to_requested_strategy(candidate: Optional[Dict[str, Any]]) -> bool:
+            return isinstance(candidate, dict) and candidate.get("strategy_id") == strategy_id
+
         response_lost = False
 
-        if not isinstance(entry, dict) or not entry.get("registry_id"):
+        if idempotent_replay:
+            # Reviewer finding 7: a replay's PATCH response IS the
+            # historically-committed entry snapshot (see
+            # RegistryService.update_metadata / commit_metadata_cas's
+            # receipt-replay semantics), not a claim to be re-verified
+            # against "whatever is current now". Comparing it against an
+            # independent readback GET spuriously fails whenever a later,
+            # unrelated command under a *different* key has since moved the
+            # row on — the row diverging from the original commit is
+            # expected and correct, not evidence the replay is wrong.
+            if not isinstance(entry, dict) or not entry.get("registry_id"):
+                raise ActionUnavailableError(
+                    f"Registry metadata PATCH replay for registry_id={registry_id!r} returned an "
+                    "ambiguous response with no entry payload.",
+                    action_id=action_id,
+                    entity_type="Strategy",
+                    error_code="AMBIGUOUS_REGISTRY_RESPONSE",
+                )
+            if not _belongs_to_requested_strategy(entry):
+                raise ActionUnavailableError(
+                    f"Registry metadata PATCH replay for registry_id={registry_id!r} belongs to "
+                    f"strategy_id={entry.get('strategy_id')!r}, not the requested "
+                    f"strategy_id={strategy_id!r}.",
+                    action_id=action_id,
+                    entity_type="Strategy",
+                    error_code="STRATEGY_ID_MISMATCH",
+                )
+        elif not isinstance(entry, dict) or not entry.get("registry_id"):
             # The PATCH nominally succeeded (no HTTPError was raised) but its
             # body carries no confirmable entry snapshot (e.g. 200 {}).
             # Rather than immediately reporting failure, attempt the
             # readback to distinguish "committed but response lost" from
             # "not committed" — a hard FAILED here would fabricate a
             # downstream error for a write that actually succeeded.
-            if readback_entry is None or readback_entry.get("metadata") != new_metadata:
+            readback_entry = self._readback_entry(registry_id, auth_token=auth_token, mfa_token=mfa_token)
+            if (
+                readback_entry is None
+                or readback_entry.get("metadata") != new_metadata
+                or not _belongs_to_requested_strategy(readback_entry)
+            ):
                 raise ActionUnavailableError(
                     f"Registry metadata PATCH for registry_id={registry_id!r} returned an "
                     "ambiguous response with no entry payload, and a follow-up owner GET "
@@ -232,16 +261,41 @@ class StrategyCommandAdapter(DomainCommandAdapter):
             entry = readback_entry
             response_lost = True
         else:
+            # Reviewer finding 6: registry_id is caller-supplied and must be
+            # verified to actually belong to the *requested* strategy_id
+            # before this is ever reported as success — otherwise a caller
+            # could target strategy A but supply a registry_id from strategy
+            # B, mutate B, and get back a receipt claiming A was updated.
+            if not _belongs_to_requested_strategy(entry):
+                raise ActionUnavailableError(
+                    f"Registry entry registry_id={registry_id!r} belongs to "
+                    f"strategy_id={entry.get('strategy_id')!r}, not the requested "
+                    f"strategy_id={strategy_id!r}; refusing to report success for a "
+                    "different aggregate than the caller asked to mutate.",
+                    action_id=action_id,
+                    entity_type="Strategy",
+                    error_code="STRATEGY_ID_MISMATCH",
+                )
             # The PATCH response claimed a specific committed snapshot;
             # verify it against an independent owner read rather than taking
-            # the mutation response's own word for it.
+            # the mutation response's own word for it — architecture-
+            # resumption-sa-sd.md §3.3 / reviewer finding 5. "POST/PATCH
+            # accepted" does not constitute owner GET/reload proof.
+            readback_entry = self._readback_entry(registry_id, auth_token=auth_token, mfa_token=mfa_token)
             if readback_entry is None:
+                # The write itself is already confirmed committed (the PATCH
+                # returned a concrete entry snapshot); a subsequent readback
+                # failure is a transient confirmation gap, not proof the
+                # mutation did not happen — the caller should retry the read,
+                # not resubmit the same command (reviewer finding 7).
                 raise ActionUnavailableError(
-                    f"Registry metadata PATCH for registry_id={registry_id!r} could not be "
-                    "confirmed by a follow-up owner GET readback.",
+                    f"Registry metadata PATCH for registry_id={registry_id!r} committed but could "
+                    "not be confirmed by a follow-up owner GET readback.",
                     action_id=action_id,
                     entity_type="Strategy",
                     error_code="READBACK_UNAVAILABLE",
+                    retryable=True,
+                    downstream_status=503,
                 )
             if (
                 readback_entry.get("checksum") != entry.get("checksum")
@@ -269,7 +323,7 @@ class StrategyCommandAdapter(DomainCommandAdapter):
                 "registry_id": registry_id,
                 "action": action_id,
                 "metadata": entry.get("metadata"),
-                "version": entry.get("updated_at"),
+                "version": entry.get("version"),
                 "checksum": entry.get("checksum"),
                 "commit_time": entry.get("updated_at"),
                 "correlation_id": command_id,

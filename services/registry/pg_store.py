@@ -20,7 +20,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
-from typing import Any, Optional
+from typing import Any, Callable, Optional
 
 from services.foundation.postgres_json_store import PostgresJsonOwnerStore
 
@@ -110,8 +110,28 @@ class PostgresRegistryStore:
         registry_id: str,
         *,
         actor: Optional[dict[str, Any]] = None,
+        unique_fields: tuple[str, ...] = (),
     ) -> RegistryEntry:
-        entry, _created = self.create_if_absent(payload, registry_id, actor=actor)
+        """Create a new entry, atomically reserving ``unique_fields`` if given.
+
+        Reviewer finding 3: this previously called ``create_if_absent`` with
+        no ``unique_fields``, so it reserved only the (effectively random,
+        caller-generated) ``registry_id`` and left the
+        (strategy_id, version, artifact_type) composite identity completely
+        unguarded on this path — two concurrent ``register()`` calls under
+        two different registry_ids could both commit the same revision
+        identity. A genuine collision here (a *different* registry_id
+        already holds the composite identity) is a caller error, not a
+        silent "return the other one" outcome the way ``create_if_absent``'s
+        idempotent-replay semantics are, so it raises instead.
+        """
+        entry, created = self.create_if_absent(
+            payload, registry_id, actor=actor, unique_fields=unique_fields,
+        )
+        if not created and entry.registry_id != registry_id:
+            from .storage import RegistryUniqueViolationError
+
+            raise RegistryUniqueViolationError(registry_id, unique_fields, entry.registry_id)
         return entry
 
     def create_if_absent(
@@ -298,6 +318,68 @@ class PostgresRegistryStore:
                 if not filled:
                     raise RegistryConcurrentUpdateError(registry_id)
         return RegistryEntry.from_dict(canonical), False
+
+    def create_with_receipt(
+        self,
+        payload_factory: Callable[[], tuple[RegistryEntryCreate, str]],
+        *,
+        command_key: str,
+        actor: Optional[dict[str, Any]] = None,
+        unique_fields: tuple[str, ...] = (),
+    ) -> tuple[RegistryEntry, bool]:
+        """Atomically create-or-replay a caller-scoped idempotent creation.
+
+        See ``RegistryStore.create_with_receipt`` (storage.py) for the
+        reviewer finding 4 rationale. The reservation and the entry
+        insertion commit in the same Postgres transaction — mirroring
+        :meth:`commit_metadata_cas` — so a same-key replay always returns
+        the entry actually committed the first time, never a fresh
+        creation, and a crash between "receipt reserved" and "entry
+        inserted" cannot leave a receipt pointing at nothing durable (the
+        finalize step below fails the whole transaction if it cannot
+        complete).
+        """
+        scoped_key = self.receipt_key(command_key, "register_entry", actor=actor)
+        with self._entries.transaction() as conn:
+            reservation = {
+                "command_key": command_key,
+                "receipt_key": scoped_key,
+                "committed_entry": None,
+            }
+            reserved, receipt_payload = self._receipts.insert_if_absent(
+                scoped_key, reservation, conn=conn,
+            )
+            if not reserved:
+                committed_entry = receipt_payload.get("committed_entry")
+                if committed_entry is None:
+                    # Another in-flight transaction reserved this key but has
+                    # not yet committed the entry it records.
+                    raise RegistryConcurrentUpdateError("register_entry")
+                return RegistryEntry.from_dict(committed_entry), True
+
+            payload, registry_id = payload_factory()
+            entry = _new_entry(payload, registry_id, actor=actor)
+            created, canonical = self._entries.insert_if_absent(
+                registry_id, entry.to_dict(), unique_fields=unique_fields, conn=conn,
+            )
+            if created:
+                committed_entry = entry.to_dict()
+            else:
+                canonical_entry = RegistryEntry.from_dict(canonical)
+                if canonical_entry.registry_id != registry_id:
+                    from .storage import RegistryUniqueViolationError
+
+                    raise RegistryUniqueViolationError(
+                        registry_id, unique_fields, canonical_entry.registry_id,
+                    )
+                committed_entry = canonical
+
+            finalized = dict(reservation)
+            finalized["committed_entry"] = committed_entry
+            filled, _ = self._receipts.compare_and_set(scoped_key, reservation, finalized, conn=conn)
+            if not filled:
+                raise RegistryConcurrentUpdateError("register_entry")
+        return RegistryEntry.from_dict(committed_entry), False
 
     def update_deployment_summary(
         self,

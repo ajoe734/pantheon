@@ -63,6 +63,7 @@ def test_update_params_preserves_callers_precondition_and_uses_patch_response_as
         {
             "entry": {
                 "registry_id": "reg-001",
+                "strategy_id": "strat-alpha",
                 "metadata": {"note": "new"},
                 "updated_at": "2026-09-06T00:00:00Z",
                 "checksum": "sha256:abc",
@@ -113,7 +114,7 @@ def test_update_params_idempotent_replay_header_is_surfaced(mock_http, adapter):
     mock_http.return_value = (
         200,
         {"X-Idempotent-Replay": "true"},
-        {"entry": {"registry_id": "reg-001", "metadata": {"note": "v1"}, "updated_at": "t1"}},
+        {"entry": {"registry_id": "reg-001", "strategy_id": "strat-alpha", "metadata": {"note": "v1"}, "updated_at": "t1"}},
     )
 
     result = adapter.execute(
@@ -129,6 +130,131 @@ def test_update_params_idempotent_replay_header_is_surfaced(mock_http, adapter):
         },
     )
     assert result["idempotent_replay"] is True
+
+
+@patch("services.control_plane.bff.command_adapters.strategy_adapter.http_request_json_with_headers")
+def test_update_params_rejects_registry_id_belonging_to_different_strategy(mock_http, adapter):
+    """Reviewer finding 6: registry_id is caller-supplied and must actually
+    belong to the requested strategy_id. A caller targeting strategy A but
+    supplying a registry_id that belongs to strategy B must not get back a
+    receipt claiming A was updated."""
+    mock_http.return_value = (
+        200,
+        {"X-Idempotent-Replay": "false"},
+        {
+            "entry": {
+                "registry_id": "reg-001",
+                "strategy_id": "strat-bravo",
+                "metadata": {"note": "new"},
+                "updated_at": "2026-09-06T00:00:00Z",
+                "checksum": "sha256:abc",
+            }
+        },
+    )
+
+    with pytest.raises(ActionUnavailableError) as excinfo:
+        adapter.execute(
+            "cmd-strat-cross",
+            "StrategyAction",
+            {
+                "entity_type": "strategy",
+                "strategy_id": "strat-alpha",
+                "registry_id": "reg-001",
+                "action_id": "update_params",
+                "expected_metadata": {"note": "old"},
+                "metadata": {"note": "new"},
+            },
+        )
+    assert excinfo.value.error_code == "STRATEGY_ID_MISMATCH"
+
+
+@patch("services.control_plane.bff.command_adapters.strategy_adapter.http_request_json_with_headers")
+def test_update_params_replay_does_not_compare_against_mutable_latest_readback(mock_http, adapter):
+    """Reviewer finding 7: a replay's PATCH response is the original
+    committed snapshot, not a claim to be re-verified against a "current"
+    owner GET — comparing against a readback that a later, unrelated command
+    has since moved on must not turn a genuine replay success into a
+    spurious READBACK_MISMATCH failure."""
+    call_responses = [
+        (
+            200,
+            {"X-Idempotent-Replay": "true"},
+            {
+                "entry": {
+                    "registry_id": "reg-001",
+                    "strategy_id": "strat-alpha",
+                    "metadata": {"note": "one"},
+                    "updated_at": "t1",
+                    "checksum": "sha256:one",
+                }
+            },
+        ),
+    ]
+    mock_http.side_effect = call_responses
+
+    result = adapter.execute(
+        "cmd-strat-replay",
+        "StrategyAction",
+        {
+            "entity_type": "strategy",
+            "strategy_id": "strat-alpha",
+            "registry_id": "reg-001",
+            "action_id": "update_params",
+            "expected_metadata": None,
+            "metadata": {"note": "one"},
+        },
+    )
+    assert result["status"] == "metadata_updated"
+    assert result["idempotent_replay"] is True
+    # A replay must not issue a second (readback) HTTP call at all — there is
+    # nothing to verify against that could ever be more authoritative than
+    # the original committed receipt itself.
+    assert mock_http.call_count == 1
+
+
+@patch("services.control_plane.bff.command_adapters.strategy_adapter.http_request_json_with_headers")
+def test_update_params_readback_failure_after_confirmed_commit_is_retryable(mock_http, adapter):
+    """Reviewer finding 7: when the PATCH itself already returned a concrete
+    committed entry snapshot, a subsequent readback GET failure is a
+    transient confirmation gap — not proof the mutation never happened — and
+    must be reported as retryable, not the flat non-retryable 422 used for a
+    genuinely unsupported action."""
+
+    def _side_effect(*args, **kwargs):
+        if kwargs.get("method") == "PATCH":
+            return (
+                200,
+                {"X-Idempotent-Replay": "false"},
+                {
+                    "entry": {
+                        "registry_id": "reg-001",
+                        "strategy_id": "strat-alpha",
+                        "metadata": {"note": "new"},
+                        "updated_at": "2026-09-06T00:00:00Z",
+                        "checksum": "sha256:abc",
+                    }
+                },
+            )
+        raise urllib.error.URLError("readback unavailable")
+
+    mock_http.side_effect = _side_effect
+
+    with pytest.raises(ActionUnavailableError) as excinfo:
+        adapter.execute(
+            "cmd-strat-readback-gap",
+            "StrategyAction",
+            {
+                "entity_type": "strategy",
+                "strategy_id": "strat-alpha",
+                "registry_id": "reg-001",
+                "action_id": "update_params",
+                "expected_metadata": {"note": "old"},
+                "metadata": {"note": "new"},
+            },
+        )
+    assert excinfo.value.error_code == "READBACK_UNAVAILABLE"
+    assert excinfo.value.retryable is True
+    assert excinfo.value.downstream_status == 503
 
 
 @patch("services.control_plane.bff.command_adapters.strategy_adapter.http_request_json_with_headers")
@@ -412,6 +538,7 @@ class TestUpdateParamsOverRealSocket:
         _CapturingHandler.response_body = {
             "entry": {
                 "registry_id": "reg-001",
+                "strategy_id": "strat-alpha",
                 "metadata": {"note": "new"},
                 "updated_at": "2026-09-06T00:00:00Z",
                 "checksum": "sha256:real",
@@ -441,6 +568,7 @@ class TestUpdateParamsOverRealSocket:
         _CapturingHandler.response_body = {
             "entry": {
                 "registry_id": "reg-001",
+                "strategy_id": "strat-alpha",
                 "metadata": {"note": "new"},
                 "updated_at": "2026-09-06T01:23:45Z",
                 "checksum": "sha256:exact-version",

@@ -50,6 +50,7 @@ from .strategy_artifact import (
     strategy_artifact_checksum,
     validate_strategy_artifact,
 )
+from .paper_strategy_spec import validate_strategy_spec
 
 logger = logging.getLogger(__name__)
 
@@ -368,8 +369,8 @@ def _caller_tenant(ctx: AuthContext) -> Optional[str]:
     return None
 
 
-def _can_read(ctx: AuthContext, view: RegistryEntryView) -> bool:
-    """Scoped-read authorization — reviewer finding 1.
+def _can_read_entry(ctx: AuthContext, entry: Any) -> bool:
+    """Scoped-read authorization on a bare entry — reviewer finding 1.
 
     Builtins (``owner_tenant == BUILTIN_TENANT``) are public reference data:
     any verified caller may read them. An ``admin`` caller may read across
@@ -380,12 +381,16 @@ def _can_read(ctx: AuthContext, view: RegistryEntryView) -> bool:
     ("missing tenant legacy rows are not globally authorized",
     architecture-resumption-sa-sd.md §3.1).
     """
-    owner_tenant = view.entry.owner_tenant
+    owner_tenant = entry.owner_tenant
     if owner_tenant == BUILTIN_TENANT:
         return True
     if "admin" in ctx.roles:
         return True
     return _caller_tenant(ctx) == owner_tenant
+
+
+def _can_read(ctx: AuthContext, view: RegistryEntryView) -> bool:
+    return _can_read_entry(ctx, view.entry)
 
 
 def _authorize_read(ctx: AuthContext, view: RegistryEntryView) -> RegistryEntryView:
@@ -465,6 +470,20 @@ def _strategy_spec_register_payload(body: StrategySpecRegisterRequest) -> Regist
             "StrategySpec registry entries require storage_ref unless an inline strategy_spec is provided."
         )
 
+    if strategy_spec is not None:
+        # Reviewer finding 2: hashing an arbitrary strategy_spec dict without
+        # running the canonical schema validator let a caller register a
+        # StrategySpec with e.g. an empty payload — checksum-valid but
+        # schema-invalid. Run the same validator used elsewhere
+        # (services/control-plane/specs/strategy_spec.schema.json) before
+        # this content is ever hashed/stored as a StrategySpec.
+        schema_errors = validate_strategy_spec(strategy_spec)
+        if schema_errors:
+            raise RegistryError(
+                f"strategy_spec for strategy_id={strategy_id!r} failed schema validation: "
+                + "; ".join(schema_errors)
+            )
+
     checksum = str(body.checksum or "").strip()
     if strategy_spec is not None:
         computed_checksum = _strategy_spec_checksum(strategy_spec)
@@ -513,6 +532,8 @@ def _validate_strategy_spec_version_lineage(
     strategy_id: str,
     version: str,
     lineage: Lineage,
+    *,
+    ctx: AuthContext,
 ) -> None:
     """Reject an out-of-sequence StrategySpec version with no valid parent linkage.
 
@@ -524,11 +545,18 @@ def _validate_strategy_spec_version_lineage(
     naming an existing StrategySpec entry for this strategy_id. An arbitrary
     version like "9.9.9" with none of the above must be rejected — accepting
     it would let a caller silently jump the immutable revision sequence.
+
+    ``existing_specs`` is scoped to entries visible to ``ctx`` (own tenant or
+    builtin) — reviewer finding 3: computing "latest known version" across
+    *all* tenants let a caller's version-sequence check be satisfied or
+    defeated by another tenant's unrelated revisions of the same
+    ``strategy_id``.
     """
     existing_specs = [
         view
         for view in registry_service.list_by_strategy(strategy_id)
         if view.entry.artifact_type == ArtifactType.STRATEGY_SPEC
+        and _can_read_entry(ctx, view.entry)
     ]
     if not existing_specs:
         return
@@ -755,6 +783,34 @@ def _resolve_entry_or_draft_payload(
         )
         return create_payload, registry_id
 
+    # Reviewer finding 2: the generic route stores a caller-supplied
+    # checksum verbatim without checking it against any actual content. A
+    # bare artifact_type=strategy_spec reference entry (checksum only, no
+    # embedded content — the pattern the existing generic-route tests use)
+    # is unaffected: there is nothing here for the registry to validate as a
+    # spec. But if the caller *does* embed an inline strategy_spec payload
+    # under metadata.strategy_spec through this generic path, it must be
+    # schema-valid and its checksum must actually match the embedded
+    # content — otherwise a caller could smuggle an unvalidated/mismatched
+    # strategy_spec through the generic route instead of the dedicated,
+    # fully-validated POST /api/registry/strategy-specs facade.
+    if payload.artifact_type == ArtifactType.STRATEGY_SPEC:
+        embedded_spec = (payload.metadata or {}).get("strategy_spec")
+        if embedded_spec is not None:
+            schema_errors = validate_strategy_spec(embedded_spec)
+            if schema_errors:
+                raise RegistryError(
+                    "metadata.strategy_spec failed schema validation: "
+                    + "; ".join(schema_errors)
+                )
+            computed_checksum = _strategy_spec_checksum(embedded_spec)
+            if payload.checksum and payload.checksum != computed_checksum:
+                raise RegistryError(
+                    "checksum does not match the computed checksum of the embedded "
+                    f"metadata.strategy_spec payload (expected {computed_checksum!r}, "
+                    f"got {payload.checksum!r})."
+                )
+
     registry_id = f"reg-{payload.strategy_id}-{payload.version}-{uuid.uuid4().hex[:8]}"
     create_payload = RegistryEntryCreate(
         artifact_type=payload.artifact_type,
@@ -776,11 +832,26 @@ def _resolve_entry_or_draft_payload(
 async def register_entry(
     payload: RegistryEntryOrDraftRequest,
     authorization: Optional[str] = Header(default=None),
+    idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
 ):
-    """Create a new draft or candidate registry entry (name-only draft, or full typed)."""
+    """Create a new draft or candidate registry entry (name-only draft, or full typed).
+
+    An ``Idempotency-Key`` header makes a retried identical request return
+    the *originally* created entry instead of synthesizing a fresh identity
+    every retry (reviewer finding 4) — this matters most for the name-only
+    draft path, which otherwise generates a new random strategy identity on
+    every call with no way for a caller to safely retry a dropped response.
+    """
     ctx = _authenticate_registry_write(authorization)
     registry_service = get_registry_service()
     try:
+        if idempotency_key:
+            view, _replayed = registry_service.register_with_idempotency(
+                lambda: _resolve_entry_or_draft_payload(payload),
+                command_key=idempotency_key,
+                actor=_actor_context(ctx),
+            )
+            return view
         create_payload, registry_id = _resolve_entry_or_draft_payload(payload)
         return registry_service.register(create_payload, registry_id, actor=_actor_context(ctx))
     except RegistryConflictError as e:
@@ -897,15 +968,14 @@ async def update_metadata(
     response_model=RegistryEntryView,
 )
 async def latest_approved(strategy_id: str, authorization: Optional[str] = Header(default=None)):
-    """Return the newest approved entry for a strategy family (requires a verified caller).
-
-    Note: this is a cross-version aggregate read; it enforces authentication
-    but (unlike the single-entry GET routes) does not yet filter the
-    resolved entry by tenant scope — see the per-entry scoping on
-    ``get_entry``/``list_entries`` for the enforced boundary.
+    """Return the newest approved entry for a strategy family, scoped to the
+    caller's verified tenant (reviewer finding 1) — never another tenant's
+    approved entry just because it is the semver-latest across all tenants.
     """
-    _authenticate_registry_read(authorization)
-    result = get_registry_service().resolve_latest_approved(strategy_id)
+    ctx = _authenticate_registry_read(authorization)
+    result = get_registry_service().resolve_latest_approved(
+        strategy_id, visible=lambda entry: _can_read_entry(ctx, entry),
+    )
     if result is None:
         raise HTTPException(status_code=404, detail=f"No approved entry for strategy: {strategy_id}")
     return result
@@ -916,9 +986,12 @@ async def latest_approved(strategy_id: str, authorization: Optional[str] = Heade
     response_model=DeploymentView,
 )
 async def deployment_view(strategy_id: str, authorization: Optional[str] = Header(default=None)):
-    """Return the derived deployment-stage view for a strategy (requires a verified caller)."""
-    _authenticate_registry_read(authorization)
-    return get_registry_service().resolve_deployment_view(strategy_id)
+    """Return the derived deployment-stage view for a strategy, scoped to the
+    caller's verified tenant (reviewer finding 1)."""
+    ctx = _authenticate_registry_read(authorization)
+    return get_registry_service().resolve_deployment_view(
+        strategy_id, visible=lambda entry: _can_read_entry(ctx, entry),
+    )
 
 
 # -- Internal: deployment summary projection ------------------------------
@@ -983,6 +1056,7 @@ async def register_strategy_spec(
         create_payload = _strategy_spec_register_payload(payload)
         _validate_strategy_spec_version_lineage(
             registry_service, payload.strategy_id, payload.version, create_payload.lineage,
+            ctx=ctx,
         )
         view, created = registry_service.register_if_absent(
             create_payload,
@@ -991,11 +1065,17 @@ async def register_strategy_spec(
         )
         if created:
             return _ensure_strategy_spec_view(view, registry_id)
-        return _ensure_strategy_spec_registration_matches(
+        # Reviewer finding 1: a same-key/same-content POST replay must still
+        # authorize the *existing* entry's immutable owner_tenant before
+        # returning it — otherwise a caller in a different tenant than the
+        # entry's true owner could read another tenant's StrategySpec simply
+        # by re-POSTing its identity.
+        matched = _ensure_strategy_spec_registration_matches(
             view,
             create_payload,
             registry_id,
         )
+        return _authorize_write(ctx, matched)
     except RegistryConflictError as e:
         raise HTTPException(status_code=409, detail=str(e))
     except RegistryError as e:

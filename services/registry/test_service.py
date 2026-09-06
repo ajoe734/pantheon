@@ -920,6 +920,33 @@ def _create_entry(client: TestClient, token: str, *, strategy_id: str, version: 
     return resp.json()
 
 
+def _valid_spec(strategy_id: str, **variant_metadata) -> dict:
+    """Minimal schema-valid StrategySpec (services/control-plane/specs/
+    strategy_spec.schema.json) — reviewer finding 2 requires
+    POST /api/registry/strategy-specs to enforce this schema, so tests
+    exercising other behaviors (revision-identity, version-sequence) must
+    submit schema-complete payloads. ``variant_metadata`` lands under the
+    schema's open ``metadata`` object to distinguish otherwise-identical
+    payload variants without violating the root's ``additionalProperties: false``.
+    """
+    spec = {
+        "spec_version": "1.0",
+        "strategy_id": strategy_id,
+        "title": "Registry service probe strategy",
+        "hypothesis": "Deterministic probe hypothesis for registry service tests.",
+        "objective": "Prove real registry write-owner capability, not just route existence.",
+        "market_scope": {"symbols": ["TEST"], "frequency": "1d"},
+        "data_dependencies": [{"ref": "test-fixture", "kind": "note"}],
+        "execution_profile": {"signal_schema_version": "1.0", "quantity_type": "SHARES"},
+        "evaluation_plan": {"metrics": ["sharpe"]},
+        "governance": {"approval_required": True},
+        "provenance": {"source_kind": "manual", "created_at": "2026-01-01T00:00:00Z"},
+    }
+    if variant_metadata:
+        spec["metadata"] = dict(variant_metadata)
+    return spec
+
+
 # -- Finding 1: target authorization / system scope -----------------------
 
 
@@ -1168,7 +1195,7 @@ def test_two_registry_ids_cannot_both_win_the_same_strategy_version(strict_clien
             "strategy_id": strategy_id,
             "version": "1.0.0",
             "lineage": lineage,
-            "strategy_spec": {"strategy_id": strategy_id, "spec_version": "1.0"},
+            "strategy_spec": _valid_spec(strategy_id),
         },
         headers=_bearer(token),
     )
@@ -1181,7 +1208,7 @@ def test_two_registry_ids_cannot_both_win_the_same_strategy_version(strict_clien
             "version": "1.0.0",
             "registry_id": "reg-a-different-supplied-id",
             "lineage": lineage,
-            "strategy_spec": {"strategy_id": strategy_id, "spec_version": "1.0", "diverged": True},
+            "strategy_spec": _valid_spec(strategy_id, diverged=True),
         },
         headers=_bearer(token),
     )
@@ -1205,7 +1232,7 @@ def test_parent_linked_revision_cannot_downgrade_version(strict_client):
             "strategy_id": strategy_id,
             "version": "1.0.0",
             "lineage": {"source_run_ids": ["run-1"]},
-            "strategy_spec": {"strategy_id": strategy_id, "spec_version": "1.0"},
+            "strategy_spec": _valid_spec(strategy_id),
         },
         headers=_bearer(token),
     )
@@ -1218,7 +1245,7 @@ def test_parent_linked_revision_cannot_downgrade_version(strict_client):
             "strategy_id": strategy_id,
             "version": "0.0.1",
             "lineage": {"source_run_ids": ["run-1"], "parent_registry_ids": [parent_id]},
-            "strategy_spec": {"strategy_id": strategy_id, "spec_version": "1.0", "v": 2},
+            "strategy_spec": _valid_spec(strategy_id, v=2),
         },
         headers=_bearer(token),
     )
@@ -1314,3 +1341,104 @@ def test_receipt_key_does_not_collide_across_ambiguous_tenant_actor_boundary():
         "cmd-1", "reg-1", actor={"tenant": "a", "actor_id": "b:c"}
     )
     assert key_1 != key_2
+
+
+# -- Gen-5 reviewer findings ------------------------------------------------
+
+
+def test_readiness_dependency_reports_memory_backend_as_degraded_not_ok(monkeypatch):
+    """Reviewer finding 8: readiness must not silently report ready=true
+    with no dependency evidence regardless of the selected owner backend —
+    the in-memory test double must be explicitly surfaced as degraded, not
+    conflated with a reachable durable production owner."""
+    for key in ("REGISTRY_STORE_BACKEND", "PANTHEON_ENV", "PANTHEON_PERSISTENCE_POSTURE", "DATABASE_URL"):
+        monkeypatch.delenv(key, raising=False)
+    reset_store()
+    from . import main as registry_main
+
+    dependency = registry_main._registry_owner_dependency()
+    assert dependency["status"] == "degraded"
+    assert dependency["backend"] == "memory"
+    reset_store()
+
+
+def test_latest_approved_endpoint_does_not_leak_another_tenants_approved_entry(strict_client):
+    """Reviewer finding 1: the aggregate resolve must not surface another
+    tenant's approved entry just because it is the semver-latest across all
+    tenants."""
+    strategy_id = "cross-tenant-latest"
+    token_a = _jwt(subject="writer-a", tenant="tenant-a")
+    token_b = _jwt(subject="writer-b", tenant="tenant-b")
+
+    created_a = _create_entry(strict_client, token_a, strategy_id=strategy_id, version="1.0.0")
+    registry_id_a = created_a["entry"]["registry_id"]
+    strict_client.post(
+        f"/api/registry/entries/{registry_id_a}/advance",
+        json={"target_state": "candidate"},
+        headers=_bearer(token_a),
+    )
+    strict_client.post(
+        f"/api/registry/entries/{registry_id_a}/advance",
+        json={"target_state": "approved"},
+        headers=_bearer(token_a),
+    )
+
+    # tenant-b has never registered anything for this strategy_id — the
+    # aggregate resolve must report 404, not tenant-a's approved entry.
+    resp = strict_client.get(
+        f"/api/registry/strategies/{strategy_id}/latest-approved", headers=_bearer(token_b)
+    )
+    assert resp.status_code == 404, resp.text
+
+
+def test_register_entry_idempotency_key_replays_original_identity(strict_client):
+    """Reviewer finding 4: a retried identical name-only draft POST under the
+    same Idempotency-Key must return the originally-created entry, not a
+    freshly synthesized strategy identity."""
+    token = _jwt(subject="idem-writer", tenant="tenant-a")
+    headers = dict(_bearer(token))
+    headers["Idempotency-Key"] = "draft-create-001"
+
+    first = strict_client.post(
+        "/api/registry/entries", json={"name": "Idempotent Draft"}, headers=headers,
+    )
+    assert first.status_code == 200, first.text
+    first_entry = first.json()["entry"]
+
+    second = strict_client.post(
+        "/api/registry/entries", json={"name": "Idempotent Draft"}, headers=headers,
+    )
+    assert second.status_code == 200, second.text
+    second_entry = second.json()["entry"]
+
+    assert second_entry["registry_id"] == first_entry["registry_id"]
+    assert second_entry["strategy_id"] == first_entry["strategy_id"]
+
+
+def test_register_entry_without_idempotency_key_still_synthesizes_fresh_identity(strict_client):
+    """No Idempotency-Key header means no idempotency contract at all —
+    two calls remain two distinct drafts, preserving existing behavior."""
+    token = _jwt(subject="idem-writer-2", tenant="tenant-a")
+    first = strict_client.post(
+        "/api/registry/entries", json={"name": "Plain Draft"}, headers=_bearer(token),
+    )
+    second = strict_client.post(
+        "/api/registry/entries", json={"name": "Plain Draft"}, headers=_bearer(token),
+    )
+    assert first.json()["entry"]["strategy_id"] != second.json()["entry"]["strategy_id"]
+
+
+def test_create_enforces_composite_unique_identity_not_just_registry_id(strict_client):
+    """Reviewer finding 3: the plain register() create path (used by e.g.
+    model_artifact entries) must also atomically reserve
+    (strategy_id, version, artifact_type) — not only the caller-generated
+    registry_id — so a second distinct registry_id cannot collide on the
+    same revision identity."""
+    from .storage import RegistryStore
+
+    store = RegistryStore()
+    svc = RegistryService(store)
+    payload = _make_create_payload(strategy_id="unique-identity-strat", version="1.0.0")
+    svc.register(payload, "reg-first")
+    with pytest.raises(RegistryError):
+        svc.register(payload, "reg-second")

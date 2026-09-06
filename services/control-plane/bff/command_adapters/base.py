@@ -27,7 +27,14 @@ def utc_now() -> str:
 
 
 class ActionUnavailableError(ValueError):
-    """Raised when an action is explicitly unavailable or unsupported in production."""
+    """Raised when an action is explicitly unavailable or unsupported in production.
+
+    ``retryable``/``downstream_status`` distinguish a genuinely unsupported
+    action (default: not retryable, 422) from a transient confirmation gap on
+    a mutation that may have already committed — e.g. a readback GET that
+    fails right after a successful write (reviewer finding 7): the caller
+    should retry the read, not treat this the same as "action not supported".
+    """
 
     def __init__(
         self,
@@ -37,6 +44,8 @@ class ActionUnavailableError(ValueError):
         entity_type: str = "",
         error_code: str = "ACTION_UNAVAILABLE",
         suggestion: str = "Submit a supported domain action or use the governed CLI workflow.",
+        retryable: bool = False,
+        downstream_status: int = 422,
     ) -> None:
         super().__init__(message)
         self.message = message
@@ -44,6 +53,8 @@ class ActionUnavailableError(ValueError):
         self.entity_type = entity_type
         self.error_code = error_code
         self.suggestion = suggestion
+        self.retryable = retryable
+        self.downstream_status = downstream_status
 
 
 def get_base_url(primary_env: str, *fallback_envs: str) -> str:
