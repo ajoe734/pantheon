@@ -43,6 +43,21 @@ every file enumerated by plan section 5.
   records its provenance and operational grant command/receipt contract. This addition does not modify
   `SOURCE_MANIFEST.json`'s existing frozen hashes or this task's own
   evidence.
+- [ARCHIVE_RESURRECTION_SA_SD.md](ARCHIVE_RESURRECTION_SA_SD.md) — added
+  by task `OPS-ARCHIVE-RESURRECTION-CONTRACT-001` (not this document's own
+  task): the repository-readable copy of the separately operator-approved
+  archive resurrection recovery plan, preserved byte-identically (SHA256
+  `4a6862fd7465896da09381030dc6310d7efaf4468791c3ef55a327ca8453c9d8`).
+  The [local tooling runbook](../../operations/management-ai-openclaw-dev-bridge.md)
+  records its operational recovery and proof contract. This addition does not modify
+  `SOURCE_MANIFEST.json`'s existing frozen hashes or this task's own evidence.
+- [LEGACY_CLOSEOUT_RECONCILIATION.md](LEGACY_CLOSEOUT_RECONCILIATION.md) — added
+  by task `OPS-ARCHIVE-RESURRECTION-CONTRACT-001` (not this document's own
+  task): the repository-readable copy of the factual legacy closeout deduplication
+  and archive diagnosis report, preserved byte-identically (SHA256
+  `75d9435610d38771795c79a1c76a27fff23db96eec029e36ca6cc8bef6f335c3`).
+  This addition does not modify `SOURCE_MANIFEST.json`'s existing frozen hashes
+  or this task's own evidence.
 
 ## Historical source snapshots (`archive/`)
 

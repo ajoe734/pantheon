@@ -164,12 +164,12 @@ Minimum lineage subfields:
 
 | Field | Required | Description |
 |---|---|---|
-| `parent_registry_ids` | no | direct parents if this entry derives from earlier versions |
+| `parent_registry_ids` | no | direct parents if this entry derives from earlier versions; mandatory for noninitial StrategySpec revisions |
 | `source_run_ids` | no | training / optimization / replication runs |
 | `source_dataset_refs` | no | dataset or feature store references |
 | `source_strategy_spec_id` | no | originating StrategySpec when applicable |
 
-If an artifact reaches `approved`, lineage must not be empty.
+If an artifact reaches `approved`, lineage must not be empty. Every noninitial StrategySpec revision must declare explicit caller parent identity (`parent_registry_ids` in lineage) naming an existing StrategySpec entry for that strategy family, and must advance from the current latest revision (stale parent fails with 409 Conflict). Content checksum alone is not revision CAS.
 
 ---
 
@@ -229,11 +229,95 @@ The storage backend is still open, but the logical operations are not.
 | `register(entry)` | create a new `draft` or `candidate` entry |
 | `get(registry_id)` | read one entry |
 | `list_by_strategy(strategy_id)` | enumerate versions within a strategy family |
-| `advance_artifact_state(registry_id, target_state, approver?, approval_decision_id?)` | transition an entry through governed artifact-state checks and retain the canonical decision link when approving |
+| `advance_artifact_state(registry_id, target_state, approver?, approval_decision_id?, command_key?)` | transition an entry through governed artifact-state checks and retain the canonical decision link when approving; `command_key` makes an identical retry an idempotent replay of the original committed transition instead of re-running it (see below) |
+| `update_metadata(registry_id, expected_metadata, new_metadata, command_key?)` | allowed operator metadata update with CAS: fails with a conflict when `expected_metadata` no longer matches the durable entry; `command_key` makes an identical retry an idempotent no-op replay |
 | `resolve_latest_approved(strategy_id)` | return the newest approved entry for a strategy |
 | `resolve_deployment_view(strategy_id)` | return the derived deployment-stage view from deployment/runtime objects |
 
 `resolve_deployment_view()` is a composed read path, not a registry-only write authority.
+
+`update_metadata()` mutates only the operator-facing `metadata` record kind — it can never fabricate
+or upgrade a validated StrategySpec or `artifact_state`. It is the `PATCH /api/registry/entries/{registry_id}/metadata`
+HTTP endpoint (REGISTRY-STRATEGY-UNIFIED-CONTRACT-001), backed by a real Postgres CAS commit in the
+same transaction as its idempotent command receipt when `command_key` is supplied. See
+`services/registry/first_release_contract.json` for the frozen capability matrix and
+`services/registry/command_contract.py` for the canonical Strategy-action-to-owner mapping (Registry
+owns this metadata update; review/paper-promotion/activation/pause/archive belong to other owners and
+must not be relabeled as Registry operations).
+
+#### Command-receipt durability mechanism (not a separate outbox)
+
+Every owned mutation that accepts an idempotency key (`update_metadata`'s `command_key`,
+`advance_artifact_state`'s `command_key`, and the generic-create `Idempotency-Key` header on
+`POST /api/registry/entries`) commits its receipt in the **same Postgres transaction** as the state
+write it records — one row in `registry.command_receipts`, written via the same shared connection
+(`PostgresJsonOwnerStore.transaction()`) as the `registry.entries` row it mutates
+(`PostgresRegistryStore.commit_metadata_cas` / `commit_artifact_state_cas` / `create_with_receipt`).
+This is deliberately **not** a separate outbox/prepare-activate-reconcile protocol: there is no
+second event table, no background relay, and no "pending" intermediate state to reconcile. The crash
+safety property this buys is narrower but concrete: a crash between "entry committed" and "response
+sent to the caller" is safe, because a replay of the same `command_key` re-reads the already-committed
+receipt row (bound to that exact request) instead of re-running the mutation or silently no-op'ing —
+and a crash *during* the transaction (before either row commits) rolls back atomically, leaving neither
+the entry mutation nor the receipt reservation behind. `advance_artifact_state`'s replay path
+additionally never re-runs the transition-legality/lineage business-rule check on a replay (that check
+only runs on the genuinely-fresh path, after the store has already ruled out a replay) — re-checking it
+against the entry's *current* (already-post-transition) state would otherwise spuriously reject a
+legitimate replay as a "forbidden transition".
+
+Receipt keys (`PostgresRegistryStore.receipt_key`) are scoped by tenant + actor + `registry_id` +
+**command type** (`"metadata"` / `"advance"` / `"create"`) + `command_key` — the command type is
+folded into the framed identity so the same client-chosen `command_key` value reused for both a
+metadata-CAS call and an `advance` on the same `registry_id`/tenant/actor can never land on the same
+receipt row, regardless of whether their request digests happen to differ.
+
+Every method that writes to both `registry.entries` and `registry.command_receipts` in one transaction
+locks the **entries table first**, before ever touching receipts (`PostgresJsonOwnerStore.lock_table`,
+called explicitly ahead of any receipts access in `create_with_receipt`/`commit_metadata_cas`/
+`commit_artifact_state_cas`; `create_if_absent`/`register_strategy_spec_revision` already insert into
+entries before receipts naturally). This global ordering is required because
+`PostgresJsonOwnerStore.insert_if_absent` always takes a table-level `SHARE ROW EXCLUSIVE` lock: two
+unrelated, lawful concurrent requests that happened to touch the two tables in opposite orders could
+deadlock in Postgres (one holding entries and waiting on receipts, the other holding receipts and
+waiting on entries) rather than merely serialize.
+
+`advance_artifact_state` requires the caller's own claimed base (`expected_artifact_state`; every
+public `.../advance` route rejects an omitted value with 422) and accepts optional further narrowing
+(`expected_version`/`expected_updated_at`). Each supplied field is merged onto the CAS base snapshot
+before the compare-and-set, binding the write to what the caller actually believes the entry's current
+state is — never only a value the store re-read fresh at request time. A stale claim fails the same 409
+conflict a stale `expected_metadata` already does on `update_metadata`. `expected_artifact_state` was
+made mandatory (previously optional, silently falling back to a fresh server re-read as the CAS base
+when omitted) after an independent review reproduced a real-Postgres HTTP request that advanced a bound
+transition, then advanced again with no expected_* field at all and still succeeded — not a caller-bound
+CAS at all.
+
+A same-`registry_id` create-if-absent replay (the StrategySpec/StrategyArtifact/AllocationPolicyArtifact
+facades' "already registered, return the existing entry" path) is compared against, and now **returns**,
+the entry's **original creation content** — a snapshot recorded once, in the same transaction as the
+entry's first successful insert, and exposed via
+`PostgresRegistryStore.get_creation_receipt`/`RegistryStore.get_creation_receipt` — not whatever the row
+has mutated into since (a later `advance` or `update_metadata` call). This keeps an exact replay of the
+original request succeeding even after legitimate downstream progress, and reports back exactly what
+that original command committed rather than an unrelated later command's edit; the durable row itself is
+never reverted, and the ordinary `GET` route always returns the live current entry.
+
+A same-`registry_id` collision on any create-if-absent path (including
+`AllocationPolicyArtifactRegisterRequest`'s caller-suppliable `registry_id`) is independently authorized
+(tenant/builtin scoped, matching a `GET` of the same entry) and kind/content-matched against the caller's
+own request before ever being returned — a caller cannot read another tenant's private entry, or a
+different artifact kind entirely, simply by re-POSTing a guessed or known `registry_id`.
+
+### Storage backend
+
+Production selects `PostgresRegistryStore` (`services/registry/pg_store.py`, `REGISTRY_STORE_BACKEND=postgres`)
+as the single durable write authority for StrategySpec content, immutable versions, RegistryEntry
+identities and artifact-state, using `services/foundation/postgres_json_store.py`'s CAS/transaction
+primitives. The in-memory `RegistryStore` (`services/registry/storage.py`) is an explicit test double
+constructed directly by unit tests, never a missing-config production fallback: `REGISTRY_STORE_BACKEND`
+must always be set to `memory` or `postgres` explicitly (`storage.build_registry_store` raises otherwise,
+in every posture, not only an enforced staging/prod one) — `services/registry/conftest.py` sets it to
+`memory` explicitly for this whole package's unit-test run.
 
 ### StrategySpec registry facade
 
@@ -252,7 +336,21 @@ supplying or trusting `artifact_type` themselves. It must still preserve:
 
 - lineage from source seed, source run, parent registry entry, dataset, or source StrategySpec
 - `storage_ref` and `checksum` on every registered StrategySpec artifact
+- mandatory caller parent identity (`parent_registry_ids`) on all noninitial revisions; checksum alone cannot identify parent revisions
+- identical atomic revision sequencing invariants across both the dedicated `/api/registry/strategy-specs` facade and the generic `/api/registry/entries` endpoint for all StrategySpec representations (inline or storage reference); draft classification is strictly derived server-side from request structure, and reserved `draft_kind` metadata markers on typed or StrategySpec submissions are rejected (400)
 - the same `artifact_state` / `deployment_stage` split as the generic registry entry API
+
+Generic typed StrategySpec creation uses the same canonical payload admission
+as this facade, for both keyed and unkeyed requests. Lineage is mandatory;
+inline content must pass schema, identity and checksum validation, while an
+external reference requires a nonempty storage path and checksum. A name-only
+draft remains a separate metadata record, not a validated full specification.
+
+`allocation_policy` creation is exclusive to
+`POST /api/registry/allocation-policy-artifacts`. Generic `POST /api/registry/entries`
+rejects that kind with 400, including keyed requests and otherwise valid payloads.
+The typed validator supplies artifact content, provenance and derived fields;
+generic reads and lawful transitions remain available for those validated entries.
 
 ### Evolvable StrategyArtifact facade
 
