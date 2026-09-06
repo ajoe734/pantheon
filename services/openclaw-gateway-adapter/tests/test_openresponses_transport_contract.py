@@ -1596,9 +1596,16 @@ def run_pinned_gateway_replay():
                 from fastapi.testclient import TestClient
                 from unittest.mock import patch
 
+                policy_reads = []
+
                 def policy_rpc(cmd, **kw):
                     assert cmd[1:4] == ["gateway", "call", "config.get"]
-                    return docker("exec", name, "node", "openclaw.mjs", *cmd[1:], timeout=kw["timeout"])
+                    started_at = time.monotonic()
+                    try:
+                        return docker("exec", name, "node", "openclaw.mjs", *cmd[1:], timeout=kw["timeout"])
+                    finally:
+                        policy_reads.append({"elapsed_seconds": time.monotonic() - started_at,
+                                             "budget_seconds": kw["timeout"]})
 
                 provider._run = policy_rpc
                 provider._which = lambda _: "openclaw"
@@ -1611,6 +1618,7 @@ def run_pinned_gateway_replay():
                     client = TestClient(adapter_main.app)
                     results = []
                     for case in (["denied"] if policy_probe == "missing" else ["positive", "denied"]):
+                        started_at = time.monotonic()
                         response = client.post(
                             "/api/openclaw-adapter/assistant/providers/openclaw/structured",
                             json={"prompt": "CASE_" + case, "session_id": "policy-" + case,
@@ -1619,7 +1627,8 @@ def run_pinned_gateway_replay():
                             headers={"X-Operator-Id": "fixture", "X-Pantheon-Service-Token": "synthetic-policy-token"},
                         )
                         results.append({"case": case, "http_status": response.status_code,
-                                        "error_code": response.json().get("error_code")})
+                                        "error_code": response.json().get("error_code"),
+                                        "elapsed_seconds": time.monotonic() - started_at})
                         if policy_probe == "missing":
                             assert response.status_code == 503, response.text
                             assert response.json()["error_code"] == "OPENCLAW_STRUCTURED_POLICY_DENIED", response.text
@@ -1633,6 +1642,7 @@ def run_pinned_gateway_replay():
                     assert all(r["tools"] == ["emit_extraction"] for r in Model.records)
                     assert docker("exec", name, "test", "-e", "/tmp/SIMPLIFY_FORBIDDEN").returncode == 1
                     print("MOUNTED_POLICY_RESULT", json.dumps({"policy": policy_probe, "results": results,
+                          "policy_reads": policy_reads, "turn_deadline_seconds": provider._timeout,
                           "model_requests": len(Model.records), "native_exec_advertised": False,
                           "marker_exists": False, "image": image}), flush=True)
                 return

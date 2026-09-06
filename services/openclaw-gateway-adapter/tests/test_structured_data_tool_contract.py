@@ -567,7 +567,36 @@ class TestStructuredEndpointRejectsCallerSuppliedTools:
         assert response.json()["error_code"] == "OPENCLAW_STRUCTURED_POLICY_DENIED"
         invoke.assert_not_called()
         assert gateway_policy.call_args.args == ("config.get",)
-        assert 0 < gateway_policy.call_args.kwargs["timeout_seconds"] <= 10
+        assert 0 < gateway_policy.call_args.kwargs["timeout_seconds"] <= adapter_main._OPENCLAW_AGENT_PROVIDER._timeout
+
+    def test_policy_startup_over_ten_seconds_uses_remaining_turn_budget(self, gateway_policy):
+        from types import SimpleNamespace
+        client, adapter_main = self._client()
+        clock = [100.0]
+        snapshot = gateway_policy.return_value
+
+        def slow_policy(*args, **kwargs):
+            # Model a healthy CLI cold start that the former cap rejected.
+            assert kwargs["timeout_seconds"] == 15.0
+            clock[0] += 12.0
+            return snapshot
+
+        gateway_policy.side_effect = slow_policy
+        result = SimpleNamespace(to_dict=lambda: {"status": "completed"})
+        with (
+            patch.object(adapter_main, "time", SimpleNamespace(monotonic=lambda: clock[0])),
+            patch.object(adapter_main._OPENCLAW_AGENT_PROVIDER, "_timeout", 15),
+            patch.object(adapter_main._OPENCLAW_AGENT_PROVIDER, "invoke_structured", return_value=result) as invoke,
+        ):
+            response = client.post(
+                "/api/openclaw-adapter/assistant/providers/openclaw/structured",
+                json={"prompt": "extract", "extraction_schema": EXTRACTION_SCHEMA},
+                headers={"X-Operator-Id": "operator-1"},
+            )
+        assert response.status_code == 200, response.text
+        gateway_policy.assert_called_once()
+        invoke.assert_called_once()
+        assert invoke.call_args.kwargs["timeout_seconds"] == 3.0
 
     def test_unavailable_policy_blocks_before_dispatch(self, gateway_policy):
         client, adapter_main = self._client()

@@ -239,8 +239,10 @@ administrative Gateway RPC, using the same URL and credential as the HTTP turn.
 The snapshot must be valid and contain exactly one selected default agent with
 `tools.deny: ["*"]`. Missing, mismatched, malformed or unavailable policy returns
 a typed 503 before any model request. No local mirror or prior successful probe
-substitutes for this check. Policy RPC time (at most ten seconds) and the HTTP
-turn share one deadline. This administrative read requires the CLI; ordinary
+substitutes for this check. Policy RPC startup/read and the HTTP turn share the
+configured invocation deadline: the RPC can use its remaining budget and HTTP
+receives only the time left after verification. There is no separate ten-second
+policy cap or retry, and exhaustion prevents model dispatch. This administrative read requires the CLI; ordinary
 invoke/stream/readiness still use only HTTP. No policy is written automatically.
 The pinned local fixture verifies both pre-dispatch rejection without policy
 and native execution denial with policy. Configuration administrators must keep

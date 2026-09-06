@@ -1909,7 +1909,10 @@ def _assert_structured_gateway_policy(agent_id: str, *, deadline: float) -> None
     """
     try:
         snapshot = _OPENCLAW_AGENT_PROVIDER._gateway_call(
-            "config.get", timeout_seconds=min(10.0, deadline - time.monotonic()),
+            # CLI startup is part of this read. An independent ten-second
+            # cap can reject a healthy Gateway while the turn still has time.
+            # The HTTP dispatch receives only what remains of this deadline.
+            "config.get", timeout_seconds=deadline - time.monotonic(),
         )
     except GatewayOpenClawProviderError as exc:
         raise GatewayOpenClawProviderError(
