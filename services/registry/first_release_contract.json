@@ -138,7 +138,7 @@
     ]
   },
   "generic_route_strategy_spec_serialized_creation": {
-    "note": "POST /api/registry/entries previously ran the StrategySpec version/lineage invariant check (_validate_strategy_spec_version_lineage) as a separate, unlocked pre-check and then called the plain register() path — the same TOCTOU race the dedicated facade closed in an earlier pass (per-strategy_id Postgres advisory transaction lock, re-validating against the true latest-committed state) was left open on this route (generation-9 finding 2). register_entry now routes a full StrategySpec (an embedded metadata.strategy_spec, not a bare checksum reference) through RegistryService.register_strategy_spec_revision under the same lock whenever the artifact_type is strategy_spec.",
+    "note": "Generic and typed StrategySpec submissions share canonical content admission and transaction-scoped revision lineage validation for inline content and external references. Name-only draft metadata remains a separate server-classified creation path. Generic keyed writes use register_with_idempotency with the same strategy lock and original receipt.",
     "proof": "services/registry/test_owner_durability.py::test_generic_route_embedded_spec_serializes_concurrent_revision_race"
   },
   "readiness_owner_dependency_receipts_table": {
@@ -167,7 +167,7 @@
     "remaining_gap": "Not proven against a live Postgres outage/partition in this pass; the connection probe itself is genuine (fresh connect + SELECT 1, not a cached pool), but no test kills the database mid-run to observe the transition to error status."
   },
   "retirement": {
-    "note": "No parallel full-spec/revision authority is mounted in the current dev app; the WIP that added one lived only in the archived, never-merged REGISTRY-STRATEGY-DURABILITY-PREREQUISITE-001 worktree (superseded, not resumed). There is therefore no retired-but-still-mounted route to remove in this delivery.",
+    "note": "The never-merged predecessor parallel store is not mounted. This delivery also retires generic allocation_policy creation: POST /api/registry/entries rejects that kind; POST /api/registry/allocation-policy-artifacts is its sole typed creation route. Mounted keyed/unkeyed rejection and typed positive/replay/restart tests enforce the retired mutation boundary.",
     "mounted_routes_audit": "services/registry/test_first_release_contract.py::test_no_unlisted_mutating_routes_are_mounted enumerates every mounted route and fails if a route appears that this contract does not name.",
     "remaining_scope_not_owned_by_this_task": [
       "Real governance-review/promotion/runtime owner integration for submit_review/promote_paper/activate/pause/archive (OVERLAY-RETIRE-001, DOMAIN-WRITERS-DURABILITY-CORRECTIVE-001 own those consumers per architecture-resumption-sa-sd.md §4)",

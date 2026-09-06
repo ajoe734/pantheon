@@ -1,103 +1,97 @@
 {
   "schema_version": "pantheon.task-evidence.v1",
   "task_id": "REGISTRY-STRATEGY-UNIFIED-CONTRACT-001",
-  "normative_plan": "/home/chloe_ong_dev_cctech_support_com/code/pantheon-artifacts/dev-closure-20260906/architecture-resumption-sa-sd.md, /home/chloe_ong_dev_cctech_support_com/code/pantheon-artifacts/dev-closure-20260906/operator-architecture-confirmation.md",
-  "predecessor": "head f08d2f256ae1acca3e6596f160dc18f50eaccce4 on PR #5620, which reviewer Codex rejected with findings: [P1] services/registry/service.py:1118,1138,1169 trusts caller-controlled metadata.draft_kind == name_only to skip both revision precheck and transaction-scoped lineage validation; [P1] /tmp/test_registry_review_f08d.py failed 4 probes across keyed/unkeyed and inline/storage_ref combinations.",
-  "scope_note": "This is the generation-21 corrective pass resolving all review reject findings from PR #5620 frozen head f08d2f256ae1acca3e6596f160dc18f50eaccce4: (1) Derived draft classification strictly server-side from request structure (is_name_only_draft = not bool(payload.artifact_type and payload.strategy_id and payload.version)), never arbitrary caller-controlled metadata. Typed submissions and StrategySpec submissions reject reserved metadata field 'draft_kind' (400), and mixing name with typed fields is rejected (400). (2) Enforced atomic revision invariants and caller parent lineage without exemption across all StrategySpec representations (inline metadata.strategy_spec and storage_ref references) on generic POST /api/registry/entries (both keyed and unkeyed), while preserving genuine name-only drafts and distinct artifacts. (3) Added permanent committed regression tests test_typed_revision_cannot_claim_name_only_to_skip_base and test_name_only_draft_real_process_positive_and_durable_readback in services/registry/test_owner_durability_real_process.py, as well as unit tests in test_service.py. (4) Reconciled first_release_contract.json and contract.md. All 394 tests in the full suite and all 4 reviewer probes pass against live PostgreSQL.",
-  "implementation": {
-    "files_added": [],
-    "files_modified": [
-      "services/control-plane/bff/command_adapters/strategy_adapter.py",
-      "services/control-plane/bff/tests/test_command_adapters_router.py",
-      "services/control-plane/bff/tests/test_strategy_registry_owner_prerequisite.py",
-      "services/registry/contract.md",
-      "services/registry/first_release_contract.json",
-      "services/registry/service.py",
-      "services/registry/test_owner_durability.py",
-      "services/registry/test_owner_durability_real_process.py",
-      "services/registry/test_registry_positives.py",
-      "services/registry/test_service.py",
-      "docs/deployment/evidence/REGISTRY-STRATEGY-UNIFIED-CONTRACT-001/evidence.json"
-    ],
-    "summary": [
-      "strategy_adapter.py: _adapter_auth_env() hardcodes PANTHEON_RUNTIME_AUTH_MODE: strict. _authenticate_caller() strictly requires JWT bearer token and fails closed before any owner GET I/O. Removed non-JWT fallback branch.",
-      "test_strategy_registry_owner_prerequisite.py: Added test_adapter_rejects_permissive_unsigned_before_owner_io proving zero owner GET calls when caller provides non-JWT or unsigned tokens under permissive env settings (54/54 passed).",
-      "test_command_adapters_router.py: Configured strict auth and passed signed JWT token.",
-      "service.py: Eliminated checksum-only caller base fallback (lines 684-704), requiring unambiguous caller-observed parent_registry_ids in lineage for all noninitial StrategySpec revisions (400 if omitted, 409 if stale parent or mismatched base_checksum).",
-      "service.py: Extended atomic revision sequencing invariants, pre-check, and advisory lock validation to ALL StrategySpec representations (inline metadata.strategy_spec, object_store/storage_ref references) on generic POST /api/registry/entries (both keyed and unkeyed), while preserving name-only drafts and distinct non-strategy_spec artifacts.",
-      "service.py: Derived draft classification server-side from request structure, rejected reserved draft_kind metadata markers on typed and StrategySpec submissions (400), and rejected mixing name with typed fields (400).",
-      "test_owner_durability_real_process.py: Added committed regression tests test_stale_digest_cannot_bind_a_different_revision, test_generic_reference_revision_cannot_skip_caller_base, test_typed_revision_cannot_claim_name_only_to_skip_base (4 parameterized variants), and test_name_only_draft_real_process_positive_and_durable_readback (2 parameterized variants).",
-      "test_service.py: Added unit tests test_typed_submission_cannot_mix_name, test_typed_submission_rejects_reserved_draft_kind, and test_strategy_spec_facade_rejects_reserved_draft_kind.",
-      "first_release_contract.json: Reconciled create_next_revision and generic_route_typed_content_validation contract entries to require explicit parent_registry_ids, document parity across all StrategySpec representations, and document draft classification invariants.",
-      "contract.md: Updated lineage requirements and StrategySpec facade documentation to mandate caller parent_registry_ids for noninitial revisions and reflect generic route parity and draft classification."
-    ]
+  "normative_plan": "/home/chloe_ong_dev_cctech_support_com/code/pantheon-artifacts/dev-closure-20260906/architecture-resumption-sa-sd.md",
+  "source": {
+    "tested_commit": "3e7ce92f9cc451994324fdde9d57d079612c4fa7",
+    "base_commit": "a9557a6002e8170eb92415cc61e9d6a584cc610f",
+    "sha256_by_path": {
+      "docker-compose.control.yml": "5e6b301491d349ebccce8c0bd965498a6bf5ac42d9e9d339388b52068fdc79f2",
+      "docker-compose.yml": "2bd6c46c39d08efbbb6f7a1959b67ffb20e16eab0a65c37ea22c520f85bc772a",
+      "services/control-plane/bff/command_adapters/base.py": "adab84b6da079353174a31711d7016fc1c644dbf53a35d3f3acab7ece83b1024",
+      "services/control-plane/bff/command_adapters/strategy_adapter.py": "2877f6952ae7a70769cf448a1362b22799c4748bff1a2f4aa90eb0701e7e5f60",
+      "services/control-plane/bff/command_executor.py": "ba5eed7910042e36a1130de76381d53909b298d1dc70db2bcb9c6802b0d2841c",
+      "services/control-plane/bff/test_command_executor.py": "3a77fa72995f2b9fda81624c03ea73f6f9ca21eb8b4559b2162c3c20f591caa8",
+      "services/control-plane/bff/tests/test_command_adapters_router.py": "43944b7ebe5e29042b5bb60256d7ce04d502823b5483873086d0c3cbea68e375",
+      "services/control-plane/bff/tests/test_strategy_registry_owner_prerequisite.py": "83a9d06bd2fb7d0ec0d4ebfeed2886073d2103488c51f8c5e6dd59b76032bc75",
+      "services/foundation/postgres_json_store.py": "6fbcc890f370abf0d8bb05b67757aea4c4a00ae7edc2a4bb21662302896c4be2",
+      "services/foundation/tests/test_registry_owner_transaction.py": "429a69bd2311852075ecb061edf1a8ebac22c1d92574073c4f9df8a81b75b690",
+      "services/registry/command_contract.py": "b596be18af295ed422e86136e02342a13caba041702c2af8d92588634bb7cf3c",
+      "services/registry/conftest.py": "c19e8a13761875a88be15c74a46eaa3c44795074a25e6726ab4decac469ce459",
+      "services/registry/main.py": "bcf58e2b590f8e8a9205ff757671af376141c211f15d193345fb47d18168ffff",
+      "services/registry/models.py": "2872744683f1902c44d9881f5d2884703b392c7ee6f82279cc3e765d70d8d73c",
+      "services/registry/pg_store.py": "abc7adaec6785eb6870ce4366f5e82824e2a1e5396b55124d1e30833735f2c50",
+      "services/registry/requirements.txt": "4c9a764ebaf97c16c66cd835763ededb9f76bf0b9dbd004f448b541360cf67f4",
+      "services/registry/service.py": "1a3e56a337616251f688ed398b0a798616959b8a83f0d9fde05344b5c54c6ef1",
+      "services/registry/split_api.py": "6ce3620fb2613ecde00995c74a8f8dba38788cd20a741349f1d411af15030b5c",
+      "services/registry/storage.py": "6b366c10135697d18ad661d58cff80b8ea467f34f4869dc3e85782f1ba41fb1c",
+      "services/registry/test_allocation_policy_artifact.py": "7032d43e43e64d22247c8ba4ddfa25477c23c2ab1662d1f41fe276c49fafb8bb",
+      "services/registry/test_first_release_contract.py": "39575827078b0920ead14d6b0238fd3dc9130b00902ae2be3507154fc20d4aeb",
+      "services/registry/test_owner_durability.py": "dfb85fb7f21931dc9b90096a0b06475eca3bec5ca70e4e2c3c2b8ceed6861923",
+      "services/registry/test_owner_durability_real_process.py": "71ddc9c61ef1ee961d43d80c901b871e2484995a04de69be9f30df71412544c4",
+      "services/registry/test_registry_auth_wiring.py": "47beccedd415e7f9e2480b1fbc7d13d9561feb781fd5113fa5d6edc4aa8ab550",
+      "services/registry/test_registry_positives.py": "5ec9780fb31129dd0d729c4c364107612c1dc706909e0342fa2f67c6c7c9d18d",
+      "services/registry/test_service.py": "0418dc047a69c3719f3266804694891648a290989c4edc4e5af9c40d8e86f2cc",
+      "services/registry/test_storage_backend_posture.py": "36149bbfaa4464052c55dddd6c637e23a8bc137beef4a59222365fe239f096dd",
+      "services/registry/test_strategy_artifact.py": "7536e88ab3893f2454881dac09c23cecce4b0f3eb18a1ac11289f6536014550c"
+    },
+    "post_validation_changes": "Only first_release_contract.json narrative reconciliation and this evidence manifest; product and test source match the tested commit."
   },
+  "scope_note": "Registry owns a single PostgreSQL-backed repository with strict scoped identity, immutable version content, original atomic receipts, caller CAS and durable readback. The Strategy HTTP adapter verifies supported Registry mutations and explicitly identifies other-owner actions as unavailable. This owner continuation repairs both findings of the genuine 15:17:07 review of PR 5620 head 3f7e9551; it does not claim reviewer approval or full product/dev acceptance.",
+  "review_findings_addressed": [
+    {
+      "finding": "Generic entries accepted empty typed StrategySpec, with or without Idempotency-Key.",
+      "resolution": "Removed duplicate generic content validation and reuse _strategy_spec_register_payload for every typed StrategySpec. Both routes require lineage and either canonical schema/identity/checksum-valid inline content or an explicit storage reference and checksum. The shared validator rejects malformed/blank references and inline pointers without content. Existing transaction-scoped revision/CAS and receipts remain in force."
+    },
+    {
+      "finding": "Generic allocation_policy creation bypassed the canonical AllocationPolicyArtifact validator and could expose invalid approved content.",
+      "resolution": "Generic creation now rejects the allocation_policy kind regardless of payload validity and key presence. Only POST /api/registry/allocation-policy-artifacts creates that kind through its existing canonical validator. Tests prove invalid creation leaves typed GET/list empty, valid typed creation/approval works and its original receipt and current approved GET survive a fresh OS process."
+    }
+  ],
   "verification": {
-    "environment": "A disposable, existing local Postgres container (pgvector/pgvector:pg16, host port 25432, database 'postgres') was used directly as TEST_DATABASE_URL (postgresql://postgres:postgres@127.0.0.1:25432/postgres) for every TEST_DATABASE_URL-gated test in the targeted suites -- none were skipped in the Postgres run. Each test that creates a schema uses a uuid4-suffixed schema name and drops it in a finally block. No hosted/provider/broker/capital service or credential was touched.",
+    "environment": "Checkout-scoped .venv-pantheon provisioned with scripts/dev/provision_python_distribution.py using the existing dependency interpreter. Dedicated local test PostgreSQL on 127.0.0.1:25432, unique disposable schema per test; mounted FastAPI apps and actual HTTP adapter with strict synthetic JWT identities. No hosted/provider/broker/capital changes.",
     "commands": [
       {
-        "command": "TEST_DATABASE_URL=postgresql://postgres:postgres@127.0.0.1:25432/postgres .venv-pantheon/bin/python3 -m pytest services/registry services/foundation/tests/test_registry_owner_transaction.py services/foundation/tests/test_control_plane_postgres_owner_stores.py services/control-plane/bff/tests/test_strategy_registry_owner_prerequisite.py services/control-plane/bff/test_command_executor.py services/control-plane/bff/tests/test_command_adapters_router.py -q",
-        "result": "394 passed, 3 warnings in 157.89s against live PostgreSQL container"
-      },
-      {
-        "command": "TEST_DATABASE_URL=postgresql://postgres:postgres@127.0.0.1:25432/postgres .venv-pantheon/bin/python3 -m pytest -v services/registry/test_owner_durability_real_process.py",
-        "result": "20 passed, 1 warning in 47.05s against live PostgreSQL -- real process SIGKILL, crash window, rapid same-second mutation/replay without sleep, parent lineage base_checksum 409, concurrent parent-linked writers, mandatory caller base identity verification, stale digest intervening revision CAS rejection, generic reference revision base binding, draft_kind bypass rejection across all 4 keyed/unkeyed inline/reference combinations with durable readback, and genuine name-only draft positive capability with durable readback across restart"
-      },
-      {
-        "command": ".venv-pantheon/bin/python3 -m pytest -v services/control-plane/bff/tests/test_strategy_registry_owner_prerequisite.py",
-        "result": "54 passed in 17.33s -- caller strict auth before owner I/O, claims validation, zero owner I/O on permissive/unsigned tokens, scoped receipt validation, transport recovery, and adversarial tests"
-      },
-      {
-        "command": "TEST_DATABASE_URL=postgresql://postgres:postgres@127.0.0.1:25432/postgres .venv-pantheon/bin/python3 -m pytest /tmp/test_registry_review_f08d.py -q --tb=short",
-        "result": "4 passed, 1 warning in 8.44s -- reviewer probe asserting draft_kind cannot bypass revision base across all 4 keyed/unkeyed inline/reference combinations"
-      },
-      {
-        "command": "TEST_DATABASE_URL=postgresql://postgres:postgres@127.0.0.1:25432/postgres .venv-pantheon/bin/python3 -m pytest services/registry/test_owner_durability.py",
-        "result": "16 passed in 8.38s against live PostgreSQL"
-      },
-      {
-        "command": ".venv-pantheon/bin/python3 -m pytest services/registry/test_first_release_contract.py",
-        "result": "13 passed in 2.99s"
-      },
-      {
-        "command": "python3 -m py_compile services/control-plane/bff/command_adapters/strategy_adapter.py services/control-plane/bff/tests/test_strategy_registry_owner_prerequisite.py services/control-plane/bff/tests/test_command_adapters_router.py services/foundation/tests/test_registry_owner_transaction.py services/registry/pg_store.py services/registry/service.py services/registry/split_api.py services/registry/storage.py services/registry/test_owner_durability_real_process.py services/registry/test_owner_durability.py services/registry/test_registry_positives.py services/registry/test_service.py",
-        "result": "clean compile, no syntax errors"
+        "command": "TEST_DATABASE_URL=<isolated-local-test-postgres> timeout 300 .venv-pantheon/bin/python3 -m pytest services/registry services/foundation/tests/test_registry_owner_transaction.py services/foundation/tests/test_control_plane_postgres_owner_stores.py services/control-plane/bff/tests/test_strategy_registry_owner_prerequisite.py services/control-plane/bff/test_command_executor.py services/control-plane/bff/tests/test_command_adapters_router.py /tmp/test_registry_review_3f7e.py -q --tb=short",
+        "exit_status": 0,
+        "passed": 402,
+        "skipped": 0,
+        "xfailed": 0,
+        "warnings": 3,
+        "elapsed_seconds": 196.06,
+        "log": "/tmp/registry-codex-admission-verified.log",
+        "log_sha256": "f8dbbbd8ea0f4603e3b2c9e7171825f10289a17f8bfeaeccb4bdc1703da1df85",
+        "terminal_output": "........................................................................ [ 17%]\n........................................................................ [ 35%]\n........................................................................ [ 53%]\n........................................................................ [ 71%]\n........................................................................ [ 89%]\n..........................................                               [100%]\n=============================== warnings summary ===============================\n../../../../home/chloe_ong_dev_cctech_support_com/code/pantheon/.venv/lib/python3.12/site-packages/fastapi/testclient.py:1\n  /home/chloe_ong_dev_cctech_support_com/code/pantheon/.venv/lib/python3.12/site-packages/fastapi/testclient.py:1: StarletteDeprecationWarning: Using `httpx` with `starlette.testclient` is deprecated; install `httpx2` instead.\n    from starlette.testclient import TestClient as TestClient  # noqa\n\nservices/control-plane/bff/tests/test_command_adapters_router.py::test_main_app_operator_command_submission_regression\nservices/control-plane/bff/tests/test_command_adapters_router.py::test_main_app_operator_command_submission_regression\n  /tmp/pantheon-worker-worktrees/pantheon/registry-strategy-unified-contract-001/services/research/strategy_spec/normalizer.py:21: DeprecationWarning: jsonschema.RefResolver is deprecated as of v4.18.0, in favor of the https://github.com/python-jsonschema/referencing library, which provides more compliant referencing behavior as well as more flexible APIs for customization. A future release will remove RefResolver. Please file a feature request (on referencing) if you are missing an API for the kind of customization you need.\n    from jsonschema import Draft7Validator, RefResolver\n\n-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html\n402 passed, 3 warnings in 196.06s (0:03:16)\n"
       }
     ],
-    "not_covered_in_this_delivery": [
-      "Governance/paper/runtime positives (submit_review/promote_paper/activate/pause/archive real owner integration) remain assigned to the existing downstream tasks named in architecture-resumption-sa-sd.md \u00a74's consumer table; this pass does not implement their scope."
+    "counts": "398 committed tests plus 4 independent reviewer probes; permanent new regression tests cover the rejected typed/generic payloads and valid counterparts.",
+    "new_permanent_proofs": [
+      "services/registry/test_owner_durability_real_process.py::test_generic_typed_admission_and_restart[False/True]",
+      "services/registry/test_owner_durability_real_process.py::test_allocation_typed_admission_and_restart[False/True]"
+    ],
+    "preserved_proofs": "Full Registry/foundation/BFF suites exercised strict auth negatives, explicit backend posture, stale CAS, two-process contention, SIGKILL restart, transaction rollback and response-loss windows, original receipt replay, BFF readback mismatch, genuine drafts/spec/revisions, artifact/allocation behavior and command transport.",
+    "diagnostic_runs_not_acceptance": [
+      "Initial focused batch: 112 passed, 3 failed, exit 1; old empty typed fixtures were corrected without relaxing assertions.",
+      "First full diagnostic batch: 393 passed, 9 failed, exit 1; corrected shared fixture lineage/storage and normalized absent metadata to null in the canonical payload builder. Superseded by fixed-commit full pass above."
     ]
   },
-  "acceptance_check": {
-    "strategy_adapter_reloads_durable_registry_receipt": true,
-    "strategy_adapter_unconfirmed_receipt_fails_closed": true,
-    "strategy_adapter_canonical_actor_extraction_used": true,
-    "strategy_adapter_caller_auth_inbound_validated": true,
-    "strategy_adapter_strict_receipt_scope_validated": true,
-    "strategy_adapter_transport_disconnect_retryable": true,
-    "strategy_adapter_rapid_same_second_mutation_verified": true,
-    "strategy_adapter_zero_owner_io_on_invalid_auth": true,
-    "strategy_spec_generic_and_typed_writes_share_advisory_lock": true,
-    "strategy_spec_parent_lineage_base_checksum_enforced": true,
-    "strategy_spec_parent_lineage_mandatory_no_checksum_only_cas": true,
-    "strategy_spec_generic_and_typed_all_representations_share_invariants": true,
-    "strategy_spec_stale_parent_rejected_409": true,
-    "strategy_spec_unbound_revision_rejected_400": true,
-    "typed_submissions_reject_reserved_draft_kind": true,
-    "draft_classification_derived_server_side_from_request_structure": true,
-    "create_with_receipt_lock_ordering_consistent": true,
-    "real_postgres_adversarial_crash_and_response_loss_tested": true,
-    "sigkill_process_durability_tested": true,
-    "tcp_proxy_response_loss_lifecycle_tested": true,
-    "fault_injection_atomic_rollback_tested": true,
-    "first_release_contract_reconciled": true,
-    "real_postgres_suite_executed_this_session_not_skipped": true,
-    "existing_test_suite_green_memory_and_postgres_backends": true,
-    "advance_process_kill_crash_window_proof": true,
-    "governance_promotion_runtime_owner_integration": false
-  },
+  "consumer_handoffs": [
+    {
+      "task": "DOMAIN-WRITERS-DURABILITY-CORRECTIVE-001",
+      "contract": "AllocationPolicyArtifact uses POST /api/registry/allocation-policy-artifacts with version, allocation_policy_artifact and optional stable registry_id, verified scoped bearer identity. Generic allocation creation is rejected. Current production Python source inventory found no generic allocation writer; HTTP enforcement and canonical positives are tested. Existing research/source/deployment/runtime consumer integration remains that task's scope."
+    },
+    {
+      "task": "OVERLAY-RETIRE-001",
+      "contract": "Generic typed StrategySpec now has identical lineage/content/reference prerequisites to strategy-specs. Genuine name-only draft requests remain supported. Strategy adapter and downstream business-action owner boundaries are unchanged."
+    }
+  ],
+  "not_covered": [
+    "Genuine governance review, paper promotion and runtime business-action integration belong to the existing downstream owners named in immutable plan section 4.",
+    "Source validation and PR delivery do not prove the coordinated FE/BFF hosted release, all twelve loops, Management/Agora/OpenClaw journeys or exact-artifact rollback."
+  ],
   "review": {
-    "reviewer": "Codex",
-    "decision": "Resolved all review reject findings from PR #5620 (frozen head f08d2f256ae1acca3e6596f160dc18f50eaccce4): (1) Derived draft classification server-side from request structure rather than arbitrary metadata; (2) Rejected reserved draft_kind metadata markers on typed and StrategySpec submissions (400) and rejected mixing name with typed fields (400); (3) Added committed real-process regressions for all four combinations (keyed/unkeyed, inline/storage_ref) with durable readback and verified genuine name-only draft positive capability across fresh OS processes. All 4 reviewer probes and full suite pass against live PostgreSQL."
+    "reviewer": "Antigravity2",
+    "decision": "pending independent exact-head review",
+    "owner": "Codex"
   }
 }
