@@ -253,7 +253,11 @@ class V2StartupCacheTests(unittest.TestCase):
                 "runner_status": "completed",
                 "exit_code": 0,
                 "runner_finished_at": "2026-08-28T00:00:00Z",
-                "request_snapshot": {"reason": supervisor.REASON_OWNED_IN_PROGRESS},
+                "request_snapshot": {
+                    "reason": supervisor.REASON_OWNED_IN_PROGRESS,
+                    "task_generation": 1,
+                    "metadata": {"task_generation": 1},
+                },
             }
         )
         worker["process_generation"] = supervisor.worker_process_generation_id(
@@ -8678,6 +8682,213 @@ class RuntimeAndFailureSemanticsTests(unittest.TestCase):
             "preserve",
         )
 
+    def test_canonical_worker_terminal_status_and_active_lease_all_transfer_strict_negatives_and_positives(
+        self,
+    ) -> None:
+        """Prove strict generation checks, missing event_id fail-closed, and non-transfer note handling."""
+        config = config_fixture()
+        owner_worker = self._owner_worker(generation=1)
+        handoff_task = task_fixture(status="review", owner="Codex", reviewer="Codex2")
+        handoff_event = self._exact_lifecycle_event(
+            owner_worker, event_type="handoff", agent="Codex"
+        )
+
+        # Baseline positive: valid handoff
+        self.assertEqual(
+            supervisor.canonical_worker_terminal_status(
+                config, owner_worker, handoff_task, activity_events=[handoff_event]
+            ),
+            "review",
+        )
+        self.assertEqual(
+            supervisor.active_worker_governance_lease_decision(
+                config, owner_worker, handoff_task, activity_events=[handoff_event]
+            )["action"],
+            "terminate",
+        )
+
+        # (1) Negative: wrong_metadata_generation fails closed; Positive counterpart succeeds
+        bad_meta = copy.deepcopy(owner_worker)
+        bad_meta["request_snapshot"]["metadata"]["task_generation"] = 2
+        self.assertIsNone(
+            supervisor.canonical_worker_terminal_status(
+                config, bad_meta, handoff_task, activity_events=[handoff_event]
+            )
+        )
+        self.assertEqual(
+            supervisor.active_worker_governance_lease_decision(
+                config, bad_meta, handoff_task, activity_events=[handoff_event]
+            )["action"],
+            "preserve",
+        )
+
+        # (2) Negative: bool_worker_generation fails closed; Positive counterpart succeeds
+        bad_bool = copy.deepcopy(owner_worker)
+        bad_bool["task_generation"] = True
+        self.assertIsNone(
+            supervisor.canonical_worker_terminal_status(
+                config, bad_bool, handoff_task, activity_events=[handoff_event]
+            )
+        )
+        self.assertEqual(
+            supervisor.active_worker_governance_lease_decision(
+                config, bad_bool, handoff_task, activity_events=[handoff_event]
+            )["action"],
+            "preserve",
+        )
+
+        # (3) Negative: missing_snapshot_generation fails closed; Positive counterpart succeeds
+        bad_snap = copy.deepcopy(owner_worker)
+        bad_snap["request_snapshot"].pop("task_generation", None)
+        self.assertIsNone(
+            supervisor.canonical_worker_terminal_status(
+                config, bad_snap, handoff_task, activity_events=[handoff_event]
+            )
+        )
+        self.assertEqual(
+            supervisor.active_worker_governance_lease_decision(
+                config, bad_snap, handoff_task, activity_events=[handoff_event]
+            )["action"],
+            "preserve",
+        )
+
+        # (4) Negative: handoff missing event_id fails closed; Positive counterpart succeeds
+        bad_handoff_event = copy.deepcopy(handoff_event)
+        bad_handoff_event.pop("event_id", None)
+        self.assertIsNone(
+            supervisor.canonical_worker_terminal_status(
+                config, owner_worker, handoff_task, activity_events=[bad_handoff_event]
+            )
+        )
+        self.assertEqual(
+            supervisor.active_worker_governance_lease_decision(
+                config, owner_worker, handoff_task, activity_events=[bad_handoff_event]
+            )["action"],
+            "preserve",
+        )
+
+        # (5) Negative: review_approved missing event_id fails closed; Positive counterpart succeeds
+        reviewer_worker = copy.deepcopy(owner_worker)
+        reviewer_worker.update({
+            "agent_id": "codex2",
+            "logical_agent_id": "codex2",
+            "request_snapshot": {
+                "reason": supervisor.REASON_REVIEW_READY,
+                "task_generation": 1,
+                "metadata": {"task_generation": 1},
+            },
+        })
+        approved_task = task_fixture(status="review_approved", owner="Codex", reviewer="Codex2")
+        approved_event = self._exact_lifecycle_event(
+            reviewer_worker, event_type="review_approved", agent="Codex2"
+        )
+        # Positive
+        self.assertEqual(
+            supervisor.canonical_worker_terminal_status(
+                config, reviewer_worker, approved_task, activity_events=[approved_event]
+            ),
+            "review_approved",
+        )
+        self.assertEqual(
+            supervisor.active_worker_governance_lease_decision(
+                config, reviewer_worker, approved_task, activity_events=[approved_event]
+            )["action"],
+            "terminate",
+        )
+        # Negative
+        bad_approved_event = copy.deepcopy(approved_event)
+        bad_approved_event.pop("event_id", None)
+        self.assertIsNone(
+            supervisor.canonical_worker_terminal_status(
+                config, reviewer_worker, approved_task, activity_events=[bad_approved_event]
+            )
+        )
+        self.assertEqual(
+            supervisor.active_worker_governance_lease_decision(
+                config, reviewer_worker, approved_task, activity_events=[bad_approved_event]
+            )["action"],
+            "preserve",
+        )
+
+        # (6) Negative: done missing event_id fails closed; Positive counterpart succeeds
+        done_task = task_fixture(status="done", owner="Codex", reviewer="Codex2")
+        done_event = self._exact_lifecycle_event(
+            owner_worker, event_type="done", agent="Codex"
+        )
+        # Positive
+        self.assertEqual(
+            supervisor.canonical_worker_terminal_status(
+                config, owner_worker, done_task, activity_events=[done_event]
+            ),
+            "done",
+        )
+        # Negative
+        bad_done_event = copy.deepcopy(done_event)
+        bad_done_event.pop("event_id", None)
+        self.assertIsNone(
+            supervisor.canonical_worker_terminal_status(
+                config, owner_worker, done_task, activity_events=[bad_done_event]
+            )
+        )
+
+        # (7) Non-transfer Human/Ops clarification note does NOT invalidate authentic reopen
+        intent = self._pending_review_requeue_intent(task_generation=1)
+        reopen_task = task_fixture(
+            status="in_progress", owner="Codex", reviewer="Codex2", review_requeue_intent=intent
+        )
+        reopen_event = self._exact_lifecycle_event(
+            reviewer_worker, event_type="reopen", agent="Codex2"
+        )
+        reopen_event["review_requeue_intent"] = copy.deepcopy(intent)
+        reopen_event.pop("event_id", None)
+        encoded_reopen = json.dumps(
+            reopen_event, sort_keys=True, separators=(",", ":"), ensure_ascii=False
+        ).encode("utf-8")
+        reopen_event["event_id"] = "ai-status-event-" + hashlib.sha256(encoded_reopen).hexdigest()
+
+        clarification_note = {
+            "type": "note",
+            "task_id": "TASK-1",
+            "ts": "2026-08-15T04:02:00Z",
+            "agent": "Human/Ops",
+            "message": "Retain reviewer findings; this is a clarification, not a new assignment.",
+        }
+        note_encoded = json.dumps(
+            clarification_note, sort_keys=True, separators=(",", ":"), ensure_ascii=False
+        ).encode("utf-8")
+        clarification_note["event_id"] = "ai-status-event-" + hashlib.sha256(note_encoded).hexdigest()
+
+        self.assertEqual(
+            supervisor.canonical_worker_terminal_status(
+                config,
+                reviewer_worker,
+                reopen_task,
+                activity_events=[reopen_event, clarification_note],
+            ),
+            "in_progress",
+        )
+        self.assertEqual(
+            supervisor.active_worker_governance_lease_decision(
+                config,
+                reviewer_worker,
+                reopen_task,
+                activity_events=[reopen_event, clarification_note],
+            )["action"],
+            "terminate",
+        )
+
+        # (8) Reopen requeue_intent reopened_at mismatch fails closed
+        mismatched_time_task = copy.deepcopy(reopen_task)
+        mismatched_time_task["review_requeue_intent"]["reopened_at"] = "2026-08-15T04:02:00Z"
+        self.assertIsNone(
+            supervisor.canonical_worker_terminal_status(
+                config,
+                reviewer_worker,
+                mismatched_time_task,
+                activity_events=[reopen_event],
+            )
+        )
+
     def test_canonical_worker_terminal_status_recognizes_real_recorded_reopens(
         self,
     ) -> None:
@@ -9821,13 +10032,9 @@ class ProviderStreamLifecycleTests(unittest.TestCase):
         config = config_fixture()
         task = task_fixture(status="review")
         worker = RuntimeAndFailureSemanticsTests._owner_worker(generation=1)
-        event = {
-            "task_id": "TASK-1",
-            "type": "handoff",
-            "ts": "2026-08-15T04:01:00Z",
-            "agent": "Codex",
-            "status_command": {"worker_lease": supervisor.worker_process_identity(worker)},
-        }
+        event = RuntimeAndFailureSemanticsTests._exact_lifecycle_event(
+            worker, event_type="handoff", agent="Codex"
+        )
         self.assertEqual(
             supervisor.canonical_worker_terminal_status(
                 config, worker, task, activity_events=[event]
@@ -11267,19 +11474,17 @@ def _child_reopen_worker(
     barrier2: Any = None,
 ) -> None:
     import subprocess
-    if barrier1 is not None:
-        try:
-            barrier1.wait(timeout=10)
-        except Exception:
-            pass
-    cmd = ["bash", f"{worktree_str}/scripts/ai-status.sh", "reopen", "TASK-RACE-001", "Rejection from child process"]
-    proc = subprocess.run(cmd, env=env_dict, cwd=worktree_str, capture_output=True, text=True)
-    if barrier2 is not None:
-        try:
-            barrier2.wait(timeout=10)
-        except Exception:
-            pass
-    result_queue.put({"returncode": proc.returncode, "stdout": proc.stdout, "stderr": proc.stderr})
+    try:
+        if barrier1 is not None:
+            barrier1.wait(timeout=15)
+        cmd = ["bash", f"{worktree_str}/scripts/ai-status.sh", "reopen", "TASK-RACE-001", "Rejection from child process"]
+        proc = subprocess.run(cmd, env=env_dict, cwd=worktree_str, capture_output=True, text=True)
+        if barrier2 is not None:
+            barrier2.wait(timeout=15)
+        result_queue.put({"returncode": proc.returncode, "stdout": proc.stdout, "stderr": proc.stderr})
+    except Exception as exc:
+        result_queue.put({"error": str(exc), "returncode": -1, "stdout": "", "stderr": str(exc)})
+        raise
 
 
 def _child_recovery_worker(
@@ -11294,24 +11499,29 @@ def _child_recovery_worker(
     from unittest import mock
     import common
     import supervisor
-    snapshot = None
-    if take_snapshot_first:
-        snapshot = supervisor.load_status(config)
-    if barrier1 is not None:
-        try:
-            barrier1.wait(timeout=10)
-        except Exception:
-            pass
-    if barrier2 is not None and take_snapshot_first:
-        try:
-            barrier2.wait(timeout=10)
-        except Exception:
-            pass
-    issued = worker.get("status_command_runtime")
-    if issued:
-        issued_env = common._status_command_runtime_env_from_record(issued)
-        issued_env.update(common.task_state_store_runtime_env(config))
-        with mock.patch.object(supervisor, "status_command_runtime_env", return_value=issued_env):
+    try:
+        snapshot = None
+        if take_snapshot_first:
+            snapshot = supervisor.load_status(config)
+        if barrier1 is not None:
+            barrier1.wait(timeout=15)
+        if barrier2 is not None and take_snapshot_first:
+            barrier2.wait(timeout=15)
+        issued = worker.get("status_command_runtime")
+        if issued:
+            issued_env = common._status_command_runtime_env_from_record(issued)
+            issued_env.update(common.task_state_store_runtime_env(config))
+            with mock.patch.object(supervisor, "status_command_runtime_env", return_value=issued_env):
+                res = supervisor.recover_lost_worker_lease(
+                    config,
+                    state,
+                    worker,
+                    reason_kind="worker_process_missing",
+                    reason="Process missing in race test",
+                    status=snapshot,
+                )
+                result_queue.put({"result": res, "status": worker.get("status"), "worker": dict(worker)})
+        else:
             res = supervisor.recover_lost_worker_lease(
                 config,
                 state,
@@ -11321,21 +11531,11 @@ def _child_recovery_worker(
                 status=snapshot,
             )
             result_queue.put({"result": res, "status": worker.get("status"), "worker": dict(worker)})
-    else:
-        res = supervisor.recover_lost_worker_lease(
-            config,
-            state,
-            worker,
-            reason_kind="worker_process_missing",
-            reason="Process missing in race test",
-            status=snapshot,
-        )
-        result_queue.put({"result": res, "status": worker.get("status"), "worker": dict(worker)})
-    if barrier2 is not None and not take_snapshot_first:
-        try:
-            barrier2.wait(timeout=10)
-        except Exception:
-            pass
+        if barrier2 is not None and not take_snapshot_first:
+            barrier2.wait(timeout=15)
+    except Exception as exc:
+        result_queue.put({"error": str(exc), "result": None, "status": "error"})
+        raise
 
 
 def _child_stale_reopen(
@@ -11346,19 +11546,17 @@ def _child_stale_reopen(
     barrier2: Any = None,
 ) -> None:
     import subprocess
-    if barrier1 is not None:
-        try:
-            barrier1.wait(timeout=10)
-        except Exception:
-            pass
-    if barrier2 is not None:
-        try:
-            barrier2.wait(timeout=10)
-        except Exception:
-            pass
-    cmd = ["bash", f"{worktree_str}/scripts/ai-status.sh", "reopen", "TASK-RACE-002", "Stale reopen attempt"]
-    proc = subprocess.run(cmd, env=env_dict, cwd=worktree_str, capture_output=True, text=True)
-    result_queue.put({"returncode": proc.returncode, "stdout": proc.stdout, "stderr": proc.stderr})
+    try:
+        if barrier1 is not None:
+            barrier1.wait(timeout=15)
+        if barrier2 is not None:
+            barrier2.wait(timeout=15)
+        cmd = ["bash", f"{worktree_str}/scripts/ai-status.sh", "reopen", "TASK-RACE-002", "Stale reopen attempt"]
+        proc = subprocess.run(cmd, env=env_dict, cwd=worktree_str, capture_output=True, text=True)
+        result_queue.put({"returncode": proc.returncode, "stdout": proc.stdout, "stderr": proc.stderr})
+    except Exception as exc:
+        result_queue.put({"error": str(exc), "returncode": -1, "stdout": "", "stderr": str(exc)})
+        raise
 
 
 class RealProcessReviewHandoffRecoveryFlowTests(unittest.TestCase):
