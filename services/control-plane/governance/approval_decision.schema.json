@@ -16,7 +16,9 @@
   "properties": {
     "decision_id": {
       "type": "string",
-      "description": "Unique identifier for this approval decision."
+      "description": "Unique identifier for this approval decision.",
+      "minLength": 1,
+      "pattern": "\\S"
     },
     "target_type": {
       "type": "string",
@@ -27,18 +29,22 @@
         "model_artifact",
         "allocation_policy",
         "persona_capital_binding",
-        "evolution_proposal"
+        "evolution_proposal",
+        "persona_training_target"
       ],
       "description": "The type of object being approved. Must match a valid governance target."
     },
     "target_id": {
       "type": "string",
-      "description": "The ID of the target object (e.g., registry_id, evolution_proposal_id)."
+      "description": "The ID of the target object (e.g., registry_id, evolution_proposal_id).",
+      "minLength": 1,
+      "pattern": "\\S"
     },
     "target_version": {
       "type": "string",
       "minLength": 1,
-      "description": "The version or immutable snapshot key of the target object at the time of this decision."
+      "description": "The version or immutable snapshot key of the target object at the time of this decision.",
+      "pattern": "\\S"
     },
     "decision": {
       "type": "string",
@@ -83,7 +89,8 @@
       "type": "array",
       "items": {
         "type": "string",
-        "minLength": 1
+        "minLength": 1,
+        "pattern": "\\S"
       },
       "description": "Conditions that must be satisfied for approved_with_conditions decisions. Empty or absent for approved/rejected."
     },
@@ -102,7 +109,10 @@
       "type": "array",
       "items": {
         "type": "object",
-        "required": ["ref_type", "ref_id"],
+        "required": [
+          "ref_type",
+          "ref_id"
+        ],
         "properties": {
           "ref_type": {
             "type": "string",
@@ -125,7 +135,12 @@
             "properties": {
               "backend": {
                 "type": "string",
-                "enum": ["object_store", "gcs", "db", "inline"]
+                "enum": [
+                  "object_store",
+                  "gcs",
+                  "db",
+                  "inline"
+                ]
               },
               "path": {
                 "type": "string"
@@ -220,12 +235,22 @@
     },
     "authority_status": {
       "type": "string",
-      "enum": ["authoritative"],
+      "enum": [
+        "authoritative"
+      ],
       "description": "Authoritative status flag."
     },
     "metadata": {
       "type": "object",
       "description": "Additional metadata for downstream consumers."
+    },
+    "version": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "event_id": {
+      "type": "string",
+      "minLength": 1
     }
   },
   "allOf": [
@@ -236,13 +261,24 @@
             "const": "approved_with_conditions"
           }
         },
-        "required": ["decision"]
+        "required": [
+          "decision"
+        ]
       },
       "then": {
-        "required": ["conditions"],
+        "required": [
+          "conditions"
+        ],
         "properties": {
           "conditions": {
             "minItems": 1
+          }
+        }
+      },
+      "else": {
+        "properties": {
+          "conditions": {
+            "maxItems": 0
           }
         }
       }
@@ -258,10 +294,15 @@
             ]
           }
         },
-        "required": ["decision_state"]
+        "required": [
+          "decision_state"
+        ]
       },
       "then": {
-        "required": ["actor_role", "actor_id"]
+        "required": [
+          "actor_role",
+          "actor_id"
+        ]
       }
     },
     {
@@ -271,10 +312,16 @@
             "const": "decided"
           }
         },
-        "required": ["decision_state"]
+        "required": [
+          "decision_state"
+        ]
       },
       "then": {
-        "required": ["decision", "rationale", "decided_at"]
+        "required": [
+          "decision",
+          "rationale",
+          "decided_at"
+        ]
       }
     }
   ]

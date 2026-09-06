@@ -6,6 +6,7 @@ from concurrent.futures import ThreadPoolExecutor
 from threading import Barrier
 
 import pytest
+from services.governance.test_approval_authority import (advance_registry_http, advance_registry_unit, registry_unit_headers, configure_registry_unit_auth)
 from fastapi.testclient import TestClient
 
 from services.runtime_auth_inbound import AuthContext
@@ -27,7 +28,8 @@ from .strategy_artifact import (
 
 
 @pytest.fixture(autouse=True)
-def clean_store():
+def clean_store(monkeypatch):
+    configure_registry_unit_auth(monkeypatch)
     reset_store()
     yield
     reset_store()
@@ -72,7 +74,7 @@ def test_builtin_v1_is_schema_valid_and_maps_to_execution_bundle():
 
 
 def test_builtin_v1_is_registered_idempotently_after_store_reset():
-    client = TestClient(app, headers={"Authorization": "Bearer test-operator:operator"})
+    client = TestClient(app, headers=registry_unit_headers())
     registry_id = "artifact-tw-session-momentum-v1"
 
     first = client.get(f"/api/registry/strategy-artifacts/{registry_id}")
@@ -99,7 +101,7 @@ def test_builtin_v1_is_registered_idempotently_after_store_reset():
     ]
 
     reset_store()
-    after_reset = TestClient(app, headers={"Authorization": "Bearer test-operator:operator"}).get(
+    after_reset = TestClient(app, headers=registry_unit_headers()).get(
         f"/api/registry/strategy-artifacts/{registry_id}"
     )
     assert after_reset.status_code == 200, after_reset.text
@@ -127,7 +129,7 @@ def test_v1_logic_interpreter_uses_declared_parameters():
 
 
 def test_mutation_api_creates_real_child_delta_and_preserves_parent():
-    client = TestClient(app, headers={"Authorization": "Bearer test-operator:operator"})
+    client = TestClient(app, headers=registry_unit_headers())
     parent_id = "artifact-tw-session-momentum-v1"
     child_id = "artifact-tw-session-momentum-v2"
 
@@ -352,7 +354,7 @@ def test_mutation_rejects_string_run_sequence_and_huge_out_of_range_integer():
 
 
 def test_strategy_artifact_facade_rejects_plain_execution_bundle():
-    client = TestClient(app, headers={"Authorization": "Bearer test-operator:operator"})
+    client = TestClient(app, headers=registry_unit_headers())
     created = client.post(
         "/api/registry/entries",
         json={
@@ -388,7 +390,7 @@ def test_strategy_artifact_facade_rejects_plain_execution_bundle():
     ],
 )
 def test_strategy_artifact_facade_rejects_malformed_or_mismatched_overlay(embedded):
-    client = TestClient(app, headers={"Authorization": "Bearer test-operator:operator"})
+    client = TestClient(app, headers=registry_unit_headers())
     created = client.post(
         "/api/registry/entries",
         json={
@@ -430,7 +432,7 @@ def test_strategy_artifact_facade_rejects_malformed_or_mismatched_overlay(embedd
     ],
 )
 def test_idempotent_retry_rejects_changed_registration_envelope(field, value):
-    client = TestClient(app, headers={"Authorization": "Bearer test-operator:operator"})
+    client = TestClient(app, headers=registry_unit_headers())
     registry_id = "artifact-tw-session-momentum-v1"
     seeded = client.get(f"/api/registry/strategy-artifacts/{registry_id}")
     assert seeded.status_code == 200, seeded.text
@@ -487,7 +489,7 @@ def test_same_child_id_concurrent_mutations_never_overwrite():
 
 def test_fastapi_startup_registers_builtin_before_health_only_request():
     registry_id = "artifact-tw-session-momentum-v1"
-    with TestClient(app, headers={"Authorization": "Bearer test-operator:operator"}) as client:
+    with TestClient(app, headers=registry_unit_headers()) as client:
         health = client.get("/health")
         assert health.status_code == 200, health.text
         assert get_store().get(registry_id) is not None
@@ -498,7 +500,7 @@ def test_strategy_artifact_advance_preserves_deployment_split():
     1: "deny unauthorized builtin mutation") — this proof registers a fresh,
     non-builtin StrategyArtifact (a caller-owned entry, not a bootstrap
     artifact) and advances *that* instead of the shared built-in fixture."""
-    client = TestClient(app, headers={"Authorization": "Bearer test-operator:operator"})
+    client = TestClient(app, headers=registry_unit_headers())
     artifact = copy.deepcopy(_artifact())
     artifact["artifact_id"] = "artifact-advance-split-test-v1"
     artifact["strategy_id"] = "advance-split-test"
@@ -509,8 +511,8 @@ def test_strategy_artifact_advance_preserves_deployment_split():
     assert registered.status_code == 200, registered.text
     registry_id = registered.json()["entry"]["registry_id"]
 
-    approved = client.post(
-        f"/api/registry/strategy-artifacts/{registry_id}/advance",
+    approved = advance_registry_http(
+        client, f"/api/registry/strategy-artifacts/{registry_id}/advance",
         json={
             "target_state": "approved",
             "expected_artifact_state": "candidate",

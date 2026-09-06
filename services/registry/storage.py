@@ -555,9 +555,9 @@ class RegistryStore:
             current = self._entries.get(registry_id)
             if current is None or current.to_dict() != base_snapshot:
                 raise RegistryConcurrentUpdateError(registry_id)
-            if validate is not None:
-                validate(RegistryEntry.from_dict(base_snapshot))
             entry = RegistryEntry.from_dict(base_snapshot)
+            if validate is not None:
+                validate(entry)
             entry.artifact_state = target_state
             entry.updated_at = utc_now_iso()
             if approved_at is not None:

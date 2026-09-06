@@ -14,6 +14,7 @@ from __future__ import annotations
 import time
 
 import pytest
+from services.governance.test_approval_authority import (advance_registry_http, advance_registry_unit, registry_unit_headers, configure_registry_unit_auth)
 from fastapi import HTTPException
 from fastapi.testclient import TestClient
 
@@ -42,7 +43,8 @@ from .strategy_artifact import (
 # -- Fixtures -------------------------------------------------------------
 
 @pytest.fixture(autouse=True)
-def clean_store():
+def clean_store(monkeypatch):
+    configure_registry_unit_auth(monkeypatch)
     """Reset the singleton store before each test."""
     reset_store()
     yield
@@ -113,19 +115,19 @@ class TestArtifactStateTransitions:
     def test_draft_to_candidate(self):
         store = RegistryStore()
         svc = RegistryService(store)
-        entry = svc.register(_make_create_payload(), "reg-001")
+        entry = svc.register(_make_create_payload(), "reg-001", actor={"id": "unit-operator", "tenant": "tenant-unit"})
         assert entry.entry.artifact_state == ArtifactState.DRAFT
 
-        advanced = svc.advance_artifact_state("reg-001", ArtifactState.CANDIDATE)
+        advanced = advance_registry_unit(svc, "reg-001", ArtifactState.CANDIDATE)
         assert advanced.entry.artifact_state == ArtifactState.CANDIDATE
 
     def test_candidate_to_approved(self):
         store = RegistryStore()
         svc = RegistryService(store)
-        entry = svc.register(_make_create_payload(), "reg-001")
-        svc.advance_artifact_state("reg-001", ArtifactState.CANDIDATE)
-        advanced = svc.advance_artifact_state(
-            "reg-001",
+        entry = svc.register(_make_create_payload(), "reg-001", actor={"id": "unit-operator", "tenant": "tenant-unit"})
+        advance_registry_unit(svc, "reg-001", ArtifactState.CANDIDATE)
+        advanced = advance_registry_unit(
+            svc, "reg-001",
             ArtifactState.APPROVED,
             approver="risk-committee",
             approval_decision_id="decision-reg-001",
@@ -148,68 +150,68 @@ class TestArtifactStateTransitions:
                 checksum="sha256:abc123",
             ),
             "reg-001",
-        )
-        svc.advance_artifact_state("reg-001", ArtifactState.CANDIDATE)
+        actor={"id": "unit-operator", "tenant": "tenant-unit"})
+        advance_registry_unit(svc, "reg-001", ArtifactState.CANDIDATE)
         with pytest.raises(RegistryError, match="Cannot approve artifact without lineage"):
-            svc.advance_artifact_state("reg-001", ArtifactState.APPROVED)
+            advance_registry_unit(svc, "reg-001", ArtifactState.APPROVED)
 
     def test_approved_to_retired(self):
         store = RegistryStore()
         svc = RegistryService(store)
-        entry = svc.register(_make_create_payload(), "reg-001")
-        svc.advance_artifact_state("reg-001", ArtifactState.CANDIDATE)
-        svc.advance_artifact_state("reg-001", ArtifactState.APPROVED)
-        advanced = svc.advance_artifact_state("reg-001", ArtifactState.RETIRED)
+        entry = svc.register(_make_create_payload(), "reg-001", actor={"id": "unit-operator", "tenant": "tenant-unit"})
+        advance_registry_unit(svc, "reg-001", ArtifactState.CANDIDATE)
+        advance_registry_unit(svc, "reg-001", ArtifactState.APPROVED)
+        advanced = advance_registry_unit(svc, "reg-001", ArtifactState.RETIRED)
         assert advanced.entry.artifact_state == ArtifactState.RETIRED
 
     def test_draft_to_retired(self):
         store = RegistryStore()
         svc = RegistryService(store)
-        svc.register(_make_create_payload(), "reg-001")
-        advanced = svc.advance_artifact_state("reg-001", ArtifactState.RETIRED)
+        svc.register(_make_create_payload(), "reg-001", actor={"id": "unit-operator", "tenant": "tenant-unit"})
+        advanced = advance_registry_unit(svc, "reg-001", ArtifactState.RETIRED)
         assert advanced.entry.artifact_state == ArtifactState.RETIRED
 
     def test_candidate_to_retired(self):
         store = RegistryStore()
         svc = RegistryService(store)
-        entry = svc.register(_make_create_payload(), "reg-001")
-        svc.advance_artifact_state("reg-001", ArtifactState.CANDIDATE)
-        advanced = svc.advance_artifact_state("reg-001", ArtifactState.RETIRED)
+        entry = svc.register(_make_create_payload(), "reg-001", actor={"id": "unit-operator", "tenant": "tenant-unit"})
+        advance_registry_unit(svc, "reg-001", ArtifactState.CANDIDATE)
+        advanced = advance_registry_unit(svc, "reg-001", ArtifactState.RETIRED)
         assert advanced.entry.artifact_state == ArtifactState.RETIRED
 
     def test_forbidden_transition_draft_to_approved(self):
         store = RegistryStore()
         svc = RegistryService(store)
-        svc.register(_make_create_payload(), "reg-001")
+        svc.register(_make_create_payload(), "reg-001", actor={"id": "unit-operator", "tenant": "tenant-unit"})
         with pytest.raises(RegistryError, match="Forbidden"):
-            svc.advance_artifact_state("reg-001", ArtifactState.APPROVED)
+            advance_registry_unit(svc, "reg-001", ArtifactState.APPROVED)
 
     def test_forbidden_transition_draft_to_retired_via_candidate(self):
         """Draft can go directly to retired, but not to approved without candidate."""
         store = RegistryStore()
         svc = RegistryService(store)
-        svc.register(_make_create_payload(), "reg-001")
+        svc.register(_make_create_payload(), "reg-001", actor={"id": "unit-operator", "tenant": "tenant-unit"})
         # Direct draft->retired IS allowed, so let's test retired->draft (impossible)
-        svc.advance_artifact_state("reg-001", ArtifactState.RETIRED)
+        advance_registry_unit(svc, "reg-001", ArtifactState.RETIRED)
         with pytest.raises(RegistryError, match="Forbidden"):
-            svc.advance_artifact_state("reg-001", ArtifactState.DRAFT)
+            advance_registry_unit(svc, "reg-001", ArtifactState.DRAFT)
 
     def test_forbidden_transition_retired_to_anything(self):
         store = RegistryStore()
         svc = RegistryService(store)
-        svc.register(_make_create_payload(), "reg-001")
-        svc.advance_artifact_state("reg-001", ArtifactState.RETIRED)
+        svc.register(_make_create_payload(), "reg-001", actor={"id": "unit-operator", "tenant": "tenant-unit"})
+        advance_registry_unit(svc, "reg-001", ArtifactState.RETIRED)
         for target in [ArtifactState.DRAFT, ArtifactState.CANDIDATE, ArtifactState.APPROVED]:
             with pytest.raises(RegistryError, match="Forbidden"):
-                svc.advance_artifact_state("reg-001", target)
+                advance_registry_unit(svc, "reg-001", target)
 
     def test_approved_does_not_change_deployment_stage(self):
         """Approving an artifact does NOT set deployment_stage."""
         store = RegistryStore()
         svc = RegistryService(store)
-        svc.register(_make_create_payload(), "reg-001")
-        svc.advance_artifact_state("reg-001", ArtifactState.CANDIDATE)
-        approved = svc.advance_artifact_state("reg-001", ArtifactState.APPROVED)
+        svc.register(_make_create_payload(), "reg-001", actor={"id": "unit-operator", "tenant": "tenant-unit"})
+        advance_registry_unit(svc, "reg-001", ArtifactState.CANDIDATE)
+        approved = advance_registry_unit(svc, "reg-001", ArtifactState.APPROVED)
         assert approved.deployment_stage == DeploymentStage.NONE
 
 
@@ -286,9 +288,9 @@ class TestDeploymentView:
     def test_approved_without_deployment_summary(self):
         store = RegistryStore()
         svc = RegistryService(store)
-        svc.register(_make_create_payload(), "reg-001")
-        svc.advance_artifact_state("reg-001", ArtifactState.CANDIDATE)
-        svc.advance_artifact_state("reg-001", ArtifactState.APPROVED)
+        svc.register(_make_create_payload(), "reg-001", actor={"id": "unit-operator", "tenant": "tenant-unit"})
+        advance_registry_unit(svc, "reg-001", ArtifactState.CANDIDATE)
+        advance_registry_unit(svc, "reg-001", ArtifactState.APPROVED)
 
         view = svc.resolve_deployment_view("test-alpha")
         assert view.current_stage == DeploymentStage.NONE
@@ -297,9 +299,9 @@ class TestDeploymentView:
     def test_approved_with_deployment_summary(self):
         store = RegistryStore()
         svc = RegistryService(store)
-        svc.register(_make_create_payload(), "reg-001")
-        svc.advance_artifact_state("reg-001", ArtifactState.CANDIDATE)
-        svc.advance_artifact_state("reg-001", ArtifactState.APPROVED)
+        svc.register(_make_create_payload(), "reg-001", actor={"id": "unit-operator", "tenant": "tenant-unit"})
+        advance_registry_unit(svc, "reg-001", ArtifactState.CANDIDATE)
+        advance_registry_unit(svc, "reg-001", ArtifactState.APPROVED)
 
         # Simulate deployment service updating the projection
         svc.update_deployment_summary(
@@ -317,7 +319,7 @@ class TestDeploymentView:
     def test_deployment_stage_requires_approved_artifact(self):
         store = RegistryStore()
         svc = RegistryService(store)
-        svc.register(_make_create_payload(), "reg-001")
+        svc.register(_make_create_payload(), "reg-001", actor={"id": "unit-operator", "tenant": "tenant-unit"})
         with pytest.raises(
             RegistryError,
             match="Cannot project a non-'none' deployment stage onto an artifact that is not approved",
@@ -329,7 +331,7 @@ class TestDeploymentView:
 
 class TestFastAPIEndpoints:
     def setup_method(self):
-        self.client = TestClient(app, headers={"Authorization": "Bearer test-operator:operator"})
+        self.client = TestClient(app, headers=registry_unit_headers())
 
     def test_health(self):
         resp = self.client.get("/health")
@@ -381,14 +383,14 @@ class TestFastAPIEndpoints:
         assert create_resp.json()["entry"]["artifact_state"] == "draft"
         assert create_resp.json()["deployment_stage"] == "none"
 
-        candidate_resp = self.client.post(
-            f"/api/registry/entries/{registry_id}/advance",
+        candidate_resp = advance_registry_http(
+            self.client, f"/api/registry/entries/{registry_id}/advance",
             json={"target_state": "candidate", "expected_artifact_state": "draft"},
         )
         assert candidate_resp.status_code == 200, candidate_resp.text
 
-        approved_resp = self.client.post(
-            f"/api/registry/entries/{registry_id}/advance",
+        approved_resp = advance_registry_http(
+            self.client, f"/api/registry/entries/{registry_id}/advance",
             json={
                 "target_state": "approved",
                 "approver": "offline-eval-gate",
@@ -438,8 +440,8 @@ class TestFastAPIEndpoints:
         assert created.status_code == 200, created.text
         current_state = "draft"
         for target_state in ("candidate", "approved"):
-            advanced = self.client.post(
-                f"/api/registry/strategy-specs/{registry_id}/advance",
+            advanced = advance_registry_http(
+                self.client, f"/api/registry/strategy-specs/{registry_id}/advance",
                 json={
                     "target_state": target_state,
                     "expected_artifact_state": current_state,
@@ -542,8 +544,8 @@ class TestFastAPIEndpoints:
         assert get_resp.status_code == 200, get_resp.text
         assert get_resp.json()["entry"]["artifact_type"] == "strategy_spec"
 
-        advance_resp = self.client.post(
-            f"/api/registry/strategy-specs/{registry_id}/advance",
+        advance_resp = advance_registry_http(
+            self.client, f"/api/registry/strategy-specs/{registry_id}/advance",
             json={"target_state": "candidate", "expected_artifact_state": "draft"},
         )
         assert advance_resp.status_code == 200, advance_resp.text
@@ -634,16 +636,16 @@ class TestFastAPIEndpoints:
         registry_id = create_resp.json()["entry"]["registry_id"]
 
         # Draft -> Candidate
-        resp = self.client.post(
-            f"/api/registry/entries/{registry_id}/advance",
+        resp = advance_registry_http(
+            self.client, f"/api/registry/entries/{registry_id}/advance",
             json={"target_state": "candidate", "expected_artifact_state": "draft"},
         )
         assert resp.status_code == 200
         assert resp.json()["entry"]["artifact_state"] == "candidate"
 
         # Candidate -> Approved
-        resp = self.client.post(
-            f"/api/registry/entries/{registry_id}/advance",
+        resp = advance_registry_http(
+            self.client, f"/api/registry/entries/{registry_id}/advance",
             json={
                 "target_state": "approved",
                 "approver": "test-reviewer",
@@ -668,8 +670,8 @@ class TestFastAPIEndpoints:
         registry_id = create_resp.json()["entry"]["registry_id"]
 
         # Draft -> Approved (forbidden)
-        resp = self.client.post(
-            f"/api/registry/entries/{registry_id}/advance",
+        resp = advance_registry_http(
+            self.client, f"/api/registry/entries/{registry_id}/advance",
             json={"target_state": "approved", "expected_artifact_state": "draft"},
         )
         assert resp.status_code == 400
@@ -701,12 +703,12 @@ class TestFastAPIEndpoints:
                 "lineage": {"source_run_ids": [f"run-{v}"]},
             })
             rid = create_resp.json()["entry"]["registry_id"]
-            self.client.post(
-                f"/api/registry/entries/{rid}/advance",
+            advance_registry_http(
+                self.client, f"/api/registry/entries/{rid}/advance",
                 json={"target_state": "candidate", "expected_artifact_state": "draft"},
             )
-            self.client.post(
-                f"/api/registry/entries/{rid}/advance",
+            advance_registry_http(
+                self.client, f"/api/registry/entries/{rid}/advance",
                 json={"target_state": "approved", "expected_artifact_state": "candidate"},
             )
 
@@ -738,12 +740,12 @@ class TestFastAPIEndpoints:
             "lineage": {"source_run_ids": ["run-001"]},
         })
         rid = create_resp.json()["entry"]["registry_id"]
-        self.client.post(
-            f"/api/registry/entries/{rid}/advance",
+        advance_registry_http(
+            self.client, f"/api/registry/entries/{rid}/advance",
             json={"target_state": "candidate", "expected_artifact_state": "draft"},
         )
-        self.client.post(
-            f"/api/registry/entries/{rid}/advance",
+        advance_registry_http(
+            self.client, f"/api/registry/entries/{rid}/advance",
             json={"target_state": "approved", "expected_artifact_state": "candidate"},
         )
 
@@ -783,7 +785,7 @@ class TestFastAPIEndpoints:
         assert len(resp.json()) == 1
 
         reset_store()
-        isolated_client = TestClient(app, headers={"Authorization": "Bearer test-operator:operator"})
+        isolated_client = TestClient(app, headers=registry_unit_headers())
         resp = isolated_client.get("/api/registry/strategies/isolation-test/entries")
         assert resp.status_code == 200
         assert resp.json() == []
@@ -802,12 +804,12 @@ class TestFastAPIEndpoints:
             "lineage": {"source_run_ids": ["run-001"]},
         })
         rid = create_resp.json()["entry"]["registry_id"]
-        self.client.post(
-            f"/api/registry/entries/{rid}/advance",
+        advance_registry_http(
+            self.client, f"/api/registry/entries/{rid}/advance",
             json={"target_state": "candidate", "expected_artifact_state": "draft"},
         )
-        approved = self.client.post(
-            f"/api/registry/entries/{rid}/advance",
+        approved = advance_registry_http(
+            self.client, f"/api/registry/entries/{rid}/advance",
             json={
                 "target_state": "approved",
                 "approver": "test",
@@ -833,12 +835,12 @@ class TestFastAPIEndpoints:
             "lineage": {"source_run_ids": ["run-001"]},
         })
         rid = create_resp.json()["entry"]["registry_id"]
-        self.client.post(
-            f"/api/registry/entries/{rid}/advance",
+        advance_registry_http(
+            self.client, f"/api/registry/entries/{rid}/advance",
             json={"target_state": "candidate", "expected_artifact_state": "draft"},
         )
-        self.client.post(
-            f"/api/registry/entries/{rid}/advance",
+        advance_registry_http(
+            self.client, f"/api/registry/entries/{rid}/advance",
             json={"target_state": "approved", "expected_artifact_state": "candidate"},
         )
 
@@ -852,8 +854,8 @@ class TestFastAPIEndpoints:
         assert resp.json()["deployment_stage"] == "paper"
 
         # Advance artifact_state to retired — deployment_stage should remain
-        self.client.post(
-            f"/api/registry/entries/{rid}/advance",
+        advance_registry_http(
+            self.client, f"/api/registry/entries/{rid}/advance",
             json={"target_state": "retired", "expected_artifact_state": "approved"},
         )
         resp = self.client.get(f"/api/registry/entries/{rid}")
@@ -863,8 +865,8 @@ class TestFastAPIEndpoints:
 
     def test_advance_missing_entry_returns_404(self):
         """advance_state() on a non-existent registry_id must return 404, not 400."""
-        resp = self.client.post(
-            "/api/registry/entries/nonexistent-reg-id/advance",
+        resp = advance_registry_http(
+            self.client, "/api/registry/entries/nonexistent-reg-id/advance",
             json={"target_state": "candidate", "expected_artifact_state": "draft"},
         )
         assert resp.status_code == 404
@@ -881,8 +883,8 @@ class TestFastAPIEndpoints:
         })
         rid = create_resp.json()["entry"]["registry_id"]
         # draft -> approved is not an allowed direct transition
-        resp = self.client.post(
-            f"/api/registry/entries/{rid}/advance",
+        resp = advance_registry_http(
+            self.client, f"/api/registry/entries/{rid}/advance",
             json={"target_state": "approved", "expected_artifact_state": "draft"},
         )
         assert resp.status_code == 400
@@ -1481,13 +1483,13 @@ def test_latest_approved_endpoint_does_not_leak_another_tenants_approved_entry(s
 
     created_a = _create_entry(strict_client, token_a, strategy_id=strategy_id, version="1.0.0")
     registry_id_a = created_a["entry"]["registry_id"]
-    strict_client.post(
-        f"/api/registry/entries/{registry_id_a}/advance",
+    advance_registry_http(
+        strict_client, f"/api/registry/entries/{registry_id_a}/advance",
         json={"target_state": "candidate", "expected_artifact_state": "draft"},
         headers=_bearer(token_a),
     )
-    strict_client.post(
-        f"/api/registry/entries/{registry_id_a}/advance",
+    advance_registry_http(
+        strict_client, f"/api/registry/entries/{registry_id_a}/advance",
         json={"target_state": "approved", "expected_artifact_state": "candidate"},
         headers=_bearer(token_a),
     )
@@ -1548,9 +1550,9 @@ def test_create_enforces_composite_unique_identity_not_just_registry_id(strict_c
     store = RegistryStore()
     svc = RegistryService(store)
     payload = _make_create_payload(strategy_id="unique-identity-strat", version="1.0.0")
-    svc.register(payload, "reg-first")
+    svc.register(payload, "reg-first", actor={"id": "unit-operator", "tenant": "tenant-unit"})
     with pytest.raises(RegistryError):
-        svc.register(payload, "reg-second")
+        svc.register(payload, "reg-second", actor={"id": "unit-operator", "tenant": "tenant-unit"})
 
 
 # ===========================================================================
@@ -1725,8 +1727,8 @@ def test_advance_command_key_replay_returns_original_receipt_not_forbidden_trans
     created = _create_entry(strict_client, token, strategy_id="advance-receipt-strat")
     registry_id = created["entry"]["registry_id"]
 
-    first = strict_client.post(
-        f"/api/registry/entries/{registry_id}/advance",
+    first = advance_registry_http(
+        strict_client, f"/api/registry/entries/{registry_id}/advance",
         json={
             "target_state": "candidate",
             "command_key": "advance-cmd-001",
@@ -1742,8 +1744,8 @@ def test_advance_command_key_replay_returns_original_receipt_not_forbidden_trans
     # it must be recognized as the same logical command and short-circuited
     # to the original receipt rather than re-evaluated against the entry's
     # (now advanced) current state.
-    replay = strict_client.post(
-        f"/api/registry/entries/{registry_id}/advance",
+    replay = advance_registry_http(
+        strict_client, f"/api/registry/entries/{registry_id}/advance",
         json={
             "target_state": "candidate",
             "command_key": "advance-cmd-001",
@@ -1764,8 +1766,8 @@ def test_advance_command_key_divergent_replay_is_409(strict_client):
     created = _create_entry(strict_client, token, strategy_id="advance-divergent-strat")
     registry_id = created["entry"]["registry_id"]
 
-    first = strict_client.post(
-        f"/api/registry/entries/{registry_id}/advance",
+    first = advance_registry_http(
+        strict_client, f"/api/registry/entries/{registry_id}/advance",
         json={
             "target_state": "candidate",
             "command_key": "advance-cmd-shared",
@@ -1779,8 +1781,8 @@ def test_advance_command_key_divergent_replay_is_409(strict_client):
     # divergent-target-state-under-shared-command_key check must still fire
     # a 409 for the command_key mismatch, not a different "stale base" 409 —
     # so expected_artifact_state here reflects the entry's true current state.
-    diverged = strict_client.post(
-        f"/api/registry/entries/{registry_id}/advance",
+    diverged = advance_registry_http(
+        strict_client, f"/api/registry/entries/{registry_id}/advance",
         json={
             "target_state": "retired",
             "command_key": "advance-cmd-shared",
@@ -1960,15 +1962,15 @@ def test_advance_with_stale_expected_base_is_409_not_silently_ignored(strict_cli
     original_version = created["entry"]["version"]
     original_updated_at = created["entry"]["updated_at"]
 
-    first = strict_client.post(
-        f"/api/registry/entries/{registry_id}/advance",
+    first = advance_registry_http(
+        strict_client, f"/api/registry/entries/{registry_id}/advance",
         json={"target_state": "candidate", "expected_artifact_state": "draft"},
         headers=_bearer(token),
     )
     assert first.status_code == 200, first.text
 
-    stale = strict_client.post(
-        f"/api/registry/entries/{registry_id}/advance",
+    stale = advance_registry_http(
+        strict_client, f"/api/registry/entries/{registry_id}/advance",
         json={
             "target_state": "approved",
             "expected_artifact_state": "draft",
@@ -1991,8 +1993,8 @@ def test_advance_with_matching_expected_base_succeeds(strict_client):
     registry_id = created["entry"]["registry_id"]
     entry = created["entry"]
 
-    advanced = strict_client.post(
-        f"/api/registry/entries/{registry_id}/advance",
+    advanced = advance_registry_http(
+        strict_client, f"/api/registry/entries/{registry_id}/advance",
         json={
             "target_state": "candidate",
             "expected_artifact_state": entry["artifact_state"],
@@ -2023,8 +2025,8 @@ def test_metadata_and_advance_command_keys_do_not_share_a_receipt_namespace(stri
     assert metadata_call.status_code == 200, metadata_call.text
     assert metadata_call.headers["X-Idempotent-Replay"] == "false"
 
-    advance_call = strict_client.post(
-        f"/api/registry/entries/{registry_id}/advance",
+    advance_call = advance_registry_http(
+        strict_client, f"/api/registry/entries/{registry_id}/advance",
         json={
             "target_state": "candidate",
             "command_key": shared_key,

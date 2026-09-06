@@ -558,7 +558,7 @@ class PostgresRegistryStore:
             if validate is not None:
                 validate(base_entry)
 
-            entry = RegistryEntry.from_dict(base_snapshot)
+            entry = base_entry
             entry.artifact_state = target_state
             entry.updated_at = utc_now_iso()
             if approved_at is not None:
