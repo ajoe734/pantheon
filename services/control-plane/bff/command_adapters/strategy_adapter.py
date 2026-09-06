@@ -190,6 +190,65 @@ class StrategyCommandAdapter(DomainCommandAdapter):
             )
         new_metadata = params.get("metadata") if isinstance(params.get("metadata"), dict) else {}
 
+        def _belongs_to_requested_strategy(candidate: Optional[Dict[str, Any]]) -> bool:
+            return isinstance(candidate, dict) and candidate.get("strategy_id") == strategy_id
+
+        # Reviewer finding 6: verify that the caller-supplied registry_id
+        # actually belongs to the requested strategy_id BEFORE issuing the
+        # mutating PATCH — not only after the PATCH response comes back.
+        # Previously a request naming strategy A but supplying a
+        # registry_id belonging to strategy B was only rejected once B's
+        # metadata had already been mutated (the mismatch was discovered
+        # from the PATCH's own response), so a caller could cause a
+        # partially-applied mutation on the wrong aggregate before the
+        # error surfaced. This pre-check also captures the pre-mutation
+        # baseline (registry_id, strategy_id, checksum, version,
+        # owner_tenant) as the "original immutable receipt" this call binds
+        # its own post-PATCH readback verification against (reviewer
+        # finding 7) — never a PATCH response's own self-reported claims
+        # alone, and never a fresh "whatever is current now" comparison
+        # that a later, unrelated command could have since moved.
+        original_entry = self._readback_entry(registry_id, auth_token=auth_token, mfa_token=mfa_token)
+        if original_entry is None:
+            raise ActionUnavailableError(
+                f"update_params on strategy {strategy_id!r} could not resolve registry_id="
+                f"{registry_id!r} to an existing Registry entry before attempting the metadata "
+                "update.",
+                action_id=action_id,
+                entity_type="Strategy",
+                error_code="REGISTRY_ID_NOT_FOUND",
+            )
+        if not _belongs_to_requested_strategy(original_entry):
+            raise ActionUnavailableError(
+                f"Registry entry registry_id={registry_id!r} belongs to strategy_id="
+                f"{original_entry.get('strategy_id')!r}, not the requested "
+                f"strategy_id={strategy_id!r}; refusing to mutate a different aggregate than "
+                "the caller asked to target.",
+                action_id=action_id,
+                entity_type="Strategy",
+                error_code="STRATEGY_ID_MISMATCH",
+            )
+        original_identity = {
+            "registry_id": original_entry.get("registry_id"),
+            "checksum": original_entry.get("checksum"),
+            "version": original_entry.get("version"),
+            "owner_tenant": original_entry.get("owner_tenant"),
+        }
+
+        def _diverges_from_original(candidate: Dict[str, Any]) -> bool:
+            """A metadata-only PATCH must never change registry_id/checksum/
+            version/owner_tenant — those are the immutable identity fields
+            bound at command-issue time. Any divergence between what the
+            registry now reports and this pre-issue baseline means the
+            response (replay or not) cannot be trusted as proof this exact
+            command committed against this exact aggregate/content."""
+            return (
+                candidate.get("registry_id") != original_identity["registry_id"]
+                or candidate.get("checksum") != original_identity["checksum"]
+                or candidate.get("version") != original_identity["version"]
+                or candidate.get("owner_tenant") != original_identity["owner_tenant"]
+            )
+
         status_code, headers, body = http_request_json_with_headers(
             registry_url(f"/api/registry/entries/{registry_id}/metadata"),
             method="PATCH",
@@ -204,9 +263,6 @@ class StrategyCommandAdapter(DomainCommandAdapter):
 
         entry = body.get("entry") if isinstance(body, dict) else None
         idempotent_replay = str(header_value(headers, "X-Idempotent-Replay") or "").strip().lower() == "true"
-
-        def _belongs_to_requested_strategy(candidate: Optional[Dict[str, Any]]) -> bool:
-            return isinstance(candidate, dict) and candidate.get("strategy_id") == strategy_id
 
         response_lost = False
 
@@ -237,6 +293,24 @@ class StrategyCommandAdapter(DomainCommandAdapter):
                     entity_type="Strategy",
                     error_code="STRATEGY_ID_MISMATCH",
                 )
+            # Reviewer finding 7: a replay response claiming ``strategy_id``
+            # matches is not sufficient on its own — a fault-injected/forged
+            # replay body could report the right strategy_id while carrying
+            # a wrong registry_id, checksum (content), version, or
+            # owner_tenant. Bind the verification to the immutable identity
+            # captured at command-issue time (before the PATCH was ever
+            # sent), not to whatever the response claims about itself.
+            if _diverges_from_original(entry):
+                raise ActionUnavailableError(
+                    f"Registry metadata PATCH replay for registry_id={registry_id!r} diverges "
+                    "from the original immutable receipt captured before this command was "
+                    "issued (registry_id/checksum/version/owner_tenant); refusing to trust a "
+                    "replay against a different identity/content than the one this command "
+                    "originally targeted.",
+                    action_id=action_id,
+                    entity_type="Strategy",
+                    error_code="READBACK_MISMATCH",
+                )
         elif not isinstance(entry, dict) or not entry.get("registry_id"):
             # The PATCH nominally succeeded (no HTTPError was raised) but its
             # body carries no confirmable entry snapshot (e.g. 200 {}).
@@ -249,11 +323,13 @@ class StrategyCommandAdapter(DomainCommandAdapter):
                 readback_entry is None
                 or readback_entry.get("metadata") != new_metadata
                 or not _belongs_to_requested_strategy(readback_entry)
+                or _diverges_from_original(readback_entry)
             ):
                 raise ActionUnavailableError(
                     f"Registry metadata PATCH for registry_id={registry_id!r} returned an "
                     "ambiguous response with no entry payload, and a follow-up owner GET "
-                    "readback does not confirm the requested metadata was committed.",
+                    "readback does not confirm the requested metadata was committed against "
+                    "the original immutable identity (registry_id/checksum/version/owner_tenant).",
                     action_id=action_id,
                     entity_type="Strategy",
                     error_code="AMBIGUOUS_REGISTRY_RESPONSE",
@@ -275,6 +351,17 @@ class StrategyCommandAdapter(DomainCommandAdapter):
                     action_id=action_id,
                     entity_type="Strategy",
                     error_code="STRATEGY_ID_MISMATCH",
+                )
+            if _diverges_from_original(entry):
+                raise ActionUnavailableError(
+                    f"Registry metadata PATCH response for registry_id={registry_id!r} diverges "
+                    "from the original immutable receipt captured before this command was "
+                    "issued (registry_id/checksum/version/owner_tenant); refusing to report "
+                    "success against a different identity/content than the one this command "
+                    "originally targeted.",
+                    action_id=action_id,
+                    entity_type="Strategy",
+                    error_code="READBACK_MISMATCH",
                 )
             # The PATCH response claimed a specific committed snapshot;
             # verify it against an independent owner read rather than taking

@@ -21,7 +21,7 @@ import os
 import re
 import uuid
 from contextlib import asynccontextmanager
-from typing import Any, Optional
+from typing import Any, Callable, Optional
 
 from fastapi import FastAPI, Header, HTTPException, Request, Response
 from fastapi.responses import JSONResponse
@@ -36,6 +36,7 @@ from .models import (
     DeploymentStage,
     DeploymentView,
     Lineage,
+    RegistryEntry,
     RegistryEntryCreate,
     RegistryEntryView,
     StorageBackend,
@@ -83,6 +84,13 @@ class AdvanceRequest(BaseModel):
     target_state: ArtifactState
     approver: Optional[str] = None
     approval_decision_id: Optional[str] = None
+    command_key: Optional[str] = None
+    """Reviewer finding 5: an idempotency key binding this transition to a
+    durable command receipt (see RegistryService.advance_artifact_state /
+    PostgresRegistryStore.commit_artifact_state_cas) — a retried identical
+    advance under the same key returns the originally-committed entry
+    instead of re-running the transition or raising a spurious "forbidden
+    transition" error once the entry has already moved."""
 
 
 class DeploymentSummaryUpdate(BaseModel):
@@ -221,7 +229,7 @@ def _require_verified_identity(ctx: AuthContext) -> None:
     if ctx.token_kind != "jwt":
         return
     missing = [claim for claim in _REQUIRED_JWT_CLAIMS if not ctx.claims.get(claim)]
-    if not any(ctx.claims.get(name) for name in _TENANT_CLAIM_NAMES):
+    if not any(str(ctx.claims.get(name) or "").strip() for name in _TENANT_CLAIM_NAMES):
         missing.append("tenant")
     # Checked directly against the raw claims (not the resolved ctx.roles),
     # because validate_request_auth assigns PANTHEON_RUNTIME_DEFAULT_ROLE when
@@ -237,6 +245,39 @@ def _require_verified_identity(ctx: AuthContext) -> None:
                 f"{sorted(set(missing))}"
             ),
         )
+
+
+def _reject_malformed_identity_claims(ctx: AuthContext) -> None:
+    """Reject a JWT whose ``sub``/tenant claim is present but blank after
+    stripping whitespace — that is malformed, not merely absent.
+
+    Reviewer finding 1: a JWT with ``sub=" "`` (whitespace-only) was not
+    caught by :func:`_require_verified_identity`'s "is this claim missing"
+    check (a whitespace string is truthy), so it fell through to
+    ``services.runtime_auth_inbound``'s own "no usable claim" fallback and
+    was silently synthesized into ``actor_id="internal-api-operator"`` before
+    ever reaching authorization or persistence. Likewise a whitespace-only
+    tenant claim was persisted as a null ``owner_tenant`` rather than
+    rejected. This check runs on the raw, still-unstripped claims (before
+    :func:`_require_verified_identity` and :func:`_reject_reserved_tenant_claim`,
+    and long before any write) and only applies to real JWTs — a structured
+    test-double token has no separate claim to be blank.
+    """
+    if ctx.token_kind != "jwt":
+        return
+    sub = ctx.claims.get("sub")
+    if sub is not None and not str(sub).strip():
+        raise HTTPException(
+            status_code=403,
+            detail="Verified JWT 'sub' claim is present but blank/whitespace-only.",
+        )
+    for name in _TENANT_CLAIM_NAMES:
+        tenant = ctx.claims.get(name)
+        if tenant is not None and not str(tenant).strip():
+            raise HTTPException(
+                status_code=403,
+                detail=f"Verified JWT {name!r} claim is present but blank/whitespace-only.",
+            )
 
 
 def _require_production_auth_configuration(env: dict[str, str]) -> None:
@@ -306,6 +347,7 @@ def _authenticate_registry(
         )
     except AuthError as exc:
         raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
+    _reject_malformed_identity_claims(ctx)
     _require_verified_identity(ctx)
     _reject_reserved_tenant_claim(ctx)
     return ctx
@@ -338,7 +380,10 @@ def _reject_reserved_tenant_claim(ctx: AuthContext) -> None:
     registry's own bootstrap identity and read/write built-in entries as if
     it owned them."""
     for name in _TENANT_CLAIM_NAMES:
-        if ctx.claims.get(name) == BUILTIN_TENANT:
+        value = ctx.claims.get(name)
+        # Strip before comparing so a whitespace-padded reserved marker
+        # (e.g. " __builtin__ ") is still caught — reviewer finding 1.
+        if value is not None and str(value).strip() == BUILTIN_TENANT:
             raise HTTPException(
                 status_code=403,
                 detail=f"tenant claim {BUILTIN_TENANT!r} is reserved and cannot be asserted by a caller.",
@@ -348,24 +393,23 @@ def _reject_reserved_tenant_claim(ctx: AuthContext) -> None:
 def _actor_context(ctx: AuthContext) -> dict[str, Any]:
     """Project a verified AuthContext into the durable ``last_actor`` audit
     binding recorded on the RegistryEntry (see models.RegistryEntry.last_actor)."""
-    tenant = None
-    for name in _TENANT_CLAIM_NAMES:
-        tenant = ctx.claims.get(name)
-        if tenant:
-            break
     return {
         "actor_id": ctx.actor_id,
         "roles": sorted(ctx.roles),
-        "tenant": tenant,
+        "tenant": _caller_tenant(ctx),
         "token_kind": ctx.token_kind,
     }
 
 
 def _caller_tenant(ctx: AuthContext) -> Optional[str]:
+    """Return the caller's tenant claim, normalized (stripped) — reviewer
+    finding 1: a claim value's surrounding whitespace must never leak into
+    the persisted ``owner_tenant``/authorization comparisons; a blank claim
+    is already rejected upstream by :func:`_reject_malformed_identity_claims`."""
     for name in _TENANT_CLAIM_NAMES:
         tenant = ctx.claims.get(name)
-        if tenant:
-            return str(tenant)
+        if tenant is not None and str(tenant).strip():
+            return str(tenant).strip()
     return None
 
 
@@ -437,6 +481,24 @@ def _strategy_spec_register_payload(body: StrategySpecRegisterRequest) -> Regist
         raise RegistryError("strategy_id is required")
 
     strategy_spec = body.strategy_spec
+    if strategy_spec is None:
+        # Reviewer finding 2: a caller could previously pass
+        # metadata.strategy_spec={} (or any embedded dict) alongside no
+        # top-level strategy_spec and an arbitrary checksum — since
+        # `strategy_spec is None` here, none of the schema/checksum
+        # validation below ran at all, and the arbitrary checksum was
+        # accepted verbatim with no actual content it corresponded to.
+        # Treat a metadata-embedded strategy_spec as the real content to
+        # validate/hash, exactly like a top-level one — an empty {} then
+        # fails schema validation below instead of being silently written
+        # as if it were validated.
+        metadata_embedded_spec = (body.metadata or {}).get("strategy_spec")
+        if metadata_embedded_spec is not None:
+            if not isinstance(metadata_embedded_spec, dict):
+                raise RegistryError(
+                    "metadata.strategy_spec must be an object if provided."
+                )
+            strategy_spec = metadata_embedded_spec
     if strategy_spec is not None:
         embedded_strategy_id = str(strategy_spec.get("strategy_id") or "").strip()
         if embedded_strategy_id and embedded_strategy_id != strategy_id:
@@ -527,13 +589,11 @@ def _strategy_spec_register_payload(body: StrategySpecRegisterRequest) -> Regist
     )
 
 
-def _validate_strategy_spec_version_lineage(
-    registry_service: RegistryService,
+def _check_strategy_spec_version_lineage(
+    existing_specs: list[RegistryEntry],
     strategy_id: str,
     version: str,
     lineage: Lineage,
-    *,
-    ctx: AuthContext,
 ) -> None:
     """Reject an out-of-sequence StrategySpec version with no valid parent linkage.
 
@@ -546,22 +606,18 @@ def _validate_strategy_spec_version_lineage(
     version like "9.9.9" with none of the above must be rejected — accepting
     it would let a caller silently jump the immutable revision sequence.
 
-    ``existing_specs`` is scoped to entries visible to ``ctx`` (own tenant or
-    builtin) — reviewer finding 3: computing "latest known version" across
-    *all* tenants let a caller's version-sequence check be satisfied or
-    defeated by another tenant's unrelated revisions of the same
-    ``strategy_id``.
+    This is the pure invariant check, factored out of the ctx-scoped list
+    resolution (:func:`_validate_strategy_spec_version_lineage`) so it can
+    also be re-invoked, unchanged, against a freshly-locked read of the true
+    latest-committed state inside :meth:`RegistryService.register_strategy_spec_revision`
+    (reviewer finding 4 — see that method's docstring for the TOCTOU race
+    this closes). ``existing_specs`` must already be scoped to the entries
+    the caller is authorized to see and to ``artifact_type == STRATEGY_SPEC``.
     """
-    existing_specs = [
-        view
-        for view in registry_service.list_by_strategy(strategy_id)
-        if view.entry.artifact_type == ArtifactType.STRATEGY_SPEC
-        and _can_read_entry(ctx, view.entry)
-    ]
     if not existing_specs:
         return
 
-    existing_versions = {view.entry.version for view in existing_specs}
+    existing_versions = {entry.version for entry in existing_specs}
     if version in existing_versions:
         return
 
@@ -571,7 +627,7 @@ def _validate_strategy_spec_version_lineage(
 
     parent_ids = lineage.parent_registry_ids or []
     if parent_ids:
-        valid_parents = {view.entry.registry_id: view.entry.version for view in existing_specs}
+        valid_parents = {entry.registry_id: entry.version for entry in existing_specs}
         matching = [pid for pid in parent_ids if pid in valid_parents]
         if not matching:
             raise RegistryError(
@@ -607,6 +663,58 @@ def _validate_strategy_spec_version_lineage(
             "no parent_registry_ids linking it to an existing entry. Valid next versions: "
             f"{sorted('.'.join(str(p) for p in v) for v in valid_next)}."
         )
+
+
+def _validate_strategy_spec_version_lineage(
+    registry_service: RegistryService,
+    strategy_id: str,
+    version: str,
+    lineage: Lineage,
+    *,
+    ctx: AuthContext,
+) -> None:
+    """Best-effort (non-atomic) ctx-scoped pre-check, mirroring
+    ``RegistryService._reject_version_collision``'s documented "narrows but
+    does not fully close" caveat. Scoped to entries visible to ``ctx`` (own
+    tenant or builtin) — reviewer finding 3: computing "latest known
+    version" across *all* tenants let a caller's version-sequence check be
+    satisfied or defeated by another tenant's unrelated revisions of the
+    same ``strategy_id``. The dedicated /strategy-specs registration route
+    additionally re-runs :func:`_check_strategy_spec_version_lineage` inside
+    a per-strategy_id lock (see :meth:`RegistryService.register_strategy_spec_revision`)
+    to actually close the concurrent-registration race (reviewer finding 4);
+    this function alone only narrows it.
+    """
+    existing_specs = [
+        view.entry
+        for view in registry_service.list_by_strategy(strategy_id)
+        if view.entry.artifact_type == ArtifactType.STRATEGY_SPEC
+        and _can_read_entry(ctx, view.entry)
+    ]
+    _check_strategy_spec_version_lineage(existing_specs, strategy_id, version, lineage)
+
+
+def _strategy_spec_lineage_validator(
+    ctx: AuthContext,
+    strategy_id: str,
+    version: str,
+    lineage: Lineage,
+) -> Callable[[list[RegistryEntry]], None]:
+    """Build a ``validate_lineage`` callback for
+    :meth:`RegistryService.register_strategy_spec_revision` that scopes a
+    freshly-locked read of *all* entries for ``strategy_id`` down to the
+    caller-visible StrategySpec entries before re-running the same
+    invariant check :func:`_validate_strategy_spec_version_lineage` runs as
+    a pre-check — see that function's docstring and reviewer finding 4.
+    """
+    def _validate(existing_entries: list[RegistryEntry]) -> None:
+        scoped = [
+            entry for entry in existing_entries
+            if entry.artifact_type == ArtifactType.STRATEGY_SPEC and _can_read_entry(ctx, entry)
+        ]
+        _check_strategy_spec_version_lineage(scoped, strategy_id, version, lineage)
+
+    return _validate
 
 
 def _ensure_strategy_spec_view(view: RegistryEntryView, registry_id: str) -> RegistryEntryView:
@@ -794,9 +902,26 @@ def _resolve_entry_or_draft_payload(
     # content — otherwise a caller could smuggle an unvalidated/mismatched
     # strategy_spec through the generic route instead of the dedicated,
     # fully-validated POST /api/registry/strategy-specs facade.
+    resolved_checksum = payload.checksum or ""
     if payload.artifact_type == ArtifactType.STRATEGY_SPEC:
         embedded_spec = (payload.metadata or {}).get("strategy_spec")
         if embedded_spec is not None:
+            # Reviewer finding 2: a caller registering a *full* StrategySpec
+            # through this generic route (an embedded metadata.strategy_spec,
+            # not just a bare checksum reference) must satisfy the same
+            # structural invariants as the dedicated
+            # POST /api/registry/strategy-specs facade — an embedded
+            # strategy_id must not disagree with the registry strategy_id,
+            # lineage must not be empty, and the checksum must be bound to
+            # the actual embedded content rather than an arbitrary caller
+            # value. Without this, the dedicated facade's "9.9.9 out-of-
+            # sequence revision" rejection could be bypassed entirely by
+            # posting the identical content through this route instead.
+            embedded_strategy_id = str(embedded_spec.get("strategy_id") or "").strip()
+            if embedded_strategy_id and embedded_strategy_id != payload.strategy_id:
+                raise RegistryError(
+                    "Inline StrategySpec strategy_id must match the registry strategy_id."
+                )
             schema_errors = validate_strategy_spec(embedded_spec)
             if schema_errors:
                 raise RegistryError(
@@ -810,6 +935,12 @@ def _resolve_entry_or_draft_payload(
                     f"metadata.strategy_spec payload (expected {computed_checksum!r}, "
                     f"got {payload.checksum!r})."
                 )
+            resolved_checksum = computed_checksum
+            if Lineage.from_dict(payload.lineage or {}).is_empty():
+                raise RegistryError(
+                    "StrategySpec registry entries with an embedded metadata.strategy_spec "
+                    "require lineage, even through the generic /api/registry/entries route."
+                )
 
     registry_id = f"reg-{payload.strategy_id}-{payload.version}-{uuid.uuid4().hex[:8]}"
     create_payload = RegistryEntryCreate(
@@ -819,7 +950,7 @@ def _resolve_entry_or_draft_payload(
         artifact_state=payload.artifact_state,
         lineage=Lineage.from_dict(payload.lineage or {}),
         storage_ref=StorageRef.from_dict(payload.storage_ref) if payload.storage_ref else None,
-        checksum=payload.checksum or "",
+        checksum=resolved_checksum,
         producer_run_id=payload.producer_run_id,
         evaluation_summary=payload.evaluation_summary,
         rollback_target=payload.rollback_target,
@@ -844,15 +975,47 @@ async def register_entry(
     """
     ctx = _authenticate_registry_write(authorization)
     registry_service = get_registry_service()
+
+    def _build_payload() -> tuple[RegistryEntryCreate, str]:
+        create_payload, registry_id = _resolve_entry_or_draft_payload(payload)
+        # Reviewer finding 2: a full StrategySpec (embedded metadata.
+        # strategy_spec content, not a bare checksum reference) registered
+        # through this generic route must go through the same identity/
+        # sequence protection as the dedicated POST /api/registry/strategy-
+        # specs facade (_validate_strategy_spec_version_lineage) — otherwise
+        # an out-of-sequence revision (e.g. "9.9.9" with no valid parent)
+        # rejected by the dedicated route could still be smuggled through
+        # this one with identical content.
+        if (
+            create_payload.artifact_type == ArtifactType.STRATEGY_SPEC
+            and (create_payload.metadata or {}).get("strategy_spec") is not None
+        ):
+            _validate_strategy_spec_version_lineage(
+                registry_service,
+                create_payload.strategy_id,
+                create_payload.version,
+                create_payload.lineage,
+                ctx=ctx,
+            )
+        return create_payload, registry_id
+
     try:
         if idempotency_key:
             view, _replayed = registry_service.register_with_idempotency(
-                lambda: _resolve_entry_or_draft_payload(payload),
+                _build_payload,
                 command_key=idempotency_key,
                 actor=_actor_context(ctx),
+                # Reviewer finding 3: fingerprint the caller's actual
+                # normalized request body (not the factory's output, which
+                # embeds a fresh random registry_id/strategy_id on every
+                # call and so can never be compared across replays) so a
+                # same Idempotency-Key reused with different content (e.g.
+                # a different draft name) is rejected as divergent rather
+                # than silently returning the first request's entry.
+                request_fingerprint=payload.model_dump(mode="json"),
             )
             return view
-        create_payload, registry_id = _resolve_entry_or_draft_payload(payload)
+        create_payload, registry_id = _build_payload()
         return registry_service.register(create_payload, registry_id, actor=_actor_context(ctx))
     except RegistryConflictError as e:
         raise HTTPException(status_code=409, detail=str(e))
@@ -910,10 +1073,13 @@ async def advance_state(
             body.target_state,
             approver=body.approver,
             approval_decision_id=body.approval_decision_id,
+            command_key=body.command_key,
             actor=_actor_context(ctx),
         )
     except RegistryNotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e))
+    except RegistryConflictError as e:
+        raise HTTPException(status_code=409, detail=str(e))
     except RegistryError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
@@ -1028,6 +1194,8 @@ async def update_deployment_summary(
         )
     except RegistryNotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e))
+    except RegistryConflictError as e:
+        raise HTTPException(status_code=409, detail=str(e))
     except RegistryError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
@@ -1054,13 +1222,17 @@ async def register_strategy_spec(
     registry_service = get_registry_service()
     try:
         create_payload = _strategy_spec_register_payload(payload)
-        _validate_strategy_spec_version_lineage(
-            registry_service, payload.strategy_id, payload.version, create_payload.lineage,
-            ctx=ctx,
-        )
-        view, created = registry_service.register_if_absent(
+        # Reviewer finding 4: validate the version/lineage invariant inside
+        # the same per-strategy_id lock/transaction as the insert (not as a
+        # separate read-then-decide step beforehand) so two concurrent
+        # requests for different next versions of the same strategy_id
+        # cannot both read the same stale "latest" and both commit.
+        view, created = registry_service.register_strategy_spec_revision(
             create_payload,
             registry_id,
+            validate_lineage=_strategy_spec_lineage_validator(
+                ctx, payload.strategy_id, payload.version, create_payload.lineage,
+            ),
             actor=_actor_context(ctx),
         )
         if created:
@@ -1138,10 +1310,13 @@ async def advance_strategy_spec_state(
             body.target_state,
             approver=body.approver,
             approval_decision_id=body.approval_decision_id,
+            command_key=body.command_key,
             actor=_actor_context(ctx),
         )
     except RegistryNotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e))
+    except RegistryConflictError as e:
+        raise HTTPException(status_code=409, detail=str(e))
     except RegistryError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
@@ -1275,10 +1450,13 @@ async def advance_strategy_artifact_state(
             body.target_state,
             approver=body.approver,
             approval_decision_id=body.approval_decision_id,
+            command_key=body.command_key,
             actor=_actor_context(ctx),
         )
     except RegistryNotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e))
+    except RegistryConflictError as e:
+        raise HTTPException(status_code=409, detail=str(e))
     except RegistryError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
@@ -1525,10 +1703,13 @@ async def advance_allocation_policy_artifact_state(
             body.target_state,
             approver=body.approver,
             approval_decision_id=body.approval_decision_id,
+            command_key=body.command_key,
             actor=_actor_context(ctx),
         )
     except RegistryNotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e))
+    except RegistryConflictError as e:
+        raise HTTPException(status_code=409, detail=str(e))
     except RegistryError as e:
         raise HTTPException(status_code=400, detail=str(e))
 

@@ -254,3 +254,39 @@ def test_advance_state_conflict_is_409_not_silent_overwrite(pg_app):
         json={"target_state": "draft"},
     )
     assert forbidden.status_code == 400
+
+
+def test_readyz_fails_closed_when_owner_schema_is_missing(monkeypatch):
+    """Reviewer finding 8: with bootstrap disabled and no pre-created
+    schema/table, /readyz must report ready=false (not 200/ready=true) —
+    a bare "SELECT 1" previously succeeded regardless of whether the actual
+    owner schema/table existed, so this reproduced live as /readyz 200
+    ready=true while every real entry GET raised psycopg's
+    InvalidSchemaName."""
+    dsn = os.getenv("TEST_DATABASE_URL", "").strip()
+    if not dsn:
+        pytest.skip("TEST_DATABASE_URL is required for real Postgres owner durability proof")
+
+    schema = f"registry_missing_schema_{uuid4().hex}"
+    monkeypatch.setenv("REGISTRY_STORE_BACKEND", "postgres")
+    monkeypatch.setenv("REGISTRY_STORE_DSN", dsn)
+    monkeypatch.setenv("REGISTRY_ENTRIES_TABLE", f"{schema}.entries")
+    monkeypatch.setenv("REGISTRY_RECEIPTS_TABLE", f"{schema}.command_receipts")
+    # Bootstrap disabled: the schema/table are never created, reproducing
+    # the exact "bootstrap=0/missing schema" scenario from the live probe.
+    monkeypatch.setenv("REGISTRY_STORE_BOOTSTRAP", "0")
+    monkeypatch.setenv("PANTHEON_REGISTRY_AUTH_MODE", "strict")
+    monkeypatch.setenv("PANTHEON_REGISTRY_JWT_SECRET", _JWT_SECRET)
+    monkeypatch.setenv("PANTHEON_REGISTRY_JWT_ISSUER", _JWT_ISSUER)
+    monkeypatch.setenv("PANTHEON_REGISTRY_JWT_AUDIENCE", _JWT_AUDIENCE)
+    reset_store()
+    try:
+        from . import main as main_module
+
+        client = TestClient(main_module.app)
+        resp = client.get("/readyz")
+        body = resp.json()
+        assert body.get("ready") is False, body
+        assert resp.status_code != 200 or body.get("ready") is False
+    finally:
+        reset_store()

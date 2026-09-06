@@ -139,11 +139,20 @@ class RegistryService:
         *,
         command_key: str,
         actor: Optional[dict] = None,
+        request_fingerprint: object = None,
     ) -> tuple[RegistryEntryView, bool]:
         """Create a new entry, replaying the original result under a repeated
         caller-scoped ``command_key`` instead of synthesizing a fresh
         identity every retry — reviewer finding 4. ``payload_factory`` is
         only invoked on a genuine first request; a replay never calls it.
+
+        ``request_fingerprint`` is a JSON-serializable normalized
+        representation of the caller's actual request body — reviewer
+        finding 3: the same ``command_key`` reused with a *different*
+        request (e.g. a different draft ``name``) must not silently return
+        the originally-created entry as if it satisfied the new request; it
+        is a divergent replay and fails closed (409) via
+        :class:`DivergentCommandReplayError` -> :class:`RegistryConflictError`.
         """
         def _validated_factory() -> tuple[RegistryEntryCreate, str]:
             payload, registry_id = payload_factory()
@@ -156,8 +165,11 @@ class RegistryService:
                 command_key=command_key,
                 actor=actor,
                 unique_fields=_REVISION_UNIQUE_FIELDS,
+                request_fingerprint=request_fingerprint,
             )
         except RegistryUniqueViolationError as exc:
+            raise RegistryConflictError(str(exc)) from exc
+        except DivergentCommandReplayError as exc:
             raise RegistryConflictError(str(exc)) from exc
         if not replayed:
             logger.info(
@@ -196,6 +208,47 @@ class RegistryService:
                 "Registered %s (state=%s)",
                 entry.registry_id,
                 entry.artifact_state.value,
+            )
+        return self._to_view(entry), created
+
+    def register_strategy_spec_revision(
+        self,
+        payload: RegistryEntryCreate,
+        registry_id: str,
+        *,
+        validate_lineage: Callable[[list[RegistryEntry]], None],
+        actor: Optional[dict] = None,
+    ) -> tuple[RegistryEntryView, bool]:
+        """Atomically register a StrategySpec revision under a per-strategy_id
+        aggregate lock, re-validating ``validate_lineage`` against the true
+        latest-committed state inside the same lock/transaction as the
+        insert.
+
+        Reviewer finding 4 (TOCTOU race): ``register_if_absent`` validates a
+        version-sequence invariant (e.g. "1.0.1 is a valid next version from
+        1.0.0") via a plain read *before* calling into the store, so two
+        concurrent callers can both read the same stale "latest" version,
+        both independently pass validation for two different next versions,
+        and both commit — the store's ``unique_fields`` uniqueness check
+        never catches this because they target different versions. Here
+        ``validate_lineage`` is passed down to the store and invoked *after*
+        the aggregate lock is acquired and the existing revisions are
+        re-read under it, so a concurrent winner's commit is guaranteed
+        visible before this caller's check runs.
+        """
+        self._validate_registration_state(payload)
+        entry, created = self.store.register_strategy_spec_revision(
+            strategy_id=payload.strategy_id,
+            registry_id=registry_id,
+            payload=payload,
+            validate_lineage=validate_lineage,
+            actor=actor or _BOOTSTRAP_ACTOR,
+            unique_fields=_REVISION_UNIQUE_FIELDS,
+        )
+        if created:
+            logger.info(
+                "Registered %s (state=%s) via strategy-spec revision lock",
+                entry.registry_id, entry.artifact_state.value,
             )
         return self._to_view(entry), created
 
@@ -256,12 +309,21 @@ class RegistryService:
         approver: Optional[str] = None,
         approval_decision_id: Optional[str] = None,
         *,
+        command_key: Optional[str] = None,
         actor: Optional[dict] = None,
     ) -> RegistryEntryView:
         """
         Transition an entry through governed artifact-state checks.
 
         Registry owns artifact_state; deployment_stage is NOT touched here.
+
+        ``command_key`` binds this transition to an idempotent command
+        receipt committed in the same transaction as the state write
+        (reviewer finding 5, mirroring ``update_metadata``'s CAS/receipt) —
+        a replay of the same command_key returns the entry exactly as it
+        was originally committed rather than re-running the transition
+        (which would otherwise raise a spurious "forbidden transition" once
+        the entry has already moved) or silently no-op'ing.
         """
         entry = self.store.get(registry_id)
         if entry is None:
@@ -269,36 +331,58 @@ class RegistryService:
 
         base_snapshot = entry.to_dict()
         current = entry.artifact_state
-        allowed = ALLOWED_ARTIFACT_TRANSITIONS.get(current, [])
-        if target_state not in allowed:
-            raise RegistryError(
-                f"Forbidden artifact-state transition: {current.value} -> {target_state.value}. "
-                f"Allowed: {[a.value for a in allowed]}"
-            )
 
-        if target_state == ArtifactState.APPROVED and entry.lineage.is_empty():
-            raise RegistryError(
-                "Cannot approve artifact without lineage. "
-                "Approved artifacts must carry source runs, parent entries, or source dataset/spec refs."
-            )
+        # Reviewer finding 5: this business-rule check must NOT run
+        # unconditionally here — on a genuine command_key replay, the
+        # entry's *current* state is already the post-transition state
+        # (e.g. "candidate" after a draft->candidate transition already
+        # committed), so re-validating "is candidate->candidate a legal
+        # transition" against it would always (and wrongly) reject the
+        # replay with a spurious "forbidden transition" error instead of
+        # returning the original receipt. It is passed down as a callback
+        # invoked by the store only after the store's own replay
+        # short-circuit has already ruled out a replay.
+        def _validate_transition(base_entry: RegistryEntry) -> None:
+            allowed = ALLOWED_ARTIFACT_TRANSITIONS.get(base_entry.artifact_state, [])
+            if target_state not in allowed:
+                raise RegistryError(
+                    f"Forbidden artifact-state transition: {base_entry.artifact_state.value} -> "
+                    f"{target_state.value}. Allowed: {[a.value for a in allowed]}"
+                )
+            if target_state == ArtifactState.APPROVED and base_entry.lineage.is_empty():
+                raise RegistryError(
+                    "Cannot approve artifact without lineage. Approved artifacts must carry "
+                    "source runs, parent entries, or source dataset/spec refs."
+                )
 
-        entry.artifact_state = target_state
-
-        if target_state == ArtifactState.APPROVED:
-            entry.approved_at = utc_now_iso()
-            if approver:
-                entry.approver = approver
-            if approval_decision_id:
-                entry.approval_decision_id = approval_decision_id
+        approved_at = utc_now_iso() if target_state == ArtifactState.APPROVED else None
 
         try:
-            entry = self.store.update(entry, expected=base_snapshot, actor=actor)
+            entry, replayed = self.store.commit_artifact_state_cas(
+                registry_id=registry_id,
+                base_snapshot=base_snapshot,
+                validate=_validate_transition,
+                target_state=target_state,
+                approved_at=approved_at,
+                approver=approver if target_state == ArtifactState.APPROVED else None,
+                approval_decision_id=approval_decision_id if target_state == ArtifactState.APPROVED else None,
+                command_key=command_key,
+                actor=actor,
+            )
         except RegistryConcurrentUpdateError as exc:
             raise RegistryConflictError(str(exc)) from exc
-        logger.info(
-            "Advanced %s artifact_state: %s -> %s",
-            registry_id, current.value, target_state.value,
-        )
+        except DivergentCommandReplayError as exc:
+            raise RegistryConflictError(str(exc)) from exc
+        if not replayed:
+            logger.info(
+                "Advanced %s artifact_state: %s -> %s",
+                registry_id, current.value, target_state.value,
+            )
+        else:
+            logger.info(
+                "Replayed idempotent advance for %s via command_key (no-op transition re-run)",
+                registry_id,
+            )
         return self._to_view(entry)
 
     def update_metadata(

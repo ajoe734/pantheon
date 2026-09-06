@@ -93,16 +93,21 @@ def test_update_params_preserves_callers_precondition_and_uses_patch_response_as
     assert result["domain_receipt"]["checksum"] == "sha256:abc"
     assert result["idempotent_replay"] is False
 
-    # Exactly two HTTP calls: the PATCH itself (carrying the caller's own
-    # expected_metadata unchanged — no preceding "refresh to latest" GET),
-    # followed by a genuine owner GET readback that verifies what the PATCH
-    # response claimed (reviewer finding 5 — never trust the mutation
-    # response alone as proof of what committed).
-    assert mock_http.call_count == 2
-    patch_call = mock_http.call_args_list[0]
+    # Reviewer finding 6: three HTTP calls now — a pre-mutation owner GET
+    # that verifies registry_id actually belongs to strategy_id and captures
+    # the pre-issue immutable baseline (registry_id/checksum/version/
+    # owner_tenant) BEFORE any mutating call, then the PATCH itself
+    # (carrying the caller's own expected_metadata unchanged — no "refresh
+    # to latest" substitution), then a genuine owner GET readback that
+    # verifies what the PATCH response claimed (reviewer finding 5 — never
+    # trust the mutation response alone as proof of what committed).
+    assert mock_http.call_count == 3
+    precheck_call = mock_http.call_args_list[0]
+    assert precheck_call.kwargs["method"] == "GET"
+    patch_call = mock_http.call_args_list[1]
     assert patch_call.kwargs["method"] == "PATCH"
     assert patch_call.kwargs["payload"]["expected_metadata"] == {"note": "old"}
-    readback_call = mock_http.call_args_list[1]
+    readback_call = mock_http.call_args_list[2]
     assert readback_call.kwargs["method"] == "GET"
     assert readback_call.args[0] == "http://registry-svc.internal/api/registry/entries/reg-001"
     assert patch_call.kwargs["payload"]["metadata"] == {"note": "new"}
@@ -117,6 +122,8 @@ def test_update_params_idempotent_replay_header_is_surfaced(mock_http, adapter):
         {"entry": {"registry_id": "reg-001", "strategy_id": "strat-alpha", "metadata": {"note": "v1"}, "updated_at": "t1"}},
     )
 
+    # mock_http.return_value applies identically to every call this makes
+    # (pre-check GET + PATCH); both see the same strat-alpha entry shape.
     result = adapter.execute(
         "cmd-strat-005",
         "StrategyAction",
@@ -166,6 +173,66 @@ def test_update_params_rejects_registry_id_belonging_to_different_strategy(mock_
             },
         )
     assert excinfo.value.error_code == "STRATEGY_ID_MISMATCH"
+    # Reviewer finding 6: the mismatch must be caught by the pre-mutation
+    # identity-verification GET — the mutating PATCH must never be issued
+    # against the wrong aggregate in the first place.
+    assert mock_http.call_count == 1
+    assert mock_http.call_args_list[0].kwargs["method"] == "GET"
+
+
+@patch("services.control_plane.bff.command_adapters.strategy_adapter.http_request_json_with_headers")
+def test_update_params_replay_with_forged_registry_id_is_rejected_despite_matching_strategy_id(
+    mock_http, adapter,
+):
+    """Reviewer finding 7: a replay response reporting the right strategy_id
+    but a wrong registry_id/checksum (a fault-injected or forged replay
+    body) must be rejected — matching strategy_id alone is not sufficient
+    proof this is a genuine replay of the exact command that was issued."""
+    call_responses = [
+        # Pre-mutation identity-verification GET: the real reg-001.
+        (
+            200,
+            {},
+            {
+                "entry": {
+                    "registry_id": "reg-001",
+                    "strategy_id": "strat-alpha",
+                    "metadata": {"note": "old"},
+                    "checksum": "sha256:real",
+                }
+            },
+        ),
+        # The PATCH "replay" response claims strategy_id matches but reports
+        # a different registry_id and checksum entirely.
+        (
+            200,
+            {"X-Idempotent-Replay": "true"},
+            {
+                "entry": {
+                    "registry_id": "reg-999-wrong",
+                    "strategy_id": "strat-alpha",
+                    "metadata": {"note": "forged"},
+                    "checksum": "sha256:forged",
+                }
+            },
+        ),
+    ]
+    mock_http.side_effect = call_responses
+
+    with pytest.raises(ActionUnavailableError) as excinfo:
+        adapter.execute(
+            "cmd-strat-forged-replay",
+            "StrategyAction",
+            {
+                "entity_type": "strategy",
+                "strategy_id": "strat-alpha",
+                "registry_id": "reg-001",
+                "action_id": "update_params",
+                "expected_metadata": None,
+                "metadata": {"note": "one"},
+            },
+        )
+    assert excinfo.value.error_code == "READBACK_MISMATCH"
 
 
 @patch("services.control_plane.bff.command_adapters.strategy_adapter.http_request_json_with_headers")
@@ -175,20 +242,19 @@ def test_update_params_replay_does_not_compare_against_mutable_latest_readback(m
     owner GET — comparing against a readback that a later, unrelated command
     has since moved on must not turn a genuine replay success into a
     spurious READBACK_MISMATCH failure."""
+    entry_snapshot = {
+        "registry_id": "reg-001",
+        "strategy_id": "strat-alpha",
+        "metadata": {"note": "one"},
+        "updated_at": "t1",
+        "checksum": "sha256:one",
+    }
     call_responses = [
-        (
-            200,
-            {"X-Idempotent-Replay": "true"},
-            {
-                "entry": {
-                    "registry_id": "reg-001",
-                    "strategy_id": "strat-alpha",
-                    "metadata": {"note": "one"},
-                    "updated_at": "t1",
-                    "checksum": "sha256:one",
-                }
-            },
-        ),
+        # Pre-mutation owner GET (reviewer finding 6) — captures the
+        # immutable baseline this call's replay verification is bound to.
+        (200, {}, {"entry": entry_snapshot}),
+        # The PATCH itself, reporting a replay.
+        (200, {"X-Idempotent-Replay": "true"}, {"entry": entry_snapshot}),
     ]
     mock_http.side_effect = call_responses
 
@@ -206,10 +272,11 @@ def test_update_params_replay_does_not_compare_against_mutable_latest_readback(m
     )
     assert result["status"] == "metadata_updated"
     assert result["idempotent_replay"] is True
-    # A replay must not issue a second (readback) HTTP call at all — there is
-    # nothing to verify against that could ever be more authoritative than
-    # the original committed receipt itself.
-    assert mock_http.call_count == 1
+    # A replay must not issue a *third* (post-PATCH readback) HTTP call —
+    # there is nothing to verify against that could ever be more
+    # authoritative than the original committed receipt itself. Only the
+    # pre-mutation identity-verification GET and the PATCH itself run.
+    assert mock_http.call_count == 2
 
 
 @patch("services.control_plane.bff.command_adapters.strategy_adapter.http_request_json_with_headers")
@@ -220,7 +287,10 @@ def test_update_params_readback_failure_after_confirmed_commit_is_retryable(mock
     must be reported as retryable, not the flat non-retryable 422 used for a
     genuinely unsupported action."""
 
+    call_count = {"n": 0}
+
     def _side_effect(*args, **kwargs):
+        call_count["n"] += 1
         if kwargs.get("method") == "PATCH":
             return (
                 200,
@@ -231,6 +301,23 @@ def test_update_params_readback_failure_after_confirmed_commit_is_retryable(mock
                         "strategy_id": "strat-alpha",
                         "metadata": {"note": "new"},
                         "updated_at": "2026-09-06T00:00:00Z",
+                        "checksum": "sha256:abc",
+                    }
+                },
+            )
+        if call_count["n"] == 1:
+            # The pre-mutation identity-verification GET (reviewer finding
+            # 6) must succeed so the PATCH is actually attempted; only the
+            # *post-PATCH* readback GET is unavailable here.
+            return (
+                200,
+                {},
+                {
+                    "entry": {
+                        "registry_id": "reg-001",
+                        "strategy_id": "strat-alpha",
+                        "metadata": {"note": "old"},
+                        "updated_at": "2026-09-05T00:00:00Z",
                         "checksum": "sha256:abc",
                     }
                 },
@@ -262,7 +349,29 @@ def test_update_params_ambiguous_patch_response_never_fabricates_success(mock_ht
     """A 200 response with no confirmable entry payload (e.g. an empty body)
     must never be reported as metadata_updated — that would be exactly the
     "wrong-version/empty GET manufactures a fake success" defect."""
-    mock_http.return_value = (200, {}, {})
+    call_responses = [
+        # Pre-mutation identity-verification GET (reviewer finding 6) must
+        # succeed so the PATCH itself is attempted and its own ambiguous
+        # response is what's under test here.
+        (
+            200,
+            {},
+            {
+                "entry": {
+                    "registry_id": "reg-001",
+                    "strategy_id": "strat-alpha",
+                    "metadata": {"note": "old"},
+                    "checksum": "sha256:abc",
+                }
+            },
+        ),
+        # The PATCH itself returns an ambiguous/empty body.
+        (200, {}, {}),
+        # The follow-up readback attempt (distinguishing "committed but
+        # response lost" from "not committed") also comes back empty.
+        (200, {}, {}),
+    ]
+    mock_http.side_effect = call_responses
 
     with pytest.raises(ActionUnavailableError) as excinfo:
         adapter.execute(
@@ -556,12 +665,14 @@ class TestUpdateParamsOverRealSocket:
                 "metadata": {"note": "new"},
             },
         )
-        # The adapter now performs a PATCH followed by a genuine owner GET
+        # The adapter now performs a pre-mutation identity-verification GET
+        # (reviewer finding 6), then the PATCH, then a genuine owner GET
         # readback (reviewer finding 5); ``received`` reflects the *last*
-        # request (the GET), so assert the PATCH specifically against the
-        # first entry in the request log.
-        assert _CapturingHandler.received_log[0]["method"] == "PATCH"
-        assert _CapturingHandler.received_log[0]["body"]["expected_metadata"] == {"note": "callers-own-base"}
+        # request (the readback GET), so assert the PATCH specifically
+        # against the second entry in the request log.
+        assert _CapturingHandler.received_log[0]["method"] == "GET"
+        assert _CapturingHandler.received_log[1]["method"] == "PATCH"
+        assert _CapturingHandler.received_log[1]["body"]["expected_metadata"] == {"note": "callers-own-base"}
         assert _CapturingHandler.received["method"] == "GET"
 
     def test_correct_patch_result_produces_receipt_bound_to_that_exact_response(self, adapter):
@@ -594,7 +705,10 @@ class TestUpdateParamsOverRealSocket:
 
     def test_empty_response_body_cannot_manufacture_a_fake_success(self, adapter):
         """A 200 with no entry payload (e.g. an unrelated/empty GET-shaped
-        body) must not be reported as metadata_updated."""
+        body) must not be reported as metadata_updated. Reviewer finding 6:
+        the pre-mutation identity-verification GET now runs first and fails
+        closed even earlier than before — the mutating PATCH is never even
+        attempted when the registry_id cannot be resolved up front."""
         _CapturingHandler.response_body = {}
         with pytest.raises(ActionUnavailableError) as excinfo:
             adapter.execute(
@@ -609,4 +723,6 @@ class TestUpdateParamsOverRealSocket:
                     "metadata": {"note": "new"},
                 },
             )
-        assert excinfo.value.error_code == "AMBIGUOUS_REGISTRY_RESPONSE"
+        assert excinfo.value.error_code == "REGISTRY_ID_NOT_FOUND"
+        # The PATCH must never have been attempted.
+        assert all(record["method"] == "GET" for record in _CapturingHandler.received_log)

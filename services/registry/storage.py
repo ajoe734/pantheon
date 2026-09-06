@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import os
 import threading
-from typing import Callable, Optional
+from typing import Any, Callable, Optional
 
 from .models import (
     DeploymentStage,
@@ -287,6 +287,7 @@ class RegistryStore:
         command_key: str,
         actor: Optional[dict] = None,
         unique_fields: tuple[str, ...] = (),
+        request_fingerprint: object = None,
     ) -> tuple[RegistryEntry, bool]:
         """Atomically create-or-replay a caller-scoped idempotent creation.
 
@@ -298,15 +299,26 @@ class RegistryStore:
         invoked when this is genuinely the first request under this
         tenant/actor-scoped key; a replay never generates a new identity,
         it returns the entry snapshot committed the first time.
+
+        ``request_fingerprint`` is a JSON-serializable normalized
+        representation of the caller's request (see
+        ``PostgresRegistryStore.create_with_receipt`` for the reviewer
+        finding 3 rationale): a same-key replay whose fingerprint differs
+        from the one originally committed is a divergent request, not a
+        replay, and must fail closed instead of silently returning the
+        original entry under a different requested identity/content.
         """
-        from .pg_store import PostgresRegistryStore
+        from .pg_store import DivergentCommandReplayError, PostgresRegistryStore, _request_digest
 
         scoped_key = PostgresRegistryStore.receipt_key(
             command_key, "register_entry", actor=actor,
         )
+        request_digest = _request_digest({"request": request_fingerprint})
         with self._lock:
             receipt = self._command_receipts.get(scoped_key)
             if receipt is not None:
+                if receipt.get("request_digest") != request_digest:
+                    raise DivergentCommandReplayError(command_key)
                 return RegistryEntry.from_dict(receipt["committed_entry"]), True
 
             payload, registry_id = payload_factory()
@@ -324,8 +336,50 @@ class RegistryStore:
             entry = self._new_entry(payload, registry_id, actor=actor)
             self._put_unlocked(entry)
             committed = entry.to_dict()
-            self._command_receipts[scoped_key] = {"committed_entry": committed}
+            self._command_receipts[scoped_key] = {
+                "committed_entry": committed,
+                "request_digest": request_digest,
+            }
             return RegistryEntry.from_dict(committed), False
+
+    def register_strategy_spec_revision(
+        self,
+        *,
+        strategy_id: str,
+        registry_id: str,
+        payload: RegistryEntryCreate,
+        validate_lineage: Callable[[list[RegistryEntry]], None],
+        actor: Optional[dict] = None,
+        unique_fields: tuple[str, ...] = (),
+    ) -> tuple[RegistryEntry, bool]:
+        """In-memory mirror of ``PostgresRegistryStore.register_strategy_spec_revision``.
+
+        ``self._lock`` already serializes the whole read-validate-write
+        sequence for every caller against this process-local store (there is
+        no separate advisory-lock primitive needed in-process), so this
+        closes the same TOCTOU race the Postgres backend closes with a
+        per-strategy_id advisory transaction lock.
+        """
+        with self._lock:
+            existing_entries = [
+                RegistryEntry.from_dict(entry.to_dict())
+                for entry in self._entries.values()
+                if entry.strategy_id == strategy_id
+            ]
+            validate_lineage(existing_entries)
+            existing = self._entries.get(registry_id)
+            if existing is not None:
+                return RegistryEntry.from_dict(existing.to_dict()), False
+            if unique_fields:
+                for other in self._entries.values():
+                    if all(
+                        getattr(payload, field, None) == getattr(other, field, None)
+                        for field in unique_fields
+                    ):
+                        return RegistryEntry.from_dict(other.to_dict()), False
+            entry = self._new_entry(payload, registry_id, actor=actor)
+            self._put_unlocked(entry)
+            return RegistryEntry.from_dict(entry.to_dict()), True
 
     # -- Deployment summary update (called by deployment service) -----------
 
@@ -359,6 +413,83 @@ class RegistryStore:
             if actor is not None:
                 entry.last_actor = actor
             return RegistryEntry.from_dict(entry.to_dict())
+
+    # -- Artifact-state CAS update (parity with PostgresRegistryStore) -----
+
+    def commit_artifact_state_cas(
+        self,
+        *,
+        registry_id: str,
+        base_snapshot: dict,
+        target_state: Any,
+        approved_at: Optional[str] = None,
+        approver: Optional[str] = None,
+        approval_decision_id: Optional[str] = None,
+        command_key: Optional[str] = None,
+        actor: Optional[dict] = None,
+        validate: Optional[Callable[[RegistryEntry], None]] = None,
+    ) -> tuple[RegistryEntry, bool]:
+        """In-memory mirror of ``PostgresRegistryStore.commit_artifact_state_cas``
+        — same CAS + idempotent-replay + divergent-key-rejection contract as
+        ``commit_metadata_cas``, applied to the artifact_state transition
+        (reviewer finding 5). ``validate`` runs only on the non-replay path —
+        see the Postgres backend's docstring for why re-validating a
+        transition against a replay's already-post-transition current state
+        would always (and wrongly) fail."""
+        from .pg_store import PostgresRegistryStore
+
+        scoped_key = (
+            PostgresRegistryStore.receipt_key(command_key, registry_id, actor=actor)
+            if command_key
+            else None
+        )
+        target_value = target_state.value if hasattr(target_state, "value") else target_state
+        with self._lock:
+            if scoped_key:
+                receipt = self._command_receipts.get(scoped_key)
+                if receipt is not None:
+                    # Deliberately excludes the entry's current
+                    # artifact_state from the comparison — see the Postgres
+                    # backend's docstring: there is no separate "expected
+                    # base state" precondition here, and the base
+                    # legitimately differs between the original call and a
+                    # later replay issued after that call already committed.
+                    if (
+                        receipt.get("target_state") != target_value
+                        or receipt.get("approver") != approver
+                        or receipt.get("approval_decision_id") != approval_decision_id
+                    ):
+                        from .pg_store import DivergentCommandReplayError
+
+                        raise DivergentCommandReplayError(command_key)
+                    return RegistryEntry.from_dict(receipt["committed_entry"]), True
+
+            current = self._entries.get(registry_id)
+            if current is None or current.to_dict() != base_snapshot:
+                raise RegistryConcurrentUpdateError(registry_id)
+            if validate is not None:
+                validate(RegistryEntry.from_dict(base_snapshot))
+            entry = RegistryEntry.from_dict(base_snapshot)
+            entry.artifact_state = target_state
+            entry.updated_at = utc_now_iso()
+            if approved_at is not None:
+                entry.approved_at = approved_at
+            if approver:
+                entry.approver = approver
+            if approval_decision_id:
+                entry.approval_decision_id = approval_decision_id
+            if actor is not None:
+                entry.last_actor = actor
+            self._put_unlocked(entry)
+            committed = entry.to_dict()
+            if scoped_key:
+                self._command_receipts[scoped_key] = {
+                    "target_state": target_value,
+                    "approver": approver,
+                    "approval_decision_id": approval_decision_id,
+                    "committed_entry": committed,
+                }
+            return RegistryEntry.from_dict(committed), False
 
     # -- Metadata CAS update (parity with PostgresRegistryStore) -----------
 

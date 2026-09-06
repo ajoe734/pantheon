@@ -121,6 +121,23 @@ class PostgresJsonOwnerStore:
 
     def bootstrap(self) -> None:
         with self._connect() as conn:
+            # Reviewer finding 9: "CREATE ... IF NOT EXISTS" is not actually
+            # race-free under concurrent DDL from two fresh processes
+            # bootstrapping the same table for the first time — Postgres can
+            # raise 23505 (unique_violation on the catalog) *or* 42P07
+            # (duplicate_table/duplicate_object), depending on timing,
+            # neither of which is a real failure once the schema/table
+            # exists either way. A session-scoped advisory transaction lock
+            # keyed on this table's name serializes the whole
+            # schema-then-table bootstrap sequence across concurrent
+            # processes: the loser blocks until the winner's bootstrap
+            # transaction commits, then finds the schema/table already
+            # present and its own DDL is a genuine no-op — closing the race
+            # at the source instead of only catching more error codes after
+            # the fact. The lock is released automatically when this
+            # transaction commits (this connection's implicit commit on
+            # context-manager exit) or rolls back.
+            self.advisory_xact_lock(self.table_name, conn=conn)
             ensure_postgres_schema(conn, self.schema)
             try:
                 conn.execute(
@@ -133,11 +150,12 @@ class PostgresJsonOwnerStore:
                     """
                 )
             except Exception as exc:
-                # Two owner-store instances racing their first bootstrap can
-                # both pass "IF NOT EXISTS" before either commits (23505 =
-                # unique violation on pg_type/pg_class). The table now exists
+                # Belt-and-suspenders: even with the advisory lock above,
+                # tolerate both duplicate error codes a concurrent winner
+                # (e.g. a process not holding/respecting this lock, or a
+                # legacy caller) could still produce. The table now exists
                 # either way, so this is not a real failure.
-                if getattr(exc, "sqlstate", "") != "23505":
+                if getattr(exc, "sqlstate", "") not in ("23505", "42P07"):
                     raise
                 if hasattr(conn, "rollback"):
                     conn.rollback()
@@ -335,8 +353,16 @@ class PostgresJsonOwnerStore:
         payload = row[0] if isinstance(row, tuple) else row.get("payload")
         return self._decode_payload(payload)
 
-    def list_all(self) -> List[Dict[str, Any]]:
-        with self._connect() as conn:
+    def list_all(self, *, conn: Optional[Any] = None) -> List[Dict[str, Any]]:
+        """List every row's decoded payload.
+
+        Pass ``conn`` (from :meth:`transaction`) to read within an
+        in-progress transaction — e.g. under an advisory lock held for a
+        read-validate-write sequence — instead of opening a second,
+        independent connection that would not see uncommitted-but-locked
+        state consistently.
+        """
+        with self._use_conn(conn) as conn:
             cursor = conn.execute(f"SELECT payload FROM {self.table} ORDER BY updated_at ASC")
             rows = cursor.fetchall()
         records: List[Dict[str, Any]] = []
@@ -346,6 +372,18 @@ class PostgresJsonOwnerStore:
             if decoded is not None:
                 records.append(decoded)
         return records
+
+    def advisory_xact_lock(self, key: str, *, conn: Any) -> None:
+        """Take a Postgres session-scoped advisory transaction lock keyed on
+        an arbitrary string, released automatically at transaction end
+        (commit or rollback) — never leaked across requests/connections.
+
+        Used to serialize a read-validate-write sequence across concurrent
+        callers keyed on some aggregate identity (e.g. a strategy_id) when
+        the invariant being protected spans multiple rows/versions and
+        cannot be expressed as a single-row compare-and-set.
+        """
+        conn.execute("SELECT pg_advisory_xact_lock(hashtext(%s))", (key,))
 
     @staticmethod
     def _decode_payload(payload: Any) -> Optional[Dict[str, Any]]:

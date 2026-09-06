@@ -62,11 +62,23 @@ def _registry_owner_dependency() -> dict:
     entries = getattr(store, "_entries", None)
     if entries is None or not hasattr(entries, "_connect"):
         return {"status": "error", "detail": "registry postgres store has no connection handle"}
+    table = getattr(entries, "table", None)
+    if not table:
+        return {"status": "error", "detail": "registry postgres store has no configured table"}
     try:
         with entries._connect() as conn:
-            conn.execute("SELECT 1")
+            # Reviewer finding 8: a bare "SELECT 1" succeeds even when the
+            # owner schema/table required for actual reads/writes is
+            # missing (bootstrap disabled, or bootstrap raced/failed) — this
+            # previously let /readyz report ready=true while every real
+            # entry GET/write raised psycopg's InvalidSchemaName. Probe the
+            # actual configured owner table (never the application's cached
+            # pool — a fresh, short-lived connection, matching the rest of
+            # this function) so a missing schema/table fails closed here
+            # instead of surfacing only on a caller's first real request.
+            conn.execute(f"SELECT 1 FROM {table} LIMIT 0")
     except Exception as exc:
-        return {"status": "error", "detail": f"registry postgres connection failed: {exc}"}
+        return {"status": "error", "detail": f"registry postgres owner table probe failed: {exc}"}
     return {"status": "ok", "backend": "postgres"}
 
 

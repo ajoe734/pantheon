@@ -319,6 +319,125 @@ class PostgresRegistryStore:
                     raise RegistryConcurrentUpdateError(registry_id)
         return RegistryEntry.from_dict(canonical), False
 
+    def commit_artifact_state_cas(
+        self,
+        *,
+        registry_id: str,
+        base_snapshot: dict[str, Any],
+        target_state: Any,
+        approved_at: Optional[str] = None,
+        approver: Optional[str] = None,
+        approval_decision_id: Optional[str] = None,
+        command_key: Optional[str] = None,
+        actor: Optional[dict[str, Any]] = None,
+        validate: Optional[Callable[[RegistryEntry], None]] = None,
+    ) -> tuple[RegistryEntry, bool]:
+        """Atomically CAS ``artifact_state`` (plus approval fields) and record
+        an idempotent command receipt in the same transaction — mirrors
+        :meth:`commit_metadata_cas`.
+
+        Reviewer finding 5: prior to this, ``advance_artifact_state`` had no
+        caller-scoped receipt at all — a retried ``advance`` command_key
+        would either re-run the state transition (raising a "forbidden
+        transition" error on the second call, since the entry had already
+        moved) or silently no-op, with no way for a caller to distinguish
+        "my retry landed on the original commit" from "my retry was
+        rejected". As with metadata CAS, the receipt row is reserved
+        *before* the entry mutation (via ``insert_if_absent``, which holds a
+        table-level lock for the rest of this transaction) and a same-key
+        replay always returns the entry snapshot exactly as it was
+        originally committed under this command_key, never a fresh read of
+        whatever the entry has become since under other commands. This is
+        not a separate outbox: the receipt and the entry mutation are one
+        row each, committed together in one Postgres transaction — a crash
+        between "entry written" and "receipt written" cannot happen, and a
+        crash after commit but before the HTTP response reaches the caller
+        is safe because a replay of the same command_key re-reads this
+        already-committed receipt instead of re-running (or failing to
+        re-run) the transition.
+
+        ``validate`` (e.g. the caller's "is this transition/lineage legal"
+        business-rule check) is invoked only on the genuinely-fresh path,
+        *after* the replay short-circuit above has already ruled out a
+        replay — never on a replay. This matters because the entry's
+        *current* state on a replay is already the post-transition state
+        (e.g. "candidate" after a draft->candidate transition already
+        committed), so re-running a "is candidate->candidate allowed"
+        transition check against it would always (and wrongly) fail.
+        """
+        # The digest deliberately excludes the entry's current
+        # artifact_state: unlike metadata CAS's caller-supplied
+        # expected_metadata precondition, there is no separate "expected
+        # base state" parameter here — the base is always the freshly-read
+        # current state, which legitimately differs between the original
+        # call (e.g. "draft") and a replay issued after that call already
+        # committed (now "candidate"). Including it would make every
+        # genuine replay look divergent. The caller's actual intent is
+        # target_state/approver/approval_decision_id for this registry_id.
+        request_digest = _request_digest({
+            "registry_id": registry_id,
+            "target_state": target_state.value if hasattr(target_state, "value") else target_state,
+            "approver": approver,
+            "approval_decision_id": approval_decision_id,
+        })
+        scoped_key = self.receipt_key(command_key, registry_id, actor=actor) if command_key else None
+
+        with self._entries.transaction() as conn:
+            reservation: Optional[dict[str, Any]] = None
+            if scoped_key:
+                reservation = {
+                    "command_key": command_key,
+                    "receipt_key": scoped_key,
+                    "registry_id": registry_id,
+                    "request_digest": request_digest,
+                    "committed_entry": None,
+                    "committed_at": None,
+                }
+                reserved, receipt_payload = self._receipts.insert_if_absent(
+                    scoped_key, reservation, conn=conn,
+                )
+                if not reserved:
+                    if receipt_payload.get("request_digest") != request_digest:
+                        raise DivergentCommandReplayError(command_key)
+                    committed_entry = receipt_payload.get("committed_entry")
+                    if committed_entry is None:
+                        raise RegistryConcurrentUpdateError(registry_id)
+                    return RegistryEntry.from_dict(committed_entry), True
+
+            base_entry = RegistryEntry.from_dict(base_snapshot)
+            if validate is not None:
+                validate(base_entry)
+
+            entry = RegistryEntry.from_dict(base_snapshot)
+            entry.artifact_state = target_state
+            entry.updated_at = utc_now_iso()
+            if approved_at is not None:
+                entry.approved_at = approved_at
+            if approver:
+                entry.approver = approver
+            if approval_decision_id:
+                entry.approval_decision_id = approval_decision_id
+            if actor is not None:
+                entry.last_actor = actor
+            new_payload = entry.to_dict()
+
+            ok, canonical = self._entries.compare_and_set(
+                registry_id, base_snapshot, new_payload, conn=conn,
+            )
+            if not ok:
+                raise RegistryConcurrentUpdateError(registry_id)
+
+            if scoped_key:
+                finalized = dict(reservation)
+                finalized["committed_entry"] = canonical
+                finalized["committed_at"] = utc_now_iso()
+                filled, _ = self._receipts.compare_and_set(
+                    scoped_key, reservation, finalized, conn=conn,
+                )
+                if not filled:
+                    raise RegistryConcurrentUpdateError(registry_id)
+        return RegistryEntry.from_dict(canonical), False
+
     def create_with_receipt(
         self,
         payload_factory: Callable[[], tuple[RegistryEntryCreate, str]],
@@ -326,6 +445,7 @@ class PostgresRegistryStore:
         command_key: str,
         actor: Optional[dict[str, Any]] = None,
         unique_fields: tuple[str, ...] = (),
+        request_fingerprint: Any = None,
     ) -> tuple[RegistryEntry, bool]:
         """Atomically create-or-replay a caller-scoped idempotent creation.
 
@@ -338,18 +458,34 @@ class PostgresRegistryStore:
         inserted" cannot leave a receipt pointing at nothing durable (the
         finalize step below fails the whole transaction if it cannot
         complete).
+
+        ``request_fingerprint`` is a JSON-serializable representation of the
+        caller's *normalized request* (not the factory-produced entry, which
+        embeds a fresh random identity on every call and therefore cannot be
+        compared across replays). Reviewer finding 3: a same
+        ``Idempotency-Key`` reused with a genuinely different request (e.g.
+        a different ``name``) previously returned 200 with the *original*
+        entry both times, silently discarding the caller's second, different
+        request instead of reporting a conflict. The digest is computed
+        before the factory ever runs, so a divergent replay is rejected
+        without invoking (and without needing to invoke) the factory a
+        second time.
         """
         scoped_key = self.receipt_key(command_key, "register_entry", actor=actor)
+        request_digest = _request_digest({"request": request_fingerprint})
         with self._entries.transaction() as conn:
             reservation = {
                 "command_key": command_key,
                 "receipt_key": scoped_key,
+                "request_digest": request_digest,
                 "committed_entry": None,
             }
             reserved, receipt_payload = self._receipts.insert_if_absent(
                 scoped_key, reservation, conn=conn,
             )
             if not reserved:
+                if receipt_payload.get("request_digest") != request_digest:
+                    raise DivergentCommandReplayError(command_key)
                 committed_entry = receipt_payload.get("committed_entry")
                 if committed_entry is None:
                     # Another in-flight transaction reserved this key but has
@@ -380,6 +516,54 @@ class PostgresRegistryStore:
             if not filled:
                 raise RegistryConcurrentUpdateError("register_entry")
         return RegistryEntry.from_dict(committed_entry), False
+
+    def register_strategy_spec_revision(
+        self,
+        *,
+        strategy_id: str,
+        registry_id: str,
+        payload: RegistryEntryCreate,
+        validate_lineage: Callable[[list[RegistryEntry]], None],
+        actor: Optional[dict[str, Any]] = None,
+        unique_fields: tuple[str, ...] = (),
+    ) -> tuple[RegistryEntry, bool]:
+        """Serialize StrategySpec revision creation per ``strategy_id`` and
+        re-validate the version/lineage invariant against the true
+        latest-committed state inside the same transaction as the insert.
+
+        Reviewer finding 4 (TOCTOU race): two concurrent requests could each
+        read "latest=1.0.0" via a plain, unlocked read before either
+        committed, both independently pass the "is this a valid next
+        version" check (e.g. both 1.0.1 and 2.0.0 are valid next versions
+        from 1.0.0), and both commit — since they target *different*
+        versions, the (strategy_id, version, artifact_type) ``unique_fields``
+        constraint never catches this at all; the invariant being violated
+        is "there is exactly one next revision per current latest", not
+        "no two rows share a version". A Postgres session-scoped advisory
+        transaction lock keyed on ``strategy_id`` serializes the whole
+        read-validate-write sequence for one strategy family: the second
+        caller blocks until the first commits and releases the lock (at
+        transaction end), then re-reads the true latest-committed version
+        and re-validates against *that*, aborting with whatever error
+        ``validate_lineage`` raises (mapped to 409/400 by the caller) if the
+        version is no longer a valid next step.
+        """
+        with self._entries.transaction() as conn:
+            self._entries.advisory_xact_lock(strategy_id, conn=conn)
+            existing_raw = self._entries.list_all(conn=conn)
+            existing_entries = [
+                RegistryEntry.from_dict(raw)
+                for raw in existing_raw
+                if raw.get("strategy_id") == strategy_id
+            ]
+            validate_lineage(existing_entries)
+            entry = _new_entry(payload, registry_id, actor=actor)
+            created, canonical = self._entries.insert_if_absent(
+                registry_id, entry.to_dict(), unique_fields=unique_fields, conn=conn,
+            )
+            if created:
+                return entry, True
+            return RegistryEntry.from_dict(canonical), False
 
     def update_deployment_summary(
         self,

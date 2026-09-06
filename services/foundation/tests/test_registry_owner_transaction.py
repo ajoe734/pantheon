@@ -14,6 +14,7 @@ versions exist. Each is proven here against the real database.
 from __future__ import annotations
 
 import os
+import threading
 from concurrent.futures import ThreadPoolExecutor
 from uuid import uuid4
 
@@ -278,6 +279,108 @@ def test_concurrent_first_bootstrap_does_not_raise(pg_case):
 
     with ThreadPoolExecutor(max_workers=4) as pool:
         list(pool.map(lambda _: _bootstrap(), range(4)))
+
+
+def test_concurrent_strategy_spec_revision_registration_serializes_not_races(pg_case):
+    """Reviewer finding 4 (TOCTOU race): two concurrent callers racing to
+    register the *next* StrategySpec revision (e.g. both attempting a
+    version bump from the same current latest) must not both succeed —
+    the second must see the first's committed version and be rejected for
+    being no longer a valid next step, or the whole invariant is violated
+    even though the store's (strategy_id, version, artifact_type)
+    uniqueness constraint never fires (they target different versions).
+    ``register_strategy_spec_revision``'s per-strategy_id advisory
+    transaction lock must serialize the read-validate-write sequence so
+    only one of two concurrent "next version from 1.0.0" attempts commits.
+    """
+    _store(pg_case)  # bootstrap schema/tables once before racing connections
+    strategy_id = "strat-toctou"
+
+    base_store = _store(pg_case, bootstrap=False)
+    base_store.create_if_absent(_payload(strategy_id=strategy_id, version="1.0.0"), "reg-toctou-base")
+
+    results: dict[str, tuple[bool, object]] = {}
+    completion_order: list[str] = []
+    order_lock = threading.Lock()
+
+    def _attempt(seed_version: str):
+        store = _store(pg_case, bootstrap=False)
+
+        def _validate(existing: list) -> None:
+            versions = {e.version for e in existing}
+
+            def _parse(v: str) -> tuple[int, int, int]:
+                return tuple(int(x) for x in v.split("."))  # type: ignore[return-value]
+
+            latest = max(versions, key=_parse)
+            major, minor, patch = _parse(latest)
+            valid_next = {(major + 1, 0, 0), (major, minor + 1, 0), (major, minor, patch + 1)}
+            if _parse(seed_version) not in valid_next:
+                raise RegistryConcurrentUpdateError(
+                    f"{seed_version} is not a valid next version from {latest}"
+                )
+
+        try:
+            entry, created = store.register_strategy_spec_revision(
+                strategy_id=strategy_id,
+                registry_id=f"reg-toctou-{seed_version}",
+                payload=_payload(strategy_id=strategy_id, version=seed_version),
+                validate_lineage=_validate,
+                unique_fields=("strategy_id", "version", "artifact_type"),
+            )
+            # Record real commit order via a Python-side monotonic sequence
+            # captured immediately after the call returns (i.e. after this
+            # thread's transaction has committed and released the advisory
+            # lock). Postgres' own ``now()``/``updated_at`` reflects
+            # *transaction start* time, not commit time — a transaction that
+            # blocks longest on the advisory lock can still have the
+            # earliest ``now()``, so sorting committed rows by ``updated_at``
+            # does not reliably reflect actual serialization order under lock
+            # contention. This Python-side order is the ground truth for
+            # "which attempt's read-validate-write section actually ran
+            # (and committed) second".
+            with order_lock:
+                completion_order.append(seed_version)
+            results[seed_version] = (True, created)
+        except Exception as exc:  # noqa: BLE001 - proving rejection, not a specific type here
+            results[seed_version] = (False, exc)
+
+    # Both 1.0.1 (patch bump) and 2.0.0 (major bump) are each individually a
+    # valid "next version" from 1.0.0 — the TOCTOU race is exactly this
+    # scenario, where a naive unlocked pre-check lets both validate
+    # successfully against the same stale "latest=1.0.0" read. Note that a
+    # major-version bump is *unconditionally* valid regardless of which
+    # minor/patch preceded it (see the identical rule in
+    # service.py's _check_strategy_spec_version_lineage), so if 1.0.1 wins
+    # the race to commit first, 2.0.0 remains a legitimately valid next
+    # step from 1.0.1 too — both succeeding in *that* order is correct
+    # behavior, not a bug. The actual defect this test proves fixed is the
+    # reviewer's exact failure mode: a *stale* commit (1.0.1) landing
+    # *after* a later-committed revision (2.0.0) it is no longer a valid
+    # next step from — this must never happen regardless of which attempt
+    # the thread scheduler happens to run first.
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        list(pool.map(_attempt, ["1.0.1", "2.0.0"]))
+
+    entries = {e.version: e for e in _store(pg_case).list_by_strategy(strategy_id)}
+    committed_versions = [v for v in ("1.0.1", "2.0.0") if entries.get(v) is not None]
+    assert 1 <= len(committed_versions) <= 2, f"unexpected committed set: {committed_versions}"
+    if len(committed_versions) == 2:
+        # ``completion_order`` is the Python-side ground truth for actual
+        # commit order (see the comment above where it is populated) — do
+        # not resurrect a DB-timestamp-based ordering here.
+        first_version, second_version = completion_order
+
+        def _parse(v: str) -> tuple[int, int, int]:
+            return tuple(int(x) for x in v.split("."))  # type: ignore[return-value]
+
+        major, minor, patch = _parse(first_version)
+        valid_next = {(major + 1, 0, 0), (major, minor + 1, 0), (major, minor, patch + 1)}
+        assert _parse(second_version) in valid_next, (
+            f"second-committed version {second_version!r} is not a valid next step from "
+            f"first-committed {first_version!r} — a stale revision slipped in after a later "
+            f"one already committed (results: {results}, completion_order: {completion_order})"
+        )
 
 
 def test_missing_config_fails_closed_not_memory_fallback():

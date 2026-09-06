@@ -1442,3 +1442,216 @@ def test_create_enforces_composite_unique_identity_not_just_registry_id(strict_c
     svc.register(payload, "reg-first")
     with pytest.raises(RegistryError):
         svc.register(payload, "reg-second")
+
+
+# ===========================================================================
+# Regression proofs for the generation-6 Codex rejection of PR #5620
+# (REGISTRY-STRATEGY-UNIFIED-CONTRACT-001) — 9 findings reproduced against
+# live isolated PostgreSQL. Each of the in-process-reproducible ones is
+# pinned here against the in-memory backend; Postgres-specific proofs
+# (TOCTOU races, advisory-lock bootstrap serialization) live in
+# services/foundation/tests/test_registry_owner_transaction.py and
+# services/registry/test_owner_durability_real_process.py.
+# ===========================================================================
+
+
+def test_whitespace_only_sub_claim_is_rejected_not_synthesized(strict_client):
+    """Reviewer finding 1: a JWT with sub=" " (whitespace-only) must be
+    rejected as malformed, not silently fall through to a synthesized
+    actor_id="internal-api-operator" and get persisted."""
+    token = _jwt(subject="ignored", tenant="tenant-a", sub=" ")
+    resp = strict_client.post(
+        "/api/registry/entries",
+        json={"name": "whitespace-sub-draft"},
+        headers=_bearer(token),
+    )
+    assert resp.status_code == 403, resp.text
+
+
+def test_whitespace_only_tenant_claim_is_rejected_not_persisted_as_null(strict_client):
+    """Reviewer finding 1: a JWT with tenant=" " (whitespace-only) must be
+    rejected as malformed, not silently persisted as owner_tenant=null."""
+    token = _jwt(subject="op-1", tenant=" ")
+    resp = strict_client.post(
+        "/api/registry/entries",
+        json={"name": "whitespace-tenant-draft"},
+        headers=_bearer(token),
+    )
+    assert resp.status_code == 403, resp.text
+
+
+def test_whitespace_padded_builtin_tenant_claim_is_still_rejected(strict_client):
+    """Reviewer finding 1: " __builtin__ " (whitespace-padded reserved
+    marker) must still be caught by the reserved-tenant check — stripping
+    happens before the comparison, not after."""
+    token = _jwt(subject="forger-2", tenant=" __builtin__ ")
+    resp = strict_client.post(
+        "/api/registry/entries",
+        json={"name": "padded-builtin-draft"},
+        headers=_bearer(token),
+    )
+    assert resp.status_code == 403, resp.text
+
+
+def test_generic_route_strategy_spec_with_embedded_spec_requires_lineage(strict_client):
+    """Reviewer finding 2: a caller registering a *full* StrategySpec
+    (embedded metadata.strategy_spec content) through the generic
+    /api/registry/entries route must satisfy the same lineage requirement as
+    the dedicated /strategy-specs facade — a bare checksum-only reference
+    entry (no embedded content) is unaffected and still allowed with no
+    lineage, but embedded content with empty lineage must be rejected."""
+    token = _jwt(subject="generic-writer", tenant="tenant-a")
+    strategy_id = "generic-route-strat"
+    resp = strict_client.post(
+        "/api/registry/entries",
+        json={
+            "artifact_type": "strategy_spec",
+            "strategy_id": strategy_id,
+            "version": "1.0.0",
+            "metadata": {"strategy_spec": _valid_spec(strategy_id)},
+        },
+        headers=_bearer(token),
+    )
+    assert resp.status_code == 400, resp.text
+    assert "lineage" in resp.json()["detail"].lower()
+
+
+def test_generic_route_strategy_spec_with_embedded_spec_enforces_version_sequence(strict_client):
+    """Reviewer finding 2: an out-of-sequence StrategySpec version (e.g.
+    9.9.9 with no valid parent link) must be rejected through the generic
+    /api/registry/entries route the same way the dedicated
+    POST /api/registry/strategy-specs facade already rejects it — otherwise
+    the dedicated route's rejection is trivially bypassable by posting
+    identical content through the generic route instead."""
+    token = _jwt(subject="generic-writer-2", tenant="tenant-a")
+    strategy_id = "generic-route-sequence-strat"
+
+    first = strict_client.post(
+        "/api/registry/strategy-specs",
+        json={
+            "strategy_id": strategy_id,
+            "version": "1.0.0",
+            "lineage": {"source_run_ids": ["run-1"]},
+            "strategy_spec": _valid_spec(strategy_id),
+        },
+        headers=_bearer(token),
+    )
+    assert first.status_code == 200, first.text
+
+    jump = strict_client.post(
+        "/api/registry/entries",
+        json={
+            "artifact_type": "strategy_spec",
+            "strategy_id": strategy_id,
+            "version": "9.9.9",
+            "lineage": {"source_run_ids": ["run-1"]},
+            "metadata": {"strategy_spec": _valid_spec(strategy_id, v=2)},
+        },
+        headers=_bearer(token),
+    )
+    assert jump.status_code == 400, jump.text
+    assert "valid next revision" in jump.json()["detail"].lower()
+
+    # The rejected jump must never have been persisted.
+    listed = strict_client.get(
+        f"/api/registry/strategies/{strategy_id}/entries", headers=_bearer(token),
+    )
+    versions = [e["entry"]["version"] for e in listed.json()]
+    assert "9.9.9" not in versions
+
+
+def test_dedicated_route_rejects_empty_metadata_strategy_spec_with_arbitrary_checksum(strict_client):
+    """Reviewer finding 2: metadata.strategy_spec={} with no top-level
+    strategy_spec and an arbitrary caller-supplied checksum must not be
+    silently accepted as if it were a validated (or intentionally empty)
+    spec — there is no actual content for that checksum to correspond to."""
+    token = _jwt(subject="empty-spec-writer", tenant="tenant-a")
+    resp = strict_client.post(
+        "/api/registry/strategy-specs",
+        json={
+            "strategy_id": "empty-spec-strat",
+            "version": "1.0.0",
+            "lineage": {"source_run_ids": ["run-1"]},
+            "checksum": "sha256:arbitrary-unvalidated-checksum",
+            "metadata": {"strategy_spec": {}},
+        },
+        headers=_bearer(token),
+    )
+    assert resp.status_code == 400, resp.text
+
+
+def test_idempotency_key_replay_with_divergent_request_is_409_not_silent_original(strict_client):
+    """Reviewer finding 3: the same Idempotency-Key reused with a genuinely
+    different request (a different draft name) must fail closed (409), not
+    silently return the entry created by the *first* request as if it
+    satisfied the second, different one."""
+    token = _jwt(subject="idem-divergent-writer", tenant="tenant-a")
+    headers = dict(_bearer(token))
+    headers["Idempotency-Key"] = "divergent-create-001"
+
+    first = strict_client.post(
+        "/api/registry/entries", json={"name": "Alpha"}, headers=headers,
+    )
+    assert first.status_code == 200, first.text
+    first_entry = first.json()["entry"]
+
+    second = strict_client.post(
+        "/api/registry/entries", json={"name": "Beta"}, headers=headers,
+    )
+    assert second.status_code == 409, second.text
+
+    # The original entry must be unaffected by the divergent replay attempt.
+    readback = strict_client.get(
+        f"/api/registry/entries/{first_entry['registry_id']}", headers=_bearer(token),
+    )
+    assert readback.json()["entry"]["metadata"]["name"] == "Alpha"
+
+
+def test_advance_command_key_replay_returns_original_receipt_not_forbidden_transition(strict_client):
+    """Reviewer finding 5: a retried advance under the same command_key must
+    return the entry exactly as originally committed, not re-run the
+    transition (which would otherwise raise a spurious "forbidden
+    transition" error once the entry has already moved past draft)."""
+    token = _jwt(subject="advance-writer", tenant="tenant-a")
+    created = _create_entry(strict_client, token, strategy_id="advance-receipt-strat")
+    registry_id = created["entry"]["registry_id"]
+
+    first = strict_client.post(
+        f"/api/registry/entries/{registry_id}/advance",
+        json={"target_state": "candidate", "command_key": "advance-cmd-001"},
+        headers=_bearer(token),
+    )
+    assert first.status_code == 200, first.text
+    assert first.json()["entry"]["artifact_state"] == "candidate"
+
+    replay = strict_client.post(
+        f"/api/registry/entries/{registry_id}/advance",
+        json={"target_state": "candidate", "command_key": "advance-cmd-001"},
+        headers=_bearer(token),
+    )
+    assert replay.status_code == 200, replay.text
+    assert replay.json()["entry"]["artifact_state"] == "candidate"
+    assert replay.json()["entry"]["registry_id"] == registry_id
+
+
+def test_advance_command_key_divergent_replay_is_409(strict_client):
+    """Reviewer finding 5: reusing an advance command_key with a genuinely
+    different target_state must fail closed (409), not silently accept a
+    second transition under the same key."""
+    token = _jwt(subject="advance-writer-2", tenant="tenant-a")
+    created = _create_entry(strict_client, token, strategy_id="advance-divergent-strat")
+    registry_id = created["entry"]["registry_id"]
+
+    first = strict_client.post(
+        f"/api/registry/entries/{registry_id}/advance",
+        json={"target_state": "candidate", "command_key": "advance-cmd-shared"},
+        headers=_bearer(token),
+    )
+    assert first.status_code == 200, first.text
+
+    diverged = strict_client.post(
+        f"/api/registry/entries/{registry_id}/advance",
+        json={"target_state": "retired", "command_key": "advance-cmd-shared"},
+        headers=_bearer(token),
+    )
+    assert diverged.status_code == 409, diverged.text

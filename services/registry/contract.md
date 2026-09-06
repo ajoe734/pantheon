@@ -229,7 +229,7 @@ The storage backend is still open, but the logical operations are not.
 | `register(entry)` | create a new `draft` or `candidate` entry |
 | `get(registry_id)` | read one entry |
 | `list_by_strategy(strategy_id)` | enumerate versions within a strategy family |
-| `advance_artifact_state(registry_id, target_state, approver?, approval_decision_id?)` | transition an entry through governed artifact-state checks and retain the canonical decision link when approving |
+| `advance_artifact_state(registry_id, target_state, approver?, approval_decision_id?, command_key?)` | transition an entry through governed artifact-state checks and retain the canonical decision link when approving; `command_key` makes an identical retry an idempotent replay of the original committed transition instead of re-running it (see below) |
 | `update_metadata(registry_id, expected_metadata, new_metadata, command_key?)` | allowed operator metadata update with CAS: fails with a conflict when `expected_metadata` no longer matches the durable entry; `command_key` makes an identical retry an idempotent no-op replay |
 | `resolve_latest_approved(strategy_id)` | return the newest approved entry for a strategy |
 | `resolve_deployment_view(strategy_id)` | return the derived deployment-stage view from deployment/runtime objects |
@@ -244,6 +244,26 @@ same transaction as its idempotent command receipt when `command_key` is supplie
 `services/registry/command_contract.py` for the canonical Strategy-action-to-owner mapping (Registry
 owns this metadata update; review/paper-promotion/activation/pause/archive belong to other owners and
 must not be relabeled as Registry operations).
+
+#### Command-receipt durability mechanism (not a separate outbox)
+
+Every owned mutation that accepts an idempotency key (`update_metadata`'s `command_key`,
+`advance_artifact_state`'s `command_key`, and the generic-create `Idempotency-Key` header on
+`POST /api/registry/entries`) commits its receipt in the **same Postgres transaction** as the state
+write it records — one row in `registry.command_receipts`, written via the same shared connection
+(`PostgresJsonOwnerStore.transaction()`) as the `registry.entries` row it mutates
+(`PostgresRegistryStore.commit_metadata_cas` / `commit_artifact_state_cas` / `create_with_receipt`).
+This is deliberately **not** a separate outbox/prepare-activate-reconcile protocol: there is no
+second event table, no background relay, and no "pending" intermediate state to reconcile. The crash
+safety property this buys is narrower but concrete: a crash between "entry committed" and "response
+sent to the caller" is safe, because a replay of the same `command_key` re-reads the already-committed
+receipt row (bound to that exact request) instead of re-running the mutation or silently no-op'ing —
+and a crash *during* the transaction (before either row commits) rolls back atomically, leaving neither
+the entry mutation nor the receipt reservation behind. `advance_artifact_state`'s replay path
+additionally never re-runs the transition-legality/lineage business-rule check on a replay (that check
+only runs on the genuinely-fresh path, after the store has already ruled out a replay) — re-checking it
+against the entry's *current* (already-post-transition) state would otherwise spuriously reject a
+legitimate replay as a "forbidden transition".
 
 ### Storage backend
 
