@@ -15,6 +15,7 @@ import stat
 import subprocess
 import sys
 import tempfile
+import time
 import urllib.parse
 from contextlib import contextmanager
 from copy import deepcopy
@@ -7119,46 +7120,94 @@ def verify_stale_archive_resurrection_proof(
                 raise RuntimeError(
                     f"stale resurrection import event missing event_id: {task_id}"
                 )
+            payload_without_cmd = {
+                k: v for k, v in event.items() if k not in {"event_id", "status_command"}
+            }
+            payload_all = {k: v for k, v in event.items() if k != "event_id"}
+            accepted_digests = {
+                _canonical_json_sha256(payload_without_cmd),
+                _canonical_json_sha256(payload_all),
+            }
+            accepted_ids = {
+                f"{prefix}-{d}"
+                for d in accepted_digests
+                for prefix in (
+                    "ai-status-event",
+                    "human-ops-import",
+                    "human-ops-task-imported",
+                    "human-ops-task-reentered",
+                    "human-ops-assign",
+                )
+            }
+            if ev_id not in accepted_ids:
+                raise RuntimeError(
+                    f"stale resurrection import event unauthenticated event_id ({ev_id!r}): {task_id}"
+                )
             if actor != "Human/Ops":
                 raise RuntimeError(
                     f"stale resurrection import event unauthorized actor ({actor!r}): {task_id}"
                 )
+            op_mode = str(event.get("operator_mode") or "").strip()
+            if op_mode != "local_human_ops":
+                raise RuntimeError(
+                    f"stale resurrection import event missing or invalid operator_mode ({op_mode!r}): {task_id}"
+                )
             raw_gen = event.get("generation")
-            if raw_gen is not None:
-                try:
-                    if int(raw_gen) != archive_gen:
-                        raise RuntimeError(
-                            f"stale resurrection import event generation mismatch (expected {archive_gen}, got {raw_gen}): {task_id}"
-                        )
-                except (ValueError, TypeError) as exc:
+            if raw_gen is None or isinstance(raw_gen, bool):
+                raise RuntimeError(
+                    f"stale resurrection import event missing or invalid generation: {task_id}"
+                )
+            try:
+                if int(raw_gen) != archive_gen:
                     raise RuntimeError(
-                        f"stale resurrection import event generation invalid: {task_id}"
-                    ) from exc
+                        f"stale resurrection import event generation mismatch (expected {archive_gen}, got {raw_gen}): {task_id}"
+                    )
+            except (ValueError, TypeError) as exc:
+                raise RuntimeError(
+                    f"stale resurrection import event generation invalid: {task_id}"
+                ) from exc
             raw_arch_gen = event.get("archive_generation")
-            if raw_arch_gen is not None:
-                try:
-                    if int(raw_arch_gen) != archive_gen:
-                        raise RuntimeError(
-                            f"stale resurrection import event archive_generation mismatch (expected {archive_gen}, got {raw_arch_gen}): {task_id}"
-                        )
-                except (ValueError, TypeError) as exc:
+            if raw_arch_gen is None or isinstance(raw_arch_gen, bool):
+                raise RuntimeError(
+                    f"stale resurrection import event missing or invalid archive_generation: {task_id}"
+                )
+            try:
+                if int(raw_arch_gen) != archive_gen:
                     raise RuntimeError(
-                        f"stale resurrection import event archive_generation invalid: {task_id}"
-                    ) from exc
-            ev_owner = canonical_agent_name(event.get("owner") or event.get("new_owner"))
-            if ev_owner and ev_owner != archive_owner:
+                        f"stale resurrection import event archive_generation mismatch (expected {archive_gen}, got {raw_arch_gen}): {task_id}"
+                    )
+            except (ValueError, TypeError) as exc:
+                raise RuntimeError(
+                    f"stale resurrection import event archive_generation invalid: {task_id}"
+                ) from exc
+            raw_owner = event.get("owner") or event.get("new_owner")
+            if not raw_owner:
+                raise RuntimeError(
+                    f"stale resurrection import event missing mandatory owner: {task_id}"
+                )
+            ev_owner = canonical_agent_name(raw_owner)
+            if ev_owner != archive_owner:
                 raise RuntimeError(
                     f"stale resurrection import event owner mismatch (expected {archive_owner!r}, got {ev_owner!r}): {task_id}"
                 )
-            ev_reviewer = canonical_agent_name(event.get("reviewer") or event.get("new_reviewer"))
-            if ev_reviewer and ev_reviewer != archive_reviewer:
+            raw_reviewer = event.get("reviewer") or event.get("new_reviewer")
+            if not raw_reviewer:
+                raise RuntimeError(
+                    f"stale resurrection import event missing mandatory reviewer: {task_id}"
+                )
+            ev_reviewer = canonical_agent_name(raw_reviewer)
+            if ev_reviewer != archive_reviewer:
                 raise RuntimeError(
                     f"stale resurrection import event reviewer mismatch (expected {archive_reviewer!r}, got {ev_reviewer!r}): {task_id}"
                 )
             ev_archive_digest = str(event.get("archive_snapshot_sha256") or "").strip()
-            if ev_archive_digest and ev_archive_digest != archive_sha256:
+            if not ev_archive_digest:
                 raise RuntimeError(
-                    f"stale resurrection import event archive digest mismatch: {task_id}"
+                    f"stale resurrection import event missing mandatory archive_snapshot_sha256: {task_id}"
+                )
+            if ev_archive_digest != archive_sha256:
+                raise RuntimeError(
+                    f"stale resurrection import event archive digest mismatch (expected {archive_sha256!r}, got {ev_archive_digest!r}): {task_id}"
                 )
             import_events.append((ev_ts, event))
 
@@ -10503,6 +10552,17 @@ def main(argv: list[str]) -> int:
         else None
     )
 
+    barrier_base = os.environ.get("PANTHEON_TEST_PREFLIGHT_BARRIER")
+    if barrier_base and command == "reconcile_merged_done":
+        ready_path = Path(f"{barrier_base}.ready")
+        go_path = Path(f"{barrier_base}.go")
+        ready_path.write_text("ready", encoding="utf-8")
+        deadline = time.monotonic() + 15.0
+        while time.monotonic() < deadline:
+            if go_path.exists():
+                break
+            time.sleep(0.02)
+
     if (
         command in {"approve", "operator_accept", "reopen"}
         and external_preflight is not None
@@ -10540,6 +10600,11 @@ def main(argv: list[str]) -> int:
                 command_result = commands[command](state, args)
                 if command_result is False:
                     return None
+                if (
+                    command == "reconcile_merged_done"
+                    and str(os.environ.get("LOOP_TEST_RECONCILE_SIGKILL_AFTER") or "").strip() == "before_commit"
+                ):
+                    os.kill(os.getpid(), 9)
                 sync_all(state, refresh_views=False)
         return deepcopy(state)
 

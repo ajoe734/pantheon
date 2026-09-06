@@ -46,11 +46,11 @@
     },
     "clause_8_positive_fixtures_and_crash_recovery": {
       "status": "satisfied",
-      "detail": "Positive fixtures with genuine isolated command runtime and git ancestry, executing real isolated CLI invocations (ai_status.py show, reconcile_merged_done, and recover) without in-process mocks; authenticated import provenance and reassignment lineage g1 -> g2; real two-process concurrency race via subprocess.Popen exercising authoritative TaskStore serialization lock; uncommitted crash zero-effect, post-commit crash/restart recovery, outbox receipt convergence, idempotent recovery, changed-proof failure, and re-admission rejection."
+      "detail": "Positive fixtures with genuine isolated command runtime and git ancestry, executing real isolated CLI invocations (ai_status.py show, reconcile_merged_done, and recover) without in-process mocks; authenticated import provenance with mandatory exact bindings (generation, archive_generation, owner, reviewer, archive_snapshot_sha256, operator_mode: 'local_human_ops', agent: 'Human/Ops') and authenticated event_id against payload digest; deterministic real-process barriers covering mutation and active worker claim between preflight and commit; crash interruption before commit (SIGKILL before commit lock sync) and after commit (pending outbox), restart recovery, proof-change refusal, outbox receipt convergence, and idempotent recovery with exact byte, generation, and archive checks."
     },
     "clause_9_zero_effect_negatives": {
       "status": "satisfied",
-      "detail": "Zero-effect negatives verified for unauthenticated import (missing event_id, unauthorized actor, generation/archive mismatch), corrupt/malformed runtime structures (dict or list workers, queue, leases, supervisor reservations with launch_intent), active review invalidation/rejection, intervening new work, nonoperator invocations, and concurrent CAS/proof forks."
+      "detail": "Zero-effect negatives verified for unauthenticated import (missing event_id, unauthorized actor, missing or invalid operator_mode, missing/mismatched generation, archive_generation, owner, reviewer, archive_snapshot_sha256, unauthenticated event_id digest), corrupt/malformed runtime structures (dict or list workers, queue, leases, supervisor reservations with launch_intent), active review invalidation/rejection, intervening new work, nonoperator invocations, and concurrent CAS/proof forks."
     },
     "clause_10_clean_worktree_base": {
       "status": "satisfied",
@@ -85,7 +85,7 @@
       {
         "name": "archive_resurrection_contract_tests",
         "command": "AI_NAME=Antigravity2 python3 -m pytest -q scripts/test_ai_status.py -k TestStaleArchiveResurrectionContract",
-        "passed": 19,
+        "passed": 24,
         "subtests_passed": 19,
         "failed": 0,
         "exit_code": 0
@@ -125,14 +125,14 @@
       {
         "name": "focused_ai_status_tests",
         "command": "AI_NAME=Antigravity2 python3 -m pytest -q scripts/test_ai_status.py -k 'assign or reopen or reconcile or archive'",
-        "passed": 137,
+        "passed": 142,
         "subtests_passed": 56,
         "failed": 0,
         "exit_code": 0
       }
     ],
     "totals": {
-      "passed": 492,
+      "passed": 502,
       "subtests_passed": 134,
       "failed": 0
     }
