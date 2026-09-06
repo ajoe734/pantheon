@@ -8292,6 +8292,84 @@ class RuntimeAndFailureSemanticsTests(unittest.TestCase):
         self.assertEqual(worker["status"], "superseded")
         self.assertNotIn("governance_lease_guard", worker)
 
+    def test_canonical_worker_terminal_status_recognizes_exact_reviewer_reopen(
+        self,
+    ) -> None:
+        config = config_fixture()
+        task = task_fixture(status="in_progress", reviewer="Codex2")
+        worker = self._owner_worker(generation=1)
+        worker.update(
+            {
+                "run_id": "run-reviewer",
+                "agent_id": "codex2",
+                "logical_agent_id": "codex2",
+                "queue_event_id": "evt-reviewer",
+                "request_snapshot": {
+                    "reason": supervisor.REASON_REVIEW_READY,
+                    "task_generation": 1,
+                    "metadata": {"task_generation": 1},
+                },
+            }
+        )
+        worker["process_generation"] = supervisor.worker_process_generation_id(
+            task_id="TASK-1",
+            worker_run_id="run-reviewer",
+            queue_event_id="evt-reviewer",
+            pid=1234,
+            pid_start_ticks=5678,
+        )
+        reopen_event = self._exact_lifecycle_event(worker, event_type="reopen")
+        reopen_event["agent"] = "Codex2"
+
+        self.assertEqual(
+            supervisor.canonical_worker_terminal_status(
+                config,
+                worker,
+                task,
+                activity_events=[reopen_event],
+            ),
+            "in_progress",
+        )
+
+        # Wrong actor on the exact same event/task/process identity fails closed.
+        mismatched_actor_event = dict(reopen_event, agent="SomeoneElse")
+        self.assertIsNone(
+            supervisor.canonical_worker_terminal_status(
+                config,
+                worker,
+                task,
+                activity_events=[mismatched_actor_event],
+            )
+        )
+
+        # An owner-dispatched worker cannot claim a reviewer's reopen as its own.
+        owner_dispatch_worker = dict(worker)
+        owner_dispatch_worker["request_snapshot"] = {
+            "reason": supervisor.REASON_OWNED_IN_PROGRESS,
+            "task_generation": 1,
+            "metadata": {"task_generation": 1},
+        }
+        self.assertIsNone(
+            supervisor.canonical_worker_terminal_status(
+                config,
+                owner_dispatch_worker,
+                task,
+                activity_events=[reopen_event],
+            )
+        )
+
+        # A required_role="owner" caller (e.g. owner_worker_canonical_handoff_status)
+        # must not be satisfied by a reviewer's reopen either.
+        self.assertIsNone(
+            supervisor.canonical_worker_terminal_status(
+                config,
+                worker,
+                task,
+                activity_events=[reopen_event],
+                required_role="owner",
+            )
+        )
+
     def test_run_once_orders_launch_before_slow_maintenance(self) -> None:
         source = inspect.getsource(supervisor.run_once)
         self.assertNotIn('"sync_github_bus"', source)
@@ -8797,6 +8875,92 @@ class WorkerLeaseApprovalWaitProgressTests(unittest.TestCase):
         recover.assert_not_called()
         self.assertEqual(worker["status"], "completed")
         self.assertEqual(state["queue"]["events"]["evt-owner"]["status"], "completed")
+
+    def test_missing_process_reviewer_after_exact_reopen_reaps_without_lost_lease(
+        self,
+    ) -> None:
+        """Reproduces Registry g19: reopen commits, runner SIGTERMs (exit 143).
+
+        The reviewer's exact ``reopen`` already ended its dispatched review
+        attempt and moved responsibility to the owner -- the runner's own
+        truthful SIGTERM/143 afterward must not re-trigger generic lost-lease
+        fencing (no ``recover_lost_worker_lease`` call, no generation bump, no
+        dropped ``review_requeue_intent``).
+        """
+        config = config_fixture()
+        task = task_fixture(status="in_progress")
+        worker = RuntimeAndFailureSemanticsTests._owner_worker(generation=1)
+        worker.update(
+            {
+                "run_id": "run-reviewer",
+                "agent_id": "codex2",
+                "logical_agent_id": "codex2",
+                "queue_event_id": "evt-reviewer",
+                "runner_status": "failed",
+                "exit_code": 143,
+                "runner_signal": 15,
+                "request_snapshot": {
+                    "reason": supervisor.REASON_REVIEW_READY,
+                    "task_generation": 1,
+                    "metadata": {"task_generation": 1},
+                },
+            }
+        )
+        worker["process_generation"] = supervisor.worker_process_generation_id(
+            task_id="TASK-1",
+            worker_run_id="run-reviewer",
+            queue_event_id="evt-reviewer",
+            pid=1234,
+            pid_start_ticks=5678,
+        )
+        state = {
+            "workers": {"run-reviewer": worker},
+            "queue": {
+                "events": {
+                    "evt-reviewer": {
+                        "status": "started",
+                        "intent": {"event_id": "evt-reviewer"},
+                    }
+                }
+            },
+        }
+        observation = {
+            "changed": False,
+            "alive": False,
+            "meaningful_progress_advanced": False,
+            "commit_progress_advanced": False,
+            "lease_expired": False,
+            "stop": True,
+        }
+        reopen_event = RuntimeAndFailureSemanticsTests._exact_lifecycle_event(
+            worker, event_type="reopen"
+        )
+
+        with (
+            mock.patch.object(supervisor, "load_approval_state", return_value={}),
+            mock.patch.object(supervisor, "load_status", return_value={"tasks": [task]}),
+            mock.patch.object(supervisor, "retry_due_workers", return_value=False),
+            mock.patch.object(
+                supervisor,
+                "recent_governance_activity_events",
+                return_value=[reopen_event],
+            ),
+            mock.patch.object(
+                supervisor, "poll_worker_orphan_stage", return_value={"changed": False, "stop": False}
+            ),
+            mock.patch.object(supervisor, "poll_worker_observation_stage", return_value=observation),
+            mock.patch.object(supervisor, "recover_lost_worker_lease") as recover,
+            mock.patch.object(supervisor, "reconcile_pending_worker_recoveries", return_value=False),
+            mock.patch.object(supervisor, "write_activity_log"),
+            mock.patch.object(supervisor, "record_worker_runtime_measurement"),
+        ):
+            self.assertTrue(supervisor.poll_workers(config, state))
+
+        recover.assert_not_called()
+        self.assertEqual(worker["status"], "completed")
+        self.assertEqual(state["queue"]["events"]["evt-reviewer"]["status"], "completed")
+        # No generic fence: generation/next were never touched.
+        self.assertEqual(task.get("generation", 1), 1)
 
     def test_successful_dead_owner_without_handoff_keeps_lost_lease_recovery(self) -> None:
         config = config_fixture()
