@@ -11730,116 +11730,6 @@ def persist_review_decision_intent_recovery_receipt(
     return sync_status_pipeline(config)
 
 
-def _migrate_legacy_review_intent_collision_locked(
-    config: dict[str, Any],
-    *,
-    task_id: str,
-    prior_task: Mapping[str, Any],
-    expected_digest: str,
-) -> bool:
-    """Restore one exact task state from journal history, resolving any colliding generic receipt."""
-
-    status = load_status(config)
-    task = task_index_from_status(config, status).get(task_id)
-    if task is None:
-        return False
-    intent = task.get("review_decision_intent")
-    if not isinstance(intent, Mapping):
-        return False
-    if str(intent.get("task_digest") or "").strip() != expected_digest:
-        return False
-
-    restored_task = deepcopy(dict(prior_task))
-    restored_task.pop("worker_recovery", None)
-    restored_task.pop(REVIEW_INTENT_RECOVERY_TASK_KEY, None)
-    restored_task["review_decision_intent"] = deepcopy(dict(intent))
-    if review_intent_recovery_task_digest(restored_task) != expected_digest:
-        return False
-
-    tasks = status.get("tasks", []) or []
-    for i, item in enumerate(tasks):
-        if str(item.get("id") or "") == task_id:
-            tasks[i] = restored_task
-            break
-
-    receipts = status.get(WORKER_RECOVERY_RECEIPTS_KEY)
-    if isinstance(receipts, dict):
-        timestamp = utc_now()
-        for receipt_id, rec in list(receipts.items()):
-            if isinstance(rec, dict) and str(rec.get("task_id") or "") == task_id:
-                if str(rec.get("status") or "") in {"pending", "held"}:
-                    rec["status"] = "resolved"
-                    rec["resolved_at"] = timestamp
-                    rec["resolved_reason"] = (
-                        "Resolved by review decision intent legacy collision migration "
-                        f"from authoritative journal history (restored digest {expected_digest})."
-                    )
-
-    write_status(config, status, source="supervisor-review-intent-collision-migration")
-    return True
-
-
-def reconcile_legacy_review_decision_intent_collision(
-    config: dict[str, Any],
-    state: dict[str, Any],
-    task_id: str,
-    intent: Mapping[str, Any],
-) -> bool:
-    """Migrate a task row that suffered a generic worker recovery collision while a review intent was frozen."""
-
-    expected_digest = str(intent.get("task_digest") or "").strip()
-    if not expected_digest:
-        return False
-
-    event_log = None
-    try:
-        runtime_env = task_state_store_runtime_env(config)
-        event_log = runtime_env.get(TASK_STATE_EVENT_LOG_ENV)
-    except Exception:
-        pass
-    if not event_log:
-        store_config = config.get("task_state_store") or {}
-        event_log = store_config.get("event_log")
-    if not event_log:
-        return False
-
-    prior_task = rewrite_task_state_store.find_exact_prior_task_state_from_journal(
-        event_log,
-        task_id,
-        expected_digest,
-    )
-    if prior_task is None:
-        return False
-
-    status_path = config_path(config, "status_file")
-    with canonical_task_state_lock_file(status_path, shared=False, nonblocking=False):
-        applied = _migrate_legacy_review_intent_collision_locked(
-            config,
-            task_id=task_id,
-            prior_task=prior_task,
-            expected_digest=expected_digest,
-        )
-    if not applied:
-        return False
-
-    write_activity_log(
-        config,
-        {
-            "type": "review_decision_intent_collision_migrated",
-            "task_id": task_id,
-            "nonce": intent.get("nonce"),
-            "actor": intent.get("actor"),
-            "command": intent.get("command"),
-            "task_digest": expected_digest,
-            "message": (
-                f"Supervisor migrated legacy review intent collision on {task_id} "
-                f"from authoritative journal history; restored exact prior task digest {expected_digest}."
-            ),
-        },
-    )
-    return sync_status_pipeline(config)
-
-
 def reconcile_review_decision_intent_lease_recovery(
     config: dict[str, Any],
     state: dict[str, Any],
@@ -11873,19 +11763,14 @@ def reconcile_review_decision_intent_lease_recovery(
 
         expected_digest = str(intent.get("task_digest") or "").strip()
         current_digest = review_intent_recovery_task_digest(task)
-        if expected_digest and current_digest != expected_digest:
-            if reconcile_legacy_review_decision_intent_collision(
-                config, state, task_id, intent
-            ):
-                changed = True
-                status = load_status(config)
-                task = task_index_from_status(config, status).get(task_id)
-                if task is None:
-                    continue
-                current_digest = review_intent_recovery_task_digest(task)
-            else:
-                continue
-
+        # The legacy generic worker-recovery collision migration path that
+        # used to run here (reconcile_legacy_review_decision_intent_collision)
+        # has been retired: no current task row exercises it, and it was a
+        # narrow one-time journal replay for a bug class the current
+        # review-decision-intent CAS design no longer produces. A digest
+        # mismatch is now always treated as a non-recoverable lease -- the
+        # supervisor never rewrites a task row to compensate for a stale
+        # intent digest.
         if current_digest != expected_digest:
             continue
 
