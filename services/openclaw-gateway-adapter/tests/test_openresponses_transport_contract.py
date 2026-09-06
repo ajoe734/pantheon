@@ -89,7 +89,7 @@ def _make_provider(*, gateway_url: str = "ws://openclaw-gateway:18789", token: s
 class TestNormalInvokeContract:
     def test_short_prompt_invoke_succeeds_over_http_only(self):
         provider = _make_provider()
-        with patch("urllib.request.urlopen", return_value=_FakeSSEResponse(_answer_events("hello"))):
+        with patch("assistant_openclaw_provider._urlopen_with_deadline", return_value=_FakeSSEResponse(_answer_events("hello"))):
             result = provider.invoke("hi", operator_id="op-1")
         assert result.status == "completed"
         assert result.output["transport"] == "responses_http"
@@ -97,7 +97,7 @@ class TestNormalInvokeContract:
     def test_oversized_prompt_behaves_identically_to_short_prompt(self):
         provider = _make_provider()
         big_prompt = "y" * (96 * 1024 + 5)
-        with patch("urllib.request.urlopen", return_value=_FakeSSEResponse(_answer_events("big reply"))) as _mock:
+        with patch("assistant_openclaw_provider._urlopen_with_deadline", return_value=_FakeSSEResponse(_answer_events("big reply"))) as _mock:
             result = provider.invoke(big_prompt, operator_id="op-1")
         assert result.status == "completed"
         assert result.output["transport"] == "responses_http"
@@ -105,19 +105,19 @@ class TestNormalInvokeContract:
     def test_invoke_never_spawns_subprocess(self):
         """`_run_func` raises if called; invoke must succeed without touching it."""
         provider = _make_provider()
-        with patch("urllib.request.urlopen", return_value=_FakeSSEResponse(_answer_events("ok"))):
+        with patch("assistant_openclaw_provider._urlopen_with_deadline", return_value=_FakeSSEResponse(_answer_events("ok"))):
             result = provider.invoke("hello", operator_id="op-1")
         assert result.status == "completed"
 
     def test_stream_never_spawns_subprocess(self):
         provider = _make_provider()
-        with patch("urllib.request.urlopen", return_value=_FakeSSEResponse(_answer_events("ok"))):
+        with patch("assistant_openclaw_provider._urlopen_with_deadline", return_value=_FakeSSEResponse(_answer_events("ok"))):
             events = list(provider.stream("hello", operator_id="op-1"))
         assert events[-1]["type"] == "done"
 
     def test_readiness_answer_probe_never_spawns_subprocess(self):
         provider = _make_provider()
-        with patch("urllib.request.urlopen", return_value=_FakeSSEResponse(_answer_events("PANTHEON_PROVIDER_READY"))):
+        with patch("assistant_openclaw_provider._urlopen_with_deadline", return_value=_FakeSSEResponse(_answer_events("PANTHEON_PROVIDER_READY"))):
             info = provider.readiness(auth_probe=True)
         assert info["ready"] is True
 
@@ -129,14 +129,14 @@ class TestNormalInvokeContract:
         provider = _make_provider()
         captured = {}
 
-        def fake_urlopen(req, timeout=None):
+        def fake_urlopen(req, timeout=None, deadline=None):
             headers = {k.lower(): v for k, v in req.header_items()}
             captured["agent_id"] = headers.get("x-openclaw-agent-id")
             captured["model_header"] = headers.get("x-openclaw-model")
             captured["body"] = json.loads(req.data.decode("utf-8"))
             return _FakeSSEResponse(_answer_events("routed reply"))
 
-        with patch("urllib.request.urlopen", fake_urlopen):
+        with patch("assistant_openclaw_provider._urlopen_with_deadline", fake_urlopen):
             result = provider.invoke(
                 "route this",
                 agent_id="persona-opinion-abcdef0123456789abcdef01",
@@ -153,13 +153,13 @@ class TestNormalInvokeContract:
         provider = _make_provider()
         captured = {}
 
-        def fake_urlopen(req, timeout=None):
+        def fake_urlopen(req, timeout=None, deadline=None):
             headers = {k.lower(): v for k, v in req.header_items()}
             captured["model_header"] = headers.get("x-openclaw-model")
             captured["body"] = json.loads(req.data.decode("utf-8"))
             return _FakeSSEResponse(_answer_events("ok"))
 
-        with patch("urllib.request.urlopen", fake_urlopen):
+        with patch("assistant_openclaw_provider._urlopen_with_deadline", fake_urlopen):
             list(provider.stream("hi", operator_id="op-1"))
         assert captured["body"]["model"] == "openclaw/main"
         assert captured["model_header"] is None
@@ -171,11 +171,11 @@ class TestNormalInvokeContract:
         provider = _make_provider()
         captured_users = []
 
-        def fake_urlopen(req, timeout=None):
+        def fake_urlopen(req, timeout=None, deadline=None):
             captured_users.append(json.loads(req.data.decode("utf-8")).get("user"))
             return _FakeSSEResponse(_answer_events("ok"))
 
-        with patch("urllib.request.urlopen", fake_urlopen):
+        with patch("assistant_openclaw_provider._urlopen_with_deadline", fake_urlopen):
             provider.invoke(
                 "hi",
                 operator_id="alice",
@@ -197,7 +197,7 @@ class TestNormalInvokeContract:
         provider = _make_provider()
         captured = {}
 
-        def fake_urlopen(req, timeout=None):
+        def fake_urlopen(req, timeout=None, deadline=None):
             captured["body"] = json.loads(req.data.decode("utf-8"))
             return _FakeSSEResponse(_answer_events("ok"))
 
@@ -205,7 +205,7 @@ class TestNormalInvokeContract:
             {"role": "user", "content": "first turn"},
             {"role": "assistant", "content": "first reply"},
         ]
-        with patch("urllib.request.urlopen", fake_urlopen):
+        with patch("assistant_openclaw_provider._urlopen_with_deadline", fake_urlopen):
             list(provider.stream("second turn", operator_id="op-1", messages=history))
         input_list = captured["body"]["input"]
         assert all(item.get("type") == "message" for item in input_list)
@@ -221,7 +221,7 @@ class TestNormalInvokeContract:
         provider = _make_provider()
         captured = {}
 
-        def fake_urlopen(req, timeout=None):
+        def fake_urlopen(req, timeout=None, deadline=None):
             captured["body"] = json.loads(req.data.decode("utf-8"))
             return _FakeSSEResponse(_answer_events("ok"))
 
@@ -236,7 +236,7 @@ class TestNormalInvokeContract:
             },
             {"role": "assistant", "content": "a description"},
         ]
-        with patch("urllib.request.urlopen", fake_urlopen):
+        with patch("assistant_openclaw_provider._urlopen_with_deadline", fake_urlopen):
             list(provider.stream("second turn", operator_id="op-1", messages=history))
         input_list = captured["body"]["input"]
         multimodal_entry = input_list[1]
@@ -293,11 +293,11 @@ class TestNormalInvokeContract:
         provider = _make_provider()
         captured = {}
 
-        def fake_urlopen(req, timeout=None):
+        def fake_urlopen(req, timeout=None, deadline=None):
             captured["body"] = json.loads(req.data.decode("utf-8"))
             return _FakeSSEResponse(_answer_events("ok"))
 
-        with patch("urllib.request.urlopen", fake_urlopen):
+        with patch("assistant_openclaw_provider._urlopen_with_deadline", fake_urlopen):
             list(
                 provider.stream(
                     "hi",
@@ -319,13 +319,13 @@ class TestNormalInvokeContract:
         provider = _make_provider()
         captured = {}
 
-        def fake_urlopen(req, timeout=None):
+        def fake_urlopen(req, timeout=None, deadline=None):
             captured["body"] = json.loads(req.data.decode("utf-8"))
             return _FakeSSEResponse(_answer_events("ok"))
 
         padding = "x" * 5000
         context_pack = {"padding": padding, "required_fact": "the-secret-passphrase-99"}
-        with patch("urllib.request.urlopen", fake_urlopen):
+        with patch("assistant_openclaw_provider._urlopen_with_deadline", fake_urlopen):
             list(
                 provider.stream(
                     "hi",
@@ -354,7 +354,7 @@ class TestNormalInvokeContract:
         context."""
         provider = _make_provider()
         oversized = {"padding": "y" * 400_000}
-        with patch("urllib.request.urlopen") as mock_urlopen:
+        with patch("assistant_openclaw_provider._urlopen_with_deadline") as mock_urlopen:
             events = list(
                 provider.stream("hi", operator_id="op-1", context_pack=oversized)
             )
@@ -370,11 +370,11 @@ class TestNormalInvokeContract:
         provider = _make_provider()
         captured = {}
 
-        def fake_urlopen(req, timeout=None):
+        def fake_urlopen(req, timeout=None, deadline=None):
             captured["body"] = json.loads(req.data.decode("utf-8"))
             return _FakeSSEResponse(_answer_events("ok"))
 
-        with patch("urllib.request.urlopen", fake_urlopen):
+        with patch("assistant_openclaw_provider._urlopen_with_deadline", fake_urlopen):
             list(
                 provider.stream(
                     "describe this",
@@ -400,12 +400,12 @@ class TestNormalInvokeContract:
         provider = _make_provider()
         captured = {}
 
-        def fake_urlopen(req, timeout=None):
+        def fake_urlopen(req, timeout=None, deadline=None):
             captured["body"] = json.loads(req.data.decode("utf-8"))
             return _FakeSSEResponse(_answer_events("ok"))
 
         history = [{"role": "user", "content": "first turn"}]
-        with patch("urllib.request.urlopen", fake_urlopen):
+        with patch("assistant_openclaw_provider._urlopen_with_deadline", fake_urlopen):
             list(
                 provider.stream(
                     "second turn",
@@ -432,10 +432,10 @@ class TestErrorInjectionContract:
     def test_http_error_status_codes_surface_as_single_typed_error(self, status_code):
         provider = _make_provider()
 
-        def fake_urlopen(req, timeout=None):
+        def fake_urlopen(req, timeout=None, deadline=None):
             raise urllib.error.HTTPError(req.full_url, status_code, "err", {}, None)
 
-        with patch("urllib.request.urlopen", fake_urlopen):
+        with patch("assistant_openclaw_provider._urlopen_with_deadline", fake_urlopen):
             events = list(provider.stream("hi", operator_id="op-1"))
         assert len(events) == 1
         assert events[0]["type"] == "error"
@@ -444,7 +444,7 @@ class TestErrorInjectionContract:
     def test_connection_refused_is_single_typed_error(self):
         provider = _make_provider()
         with patch(
-            "urllib.request.urlopen",
+            "assistant_openclaw_provider._urlopen_with_deadline",
             side_effect=urllib.error.URLError(ConnectionRefusedError("refused")),
         ):
             events = list(provider.stream("hi", operator_id="op-1"))
@@ -455,7 +455,7 @@ class TestErrorInjectionContract:
     def test_dns_or_tls_style_failure_is_single_typed_error(self):
         provider = _make_provider()
         with patch(
-            "urllib.request.urlopen",
+            "assistant_openclaw_provider._urlopen_with_deadline",
             side_effect=urllib.error.URLError(OSError("Name or service not known")),
         ):
             events = list(provider.stream("hi", operator_id="op-1"))
@@ -466,7 +466,7 @@ class TestErrorInjectionContract:
     def test_socket_timeout_is_single_typed_error(self):
         provider = _make_provider()
         with patch(
-            "urllib.request.urlopen",
+            "assistant_openclaw_provider._urlopen_with_deadline",
             side_effect=urllib.error.URLError(socket.timeout("timed out")),
         ):
             events = list(provider.stream("hi", operator_id="op-1"))
@@ -487,7 +487,7 @@ class TestErrorInjectionContract:
                 pass
 
         provider = _make_provider()
-        with patch("urllib.request.urlopen", return_value=_BrokenIter()):
+        with patch("assistant_openclaw_provider._urlopen_with_deadline", return_value=_BrokenIter()):
             events = list(provider.stream("hi", operator_id="op-1"))
         terminal = [e for e in events if e["type"] in ("done", "error")]
         assert len(terminal) == 1
@@ -503,7 +503,7 @@ class TestErrorInjectionContract:
             b'data: {"type":"response.completed","response":{"status":"completed"}}\n',
             b"data: [DONE]\n",
         ]
-        with patch("urllib.request.urlopen", return_value=_RawLinesResponse(lines)):
+        with patch("assistant_openclaw_provider._urlopen_with_deadline", return_value=_RawLinesResponse(lines)):
             events = list(provider.stream("hi", operator_id="op-1"))
         done = [e for e in events if e["type"] == "done"]
         assert len(done) == 1
@@ -519,7 +519,7 @@ class TestErrorInjectionContract:
             b'data: {"type":"response.completed","response":{"status":"completed"}}\n',
             b"data: [DONE]\n",
         ]
-        with patch("urllib.request.urlopen", return_value=_RawLinesResponse(lines)):
+        with patch("assistant_openclaw_provider._urlopen_with_deadline", return_value=_RawLinesResponse(lines)):
             events = list(provider.stream("hi", operator_id="op-1"))
         done = [e for e in events if e["type"] == "done"]
         assert len(done) == 1
@@ -539,7 +539,7 @@ class TestErrorInjectionContract:
             b'data: {"type":"response.completed","response":{"status":"completed"}}\n',
             b"data: [DONE]\n",
         ]
-        with patch("urllib.request.urlopen", return_value=_RawLinesResponse(lines)):
+        with patch("assistant_openclaw_provider._urlopen_with_deadline", return_value=_RawLinesResponse(lines)):
             events = list(provider.stream("hi", operator_id="op-1"))
         errors = [e for e in events if e["type"] == "error"]
         assert not errors, errors
@@ -558,7 +558,7 @@ class TestErrorInjectionContract:
             b'data: {"type":"response.completed","response":{"status":"completed"}}\n',
             b"data: [DONE]\n",
         ]
-        with patch("urllib.request.urlopen", return_value=_RawLinesResponse(lines)):
+        with patch("assistant_openclaw_provider._urlopen_with_deadline", return_value=_RawLinesResponse(lines)):
             events = list(provider.stream("hi", operator_id="op-1"))
         done = [e for e in events if e["type"] == "done"]
         assert len(done) == 1
@@ -569,7 +569,7 @@ class TestErrorInjectionContract:
         without ever emitting response.completed or [DONE]."""
         lines = [b'data: {"type":"response.output_text.delta","delta":"partial answer"}\n']
         provider = _make_provider()
-        with patch("urllib.request.urlopen", return_value=_RawLinesResponse(lines)):
+        with patch("assistant_openclaw_provider._urlopen_with_deadline", return_value=_RawLinesResponse(lines)):
             events = list(provider.stream("hi", operator_id="op-1"))
         terminal = [e for e in events if e["type"] in ("done", "error")]
         assert len(terminal) == 1
@@ -583,7 +583,7 @@ class TestErrorInjectionContract:
     def test_response_failed_event_is_single_typed_error(self):
         provider = _make_provider()
         lines = [b'data: {"type":"response.failed","reason":"upstream_error"}\n']
-        with patch("urllib.request.urlopen", return_value=_RawLinesResponse(lines)):
+        with patch("assistant_openclaw_provider._urlopen_with_deadline", return_value=_RawLinesResponse(lines)):
             events = list(provider.stream("hi", operator_id="op-1"))
         assert len(events) == 1
         assert events[0]["type"] == "error"
@@ -592,7 +592,7 @@ class TestErrorInjectionContract:
     def test_nested_response_status_failed_is_single_typed_error(self):
         provider = _make_provider()
         lines = [b'data: {"type":"response.completed","response":{"status":"failed"}}\n']
-        with patch("urllib.request.urlopen", return_value=_RawLinesResponse(lines)):
+        with patch("assistant_openclaw_provider._urlopen_with_deadline", return_value=_RawLinesResponse(lines)):
             events = list(provider.stream("hi", operator_id="op-1"))
         assert len(events) == 1
         assert events[0]["type"] == "error"
@@ -601,7 +601,7 @@ class TestErrorInjectionContract:
     def test_nested_response_status_incomplete_is_single_typed_error(self):
         provider = _make_provider()
         lines = [b'data: {"type":"response.completed","response":{"status":"incomplete"}}\n']
-        with patch("urllib.request.urlopen", return_value=_RawLinesResponse(lines)):
+        with patch("assistant_openclaw_provider._urlopen_with_deadline", return_value=_RawLinesResponse(lines)):
             events = list(provider.stream("hi", operator_id="op-1"))
         assert len(events) == 1
         assert events[0]["type"] == "error"
@@ -631,7 +631,7 @@ class TestErrorInjectionContract:
             },
         }
         lines = [("data: " + json.dumps(payload) + "\n").encode("utf-8")]
-        with patch("urllib.request.urlopen", return_value=_RawLinesResponse(lines)):
+        with patch("assistant_openclaw_provider._urlopen_with_deadline", return_value=_RawLinesResponse(lines)):
             events = list(provider.stream("hi", operator_id="op-1"))
         done = [e for e in events if e["type"] == "done"]
         assert len(done) == 1
@@ -650,7 +650,7 @@ class TestErrorInjectionContract:
             "response": {"status": "incomplete", "output": []},
         }
         lines = [("data: " + json.dumps(payload) + "\n").encode("utf-8")]
-        with patch("urllib.request.urlopen", return_value=_RawLinesResponse(lines)):
+        with patch("assistant_openclaw_provider._urlopen_with_deadline", return_value=_RawLinesResponse(lines)):
             events = list(provider.stream("hi", operator_id="op-1"))
         assert len(events) == 1
         assert events[0]["type"] == "error"
@@ -665,7 +665,7 @@ class TestErrorInjectionContract:
             b'data: {"type":"response.output_text.delta","delta":"partial"}\n',
             b'data: {"type":"response.completed","response":{"status":"cancelled"}}\n',
         ]
-        with patch("urllib.request.urlopen", return_value=_RawLinesResponse(lines)):
+        with patch("assistant_openclaw_provider._urlopen_with_deadline", return_value=_RawLinesResponse(lines)):
             events = list(provider.stream("hi", operator_id="op-1"))
         done = [e for e in events if e["type"] == "done"]
         assert done == []
@@ -676,7 +676,7 @@ class TestErrorInjectionContract:
     def test_nested_response_status_in_progress_is_rejected(self):
         provider = _make_provider()
         lines = [b'data: {"type":"response.completed","response":{"status":"in_progress"}}\n']
-        with patch("urllib.request.urlopen", return_value=_RawLinesResponse(lines)):
+        with patch("assistant_openclaw_provider._urlopen_with_deadline", return_value=_RawLinesResponse(lines)):
             events = list(provider.stream("hi", operator_id="op-1"))
         assert len(events) == 1
         assert events[0]["type"] == "error"
@@ -685,7 +685,7 @@ class TestErrorInjectionContract:
     def test_refusal_with_no_text_and_no_function_calls_is_typed_empty(self):
         provider = _make_provider()
         lines = [b'data: {"type":"response.completed","response":{"status":"completed"}}\n']
-        with patch("urllib.request.urlopen", return_value=_RawLinesResponse(lines)):
+        with patch("assistant_openclaw_provider._urlopen_with_deadline", return_value=_RawLinesResponse(lines)):
             events = list(provider.stream("hi", operator_id="op-1"))
         assert len(events) == 1
         assert events[0]["type"] == "error"
@@ -697,7 +697,7 @@ class TestErrorInjectionContract:
             b'data: {"type":"response.output_text.done","text":"no done marker"}\n',
             b'data: {"type":"response.completed","response":{"status":"completed"}}\n',
         ]
-        with patch("urllib.request.urlopen", return_value=_RawLinesResponse(lines)):
+        with patch("assistant_openclaw_provider._urlopen_with_deadline", return_value=_RawLinesResponse(lines)):
             events = list(provider.stream("hi", operator_id="op-1"))
         done = [e for e in events if e["type"] == "done"]
         assert len(done) == 1
@@ -711,7 +711,7 @@ class TestErrorInjectionContract:
         text happened to arrive first."""
         provider = _make_provider()
         lines = [b'data: {"type":"response.output_text.delta","delta":"streamed"}\n']
-        with patch("urllib.request.urlopen", return_value=_RawLinesResponse(lines)):
+        with patch("assistant_openclaw_provider._urlopen_with_deadline", return_value=_RawLinesResponse(lines)):
             events = list(provider.stream("hi", operator_id="op-1"))
         terminal = [e for e in events if e["type"] in ("done", "error")]
         assert len(terminal) == 1
@@ -727,7 +727,7 @@ class TestErrorInjectionContract:
             b'data: {"type":"response.output_text.delta","delta":"streamed"}\n',
             b"data: [DONE]\n",
         ]
-        with patch("urllib.request.urlopen", return_value=_RawLinesResponse(lines)):
+        with patch("assistant_openclaw_provider._urlopen_with_deadline", return_value=_RawLinesResponse(lines)):
             events = list(provider.stream("hi", operator_id="op-1"))
         terminal = [e for e in events if e["type"] in ("done", "error")]
         assert len(terminal) == 1
@@ -749,7 +749,7 @@ class TestErrorInjectionContract:
             b'data: {"type":"response.completed","response":{"status":"completed"}}\n',
             b"data: [DONE]\n",
         ]
-        with patch("urllib.request.urlopen", return_value=_RawLinesResponse(lines)):
+        with patch("assistant_openclaw_provider._urlopen_with_deadline", return_value=_RawLinesResponse(lines)):
             events = list(provider.stream("hi", operator_id="op-1"))
         errors = [e for e in events if e["type"] == "error"]
         assert not errors, errors
@@ -761,12 +761,12 @@ class TestErrorInjectionContract:
         provider = _make_provider()
         calls = []
 
-        def fake_urlopen(req, timeout=None):
+        def fake_urlopen(req, timeout=None, deadline=None):
             headers = {k.lower(): v for k, v in req.header_items()}
             calls.append(headers.get("x-openclaw-model"))
             raise urllib.error.HTTPError(req.full_url, 500, "boom", {}, None)
 
-        with patch("urllib.request.urlopen", fake_urlopen):
+        with patch("assistant_openclaw_provider._urlopen_with_deadline", fake_urlopen):
             with pytest.raises(OpenClawProviderError):
                 provider.invoke("hi", operator_id="op-1")
         assert len(calls) == 1
@@ -946,3 +946,108 @@ class TestRealLocalHttpServerRegressions:
         assert len(events) == 1
         assert events[0]["type"] == "error"
         assert events[0]["error_code"] == "OPENCLAW_RESPONSES_TIMEOUT"
+
+    def test_overlapping_deadlines_never_corrupt_process_global_http_classes(self):
+        """Deterministic reproduction of the exact overlap the reviewer
+        flagged against the old design: request A starts, request B starts
+        while A is still in flight, A finishes (times out) first, then B
+        finishes. The previous implementation temporarily replaced
+        `http.client.HTTPConnection`/`HTTPSConnection` with per-call
+        subclasses for the duration of each `with` block; A's `__exit__`
+        restored the *pre-A* classes (wiping B's still-active override), and
+        B's `__exit__` then restored *A's* classes permanently — a wholly
+        unrelated request made afterward would stay bound by A's
+        already-expired deadline forever.
+
+        The fixed design builds a private, request-scoped opener per call
+        (`_urlopen_with_deadline`) and never assigns to
+        `http.client.HTTPConnection`/`HTTPSConnection` at all, so this test
+        asserts those process-global attributes are the exact same objects
+        before, during, and after two genuinely overlapping real-socket
+        requests — and that a third, independent request made afterward
+        completes on its own generous budget instead of failing against a
+        stale short one.
+        """
+        import http.client
+        import threading
+        import time as _time
+
+        orig_http_connection = http.client.HTTPConnection
+        orig_https_connection = http.client.HTTPSConnection
+
+        # A: slow drip, short budget -> times out first, well before B.
+        # B: slow drip, longer budget -> still in flight when A exits.
+        with _SlowDripHTTPServer(chunk_delay=0.05, num_chunks=40) as server_a, \
+                _SlowDripHTTPServer(chunk_delay=0.05, num_chunks=40) as server_b:
+            provider_a = AssistantOpenClawProvider(
+                gateway_url=f"ws://127.0.0.1:{server_a.port}",
+                agent_id="main",
+                token="test-token",
+                _which_func=lambda _: None,
+                _run_func=_forbidden_run,
+            )
+            provider_b = AssistantOpenClawProvider(
+                gateway_url=f"ws://127.0.0.1:{server_b.port}",
+                agent_id="main",
+                token="test-token",
+                _which_func=lambda _: None,
+                _run_func=_forbidden_run,
+            )
+
+            results: dict = {}
+            classes_during_overlap: list = []
+            a_started = threading.Event()
+            b_started = threading.Event()
+
+            def run_a():
+                a_started.set()
+                b_started.wait(timeout=2.0)
+                results["a"] = list(provider_a.stream("hi", operator_id="op-a", timeout_seconds=0.3))
+
+            def run_b():
+                a_started.wait(timeout=2.0)
+                b_started.set()
+                # Sample the global classes partway through B's own request,
+                # i.e. while A is guaranteed to have already started (and,
+                # for a long enough B budget, likely already exited).
+                _time.sleep(0.4)
+                classes_during_overlap.append((http.client.HTTPConnection, http.client.HTTPSConnection))
+                results["b"] = list(provider_b.stream("hi", operator_id="op-b", timeout_seconds=1.5))
+
+            thread_a = threading.Thread(target=run_a)
+            thread_b = threading.Thread(target=run_b)
+            thread_a.start()
+            thread_b.start()
+            thread_a.join(timeout=5.0)
+            thread_b.join(timeout=5.0)
+
+        assert not thread_a.is_alive() and not thread_b.is_alive()
+        # A (0.3s budget) times out; B (1.5s budget) completes its own
+        # request on its own schedule -- neither corrupted the other's
+        # deadline.
+        assert results["a"][0]["error_code"] == "OPENCLAW_RESPONSES_TIMEOUT"
+        assert results["b"][0]["error_code"] == "OPENCLAW_RESPONSES_TIMEOUT"
+
+        # The process-global connection classes were never reassigned, not
+        # even transiently while both requests were in flight.
+        assert classes_during_overlap == [(orig_http_connection, orig_https_connection)]
+        assert http.client.HTTPConnection is orig_http_connection
+        assert http.client.HTTPSConnection is orig_https_connection
+
+        # A third, wholly unrelated request made after both A and B finished
+        # must use its own (generous) deadline, not get stuck bound to
+        # either of A's or B's now-expired ones.
+        with _SlowDripHTTPServer(chunk_delay=0.01, num_chunks=2) as server_c:
+            provider_c = AssistantOpenClawProvider(
+                gateway_url=f"ws://127.0.0.1:{server_c.port}",
+                agent_id="main",
+                token="test-token",
+                _which_func=lambda _: None,
+                _run_func=_forbidden_run,
+            )
+            started = _time.monotonic()
+            events_c = list(provider_c.stream("hi", operator_id="op-c", timeout_seconds=5.0))
+            elapsed_c = _time.monotonic() - started
+        assert elapsed_c < 1.0, f"unrelated follow-up request took {elapsed_c:.3f}s, suggesting a stale deadline leaked in"
+        assert events_c[0]["type"] == "error"
+        assert events_c[0]["error_code"] == "OPENCLAW_RESPONSES_EMPTY"

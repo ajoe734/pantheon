@@ -847,15 +847,16 @@ class AssistantProviderInvokeRequest(BaseModel):
     metadata: Optional[Dict[str, Any]] = None
     messages: Optional[List[Dict[str, Any]]] = None
     attachments: Optional[List[Dict[str, Any]]] = None
-    # No mounted route threads an explicit provider/model override through
-    # today (routing is by `agent_id`, and any actual model override lives
-    # in the provider's own `X-OpenClaw-Model` header contract, validated
-    # server-side against the agent's allowed model visibility policy).
-    # Accepting this field and silently dropping it would let a caller
-    # believe an override took effect when it never reached the upstream
-    # request at all; declaring it here purely so `reject_explicit_model`
-    # below can fail closed with a typed 422 instead of pydantic silently
-    # discarding an unrecognized field.
+    # An explicit model override is threaded through to the provider's
+    # `X-OpenClaw-Model` header (see `_invoke_upstream`/the stream handler
+    # below) -- but only when it is an *authorized* override: paired with a
+    # governed non-default `agent_id` + `persona_admission` (the same
+    # admission gate `validate_agent_selection` already enforces below).
+    # Without that pairing there is no authorization surface for a model
+    # override on the default Management-AI agent, so it is rejected
+    # (`reject_unauthorized_model`) rather than silently ignored, which
+    # would let a caller believe an override took effect when it never
+    # reached the upstream request at all.
     model: Optional[str] = None
 
     @model_validator(mode="after")
@@ -869,11 +870,12 @@ class AssistantProviderInvokeRequest(BaseModel):
         return self
 
     @model_validator(mode="after")
-    def reject_explicit_model(self) -> "AssistantProviderInvokeRequest":
-        if self.model is not None:
+    def reject_unauthorized_model(self) -> "AssistantProviderInvokeRequest":
+        if self.model is not None and self.persona_admission is None:
             raise ValueError(
-                "an explicit model override is not supported on this mounted route; "
-                "routing is by agent_id only"
+                "an explicit model override requires a governed non-default agent_id "
+                "with a matching persona_admission; the default agent is routed by "
+                "agent_id only"
             )
         return self
 
@@ -1650,6 +1652,14 @@ def invoke_openclaw_provider(
         }
         if req.agent_id is not None:
             invoke_kwargs["agent_id"] = req.agent_id
+        if req.model is not None:
+            # `reject_unauthorized_model` above already guarantees `model`
+            # is only set together with an admitted `persona_admission`, so
+            # this is the authorized-override path; it reaches the upstream
+            # `X-OpenClaw-Model` header verbatim, with no fallback
+            # candidate substituted in front of it (see
+            # `_resolve_model_candidates`).
+            invoke_kwargs["model"] = req.model
         if req.persona_admission is not None:
             # A deterministic session identity makes the upstream attempt
             # auditable.  The invocation ledger below fences a crash/in-doubt
@@ -1884,6 +1894,7 @@ def invoke_openclaw_provider_stream(
                 operator_id=operator,
                 trace_id=x_trace_id,
                 session_user=session_user,
+                model=req.model,
                 agent_id=req.agent_id,
                 messages=req.messages,
                 attachments=req.attachments,

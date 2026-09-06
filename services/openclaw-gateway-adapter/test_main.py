@@ -2148,6 +2148,94 @@ class TestGovernedServantAgentSync(unittest.TestCase):
         self.assertFalse(invoke.call_args.kwargs["metadata"]["persona_memory_mutated"])
         self.assertRegex(invoke.call_args.kwargs["session_id"], r"^pint-[0-9a-f]{32}$")
 
+    def test_persona_provider_invocation_threads_authorized_explicit_model(self):
+        """SIMPLIFY-OPENCLAW-001 mounted-acceptance regression: an explicit
+        `model` override paired with a governed non-default `agent_id` +
+        matching `persona_admission` must actually reach the provider (and
+        from there the Gateway `X-OpenClaw-Model` header) rather than being
+        rejected or silently dropped -- unlike the default-agent path, where
+        no `model` field is accepted at all
+        (`test_default_agent_explicit_model_is_rejected` below)."""
+        payload = self._opinion_payload()
+        agent = {
+            "status": "created",
+            "agent_id": payload["agent_id"],
+            "workspace_ref": payload["workspace_ref"],
+        }
+        ensure_headers = {
+            **self._HEADERS,
+            "Idempotency-Key": "persona-opinion-agent-invoke-model",
+            "X-Request-Id": "persona-opinion-request-invoke-model",
+        }
+        invocation_admission = {
+            key: payload[key]
+            for key in (
+                "persona_id", "tenant_id", "persona_version", "agent_id", "workspace_ref",
+                "capability_snapshot_id", "allowed_capabilities",
+                "environment_ceiling", "requested_environment", "execution_authority",
+                "display_name", "mandate", "archetype", "strategy_family", "traits",
+            )
+        }
+        provider_result = MagicMock()
+        provider_result.to_dict.return_value = {
+            "provider": "openclaw",
+            "mode": "user",
+            "status": "completed",
+            "output": {"agent_id": payload["agent_id"], "json_events": []},
+        }
+        with (
+            self._auth_config(),
+            patch.object(adapter_main, "_sync_persona_opinion_agent", return_value=agent),
+            patch.object(adapter_main, "_assert_persona_opinion_runtime_policy", return_value={}),
+            patch.object(
+                adapter_main._OPENCLAW_AGENT_PROVIDER,
+                "gateway_agents_list",
+                return_value=[{"id": payload["agent_id"]}],
+            ),
+            patch.object(adapter_main._OPENCLAW_AGENT_PROVIDER, "invoke", return_value=provider_result) as invoke,
+        ):
+            ensured = client.post(
+                "/api/openclaw-adapter/agents/persona-opinion/ensure",
+                json=payload,
+                headers=ensure_headers,
+            )
+            invoked = client.post(
+                "/api/openclaw-adapter/assistant/providers/openclaw/invoke",
+                json={
+                    "mode": "user",
+                    "prompt": "Return opinion JSON",
+                    "context_pack": {},
+                    "metadata": {"allowed_tools": []},
+                    "agent_id": payload["agent_id"],
+                    "persona_admission": invocation_admission,
+                    "model": "anthropic/claude-opus-4-8",
+                },
+                headers={
+                    "X-Pantheon-Service-Token": "adapter-secret",
+                    "X-Operator-Id": "operator-1",
+                    "Idempotency-Key": "persona-opinion-provider-invoke-model",
+                },
+            )
+
+        self.assertEqual(ensured.status_code, 201, ensured.text)
+        self.assertEqual(invoked.status_code, 200, invoked.text)
+        self.assertEqual(invoke.call_args.kwargs["agent_id"], payload["agent_id"])
+        # The explicit override reaches the provider verbatim -- no
+        # fallback candidate substituted in front of it.
+        self.assertEqual(invoke.call_args.kwargs["model"], "anthropic/claude-opus-4-8")
+
+    def test_default_agent_explicit_model_is_rejected(self):
+        """Without a governed non-default `agent_id` + `persona_admission`,
+        there is no authorization surface for a model override on the
+        default Management-AI agent -- it fails closed with a typed 422
+        instead of being silently dropped."""
+        resp = client.post(
+            "/api/openclaw-adapter/assistant/providers/openclaw/invoke",
+            json={"mode": "user", "prompt": "hi", "model": "anthropic/claude-opus-4-8"},
+            headers={"X-Operator-Id": "operator-1"},
+        )
+        self.assertEqual(resp.status_code, 422, resp.text)
+
     def test_persona_invoke_live_visibility_preflight_does_not_claim_ledger(self):
         payload = self._opinion_payload()
         agent = {"status": "created", "agent_id": payload["agent_id"]}

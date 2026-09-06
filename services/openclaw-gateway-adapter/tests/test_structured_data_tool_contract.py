@@ -109,7 +109,7 @@ class TestInvokeStructuredPositive:
         events = _tool_call_events(
             EMIT_EXTRACTION_TOOL_NAME, json.dumps({"title": "Widget", "count": 3})
         )
-        with patch("urllib.request.urlopen", return_value=_FakeSSEResponse(events)):
+        with patch("assistant_openclaw_provider._urlopen_with_deadline", return_value=_FakeSSEResponse(events)):
             result = provider.invoke_structured(
                 "extract the widget",
                 extraction_schema=EXTRACTION_SCHEMA,
@@ -126,13 +126,13 @@ class TestInvokeStructuredPositive:
         provider = _make_provider()
         captured = {}
 
-        def fake_urlopen(req, timeout=None):
+        def fake_urlopen(req, timeout=None, deadline=None):
             captured["body"] = json.loads(req.data.decode("utf-8"))
             return _FakeSSEResponse(
                 _tool_call_events(EMIT_EXTRACTION_TOOL_NAME, json.dumps({"title": "x"}))
             )
 
-        with patch("urllib.request.urlopen", fake_urlopen):
+        with patch("assistant_openclaw_provider._urlopen_with_deadline", fake_urlopen):
             provider.invoke_structured(
                 "extract", extraction_schema=EXTRACTION_SCHEMA, operator_id="op-1"
             )
@@ -161,7 +161,7 @@ class TestInvokeStructuredPositive:
                 },
             }
         ]
-        with patch("urllib.request.urlopen", return_value=_FakeSSEResponse(events)):
+        with patch("assistant_openclaw_provider._urlopen_with_deadline", return_value=_FakeSSEResponse(events)):
             result = provider.invoke_structured(
                 "extract", extraction_schema=EXTRACTION_SCHEMA, operator_id="op-1"
             )
@@ -178,7 +178,7 @@ class TestInvokeStructuredNegative:
             },
             {"type": "response.completed", "response": {"status": "completed"}},
         ]
-        with patch("urllib.request.urlopen", return_value=_FakeSSEResponse(events)):
+        with patch("assistant_openclaw_provider._urlopen_with_deadline", return_value=_FakeSSEResponse(events)):
             with pytest.raises(OpenClawProviderError) as excinfo:
                 provider.invoke_structured(
                     "extract", extraction_schema=EXTRACTION_SCHEMA, operator_id="op-1"
@@ -189,7 +189,7 @@ class TestInvokeStructuredNegative:
     def test_wrong_tool_name_is_rejected(self):
         provider = _make_provider()
         events = _tool_call_events("some_other_tool", json.dumps({"title": "x"}))
-        with patch("urllib.request.urlopen", return_value=_FakeSSEResponse(events)):
+        with patch("assistant_openclaw_provider._urlopen_with_deadline", return_value=_FakeSSEResponse(events)):
             with pytest.raises(OpenClawProviderError) as excinfo:
                 provider.invoke_structured(
                     "extract", extraction_schema=EXTRACTION_SCHEMA, operator_id="op-1"
@@ -227,7 +227,7 @@ class TestInvokeStructuredNegative:
                 },
             }
         ]
-        with patch("urllib.request.urlopen", return_value=_FakeSSEResponse(events)):
+        with patch("assistant_openclaw_provider._urlopen_with_deadline", return_value=_FakeSSEResponse(events)):
             with pytest.raises(OpenClawProviderError) as excinfo:
                 provider.invoke_structured(
                     "extract", extraction_schema=EXTRACTION_SCHEMA, operator_id="op-1"
@@ -237,7 +237,7 @@ class TestInvokeStructuredNegative:
     def test_invalid_json_arguments_are_rejected(self):
         provider = _make_provider()
         events = _tool_call_events(EMIT_EXTRACTION_TOOL_NAME, "{not valid json")
-        with patch("urllib.request.urlopen", return_value=_FakeSSEResponse(events)):
+        with patch("assistant_openclaw_provider._urlopen_with_deadline", return_value=_FakeSSEResponse(events)):
             with pytest.raises(OpenClawProviderError) as excinfo:
                 provider.invoke_structured(
                     "extract", extraction_schema=EXTRACTION_SCHEMA, operator_id="op-1"
@@ -248,7 +248,7 @@ class TestInvokeStructuredNegative:
     def test_missing_required_field_is_rejected(self):
         provider = _make_provider()
         events = _tool_call_events(EMIT_EXTRACTION_TOOL_NAME, json.dumps({"count": 3}))
-        with patch("urllib.request.urlopen", return_value=_FakeSSEResponse(events)):
+        with patch("assistant_openclaw_provider._urlopen_with_deadline", return_value=_FakeSSEResponse(events)):
             with pytest.raises(OpenClawProviderError) as excinfo:
                 provider.invoke_structured(
                     "extract", extraction_schema=EXTRACTION_SCHEMA, operator_id="op-1"
@@ -261,7 +261,7 @@ class TestInvokeStructuredNegative:
         events = _tool_call_events(
             EMIT_EXTRACTION_TOOL_NAME, json.dumps({"title": "ok", "count": "not-a-number"})
         )
-        with patch("urllib.request.urlopen", return_value=_FakeSSEResponse(events)):
+        with patch("assistant_openclaw_provider._urlopen_with_deadline", return_value=_FakeSSEResponse(events)):
             with pytest.raises(OpenClawProviderError) as excinfo:
                 provider.invoke_structured(
                     "extract", extraction_schema=EXTRACTION_SCHEMA, operator_id="op-1"
@@ -273,7 +273,7 @@ class TestInvokeStructuredNegative:
         events = _tool_call_events(
             EMIT_EXTRACTION_TOOL_NAME, json.dumps({"title": "ok", "count": True})
         )
-        with patch("urllib.request.urlopen", return_value=_FakeSSEResponse(events)):
+        with patch("assistant_openclaw_provider._urlopen_with_deadline", return_value=_FakeSSEResponse(events)):
             with pytest.raises(OpenClawProviderError) as excinfo:
                 provider.invoke_structured(
                     "extract", extraction_schema=EXTRACTION_SCHEMA, operator_id="op-1"
@@ -285,7 +285,7 @@ class TestInvokeStructuredNegative:
         without any CLI subprocess involvement."""
         provider = _make_provider()
         events = _tool_call_events(EMIT_EXTRACTION_TOOL_NAME, json.dumps({"title": "ok"}))
-        with patch("urllib.request.urlopen", return_value=_FakeSSEResponse(events)):
+        with patch("assistant_openclaw_provider._urlopen_with_deadline", return_value=_FakeSSEResponse(events)):
             result = provider.invoke_structured(
                 "extract", extraction_schema=EXTRACTION_SCHEMA, operator_id="op-1"
             )
@@ -535,7 +535,7 @@ class TestStructuredEndpointRejectsCallerSuppliedTools:
         with (
             patch.object(adapter_main._OPENCLAW_AGENT_PROVIDER, "_gateway_url", "http://openclaw.test"),
             patch.object(adapter_main._OPENCLAW_AGENT_PROVIDER, "_token", "test-token"),
-            patch("urllib.request.urlopen", return_value=_FakeSSEResponse(events)),
+            patch("assistant_openclaw_provider._urlopen_with_deadline", return_value=_FakeSSEResponse(events)),
         ):
             resp = client.post(
                 "/api/openclaw-adapter/assistant/providers/openclaw/structured",

@@ -358,14 +358,71 @@ def _validate_extraction_array(value: Any, schema: Dict[str, Any], path: str) ->
         _validate_extraction_value(item, items_schema, f"{path}[{index}]" if path else f"[{index}]")
 
 
+def _json_schema_value_equal(value: Any, candidate: Any) -> bool:
+    """Type-sensitive equality for `enum`/`const` comparison.
+
+    Plain Python `==` treats `True == 1` and `False == 0` as truthy, which
+    would let a boolean silently satisfy a numeric `enum`/`const` (and vice
+    versa). JSON Schema treats `true`/`false` as a distinct type from
+    numbers, so a boolean and a non-boolean number must never compare equal
+    here even though Python's own `==` would say so.
+    """
+    if isinstance(value, bool) or isinstance(candidate, bool):
+        return isinstance(value, bool) and isinstance(candidate, bool) and value == candidate
+    if isinstance(value, (int, float)) and isinstance(candidate, (int, float)):
+        return value == candidate
+    return type(value) is type(candidate) and value == candidate
+
+
+# JSON-Schema keywords this dependency-free validator understands. A schema
+# that declares any other keyword (`anyOf`, `oneOf`, `not`, `format`,
+# `multipleOf`, `patternProperties`, `$ref`, ...) is rejected explicitly
+# instead of silently ignoring a constraint the caller believed was
+# enforced, which would let arguments that violate that constraint reach
+# the downstream extraction task undetected.
+_SUPPORTED_SCHEMA_KEYWORDS = {
+    "type",
+    "enum",
+    "const",
+    "minimum",
+    "maximum",
+    "exclusiveMinimum",
+    "exclusiveMaximum",
+    "minLength",
+    "maxLength",
+    "pattern",
+    "minItems",
+    "maxItems",
+    "items",
+    "properties",
+    "required",
+    "additionalProperties",
+    "description",
+    "title",
+}
+
+
+def _reject_unsupported_schema_keywords(schema: Dict[str, Any], path: str) -> None:
+    unsupported = sorted(set(schema.keys()) - _SUPPORTED_SCHEMA_KEYWORDS)
+    if unsupported:
+        raise _schema_mismatch(path or "root", f"declares unsupported schema keyword(s) {unsupported!r}")
+
+
 def _validate_extraction_value(value: Any, schema: Dict[str, Any], path: str) -> None:
     if not isinstance(schema, dict):
         raise _schema_mismatch(path or "root", "declares an unsupported or malformed schema")
+    _reject_unsupported_schema_keywords(schema, path)
+
+    if "const" in schema:
+        const_value = schema["const"]
+        if not _json_schema_value_equal(value, const_value):
+            raise _schema_mismatch(path, f"does not equal the declared const {const_value!r}")
+
     enum_values = schema.get("enum")
     if enum_values is not None:
         if not isinstance(enum_values, list):
             raise _schema_mismatch(path or "root", "declares a malformed enum (must be a list)")
-        if value not in enum_values:
+        if not any(_json_schema_value_equal(value, candidate) for candidate in enum_values):
             raise _schema_mismatch(path, f"is not one of the declared enum values {enum_values!r}")
 
     declared_type = schema.get("type")
@@ -397,9 +454,18 @@ def _validate_extraction_value(value: Any, schema: Dict[str, Any], path: str) ->
     # value `None` must pass, not crash comparing `None < 0`).
     if value is None:
         return
-    if "integer" in types or "number" in types:
+    # Bound checks key off the *actual runtime type of `value`*, never off
+    # the declared type union. For a union type like
+    # `type: ["string", "number"], minimum: 0`, a string value must not
+    # reach the numeric bound check (comparing `str < int` raises
+    # `TypeError`), and a numeric value must not reach the string-length
+    # check (`len()` on an int raises `TypeError`) — each branch below only
+    # fires for the value shape it can actually handle.
+    if isinstance(value, bool):
+        pass
+    elif isinstance(value, (int, float)):
         _validate_extraction_numeric_bounds(value, schema, path)
-    if "string" in types:
+    elif isinstance(value, str):
         _validate_extraction_string_constraints(value, schema, path)
 
 
@@ -596,54 +662,84 @@ class _DeadlineBoundedHTTPSConnection(http.client.HTTPSConnection):
         self.sock = context.wrap_socket(self.sock, server_hostname=self.host)
 
 
-class _TemporaryDeadlineBoundedHTTPConnections:
-    """Context manager that temporarily replaces `http.client.HTTPConnection`
-    /`HTTPSConnection` with deadline-aware subclasses for the duration of one
-    `urllib.request.urlopen()` call, so connection establishment and header
-    parsing (both otherwise entirely unbounded by `stream()`'s own
-    per-SSE-line deadline check, since they happen before/outside that loop)
-    share the same absolute deadline. Once `urlopen()` returns or raises, the
-    resulting response/`HTTPError` object already holds a reference to the
-    deadline-bound socket instance, so subsequent reads (the SSE body loop,
-    or an `HTTPError.read()` in the caller's `except` block) stay bounded
-    even after this context manager has restored the original classes.
+def _deadline_bound_http_connection_factory(deadline: float):
+    """Build a per-call factory that produces a fresh, instance-scoped
+    `_DeadlineBoundedHTTPConnection` — the deadline lives on the returned
+    instance, never on the shared class, so it cannot leak to any other
+    call.
+    """
 
-    This mutates process-global `http.client` state for a short window
-    (bounded above by `deadline` itself, since header parsing can no longer
-    run unbounded). A genuinely concurrent in-flight request from another
-    thread inside the exact same window would transiently pick up this
-    call's deadline instead of its own; the worst case of that is still a
-    *bounded* deadline (never the previous fully-unbounded slow-drip), so
-    this is an accepted, documented trade-off, not a fully race-free
-    per-request isolation -- true isolation would require not sharing the
-    `http.client` module classes across threads at all, which is out of
-    scope for this fix.
+    def factory(host: str, **kwargs: Any) -> _DeadlineBoundedHTTPConnection:
+        conn = _DeadlineBoundedHTTPConnection(host, **kwargs)
+        conn._pantheon_deadline = deadline
+        return conn
+
+    return factory
+
+
+def _deadline_bound_https_connection_factory(deadline: float):
+    def factory(host: str, **kwargs: Any) -> _DeadlineBoundedHTTPSConnection:
+        conn = _DeadlineBoundedHTTPSConnection(host, **kwargs)
+        conn._pantheon_deadline = deadline
+        return conn
+
+    return factory
+
+
+class _DeadlineBoundedHTTPHandler(urllib.request.HTTPHandler):
+    """Per-request HTTP handler that builds a fresh deadline-bound
+    connection for each call instead of mutating the process-global
+    `http.client.HTTPConnection` class.
+
+    The previous implementation temporarily replaced
+    `http.client.HTTPConnection`/`HTTPSConnection` for the duration of one
+    `urlopen()` call. That mutated shared process-global state: two
+    overlapping calls A and B interleaving as A.enter, B.enter, A.exit,
+    B.exit meant A.exit restored the pre-A classes (silently discarding
+    B's still-active deadline override for any connection B opens after
+    that point), and B.exit then restored *A's* classes permanently (since
+    that is what B's `__enter__` had captured as "original"), leaving every
+    later, wholly unrelated request bound by A's already-expired deadline.
+    Building a private `OpenerDirector` per call (see
+    `_urlopen_with_deadline` below) means each call's deadline lives only
+    on the connection instances it creates -- there is no shared class to
+    race over, so overlapping calls (and any request made after either one
+    finishes) cannot observe another call's deadline at all.
     """
 
     def __init__(self, deadline: float) -> None:
-        self._deadline = deadline
-        self._orig_http: Any = None
-        self._orig_https: Any = None
+        super().__init__()
+        self._factory = _deadline_bound_http_connection_factory(deadline)
 
-    def __enter__(self) -> "_TemporaryDeadlineBoundedHTTPConnections":
-        self._orig_http = http.client.HTTPConnection
-        self._orig_https = http.client.HTTPSConnection
-        deadline = self._deadline
+    def http_open(self, req: "urllib.request.Request") -> Any:
+        return self.do_open(self._factory, req)
 
-        class _HTTPConn(_DeadlineBoundedHTTPConnection):
-            _pantheon_deadline = deadline
 
-        class _HTTPSConn(_DeadlineBoundedHTTPSConnection):
-            _pantheon_deadline = deadline
+class _DeadlineBoundedHTTPSHandler(urllib.request.HTTPSHandler):
+    def __init__(self, deadline: float, context: Optional[ssl.SSLContext] = None) -> None:
+        super().__init__(context=context)
+        self._factory = _deadline_bound_https_connection_factory(deadline)
 
-        http.client.HTTPConnection = _HTTPConn
-        http.client.HTTPSConnection = _HTTPSConn
-        return self
+    def https_open(self, req: "urllib.request.Request") -> Any:
+        return self.do_open(
+            self._factory,
+            req,
+            context=self._context,
+            check_hostname=self._check_hostname,
+        )
 
-    def __exit__(self, *exc_info: Any) -> bool:
-        http.client.HTTPConnection = self._orig_http
-        http.client.HTTPSConnection = self._orig_https
-        return False
+
+def _urlopen_with_deadline(req: "urllib.request.Request", *, timeout: float, deadline: float) -> Any:
+    """Equivalent to `urllib.request.urlopen(req, timeout=timeout)`, but
+    connection establishment, header parsing, and any error-body read are
+    all bound by the same absolute `deadline` via a request-scoped opener
+    -- no process-global `http.client` state is mutated.
+    """
+    opener = urllib.request.build_opener(
+        _DeadlineBoundedHTTPHandler(deadline),
+        _DeadlineBoundedHTTPSHandler(deadline),
+    )
+    return opener.open(req, timeout=timeout)
 
 
 class AssistantOpenClawProvider:
@@ -1594,16 +1690,15 @@ class AssistantOpenClawProvider:
         # The same `read_deadline` also has to bound connection establishment,
         # header parsing, and an HTTPError body read (`exc.read()` below) --
         # none of those are covered by the per-line check above, since they
-        # all happen before or outside that loop. Temporarily re-homing the
-        # connection classes `urlopen()` uses (see
-        # `_TemporaryDeadlineBoundedHTTPConnections`) makes every subsequent
-        # recv on the resulting socket (header parse, success body, or error
-        # body -- they share the same underlying socket) shrink its own
-        # timeout to whatever is left of `read_deadline`, instead of only
-        # being bounded by the static `timeout=` below.
+        # all happen before or outside that loop. `_urlopen_with_deadline`
+        # opens the request through connection instances built just for this
+        # call (see `_DeadlineBoundedHTTPHandler`), so every subsequent recv
+        # on the resulting socket (header parse, success body, or error body
+        # -- they share the same underlying socket) shrinks its own timeout
+        # to whatever is left of `read_deadline`, without mutating any
+        # process-global state another overlapping call could observe.
         try:
-            with _TemporaryDeadlineBoundedHTTPConnections(read_deadline):
-                resp = urllib.request.urlopen(req, timeout=effective_timeout)
+            resp = _urlopen_with_deadline(req, timeout=effective_timeout, deadline=read_deadline)
         except urllib.error.HTTPError as exc:
             body = ""
             try:

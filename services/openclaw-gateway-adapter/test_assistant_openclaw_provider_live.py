@@ -64,7 +64,7 @@ def _answer_events(text: str) -> list:
 
 
 def _http_error_urlopen(status_code: int, body: str = ""):
-    def fake_urlopen(req, timeout=None):
+    def fake_urlopen(req, timeout=None, deadline=None):
         raise urllib.error.HTTPError(req.full_url, status_code, body, {}, None)
 
     return fake_urlopen
@@ -83,7 +83,7 @@ def _model_dispatch_urlopen(handlers: dict, calls: list):
     involved.
     """
 
-    def fake_urlopen(req, timeout=None):
+    def fake_urlopen(req, timeout=None, deadline=None):
         body = json.loads(req.data.decode("utf-8"))
         headers = {k.lower(): v for k, v in req.header_items()}
         model = headers.get("x-openclaw-model")
@@ -363,7 +363,7 @@ class TestAssistantOpenClawProviderUnit(unittest.TestCase):
             token="tok",
             _which_func=lambda _: None,
         )
-        with patch("urllib.request.urlopen", fake_urlopen):
+        with patch("assistant_openclaw_provider._urlopen_with_deadline", fake_urlopen):
             info = provider.readiness(auth_probe=True)
         self.assertTrue(info["ready"])
         self.assertNotIn("binary_path", info)
@@ -393,7 +393,7 @@ class TestAssistantOpenClawProviderUnit(unittest.TestCase):
         )
 
         provider = self._make_provider()
-        with patch("urllib.request.urlopen", fake_urlopen):
+        with patch("assistant_openclaw_provider._urlopen_with_deadline", fake_urlopen):
             info = provider.readiness(auth_probe=True)
 
         self.assertTrue(info["ready"])
@@ -418,7 +418,7 @@ class TestAssistantOpenClawProviderUnit(unittest.TestCase):
         )
 
         provider = self._make_provider()
-        with patch("urllib.request.urlopen", fake_urlopen):
+        with patch("assistant_openclaw_provider._urlopen_with_deadline", fake_urlopen):
             info = provider.readiness(auth_probe=True)
 
         self.assertTrue(info["ready"])
@@ -454,7 +454,7 @@ class TestAssistantOpenClawProviderUnit(unittest.TestCase):
         )
 
         provider = self._make_provider()
-        with patch("urllib.request.urlopen", fake_urlopen):
+        with patch("assistant_openclaw_provider._urlopen_with_deadline", fake_urlopen):
             info = provider.readiness(auth_probe=True)
 
         self.assertTrue(info["ready"])
@@ -495,7 +495,7 @@ class TestAssistantOpenClawProviderUnit(unittest.TestCase):
         )
 
         provider = self._make_provider()
-        with patch("urllib.request.urlopen", fake_urlopen):
+        with patch("assistant_openclaw_provider._urlopen_with_deadline", fake_urlopen):
             info = provider.readiness(auth_probe=True)
 
         self.assertTrue(info["ready"])
@@ -525,7 +525,7 @@ class TestAssistantOpenClawProviderUnit(unittest.TestCase):
         )
 
         provider = self._make_provider()
-        with patch("urllib.request.urlopen", fake_urlopen):
+        with patch("assistant_openclaw_provider._urlopen_with_deadline", fake_urlopen):
             info = provider.readiness(auth_probe=True)
 
         self.assertFalse(info["ready"])
@@ -552,7 +552,7 @@ class TestAssistantOpenClawProviderUnit(unittest.TestCase):
         )
 
         provider = self._make_provider()
-        with patch("urllib.request.urlopen", fake_urlopen):
+        with patch("assistant_openclaw_provider._urlopen_with_deadline", fake_urlopen):
             info = provider.readiness(auth_probe=True)
 
         sanitized_reason = info["primary_unavailable"]["reason"]
@@ -571,7 +571,7 @@ class TestAssistantOpenClawProviderUnit(unittest.TestCase):
         )
 
         provider = self._make_provider()
-        with patch("urllib.request.urlopen", fake_urlopen):
+        with patch("assistant_openclaw_provider._urlopen_with_deadline", fake_urlopen):
             info = provider.readiness(auth_probe=True)
 
         self.assertFalse(info["ready"])
@@ -594,7 +594,7 @@ class TestAssistantOpenClawProviderUnit(unittest.TestCase):
         )
 
         provider = self._make_provider()
-        with patch("urllib.request.urlopen", fake_urlopen):
+        with patch("assistant_openclaw_provider._urlopen_with_deadline", fake_urlopen):
             info = provider.readiness(auth_probe=True)
 
         self.assertTrue(info["ready"])
@@ -624,7 +624,7 @@ class TestAssistantOpenClawProviderUnit(unittest.TestCase):
         )
 
         provider = self._make_provider()
-        with patch("urllib.request.urlopen", fake_urlopen):
+        with patch("assistant_openclaw_provider._urlopen_with_deadline", fake_urlopen):
             info = provider.readiness(auth_probe=True)
 
         self.assertFalse(info["ready"])
@@ -645,7 +645,7 @@ class TestAssistantOpenClawProviderUnit(unittest.TestCase):
         )
 
         provider = self._make_provider()
-        with patch("urllib.request.urlopen", fake_urlopen):
+        with patch("assistant_openclaw_provider._urlopen_with_deadline", fake_urlopen):
             info = provider.readiness(auth_probe=True)
 
         self.assertFalse(info["ready"])
@@ -660,12 +660,12 @@ class TestAssistantOpenClawProviderUnit(unittest.TestCase):
     def test_invoke_does_not_retry_on_http_401_making_exactly_one_call(self) -> None:
         calls: list = []
 
-        def fake_urlopen(req, timeout=None):
+        def fake_urlopen(req, timeout=None, deadline=None):
             calls.append(req)
             raise urllib.error.HTTPError(req.full_url, 401, "unauthorized", {}, None)
 
         provider = self._make_provider()
-        with patch("urllib.request.urlopen", fake_urlopen):
+        with patch("assistant_openclaw_provider._urlopen_with_deadline", fake_urlopen):
             with self.assertRaises(OpenClawProviderError) as ctx:
                 provider.invoke("test", mode="user", operator_id="op-1")
 
@@ -676,12 +676,12 @@ class TestAssistantOpenClawProviderUnit(unittest.TestCase):
     def test_invoke_does_not_retry_after_generic_connection_failure(self) -> None:
         calls: list = []
 
-        def fake_urlopen(req, timeout=None):
+        def fake_urlopen(req, timeout=None, deadline=None):
             calls.append(req)
             raise ConnectionResetError("connection reset")
 
         provider = self._make_provider()
-        with patch("urllib.request.urlopen", fake_urlopen):
+        with patch("assistant_openclaw_provider._urlopen_with_deadline", fake_urlopen):
             with self.assertRaises(OpenClawProviderError) as ctx:
                 provider.invoke("test ambiguous generic failure", mode="user", operator_id="op-1")
 
@@ -693,12 +693,12 @@ class TestAssistantOpenClawProviderUnit(unittest.TestCase):
     def test_invoke_does_not_retry_on_http_5xx_error(self) -> None:
         calls: list = []
 
-        def fake_urlopen(req, timeout=None):
+        def fake_urlopen(req, timeout=None, deadline=None):
             calls.append(req)
             raise urllib.error.HTTPError(req.full_url, 503, "service unavailable", {}, None)
 
         provider = self._make_provider()
-        with patch("urllib.request.urlopen", fake_urlopen):
+        with patch("assistant_openclaw_provider._urlopen_with_deadline", fake_urlopen):
             with self.assertRaises(OpenClawProviderError) as ctx:
                 provider.invoke("test post-execution auth failure", mode="user", operator_id="op-1")
 
@@ -710,12 +710,12 @@ class TestAssistantOpenClawProviderUnit(unittest.TestCase):
     def test_invoke_does_not_retry_after_timeout(self) -> None:
         calls: list = []
 
-        def fake_urlopen(req, timeout=None):
+        def fake_urlopen(req, timeout=None, deadline=None):
             calls.append(req)
             raise urllib.error.URLError(TimeoutError("timed out"))
 
         provider = self._make_provider()
-        with patch("urllib.request.urlopen", fake_urlopen):
+        with patch("assistant_openclaw_provider._urlopen_with_deadline", fake_urlopen):
             with self.assertRaises(OpenClawProviderError) as ctx:
                 provider.invoke("test ambiguous turn", mode="user", operator_id="op-1")
 
@@ -747,7 +747,7 @@ class TestAssistantOpenClawProviderUnit(unittest.TestCase):
         )
 
         provider = self._make_provider()
-        with patch("urllib.request.urlopen", fake_urlopen):
+        with patch("assistant_openclaw_provider._urlopen_with_deadline", fake_urlopen):
             result = provider.invoke("Say hello", mode="user", operator_id="op-1")
         self.assertEqual(result.status, "completed")
         self.assertEqual(result.provider, "openclaw")
@@ -759,7 +759,7 @@ class TestAssistantOpenClawProviderUnit(unittest.TestCase):
     def test_invoke_selects_validated_per_request_agent_and_reports_it(self) -> None:
         captured: dict = {}
 
-        def fake_urlopen(req, timeout=None):
+        def fake_urlopen(req, timeout=None, deadline=None):
             captured["url"] = req.full_url
             headers = {k.lower(): v for k, v in req.header_items()}
             captured["agent_id"] = headers.get("x-openclaw-agent-id")
@@ -768,7 +768,7 @@ class TestAssistantOpenClawProviderUnit(unittest.TestCase):
             return _FakeSSEResponse(_answer_events("persona result"))
 
         provider = self._make_provider()
-        with patch("urllib.request.urlopen", fake_urlopen):
+        with patch("assistant_openclaw_provider._urlopen_with_deadline", fake_urlopen):
             result = provider.invoke(
                 "Return opinion JSON",
                 agent_id="persona-opinion-0123456789abcdef01234567",
@@ -798,7 +798,7 @@ class TestAssistantOpenClawProviderUnit(unittest.TestCase):
     def test_invoke_persona_agent_does_not_override_model(self) -> None:
         captured: dict = {}
 
-        def fake_urlopen(req, timeout=None):
+        def fake_urlopen(req, timeout=None, deadline=None):
             headers = {k.lower(): v for k, v in req.header_items()}
             captured["agent_id"] = headers.get("x-openclaw-agent-id")
             captured["model_header"] = headers.get("x-openclaw-model")
@@ -806,7 +806,7 @@ class TestAssistantOpenClawProviderUnit(unittest.TestCase):
             return _FakeSSEResponse(_answer_events("persona opinion text"))
 
         provider = self._make_provider()
-        with patch("urllib.request.urlopen", fake_urlopen):
+        with patch("assistant_openclaw_provider._urlopen_with_deadline", fake_urlopen):
             result = provider.invoke(
                 "Return persona opinion",
                 agent_id="persona-opinion-a",
@@ -838,7 +838,7 @@ class TestAssistantOpenClawProviderUnit(unittest.TestCase):
         provider = self._make_provider()
 
         # 1. Readiness probe runs: primary hangs/times out, fallback openai/gpt-5.6-sol succeeds
-        with patch("urllib.request.urlopen", fake_urlopen):
+        with patch("assistant_openclaw_provider._urlopen_with_deadline", fake_urlopen):
             info = provider.readiness(auth_probe=True)
         self.assertTrue(info["ready"])
         self.assertEqual(info["status"], "ready")
@@ -852,7 +852,7 @@ class TestAssistantOpenClawProviderUnit(unittest.TestCase):
             {"openai/gpt-5.6-sol": lambda _t: _FakeSSEResponse(_answer_events("live answer"))},
             calls,
         )
-        with patch("urllib.request.urlopen", fake_urlopen_2):
+        with patch("assistant_openclaw_provider._urlopen_with_deadline", fake_urlopen_2):
             result = provider.invoke("Reply with exactly: OPENCLAW_LIVE", mode="user", operator_id="smoke-test")
         self.assertEqual(result.status, "completed")
         self.assertEqual(result.output["active_model"], "openai/gpt-5.6-sol")
@@ -885,7 +885,7 @@ class TestAssistantOpenClawProviderUnit(unittest.TestCase):
             {"anthropic/claude-opus-4-8": lambda _t: _FakeSSEResponse(_answer_events("response"))},
             calls,
         )
-        with patch("urllib.request.urlopen", fake_urlopen):
+        with patch("assistant_openclaw_provider._urlopen_with_deadline", fake_urlopen):
             result = provider.invoke(prompt, operator_id="op-1")
         self.assertEqual(result.status, "completed")
         self.assertEqual(len(calls), 1)
@@ -906,7 +906,7 @@ class TestAssistantOpenClawProviderUnit(unittest.TestCase):
 
         big_prompt = "x" * (96 * 1024 + 1)
         provider = self._make_provider()
-        with patch("urllib.request.urlopen", fake_urlopen):
+        with patch("assistant_openclaw_provider._urlopen_with_deadline", fake_urlopen):
             result = provider.invoke(
                 big_prompt,
                 operator_id="op-1",
@@ -931,7 +931,7 @@ class TestAssistantOpenClawProviderUnit(unittest.TestCase):
         regardless of prompt size."""
         provider = self._make_provider()
         with patch(
-            "urllib.request.urlopen",
+            "assistant_openclaw_provider._urlopen_with_deadline",
             side_effect=urllib.error.URLError(ConnectionRefusedError("refused")),
         ), self.assertRaises(OpenClawProviderError) as ctx:
             provider.invoke("x" * (96 * 1024 + 1), operator_id="op-1")
@@ -942,7 +942,7 @@ class TestAssistantOpenClawProviderUnit(unittest.TestCase):
     def test_invoke_non_zero_exit_raises(self) -> None:
         provider = self._make_provider()
         with patch(
-            "urllib.request.urlopen",
+            "assistant_openclaw_provider._urlopen_with_deadline",
             side_effect=urllib.error.HTTPError("url", 500, "generic failure", {}, None),
         ):
             with self.assertRaises(OpenClawProviderError) as ctx:
@@ -1027,7 +1027,7 @@ class TestAssistantOpenClawProviderStream(unittest.TestCase):
 
         captured = {}
 
-        def fake_urlopen(req, timeout=None):
+        def fake_urlopen(req, timeout=None, deadline=None):
             captured["url"] = req.full_url
             captured["body"] = req.data
             captured["auth"] = req.headers.get("Authorization")
@@ -1035,7 +1035,7 @@ class TestAssistantOpenClawProviderStream(unittest.TestCase):
             return FakeResp()
 
         provider = self._provider()
-        with mock.patch("urllib.request.urlopen", fake_urlopen):
+        with mock.patch("assistant_openclaw_provider._urlopen_with_deadline", fake_urlopen):
             events = list(provider.stream("hi", operator_id="op-1", session_user="sess-1"))
 
         # URL + auth + payload shape
@@ -1058,11 +1058,11 @@ class TestAssistantOpenClawProviderStream(unittest.TestCase):
         import urllib.error
         from unittest import mock
 
-        def fake_urlopen(req, timeout=None):
+        def fake_urlopen(req, timeout=None, deadline=None):
             raise urllib.error.HTTPError(req.full_url, 404, "Not Found", {}, None)
 
         provider = self._provider()
-        with mock.patch("urllib.request.urlopen", fake_urlopen):
+        with mock.patch("assistant_openclaw_provider._urlopen_with_deadline", fake_urlopen):
             events = list(provider.stream("hi", operator_id="op-1"))
         self.assertEqual(events[-1]["type"], "error")
         self.assertEqual(events[-1]["error_code"], "OPENCLAW_RESPONSES_DISABLED")
@@ -1078,7 +1078,7 @@ class TestAssistantOpenClawProviderStream(unittest.TestCase):
                 pass
 
         provider = self._provider()
-        with mock.patch("urllib.request.urlopen", return_value=FakeResp()):
+        with mock.patch("assistant_openclaw_provider._urlopen_with_deadline", return_value=FakeResp()):
             events = list(provider.stream("hi", operator_id="op-1"))
 
         self.assertEqual(events[-1]["type"], "error")
@@ -1099,7 +1099,7 @@ class TestAssistantOpenClawProviderStream(unittest.TestCase):
                 pass
 
         provider = self._provider()
-        with mock.patch("urllib.request.urlopen", return_value=FakeResp()):
+        with mock.patch("assistant_openclaw_provider._urlopen_with_deadline", return_value=FakeResp()):
             events = list(provider.stream("hi", operator_id="op-1"))
 
         done = [event for event in events if event["type"] == "done"]
@@ -1113,7 +1113,7 @@ class TestAssistantOpenClawProviderStream(unittest.TestCase):
 
         provider = self._provider()
         with mock.patch(
-            "urllib.request.urlopen",
+            "assistant_openclaw_provider._urlopen_with_deadline",
             side_effect=urllib.error.URLError(ConnectionRefusedError("refused")),
         ):
             events = list(provider.stream("hi", operator_id="op-1"))
@@ -1128,7 +1128,7 @@ class TestAssistantOpenClawProviderStream(unittest.TestCase):
 
         provider = self._provider()
         with mock.patch(
-            "urllib.request.urlopen",
+            "assistant_openclaw_provider._urlopen_with_deadline",
             side_effect=urllib.error.URLError(socket.timeout("timed out")),
         ):
             events = list(provider.stream("hi", operator_id="op-1"))
@@ -1148,7 +1148,7 @@ class TestAssistantOpenClawProviderStream(unittest.TestCase):
                 pass
 
         provider = self._provider()
-        with mock.patch("urllib.request.urlopen", return_value=FakeResp()):
+        with mock.patch("assistant_openclaw_provider._urlopen_with_deadline", return_value=FakeResp()):
             events = list(provider.stream("hi", operator_id="op-1"))
 
         self.assertEqual(events[-1]["type"], "error")
@@ -1179,13 +1179,13 @@ class TestAssistantOpenClawProviderStream(unittest.TestCase):
             def close(self):
                 pass
 
-        def fake_urlopen(req, timeout=None):
+        def fake_urlopen(req, timeout=None, deadline=None):
             body = json.loads(req.data.decode("utf-8"))
             calls.append(body)
             return FakeResp()
 
         provider = self._provider()
-        with mock.patch("urllib.request.urlopen", fake_urlopen):
+        with mock.patch("assistant_openclaw_provider._urlopen_with_deadline", fake_urlopen):
             events = list(provider.stream("hi", operator_id="op-1"))
 
         done = [event for event in events if event["type"] == "done"]
@@ -1201,11 +1201,11 @@ class TestAssistantOpenClawProviderStream(unittest.TestCase):
         import urllib.error
         from unittest import mock
 
-        def fake_urlopen(req, timeout=None):
+        def fake_urlopen(req, timeout=None, deadline=None):
             raise urllib.error.HTTPError(req.full_url, 400, "Bad Request", {}, None)
 
         provider = self._provider()
-        with mock.patch("urllib.request.urlopen", fake_urlopen):
+        with mock.patch("assistant_openclaw_provider._urlopen_with_deadline", fake_urlopen):
             events = list(provider.stream("hi", operator_id="op-1"))
 
         self.assertEqual(len(events), 1)
