@@ -23,6 +23,7 @@ rollout order, and links to the detailed evidence.
 - [Backend inventory counts](oss-inventory-summary.json)
 - [PyPI metadata observations](oss-pypi-latest-current-dev.json)
 - [BFF exact AST duplicates](bff-exact-duplicates.json)
+- [Publication validation manifest](../../deployment/evidence/SYS-SIMPLIFY-AUDIT-20260906/evidence.json)
 
 Backend source: `471dc5391a0f9cbde54d51730891583043708e42`.
 Frontend source: `5d4f385284b44a30e10764426a47fd808a7ae3cb`.
