@@ -12,7 +12,9 @@ and rejection of a stale CAS request over HTTP (409).
 from __future__ import annotations
 
 import os
+import threading
 import time
+from concurrent.futures import ThreadPoolExecutor
 from uuid import uuid4
 
 import pytest
@@ -290,3 +292,131 @@ def test_readyz_fails_closed_when_owner_schema_is_missing(monkeypatch):
         assert resp.status_code != 200 or body.get("ready") is False
     finally:
         reset_store()
+
+
+# ===========================================================================
+# Gen-8 independent Codex rejection of PR #5620 — findings 2 and 8, which
+# require real concurrency / a live Postgres owner and so cannot be proven
+# against the in-memory backend (see test_service.py for the gen-8 findings
+# that can be).
+# ===========================================================================
+
+
+def _valid_spec(strategy_id: str, **variant_metadata) -> dict:
+    """Minimal schema-valid StrategySpec — see test_registry_positives._valid_spec."""
+    spec = {
+        "spec_version": "1.0",
+        "strategy_id": strategy_id,
+        "title": "Owner durability probe strategy",
+        "hypothesis": "Deterministic probe hypothesis for registry owner durability tests.",
+        "objective": "Prove real registry write-owner capability, not just route existence.",
+        "market_scope": {"symbols": ["TEST"], "frequency": "1d"},
+        "data_dependencies": [{"ref": "test-fixture", "kind": "note"}],
+        "execution_profile": {"signal_schema_version": "1.0", "quantity_type": "SHARES"},
+        "evaluation_plan": {"metrics": ["sharpe"]},
+        "governance": {"approval_required": True},
+        "provenance": {"source_kind": "manual", "created_at": "2026-01-01T00:00:00Z"},
+    }
+    if variant_metadata:
+        spec["metadata"] = dict(variant_metadata)
+    return spec
+
+
+def test_generic_route_embedded_spec_serializes_concurrent_revision_race(pg_app):
+    """Reviewer finding 2 (gen-8 review): a full StrategySpec submitted
+    through the generic POST /api/registry/entries route must commit through
+    the same per-strategy_id serialized invariant as the dedicated
+    POST /api/registry/strategy-specs facade — not a separate, unlocked
+    pre-check followed by a plain unconditional insert.
+
+    Proof: version "1.1.0" is allowed to fully commit (acquire the
+    per-strategy_id advisory lock, re-validate, insert, and release the
+    lock) while a second request for version "1.0.1" is paused *before* it
+    enters the lock (patched at the unlocked pre-check, never while holding
+    the lock — pausing inside the lock would deadlock the "1.1.0" request
+    behind it). Once "1.0.1" resumes and enters the locked path, it
+    re-reads the *true* current latest (now "1.1.0", not the stale "1.0.0"
+    it originally pre-checked against) and must be rejected: "1.0.1" is not
+    a valid next revision from "1.1.0". The pre-fix code validated only
+    against the stale pre-check read and would have let both commit.
+    """
+    strategy_id = "owner-durability-generic-race"
+    base = pg_app.post(
+        "/api/registry/entries",
+        json={
+            "artifact_type": "strategy_spec",
+            "strategy_id": strategy_id,
+            "version": "1.0.0",
+            "lineage": {"source_run_ids": ["run-base"]},
+            "metadata": {"strategy_spec": _valid_spec(strategy_id)},
+        },
+    )
+    assert base.status_code == 200, base.text
+
+    from . import service as service_module
+
+    real_validate = service_module._validate_strategy_spec_version_lineage
+    paused_started = threading.Event()
+    release_paused = threading.Event()
+
+    def _pausing_validate(registry_service, strategy_id_arg, version, lineage, *, ctx):
+        if version == "1.0.1":
+            paused_started.set()
+            assert release_paused.wait(15), "1.1.0 request did not signal completion in time"
+        return real_validate(registry_service, strategy_id_arg, version, lineage, ctx=ctx)
+
+    def _submit(version: str):
+        return pg_app.post(
+            "/api/registry/entries",
+            json={
+                "artifact_type": "strategy_spec",
+                "strategy_id": strategy_id,
+                "version": version,
+                "lineage": {"source_run_ids": ["run-base"]},
+                "metadata": {"strategy_spec": _valid_spec(strategy_id, variant=version)},
+            },
+        )
+
+    service_module._validate_strategy_spec_version_lineage = _pausing_validate
+    try:
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            stale = pool.submit(_submit, "1.0.1")
+            assert paused_started.wait(15)
+            fresh = pool.submit(_submit, "1.1.0")
+            fresh_result = fresh.result(timeout=15)
+            assert fresh_result.status_code == 200, fresh_result.text
+            release_paused.set()
+            stale_result = stale.result(timeout=15)
+    finally:
+        service_module._validate_strategy_spec_version_lineage = real_validate
+
+    assert stale_result.status_code == 400, stale_result.text
+
+    listed = pg_app.get(f"/api/registry/strategies/{strategy_id}/strategy-specs")
+    versions = sorted(item["entry"]["version"] for item in listed.json())
+    assert versions == ["1.0.0", "1.1.0"]
+
+
+def test_readyz_fails_closed_when_receipts_table_is_missing(pg_app):
+    """Reviewer finding 8 (gen-8 review): readiness previously probed only
+    the entries table. Drop the command-receipts table (leaving entries
+    intact) and /readyz must report not-ready — a bare entries-only probe
+    previously reported ready=true here while any idempotency-keyed
+    create/metadata/advance commit would raise a 500 against the missing
+    receipts table."""
+    import psycopg
+
+    # Trigger bootstrap (schema/table creation) first via a real register
+    # call, then drop only the receipts table out from under the app.
+    _register(pg_app)
+
+    receipts_table = os.environ["REGISTRY_RECEIPTS_TABLE"]
+    with psycopg.connect(os.environ["REGISTRY_STORE_DSN"]) as conn:
+        conn.execute(f"DROP TABLE {receipts_table}")
+
+    from . import main as main_module
+
+    client = TestClient(main_module.app, headers=_AUTH_HEADERS)
+    resp = client.get("/readyz")
+    body = resp.json()
+    assert body.get("ready") is False, body

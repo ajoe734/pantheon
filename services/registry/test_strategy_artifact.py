@@ -8,6 +8,8 @@ from threading import Barrier
 import pytest
 from fastapi.testclient import TestClient
 
+from services.runtime_auth_inbound import AuthContext
+
 from .models import ArtifactState, ArtifactType, DeploymentStage
 from .service import _register_strategy_artifact, app, get_registry_service
 from .split_api import RegistryError
@@ -35,6 +37,11 @@ def _registration() -> dict:
     return load_strategy_artifact_registration(
         BUILTIN_STRATEGY_ARTIFACT_PATHS[0]
     )
+
+
+_TEST_CTX = AuthContext(
+    actor_id="test-operator", roles=frozenset({"operator"}), claims={}, token_kind="structured",
+)
 
 
 def _artifact() -> dict:
@@ -462,6 +469,7 @@ def test_same_child_id_concurrent_mutations_never_overwrite():
                     "artifact_state": "candidate",
                     "strategy_artifact": child,
                 },
+                ctx=_TEST_CTX,
             )
             return "created", view.entry.checksum
         except RegistryError as exc:

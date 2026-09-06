@@ -265,13 +265,37 @@ only runs on the genuinely-fresh path, after the store has already ruled out a r
 against the entry's *current* (already-post-transition) state would otherwise spuriously reject a
 legitimate replay as a "forbidden transition".
 
+Receipt keys (`PostgresRegistryStore.receipt_key`) are scoped by tenant + actor + `registry_id` +
+**command type** (`"metadata"` / `"advance"` / `"create"`) + `command_key` — the command type is
+folded into the framed identity so the same client-chosen `command_key` value reused for both a
+metadata-CAS call and an `advance` on the same `registry_id`/tenant/actor can never land on the same
+receipt row, regardless of whether their request digests happen to differ.
+
+`advance_artifact_state` additionally accepts an optional caller-claimed base
+(`expected_artifact_state`/`expected_version`/`expected_updated_at`). When supplied, each is merged
+onto the CAS base snapshot before the compare-and-set, binding the write to what the caller actually
+believes the entry's current state is — not only a value the store re-read fresh at request time. A
+stale claim fails the same 409 conflict a stale `expected_metadata` already does on `update_metadata`.
+Omitting all three preserves the original server-reread behavior.
+
+A same-`registry_id` create-if-absent replay (the StrategySpec/StrategyArtifact facades' "already
+registered, return the existing entry" path) is compared against the entry's **original creation
+content** — a snapshot recorded once, in the same transaction as the entry's first successful insert,
+and exposed via `PostgresRegistryStore.get_creation_receipt`/`RegistryStore.get_creation_receipt` — not
+against whatever the row has mutated into since (a later `advance` or `update_metadata` call). This
+keeps an exact replay of the original request succeeding even after legitimate downstream progress; the
+row *returned* to the caller is always the live current entry, never reverted to its original state.
+
 ### Storage backend
 
 Production selects `PostgresRegistryStore` (`services/registry/pg_store.py`, `REGISTRY_STORE_BACKEND=postgres`)
 as the single durable write authority for StrategySpec content, immutable versions, RegistryEntry
 identities and artifact-state, using `services/foundation/postgres_json_store.py`'s CAS/transaction
 primitives. The in-memory `RegistryStore` (`services/registry/storage.py`) is an explicit test double
-constructed directly by unit tests, never a missing-config production fallback.
+constructed directly by unit tests, never a missing-config production fallback: `REGISTRY_STORE_BACKEND`
+must always be set to `memory` or `postgres` explicitly (`storage.build_registry_store` raises otherwise,
+in every posture, not only an enforced staging/prod one) — `services/registry/conftest.py` sets it to
+`memory` explicitly for this whole package's unit-test run.
 
 ### StrategySpec registry facade
 

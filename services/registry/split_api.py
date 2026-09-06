@@ -302,6 +302,24 @@ class RegistryService:
         entries = self.store.list_by_strategy(strategy_id)
         return [self._to_view(e) for e in entries]
 
+    def get_creation_receipt(self, registry_id: str) -> Optional[RegistryEntryView]:
+        """Return the entry exactly as it was at its first successful
+        creation (reviewer finding 5), if the store recorded one.
+
+        Callers comparing a same-identity create replay's claimed content
+        against the durable row should prefer this over the live view's
+        current (possibly since-mutated) fields — content like metadata can
+        have legitimately changed via a later, unrelated ``update_metadata``
+        call, and comparing against that drifted content would wrongly
+        reject an exact replay of what was originally submitted. ``None``
+        for a legacy row created before this receipt existed.
+        """
+        get_receipt = getattr(self.store, "get_creation_receipt", None)
+        if get_receipt is None:
+            return None
+        entry = get_receipt(registry_id)
+        return self._to_view(entry) if entry is not None else None
+
     def advance_artifact_state(
         self,
         registry_id: str,
@@ -311,6 +329,9 @@ class RegistryService:
         *,
         command_key: Optional[str] = None,
         actor: Optional[dict] = None,
+        expected_artifact_state: Optional[ArtifactState] = None,
+        expected_version: Optional[str] = None,
+        expected_updated_at: Optional[str] = None,
     ) -> RegistryEntryView:
         """
         Transition an entry through governed artifact-state checks.
@@ -324,6 +345,21 @@ class RegistryService:
         was originally committed rather than re-running the transition
         (which would otherwise raise a spurious "forbidden transition" once
         the entry has already moved) or silently no-op'ing.
+
+        ``expected_artifact_state``/``expected_version``/``expected_updated_at``
+        are the caller's own claimed base snapshot (reviewer finding 6,
+        gen-8 review): without them, ``base_snapshot`` below was always a
+        freshly server-read current row, never something the caller actually
+        supplied — so a caller submitting a stale belief (e.g. "I still
+        think this entry is in draft") had that belief silently discarded
+        and the transition applied against whatever the row actually was,
+        rather than rejected as a stale-base conflict the way
+        ``update_metadata``'s ``expected_metadata`` already is. When
+        supplied, each is merged onto ``base_snapshot`` before the CAS, so a
+        mismatch against the true durable row makes the whole snapshot
+        comparison fail (409) exactly like a stale ``expected_metadata``
+        does; omitting them preserves the prior server-reread behavior for
+        callers that do not (yet) track a base.
         """
         entry = self.store.get(registry_id)
         if entry is None:
@@ -331,6 +367,17 @@ class RegistryService:
 
         base_snapshot = entry.to_dict()
         current = entry.artifact_state
+
+        if expected_artifact_state is not None:
+            base_snapshot["artifact_state"] = (
+                expected_artifact_state.value
+                if hasattr(expected_artifact_state, "value")
+                else expected_artifact_state
+            )
+        if expected_version is not None:
+            base_snapshot["version"] = expected_version
+        if expected_updated_at is not None:
+            base_snapshot["updated_at"] = expected_updated_at
 
         # Reviewer finding 5: this business-rule check must NOT run
         # unconditionally here — on a genuine command_key replay, the
@@ -368,6 +415,11 @@ class RegistryService:
                 approval_decision_id=approval_decision_id if target_state == ArtifactState.APPROVED else None,
                 command_key=command_key,
                 actor=actor,
+                expected_artifact_state=base_snapshot.get("artifact_state")
+                if expected_artifact_state is not None
+                else None,
+                expected_version=expected_version,
+                expected_updated_at=expected_updated_at,
             )
         except RegistryConcurrentUpdateError as exc:
             raise RegistryConflictError(str(exc)) from exc

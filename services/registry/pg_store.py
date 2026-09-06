@@ -156,12 +156,37 @@ class PostgresRegistryStore:
         "immutable revision identity" requirement.
         """
         entry = _new_entry(payload, registry_id, actor=actor)
-        created, canonical = self._entries.insert_if_absent(
-            registry_id, entry.to_dict(), unique_fields=unique_fields,
-        )
-        if created:
-            return entry, True
+        with self._entries.transaction() as conn:
+            created, canonical = self._entries.insert_if_absent(
+                registry_id, entry.to_dict(), unique_fields=unique_fields, conn=conn,
+            )
+            if created:
+                self._store_creation_receipt(registry_id, entry.to_dict(), conn=conn)
+                return entry, True
+        # Reviewer finding 5: the *comparison* a caller runs against a
+        # same-registry_id collision must use the row's immutable
+        # original-creation content (see :meth:`get_creation_receipt`), never
+        # whatever it has mutated into since (advance/metadata edits) — but
+        # the row returned here stays the live current entry, since a
+        # replayed create is not a request to revert real progress (e.g. an
+        # approval) back to its original draft state. Callers that need the
+        # immutable original content for their own equality check fetch it
+        # separately via :meth:`get_creation_receipt`.
         return RegistryEntry.from_dict(canonical), False
+
+    def get_creation_receipt(self, registry_id: str) -> Optional[RegistryEntry]:
+        """Return the entry exactly as it was at its first successful
+        creation, if a receipt was recorded (see :meth:`_store_creation_receipt`).
+
+        ``None`` for a row created before this receipt existed (a legacy
+        row) or one that was never created through ``create_if_absent``/
+        ``register_strategy_spec_revision`` (e.g. ``put``-only bootstrap).
+        Callers comparing a same-identity replay's claimed content should
+        prefer this over the live row's current (possibly since-mutated)
+        fields, but must still return the live row to any HTTP caller.
+        """
+        original = self._read_creation_receipt(registry_id)
+        return RegistryEntry.from_dict(original) if original is not None else None
 
     def put(self, entry: RegistryEntry) -> None:
         """Unconditional overwrite — restricted to idempotent built-in bootstrap
@@ -202,8 +227,9 @@ class PostgresRegistryStore:
         registry_id: str,
         *,
         actor: Optional[dict[str, Any]] = None,
+        command_type: str = "generic",
     ) -> str:
-        """Scope an idempotent command receipt by tenant/actor/command/aggregate.
+        """Scope an idempotent command receipt by tenant/actor/command-type/aggregate.
 
         A bare ``command_key`` is not a safe idempotency scope on its own: two
         different tenants or actors could submit the same client-chosen key
@@ -218,12 +244,67 @@ class PostgresRegistryStore:
         unambiguous framing regardless of what characters the field
         contains) and the whole framed string is hashed to keep the key a
         fixed, storage-friendly size.
+
+        Prior defect (reviewer finding 6, gen-8 review): without
+        ``command_type`` a caller reusing the same client-chosen
+        ``command_key`` for both a metadata-CAS call and an artifact-state
+        advance on the same registry_id/tenant/actor would land on the exact
+        same receipt row — the two call sites only avoided actually
+        colliding because their divergent request digests happened to
+        differ, not because the namespace was actually distinct.
+        ``command_type`` (e.g. ``"metadata"``, ``"advance"``, ``"create"``)
+        is now part of the framed identity so the two command kinds can
+        never share a receipt row in the first place, regardless of digest.
         """
         tenant = str((actor or {}).get("tenant") or "unscoped").strip() or "unscoped"
         actor_id = str((actor or {}).get("actor_id") or "unscoped").strip() or "unscoped"
-        parts = [tenant, actor_id, registry_id, command_key]
+        parts = [tenant, actor_id, registry_id, command_type, command_key]
         framed = "|".join(f"{len(part)}:{part}" for part in parts)
         return hashlib.sha256(framed.encode("utf-8")).hexdigest()
+
+    _CREATION_RECEIPT_PREFIX = "creation-receipt:"
+
+    @classmethod
+    def _creation_receipt_key(cls, registry_id: str) -> str:
+        """Key for the immutable original-creation receipt of ``registry_id``.
+
+        Reviewer finding 5: a same-identity create-if-absent replay (the
+        StrategySpec/StrategyArtifact facades' "already registered, return
+        the existing entry" path) previously returned whatever the row has
+        become since — including later ``advance``/metadata mutations — so
+        an identical create request replayed after a permitted metadata edit
+        was wrongly rejected as "different content" even though it exactly
+        matches what was originally submitted. This receipt freezes the
+        entry snapshot exactly as it was at the moment of its first
+        successful creation, independent of ``record_id``'s own key space
+        (a distinct, prefixed pseudo-identity in the same receipts table).
+        """
+        return f"{cls._CREATION_RECEIPT_PREFIX}{registry_id}"
+
+    def _store_creation_receipt(
+        self, registry_id: str, entry_snapshot: dict[str, Any], *, conn: Any,
+    ) -> None:
+        """Record the immutable original-creation snapshot, in the same
+        transaction as the entry's own insert (``conn`` is the shared
+        connection from :meth:`PostgresJsonOwnerStore.transaction`)."""
+        self._receipts.insert_if_absent(
+            self._creation_receipt_key(registry_id),
+            {"registry_id": registry_id, "created_entry": entry_snapshot},
+            conn=conn,
+        )
+
+    def _read_creation_receipt(self, registry_id: str) -> Optional[dict[str, Any]]:
+        """Read back the original-creation snapshot, if one was recorded.
+
+        Safe to use its own fresh connection (not ``conn=``): this is only
+        ever consulted after a create-if-absent collision, meaning the
+        original creation (and its receipt, committed atomically alongside
+        it) already committed in a prior, separate transaction.
+        """
+        receipt = self._receipts.get(self._creation_receipt_key(registry_id))
+        if receipt is None:
+            return None
+        return receipt.get("created_entry")
 
     def commit_metadata_cas(
         self,
@@ -275,7 +356,11 @@ class PostgresRegistryStore:
             "expected_metadata": base_snapshot.get("metadata"),
             "metadata": new_metadata,
         })
-        scoped_key = self.receipt_key(command_key, registry_id, actor=actor) if command_key else None
+        scoped_key = (
+            self.receipt_key(command_key, registry_id, actor=actor, command_type="metadata")
+            if command_key
+            else None
+        )
 
         with self._entries.transaction() as conn:
             reservation: Optional[dict[str, Any]] = None
@@ -331,10 +416,28 @@ class PostgresRegistryStore:
         command_key: Optional[str] = None,
         actor: Optional[dict[str, Any]] = None,
         validate: Optional[Callable[[RegistryEntry], None]] = None,
+        expected_artifact_state: Optional[str] = None,
+        expected_version: Optional[str] = None,
+        expected_updated_at: Optional[str] = None,
     ) -> tuple[RegistryEntry, bool]:
         """Atomically CAS ``artifact_state`` (plus approval fields) and record
         an idempotent command receipt in the same transaction — mirrors
         :meth:`commit_metadata_cas`.
+
+        ``expected_artifact_state``/``expected_version``/``expected_updated_at``
+        are the caller's own claimed base — reviewer finding 6 (gen-8
+        review): ``base_snapshot`` here is always the store's own freshly
+        re-read current row, never a value the caller actually supplied, so
+        an advance request carrying a stale premise (e.g. "I still believe
+        this entry is in draft") committed against whatever the row actually
+        was, silently ignoring the caller's now-false belief. The caller
+        (``RegistryService.advance_artifact_state``/split_api.py) merges
+        these onto ``base_snapshot`` before calling in, so the
+        ``compare_and_set`` below already enforces them as part of the CAS
+        row-equality check; they are threaded through here only so a
+        genuinely divergent replay (the same command_key resubmitted with a
+        *different* claimed base) is detected via ``request_digest`` rather
+        than silently treated as an identical replay.
 
         Reviewer finding 5: prior to this, ``advance_artifact_state`` had no
         caller-scoped receipt at all — a retried ``advance`` command_key
@@ -379,8 +482,19 @@ class PostgresRegistryStore:
             "target_state": target_state.value if hasattr(target_state, "value") else target_state,
             "approver": approver,
             "approval_decision_id": approval_decision_id,
+            # Reviewer finding 6: a same command_key resubmitted with a
+            # different claimed base is a divergent request, not an
+            # identical replay, even though target_state/approver/
+            # approval_decision_id are unchanged.
+            "expected_artifact_state": expected_artifact_state,
+            "expected_version": expected_version,
+            "expected_updated_at": expected_updated_at,
         })
-        scoped_key = self.receipt_key(command_key, registry_id, actor=actor) if command_key else None
+        scoped_key = (
+            self.receipt_key(command_key, registry_id, actor=actor, command_type="advance")
+            if command_key
+            else None
+        )
 
         with self._entries.transaction() as conn:
             reservation: Optional[dict[str, Any]] = None
@@ -471,7 +585,7 @@ class PostgresRegistryStore:
         without invoking (and without needing to invoke) the factory a
         second time.
         """
-        scoped_key = self.receipt_key(command_key, "register_entry", actor=actor)
+        scoped_key = self.receipt_key(command_key, "register_entry", actor=actor, command_type="create")
         request_digest = _request_digest({"request": request_fingerprint})
         with self._entries.transaction() as conn:
             reservation = {
@@ -562,8 +676,12 @@ class PostgresRegistryStore:
                 registry_id, entry.to_dict(), unique_fields=unique_fields, conn=conn,
             )
             if created:
+                self._store_creation_receipt(registry_id, entry.to_dict(), conn=conn)
                 return entry, True
-            return RegistryEntry.from_dict(canonical), False
+        # See create_if_absent's docstring: returns the live current row;
+        # callers use get_creation_receipt() for the immutable-content
+        # comparison instead.
+        return RegistryEntry.from_dict(canonical), False
 
     def update_deployment_summary(
         self,

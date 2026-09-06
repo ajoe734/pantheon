@@ -69,6 +69,9 @@ class RegistryStore:
         self._strategy_index: dict[str, list[str]] = {}
         # command_key -> {"new_metadata": ...} idempotent-replay ledger
         self._command_receipts: dict[str, dict] = {}
+        # registry_id -> original entry snapshot at first successful creation
+        # (reviewer finding 5 — see PostgresRegistryStore._store_creation_receipt)
+        self._creation_receipts: dict[str, dict] = {}
 
     # -- Write operations -------------------------------------------------
 
@@ -165,6 +168,11 @@ class RegistryStore:
         with self._lock:
             existing = self._entries.get(registry_id)
             if existing is not None:
+                # Returns the live current row; callers use
+                # get_creation_receipt() for the immutable-content
+                # comparison instead (reviewer finding 5) — a replayed
+                # create is not a request to revert real progress (e.g. an
+                # approval) back to its original draft state.
                 return RegistryEntry.from_dict(existing.to_dict()), False
             if unique_fields:
                 for other in self._entries.values():
@@ -175,6 +183,7 @@ class RegistryStore:
                         return RegistryEntry.from_dict(other.to_dict()), False
             entry = self._new_entry(payload, registry_id, actor=actor)
             self._put_unlocked(entry)
+            self._creation_receipts[registry_id] = entry.to_dict()
             return RegistryEntry.from_dict(entry.to_dict()), True
 
     def update(
@@ -311,7 +320,7 @@ class RegistryStore:
         from .pg_store import DivergentCommandReplayError, PostgresRegistryStore, _request_digest
 
         scoped_key = PostgresRegistryStore.receipt_key(
-            command_key, "register_entry", actor=actor,
+            command_key, "register_entry", actor=actor, command_type="create",
         )
         request_digest = _request_digest({"request": request_fingerprint})
         with self._lock:
@@ -379,7 +388,14 @@ class RegistryStore:
                         return RegistryEntry.from_dict(other.to_dict()), False
             entry = self._new_entry(payload, registry_id, actor=actor)
             self._put_unlocked(entry)
+            self._creation_receipts[registry_id] = entry.to_dict()
             return RegistryEntry.from_dict(entry.to_dict()), True
+
+    def get_creation_receipt(self, registry_id: str) -> Optional[RegistryEntry]:
+        """In-memory mirror of ``PostgresRegistryStore.get_creation_receipt``."""
+        with self._lock:
+            original = self._creation_receipts.get(registry_id)
+            return RegistryEntry.from_dict(original) if original is not None else None
 
     # -- Deployment summary update (called by deployment service) -----------
 
@@ -428,6 +444,9 @@ class RegistryStore:
         command_key: Optional[str] = None,
         actor: Optional[dict] = None,
         validate: Optional[Callable[[RegistryEntry], None]] = None,
+        expected_artifact_state: Optional[str] = None,
+        expected_version: Optional[str] = None,
+        expected_updated_at: Optional[str] = None,
     ) -> tuple[RegistryEntry, bool]:
         """In-memory mirror of ``PostgresRegistryStore.commit_artifact_state_cas``
         — same CAS + idempotent-replay + divergent-key-rejection contract as
@@ -435,11 +454,24 @@ class RegistryStore:
         (reviewer finding 5). ``validate`` runs only on the non-replay path —
         see the Postgres backend's docstring for why re-validating a
         transition against a replay's already-post-transition current state
-        would always (and wrongly) fail."""
+        would always (and wrongly) fail.
+
+        ``expected_artifact_state``/``expected_version``/``expected_updated_at``
+        mirror the Postgres backend's caller-bound-base digest fields
+        (reviewer finding 6) — ``base_snapshot`` itself already carries the
+        caller's claimed base merged in by the caller
+        (``RegistryService.advance_artifact_state``), so the actual CAS
+        enforcement is the ``current.to_dict() != base_snapshot`` check
+        below; these are threaded through only so a same command_key
+        resubmitted with a genuinely different claimed base is detected as
+        divergent rather than silently replayed.
+        """
         from .pg_store import PostgresRegistryStore
 
         scoped_key = (
-            PostgresRegistryStore.receipt_key(command_key, registry_id, actor=actor)
+            PostgresRegistryStore.receipt_key(
+                command_key, registry_id, actor=actor, command_type="advance",
+            )
             if command_key
             else None
         )
@@ -458,6 +490,9 @@ class RegistryStore:
                         receipt.get("target_state") != target_value
                         or receipt.get("approver") != approver
                         or receipt.get("approval_decision_id") != approval_decision_id
+                        or receipt.get("expected_artifact_state") != expected_artifact_state
+                        or receipt.get("expected_version") != expected_version
+                        or receipt.get("expected_updated_at") != expected_updated_at
                     ):
                         from .pg_store import DivergentCommandReplayError
 
@@ -487,6 +522,9 @@ class RegistryStore:
                     "target_state": target_value,
                     "approver": approver,
                     "approval_decision_id": approval_decision_id,
+                    "expected_artifact_state": expected_artifact_state,
+                    "expected_version": expected_version,
+                    "expected_updated_at": expected_updated_at,
                     "committed_entry": committed,
                 }
             return RegistryEntry.from_dict(committed), False
@@ -518,7 +556,9 @@ class RegistryStore:
         from .pg_store import PostgresRegistryStore
 
         scoped_key = (
-            PostgresRegistryStore.receipt_key(command_key, registry_id, actor=actor)
+            PostgresRegistryStore.receipt_key(
+                command_key, registry_id, actor=actor, command_type="metadata",
+            )
             if command_key
             else None
         )
@@ -573,11 +613,23 @@ def build_registry_store():
 
     ``REGISTRY_STORE_BACKEND=postgres`` selects the durable production owner
     store (``pg_store.PostgresRegistryStore``). ``REGISTRY_STORE_BACKEND=memory``
-    (or unset, in dev posture) is an explicit, documented test/local-dev
-    opt-in into the in-memory test double — never a silent fallback for a
-    staging/production deployment that failed to configure Postgres.
+    is an explicit, documented test/local-dev opt-in into the in-memory test
+    double (see ``conftest.py``, which sets it for this whole package's unit
+    test run) — never a silent fallback when nothing was configured at all.
 
-    Backend selection fails closed the same way
+    Reviewer finding 7 (gen-8 review): an earlier revision of this function
+    defaulted an unset ``REGISTRY_STORE_BACKEND`` to memory in "dev posture"
+    (no enforced ``PANTHEON_ENV``/``PANTHEON_PERSISTENCE_POSTURE``) — but that
+    let the actual mounted app silently serve real writes against an
+    in-memory store with zero configuration at all, which is exactly the
+    "missing-config fallback" architecture-resumption-sa-sd.md §3.1 forbids:
+    "memory is explicitly injected test-only, never missing-config/
+    connection/schema fallback". ``REGISTRY_STORE_BACKEND`` must now always
+    be explicitly set to ``memory`` or ``postgres`` — dev/test callers opt in
+    to memory the same explicit way ``conftest.py`` already does, they do not
+    rely on an implicit default.
+
+    Backend selection additionally fails closed the same way
     ``services.foundation.persistence_posture`` already does for every other
     service: in an enforced posture (``PANTHEON_ENV``/``PANTHEON_PERSISTENCE_POSTURE``
     in {stage, staging, prod, production, ...}), ``REGISTRY_STORE_BACKEND``
@@ -594,8 +646,16 @@ def build_registry_store():
         require_object_store=False,
     )
 
-    backend = os.getenv("REGISTRY_STORE_BACKEND", "memory").strip().lower()
-    if backend in ("", "memory"):
+    backend_raw = os.getenv("REGISTRY_STORE_BACKEND")
+    if backend_raw is None or not backend_raw.strip():
+        raise RuntimeError(
+            "REGISTRY_STORE_BACKEND is not set. The registry never silently defaults to "
+            "the in-memory test double — set REGISTRY_STORE_BACKEND=memory to explicitly "
+            "opt into it (tests/local dev only; see conftest.py) or "
+            "REGISTRY_STORE_BACKEND=postgres for a durable deployment."
+        )
+    backend = backend_raw.strip().lower()
+    if backend == "memory":
         # A configured Postgres DSN is a strong signal the deployer intended
         # the durable backend; silently returning the in-memory test double
         # in that case would mean every write vanishes on process exit while
@@ -603,9 +663,9 @@ def build_registry_store():
         # guessing (architecture-resumption-sa-sd.md §3.1).
         if os.getenv("REGISTRY_STORE_DSN") or os.getenv("DATABASE_URL"):
             raise RuntimeError(
-                "REGISTRY_STORE_DSN/DATABASE_URL is configured but REGISTRY_STORE_BACKEND "
-                "is unset or 'memory'; refusing to silently select the in-memory test double "
-                "over an apparently-intended Postgres connection. Set REGISTRY_STORE_BACKEND=postgres."
+                "REGISTRY_STORE_DSN/DATABASE_URL is configured but REGISTRY_STORE_BACKEND="
+                "memory; refusing to silently select the in-memory test double over an "
+                "apparently-intended Postgres connection. Set REGISTRY_STORE_BACKEND=postgres."
             )
         return RegistryStore()
     if backend != "postgres":

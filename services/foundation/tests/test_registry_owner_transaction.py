@@ -159,7 +159,9 @@ def test_metadata_cas_commit_and_receipt_are_one_atomic_transaction(pg_case):
     assert replayed is False
     assert updated.metadata == {"note": "first commit"}
 
-    receipt = store._receipts.get(store.receipt_key("cmd-abc", "reg-003"))
+    receipt = store._receipts.get(
+        store.receipt_key("cmd-abc", "reg-003", command_type="metadata")
+    )
     assert receipt is not None
     assert receipt["registry_id"] == "reg-003"
     assert receipt["committed_entry"]["metadata"] == {"note": "first commit"}

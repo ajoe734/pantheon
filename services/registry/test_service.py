@@ -32,6 +32,11 @@ from .models import (
 from .service import _require_production_auth_configuration, app
 from .split_api import RegistryError, RegistryNotFoundError, RegistryService
 from .storage import RegistryStore, reset_store
+from .strategy_artifact import (
+    BUILTIN_STRATEGY_ARTIFACT_PATHS,
+    load_strategy_artifact_registration,
+    mutate_strategy_artifact,
+)
 
 
 # -- Fixtures -------------------------------------------------------------
@@ -1350,9 +1355,16 @@ def test_readiness_dependency_reports_memory_backend_as_degraded_not_ok(monkeypa
     """Reviewer finding 8: readiness must not silently report ready=true
     with no dependency evidence regardless of the selected owner backend —
     the in-memory test double must be explicitly surfaced as degraded, not
-    conflated with a reachable durable production owner."""
+    conflated with a reachable durable production owner.
+
+    Reviewer finding 7 (gen-8 review): REGISTRY_STORE_BACKEND must be
+    explicitly set to opt into the in-memory test double (see
+    storage.build_registry_store) — this test injects it explicitly rather
+    than relying on a since-removed unset-implies-memory default.
+    """
     for key in ("REGISTRY_STORE_BACKEND", "PANTHEON_ENV", "PANTHEON_PERSISTENCE_POSTURE", "DATABASE_URL"):
         monkeypatch.delenv(key, raising=False)
+    monkeypatch.setenv("REGISTRY_STORE_BACKEND", "memory")
     reset_store()
     from . import main as registry_main
 
@@ -1655,3 +1667,243 @@ def test_advance_command_key_divergent_replay_is_409(strict_client):
         headers=_bearer(token),
     )
     assert diverged.status_code == 409, diverged.text
+
+
+# ===========================================================================
+# Regression proofs for the gen-8 independent Codex rejection of PR #5620
+# (exact head 6e0ed787803815cd36fff1a529a46fe486e6933d) — reproduced against
+# the in-memory backend so they run without a live database. Concurrency/
+# real-Postgres-only proofs (finding 2's serialized generic-route revision
+# lock, finding 8's receipts-table readiness probe) live in
+# test_owner_durability.py, gated on TEST_DATABASE_URL.
+# ===========================================================================
+
+
+def _cross_tenant_artifact_registration(*, artifact_id: str) -> dict:
+    """A schema-valid StrategyArtifact registration, derived from the
+    checked-in builtin (mirrors test_strategy_artifact.py's ``_artifact``/
+    ``mutate_strategy_artifact`` pattern) so these tenant-scoping tests
+    exercise real schema validation rather than a hand-rolled partial dict."""
+    parent = load_strategy_artifact_registration(BUILTIN_STRATEGY_ARTIFACT_PATHS[0])["strategy_artifact"]
+    artifact = mutate_strategy_artifact(
+        parent,
+        new_artifact_id=artifact_id,
+        new_version="1.1.0",
+        parameter_updates={"momentum_threshold": 0.03},
+        source_run_ids=["training-session-tenant-probe"],
+    )
+    return {
+        "registry_id": artifact_id,
+        "artifact_state": "candidate",
+        "strategy_artifact": artifact,
+    }
+
+
+def test_strategy_artifact_replay_from_different_tenant_is_denied_not_leaked(strict_client):
+    """Reviewer finding 1: a same-registry_id StrategyArtifact POST replay
+    from a *different* tenant than the entry's true owner must be denied
+    (403), not silently authorized and its private content returned."""
+    owner_token = _jwt(subject="artifact-owner", tenant="tenant-a")
+    other_token = _jwt(subject="artifact-intruder", tenant="tenant-b")
+    registration = _cross_tenant_artifact_registration(artifact_id="artifact-cross-tenant-probe")
+
+    created = strict_client.post(
+        "/api/registry/strategy-artifacts", json=registration, headers=_bearer(owner_token),
+    )
+    assert created.status_code == 200, created.text
+
+    denied_get = strict_client.get(
+        "/api/registry/strategy-artifacts/artifact-cross-tenant-probe", headers=_bearer(other_token),
+    )
+    assert denied_get.status_code == 403, denied_get.text
+
+    replay = strict_client.post(
+        "/api/registry/strategy-artifacts", json=registration, headers=_bearer(other_token),
+    )
+    assert replay.status_code == 403, replay.text
+
+
+def test_strategy_artifact_replay_from_same_tenant_still_succeeds(strict_client):
+    """Same-tenant replay of an identical StrategyArtifact registration must
+    keep succeeding as an idempotent no-op (not collateral damage from the
+    finding-1 cross-tenant fix)."""
+    token = _jwt(subject="artifact-owner-2", tenant="tenant-a")
+    registration = _cross_tenant_artifact_registration(artifact_id="artifact-same-tenant-probe")
+    created = strict_client.post(
+        "/api/registry/strategy-artifacts", json=registration, headers=_bearer(token),
+    )
+    assert created.status_code == 200, created.text
+
+    replay = strict_client.post(
+        "/api/registry/strategy-artifacts", json=registration, headers=_bearer(token),
+    )
+    assert replay.status_code == 200, replay.text
+    assert replay.json()["entry"]["registry_id"] == "artifact-same-tenant-probe"
+
+
+def test_strategy_spec_create_replay_after_metadata_edit_still_matches_original(strict_client):
+    """Reviewer finding 5: a same-registry_id StrategySpec create replay must
+    be compared against the entry's *original* creation content, not
+    whatever it has mutated into since a later, unrelated update_metadata
+    call — otherwise an exact replay of the original request is wrongly
+    rejected as "different content" just because metadata legitimately
+    drifted under a separate command."""
+    token = _jwt(subject="spec-owner", tenant="tenant-a")
+    registry_id = "reg-strategy-spec-metadata-drift-probe"
+    payload = {
+        "registry_id": registry_id,
+        "strategy_id": "spec-metadata-drift-strat",
+        "version": "1.0.0",
+        "lineage": {"source_run_ids": ["run-1"]},
+        "strategy_spec": _valid_spec("spec-metadata-drift-strat"),
+    }
+
+    created = strict_client.post(
+        "/api/registry/strategy-specs", json=payload, headers=_bearer(token),
+    )
+    assert created.status_code == 200, created.text
+    original_metadata = created.json()["entry"]["metadata"]
+
+    patched = strict_client.patch(
+        f"/api/registry/entries/{registry_id}/metadata",
+        json={
+            "expected_metadata": original_metadata,
+            "metadata": dict(original_metadata, operator_note="edited after creation"),
+        },
+        headers=_bearer(token),
+    )
+    assert patched.status_code == 200, patched.text
+
+    replay = strict_client.post(
+        "/api/registry/strategy-specs", json=payload, headers=_bearer(token),
+    )
+    assert replay.status_code == 200, replay.text
+    # The replay's identity-comparison succeeded (200, not 400) even though
+    # the live entry's metadata now differs from what was originally
+    # submitted; the *returned* entry still reflects the live, edited state
+    # — a replayed create is not a request to revert the operator's edit.
+    assert replay.json()["entry"]["metadata"]["operator_note"] == "edited after creation"
+
+    readback = strict_client.get(
+        f"/api/registry/strategy-specs/{registry_id}", headers=_bearer(token),
+    )
+    assert readback.json()["entry"]["metadata"]["operator_note"] == "edited after creation"
+
+
+def test_strategy_spec_create_replay_still_rejects_genuinely_different_content(strict_client):
+    """The finding-5 fix must not turn the replay comparison into a no-op —
+    a same-registry_id create with genuinely different original content
+    (never submitted before) must still be rejected (400)."""
+    token = _jwt(subject="spec-owner-2", tenant="tenant-a")
+    registry_id = "reg-strategy-spec-genuine-collision-probe"
+    payload = {
+        "registry_id": registry_id,
+        "strategy_id": "spec-genuine-collision-strat",
+        "version": "1.0.0",
+        "lineage": {"source_run_ids": ["run-1"]},
+        "strategy_spec": _valid_spec("spec-genuine-collision-strat"),
+    }
+    created = strict_client.post(
+        "/api/registry/strategy-specs", json=payload, headers=_bearer(token),
+    )
+    assert created.status_code == 200, created.text
+
+    different = dict(payload)
+    different["strategy_spec"] = _valid_spec(
+        "spec-genuine-collision-strat", caller_note="genuinely different content",
+    )
+    collision = strict_client.post(
+        "/api/registry/strategy-specs", json=different, headers=_bearer(token),
+    )
+    assert collision.status_code == 400, collision.text
+
+
+def test_advance_with_stale_expected_base_is_409_not_silently_ignored(strict_client):
+    """Reviewer finding 6: an advance request carrying an explicit,
+    caller-claimed base (expected_artifact_state/expected_version/
+    expected_updated_at) that is stale must be rejected (409), not silently
+    committed against whatever the row actually is regardless of the
+    caller's false premise."""
+    token = _jwt(subject="advance-base-writer", tenant="tenant-a")
+    created = _create_entry(strict_client, token, strategy_id="advance-stale-base-strat")
+    registry_id = created["entry"]["registry_id"]
+    original_version = created["entry"]["version"]
+    original_updated_at = created["entry"]["updated_at"]
+
+    first = strict_client.post(
+        f"/api/registry/entries/{registry_id}/advance",
+        json={"target_state": "candidate"},
+        headers=_bearer(token),
+    )
+    assert first.status_code == 200, first.text
+
+    stale = strict_client.post(
+        f"/api/registry/entries/{registry_id}/advance",
+        json={
+            "target_state": "approved",
+            "expected_artifact_state": "draft",
+            "expected_version": original_version,
+            "expected_updated_at": original_updated_at,
+        },
+        headers=_bearer(token),
+    )
+    assert stale.status_code == 409, stale.text
+
+    unchanged = strict_client.get(f"/api/registry/entries/{registry_id}", headers=_bearer(token))
+    assert unchanged.json()["entry"]["artifact_state"] == "candidate"
+
+
+def test_advance_with_matching_expected_base_succeeds(strict_client):
+    """The finding-6 fix must not reject a caller that supplies a base which
+    genuinely matches the current durable row."""
+    token = _jwt(subject="advance-base-writer-2", tenant="tenant-a")
+    created = _create_entry(strict_client, token, strategy_id="advance-fresh-base-strat")
+    registry_id = created["entry"]["registry_id"]
+    entry = created["entry"]
+
+    advanced = strict_client.post(
+        f"/api/registry/entries/{registry_id}/advance",
+        json={
+            "target_state": "candidate",
+            "expected_artifact_state": entry["artifact_state"],
+            "expected_version": entry["version"],
+            "expected_updated_at": entry["updated_at"],
+        },
+        headers=_bearer(token),
+    )
+    assert advanced.status_code == 200, advanced.text
+    assert advanced.json()["entry"]["artifact_state"] == "candidate"
+
+
+def test_metadata_and_advance_command_keys_do_not_share_a_receipt_namespace(strict_client):
+    """Reviewer finding 6: the same client-chosen command_key value used for
+    a metadata-CAS call and, separately, an artifact-state advance on the
+    same registry_id/tenant/actor must never be treated as one receipt
+    namespace — each command kind gets its own scoped receipt row."""
+    token = _jwt(subject="namespace-writer", tenant="tenant-a")
+    created = _create_entry(strict_client, token, strategy_id="receipt-namespace-strat")
+    registry_id = created["entry"]["registry_id"]
+    shared_key = "shared-command-key-001"
+
+    metadata_call = strict_client.patch(
+        f"/api/registry/entries/{registry_id}/metadata",
+        json={"expected_metadata": None, "metadata": {"note": "v1"}, "command_key": shared_key},
+        headers=_bearer(token),
+    )
+    assert metadata_call.status_code == 200, metadata_call.text
+    assert metadata_call.headers["X-Idempotent-Replay"] == "false"
+
+    advance_call = strict_client.post(
+        f"/api/registry/entries/{registry_id}/advance",
+        json={"target_state": "candidate", "command_key": shared_key},
+        headers=_bearer(token),
+    )
+    assert advance_call.status_code == 200, advance_call.text
+    assert advance_call.json()["entry"]["artifact_state"] == "candidate"
+
+    # Both commands actually took effect — neither one was treated as a
+    # (wrong-type) replay of the other's receipt.
+    final = strict_client.get(f"/api/registry/entries/{registry_id}", headers=_bearer(token))
+    final_entry = final.json()["entry"]
+    assert final_entry["metadata"] == {"note": "v1"}
+    assert final_entry["artifact_state"] == "candidate"

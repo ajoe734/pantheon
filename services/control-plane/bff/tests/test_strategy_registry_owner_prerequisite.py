@@ -119,7 +119,15 @@ def test_update_params_idempotent_replay_header_is_surfaced(mock_http, adapter):
     mock_http.return_value = (
         200,
         {"X-Idempotent-Replay": "true"},
-        {"entry": {"registry_id": "reg-001", "strategy_id": "strat-alpha", "metadata": {"note": "v1"}, "updated_at": "t1"}},
+        {
+            "entry": {
+                "registry_id": "reg-001",
+                "strategy_id": "strat-alpha",
+                "metadata": {"note": "v1"},
+                "updated_at": "t1",
+                "last_actor": {"actor_id": "operator-a", "tenant": "tenant-a"},
+            }
+        },
     )
 
     # mock_http.return_value applies identically to every call this makes
@@ -248,6 +256,7 @@ def test_update_params_replay_does_not_compare_against_mutable_latest_readback(m
         "metadata": {"note": "one"},
         "updated_at": "t1",
         "checksum": "sha256:one",
+        "last_actor": {"actor_id": "operator-a", "tenant": "tenant-a"},
     }
     call_responses = [
         # Pre-mutation owner GET (reviewer finding 6) — captures the
@@ -277,6 +286,216 @@ def test_update_params_replay_does_not_compare_against_mutable_latest_readback(m
     # authoritative than the original committed receipt itself. Only the
     # pre-mutation identity-verification GET and the PATCH itself run.
     assert mock_http.call_count == 2
+
+
+# ===========================================================================
+# Gen-8 independent Codex rejection of PR #5620 (findings 3-4): the owner
+# GET/PATCH responses above were compared for *internal consistency*
+# (readback matches the PATCH response) but never against what the caller
+# actually requested, and a replay's own claimed content was trusted with no
+# sanity check beyond the immutable identity fields that never change on a
+# metadata-only commit in the first place.
+# ===========================================================================
+
+
+@patch("services.control_plane.bff.command_adapters.strategy_adapter.http_request_json_with_headers")
+def test_update_params_readback_confirming_unapplied_metadata_is_rejected(mock_http, adapter):
+    """Reviewer finding 3: if the owner silently no-ops the write (the PATCH
+    response and the follow-up readback both report the *old*, unchanged
+    metadata), every prior check (self-consistency between PATCH response
+    and readback, scope/identity match) passed — but the requested update was
+    never actually applied. This must be rejected, not reported as
+    metadata_updated."""
+    baseline = {
+        "registry_id": "reg-001",
+        "strategy_id": "strat-alpha",
+        "owner_tenant": "tenant-a",
+        "version": "1.0.0",
+        "checksum": "sha256:original",
+        "metadata": {"note": "old"},
+        "updated_at": "2026-09-06T01:00:00Z",
+        "last_actor": {"actor_id": "operator-a", "tenant": "tenant-a"},
+    }
+    mock_http.side_effect = [
+        (200, {}, {"entry": baseline}),  # pre-mutation identity GET
+        (200, {"X-Idempotent-Replay": "false"}, {"entry": baseline}),  # PATCH: unchanged
+        (200, {}, {"entry": baseline}),  # follow-up readback: also unchanged
+    ]
+
+    with pytest.raises(ActionUnavailableError) as excinfo:
+        adapter.execute(
+            "cmd-unapplied",
+            "StrategyAction",
+            {
+                "entity_type": "strategy",
+                "strategy_id": "strat-alpha",
+                "registry_id": "reg-001",
+                "action_id": "update_params",
+                "expected_metadata": {"note": "old"},
+                "metadata": {"note": "new"},
+            },
+        )
+    assert excinfo.value.error_code == "READBACK_MISMATCH"
+
+
+@patch("services.control_plane.bff.command_adapters.strategy_adapter.http_request_json_with_headers")
+def test_update_params_readback_for_wrong_scope_is_rejected(mock_http, adapter):
+    """Reviewer finding 3: a follow-up readback that reports a *different*
+    strategy_id/owner_tenant/version than the command targeted must be
+    rejected even if its checksum/updated_at/metadata happen to match the
+    PATCH response — those three fields alone are not proof it is the same
+    aggregate."""
+    baseline = {
+        "registry_id": "reg-001",
+        "strategy_id": "strat-alpha",
+        "owner_tenant": "tenant-a",
+        "version": "1.0.0",
+        "checksum": "sha256:original",
+        "metadata": {"note": "old"},
+        "updated_at": "2026-09-06T01:00:00Z",
+        "last_actor": {"actor_id": "operator-a", "tenant": "tenant-a"},
+    }
+    patched = dict(baseline, metadata={"note": "new"}, updated_at="2026-09-06T01:00:01Z")
+    wrong_scope_readback = dict(patched, strategy_id="strat-other", owner_tenant="tenant-other", version="9.0.0")
+    mock_http.side_effect = [
+        (200, {}, {"entry": baseline}),
+        (200, {"X-Idempotent-Replay": "false"}, {"entry": patched}),
+        (200, {}, {"entry": wrong_scope_readback}),
+    ]
+
+    with pytest.raises(ActionUnavailableError) as excinfo:
+        adapter.execute(
+            "cmd-wrong-scope",
+            "StrategyAction",
+            {
+                "entity_type": "strategy",
+                "strategy_id": "strat-alpha",
+                "registry_id": "reg-001",
+                "action_id": "update_params",
+                "expected_metadata": {"note": "old"},
+                "metadata": {"note": "new"},
+            },
+        )
+    assert excinfo.value.error_code == "READBACK_MISMATCH"
+
+
+@patch("services.control_plane.bff.command_adapters.strategy_adapter.http_request_json_with_headers")
+def test_update_params_replay_with_unrelated_metadata_is_rejected(mock_http, adapter):
+    """Reviewer finding 4: a replay response reporting metadata that differs
+    from what this exact command requested must be rejected — matching
+    registry_id/checksum/version/owner_tenant is not sufficient on its own
+    for a metadata commit, since those fields are exactly what stays fixed
+    while metadata is what changed."""
+    baseline = {
+        "registry_id": "reg-001",
+        "strategy_id": "strat-alpha",
+        "owner_tenant": "tenant-a",
+        "version": "1.0.0",
+        "checksum": "sha256:original",
+        "metadata": {"note": "old"},
+        "updated_at": "2026-09-06T01:00:00Z",
+        "last_actor": {"actor_id": "operator-a", "tenant": "tenant-a"},
+    }
+    forged_replay = dict(
+        baseline,
+        metadata={"note": "unrelated"},
+        last_actor={"actor_id": "other-actor", "tenant": "tenant-a"},
+        updated_at=None,
+    )
+    mock_http.side_effect = [
+        (200, {}, {"entry": baseline}),
+        (200, {"X-Idempotent-Replay": "true"}, {"entry": forged_replay}),
+    ]
+
+    with pytest.raises(ActionUnavailableError) as excinfo:
+        adapter.execute(
+            "cmd-replay-unrelated",
+            "StrategyAction",
+            {
+                "entity_type": "strategy",
+                "strategy_id": "strat-alpha",
+                "registry_id": "reg-001",
+                "action_id": "update_params",
+                "expected_metadata": {"note": "old"},
+                "metadata": {"note": "new"},
+            },
+        )
+    assert excinfo.value.error_code == "REPLAY_METADATA_MISMATCH"
+
+
+@patch("services.control_plane.bff.command_adapters.strategy_adapter.http_request_json_with_headers")
+def test_update_params_replay_missing_commit_time_is_rejected(mock_http, adapter):
+    """Reviewer finding 4: a replay response with the requested metadata but
+    no commit timestamp is not a trustworthy original receipt."""
+    baseline = {
+        "registry_id": "reg-001",
+        "strategy_id": "strat-alpha",
+        "owner_tenant": "tenant-a",
+        "version": "1.0.0",
+        "checksum": "sha256:original",
+        "metadata": {"note": "old"},
+        "updated_at": "2026-09-06T01:00:00Z",
+        "last_actor": {"actor_id": "operator-a", "tenant": "tenant-a"},
+    }
+    replay_missing_time = dict(baseline, metadata={"note": "new"}, updated_at=None)
+    mock_http.side_effect = [
+        (200, {}, {"entry": baseline}),
+        (200, {"X-Idempotent-Replay": "true"}, {"entry": replay_missing_time}),
+    ]
+
+    with pytest.raises(ActionUnavailableError) as excinfo:
+        adapter.execute(
+            "cmd-replay-no-time",
+            "StrategyAction",
+            {
+                "entity_type": "strategy",
+                "strategy_id": "strat-alpha",
+                "registry_id": "reg-001",
+                "action_id": "update_params",
+                "expected_metadata": {"note": "old"},
+                "metadata": {"note": "new"},
+            },
+        )
+    assert excinfo.value.error_code == "REPLAY_MISSING_COMMIT_TIME"
+
+
+@patch("services.control_plane.bff.command_adapters.strategy_adapter.http_request_json_with_headers")
+def test_update_params_replay_missing_actor_is_rejected(mock_http, adapter):
+    """Reviewer finding 4: a replay response with the requested metadata and
+    a commit timestamp but no recorded actor is not a trustworthy original
+    receipt either."""
+    baseline = {
+        "registry_id": "reg-001",
+        "strategy_id": "strat-alpha",
+        "owner_tenant": "tenant-a",
+        "version": "1.0.0",
+        "checksum": "sha256:original",
+        "metadata": {"note": "old"},
+        "updated_at": "2026-09-06T01:00:00Z",
+        "last_actor": {"actor_id": "operator-a", "tenant": "tenant-a"},
+    }
+    replay_missing_actor = dict(
+        baseline, metadata={"note": "new"}, updated_at="2026-09-06T01:00:01Z", last_actor=None,
+    )
+    mock_http.side_effect = [
+        (200, {}, {"entry": baseline}),
+        (200, {"X-Idempotent-Replay": "true"}, {"entry": replay_missing_actor}),
+    ]
+
+    with pytest.raises(ActionUnavailableError) as excinfo:
+        adapter.execute(
+            "cmd-replay-no-actor",
+            "StrategyAction",
+            {
+                "entity_type": "strategy",
+                "strategy_id": "strat-alpha",
+                "registry_id": "reg-001",
+                "action_id": "update_params",
+                "expected_metadata": {"note": "old"},
+                "metadata": {"note": "new"},
+            },
+        )
+    assert excinfo.value.error_code == "REPLAY_MISSING_ACTOR"
 
 
 @patch("services.control_plane.bff.command_adapters.strategy_adapter.http_request_json_with_headers")

@@ -91,6 +91,18 @@ class AdvanceRequest(BaseModel):
     advance under the same key returns the originally-committed entry
     instead of re-running the transition or raising a spurious "forbidden
     transition" error once the entry has already moved."""
+    expected_artifact_state: Optional[ArtifactState] = None
+    expected_version: Optional[str] = None
+    expected_updated_at: Optional[str] = None
+    """Reviewer finding 6 (gen-8 review): the caller's own claimed base
+    snapshot. Without these, the CAS this route performs always bound to a
+    freshly server-read current row, never anything the caller actually
+    supplied — so a caller advancing against a stale belief about the
+    entry's current state/version/updated_at had that belief silently
+    discarded instead of rejected as a 409 stale-base conflict. Supplying
+    any of them binds the CAS to that exact claimed field; a caller that
+    does not track a base can omit all three and keep the prior
+    server-reread behavior."""
 
 
 class DeploymentSummaryUpdate(BaseModel):
@@ -727,8 +739,23 @@ def _ensure_strategy_spec_registration_matches(
     view: RegistryEntryView,
     create_payload: RegistryEntryCreate,
     registry_id: str,
+    *,
+    receipt_entry: Optional[RegistryEntry] = None,
 ) -> RegistryEntryView:
-    """Validate StrategySpec create-if-absent replay against existing content."""
+    """Validate StrategySpec create-if-absent replay against existing content.
+
+    ``receipt_entry`` (the entry exactly as it was at its original creation
+    — see ``RegistryService.get_creation_receipt``) is compared against the
+    caller's replay payload when available, instead of ``view.entry``'s
+    live current fields (reviewer finding 5, gen-8 review): a later,
+    unrelated ``update_metadata`` call can legitimately drift ``metadata``
+    away from what was originally submitted, and comparing a replay against
+    that drifted content would wrongly reject an exact replay of the
+    original request as "different content". The row *returned* stays the
+    live ``view`` regardless — a replayed create is not a request to revert
+    real progress (e.g. an approval already granted) back to its original
+    draft state, only the equality check uses the immutable original.
+    """
 
     if view.entry.registry_id != registry_id:
         # register_if_absent's _REVISION_UNIQUE_FIELDS collision: a
@@ -742,7 +769,7 @@ def _ensure_strategy_spec_registration_matches(
             f"requested registry_id={registry_id!r}."
         )
     view = _ensure_strategy_spec_view(view, registry_id)
-    entry = view.entry
+    entry = receipt_entry if receipt_entry is not None else view.entry
     if (
         entry.strategy_id != create_payload.strategy_id
         or entry.version != create_payload.version
@@ -814,6 +841,7 @@ def _register_strategy_artifact(
     registry_service: RegistryService,
     registration: dict[str, Any],
     *,
+    ctx: AuthContext,
     actor: Optional[dict[str, Any]] = None,
 ) -> RegistryEntryView:
     registry_id, create_payload = build_strategy_artifact_registry_payload(registration)
@@ -827,19 +855,38 @@ def _register_strategy_artifact(
             f"requested registry_id={registry_id!r}."
         )
     view = _ensure_strategy_artifact_view(view, registry_id)
+    # Reviewer finding 1 (gen-8 review): a same-registry_id POST replay must
+    # authorize the *existing* entry's immutable owner_tenant before
+    # comparing/returning it — otherwise a caller in a different tenant than
+    # the entry's true owner could read another tenant's private
+    # StrategyArtifact simply by re-POSTing its identity. This is a read
+    # authorization (mirrors `_can_read`), not a write authorization: a
+    # built-in artifact's own idempotent re-registration (any caller can
+    # replay it with identical content — see strategy_artifact.py
+    # ``ensure_builtin_strategy_artifacts``, run on every process start) must
+    # keep succeeding, and builtins are already public-read for any verified
+    # caller; only a genuinely different, non-built-in tenant's private entry
+    # must be denied here.
+    _authorize_read(ctx, view)
+    # Reviewer finding 5 (gen-8 review): compare against the entry's
+    # immutable original-creation content when available, not whatever it
+    # has mutated into since (e.g. a later update_metadata edit) — mirrors
+    # the StrategySpec facade's identical use of get_creation_receipt above.
+    receipt_view = registry_service.get_creation_receipt(registry_id)
+    comparison_entry = receipt_view.entry if receipt_view is not None else view.entry
     expected_artifact = (create_payload.metadata or {}).get("strategy_artifact")
-    existing_artifact = (view.entry.metadata or {}).get("strategy_artifact")
+    existing_artifact = (comparison_entry.metadata or {}).get("strategy_artifact")
     if (
-        view.entry.checksum != create_payload.checksum
+        comparison_entry.checksum != create_payload.checksum
         or existing_artifact != expected_artifact
-        or view.entry.strategy_id != create_payload.strategy_id
-        or view.entry.version != create_payload.version
-        or view.entry.lineage.to_dict() != create_payload.lineage.to_dict()
-        or view.entry.storage_ref.to_dict() != create_payload.storage_ref.to_dict()
-        or view.entry.producer_run_id != create_payload.producer_run_id
-        or view.entry.evaluation_summary != create_payload.evaluation_summary
-        or view.entry.rollback_target != create_payload.rollback_target
-        or view.entry.metadata != create_payload.metadata
+        or comparison_entry.strategy_id != create_payload.strategy_id
+        or comparison_entry.version != create_payload.version
+        or comparison_entry.lineage.to_dict() != create_payload.lineage.to_dict()
+        or comparison_entry.storage_ref.to_dict() != create_payload.storage_ref.to_dict()
+        or comparison_entry.producer_run_id != create_payload.producer_run_id
+        or comparison_entry.evaluation_summary != create_payload.evaluation_summary
+        or comparison_entry.rollback_target != create_payload.rollback_target
+        or comparison_entry.metadata != create_payload.metadata
     ):
         raise RegistryError(
             f"StrategyArtifact registry_id already exists with different content: {registry_id}"
@@ -1016,6 +1063,44 @@ async def register_entry(
             )
             return view
         create_payload, registry_id = _build_payload()
+        if (
+            create_payload.artifact_type == ArtifactType.STRATEGY_SPEC
+            and (create_payload.metadata or {}).get("strategy_spec") is not None
+        ):
+            # Reviewer finding 2 (gen-8 review): a full StrategySpec (embedded
+            # metadata.strategy_spec content) submitted through this generic
+            # route must commit through the same per-strategy_id serialized
+            # invariant as the dedicated POST /api/registry/strategy-specs
+            # facade (RegistryService.register_strategy_spec_revision).
+            # Calling plain register() here only validated the version/
+            # lineage invariant via a separate, unlocked pre-check
+            # (_validate_strategy_spec_version_lineage above) and then
+            # inserted unconditionally — two concurrent requests for two
+            # different "next" versions of the same strategy_id could both
+            # pass that pre-check against the same stale "latest" and both
+            # commit, since the store's (strategy_id, version, artifact_type)
+            # unique_fields constraint only catches two requests targeting
+            # the *same* version, never "there must be exactly one next
+            # revision from the current latest".
+            view, created = registry_service.register_strategy_spec_revision(
+                create_payload,
+                registry_id,
+                validate_lineage=_strategy_spec_lineage_validator(
+                    ctx, create_payload.strategy_id, create_payload.version, create_payload.lineage,
+                ),
+                actor=_actor_context(ctx),
+            )
+            if not created:
+                # This route always generates a fresh, randomly-suffixed
+                # registry_id, so `created=False` can only mean a genuine
+                # (strategy_id, version, artifact_type) collision with an
+                # already-registered *different* registry_id — never a
+                # same-key replay of this call.
+                raise RegistryConflictError(
+                    f"strategy_id={create_payload.strategy_id!r} version={create_payload.version!r} "
+                    f"is already registered as registry_id={view.entry.registry_id!r}."
+                )
+            return view
         return registry_service.register(create_payload, registry_id, actor=_actor_context(ctx))
     except RegistryConflictError as e:
         raise HTTPException(status_code=409, detail=str(e))
@@ -1075,6 +1160,9 @@ async def advance_state(
             approval_decision_id=body.approval_decision_id,
             command_key=body.command_key,
             actor=_actor_context(ctx),
+            expected_artifact_state=body.expected_artifact_state,
+            expected_version=body.expected_version,
+            expected_updated_at=body.expected_updated_at,
         )
     except RegistryNotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e))
@@ -1242,10 +1330,12 @@ async def register_strategy_spec(
         # returning it — otherwise a caller in a different tenant than the
         # entry's true owner could read another tenant's StrategySpec simply
         # by re-POSTing its identity.
+        receipt_view = registry_service.get_creation_receipt(registry_id)
         matched = _ensure_strategy_spec_registration_matches(
             view,
             create_payload,
             registry_id,
+            receipt_entry=receipt_view.entry if receipt_view is not None else None,
         )
         return _authorize_write(ctx, matched)
     except RegistryConflictError as e:
@@ -1312,6 +1402,9 @@ async def advance_strategy_spec_state(
             approval_decision_id=body.approval_decision_id,
             command_key=body.command_key,
             actor=_actor_context(ctx),
+            expected_artifact_state=body.expected_artifact_state,
+            expected_version=body.expected_version,
+            expected_updated_at=body.expected_updated_at,
         )
     except RegistryNotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e))
@@ -1335,6 +1428,7 @@ async def register_strategy_artifact(
         return _register_strategy_artifact(
             registry_service,
             _strategy_artifact_registration(payload),
+            ctx=ctx,
             actor=_actor_context(ctx),
         )
     except RegistryConflictError as e:
@@ -1417,6 +1511,7 @@ async def mutate_strategy_artifact_entry(
                 if body.source_run_ids
                 else None,
             },
+            ctx=ctx,
             actor=_actor_context(ctx),
         )
     except RegistryNotFoundError as e:
@@ -1452,6 +1547,9 @@ async def advance_strategy_artifact_state(
             approval_decision_id=body.approval_decision_id,
             command_key=body.command_key,
             actor=_actor_context(ctx),
+            expected_artifact_state=body.expected_artifact_state,
+            expected_version=body.expected_version,
+            expected_updated_at=body.expected_updated_at,
         )
     except RegistryNotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e))
@@ -1705,6 +1803,9 @@ async def advance_allocation_policy_artifact_state(
             approval_decision_id=body.approval_decision_id,
             command_key=body.command_key,
             actor=_actor_context(ctx),
+            expected_artifact_state=body.expected_artifact_state,
+            expected_version=body.expected_version,
+            expected_updated_at=body.expected_updated_at,
         )
     except RegistryNotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e))

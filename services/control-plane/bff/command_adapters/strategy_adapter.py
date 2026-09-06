@@ -311,6 +311,41 @@ class StrategyCommandAdapter(DomainCommandAdapter):
                     entity_type="Strategy",
                     error_code="READBACK_MISMATCH",
                 )
+            # Reviewer finding 4 (gen-8 review): registry_id/checksum/
+            # version/owner_tenant identity matching is not sufficient on
+            # its own for a *metadata* commit — those fields are exactly
+            # what stays fixed while metadata is what changed, so a replay
+            # response carrying unrelated metadata, no recorded actor, or a
+            # null commit timestamp passed every check above while reporting
+            # a fabricated "metadata_updated" success. A genuine original
+            # command receipt always reflects the metadata this exact
+            # command actually requested, carries a non-null commit
+            # timestamp, and records the actor who committed it.
+            if entry.get("metadata") != new_metadata:
+                raise ActionUnavailableError(
+                    f"Registry metadata PATCH replay for registry_id={registry_id!r} reports "
+                    "metadata different from what this exact command originally requested; "
+                    "refusing to trust it as this command's original receipt.",
+                    action_id=action_id,
+                    entity_type="Strategy",
+                    error_code="REPLAY_METADATA_MISMATCH",
+                )
+            if not entry.get("updated_at"):
+                raise ActionUnavailableError(
+                    f"Registry metadata PATCH replay for registry_id={registry_id!r} carries no "
+                    "commit timestamp; a genuinely committed original receipt always has one.",
+                    action_id=action_id,
+                    entity_type="Strategy",
+                    error_code="REPLAY_MISSING_COMMIT_TIME",
+                )
+            if not isinstance(entry.get("last_actor"), dict) or not entry["last_actor"].get("actor_id"):
+                raise ActionUnavailableError(
+                    f"Registry metadata PATCH replay for registry_id={registry_id!r} carries no "
+                    "recorded actor; a genuinely committed original receipt always has one.",
+                    action_id=action_id,
+                    entity_type="Strategy",
+                    error_code="REPLAY_MISSING_ACTOR",
+                )
         elif not isinstance(entry, dict) or not entry.get("registry_id"):
             # The PATCH nominally succeeded (no HTTPError was raised) but its
             # body carries no confirmable entry snapshot (e.g. 200 {}).
@@ -384,15 +419,32 @@ class StrategyCommandAdapter(DomainCommandAdapter):
                     retryable=True,
                     downstream_status=503,
                 )
+            # Reviewer finding 3 (gen-8 review): comparing the readback only
+            # against the PATCH response's own self-reported checksum/
+            # updated_at/metadata was not enough on two counts:
+            #   (1) it never checked that the *requested* metadata was
+            #       actually applied — an owner that silently no-op'd the
+            #       write (returning the unchanged old metadata in both the
+            #       PATCH response and the follow-up GET) satisfied every
+            #       check while never actually updating anything.
+            #   (2) it never verified the follow-up GET's own identity
+            #       (registry_id/strategy_id/owner_tenant/version) — a
+            #       readback for a *different* aggregate that happened to
+            #       carry the same checksum/updated_at/metadata as the PATCH
+            #       response also satisfied every check.
             if (
-                readback_entry.get("checksum") != entry.get("checksum")
+                readback_entry.get("registry_id") != registry_id
+                or not _belongs_to_requested_strategy(readback_entry)
+                or _diverges_from_original(readback_entry)
+                or readback_entry.get("metadata") != new_metadata
+                or readback_entry.get("checksum") != entry.get("checksum")
                 or readback_entry.get("updated_at") != entry.get("updated_at")
-                or readback_entry.get("metadata") != entry.get("metadata")
             ):
                 raise ActionUnavailableError(
                     f"Registry metadata PATCH response for registry_id={registry_id!r} does not "
-                    "match a follow-up owner GET readback; refusing to report success on a "
-                    "discrepant state.",
+                    "match a follow-up owner GET readback, or the readback does not confirm the "
+                    "requested metadata was actually applied against the original immutable "
+                    "identity; refusing to report success on a discrepant or unapplied state.",
                     action_id=action_id,
                     entity_type="Strategy",
                     error_code="READBACK_MISMATCH",

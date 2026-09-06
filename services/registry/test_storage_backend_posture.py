@@ -1,13 +1,26 @@
-"""Registry storage backend selection must fail closed in production posture
-rather than silently returning the in-memory test double.
+"""Registry storage backend selection must fail closed rather than silently
+returning the in-memory test double.
 
-architecture-resumption-sa-sd.md §3.1: an unset/empty REGISTRY_STORE_BACKEND
-in a staging/production persistence posture (PANTHEON_ENV / PANTHEON_PERSISTENCE_POSTURE)
-must never resolve to the in-memory RegistryStore. Dev/test posture keeps the
-explicit, documented memory default so the existing unit-test suite (which
-never sets a production posture) is unaffected — see services/registry/conftest.py.
-This mirrors the existing repo-wide pattern in
-services/foundation/persistence_posture.py used by other owner services.
+architecture-resumption-sa-sd.md §3.1: REGISTRY_STORE_BACKEND must always be
+explicitly set to ``memory`` or ``postgres`` — "memory is explicitly injected
+test-only, never missing-config/connection/schema fallback".
+
+Reviewer finding 7 (gen-8 review): an earlier revision of this module
+documented and tested a "dev posture keeps an implicit memory default"
+carve-out. That carve-out itself was the defect: an entirely unconfigured
+mounted app (no PANTHEON_ENV, no REGISTRY_STORE_BACKEND) silently served real
+writes against the in-memory store, which is indistinguishable from a
+working deployment until data vanishes on process exit. There is no
+posture-based carve-out anymore — an unset backend fails closed in every
+posture; dev/test callers opt into memory the same explicit way
+services/registry/conftest.py already does for this package's whole unit
+test run.
+
+Backend selection also fails closed the same way
+services/foundation/persistence_posture.py already does for every other
+service: in an enforced posture (PANTHEON_ENV / PANTHEON_PERSISTENCE_POSTURE
+in {stage, staging, prod, production, ...}), REGISTRY_STORE_BACKEND must
+resolve to postgres or this raises RuntimeError.
 """
 from __future__ import annotations
 
@@ -30,9 +43,21 @@ def clean_env(monkeypatch):
     yield monkeypatch
 
 
-def test_unset_backend_in_dev_posture_defaults_to_memory(clean_env):
-    """Dev posture (the default when no PANTHEON_ENV is set) keeps the
-    explicit, documented memory test-double default."""
+def test_unset_backend_always_fails_closed_even_in_dev_posture(clean_env):
+    """Reviewer finding 7 (gen-8 review): an unset REGISTRY_STORE_BACKEND
+    must raise even in dev posture (no PANTHEON_ENV set) — the mounted app
+    never silently serves real writes against the in-memory test double just
+    because nothing was configured at all. Explicit opt-in only (see
+    test_explicit_memory_backend_in_dev_posture_is_allowed below)."""
+    with pytest.raises(RuntimeError):
+        build_registry_store()
+
+
+def test_explicit_memory_backend_in_dev_posture_is_allowed(clean_env):
+    """An explicit REGISTRY_STORE_BACKEND=memory (as services/registry/conftest.py
+    sets for this whole package's unit test run) is the documented test-only
+    opt-in into the in-memory test double."""
+    clean_env.setenv("REGISTRY_STORE_BACKEND", "memory")
     store = build_registry_store()
     assert isinstance(store, RegistryStore)
 

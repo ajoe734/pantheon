@@ -60,10 +60,12 @@ def _registry_owner_dependency() -> dict:
         # reported the same as a reachable durable production owner.
         return {"status": "degraded", "backend": "memory", "detail": "in-memory test double selected"}
     entries = getattr(store, "_entries", None)
+    receipts = getattr(store, "_receipts", None)
     if entries is None or not hasattr(entries, "_connect"):
         return {"status": "error", "detail": "registry postgres store has no connection handle"}
     table = getattr(entries, "table", None)
-    if not table:
+    receipts_table = getattr(receipts, "table", None) if receipts is not None else None
+    if not table or not receipts_table:
         return {"status": "error", "detail": "registry postgres store has no configured table"}
     try:
         with entries._connect() as conn:
@@ -76,7 +78,15 @@ def _registry_owner_dependency() -> dict:
             # pool — a fresh, short-lived connection, matching the rest of
             # this function) so a missing schema/table fails closed here
             # instead of surfacing only on a caller's first real request.
+            #
+            # Reviewer finding 8 (gen-8 review): probing only the entries
+            # table let /readyz report ready=true while the command-receipts
+            # table (required by every idempotency-keyed create/metadata/
+            # advance commit) was missing entirely, so the very next
+            # idempotent write raised a 500. Probe both required owner
+            # tables, not just entries.
             conn.execute(f"SELECT 1 FROM {table} LIMIT 0")
+            conn.execute(f"SELECT 1 FROM {receipts_table} LIMIT 0")
     except Exception as exc:
         return {"status": "error", "detail": f"registry postgres owner table probe failed: {exc}"}
     return {"status": "ok", "backend": "postgres"}
