@@ -625,7 +625,7 @@ def _strategy_spec_register_payload(body: StrategySpecRegisterRequest) -> Regist
         producer_run_id=body.producer_run_id or source_seed_id or None,
         evaluation_summary=body.evaluation_summary,
         rollback_target=body.rollback_target,
-        metadata=metadata,
+        metadata=metadata or None,
     )
 
 

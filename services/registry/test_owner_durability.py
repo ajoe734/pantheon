@@ -109,6 +109,8 @@ def _register(client: TestClient, **overrides) -> dict:
         "version": "1.0.0",
         "artifact_state": "draft",
         "checksum": "sha256:cafef00d",
+        "lineage": {"source_run_ids": ["run-durability"]},
+        "storage_ref": {"backend": "object_store", "path": "spec.json"},
     }
     payload.update(overrides)
     resp = client.post("/api/registry/entries", json=payload)
