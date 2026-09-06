@@ -1,0 +1,71 @@
+{
+  "task_id": "GOV-APPROVAL-AUTHORITY-PREREQUISITE-001",
+  "record_kind": "implementation_checkpoint_not_acceptance",
+  "status": "incomplete_requires_artifact_contract_revision",
+  "source_commit": "bdb017d71c4c75178ea637423d38cda48d3e7739",
+  "source_tree": "3d3290b5f2214a5169806f2e4dc30899caf13f00",
+  "base_commit": "96294dcf3",
+  "anchors": ["7168b5995", "bdb017d71"],
+  "scope_hold": {
+    "kind": "external",
+    "required_actor": "Human/Ops",
+    "required_artifact_addition": "services/deployment/test_l12_dep_001_dispatcher.py",
+    "reason": "The existing full paper dispatcher acceptance creates Registry/ApprovalDecision local JSON snapshots and expects them to authorize plan creation. Retiring that authority, required by this task, now rejects its plan at line 381. The test must be migrated to genuine scoped owner reads while preserving its terminal plan/binding assertions. It is not declared in this task's exact artifacts and may not be edited before formal operator scope revision.",
+    "canonical_rule": "Precise artifacts only; genuine checkpoint and formal operator revision before any undeclared edit.",
+    "declared_dependencies": "All three declared dependencies were satisfied at dispatch; this is not a task dependency blocker."
+  },
+  "validation": [
+    {
+      "command": "GOV_APPROVAL_TEST_DSN=<isolated-db> timeout 120 .venv-pantheon/bin/python -m pytest -q services/governance/test_approval_authority_postgres.py --tb=short",
+      "exit_code": 0,
+      "passed": 20,
+      "elapsed_seconds": 8.17,
+      "coverage": "Mounted Governance HTTP; all seven existing risk/role positives including automated_gate; required claims; tenant private IDs; body role escalation; second fresh interpreter original proposal receipt replay; two live processes competing on review CAS; same-key divergent request; PostgreSQL audit constraint failure rolls back decision and receipt."
+    },
+    {
+      "command": "GOV_APPROVAL_TEST_DSN=<isolated-db> timeout 120 .venv-pantheon/bin/python -m pytest -q services/governance/test_approval_authority_postgres.py services/control-plane/governance/test_approval_decision.py services/control-plane/governance/test_paper_approval_decision.py --tb=short",
+      "exit_code": 0,
+      "passed": 74,
+      "elapsed_seconds": 30.70,
+      "note": "Includes the previous 20-case suite again; do not add the two totals as unique cases."
+    },
+    {
+      "command": "REGISTRY_STORE_BACKEND=memory timeout 120 .venv-pantheon/bin/python -m pytest -q services/governance/test_governance_api.py services/governance/test_human_gate_api.py services/governance/test_freeze_rollback_store.py services/governance/test_consultation_handoff.py services/runtime-manager/test_deploy_authority.py services/runtime-manager/test_promotion_authority.py services/deployment/test_service.py services/deployment/test_dep001_rebaseline_service.py services/persona/test_training_target_owner.py --tb=short",
+      "exit_code": 1,
+      "passed": 40,
+      "failed": 95,
+      "elapsed_seconds": 35.64,
+      "note": "NOT acceptance. Existing fixtures/callers still use unauthenticated approval requests, unversioned commands, generic fetch callbacks, old Persona verifier signature and local/request-supplied Deployment authority. All failures remain open; no tests or assertions were deleted."
+    },
+    {
+      "command": "REGISTRY_STORE_BACKEND=memory timeout 60 .venv-pantheon/bin/python -m pytest -q services/deployment/test_l12_dep_001_dispatcher.py::test_approved_paper_command_reaches_terminal_plan_and_binding --tb=short",
+      "exit_code": 1,
+      "failed": 1,
+      "elapsed_seconds": 1.34,
+      "failure": "services/deployment/test_l12_dep_001_dispatcher.py:381: expected 201, received 422: Registry owner URL and scoped read principal required",
+      "note": "Concrete undeclared-artifact checkpoint. The original fixture writes local Registry/ApprovalDecision JSON at lines 274-309 and relies on its production selector."
+    }
+  ],
+  "isolated_resources": {
+    "container_name": "gov-approval-prereq-test",
+    "container_id": "691fd0d293cdd09d6133f0e35510a06348f99318f814a8419824a64e1cbfcd75",
+    "image": "postgres:16",
+    "image_digest": "sha256:f1c3376c26f2609ab9f29f71f824103fe2fcd8ee0346485cb6122a4f93df6f94",
+    "database": "gov_approval_test",
+    "host_binding": "127.0.0.1:32780",
+    "isolation": "Dedicated task container, ephemeral container filesystem, random per-batch schemas, synthetic tenant/principals, in-memory random JWT test key. No existing business database, hosted service or account grant was used.",
+    "application_processes": "All spawned uvicorn interpreters terminated and waited in fixture finally blocks."
+  },
+  "remaining_required_work": [
+    "Formal exact-artifact addition before migrating the existing full paper dispatcher test.",
+    "Complete all in-scope regression migration/fixes; currently 95 failures, not a reviewed delivery.",
+    "Full genuine Governance -> Registry APPROVED -> Deployment/Runtime and Persona target-bound positive/negative HTTP proof remains outstanding.",
+    "Complete common reader malformed/unavailable/redirect and exact ID/version/digest/conditional/revocation tests; approved-decision response-loss replay, fresh-process restart, receipt/commit failure and decided competition proof remain outstanding.",
+    "Finish Deployment projection authority, Runtime promotion integration, scoped consumer configuration, contract/schema and Overlay handoff documentation.",
+    "Audit the entire plan section 3 matrix; no self-reduced tested slice is accepted.",
+    "Replace this checkpoint record with genuine completed evidence before exact-head handoff, independent Codex2 canonical review, CI, integrator merge and owner done."
+  ],
+  "independent_review": "not requested; checkpoint is not ready",
+  "merged": false,
+  "hosted_acceptance": false
+}
