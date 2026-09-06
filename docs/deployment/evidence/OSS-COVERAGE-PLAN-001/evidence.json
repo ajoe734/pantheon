@@ -1,0 +1,108 @@
+{
+  "task_id": "OSS-COVERAGE-PLAN-001",
+  "owner": "Claude",
+  "reviewer": "Codex",
+  "summary": "Version the frozen sixteen-candidate simplification execution plan into docs/plans/system-simplification-20260906/, publish the initial dependency-coverage disposition ledger with status explicitly planned, and reconcile the frozen inventory counts against current Pantheon dev and execute-plans dev.",
+  "source_packet": {
+    "packet_id": "pkt-llm-oss-simplification-execution-20260906-v2-01",
+    "conversation_id": "pantheon-llm-oss-simplification-20260906",
+    "source_dir": "/home/chloe_ong_dev_cctech_support_com/code/pantheon/.orchestrator/assistant-dev-packets/sources/pkt-llm-oss-simplification-execution-20260906-v2",
+    "audit_pr": 5621,
+    "audit_commit": "70e7abadaa4800f6d58acbbe3189a76c932d149d",
+    "audit_baseline_pantheon": "471dc5391a0f9cbde54d51730891583043708e42",
+    "audit_baseline_execute_plans": "5d4f385284b44a30e10764426a47fd808a7ae3cb"
+  },
+  "copied_verbatim": [
+    {
+      "file": "docs/plans/system-simplification-20260906/COVERAGE.md",
+      "source": "COVERAGE.md",
+      "sha256": "06d45f4f51a70c5efb0130fd5613f5f53abfa6f9f86bdeea501f1e340525368e",
+      "identical_to_source": true,
+      "matches_dev_bridge_source_ref": true
+    },
+    {
+      "file": "docs/plans/system-simplification-20260906/EXECUTION_PLAN.md",
+      "source": "EXECUTION_PLAN.md",
+      "sha256": "5e2fc8f0fcd0b0b8fd7eb1b70a68d6d0bdb4cd883be4edcd51db345ff89d4cc4",
+      "identical_to_source": true,
+      "matches_dev_bridge_source_ref": true
+    },
+    {
+      "file": "docs/plans/system-simplification-20260906/tasks.json",
+      "source": "tasks.json",
+      "sha256": "2b253038baa20bfb542f38f490253644461687aa8c493c1a17c0af31248f2b01",
+      "identical_to_source": true,
+      "matches_dev_bridge_source_ref": true,
+      "task_count": 19
+    },
+    {
+      "file": "docs/plans/system-simplification-20260906/oss-source-artifacts.csv",
+      "source": "oss-source-artifacts.csv",
+      "sha256": "a4b74f97944496a4b424550e3fd2ade7219a3b52cf6c755e11f9cf281a0f4730",
+      "identical_to_source": true,
+      "matches_dev_bridge_source_ref": true
+    },
+    {
+      "file": "docs/plans/system-simplification-20260906/llm-task-design.md",
+      "source": "llm-task-design.md",
+      "sha256": "333b3918ed7bcbf9f40a3c0601eabfe6a91310717b61d1e87997eecf32b05855",
+      "identical_to_source": true,
+      "matches_dev_bridge_source_ref": true
+    }
+  ],
+  "verification_note": "diff -q against each source packet file returned no differences, and a fresh sha256sum of each committed copy matches both the source packet file and the sourceRefs sha256 recorded on the task's canonical dev_bridge.documents row.",
+  "disposition_ledger": {
+    "file": "docs/plans/system-simplification-20260906/oss-version-disposition.csv",
+    "generated_from": "oss-version-task-coverage.csv (frozen packet supply, sha256 44657ecc44e854920f34584f96be2868e192634d231ceea19790490ca9637ab5, matches dev_bridge source_ref)",
+    "transform": "appended a status column set to the literal value 'planned' for every row; no disposition, task_id, or inventory value was rewritten",
+    "row_count": 447,
+    "unassigned_task_id_rows": 0
+  },
+  "reconciliation_against_current_dev": {
+    "method": "For each inventory category, counted the same signal directly in the current worktree (Pantheon task branch task/OSS-COVERAGE-PLAN-001 at 55cd327b9200648e5d42360907dedc17ddf6f5fc, cut from dev) and, for npm, in the sibling execute-plans dev checkout at 4fd6088d5478d32911029628d5047b5e37c6bbdf, then compared to the frozen packet counts.",
+    "pypi_declaration_rows": {
+      "frozen_count": 195,
+      "current_count": 195,
+      "match": true,
+      "note": "Two apparent extra lines in services/research/finrl/requirements.txt and services/research/rllib/requirements.txt were --extra-index-url directives, not package declarations; excluding those, current matches frozen exactly."
+    },
+    "pypi_package_summary_rows": {
+      "frozen_count": 44,
+      "current_count": 44,
+      "match": true
+    },
+    "requirements_files": {
+      "frozen_count": 49,
+      "current_count": 49,
+      "match": true,
+      "note": "46 files carry at least one pypi_declaration row; the remaining 3 (services/research/requirements.txt, services/research/dspy/requirements.txt, services/research/imitation/requirements.txt) are the forwarding/comment-only files called out in the task acceptance and correctly carry zero declaration rows."
+    },
+    "npm_dependency_rows": {
+      "frozen_count": 94,
+      "current_count": 94,
+      "match": true,
+      "checked_in": "execute-plans dev (4fd6088d5478d32911029628d5047b5e37c6bbdf) package.json dependencies+devDependencies",
+      "package_name_diff": "none"
+    },
+    "image_declaration_rows": {
+      "frozen_count": 63,
+      "current_count": 63,
+      "match": true,
+      "note": "49 Dockerfile FROM lines + 14 docker-compose*.yml image: lines across the current Pantheon worktree."
+    },
+    "inline_install_rows": {
+      "frozen_count": 51,
+      "current_count": 51,
+      "match": true
+    },
+    "conclusion": "No new current-dev declarations were discovered outside the frozen packet inventory; the frozen oss-version-task-coverage.csv rows remain a complete and current cover of the audit inventory, so no additional rows were appended to the disposition ledger beyond the frozen set plus the new status column."
+  },
+  "scope_boundary": {
+    "note": "This task versions and publishes the plan/coverage documents and the initial planned-status disposition ledger. It does not implement any OSS upgrade, LLM replacement, or retirement candidate; those are separate family tasks (OSS-CORE-BASELINE-001, OSS-TOOLING-BASELINE-001, OSS-RESEARCH-FOOTPRINT-001, OSS-RESEARCH-BASELINE-001, OSS-EXECUTION-BASELINE-001, FE-DEP-CLOSURE-001, FE-TOOLCHAIN-BASELINE-001, FE-UI-DEPS-BASELINE-001, OSS-INFRA-CHOICE-001, OSS-INFRA-PROFILES-001, OSS-OBJECT-STORE-CUTOVER-001, SIMPLIFY-OPENCLAW-001, SIMPLIFY-EXTRACTION-001, SIMPLIFY-RETRIEVAL-MEMORY-001, SIMPLIFY-BFF-RESIDUAL-001, FE-QUERY-CACHE-001, OPS-LEGACY-REVIEW-RETIRE-001, SYS-SIMPLIFY-IMPLEMENTATION-CLOSURE-001) listed with their own owner/reviewer/dependency graph in tasks.json and COVERAGE.md. No credentials, accounts, quotas, model settings, or slot counts were changed."
+  },
+  "verified_commands": [
+    "diff -q <source packet file> <copied docs/plans file>  (5 files, all identical)",
+    "python3 -c \"...\" to append the status=planned column to oss-version-disposition.csv (447 rows, 0 unassigned task_id)",
+    "grep -vE '^\\s*(#|$)' <requirements files>; find -iname Dockerfile*; find -iname docker-compose*.yml; python3 -c to read execute-plans package.json dependencies"
+  ]
+}
