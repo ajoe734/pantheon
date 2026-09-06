@@ -85,14 +85,22 @@
       {
         "name": "archive_resurrection_contract_tests",
         "command": "AI_NAME=Antigravity2 python3 -m pytest -q scripts/test_ai_status.py -k TestStaleArchiveResurrectionContract",
-        "passed": 26,
+        "passed": 30,
         "subtests_passed": 23,
         "failed": 0,
         "exit_code": 0
       },
       {
+        "name": "same_generation_smoke_tests",
+        "command": "AI_NAME=Antigravity2 python3 -m pytest -q scripts/test_ai_status.py -k 'reconcile_merged_done_reuses_matching_immutable_archive or same_delivery_archive_recovery'",
+        "passed": 3,
+        "subtests_passed": 4,
+        "failed": 0,
+        "exit_code": 0
+      },
+      {
         "name": "reviewer_probes",
-        "command": "PYTHONPATH=. python3 /tmp/archive_resurrection_review_probes.py",
+        "command": "PYTHONPATH=. python3 /tmp/ops_archive_codex_round2_probes.py",
         "passed": 4,
         "subtests_passed": 0,
         "failed": 0,
@@ -121,19 +129,11 @@
         "subtests_passed": 55,
         "failed": 0,
         "exit_code": 0
-      },
-      {
-        "name": "focused_ai_status_tests",
-        "command": "AI_NAME=Antigravity2 python3 -m pytest -q scripts/test_ai_status.py -k 'assign or reopen or reconcile or archive'",
-        "passed": 142,
-        "subtests_passed": 56,
-        "failed": 0,
-        "exit_code": 0
       }
     ],
     "totals": {
-      "passed": 504,
-      "subtests_passed": 138,
+      "passed": 369,
+      "subtests_passed": 86,
       "failed": 0
     }
   },

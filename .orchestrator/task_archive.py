@@ -804,6 +804,7 @@ def status_archive_outbox_payload(
     snapshots: list[dict[str, Any]],
     *,
     archive_root: str,
+    archive_file_sha256s: Mapping[str, str] | None = None,
 ) -> dict[str, Any]:
     """Build the sole durable archive-outbox contract.
 
@@ -815,11 +816,17 @@ def status_archive_outbox_payload(
         str(snapshot["task_id"]): _canonical_json_sha256(snapshot)
         for snapshot in snapshots
     }
-    binding = {
+    binding: dict[str, Any] = {
         "archive_root": archive_root,
         "snapshots": snapshots,
         "snapshot_sha256s": snapshot_sha256s,
     }
+    if archive_file_sha256s:
+        binding["archive_file_sha256s"] = {
+            str(k): str(v).strip()
+            for k, v in archive_file_sha256s.items()
+            if str(v).strip()
+        }
     return {
         "schema_version": STATUS_ARCHIVE_OUTBOX_SCHEMA_VERSION,
         "transaction_id": "ai-status-archive-tx-" + _canonical_json_sha256(binding),
@@ -852,10 +859,12 @@ def validate_status_archive_outbox(
         "snapshots",
         "snapshot_sha256s",
     }
-    if set(value) != required:
+    allowed = required | {"archive_file_sha256s"}
+    if not (required <= set(value) <= allowed):
         raise RuntimeError("status archive outbox schema is not exact")
     snapshots = value.get("snapshots")
     snapshot_sha256s = value.get("snapshot_sha256s")
+    raw_file_shas = value.get("archive_file_sha256s")
     if (
         value.get("schema_version") != STATUS_ARCHIVE_OUTBOX_SCHEMA_VERSION
         or not isinstance(value.get("archive_root"), str)
@@ -869,17 +878,26 @@ def validate_status_archive_outbox(
         or not isinstance(snapshot_sha256s, dict)
     ):
         raise RuntimeError("status archive outbox contract is invalid")
+    if raw_file_shas is not None:
+        if not isinstance(raw_file_shas, dict):
+            raise RuntimeError("status archive outbox contract is invalid")
+        task_ids = {str(s["task_id"]) for s in snapshots}
+        for tid, sha in raw_file_shas.items():
+            if tid not in task_ids or not isinstance(sha, str) or not re.fullmatch(r"[0-9a-f]{64}", sha):
+                raise RuntimeError("status archive outbox contract is invalid")
     expected_digests = {
         str(snapshot["task_id"]): _canonical_json_sha256(snapshot)
         for snapshot in snapshots
     }
     if snapshot_sha256s != expected_digests:
         raise RuntimeError("status archive outbox snapshot digest mismatch")
-    binding = {
+    binding: dict[str, Any] = {
         "archive_root": value["archive_root"],
         "snapshots": snapshots,
         "snapshot_sha256s": snapshot_sha256s,
     }
+    if raw_file_shas:
+        binding["archive_file_sha256s"] = raw_file_shas
     expected_id = "ai-status-archive-tx-" + _canonical_json_sha256(binding)
     if value.get("transaction_id") != expected_id:
         raise RuntimeError("status archive outbox digest mismatch")

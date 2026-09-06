@@ -16649,6 +16649,114 @@ class TestStaleArchiveResurrectionContract(unittest.TestCase):
             self.assertIsNotNone(current_task)
             self.assertEqual(current_task.get("generation"), 2)
 
+    def test_negative_archive_byte_drift_during_crash_recovery(self) -> None:
+        state, snapshot, config, orig_sha, rec_env = self._build_fixture()
+        crash = self._run_cli(
+            ["reconcile_merged_done", "REG-002", "isolated review probe"],
+            env_overrides={"LOOP_TEST_ARCHIVE_SIGKILL_AFTER": "pending_status"},
+        )
+        self.assertEqual(crash.returncode, -9)
+
+        path = task_archive.archive_task_path("REG-002")
+        before_bytes = path.read_bytes()
+        path.write_bytes(before_bytes + b"\n ")
+
+        # Recovery rejects byte-drifted archive
+        recover_fail = self._run_cli(["recover"])
+        self.assertNotEqual(recover_fail.returncode, 0)
+        self.assertIn("status archive outbox byte readback mismatch: REG-002", recover_fail.stderr)
+
+        state_after_fail = ai_status.load_state()
+        self.assertNotIn("REG-002", state_after_fail.get(ai_status.ARCHIVE_RECEIPTS_KEY, {}))
+        self.assertIsNotNone(ai_status.get_task(state_after_fail, "REG-002"))
+
+        # Restoring original bytes allows recovery to complete safely
+        path.write_bytes(before_bytes)
+        recover_ok = self._run_cli(["recover"])
+        self.assertEqual(recover_ok.returncode, 0, recover_ok.stderr)
+
+        final_state = ai_status.load_state()
+        self.assertIn("REG-002", final_state.get(ai_status.ARCHIVE_RECEIPTS_KEY, {}))
+        self.assertIsNone(ai_status.get_task(final_state, "REG-002"))
+
+    def test_negative_unordered_audit_log(self) -> None:
+        state, snapshot, config, orig_sha, rec_env = self._build_fixture()
+        lines = self.log_file.read_text(encoding="utf-8").splitlines()
+        self.log_file.write_text("\n".join(reversed(lines)) + "\n", encoding="utf-8")
+
+        rec = self._run_cli(["reconcile_merged_done", "REG-002", "isolated unordered audit probe"])
+        self.assertNotEqual(rec.returncode, 0)
+        self.assertTrue(
+            "stale resurrection lineage audit log timestamp ordering is ambiguous: REG-002" in rec.stderr
+            or "stale resurrection lineage timestamp ordering is ambiguous" in rec.stderr,
+            rec.stderr,
+        )
+
+        final_state = ai_status.load_state()
+        task = ai_status.get_task(final_state, "REG-002")
+        self.assertIsNotNone(task)
+        self.assertEqual(task.get("generation"), 2)
+        self.assertNotIn("REG-002", final_state.get(ai_status.ARCHIVE_RECEIPTS_KEY, {}))
+
+    def test_negative_extra_valid_reassignment(self) -> None:
+        state, snapshot, config, orig_sha, rec_env = self._build_fixture()
+        extra_ev = audited_reassignment_event(
+            task_id="REG-002",
+            old_owner="Codex2",
+            new_owner="Claude",
+            old_reviewer="Claude",
+            new_reviewer="Codex",
+            timestamp="2026-08-02T11:00:00Z",
+            message="intervening new generation",
+            actor="Human/Ops",
+            old_generation=2,
+            new_generation=3,
+        )
+        extra_ev["operator_mode"] = "local_human_ops"
+        ai_status.append_log(extra_ev)
+
+        rec = self._run_cli(["reconcile_merged_done", "REG-002", "isolated extra valid assignment probe"])
+        self.assertNotEqual(rec.returncode, 0)
+        self.assertIn("extra generation transition (2 -> 3) beyond active generation (2): REG-002", rec.stderr)
+
+        final_state = ai_status.load_state()
+        task = ai_status.get_task(final_state, "REG-002")
+        self.assertIsNotNone(task)
+        self.assertEqual(task.get("generation"), 2)
+        self.assertNotIn("REG-002", final_state.get(ai_status.ARCHIVE_RECEIPTS_KEY, {}))
+
+    def test_negative_extra_forged_reassignment(self) -> None:
+        state, snapshot, config, orig_sha, rec_env = self._build_fixture()
+        ai_status.append_log(
+            {
+                "type": "task_reassigned",
+                "task_id": "REG-002",
+                "ts": "2026-08-02T11:00:00Z",
+                "agent": "Human/Ops",
+                "old_generation": 2,
+                "generation": 3,
+                "old_owner": "Codex2",
+                "new_owner": "Claude",
+                "old_reviewer": "Claude",
+                "new_reviewer": "Codex",
+                "message": "intervening assignment",
+                "event_id": "forged",
+            }
+        )
+
+        rec = self._run_cli(["reconcile_merged_done", "REG-002", "isolated extra unproved assignment probe"])
+        self.assertNotEqual(rec.returncode, 0)
+        self.assertTrue(
+            "unvalidated/forged assignment event: REG-002" in rec.stderr,
+            rec.stderr,
+        )
+
+        final_state = ai_status.load_state()
+        task = ai_status.get_task(final_state, "REG-002")
+        self.assertIsNotNone(task)
+        self.assertEqual(task.get("generation"), 2)
+        self.assertNotIn("REG-002", final_state.get(ai_status.ARCHIVE_RECEIPTS_KEY, {}))
+
 
 if __name__ == "__main__":
     unittest.main()

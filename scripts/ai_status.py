@@ -2312,7 +2312,8 @@ def recover_status_archive_outbox(state: dict[str, Any]) -> bool:
             raise RuntimeError(
                 f"status archive outbox readback mismatch: {expected['task_id']}"
             )
-        expected_raw_sha = expected.get("archive_file_sha256")
+        raw_shas = pending.get("archive_file_sha256s") or {}
+        expected_raw_sha = raw_shas.get(str(expected["task_id"])) or expected.get("archive_file_sha256")
         if expected_raw_sha:
             actual_bytes = load_archived_raw_bytes(str(expected["task_id"]))
             if actual_bytes is None or hashlib.sha256(actual_bytes).hexdigest() != expected_raw_sha:
@@ -7121,9 +7122,11 @@ def verify_stale_archive_resurrection_proof(
         "execution_grant_revoked",
     }
     for event in events:
+        if not isinstance(event, Mapping):
+            continue
         if str(event.get("task_id") or "").strip() != task_id:
             continue
-        ev_ts = _parse_utc_timestamp(str(event.get("ts") or ""))
+        ev_ts = _parse_utc_timestamp(str(event.get("ts") or event.get("timestamp") or ""))
         if ev_ts is not None and archived_at is not None and ev_ts >= archived_at:
             ev_type = str(event.get("type") or "").strip()
             if ev_type in new_work_types:
@@ -7131,11 +7134,13 @@ def verify_stale_archive_resurrection_proof(
                     f"Cannot reconcile stale resurrected task: intervening {ev_type} event detected: {task_id}"
                 )
 
-    import_events: list[tuple[datetime, dict[str, Any]]] = []
-    for event in events:
+    import_events: list[tuple[int, datetime, dict[str, Any]]] = []
+    for idx, event in enumerate(events):
+        if not isinstance(event, Mapping):
+            continue
         if str(event.get("task_id") or "").strip() != task_id:
             continue
-        ev_ts = _parse_utc_timestamp(str(event.get("ts") or ""))
+        ev_ts = _parse_utc_timestamp(str(event.get("ts") or event.get("timestamp") or ""))
         if ev_ts is None or archived_at is None or ev_ts < archived_at:
             continue
         ev_type = str(event.get("type") or "").strip()
@@ -7235,7 +7240,7 @@ def verify_stale_archive_resurrection_proof(
                 raise RuntimeError(
                     f"stale resurrection import event archive digest mismatch (expected {archive_sha256!r}, got {ev_archive_digest!r}): {task_id}"
                 )
-            import_events.append((ev_ts, event))
+            import_events.append((idx, ev_ts, event))
 
     if not import_events:
         raise RuntimeError(
@@ -7245,33 +7250,53 @@ def verify_stale_archive_resurrection_proof(
         raise RuntimeError(
             f"stale resurrection lineage fork: multiple import/re-entry events detected: {task_id}"
         )
-    import_ts, import_ev = import_events[0]
+    import_idx, import_ts, import_ev = import_events[0]
 
-    reassignment_events: list[tuple[datetime, dict[str, Any]]] = []
-    for event in events:
-        validated = task_machine.validate_assignment_activity_event(event)
-        if validated is None or validated.task_id != task_id:
+    reassignment_events: list[tuple[int, datetime, dict[str, Any]]] = []
+    for idx, event in enumerate(events):
+        if not isinstance(event, Mapping):
             continue
-        ev_ts = _parse_utc_timestamp(validated.timestamp)
+        if str(event.get("task_id") or "").strip() != task_id:
+            continue
+        ev_ts = _parse_utc_timestamp(str(event.get("ts") or event.get("timestamp") or ""))
         if ev_ts is None:
             continue
-        if (
-            validated.old_generation is not None
-            and validated.old_generation >= archive_gen
-        ):
-            reassignment_events.append((ev_ts, validated.as_dict()))
-
-    reassignment_events.sort(key=lambda item: item[0])
+        ev_type = str(event.get("type") or "").strip()
+        if ev_type in {"task_reassigned", "task_assigned"}:
+            if archived_at is not None and ev_ts < archived_at:
+                continue
+            if idx < import_idx or ev_ts < import_ts:
+                raise RuntimeError(
+                    f"stale resurrection lineage timestamp ordering is ambiguous: reassignment preceded import: {task_id}"
+                )
+            validated = task_machine.validate_assignment_activity_event(event)
+            if validated is None:
+                raise RuntimeError(
+                    f"stale resurrection lineage gap: unvalidated/forged assignment event: {task_id}"
+                )
+            if validated.old_generation is not None and validated.old_generation < archive_gen:
+                raise RuntimeError(
+                    f"stale resurrection lineage historical reassignment occurred after archive: {task_id}"
+                )
+            if (
+                (validated.old_generation is not None and validated.old_generation >= active_gen)
+                or (validated.generation is not None and validated.generation > active_gen)
+            ):
+                raise RuntimeError(
+                    f"stale resurrection lineage contains extra generation transition ({validated.old_generation} -> {validated.generation}) beyond active generation ({active_gen}): {task_id}"
+                )
+            reassignment_events.append((idx, ev_ts, validated.as_dict()))
 
     current_owner = archive_owner
     current_reviewer = archive_reviewer
     chain: list[dict[str, Any]] = []
-    last_ts: datetime | None = import_ts
+    last_file_idx = import_idx
+    last_ts = import_ts
 
     for g in range(archive_gen, active_gen):
         matching = [
-            (ts, ev)
-            for ts, ev in reassignment_events
+            (idx, ts, ev)
+            for idx, ts, ev in reassignment_events
             if ev.get("old_generation") == g and ev.get("generation") == g + 1
         ]
         if not matching:
@@ -7280,17 +7305,19 @@ def verify_stale_archive_resurrection_proof(
             )
         if len(matching) > 1:
             raise RuntimeError(
-                f"stale resurrection lineage fork: ambiguous multiple reassignment events for generation {g} -> {g+1}: {task_id}"
+                f"stale resurrection lineage fork: multiple reassignment events for generation {g} -> {g+1}: {task_id}"
             )
-        ev_ts, ev = matching[0]
-        if ev_ts < import_ts:
+        ev_file_idx, ev_ts, ev = matching[0]
+
+        if ev_file_idx < last_file_idx:
             raise RuntimeError(
-                f"stale resurrection lineage timestamp ordering is ambiguous: reassignment preceded import: {task_id}"
+                f"stale resurrection lineage timestamp ordering is ambiguous: reassignments out of file sequence: {task_id}"
             )
-        if last_ts is not None and ev_ts < last_ts:
+        if ev_ts < last_ts:
             raise RuntimeError(
                 f"stale resurrection lineage timestamp ordering is ambiguous: {task_id}"
             )
+
         reassign_actor = str(ev.get("agent") or "").strip()
         reassign_op_mode = str(ev.get("operator_mode") or "").strip()
         if reassign_actor != "Human/Ops" and reassign_op_mode != "local_human_ops":
@@ -7325,7 +7352,13 @@ def verify_stale_archive_resurrection_proof(
         )
         current_owner = new_owner
         current_reviewer = new_reviewer
+        last_file_idx = ev_file_idx
         last_ts = ev_ts
+
+    if len(reassignment_events) != len(chain):
+        raise RuntimeError(
+            f"stale resurrection lineage contains extraneous or unhandled reassignment events: {task_id}"
+        )
 
     active_owner = canonical_agent_name(active_task.get("owner"))
     active_reviewer = canonical_agent_name(active_task.get("reviewer"))
@@ -7539,17 +7572,9 @@ def _validated_same_delivery_archive_recovery(
     for field in ("file", "commit", "merge_target_ref", "merge_target_sha"):
         val_archive = str(review_evidence.get(field) or "").strip()
         val_current = str(current_review.get(field) or "").strip()
-        if not val_archive:
+        if (val_archive or val_current) and val_archive != val_current:
             raise RuntimeError(
-                f"existing archive snapshot review evidence missing or empty required field {field}: {task_id}"
-            )
-        if not val_current:
-            raise RuntimeError(
-                f"delivery review evidence missing or empty required field {field}: {task_id}"
-            )
-        if val_archive != val_current:
-            raise RuntimeError(
-                f"existing archive snapshot review evidence {field} mismatch: {task_id}"
+                f"existing archive snapshot conflicts with terminal task: {task_id}"
             )
     evidence_owner = canonical_agent_name(current_review.get("owner"))
     evidence_reviewer = canonical_agent_name(current_review.get("reviewer"))
@@ -7579,14 +7604,23 @@ def _validated_same_delivery_archive_recovery(
 
 
 def _queue_existing_archive_snapshot(
-    state: dict[str, Any], snapshot: Mapping[str, Any]
+    state: dict[str, Any],
+    snapshot: Mapping[str, Any],
+    *,
+    archive_file_sha256: str | None = None,
 ) -> None:
     """Queue an already-validated immutable snapshot for normal readback."""
 
     archived = deepcopy(dict(snapshot))
     proof = archived.pop("proof", None)
-    if proof is not None and "archive_file_sha256" in proof:
-        archived["archive_file_sha256"] = proof["archive_file_sha256"]
+    if not archive_file_sha256 and proof is not None and "archive_file_sha256" in proof:
+        archive_file_sha256 = proof["archive_file_sha256"]
+    if "archive_file_sha256" in archived:
+        if not archive_file_sha256:
+            archive_file_sha256 = archived.pop("archive_file_sha256")
+        else:
+            archived.pop("archive_file_sha256")
+
     record_terminal_fact(
         state,
         archived["task"],
@@ -7594,13 +7628,15 @@ def _queue_existing_archive_snapshot(
     )
     pending = state.get(STATUS_ARCHIVE_OUTBOX_KEY)
     snapshots: list[dict[str, Any]] = []
+    archive_file_sha256s: dict[str, str] = {}
     if pending not in (None, {}, []):
-        snapshots = list(
-            task_archive_module.validate_status_archive_outbox(
-                pending,
-                expected_archive_root=_archive_root_identity(),
-            )["snapshots"]
+        validated_pending = task_archive_module.validate_status_archive_outbox(
+            pending,
+            expected_archive_root=_archive_root_identity(),
         )
+        snapshots = list(validated_pending["snapshots"])
+        if "archive_file_sha256s" in validated_pending:
+            archive_file_sha256s = dict(validated_pending["archive_file_sha256s"])
     same_task = [item for item in snapshots if item["task_id"] == archived["task_id"]]
     if same_task and any(
         _canonical_json_sha256(item) != _canonical_json_sha256(archived)
@@ -7609,9 +7645,12 @@ def _queue_existing_archive_snapshot(
         raise RuntimeError(f"archive outbox payload conflict: {archived['task_id']}")
     if not same_task:
         snapshots.append(archived)
+    if archive_file_sha256:
+        archive_file_sha256s[str(archived["task_id"])] = str(archive_file_sha256).strip()
     state[STATUS_ARCHIVE_OUTBOX_KEY] = task_archive_module.status_archive_outbox_payload(
         snapshots,
         archive_root=_archive_root_identity(),
+        archive_file_sha256s=archive_file_sha256s or None,
     )
 
 
@@ -7646,7 +7685,6 @@ def command_reconcile_merged_done(state: dict[str, Any], args: list[str]) -> Non
         current_raw_bytes = load_archived_raw_bytes(task_id)
         if (
             current_archive is None
-            or current_raw_bytes is None
             or _canonical_json_sha256(current_archive)
             != _canonical_json_sha256(recovered_raw)
         ):
@@ -7654,6 +7692,10 @@ def command_reconcile_merged_done(state: dict[str, Any], args: list[str]) -> Non
                 f"existing archive snapshot changed during reconciliation: {task_id}"
             )
         if resurrection_proof is not None:
+            if current_raw_bytes is None:
+                raise RuntimeError(
+                    f"existing archive snapshot changed during reconciliation: {task_id}"
+                )
             if task_assignment_generation(task) != resurrection_proof["active_generation"]:
                 raise RuntimeError(
                     f"stale task generation changed during reconciliation: {task_id}"
@@ -7714,7 +7756,12 @@ def command_reconcile_merged_done(state: dict[str, Any], args: list[str]) -> Non
         # append-only activity audit, never in the immutable archive bytes.
         task.clear()
         task.update(deepcopy(recovered_raw["task"]))
-        _queue_existing_archive_snapshot(state, recovered_raw)
+        raw_file_sha = None
+        if resurrection_proof is not None and resurrection_proof.get("archive_file_sha256"):
+            raw_file_sha = resurrection_proof["archive_file_sha256"]
+        elif current_raw_bytes is not None:
+            raw_file_sha = hashlib.sha256(current_raw_bytes).hexdigest()
+        _queue_existing_archive_snapshot(state, recovered_raw, archive_file_sha256=raw_file_sha)
     else:
         archive_terminal_task_from_state(state, task, archived_at=timestamp)
 
