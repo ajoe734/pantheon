@@ -1,0 +1,100 @@
+{
+  "manifest_version": 1,
+  "generated_for_task": "DOC-FIRST-RELEASE-PLAN-DELIVERY-001",
+  "generated_at": "2026-09-06",
+  "note": "Provenance/SHA256 manifest for every source enumerated by APPROVAL_RELEASE_SA_SD.md section 5. Destination paths are relative to the pantheon repository root. classification distinguishes active signed source, superseded/historical source, rejected/unqueued draft, and current derived state. None of these entries are executable/signed task packets, credentials, or canonical task/queue JSON; those were intentionally excluded from this delivery per plan section 5.",
+  "entries": [
+    {
+      "group": "original_gap_audit_2026-09-03",
+      "classification": "already_merged_active_source",
+      "destination": "docs/04/pantheon_current_full_gap_audit_2026-09-03/",
+      "provenance": "Original workstation snapshot /tmp/pantheon-current-gap-audit-20260903/docs/04/pantheon_current_full_gap_audit_2026-09-03/; merged into pantheon dev by PLAN-ADMIT-001 (commit 7a741afd8, 'PLAN-ADMIT-001: admit structural closure planning packet').",
+      "status": "merged_to_dev",
+      "files": [
+        {"path": "docs/04/pantheon_current_full_gap_audit_2026-09-03/INDEX.md", "sha256": "3959c4515f1b83790fa70fad637e31ab370b2a9509acf5d0845860e26055fc7a"},
+        {"path": "docs/04/pantheon_current_full_gap_audit_2026-09-03/REPORT.md", "sha256": "75709d429e012868941afe7d1e37a067cfeafa8bc49ea13bcf7250c718d5ecba"},
+        {"path": "docs/04/pantheon_current_full_gap_audit_2026-09-03/SA.md", "sha256": "8b9b3d06a48f383e6b4b3330c28869cbdd6f7f08719d183a212c76ccb645160a"},
+        {"path": "docs/04/pantheon_current_full_gap_audit_2026-09-03/SD.md", "sha256": "ef6f664aceffcb3a594517ec5027ed74927a775a5bad7a4b76479d8cb454f567"},
+        {"path": "docs/04/pantheon_current_full_gap_audit_2026-09-03/TRACEABILITY.md", "sha256": "76771001f31450325fc8c41bae5d94dbdcbc3562c42013edff434824e2f6e2dd"},
+        {"path": "docs/04/pantheon_current_full_gap_audit_2026-09-03/EXECUTION_TASKS.md", "sha256": "bb7478844c3659e89a23f520db6b3360eb36ad1cf20b24f636434b72919c452c"},
+        {"path": "docs/04/pantheon_current_full_gap_audit_2026-09-03/tasks.json", "sha256": "c21730622c671e4ee6c367e0d6e34773bc73342fe9f9ae73e57e50825f314fed", "note": "historical tasks catalog; non-executable reference only, not a canonical task/queue JSON"},
+        {"path": "docs/04/pantheon_current_full_gap_audit_2026-09-03/archive/PLAN-ADMIT-001-independent-review-2026-09-03.md", "sha256": "ce27c54e72506aacd1415a5cafbd66ce203d2328a55bb25d9c4019d7858752fb"}
+      ]
+    },
+    {
+      "group": "supplemental_reconcile_prerequisite_20260905",
+      "classification": "superseded_or_historical_signed_source",
+      "destination": "docs/04/pantheon_first_release_closure_2026-09-06/archive/supplemental-reconcile-20260905/",
+      "provenance": "/tmp/pantheon-archive-reconcile-prerequisite-20260905.PrI7ms/ (workstation snapshot dated 2026-09-05/06; not previously committed to any repository).",
+      "status": "newly_delivered_this_task",
+      "files": [
+        {"path": "docs/04/pantheon_first_release_closure_2026-09-06/archive/supplemental-reconcile-20260905/API_CONVERGENCE_RETIREMENT_DISCUSSION_20260906.md", "sha256": "2e860b4611939ad3ca740f2a1dd6d933d043de1a68945873e2cb0832289e331b"},
+        {"path": "docs/04/pantheon_first_release_closure_2026-09-06/archive/supplemental-reconcile-20260905/ARCHITECTURE_DISCUSSION_HOLD_20260906.md", "sha256": "d7f89dac3e9929b1340be1c29de727869050a557af6c03bab998eed4c1d1ec5f"},
+        {"path": "docs/04/pantheon_first_release_closure_2026-09-06/archive/supplemental-reconcile-20260905/BFF_PACKAGE_BOUNDARY_SA_SD.md", "sha256": "589575432d0895e5600e9ca52374e08552db6e62754ae4809c70d07d0878701e"},
+        {"path": "docs/04/pantheon_first_release_closure_2026-09-06/archive/supplemental-reconcile-20260905/CURRENT_SOURCE_REAUDIT_20260906.md", "sha256": "7d2bf351dd52d0e30c249da80f1ff7a3e0fa0437ba80d2b172e70ce7189ad163"},
+        {"path": "docs/04/pantheon_first_release_closure_2026-09-06/archive/supplemental-reconcile-20260905/CW_READ_POLICY_CLOSURE_SA_SD.md", "sha256": "812d2ef8df25ab6646148313e99f58622f019c19b070ce2721b9675b1c03e192"},
+        {"path": "docs/04/pantheon_first_release_closure_2026-09-06/archive/supplemental-reconcile-20260905/EXECUTION_HANDOFF_STATUS.md", "sha256": "faaaef723183a48ceccebce4fb65a94d57c020879c0bb881fb428d00ef6ae7f2"},
+        {"path": "docs/04/pantheon_first_release_closure_2026-09-06/archive/supplemental-reconcile-20260905/FIRST_RELEASE_CANONICAL_RECONCILIATION_20260906.md", "sha256": "c029dd66d7a50b3b177ef4be83974e809dfc239c02f26d98bd63bd12cdd245fe"},
+        {"path": "docs/04/pantheon_first_release_closure_2026-09-06/archive/supplemental-reconcile-20260905/FIRST_RELEASE_UNIFIED_ARCHITECTURE_SA_SD_20260906.md", "sha256": "b264f269ef07245a698868e70bc8a3ce140c30d7a918ac2394cb63ace7e72ed0"},
+        {"path": "docs/04/pantheon_first_release_closure_2026-09-06/archive/supplemental-reconcile-20260905/GOVERNANCE_CW_CONTRACT_SA_SD.md", "sha256": "00e36a3742b5fdf8dd331988d92044c6600f860e880160062fc7f0ecc8c2d1b3"},
+        {"path": "docs/04/pantheon_first_release_closure_2026-09-06/archive/supplemental-reconcile-20260905/ONESHOT_VALIDATION_SA_SD.md", "sha256": "f3583333813e230e566a7d2438a66ee663885388dad0f9f24413d5ef84a32779"},
+        {"path": "docs/04/pantheon_first_release_closure_2026-09-06/archive/supplemental-reconcile-20260905/OVERLAY_CHECKPOINT_REVIEW_20260906.md", "sha256": "72ad597eb9206beede491c70093d714e7004e5380e7068e356db50c4f391c3fc"},
+        {"path": "docs/04/pantheon_first_release_closure_2026-09-06/archive/supplemental-reconcile-20260905/OVERLAY_SCOPE_REVALIDATION_20260906.md", "sha256": "d775aa1a6f0bfef576250b3f078204b6f7347baeaab5260e65296cdf5ddc942c"},
+        {"path": "docs/04/pantheon_first_release_closure_2026-09-06/archive/supplemental-reconcile-20260905/PROMOTION_PREFLIGHT_NOTES.md", "sha256": "62c1028296da9d8fa3b0c14dca798c214ab2d1cb6a3b6cfdd762dd9b998a033b"},
+        {"path": "docs/04/pantheon_first_release_closure_2026-09-06/archive/supplemental-reconcile-20260905/PYTHON_RUNTIME_SA_SD.md", "sha256": "56780d70141c27f5bddf434d354b3afb08bbc4e287f741d82348113c21694227"},
+        {"path": "docs/04/pantheon_first_release_closure_2026-09-06/archive/supplemental-reconcile-20260905/REGISTRY_AUTH_BOUNDARY_PREFLIGHT_20260906.md", "sha256": "fff648be99b5ad7b1b6da4a1352f72503de843e5d3c28b76ba24baab5e109ee2"},
+        {"path": "docs/04/pantheon_first_release_closure_2026-09-06/archive/supplemental-reconcile-20260905/REGISTRY_STRATEGY_PREREQUISITE_SA_SD_20260906.md", "sha256": "1fae1dc08121ef81e158d41f45cb9e7b7ddfec6100f01583c2ab62effeb0fea4"},
+        {"path": "docs/04/pantheon_first_release_closure_2026-09-06/archive/supplemental-reconcile-20260905/REGISTRY_STRATEGY_PREREQUISITE_SA_SD_20260906_V2.md", "sha256": "a028f255638346bdeb050d46d3daf7fdc86c141cb7405ea222342f446dde6a3f"},
+        {"path": "docs/04/pantheon_first_release_closure_2026-09-06/archive/supplemental-reconcile-20260905/SA_SD.md", "sha256": "cad49a5f1c1a819bb12b717933f68c8d2313c0a3c95c46590a411a6f01b4f9af"},
+        {"path": "docs/04/pantheon_first_release_closure_2026-09-06/archive/supplemental-reconcile-20260905/STRATEGY_REGISTRY_OWNER_REAUDIT_20260906.md", "sha256": "f8692baaef54aea3545edb1549312670835881dbcdd276dc4349197ea65c4999"},
+        {"path": "docs/04/pantheon_first_release_closure_2026-09-06/archive/supplemental-reconcile-20260905/STRUCTURAL_RESIDUAL_SA_SD_20260906.md", "sha256": "6ec3b02f78435f26e48f491f8f86d593771cab9c115e7fb5745d94930bd064aa"}
+      ],
+      "excluded_from_delivery": [
+        "queue_*.py (canonical queue/dispatch scripts, not documentation sources)",
+        "*.json runtime/promotion payloads (PYTHON_RUNTIME_PROMOTION_62ecea34.json, WORKER_POLICY_PROMOTION_dd3f0563.json) — operational artifacts, not planning documentation"
+      ]
+    },
+    {
+      "group": "registry_resumption_dev_closure_20260906",
+      "classification": "current_verified_state",
+      "destination": "docs/04/pantheon_first_release_closure_2026-09-06/archive/registry-resumption-20260906/",
+      "provenance": "/home/chloe_ong_dev_cctech_support_com/code/pantheon-artifacts/dev-closure-20260906/ (operator workstation artifact bundle dated 2026-09-06).",
+      "status": "newly_delivered_this_task",
+      "files": [
+        {"path": "docs/04/pantheon_first_release_closure_2026-09-06/archive/registry-resumption-20260906/architecture-resumption-sa-sd.md", "sha256": "b7fbb1189cc963b2bee58f52c1f267b4e85e6782381685735db9c4dbc4677790"},
+        {"path": "docs/04/pantheon_first_release_closure_2026-09-06/archive/registry-resumption-20260906/operator-architecture-confirmation.md", "sha256": "32055cbdce999b41c956d2851316c93c043d6ba8f58728040d74e989cc6681b5"},
+        {"path": "docs/04/pantheon_first_release_closure_2026-09-06/archive/registry-resumption-20260906/operator-worker-role-preference.md", "sha256": "31d8c9367fb388d04f6facb06b72bef540ff11f76a487c0ac4b825b08d4bad6d"},
+        {"path": "docs/04/pantheon_first_release_closure_2026-09-06/archive/registry-resumption-20260906/report.md", "sha256": "d6ea8b80e279c40043cf36d5f9a65fb0aa43a05b075b359433a73c07f301cf62"},
+        {"path": "docs/04/pantheon_first_release_closure_2026-09-06/archive/registry-resumption-20260906/overlap-audit.md", "sha256": "8583cee8554f5be6bd37d84ec44851821a8bbe40a06ce64f7cf469bd258d6b95"}
+      ],
+      "excluded_from_delivery": [
+        "SHA256SUMS, baseline-*replay*.{json,txt}, candidate/*.json, hosted/*.json, queue_registry_unified_successor.py, rollback-compose-preflight.py, release-closure-sa-sd.md, resumption-evidence.json, worker-role-assignments.json — operational/runtime evidence and duplicate/derivative SA_SD variants outside plan section 5's five named sources; left in place at their operator workstation location, not copied"
+      ]
+    },
+    {
+      "group": "approval_release_plan_20260906",
+      "classification": "active_signed_plan",
+      "destination": "docs/04/pantheon_first_release_closure_2026-09-06/archive/APPROVAL_RELEASE_SA_SD.md",
+      "provenance": "/tmp/pantheon-approval-release-delivery-20260906.as2zQ6/APPROVAL_RELEASE_SA_SD.md; operator-confirmed immutable plan dated 2026-09-06, packet_id pkt-approval-release-doc-delivery-20260906-v1, packet_digest 920d842f73ec992a1dbd39324e226b5fd0f3b731eb16bfef8c1d0e682be3453c.",
+      "status": "newly_delivered_this_task",
+      "files": [
+        {"path": "docs/04/pantheon_first_release_closure_2026-09-06/archive/APPROVAL_RELEASE_SA_SD.md", "sha256": "6a6bbd28f45b7b052b19d09b2f0bc5b20e0e37ca2620f722e1a40cbbc9fa7157"}
+      ]
+    },
+    {
+      "group": "current_entrypoint_2026-09-06",
+      "classification": "current_verified_state",
+      "destination": "docs/04/pantheon_first_release_closure_2026-09-06/",
+      "provenance": "Authored by this task (DOC-FIRST-RELEASE-PLAN-DELIVERY-001) to satisfy APPROVAL_RELEASE_SA_SD.md section 5's requirement for one current INDEX/SA-SD/execution-order/traceability/status entrypoint.",
+      "status": "newly_delivered_this_task",
+      "files": [
+        {"path": "docs/04/pantheon_first_release_closure_2026-09-06/INDEX.md"},
+        {"path": "docs/04/pantheon_first_release_closure_2026-09-06/SA_SD.md"},
+        {"path": "docs/04/pantheon_first_release_closure_2026-09-06/EXECUTION_ORDER.md"},
+        {"path": "docs/04/pantheon_first_release_closure_2026-09-06/TRACEABILITY.md"},
+        {"path": "docs/04/pantheon_first_release_closure_2026-09-06/STATUS.md"},
+        {"path": "docs/04/pantheon_first_release_closure_2026-09-06/SOURCE_MANIFEST.json", "note": "this file"}
+      ]
+    }
+  ]
+}
