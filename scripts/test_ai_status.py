@@ -1800,6 +1800,92 @@ class DevBridgeMaterializeBatchTests(unittest.TestCase):
             execution_authorization.is_execution_authorized(task_after, now=now)
         )
 
+    def _synthetic_execution_grant(self, task_id: str) -> tuple[dict, dict]:
+        packet_id = "pkt-contract-binding-20260906T000000Z"
+        payload = self._payload_path(
+            [self._task_row(task_id, packet_id=packet_id)],
+            packet_id=packet_id, packet_digest="unused", work_class="security",
+            include_authorization=False,
+        )
+        self.assertEqual(self._run_main(payload), 0)
+        task = ai_status.get_task(ai_status.load_state(), task_id)
+        policy = task["execution_authorization"]["policy"]
+        self.assertEqual(policy["task_spec_hash"], task["dev_bridge"]["task_spec_hash"])
+        key = Ed25519PrivateKey.generate()
+        public = base64.urlsafe_b64encode(key.public_key().public_bytes(
+            encoding=serialization.Encoding.Raw, format=serialization.PublicFormat.Raw
+        )).decode().rstrip("=")
+        now = datetime.now(timezone.utc)
+        grant = {
+            "task_id": task_id, "generation": task["generation"],
+            "policy_digest": policy["policy_digest"], "repository": policy["repository"],
+            "environment": policy["environment"], "resources": policy["resources"],
+            "action_scope": policy["action_scope"],
+            "purpose": execution_authorization.EXECUTION_GRANT_PURPOSE,
+            "capability": execution_authorization.EXECUTION_GRANT_CAPABILITY,
+            "audience": task_id, "mfa_verified": True, "mfa_actor": "isolated-test-operator",
+            "nonce": "one-shot-test-nonce", "issued_at": now.isoformat(),
+            "expires_at": (now + timedelta(seconds=120)).isoformat(), "run_ttl_seconds": 1800,
+        }
+        grant["signature"] = {
+            "key_id": "isolated-test-issuer", "algorithm": "Ed25519",
+            "value": base64.urlsafe_b64encode(key.sign(execution_authorization._canonical_json(grant))).decode().rstrip("="),
+        }
+        return grant, {"execution_authorization": {"mfa_issuer_public_keys": {"isolated-test-issuer": public}}}
+
+    def _run_execution_grant_cli(self, grant: dict, config: dict, *args: str) -> int:
+        with (
+            mock.patch.object(ai_status, "validate_status_command_runtime_binding"),
+            mock.patch.object(ai_status, "validate_status_root_binding"),
+            mock.patch.object(ai_status, "load_config", return_value=config),
+            mock.patch.object(sys, "stdout", io.StringIO()),
+            mock.patch.dict(os.environ, {
+                "AI_NAME": "Human/Ops", ai_status.LOCAL_HUMAN_OPS_ENV: "1",
+                "EXECUTION_GRANT_JSON": json.dumps(grant),
+            }, clear=False),
+        ):
+            return ai_status.main(["ai_status.py", *args])
+
+    def test_grant_nonce_stays_spent_across_revoke_reopen_and_taskstore_reload(self) -> None:
+        task_id = "NONCE-REPLAY-CLOSED"
+        grant, config = self._synthetic_execution_grant(task_id)
+        self.assertEqual(self._run_execution_grant_cli(grant, config, "execution-grant-submit", task_id), 0)
+        self.assertEqual(self._run_execution_grant_cli(grant, config, "execution-grant-revoke", task_id, "Test revoke"), 0)
+        with self.assertRaisesRegex(SystemExit, "already consumed"):
+            self._run_execution_grant_cli(grant, config, "execution-grant-submit", task_id)
+        aliases = config["execution_authorization"]["mfa_issuer_public_keys"]
+        aliases["same-issuer-alias"] = aliases["isolated-test-issuer"]
+        alias_grant = deepcopy(grant)
+        alias_grant["signature"]["key_id"] = "same-issuer-alias"
+        with self.assertRaisesRegex(SystemExit, "already consumed"):
+            self._run_execution_grant_cli(alias_grant, config, "execution-grant-submit", task_id)
+        state = ai_status.load_state()
+        task = ai_status.get_task(state, task_id)
+        policy = deepcopy(task["execution_authorization"]["policy"])
+        self.assertTrue(ai_status._reopen_invalidates_execution_authorization(task))
+        ai_status.save_state(state)
+        with self.assertRaisesRegex(SystemExit, "already consumed"):
+            self._run_execution_grant_cli(grant, config, "execution-grant-submit", task_id)
+        after = ai_status.get_task(ai_status.load_state(), task_id)
+        self.assertEqual(after["execution_authorization"]["policy"], policy)
+        self.assertEqual(after["execution_authorization"]["state"], execution_authorization.STATE_PENDING)
+        self.assertFalse(execution_authorization.is_execution_authorized(after, now=datetime.now(timezone.utc)))
+
+    def test_grant_submit_rejects_changed_acceptance_without_consuming_nonce(self) -> None:
+        task_id = "CONTRACT-MISMATCH-CLOSED"
+        grant, config = self._synthetic_execution_grant(task_id)
+        state = ai_status.load_state()
+        task = ai_status.get_task(state, task_id)
+        policy = deepcopy(task["execution_authorization"]["policy"])
+        task["acceptance"] = ["Broadened after source intake"]
+        ai_status._reopen_invalidates_execution_authorization(task)
+        ai_status.save_state(state)
+        with self.assertRaisesRegex(SystemExit, "current signed task contract"):
+            self._run_execution_grant_cli(grant, config, "execution-grant-submit", task_id)
+        state = ai_status.load_state()
+        self.assertFalse(state.get("execution_authorization_consumed_grants"))
+        self.assertEqual(ai_status.get_task(state, task_id)["execution_authorization"]["policy"], policy)
+
     def test_execution_grant_revoke_restores_old_runtime_hold(self) -> None:
         # OPS-PRIVILEGED-TASK-EXECUTION-AUTH-001, Codex2 exact-head REJECT
         # P1-5: revoking a granted execution-authorization record must
@@ -7805,14 +7891,22 @@ class ReviewApprovedWorkflowTests(unittest.TestCase):
         task = self.state["tasks"][0]
         task["status"] = "review"
         task["target_repo"] = "pantheon"
-        task["dev_bridge"] = {"work_class": "security"}
+        spec = {
+            field: deepcopy(task.get(field, [] if field in {"depends_on", "artifacts", "acceptance", "execution_resources"} else None))
+            for field in ("id", "title", "owner", "reviewer", "target_repo", "phase", "depends_on", "artifacts", "acceptance", "execution_resources")
+        }
+        spec["summary"] = task.get("summary_zh")
+        task.update({key: value for key, value in spec.items() if key != "summary"})
+        task["dev_bridge"] = {"work_class": "security", "task_spec": spec}
         policy = execution_authorization.derive_execution_policy(
             task_id="REG-002",
             work_class="security",
             repository="pantheon",
             resources=task.get("execution_resources"),
             artifacts=task.get("artifacts"),
+            task_spec=spec,
         )
+        task["dev_bridge"]["task_spec_hash"] = policy["task_spec_hash"]
         now = datetime.now(timezone.utc)
         grant = {
             "task_id": "REG-002",

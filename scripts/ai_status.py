@@ -4435,6 +4435,8 @@ def command_assign(state: dict[str, Any], args: list[str]) -> bool | None:
                 repository=target_repo,
                 resources=execution_resources,
                 artifacts=artifacts,
+                task_spec=spec,
+                task_spec_hash=bridge["task_spec_hash"],
             )
             metadata["execution_authorization"] = (
                 execution_authorization.pending_authorization_hold(execution_policy)
@@ -4679,6 +4681,8 @@ def command_assign(state: dict[str, Any], args: list[str]) -> bool | None:
         task["owner"] = assignment.new_owner
         task["reviewer"] = assignment.new_reviewer
         task["generation"] = old_generation + 1
+        if _reopen_invalidates_execution_authorization(task):
+            task["waiting_for"] = "Human/Ops"
         if title:
             task["title"] = title
         if summary_zh:
@@ -5216,12 +5220,6 @@ def _reopen_invalidates_execution_authorization(task: dict[str, Any]) -> bool:
     ``waiting_for`` fence instead of unconditionally clearing it.
     """
 
-    dev_bridge = task.get("dev_bridge")
-    work_class = (
-        str(dev_bridge.get("work_class") or "").strip().lower()
-        if isinstance(dev_bridge, dict)
-        else ""
-    )
     existing_record = task.get("execution_authorization")
     existing_policy = (
         existing_record.get("policy") if isinstance(existing_record, dict) else None
@@ -5229,21 +5227,19 @@ def _reopen_invalidates_execution_authorization(task: dict[str, Any]) -> bool:
     already_privileged_record = isinstance(existing_policy, dict) and bool(
         existing_policy.get("requires_execution_authorization")
     )
-    privileged = (
-        execution_authorization.is_privileged_work_class(work_class)
-        or already_privileged_record
-    )
+    privileged = execution_authorization.task_privileged_by_source(task) or already_privileged_record
     if not privileged:
         return False
-    policy = execution_authorization.derive_execution_policy(
-        task_id=task.get("id"),
-        work_class=work_class or (existing_policy or {}).get("work_class"),
-        repository=task.get("target_repo"),
-        environment=(existing_policy or {}).get("environment"),
-        resources=task.get("execution_resources"),
-        artifacts=task.get("artifacts"),
-    )
-    task["execution_authorization"] = execution_authorization.pending_authorization_hold(policy)
+    # Reopen is not source intake authority. Preserve even an invalid policy
+    # as a closed hold; never bless changed scope by deriving a new digest.
+    task["execution_authorization"] = {
+        "state": execution_authorization.STATE_PENDING,
+        "policy": deepcopy(existing_policy),
+        "old_runtime_hold": True,
+        "grant": None,
+        "reserved_run_id": None,
+        "reserved_at": None,
+    }
     return True
 
 
@@ -5678,25 +5674,28 @@ def command_execution_grant_submit(state: dict[str, Any], args: list[str]) -> No
 
     now = datetime.now(timezone.utc)
     try:
-        execution_authorization.verify_execution_grant(
+        issuer_fingerprint = execution_authorization.verify_execution_grant(
             grant,
             policy=policy,
             task_id=task_id,
             generation=task.get("generation", 0),
             trusted_issuers=trusted_issuers,
             now=now,
+            task=task,
         )
         ledger = state.setdefault("execution_authorization_consumed_grants", {})
         if not isinstance(ledger, dict):
             raise execution_authorization.ExecutionAuthorizationError(
                 "execution grant replay ledger is invalid"
             )
-        execution_authorization.consume_grant_nonce(ledger, grant, task_id=task_id, now=now)
+        execution_authorization.consume_grant_nonce(
+            ledger, grant, task_id=task_id, now=now, issuer_fingerprint=issuer_fingerprint,
+        )
     except execution_authorization.ExecutionAuthorizationError as exc:
         raise SystemExit(str(exc)) from exc
 
     task["execution_authorization"] = execution_authorization.build_granted_authorization(
-        policy=policy, grant=grant
+        policy=policy, grant=grant, task=task
     )
     # Release the old-runtime-recognized intake hold (SA/SD 2, 6) now that a
     # genuine grant is bound. The ongoing execution-authorization gate itself

@@ -16,7 +16,20 @@ Source completion (`merged`) is explicitly **not** the same as
 | `GOV-APPROVAL-AUTHORITY-PREREQUISITE-001` | `todo` (materialized) | Canonical task row already exists (owner `Antigravity2`, reviewer `Codex2`). `depends_on`: this task, `REGISTRY-STRATEGY-UNIFIED-CONTRACT-001`, `DOMAIN-WRITERS-001`. Materialized does not mean started or reviewed. |
 | `STRUCT-RETIRE-001` | `todo` (materialized) | Canonical task row already exists (owner `Antigravity`, reviewer `Codex2`). `depends_on`: this task, `GOV-APPROVAL-AUTHORITY-PREREQUISITE-001`, `REGISTRY-STRATEGY-UNIFIED-CONTRACT-001`, `DOMAIN-WRITERS-DURABILITY-CORRECTIVE-001`, `DEV-DELIVERY-001`. |
 
-## Hosted tasks (unchanged, still pending one-shot admission)
+## Execution authorization prerequisite (current supplement)
+
+`OPS-PRIVILEGED-TASK-EXECUTION-AUTH-001` is in source implementation on PR
+[#5627](https://github.com/ajoe734/pantheon/pull/5627), owned by Codex2 with Codex
+reviewing. The operator-approved [execution authorization plan](EXECUTION_AUTHORIZATION_SA_SD.md)
+permits signed privileged intake as `admitted_pending_authorization` after the
+qualified runtime proves both barriers. Genuine MFA is required before execution.
+This supersedes only the historical MFA-at-intake rule. Source review/merge,
+runtime acceptance and the three original pending-intake receipts remain
+separate, unclaimed gates in this source evidence. `runnable` and `running`
+require actual grant/attempt evidence; `hosted_accepted` still requires the
+later original hosted acceptance.
+
+## Hosted tasks (original IDs, pending qualified-runtime intake)
 
 | Task ID | Status |
 | --- | --- |

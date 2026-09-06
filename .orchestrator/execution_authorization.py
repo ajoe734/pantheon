@@ -27,6 +27,7 @@ import base64
 import binascii
 import hashlib
 import json
+import re
 from copy import deepcopy
 from datetime import datetime, timezone
 from typing import Any, Mapping
@@ -82,9 +83,13 @@ class ExecutionAuthorizationError(ValueError):
 
 
 def _canonical_json(value: Any) -> bytes:
-    return json.dumps(
-        value, sort_keys=True, separators=(",", ":"), ensure_ascii=True
-    ).encode("utf-8")
+    try:
+        return json.dumps(
+            value, sort_keys=True, separators=(",", ":"), ensure_ascii=True,
+            allow_nan=False,
+        ).encode("utf-8")
+    except (TypeError, ValueError, OverflowError) as exc:
+        raise ExecutionAuthorizationError("execution authorization contains invalid JSON") from exc
 
 
 def _sha256_hex(data: bytes) -> str:
@@ -137,17 +142,10 @@ def execution_policy_digest(
     resources: Any,
     action_scope: Any,
     artifacts: Any = None,
+    work_class: Any = None,
+    task_spec_hash: Any = None,
 ) -> str:
-    """Digest one task's exact execution scope, including its artifact contract.
-
-    ``artifacts`` is included so a canonical ``command_artifact_contract``
-    revision changes this digest exactly like a ``command_execution_resource``
-    revision does; :func:`is_execution_authorized` recomputes this digest
-    against the *current* task on every call and fails closed on a mismatch,
-    so either kind of scope revision invalidates an outstanding grant even
-    when it does not also bump ``generation`` (SA/SD 3, "reassignment, scope
-    or target change invalidates the grant").
-    """
+    """Bind source classification, full signed specification, and execution scope."""
 
     payload = {
         "task_id": str(task_id or "").strip(),
@@ -156,6 +154,8 @@ def execution_policy_digest(
         "resources": _normalized_resources(resources),
         "action_scope": str(action_scope or "").strip(),
         "artifacts": _normalized_artifacts(artifacts),
+        "work_class": work_class,
+        "task_spec_hash": task_spec_hash,
     }
     return _sha256_hex(_canonical_json(payload))
 
@@ -169,6 +169,8 @@ def derive_execution_policy(
     resources: Any = None,
     action_scope: Any = None,
     artifacts: Any = None,
+    task_spec: Mapping[str, Any] | None = None,
+    task_spec_hash: str | None = None,
 ) -> dict[str, Any]:
     """Derive the immutable execution policy for one task's exact contract.
 
@@ -184,6 +186,13 @@ def derive_execution_policy(
     resources_list = _normalized_resources(resources)
     artifacts_list = _normalized_artifacts(artifacts)
     repository_value = str(repository or "").strip()
+    if task_spec is not None:
+        if not isinstance(task_spec, Mapping):
+            raise ExecutionAuthorizationError("execution policy task_spec must be an object")
+        actual_hash = _sha256_hex(_canonical_json(dict(task_spec)))
+        if task_spec_hash is not None and task_spec_hash != actual_hash:
+            raise ExecutionAuthorizationError("execution policy task_spec_hash mismatch")
+        task_spec_hash = actual_hash
     digest = execution_policy_digest(
         task_id=task_id,
         repository=repository_value,
@@ -191,6 +200,8 @@ def derive_execution_policy(
         resources=resources_list,
         action_scope=action_scope_value,
         artifacts=artifacts_list,
+        work_class=normalized_class,
+        task_spec_hash=task_spec_hash,
     )
     return {
         "work_class": normalized_class,
@@ -201,6 +212,9 @@ def derive_execution_policy(
         "artifacts": artifacts_list,
         "action_scope": action_scope_value,
         "policy_digest": digest,
+        "task_spec_hash": task_spec_hash,
+        "source_owner": (task_spec or {}).get("owner"),
+        "source_reviewer": (task_spec or {}).get("reviewer"),
     }
 
 
@@ -246,7 +260,7 @@ def _verify_ed25519(
     signature: Mapping[str, Any],
     *,
     trusted_issuers: Mapping[str, str],
-) -> None:
+) -> str:
     key_id = str(signature.get("key_id") or "").strip()
     encoded_key = trusted_issuers.get(key_id)
     if not isinstance(encoded_key, str) or not encoded_key.strip():
@@ -263,10 +277,11 @@ def _verify_ed25519(
         Ed25519PublicKey.from_public_bytes(public_key_bytes).verify(
             signature_bytes, canonical
         )
-    except (ValueError, binascii.Error, InvalidSignature) as exc:
+    except (TypeError, ValueError, binascii.Error, InvalidSignature) as exc:
         raise ExecutionAuthorizationError(
             "execution grant signature verification failed"
         ) from exc
+    return _sha256_hex(public_key_bytes)
 
 
 def verify_execution_grant(
@@ -277,19 +292,21 @@ def verify_execution_grant(
     generation: Any,
     trusted_issuers: Mapping[str, str],
     now: datetime,
-) -> None:
+    task: Mapping[str, Any] | None = None,
+) -> str:
     """Verify one signed execution-authorization grant against exact policy.
 
     ``trusted_issuers`` maps ``key_id`` to a base64url-encoded Ed25519 public
     key. It is a distinct trust root from the dev-bridge packet-source keys
     (``BRIDGE_SIGNING_PUBLIC_KEYS_JSON``): a packet-source key must never be
-    accepted here (SA/SD 3). Raises :class:`ExecutionAuthorizationError` with
-    an actionable reason on any failure; never returns a partial verdict.
+    accepted here (SA/SD 3). Returns the successfully verified public-key
+    fingerprint for durable nonce consumption. Raises
+    :class:`ExecutionAuthorizationError` on any failure.
     """
 
     if not isinstance(grant, Mapping):
         raise ExecutionAuthorizationError("execution grant is missing")
-    if not policy.get("requires_execution_authorization"):
+    if not isinstance(policy, Mapping) or policy.get("requires_execution_authorization") is not True:
         raise ExecutionAuthorizationError(
             "execution grant is not applicable to a non-privileged policy"
         )
@@ -298,13 +315,25 @@ def verify_execution_grant(
         raise ExecutionAuthorizationError(
             "execution grant signature is missing or invalid"
         )
-    if not trusted_issuers:
+    if not isinstance(trusted_issuers, Mapping) or not trusted_issuers:
         raise ExecutionAuthorizationError(
             "no trusted MFA issuer is configured; grant submission stays closed"
         )
+    if not _policy_is_well_formed(policy):
+        raise ExecutionAuthorizationError("execution policy is missing or corrupt")
+    expected_digest = execution_policy_digest(
+        task_id=task_id, repository=policy["repository"], environment=policy["environment"],
+        resources=policy["resources"], action_scope=policy["action_scope"],
+        artifacts=policy["artifacts"], work_class=policy["work_class"],
+        task_spec_hash=policy["task_spec_hash"],
+    )
+    if expected_digest != policy["policy_digest"]:
+        raise ExecutionAuthorizationError("execution policy digest is corrupt")
+    if task is not None and not execution_policy_matches_task(task, policy=policy):
+        raise ExecutionAuthorizationError("execution policy does not match current signed task contract")
     body = deepcopy(dict(grant))
     body.pop("signature", None)
-    _verify_ed25519(body, signature, trusted_issuers=trusted_issuers)
+    issuer_fingerprint = _verify_ed25519(body, signature, trusted_issuers=trusted_issuers)
 
     if str(grant.get("purpose") or "").strip() != EXECUTION_GRANT_PURPOSE:
         raise ExecutionAuthorizationError("execution grant purpose is invalid")
@@ -316,16 +345,15 @@ def verify_execution_grant(
         raise ExecutionAuthorizationError(
             "execution grant requires an independently verified MFA assertion"
         )
-    if not str(grant.get("mfa_actor") or "").strip():
+    if not isinstance(grant.get("mfa_actor"), str) or not grant["mfa_actor"].strip():
         raise ExecutionAuthorizationError("execution grant MFA actor identity is required")
 
     if str(grant.get("task_id") or "").strip() != str(task_id or "").strip():
         raise ExecutionAuthorizationError("execution grant task_id mismatch")
-    try:
-        grant_generation = int(grant.get("generation"))
-    except (TypeError, ValueError):
+    grant_generation = grant.get("generation")
+    if type(grant_generation) is not int or grant_generation < 0:
         raise ExecutionAuthorizationError("execution grant generation must be an integer")
-    if grant_generation != int(generation or 0):
+    if type(generation) is not int or grant_generation != generation:
         raise ExecutionAuthorizationError("execution grant generation mismatch")
     if str(grant.get("policy_digest") or "").strip() != str(policy.get("policy_digest") or "").strip():
         raise ExecutionAuthorizationError("execution grant policy_digest mismatch")
@@ -335,11 +363,11 @@ def verify_execution_grant(
         raise ExecutionAuthorizationError("execution grant environment mismatch")
     if str(grant.get("action_scope") or "").strip() != str(policy.get("action_scope") or "").strip():
         raise ExecutionAuthorizationError("execution grant action_scope mismatch")
-    if _normalized_resources(grant.get("resources")) != list(policy.get("resources") or []):
+    if not _is_string_list(grant.get("resources")) or _normalized_resources(grant.get("resources")) != policy["resources"]:
         raise ExecutionAuthorizationError("execution grant resources mismatch")
 
-    nonce = str(grant.get("nonce") or "").strip()
-    if not nonce:
+    nonce = grant.get("nonce")
+    if not isinstance(nonce, str) or not nonce.strip():
         raise ExecutionAuthorizationError("execution grant nonce is required")
 
     issued = _parse_utc(grant.get("issued_at"))
@@ -352,15 +380,15 @@ def verify_execution_grant(
         )
     if now < issued:
         raise ExecutionAuthorizationError("execution grant is not yet valid")
-    if now > expires:
+    if now >= expires:
         raise ExecutionAuthorizationError("execution grant has expired")
 
-    try:
-        run_ttl_seconds = int(grant.get("run_ttl_seconds", DEFAULT_RUN_TTL_SECONDS))
-    except (TypeError, ValueError):
+    run_ttl_seconds = grant.get("run_ttl_seconds", DEFAULT_RUN_TTL_SECONDS)
+    if type(run_ttl_seconds) is not int:
         raise ExecutionAuthorizationError("execution grant run_ttl_seconds is invalid")
     if run_ttl_seconds <= 0 or run_ttl_seconds > MAX_RUN_TTL_SECONDS:
         raise ExecutionAuthorizationError("execution grant run_ttl_seconds is out of bounds")
+    return issuer_fingerprint
 
 
 def consume_grant_nonce(
@@ -369,20 +397,32 @@ def consume_grant_nonce(
     *,
     task_id: Any,
     now: datetime,
+    issuer_fingerprint: str,
 ) -> None:
     """Atomically spend a grant's one-shot nonce against a durable ledger.
 
     The caller holds the canonical task-state lock and owns ``ledger``
     in-place mutation and its own commit; this function only decides replay
-    eligibility. A second submission of the exact same signed grant -- to
+    eligibility. ``issuer_fingerprint`` comes from verify_execution_grant,
+    never from caller-supplied signature routing metadata. A second submission of the same signed grant -- to
     this task or any other -- is rejected (SA/SD 3, "one-shot nonce").
     """
 
-    nonce = str(grant.get("nonce") or "").strip()
-    if not nonce:
+    if not isinstance(ledger, dict) or not isinstance(grant, Mapping):
+        raise ExecutionAuthorizationError("execution grant replay ledger or grant is invalid")
+    nonce = grant.get("nonce")
+    if not isinstance(nonce, str) or not nonce.strip():
         raise ExecutionAuthorizationError("execution grant nonce is required")
-    key_id = str((grant.get("signature") or {}).get("key_id") or "").strip()
-    assertion_id = _sha256_hex(f"{key_id}:{nonce}".encode("utf-8"))
+    signature = grant.get("signature")
+    if not isinstance(signature, Mapping) or not isinstance(signature.get("key_id"), str):
+        raise ExecutionAuthorizationError("execution grant issuer signature is invalid")
+    if not isinstance(issuer_fingerprint, str) or not re.fullmatch(r"[0-9a-f]{64}", issuer_fingerprint):
+        raise ExecutionAuthorizationError("verified execution issuer fingerprint is required")
+    nonce = nonce.strip()
+    # key_id is unsigned routing metadata; multiple configured aliases may
+    # resolve to the same issuer key. Only the successfully verified key's
+    # fingerprint supplies stable replay identity across those aliases.
+    assertion_id = _sha256_hex(f"{issuer_fingerprint}:{nonce}".encode("utf-8"))
     if assertion_id in ledger:
         raise ExecutionAuthorizationError("execution grant nonce was already consumed")
     ledger[assertion_id] = {
@@ -395,6 +435,7 @@ def build_granted_authorization(
     *,
     policy: Mapping[str, Any],
     grant: Mapping[str, Any],
+    task: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Return the redacted, durable ``STATE_GRANTED`` subrecord to persist.
 
@@ -420,10 +461,99 @@ def build_granted_authorization(
             "issued_at": str(grant.get("issued_at") or ""),
             "expires_at": str(grant.get("expires_at") or ""),
             "run_ttl_seconds": int(grant.get("run_ttl_seconds", DEFAULT_RUN_TTL_SECONDS)),
+            "owner": task.get("owner") if task is not None else policy.get("source_owner"),
+            "reviewer": task.get("reviewer") if task is not None else policy.get("source_reviewer"),
         },
         "reserved_run_id": None,
         "reserved_at": None,
     }
+
+
+def _is_string_list(value: Any) -> bool:
+    return isinstance(value, list) and all(isinstance(item, str) and item.strip() for item in value)
+
+
+def _policy_is_well_formed(policy: Mapping[str, Any]) -> bool:
+    if policy.get("requires_execution_authorization") is not True:
+        return False
+    if not isinstance(policy.get("work_class"), str) or policy["work_class"] not in PRIVILEGED_WORK_CLASSES:
+        return False
+    for field in ("repository", "environment", "action_scope", "source_owner", "source_reviewer"):
+        if not isinstance(policy.get(field), str) or not policy[field].strip():
+            return False
+    for field in ("policy_digest", "task_spec_hash"):
+        if not isinstance(policy.get(field), str) or not re.fullmatch(r"[0-9a-f]{64}", policy[field]):
+            return False
+    for field in ("resources", "artifacts"):
+        if not _is_string_list(policy.get(field)) or policy[field] != _normalized_resources(policy[field]):
+            return False
+    return True
+
+
+def execution_policy_matches_task(task: Mapping[str, Any], *, policy: Mapping[str, Any]) -> bool:
+    """Validate the frozen signed specification and its current canonical projection.
+
+    Assignment is allowed to change through its generation-bound transition;
+    all other signed fields retain the exact intake contract. The grant also
+    snapshots the current assignment, preventing a silent owner swap.
+    """
+    if not isinstance(policy, Mapping) or not _policy_is_well_formed(policy):
+        return False
+    bridge = task.get("dev_bridge")
+    if not isinstance(bridge, Mapping) or bridge.get("work_class") != policy["work_class"]:
+        return False
+    if bridge.get("operator_authorization_required", True) is not True:
+        return False
+    spec = bridge.get("task_spec")
+    if not isinstance(spec, Mapping):
+        return False
+    if bridge.get("task_spec_hash") != policy["task_spec_hash"]:
+        return False
+    try:
+        if _sha256_hex(_canonical_json(dict(spec))) != policy["task_spec_hash"]:
+            return False
+        for field in ("id", "title", "target_repo", "owner", "reviewer"):
+            if not isinstance(spec.get(field), str) or not spec[field].strip():
+                return False
+        for field in ("depends_on", "artifacts", "acceptance"):
+            if not _is_string_list(spec.get(field)):
+                return False
+        for field, source_field in (("source_owner", "owner"), ("source_reviewer", "reviewer")):
+            if policy[field] != spec[source_field]:
+                return False
+        for field in ("owner", "reviewer"):
+            if not isinstance(task.get(field), str) or not task[field].strip():
+                return False
+        for field, value in spec.items():
+            if field in {"owner", "reviewer"}:
+                continue
+            if field == "summary":
+                current = task.get("summary_zh")
+            elif field == "phase":
+                current = task.get("phase")
+                value = value or "Unassigned"
+            else:
+                current = task.get(field)
+            if current != value:
+                return False
+        for field, default in (("dependency_tracks", {}), ("execution_resources", [])):
+            if field not in spec and task.get(field, default) != default:
+                return False
+        if policy["repository"] != task.get("target_repo"):
+            return False
+        if policy["resources"] != _normalized_resources(task.get("execution_resources")):
+            return False
+        if policy["artifacts"] != _normalized_artifacts(task.get("artifacts")):
+            return False
+        current_digest = execution_policy_digest(
+            task_id=task.get("id"), repository=task.get("target_repo"),
+            environment=policy["environment"], resources=task.get("execution_resources"),
+            action_scope=policy["action_scope"], artifacts=task.get("artifacts"),
+            work_class=bridge["work_class"], task_spec_hash=bridge["task_spec_hash"],
+        )
+    except (ExecutionAuthorizationError, TypeError, ValueError):
+        return False
+    return current_digest == policy["policy_digest"]
 
 
 def task_privileged_by_source(task: Mapping[str, Any]) -> bool:
@@ -441,9 +571,16 @@ def task_privileged_by_source(task: Mapping[str, Any]) -> bool:
     """
 
     dev_bridge = task.get("dev_bridge")
-    if not isinstance(dev_bridge, Mapping):
+    if dev_bridge is None:
         return False
-    return is_privileged_work_class(dev_bridge.get("work_class"))
+    if not isinstance(dev_bridge, Mapping):
+        return True
+    work_class = dev_bridge.get("work_class")
+    return (
+        not isinstance(work_class, str)
+        or work_class not in {"functional", "paper", "read_only", "ci", "reconcile_only"}
+        or dev_bridge.get("operator_authorization_required") is True
+    )
 
 
 # Retained as a private alias: this module's own callers below predate the
@@ -468,30 +605,24 @@ def _grant_matches_current_scope(
     sync with the other.
     """
 
-    try:
-        task_generation = int(task.get("generation", 0) or 0)
-    except (TypeError, ValueError):
+    task_generation = task.get("generation", 0)
+    if type(task_generation) is not int or task_generation < 0:
         return False
-    if grant.get("generation") != task_generation:
+    if type(grant.get("generation")) is not int or grant.get("generation") != task_generation:
         return False
+    if grant.get("task_id") != task.get("id"):
+        return False
+    for field in ("repository", "environment", "resources", "action_scope"):
+        if grant.get(field) != policy.get(field):
+            return False
+    for field in ("owner", "reviewer"):
+        if grant.get(field) != task.get(field):
+            return False
     if str(grant.get("policy_digest") or "") != str(policy.get("policy_digest") or ""):
         return False
-    # Recompute the digest against the task's *current* target/resources/
-    # artifact contract rather than trusting the two frozen, previously
-    # agreeing digests above. ``command_execution_resource`` and
-    # ``command_artifact_contract`` revise a pre-dispatch task's scope
-    # without bumping ``generation``; without this recomputation neither
-    # frozen digest would ever change, so a scope revision made after grant
-    # issuance would silently keep an outstanding grant valid.
-    current_digest = execution_policy_digest(
-        task_id=task.get("id"),
-        repository=task.get("target_repo") or policy.get("repository"),
-        environment=policy.get("environment"),
-        resources=task.get("execution_resources"),
-        action_scope=policy.get("action_scope"),
-        artifacts=task.get("artifacts"),
-    )
-    return current_digest == str(policy.get("policy_digest") or "")
+    # Frozen grant/policy agreement alone does not prove that the signed
+    # specification still matches the canonical task about to execute.
+    return execution_policy_matches_task(task, policy=policy)
 
 
 def is_execution_authorized(
@@ -523,8 +654,8 @@ def is_execution_authorized(
     policy = record.get("policy")
     if not isinstance(policy, Mapping):
         return False
-    if not policy.get("requires_execution_authorization"):
-        return not privileged_by_source
+    if policy.get("requires_execution_authorization") is not True:
+        return False
     if record.get("state") != STATE_GRANTED:
         return False
     grant = record.get("grant")
@@ -533,7 +664,11 @@ def is_execution_authorized(
     if not _grant_matches_current_scope(task, policy=policy, grant=grant):
         return False
     expires = _parse_utc(grant.get("expires_at"))
-    if expires is None or now > expires:
+    issued = _parse_utc(grant.get("issued_at"))
+    ttl = grant.get("run_ttl_seconds")
+    if (issued is None or expires is None or not issued <= now < expires
+            or (expires - issued).total_seconds() > MAX_GRANT_START_FRESHNESS_SECONDS
+            or type(ttl) is not int or not 0 < ttl <= MAX_RUN_TTL_SECONDS):
         return False
     return True
 
@@ -575,11 +710,11 @@ def reservation_is_current(
     policy = record.get("policy")
     if not isinstance(policy, Mapping):
         return False
-    if not policy.get("requires_execution_authorization"):
-        return not privileged_by_source
+    if policy.get("requires_execution_authorization") is not True:
+        return False
     if record.get("state") != STATE_RESERVED:
         return False
-    if str(record.get("reserved_run_id") or "").strip() != str(run_id or "").strip():
+    if not isinstance(run_id, str) or not run_id.strip() or record.get("reserved_run_id") != run_id:
         return False
     grant = record.get("grant")
     if not isinstance(grant, Mapping):
@@ -589,15 +724,17 @@ def reservation_is_current(
     reserved_at = _parse_utc(record.get("reserved_at"))
     if reserved_at is None:
         return False
-    try:
-        run_ttl_seconds = int(grant.get("run_ttl_seconds", DEFAULT_RUN_TTL_SECONDS))
-    except (TypeError, ValueError):
+    run_ttl_seconds = grant.get("run_ttl_seconds")
+    if type(run_ttl_seconds) is not int or not 0 < run_ttl_seconds <= MAX_RUN_TTL_SECONDS:
         return False
-    if run_ttl_seconds <= 0:
+    issued = _parse_utc(grant.get("issued_at"))
+    expires = _parse_utc(grant.get("expires_at"))
+    if (issued is None or expires is None or not issued <= reserved_at < expires
+            or (expires - issued).total_seconds() > MAX_GRANT_START_FRESHNESS_SECONDS):
         return False
     if now < reserved_at:
         return False
-    if (now - reserved_at).total_seconds() > run_ttl_seconds:
+    if (now - reserved_at).total_seconds() >= run_ttl_seconds:
         return False
     return True
 
@@ -616,12 +753,15 @@ def reserve_execution_authorization(
     snapshot cannot both win (SA/SD 4). Never mutates ``task`` in place.
     """
 
+    if not isinstance(run_id, str) or not run_id.strip():
+        raise ExecutionAuthorizationError("execution reservation run_id is required")
     if not is_execution_authorized(task, now=now):
         raise ExecutionAuthorizationError(
             "task is not currently execution-authorized; refusing to reserve"
         )
     record = task.get("execution_authorization")
-    assert isinstance(record, Mapping)
+    if not isinstance(record, Mapping):
+        raise ExecutionAuthorizationError("task has no execution-authorization record to reserve")
     updated = deepcopy(dict(record))
     updated["state"] = STATE_RESERVED
     updated["reserved_run_id"] = str(run_id or "")

@@ -61,16 +61,19 @@ consults that verdict for the two *owner-execution* dispatch reasons,
 health, or endpoint check. `REVIEW_READY` and `OWNED_FINALIZE` dispatch are
 read-only/closeout-bookkeeping purposes and are never denied on this
 verdict -- a pending, expired, or revoked privileged task can still be
-reviewed and finalized. A non-privileged task, or any task with no
-`execution_authorization` subrecord, is unaffected (`execution_authorized`
-defaults to `True`). `is_execution_authorized` derives privileged
+reviewed and finalized. Only a non-privileged task with no authorization requirement is unaffected. `is_execution_authorized` derives privileged
 classification from the task's durable `dev_bridge.work_class`, not from
 whether the subrecord happens to be present, so a dropped or downgraded
 subrecord on a privileged task fails closed instead of falling back to
 authorized. `supervisor.start_worker_for_request` spends the one-shot grant
 under the canonical task-state lock immediately before launch (also scoped
 to `OWNED_IN_PROGRESS`/`OWNED_READY`), and `worker_runner.py` independently
-revalidates the exact reservation at actual process-launch time. See
+revalidates the exact reservation against the authoritative journal at actual
+process-launch time. The durable runtime receipt binds the PID/start ticks,
+command, task generation, role, workspace and journal identity; caller-provided
+role or task labels cannot exempt a launch. Reservation uses a unique event
+attempt and cannot be reused after process loss. Full signed spec/contract
+changes, reassignment and revocation invalidate the binding. See
 `.orchestrator/execution_authorization.py`'s module docstring and
 `docs/04/pantheon_first_release_closure_2026-09-06/EXECUTION_AUTHORIZATION_SA_SD.md`
 for the full policy/grant/one-shot-consume contract.

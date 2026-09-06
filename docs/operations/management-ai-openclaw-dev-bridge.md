@@ -37,7 +37,9 @@ For a local task packet, verify all of the following:
 1. The packet is placed in the local pending inbox.
 2. The supervisor records a processed receipt.
 3. The canonical task record appears under `ai-task-archive/tasks/`.
-4. The resulting task is eligible under the V2 dispatch evaluator.
+4. Canonical readback distinguishes ordinary eligibility from
+   `admitted_pending_authorization`; a privileged pending receipt is accepted
+   intake and carries no execution permission.
 
 If a task needs a direct Human/Ops change, use the local status command with a
 specific task identifier and reason. Do not edit task JSON, queue JSONL, or
@@ -64,46 +66,81 @@ packet — see the "Execution authorization" section below.
 
 ## Execution authorization (privileged task execution, separate from intake)
 
-Genuine MFA is required later, separately, at actual execution — never at
-intake. `.orchestrator/execution_authorization.py` is the sole module that
-derives a privileged task's immutable execution policy (over its current
-target/resources/artifacts), verifies an independently issued MFA-bound
-grant against it, and enforces one-shot consumption so a grant authorizes
-exactly one dispatch attempt. It is fed into the existing shared
-planner/delivery predicate (`rewrite/dispatch_admission.py`'s
-`TaskIntent.execution_authorized`), scoped to owner-execution dispatch only
-so a pending/revoked privileged task can still be reviewed and finalized,
-and spent at the actual claim/lease boundary
-(`supervisor.reserve_execution_authorization_for_launch`, called immediately
-before the adapter process launches). `worker_runner.py`'s
-`ensure_execution_authorized_before_launch` independently revalidates the
-exact reservation at actual process-launch time, so a direct invocation
-bypassing the supervisor cannot launch owner-execution work either. A fresh
-privileged task also carries an old-runtime-recognized `waiting_for` hold
-until a genuine grant is bound, so an older command-runtime rollback that
-predates this module entirely still cannot dispatch it.
+Genuine MFA is required at execution. The immutable approved plan is
+[EXECUTION_AUTHORIZATION_SA_SD.md](../04/pantheon_first_release_closure_2026-09-06/EXECUTION_AUTHORIZATION_SA_SD.md),
+byte-identical to `/tmp/pantheon-execution-auth-20260906.2Y96ee/SA_SD.md`
+(SHA256 `dde7dfc27ca02bf5d8920c9e176d2d543904540a5103cf0c756b0d7b73372e66`).
+Its original assignment is historical; canonical assignment currently names
+Codex2 as implementation owner and Codex as independent reviewer.
 
-Human/Ops CLI:
+`execution_authorization.py` binds the verified full signed task spec and its
+hash, work class, repository, environment, resources and action into one policy
+digest. Current contract, task generation and assignment must still match at
+grant submission, reservation and worker entry. Scope changes invalidate the
+grant; they cannot silently rewrite the immutable policy. A new signed
+contract is required for changed source obligations.
+
+The existing shared planner and late-delivery predicate denies privileged
+owner execution before capacity/worktree/provider launch. The supervisor
+reserves one grant under the canonical TaskStore lock for one event attempt,
+then checks it again under the lock held through adapter launch. A crash after
+reservation spends that attempt; replay cannot recover authority for another
+attempt. `worker_runner.py` waits for the existing durable worker/launch receipt
+and verifies its PID/start ticks, command, workspace, task, generation and
+canonical role. That receipt binds the authoritative journal; caller-selected
+command text, role labels and `ai-status.json` mirrors confer no authority.
+
+Revocation, reopen and reassignment restore the existing `waiting_for=Human/Ops`
+pending hold. Active execution rechecks its bounded reservation on the existing
+heartbeat and uses the bounded process termination path when authority is lost.
+Termination is not a rollback receipt; any compensation remains owned by the
+existing hosted protocol and environment lease. Read-only review/finalization
+cannot spend a mutation grant or clear a pending hold.
+
+Use the qualified command runtime supplied by the supervisor. A worker reads
+redacted state using its actual identity, for example:
 
 ```bash
-AI_NAME=Human/Ops \
-EXECUTION_GRANT_JSON="$(cat grant.json)" \
-PANTHEON_LOCAL_HUMAN_OPS=1 \
-./scripts/ai-status.sh execution-grant-submit <task-id>
-
-AI_NAME=Human/Ops \
-PANTHEON_LOCAL_HUMAN_OPS=1 \
-./scripts/ai-status.sh execution-grant-revoke <task-id> "<reason>"
+AI_NAME=Codex2 "$PANTHEON_COMMAND_ROOT/scripts/ai-status.sh" show <task-id>
 ```
 
-The trusted MFA-issuer public-key set is configured at
-`execution_authorization.mfa_issuer_public_keys` in
-`.orchestrator/config.json` — an independently provisioned trust root kept
-distinct from `BRIDGE_SIGNING_PUBLIC_KEYS_JSON` and from the grant
-submitter's own environment: a dev-bridge packet-source key, or a
-caller-supplied environment variable, is never an accepted MFA issuer. See
-`docs/04/pantheon_first_release_closure_2026-09-06/EXECUTION_AUTHORIZATION_SA_SD.md`
-for the full grant field contract and the approved plan this implements.
+Human/Ops submits an independently issued assertion through the existing local
+operator ingress (the example reads an already-issued grant; it creates no
+credentials):
+
+```bash
+EXECUTION_GRANT_JSON="$(cat grant.json)" \
+  "$PANTHEON_COMMAND_ROOT/scripts/human-ops-status.sh" execution-grant-submit <task-id>
+"$PANTHEON_COMMAND_ROOT/scripts/human-ops-status.sh" execution-grant-revoke <task-id> "<reason>"
+```
+
+The assertion is canonical JSON signed with Ed25519, with `signature.algorithm`,
+`signature.key_id`, and base64url `signature.value`. Required body fields are
+`task_id`, `generation`, `policy_digest`, `repository`, `environment`,
+`resources`, `action_scope`, `purpose=pantheon.execution.mfa`,
+`capability=assistant.canonical.execute`, `audience=<task-id>`,
+`mfa_verified=true`, `mfa_actor`, `nonce`, `issued_at`, and `expires_at`.
+The issuer, not the submitter, vouches for MFA. Start validity is at most 300
+seconds; `run_ttl_seconds` separately bounds the consumed run (default 3600,
+maximum 86400). A nonce cannot be submitted twice. Persisted task state keeps
+scoped bindings and redacted references, not the bearer assertion or a key.
+
+Trusted public issuers are configured at
+`execution_authorization.mfa_issuer_public_keys` in the qualified runtime's
+`.orchestrator/config.json`, independently of bridge source signing trust and
+the submitting environment. An empty issuer set closes grant submission with
+an actionable reason while signed pending intake remains available.
+
+Source acceptance, qualified runtime acceptance, pending intake and hosted
+acceptance are separate receipts. Runtime promotion must use the existing
+`promote_supervisor_runtime.py` discover-only preflight with explicit roots and
+candidate interpreter; its isolated behavioral probe requires both intake and
+late execution barriers and records imported candidate paths. An unsafe older
+runtime cannot be promoted or used for rollback. Only after accepted source,
+qualified runtime and no-MFA/no-launch proof may the coordinator submit the
+original `DEV-RELEASE-HOSTED-001`, `L12-HOSTED-001` and `MGMT-AGORA-E2E-001`
+as pending, preserving IDs and contracts and rechecking deduplication. This
+source task issues no live grant and performs no hosted operation.
 
 ## Removing development tooling
 

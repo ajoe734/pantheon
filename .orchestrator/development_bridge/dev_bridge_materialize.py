@@ -58,6 +58,7 @@ from cryptography.exceptions import InvalidSignature
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 
 from common import utc_now as iso_now
+import execution_authorization
 
 # Canonical home of the materialization re-entrancy guard (see module
 # docstring) -- ai_status.py imports this exact instance rather than owning
@@ -564,6 +565,8 @@ def read_dev_bridge_materialized_batch(
                 expected = {}
             if spec_field == "execution_resources" and spec_field not in signed_spec:
                 expected = []
+            if spec_field == "phase":
+                expected = expected or "Unassigned"
             if spec_field == "target_repo" and spec_field not in signed_spec:
                 expected = task.get("target_repo")
             if spec_field in {"depends_on", "artifacts", "acceptance", "execution_resources"}:
@@ -573,6 +576,13 @@ def read_dev_bridge_materialized_batch(
                 raise SystemExit(
                     "Dev bridge materialize readback immutable task-spec mismatch: "
                     f"{task_id}.{spec_field}"
+                )
+        if execution_authorization.is_privileged_work_class(expected_bridge.get("work_class")):
+            authorization = task.get("execution_authorization")
+            policy = authorization.get("policy") if isinstance(authorization, Mapping) else None
+            if not execution_authorization.execution_policy_matches_task(task, policy=policy):
+                raise SystemExit(
+                    f"Dev bridge materialize readback execution-policy mismatch: {task_id}"
                 )
         results.append(
             {

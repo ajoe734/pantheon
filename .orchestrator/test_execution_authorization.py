@@ -27,6 +27,14 @@ class ExecutionAuthorizationTestCase(unittest.TestCase):
                 )
             )
         }
+        self.spec = {
+            "id": "OPS-PRIV-001", "title": "Bound privileged work",
+            "owner": "Codex2", "reviewer": "Codex", "target_repo": "pantheon",
+            "phase": "Development", "summary": "One approved scope",
+            "depends_on": ["PLAN-001"], "dependency_tracks": {"PLAN-001": "functional"},
+            "execution_resources": ["dev-supervisor"], "artifacts": [],
+            "acceptance": ["No unauthorized effects"],
+        }
         self.policy = ea.derive_execution_policy(
             task_id="OPS-PRIV-001",
             work_class="security",
@@ -34,6 +42,7 @@ class ExecutionAuthorizationTestCase(unittest.TestCase):
             environment="pantheon-dev",
             resources=["dev-supervisor"],
             action_scope="execute",
+            task_spec=self.spec,
         )
         # is_execution_authorized recomputes the policy digest against the
         # task's *current* target/resources/artifacts, so any granted-task
@@ -41,9 +50,15 @@ class ExecutionAuthorizationTestCase(unittest.TestCase):
         # given, the same way scripts/ai_status.py's command_assign mirrors
         # them onto the real task row at intake.
         self.current_scope_fields = {
+            **deepcopy(self.spec),
+            "summary_zh": self.spec["summary"],
             "target_repo": "pantheon",
             "execution_resources": ["dev-supervisor"],
             "artifacts": [],
+            "dev_bridge": {
+                "work_class": "security", "task_spec": deepcopy(self.spec),
+                "task_spec_hash": self.policy["task_spec_hash"],
+            },
         }
 
     def _sign(self, body: dict, key, key_id: str = "mfa-issuer-1") -> dict:
@@ -312,17 +327,43 @@ class ExecutionAuthorizationTestCase(unittest.TestCase):
 
     def test_replayed_nonce_is_rejected(self) -> None:
         grant = self._grant()
+        fingerprint = ea.verify_execution_grant(
+            grant, policy=self.policy, task_id="OPS-PRIV-001", generation=0,
+            trusted_issuers=self.trusted_issuers, now=self.now,
+        )
         ledger: dict = {}
-        ea.consume_grant_nonce(ledger, grant, task_id="OPS-PRIV-001", now=self.now)
+        ea.consume_grant_nonce(ledger, grant, task_id="OPS-PRIV-001", now=self.now, issuer_fingerprint=fingerprint)
         with self.assertRaisesRegex(ea.ExecutionAuthorizationError, "already consumed"):
-            ea.consume_grant_nonce(ledger, grant, task_id="OPS-PRIV-001", now=self.now)
+            ea.consume_grant_nonce(ledger, grant, task_id="OPS-PRIV-001", now=self.now, issuer_fingerprint=fingerprint)
 
     def test_replayed_nonce_against_a_different_task_is_still_rejected(self) -> None:
         grant = self._grant()
+        fingerprint = ea.verify_execution_grant(
+            grant, policy=self.policy, task_id="OPS-PRIV-001", generation=0,
+            trusted_issuers=self.trusted_issuers, now=self.now,
+        )
         ledger: dict = {}
-        ea.consume_grant_nonce(ledger, grant, task_id="OPS-PRIV-001", now=self.now)
+        ea.consume_grant_nonce(ledger, grant, task_id="OPS-PRIV-001", now=self.now, issuer_fingerprint=fingerprint)
         with self.assertRaisesRegex(ea.ExecutionAuthorizationError, "already consumed"):
-            ea.consume_grant_nonce(ledger, grant, task_id="OTHER-TASK", now=self.now)
+            ea.consume_grant_nonce(ledger, grant, task_id="OTHER-TASK", now=self.now, issuer_fingerprint=fingerprint)
+
+    def test_unsigned_issuer_alias_cannot_replay_one_verified_assertion(self) -> None:
+        grant = self._grant()
+        aliases = {**self.trusted_issuers, "same-key-alias": self.trusted_issuers["mfa-issuer-1"]}
+        fingerprint = ea.verify_execution_grant(
+            grant, policy=self.policy, task_id="OPS-PRIV-001", generation=0,
+            trusted_issuers=aliases, now=self.now,
+        )
+        ledger = {}
+        ea.consume_grant_nonce(ledger, grant, task_id="OPS-PRIV-001", now=self.now, issuer_fingerprint=fingerprint)
+        grant["signature"]["key_id"] = "same-key-alias"
+        alias_fingerprint = ea.verify_execution_grant(
+            grant, policy=self.policy, task_id="OPS-PRIV-001", generation=0,
+            trusted_issuers=aliases, now=self.now,
+        )
+        self.assertEqual(alias_fingerprint, fingerprint)
+        with self.assertRaisesRegex(ea.ExecutionAuthorizationError, "already consumed"):
+            ea.consume_grant_nonce(ledger, grant, task_id="OPS-PRIV-001", now=self.now, issuer_fingerprint=alias_fingerprint)
 
     # -- reassignment / reopen / revoke ---------------------------------------
 
@@ -601,6 +642,101 @@ class ExecutionAuthorizationTestCase(unittest.TestCase):
         self.assertFalse(
             ea.reservation_is_current(task, run_id="run-1", now=self.now)
         )
+
+    def test_every_signed_contract_field_is_bound_at_grant_and_entry(self) -> None:
+        changes = {
+            "title": "A different job", "summary_zh": "Broadened task",
+            "phase": "Production", "depends_on": [],
+            "dependency_tracks": {"PLAN-001": "hosted"},
+            "acceptance": ["Changed acceptance"], "owner": "Claude",
+            "reviewer": "Gemini", "target_repo": "execute-plans",
+        }
+        for field, value in changes.items():
+            for reserved in (False, True):
+                with self.subTest(field=field, reserved=reserved):
+                    task = deepcopy(self._granted_task())
+                    if reserved:
+                        task["execution_authorization"] = ea.reserve_execution_authorization(
+                            task, run_id="run-1", now=self.now
+                        )
+                    task[field] = value
+                    self.assertFalse(ea.is_execution_authorized(task, now=self.now))
+                    self.assertFalse(ea.reservation_is_current(task, run_id="run-1", now=self.now))
+
+    def test_source_spec_mutation_or_missing_hash_cannot_authorize(self) -> None:
+        for corruption in ("missing-spec", "missing-hash", "changed-spec", "downgrade", "policy-class", "policy-hash"):
+            with self.subTest(corruption=corruption):
+                task = deepcopy(self._granted_task())
+                if corruption == "missing-spec":
+                    task["dev_bridge"].pop("task_spec")
+                elif corruption == "missing-hash":
+                    task["dev_bridge"].pop("task_spec_hash")
+                elif corruption == "changed-spec":
+                    task["dev_bridge"]["task_spec"]["acceptance"] = ["Changed acceptance"]
+                    task["acceptance"] = ["Changed acceptance"]
+                elif corruption == "downgrade":
+                    task["dev_bridge"]["work_class"] = "functional"
+                elif corruption == "policy-class":
+                    task["execution_authorization"]["policy"]["work_class"] = "hosted"
+                else:
+                    task["execution_authorization"]["policy"].pop("task_spec_hash")
+                self.assertFalse(ea.is_execution_authorized(task, now=self.now))
+                with self.assertRaises(ea.ExecutionAuthorizationError):
+                    ea.reserve_execution_authorization(task, run_id="run-1", now=self.now)
+
+    def test_malformed_policy_and_scalar_shapes_fail_closed(self) -> None:
+        for field, values in {
+            "resources": ({}, "dev-supervisor", 7, [False]),
+            "work_class": ([], {}, True),
+            "requires_execution_authorization": ("true", 1, False),
+        }.items():
+            for value in values:
+                with self.subTest(field=field, value=value):
+                    task = deepcopy(self._granted_task())
+                    task["execution_authorization"]["policy"][field] = value
+                    self.assertFalse(ea.is_execution_authorized(task, now=self.now))
+                    self.assertFalse(ea.reservation_is_current(task, run_id="run-1", now=self.now))
+        for value in (True, 0.9, "0", {}, []):
+            with self.subTest(generation=value):
+                with self.assertRaises(ea.ExecutionAuthorizationError):
+                    ea.verify_execution_grant(
+                        self._grant(generation=value), policy=self.policy,
+                        task_id=self.spec["id"], generation=0,
+                        trusted_issuers=self.trusted_issuers, now=self.now,
+                    )
+
+    def test_fresh_grant_after_reassignment_snapshots_current_assignment(self) -> None:
+        task = deepcopy(self._granted_task())
+        original_policy = deepcopy(task["execution_authorization"]["policy"])
+        task.update(owner="Claude", reviewer="Gemini", generation=1)
+        grant = self._grant(generation=1, nonce="new-assignment")
+        ea.verify_execution_grant(
+            grant, policy=original_policy, task_id=task["id"], generation=1,
+            trusted_issuers=self.trusted_issuers, now=self.now, task=task,
+        )
+        task["execution_authorization"] = ea.build_granted_authorization(
+            policy=original_policy, grant=grant, task=task
+        )
+        self.assertTrue(ea.is_execution_authorized(task, now=self.now))
+        self.assertEqual(task["execution_authorization"]["policy"], original_policy)
+        task["owner"] = "Codex2"
+        self.assertFalse(ea.is_execution_authorized(task, now=self.now))
+
+    def test_scope_mutation_is_rejected_before_grant_submission(self) -> None:
+        task = deepcopy(self._granted_task())
+        task["acceptance"] = ["Expanded acceptance"]
+        with self.assertRaisesRegex(ea.ExecutionAuthorizationError, "current signed task contract"):
+            ea.verify_execution_grant(
+                self._grant(), policy=self.policy, task_id=task["id"], generation=0,
+                trusted_issuers=self.trusted_issuers, now=self.now, task=task,
+            )
+
+    def test_reserved_run_lifetime_is_bounded_separately_from_start_expiry(self) -> None:
+        task = deepcopy(self._granted_task())
+        task["execution_authorization"] = ea.reserve_execution_authorization(task, run_id="run-1", now=self.now)
+        self.assertTrue(ea.reservation_is_current(task, run_id="run-1", now=self.now + timedelta(seconds=121)))
+        task["execution_authorization"]["grant"]["run_ttl_seconds"] = ea.MAX_RUN_TTL_SECONDS + 1
+        self.assertFalse(ea.reservation_is_current(task, run_id="run-1", now=self.now))
 
 
 if __name__ == "__main__":
