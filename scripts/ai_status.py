@@ -6836,27 +6836,14 @@ def _assert_no_active_execution(
             raise RuntimeError(f"orchestrator runtime supervisor structure is malformed: {task_id}")
 
 
-def _compute_audit_proof_digest(events: list[Mapping[str, Any]], task_id: str, archived_at: datetime) -> str:
+def _compute_audit_proof_digest(events: list[Mapping[str, Any]], task_id: str) -> str:
+    # Bind the complete ordered task history, including payloads and the
+    # historical prefix. An event's own timestamp cannot exclude it from CAS.
     task_events = [
         e for e in events
         if str(e.get("task_id") or "").strip() == task_id
-        and (_parse_utc_timestamp(str(e.get("ts") or "")) or datetime.min) >= archived_at
     ]
-    payload = json.dumps(
-        [
-            {
-                "event_id": str(e.get("event_id") or ""),
-                "ts": str(e.get("ts") or ""),
-                "type": str(e.get("type") or ""),
-                "agent": str(e.get("agent") or ""),
-                "message": str(e.get("message") or ""),
-            }
-            for e in task_events
-        ],
-        sort_keys=True,
-        separators=(",", ":"),
-    ).encode("utf-8")
-    return hashlib.sha256(payload).hexdigest()
+    return _canonical_json_sha256(task_events)
 
 
 def _assert_audit_proof_range_valid(task_id: str, proof: Mapping[str, Any]) -> None:
@@ -6898,13 +6885,11 @@ def _assert_audit_proof_range_valid(task_id: str, proof: Mapping[str, Any]) -> N
 
     expected_digest = proof_range.get("audit_proof_digest")
     if expected_digest:
-        archived_at = _parse_utc_timestamp(str(proof.get("archived_at") or ""))
-        if archived_at is not None:
-            current_digest = _compute_audit_proof_digest(events, task_id, archived_at)
-            if current_digest != expected_digest:
-                raise RuntimeError(
-                    f"activity audit changed after preflight: proof digest mismatch: {task_id}"
-                )
+        current_digest = _compute_audit_proof_digest(events, task_id)
+        if current_digest != expected_digest:
+            raise RuntimeError(
+                f"activity audit changed after preflight: proof digest mismatch: {task_id}"
+            )
 
 
 def verify_stale_archive_resurrection_proof(
@@ -6952,6 +6937,7 @@ def verify_stale_archive_resurrection_proof(
         "task_class",
         "dev_bridge",
         "execution_authorization",
+        "completion_tracks",
     )
     for field in scope_fields:
         if deepcopy(active_task.get(field)) != deepcopy(archived_task.get(field)):
@@ -7101,35 +7087,33 @@ def verify_stale_archive_resurrection_proof(
             f"Cannot reconcile stale resurrected task: activity audit is unavailable: {task_id}"
         ) from exc
 
-    new_work_types = {
-        "start",
-        "reopen",
-        "progress",
-        "handoff",
-        "approve",
-        "review_approved",
-        "commit",
-        "task_started",
-        "task_reopened",
-        "task_review_approved",
-        "done",
-        "reconcile_merged_done",
-        "reconcile_done",
-        "artifact_contract_revised",
-        "dependency_track_revised",
-        "execution_resource_revised",
-        "execution_grant_submitted",
-        "execution_grant_revoked",
+    # The exception proves import plus role recovery only. Unknown mutations
+    # must fail closed too, rather than relying on an exhaustive denylist of
+    # every current and future lifecycle/delivery command. Notes are read-only
+    # observations; the import and assignment events are authenticated below.
+    role_recovery_types = {
+        "assign", "task_imported", "import", "task_reentered",
+        "task_reassigned", "task_assigned", "note",
     }
+    last_task_ts = None
     for event in events:
         if not isinstance(event, Mapping):
             continue
         if str(event.get("task_id") or "").strip() != task_id:
             continue
         ev_ts = _parse_utc_timestamp(str(event.get("ts") or event.get("timestamp") or ""))
-        if ev_ts is not None and archived_at is not None and ev_ts >= archived_at:
+        # Validate append order BEFORE selecting the post-archive interval.
+        # Otherwise an appended reopen can masquerade as historical simply by
+        # backdating its timestamp. A genuine ordered historical prefix stays
+        # available to the existing historical reassignment validator.
+        if ev_ts is None or (last_task_ts is not None and ev_ts < last_task_ts):
+            raise RuntimeError(
+                f"stale resurrection lineage audit log timestamp ordering is ambiguous: {task_id}"
+            )
+        last_task_ts = ev_ts
+        if ev_ts >= archived_at:
             ev_type = str(event.get("type") or "").strip()
-            if ev_type in new_work_types:
+            if ev_type not in role_recovery_types:
                 raise RuntimeError(
                     f"Cannot reconcile stale resurrected task: intervening {ev_type} event detected: {task_id}"
                 )
@@ -7374,7 +7358,7 @@ def verify_stale_archive_resurrection_proof(
     spec_hash = task_spec_hash(active_task)
     cas_digest = task_mutation_cas_digest(active_task)
     archive_sha256 = _canonical_json_sha256(archived)
-    audit_proof_digest = _compute_audit_proof_digest(events, task_id, archived_at)
+    audit_proof_digest = _compute_audit_proof_digest(events, task_id)
 
     import_event_id = str(import_ev.get("event_id") or "")
     all_event_ids = ([import_event_id] if import_event_id else []) + [item["event_id"] for item in chain]

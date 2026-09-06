@@ -16084,6 +16084,7 @@ class TestStaleArchiveResurrectionContract(unittest.TestCase):
             ("dev_bridge", {"bridge_mode": "other"}),
             ("execution_authorization", {"mode": "custom"}),
             ("execution_resources", ["hosted-write"]),
+            ("completion_tracks", {"functional": {"status": "in_progress"}}),
         ]
         for field, new_val in fields:
             with self.subTest(field=field):
@@ -16144,6 +16145,11 @@ class TestStaleArchiveResurrectionContract(unittest.TestCase):
             "done",
             "reconcile_merged_done",
             "reconcile_done",
+            "completion_milestone",
+            "operator_accepted",
+            "superseded",
+            "integration_resumed",
+            "future_lifecycle_mutation",
         ]:
             with self.subTest(ev_type=ev_type):
                 self.log_file.write_text("", encoding="utf-8")
@@ -16165,6 +16171,84 @@ class TestStaleArchiveResurrectionContract(unittest.TestCase):
                 ):
                     _command_reconcile_merged_done(state, ["REG-002", "Must fail."])
                 self.assertEqual(state, before)
+
+    def _assert_cli_retirement_refused(self, expected_error: str) -> None:
+        before_state = deepcopy(ai_status.load_state())
+        before_journal = self.event_log_file.read_bytes()
+        before_audit = self.log_file.read_bytes()
+        archive_path = task_archive.archive_task_path("REG-002")
+        before_archive = archive_path.read_bytes()
+        before_runtime = ai_status.ORCHESTRATOR_STATE_FILE.read_bytes()
+        result = self._run_cli(["reconcile_merged_done", "REG-002", "Must retain genuine work"])
+        self.assertNotEqual(result.returncode, 0, result.stdout)
+        self.assertIn(expected_error, result.stderr)
+        self.assertEqual(ai_status.load_state(), before_state)
+        self.assertEqual(self.event_log_file.read_bytes(), before_journal)
+        self.assertEqual(self.log_file.read_bytes(), before_audit)
+        self.assertEqual(archive_path.read_bytes(), before_archive)
+        self.assertEqual(ai_status.ORCHESTRATOR_STATE_FILE.read_bytes(), before_runtime)
+
+    def test_real_cli_milestone_prevents_retirement(self) -> None:
+        self._build_fixture()
+        milestone = self._run_cli([
+            "milestone", "REG-002", "functional", "in_progress",
+            "New implementation work is underway",
+        ])
+        self.assertEqual(milestone.returncode, 0, milestone.stderr)
+        task = ai_status.get_task(ai_status.load_state(), "REG-002")
+        self.assertEqual(task["completion_tracks"]["functional"]["status"], "in_progress")
+        self._assert_cli_retirement_refused("conflicts with terminal task")
+
+    def test_real_cli_non_role_events_prevent_retirement(self) -> None:
+        self._build_fixture()
+        valid_audit = self.log_file.read_bytes()
+        for event_type in ("completion_milestone", "operator_accepted", "superseded", "future_lifecycle_mutation"):
+            with self.subTest(event_type=event_type):
+                self.log_file.write_bytes(valid_audit)
+                ai_status.append_log({
+                    "type": event_type, "task_id": "REG-002", "agent": "Human/Ops",
+                    "ts": "2026-08-02T12:00:00Z", "message": "New work",
+                })
+                self._assert_cli_retirement_refused(f"intervening {event_type} event detected")
+
+    def test_real_cli_backdated_or_undated_events_prevent_retirement(self) -> None:
+        self._build_fixture()
+        valid_lines = self.log_file.read_text(encoding="utf-8").splitlines()
+        for insertion in (1, len(valid_lines)):
+            for timestamp in ("2026-07-31T12:00:00Z", "2026-08-01T11:00:00Z", "invalid", None):
+                with self.subTest(insertion=insertion, timestamp=timestamp):
+                    event = {"type": "reopen", "task_id": "REG-002", "agent": "Human/Ops"}
+                    if timestamp is not None:
+                        event["ts"] = timestamp
+                    lines = list(valid_lines)
+                    lines.insert(insertion, json.dumps(event))
+                    self.log_file.write_text("\n".join(lines) + "\n", encoding="utf-8")
+                    self._assert_cli_retirement_refused("timestamp ordering is ambiguous")
+
+    def test_real_cli_ordered_historical_prefix_remains_eligible(self) -> None:
+        self._build_fixture()
+        valid_audit = self.log_file.read_bytes()
+        historical = audited_reassignment_event(
+            task_id="REG-002", old_owner="Codex", new_owner="Codex",
+            old_reviewer="Claude", new_reviewer="Codex2",
+            timestamp="2026-07-31T12:00:00Z", message="Historical reviewer assignment",
+            actor="Human/Ops", old_generation=0, new_generation=1,
+        )
+        self.log_file.write_bytes(json.dumps(historical).encode() + b"\n" + valid_audit)
+        result = self._run_cli(["reconcile_merged_done", "REG-002", "Keep historical prefix"])
+        self.assertEqual(result.returncode, 0, result.stderr)
+        state = ai_status.load_state()
+        self.assertIsNone(ai_status.get_task(state, "REG-002"))
+        self.assertEqual(state[ai_status.TERMINAL_FACTS_KEY]["REG-002"]["generation"], 1)
+
+    def test_audit_digest_binds_full_history_and_payload(self) -> None:
+        events = [{"task_id": "REG-002", "ts": "2026-07-31T12:00:00Z", "generation": 1}]
+        digest = ai_status._compute_audit_proof_digest(events, "REG-002")
+        changed = deepcopy(events)
+        changed[0]["generation"] = 2
+        self.assertNotEqual(digest, ai_status._compute_audit_proof_digest(changed, "REG-002"))
+        changed = events + [{"task_id": "REG-002", "type": "reopen"}]
+        self.assertNotEqual(digest, ai_status._compute_audit_proof_digest(changed, "REG-002"))
 
     def test_negative_active_worker_or_lease(self) -> None:
         state, snapshot, config, orig_sha, rec_env = self._build_fixture()
