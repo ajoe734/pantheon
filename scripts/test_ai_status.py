@@ -15394,5 +15394,631 @@ class TestSentinelTimestampOverflow(unittest.TestCase):
             self._test_temp_dir.cleanup()
 
 
+class TestStaleArchiveResurrectionContract(unittest.TestCase):
+    def setUp(self) -> None:
+        _setup_test_isolation(self)
+        self.addCleanup(_teardown_test_isolation, self)
+        self.root = self._test_root
+        self.status_file = self._test_status_file
+        self.log_file = self._test_log_file
+        if self.log_file.exists():
+            self.log_file.unlink()
+        self.log_file.write_text("", encoding="utf-8")
+
+        self._task_state_env = mock.patch.dict(
+            os.environ,
+            {
+                ai_status.TASK_STATE_STORE_MODE_ENV: "",
+                ai_status.TASK_STATE_EVENT_LOG_ENV: "",
+            },
+            clear=False,
+        )
+        self._task_state_env.start()
+        self.addCleanup(self._task_state_env.stop)
+
+        subprocess.run(["git", "init", "-q"], cwd=str(self.root), check=True)
+        subprocess.run(["git", "config", "user.name", "Test"], cwd=str(self.root), check=True)
+        subprocess.run(["git", "config", "user.email", "test@test.com"], cwd=str(self.root), check=True)
+        dummy_file = self.root / "dummy.txt"
+        dummy_file.write_text("dummy", encoding="utf-8")
+        subprocess.run(["git", "add", "dummy.txt"], cwd=str(self.root), check=True)
+        subprocess.run(["git", "commit", "-m", "initial commit", "-q"], cwd=str(self.root), check=True)
+
+    def _init_git_repo(self, root: Path, *, remote: str, files: dict[str, str]) -> str:
+        if root.exists():
+            shutil.rmtree(root)
+        root.mkdir(parents=True, exist_ok=True)
+        subprocess.run(["git", "init", "-b", "dev"], cwd=root, check=True, capture_output=True)
+        subprocess.run(["git", "config", "user.name", "Test"], cwd=root, check=True)
+        subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=root, check=True)
+        subprocess.run(["git", "remote", "add", "origin", remote], cwd=root, check=True)
+        for relative, content in files.items():
+            path = root / relative
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(content, encoding="utf-8")
+        subprocess.run(["git", "add", "."], cwd=root, check=True)
+        subprocess.run(["git", "commit", "-m", "test commit"], cwd=root, check=True, capture_output=True)
+        sha = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            cwd=root,
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout.strip()
+        subprocess.run(
+            ["git", "update-ref", "refs/remotes/origin/dev", sha],
+            cwd=root,
+            check=True,
+        )
+        return sha
+
+    def _build_fixture(
+        self,
+        *,
+        active_gen: int = 2,
+        archive_gen: int = 1,
+        active_owner: str = "Codex2",
+        active_reviewer: str = "Claude",
+        archive_owner: str = "Codex",
+        archive_reviewer: str = "Codex2",
+        evidence_owner: str | None = None,
+        evidence_reviewer: str | None = None,
+        reassign_old_owner: str = "Codex",
+        reassign_new_owner: str = "Codex2",
+        reassign_old_reviewer: str = "Codex2",
+        reassign_new_reviewer: str = "Claude",
+        reassign_ts: str = "2026-08-02T10:00:00Z",
+        archive_ts: str = "2026-08-01T10:00:00Z",
+        reassign_event: bool = True,
+        intervening_event: str | None = None,
+        scope_overrides: dict[str, Any] | None = None,
+    ) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any], str, dict[str, str]]:
+        delivery_root = self.root / "execute-plans"
+        delivery_sha = self._init_git_repo(
+            delivery_root,
+            remote="https://github.com/ajoe734/execute-plans.git",
+            files={"src/delivery.ts": "export const delivered = true;\n"},
+        )
+        evidence_root = self.root / "pantheon"
+        ev_owner = evidence_owner if evidence_owner is not None else archive_owner
+        ev_reviewer = evidence_reviewer if evidence_reviewer is not None else archive_reviewer
+        evidence_file = ".orchestrator/task-briefs/reg_002.md"
+        evidence_text = (
+            "# Task Brief: REG-002\n\n"
+            "- Status: review_approved\n"
+            f"- Owner: {ev_owner}\n"
+            f"- Reviewer: {ev_reviewer}\n\n"
+            "Delivery repository: ajoe734/execute-plans\n"
+            f"Delivery commit: {delivery_sha}\n"
+        )
+        evidence_sha = self._init_git_repo(
+            evidence_root,
+            remote="https://github.com/ajoe734/pantheon.git",
+            files={evidence_file: evidence_text},
+        )
+        config = {
+            "coordination": {
+                "enabled": True,
+                "repositories": {
+                    "execute_plans": {
+                        "repo": "ajoe734/execute-plans",
+                        "local_path": str(delivery_root),
+                    }
+                },
+            }
+        }
+        reconcile_env = {
+            "RECONCILE_EVIDENCE_FILE": evidence_file,
+            "RECONCILE_EVIDENCE_COMMIT": evidence_sha,
+            "RECONCILE_DELIVERY_REPOSITORY": "ajoe734/execute-plans",
+            "RECONCILE_DELIVERY_ROOT": str(delivery_root),
+            "RECONCILE_DELIVERY_COMMIT": delivery_sha,
+        }
+
+        archived_delivery = {
+            "reconciled_from_merged_evidence": True,
+            "repository_id": "execute_plans",
+            "repository_slug": "ajoe734/execute-plans",
+            "commit": delivery_sha,
+            "review_evidence": {
+                "file": evidence_file,
+                "commit": evidence_sha,
+                "merge_target_ref": "origin/dev",
+                "merge_target_sha": evidence_sha,
+                "owner": ev_owner,
+                "reviewer": ev_reviewer,
+                "status": "review_approved",
+            },
+        }
+        base_scope: dict[str, Any] = {
+            "title": "Positive archive resurrection candidate",
+            "phase": "Release",
+            "depends_on": ["REG-001"],
+            "dependency_tracks": ["core"],
+            "artifacts": ["execute-plans:src/delivery.ts"],
+            "acceptance": ["delivery ok"],
+            "target_repo": "execute_plans",
+            "task_class": "execution",
+            "dev_bridge": {"bridge_mode": "test"},
+            "execution_authorization": {"mode": "none"},
+        }
+        archived_task = {
+            "id": "REG-002",
+            **deepcopy(base_scope),
+            "generation": archive_gen,
+            "owner": archive_owner,
+            "reviewer": archive_reviewer,
+            "status": "done",
+            "terminal_outcome": "completed",
+            "next": "Completed",
+            "last_update": archive_ts,
+            "delivery": deepcopy(archived_delivery),
+        }
+        snapshot = {
+            "version": 1,
+            "task_id": "REG-002",
+            "archived_at": archive_ts,
+            "terminal_status": "done",
+            "terminal_outcome": "completed",
+            "task": deepcopy(archived_task),
+            "handoffs": [],
+            "blockers": [],
+        }
+
+        snapshot_path = task_archive.archive_task_path("REG-002")
+        snapshot_path.parent.mkdir(parents=True, exist_ok=True)
+        snapshot_raw = json.dumps(snapshot, indent=2, sort_keys=True) + "\n"
+        snapshot_path.write_text(snapshot_raw, encoding="utf-8")
+        task_archive.ARCHIVE_INDEX_FILE.write_text(
+            json.dumps({"tasks": {"REG-002": {"archived_at": archive_ts, "version": 1}}}, indent=2) + "\n",
+            encoding="utf-8",
+        )
+
+        active_task = {
+            "id": "REG-002",
+            **deepcopy(base_scope),
+            **(deepcopy(scope_overrides) if scope_overrides else {}),
+            "generation": active_gen,
+            "owner": active_owner,
+            "reviewer": active_reviewer,
+            "status": "blocked",
+            "next": "Waiting for unblock",
+            "last_update": "2026-08-02T10:00:00Z",
+        }
+
+        state = ai_status.default_state()
+        state["tasks"] = [
+            active_task,
+            {
+                "id": "REG-003",
+                "title": "Downstream dependent task",
+                "phase": "Release",
+                "owner": "Codex2",
+                "reviewer": "Claude",
+                "status": "todo",
+                "depends_on": ["REG-002"],
+                "artifacts": [],
+                "acceptance": [],
+                "next": "Waiting on REG-002",
+                "last_update": "2026-08-02T10:00:00Z",
+            },
+        ]
+        state["blockers"] = [
+            {
+                "task_id": "REG-002",
+                "owner": "Codex2",
+                "waiting_for": "Codex",
+                "message": "Blocked on recovery",
+                "status": "open",
+                "created_at": "2026-08-02T10:00:00Z",
+            }
+        ]
+        state[ai_status.TERMINAL_FACTS_KEY] = {
+            "REG-002": {
+                "task_id": "REG-002",
+                "status": "done",
+                "terminal_outcome": "completed",
+                "generation": archive_gen,
+                "recorded_at": archive_ts,
+            }
+        }
+        ai_status.save_state(state)
+
+        if reassign_event:
+            ev = audited_reassignment_event(
+                task_id="REG-002",
+                old_owner=reassign_old_owner,
+                new_owner=reassign_new_owner,
+                old_reviewer=reassign_old_reviewer,
+                new_reviewer=reassign_new_reviewer,
+                timestamp=reassign_ts,
+                message="Auto-reassign REG-002",
+                actor="Orchestrator",
+                old_generation=archive_gen,
+                new_generation=active_gen,
+            )
+            ai_status.append_log(ev)
+
+        if intervening_event is not None:
+            ai_status.append_log(
+                {
+                    "ts": "2026-08-02T12:00:00Z",
+                    "agent": active_owner,
+                    "type": intervening_event,
+                    "task_id": "REG-002",
+                    "message": f"intervening {intervening_event}",
+                }
+            )
+
+        return state, snapshot, config, ai_status._canonical_json_sha256(snapshot), reconcile_env
+
+    def test_positive_archive_resurrection_reconciliation(self) -> None:
+        state, snapshot, config, orig_sha, rec_env = self._build_fixture()
+        active_task = ai_status.get_task(state, "REG-002")
+
+        # 1. Diagnostic
+        diag = ai_status.archive_resurrection_diagnostic(active_task, snapshot)
+        self.assertTrue(diag["eligible"])
+        self.assertEqual(diag["reason"], "eligible_for_stale_role_recovery")
+        proof = diag["proof"]
+        self.assertEqual(proof["retired_active_row"]["generation"], 2)
+        self.assertEqual(proof["retired_active_row"]["owner"], "Codex2")
+        self.assertEqual(proof["retired_active_row"]["reviewer"], "Claude")
+        self.assertEqual(proof["archive_generation"], 1)
+
+        # 2. Command show
+        with mock.patch("sys.stdout", new_callable=io.StringIO) as mock_stdout:
+            ai_status.command_show(state, ["REG-002"])
+            show_out = json.loads(mock_stdout.getvalue())
+            self.assertEqual(show_out["source"], "active")
+            self.assertTrue(show_out["archive_resurrection_diagnostic"]["eligible"])
+
+        # 3. Preflight and reconcile
+        with (
+            mock.patch.dict(os.environ, {"AI_NAME": "Human/Ops", "PANTHEON_LOCAL_HUMAN_OPS": "1", **rec_env}, clear=False),
+            mock.patch.object(ai_status, "ROOT", self.root / "pantheon"),
+            mock.patch.object(ai_status, "load_config", return_value=config),
+            mock.patch.object(ai_status, "validate_protected_closeout_transition", return_value=None),
+        ):
+            _command_reconcile_merged_done(state, ["REG-002", "Reconcile stale role recovery."])
+
+        # 4. Outbox recovery / drain
+        recovered = ai_status.recover_status_archive_outbox(state)
+        self.assertTrue(recovered)
+
+        # 5. Assertions on final state:
+        self.assertIsNone(ai_status.get_task(state, "REG-002"))
+        term_fact = state[ai_status.TERMINAL_FACTS_KEY]["REG-002"]
+        self.assertEqual(term_fact["generation"], 1)
+        self.assertEqual(term_fact["recorded_at"], "2026-08-01T10:00:00Z")
+        on_disk_snapshot = ai_status.load_archived_snapshot("REG-002")
+        self.assertEqual(ai_status._canonical_json_sha256(on_disk_snapshot), orig_sha)
+        receipt = state[ai_status.ARCHIVE_RECEIPTS_KEY]["REG-002"]
+        self.assertEqual(receipt["snapshot_sha256"], orig_sha)
+        self.assertEqual(state["blockers"], [])
+
+        # 6. Audit log entries
+        logs = [
+            json.loads(line)
+            for line in ai_status.LOG_FILE.read_text(encoding="utf-8").splitlines()
+            if line.strip()
+        ]
+        retired_events = [e for e in logs if e.get("type") == "stale_archive_resurrection_retired"]
+        self.assertEqual(len(retired_events), 1)
+        self.assertEqual(retired_events[0]["retired_generation"], 2)
+        self.assertEqual(retired_events[0]["archive_generation"], 1)
+
+        reconcile_events = [e for e in logs if e.get("type") == "reconcile_merged_done"]
+        self.assertEqual(len(reconcile_events), 1)
+        self.assertEqual(reconcile_events[0]["retired_stale_active_row"]["generation"], 2)
+        self.assertIn("archive_resurrection_proof", reconcile_events[0])
+
+    def test_negative_missing_reassignment_lineage(self) -> None:
+        state, snapshot, config, orig_sha, rec_env = self._build_fixture(reassign_event=False)
+        active_task = ai_status.get_task(state, "REG-002")
+        diag = ai_status.archive_resurrection_diagnostic(active_task, snapshot)
+        self.assertFalse(diag["eligible"])
+        self.assertIn("stale resurrection lineage gap", diag["reason"])
+
+        before = deepcopy(state)
+        with (
+            mock.patch.dict(os.environ, {"AI_NAME": "Human/Ops", "PANTHEON_LOCAL_HUMAN_OPS": "1", **rec_env}, clear=False),
+            mock.patch.object(ai_status, "ROOT", self.root / "pantheon"),
+            mock.patch.object(ai_status, "load_config", return_value=config),
+            mock.patch.object(ai_status, "validate_protected_closeout_transition", return_value=None),
+            self.assertRaisesRegex(RuntimeError, "stale resurrection lineage gap"),
+        ):
+            _command_reconcile_merged_done(state, ["REG-002", "Must fail."])
+        self.assertEqual(state, before)
+
+    def test_negative_forged_reassignment_event(self) -> None:
+        state, snapshot, config, orig_sha, rec_env = self._build_fixture(reassign_event=False)
+        ai_status.append_log({
+            "event_id": "forged-event-12345",
+            "ts": "2026-08-02T10:00:00Z",
+            "agent": "Orchestrator",
+            "type": "task_reassigned",
+            "task_id": "REG-002",
+            "old_generation": 1,
+            "generation": 2,
+            "old_owner": "Codex",
+            "new_owner": "Codex2",
+            "old_reviewer": "Codex2",
+            "new_reviewer": "Claude",
+        })
+        active_task = ai_status.get_task(state, "REG-002")
+        diag = ai_status.archive_resurrection_diagnostic(active_task, snapshot)
+        self.assertFalse(diag["eligible"])
+        self.assertIn("stale resurrection lineage gap", diag["reason"])
+
+        before = deepcopy(state)
+        with (
+            mock.patch.dict(os.environ, {"AI_NAME": "Human/Ops", "PANTHEON_LOCAL_HUMAN_OPS": "1", **rec_env}, clear=False),
+            mock.patch.object(ai_status, "ROOT", self.root / "pantheon"),
+            mock.patch.object(ai_status, "load_config", return_value=config),
+            mock.patch.object(ai_status, "validate_protected_closeout_transition", return_value=None),
+            self.assertRaisesRegex(RuntimeError, "stale resurrection lineage gap"),
+        ):
+            _command_reconcile_merged_done(state, ["REG-002", "Must fail."])
+        self.assertEqual(state, before)
+
+    def test_negative_forked_reassignment_lineage(self) -> None:
+        state, snapshot, config, orig_sha, rec_env = self._build_fixture(reassign_event=True)
+        second_ev = audited_reassignment_event(
+            task_id="REG-002",
+            old_owner="Codex",
+            new_owner="Antigravity",
+            old_reviewer="Codex2",
+            new_reviewer="Claude",
+            timestamp="2026-08-02T10:05:00Z",
+            message="Conflicting fork",
+            actor="Orchestrator",
+            old_generation=1,
+            new_generation=2,
+        )
+        ai_status.append_log(second_ev)
+        active_task = ai_status.get_task(state, "REG-002")
+        diag = ai_status.archive_resurrection_diagnostic(active_task, snapshot)
+        self.assertFalse(diag["eligible"])
+        self.assertIn("stale resurrection lineage fork", diag["reason"])
+
+        before = deepcopy(state)
+        with (
+            mock.patch.dict(os.environ, {"AI_NAME": "Human/Ops", "PANTHEON_LOCAL_HUMAN_OPS": "1", **rec_env}, clear=False),
+            mock.patch.object(ai_status, "ROOT", self.root / "pantheon"),
+            mock.patch.object(ai_status, "load_config", return_value=config),
+            mock.patch.object(ai_status, "validate_protected_closeout_transition", return_value=None),
+            self.assertRaisesRegex(RuntimeError, "stale resurrection lineage fork"),
+        ):
+            _command_reconcile_merged_done(state, ["REG-002", "Must fail."])
+        self.assertEqual(state, before)
+
+    def test_negative_reordered_timestamps(self) -> None:
+        state, snapshot, config, orig_sha, rec_env = self._build_fixture(
+            reassign_ts="2026-07-15T00:00:00Z",
+            archive_ts="2026-08-01T10:00:00Z",
+        )
+        active_task = ai_status.get_task(state, "REG-002")
+        diag = ai_status.archive_resurrection_diagnostic(active_task, snapshot)
+        self.assertFalse(diag["eligible"])
+        self.assertIn("stale resurrection lineage timestamp ordering is ambiguous", diag["reason"])
+
+        before = deepcopy(state)
+        with (
+            mock.patch.dict(os.environ, {"AI_NAME": "Human/Ops", "PANTHEON_LOCAL_HUMAN_OPS": "1", **rec_env}, clear=False),
+            mock.patch.object(ai_status, "ROOT", self.root / "pantheon"),
+            mock.patch.object(ai_status, "load_config", return_value=config),
+            mock.patch.object(ai_status, "validate_protected_closeout_transition", return_value=None),
+            self.assertRaisesRegex(RuntimeError, "stale resurrection lineage timestamp ordering is ambiguous"),
+        ):
+            _command_reconcile_merged_done(state, ["REG-002", "Must fail."])
+        self.assertEqual(state, before)
+
+    def test_negative_role_mismatch(self) -> None:
+        state, snapshot, config, orig_sha, rec_env = self._build_fixture(
+            reassign_old_reviewer="Claude",
+        )
+        active_task = ai_status.get_task(state, "REG-002")
+        diag = ai_status.archive_resurrection_diagnostic(active_task, snapshot)
+        self.assertFalse(diag["eligible"])
+        self.assertIn("stale resurrection lineage role mismatch", diag["reason"])
+
+        before = deepcopy(state)
+        with (
+            mock.patch.dict(os.environ, {"AI_NAME": "Human/Ops", "PANTHEON_LOCAL_HUMAN_OPS": "1", **rec_env}, clear=False),
+            mock.patch.object(ai_status, "ROOT", self.root / "pantheon"),
+            mock.patch.object(ai_status, "load_config", return_value=config),
+            mock.patch.object(ai_status, "validate_protected_closeout_transition", return_value=None),
+            self.assertRaisesRegex(RuntimeError, "stale resurrection lineage role mismatch"),
+        ):
+            _command_reconcile_merged_done(state, ["REG-002", "Must fail."])
+        self.assertEqual(state, before)
+
+    def test_negative_altered_scope(self) -> None:
+        fields = [
+            ("title", "Altered title"),
+            ("artifacts", ["execute-plans:src/different.ts"]),
+            ("acceptance", ["different acceptance"]),
+            ("dev_bridge", {"bridge_mode": "other"}),
+            ("execution_authorization", {"mode": "custom"}),
+        ]
+        for field, new_val in fields:
+            with self.subTest(field=field):
+                state, snapshot, config, orig_sha, rec_env = self._build_fixture(
+                    scope_overrides={field: new_val}
+                )
+                active_task = ai_status.get_task(state, "REG-002")
+                diag = ai_status.archive_resurrection_diagnostic(active_task, snapshot)
+                self.assertFalse(diag["eligible"])
+                self.assertIn("conflicts with terminal task", diag["reason"])
+
+                before = deepcopy(state)
+                with (
+                    mock.patch.dict(os.environ, {"AI_NAME": "Human/Ops", "PANTHEON_LOCAL_HUMAN_OPS": "1", **rec_env}, clear=False),
+                    mock.patch.object(ai_status, "ROOT", self.root / "pantheon"),
+                    mock.patch.object(ai_status, "load_config", return_value=config),
+                    mock.patch.object(ai_status, "validate_protected_closeout_transition", return_value=None),
+                    self.assertRaisesRegex(RuntimeError, "existing archive snapshot conflicts"),
+                ):
+                    _command_reconcile_merged_done(state, ["REG-002", "Must fail."])
+                self.assertEqual(state, before)
+
+    def test_negative_intervening_new_work(self) -> None:
+        for ev_type in ["task_reopened", "task_started", "commit"]:
+            with self.subTest(ev_type=ev_type):
+                self.log_file.write_text("", encoding="utf-8")
+                state, snapshot, config, orig_sha, rec_env = self._build_fixture(
+                    intervening_event=ev_type
+                )
+                active_task = ai_status.get_task(state, "REG-002")
+                diag = ai_status.archive_resurrection_diagnostic(active_task, snapshot)
+                self.assertFalse(diag["eligible"])
+                self.assertIn(f"intervening {ev_type} event detected", diag["reason"])
+
+                before = deepcopy(state)
+                with (
+                    mock.patch.dict(os.environ, {"AI_NAME": "Human/Ops", "PANTHEON_LOCAL_HUMAN_OPS": "1", **rec_env}, clear=False),
+                    mock.patch.object(ai_status, "ROOT", self.root / "pantheon"),
+                    mock.patch.object(ai_status, "load_config", return_value=config),
+                    mock.patch.object(ai_status, "validate_protected_closeout_transition", return_value=None),
+                    self.assertRaisesRegex(RuntimeError, f"intervening {ev_type} event detected"),
+                ):
+                    _command_reconcile_merged_done(state, ["REG-002", "Must fail."])
+                self.assertEqual(state, before)
+
+    def test_negative_active_worker_or_lease(self) -> None:
+        state, snapshot, config, orig_sha, rec_env = self._build_fixture()
+        before = deepcopy(state)
+        with (
+            mock.patch.dict(os.environ, {"AI_NAME": "Human/Ops", "PANTHEON_LOCAL_HUMAN_OPS": "1", **rec_env}, clear=False),
+            mock.patch.object(ai_status, "ROOT", self.root / "pantheon"),
+            mock.patch.object(ai_status, "load_config", return_value=config),
+            mock.patch.object(ai_status, "validate_protected_closeout_transition", return_value=None),
+            mock.patch.object(ai_status, "task_has_active_worker_recovery", return_value=True),
+            self.assertRaisesRegex(RuntimeError, "cannot reconcile stale resurrected task with active worker recovery"),
+        ):
+            _command_reconcile_merged_done(state, ["REG-002", "Must fail."])
+        self.assertEqual(state, before)
+
+    def test_negative_nonoperator_reconciliation(self) -> None:
+        state, snapshot, config, orig_sha, rec_env = self._build_fixture()
+        before = deepcopy(state)
+        with (
+            mock.patch.dict(os.environ, {"AI_NAME": "Codex2", "PANTHEON_LOCAL_HUMAN_OPS": "0", **rec_env}, clear=False),
+            mock.patch.object(ai_status, "ROOT", self.root / "pantheon"),
+            mock.patch.object(ai_status, "load_config", return_value=config),
+            mock.patch.object(ai_status, "validate_protected_closeout_transition", return_value=None),
+            self.assertRaises(SystemExit),
+        ):
+            _command_reconcile_merged_done(state, ["REG-002", "Must fail."])
+        self.assertEqual(state, before)
+
+        with (
+            mock.patch.dict(os.environ, {"AI_NAME": "Human/Ops", "PANTHEON_LOCAL_HUMAN_OPS": "0", **rec_env}, clear=False),
+            mock.patch.object(ai_status, "ROOT", self.root / "pantheon"),
+            mock.patch.object(ai_status, "load_config", return_value=config),
+            mock.patch.object(ai_status, "validate_protected_closeout_transition", return_value=None),
+            self.assertRaises(RuntimeError),
+        ):
+            _command_reconcile_merged_done(state, ["REG-002", "Must fail."])
+        self.assertEqual(state, before)
+
+    def test_concurrency_cas_task_mutation_invalidation(self) -> None:
+        state, snapshot, config, orig_sha, rec_env = self._build_fixture()
+        active_task = ai_status.get_task(state, "REG-002")
+
+        with (
+            mock.patch.dict(os.environ, {"AI_NAME": "Human/Ops", "PANTHEON_LOCAL_HUMAN_OPS": "1", **rec_env}, clear=False),
+            mock.patch.object(ai_status, "ROOT", self.root / "pantheon"),
+            mock.patch.object(ai_status, "load_config", return_value=config),
+            mock.patch.object(ai_status, "validate_protected_closeout_transition", return_value=None),
+        ):
+            preflight = ai_status.prepare_external_mutation_preflight(
+                "reconcile_merged_done", active_task, ["REG-002", "Closeout message."]
+            )
+            mutated_task = deepcopy(active_task)
+            mutated_task["generation"] = 3
+            with self.assertRaises(SystemExit) as ctx:
+                ai_status.validate_external_mutation_preflight(
+                    "reconcile_merged_done", mutated_task, preflight
+                )
+            self.assertIn("changed after external review evidence was prepared", str(ctx.exception))
+
+    def test_crash_restart_outbox_recovery(self) -> None:
+        state, snapshot, config, orig_sha, rec_env = self._build_fixture()
+        task = ai_status.get_task(state, "REG-002")
+        task.clear()
+        task.update(deepcopy(snapshot["task"]))
+        ai_status._queue_existing_archive_snapshot(state, snapshot)
+        self.assertIsNotNone(state.get(ai_status.STATUS_ARCHIVE_OUTBOX_KEY))
+
+        drained = ai_status.recover_status_archive_outbox(state)
+        self.assertTrue(drained)
+        self.assertIsNone(state.get(ai_status.STATUS_ARCHIVE_OUTBOX_KEY))
+        receipt = state[ai_status.ARCHIVE_RECEIPTS_KEY]["REG-002"]
+        self.assertEqual(receipt["snapshot_sha256"], orig_sha)
+
+    def test_command_assign_rejects_terminal_and_archived_tasks(self) -> None:
+        state, snapshot, config, orig_sha, rec_env = self._build_fixture()
+        with (
+            mock.patch.dict(os.environ, {"AI_NAME": "Human/Ops"}, clear=False),
+            self.assertRaises(SystemExit) as ctx1,
+        ):
+            ai_status.command_assign(state, ["REG-002", "Codex2", "Claude"])
+        self.assertIn("already terminal/archived", str(ctx1.exception))
+
+        state["tasks"] = [t for t in state["tasks"] if t.get("id") != "REG-002"]
+        with (
+            mock.patch.dict(os.environ, {"AI_NAME": "Human/Ops"}, clear=False),
+            self.assertRaises(SystemExit) as ctx2,
+        ):
+            ai_status.command_assign(state, ["REG-002", "Codex2", "Claude"])
+        self.assertIn("already terminal/archived", str(ctx2.exception))
+
+    def test_ppl_alloc_007_ground_truth_fails_closed(self) -> None:
+        state, snapshot, config, orig_sha, rec_env = self._build_fixture(
+            archive_owner="Codex",
+            archive_reviewer="Codex2",
+            evidence_owner="Codex",
+            evidence_reviewer="Claude",
+            active_owner="Codex2",
+            active_reviewer="Claude",
+            reassign_old_owner="Codex",
+            reassign_new_owner="Codex2",
+            reassign_old_reviewer="Claude",
+            reassign_new_reviewer="Claude",
+        )
+        gen1_reassign = legacy_supervisor_reassignment_event(
+            task_id="REG-002",
+            old_owner="Codex",
+            new_owner="Codex",
+            old_reviewer="Claude",
+            new_reviewer="Codex2",
+            timestamp="2026-07-19T23:52:06Z",
+            message="Auto-reassign reviewer to Codex2",
+        )
+        ai_status.append_log(gen1_reassign)
+        active_task = ai_status.get_task(state, "REG-002")
+        diag = ai_status.archive_resurrection_diagnostic(active_task, snapshot)
+        self.assertFalse(diag["eligible"])
+        self.assertEqual(
+            diag["reason"],
+            "stale resurrection lineage role mismatch at generation 1 -> 2: expected old reviewer 'Codex2', got 'Claude': REG-002"
+        )
+        before = deepcopy(state)
+        with (
+            mock.patch.dict(os.environ, {"AI_NAME": "Human/Ops", "PANTHEON_LOCAL_HUMAN_OPS": "1", **rec_env}, clear=False),
+            mock.patch.object(ai_status, "ROOT", self.root / "pantheon"),
+            mock.patch.object(ai_status, "load_config", return_value=config),
+            mock.patch.object(ai_status, "validate_protected_closeout_transition", return_value=None),
+            self.assertRaisesRegex(
+                RuntimeError,
+                "stale resurrection lineage role mismatch at generation 1 -> 2: expected old reviewer 'Codex2', got 'Claude'",
+            ),
+        ):
+            _command_reconcile_merged_done(state, ["REG-002", "Must fail."])
+        self.assertEqual(state, before)
+
+
 if __name__ == "__main__":
     unittest.main()

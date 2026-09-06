@@ -4520,6 +4520,10 @@ def command_assign(state: dict[str, Any], args: list[str]) -> bool | None:
                 f"Task {task_id} artifact conflict guard is immutable."
             )
     if task is None:
+        if has_terminal_fact(state, task_id) or load_archived_snapshot(task_id) is not None:
+            raise SystemExit(
+                f"Cannot assign task {task_id}: task is already terminal/archived"
+            )
         try:
             validate_role_based_acceptance(acceptance, KNOWN_AGENTS)
         except ValueError as exc:
@@ -4638,6 +4642,14 @@ def command_assign(state: dict[str, Any], args: list[str]) -> bool | None:
         if current_actor() != "Human/Ops":
             raise SystemExit(
                 "Only Human/Ops may change an existing task assignment."
+            )
+        if (
+            is_terminal_task(task)
+            or has_terminal_fact(state, task_id)
+            or load_archived_snapshot(task_id) is not None
+        ):
+            raise SystemExit(
+                f"Cannot reassign task {task_id}: task is already terminal/archived"
             )
         if task_has_active_worker_recovery(task):
             raise SystemExit(
@@ -5251,7 +5263,7 @@ def command_reopen(state: dict[str, Any], args: list[str]) -> None:
     ensure_agent(actor)
     task = get_task(state, task_id)
     if task is None:
-        if has_terminal_fact(state, task_id):
+        if has_terminal_fact(state, task_id) or load_archived_snapshot(task_id) is not None:
             raise SystemExit(
                 f"Task {task_id} is terminal and cannot be reopened in place. Create a new follow-up task that references {task_id}."
             )
@@ -6627,23 +6639,155 @@ def validate_merged_done_evidence(task: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def _validated_same_delivery_archive_recovery(
+def task_spec_hash(task: Mapping[str, Any]) -> str:
+    """Return the deterministic spec hash of a task across its immutable scope."""
+    bridge = task.get("dev_bridge")
+    if isinstance(bridge, Mapping) and bridge.get("task_spec_hash"):
+        return str(bridge["task_spec_hash"]).strip()
+    dep_tracks = task.get("dependency_tracks")
+    if isinstance(dep_tracks, Mapping):
+        normalized_tracks = dict(dep_tracks)
+    elif isinstance(dep_tracks, (list, tuple)):
+        normalized_tracks = list(dep_tracks)
+    else:
+        normalized_tracks = {}
+    spec = {
+        "id": str(task.get("id") or "").strip(),
+        "title": str(task.get("title") or "").strip(),
+        "phase": str(task.get("phase") or "Unassigned").strip(),
+        "depends_on": list(task.get("depends_on") or []),
+        "dependency_tracks": normalized_tracks,
+        "artifacts": list(task.get("artifacts") or []),
+        "acceptance": list(task.get("acceptance") or []),
+        "target_repo": str(task.get("target_repo") or "").strip(),
+        "task_class": str(task.get("task_class") or "").strip(),
+    }
+    encoded = json.dumps(
+        spec,
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=False,
+    ).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def _assert_no_active_execution(
+    task_id: str, *, active_task: Mapping[str, Any] | None = None
+) -> None:
+    """Fail closed if any active worker, lease, or queue intent exists for task."""
+    if active_task is not None and task_has_active_worker_recovery(active_task):
+        raise RuntimeError(
+            f"cannot reconcile stale resurrected task with active worker recovery: {task_id}"
+        )
+
+    binding = getattr(_STATUS_COMMAND_LEASE_LOCAL, "binding", None)
+    if isinstance(binding, Mapping) and str(binding.get("task_id") or "").strip() == task_id:
+        raise RuntimeError(
+            f"cannot reconcile stale resurrected task with active command lease: {task_id}"
+        )
+
+    if ORCHESTRATOR_STATE_FILE.exists():
+        try:
+            orc_state = json.loads(ORCHESTRATOR_STATE_FILE.read_text(encoding="utf-8"))
+        except Exception:
+            orc_state = None
+        if isinstance(orc_state, Mapping):
+            workers = orc_state.get("workers")
+            if isinstance(workers, Mapping):
+                for run_id, worker in workers.items():
+                    if isinstance(worker, Mapping) and str(worker.get("task_id") or "").strip() == task_id:
+                        status = str(worker.get("status") or "").strip()
+                        if status in {
+                            "running",
+                            "started",
+                            "waiting_approval",
+                            "suspended_approval",
+                            "retry_backoff",
+                            "stalled",
+                        }:
+                            raise RuntimeError(
+                                f"cannot reconcile stale resurrected task with active worker {run_id} ({status}): {task_id}"
+                            )
+            queue = orc_state.get("queue")
+            if isinstance(queue, Mapping):
+                events = queue.get("events")
+                if isinstance(events, Mapping):
+                    for ev_id, ev in events.items():
+                        if isinstance(ev, Mapping) and str(ev.get("task_id") or "").strip() == task_id:
+                            q_status = str(ev.get("status") or "").strip()
+                            if q_status in {
+                                "queued",
+                                "started",
+                                "running",
+                                "waiting_approval",
+                                "suspended_approval",
+                                "retry_backoff",
+                                "stalled",
+                                "admitted",
+                            }:
+                                raise RuntimeError(
+                                    f"cannot reconcile stale resurrected task with active queue event {ev_id} ({q_status}): {task_id}"
+                                )
+            worktrees = orc_state.get("worker_worktrees")
+            if isinstance(worktrees, Mapping):
+                leases = worktrees.get("leases")
+                if isinstance(leases, Mapping):
+                    for lease_key, lease in leases.items():
+                        if isinstance(lease, Mapping) and str(lease.get("task_id") or "").strip() == task_id:
+                            raise RuntimeError(
+                                f"cannot reconcile stale resurrected task with active worktree lease {lease_key}: {task_id}"
+                            )
+
+
+def _assert_audit_proof_range_valid(task_id: str, proof: Mapping[str, Any]) -> None:
+    proof_range = proof.get("audit_proof_range")
+    if not isinstance(proof_range, Mapping):
+        raise RuntimeError(f"archive resurrection proof missing audit proof range: {task_id}")
+    expected_event_ids = proof_range.get("event_ids")
+    if not isinstance(expected_event_ids, list) or not expected_event_ids:
+        raise RuntimeError(f"archive resurrection proof missing event IDs: {task_id}")
+
+    try:
+        events = list(
+            _activity_events_across_sources(
+                LOG_FILE, source="authoritative proof range revalidation"
+            )
+        )
+    except Exception as exc:
+        raise RuntimeError(
+            f"activity audit unavailable during reconciliation: {task_id}"
+        ) from exc
+
+    events_by_id = {
+        str(ev.get("event_id") or ""): ev
+        for ev in events
+        if ev.get("event_id")
+    }
+    for ev_id in expected_event_ids:
+        if ev_id not in events_by_id:
+            raise RuntimeError(
+                f"reassignment event {ev_id} missing from activity audit during reconciliation: {task_id}"
+            )
+        validated = task_machine.validate_assignment_activity_event(events_by_id[ev_id])
+        if validated is None or validated.task_id != task_id:
+            raise RuntimeError(
+                f"reassignment event {ev_id} failed revalidation during reconciliation: {task_id}"
+            )
+
+
+def verify_stale_archive_resurrection_proof(
     active_task: Mapping[str, Any],
-    *,
+    archived_snapshot: Mapping[str, Any],
     delivery: Mapping[str, Any],
-    snapshot: Mapping[str, Any],
 ) -> dict[str, Any]:
-    """Admit one stale resurrection without changing its completed archive.
+    """Verify complete, ordered, authenticated proof for stale resurrection.
 
-    Merged-evidence validation has already proved ``delivery``.  This helper
-    only answers whether an existing completed snapshot is the same original
-    task generation, scope and delivery.  Any uncertainty remains the ordinary
-    archive conflict handled by ``archive_terminal_task_from_state``.
+    Returns the authoritative resurrection proof binding active/archive
+    generation, digests, CAS hashes, delivery, and unbroken reassignment chain.
     """
-
     task_id = str(active_task.get("id") or "").strip()
     try:
-        archived = _validate_status_archive_snapshot(deepcopy(dict(snapshot)))
+        archived = _validate_status_archive_snapshot(deepcopy(dict(archived_snapshot)))
     except RuntimeError as exc:
         raise RuntimeError(
             f"existing archive snapshot conflicts with terminal task: {task_id}"
@@ -6652,11 +6796,16 @@ def _validated_same_delivery_archive_recovery(
     if (
         archived.get("terminal_outcome") != "completed"
         or str(archived.get("task_id") or "") != task_id
-        or task_assignment_generation(active_task)
-        != task_assignment_generation(archived_task)
     ):
         raise RuntimeError(
             f"existing archive snapshot conflicts with terminal task: {task_id}"
+        )
+
+    archive_gen = task_assignment_generation(archived_task)
+    active_gen = task_assignment_generation(active_task)
+    if active_gen <= archive_gen:
+        raise RuntimeError(
+            f"stale archive resurrection requires active generation ({active_gen}) > archive generation ({archive_gen}): {task_id}"
         )
 
     scope_fields = (
@@ -6668,6 +6817,330 @@ def _validated_same_delivery_archive_recovery(
         "acceptance",
         "target_repo",
         "task_class",
+        "dev_bridge",
+        "execution_authorization",
+    )
+    for field in scope_fields:
+        if deepcopy(active_task.get(field)) != deepcopy(archived_task.get(field)):
+            raise RuntimeError(
+                f"existing archive snapshot conflicts with terminal task: {task_id}"
+            )
+
+    archived_delivery = archived_task.get("delivery")
+    if not isinstance(archived_delivery, Mapping):
+        raise RuntimeError(
+            f"existing archive snapshot conflicts with terminal task: {task_id}"
+        )
+    for field in ("repository_id", "repository_slug", "commit"):
+        if str(archived_delivery.get(field) or "").strip() != str(delivery.get(field) or "").strip():
+            raise RuntimeError(
+                f"existing archive snapshot conflicts with terminal task: {task_id}"
+            )
+
+    review_evidence = archived_delivery.get("review_evidence")
+    current_review = delivery.get("review_evidence")
+    if not isinstance(review_evidence, Mapping) or not isinstance(current_review, Mapping):
+        raise RuntimeError(
+            f"existing archive snapshot conflicts with terminal task: {task_id}"
+        )
+    evidence_owner = canonical_agent_name(current_review.get("owner"))
+    evidence_reviewer = canonical_agent_name(current_review.get("reviewer"))
+    if (
+        canonical_agent_name(review_evidence.get("owner")) != evidence_owner
+        or canonical_agent_name(review_evidence.get("reviewer")) != evidence_reviewer
+    ):
+        raise RuntimeError(
+            f"existing archive snapshot conflicts with terminal task: {task_id}"
+        )
+
+    archive_owner = canonical_agent_name(archived_task.get("owner"))
+    archive_reviewer = canonical_agent_name(archived_task.get("reviewer"))
+
+    _assert_no_active_execution(task_id, active_task=active_task)
+
+    archived_at_str = str(archived.get("archived_at") or "").strip()
+    archived_at = _parse_utc_timestamp(archived_at_str)
+    if archived_at is None:
+        raise RuntimeError(
+            f"Cannot reconcile stale resurrected task: archived_at is unavailable: {task_id}"
+        )
+
+    try:
+        events = list(
+            _activity_events_across_sources(
+                LOG_FILE,
+                source="stale archive resurrection lineage verification",
+            )
+        )
+    except (FileNotFoundError, RuntimeError) as exc:
+        raise RuntimeError(
+            f"Cannot reconcile stale resurrected task: activity audit is unavailable: {task_id}"
+        ) from exc
+
+    for event in events:
+        if str(event.get("task_id") or "").strip() != task_id:
+            continue
+        ev_ts = _parse_utc_timestamp(str(event.get("ts") or ""))
+        if ev_ts is not None and archived_at is not None and ev_ts >= archived_at:
+            ev_type = str(event.get("type") or "").strip()
+            if ev_type in {
+                "task_reopened",
+                "task_started",
+                "commit",
+                "task_review_approved",
+                "done",
+                "reconcile_merged_done",
+            }:
+                raise RuntimeError(
+                    f"Cannot reconcile stale resurrected task: intervening {ev_type} event detected: {task_id}"
+                )
+
+    reassignment_events: list[tuple[datetime, dict[str, Any]]] = []
+    for event in events:
+        validated = task_machine.validate_assignment_activity_event(event)
+        if validated is None or validated.task_id != task_id:
+            continue
+        ev_ts = _parse_utc_timestamp(validated.timestamp)
+        if ev_ts is None:
+            continue
+        if (
+            validated.old_generation is not None
+            and validated.old_generation >= archive_gen
+        ):
+            reassignment_events.append((ev_ts, validated.as_dict()))
+
+    reassignment_events.sort(key=lambda item: item[0])
+
+    current_owner = archive_owner
+    current_reviewer = archive_reviewer
+    chain: list[dict[str, Any]] = []
+    last_ts: datetime | None = archived_at
+
+    for g in range(archive_gen, active_gen):
+        matching = [
+            (ts, ev)
+            for ts, ev in reassignment_events
+            if ev.get("old_generation") == g and ev.get("generation") == g + 1
+        ]
+        if not matching:
+            raise RuntimeError(
+                f"stale resurrection lineage gap: missing authenticated reassignment event for generation {g} -> {g+1}: {task_id}"
+            )
+        if len(matching) > 1:
+            raise RuntimeError(
+                f"stale resurrection lineage fork: ambiguous multiple reassignment events for generation {g} -> {g+1}: {task_id}"
+            )
+        ev_ts, ev = matching[0]
+        if last_ts is not None and ev_ts < last_ts:
+            raise RuntimeError(
+                f"stale resurrection lineage timestamp ordering is ambiguous: {task_id}"
+            )
+        old_owner = canonical_agent_name(ev.get("old_owner"))
+        old_reviewer = canonical_agent_name(ev.get("old_reviewer"))
+        if old_owner != current_owner:
+            raise RuntimeError(
+                f"stale resurrection lineage role mismatch at generation {g} -> {g+1}: expected old owner {current_owner!r}, got {old_owner!r}: {task_id}"
+            )
+        if old_reviewer != current_reviewer:
+            raise RuntimeError(
+                f"stale resurrection lineage role mismatch at generation {g} -> {g+1}: expected old reviewer {current_reviewer!r}, got {old_reviewer!r}: {task_id}"
+            )
+        new_owner = canonical_agent_name(ev.get("new_owner"))
+        new_reviewer = canonical_agent_name(ev.get("new_reviewer"))
+        chain.append(
+            {
+                "event_id": str(ev.get("event_id") or ""),
+                "ts": str(ev.get("ts") or ""),
+                "timestamp_dt": ev_ts,
+                "old_generation": g,
+                "generation": g + 1,
+                "old_owner": old_owner,
+                "new_owner": new_owner,
+                "old_reviewer": old_reviewer,
+                "new_reviewer": new_reviewer,
+                "message": str(ev.get("message") or ""),
+            }
+        )
+        current_owner = new_owner
+        current_reviewer = new_reviewer
+        last_ts = ev_ts
+
+    active_owner = canonical_agent_name(active_task.get("owner"))
+    active_reviewer = canonical_agent_name(active_task.get("reviewer"))
+    if current_owner != active_owner:
+        raise RuntimeError(
+            f"stale resurrection lineage role mismatch: chain ended with owner {current_owner!r}, but active task has {active_owner!r}: {task_id}"
+        )
+    if current_reviewer != active_reviewer:
+        raise RuntimeError(
+            f"stale resurrection lineage role mismatch: chain ended with reviewer {current_reviewer!r}, but active task has {active_reviewer!r}: {task_id}"
+        )
+
+    spec_hash = task_spec_hash(active_task)
+    cas_digest = task_mutation_cas_digest(active_task)
+    archive_sha256 = _canonical_json_sha256(archived)
+
+    proof = {
+        "proof_kind": "stale_role_recovery_archive_resurrection",
+        "task_id": task_id,
+        "archive_generation": archive_gen,
+        "active_generation": active_gen,
+        "archive_snapshot_sha256": archive_sha256,
+        "active_task_cas_digest": cas_digest,
+        "spec_hash": spec_hash,
+        "delivery_commit": str(delivery.get("commit") or ""),
+        "delivery_repository": str(
+            delivery.get("repository_slug") or delivery.get("repository_id") or ""
+        ),
+        "retired_active_row": {
+            "generation": active_gen,
+            "owner": active_owner,
+            "reviewer": active_reviewer,
+            "status": str(active_task.get("status") or ""),
+            "digest": cas_digest,
+        },
+        "audit_proof_range": {
+            "start_event_id": chain[0]["event_id"],
+            "end_event_id": chain[-1]["event_id"],
+            "start_timestamp": chain[0]["ts"],
+            "end_timestamp": chain[-1]["ts"],
+            "hops": len(chain),
+            "event_ids": [item["event_id"] for item in chain],
+        },
+        "reassignment_chain": [
+            {
+                "event_id": item["event_id"],
+                "ts": item["ts"],
+                "old_generation": item["old_generation"],
+                "generation": item["generation"],
+                "old_owner": item["old_owner"],
+                "new_owner": item["new_owner"],
+                "old_reviewer": item["old_reviewer"],
+                "new_reviewer": item["new_reviewer"],
+                "message": item["message"],
+            }
+            for item in chain
+        ],
+    }
+    return proof
+
+
+def archive_resurrection_diagnostic(
+    active_task: Mapping[str, Any],
+    snapshot: Mapping[str, Any] | None,
+) -> dict[str, Any]:
+    """Report eligibility and exact reason for stale archive resurrection."""
+    task_id = str(active_task.get("id") or "").strip()
+    if snapshot is None:
+        return {
+            "task_id": task_id,
+            "eligible": False,
+            "reason": "no_archive_snapshot_on_disk",
+        }
+    archive_task = snapshot.get("task") if isinstance(snapshot, Mapping) else None
+    if not isinstance(archive_task, Mapping):
+        return {
+            "task_id": task_id,
+            "eligible": False,
+            "reason": "archive_snapshot_corrupt",
+        }
+    archive_gen = task_assignment_generation(archive_task)
+    active_gen = task_assignment_generation(active_task)
+    diagnostic: dict[str, Any] = {
+        "task_id": task_id,
+        "archive_generation": archive_gen,
+        "active_generation": active_gen,
+    }
+    if str(snapshot.get("terminal_outcome") or "") != "completed":
+        diagnostic["eligible"] = False
+        diagnostic["reason"] = "archive_outcome_not_completed"
+        return diagnostic
+    if active_gen <= archive_gen:
+        diagnostic["eligible"] = False
+        diagnostic["reason"] = "active_generation_not_greater_than_archive_generation"
+        return diagnostic
+
+    archived_delivery = archive_task.get("delivery")
+    if not isinstance(archived_delivery, Mapping):
+        diagnostic["eligible"] = False
+        diagnostic["reason"] = "archived_delivery_missing"
+        return diagnostic
+
+    try:
+        proof = verify_stale_archive_resurrection_proof(
+            active_task,
+            snapshot,
+            archived_delivery,
+        )
+        diagnostic["eligible"] = True
+        diagnostic["reason"] = "eligible_for_stale_role_recovery"
+        diagnostic["proof"] = proof
+    except Exception as exc:
+        diagnostic["eligible"] = False
+        diagnostic["reason"] = str(exc)
+    return diagnostic
+
+
+def _validated_same_delivery_archive_recovery(
+    active_task: Mapping[str, Any],
+    *,
+    delivery: Mapping[str, Any],
+    snapshot: Mapping[str, Any],
+) -> dict[str, Any]:
+    """Admit one stale resurrection without changing its completed archive.
+
+    Merged-evidence validation has already proved ``delivery``. This helper
+    only answers whether an existing completed snapshot is the same original
+    task generation, scope and delivery, or a proven cross-generation stale
+    resurrection with complete authenticated reassignment lineage. Any
+    uncertainty remains the ordinary archive conflict.
+    """
+
+    task_id = str(active_task.get("id") or "").strip()
+    try:
+        archived = _validate_status_archive_snapshot(deepcopy(dict(snapshot)))
+    except RuntimeError as exc:
+        raise RuntimeError(
+            f"existing archive snapshot conflicts with terminal task: {task_id}"
+        ) from exc
+    archived_task = archived["task"]
+    active_gen = task_assignment_generation(active_task)
+    archive_gen = task_assignment_generation(archived_task)
+    if (
+        archived.get("terminal_outcome") != "completed"
+        or str(archived.get("task_id") or "") != task_id
+        or active_gen < archive_gen
+    ):
+        raise RuntimeError(
+            f"existing archive snapshot conflicts with terminal task: {task_id}"
+        )
+
+    if active_gen > archive_gen:
+        actor = current_actor()
+        if actor != "Human/Ops" or not local_human_ops_requested():
+            raise RuntimeError(
+                f"Only explicit local Human/Ops may reconcile stale resurrected task from earlier generation archive: {task_id}"
+            )
+        proof = verify_stale_archive_resurrection_proof(
+            active_task,
+            snapshot,
+            delivery,
+        )
+        recovered = deepcopy(dict(archived))
+        recovered["proof"] = proof
+        return recovered
+
+    scope_fields = (
+        "title",
+        "phase",
+        "depends_on",
+        "dependency_tracks",
+        "artifacts",
+        "acceptance",
+        "target_repo",
+        "task_class",
+        "dev_bridge",
+        "execution_authorization",
     )
     if any(
         deepcopy(active_task.get(field)) != deepcopy(archived_task.get(field))
@@ -6726,6 +7199,7 @@ def _queue_existing_archive_snapshot(
     """Queue an already-validated immutable snapshot for normal readback."""
 
     archived = deepcopy(dict(snapshot))
+    archived.pop("proof", None)
     record_terminal_fact(
         state,
         archived["task"],
@@ -6777,16 +7251,39 @@ def command_reconcile_merged_done(state: dict[str, Any], args: list[str]) -> Non
     )
     delivery = deepcopy(preflight["delivery"])
     recovered_archive = deepcopy(preflight.get("recovered_immutable_archive"))
+    resurrection_proof = deepcopy(preflight.get("archive_resurrection_proof"))
+    recovered_raw = None
     if recovered_archive is not None:
+        recovered_raw = {k: v for k, v in recovered_archive.items() if k != "proof"}
         current_archive = load_archived_snapshot(task_id)
         if (
             current_archive is None
             or _canonical_json_sha256(current_archive)
-            != _canonical_json_sha256(recovered_archive)
+            != _canonical_json_sha256(recovered_raw)
         ):
             raise RuntimeError(
                 f"existing archive snapshot changed during reconciliation: {task_id}"
             )
+        if resurrection_proof is not None:
+            if task_assignment_generation(task) != resurrection_proof["active_generation"]:
+                raise RuntimeError(
+                    f"stale task generation changed during reconciliation: {task_id}"
+                )
+            if task_spec_hash(task) != resurrection_proof["spec_hash"]:
+                raise RuntimeError(
+                    f"stale task spec changed during reconciliation: {task_id}"
+                )
+            if task_mutation_cas_digest(task) != resurrection_proof["active_task_cas_digest"]:
+                raise RuntimeError(
+                    f"stale task row changed during reconciliation: {task_id}"
+                )
+            if _canonical_json_sha256(current_archive) != resurrection_proof["archive_snapshot_sha256"]:
+                raise RuntimeError(
+                    f"existing archive snapshot changed during reconciliation: {task_id}"
+                )
+            _assert_no_active_execution(task_id, active_task=task)
+            _assert_audit_proof_range_valid(task_id, resurrection_proof)
+
     timestamp = iso_now()
     delivery["recorded_at"] = timestamp
     verdict_ref = deepcopy(preflight.get("protected_closeout_verdict"))
@@ -6800,17 +7297,33 @@ def command_reconcile_merged_done(state: dict[str, Any], args: list[str]) -> Non
     task.pop("waiting_for", None)
     mark_blockers_resolved(state, task_id)
     mark_handoffs_done(state, task_id)
-    if recovered_archive is not None:
-        # The historical snapshot is the durable terminal row.  Put that exact
+    if recovered_raw is not None:
+        # The historical snapshot is the durable terminal row. Put that exact
         # task back into the normal archive outbox path so readback, receipt,
         # active-row removal and the authoritative state commit retain their
-        # existing ordering.  Fresh reconciliation evidence belongs in the
+        # existing ordering. Fresh reconciliation evidence belongs in the
         # append-only activity audit, never in the immutable archive bytes.
         task.clear()
-        task.update(deepcopy(recovered_archive["task"]))
-        _queue_existing_archive_snapshot(state, recovered_archive)
+        task.update(deepcopy(recovered_raw["task"]))
+        _queue_existing_archive_snapshot(state, recovered_raw)
     else:
         archive_terminal_task_from_state(state, task, archived_at=timestamp)
+
+    if resurrection_proof is not None:
+        retired_row = resurrection_proof["retired_active_row"]
+        append_log(
+            {
+                "ts": timestamp,
+                "agent": actor,
+                "type": "stale_archive_resurrection_retired",
+                "task_id": task_id,
+                "retired_generation": retired_row["generation"],
+                "retired_task_digest": retired_row["digest"],
+                "archive_generation": resurrection_proof["archive_generation"],
+                "archive_snapshot_sha256": resurrection_proof["archive_snapshot_sha256"],
+                "proof": resurrection_proof,
+            }
+        )
     append_log(
         {
             "ts": timestamp,
@@ -6823,10 +7336,20 @@ def command_reconcile_merged_done(state: dict[str, Any], args: list[str]) -> Non
                 {
                     "recovered_immutable_archive": {
                         "archived_at": str(recovered_archive["archived_at"]),
-                        "snapshot_sha256": _canonical_json_sha256(recovered_archive),
+                        "snapshot_sha256": _canonical_json_sha256(
+                            recovered_raw if recovered_raw is not None else recovered_archive
+                        ),
                     }
                 }
                 if recovered_archive is not None
+                else {}
+            ),
+            **(
+                {
+                    "retired_stale_active_row": resurrection_proof["retired_active_row"],
+                    "archive_resurrection_proof": resurrection_proof,
+                }
+                if resurrection_proof is not None
                 else {}
             ),
         }
@@ -7586,8 +8109,15 @@ def prepare_external_mutation_preflight(
             delivery = validate_merged_tooling_done(task)
             verdict_ref = None
         else:
-            delivery = validate_merged_done_evidence(task)
             existing_archive = load_archived_snapshot(task_id)
+            target_task = (
+                existing_archive["task"]
+                if existing_archive is not None
+                and isinstance(existing_archive.get("task"), Mapping)
+                and task_assignment_generation(task) > task_assignment_generation(existing_archive["task"])
+                else task
+            )
+            delivery = validate_merged_done_evidence(target_task)
             recovered_archive = (
                 _validated_same_delivery_archive_recovery(
                     task,
@@ -7614,6 +8144,13 @@ def prepare_external_mutation_preflight(
                 ),
             }
         )
+        if recovered_archive is not None and "proof" in recovered_archive:
+            proof = recovered_archive["proof"]
+            payload["archive_resurrection_proof"] = deepcopy(proof)
+            payload["bound_generation"] = proof["active_generation"]
+            payload["bound_spec_hash"] = proof["spec_hash"]
+            payload["bound_archive_digest"] = proof["archive_snapshot_sha256"]
+            payload["bound_audit_proof_range"] = deepcopy(proof["audit_proof_range"])
         return payload
 
     if canonical_agent_name(task.get("owner")) != actor:
@@ -8091,6 +8628,16 @@ def validate_external_mutation_preflight(
     if value.get("task_digest") != current_digest:
         raise SystemExit(
             f"{task_id} changed after external review evidence was prepared; "
+            f"discarding stale {command} result and requiring a fresh attempt"
+        )
+    if "bound_generation" in value and task_assignment_generation(task) != value["bound_generation"]:
+        raise SystemExit(
+            f"{task_id} generation changed after external review evidence was prepared; "
+            f"discarding stale {command} result and requiring a fresh attempt"
+        )
+    if "bound_spec_hash" in value and task_spec_hash(task) != value["bound_spec_hash"]:
+        raise SystemExit(
+            f"{task_id} specification changed after external review evidence was prepared; "
             f"discarding stale {command} result and requiring a fresh attempt"
         )
     return deepcopy(dict(value))
@@ -8942,15 +9489,21 @@ def command_show(state: dict[str, Any], args: list[str]) -> None:
     source = resolver.source(task_id)
     active_task = resolver.get(task_id) if source == "active" else None
     if active_task is not None:
+        payload = {
+            "source": "active",
+            "task": active_task,
+            "execution_authorization_status": execution_authorization.execution_authorization_status(
+                active_task, now=datetime.now(timezone.utc)
+            ),
+        }
+        snapshot = load_archived_snapshot(task_id)
+        if snapshot is not None:
+            payload["archive_resurrection_diagnostic"] = archive_resurrection_diagnostic(
+                active_task, snapshot
+            )
         print(
             json.dumps(
-                {
-                    "source": "active",
-                    "task": active_task,
-                    "execution_authorization_status": execution_authorization.execution_authorization_status(
-                        active_task, now=datetime.now(timezone.utc)
-                    ),
-                },
+                payload,
                 indent=2,
                 ensure_ascii=False,
             )
@@ -8958,28 +9511,37 @@ def command_show(state: dict[str, Any], args: list[str]) -> None:
         return
 
     snapshot = load_archived_snapshot(task_id)
+    receipts = state.get(ARCHIVE_RECEIPTS_KEY) or {}
+    facts = state.get(TERMINAL_FACTS_KEY) or {}
     if snapshot is not None:
+        payload = {
+            "source": "archive",
+            "snapshot_path": archive_display_path(archive_task_path(task_id)),
+            "snapshot": snapshot,
+        }
+        if task_id in receipts:
+            payload["archive_receipt"] = deepcopy(receipts[task_id])
+        if task_id in facts:
+            payload["terminal_fact"] = deepcopy(facts[task_id])
         print(
             json.dumps(
-                {
-                    "source": "archive",
-                    "snapshot_path": archive_display_path(archive_task_path(task_id)),
-                    "snapshot": snapshot,
-                },
+                payload,
                 indent=2,
                 ensure_ascii=False,
             )
         )
         return
     if source == "terminal_fact":
-        facts = state.get(TERMINAL_FACTS_KEY) or {}
+        payload = {
+            "source": "terminal_fact",
+            "task": deepcopy(facts[task_id]),
+            "archive_missing": True,
+        }
+        if task_id in receipts:
+            payload["archive_receipt"] = deepcopy(receipts[task_id])
         print(
             json.dumps(
-                {
-                    "source": "terminal_fact",
-                    "task": deepcopy(facts[task_id]),
-                    "archive_missing": True,
-                },
+                payload,
                 indent=2,
                 ensure_ascii=False,
             )

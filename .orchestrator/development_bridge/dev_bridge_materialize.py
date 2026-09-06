@@ -404,6 +404,13 @@ def validate_dev_bridge_batch_dependency_closure(
         if not isinstance(row, Mapping):
             raise SystemExit("Dev bridge materialize batch row is invalid")
         task_id = str(row.get("task_id") or "").strip()
+        if (
+            task_id in terminal_ids
+            or ai_status.load_archived_snapshot(task_id) is not None
+        ):
+            raise SystemExit(
+                f"Cannot materialize task {task_id}: task is already terminal/archived"
+            )
         bridge = ((row.get("task_metadata") or {}).get("dev_bridge") or {})
         task_spec = bridge.get("task_spec") if isinstance(bridge, Mapping) else None
         dependencies = task_spec.get("depends_on") if isinstance(task_spec, Mapping) else None
