@@ -19,7 +19,7 @@ Findings, all read-only, all reproducible from this repo:
    unknown, not proven empty.** `docker-compose.yml` and
    `docker-compose.control.yml` each declare a `minio` server + `minio-init`
    bootstrap and wire `PANTHEON_S3_ENDPOINT` / `PANTHEON_S3_ACCESS_KEY` /
-   `PANTHEON_S3_SECRET_KEY` / `PANTHEON_ARTIFACT_BUCKET` into 17 (main stack)
+   `PANTHEON_S3_SECRET_KEY` / `PANTHEON_ARTIFACT_BUCKET` into 18 (main stack)
    / 12 (control stack) application services. A repo-wide, non-test search
    for `boto3`, `botocore`, or any S3 client construction under `services/`
    and `scripts/` returns nothing. The only two files that read those four
@@ -47,9 +47,11 @@ Findings, all read-only, all reproducible from this repo:
    already GCS, neither MinIO.** `scripts/capture_canonical_telemetry_baseline.py`
    (lines ~159-183) resolves a `gcs_object` recovery source via
    `gcloud storage objects describe` and hard-fails unless the object
-   returns a `generation`, a `metageneration`, and a valid hex
-   `pantheon_sha256`/`sha256` metadata value — a real reliance on GCS's
-   built-in per-write version identity. `scripts/deploy_nonprod_vm.sh`
+   returns a `generation`, a `metageneration` (both GCS-automatic, per
+   write), and a valid hex `pantheon_sha256`/`sha256` metadata value
+   (custom object metadata the uploader must set explicitly; GCS does
+   not compute this) — a real reliance on GCS's built-in per-write
+   version identity plus a call-site metadata contract. `scripts/deploy_nonprod_vm.sh`
    (lines ~2020-2058) performs a real PUT/GET/DELETE probe against the
    hosted `PANTHEON_MGMT_AI_ATTACH_BUCKET` bucket at deploy time via the
    GCS JSON API. Both already target GCS, so neither motivates keeping or
@@ -187,7 +189,11 @@ directly against `management_ai_store.py` above without going through
 A second, independent proof exercises the adapter's *real* local-disk
 fallback path (no mock objects at all) to prove genuine durable
 restore/readback, seeded and read back across two separate store
-instances so no in-process cache can mask a fake pass:
+instances *within the same process* so no in-process cache can mask a
+fake pass. This proves readback is driven by the bytes actually
+persisted to disk rather than a shared in-memory object, but it is not a
+fresh-process restart/restore proof (both instances run in the one
+Python process invoked below):
 
 ```
 $ .venv-pantheon/bin/python3 - <<'PY'
@@ -209,8 +215,9 @@ assert os.path.isfile(on_disk_path)
 with open(on_disk_path, "rb") as fh:
     assert hashlib.sha256(fh.read()).hexdigest() == expected_sha256
 
-# Fresh, independent store instance -- proves genuine restore/readback of
-# already-persisted bytes, not an in-process cache hit.
+# A second, independent store instance (same process, no shared Python
+# object) -- proves genuine readback of already-persisted disk bytes,
+# not an in-process cache hit. This is not a fresh-process restart.
 reader = mas.ManagementAiAttachmentStore(storage_path=tmp_dir, bucket_name=None)
 content, mime_type, filename = reader.read(metadata["id"], metadata)
 assert content == image_bytes
@@ -223,14 +230,17 @@ ISOLATED_LOCAL_DURABLE_RESTORE_PROOF: PASS att_7c36d41b401f4422 be0795f6644bbf97
 
 Together the two proofs cover every S3-shaped semantic that the
 in-request-path attachment consumer actually needs today: put-by-key,
-get-by-key, size, content-type, filename, and durable restore across a
-fresh process. They do **not** cover the GCS `generation`/`metageneration`/
-`pantheon_sha256`-metadata identity contract required by
+get-by-key, size, content-type, filename, and durable disk persistence
+verified via a second same-process store instance (not a fresh-process
+restart — see §4 above). They do **not** cover the GCS
+`generation`/`metageneration` (GCS-automatic) plus `pantheon_sha256`
+(custom, uploader-set) metadata identity contract required by
 `scripts/capture_canonical_telemetry_baseline.py` (§1 finding 3): that
-contract is GCS's own built-in per-write versioning feature, so it needs
-no new server-side capability, but exercising it against a *real* bucket
-requires hosted `gcloud`/network credentials this read-only task does not
-have. That feasibility is left as an explicit open item for
+contract combines GCS's own built-in per-write versioning feature
+(generation/metageneration, needing no new server-side capability) with
+a custom metadata field the writer must set explicitly, and exercising
+either against a *real* bucket requires hosted `gcloud`/network
+credentials this read-only task does not have. That feasibility is left as an explicit open item for
 `OSS-OBJECT-STORE-CUTOVER-001` — it is not fabricated as already-proven
 here, and it is not a reason to prefer MinIO, since MinIO does not supply
 this GCS-specific identity contract either.
@@ -299,6 +309,12 @@ hosted content is confirmed empty (that remains conditional per §1/§3).
   cutover task's own reversible local migration/readback check (per its
   acceptance criteria) confirms zero remaining source-code consumers — this
   task does not perform that deletion or that inventory check.
+- Also update `scripts/bootstrap.sh`, which starts and depends on MinIO
+  outside the two Compose files: line 66 lists `minio` in its
+  `INFRA_SERVICES` array and brings it up via `docker compose up -d`, and
+  line 118 runs `docker compose run --rm minio-init` to create the bucket.
+  Both must be removed as part of the same retirement, not left to bit-rot
+  after the Compose service declarations are deleted.
 - If any later consumer genuinely needs true S3-only semantics (multipart
   upload from an external tool that cannot speak the GCS API, for example),
   that is a new decision with its own consumer/data enumeration, not a

@@ -2,7 +2,7 @@
   "task_id": "OSS-INFRA-CHOICE-001",
   "owner": "Claude",
   "reviewer": "Codex2",
-  "summary": "Enumerated every declared object-store consumer across docker-compose.yml/docker-compose.control.yml/docker-compose.exec.yml and services/**/*.py plus deploy/evidence tooling under scripts/, found zero real S3/MinIO source-code consumers and three real GCS consumers (one in-request-path, two out-of-band), compared local-S3-replacement vs managed-store vs conditional retirement, produced two reproducible isolated proofs (a mocked-bucket round trip and a real local-disk durable restore/readback) against the real adapter, recorded the accepted choice with hosted-content and identity-preservation caveats made explicit, and corrected the core/workers/research/management-ai/execution source-profile contract to match actual docker-compose.yml/docker-compose.exec.yml dependency and Compose-profile-opt-in evidence.",
+  "summary": "Enumerated every declared object-store consumer across docker-compose.yml/docker-compose.control.yml/docker-compose.exec.yml and services/**/*.py plus deploy/evidence tooling under scripts/, found zero real S3/MinIO source-code consumers and three real GCS consumers (one in-request-path, two out-of-band), compared local-S3-replacement vs managed-store vs conditional retirement, produced two reproducible isolated proofs (a mocked-bucket round trip and a same-process two-instance local-disk durable read/write verification) against the real adapter, recorded the accepted choice with hosted-content and identity-preservation caveats made explicit, and corrected the core/workers/research/management-ai/execution source-profile contract to match actual docker-compose.yml/docker-compose.control.yml/docker-compose.exec.yml per-environment Compose-topology, dependency-closure, and volume evidence (second reviewer-reject correction pass: see profile_contract_design.corrections_from_second_reviewer_reject below).",
   "depends_on": ["OSS-COVERAGE-PLAN-001"],
   "task_branch_base_dev": "ec47156479e6d51fe1e03056d9060cbc8893d739",
   "prior_review": {
@@ -49,22 +49,22 @@
     {
       "file": "docs/plans/system-simplification-20260906/storage-consumer-matrix.json",
       "purpose": "Full read-only enumeration of every docker-compose service declaring PANTHEON_S3_* env vars or depends_on minio, the repo-wide non-test search for boto3/botocore/S3-client usage (zero hits), all three real object-store consumers (attachment store, telemetry-baseline recovery-source identity, deploy-time bucket probe), and the corrected hosted-content-unknown / tenant-authorization findings.",
-      "sha256": "ec62ac78fbe0a36a992a3c361b78e13aca1ec28ab0acd4efbb7a007faf2c4a6f"
+      "sha256": "06c72cd4403e51b4c10852c91a9a2bca7c43f695dad8e271d68ae9c0e27a757d"
     },
     {
       "file": "docs/plans/system-simplification-20260906/storage-topology-decision.md",
       "purpose": "Compares the 3 acceptance-bounded options, records the accepted decision (GCS as sole backend; conditionally retire the unused-in-source-code MinIO layer pending hosted inventory), and carries both reproducible isolated proofs (mocked-bucket round trip and real local-disk durable restore/readback).",
-      "sha256": "414befdd23808453a58a409c5482060923223da58e21e0adf0d73d64b023c6b1"
+      "sha256": "e3ecb56940d6f19b382577fe211cdb8445cc874c5ec2f2b5196a9fe42027a61f"
     },
     {
       "file": "docs/plans/system-simplification-20260906/profile-contract.json",
       "purpose": "Design-only core/workers/research/management-ai/execution profile contract with health/dependency/volume/isolation requirements, corrected against actual docker-compose.yml/docker-compose.exec.yml Compose-profile-opt-in and depends_on evidence, aligned to SA.md's accepted environment-identity plan and to the corrected storage decision.",
-      "sha256": "0d02341e30385f6c3f3dceff28aecf0402e3e621729fe064dea6202852f9295b"
+      "sha256": "b822024d06b3eaa4f18437fe5b74a5a7fc83f0613eeb3fa5e3de1528b7722fcd"
     }
   ],
   "consumer_enumeration": {
     "method": "grep across docker-compose.yml, docker-compose.control.yml, docker-compose.remote-dev.yml, docker-compose.exec.yml for PANTHEON_S3_ENDPOINT/PANTHEON_ARTIFACT_BUCKET/minio; a repo-wide non-test grep for boto3/botocore/S3 client construction under services/ and scripts/; and a direct read of the three files a prior reviewer identified as additional real GCS consumers.",
-    "result": "17 services (main stack) / 12 services (control stack) declare the four PANTHEON_S3_* env vars; only 8/9 of those add a depends_on: minio: condition: service_healthy edge. Zero non-test source files construct an S3 client. The two files that read the env vars (services/foundation/persistence_posture.py, services/source_search_posture.py) only check presence for a staging/prod posture gate and explicitly document that they never open a connection.",
+    "result": "18 services (main stack) / 12 services (control stack) declare the four PANTHEON_S3_* env vars; only 8/9 of those add a depends_on: minio: condition: service_healthy edge. Zero non-test source files construct an S3 client. The two files that read the env vars (services/foundation/persistence_posture.py, services/source_search_posture.py) only check presence for a staging/prod posture gate and explicitly document that they never open a connection.",
     "real_consumers": [
       "services/control-plane/bff/management_ai_store.py: google-cloud-storage (Apache-2.0), gated by PANTHEON_MGMT_AI_ATTACH_BUCKET, with a local-filesystem fallback when unset; in-request-path.",
       "scripts/capture_canonical_telemetry_baseline.py:159-183: gcloud storage objects describe on a gcs_object recovery source; requires generation, metageneration, and pantheon_sha256/sha256 metadata; out-of-band release-evidence tooling.",
@@ -109,9 +109,9 @@
       "asserted": [
         "a real file exists on disk at the adapter's own path convention immediately after store_inline_attachment()",
         "the on-disk bytes' SHA-256 matches the seeded content's SHA-256",
-        "a brand-new store instance (no shared Python object/memory dict) reads back byte-identical content, mimeType, and filename"
+        "a second, independent store instance in the same process (no shared Python object/memory dict) reads back byte-identical content, mimeType, and filename -- this is a same-process, two-instance proof, not a fresh-process restart/restore"
       ],
-      "not_covered": "The GCS generation/metageneration/pantheon_sha256 identity contract required by scripts/capture_canonical_telemetry_baseline.py is GCS's own built-in feature and was not exercised against a real hosted bucket (no gcloud/network credentials available in this read-only task); left as an explicit open item for OSS-OBJECT-STORE-CUTOVER-001, not fabricated as proven."
+      "not_covered": "The GCS generation/metageneration (automatic, GCS-assigned) plus pantheon_sha256 (custom, uploader-set) identity contract required by scripts/capture_canonical_telemetry_baseline.py was not exercised against a real hosted bucket (no gcloud/network credentials available in this read-only task); left as an explicit open item for OSS-OBJECT-STORE-CUTOVER-001, not fabricated as proven."
     },
     {
       "target": "services/control-plane/bff/test_bff_mgmt_ai_persistence_2026_06_03.py::test_management_ai_attachment_store_uses_gcs_bucket_metadata",
@@ -122,11 +122,12 @@
     "profiles": ["core", "workers", "research", "management-ai", "execution"],
     "cross_cutting_rule": "no profile's startup health may depend on minio; the accepted GCS path stays env-gated/optional for every profile; deploy-time/release-evidence GCS tooling (scripts/deploy_nonprod_vm.sh, scripts/capture_canonical_telemetry_baseline.py) is out-of-band and does not become a new profile startup dependency",
     "corrections_from_reviewer_reject": "opt-in lifecycle-capacity-benchmark and smoke/e2e harness containers no longer default to core; signal-store moved from core to execution (its only real docker-compose.yml consumers); three research-owned workers split out of the blanket Prod Control singleton row; execution profile now lists dev/ephemeral-staging (docker-compose.yml) and Prod Execution (docker-compose.exec.yml) services separately, including broker-adapter/exchange-adapter/pantheon-lean-live and a corrected dependency/volume closure with no fabricated postgres/nats dependency on the isolated Prod Execution stack",
+    "corrections_from_second_reviewer_reject": "Added compose_topology_by_environment mapping each SA.md environment to the actual Compose file it runs (docker-compose.yml for dev/ephemeral_staging vs the separate, external-runtime-wired docker-compose.control.yml for prod_control vs docker-compose.exec.yml for prod_execution). Corrected core/workers dependency_requirements to name the real cross-profile hard depends_on edges that exist on docker-compose.yml (telemetry/incidents/evolution/deployment-outbox-consumer -> runtime-manager; operator-bff -> four research services + openclaw-gateway-adapter + paper-fleet-reconciler + runtime-manager) and to state these do not exist on docker-compose.control.yml, which reaches runtime-manager and the OpenClaw adapter only via external URLs -- documenting the gap rather than fabricating an already-clean dependency closure for the dev/ephemeral_staging mono-stack. Removed the circular management-ai/core startup claim: corrected dependency_requirements to state openclaw-gateway-adapter itself has no depends_on edge on any core service, while operator-bff/consultation-svc instead depend on it, so management-ai gates part of core startup rather than the reverse; also documented that this edge does not exist on docker-compose.control.yml. Added bff-data to core.volume_requirements (operator-bff's own volume, previously omitted) and documented its pre-existing cross-profile read-only mount by two workers-profile services. Added activation_clarification_dev_paper to the execution profile explaining that 'dev: NO (Paper)' means Live-broker capability is disabled, not that the Paper-topology runtime-manager/broker/signal-store services are absent from the running dev stack.",
     "scope_boundary": "design/document only; no docker-compose.yml/docker-compose.control.yml/docker-compose.exec.yml edit was made, no hostname was provisioned, no data was migrated, no runtime was promoted or deployed by this task"
   },
   "decision_recorded": {
     "chosen_backend": "Google Cloud Storage, via the existing ManagementAiAttachmentStore adapter for the in-request-path consumer; scripts/capture_canonical_telemetry_baseline.py and scripts/deploy_nonprod_vm.sh keep their existing direct GCS access unchanged",
-    "minio_disposition": "accepted for conditional retirement by OSS-OBJECT-STORE-CUTOVER-001 after (a) a hosted inventory check confirms no populated hosted MinIO/GCS content needs migration/restore and (b) that task's own reversible local migration/readback proof confirms zero remaining source-code consumers; this task performs no deletion and no hosted inventory check",
+    "minio_disposition": "accepted for conditional retirement by OSS-OBJECT-STORE-CUTOVER-001 after (a) a hosted inventory check confirms no populated hosted MinIO/GCS content needs migration/restore and (b) that task's own reversible local migration/readback proof confirms zero remaining source-code consumers; this task performs no deletion and no hosted inventory check. Retirement scope also includes scripts/bootstrap.sh:66,118, which starts minio in INFRA_SERVICES and runs minio-init outside the two Compose files.",
     "posture_files_to_update_later": [
       "services/foundation/persistence_posture.py (OBJECT_STORE_KEYS enforcement)",
       "services/source_search_posture.py (object_store_keys enforcement)"
@@ -155,7 +156,11 @@
       "sed -n '370-390,555-570,660-675' docker-compose.yml — confirmed alpha-replication-worker/training-session-preview-worker/policy-learning-shadow-eval-scheduler depend on research-profile services",
       "grep -n depends_on docker-compose.exec.yml — confirmed pantheon-paper-runtime's hard dependency on signal-store/runtime-manager/broker-adapter/exchange-adapter and the absence of any postgres/nats declaration in docker-compose.exec.yml",
       ".venv-pantheon/bin/python3 <mocked-bucket proof> — exit 0, ISOLATED_GCS_OBJECT_STORE_PROOF: PASS",
-      ".venv-pantheon/bin/python3 <real local-disk restore proof> — exit 0, ISOLATED_LOCAL_DURABLE_RESTORE_PROOF: PASS"
+      ".venv-pantheon/bin/python3 <real local-disk restore proof> — exit 0, ISOLATED_LOCAL_DURABLE_RESTORE_PROOF: PASS",
+      "sed -n '1350,1410p;1020,1100p;1900,1975p' docker-compose.yml; sed -n '1,900p' docker-compose.control.yml — confirmed the reviewer-cited runtime-manager/openclaw-gateway-adapter cross-profile depends_on edges on docker-compose.yml and their absence (external URL env vars only, no colocated openclaw-gateway-adapter service) on docker-compose.control.yml",
+      "grep -n bff-data docker-compose.yml docker-compose.control.yml — confirmed operator-bff's own bff-data volume plus its pre-existing read-only cross-profile mount by agora-interaction-worker/source-ingest-agora-projector",
+      "sed -n '55,75p;110,125p' scripts/bootstrap.sh — confirmed the minio/minio-init bootstrap steps added to the retirement disposition",
+      "python3 -c \"import hashlib; ...\" — recomputed sha256 for all three corrected artifacts and updated artifacts_produced below to match"
     ],
     "not_run": "No pytest suite was run (no dependency interpreter with pytest verified in this pass); no claim of a passing pytest suite is made. Only the two direct-script isolated proofs above are claimed as run and passing."
   }
