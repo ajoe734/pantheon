@@ -7415,6 +7415,7 @@ def _run_reserved_runtime_phase(
                 fresh_events = disk_events if has_log_path else (disk_events or [])
 
                 if deferred_terminations:
+                    now_dt = datetime.now(timezone.utc)
                     for term_pid, term_ticks in deferred_terminations:
                         target_worker = None
                         for candidate_worker in itertools.chain(
@@ -7427,22 +7428,50 @@ def _run_reserved_runtime_phase(
                             ):
                                 target_worker = candidate_worker
                                 break
-                        if target_worker is not None:
-                            t_id = str(target_worker.get("task_id") or "")
-                            if t_id:
-                                fresh_task = _safe_load_canonical_task(config, {}, t_id)
-                                if fresh_task is None:
-                                    cas_matches = False
-                                    break
-                                fresh_decision = active_worker_governance_lease_decision(
-                                    config,
-                                    target_worker,
-                                    fresh_task,
-                                    activity_events=fresh_events,
-                                )
-                                if fresh_decision.get("action") != "terminate":
-                                    cas_matches = False
-                                    break
+                        if target_worker is None:
+                            cas_matches = False
+                            break
+                        if (
+                            term_ticks is not None
+                            and target_worker.get("pid_start_ticks") is not None
+                            and int(term_ticks) != int(target_worker.get("pid_start_ticks"))
+                        ):
+                            cas_matches = False
+                            break
+
+                        t_id = str(target_worker.get("task_id") or "")
+                        if t_id:
+                            fresh_task = _safe_load_canonical_task(config, {}, t_id)
+                            if fresh_task is None:
+                                cas_matches = False
+                                break
+                            if fresh_task.get("review_decision_intent") not in (None, {}, []):
+                                cas_matches = False
+                                break
+
+                            # Reason-specific termination validation:
+                            # 1. Genuine lease expiry / progress timeout
+                            is_lease_expired = worker_lease_is_expired(config, target_worker, now_dt)
+
+                            # 2. Task generation fence advanced
+                            is_gen_fence = not worker_matches_current_task_generation(target_worker, fresh_task)
+
+                            # 3. Governance lease decision (responsibility transfer, authorized cancellation, terminal status)
+                            fresh_decision = active_worker_governance_lease_decision(
+                                config,
+                                target_worker,
+                                fresh_task,
+                                activity_events=fresh_events,
+                            )
+                            is_gov_terminate = fresh_decision.get("action") == "terminate"
+
+                            if not (is_lease_expired or is_gen_fence or is_gov_terminate):
+                                cas_matches = False
+                                break
+                        else:
+                            if not worker_lease_is_expired(config, target_worker, now_dt):
+                                cas_matches = False
+                                break
 
                 if cas_matches:
                     res_workers = reserved.get("workers") or {}
@@ -7460,6 +7489,16 @@ def _run_reserved_runtime_phase(
                         q_res_status = str((res_queue.get(q_ev_id) or {}).get("status") or "")
                         q_scr_status = str((scr_queue.get(q_ev_id) or {}).get("status") or "")
 
+                        transitioned_to_superseded = (
+                            r_status != "superseded" and s_status == "superseded"
+                        )
+                        superseded_queue_cleanup = (
+                            s_status == "superseded"
+                            and bool(q_ev_id)
+                            and q_res_status != "completed"
+                            and q_scr_status == "completed"
+                        )
+
                         transitioned_to_completed = (
                             r_status != "completed"
                             and (s_status == "completed" or (s_worker is None and q_scr_status == "completed"))
@@ -7469,15 +7508,44 @@ def _run_reserved_runtime_phase(
                             and q_res_status != "completed"
                             and q_scr_status == "completed"
                         )
-                        transitioned_to_superseded = (
-                            r_status != "superseded" and s_status == "superseded"
-                        )
 
                         t_id = str(r_worker.get("task_id") or "")
                         if not t_id:
                             continue
 
-                        if transitioned_to_completed or queue_transitioned_to_completed:
+                        if transitioned_to_superseded or superseded_queue_cleanup:
+                            fresh_task = _safe_load_canonical_task(config, {}, t_id)
+                            if fresh_task is None:
+                                continue
+                            if fresh_task.get("review_decision_intent") not in (None, {}, []):
+                                cas_matches = False
+                                break
+
+                            is_gen_fence = not worker_matches_current_task_generation(r_worker, fresh_task)
+                            fresh_decision = active_worker_governance_lease_decision(
+                                config,
+                                r_worker,
+                                fresh_task,
+                                activity_events=fresh_events,
+                            )
+                            is_gov_terminate = fresh_decision.get("action") == "terminate"
+
+                            r_role = (
+                                "reviewer"
+                                if str((r_worker.get("request_snapshot") or {}).get("reason") or "") == REASON_REVIEW_READY
+                                else "owner"
+                            )
+                            expected_actor = str(fresh_task.get(r_role) or "")
+                            r_actor = display_name_for(
+                                config, str(r_worker.get("agent_id") or r_worker.get("provider") or "")
+                            )
+                            is_actor_mismatch = bool(expected_actor and r_actor and r_actor != expected_actor)
+
+                            if not (is_gen_fence or is_gov_terminate or is_actor_mismatch):
+                                cas_matches = False
+                                break
+
+                        elif transitioned_to_completed or queue_transitioned_to_completed:
                             fresh_task = _safe_load_canonical_task(config, {}, t_id)
                             if fresh_task is None:
                                 cas_matches = False
@@ -7489,21 +7557,6 @@ def _run_reserved_runtime_phase(
                                 activity_events=fresh_events,
                             )
                             if fresh_terminal is None:
-                                cas_matches = False
-                                break
-
-                        elif transitioned_to_superseded:
-                            fresh_task = _safe_load_canonical_task(config, {}, t_id)
-                            if fresh_task is None:
-                                cas_matches = False
-                                break
-                            fresh_decision = active_worker_governance_lease_decision(
-                                config,
-                                r_worker,
-                                fresh_task,
-                                activity_events=fresh_events,
-                            )
-                            if fresh_decision.get("action") != "terminate":
                                 cas_matches = False
                                 break
 
@@ -8395,7 +8448,7 @@ def active_worker_governance_lease_decision(
                             archived_snapshot = json.loads(read_task_archive_file_safe(arch_file))
                         except Exception:
                             pass
-                if archived_snapshot is None:
+                if archived_snapshot is None and not status_root_val:
                     try:
                         archived_snapshot = load_archived_snapshot(str(task.get("id") or ""))
                     except Exception:

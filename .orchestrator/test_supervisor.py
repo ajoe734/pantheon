@@ -15587,6 +15587,327 @@ class RealProcessReviewHandoffRecoveryFlowTests(unittest.TestCase):
                         proc.kill()
                         proc.wait(timeout=3)
 
+    def test_reserved_phase_commits_reason_specific_generation_fence_cleanup(self) -> None:
+        """Verify reserved-phase final CAS revalidates generation fences and rejects unauthorized supersede."""
+        # 1. Positive control: worker gen 1 vs task gen 2 commits generation fence cleanup
+        with tempfile.TemporaryDirectory(prefix="pantheon-fence-cleanup-") as directory:
+            root = Path(directory)
+            status_root = root / "status"
+            (status_root / ".orchestrator").mkdir(parents=True)
+            c = config_fixture(status_root)
+            journal = root / "events.jsonl"
+            c["task_state_store"] = {"mode": "authoritative", "event_log": str(journal)}
+
+            t2 = task_fixture(status="in_progress")
+            t2["generation"] = 2
+            rewrite_task_state_store.append_state_commit(
+                journal,
+                {"tasks": [t2], "agents": [], "handoffs": [], "blockers": []},
+                source="isolated gen 2 fixture",
+            )
+            w1 = RuntimeAndFailureSemanticsTests._owner_worker(generation=1)
+            state = runtime_state.default_state()
+            state["workers"][w1["run_id"]] = copy.deepcopy(w1)
+            state["queue"]["events"][w1["queue_event_id"]] = {
+                "status": "processing",
+                "intent": {"event_id": w1["queue_event_id"], "task_id": t2["id"]},
+            }
+            runtime_state.save_runtime_state(c, state)
+
+            def operation_fence(scratch):
+                res = supervisor.poll_worker_assignment_stage(
+                    c, scratch, scratch["workers"][w1["run_id"]],
+                    w1["run_id"], {t2["id"]: t2}, {"running"}, False,
+                    governance_activity_events=[],
+                )
+                self.assertEqual(scratch["workers"][w1["run_id"]]["status"], "superseded")
+                self.assertEqual(scratch["queue"]["events"][w1["queue_event_id"]]["status"], "completed")
+                return res["changed"]
+
+            committed = supervisor._run_reserved_runtime_phase(c, "isolated_fence_poll", operation_fence)
+            self.assertTrue(committed, "valid generation fence cleanup must commit")
+            final = runtime_state.load_runtime_state(c)
+            self.assertEqual(final["queue"]["events"][w1["queue_event_id"]]["status"], "completed")
+            self.assertIn(final["workers"].get(w1["run_id"], {}).get("status", "reaped"), {"superseded", "reaped"})
+
+        # 2. Exited worker positive control: worker gen 1 vs task gen 2 with already-exited worker
+        with tempfile.TemporaryDirectory(prefix="pantheon-fence-exited-") as directory:
+            root = Path(directory)
+            status_root = root / "status"
+            (status_root / ".orchestrator").mkdir(parents=True)
+            c = config_fixture(status_root)
+            journal = root / "events.jsonl"
+            c["task_state_store"] = {"mode": "authoritative", "event_log": str(journal)}
+
+            t2 = task_fixture(status="in_progress")
+            t2["generation"] = 2
+            rewrite_task_state_store.append_state_commit(
+                journal,
+                {"tasks": [t2], "agents": [], "handoffs": [], "blockers": []},
+                source="isolated gen 2 exited fixture",
+            )
+            w_exited = RuntimeAndFailureSemanticsTests._owner_worker(generation=1)
+            state = runtime_state.default_state()
+            state["workers"][w_exited["run_id"]] = copy.deepcopy(w_exited)
+            state["queue"]["events"][w_exited["queue_event_id"]] = {
+                "status": "processing",
+                "intent": {"event_id": w_exited["queue_event_id"], "task_id": t2["id"]},
+            }
+            runtime_state.save_runtime_state(c, state)
+
+            def operation_exited(scratch):
+                res = supervisor.poll_worker_assignment_stage(
+                    c, scratch, scratch["workers"][w_exited["run_id"]],
+                    w_exited["run_id"], {t2["id"]: t2}, {"running"}, alive=False,
+                    governance_activity_events=[],
+                )
+                self.assertEqual(scratch["workers"][w_exited["run_id"]]["status"], "superseded")
+                self.assertEqual(scratch["queue"]["events"][w_exited["queue_event_id"]]["status"], "completed")
+                return res["changed"]
+
+            committed_exited = supervisor._run_reserved_runtime_phase(c, "isolated_exited_poll", operation_exited)
+            self.assertTrue(committed_exited, "valid exited-worker generation fence cleanup must commit")
+            final_exited = runtime_state.load_runtime_state(c)
+            self.assertEqual(final_exited["queue"]["events"][w_exited["queue_event_id"]]["status"], "completed")
+            self.assertIn(final_exited["workers"].get(w_exited["run_id"], {}).get("status", "reaped"), {"superseded", "reaped"})
+
+        # 3. Refusal control: worker gen 2 vs task gen 2 with no governance event rejects unauthorized supersede
+        with tempfile.TemporaryDirectory(prefix="pantheon-fence-unauth-") as directory:
+            root = Path(directory)
+            status_root = root / "status"
+            (status_root / ".orchestrator").mkdir(parents=True)
+            c = config_fixture(status_root)
+            journal = root / "events.jsonl"
+            c["task_state_store"] = {"mode": "authoritative", "event_log": str(journal)}
+
+            t2 = task_fixture(status="in_progress")
+            t2["generation"] = 2
+            rewrite_task_state_store.append_state_commit(
+                journal,
+                {"tasks": [t2], "agents": [], "handoffs": [], "blockers": []},
+                source="isolated gen 2 unauth fixture",
+            )
+            w_matching = RuntimeAndFailureSemanticsTests._owner_worker(generation=2)
+            state = runtime_state.default_state()
+            state["workers"][w_matching["run_id"]] = copy.deepcopy(w_matching)
+            state["queue"]["events"][w_matching["queue_event_id"]] = {
+                "status": "processing",
+                "intent": {"event_id": w_matching["queue_event_id"], "task_id": t2["id"]},
+            }
+            runtime_state.save_runtime_state(c, state)
+
+            def operation_unauthorized_supersede(scratch):
+                scratch["workers"][w_matching["run_id"]]["status"] = "superseded"
+                scratch["queue"]["events"][w_matching["queue_event_id"]]["status"] = "completed"
+                return True
+
+            committed_rejected = supervisor._run_reserved_runtime_phase(c, "isolated_unauth_poll", operation_unauthorized_supersede)
+            self.assertFalse(committed_rejected, "unauthorized supersede without generation fence or governance transition must be discarded")
+            final_rejected = runtime_state.load_runtime_state(c)
+            self.assertEqual(final_rejected["workers"][w_matching["run_id"]]["status"], "running")
+            self.assertEqual(final_rejected["queue"]["events"][w_matching["queue_event_id"]]["status"], "processing")
+
+    def test_reserved_phase_reaps_real_expired_lease_and_refuses_unauthorized_signals(self) -> None:
+        """Verify reserved-phase final CAS revalidates expired leases and refuses unauthorized signals."""
+        with tempfile.TemporaryDirectory(prefix="pantheon-expiry-reap-") as directory:
+            root = Path(directory)
+            status_root = root / "status"
+            (status_root / ".orchestrator").mkdir(parents=True)
+            c = config_fixture(status_root)
+            journal = root / "events.jsonl"
+            c["task_state_store"] = {"mode": "authoritative", "event_log": str(journal)}
+
+            t = task_fixture(status="in_progress")
+            t["generation"] = 1
+            rewrite_task_state_store.append_state_commit(
+                journal,
+                {"tasks": [t], "agents": [], "handoffs": [], "blockers": []},
+                source="isolated expiry fixture",
+            )
+            w = RuntimeAndFailureSemanticsTests._owner_worker(generation=1)
+            state = runtime_state.default_state()
+            state["workers"][w["run_id"]] = copy.deepcopy(w)
+            state["queue"]["events"][w["queue_event_id"]] = {
+                "status": "processing",
+                "intent": {"event_id": w["queue_event_id"], "task_id": t["id"]},
+            }
+
+            # 1. Positive control: real expired worker process is terminated by reserved phase
+            proc = subprocess.Popen(
+                [sys.executable, "-c", "import time; time.sleep(45)"],
+                cwd=root, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL, start_new_session=True,
+            )
+            try:
+                w["pid"] = proc.pid
+                w["pid_start_ticks"] = supervisor.worker_pid_start_ticks(proc.pid)
+                self.assertIsNotNone(w["pid_start_ticks"])
+                w["process_generation"] = supervisor.worker_process_generation_id(
+                    task_id=w["task_id"], worker_run_id=w["run_id"],
+                    queue_event_id=w["queue_event_id"], pid=w["pid"],
+                    pid_start_ticks=w["pid_start_ticks"],
+                )
+                w["lease_expires_at"] = "2026-08-15T04:01:00Z"
+                state["workers"][w["run_id"]] = copy.deepcopy(w)
+                runtime_state.save_runtime_state(c, state)
+
+                now = datetime.now(timezone.utc)
+                self.assertTrue(supervisor.worker_lease_is_expired(c, w, now))
+
+                signals_sent = []
+                real_kill = os.kill
+
+                def observe_kill(pid, sig):
+                    if pid == proc.pid and int(sig) != 0:
+                        signals_sent.append(int(sig))
+                    return real_kill(pid, sig)
+
+                def operation_expiry(scratch):
+                    observed = supervisor.poll_worker_observation_stage(
+                        c, scratch, scratch["workers"][w["run_id"]],
+                        now=now, active_worker_statuses={"running"},
+                        poll_counts={"marker_updates": 0, "commit_progress_updates": 0, "lease_refreshes": 0},
+                    )
+                    self.assertEqual(supervisor._DEFERRED_WORKER_TERMINATIONS.get(), [(proc.pid, w["pid_start_ticks"])])
+                    return observed["changed"]
+
+                with mock.patch.object(supervisor, "update_worker_runtime_markers", return_value=False), \
+                     mock.patch.object(supervisor, "update_from_log", return_value=False), \
+                     mock.patch.object(supervisor, "update_worker_commit_progress", return_value=(False, False)), \
+                     mock.patch.object(os, "kill", side_effect=observe_kill):
+                    committed = supervisor._run_reserved_runtime_phase(c, "isolated_expiry_poll", operation_expiry)
+
+                self.assertTrue(committed, "genuine expired-lease termination must commit")
+                self.assertIn(15, signals_sent)
+                proc.wait(timeout=3)
+            finally:
+                if proc.poll() is None:
+                    proc.terminate()
+                    try:
+                        proc.wait(timeout=3)
+                    except subprocess.TimeoutExpired:
+                        proc.kill()
+                        proc.wait(timeout=3)
+
+            # 2. Refusal control: unexpired worker with no governance event refuses deferred termination
+            proc2 = subprocess.Popen(
+                [sys.executable, "-c", "import time; time.sleep(45)"],
+                cwd=root, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL, start_new_session=True,
+            )
+            try:
+                w2 = RuntimeAndFailureSemanticsTests._owner_worker(generation=1)
+                w2["run_id"] = "run-owner-fresh"
+                w2["queue_event_id"] = "queue-event-fresh"
+                w2["pid"] = proc2.pid
+                w2["pid_start_ticks"] = supervisor.worker_pid_start_ticks(proc2.pid)
+                w2["process_generation"] = supervisor.worker_process_generation_id(
+                    task_id=w2["task_id"], worker_run_id=w2["run_id"],
+                    queue_event_id=w2["queue_event_id"], pid=w2["pid"],
+                    pid_start_ticks=w2["pid_start_ticks"],
+                )
+                w2["lease_expires_at"] = "2026-09-07T12:00:00Z"
+                w2["last_heartbeat_at"] = datetime.now(timezone.utc).isoformat()
+                state["workers"][w2["run_id"]] = copy.deepcopy(w2)
+                state["queue"]["events"][w2["queue_event_id"]] = {
+                    "status": "processing",
+                    "intent": {"event_id": w2["queue_event_id"], "task_id": t["id"]},
+                }
+                runtime_state.save_runtime_state(c, state)
+
+                signals_sent2 = []
+
+                def observe_kill2(pid, sig):
+                    if pid == proc2.pid and int(sig) != 0:
+                        signals_sent2.append(int(sig))
+                    return real_kill(pid, sig)
+
+                def operation_unauthorized_signal(scratch):
+                    # Malicious / bogus deferred termination injected without valid reason
+                    deferred = supervisor._DEFERRED_WORKER_TERMINATIONS.get()
+                    deferred.append((proc2.pid, w2["pid_start_ticks"]))
+                    return True
+
+                with mock.patch.object(os, "kill", side_effect=observe_kill2):
+                    committed2 = supervisor._run_reserved_runtime_phase(c, "isolated_unauth_signal_poll", operation_unauthorized_signal)
+
+                self.assertFalse(committed2, "unauthorized signal against fresh unexpired worker must be discarded")
+                self.assertEqual(signals_sent2, [], "no signals should be sent to fresh worker")
+                self.assertIsNone(proc2.poll(), "fresh worker process should remain alive")
+            finally:
+                if proc2.poll() is None:
+                    proc2.terminate()
+                    try:
+                        proc2.wait(timeout=3)
+                    except subprocess.TimeoutExpired:
+                        proc2.kill()
+                        proc2.wait(timeout=3)
+
+            # 3. Pending review intent control: expired worker with pending review_decision_intent refuses termination
+            proc3 = subprocess.Popen(
+                [sys.executable, "-c", "import time; time.sleep(45)"],
+                cwd=root, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL, start_new_session=True,
+            )
+            try:
+                t_intent = copy.deepcopy(t)
+                t_intent["review_decision_intent"] = {
+                    "nonce": "test-nonce-1234",
+                    "actor": "Codex",
+                    "decision": "approve",
+                }
+                rewrite_task_state_store.append_state_commit(
+                    journal,
+                    {"tasks": [t_intent], "agents": [], "handoffs": [], "blockers": []},
+                    source="isolated intent fixture",
+                )
+
+                w3 = RuntimeAndFailureSemanticsTests._owner_worker(generation=1)
+                w3["run_id"] = "run-owner-intent"
+                w3["task_id"] = t_intent["id"]
+                w3["queue_event_id"] = "queue-event-intent"
+                w3["pid"] = proc3.pid
+                w3["pid_start_ticks"] = supervisor.worker_pid_start_ticks(proc3.pid)
+                w3["process_generation"] = supervisor.worker_process_generation_id(
+                    task_id=w3["task_id"], worker_run_id=w3["run_id"],
+                    queue_event_id=w3["queue_event_id"], pid=w3["pid"],
+                    pid_start_ticks=w3["pid_start_ticks"],
+                )
+                w3["lease_expires_at"] = "2026-08-15T04:01:00Z"
+                state["workers"][w3["run_id"]] = copy.deepcopy(w3)
+                state["queue"]["events"][w3["queue_event_id"]] = {
+                    "status": "processing",
+                    "intent": {"event_id": w3["queue_event_id"], "task_id": t_intent["id"]},
+                }
+                runtime_state.save_runtime_state(c, state)
+
+                signals_sent3 = []
+
+                def observe_kill3(pid, sig):
+                    if pid == proc3.pid and int(sig) != 0:
+                        signals_sent3.append(int(sig))
+                    return real_kill(pid, sig)
+
+                def operation_intent_fenced(scratch):
+                    deferred = supervisor._DEFERRED_WORKER_TERMINATIONS.get()
+                    deferred.append((proc3.pid, w3["pid_start_ticks"]))
+                    return True
+
+                with mock.patch.object(os, "kill", side_effect=observe_kill3):
+                    committed3 = supervisor._run_reserved_runtime_phase(c, "isolated_intent_fenced_poll", operation_intent_fenced)
+
+                self.assertFalse(committed3, "termination of worker under pending review_decision_intent must be fenced")
+                self.assertEqual(signals_sent3, [], "no signals should be sent when intent is pending")
+                self.assertIsNone(proc3.poll(), "process should remain alive when fenced")
+            finally:
+                if proc3.poll() is None:
+                    proc3.terminate()
+                    try:
+                        proc3.wait(timeout=3)
+                    except subprocess.TimeoutExpired:
+                        proc3.kill()
+                        proc3.wait(timeout=3)
+
 
 if __name__ == "__main__":
     unittest.main()
