@@ -34,7 +34,7 @@ import urllib.request
 import uuid
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, Iterator, List, Optional
+from typing import Any, Dict, Iterator, List, Optional, Tuple
 
 from assistant_provider_usage import provider_usage_snapshot
 
@@ -88,6 +88,52 @@ def _openclaw_cli_state_env(environment: Dict[str, str]) -> Dict[str, str]:
     return resolved
 
 
+def _normalize_input_item(item: Dict[str, Any]) -> Dict[str, Any]:
+    """Normalize one `input[]` entry to the pinned OpenResponses `ItemParam` shape.
+
+    The pinned Gateway's `MessageItemSchema` is `.strict()` and requires a
+    discriminating `type: "message"` alongside `role`/`content`; a plain
+    `{"role": ..., "content": ...}` dict (the shape callers/history entries
+    use today) is rejected outright. Entries that already declare a
+    non-message `type` (e.g. a caller replaying `function_call`/
+    `function_call_output`/`reasoning` items from a prior turn) are passed
+    through unchanged.
+    """
+    if not isinstance(item, dict) or item.get("type") is not None:
+        return item
+    normalized = {"type": "message", "role": item.get("role"), "content": item.get("content")}
+    if "phase" in item:
+        normalized["phase"] = item["phase"]
+    return normalized
+
+
+def derive_session_user(
+    *,
+    operator_id: Optional[str] = None,
+    session_id: Optional[str] = None,
+    metadata: Optional[Dict[str, Any]] = None,
+) -> Optional[str]:
+    """Derive the upstream OpenResponses `user` key from authenticated identity.
+
+    A caller-supplied ``session_id``/``metadata.session_id`` is only ever the
+    *conversation* component. It must never be forwarded verbatim as the sole
+    upstream session key: two different tenants/actors reusing the same
+    caller-chosen conversation name (e.g. both naming a session "shared")
+    would otherwise collide onto the same upstream `user`, cross-pollinating
+    warm session routing between them. The authenticated tenant (when known)
+    and actor (`operator_id`) are therefore always mixed into the derived key
+    ahead of the conversation component.
+    """
+    metadata = metadata or {}
+    tenant = str(metadata.get("tenant_id") or "").strip()
+    actor = str(operator_id or "").strip()
+    conversation = str(session_id or metadata.get("session_id") or "").strip()
+    parts = [part for part in (tenant, actor, conversation) if part]
+    if not parts:
+        return None
+    return "|".join(parts)
+
+
 def delegates_kernel_mode_to_codex(mode: str) -> bool:
     """Return whether the adapter must use its scoped Codex runtime.
 
@@ -128,50 +174,83 @@ _JSON_TYPE_TO_PYTHON = {
 }
 
 
+def _schema_mismatch(path: str, detail: str) -> "OpenClawProviderError":
+    return OpenClawProviderError(
+        f"tool call argument {path!r} {detail}",
+        status_code=422,
+        error_code="OPENCLAW_TOOL_ARGS_SCHEMA_MISMATCH",
+    )
+
+
+def _json_value_matches_type(value: Any, declared_type: Any) -> bool:
+    """Check `value` against a JSON-schema `type`, including a nullable
+    `type: [<t>, "null"]` union list. Returns False for a single unsupported
+    (non-str, non-list) `type` declaration so the caller can reject it
+    explicitly instead of silently treating it as unconstrained."""
+    if isinstance(declared_type, list):
+        return any(_json_value_matches_type(value, t) for t in declared_type)
+    if not isinstance(declared_type, str):
+        return False
+    if declared_type == "null":
+        return value is None
+    expected_python_type = _JSON_TYPE_TO_PYTHON.get(declared_type)
+    if expected_python_type is None:
+        return False
+    # bool is a subclass of int in Python; a JSON "integer"/"number" field
+    # should not silently accept a JSON boolean.
+    if declared_type in ("integer", "number") and isinstance(value, bool):
+        return False
+    return isinstance(value, expected_python_type)
+
+
+def _validate_extraction_value(value: Any, schema: Dict[str, Any], path: str) -> None:
+    enum_values = schema.get("enum")
+    if enum_values is not None and value not in enum_values:
+        raise _schema_mismatch(path, f"is not one of the declared enum values {enum_values!r}")
+
+    declared_type = schema.get("type")
+    if declared_type is None:
+        # No declared type: still recurse into nested object schemas that
+        # only declare `properties`/`required` without a `type: object`.
+        if isinstance(value, dict) and ("properties" in schema or "required" in schema):
+            _validate_extraction_object(value, schema, path)
+        return
+
+    types = declared_type if isinstance(declared_type, list) else [declared_type]
+    if "object" in types and isinstance(value, dict):
+        _validate_extraction_object(value, schema, path)
+        return
+    if not _json_value_matches_type(value, declared_type):
+        raise _schema_mismatch(path, f"expected type {declared_type!r}")
+
+
+def _validate_extraction_object(value: Any, schema: Dict[str, Any], path: str) -> None:
+    if not isinstance(value, dict):
+        raise _schema_mismatch(path or "root", "must be a JSON object")
+    required = schema.get("required", []) or []
+    for field in required:
+        if field not in value:
+            raise _schema_mismatch(path, f"is missing required field {field!r}")
+    properties = schema.get("properties", {}) or {}
+    for name, field_value in value.items():
+        prop_schema = properties.get(name)
+        if not isinstance(prop_schema, dict):
+            continue
+        field_path = f"{path}.{name}" if path else name
+        _validate_extraction_value(field_value, prop_schema, field_path)
+
+
 def _validate_extraction_arguments(parsed_arguments: Any, extraction_schema: Dict[str, Any]) -> None:
     """Dependency-free structural check of tool-call arguments against a schema.
 
     Deliberately not a general JSON-schema validator (``jsonschema`` is not a
-    dependency of this service) — checks only required-field presence and a
-    rough type match for properties that declare a JSON ``type``.
+    dependency of this service) — checks required-field presence (recursing
+    into nested object properties), a rough type match for properties that
+    declare a JSON ``type`` (including a nullable ``type: [<t>, "null"]``
+    union), and ``enum`` membership. An unsupported/malformed ``type``
+    declaration is rejected explicitly rather than silently ignored.
     """
-    if not isinstance(parsed_arguments, dict):
-        raise OpenClawProviderError(
-            "tool call arguments must be a JSON object",
-            status_code=422,
-            error_code="OPENCLAW_TOOL_ARGS_SCHEMA_MISMATCH",
-        )
-    required = extraction_schema.get("required", []) or []
-    for field in required:
-        if field not in parsed_arguments:
-            raise OpenClawProviderError(
-                f"tool call arguments missing required field {field!r}",
-                status_code=422,
-                error_code="OPENCLAW_TOOL_ARGS_SCHEMA_MISMATCH",
-            )
-    properties = extraction_schema.get("properties", {}) or {}
-    for name, value in parsed_arguments.items():
-        prop_schema = properties.get(name)
-        if not isinstance(prop_schema, dict):
-            continue
-        declared_type = prop_schema.get("type")
-        expected_python_type = _JSON_TYPE_TO_PYTHON.get(declared_type)
-        if expected_python_type is None:
-            continue
-        # bool is a subclass of int in Python; a JSON "integer"/"number" field
-        # should not silently accept a JSON boolean.
-        if declared_type in ("integer", "number") and isinstance(value, bool):
-            raise OpenClawProviderError(
-                f"tool call argument {name!r} expected type {declared_type!r}",
-                status_code=422,
-                error_code="OPENCLAW_TOOL_ARGS_SCHEMA_MISMATCH",
-            )
-        if not isinstance(value, expected_python_type):
-            raise OpenClawProviderError(
-                f"tool call argument {name!r} expected type {declared_type!r}",
-                status_code=422,
-                error_code="OPENCLAW_TOOL_ARGS_SCHEMA_MISMATCH",
-            )
+    _validate_extraction_object(parsed_arguments, extraction_schema, "")
 
 
 def _sanitize_failure_reason(reason: Any, message: Any = None) -> str:
@@ -492,8 +571,9 @@ class AssistantOpenClawProvider:
         """
 
         selected_agent_id = str(agent_id or self._agent_id).strip()
-        metadata_session = str((metadata or {}).get("session_id") or "").strip()
-        session_user = str(session_id or metadata_session or operator_id or "").strip() or None
+        session_user = derive_session_user(
+            operator_id=operator_id, session_id=session_id, metadata=metadata
+        )
         events = list(
             self.stream(
                 prompt,
@@ -1002,12 +1082,19 @@ class AssistantOpenClawProvider:
             return
 
         url = f"{self._http_base()}/v1/responses"
+        # The pinned Gateway's OpenAI-compat model resolver
+        # (`resolveOpenAiCompatModelOverride`) only accepts `openclaw` or
+        # `openclaw/<agentId>` as the JSON `model` — a raw provider/model id
+        # (e.g. "anthropic/claude-opus-4-8") is rejected with HTTP 400. Any
+        # requested provider/model override belongs in the `x-openclaw-model`
+        # header instead, which the Gateway validates separately against the
+        # agent's allowed model visibility policy.
         payload: Dict[str, Any] = {
-            "model": model or OPENRESPONSES_MODEL,
+            "model": f"{OPENRESPONSES_MODEL}/{effective_agent_id}",
             "stream": True,
         }
         if messages:
-            input_list: List[Dict[str, Any]] = list(messages)
+            input_list: List[Dict[str, Any]] = [_normalize_input_item(m) for m in messages]
             last_entry = input_list[-1] if input_list else None
             already_last = (
                 isinstance(last_entry, dict)
@@ -1015,7 +1102,7 @@ class AssistantOpenClawProvider:
                 and str(last_entry.get("content")) == prompt
             )
             if prompt and not already_last:
-                input_list = input_list + [{"role": "user", "content": prompt}]
+                input_list = input_list + [_normalize_input_item({"role": "user", "content": prompt})]
             payload["input"] = input_list
         else:
             payload["input"] = prompt
@@ -1027,19 +1114,26 @@ class AssistantOpenClawProvider:
         if tool_choice is not None:
             payload["tool_choice"] = tool_choice
         data = json.dumps(payload).encode("utf-8")
-        req = urllib.request.Request(
-            url,
-            data=data,
-            method="POST",
-            headers={
-                "Authorization": f"Bearer {self._token}",
-                "Content-Type": "application/json",
-                "Accept": "text/event-stream",
-                "X-OpenClaw-Agent-Id": effective_agent_id,
-            },
-        )
+        headers = {
+            "Authorization": f"Bearer {self._token}",
+            "Content-Type": "application/json",
+            "Accept": "text/event-stream",
+            "X-OpenClaw-Agent-Id": effective_agent_id,
+        }
+        if model:
+            headers["X-OpenClaw-Model"] = model
+        req = urllib.request.Request(url, data=data, method="POST", headers=headers)
 
         started_at = time.monotonic()
+        # `timeout=` on urlopen only bounds each individual socket recv, not
+        # the whole read loop below: a "slow drip" that sends a little data
+        # just under that per-read timeout, repeatedly, never trips it, and
+        # can keep the read loop going far longer than `effective_timeout` in
+        # total (observed: a 0.05s budget completing only after 0.266s real
+        # elapsed against a deliberately slow real HTTP server). `read_deadline`
+        # is checked once per received SSE line so the *total* streaming time
+        # stays bounded even when no single read ever times out on its own.
+        read_deadline = started_at + effective_timeout
         chunks: List[str] = []
         terminal_text = ""
         emitted_done = False
@@ -1093,102 +1187,185 @@ class AssistantOpenClawProvider:
             }
             return
 
+        # SSE per spec: consecutive `data:` lines with no blank line between
+        # them belong to the SAME event and are joined with "\n" before
+        # parsing; a blank line terminates the current event. Many emitters
+        # (including this file's own test fixtures) instead put one complete
+        # JSON object per `data:` line with no blank-line separators at all.
+        # To support both shapes without misparsing either, each new line is
+        # first tried on its own (matching the common single-line-per-event
+        # shape, and letting a prior unparseable fragment be discarded rather
+        # than corrupt a following, unrelated, well-formed line); only when no
+        # individual line parses standalone do accumulated fragments get
+        # joined — at the next blank line, or at end-of-stream.
+        data_buffer: List[str] = []
+
+        def _flush_buffer() -> Optional[str]:
+            nonlocal data_buffer
+            if not data_buffer:
+                return None
+            joined = "\n".join(data_buffer)
+            data_buffer = []
+            return joined
+
+        def _handle_event(evt: Dict[str, Any]) -> Tuple[List[Dict[str, Any]], Optional[str]]:
+            """Process one parsed SSE JSON event.
+
+            Returns `(events_to_yield, control)` where `control` is `None` to
+            keep reading, `"return"` to stop reading and end the generator
+            (a terminal event was already yielded — the caller must not also
+            run the post-loop "no completed event" fallback), or `"stop"` to
+            stop reading without ending the generator (used for `[DONE]`,
+            handled by the caller directly, not from here).
+            """
+            nonlocal terminal_text, emitted_done
+            etype = evt.get("type")
+            if etype == "response.output_text.delta":
+                delta = evt.get("delta", "")
+                if delta:
+                    chunks.append(delta)
+                    return [{"type": "delta", "text": delta}], None
+                return [], None
+            if etype == "response.output_text.done":
+                # OpenClaw emits this authoritative full-text snapshot before
+                # response.completed.  Some valid runs have no deltas (for
+                # example when the upstream adapter only produces a final
+                # message), so do not turn that real answer into an empty
+                # response merely because incremental events were absent.
+                text = evt.get("text")
+                if isinstance(text, str) and text.strip():
+                    terminal_text = text
+                return [], None
+            if etype == "response.completed":
+                reply = terminal_text or "".join(chunks)
+                # ASSUMPTION (not independently verified against a live pinned
+                # OpenClaw Gateway in this dev sandbox — no live gateway was
+                # reachable here): `response.completed` carries a nested
+                # `response` object shaped like the OpenAI Responses API
+                # family (`status`, `output[]`, `usage`, `id`). Treat this as
+                # an unverified-capability caveat, not a proven contract.
+                nested_response = evt.get("response")
+                function_calls: List[Dict[str, Any]] = []
+                usage: Optional[Dict[str, Any]] = None
+                response_id: Optional[str] = None
+                if isinstance(nested_response, dict):
+                    nested_status = nested_response.get("status")
+                    if nested_status in ("failed", "incomplete"):
+                        return [{
+                            "type": "error",
+                            "error_code": (
+                                "OPENCLAW_RESPONSES_FAILED"
+                                if nested_status == "failed"
+                                else "OPENCLAW_RESPONSES_INCOMPLETE"
+                            ),
+                            "message": json.dumps(nested_response)[:300],
+                        }], "return"
+                    output_items = nested_response.get("output")
+                    if isinstance(output_items, list):
+                        for item in output_items:
+                            if isinstance(item, dict) and item.get("type") == "function_call":
+                                function_calls.append(
+                                    {
+                                        "name": item.get("name"),
+                                        "arguments": item.get("arguments"),
+                                        "call_id": item.get("call_id"),
+                                    }
+                                )
+                    if "usage" in nested_response:
+                        usage = nested_response.get("usage")
+                    response_id = nested_response.get("id")
+                if not reply and not function_calls:
+                    return [{
+                        "type": "error",
+                        "error_code": "OPENCLAW_RESPONSES_EMPTY",
+                        "message": "Gateway completed /v1/responses without assistant text.",
+                    }], "return"
+                emitted_done = True
+                done_event: Dict[str, Any] = {
+                    "type": "done",
+                    "text": reply,
+                    "elapsed_ms": int((time.monotonic() - started_at) * 1000),
+                    "transport": "responses_http",
+                }
+                if function_calls:
+                    done_event["function_calls"] = function_calls
+                # Missing usage is unknown, not zero — only include the key
+                # when the upstream Gateway actually reported it.
+                if usage is not None:
+                    done_event["usage"] = usage
+                if response_id is not None:
+                    done_event["response_id"] = response_id
+                # A duplicate response.completed must never re-emit a second
+                # "done" — stop reading immediately after the first one.
+                return [done_event], "return"
+            if etype in ("response.failed", "error"):
+                return [{
+                    "type": "error",
+                    "error_code": "OPENCLAW_RESPONSES_FAILED",
+                    "message": json.dumps(evt)[:300],
+                }], "return"
+            return [], None
+
         try:
             for raw in resp:
-                line = raw.decode("utf-8", errors="replace").strip()
-                if not line or not line.startswith("data:"):
-                    continue
-                payload_str = line[len("data:"):].strip()
-                if payload_str == "[DONE]":
-                    break
-                try:
-                    evt = json.loads(payload_str)
-                except (ValueError, TypeError):
-                    continue
-                etype = evt.get("type")
-                if etype == "response.output_text.delta":
-                    delta = evt.get("delta", "")
-                    if delta:
-                        chunks.append(delta)
-                        yield {"type": "delta", "text": delta}
-                elif etype == "response.output_text.done":
-                    # OpenClaw emits this authoritative full-text snapshot before
-                    # response.completed.  Some valid runs have no deltas (for
-                    # example when the upstream adapter only produces a final
-                    # message), so do not turn that real answer into an empty
-                    # response merely because incremental events were absent.
-                    text = evt.get("text")
-                    if isinstance(text, str) and text.strip():
-                        terminal_text = text
-                elif etype == "response.completed":
-                    reply = terminal_text or "".join(chunks)
-                    # ASSUMPTION (not independently verified against a live pinned
-                    # OpenClaw Gateway in this dev sandbox — no live gateway was
-                    # reachable here): `response.completed` carries a nested
-                    # `response` object shaped like the OpenAI Responses API
-                    # family (`status`, `output[]`, `usage`, `id`). Treat this as
-                    # an unverified-capability caveat, not a proven contract.
-                    nested_response = evt.get("response")
-                    function_calls: List[Dict[str, Any]] = []
-                    usage: Optional[Dict[str, Any]] = None
-                    response_id: Optional[str] = None
-                    if isinstance(nested_response, dict):
-                        nested_status = nested_response.get("status")
-                        if nested_status in ("failed", "incomplete"):
-                            yield {
-                                "type": "error",
-                                "error_code": (
-                                    "OPENCLAW_RESPONSES_FAILED"
-                                    if nested_status == "failed"
-                                    else "OPENCLAW_RESPONSES_INCOMPLETE"
-                                ),
-                                "message": json.dumps(nested_response)[:300],
-                            }
-                            return
-                        output_items = nested_response.get("output")
-                        if isinstance(output_items, list):
-                            for item in output_items:
-                                if isinstance(item, dict) and item.get("type") == "function_call":
-                                    function_calls.append(
-                                        {
-                                            "name": item.get("name"),
-                                            "arguments": item.get("arguments"),
-                                            "call_id": item.get("call_id"),
-                                        }
-                                    )
-                        if "usage" in nested_response:
-                            usage = nested_response.get("usage")
-                        response_id = nested_response.get("id")
-                    if not reply and not function_calls:
-                        yield {
-                            "type": "error",
-                            "error_code": "OPENCLAW_RESPONSES_EMPTY",
-                            "message": "Gateway completed /v1/responses without assistant text.",
-                        }
-                        return
-                    emitted_done = True
-                    done_event: Dict[str, Any] = {
-                        "type": "done",
-                        "text": reply,
-                        "elapsed_ms": int((time.monotonic() - started_at) * 1000),
-                        "transport": "responses_http",
-                    }
-                    if function_calls:
-                        done_event["function_calls"] = function_calls
-                    # Missing usage is unknown, not zero — only include the key
-                    # when the upstream Gateway actually reported it.
-                    if usage is not None:
-                        done_event["usage"] = usage
-                    if response_id is not None:
-                        done_event["response_id"] = response_id
-                    yield done_event
-                elif etype in ("response.failed", "error"):
+                if time.monotonic() > read_deadline:
                     yield {
                         "type": "error",
-                        "error_code": "OPENCLAW_RESPONSES_FAILED",
-                        "message": json.dumps(evt)[:300],
+                        "error_code": "OPENCLAW_RESPONSES_TIMEOUT",
+                        "status_code": 504,
+                        "message": "/v1/responses response exceeded its bounded deadline while streaming.",
                     }
                     return
+                line = raw.decode("utf-8", errors="replace").rstrip("\r\n")
+                if line == "":
+                    payload_str = _flush_buffer()
+                    if payload_str is None or payload_str == "[DONE]":
+                        continue
+                    try:
+                        evt = json.loads(payload_str)
+                    except (ValueError, TypeError):
+                        continue
+                elif not line.startswith("data:"):
+                    # Ignore other SSE fields (event:/id:/retry:/comments).
+                    continue
+                else:
+                    fragment = line[len("data:"):]
+                    if fragment.startswith(" "):
+                        fragment = fragment[1:]
+                    if fragment == "[DONE]" and not data_buffer:
+                        break
+                    try:
+                        evt = json.loads(fragment)
+                    except (ValueError, TypeError):
+                        # Not (yet) valid JSON on its own — could be a
+                        # malformed line (dropped once a later line parses
+                        # standalone) or one physical line of a legal
+                        # multi-line event (completed once joined at the
+                        # next blank line / end of stream).
+                        data_buffer.append(fragment)
+                        continue
+                    data_buffer = []
+
+                events_to_yield, control = _handle_event(evt)
+                for out_event in events_to_yield:
+                    yield out_event
+                if control == "return":
+                    return
+            # End of stream (real EOF, or `[DONE]` above). A legal multi-line
+            # event with no trailing blank line separator is still buffered —
+            # flush and process it rather than silently dropping real content.
+            trailing_payload = _flush_buffer()
+            if trailing_payload and trailing_payload != "[DONE]":
+                try:
+                    trailing_evt = json.loads(trailing_payload)
+                except (ValueError, TypeError):
+                    trailing_evt = None
+                if trailing_evt is not None:
+                    events_to_yield, control = _handle_event(trailing_evt)
+                    for out_event in events_to_yield:
+                        yield out_event
+                    if control == "return":
+                        return
         except Exception as exc:  # noqa: BLE001
             yield {
                 "type": "error",

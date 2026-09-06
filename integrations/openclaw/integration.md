@@ -231,3 +231,74 @@ are now unified on a single HTTP request builder against the existing Gateway
   contains the same `entries[0]`-fallback pattern as the CLI transport did.
   That file needs a separate scope-handoff task to receive the equivalent
   fix.
+
+### 10.1 Corrective pass after independent review REJECT (2026-09-06)
+
+An independent exact-head review of PR #5629 rejected the above pass for nine
+functional defects, verified statically against the pinned upstream Gateway
+sources (`resolveOpenAiCompatModelOverride` in `gateway/http-utils.ts`,
+`MessageItemSchema`/`CreateResponseBodySchema` in
+`gateway/open-responses.schema.ts`) and, for the streaming/deadline defects,
+against a real local HTTP server (not a mocked `urlopen`). All nine are fixed
+in this corrective pass:
+
+1. **Model field vs. provider override.** The pinned Gateway's
+   `resolveOpenAiCompatModelOverride` only accepts `openclaw`/
+   `openclaw/<agentId>` in the JSON `model` field and rejects a raw provider
+   id (e.g. `anthropic/claude-opus-4-8`) with HTTP 400. `stream()` now always
+   sends `model: "openclaw/<effective_agent_id>"`; a requested provider/model
+   override travels in the `x-openclaw-model` header instead.
+2. **`input[]` item shape.** The pinned `MessageItemSchema` is `.strict()`
+   and requires a discriminating `type: "message"`; a bare
+   `{"role", "content"}` dict is rejected. `_normalize_input_item()` now
+   normalizes every history/current-turn entry before it is sent.
+3. **Session/tenant isolation.** A caller-supplied `session_id` no longer
+   travels verbatim as the upstream `user` key — `derive_session_user()`
+   mixes in the authenticated actor (`operator_id`) and tenant
+   (`metadata.tenant_id`, when present) ahead of the caller's conversation
+   name, so two different callers reusing the same session name can never
+   collide onto the same upstream session. Used by both `_invoke_via_http`
+   and the raw SSE stream endpoint in `main.py`.
+4. **Structured endpoint agent admission gap.** `/structured` had no
+   Persona-admission mechanism at all (unlike ordinary invoke's
+   `agent_id`+`persona_admission` pairing), so an arbitrary `agent_id` was
+   silently accepted. It is now restricted to the default agent only
+   (`OPENCLAW_STRUCTURED_AGENT_NOT_ALLOWED`, 422, for anything else).
+5. **Extraction schema validation gaps.** `_validate_extraction_arguments`
+   now checks `enum` membership, recurses into nested-object
+   `required`/`properties`, and handles a nullable `type: [<t>, "null"]`
+   union without the previous unhandled `TypeError` (a list is unhashable
+   and cannot key a plain dict `.get()`).
+6. **SSE parsing.** Fixed three real defects reproduced against a genuine
+   socket connection: (a) a duplicate `response.completed` no longer
+   re-emits a second `done` event (a `return` now follows the first); (b) a
+   legal multi-line SSE event (one JSON object split across consecutive
+   `data:` lines with no blank-line separator) is now joined and parsed
+   instead of being silently dropped as unparseable fragments; (c) a
+   real mid-frame connection close now yields a single truthful
+   `OPENCLAW_RESPONSES_EMPTY` error rather than any risk of a fabricated
+   success.
+7. **Shared total deadline.** `urlopen(timeout=...)` only bounds each
+   individual socket read, not the whole streaming loop — a slow drip that
+   stays under that per-read timeout on every chunk can keep the loop going
+   far past the intended total budget (reproduced: a 0.05s budget completing
+   only after 0.266s against a real slow server). The stream loop now checks
+   one shared `read_deadline` before processing each line. The cron
+   `_wait_for_terminal_run` polling loop has the same fix: `_call` is now
+   given only the remaining budget (never a fixed 30s), the inter-poll sleep
+   is capped to the remaining time, and a result that only arrives after the
+   deadline has already passed is rejected as unknown rather than accepted
+   as a late success.
+8. **Cron exact-run lookup.** `cron.runs` now requests an exact `{id, runId}`
+   lookup (the pinned Gateway supports this ahead of pagination) instead of
+   a fixed `limit: 20` page — a sufficiently busy job with more than 20 newer
+   runs ahead of the target previously timed out even though the target run
+   existed and had already completed. Client-side exact-match filtering is
+   kept as defense-in-depth.
+9. **Evidence completeness.** See
+   `docs/deployment/evidence/SIMPLIFY-OPENCLAW-001/evidence.json` for what
+   is now verified (against the pinned Gateway TypeScript sources and real
+   local-socket regression tests) versus what remains a genuinely
+   unavailable-in-this-sandbox external blocker (the >=100-request live
+   base-vs-candidate replay benchmark, which needs a reachable authenticated
+   live Gateway/model backend that does not exist in this dev sandbox).

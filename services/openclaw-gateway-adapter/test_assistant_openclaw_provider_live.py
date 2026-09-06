@@ -71,17 +71,22 @@ def _http_error_urlopen(status_code: int, body: str = ""):
 
 
 def _model_dispatch_urlopen(handlers: dict, calls: list):
-    """Return a fake `urlopen` that dispatches on the request's `model` field.
+    """Return a fake `urlopen` that dispatches on the request's requested model.
 
-    `handlers[model]` is a callable `(timeout) -> _FakeSSEResponse` (or one
-    that raises). Every call is recorded into `calls` as
-    `{"model", "timeout", "body"}` so tests can assert per-candidate timeout
-    budgets and payload shape without any subprocess involved.
+    The JSON `model` field is always the fixed `openclaw/<agentId>` alias (the
+    pinned Gateway's model resolver rejects a raw provider id there); the
+    actual requested provider/model candidate travels in the `x-openclaw-model`
+    header instead. `handlers[model]` is a callable `(timeout) ->
+    _FakeSSEResponse` (or one that raises). Every call is recorded into
+    `calls` as `{"model", "timeout", "body"}` so tests can assert
+    per-candidate timeout budgets and payload shape without any subprocess
+    involved.
     """
 
     def fake_urlopen(req, timeout=None):
         body = json.loads(req.data.decode("utf-8"))
-        model = body.get("model")
+        headers = {k.lower(): v for k, v in req.header_items()}
+        model = headers.get("x-openclaw-model")
         calls.append({"model": model, "timeout": timeout, "body": body})
         handler = handlers.get(model)
         if handler is None:
@@ -756,7 +761,9 @@ class TestAssistantOpenClawProviderUnit(unittest.TestCase):
 
         def fake_urlopen(req, timeout=None):
             captured["url"] = req.full_url
-            captured["agent_id"] = dict(req.header_items()).get("X-openclaw-agent-id")
+            headers = {k.lower(): v for k, v in req.header_items()}
+            captured["agent_id"] = headers.get("x-openclaw-agent-id")
+            captured["model_header"] = headers.get("x-openclaw-model")
             captured["body"] = json.loads(req.data.decode("utf-8"))
             return _FakeSSEResponse(_answer_events("persona result"))
 
@@ -770,10 +777,15 @@ class TestAssistantOpenClawProviderUnit(unittest.TestCase):
             )
 
         self.assertEqual(captured["agent_id"], "persona-opinion-0123456789abcdef01234567")
-        self.assertEqual(captured["body"]["user"], "fresh-persona-session-1")
+        # `user` is derived from authenticated actor + conversation, not the
+        # raw caller-supplied session_id verbatim (tenant isolation).
+        self.assertEqual(captured["body"]["user"], "op-1|fresh-persona-session-1")
         # A non-default agent with no explicit model override must NOT request
         # one of the primary/fallback models; it uses the agent's own config.
-        self.assertEqual(captured["body"]["model"], "openclaw")
+        self.assertEqual(
+            captured["body"]["model"], "openclaw/persona-opinion-0123456789abcdef01234567"
+        )
+        self.assertIsNone(captured["model_header"])
         self.assertEqual(
             result.output["agent_id"],
             "persona-opinion-0123456789abcdef01234567",
@@ -783,7 +795,9 @@ class TestAssistantOpenClawProviderUnit(unittest.TestCase):
         captured: dict = {}
 
         def fake_urlopen(req, timeout=None):
-            captured["agent_id"] = dict(req.header_items()).get("X-openclaw-agent-id")
+            headers = {k.lower(): v for k, v in req.header_items()}
+            captured["agent_id"] = headers.get("x-openclaw-agent-id")
+            captured["model_header"] = headers.get("x-openclaw-model")
             captured["body"] = json.loads(req.data.decode("utf-8"))
             return _FakeSSEResponse(_answer_events("persona opinion text"))
 
@@ -798,7 +812,8 @@ class TestAssistantOpenClawProviderUnit(unittest.TestCase):
 
         self.assertEqual(result.status, "completed")
         self.assertEqual(captured["agent_id"], "persona-opinion-a")
-        self.assertEqual(captured["body"]["model"], "openclaw")
+        self.assertEqual(captured["body"]["model"], "openclaw/persona-opinion-a")
+        self.assertIsNone(captured["model_header"])
         self.assertEqual(result.output["agent_id"], "persona-opinion-a")
         self.assertNotIn("active_model", result.output)
 
@@ -897,7 +912,7 @@ class TestAssistantOpenClawProviderUnit(unittest.TestCase):
         self.assertEqual(len(calls), 1)
         self.assertEqual(calls[0]["body"]["input"], big_prompt)
         self.assertTrue(calls[0]["body"]["stream"])
-        self.assertEqual(calls[0]["body"]["user"], "session-large-prompt")
+        self.assertEqual(calls[0]["body"]["user"], "op-1|session-large-prompt")
         self.assertEqual(result.status, "completed")
         self.assertEqual(result.output["transport"], "responses_http")
         self.assertEqual(
@@ -1021,7 +1036,7 @@ class TestAssistantOpenClawProviderStream(unittest.TestCase):
         self.assertEqual(captured["url"], "http://openclaw-gateway:18789/v1/responses")
         self.assertEqual(captured["auth"], "Bearer test-token")
         body = json.loads(captured["body"].decode("utf-8"))
-        self.assertEqual(body["model"], "openclaw")
+        self.assertEqual(body["model"], "openclaw/main")
         self.assertTrue(body["stream"])
         self.assertEqual(body["user"], "sess-1")
         self.assertEqual(captured["agent_id"], "main")
@@ -1172,8 +1187,9 @@ class TestAssistantOpenClawProviderStream(unittest.TestCase):
         self.assertEqual(done[0]["text"], "streamed answer")
         self.assertEqual(done[0]["transport"], "responses_http")
         self.assertEqual(len(calls), 1)
-        # Upstream OpenClaw v2026.7.1 contract requires model="openclaw"
-        self.assertEqual(calls[0]["model"], "openclaw")
+        # Upstream OpenClaw v2026.7.1 contract requires an `openclaw`/
+        # `openclaw/<agentId>` alias, never a raw provider id, in `model`.
+        self.assertEqual(calls[0]["model"], "openclaw/main")
 
     def test_stream_surfaces_http_400_as_typed_error(self) -> None:
         import urllib.error

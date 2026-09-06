@@ -70,7 +70,13 @@ class _CliGatewayTransport:
             )
         return found
 
-    def _call(self, method: str, params: dict[str, Any] | None = None) -> dict[str, Any]:
+    def _call(
+        self,
+        method: str,
+        params: dict[str, Any] | None = None,
+        *,
+        timeout_seconds: float | None = None,
+    ) -> dict[str, Any]:
         bin_path = self._resolve_bin()
         cmd = [
             bin_path,
@@ -84,7 +90,8 @@ class _CliGatewayTransport:
         if params is not None:
             cmd.extend(["--params", json.dumps(params, separators=(",", ":"), sort_keys=True)])
         env = {**os.environ, "NO_COLOR": "1", "OPENCLAW_HIDE_BANNER": "1", "OPENCLAW_SUPPRESS_NOTES": "1"}
-        result = self._run(cmd, capture_output=True, text=True, env=env, timeout=30)
+        budget = 30.0 if timeout_seconds is None else max(0.001, float(timeout_seconds))
+        result = self._run(cmd, capture_output=True, text=True, env=env, timeout=budget)
         if result.returncode != 0:
             raise RuntimeError(
                 f"openclaw gateway call {method} failed (exit {result.returncode}): "
@@ -106,20 +113,43 @@ class _CliGatewayTransport:
         caller only ever sees a real terminal status for `run_id` itself, or
         the timeout below (unknown outcome).
 
-        NOTE: if/when a pinned exact-run-lookup RPC (e.g. a hypothetical
-        `cron.run.get`) is verified to exist on the upstream OpenClaw Gateway
-        build actually pinned by this repo, it should be preferred here
-        instead of polling `cron.runs` and filtering client-side. No such RPC
-        is documented/verified in this repo today, so we do not invent one.
+        The pinned Gateway's `cron.runs` supports an exact `{id, runId}`
+        lookup ahead of pagination (see upstream `server-methods/cron.ts` /
+        `cron/run-log.ts`), so the request always asks for our exact run
+        rather than an arbitrary `limit`-bounded page that a sufficiently
+        busy job could push our target run behind (a fixed `limit` falsely
+        times out once enough newer runs exist). `entries` is still filtered
+        client-side for the exact `run_id`, both as defense-in-depth against
+        a Gateway build that ignores the `runId` filter and returns the
+        unfiltered page, and so existing test doubles that stub the RPC
+        without honoring `runId` remain correct.
+
+        The RPC call and the inter-poll sleep share ONE total deadline: each
+        `_call` is given only the time remaining, and a result that only
+        arrives after the deadline has already passed is treated as unknown
+        (timeout), never accepted as a late success — a slow/hung RPC must
+        not silently extend the caller's bounded budget.
         """
         deadline = time.monotonic() + self._poll_timeout
-        while time.monotonic() < deadline:
-            runs = self._call("cron.runs", {"id": job_id, "limit": 20})
+        while True:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                break
+            runs = self._call(
+                "cron.runs", {"id": job_id, "runId": run_id}, timeout_seconds=remaining
+            )
+            if time.monotonic() >= deadline:
+                # The RPC itself consumed the whole remaining budget (or ran
+                # past it) — reject a late result rather than trusting it.
+                break
             entries = runs.get("entries") or []
             target = next((e for e in entries if e.get("runId") == run_id), None)
             if target and target.get("status") in _TERMINAL_RUN_STATUSES:
                 return target
-            time.sleep(self._poll_interval)
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                break
+            time.sleep(min(self._poll_interval, remaining))
         raise RuntimeError(
             f"Timed out waiting for openclaw cron job {job_id} run {run_id} to reach a terminal state."
         )

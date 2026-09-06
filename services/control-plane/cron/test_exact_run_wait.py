@@ -239,6 +239,82 @@ class TestExactRunCorrelation:
         assert call_count["n"] >= 3
 
 
+class TestExactRunLookupAndSharedDeadline:
+    def test_cron_runs_call_requests_exact_runid_lookup(self):
+        """The pinned Gateway supports an exact `{id, runId}` lookup ahead of
+        pagination — a fixed `limit` alone can falsely time out once enough
+        newer runs exist ahead of the target. The request must always ask
+        for the exact run."""
+        captured_params: list[dict] = []
+
+        def fake_run(cmd, **_kw):
+            params_idx = cmd.index("--params") + 1
+            import json as _json
+
+            captured_params.append(_json.loads(cmd[params_idx]))
+            entries = [{"runId": "run-target", "status": "ok"}]
+            return _run_result(_cron_runs_stdout(entries))
+
+        transport = _make_transport(run_func=fake_run)
+        result = transport._wait_for_terminal_run("job-1", "run-target")
+        assert result["runId"] == "run-target"
+        assert captured_params[0] == {"id": "job-1", "runId": "run-target"}
+
+    def test_target_run_behind_more_than_old_fixed_limit_is_still_found(self):
+        """25 newer unrelated runs ahead of the target would have exceeded
+        the old fixed `limit: 20` window; an exact `runId` lookup must still
+        find it regardless of how many other runs exist."""
+        target_run_id = "run-far-behind"
+
+        def fake_run(cmd, **_kw):
+            recent = [{"runId": f"run-recent-{i}", "status": "ok"} for i in range(25)]
+            entries = recent + [{"runId": target_run_id, "status": "ok"}]
+            return _run_result(_cron_runs_stdout(entries))
+
+        transport = _make_transport(run_func=fake_run)
+        result = transport._wait_for_terminal_run("job-1", target_run_id)
+        assert result["runId"] == target_run_id
+
+    def test_rpc_and_sleep_share_one_total_deadline_not_a_fixed_subprocess_timeout(self):
+        """The RPC call and the inter-poll sleep must share ONE bounded
+        total deadline: `_call` is given only the time remaining, never the
+        old fixed 30s regardless of how little budget is actually left."""
+        captured_timeouts: list[float] = []
+
+        def fake_run(cmd, **kwargs):
+            captured_timeouts.append(kwargs.get("timeout"))
+            entries = [{"runId": "run-never", "status": "running"}]
+            return _run_result(_cron_runs_stdout(entries))
+
+        transport = _make_transport(run_func=fake_run, poll_timeout=0.2, poll_interval=0.02)
+        with pytest.raises(RuntimeError, match="Timed out"):
+            transport._wait_for_terminal_run("job-1", "run-never")
+        assert captured_timeouts, "no RPC calls were made"
+        assert all(t is not None and t <= 0.2 + 1e-6 for t in captured_timeouts), captured_timeouts
+        assert all(t != 30 for t in captured_timeouts), "must not fall back to the fixed 30s timeout"
+
+    def test_rpc_result_arriving_after_deadline_is_rejected_not_accepted_as_late_success(self):
+        """A slow/hung RPC that only returns a terminal result after the
+        caller's total deadline has already elapsed must be treated as
+        unknown (timeout), not trusted as a late success."""
+        import time as _time
+
+        deadline_poll_timeout = 0.05
+
+        def fake_run(cmd, **_kw):
+            # Simulate an RPC that takes longer than the remaining budget to
+            # return, then finally reports our run as terminal.
+            _time.sleep(deadline_poll_timeout + 0.05)
+            entries = [{"runId": "run-late", "status": "ok"}]
+            return _run_result(_cron_runs_stdout(entries))
+
+        transport = _make_transport(
+            run_func=fake_run, poll_timeout=deadline_poll_timeout, poll_interval=0.01
+        )
+        with pytest.raises(RuntimeError, match="Timed out"):
+            transport._wait_for_terminal_run("job-1", "run-late")
+
+
 def _build_dispatch_request() -> dict:
     return {
         "workflow": {

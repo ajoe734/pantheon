@@ -96,8 +96,10 @@ from assistant_codex_provider import (
 from assistant_claude_provider import AssistantClaudeProvider, ClaudeProviderError, ClaudeProviderResult
 from assistant_openclaw_provider import (
     AssistantOpenClawProvider,
+    DEFAULT_AGENT_ID as OPENCLAW_DEFAULT_AGENT_ID,
     OpenClawProviderError as GatewayOpenClawProviderError,
     delegates_kernel_mode_to_codex,
+    derive_session_user,
 )
 from assistant_provider_registry import AssistantProviderRegistry, AssistantProviderRegistryError
 from assistant_provider_runtime import (
@@ -1681,6 +1683,24 @@ def invoke_openclaw_structured_provider(
                 "message": "OpenClaw kernel modes must be delegated to the adapter Codex runtime.",
             },
         )
+    # This endpoint has no Persona-admission mechanism (unlike the ordinary
+    # invoke endpoint's agent_id+persona_admission pairing enforced by
+    # AssistantProviderInvokeRequest.validate_agent_selection). Structured
+    # extraction is a restricted, data-only capability: it must never let a
+    # caller route to an arbitrary/persona agent without going through that
+    # admission/runtime-policy path, so only the default agent is permitted.
+    if req.agent_id is not None and req.agent_id != OPENCLAW_DEFAULT_AGENT_ID:
+        return JSONResponse(
+            status_code=422,
+            content={
+                "status": "provider_error",
+                "error_code": "OPENCLAW_STRUCTURED_AGENT_NOT_ALLOWED",
+                "message": (
+                    "Structured extraction is restricted to the default agent; "
+                    "persona/tool routing requires the admitted invoke endpoint."
+                ),
+            },
+        )
     invoke_kwargs: Dict[str, Any] = {
         "extraction_schema": req.extraction_schema,
         "mode": mode,
@@ -1718,8 +1738,13 @@ def invoke_openclaw_provider_stream(
     operator = (x_operator_id or "").strip()
     metadata = dict(req.metadata or {})
     mode = str(req.mode or "user").strip().lower() or "user"
-    # Stable per-conversation session so multi-turn shares a warm agent session.
-    session_user = str(metadata.get("session_user") or metadata.get("session_id") or operator or "").strip() or None
+    # Stable per-conversation session so multi-turn shares a warm agent
+    # session. Derived from authenticated tenant/actor plus the caller's
+    # conversation name so two callers cannot collide onto the same upstream
+    # session by reusing the same caller-chosen session_user/session_id.
+    session_user = derive_session_user(
+        operator_id=operator, session_id=metadata.get("session_user"), metadata=metadata
+    )
 
     def event_stream() -> Iterator[str]:
         if not operator:
