@@ -370,14 +370,16 @@ class ApprovalDecision:
                 f"Role '{normalized_role.value}' not authorized for risk level '{normalized_risk.value}'"
             )
         if outcome == DecisionOutcome.APPROVED_WITH_CONDITIONS:
-            if not conditions:
+            if not conditions or any(not isinstance(item, str) or not item.strip() for item in conditions):
                 raise ValueError(
-                    "'approved_with_conditions' requires at least one condition"
+                    "'approved_with_conditions' requires nonempty conditions"
                 )
-            self.conditions = conditions
+        elif conditions:
+            raise ValueError("conditions require 'approved_with_conditions'")
         effective_refs = evidence_refs if evidence_refs is not None else self.evidence_refs
         if consultation_gate_required(self.target_type, self.risk_level):
             validate_consultation_gate(effective_refs)
+        self.conditions = list(conditions or [])
         if evidence_refs:
             self.evidence_refs = evidence_refs
         if session_id is not None:
@@ -434,11 +436,11 @@ class ApprovalDecision:
         """Return a list of validation errors (empty = valid)."""
         errors: List[str] = []
 
-        if not self.decision_id:
+        if not isinstance(self.decision_id, str) or not self.decision_id.strip():
             errors.append("decision_id is required")
-        if not self.target_id:
+        if not isinstance(self.target_id, str) or not self.target_id.strip():
             errors.append("target_id is required")
-        if not self.target_version:
+        if not isinstance(self.target_version, str) or not self.target_version.strip():
             errors.append("target_version is required")
         if not self.tenant_id:
             errors.append("tenant_id is required")
@@ -473,10 +475,12 @@ class ApprovalDecision:
 
         # Conditions required for approved_with_conditions
         if self.decision == DecisionOutcome.APPROVED_WITH_CONDITIONS:
-            if not self.conditions:
+            if not self.conditions or any(not isinstance(item, str) or not item.strip() for item in self.conditions):
                 errors.append(
-                    "'approved_with_conditions' requires at least one condition"
+                    "'approved_with_conditions' requires nonempty conditions"
                 )
+        elif self.conditions:
+            errors.append("conditions require 'approved_with_conditions'")
 
         # decided_at required for decided state
         if self.decision_state == DecisionState.DECIDED and not self.decided_at:

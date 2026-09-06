@@ -75,10 +75,10 @@ class ApprovalCommand(BaseModel):
 
 
 class ProposeApprovalRequest(ApprovalCommand):
-    decision_id: Optional[str] = None   # auto-generated when omitted
+    decision_id: Optional[str] = Field(default=None, min_length=1, pattern=r"\S")  # auto-generated when omitted
     target_type: TargetType
-    target_id: str
-    target_version: str
+    target_id: str = Field(min_length=1, pattern=r"\S")
+    target_version: str = Field(min_length=1, pattern=r"\S")
     risk_level: RiskLevel = RiskLevel.LOW
     capital_pool_id: Optional[str] = None
     persona_id: Optional[str] = None

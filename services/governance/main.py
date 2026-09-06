@@ -1339,7 +1339,11 @@ def _approval_command(operation, decision_id, body, authorization, idempotency_k
             if decision is not None:
                 raise ApprovalCommandConflict('Approval decision already exists')
             fields = body.model_dump(mode='json', exclude={'expected_version', 'decision_id'})
-            return ApprovalDecision.create_proposed(decision_id=decision_id, **fields)
+            proposed = ApprovalDecision.create_proposed(decision_id=decision_id, **fields)
+            errors = proposed.validate()
+            if errors:
+                raise ValueError('; '.join(errors))
+            return proposed
         if decision is None:
             raise ApprovalCommandNotFound('Approval decision not found')
         if operation == 'review':
@@ -1350,6 +1354,9 @@ def _approval_command(operation, decision_id, body, authorization, idempotency_k
             fields = body.model_dump(mode='json', exclude={'expected_version', 'actor_role', 'actor_id', 'evidence_refs'})
             refs = [EvidenceRef(**ref.model_dump()) for ref in (body.evidence_refs or [])]
             decision.decide(actor_role=role, actor_id=ctx.actor_id, evidence_refs=refs or None, **fields)
+        errors = decision.validate()
+        if errors:
+            raise ValueError('; '.join(errors))
         return decision
     if not hasattr(store, 'execute_command'):
         raise HTTPException(503, 'Approval commands require PostgreSQL decision and audit stores')

@@ -192,6 +192,19 @@ Record outcome: `under_review → decided`.
 
 **Errors**: `400 Bad Request` — wrong state, unauthorized role, missing conditions, etc.
 
+Nonempty `conditions` require `outcome=approved_with_conditions`; `approved`
+and `rejected` cannot carry conditions. Conditional outcomes require at least
+one condition, and every condition must contain non-whitespace text. Invalid
+combinations return 400 without persisting a decision change, receipt or audit
+event. Conditional decisions retain their terms on exact readback and replay;
+they cannot authorize downstream use through the shared approval reader.
+
+Proposal `target_id`, `target_version`, and any explicit `decision_id` must
+contain non-whitespace text (422 otherwise). Owner validation also runs before
+decision, receipt and audit writes; rejection rolls back the entire command,
+including its temporary receipt reservation. A corrected command may therefore
+reuse the rejected command's idempotency key.
+
 ---
 
 ### `POST /api/governance/approvals/{decision_id}/revoke`

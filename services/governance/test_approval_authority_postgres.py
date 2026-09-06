@@ -145,6 +145,97 @@ def test_all_risk_positive(mounted, owner_env, risk, role):
     assert decision['version'] == 3 and decision['event_id']
 
 
+def approval_records(env, decision_id):
+    """Snapshot all durable owner records for this decision, including receipts."""
+    from psycopg import sql
+    schema, table = env['GOVERNANCE_STORE_TABLE'].split('.')
+    tables = [table, table + '_receipts', env['GOVERNANCE_AUDIT_TABLE'].split('.')[1]]
+    with psycopg.connect(env['GOVERNANCE_STORE_DSN']) as conn:
+        return [conn.execute(sql.SQL(
+            'SELECT payload::text FROM {} WHERE payload::text LIKE %s ORDER BY payload::text'
+        ).format(sql.Identifier(schema, name)), ('%' + decision_id + '%',)).fetchall()
+                for name in tables]
+
+
+@pytest.mark.parametrize('outcome,conditions', [
+    ('approved', ['Must complete required canary observation']),
+    ('rejected', ['Must complete required canary observation']),
+    ('approved_with_conditions', []),
+    ('approved_with_conditions', ['']),
+    ('approved_with_conditions', ['  ']),
+])
+def test_inconsistent_conditions_never_commit_authority(mounted, owner_env, outcome, conditions):
+    from services.governance.approval_authority import ApprovalReader, ApprovalInvalid
+    created = post(mounted, '', owner_env, proposal()).json()
+    decision_id = created['decision_id']
+    path = '/' + decision_id
+    review = dict(expected_version=1, actor_id='synthetic-reviewer', actor_role='governance_reviewer')
+    reviewed = post(mounted, path + '/review', owner_env, review)
+    assert reviewed.status_code == 200
+    before = approval_records(owner_env, decision_id)
+    key = uuid.uuid4().hex
+    body = dict(review, expected_version=2, outcome=outcome, conditions=conditions,
+                rationale='Approval is contingent on a pending requirement')
+    for _ in range(2):
+        rejected = post(mounted, path + '/decide', owner_env, body, key)
+        assert rejected.status_code == 400, rejected.text
+        assert approval_records(owner_env, decision_id) == before
+        readback = httpx.get(mounted + '/api/governance/approvals' + path, headers=headers(owner_env))
+        assert readback.json() == reviewed.json()
+    reader = ApprovalReader(base_url=mounted, service_token=headers(owner_env)['Authorization'][7:])
+    expected = dict(tenant_id='synthetic-tenant', target_type='registry_entry',
+                    target_id='synthetic-artifact', target_version='1.0.0', candidate_digest='a' * 64)
+    with pytest.raises(ApprovalInvalid):
+        reader.verify(decision_id, expected=expected)
+    # The rejected command left no receipt reservation. The same key can commit
+    # an explicitly conditional decision, whose original replay preserves terms.
+    corrected = dict(body, outcome='approved_with_conditions', conditions=['Complete canary observation'])
+    accepted = post(mounted, path + '/decide', owner_env, corrected, key)
+    assert accepted.status_code == 200, accepted.text
+    assert accepted.json()['conditions'] == corrected['conditions']
+    assert accepted.json()['decision'] == 'approved_with_conditions'
+    assert post(mounted, path + '/decide', owner_env, corrected, key).json() == accepted.json()
+    with pytest.raises(ApprovalInvalid):
+        reader.verify(decision_id, expected=expected)
+
+
+@pytest.mark.parametrize('field', ['target_id', 'target_version', 'decision_id'])
+@pytest.mark.parametrize('value', ['', '  ', '\t\n'])
+def test_empty_target_identity_never_creates_records(mounted, owner_env, field, value):
+    decision_id = 'invalid-target-' + uuid.uuid4().hex
+    body = proposal(decision_id=decision_id, **{field: value}) if field != 'decision_id' else proposal(decision_id=value)
+    # Use an isolated target as a record marker when testing a malformed decision ID.
+    if field == 'decision_id':
+        body['target_id'] = decision_id
+    before = approval_records(owner_env, decision_id)
+    assert before == [[], [], []]
+    key = uuid.uuid4().hex
+    for _ in range(2):
+        rejected = post(mounted, '', owner_env, body, key)
+        assert rejected.status_code == 422, rejected.text
+        assert approval_records(owner_env, decision_id) == before
+    corrected = dict(body, **{field: decision_id if field == 'decision_id' else 'valid-target'})
+    accepted = post(mounted, '', owner_env, corrected, key)
+    assert accepted.status_code == 201, accepted.text
+    assert post(mounted, '', owner_env, corrected, key).json() == accepted.json()
+
+
+def test_invalid_decision_validation_rolls_back_reserved_receipt(mounted, owner_env):
+    created = post(mounted, '', owner_env, proposal()).json()
+    path = '/' + created['decision_id']
+    review = dict(expected_version=1, actor_id='synthetic-reviewer', actor_role='governance_reviewer')
+    assert post(mounted, path + '/review', owner_env, review).status_code == 200
+    before = approval_records(owner_env, created['decision_id'])
+    key = uuid.uuid4().hex
+    body = dict(review, expected_version=2, outcome='approved', rationale='')
+    rejected = post(mounted, path + '/decide', owner_env, body, key)
+    assert rejected.status_code == 400, rejected.text
+    assert 'rationale is required' in rejected.json()['detail']
+    assert approval_records(owner_env, created['decision_id']) == before
+    accepted = post(mounted, path + '/decide', owner_env, dict(body, rationale='Valid rationale'), key)
+    assert accepted.status_code == 200, accepted.text
+
+
 @pytest.mark.parametrize('claims', [{'sub': None},{'tenant_id':None},{'roles':None},{'roles':[]},
     {'exp':None},{'exp':0},{'exp':'invalid'},{'exp':float('inf')},{'iss':'wrong'},{'aud':'wrong'}])
 def test_invalid_claims_fail_closed(mounted, owner_env, claims):
