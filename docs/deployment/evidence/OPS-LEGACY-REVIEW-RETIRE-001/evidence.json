@@ -3,7 +3,8 @@
   "owner": "Claude2",
   "reviewer": "Codex2",
   "generated_at": "2026-09-06T10:11:17Z",
-  "summary": "Both retirement candidates were confirmed to have zero live consumers (see legacy-consumers.json for the exact inventory) and were fully retired. Regression tests were updated to assert rejection instead of the retired approve/migrate behavior. All focused and full-file test suites pass; no test outside the intended scope changed behavior.",
+  "evidence_revision": "2026-09-06T10:56:00Z (corrected after independent reviewer changes-requested on PR #5631 head 18c7d02ac6bc244494c88427a8dce1a8bfef104d; see legacy-consumers.json#methodology_correction for the P1 fix and residual_or_blocked_items below for the P2 fix)",
+  "summary": "Both retirement candidates were confirmed to have no current live consumer, using authoritative V2 task-journal state, queue/lease runtime projections, and live GitHub PR-head/remote-approval-ref observations (see legacy-consumers.json for the exact multi-authority inventory) and were fully retired. Regression tests were updated to assert rejection instead of the retired approve/migrate behavior. All focused and full-file test suites pass; no test outside the intended scope changed behavior. Source retirement is delivered and committed at this PR's exact head; post-merge render/preflight/promote runtime acceptance is separate and still pending -- see residual_or_blocked_items.",
   "candidates": [
     {
       "name": "Candidate A: reconcile_legacy_review_decision_intent_collision",
@@ -121,7 +122,21 @@
     ],
     "no_unexpected_failures": "No test outside the intentionally-updated set changed status. All existing negative tests (forged/stale/mixed-code successor, revoked approval, unbound approval, PR/base/branch mismatch, auto-merge outlived head, operator-acceptance edge cases, merged-before-approval, etc.) still pass unmodified."
   },
-  "residual_or_blocked_items": [],
+  "residual_or_blocked_items": [
+    "Source retirement (this PR's diff) is delivered and independently reviewable now, but it is not the end of the task's acceptance chain: after this exact head merges into dev, the existing supported render/preflight/qualified-promote flow for the development-tooling runtime must still run (docs/02-architecture/development-tooling-product-boundary.md), and post-merge dispatch/review health on the new active runtime identity must be checked. Neither has happened yet as of this evidence revision -- do not read this file as a claim that post-merge runtime acceptance already passed.",
+    "The generated-context materialization functions listed under `generated_context_disposition` below were independently verified (AST/source-segment comparison) to be exact-source-identical between the currently accepted runtime (ade16c5aa3425bd9536199b539518df631a58ab1) and this PR's head; they are an existing, already-accepted mechanism, not something this task reimplements or leaves undone. .orchestrator/common.py and .orchestrator/test_common.py remain untouched because no retirement-scoped change to them was needed."
+  ],
+  "generated_context_disposition": {
+    "summary": "Generated worker task-brief materialization (materialize_worker_context_files and three related helpers) is an existing, already-accepted mechanism that this task preserves unchanged, not a gap left by this retirement.",
+    "verified_identical_functions": [
+      "materialize_worker_context_files",
+      "_generated_worker_task_brief_path",
+      "_replace_request_context_path",
+      "_generated_worker_task_brief"
+    ],
+    "verification": "AST/source-segment SHA-256 comparison between accepted runtime ade16c5aa3425bd9536199b539518df631a58ab1 and this PR's head 18c7d02ac6bc244494c88427a8dce1a8bfef104d found byte-identical source segments for all four functions; a targeted focused run (`.venv-pantheon/bin/python3 -m pytest -q .orchestrator/test_supervisor.py -k 'tracked_brief_is_read_only or missing_brief_uses_ignored_context'`) passed 2/251 selected, exit 0, worktree clean.",
+      "behavior": "When a branch already tracks a generated task-brief file, that tracked copy is read-only and preserved; when none is tracked, the ignored path .orchestrator/worker-runtime/task-context/ is used instead and the request's effective context path is rewritten to it. finalize never copies the current approval/status state back into a tracked source brief. This task's own generated brief lives at the ignored path (git check-ignore -v resolves it to .gitignore:35; git ls-files does not track it)."
+  },
   "files_changed": [
     ".orchestrator/supervisor.py",
     ".orchestrator/test_supervisor.py",
@@ -139,5 +154,5 @@
     ".orchestrator/test_common.py",
     "docs/02-architecture/development-tooling-product-boundary.md"
   ],
-  "not_committed": "Per instructions, no git add/commit/state transition was performed. The working tree is left with these edits uncommitted for the task owner to review, commit, and carry through the PR/review/closeout flow."
+  "commit_state": "This evidence revision is committed at the exact PR #5631 head that also carries the rest of the retirement diff (source delivery only). It is not, by itself, hosted deployment or post-merge runtime acceptance: those remain pending on the existing supported render/preflight/promote flow after this head merges into dev, per residual_or_blocked_items above."
 }
