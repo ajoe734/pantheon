@@ -133,14 +133,14 @@ Each registry entry must contain these fields:
 | `evaluation_summary` | no | evaluator outputs and scores |
 | `approval_decision_id` | no | canonical approval object ref once `GOV-001` lands |
 | `approved_at` | no | when the artifact entered `approved` state |
-| `approver` | no | temporary compatibility actor hint until `ApprovalDecision` is first-class |
+| `approver` | no | verified Governance decision actor (read-only provenance) |
 | `rollback_target` | no | prior approved version safe to rebind during deployment rollback |
 | `deployment_summary` | no | derived read-model view of current stage / binding refs; not authoritative |
 | `metadata` | no | non-governing supplemental fields |
 
 Notes:
 
-- once `GOV-001` lands, `approval_decision_id` becomes the canonical authority for `approved`
+- `approval_decision_id` cites the exact Governance owner decision; caller actor hints cannot authorize `approved`
 - `deployment_summary` may cache the latest deployment read model, but registry writers must not treat it as source truth
 
 ### Suggested `deployment_summary` shape
@@ -229,7 +229,7 @@ The storage backend is still open, but the logical operations are not.
 | `register(entry)` | create a new `draft` or `candidate` entry |
 | `get(registry_id)` | read one entry |
 | `list_by_strategy(strategy_id)` | enumerate versions within a strategy family |
-| `advance_artifact_state(registry_id, target_state, approver?, approval_decision_id?, command_key?)` | transition an entry through governed artifact-state checks and retain the canonical decision link when approving; `command_key` makes an identical retry an idempotent replay of the original committed transition instead of re-running it (see below) |
+| `advance_artifact_state(registry_id, target_state, approval_decision_id?, command_key?, expected_artifact_state?, expected_version?, expected_updated_at?)` | transition an entry through governed artifact-state checks and retain the canonical decision link when approving; `command_key` makes an identical retry an idempotent replay of the original committed transition instead of re-running it (see below) |
 | `update_metadata(registry_id, expected_metadata, new_metadata, command_key?)` | allowed operator metadata update with CAS: fails with a conflict when `expected_metadata` no longer matches the durable entry; `command_key` makes an identical retry an idempotent no-op replay |
 | `resolve_latest_approved(strategy_id)` | return the newest approved entry for a strategy |
 | `resolve_deployment_view(strategy_id)` | return the derived deployment-stage view from deployment/runtime objects |
@@ -401,3 +401,15 @@ Claude should review this contract for:
 - whether `artifact_state` and `deployment_stage` are now unambiguously separated
 - whether derived deployment summaries are clearly marked non-authoritative
 - whether the compatibility window is explicit enough for downstream migration work
+
+## First-release APPROVED admission
+
+Every APPROVED transition requires an exact `approval_decision_id`, scoped
+`command_key`, and caller `expected_artifact_state`, `expected_version`, and
+`expected_updated_at`. Caller `approver` is retired and rejected. Registry uses
+`REGISTRY_GOVERNANCE_BASE_URL`, `REGISTRY_GOVERNANCE_SERVICE_TOKEN`, and
+`REGISTRY_GOVERNANCE_TIMEOUT_SECONDS` to read verified tenant/target/version/
+checksum-bound evidence through the single Governance ApprovalReader. The
+verified actor and typed `approval_evidence` are retained in the same atomic
+transition/receipt. Original command replay returns original evidence; consumers
+must re-read current Governance validity before any new execution.

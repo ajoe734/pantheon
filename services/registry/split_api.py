@@ -109,8 +109,9 @@ def _reject_immutable_metadata_mutation(
 
 
 class RegistryService:
-    def __init__(self, store: RegistryStore):
+    def __init__(self, store: RegistryStore, *, approval_reader=None):
         self.store = store
+        self.approval_reader = approval_reader
 
     # -- §8 operations ----------------------------------------------------
 
@@ -381,6 +382,13 @@ class RegistryService:
         does; omitting them preserves the prior server-reread behavior for
         callers that do not (yet) track a base.
         """
+        if target_state == ArtifactState.APPROVED:
+            if approver is not None:
+                raise RegistryError('Caller-supplied approver is retired; use a Governance decision reference')
+            if not approval_decision_id or not command_key or not actor:
+                raise RegistryError('Approval requires verified decision reference, actor and command key')
+            if expected_version is None or expected_artifact_state is None or expected_updated_at is None:
+                raise RegistryError('Approval requires the caller artifact base state/version/time')
         entry = self.store.get(registry_id)
         if entry is None:
             raise RegistryNotFoundError(f"Registry entry not found: {registry_id}")
@@ -421,6 +429,22 @@ class RegistryService:
                     "Cannot approve artifact without lineage. Approved artifacts must carry "
                     "source runs, parent entries, or source dataset/spec refs."
                 )
+
+            if target_state == ArtifactState.APPROVED:
+                from services.governance.approval_authority import configured_approval_reader, ApprovalInvalid
+                try:
+                    reader = self.approval_reader or configured_approval_reader('registry')
+                    evidence = reader.verify(approval_decision_id, expected={
+                        'tenant_id': base_entry.owner_tenant, 'target_type': 'registry_entry',
+                        'target_id': base_entry.registry_id, 'target_version': base_entry.version,
+                        'candidate_digest': base_entry.checksum,
+                    })
+                except ApprovalInvalid as exc:
+                    raise RegistryError(str(exc)) from exc
+                if actor.get('tenant') != base_entry.owner_tenant:
+                    raise RegistryError('Approval actor tenant does not own this artifact')
+                base_entry.approval_evidence = evidence.model_dump()
+                base_entry.approver = evidence.actor_id
 
         approved_at = utc_now_iso() if target_state == ArtifactState.APPROVED else None
 

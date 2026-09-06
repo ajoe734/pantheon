@@ -7,6 +7,8 @@ RuntimeBinding in an authoritative store.
 """
 from __future__ import annotations
 
+from services.governance.test_approval_authority import approval_snapshot, SnapshotApprovalReader
+
 import copy
 import importlib.util
 import json
@@ -183,10 +185,13 @@ def test_canonical_track_c_sequence_satisfies_runtime_deploy_authority() -> None
     registry_entry, register_request = _registry_entry(registration)
     assert register_request.artifact_state == ArtifactState.DRAFT
 
-    candidate_advance = AdvanceRequest(target_state="candidate")
+    candidate_advance = AdvanceRequest(target_state="candidate", expected_artifact_state="draft")
     approved_advance = AdvanceRequest(
         target_state="approved",
-        approver="risk-owner-tw-paper-contract",
+        expected_artifact_state="candidate",
+        expected_version=VERSION,
+        expected_updated_at="2026-07-27T00:00:00Z",
+        command_key="contract-approval-advance",
         approval_decision_id=APPROVAL_ID,
     )
     assert candidate_advance.target_state == ArtifactState.CANDIDATE
@@ -194,6 +199,7 @@ def test_canonical_track_c_sequence_satisfies_runtime_deploy_authority() -> None
     assert approved_advance.approval_decision_id == APPROVAL_ID
 
     proposal = ProposeApprovalRequest(
+        expected_version=0,
         decision_id=APPROVAL_ID,
         target_type="registry_entry",
         target_id=ARTIFACT_ID,
@@ -205,10 +211,12 @@ def test_canonical_track_c_sequence_satisfies_runtime_deploy_authority() -> None
         owner_user_id="operator-tw-paper-contract",
     )
     review = AcceptReviewRequest(
+        expected_version=1,
         actor_role="governance_reviewer",
         actor_id="reviewer-tw-paper-contract",
     )
     decision = DecideRequest(
+        expected_version=2,
         actor_role="risk_owner",
         outcome="approved",
         rationale="Approve the isolated paper-stage contract only.",
@@ -277,13 +285,13 @@ def test_canonical_track_c_sequence_satisfies_runtime_deploy_authority() -> None
         "expires_at": "2026-08-31T00:00:00Z",
         "revoked_at": None,
     }
+    approval = approval_snapshot(**approval, candidate_digest=registry_entry["checksum"])
     plan_request = CreateDeploymentPlanRequest(
         plan_id=PLAN_ID,
         approval_decision_id=APPROVAL_ID,
         capital_pool_id=POOL_ID,
         target_stage="paper",
-        registry_entry=registry_entry,
-        approval_decision=approval,
+        registry_id=ARTIFACT_ID,
         current_stage="none",
         sponsor_persona_id=PERSONA_ID,
         scale={"capital_scale_pct": 0.0, "gross_scale_pct": 100.0},
@@ -318,7 +326,6 @@ def test_canonical_track_c_sequence_satisfies_runtime_deploy_authority() -> None
     dispatch = DispatchDeploymentPlanRequest(
         idempotency_key="P0-TW-PAPER-ACTIVATE-001:contract-dispatch",
         source_task_id="P0-TW-PAPER-ACTIVATE-001",
-        registry_entry=registry_entry,
         metadata={"tenant_id": TENANT_ID, "contract_only": True},
     )
     assert plan["artifact_type"] == "execution_bundle"
@@ -371,6 +378,8 @@ def test_canonical_track_c_sequence_satisfies_runtime_deploy_authority() -> None
         registry_base_url="http://registry.contract",
         governance_base_url="http://governance.contract",
         capital_base_url="http://capital.contract",
+        approval_reader=SnapshotApprovalReader(approval),
+        registry_fetch_json=lambda url, timeout: {"entry": registry_entry, "deployment_stage": "none"},
         fetch_json=_fetcher(
             plan=plan,
             registry_view={
