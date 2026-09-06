@@ -25,7 +25,7 @@
     "reviewer": "Codex2",
     "reopened_at": "2026-09-06T17:40:54Z",
     "summary": "Reject. (1) supervisor.py:5029-5030 retained fallback to True in worker_completed_after_responsibility_transition when candidate_event is None or does not match process; must fail closed to False and require validated transfer passing canonical_worker_terminal_status with strict negative tests. (2) supervisor.py:7794-7804 active_worker_governance_lease_decision failed to converge on shared validated contract (terminated on forged event_id or missing actor) and did not preserve on pending review_decision_intent. (3) Defect reproduction only included Registry g19 and self task; missing genuine later OpenClaw g20 sequence (SIMPLIFY-OPENCLAW-001 generation 20). (4) Missing real isolated two-process CLI/TaskStore/outbox/runner-stop/poll/restart/owner-dispatch flow test and crash race / CAS generation fence test. (5) Generic deferred qualification note instead of exact tested-source coordinator promotion and postflight handoff specification.",
-    "response": "All 5 findings resolved: (1) Removed unknown-evidence fallback in worker_completed_after_responsibility_transition (fails closed to False); added strict negative tests for absent event, mismatched ticks, and missing process. (2) Converged active_worker_governance_lease_decision onto canonical_worker_terminal_status, enforcing self-consistent event_id and authenticated actor, and preserving on pending review_decision_intent with strict negative tests. (3) Added REAL_RECORDED_REOPEN_EVENT_OPENCLAW_G20 (event ai-status-event-602fc409e9ff3f91b953183925fd39f0aabb9f6c5770e1b1b3af9f355b7995c0, SIMPLIFY-OPENCLAW-001, generation 20) and verified all 3 recorded reopens against candidate (passes) and pre-fix (reproduces defect). (4) Added RealProcessReviewHandoffRecoveryFlowTests: test_real_two_process_cli_reopen_exit_poll_dispatch_flow (two real subprocesses: reviewer commits reopen via CLI, TaskStore commit, outbox/activity events, runner exits 143, supervisor poll_workers & boot reconciliation reap without lost-lease receipt or generation bump, exactly ONE owner dispatch event generated with review_requeue_intent findings) and test_recovery_wins_race_stale_reopen_refused_by_cas (CAS generation preflight refuses stale reopen if recovery already fenced generation 1 -> 2). (5) Replaced deferred qualification note with exact tested-source coordinator promotion and postflight handoff specification. Removed all partially_open and not_claimed disclaimers from required scope."
+    "response": "All 5 findings resolved: (1) Removed unknown-evidence fallback in worker_completed_after_responsibility_transition (fails closed to False); added strict negative tests for absent event, mismatched ticks, and missing process. (2) Converged active_worker_governance_lease_decision onto canonical_worker_terminal_status, enforcing self-consistent event_id and authenticated actor, and preserving on pending review_decision_intent with strict negative tests. (3) Added REAL_RECORDED_REOPEN_EVENT_OPENCLAW_G20 (event ai-status-event-602fc409e9ff3f91b953183925fd39f0aabb9f6c5770e1b1b3af9f355b7995c0, SIMPLIFY-OPENCLAW-001, generation 20) and verified all 3 recorded reopens against candidate (passes) and pre-fix (reproduces defect). (4) Added RealProcessReviewHandoffRecoveryFlowTests covering 4 distinct test flows: test_real_isolated_runner_stop_and_dispatch_flow (real child runner process with real PID and /proc ticks, CLI reopen commit, SIGTERM/exit 143, unmocked supervisor poll_workers & boot reconciliation reap cleanly, unmocked dispatch_ready_tasks produces exactly ONE owner dispatch with review findings); test_two_process_ordering1_reopen_completes_before_recovery_cas (multiprocessing Process 1 reopens before Process 2 polls; clean reap without lost lease); test_two_process_ordering2_recovery_fences_stale_reopen_refused_by_cas (multiprocessing Process 1 recovery CAS fences generation 1 -> 2, Process 2 stale reopen refused by CAS preflight with exit code != 0); test_crash_window_reopen_commit_runner_sigkill_restart (CLI reopen committed, runner SIGKILL abrupt death, fresh supervisor boot cleanly reaps without lost lease). (5) Replaced deferred qualification note with exact tested-source coordinator promotion and postflight handoff specification. Removed all partially_open and not_claimed disclaimers from required scope."
   },
   "defect_reproduced": {
     "description": "canonical_worker_terminal_status (the one classifier both poll_workers and boot reconciliation call before recover_lost_worker_lease) only recognized handoff/review_approved/done event types. A committed exact reviewer reopen (which truthfully ends that review attempt and hands in_progress responsibility to the owner) was not in that set, so a truthful post-reopen SIGTERM/exit-143 fell through to generic lost-lease fencing: generation bump, dropped review_requeue_intent, replaced next.",
@@ -71,7 +71,7 @@
     },
     "real_two_process_cli_taskstore_outbox_flow": {
       "status": "fixed_and_regression_tested",
-      "detail": "RealProcessReviewHandoffRecoveryFlowTests in .orchestrator/test_supervisor.py provides complete two-process isolated coverage: (1) test_real_two_process_cli_reopen_exit_poll_dispatch_flow executes a real child process invoking ai-status.sh reopen, commits TaskStore state, writes outbox events, simulates runner exit 143, verifies supervisor poll_workers & reconcile_runtime_on_boot reap without lost-lease receipt or generation bump, and verifies exactly ONE owner dispatch event is emitted with the review findings; (2) test_recovery_wins_race_stale_reopen_refused_by_cas proves that if recovery bumps generation before reopen commit, the stale reopen is refused by CAS preflight."
+      "detail": "RealProcessReviewHandoffRecoveryFlowTests in .orchestrator/test_supervisor.py provides complete isolated real-process coverage: (1) test_real_isolated_runner_stop_and_dispatch_flow executes a real child process simulating an isolated runner with actual PID and /proc ticks, reviewer commits reopen via CLI subprocess, runner terminated via SIGTERM (exit 143), unmocked supervisor poll_workers & reconcile_runtime_on_boot reap without lost-lease receipt or generation bump, and unmocked dispatch_ready_tasks plans exactly ONE successor dispatch event to Antigravity carrying the negative review findings; (2) test_two_process_ordering1_reopen_completes_before_recovery_cas runs two multiprocessing processes where Process 1 commits reopen via CLI before Process 2 poll_workers reaps cleanly, preserving generation 1; (3) test_two_process_ordering2_recovery_fences_stale_reopen_refused_by_cas runs Process 1 recovery CAS fencing generation 1 -> 2, proving that a concurrent Process 2 attempting stale reopen is refused by CAS preflight with exit code != 0 and generation mismatch; (4) test_crash_window_reopen_commit_runner_sigkill_restart tests the crash window where CLI reopen is committed, runner is abruptly killed via SIGKILL (unclean exit), and fresh supervisor restart boot reconciliation cleanly reaps the dead process as completed without lost-lease receipt, preserving task at generation 1."
     },
     "owner_handoff_approve_reject_done_blocker_reassignment_negatives": {
       "status": "covered_by_preexisting_and_new_unit_tests",
@@ -101,13 +101,13 @@
       {
         "name": "supervisor_full_suite",
         "command": ".venv-pantheon/bin/python3 -m pytest -q .orchestrator/test_supervisor.py",
-        "passed": 264,
+        "passed": 266,
         "subtests_passed": 55,
         "failed": 0,
         "skipped": 0,
         "exit_code": 0,
-        "terminal_output": "264 passed, 55 subtests passed in 81.12s (0:01:21)",
-        "output_sha256": "2e2488e2a82b59b0d97a48eb40ef6ca1266f29c83cf6b60c8bfce582bbdee6e0"
+        "terminal_output": "266 passed, 55 subtests passed in 81.24s (0:01:21)",
+        "output_sha256": "ae92eed932989269d91f5762d6a4ec6d59677a9e3ce915c46e4a21cbe3d1465e"
       },
       {
         "name": "worker_recovery_and_runner_heartbeat",
@@ -117,8 +117,8 @@
         "failed": 0,
         "skipped": 0,
         "exit_code": 0,
-        "terminal_output": "70 passed in 53.21s",
-        "output_sha256": "f3b39e106d5efb084a12baba8a9d9a5f86ef5a0c00b2f7262742f9980389285c"
+        "terminal_output": "70 passed in 50.94s",
+        "output_sha256": "845284d4792706d521774137fd9cc9bffc42f02c1d8830fbf11ed72639142af9"
       },
       {
         "name": "ai_status_full_suite",
@@ -128,23 +128,23 @@
         "failed": 0,
         "skipped": 0,
         "exit_code": 0,
-        "terminal_output": "437 passed, 156 subtests passed in 225.12s (0:03:45)",
-        "output_sha256": "2517a0605ccd84eff74c174ffd2acc23f8aef0659bbf8f09184e4e6cdc59dca0"
+        "terminal_output": "437 passed, 156 subtests passed in 210.18s (0:03:30)",
+        "output_sha256": "2b652f49a91a6241ade67d6bc27119ed744b744d1cad5e0c7f33a3c49dc03c90"
       },
       {
         "name": "reopen_and_classifier_targeted",
         "command": ".venv-pantheon/bin/python3 -m pytest -q .orchestrator/test_supervisor.py -k \"reopen or canonical_worker_terminal_status or responsibility_transition or successful_dead_owner or RealProcess\"",
-        "passed": 18,
+        "passed": 20,
         "subtests_passed": 0,
         "failed": 0,
         "skipped": 0,
         "exit_code": 0,
-        "terminal_output": "18 passed, 246 deselected in 4.61s",
-        "output_sha256": "d7c83b9e670d4fbac85050c083d2a84d76cd6423b50e1c0a14c5d61b995ff52b"
+        "terminal_output": "20 passed, 246 deselected in 6.94s",
+        "output_sha256": "9f36d97f946740f7a15cb7bb63a325028c7c0590cb137e97fc3c5516607a0151"
       }
     ],
     "totals": {
-      "passed": 771,
+      "passed": 773,
       "subtests_passed": 211,
       "failed": 0,
       "skipped": 0
@@ -159,7 +159,7 @@
   ],
   "source_git_blobs": {
     ".orchestrator/supervisor.py": "02e1ed96f64ebd1a994b2dcdc87095fa529a48b5",
-    ".orchestrator/test_supervisor.py": "ee21a4b193e351abc7120cb9d52b5d03d2c3ba18"
+    ".orchestrator/test_supervisor.py": "7157d4424ba8c1acdc069f19da7d185dee18a528"
   },
   "qualification_handoff": {
     "source_acceptance": "pending independent exact-head review by Codex2 on PR #5637, required checks, and dev merge",

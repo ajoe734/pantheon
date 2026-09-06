@@ -10,6 +10,8 @@ authoritative TaskStore projection.
 """
 from __future__ import annotations
 
+from typing import Any
+
 import ast
 import base64
 import multiprocessing
@@ -19,6 +21,7 @@ import inspect
 import json
 import os
 import shutil
+import signal
 import subprocess
 import sys
 import tempfile
@@ -11195,6 +11198,86 @@ class ReviewDecisionIntentLeaseRecoveryTests(unittest.TestCase):
         self.assertNotIn("review_decision_intent_recovery", task_after)
 
 
+def _child_reopen_worker(worktree_str: str, env_dict: dict, result_queue: Any) -> None:
+    import subprocess
+    cmd = ["bash", f"{worktree_str}/scripts/ai-status.sh", "reopen", "TASK-RACE-001", "Rejection from child process"]
+    proc = subprocess.run(cmd, env=env_dict, cwd=worktree_str, capture_output=True, text=True)
+    result_queue.put({"returncode": proc.returncode, "stdout": proc.stdout, "stderr": proc.stderr})
+
+
+def _child_poll_worker(config: dict, state: dict, result_queue: Any) -> None:
+    import supervisor
+    changed = supervisor.poll_workers(config, state)
+    result_queue.put({"changed": changed, "state": state})
+
+
+def _child_recovery_worker(config: dict, state: dict, worker: dict, result_queue: Any) -> None:
+    import supervisor
+    res = supervisor.recover_lost_worker_lease(
+        config,
+        state,
+        worker,
+        reason_kind="worker_process_missing",
+        reason="Process missing in race test",
+    )
+    result_queue.put({"result": res, "status": worker.get("status"), "worker": dict(worker)})
+
+
+def _child_stale_reopen(worktree_str: str, env_dict: dict, result_queue: Any) -> None:
+    import subprocess
+    cmd = ["bash", f"{worktree_str}/scripts/ai-status.sh", "reopen", "TASK-RACE-002", "Stale reopen attempt"]
+    proc = subprocess.run(cmd, env=env_dict, cwd=worktree_str, capture_output=True, text=True)
+    result_queue.put({"returncode": proc.returncode, "stdout": proc.stdout, "stderr": proc.stderr})
+
+
+def _child_reopen_worker(worktree_str: str, env_dict: dict, result_queue: Any) -> None:
+    import subprocess
+    cmd = ["bash", f"{worktree_str}/scripts/ai-status.sh", "reopen", "TASK-RACE-001", "Rejection from child process"]
+    proc = subprocess.run(cmd, env=env_dict, cwd=worktree_str, capture_output=True, text=True)
+    result_queue.put({"returncode": proc.returncode, "stdout": proc.stdout, "stderr": proc.stderr})
+
+
+def _child_poll_worker(config: dict, state: dict, result_queue: Any) -> None:
+    import supervisor
+    changed = supervisor.poll_workers(config, state)
+    result_queue.put({"changed": changed, "state": state})
+
+
+def _child_recovery_worker(config: dict, state: dict, worker: dict, result_queue: Any) -> None:
+    from unittest import mock
+    import common
+    import supervisor
+    issued = worker.get("status_command_runtime")
+    if issued:
+        issued_env = common._status_command_runtime_env_from_record(issued)
+        issued_env.update(common.task_state_store_runtime_env(config))
+        with mock.patch.object(supervisor, "status_command_runtime_env", return_value=issued_env):
+            res = supervisor.recover_lost_worker_lease(
+                config,
+                state,
+                worker,
+                reason_kind="worker_process_missing",
+                reason="Process missing in race test",
+            )
+            result_queue.put({"result": res, "status": worker.get("status"), "worker": dict(worker)})
+    else:
+        res = supervisor.recover_lost_worker_lease(
+            config,
+            state,
+            worker,
+            reason_kind="worker_process_missing",
+            reason="Process missing in race test",
+        )
+        result_queue.put({"result": res, "status": worker.get("status"), "worker": dict(worker)})
+
+
+def _child_stale_reopen(worktree_str: str, env_dict: dict, result_queue: Any) -> None:
+    import subprocess
+    cmd = ["bash", f"{worktree_str}/scripts/ai-status.sh", "reopen", "TASK-RACE-002", "Stale reopen attempt"]
+    proc = subprocess.run(cmd, env=env_dict, cwd=worktree_str, capture_output=True, text=True)
+    result_queue.put({"returncode": proc.returncode, "stdout": proc.stdout, "stderr": proc.stderr})
+
+
 class RealProcessReviewHandoffRecoveryFlowTests(unittest.TestCase):
     """Real isolated two-process CLI/TaskStore/outbox/runner-stop/poll/restart/owner-dispatch flow and crash race tests."""
 
@@ -11229,8 +11312,8 @@ class RealProcessReviewHandoffRecoveryFlowTests(unittest.TestCase):
                 dst.parent.mkdir(parents=True, exist_ok=True)
                 shutil.copy2(src, dst)
 
-    def test_real_two_process_cli_reopen_exit_poll_dispatch_flow(self) -> None:
-        """Real isolated process: reviewer commits reopen via CLI, exits 143, supervisor converges without lost-lease."""
+    def test_real_isolated_runner_stop_and_dispatch_flow(self) -> None:
+        """Real isolated process: reviewer commits reopen via CLI, runner exits 143, supervisor converges without lost-lease, owner dispatch planned."""
         repo_root = Path(__file__).resolve().parents[1]
         with tempfile.TemporaryDirectory() as temp_dir:
             temp_path = Path(temp_dir)
@@ -11240,7 +11323,360 @@ class RealProcessReviewHandoffRecoveryFlowTests(unittest.TestCase):
             runtime_dir.mkdir(parents=True)
             task_state_event_log = runtime_dir / "task-state-events.jsonl"
 
-            # 1. Setup clean central git repo (serves as status root & command root)
+            central.mkdir(parents=True, exist_ok=True)
+            subprocess.run(["git", "init", "-q", "-b", "dev"], cwd=central, check=True)
+            subprocess.run(["git", "config", "user.name", "Tooling Admin"], cwd=central, check=True)
+            subprocess.run(["git", "config", "user.email", "admin@example.com"], cwd=central, check=True)
+            self._copy_tooling(repo_root, central)
+
+            # 1. Start a real child process to simulate the isolated worker runner
+            runner_proc = subprocess.Popen(
+                [
+                    sys.executable,
+                    "-c",
+                    "import time, signal, sys; signal.signal(signal.SIGTERM, lambda s, f: sys.exit(143)); time.sleep(60)",
+                ]
+            )
+            try:
+                real_pid = runner_proc.pid
+                real_ticks = supervisor.worker_pid_start_ticks(real_pid)
+                self.assertIsNotNone(real_ticks, f"Could not get ticks for real PID {real_pid}")
+
+                run_id = f"codex-run-{real_pid}"
+                queue_event_id = f"evt-codex-{real_pid}"
+                proc_gen = supervisor.worker_process_generation_id(
+                    task_id="TASK-RECOVERY-001",
+                    worker_run_id=run_id,
+                    queue_event_id=queue_event_id,
+                    pid=real_pid,
+                    pid_start_ticks=real_ticks,
+                )
+
+                initial_task = {
+                    "id": "TASK-RECOVERY-001",
+                    "title": "Test Recovery Task",
+                    "owner": "Antigravity",
+                    "reviewer": "Codex2",
+                    "status": "review",
+                    "generation": 1,
+                    "next": "Ready for review",
+                    "artifacts": [".orchestrator/supervisor.py"],
+                    "target_repo": "pantheon",
+                    "depends_on": [],
+                }
+                from scripts import ai_status
+                init_state = ai_status.default_state()
+                init_state["tasks"] = [initial_task]
+                (central / "ai-status.json").write_text(json.dumps(init_state, indent=2) + "\n")
+                (central / "ai-activity-log.jsonl").write_text(json.dumps({"event_id": "seed", "type": "seed"}) + "\n")
+
+                central_runner_status = central / ".orchestrator" / "worker-runtime" / "status" / f"{run_id}.json"
+                central_runner_status.parent.mkdir(parents=True, exist_ok=True)
+                central_heartbeat = central / ".orchestrator" / "worker-runtime" / "heartbeats" / f"{run_id}.json"
+                central_heartbeat.parent.mkdir(parents=True, exist_ok=True)
+
+                issued_runtime = {
+                    "command_root": str(central),
+                    "source_sha": "will_be_set",
+                    "remote": "ajoe734/pantheon",
+                    "base_ref": "origin/dev",
+                }
+
+                worker_record = {
+                    "task_id": "TASK-RECOVERY-001",
+                    "run_id": run_id,
+                    "queue_event_id": queue_event_id,
+                    "agent_id": "codex2_1",
+                    "logical_agent_id": "codex2",
+                    "provider": "codex",
+                    "pid": real_pid,
+                    "pid_start_ticks": real_ticks,
+                    "process_generation": proc_gen,
+                    "status": "running",
+                    "runner_status": "running",
+                    "runner_status_path": str(central_runner_status),
+                    "heartbeat_path": str(central_heartbeat),
+                    "last_heartbeat_at": "2026-09-06T17:00:00Z",
+                    "task_generation": 1,
+                    "lease_acquired_at": "2026-09-06T17:00:00Z",
+                    "lease_expires_at": "2999-01-01T00:00:00Z",
+                    "request_snapshot": {
+                        "reason": supervisor.REASON_REVIEW_READY,
+                        "task_generation": 1,
+                        "metadata": {
+                            "task_generation": 1,
+                            "workspace_task_id": "TASK-RECOVERY-001",
+                            "workspace_path": str(worktree),
+                            "workspace_repository_id": "pantheon",
+                            "workspace_source_root": str(central),
+                        },
+                    },
+                    "workspace_path": str(worktree),
+                    "workspace_repository_id": "pantheon",
+                    "workspace_source_root": str(central),
+                    "status_root": str(central),
+                    "status_command_runtime": issued_runtime,
+                }
+
+                runtime_state_data = {
+                    "version": 2,
+                    "workers": {run_id: worker_record},
+                    "worktree_leases": {
+                        "leases": {
+                            run_id: {
+                                "task_id": "TASK-RECOVERY-001",
+                                "repository_id": "pantheon",
+                                "status_root": str(central),
+                                "path": str(worktree),
+                            }
+                        }
+                    },
+                    "worker_worktrees": {
+                        "leases": {
+                            "TASK-RECOVERY-001": {
+                                "task_id": "TASK-RECOVERY-001",
+                                "workspace_task_id": "TASK-RECOVERY-001",
+                                "branch": "task/TASK-RECOVERY-001",
+                                "path": str(worktree),
+                                "repository_id": "pantheon",
+                                "status_root": str(central),
+                                "last_queue_event_id": queue_event_id,
+                                "last_target_agent": "Codex2",
+                                "last_used_at": "2026-09-06T17:00:00Z",
+                            }
+                        }
+                    },
+                    "queue": {
+                        "events": {
+                            queue_event_id: {
+                                "status": "running",
+                                "intent": {
+                                    "event_id": queue_event_id,
+                                    "task_id": "TASK-RECOVERY-001",
+                                    "task_generation": 1,
+                                    "target_agent": "codex2_1",
+                                },
+                            }
+                        }
+                    },
+                }
+
+                runtime_state_path = central / ".orchestrator" / "state.json"
+                runtime_state_path.parent.mkdir(parents=True, exist_ok=True)
+                runtime_state_path.write_text(json.dumps(runtime_state_data, indent=2) + "\n")
+                (central / ".orchestrator" / "supervisor.json").write_text(json.dumps(runtime_state_data, indent=2) + "\n")
+
+                (central / ".gitignore").write_text(".orchestrator/state.json\n.orchestrator/supervisor.json\nai-status.json\nai-activity-log.jsonl\n")
+                subprocess.run(["git", "add", "."], cwd=central, check=True)
+                subprocess.run(["git", "commit", "-q", "-m", "install tooling"], cwd=central, check=True)
+                subprocess.run(["git", "remote", "add", "origin", "https://github.com/ajoe734/pantheon.git"], cwd=central, check=True)
+                subprocess.run(["git", "update-ref", "refs/remotes/origin/dev", "HEAD"], cwd=central, check=True)
+                command_sha = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=central, text=True).strip()
+                issued_runtime["source_sha"] = command_sha
+                runtime_state_path.write_text(json.dumps(runtime_state_data, indent=2) + "\n")
+
+                worktree.mkdir(parents=True, exist_ok=True)
+                subprocess.run(["git", "init", "-q", "-b", "dev"], cwd=worktree, check=True)
+                subprocess.run(["git", "config", "user.name", "Test Reviewer"], cwd=worktree, check=True)
+                subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=worktree, check=True)
+                self._copy_tooling(repo_root, worktree)
+                (worktree / "README.md").write_text("# Test\n")
+                subprocess.run(["git", "add", "."], cwd=worktree, check=True)
+                subprocess.run(["git", "commit", "-q", "-m", "initial commit"], cwd=worktree, check=True)
+                subprocess.run(["git", "remote", "add", "origin", "https://github.com/ajoe734/pantheon.git"], cwd=worktree, check=True)
+                subprocess.run(["git", "update-ref", "refs/remotes/origin/dev", "HEAD"], cwd=worktree, check=True)
+                subprocess.run(["git", "branch", "task/TASK-RECOVERY-001"], cwd=worktree, check=True)
+                subprocess.run(["git", "checkout", "task/TASK-RECOVERY-001"], cwd=worktree, check=True)
+
+                fake_bin = temp_path / "bin"
+                fake_bin.mkdir(parents=True)
+                fake_gh = fake_bin / "gh"
+                fake_gh.write_text("#!/bin/sh\nprintf '[]\\n'\n")
+                fake_gh.chmod(0o755)
+
+                config = {
+                    "paths": {
+                        "root": str(central),
+                        "state_file": str(runtime_state_path),
+                        "status_file": str(central / "ai-status.json"),
+                        "activity_log": str(central / "ai-activity-log.jsonl"),
+                        "approval_queue": str(central / ".orchestrator" / "approval-queue.json"),
+                    },
+                    "task_state_store": {
+                        "mode": "authoritative",
+                        "event_log": str(task_state_event_log),
+                    },
+                    "supervisor": {
+                        "ready_dispatch": {
+                            "enabled": True,
+                            "max_concurrent_workers": 2,
+                            "active_worker_statuses": ["running", "stalled"],
+                            "review_statuses": ["review"],
+                            "owned_statuses": ["todo", "in_progress"],
+                            "finalize_statuses": ["review_approved"],
+                            "dependency_done_statuses": ["done"],
+                        },
+                        "worker_runtime": {
+                            "heartbeat_interval_seconds": 30,
+                            "heartbeat_timeout_seconds": 120,
+                        },
+                    },
+                    "ready_dispatcher": {
+                        "enabled": True,
+                        "max_concurrent_workers": 4,
+                        "max_dispatches_per_tick": 4,
+                        "max_concurrent_per_account": {
+                            "codex_account": 2,
+                            "codex2_account": 2,
+                            "antigravity_account": 2,
+                        },
+                        "active_worker_statuses": ["running", "stalled"],
+                        "owned_statuses": ["todo", "in_progress"],
+                        "review_statuses": ["review"],
+                        "finalize_statuses": ["review_approved"],
+                        "dependency_done_statuses": ["done"],
+                        "unchanged_task_cooldown_seconds": 0,
+                    },
+                    "agents": {
+                        "codex2_1": {"id": "codex2_1", "display_name": "Codex2", "account": "codex2", "role": "reviewer", "provider": "codex", "max_parallel": 2},
+                        "codex": {"id": "codex", "display_name": "Codex", "account": "codex", "role": "owner", "provider": "codex", "max_parallel": 2},
+                        "antigravity": {"id": "antigravity", "display_name": "Antigravity", "account": "antigravity_account", "role": "owner", "provider": "antigravity", "max_parallel": 2},
+                    },
+                    "providers": {
+                        "codex": {"delivery_mode": "codex", "account": "codex_account"},
+                        "codex2": {"delivery_mode": "codex", "account": "codex2_account"},
+                        "antigravity": {"delivery_mode": "antigravity", "account": "antigravity_account"},
+                    },
+                }
+                (central / ".orchestrator" / "approval-queue.json").write_text(json.dumps({"pending": [], "history": []}) + "\n")
+                supervisor.write_status(config, init_state, source="test-init")
+
+                child_env = os.environ.copy()
+                for k in list(child_env.keys()):
+                    if k.startswith("ORCH_") or k.startswith("PANTHEON_") or k == "AI_NAME":
+                        child_env.pop(k, None)
+
+                identity_json = json.dumps(
+                    common.canonical_task_state_identity_for_paths(
+                        status_root=central,
+                        event_log=task_state_event_log,
+                    ),
+                    sort_keys=True,
+                    separators=(",", ":"),
+                )
+
+                child_env.update({
+                    "AI_NAME": "Codex2",
+                    "PANTHEON_STATUS_ROOT": str(central),
+                    "PANTHEON_WORKTREE_ROOT": str(worktree),
+                    "ORCH_WORKSPACE_PATH": str(worktree),
+                    "ORCH_RUN_ID": run_id,
+                    "ORCH_TASK_ID": "TASK-RECOVERY-001",
+                    "ORCH_RUNNER_STATUS_PATH": str(central_runner_status),
+                    "ORCH_HEARTBEAT_PATH": str(central_heartbeat),
+                    "PANTHEON_COMMAND_ROOT": str(central),
+                    "PANTHEON_COMMAND_RUNTIME_SHA": command_sha,
+                    "PANTHEON_COMMAND_REMOTE": "ajoe734/pantheon",
+                    "PANTHEON_COMMAND_BASE_REF": "origin/dev",
+                    "PANTHEON_TASK_STATE_STORE_MODE": "authoritative",
+                    "PANTHEON_TASK_STATE_EVENT_LOG": str(task_state_event_log),
+                    common.CANONICAL_TASK_STATE_IDENTITY_ENV: identity_json,
+                    "PATH": f"{fake_bin}:{child_env.get('PATH', '')}",
+                })
+
+                # 2. Reviewer commits reopen via CLI subprocess
+                reopen_message = "Independent Codex2 review REJECTS: P1 defect reproduced in real test"
+                cmd = ["bash", str(worktree / "scripts" / "ai-status.sh"), "reopen", "TASK-RECOVERY-001", reopen_message]
+                proc = subprocess.run(cmd, env=child_env, cwd=worktree, capture_output=True, text=True)
+                self.assertEqual(proc.returncode, 0, f"STDOUT: {proc.stdout}\nSTDERR: {proc.stderr}")
+
+                # 3. Stop the real child process via SIGTERM
+                runner_proc.send_signal(signal.SIGTERM)
+                runner_proc.wait(timeout=5)
+                self.assertEqual(runner_proc.returncode, 143)
+                self.assertFalse(supervisor.pid_is_alive(real_pid))
+
+                # Record runner status marker
+                central_runner_status.write_text(json.dumps({
+                    "status": "failed",
+                    "exit_code": 143,
+                    "signal": 15,
+                    "pid": real_pid,
+                    "finished_at": "2026-09-06T17:05:00Z",
+                }) + "\n")
+
+                # 4. Run poll_workers with NO MOCKS!
+                state = {
+                    "workers": {run_id: worker_record},
+                    "queue": runtime_state_data["queue"],
+                }
+                changed = supervisor.poll_workers(config, state)
+                self.assertTrue(changed)
+                self.assertEqual(worker_record["status"], "completed")
+                self.assertNotIn("governance_lease_guard", worker_record)
+
+                # Check that task status in TaskStore remained in_progress, generation untouched (1)
+                status_after_poll = supervisor.load_status(config)
+                task_after_poll = status_after_poll["tasks"][0]
+                self.assertEqual(task_after_poll["status"], "in_progress")
+                self.assertEqual(task_after_poll["generation"], 1)
+                self.assertIn("review_requeue_intent", task_after_poll)
+
+                # 5. Fresh supervisor restart / boot reconciliation with NO MOCKS!
+                state_boot = {
+                    "workers": {run_id: dict(worker_record)},
+                    "queue": runtime_state_data["queue"],
+                }
+                supervisor.reconcile_runtime_on_boot(config, state_boot)
+                status_after_boot = supervisor.load_status(config)
+                self.assertEqual(status_after_boot["tasks"][0]["generation"], 1)
+
+                # 6. Dispatch planning produces exactly ONE owner dispatch event with negative findings
+                state["delivery_health"] = {
+                    "version": 1,
+                    "endpoints": {
+                        "antigravity": {"state": "healthy", "valid_until": "2999-01-01T00:00:00Z"},
+                        "codex2_1": {"state": "healthy", "valid_until": "2999-01-01T00:00:00Z"},
+                        "codex": {"state": "healthy", "valid_until": "2999-01-01T00:00:00Z"},
+                    },
+                    "accounts": {
+                        "antigravity_account": {"state": "healthy", "valid_until": "2999-01-01T00:00:00Z"},
+                        "codex2_account": {"state": "healthy", "valid_until": "2999-01-01T00:00:00Z"},
+                        "codex_account": {"state": "healthy", "valid_until": "2999-01-01T00:00:00Z"},
+                    },
+                }
+                sink = []
+                dispatch_planned = supervisor.dispatch_ready_tasks(
+                    config,
+                    state,
+                    event_sink=lambda cfg, evt: bool(sink.append(evt) or True),
+                )
+                self.assertTrue(dispatch_planned)
+                self.assertEqual(len(sink), 1)
+                event = sink[0]
+                self.assertEqual(event["reason"], supervisor.REASON_OWNED_IN_PROGRESS)
+                self.assertEqual(event["target_agent"], "Antigravity")
+                self.assertEqual(event["task_generation"], 1)
+                task_in_event = event["task"]
+                self.assertEqual(task_in_event["review_requeue_intent"]["reason"], reopen_message)
+                self.assertEqual(task_in_event["next"], reopen_message)
+            finally:
+                if runner_proc.poll() is None:
+                    runner_proc.kill()
+                    runner_proc.wait(timeout=2)
+
+    def test_two_process_ordering1_reopen_completes_before_recovery_cas(self) -> None:
+        """Two-process race ordering 1: Reviewer completes reopen before Recovery CAS; task stays gen 1, reaped cleanly."""
+        ctx = multiprocessing.get_context("fork")
+        repo_root = Path(__file__).resolve().parents[1]
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_path = Path(temp_dir)
+            central = temp_path / "central"
+            worktree = temp_path / "worktree"
+            runtime_dir = temp_path / "runtime"
+            runtime_dir.mkdir(parents=True)
+            task_state_event_log = runtime_dir / "task-state-events.jsonl"
+
             central.mkdir(parents=True, exist_ok=True)
             subprocess.run(["git", "init", "-q", "-b", "dev"], cwd=central, check=True)
             subprocess.run(["git", "config", "user.name", "Tooling Admin"], cwd=central, check=True)
@@ -11248,8 +11684,8 @@ class RealProcessReviewHandoffRecoveryFlowTests(unittest.TestCase):
             self._copy_tooling(repo_root, central)
 
             initial_task = {
-                "id": "TASK-RECOVERY-001",
-                "title": "Test Recovery Task",
+                "id": "TASK-RACE-001",
+                "title": "Test Race Task",
                 "owner": "Antigravity",
                 "reviewer": "Codex2",
                 "status": "review",
@@ -11265,300 +11701,16 @@ class RealProcessReviewHandoffRecoveryFlowTests(unittest.TestCase):
             (central / "ai-status.json").write_text(json.dumps(init_state, indent=2) + "\n")
             (central / "ai-activity-log.jsonl").write_text(json.dumps({"event_id": "seed", "type": "seed"}) + "\n")
 
-            run_id = "codex-test-run-1"
-            queue_event_id = "evt-codex-test-run-1"
-            pid = 12345
-            pid_start_ticks = 67890
-            proc_gen = supervisor.worker_process_generation_id(
-                task_id="TASK-RECOVERY-001",
-                worker_run_id=run_id,
-                queue_event_id=queue_event_id,
-                pid=pid,
-                pid_start_ticks=pid_start_ticks,
-            )
-
-            issued_runtime = {
-                "command_root": str(central),
-                "source_sha": "will_be_set",
-                "remote": "ajoe734/pantheon",
-                "base_ref": "origin/dev",
-            }
-
-            worker_record = {
-                "task_id": "TASK-RECOVERY-001",
-                "run_id": run_id,
-                "queue_event_id": queue_event_id,
-                "agent_id": "codex2_1",
-                "logical_agent_id": "codex2",
-                "provider": "codex",
-                "pid": pid,
-                "pid_start_ticks": pid_start_ticks,
-                "process_generation": proc_gen,
-                "status": "running",
-                "runner_status": "running",
-                "task_generation": 1,
-                "lease_acquired_at": "2026-09-06T17:00:00Z",
-                "lease_expires_at": "2999-01-01T00:00:00Z",
-                "request_snapshot": {
-                    "reason": supervisor.REASON_REVIEW_READY,
-                    "task_generation": 1,
-                    "metadata": {
-                        "task_generation": 1,
-                        "workspace_task_id": "TASK-RECOVERY-001",
-                        "workspace_path": str(worktree),
-                        "workspace_repository_id": "pantheon",
-                        "workspace_source_root": str(central),
-                    },
-                },
-                "workspace_path": str(worktree),
-                "workspace_repository_id": "pantheon",
-                "workspace_source_root": str(central),
-                "status_root": str(central),
-                "status_command_runtime": issued_runtime,
-            }
-
-            runtime_state_data = {
-                "version": 2,
-                "workers": {run_id: worker_record},
-                "worktree_leases": {
-                    "leases": {
-                        run_id: {
-                            "task_id": "TASK-RECOVERY-001",
-                            "repository_id": "pantheon",
-                            "status_root": str(central),
-                            "path": str(worktree),
-                        }
-                    }
-                },
-                "worker_worktrees": {
-                    "leases": {
-                        "TASK-RECOVERY-001": {
-                            "task_id": "TASK-RECOVERY-001",
-                            "workspace_task_id": "TASK-RECOVERY-001",
-                            "branch": "task/TASK-RECOVERY-001",
-                            "path": str(worktree),
-                            "repository_id": "pantheon",
-                            "status_root": str(central),
-                            "last_queue_event_id": queue_event_id,
-                            "last_target_agent": "Codex2",
-                            "last_used_at": "2026-09-06T17:00:00Z",
-                        }
-                    }
-                },
-                "queue": {
-                    "events": {
-                        queue_event_id: {
-                            "status": "running",
-                            "intent": {
-                                "event_id": queue_event_id,
-                                "task_id": "TASK-RECOVERY-001",
-                                "task_generation": 1,
-                                "target_agent": "codex2_1",
-                            },
-                        }
-                    }
-                },
-            }
-
-            runtime_state_path = central / ".orchestrator" / "state.json"
-            runtime_state_path.parent.mkdir(parents=True, exist_ok=True)
-            runtime_state_path.write_text(json.dumps(runtime_state_data, indent=2) + "\n")
-            (central / ".orchestrator" / "supervisor.json").write_text(json.dumps(runtime_state_data, indent=2) + "\n")
-
-            (central / ".gitignore").write_text(".orchestrator/state.json\n.orchestrator/supervisor.json\nai-status.json\nai-activity-log.jsonl\n")
-            subprocess.run(["git", "add", "."], cwd=central, check=True)
-            subprocess.run(["git", "commit", "-q", "-m", "install tooling"], cwd=central, check=True)
-            subprocess.run(["git", "remote", "add", "origin", "https://github.com/ajoe734/pantheon.git"], cwd=central, check=True)
-            subprocess.run(["git", "update-ref", "refs/remotes/origin/dev", "HEAD"], cwd=central, check=True)
-            command_sha = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=central, text=True).strip()
-            issued_runtime["source_sha"] = command_sha
-            runtime_state_path.write_text(json.dumps(runtime_state_data, indent=2) + "\n")
-            (central / ".orchestrator" / "supervisor.json").write_text(json.dumps(runtime_state_data, indent=2) + "\n")
-
-            # 2. Setup worktree git repo
-            worktree.mkdir(parents=True, exist_ok=True)
-            subprocess.run(["git", "init", "-q", "-b", "dev"], cwd=worktree, check=True)
-            subprocess.run(["git", "config", "user.name", "Test Reviewer"], cwd=worktree, check=True)
-            subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=worktree, check=True)
-            self._copy_tooling(repo_root, worktree)
-            (worktree / "README.md").write_text("# Test\n")
-            subprocess.run(["git", "add", "."], cwd=worktree, check=True)
-            subprocess.run(["git", "commit", "-q", "-m", "initial commit"], cwd=worktree, check=True)
-            subprocess.run(["git", "remote", "add", "origin", "https://github.com/ajoe734/pantheon.git"], cwd=worktree, check=True)
-            subprocess.run(["git", "update-ref", "refs/remotes/origin/dev", "HEAD"], cwd=worktree, check=True)
-            subprocess.run(["git", "branch", "task/TASK-RECOVERY-001"], cwd=worktree, check=True)
-            subprocess.run(["git", "checkout", "task/TASK-RECOVERY-001"], cwd=worktree, check=True)
-
-            fake_bin = temp_path / "bin"
-            fake_bin.mkdir(parents=True)
-            fake_gh = fake_bin / "gh"
-            fake_gh.write_text("#!/bin/sh\nprintf '[]\\n'\n")
-            fake_gh.chmod(0o755)
-
-            config = config_fixture(central)
-            config["task_state_store"] = {
-                "mode": "authoritative",
-                "event_log": str(task_state_event_log),
-            }
-            config["paths"]["activity_log"] = str(central / "ai-activity-log.jsonl")
-            config["paths"]["status_file"] = str(central / "ai-status.json")
-            config["paths"]["approval_queue"] = str(central / ".orchestrator" / "approval-queue.json")
-            supervisor.write_status(config, init_state, source="test-init")
-
-            child_env = os.environ.copy()
-            for k in list(child_env.keys()):
-                if k.startswith("ORCH_") or k.startswith("PANTHEON_") or k == "AI_NAME":
-                    child_env.pop(k, None)
-
-            identity_json = json.dumps(
-                common.canonical_task_state_identity_for_paths(
-                    status_root=central,
-                    event_log=task_state_event_log,
-                ),
-                sort_keys=True,
-                separators=(",", ":"),
-            )
-
-            central_runner_status = central / ".orchestrator" / "worker-runtime" / "status" / "run.json"
-            central_heartbeat = central / ".orchestrator" / "worker-runtime" / "heartbeats" / "run.json"
-
-            child_env.update({
-                "AI_NAME": "Codex2",
-                "PANTHEON_STATUS_ROOT": str(central),
-                "PANTHEON_WORKTREE_ROOT": str(worktree),
-                "ORCH_WORKSPACE_PATH": str(worktree),
-                "ORCH_RUN_ID": run_id,
-                "ORCH_TASK_ID": "TASK-RECOVERY-001",
-                "ORCH_RUNNER_STATUS_PATH": str(central_runner_status),
-                "ORCH_HEARTBEAT_PATH": str(central_heartbeat),
-                "PANTHEON_COMMAND_ROOT": str(central),
-                "PANTHEON_COMMAND_RUNTIME_SHA": command_sha,
-                "PANTHEON_COMMAND_REMOTE": "ajoe734/pantheon",
-                "PANTHEON_COMMAND_BASE_REF": "origin/dev",
-                "PANTHEON_TASK_STATE_STORE_MODE": "authoritative",
-                "PANTHEON_TASK_STATE_EVENT_LOG": str(task_state_event_log),
-                common.CANONICAL_TASK_STATE_IDENTITY_ENV: identity_json,
-                "PATH": f"{fake_bin}:{child_env.get('PATH', '')}",
-            })
-
-            reopen_message = "Independent Codex2 review REJECTS: P1 defect reproduced in test"
-            cmd = ["bash", str(worktree / "scripts" / "ai-status.sh"), "reopen", "TASK-RECOVERY-001", reopen_message]
-            proc = subprocess.run(cmd, env=child_env, cwd=worktree, capture_output=True, text=True)
-            self.assertEqual(proc.returncode, 0, f"STDOUT: {proc.stdout}\nSTDERR: {proc.stderr}")
-
-            # Verify task state after reopen in TaskStore
-            status = supervisor.load_status(config)
-            task = status["tasks"][0]
-            self.assertEqual(task["status"], "in_progress")
-            self.assertEqual(task.get("generation"), 1)
-            self.assertIn("review_requeue_intent", task)
-            requeue_intent = task["review_requeue_intent"]
-            self.assertEqual(requeue_intent["status"], "pending")
-            self.assertEqual(requeue_intent["reason"], reopen_message)
-
-            # Verify activity log received genuine reopen event
-            activity_events = supervisor.recent_governance_activity_events(config)
-            reopen_events = [e for e in activity_events if e.get("type") == "reopen"]
-            self.assertEqual(len(reopen_events), 1)
-
-            # Reviewer process stops / runner records exit 143 (SIGTERM)
-            worker_record["runner_status"] = "failed"
-            worker_record["exit_code"] = 143
-            worker_record["runner_signal"] = 15
-
-            state = {
-                "workers": {run_id: worker_record},
-                "queue": runtime_state_data["queue"],
-            }
-            observation = {
-                "changed": False,
-                "alive": False,
-                "meaningful_progress_advanced": False,
-                "commit_progress_advanced": False,
-                "lease_expired": False,
-                "stop": True,
-            }
-
-            with (
-                mock.patch.object(supervisor, "poll_worker_observation_stage", return_value=observation),
-                mock.patch.object(supervisor, "recover_lost_worker_lease") as mock_recover,
-            ):
-                changed = supervisor.poll_workers(config, state)
-                self.assertTrue(changed)
-                mock_recover.assert_not_called()
-                self.assertEqual(worker_record["status"], "completed")
-
-            # Supervisor restart / boot reconciliation also reaps cleanly without lost-lease
-            worker_boot = dict(worker_record)
-            state_boot = {"workers": {run_id: worker_boot}, "queue": runtime_state_data["queue"]}
-            with mock.patch.object(supervisor, "recover_lost_worker_lease") as mock_recover_boot:
-                boot_changed = supervisor.reconcile_runtime_on_boot(config, state_boot)
-                self.assertFalse(boot_changed)
-                mock_recover_boot.assert_not_called()
-
-            # Supervisor dispatch planning produces exactly ONE owner dispatch with negative findings
-            dispatch_event = supervisor.build_dispatch_event(
-                task,
-                "Antigravity",
-                supervisor.REASON_OWNED_READY,
-                {"TASK-RECOVERY-001": task},
-                activity_events=activity_events,
-                config=config,
-            )
-            self.assertEqual(dispatch_event.get("reason"), supervisor.REASON_OWNED_READY)
-            self.assertEqual(dispatch_event.get("target_agent"), "Antigravity")
-            self.assertEqual(dispatch_event.get("task_generation"), 1)
-            task_payload = dispatch_event.get("task", {})
-            self.assertIn("review_requeue_intent", task_payload)
-            self.assertEqual(task_payload["review_requeue_intent"]["reason"], reopen_message)
-            self.assertEqual(task_payload["next"], reopen_message)
-
-    def test_recovery_wins_race_stale_reopen_refused_by_cas(self) -> None:
-        """Prove that if recovery wins race and bumps generation, stale reopen is refused by CAS preflight."""
-        repo_root = Path(__file__).resolve().parents[1]
-        with tempfile.TemporaryDirectory() as temp_dir:
-            temp_path = Path(temp_dir)
-            central = temp_path / "central"
-            worktree = temp_path / "worktree"
-            runtime_dir = temp_path / "runtime"
-            runtime_dir.mkdir(parents=True)
-            task_state_event_log = runtime_dir / "task-state-events.jsonl"
-
-            central.mkdir(parents=True, exist_ok=True)
-            subprocess.run(["git", "init", "-q", "-b", "dev"], cwd=central, check=True)
-            subprocess.run(["git", "config", "user.name", "Tooling Admin"], cwd=central, check=True)
-            subprocess.run(["git", "config", "user.email", "admin@example.com"], cwd=central, check=True)
-            self._copy_tooling(repo_root, central)
-
-            # Recovery ALREADY bumped task generation 1 -> 2
-            initial_task = {
-                "id": "TASK-RACE-001",
-                "title": "Test Race Task",
-                "owner": "Antigravity",
-                "reviewer": "Codex2",
-                "status": "review",
-                "generation": 2,
-                "next": "Supervisor lost lease recovery pending",
-                "artifacts": [".orchestrator/supervisor.py"],
-                "target_repo": "pantheon",
-                "depends_on": [],
-            }
-            from scripts import ai_status
-            init_state = ai_status.default_state()
-            init_state["tasks"] = [initial_task]
-            (central / "ai-status.json").write_text(json.dumps(init_state, indent=2) + "\n")
-            (central / "ai-activity-log.jsonl").write_text(json.dumps({"event_id": "seed", "type": "seed"}) + "\n")
-
-            run_id = "codex-stale-run-1"
-            queue_event_id = "evt-codex-stale-run-1"
-            pid = 12345
-            pid_start_ticks = 67890
+            run_id = "codex-run-race-1"
+            queue_event_id = "evt-codex-race-1"
+            pid = 11111
+            ticks = 22222
             proc_gen = supervisor.worker_process_generation_id(
                 task_id="TASK-RACE-001",
                 worker_run_id=run_id,
                 queue_event_id=queue_event_id,
                 pid=pid,
-                pid_start_ticks=pid_start_ticks,
+                pid_start_ticks=ticks,
             )
 
             issued_runtime = {
@@ -11576,10 +11728,9 @@ class RealProcessReviewHandoffRecoveryFlowTests(unittest.TestCase):
                 "logical_agent_id": "codex2",
                 "provider": "codex",
                 "pid": pid,
-                "pid_start_ticks": pid_start_ticks,
+                "pid_start_ticks": ticks,
                 "process_generation": proc_gen,
                 "status": "running",
-                "runner_status": "running",
                 "task_generation": 1,
                 "lease_acquired_at": "2026-09-06T17:00:00Z",
                 "lease_expires_at": "2999-01-01T00:00:00Z",
@@ -11601,6 +11752,8 @@ class RealProcessReviewHandoffRecoveryFlowTests(unittest.TestCase):
                 "status_command_runtime": issued_runtime,
             }
 
+            runtime_state_path = central / ".orchestrator" / "state.json"
+            runtime_state_path.parent.mkdir(parents=True, exist_ok=True)
             runtime_state_data = {
                 "version": 2,
                 "workers": {run_id: worker_record},
@@ -11629,23 +11782,8 @@ class RealProcessReviewHandoffRecoveryFlowTests(unittest.TestCase):
                         }
                     }
                 },
-                "queue": {
-                    "events": {
-                        queue_event_id: {
-                            "status": "running",
-                            "intent": {
-                                "event_id": queue_event_id,
-                                "task_id": "TASK-RACE-001",
-                                "task_generation": 1,
-                                "target_agent": "codex2_1",
-                            },
-                        }
-                    }
-                },
+                "queue": {"events": {queue_event_id: {"status": "running", "intent": {"event_id": queue_event_id, "task_id": "TASK-RACE-001", "task_generation": 1, "target_agent": "codex2_1"}}}},
             }
-
-            runtime_state_path = central / ".orchestrator" / "state.json"
-            runtime_state_path.parent.mkdir(parents=True, exist_ok=True)
             runtime_state_path.write_text(json.dumps(runtime_state_data, indent=2) + "\n")
             (central / ".orchestrator" / "supervisor.json").write_text(json.dumps(runtime_state_data, indent=2) + "\n")
 
@@ -11657,7 +11795,6 @@ class RealProcessReviewHandoffRecoveryFlowTests(unittest.TestCase):
             command_sha = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=central, text=True).strip()
             issued_runtime["source_sha"] = command_sha
             runtime_state_path.write_text(json.dumps(runtime_state_data, indent=2) + "\n")
-            (central / ".orchestrator" / "supervisor.json").write_text(json.dumps(runtime_state_data, indent=2) + "\n")
 
             worktree.mkdir(parents=True, exist_ok=True)
             subprocess.run(["git", "init", "-q", "-b", "dev"], cwd=worktree, check=True)
@@ -11678,14 +11815,40 @@ class RealProcessReviewHandoffRecoveryFlowTests(unittest.TestCase):
             fake_gh.write_text("#!/bin/sh\nprintf '[]\\n'\n")
             fake_gh.chmod(0o755)
 
-            config = config_fixture(central)
-            config["task_state_store"] = {
-                "mode": "authoritative",
-                "event_log": str(task_state_event_log),
+            config = {
+                "paths": {
+                    "root": str(central),
+                    "state_file": str(runtime_state_path),
+                    "status_file": str(central / "ai-status.json"),
+                    "activity_log": str(central / "ai-activity-log.jsonl"),
+                    "approval_queue": str(central / ".orchestrator" / "approval-queue.json"),
+                },
+                "task_state_store": {
+                    "mode": "authoritative",
+                    "event_log": str(task_state_event_log),
+                },
+                "supervisor": {
+                    "ready_dispatch": {
+                        "enabled": True,
+                        "max_concurrent_workers": 2,
+                        "active_worker_statuses": ["running", "stalled"],
+                        "review_statuses": ["review"],
+                        "owned_statuses": ["todo", "in_progress"],
+                        "finalize_statuses": ["review_approved"],
+                        "dependency_done_statuses": ["done"],
+                        "unchanged_task_cooldown_seconds": 0,
+                    },
+                },
+                "agents": {
+                    "codex2_1": {"id": "codex2_1", "display_name": "Codex2", "account": "codex2", "role": "reviewer", "provider": "codex", "max_parallel": 2},
+                    "antigravity": {"id": "antigravity", "display_name": "Antigravity", "account": "antigravity_account", "role": "owner", "provider": "antigravity", "max_parallel": 2},
+                },
+                "providers": {
+                    "codex": {"delivery_mode": "codex", "account": "codex_account"},
+                    "antigravity": {"delivery_mode": "antigravity", "account": "antigravity_account"},
+                },
             }
-            config["paths"]["activity_log"] = str(central / "ai-activity-log.jsonl")
-            config["paths"]["status_file"] = str(central / "ai-status.json")
-            config["paths"]["approval_queue"] = str(central / ".orchestrator" / "approval-queue.json")
+            (central / ".orchestrator" / "approval-queue.json").write_text(json.dumps({"pending": [], "history": []}) + "\n")
             supervisor.write_status(config, init_state, source="test-init")
 
             child_env = os.environ.copy()
@@ -11701,10 +11864,6 @@ class RealProcessReviewHandoffRecoveryFlowTests(unittest.TestCase):
                 sort_keys=True,
                 separators=(",", ":"),
             )
-
-            central_runner_status = central / ".orchestrator" / "worker-runtime" / "status" / "run.json"
-            central_heartbeat = central / ".orchestrator" / "worker-runtime" / "heartbeats" / "run.json"
-
             child_env.update({
                 "AI_NAME": "Codex2",
                 "PANTHEON_STATUS_ROOT": str(central),
@@ -11712,8 +11871,8 @@ class RealProcessReviewHandoffRecoveryFlowTests(unittest.TestCase):
                 "ORCH_WORKSPACE_PATH": str(worktree),
                 "ORCH_RUN_ID": run_id,
                 "ORCH_TASK_ID": "TASK-RACE-001",
-                "ORCH_RUNNER_STATUS_PATH": str(central_runner_status),
-                "ORCH_HEARTBEAT_PATH": str(central_heartbeat),
+                "ORCH_RUNNER_STATUS_PATH": str(central / ".orchestrator" / "worker-runtime" / "status" / f"{run_id}.json"),
+                "ORCH_HEARTBEAT_PATH": str(central / ".orchestrator" / "worker-runtime" / "heartbeats" / f"{run_id}.json"),
                 "PANTHEON_COMMAND_ROOT": str(central),
                 "PANTHEON_COMMAND_RUNTIME_SHA": command_sha,
                 "PANTHEON_COMMAND_REMOTE": "ajoe734/pantheon",
@@ -11724,12 +11883,510 @@ class RealProcessReviewHandoffRecoveryFlowTests(unittest.TestCase):
                 "PATH": f"{fake_bin}:{child_env.get('PATH', '')}",
             })
 
-            cmd = ["bash", str(worktree / "scripts" / "ai-status.sh"), "reopen", "TASK-RACE-001", "Late stale reopen"]
-            proc = subprocess.run(cmd, env=child_env, cwd=worktree, capture_output=True, text=True)
-            self.assertNotEqual(proc.returncode, 0)
-            self.assertIn("active status command task generation mismatch", proc.stderr)
+            q_reopen = ctx.Queue()
+            p_reopen = ctx.Process(target=_child_reopen_worker, args=(str(worktree), child_env, q_reopen))
+            p_reopen.start()
+            res_reopen = q_reopen.get(timeout=10)
+            p_reopen.join(timeout=5)
+            self.assertEqual(res_reopen["returncode"], 0, f"Reopen failed: {res_reopen}")
+
+            # Now Process 2 runs recovery / poll_workers
+            state = {"workers": {run_id: worker_record}, "queue": runtime_state_data["queue"]}
+            q_rec = ctx.Queue()
+            p_rec = ctx.Process(target=_child_poll_worker, args=(config, state, q_rec))
+            p_rec.start()
+            res_rec = q_rec.get(timeout=10)
+            p_rec.join(timeout=5)
+            self.assertTrue(res_rec["changed"])
+            self.assertEqual(res_rec["state"]["workers"][run_id]["status"], "completed")
+
+            # Check task generation was NOT bumped
+            task_now = supervisor.load_status(config)["tasks"][0]
+            self.assertEqual(task_now["status"], "in_progress")
+            self.assertEqual(task_now["generation"], 1)
+            self.assertIn("review_requeue_intent", task_now)
+
+    def test_two_process_ordering2_recovery_fences_stale_reopen_refused_by_cas(self) -> None:
+        """Two-process race ordering 2: Recovery CAS fences generation 1 -> 2; concurrent stale reopen refused."""
+        ctx = multiprocessing.get_context("fork")
+        repo_root = Path(__file__).resolve().parents[1]
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_path = Path(temp_dir)
+            central = temp_path / "central"
+            worktree = temp_path / "worktree"
+            runtime_dir = temp_path / "runtime"
+            runtime_dir.mkdir(parents=True)
+            task_state_event_log = runtime_dir / "task-state-events.jsonl"
+
+            central.mkdir(parents=True, exist_ok=True)
+            subprocess.run(["git", "init", "-q", "-b", "dev"], cwd=central, check=True)
+            subprocess.run(["git", "config", "user.name", "Tooling Admin"], cwd=central, check=True)
+            subprocess.run(["git", "config", "user.email", "admin@example.com"], cwd=central, check=True)
+            self._copy_tooling(repo_root, central)
+
+            initial_task = {
+                "id": "TASK-RACE-002",
+                "title": "Test Race Task 2",
+                "owner": "Antigravity",
+                "reviewer": "Codex2",
+                "status": "review",
+                "generation": 1,
+                "next": "Ready for review",
+                "artifacts": [".orchestrator/supervisor.py"],
+                "target_repo": "pantheon",
+                "depends_on": [],
+            }
+            from scripts import ai_status
+            init_state = ai_status.default_state()
+            init_state["tasks"] = [initial_task]
+            (central / "ai-status.json").write_text(json.dumps(init_state, indent=2) + "\n")
+            (central / "ai-activity-log.jsonl").write_text(json.dumps({"event_id": "seed", "type": "seed"}) + "\n")
+
+            run_id = "codex-run-race-2"
+            queue_event_id = "evt-codex-race-2"
+            pid = 11111
+            ticks = 22222
+            proc_gen = supervisor.worker_process_generation_id(
+                task_id="TASK-RACE-002",
+                worker_run_id=run_id,
+                queue_event_id=queue_event_id,
+                pid=pid,
+                pid_start_ticks=ticks,
+            )
+
+            issued_runtime = {
+                "command_root": str(central),
+                "source_sha": "will_be_set",
+                "remote": "ajoe734/pantheon",
+                "base_ref": "origin/dev",
+            }
+
+            worker_record = {
+                "task_id": "TASK-RACE-002",
+                "run_id": run_id,
+                "queue_event_id": queue_event_id,
+                "agent_id": "codex2_1",
+                "logical_agent_id": "codex2",
+                "provider": "codex",
+                "pid": pid,
+                "pid_start_ticks": ticks,
+                "process_generation": proc_gen,
+                "status": "running",
+                "task_generation": 1,
+                "lease_acquired_at": "2026-09-06T17:00:00Z",
+                "lease_expires_at": "2999-01-01T00:00:00Z",
+                "request_snapshot": {
+                    "reason": supervisor.REASON_REVIEW_READY,
+                    "task_generation": 1,
+                    "metadata": {
+                        "task_generation": 1,
+                        "workspace_task_id": "TASK-RACE-002",
+                        "workspace_path": str(worktree),
+                        "workspace_repository_id": "pantheon",
+                        "workspace_source_root": str(central),
+                    },
+                },
+                "workspace_path": str(worktree),
+                "workspace_repository_id": "pantheon",
+                "workspace_source_root": str(central),
+                "status_root": str(central),
+                "status_command_runtime": issued_runtime,
+            }
+
+            runtime_state_path = central / ".orchestrator" / "state.json"
+            runtime_state_path.parent.mkdir(parents=True, exist_ok=True)
+            runtime_state_data = {
+                "version": 2,
+                "workers": {run_id: worker_record},
+                "worktree_leases": {
+                    "leases": {
+                        run_id: {
+                            "task_id": "TASK-RACE-002",
+                            "repository_id": "pantheon",
+                            "status_root": str(central),
+                            "path": str(worktree),
+                        }
+                    }
+                },
+                "worker_worktrees": {
+                    "leases": {
+                        "TASK-RACE-002": {
+                            "task_id": "TASK-RACE-002",
+                            "workspace_task_id": "TASK-RACE-002",
+                            "branch": "task/TASK-RACE-002",
+                            "path": str(worktree),
+                            "repository_id": "pantheon",
+                            "status_root": str(central),
+                            "last_queue_event_id": queue_event_id,
+                            "last_target_agent": "Codex2",
+                            "last_used_at": "2026-09-06T17:00:00Z",
+                        }
+                    }
+                },
+                "queue": {"events": {queue_event_id: {"status": "running", "intent": {"event_id": queue_event_id, "task_id": "TASK-RACE-002", "task_generation": 1, "target_agent": "codex2_1"}}}},
+            }
+            runtime_state_path.write_text(json.dumps(runtime_state_data, indent=2) + "\n")
+            (central / ".orchestrator" / "supervisor.json").write_text(json.dumps(runtime_state_data, indent=2) + "\n")
+
+            (central / ".gitignore").write_text(".orchestrator/state.json\n.orchestrator/supervisor.json\nai-status.json\nai-activity-log.jsonl\n")
+            subprocess.run(["git", "add", "."], cwd=central, check=True)
+            subprocess.run(["git", "commit", "-q", "-m", "install tooling"], cwd=central, check=True)
+            subprocess.run(["git", "remote", "add", "origin", "https://github.com/ajoe734/pantheon.git"], cwd=central, check=True)
+            subprocess.run(["git", "update-ref", "refs/remotes/origin/dev", "HEAD"], cwd=central, check=True)
+            command_sha = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=central, text=True).strip()
+            issued_runtime["source_sha"] = command_sha
+            runtime_state_path.write_text(json.dumps(runtime_state_data, indent=2) + "\n")
+
+            worktree.mkdir(parents=True, exist_ok=True)
+            subprocess.run(["git", "init", "-q", "-b", "dev"], cwd=worktree, check=True)
+            subprocess.run(["git", "config", "user.name", "Test Reviewer"], cwd=worktree, check=True)
+            subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=worktree, check=True)
+            self._copy_tooling(repo_root, worktree)
+            (worktree / "README.md").write_text("# Test\n")
+            subprocess.run(["git", "add", "."], cwd=worktree, check=True)
+            subprocess.run(["git", "commit", "-q", "-m", "initial commit"], cwd=worktree, check=True)
+            subprocess.run(["git", "remote", "add", "origin", "https://github.com/ajoe734/pantheon.git"], cwd=worktree, check=True)
+            subprocess.run(["git", "update-ref", "refs/remotes/origin/dev", "HEAD"], cwd=worktree, check=True)
+            subprocess.run(["git", "branch", "task/TASK-RACE-002"], cwd=worktree, check=True)
+            subprocess.run(["git", "checkout", "task/TASK-RACE-002"], cwd=worktree, check=True)
+
+            fake_bin = temp_path / "bin"
+            fake_bin.mkdir(parents=True)
+            fake_gh = fake_bin / "gh"
+            fake_gh.write_text("#!/bin/sh\nprintf '[]\\n'\n")
+            fake_gh.chmod(0o755)
+
+            config = {
+                "paths": {
+                    "root": str(central),
+                    "state_file": str(runtime_state_path),
+                    "status_file": str(central / "ai-status.json"),
+                    "activity_log": str(central / "ai-activity-log.jsonl"),
+                    "approval_queue": str(central / ".orchestrator" / "approval-queue.json"),
+                },
+                "task_state_store": {
+                    "mode": "authoritative",
+                    "event_log": str(task_state_event_log),
+                },
+                "supervisor": {
+                    "ready_dispatch": {
+                        "enabled": True,
+                        "max_concurrent_workers": 2,
+                        "active_worker_statuses": ["running", "stalled"],
+                        "review_statuses": ["review"],
+                        "owned_statuses": ["todo", "in_progress"],
+                        "finalize_statuses": ["review_approved"],
+                        "dependency_done_statuses": ["done"],
+                        "unchanged_task_cooldown_seconds": 0,
+                    },
+                },
+                "agents": {
+                    "codex2_1": {"id": "codex2_1", "display_name": "Codex2", "account": "codex2", "role": "reviewer", "provider": "codex", "max_parallel": 2},
+                    "antigravity": {"id": "antigravity", "display_name": "Antigravity", "account": "antigravity_account", "role": "owner", "provider": "antigravity", "max_parallel": 2},
+                },
+                "providers": {
+                    "codex": {"delivery_mode": "codex", "account": "codex_account"},
+                    "antigravity": {"delivery_mode": "antigravity", "account": "antigravity_account"},
+                },
+            }
+            (central / ".orchestrator" / "approval-queue.json").write_text(json.dumps({"pending": [], "history": []}) + "\n")
+            supervisor.write_status(config, init_state, source="test-init")
+
+            child_env = os.environ.copy()
+            for k in list(child_env.keys()):
+                if k.startswith("ORCH_") or k.startswith("PANTHEON_") or k == "AI_NAME":
+                    child_env.pop(k, None)
+
+            identity_json = json.dumps(
+                common.canonical_task_state_identity_for_paths(
+                    status_root=central,
+                    event_log=task_state_event_log,
+                ),
+                sort_keys=True,
+                separators=(",", ":"),
+            )
+            child_env.update({
+                "AI_NAME": "Codex2",
+                "PANTHEON_STATUS_ROOT": str(central),
+                "PANTHEON_WORKTREE_ROOT": str(worktree),
+                "ORCH_WORKSPACE_PATH": str(worktree),
+                "ORCH_RUN_ID": run_id,
+                "ORCH_TASK_ID": "TASK-RACE-002",
+                "ORCH_RUNNER_STATUS_PATH": str(central / ".orchestrator" / "worker-runtime" / "status" / f"{run_id}.json"),
+                "ORCH_HEARTBEAT_PATH": str(central / ".orchestrator" / "worker-runtime" / "heartbeats" / f"{run_id}.json"),
+                "PANTHEON_COMMAND_ROOT": str(central),
+                "PANTHEON_COMMAND_RUNTIME_SHA": command_sha,
+                "PANTHEON_COMMAND_REMOTE": "ajoe734/pantheon",
+                "PANTHEON_COMMAND_BASE_REF": "origin/dev",
+                "PANTHEON_TASK_STATE_STORE_MODE": "authoritative",
+                "PANTHEON_TASK_STATE_EVENT_LOG": str(task_state_event_log),
+                common.CANONICAL_TASK_STATE_IDENTITY_ENV: identity_json,
+                "PATH": f"{fake_bin}:{child_env.get('PATH', '')}",
+            })
+
+            # Process 1 recovers and fences first
+            q_rec = ctx.Queue()
+            state2 = {"workers": {run_id: worker_record}, "queue": runtime_state_data["queue"]}
+            p_rec2 = ctx.Process(target=_child_recovery_worker, args=(config, state2, worker_record, q_rec))
+            p_rec2.start()
+            res_rec2 = q_rec.get(timeout=10)
+            p_rec2.join(timeout=5)
+            self.assertTrue(res_rec2["result"])
+
+            # Verify task is now fenced at generation 2
+            task2_fenced = [t for t in supervisor.load_status(config)["tasks"] if t["id"] == "TASK-RACE-002"][0]
+            self.assertEqual(task2_fenced["generation"], 2)
+            self.assertIn("worker_recovery", task2_fenced)
+
+            # Process 2 attempts reopen with stale generation 1
+            q_reopen = ctx.Queue()
+            p_reopen2 = ctx.Process(target=_child_stale_reopen, args=(str(worktree), child_env, q_reopen))
+            p_reopen2.start()
+            res_reopen2 = q_reopen.get(timeout=10)
+            p_reopen2.join(timeout=5)
+
+            # Stale reopen MUST be refused by CAS preflight
+            self.assertNotEqual(res_reopen2["returncode"], 0)
+            self.assertIn("active status command task generation mismatch", res_reopen2["stderr"])
+
+    def test_crash_window_reopen_commit_runner_sigkill_restart(self) -> None:
+        """Crash window: Reopen committed, runner abruptly killed via SIGKILL; boot restart reaps cleanly without lost lease."""
+        repo_root = Path(__file__).resolve().parents[1]
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_path = Path(temp_dir)
+            central = temp_path / "central"
+            worktree = temp_path / "worktree"
+            runtime_dir = temp_path / "runtime"
+            runtime_dir.mkdir(parents=True)
+            task_state_event_log = runtime_dir / "task-state-events.jsonl"
+
+            central.mkdir(parents=True, exist_ok=True)
+            subprocess.run(["git", "init", "-q", "-b", "dev"], cwd=central, check=True)
+            subprocess.run(["git", "config", "user.name", "Tooling Admin"], cwd=central, check=True)
+            subprocess.run(["git", "config", "user.email", "admin@example.com"], cwd=central, check=True)
+            self._copy_tooling(repo_root, central)
+
+            runner_proc = subprocess.Popen(
+                [sys.executable, "-c", "import time; time.sleep(60)"]
+            )
+            try:
+                real_pid = runner_proc.pid
+                real_ticks = supervisor.worker_pid_start_ticks(real_pid)
+                self.assertIsNotNone(real_ticks)
+
+                run_id = f"codex-run-crash-{real_pid}"
+                queue_event_id = f"evt-codex-crash-{real_pid}"
+                proc_gen = supervisor.worker_process_generation_id(
+                    task_id="TASK-CRASH-001",
+                    worker_run_id=run_id,
+                    queue_event_id=queue_event_id,
+                    pid=real_pid,
+                    pid_start_ticks=real_ticks,
+                )
+
+                initial_task = {
+                    "id": "TASK-CRASH-001",
+                    "title": "Test Crash Task",
+                    "owner": "Antigravity",
+                    "reviewer": "Codex2",
+                    "status": "review",
+                    "generation": 1,
+                    "next": "Ready for review",
+                    "artifacts": [".orchestrator/supervisor.py"],
+                    "target_repo": "pantheon",
+                    "depends_on": [],
+                }
+                from scripts import ai_status
+                init_state = ai_status.default_state()
+                init_state["tasks"] = [initial_task]
+                (central / "ai-status.json").write_text(json.dumps(init_state, indent=2) + "\n")
+                (central / "ai-activity-log.jsonl").write_text(json.dumps({"event_id": "seed", "type": "seed"}) + "\n")
+
+                central_runner_status = central / ".orchestrator" / "worker-runtime" / "status" / f"{run_id}.json"
+                central_runner_status.parent.mkdir(parents=True, exist_ok=True)
+                central_heartbeat = central / ".orchestrator" / "worker-runtime" / "heartbeats" / f"{run_id}.json"
+                central_heartbeat.parent.mkdir(parents=True, exist_ok=True)
+
+                worker_record = {
+                    "task_id": "TASK-CRASH-001",
+                    "run_id": run_id,
+                    "queue_event_id": queue_event_id,
+                    "agent_id": "codex2_1",
+                    "logical_agent_id": "codex2",
+                    "provider": "codex",
+                    "pid": real_pid,
+                    "pid_start_ticks": real_ticks,
+                    "process_generation": proc_gen,
+                    "status": "running",
+                    "runner_status": "running",
+                    "runner_status_path": str(central_runner_status),
+                    "heartbeat_path": str(central_heartbeat),
+                    "task_generation": 1,
+                    "lease_acquired_at": "2026-09-06T17:00:00Z",
+                    "lease_expires_at": "2999-01-01T00:00:00Z",
+                    "request_snapshot": {
+                        "reason": supervisor.REASON_REVIEW_READY,
+                        "task_generation": 1,
+                        "metadata": {
+                            "task_generation": 1,
+                            "workspace_task_id": "TASK-CRASH-001",
+                            "workspace_path": str(worktree),
+                            "workspace_repository_id": "pantheon",
+                            "workspace_source_root": str(central),
+                        },
+                    },
+                    "workspace_path": str(worktree),
+                    "workspace_repository_id": "pantheon",
+                    "workspace_source_root": str(central),
+                    "status_root": str(central),
+                    "status_command_runtime": {
+                        "command_root": str(central),
+                        "source_sha": "will_be_set",
+                        "remote": "ajoe734/pantheon",
+                        "base_ref": "origin/dev",
+                    },
+                }
+
+                runtime_state_data = {
+                    "version": 2,
+                    "workers": {run_id: worker_record},
+                    "worktree_leases": {"leases": {run_id: {"task_id": "TASK-CRASH-001", "repository_id": "pantheon", "status_root": str(central), "path": str(worktree)}}},
+                    "worker_worktrees": {"leases": {"TASK-CRASH-001": {"task_id": "TASK-CRASH-001", "workspace_task_id": "TASK-CRASH-001", "branch": "task/TASK-CRASH-001", "path": str(worktree), "repository_id": "pantheon", "status_root": str(central), "last_queue_event_id": queue_event_id, "last_target_agent": "Codex2", "last_used_at": "2026-09-06T17:00:00Z"}}},
+                    "queue": {"events": {queue_event_id: {"status": "running", "intent": {"event_id": queue_event_id, "task_id": "TASK-CRASH-001", "task_generation": 1, "target_agent": "codex2_1"}}}},
+                }
+
+                runtime_state_path = central / ".orchestrator" / "state.json"
+                runtime_state_path.parent.mkdir(parents=True, exist_ok=True)
+                runtime_state_path.write_text(json.dumps(runtime_state_data, indent=2) + "\n")
+                (central / ".orchestrator" / "supervisor.json").write_text(json.dumps(runtime_state_data, indent=2) + "\n")
+
+                (central / ".gitignore").write_text(".orchestrator/state.json\n.orchestrator/supervisor.json\nai-status.json\nai-activity-log.jsonl\n")
+                subprocess.run(["git", "add", "."], cwd=central, check=True)
+                subprocess.run(["git", "commit", "-q", "-m", "install tooling"], cwd=central, check=True)
+                subprocess.run(["git", "remote", "add", "origin", "https://github.com/ajoe734/pantheon.git"], cwd=central, check=True)
+                subprocess.run(["git", "update-ref", "refs/remotes/origin/dev", "HEAD"], cwd=central, check=True)
+                command_sha = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=central, text=True).strip()
+                worker_record["status_command_runtime"]["source_sha"] = command_sha
+                runtime_state_path.write_text(json.dumps(runtime_state_data, indent=2) + "\n")
+
+                worktree.mkdir(parents=True, exist_ok=True)
+                subprocess.run(["git", "init", "-q", "-b", "dev"], cwd=worktree, check=True)
+                subprocess.run(["git", "config", "user.name", "Test Reviewer"], cwd=worktree, check=True)
+                subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=worktree, check=True)
+                self._copy_tooling(repo_root, worktree)
+                (worktree / "README.md").write_text("# Test\n")
+                subprocess.run(["git", "add", "."], cwd=worktree, check=True)
+                subprocess.run(["git", "commit", "-q", "-m", "initial commit"], cwd=worktree, check=True)
+                subprocess.run(["git", "remote", "add", "origin", "https://github.com/ajoe734/pantheon.git"], cwd=worktree, check=True)
+                subprocess.run(["git", "update-ref", "refs/remotes/origin/dev", "HEAD"], cwd=worktree, check=True)
+                subprocess.run(["git", "branch", "task/TASK-CRASH-001"], cwd=worktree, check=True)
+                subprocess.run(["git", "checkout", "task/TASK-CRASH-001"], cwd=worktree, check=True)
+
+                fake_bin = temp_path / "bin"
+                fake_bin.mkdir(parents=True)
+                fake_gh = fake_bin / "gh"
+                fake_gh.write_text("#!/bin/sh\nprintf '[]\\n'\n")
+                fake_gh.chmod(0o755)
+
+                config = {
+                    "paths": {
+                        "root": str(central),
+                        "state_file": str(runtime_state_path),
+                        "status_file": str(central / "ai-status.json"),
+                        "activity_log": str(central / "ai-activity-log.jsonl"),
+                        "approval_queue": str(central / ".orchestrator" / "approval-queue.json"),
+                    },
+                    "task_state_store": {
+                        "mode": "authoritative",
+                        "event_log": str(task_state_event_log),
+                    },
+                    "supervisor": {
+                        "ready_dispatch": {
+                            "enabled": True,
+                            "max_concurrent_workers": 2,
+                            "active_worker_statuses": ["running", "stalled"],
+                            "review_statuses": ["review"],
+                            "owned_statuses": ["todo", "in_progress"],
+                            "finalize_statuses": ["review_approved"],
+                            "dependency_done_statuses": ["done"],
+                            "unchanged_task_cooldown_seconds": 0,
+                        },
+                    },
+                    "agents": {
+                        "codex2_1": {"id": "codex2_1", "display_name": "Codex2", "account": "codex2", "role": "reviewer", "provider": "codex", "max_parallel": 2},
+                        "antigravity": {"id": "antigravity", "display_name": "Antigravity", "account": "antigravity_account", "role": "owner", "provider": "antigravity", "max_parallel": 2},
+                    },
+                    "providers": {
+                        "codex": {"delivery_mode": "codex", "account": "codex_account"},
+                        "antigravity": {"delivery_mode": "antigravity", "account": "antigravity_account"},
+                    },
+                }
+                (central / ".orchestrator" / "approval-queue.json").write_text(json.dumps({"pending": [], "history": []}) + "\n")
+                supervisor.write_status(config, init_state, source="test-init")
+
+                child_env = os.environ.copy()
+                for k in list(child_env.keys()):
+                    if k.startswith("ORCH_") or k.startswith("PANTHEON_") or k == "AI_NAME":
+                        child_env.pop(k, None)
+
+                identity_json = json.dumps(
+                    common.canonical_task_state_identity_for_paths(
+                        status_root=central,
+                        event_log=task_state_event_log,
+                    ),
+                    sort_keys=True,
+                    separators=(",", ":"),
+                )
+                child_env.update({
+                    "AI_NAME": "Codex2",
+                    "PANTHEON_STATUS_ROOT": str(central),
+                    "PANTHEON_WORKTREE_ROOT": str(worktree),
+                    "ORCH_WORKSPACE_PATH": str(worktree),
+                    "ORCH_RUN_ID": run_id,
+                    "ORCH_TASK_ID": "TASK-CRASH-001",
+                    "ORCH_RUNNER_STATUS_PATH": str(central_runner_status),
+                    "ORCH_HEARTBEAT_PATH": str(central_heartbeat),
+                    "PANTHEON_COMMAND_ROOT": str(central),
+                    "PANTHEON_COMMAND_RUNTIME_SHA": command_sha,
+                    "PANTHEON_COMMAND_REMOTE": "ajoe734/pantheon",
+                    "PANTHEON_COMMAND_BASE_REF": "origin/dev",
+                    "PANTHEON_TASK_STATE_STORE_MODE": "authoritative",
+                    "PANTHEON_TASK_STATE_EVENT_LOG": str(task_state_event_log),
+                    common.CANONICAL_TASK_STATE_IDENTITY_ENV: identity_json,
+                    "PATH": f"{fake_bin}:{child_env.get('PATH', '')}",
+                })
+
+                reopen_msg = "Crash window rejection"
+                cmd = ["bash", str(worktree / "scripts" / "ai-status.sh"), "reopen", "TASK-CRASH-001", reopen_msg]
+                proc = subprocess.run(cmd, env=child_env, cwd=worktree, capture_output=True, text=True)
+                self.assertEqual(proc.returncode, 0)
+
+                # Simulate sudden SIGKILL to runner (unclean termination, no graceful exit_code written)
+                runner_proc.kill()
+                runner_proc.wait(timeout=5)
+                self.assertFalse(supervisor.pid_is_alive(real_pid))
+
+                # Fresh supervisor boots from disk state (state.json has worker in "running" with dead PID)
+                fresh_state = json.loads(runtime_state_path.read_text())
+                boot_changed = supervisor.reconcile_runtime_on_boot(config, fresh_state)
+                self.assertTrue(boot_changed)
+
+                # Verify worker is reaped as "completed" (not lost-lease)
+                reaped_worker = fresh_state["workers"][run_id]
+                self.assertEqual(reaped_worker["status"], "completed")
+                self.assertNotIn("governance_lease_guard", reaped_worker)
+
+                # Task in TaskStore is untouched generation 1
+                st = supervisor.load_status(config)
+                tk = [t for t in st["tasks"] if t["id"] == "TASK-CRASH-001"][0]
+                self.assertEqual(tk["generation"], 1)
+                self.assertEqual(tk["status"], "in_progress")
+                self.assertEqual(tk["review_requeue_intent"]["reason"], reopen_msg)
+            finally:
+                if runner_proc.poll() is None:
+                    runner_proc.kill()
+                    runner_proc.wait(timeout=2)
 
 
 if __name__ == "__main__":
     unittest.main()
-
