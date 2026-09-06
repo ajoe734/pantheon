@@ -7089,8 +7089,8 @@ def verify_stale_archive_resurrection_proof(
 
     # The exception proves import plus role recovery only. Unknown mutations
     # must fail closed too, rather than relying on an exhaustive denylist of
-    # every current and future lifecycle/delivery command. Notes are read-only
-    # observations; the import and assignment events are authenticated below.
+    # every current and future lifecycle/delivery command. Notes update only
+    # narrative; the import and assignment events are authenticated below.
     role_recovery_types = {
         "assign", "task_imported", "import", "task_reentered",
         "task_reassigned", "task_assigned", "note",

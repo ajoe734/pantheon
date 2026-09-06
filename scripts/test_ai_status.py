@@ -15728,8 +15728,9 @@ class TestStaleArchiveResurrectionContract(unittest.TestCase):
             if not k.startswith("PANTHEON_") and not k.startswith("ORCH_")
         }
         base_env.update(self._current_reconcile_env)
-        base_env.setdefault("AI_NAME", "Human/Ops")
-        base_env.setdefault("PANTHEON_LOCAL_HUMAN_OPS", "1")
+        # Fixture authority must not depend on the invoking worker's identity.
+        base_env["AI_NAME"] = "Human/Ops"
+        base_env["PANTHEON_LOCAL_HUMAN_OPS"] = "1"
         if env_overrides:
             base_env.update(env_overrides)
         base_env["PYTHONPATH"] = f"{evidence_root}:{evidence_root / 'scripts'}:{evidence_root / '.orchestrator'}"
@@ -15832,9 +15833,13 @@ class TestStaleArchiveResurrectionContract(unittest.TestCase):
             _command_reconcile_merged_done(state, ["REG-002", "Must fail."])
         self.assertEqual(state, before)
 
+    def _prepend_activity_fixture(self, event: dict[str, Any]) -> None:
+        # Import/historical fixtures precede the existing reassignment suffix.
+        self.log_file.write_bytes(json.dumps(event).encode() + b"\n" + self.log_file.read_bytes())
+
     def test_negative_import_event_unauthenticated_id(self) -> None:
         state, snapshot, config, orig_sha, rec_env = self._build_fixture(import_event=False)
-        ai_status.append_log(
+        self._prepend_activity_fixture(
             {
                 "event_id": "arbitrary-unverified-import-id",
                 "ts": "2026-08-01T12:00:00Z",
@@ -15881,7 +15886,7 @@ class TestStaleArchiveResurrectionContract(unittest.TestCase):
             "message": "Operator imported task",
         }
         ev_payload["event_id"] = f"human-ops-import-{ai_status._canonical_json_sha256(ev_payload)}"
-        ai_status.append_log(ev_payload)
+        self._prepend_activity_fixture(ev_payload)
         active_task = ai_status.get_task(state, "REG-002")
         diag = ai_status.archive_resurrection_diagnostic(active_task, snapshot)
         self.assertFalse(diag["eligible"])
@@ -15903,7 +15908,7 @@ class TestStaleArchiveResurrectionContract(unittest.TestCase):
             "message": "Operator imported task",
         }
         ev_payload["event_id"] = f"human-ops-import-{ai_status._canonical_json_sha256(ev_payload)}"
-        ai_status.append_log(ev_payload)
+        self._prepend_activity_fixture(ev_payload)
         active_task = ai_status.get_task(state, "REG-002")
         diag = ai_status.archive_resurrection_diagnostic(active_task, snapshot)
         self.assertFalse(diag["eligible"])
@@ -15925,7 +15930,7 @@ class TestStaleArchiveResurrectionContract(unittest.TestCase):
             "message": "Operator imported task",
         }
         ev_payload["event_id"] = f"human-ops-import-{ai_status._canonical_json_sha256(ev_payload)}"
-        ai_status.append_log(ev_payload)
+        self._prepend_activity_fixture(ev_payload)
         active_task = ai_status.get_task(state, "REG-002")
         diag = ai_status.archive_resurrection_diagnostic(active_task, snapshot)
         self.assertFalse(diag["eligible"])
@@ -15948,7 +15953,7 @@ class TestStaleArchiveResurrectionContract(unittest.TestCase):
             "message": "Operator imported task",
         }
         ev_payload["event_id"] = f"human-ops-import-{ai_status._canonical_json_sha256(ev_payload)}"
-        ai_status.append_log(ev_payload)
+        self._prepend_activity_fixture(ev_payload)
         active_task = ai_status.get_task(state, "REG-002")
         diag = ai_status.archive_resurrection_diagnostic(active_task, snapshot)
         self.assertFalse(diag["eligible"])
@@ -16043,7 +16048,7 @@ class TestStaleArchiveResurrectionContract(unittest.TestCase):
         active_task = ai_status.get_task(state, "REG-002")
         diag = ai_status.archive_resurrection_diagnostic(active_task, snapshot)
         self.assertFalse(diag["eligible"])
-        self.assertIn("stale resurrection lineage timestamp ordering is ambiguous", diag["reason"])
+        self.assertIn("stale resurrection lineage audit log timestamp ordering is ambiguous", diag["reason"])
 
         before = deepcopy(state)
         with (
@@ -16051,7 +16056,7 @@ class TestStaleArchiveResurrectionContract(unittest.TestCase):
             mock.patch.object(ai_status, "ROOT", self.root / "pantheon"),
             mock.patch.object(ai_status, "load_config", return_value=config),
             mock.patch.object(ai_status, "validate_protected_closeout_transition", return_value=None),
-            self.assertRaisesRegex(RuntimeError, "stale resurrection lineage timestamp ordering is ambiguous"),
+            self.assertRaisesRegex(RuntimeError, "stale resurrection lineage audit log timestamp ordering is ambiguous"),
         ):
             _command_reconcile_merged_done(state, ["REG-002", "Must fail."])
         self.assertEqual(state, before)
@@ -16178,7 +16183,8 @@ class TestStaleArchiveResurrectionContract(unittest.TestCase):
         before_audit = self.log_file.read_bytes()
         archive_path = task_archive.archive_task_path("REG-002")
         before_archive = archive_path.read_bytes()
-        before_runtime = ai_status.ORCHESTRATOR_STATE_FILE.read_bytes()
+        runtime_path = ai_status.ORCHESTRATOR_STATE_FILE
+        before_runtime = runtime_path.read_bytes() if runtime_path.exists() else None
         result = self._run_cli(["reconcile_merged_done", "REG-002", "Must retain genuine work"])
         self.assertNotEqual(result.returncode, 0, result.stdout)
         self.assertIn(expected_error, result.stderr)
@@ -16186,7 +16192,7 @@ class TestStaleArchiveResurrectionContract(unittest.TestCase):
         self.assertEqual(self.event_log_file.read_bytes(), before_journal)
         self.assertEqual(self.log_file.read_bytes(), before_audit)
         self.assertEqual(archive_path.read_bytes(), before_archive)
-        self.assertEqual(ai_status.ORCHESTRATOR_STATE_FILE.read_bytes(), before_runtime)
+        self.assertEqual(runtime_path.read_bytes() if runtime_path.exists() else None, before_runtime)
 
     def test_real_cli_milestone_prevents_retirement(self) -> None:
         self._build_fixture()
@@ -16226,20 +16232,20 @@ class TestStaleArchiveResurrectionContract(unittest.TestCase):
                     self._assert_cli_retirement_refused("timestamp ordering is ambiguous")
 
     def test_real_cli_ordered_historical_prefix_remains_eligible(self) -> None:
-        self._build_fixture()
+        self._build_fixture(archive_gen=2, active_gen=3)
         valid_audit = self.log_file.read_bytes()
         historical = audited_reassignment_event(
             task_id="REG-002", old_owner="Codex", new_owner="Codex",
             old_reviewer="Claude", new_reviewer="Codex2",
             timestamp="2026-07-31T12:00:00Z", message="Historical reviewer assignment",
-            actor="Human/Ops", old_generation=0, new_generation=1,
+            actor="Human/Ops", old_generation=1, new_generation=2,
         )
         self.log_file.write_bytes(json.dumps(historical).encode() + b"\n" + valid_audit)
         result = self._run_cli(["reconcile_merged_done", "REG-002", "Keep historical prefix"])
         self.assertEqual(result.returncode, 0, result.stderr)
         state = ai_status.load_state()
         self.assertIsNone(ai_status.get_task(state, "REG-002"))
-        self.assertEqual(state[ai_status.TERMINAL_FACTS_KEY]["REG-002"]["generation"], 1)
+        self.assertEqual(state[ai_status.TERMINAL_FACTS_KEY]["REG-002"]["generation"], 2)
 
     def test_audit_digest_binds_full_history_and_payload(self) -> None:
         events = [{"task_id": "REG-002", "ts": "2026-07-31T12:00:00Z", "generation": 1}]
@@ -16373,8 +16379,8 @@ class TestStaleArchiveResurrectionContract(unittest.TestCase):
             if not k.startswith("PANTHEON_") and not k.startswith("ORCH_")
         }
         base_env.update(rec_env)
-        base_env.setdefault("AI_NAME", "Human/Ops")
-        base_env.setdefault("PANTHEON_LOCAL_HUMAN_OPS", "1")
+        base_env["AI_NAME"] = "Human/Ops"
+        base_env["PANTHEON_LOCAL_HUMAN_OPS"] = "1"
         base_env["PANTHEON_TEST_PREFLIGHT_BARRIER"] = str(barrier)
         base_env["PYTHONPATH"] = f"{evidence_root}:{evidence_root / 'scripts'}:{evidence_root / '.orchestrator'}"
 
@@ -16434,8 +16440,8 @@ class TestStaleArchiveResurrectionContract(unittest.TestCase):
             if not k.startswith("PANTHEON_") and not k.startswith("ORCH_")
         }
         base_env.update(rec_env)
-        base_env.setdefault("AI_NAME", "Human/Ops")
-        base_env.setdefault("PANTHEON_LOCAL_HUMAN_OPS", "1")
+        base_env["AI_NAME"] = "Human/Ops"
+        base_env["PANTHEON_LOCAL_HUMAN_OPS"] = "1"
         base_env["PANTHEON_TEST_PREFLIGHT_BARRIER"] = str(barrier)
         base_env["PYTHONPATH"] = f"{evidence_root}:{evidence_root / 'scripts'}:{evidence_root / '.orchestrator'}"
 
@@ -16645,7 +16651,10 @@ class TestStaleArchiveResurrectionContract(unittest.TestCase):
             timestamp="2026-07-19T23:52:06Z",
             message="Auto-reassign reviewer to Codex2",
         )
-        ai_status.append_log(gen1_reassign)
+        # Historical evidence belongs before the current recovery suffix.
+        self.log_file.write_bytes(
+            json.dumps(gen1_reassign).encode() + b"\n" + self.log_file.read_bytes()
+        )
         active_task = ai_status.get_task(state, "REG-002")
         diag = ai_status.archive_resurrection_diagnostic(active_task, snapshot)
         self.assertFalse(diag["eligible"])

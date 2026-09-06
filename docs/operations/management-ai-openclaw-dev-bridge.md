@@ -173,7 +173,9 @@ accompanied by [LEGACY_CLOSEOUT_RECONCILIATION.md](../04/pantheon_first_release_
   ```
 - **Scope identity**: The active row must exactly match the immutable archive snapshot in
   `title`, `phase`, `depends_on`, `dependency_tracks`, `artifacts`, `acceptance`,
-  `target_repo`, `task_class`, `dev_bridge`, and `execution_authorization`.
+  `target_repo`, `task_class`, `dev_bridge`, `execution_resources`,
+  `execution_authorization`, and `completion_tracks`. A new functional or hosted
+  milestone cannot be discarded by recovering an earlier completed delivery.
 - **Delivery identity**: Merged delivery evidence and review evidence must match the archive's
   recorded delivery and review bindings byte-identically.
 - **Lineage proof**: Complete, unbroken, authenticated ordered reassignment events
@@ -181,6 +183,14 @@ accompanied by [LEGACY_CLOSEOUT_RECONCILIATION.md](../04/pantheon_first_release_
   accounting for every generation hop and role change between the completed archive
   and the active row. Any gap, fork, forged event, out-of-order timestamp, or intervening
   reopen/work event causes proof verification to fail closed.
+  The complete task audit sequence must have valid, nondecreasing timestamps;
+  a backdated or undated event appended after import cannot become historical
+  evidence. Ordered historical prefixes remain subject to the existing
+  historical reassignment checks. After the archive, only authenticated import
+  and role changes plus narrative notes are admitted; other lifecycle/delivery
+  events (including milestone, operator acceptance, supersede, and unknown
+  mutation types) reject recovery. Preflight binds all task event payloads in
+  source order, including the historical prefix, for transaction revalidation.
 - **Execution isolation**: No active worker, running process, reserved launch, worktree lease,
   or pending queue event may exist for the target task.
 
