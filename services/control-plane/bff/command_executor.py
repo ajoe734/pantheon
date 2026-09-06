@@ -247,7 +247,7 @@ def _post_json(
     data = json.dumps(payload).encode("utf-8")
     headers: Dict[str, str] = {"Content-Type": "application/json"}
     if auth_token:
-        headers["Authorization"] = f"Bearer {auth_token}"
+        headers["Authorization"] = auth_token if auth_token.startswith("Bearer ") else f"Bearer {auth_token}"
     if mfa_token:
         headers["X-MFA-Token"] = mfa_token
     req = urllib.request.Request(
@@ -278,7 +278,7 @@ def _get_json(
     """GET JSON from an owner API for post-error receipt reconciliation."""
     headers: Dict[str, str] = {"Accept": "application/json"}
     if auth_token:
-        headers["Authorization"] = f"Bearer {auth_token}"
+        headers["Authorization"] = auth_token if auth_token.startswith("Bearer ") else f"Bearer {auth_token}"
     if mfa_token:
         headers["X-MFA-Token"] = mfa_token
     req = urllib.request.Request(url, headers=headers, method="GET")
@@ -1960,8 +1960,8 @@ def execute_command_with_status(
             "entity_type": exc.entity_type,
             "started_at": started_at,
             "failed_at": _utc_now(),
-            "downstream_status": 422,
-            "retryable": False,
+            "downstream_status": exc.downstream_status,
+            "retryable": exc.retryable,
             "userActionable": False,
             "suggestion": exc.suggestion,
         }
