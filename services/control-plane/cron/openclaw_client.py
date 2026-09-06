@@ -21,7 +21,7 @@ Transport = Callable[[dict[str, Any]], dict[str, Any]]
 
 _DEFAULT_CRON_POLL_TIMEOUT = 30.0
 _DEFAULT_CRON_POLL_INTERVAL = 1.0
-_TERMINAL_RUN_STATUSES = frozenset({"ok", "failed", "cancelled", "canceled", "error", "timed_out"})
+_TERMINAL_RUN_STATUSES = frozenset({"ok", "failed", "cancelled", "canceled", "error", "timed_out", "skipped"})
 
 
 def _clean(value: str | None) -> str | None:
@@ -155,7 +155,8 @@ class _CliGatewayTransport:
                 # past it) — reject a late result rather than trusting it.
                 break
             entries = runs.get("entries") or []
-            target = next((e for e in entries if e.get("runId") == run_id), None)
+            target = next((e for e in entries if isinstance(e, dict)
+                           and e.get("jobId") == job_id and e.get("runId") == run_id), None)
             if target and target.get("status") in _TERMINAL_RUN_STATUSES:
                 return target
             remaining = deadline - time.monotonic()

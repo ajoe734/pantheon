@@ -847,18 +847,7 @@ class AssistantOpenClawProvider:
         if requested_model:
             return [requested_model]
         primary = os.getenv("OPENCLAW_PRIMARY_MODEL", "").strip() or DEFAULT_PRIMARY_MODEL
-        fallback_raw = os.getenv("OPENCLAW_FALLBACK_MODELS", "").strip()
-        if fallback_raw:
-            fallbacks = [m.strip() for m in fallback_raw.split(",") if m.strip()]
-        else:
-            fallbacks = list(DEFAULT_FALLBACK_MODELS)
-        candidates: List[str] = []
-        if getattr(self, "_active_model", None):
-            candidates.append(self._active_model)
-        for m in [primary, *fallbacks]:
-            if m and m not in candidates:
-                candidates.append(m)
-        return candidates
+        return [primary]
 
     def readiness(self, *, auth_probe: bool = False) -> Dict[str, Any]:
         usage = provider_usage_snapshot(OPENCLAW_PROVIDER_ID, OPENCLAW_PROVIDER)

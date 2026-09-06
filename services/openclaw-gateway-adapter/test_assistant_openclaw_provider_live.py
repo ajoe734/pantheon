@@ -405,7 +405,7 @@ class TestAssistantOpenClawProviderUnit(unittest.TestCase):
         self.assertGreaterEqual(calls[0]["timeout"], 1.0)
         self.assertIn("PANTHEON_PROVIDER_READY", json.dumps(calls[0]["body"]))
 
-    def test_readiness_auth_probe_converges_via_fallback_when_primary_claude_fails(self) -> None:
+    def test_readiness_auth_probe_does_not_fallback_via_fallback_when_primary_claude_fails(self) -> None:
         calls: list = []
         fake_urlopen = _model_dispatch_urlopen(
             {
@@ -421,24 +421,13 @@ class TestAssistantOpenClawProviderUnit(unittest.TestCase):
         with patch("assistant_openclaw_provider._urlopen_with_deadline", fake_urlopen):
             info = provider.readiness(auth_probe=True)
 
-        self.assertTrue(info["ready"])
-        self.assertEqual(info["status"], "ready")
-        self.assertEqual(info["active_model"], "openai/gpt-5.6-sol")
-        self.assertEqual(info["primary_model"], "anthropic/claude-opus-4-8")
-        self.assertTrue(info["fallback_used"])
-        self.assertEqual(info["primary_unavailable"]["model"], "anthropic/claude-opus-4-8")
-        self.assertEqual(info["primary_unavailable"]["status"], "unavailable")
-        self.assertEqual(info["primary_unavailable"]["reason"], "OPENCLAW_GATEWAY_TIMEOUT")
-        self.assertEqual(info["answer_probe"]["status"], "completed")
-        self.assertEqual(info["answer_probe"]["active_model"], "openai/gpt-5.6-sol")
-        self.assertEqual(len(calls), 2)
+        self.assertFalse(info["ready"])
+        self.assertEqual(info["status"], "degraded")
+        self.assertEqual(len(calls), 1)
         self.assertEqual(calls[0]["model"], "anthropic/claude-opus-4-8")
-        self.assertEqual(calls[1]["model"], "openai/gpt-5.6-sol")
-        self.assertGreaterEqual(calls[0]["timeout"], 4.0)
-        self.assertLessEqual(calls[0]["timeout"], 5.0)
-        self.assertGreaterEqual(calls[1]["timeout"], 8.0)
+        self.assertNotIn("fallback_used", info)
 
-    def test_readiness_auth_probe_converges_via_second_fallback_when_primary_and_fallback_one_fail(self) -> None:
+    def test_readiness_auth_probe_does_not_fallback_via_second_fallback_when_primary_and_fallback_one_fail(self) -> None:
         calls: list = []
         fake_urlopen = _model_dispatch_urlopen(
             {
@@ -457,25 +446,11 @@ class TestAssistantOpenClawProviderUnit(unittest.TestCase):
         with patch("assistant_openclaw_provider._urlopen_with_deadline", fake_urlopen):
             info = provider.readiness(auth_probe=True)
 
-        self.assertTrue(info["ready"])
-        self.assertEqual(info["status"], "ready")
-        self.assertEqual(info["active_model"], "openai/gpt-5.5")
-        self.assertEqual(info["primary_model"], "anthropic/claude-opus-4-8")
-        self.assertTrue(info["fallback_used"])
-        self.assertEqual(info["fallback_model"], "openai/gpt-5.5")
-        self.assertEqual(info["primary_unavailable"]["model"], "anthropic/claude-opus-4-8")
-        self.assertEqual(info["primary_unavailable"]["status"], "unavailable")
-        self.assertEqual(info["primary_unavailable"]["reason"], "OPENCLAW_GATEWAY_TIMEOUT")
-        self.assertEqual(info["answer_probe"]["status"], "completed")
-        self.assertEqual(info["answer_probe"]["active_model"], "openai/gpt-5.5")
-        self.assertEqual(len(calls), 3)
+        self.assertFalse(info["ready"])
+        self.assertEqual(info["status"], "degraded")
+        self.assertEqual(len(calls), 1)
         self.assertEqual(calls[0]["model"], "anthropic/claude-opus-4-8")
-        self.assertEqual(calls[1]["model"], "openai/gpt-5.6-sol")
-        self.assertEqual(calls[2]["model"], "openai/gpt-5.5")
-        self.assertGreaterEqual(calls[0]["timeout"], 4.0)
-        self.assertLessEqual(calls[0]["timeout"], 5.0)
-        self.assertGreaterEqual(calls[1]["timeout"], 8.0)
-        self.assertGreaterEqual(calls[2]["timeout"], 8.0)
+        self.assertNotIn("fallback_used", info)
 
     def test_readiness_primary_candidate_gets_more_than_gateway_queue_wait_budget(self) -> None:
         """OPGAP-OPENCLAW-READINESS-QUEUE-BUDGET-20260901 regression.
@@ -535,7 +510,7 @@ class TestAssistantOpenClawProviderUnit(unittest.TestCase):
         self.assertEqual(info["primary_unavailable"]["status"], "unavailable")
         self.assertEqual(info["primary_unavailable"]["reason"], "OPENCLAW_RESPONSES_HTTP_ERROR")
         self.assertEqual(info["answer_probe"]["status"], "failed")
-        self.assertEqual(len(calls), 3)  # primary + 2 fallbacks
+        self.assertEqual(len(calls), 1)  # no automatic model fallback
 
     def test_readiness_primary_unavailable_evidence_is_sanitized(self) -> None:
         calls: list = []
@@ -581,9 +556,9 @@ class TestAssistantOpenClawProviderUnit(unittest.TestCase):
         self.assertEqual(info["primary_unavailable"]["status"], "unavailable")
         self.assertEqual(info["primary_unavailable"]["reason"], "openclaw_answer_probe_sentinel_mismatch")
         self.assertEqual(info["answer_probe"]["status"], "failed")
-        self.assertEqual(len(calls), 3)  # primary + 2 fallbacks
+        self.assertEqual(len(calls), 1)  # no automatic model fallback
 
-    def test_readiness_auth_probe_converges_when_primary_returns_wrong_sentinel_and_fallback_succeeds(self) -> None:
+    def test_readiness_auth_probe_does_not_fallback_when_primary_returns_wrong_sentinel_and_fallback_succeeds(self) -> None:
         calls: list = []
         fake_urlopen = _model_dispatch_urlopen(
             {
@@ -597,17 +572,11 @@ class TestAssistantOpenClawProviderUnit(unittest.TestCase):
         with patch("assistant_openclaw_provider._urlopen_with_deadline", fake_urlopen):
             info = provider.readiness(auth_probe=True)
 
-        self.assertTrue(info["ready"])
-        self.assertEqual(info["status"], "ready")
-        self.assertEqual(info["active_model"], "openai/gpt-5.6-sol")
-        self.assertEqual(info["primary_model"], "anthropic/claude-opus-4-8")
-        self.assertTrue(info["fallback_used"])
-        self.assertEqual(info["primary_unavailable"]["model"], "anthropic/claude-opus-4-8")
-        self.assertEqual(info["primary_unavailable"]["status"], "unavailable")
-        self.assertEqual(info["primary_unavailable"]["reason"], "openclaw_answer_probe_sentinel_mismatch")
-        self.assertEqual(info["answer_probe"]["status"], "completed")
-        self.assertEqual(info["answer_probe"]["active_model"], "openai/gpt-5.6-sol")
-        self.assertEqual(len(calls), 2)
+        self.assertFalse(info["ready"])
+        self.assertEqual(info["status"], "degraded")
+        self.assertEqual(len(calls), 1)
+        self.assertEqual(calls[0]["model"], "anthropic/claude-opus-4-8")
+        self.assertNotIn("fallback_used", info)
 
     def test_readiness_auth_probe_fails_when_reply_is_empty(self) -> None:
         """An upstream reply with no text (and no function calls) raises
@@ -632,7 +601,7 @@ class TestAssistantOpenClawProviderUnit(unittest.TestCase):
         self.assertEqual(info["reason"], "OPENCLAW_RESPONSES_EMPTY")
         self.assertEqual(info["primary_unavailable"]["reason"], "OPENCLAW_RESPONSES_EMPTY")
         self.assertEqual(info["answer_probe"]["status"], "failed")
-        self.assertEqual(len(calls), 3)
+        self.assertEqual(len(calls), 1)
 
     def test_readiness_auth_probe_rejects_substring_sentinel(self) -> None:
         calls: list = []
@@ -655,7 +624,7 @@ class TestAssistantOpenClawProviderUnit(unittest.TestCase):
         self.assertEqual(info["primary_unavailable"]["status"], "unavailable")
         self.assertEqual(info["primary_unavailable"]["reason"], "openclaw_answer_probe_sentinel_mismatch")
         self.assertEqual(info["answer_probe"]["status"], "failed")
-        self.assertEqual(len(calls), 3)
+        self.assertEqual(len(calls), 1)
 
     def test_invoke_does_not_retry_on_http_401_making_exactly_one_call(self) -> None:
         calls: list = []
@@ -821,45 +790,18 @@ class TestAssistantOpenClawProviderUnit(unittest.TestCase):
         self.assertEqual(result.output["agent_id"], "persona-opinion-a")
         self.assertNotIn("active_model", result.output)
 
-    def test_readiness_to_single_invoke_end_to_end_uses_probed_fallback(self) -> None:
-        calls: list = []
-        fake_urlopen = _model_dispatch_urlopen(
-            {
-                "anthropic/claude-opus-4-8": lambda _t: (_ for _ in ()).throw(
-                    urllib.error.URLError(TimeoutError("timed out"))
-                ),
-                "openai/gpt-5.6-sol": lambda _t: _FakeSSEResponse(
-                    _answer_events("PANTHEON_PROVIDER_READY")
-                ),
-            },
-            calls,
-        )
-
+    def test_explicit_model_does_not_change_next_ordinary_turn_model(self) -> None:
+        calls = []
+        fake = _model_dispatch_urlopen({
+            "fixture/explicit": lambda _t: _FakeSSEResponse(_answer_events("answer")),
+            "anthropic/claude-opus-4-8": lambda _t: _FakeSSEResponse(_answer_events("answer")),
+        }, calls)
         provider = self._make_provider()
-
-        # 1. Readiness probe runs: primary hangs/times out, fallback openai/gpt-5.6-sol succeeds
-        with patch("assistant_openclaw_provider._urlopen_with_deadline", fake_urlopen):
-            info = provider.readiness(auth_probe=True)
-        self.assertTrue(info["ready"])
-        self.assertEqual(info["status"], "ready")
-        self.assertEqual(info["active_model"], "openai/gpt-5.6-sol")
-        self.assertTrue(info["fallback_used"])
-        self.assertEqual(len(calls), 2)
-
-        # 2. Single invoke runs next: MUST select the already-probed eligible model directly
-        # and not attempt the timed-out primary again.
-        fake_urlopen_2 = _model_dispatch_urlopen(
-            {"openai/gpt-5.6-sol": lambda _t: _FakeSSEResponse(_answer_events("live answer"))},
-            calls,
-        )
-        with patch("assistant_openclaw_provider._urlopen_with_deadline", fake_urlopen_2):
-            result = provider.invoke("Reply with exactly: OPENCLAW_LIVE", mode="user", operator_id="smoke-test")
-        self.assertEqual(result.status, "completed")
-        self.assertEqual(result.output["active_model"], "openai/gpt-5.6-sol")
-        self.assertTrue(result.output["fallback_used"])
-        self.assertEqual(result.output["transport"], "responses_http")
-        self.assertEqual(len(calls), 3)
-        self.assertEqual(calls[2]["model"], "openai/gpt-5.6-sol")
+        with patch("assistant_openclaw_provider._urlopen_with_deadline", fake):
+            provider.invoke("explicit", model="fixture/explicit")
+            provider.invoke("ordinary")
+        self.assertEqual([c["model"] for c in calls],
+                         ["fixture/explicit", "anthropic/claude-opus-4-8"])
 
     def test_invoke_never_spawns_a_subprocess(self) -> None:
         """Ordinary invoke() must go through HTTP only — no CLI subprocess.

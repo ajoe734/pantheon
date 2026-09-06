@@ -55,15 +55,27 @@ def _cron_runs_stdout(entries: list) -> str:
 
 
 class TestExactRunCorrelation:
+    @pytest.mark.parametrize("entry", [
+        {"jobId": "other-job", "runId": "same-run", "status": "ok"},
+        {"runId": "same-run", "status": "ok"},
+    ])
+    def test_same_run_id_without_matching_job_never_completes(self, entry):
+        transport = _make_transport(
+            run_func=lambda *a, **k: _run_result(_cron_runs_stdout([entry])),
+            poll_timeout=0.03,
+        )
+        with pytest.raises(RuntimeError, match="Timed out"):
+            transport._wait_for_terminal_run("job-1", "same-run")
+
     def test_interleaved_runs_of_same_job_picks_the_exact_one(self):
         """Multiple runIds present for the same job; only ours must be picked."""
         target_run_id = "run-target-002"
 
         def fake_run(cmd, **_kw):
             entries = [
-                {"runId": "run-other-001", "status": "ok", "summary": "unrelated earlier run"},
-                {"runId": target_run_id, "status": "ok", "summary": "our run"},
-                {"runId": "run-other-003", "status": "failed", "summary": "unrelated later run"},
+                {"jobId": "job-1", "runId": "run-other-001", "status": "ok", "summary": "unrelated earlier run"},
+                {"jobId": "job-1", "runId": target_run_id, "status": "ok", "summary": "our run"},
+                {"jobId": "job-1", "runId": "run-other-003", "status": "failed", "summary": "unrelated later run"},
             ]
             return _run_result(_cron_runs_stdout(entries))
 
@@ -80,9 +92,9 @@ class TestExactRunCorrelation:
         def fake_run(cmd, **_kw):
             # 10 more-recent unrelated runs, then our target run further back.
             recent = [
-                {"runId": f"run-recent-{i}", "status": "ok"} for i in range(10)
+                {"jobId": "job-1", "runId": f"run-recent-{i}", "status": "ok"} for i in range(10)
             ]
-            entries = recent + [{"runId": target_run_id, "status": "ok"}]
+            entries = recent + [{"jobId": "job-1", "runId": target_run_id, "status": "ok"}]
             return _run_result(_cron_runs_stdout(entries))
 
         transport = _make_transport(run_func=fake_run)
@@ -122,11 +134,11 @@ class TestExactRunCorrelation:
             call_count["n"] += 1
             if call_count["n"] < 3:
                 # Target run not yet indexed by the gateway.
-                entries = [{"runId": "run-unrelated", "status": "ok"}]
+                entries = [{"jobId": "job-1", "runId": "run-unrelated", "status": "ok"}]
             else:
                 entries = [
-                    {"runId": "run-unrelated", "status": "ok"},
-                    {"runId": target_run_id, "status": "ok"},
+                    {"jobId": "job-1", "runId": "run-unrelated", "status": "ok"},
+                    {"jobId": "job-1", "runId": target_run_id, "status": "ok"},
                 ]
             return _run_result(_cron_runs_stdout(entries))
 
@@ -143,8 +155,8 @@ class TestExactRunCorrelation:
 
         def fake_run(cmd, **_kw):
             entries = [
-                {"runId": "run-unrelated", "status": "ok"},
-                {"runId": target_run_id, "status": "failed", "error": "boom"},
+                {"jobId": "job-1", "runId": "run-unrelated", "status": "ok"},
+                {"jobId": "job-1", "runId": target_run_id, "status": "failed", "error": "boom"},
             ]
             return _run_result(_cron_runs_stdout(entries))
 
@@ -165,11 +177,11 @@ class TestExactRunCorrelation:
             if method == "cron.add":
                 return _run_result('{"id": "job-1"}')
             if method == "cron.run":
-                return _run_result('{"runId": "run-ours", "ok": true}')
+                return _run_result('{"jobId": "job-1", "runId": "run-ours", "ok": true}')
             if method == "cron.runs":
                 entries = [
-                    {"runId": "run-unrelated", "status": "ok"},
-                    {"runId": "run-ours", "status": "failed"},
+                    {"jobId": "job-1", "runId": "run-unrelated", "status": "ok"},
+                    {"jobId": "job-1", "runId": "run-ours", "status": "failed"},
                 ]
                 return _run_result(_cron_runs_stdout(entries))
             raise AssertionError(f"unexpected method: {method}")
@@ -187,8 +199,8 @@ class TestExactRunCorrelation:
 
         def fake_run(cmd, **_kw):
             entries = [
-                {"runId": "run-unrelated", "status": "ok"},
-                {"runId": target_run_id, "status": "running"},
+                {"jobId": "job-1", "runId": "run-unrelated", "status": "ok"},
+                {"jobId": "job-1", "runId": target_run_id, "status": "running"},
             ]
             return _run_result(_cron_runs_stdout(entries))
 
@@ -203,7 +215,7 @@ class TestExactRunCorrelation:
         status; it is a plain timeout RuntimeError."""
 
         def fake_run(cmd, **_kw):
-            entries = [{"runId": "run-other", "status": "ok"}]
+            entries = [{"jobId": "job-1", "runId": "run-other", "status": "ok"}]
             return _run_result(_cron_runs_stdout(entries))
 
         transport = _make_transport(run_func=fake_run, poll_timeout=0.1, poll_interval=0.02)
@@ -223,13 +235,13 @@ class TestExactRunCorrelation:
             # becomes terminal on the third poll.
             if call_count["n"] < 3:
                 entries = [
-                    {"runId": "run-racing-unrelated", "status": "ok"},
-                    {"runId": target_run_id, "status": "running"},
+                    {"jobId": "job-1", "runId": "run-racing-unrelated", "status": "ok"},
+                    {"jobId": "job-1", "runId": target_run_id, "status": "running"},
                 ]
             else:
                 entries = [
-                    {"runId": "run-racing-unrelated", "status": "ok"},
-                    {"runId": target_run_id, "status": "ok"},
+                    {"jobId": "job-1", "runId": "run-racing-unrelated", "status": "ok"},
+                    {"jobId": "job-1", "runId": target_run_id, "status": "ok"},
                 ]
             return _run_result(_cron_runs_stdout(entries))
 
@@ -252,7 +264,7 @@ class TestExactRunLookupAndSharedDeadline:
             import json as _json
 
             captured_params.append(_json.loads(cmd[params_idx]))
-            entries = [{"runId": "run-target", "status": "ok"}]
+            entries = [{"jobId": "job-1", "runId": "run-target", "status": "ok"}]
             return _run_result(_cron_runs_stdout(entries))
 
         transport = _make_transport(run_func=fake_run)
@@ -267,8 +279,8 @@ class TestExactRunLookupAndSharedDeadline:
         target_run_id = "run-far-behind"
 
         def fake_run(cmd, **_kw):
-            recent = [{"runId": f"run-recent-{i}", "status": "ok"} for i in range(25)]
-            entries = recent + [{"runId": target_run_id, "status": "ok"}]
+            recent = [{"jobId": "job-1", "runId": f"run-recent-{i}", "status": "ok"} for i in range(25)]
+            entries = recent + [{"jobId": "job-1", "runId": target_run_id, "status": "ok"}]
             return _run_result(_cron_runs_stdout(entries))
 
         transport = _make_transport(run_func=fake_run)
@@ -283,7 +295,7 @@ class TestExactRunLookupAndSharedDeadline:
 
         def fake_run(cmd, **kwargs):
             captured_timeouts.append(kwargs.get("timeout"))
-            entries = [{"runId": "run-never", "status": "running"}]
+            entries = [{"jobId": "job-1", "runId": "run-never", "status": "running"}]
             return _run_result(_cron_runs_stdout(entries))
 
         transport = _make_transport(run_func=fake_run, poll_timeout=0.2, poll_interval=0.02)
@@ -305,7 +317,7 @@ class TestExactRunLookupAndSharedDeadline:
             # Simulate an RPC that takes longer than the remaining budget to
             # return, then finally reports our run as terminal.
             _time.sleep(deadline_poll_timeout + 0.05)
-            entries = [{"runId": "run-late", "status": "ok"}]
+            entries = [{"jobId": "job-1", "runId": "run-late", "status": "ok"}]
             return _run_result(_cron_runs_stdout(entries))
 
         transport = _make_transport(
