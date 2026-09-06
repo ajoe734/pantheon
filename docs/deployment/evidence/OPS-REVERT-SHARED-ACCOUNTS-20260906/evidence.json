@@ -1,0 +1,51 @@
+{
+  "schema_version": "pantheon.review-evidence.v1",
+  "task_id": "OPS-REVERT-SHARED-ACCOUNTS-20260906",
+  "title": "Revert cancelled shared-account scheduler configuration",
+  "owner": "Claude",
+  "reviewer": "Codex2",
+  "target_repo": "ajoe734/pantheon",
+  "task_class": "development_tooling",
+  "delivery_state": "ready_for_independent_review",
+  "base_sha": "6f95258a3682f0b3130f280b5939665bd59767d4",
+  "reverts": {
+    "original_task_id": "OPS-SHARED-LLM-ACCOUNTS-20260906",
+    "original_pr": "https://github.com/ajoe734/pantheon/pull/5623",
+    "original_merge_commit": "6f95258a3682f0b3130f280b5939665bd59767d4",
+    "original_head_commit": "4a091a2ff40e97b4fce17285857d2bb5a13b1bc5",
+    "reason": "Operator explicitly cancelled the shared-account scheduler mapping after merge (\"你不用做這個設定阿，有需要的時候我在跟你說就好了\"). This task reverses only that change; it does not retract the previously requested and already-completed auth-directory copy, model settings, or CLI upgrade work."
+  },
+  "scope": {
+    "owned": [
+      ".orchestrator/config.json: restored providers.claude2.account to \"claude2\" and providers.codex2/codex2-1..4.account to \"codex2\" (byte-identical to pre-merge commit 70e7abadaa4800f6d58acbbe3189a76c932d149d)",
+      ".orchestrator/config.json: restored ready_dispatcher.max_concurrent_per_account entries claude2=1 and codex2=2",
+      ".orchestrator/test_supervisor.py: restored test_repo_claude_accounts_are_isolated_at_requested_capacities, replacing the shared-account contract test added by the reverted PR (byte-identical to pre-merge commit 70e7abadaa4800f6d58acbbe3189a76c932d149d)"
+    ],
+    "not_changing": [
+      "docs/deployment/evidence/OPS-SHARED-LLM-ACCOUNTS-20260906/evidence.json is left untouched as the historical review-evidence record for the already-archived, already-approved original task",
+      "logical agent identities, worker_slots, and per-agent max_parallel (claude=3, claude2=1, codex=2, codex2=2) were never touched by the reverted change and remain unchanged",
+      "credential values, auth directories, model settings, installed CLI versions, or task owner/reviewer assignments",
+      "the fleet-wide max_concurrent_workers=13 global cap",
+      "the primary shared-account caps claude1=3 and codex1=2",
+      "no live/runtime config promotion: this revert changes only the repo-tracked .orchestrator/config.json template; the live command-runtime config was never promoted with the shared-account mapping in the first place, so live account mappings are unchanged by this task"
+    ],
+    "composes_with": [
+      "the completed, unrelated auth-directory copy and model/CLI upgrade work performed under the original operator request, which this task does not undo"
+    ]
+  },
+  "verification": {
+    "byte_identity_checks": [
+      "diff <(git show 70e7abadaa4800f6d58acbbe3189a76c932d149d:.orchestrator/config.json) .orchestrator/config.json -> identical",
+      "diff <(git show 70e7abadaa4800f6d58acbbe3189a76c932d149d:.orchestrator/test_supervisor.py) .orchestrator/test_supervisor.py -> identical"
+    ],
+    "commands": [
+      "python3 -c \"import json; json.load(open('.orchestrator/config.json'))\" -> valid json",
+      "cd .orchestrator && /usr/bin/python3 -m unittest test_supervisor.RuntimeConfigurationContractTests.test_repo_claude_accounts_are_isolated_at_requested_capacities -v -> ok",
+      "cd .orchestrator && /usr/bin/python3 -m unittest test_supervisor -v -> 240 tests, 1 pre-existing unrelated error (ReviewDecisionIntentLeaseRecoveryTests.test_reconcile_migrates_legacy_collision_from_journal_and_replays_intent, task archive/status root binding mismatch caused by worker sandbox path layout, reproduces identically on the unmodified pre-merge tree and is unrelated to this revert)"
+    ]
+  },
+  "live_config_state": {
+    "promoted": false,
+    "note": "Live command-runtime remains at commit-runtimes/dd3f0563a6a3f9ca2976a354de29221d91665a73 with its own original per-lane account mapping; this revert task performs no live/runtime promotion and requires none, since the shared-account mapping introduced by the now-reverted PR was never promoted to a live command runtime."
+  }
+}
