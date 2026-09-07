@@ -111,6 +111,8 @@ def test_project_exception_allowlist_admits_named_types_only():
     raw = (
         "PersonaWriteOwnerUnavailable: persona owner call failed with SECRET_TOKEN\n"
         "ProvisioningLeaseLost: lease revoked mid PRIVATE_DETAIL\n"
+        "services.control_plane.bff.ports.persona_write_owner.PersonaWriteOwnerUnavailable: qualified owner failure SECRET_QUALIFIED_OWNER\n"
+        "services.control_plane.bff.persona_provisioning.ProvisioningLeaseLost: qualified lease failure SECRET_QUALIFIED_LEASE\n"
         "SomeUnknownFailure: raw request body SHOULD_NOT_LEAK\n"
         "SYNTHETIC_PRIVATE_SENTINELError: arbitrary request body\n"
         "CustomFakeError: sensitive payload\n"
@@ -119,16 +121,24 @@ def test_project_exception_allowlist_admits_named_types_only():
         "evil.prefix.NameError: untrusted source\n"
         "untrusted.module.PersonaWriteOwnerUnavailable: spoofed prefix\n"
         "bad.ProvisioningLeaseLost: fake lease error\n"
+        "evil.services.control_plane.bff.ports.persona_write_owner.PersonaWriteOwnerUnavailable: spoofed qualified prefix\n"
+        "bad.services.control_plane.bff.persona_provisioning.ProvisioningLeaseLost: spoofed qualified prefix\n"
+        "services.control_plane.bff.ports.persona_write_owner.PersonaWriteOwnerUnavailableSpoofed: spoofed qualified suffix\n"
+        "services.control_plane.bff.persona_provisioning.ProvisioningLeaseLostSpoofed: spoofed qualified suffix\n"
     )
     events = diag.log_events(raw)
     assert [event["type"] for event in events] == [
         "PersonaWriteOwnerUnavailable",
         "ProvisioningLeaseLost",
+        "services.control_plane.bff.ports.persona_write_owner.PersonaWriteOwnerUnavailable",
+        "services.control_plane.bff.persona_provisioning.ProvisioningLeaseLost",
     ]
     encoded = json.dumps(events)
     for secret in (
         "SECRET_TOKEN",
         "PRIVATE_DETAIL",
+        "SECRET_QUALIFIED_OWNER",
+        "SECRET_QUALIFIED_LEASE",
         "SomeUnknownFailure",
         "SHOULD_NOT_LEAK",
         "SYNTHETIC_PRIVATE_SENTINELError",
@@ -139,8 +149,61 @@ def test_project_exception_allowlist_admits_named_types_only():
         "evil.prefix.NameError",
         "untrusted.module.PersonaWriteOwnerUnavailable",
         "bad.ProvisioningLeaseLost",
+        "evil.services.control_plane.bff.ports.persona_write_owner.PersonaWriteOwnerUnavailable",
+        "bad.services.control_plane.bff.persona_provisioning.ProvisioningLeaseLost",
+        "PersonaWriteOwnerUnavailableSpoofed",
+        "ProvisioningLeaseLostSpoofed",
     ):
         assert secret not in encoded
+
+
+def test_real_domain_exception_classes_formatted_traceback_capture():
+    import traceback
+    from services.control_plane.bff.ports.persona_write_owner import PersonaWriteOwnerUnavailable
+    from services.control_plane.bff.persona_provisioning import ProvisioningLeaseLost
+
+    exc_owner = PersonaWriteOwnerUnavailable("persona", "failed to reach owner with SECRET_OWNER_KEY")
+    exc_lease = ProvisioningLeaseLost("lease expired with SECRET_LEASE_KEY")
+
+    # traceback.format_exception_only outputs the real Python traceback line:
+    # 'services.control_plane.bff.ports.persona_write_owner.PersonaWriteOwnerUnavailable: failed to reach owner with SECRET_OWNER_KEY\n'
+    tb_owner = "".join(traceback.format_exception_only(type(exc_owner), exc_owner))
+    tb_lease = "".join(traceback.format_exception_only(type(exc_lease), exc_lease))
+
+    events_owner = diag.log_events(tb_owner)
+    assert len(events_owner) == 1
+    assert events_owner[0]["kind"] == "exception"
+    assert events_owner[0]["type"] == "services.control_plane.bff.ports.persona_write_owner.PersonaWriteOwnerUnavailable"
+    assert "SECRET_OWNER_KEY" not in json.dumps(events_owner)
+
+    events_lease = diag.log_events(tb_lease)
+    assert len(events_lease) == 1
+    assert events_lease[0]["kind"] == "exception"
+    assert events_lease[0]["type"] == "services.control_plane.bff.persona_provisioning.ProvisioningLeaseLost"
+    assert "SECRET_LEASE_KEY" not in json.dumps(events_lease)
+
+    # Full simulated traceback with timestamps and negative sentinel lines
+    raw_traceback = (
+        "2026-09-07T00:17:26.123Z Traceback (most recent call last):\n"
+        '2026-09-07T00:17:26.123Z   File "/workspace/services/control-plane/bff/personas/service.py", line 4000, in _coordinate_persona_create\n'
+        '2026-09-07T00:17:26.123Z     call(auth_token="SUPERSECRET")\n'
+        f"2026-09-07T00:17:26.123Z {tb_owner}"
+        "2026-09-07T00:17:27.456Z Traceback (most recent call last):\n"
+        '2026-09-07T00:17:27.456Z   File "/workspace/services/control-plane/bff/persona_provisioning.py", line 120, in release_lease\n'
+        '2026-09-07T00:17:27.456Z     verify(secret="LEAK")\n'
+        f"2026-09-07T00:17:27.456Z {tb_lease}"
+        "2026-09-07T00:17:28.789Z SYNTHETIC_PRIVATE_SENTINELError: should not be parsed\n"
+        "2026-09-07T00:17:29.000Z untrusted.services.control_plane.bff.persona_provisioning.ProvisioningLeaseLost: fake error\n"
+    )
+    events_full = diag.log_events(raw_traceback)
+    assert [e["type"] for e in events_full if e.get("kind") == "exception"] == [
+        "services.control_plane.bff.ports.persona_write_owner.PersonaWriteOwnerUnavailable",
+        "services.control_plane.bff.persona_provisioning.ProvisioningLeaseLost",
+    ]
+    encoded_full = json.dumps(events_full)
+    for secret in ("SUPERSECRET", "SECRET_OWNER_KEY", "LEAK", "SECRET_LEASE_KEY", "SYNTHETIC_PRIVATE_SENTINELError", "untrusted"):
+        assert secret not in encoded_full
+    assert all("message" not in e for e in events_full)
 
 
 def test_commands_are_bounded_in_bytes_and_time(monkeypatch):

@@ -21,8 +21,8 @@
   },
   "prior_review_cycle": {
     "rejected_pr": "https://github.com/ajoe734/pantheon/pull/5656",
-    "rejected_head": "6cc44562831b0a65b84d5afc2df2fa5f698520fc",
-    "verdict": "Acceptance defects: (P1 D1) scripts/run_dev_paper_baseline_with_diagnostics.sh trapped EXIT INT TERM with cleanup only and resumed execution after TERM, triggering a second collector call after baseline cancellation/lease loss; (P1 D2) collect_dev_paper_diagnostics.py accepted arbitrary Error/Exception suffixes and arbitrary dotted prefixes, emitting sentinels like SYNTHETIC_PRIVATE_SENTINELError from request bodies as exception types; (P2 D2) wrapper validated only six field names with truthiness for identity_matches, accepting missing D2 fields, string false, invalid services, and null collected_at."
+    "rejected_head": "81f4d0f6fcd2dcb1195c3dfd6e98e9ad365caa97",
+    "verdict": "Acceptance defects: (P1 SD D2) custom exception capture is broken by the new exact-name allowlist at scripts/collect_dev_paper_diagnostics.py:121-128. Loading the actual repository exception classes under their production module names and passing traceback.format_exception_only output into log_events returns [] for both services.control_plane.bff.ports.persona_write_owner.PersonaWriteOwnerUnavailable and services.control_plane.bff.persona_provisioning.ProvisioningLeaseLost. Add explicit trusted fully qualified names and regression tests formatting real exception classes while retaining secret-sentinel negative tests."
   },
   "fix_design": {
     "d1_capture_inside_guarded_child": "The baseline bootstrap and the failure collector run inside the same single guarded child (scripts/run_dev_paper_baseline_with_diagnostics.sh), invoked once by run_with_dev_environment_lease.sh from the paper_bootstrap workflow step. The script captures the baseline's original exit status without `set -e`, and only if it is non-zero does it invoke the collector over the same SSH session while the guard still owns the lease and heartbeat. It always exits with the original baseline status (never `|| true`, never overridden by collector success/failure), so the guard's normal failure recording and quarantine behavior is unchanged.",
@@ -93,6 +93,16 @@
       ]
     }
   },
+  "d2_fixes_cycle_4": {
+    "p1_fully_qualified_custom_exception_allowlist": {
+      "defect": "Loading actual repository exception classes under their production module names and passing traceback.format_exception_only output into log_events returned [] because TRUSTED_EXCEPTION_NAMES only contained unqualified names PersonaWriteOwnerUnavailable and ProvisioningLeaseLost, while normal Python tracebacks format non-builtin exceptions with their defining module prefix services.control_plane.bff.ports.persona_write_owner.PersonaWriteOwnerUnavailable and services.control_plane.bff.persona_provisioning.ProvisioningLeaseLost.",
+      "fix": "Added explicit trusted fully qualified names services.control_plane.bff.ports.persona_write_owner.PersonaWriteOwnerUnavailable and services.control_plane.bff.persona_provisioning.ProvisioningLeaseLost to TRUSTED_EXCEPTION_NAMES in scripts/collect_dev_paper_diagnostics.py without reopening arbitrary dotted-prefix admission, and added regression tests in scripts/test_collect_dev_paper_diagnostics.py formatting real exception class instances with traceback.format_exception_only while retaining secret-sentinel negative tests.",
+      "regression_tests": [
+        "scripts/test_collect_dev_paper_diagnostics.py::test_project_exception_allowlist_admits_named_types_only",
+        "scripts/test_collect_dev_paper_diagnostics.py::test_real_domain_exception_classes_formatted_traceback_capture"
+      ]
+    }
+  },
   "artifacts_changed": [
     ".github/workflows/nonprod-deploy.yml",
     "docs/deployment/evidence/DEV502-CAPTURE-001/evidence.json",
@@ -115,13 +125,13 @@
       "git diff --check"
     ],
     "results": {
-      "scripts/test_collect_dev_paper_diagnostics.py": "17 passed (including regressions for baseline cancellation signal handling, bounded trusted exception allowlist, and strict 14-field D2 envelope validation)",
+      "scripts/test_collect_dev_paper_diagnostics.py": "18 passed (including regressions for baseline cancellation signal handling, bounded trusted exception allowlist with real fully-qualified domain exception classes, and strict 14-field D2 envelope validation)",
       "test_all_dev_mutations_and_public_proofs_use_pinned_wrapper": "1 passed",
       "scripts/test_bootstrap_dev_paper_baseline.py": "11 passed",
       "workflow_yaml_parse": "ok",
       "shell_syntax_check": "ok",
       "git_diff_check": "ok",
-      "total_passed": "29 passed in 14.59s"
+      "total_passed": "30 passed in 14.68s"
     }
   },
   "not_implemented_in_this_task": [
@@ -148,6 +158,12 @@
       "rejected_pr": "https://github.com/ajoe734/pantheon/pull/5656",
       "rejected_head": "6cc44562831b0a65b84d5afc2df2fa5f698520fc",
       "verdict": "Acceptance defects: (P1 D1) wrapper trapped EXIT INT TERM with cleanup only and resumed execution after TERM, triggering a second collector call after baseline cancellation/lease loss; (P1 D2) collect_dev_paper_diagnostics.py accepted arbitrary Error/Exception suffixes and arbitrary dotted prefixes, emitting sentinels like SYNTHETIC_PRIVATE_SENTINELError from request bodies as exception types; (P2 D2) wrapper validated only six field names with truthiness for identity_matches, accepting missing D2 fields, string false, invalid services, and null collected_at."
+    },
+    {
+      "cycle": 4,
+      "rejected_pr": "https://github.com/ajoe734/pantheon/pull/5656",
+      "rejected_head": "81f4d0f6fcd2dcb1195c3dfd6e98e9ad365caa97",
+      "verdict": "Acceptance defects: (P1 SD D2) custom exception capture is broken by the new exact-name allowlist at scripts/collect_dev_paper_diagnostics.py:121-128. Loading the actual repository exception classes under their production module names and passing traceback.format_exception_only output into log_events returns [] for both services.control_plane.bff.ports.persona_write_owner.PersonaWriteOwnerUnavailable and services.control_plane.bff.persona_provisioning.ProvisioningLeaseLost. Add explicit trusted fully qualified names and regression tests formatting real exception classes while retaining secret-sentinel negative tests."
     }
   ]
 }

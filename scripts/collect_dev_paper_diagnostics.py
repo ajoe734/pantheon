@@ -118,8 +118,10 @@ TRUSTED_EXCEPTION_NAMES = (
     "IntegrityError",
     "psycopg.ProgrammingError",
     "ProgrammingError",
-    # Domain / project exceptions (exact names only)
+    # Domain / project exceptions (exact names only, qualified and unqualified)
+    "services.control_plane.bff.ports.persona_write_owner.PersonaWriteOwnerUnavailable",
     "PersonaWriteOwnerUnavailable",
+    "services.control_plane.bff.persona_provisioning.ProvisioningLeaseLost",
     "ProvisioningLeaseLost",
 )
 EXCEPTION = re.compile(
