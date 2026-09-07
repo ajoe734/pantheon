@@ -161,12 +161,17 @@ def collect(expected_sha: str, *, run_id: str | None = None, attempt: str | None
                 row["collection_status"] = status if status != "ok" else "container_missing_or_ambiguous"
                 statuses.add(row["collection_status"])
                 continue
-            row.update(container_id=ids[0], state=container_state(ids[0]))
+            state = container_state(ids[0])
+            row.update(container_id=ids[0], state=state)
+            # The inspect call's own collection_status must feed the aggregate
+            # status too; a docker-inspect timeout/error previously vanished
+            # once docker-ps and docker-logs both happened to return "ok".
+            statuses.add(state.get("collection_status", "collector_error"))
             if service == "operator-bff":
-                result["identity_matches"] = row["state"].get("source_sha") == expected_sha
+                result["identity_matches"] = state.get("source_sha") == expected_sha
                 result["container_id"] = ids[0]
-                result["image_id"] = row["state"].get("image_id")
-                result["observed_source_sha"] = row["state"].get("source_sha")
+                result["image_id"] = state.get("image_id")
+                result["observed_source_sha"] = state.get("source_sha")
             raw, status = command(["docker", "logs", "--timestamps", "--since=15m", "--tail=240", ids[0]])
             row.update(collection_status=status, events=log_events(raw))
             statuses.add(status)
@@ -178,7 +183,15 @@ def collect(expected_sha: str, *, run_id: str | None = None, attempt: str | None
     result.setdefault("container_id", None)
     result.setdefault("image_id", None)
     result.setdefault("observed_source_sha", None)
-    result["collection_status"] = "ok" if statuses <= {"ok"} else "partial"
+    # A clean set of per-command "ok" statuses is not itself sufficient: the
+    # candidate operator-bff container can be fully inspectable yet running
+    # the wrong source SHA. That must never be folded into "ok".
+    if statuses - {"ok"}:
+        result["collection_status"] = "partial"
+    elif not result["identity_matches"]:
+        result["collection_status"] = "identity_mismatch"
+    else:
+        result["collection_status"] = "ok"
     return result
 
 

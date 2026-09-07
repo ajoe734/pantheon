@@ -1284,6 +1284,10 @@ jobs:
           DEV_ZONE: ${{ vars.DEV_ZONE || 'asia-east1-b' }}
           GCP_DEPLOY_PROJECT_ID: ${{ vars.DEV_GCP_DEPLOY_PROJECT_ID || 'pantheon-dev-20260902' }}
           EXPECTED_BFF_SHA: ${{ steps.target.outputs.sha }}
+          EXPECTED_FE_SHA: ${{ steps.frontend.outputs.sha }}
+          DEV_PAPER_RUN_ID: ${{ github.run_id }}
+          DEV_PAPER_ATTEMPT: ${{ github.run_attempt }}
+          DEV_PAPER_PHASE: paper_bootstrap
         shell: /bin/bash --noprofile --norc -euo pipefail {0}
         run: |
           lease_token="${PANTHEON_ENVIRONMENT_LEASE_TOKEN}"
@@ -1317,23 +1321,42 @@ jobs:
           PANTHEON_ENVIRONMENT_LEASE_TOKEN="${lease_token}" \
             DEV_PAPER_DIAGNOSTICS_DIR="${diagnostic_dir}" \
             DEV_PAPER_DIAGNOSTICS_COLLECTOR="${collector}" \
-            "${controller}/scripts/run_with_dev_environment_lease.sh" \
+            EXPECTED_FE_SHA="${EXPECTED_FE_SHA}" \
+            DEV_PAPER_RUN_ID="${DEV_PAPER_RUN_ID}" \
+            DEV_PAPER_ATTEMPT="${DEV_PAPER_ATTEMPT}" \
+            DEV_PAPER_PHASE="${DEV_PAPER_PHASE}" \
+            "${GITHUB_WORKSPACE}/.lease-controller/scripts/run_with_dev_environment_lease.sh" \
             "${diagnostics_script}" || baseline_status=$?
-          if [[ -f "${diagnostic_dir}/diagnostics.json" || -f "${diagnostic_dir}/collection-status.json" ]]; then
-            echo "artifact_path=${diagnostic_dir}" >> "${GITHUB_OUTPUT}"
+          # Upload only this explicit safe-file allowlist, never the whole
+          # directory: the wrapper never writes raw/unbounded remote output
+          # here, but the artifact upload boundary must not rely on that
+          # alone. collection-status.json is written for every outcome
+          # (not_started/collecting/timeout/ok/...), so it is the durable
+          # terminal-evidence file even when diagnostics.json never appears.
+          if [[ -f "${diagnostic_dir}/diagnostics.json" ]]; then
+            echo "diagnostics_file=${diagnostic_dir}/diagnostics.json" >> "${GITHUB_OUTPUT}"
+          fi
+          if [[ -f "${diagnostic_dir}/collection-status.json" ]]; then
+            echo "status_file=${diagnostic_dir}/collection-status.json" >> "${GITHUB_OUTPUT}"
+          fi
+          if [[ -f "${diagnostic_dir}/SHA256SUMS" ]]; then
+            echo "checksum_file=${diagnostic_dir}/SHA256SUMS" >> "${GITHUB_OUTPUT}"
           fi
           exit "${baseline_status}"
 
       - name: Upload dev paper failure diagnostics
         id: paper_bootstrap_diagnostics_upload
-        if: ${{ always() && steps.paper_bootstrap.outputs.artifact_path != '' }}
+        if: ${{ always() && (steps.paper_bootstrap.outputs.diagnostics_file != '' || steps.paper_bootstrap.outputs.status_file != '') }}
         continue-on-error: true
         timeout-minutes: 2
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: pantheon-dev-paper-diagnostics-${{ github.run_id }}-${{ github.run_attempt }}
-          path: ${{ steps.paper_bootstrap.outputs.artifact_path }}
-          if-no-files-found: error
+          path: |
+            ${{ steps.paper_bootstrap.outputs.diagnostics_file }}
+            ${{ steps.paper_bootstrap.outputs.status_file }}
+            ${{ steps.paper_bootstrap.outputs.checksum_file }}
+          if-no-files-found: warn
           retention-days: 7
 
       - name: Dev evolution dispatch hosted probe
