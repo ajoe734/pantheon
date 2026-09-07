@@ -228,6 +228,7 @@
         "lifecycle_state": "active",
         "mandate": "systematic_momentum_paper_ops",
         "strategy_family": "momentum",
+        "tenant_id": "pantheon-dev",
         "created_at": "2026-05-13T00:00:00Z",
         "last_active_at": "2026-05-13T00:21:00Z",
         "metadata": {

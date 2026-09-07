@@ -415,10 +415,53 @@ def test_migration_engine_backfill_dry_run_and_provenance() -> None:
     assert "backfilled_at" in meta
 
 
-def test_genuine_five_owner_disk_backed_restart_durability_and_multi_replica() -> None:
+@pytest.fixture
+def strategy_pg_case():
+    """Real-Postgres schema per test, mirroring
+    services/control-plane/bff/migrations/test_overlay_retirement.py's fixture
+    of the same name: skip cleanly with no live database configured, otherwise
+    prove Strategy owner durability against an actual PostgreSQL instance.
+    Strategy has no path-created durable backend (see
+    build_canonical_owner_adapter / _ReplicaInstance._resolve_adapter) — a
+    directory-backed replica has no explicit Strategy store to resolve, so
+    its restart/multi-replica proof must go through the real canonical
+    Postgres owner instead of a second, file-derived store."""
+    import os
+    from uuid import uuid4
+
+    dsn = os.getenv("TEST_DATABASE_URL", "").strip()
+    if not dsn:
+        pytest.skip("TEST_DATABASE_URL is required for real Postgres Strategy owner proof")
+    psycopg = pytest.importorskip("psycopg")
+    from psycopg import sql
+
+    schema = f"strategy_owner_{uuid4().hex}"
+    entries_table = f"{schema}.entries"
+    receipts_table = f"{schema}.command_receipts"
+    try:
+        yield dsn, entries_table, receipts_table
+    finally:
+        with psycopg.connect(dsn) as conn:
+            conn.execute(sql.SQL("DROP SCHEMA IF EXISTS {} CASCADE").format(sql.Identifier(schema)))
+
+
+def _strategy_pg_store(case, *, bootstrap: bool = True):
+    from services.registry.pg_store import PostgresRegistryStore
+
+    dsn, entries_table, receipts_table = case
+    return PostgresRegistryStore(
+        dsn=dsn, entries_table=entries_table, receipts_table=receipts_table, bootstrap=bootstrap,
+    )
+
+
+def test_genuine_five_owner_disk_backed_restart_durability_and_multi_replica(strategy_pg_case) -> None:
     """Normative SD §5.1, §5.2, §12.3: Verify multi-replica readback and process restart
-    durability across all five domain owners using genuine persistent disk storage.
+    durability across all five domain owners: Persona, Incident, Job, and Ranking on
+    genuine persistent disk storage, and Strategy on the genuine canonical Postgres
+    owner (Strategy has no path-created durable backend to fake this proof with).
     """
+    from services.control_plane.bff.migrations.overlay_retirement import StrategyCanonicalAdapter
+
     with tempfile.TemporaryDirectory() as td:
         harness = MultiReplicaReadbackHarness(shared_durable_storage=td)
 
@@ -427,14 +470,12 @@ def test_genuine_five_owner_disk_backed_restart_durability_and_multi_replica() -
 
         aggregates = [
             (AggregateKind.PERSONA, "pers-durable-rep-1", {"name": "Persona 1", "state": "active"}),
-            (AggregateKind.STRATEGY, "strat-durable-rep-1", {"title": "Strategy 1", "lifecycle_state": "active",
-                "actor": {"actor_id": "replica-test", "tenant": "tenant-corp", "roles": ["operator"], "token_kind": "service"}}),
             (AggregateKind.INCIDENT, "inc-durable-rep-1", {"title": "Incident 1", "status": "open"}),
             (AggregateKind.JOB, "job-durable-rep-1", {"name": "Job 1", "status": "running"}),
             (AggregateKind.RANKING, "rank-durable-rep-1", {"formula": "sharpe", "score": 2.5}),
         ]
 
-        # Replica Alpha writes all five aggregates directly to persistent disk storage
+        # Replica Alpha writes the four filesystem-backed aggregates directly to persistent disk storage
         for agg, key, payload in aggregates:
             record = {"id": key, "aggregate": agg.value, **payload}
             assert rep_alpha.write_canonical(key, record) is True
@@ -461,3 +502,30 @@ def test_genuine_five_owner_disk_backed_restart_durability_and_multi_replica() -
             readback_beta = rep_beta.read_canonical(key)
             assert readback_beta is not None
             assert readback_beta == rep_alpha.read_canonical(key)
+
+        # Strategy: genuine real-Postgres restart and multi-replica proof, the
+        # canonical owner it actually has (memory or postgres — never a
+        # path-derived file store).
+        strategy_adapter_alpha = StrategyCanonicalAdapter(_strategy_pg_store(strategy_pg_case))
+        strategy_record = {
+            "strategy_id": "strat-durable-rep-1",
+            "name": "Strategy 1",
+            "status": "draft",
+            "tenant_id": "tenant-corp",
+            "actor": {"actor_id": "replica-test", "tenant": "tenant-corp", "roles": ["operator"], "token_kind": "service"},
+        }
+        assert strategy_adapter_alpha.insert(strategy_record) is True
+
+        # Genuine subprocess restart against the exact schema this adapter was built with.
+        strategy_adapter_alpha.restart_process()
+
+        strategy_readback_alpha = strategy_adapter_alpha.get("strat-durable-rep-1")
+        assert strategy_readback_alpha is not None
+        assert strategy_readback_alpha["strategy_id"] == "strat-durable-rep-1"
+
+        # Replica Beta: a completely independent replica (fresh store, same schema).
+        strategy_adapter_beta = StrategyCanonicalAdapter(_strategy_pg_store(strategy_pg_case, bootstrap=False))
+        strategy_readback_beta = strategy_adapter_beta.get("strat-durable-rep-1")
+        assert strategy_readback_beta is not None
+        assert strategy_readback_beta["strategy_id"] == "strat-durable-rep-1"
+        assert strategy_readback_beta["name"] == "Strategy 1"

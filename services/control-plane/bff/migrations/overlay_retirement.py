@@ -819,13 +819,25 @@ class StrategyCanonicalAdapter:
                 "canonical Postgres-backed store; the in-memory RegistryStore "
                 "test double has no cross-process durability to prove."
             )
+        # Reconnect using the DSN/schema this adapter was actually built
+        # with, not whatever REGISTRY_STORE_DSN happens to be in the
+        # worker's ambient environment: build_postgres_registry_store()
+        # resolves those from os.environ, which does not necessarily match
+        # an explicitly injected store (e.g. a per-test schema).
+        env = dict(os.environ)
+        env["REGISTRY_STORE_BACKEND"] = "postgres"
+        env["REGISTRY_STORE_DSN"] = self._store._entries.dsn
+        env["REGISTRY_ENTRIES_TABLE"] = self._store._entries.table_name
+        env["REGISTRY_RECEIPTS_TABLE"] = self._store._receipts.table_name
         script = (
             "from services.registry.pg_store import build_postgres_registry_store\n"
             "store = build_postgres_registry_store()\n"
             "entries = store.list_all_entries()\n"
             "print(f'OK:{len(entries)}')\n"
         )
-        res = subprocess.run([sys.executable, "-c", script], capture_output=True, text=True, check=True)
+        res = subprocess.run(
+            [sys.executable, "-c", script], capture_output=True, text=True, env=env, check=True,
+        )
         assert "OK:" in res.stdout.strip()
 
 
