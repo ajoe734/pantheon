@@ -9755,7 +9755,7 @@ class RuntimeAndFailureSemanticsTests(unittest.TestCase):
             self.assertTrue(recovered)
             after_archive = supervisor.task_index_from_status(cfg, state)[task["id"]]
             after_decision = supervisor.active_worker_governance_lease_decision(
-                cfg, worker, after_archive, activity_events=events
+                cfg, worker, after_archive, activity_events=events, state=state
             )
             self.assertEqual(after_decision["action"], "terminate")
             self.assertEqual(after_decision["reason_code"], "authorized_terminal_cancellation")
@@ -9767,7 +9767,7 @@ class RuntimeAndFailureSemanticsTests(unittest.TestCase):
             owner_encoded = json.dumps(owner_event, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
             owner_event["event_id"] = "ai-status-event-" + hashlib.sha256(owner_encoded).hexdigest()
             owner_decision = supervisor.active_worker_governance_lease_decision(
-                cfg, worker, after_archive, activity_events=[owner_event]
+                cfg, worker, after_archive, activity_events=[owner_event], state=state
             )
             self.assertEqual(owner_decision["action"], "terminate")
             self.assertEqual(owner_decision["reason_code"], "authorized_terminal_cancellation")
@@ -9779,7 +9779,7 @@ class RuntimeAndFailureSemanticsTests(unittest.TestCase):
             rev_encoded = json.dumps(reviewer_event, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
             reviewer_event["event_id"] = "ai-status-event-" + hashlib.sha256(rev_encoded).hexdigest()
             reviewer_decision = supervisor.active_worker_governance_lease_decision(
-                cfg, worker, after_archive, activity_events=[reviewer_event]
+                cfg, worker, after_archive, activity_events=[reviewer_event], state=state
             )
             self.assertEqual(reviewer_decision["action"], "terminate")
             self.assertEqual(reviewer_decision["reason_code"], "authorized_terminal_cancellation")
@@ -13181,10 +13181,78 @@ class RealProcessReviewHandoffRecoveryFlowTests(unittest.TestCase):
 
             cmd_sha = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=cmd_root, text=True).strip()
 
+            reopen_message = "Independent Codex2 review REJECTS: missing negative validation"
+            fake_worker_evidence_path = temp_path / "fake_worker_evidence.json"
+
             fake_bin = temp_path / "bin"
             fake_bin.mkdir()
             fake_worker = fake_bin / "fake_worker"
-            fake_worker.write_text("#!/bin/sh\nsleep 300\nexit 0\n")
+            # This is the SAME process that ``process_queue`` actually launches for
+            # the queue-consumed owner dispatch (via worker_runner.py), not a
+            # separately/manually invoked proof. It reads the exact task-context
+            # packet materialized into its own workspace plus the exact
+            # generation supervisor bound to its launch env, and writes bounded
+            # evidence tied to this run/queue event so the parent can verify the
+            # queue-launched child itself proved the negative finding and
+            # generation -- not merely that the parent could read the same file.
+            fake_worker_source = (
+                "#!" + sys.executable + "\n"
+                "import json, os, sys, time, subprocess\n"
+                "from pathlib import Path\n"
+                "workspace = Path(os.environ.get('ORCH_WORKSPACE_PATH', ''))\n"
+                "task_id = os.environ.get('ORCH_TASK_ID', '')\n"
+                "launched_generation = os.environ.get('ORCH_TASK_GENERATION', '')\n"
+                "run_id = os.environ.get('ORCH_RUN_ID', '')\n"
+                "expected_finding = os.environ.get('FAKE_WORKER_EXPECTED_FINDING', '')\n"
+                "evidence_path = Path(os.environ.get('FAKE_WORKER_EVIDENCE_PATH', ''))\n"
+                "command_root = os.environ.get('PANTHEON_COMMAND_ROOT', '')\n"
+                "brief_path = workspace / '.orchestrator' / 'worker-runtime' / 'task-context' / (task_id.lower() + '.md')\n"
+                "brief_text = brief_path.read_text() if brief_path.is_file() else ''\n"
+                "header = '# Task Brief: ' + task_id\n"
+                "brief_verified = bool(\n"
+                "    task_id and launched_generation and expected_finding and brief_path.is_file()\n"
+                "    and header in brief_text and expected_finding in brief_text\n"
+                ")\n"
+                "canonical_generation = None\n"
+                "canonical_reason = ''\n"
+                "canonical_task_id = ''\n"
+                "error = ''\n"
+                "try:\n"
+                "    show_cmd = ['bash', command_root + '/scripts/ai-status.sh', 'show', task_id]\n"
+                "    proc = subprocess.run(show_cmd, env=os.environ.copy(), capture_output=True, text=True, timeout=30, check=True)\n"
+                "    payload = json.loads(proc.stdout)\n"
+                "    canonical_task = payload['task']\n"
+                "    canonical_task_id = str(canonical_task.get('id') or '')\n"
+                "    canonical_generation = canonical_task.get('generation')\n"
+                "    intent = canonical_task.get('review_requeue_intent') or {}\n"
+                "    canonical_reason = str(intent.get('reason') or canonical_task.get('next') or '')\n"
+                "except Exception as exc:\n"
+                "    error = repr(exc)\n"
+                "canonical_verified = bool(\n"
+                "    not error\n"
+                "    and canonical_task_id == task_id\n"
+                "    and launched_generation\n"
+                "    and str(canonical_generation) == str(launched_generation)\n"
+                "    and expected_finding\n"
+                "    and expected_finding in canonical_reason\n"
+                ")\n"
+                "evidence = {\n"
+                "    'run_id': run_id,\n"
+                "    'task_id': task_id,\n"
+                "    'launched_generation': launched_generation,\n"
+                "    'canonical_generation': canonical_generation,\n"
+                "    'finding': expected_finding,\n"
+                "    'canonical_reason': canonical_reason,\n"
+                "    'brief_verified': brief_verified,\n"
+                "    'canonical_verified': canonical_verified,\n"
+                "    'verified': bool(brief_verified and canonical_verified),\n"
+                "    'error': error,\n"
+                "}\n"
+                "evidence_path.write_text(json.dumps(evidence))\n"
+                "time.sleep(300)\n"
+                "sys.exit(0)\n"
+            )
+            fake_worker.write_text(fake_worker_source)
             fake_worker.chmod(0o755)
 
             subprocess.run(["git", "branch", "task/TASK-QUEUE-001"], cwd=worktree, check=True)
@@ -13269,7 +13337,11 @@ class RealProcessReviewHandoffRecoveryFlowTests(unittest.TestCase):
                         "antigravity": {
                             "cli": str(fake_worker),
                             "config_home": str(temp_path / "antigravity_config"),
-                            "env": {"GEMINI_API_KEY": "isolated-fake-cli-not-a-real-key"},
+                            "env": {
+                                "GEMINI_API_KEY": "isolated-fake-cli-not-a-real-key",
+                                "FAKE_WORKER_EXPECTED_FINDING": reopen_message,
+                                "FAKE_WORKER_EVIDENCE_PATH": str(fake_worker_evidence_path),
+                            },
                         },
                     },
                 },
@@ -13388,7 +13460,6 @@ class RealProcessReviewHandoffRecoveryFlowTests(unittest.TestCase):
                             break
                     time.sleep(0.1)
 
-                reopen_message = "Independent Codex2 review REJECTS: missing negative validation"
                 cli_env = env.copy()
                 cli_env["AI_NAME"] = "Codex2"
                 cli_env["ORCH_RUN_ID"] = run_id
@@ -13495,6 +13566,38 @@ class RealProcessReviewHandoffRecoveryFlowTests(unittest.TestCase):
                 brief_file = new_worktree / ".orchestrator" / "worker-runtime" / "task-context" / "task-queue-001.md"
                 self.assertTrue(brief_file.exists())
                 self.assertIn(reopen_message, brief_file.read_text())
+
+                # The queue-launched owner process itself (not a separately/manually
+                # launched proof) must read and independently verify the exact
+                # negative findings, task id, and generation supervisor bound to its
+                # own launch, through the governed `ai-status.sh show` packet plus
+                # its materialized task-context brief. Wait for that SAME real
+                # process (fake_worker, running under worker_runner.py) to publish
+                # its bounded evidence.
+                canonical_tasks_after_dispatch = supervisor.task_index_from_status(config, supervisor.load_status(config))
+                expected_generation = canonical_tasks_after_dispatch["TASK-QUEUE-001"]["generation"]
+
+                fake_worker_evidence: dict[str, Any] = {}
+                for _ in range(100):
+                    if fake_worker_evidence_path.exists():
+                        try:
+                            fake_worker_evidence = json.loads(fake_worker_evidence_path.read_text())
+                        except (json.JSONDecodeError, OSError):
+                            fake_worker_evidence = {}
+                        if fake_worker_evidence:
+                            break
+                    time.sleep(0.1)
+
+                self.assertTrue(fake_worker_evidence, "queue-launched child never published verification evidence")
+                self.assertEqual(fake_worker_evidence.get("error"), "")
+                self.assertEqual(fake_worker_evidence.get("run_id"), new_worker_rec["run_id"])
+                self.assertEqual(fake_worker_evidence.get("task_id"), "TASK-QUEUE-001")
+                self.assertEqual(str(fake_worker_evidence.get("launched_generation")), str(expected_generation))
+                self.assertEqual(str(fake_worker_evidence.get("canonical_generation")), str(expected_generation))
+                self.assertIn(reopen_message, fake_worker_evidence.get("canonical_reason") or "")
+                self.assertTrue(fake_worker_evidence.get("brief_verified"))
+                self.assertTrue(fake_worker_evidence.get("canonical_verified"))
+                self.assertTrue(fake_worker_evidence.get("verified"))
 
                 # Exactly-one owner launch check: second call to process_queue must NOT launch another process
                 delivery_outcome2 = {}

@@ -899,6 +899,153 @@ def refresh_dashboard_runtime_artifacts(config: dict[str, Any]) -> None:
         )
 
 
+def _canonical_json_sha256_for_receipt_proof(value: Any) -> str:
+    """Mirror ``scripts/ai_status.py::_canonical_json_sha256`` exactly.
+
+    Pure and global-free (unlike an ``ai_status`` module import, which can
+    resolve to a differently-configured module instance), so it is safe to use
+    against a caller-supplied canonical state without any risk of comparing
+    against the wrong archive root's configuration.
+    """
+
+    payload = json.dumps(
+        value,
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=False,
+    ).encode("utf-8")
+    return hashlib.sha256(payload).hexdigest()
+
+
+def _load_ai_status_archive_provenance(
+    config: dict[str, Any],
+) -> tuple[Any, dict[str, Any]] | None:
+    """Import ``ai_status`` and load its canonical state as a last resort.
+
+    Only used when a caller has no fresher canonical state of its own
+    (``active_worker_governance_lease_decision``'s ``state`` argument). Returns
+    ``None`` on any failure so a caller that needs canonical
+    ``archive_receipts``/``terminal_facts`` provenance fails closed instead of
+    trusting an unvalidated physical archive snapshot read straight off disk.
+    """
+
+    try:
+        repo_root = config_path(config, "status_file").parent
+    except KeyError:
+        repo_root = THIS_DIR.parent
+    scripts_dir = repo_root / "scripts"
+    if not scripts_dir.exists():
+        return None
+    scripts_path = str(scripts_dir)
+    if scripts_path not in sys.path:
+        sys.path.insert(0, scripts_path)
+    try:
+        ai_status_module = importlib.import_module("ai_status")
+    except Exception:
+        return None
+    try:
+        runtime_env = task_state_store_runtime_env(config)
+        previous_env = {name: os.environ.get(name) for name in runtime_env}
+        os.environ.update(runtime_env)
+        try:
+            canonical_state = ai_status_module.load_state()
+        finally:
+            for name, previous_value in previous_env.items():
+                if previous_value is None:
+                    os.environ.pop(name, None)
+                else:
+                    os.environ[name] = previous_value
+    except Exception:
+        return None
+    if not isinstance(canonical_state, dict):
+        return None
+    return ai_status_module, canonical_state
+
+
+def archived_task_owner_reviewer_with_receipt_proof(
+    config: dict[str, Any],
+    task_id: str,
+    archived_snapshot: Mapping[str, Any],
+    arch_task: Mapping[str, Any],
+    *,
+    state: Mapping[str, Any] | None = None,
+) -> tuple[str, str]:
+    """Return canonicalized ``(owner, reviewer)`` from an archived task snapshot.
+
+    A physical archive file on disk is not, by itself, canonical authority: it
+    proves nothing about which terminal transition actually produced it. This
+    only trusts ``arch_task``'s owner/reviewer once the exact snapshot hash
+    matches the canonical ``archive_receipts`` entry recorded at archive time
+    (``scripts/ai_status.py::_archive_receipt_for_snapshot``), and a matching
+    ``terminal_facts`` entry proves the same generation under canonical
+    lock/CAS. Missing or conflicting proof fails closed to ``("", "")``.
+
+    ``state`` is the caller's own freshly reloaded canonical task-state
+    mapping (already carrying normalized ``archive_receipts``/
+    ``terminal_facts``) when the caller has one on hand; this avoids a second,
+    possibly differently-rooted, disk read under the caller's own lock/CAS
+    order. Only when no such state is supplied does this fall back to a fresh
+    ``ai_status.load_state()`` disk read.
+    """
+
+    task_id = str(task_id or "").strip()
+    if not task_id:
+        return "", ""
+    canonical_state: Mapping[str, Any]
+    if isinstance(state, Mapping):
+        # scripts/ai_status.py's own key constants; duplicated here (rather than
+        # importing the module) because the caller already holds a fresh
+        # canonical state read under its own lock/CAS order, and a second
+        # cross-module import risks resolving a differently-configured module
+        # instance (e.g. a test that reconfigured ``scripts.ai_status``'s
+        # archive root but never touched a separately sys.path-imported
+        # ``ai_status``).
+        canonical_state = state
+        receipts = canonical_state.get("archive_receipts")
+        facts = canonical_state.get("terminal_facts")
+        canonical_json_sha256 = _canonical_json_sha256_for_receipt_proof
+    else:
+        provenance = _load_ai_status_archive_provenance(config)
+        if provenance is None:
+            return "", ""
+        ai_status_module, canonical_state = provenance
+        receipts = canonical_state.get(ai_status_module.ARCHIVE_RECEIPTS_KEY)
+        facts = canonical_state.get(ai_status_module.TERMINAL_FACTS_KEY)
+        canonical_json_sha256 = ai_status_module._canonical_json_sha256
+    if not isinstance(receipts, Mapping) or not isinstance(facts, Mapping):
+        return "", ""
+    receipt = receipts.get(task_id)
+    fact = facts.get(task_id)
+    if not isinstance(receipt, Mapping) or not isinstance(fact, Mapping):
+        return "", ""
+    try:
+        snapshot_hash_matches = canonical_json_sha256(archived_snapshot) == receipt.get("snapshot_sha256")
+    except Exception:
+        return "", ""
+    if not snapshot_hash_matches:
+        return "", ""
+    arch_gen = arch_task.get("generation")
+    if arch_gen is None:
+        arch_gen = arch_task.get("task_generation")
+    try:
+        generation_matches = arch_gen is not None and int(fact.get("generation")) == int(arch_gen)
+    except (TypeError, ValueError):
+        generation_matches = False
+    if not generation_matches:
+        return "", ""
+    snapshot_task_id = str(
+        (archived_snapshot.get("task") or {}).get("id")
+        if isinstance(archived_snapshot.get("task"), Mapping)
+        else ""
+    )
+    if str(archived_snapshot.get("task_id") or snapshot_task_id or "") != task_id:
+        return "", ""
+    return (
+        canonical_agent_name(config, str(arch_task.get("owner") or "")).casefold(),
+        canonical_agent_name(config, str(arch_task.get("reviewer") or "")).casefold(),
+    )
+
+
 def assistant_dev_bridge_tooling_dirs(repo_root: Path) -> list[Path]:
     """Locate the local development-bridge package, never product BFF code."""
 
@@ -7304,6 +7451,20 @@ def _safe_load_canonical_task(
         return None
 
 
+def _safe_load_canonical_status(config: Mapping[str, Any]) -> dict[str, Any] | None:
+    """Return a fresh canonical task-state read, or ``None`` on any failure.
+
+    Used to give ``active_worker_governance_lease_decision`` the same-cycle
+    canonical ``archive_receipts``/``terminal_facts`` it needs to validate a
+    physical archive snapshot, without a second unrelated disk root.
+    """
+
+    try:
+        return load_status(dict(config))
+    except Exception:
+        return None
+
+
 def _run_reserved_runtime_phase(
     config: dict[str, Any],
     phase_name: str,
@@ -7462,6 +7623,7 @@ def _run_reserved_runtime_phase(
                                 target_worker,
                                 fresh_task,
                                 activity_events=fresh_events,
+                                state=_safe_load_canonical_status(config),
                             )
                             is_gov_terminate = fresh_decision.get("action") == "terminate"
 
@@ -7524,6 +7686,7 @@ def _run_reserved_runtime_phase(
                                 r_worker,
                                 fresh_task,
                                 activity_events=fresh_events,
+                                state=_safe_load_canonical_status(config),
                             )
                             is_gov_terminate = fresh_decision.get("action") == "terminate"
 
@@ -8306,6 +8469,7 @@ def active_worker_governance_lease_decision(
     task: Mapping[str, Any] | None,
     *,
     activity_events: list[dict[str, Any]] | None,
+    state: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Classify whether canonical governance truth may end this active lease.
 
@@ -8313,6 +8477,11 @@ def active_worker_governance_lease_decision(
     concurrent task mutation all preserve the process. Only terminal lifecycle
     truth or the latest exact canonical ``task_reassigned`` event can authorize
     responsibility transfer here.
+
+    ``state`` is the caller's own freshly reloaded canonical task-state
+    mapping, when available, used only to validate archive-receipt provenance
+    for a terminal-cancellation task whose owner/reviewer were already
+    stripped (see ``archived_task_owner_reviewer_with_receipt_proof``).
     """
 
     if isinstance(task, Mapping) and task.get("review_decision_intent") not in (None, {}, []):
@@ -8473,8 +8642,20 @@ def active_worker_governance_lease_decision(
                     if worker_gen is not None and arch_gen is not None and str(arch_gen) != str(worker_gen):
                         gen_matches = False
                     if gen_matches and str(arch_task.get("id") or "") == str(task.get("id") or ""):
-                        task_owner = canonical_agent_name(config, str(arch_task.get("owner") or "")).casefold()
-                        task_reviewer = canonical_agent_name(config, str(arch_task.get("reviewer") or "")).casefold()
+                        # A physical archive file alone is not canonical authority for
+                        # terminal cancellation: require a matching canonical
+                        # archive_receipts digest and terminal_facts generation/role
+                        # lineage proof before trusting its owner/reviewer. Missing or
+                        # conflicting proof fails closed (task_owner/task_reviewer stay
+                        # unset), which routes this decision to the "preserve" branch
+                        # below instead of an unproven "terminate".
+                        task_owner, task_reviewer = archived_task_owner_reviewer_with_receipt_proof(
+                            config,
+                            str(task.get("id") or ""),
+                            archived_snapshot,
+                            arch_task,
+                            state=state,
+                        )
 
 
             event_actor_canon = canonical_agent_name(config, event_actor).casefold()
@@ -11354,6 +11535,7 @@ def poll_worker_assignment_stage(
                     worker,
                     current_task,
                     activity_events=fresh_events,
+                    state=_safe_load_canonical_status(config),
                 )
             if decision["action"] != "terminate":
                 if alive:
