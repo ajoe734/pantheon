@@ -3,9 +3,9 @@
   "task_id": "OVERLAY-RETIRE-001",
   "base_ref": "dev@471dc5391a0f9cbde54d51730891583043708e42",
   "depends_on": "DOMAIN-WRITERS-001 (done), JOURNAL-OWNER-001 (done)",
-  "normative_plan": "SD §5.1, §12.3; pkt-pantheon-structural-closure-functional-v2-20260903",
-  "owner": "Antigravity",
-  "reviewer": "Codex",
+  "normative_plan": "SD \u00a75.1, \u00a712.3; pkt-pantheon-structural-closure-functional-v2-20260903",
+  "owner": "Codex",
+  "reviewer": "Codex2",
   "mandatory_deletions": [
     "_PERSONA_BFF_OVERLAY",
     "_STRATEGY_BFF_OVERLAY",
@@ -86,7 +86,7 @@
       "reinstatement_prevention": "Module getattr and setattr raise AttributeError on any retired overlay symbol",
       "dictionary_exclusion": "All 4 overlay symbols are purged from main.__dict__ and module __all__",
       "fallback_read_removal": "Zero getattr(mod, '_X_OVERLAY') reads in main.py, jobs/router.py, or read_surface_ports.py",
-      "migration_engine": "SD §5.1, §5.2 deterministic migration engine with resumable cursor, checksum verification, dry-run mode, and multi-replica durability assertions"
+      "migration_engine": "SD \u00a75.1, \u00a75.2 deterministic migration engine with resumable cursor, checksum verification, dry-run mode, and multi-replica durability assertions"
     }
   },
   "acceptance_check": {
@@ -120,9 +120,20 @@
     "review_reject_p2_incident_adapter_projects_authoritative_incident_case_status_and_resolution": true,
     "review_reject_p2_strategy_write_governance_rejects_unreviewed_approval": true,
     "review_reject_p2_ranking_canonical_adapter_backed_by_ranking_write_store": true,
-    "review_reject_p2_replica_instance_removed_secondary_file_fallback": true
+    "review_reject_p2_replica_instance_removed_secondary_file_fallback": true,
+    "strategy_metadata_command_receipt_survives_restart": false,
+    "ready_for_independent_review": false
   },
-  "verification": {
+  "rollback_strategy": {
+    "rule": "Deploy the exact prior compatible release; never re-enable dual writes.",
+    "dual_writes_permitted": false,
+    "fallback_acknowledgement_permitted": false
+  },
+  "review": {
+    "reviewer": "Codex2",
+    "decision": "not submitted: unresolved durable receipt regression and artifact contract gap"
+  },
+  "previous_verification": {
     "commands": [
       {
         "command": ".venv-pantheon/bin/python3 -m pytest services/control-plane/bff/tests/test_overlay_retirement.py services/control-plane/bff/migrations/test_overlay_retirement.py services/control-plane/bff/tests/test_strategy_ranking_router.py services/control-plane/bff/tests/test_incident_router.py services/control-plane/bff/strategies/test_router_isolation.py services/control-plane/bff/personas/test_router_isolation.py -v -W ignore",
@@ -164,13 +175,49 @@
     "total_manifest_tests_passed": 74,
     "total_regression_tests_passed": 142
   },
-  "rollback_strategy": {
-    "rule": "Deploy the exact prior compatible release; never re-enable dual writes.",
-    "dual_writes_permitted": false,
-    "fallback_acknowledgement_permitted": false
+  "verification": {
+    "commands": [
+      {
+        "command": "timeout 180 .venv-pantheon/bin/python3 -m pytest services/control-plane/bff/tests/test_overlay_retirement.py services/control-plane/bff/migrations/test_overlay_retirement.py services/control-plane/bff/tests/test_strategy_ranking_router.py services/control-plane/bff/tests/test_incident_router.py services/control-plane/bff/strategies/test_router_isolation.py services/control-plane/bff/personas/test_router_isolation.py -q -W ignore",
+        "result": "1 failed, 85 passed in 65.01s",
+        "exit_code": 1,
+        "log": "/tmp/overlay-codex-core-final.log"
+      },
+      {
+        "command": "timeout 180 .venv-pantheon/bin/python3 -m pytest services/control-plane/bff/test_bff_consol_008_fixture_pack_a.py services/control-plane/bff/test_bff_consol_009_fixture_pack_b.py services/control-plane/bff/test_bff_consol_010_fixture_pack_c.py services/control-plane/bff/test_bff_consol_017_detail_smoke_b.py services/control-plane/bff/test_bff_evolution_experiment_jobs_events_contract.py services/control-plane/bff/test_bff_governance_runtime_risk_audit_contract.py services/control-plane/bff/test_inc001_rebaseline_incidents_contract.py services/control-plane/bff/test_persona_provisioning_readback.py services/control-plane/bff/tests/test_bff_b2_002_evolution_jobs_ops.py -q -W ignore",
+        "result": "142 passed in 76.83s",
+        "exit_code": 0,
+        "log": "/tmp/overlay-codex-regression.log"
+      },
+      {
+        "command": "timeout 120 .venv-pantheon/bin/python3 -m pytest services/control-plane/bff/migrations/test_overlay_retirement.py::test_strategy_writer_cas_and_durable_idempotency -q -W ignore",
+        "result": "1 failed in 2.36s: fresh Registry reader has no command receipt",
+        "exit_code": 1,
+        "log": "/tmp/overlay-codex-receipt.log"
+      }
+    ],
+    "scope": "Local owner-adapter and ASGI tests; no hosted deployment or production Postgres execution claimed.",
+    "environment": "Task-local .venv-pantheon provisioned from /tmp/pr5618/.venv-pantheon; typing_extensions 4.16.0 installed locally to resolve inherited system package incompatibility."
   },
-  "review": {
-    "reviewer": "Codex",
-    "decision": "pending independent exact-head review"
+  "review_rejection_corrections": {
+    "rejected_head": "c844ba81f0575c6e010e2d48b2c8309e91ade888",
+    "anchor_commit": "8470615a4",
+    "strategy_tenant_authorization": "Collection/PATCH bind authenticated principal and include it in request hashes. Writer requires explicit actor, checks Registry write roles and canonical tenant/builtin mutation policy on existing entries and create collisions, uses Registry metadata CAS/receipt APIs, and never retries an unguarded update. Cross-tenant draft/candidate/approved/retired tests and actual mounted route tests pass.",
+    "ranking_projection": "Fresh reads project all current owner fields and legacy aliases; legacy shadow comparison normalizes through the same schema. Owner title/criteria/entries/status/timestamp updates override migration provenance; regression passes."
+  },
+  "unresolved_blocker": {
+    "type": "external",
+    "waiting_for": "Human/Ops",
+    "source_file": "services/registry/storage.py",
+    "defect": "FileBackedRegistryStore._put_unlocked flushes before RegistryStore.commit_metadata_cas adds the command receipt; no post-transaction flush persists that receipt. New FileBackedRegistryStore(path).get_command_receipt returns None after an acknowledged metadata write. The new failing test preserves the required restart/idempotency assertion.",
+    "required_action": "Reconcile canonical artifact scope and provide an authorized Registry store fix or accepted canonical durable test transport, then rerun the unchanged failed regression and exact-head review. No changes made to Registry sources in this dispatch.",
+    "inherited_pr_paths_outside_current_artifacts": [
+      "services/registry/storage.py",
+      "services/registry/pg_store.py",
+      "services/control-plane/bff/bootstrap/dependencies.py",
+      "services/control-plane/bff/events/router.py",
+      "services/control-plane/bff/tests/conftest.py"
+    ],
+    "dependency_note": "DOMAIN-WRITERS-001 and JOURNAL-OWNER-001 remain satisfied; this is not a declared-task dependency wait."
   }
 }

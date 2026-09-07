@@ -410,6 +410,9 @@ class OverlayMigrationEngine:
         )
 
     def _diff_records(self, canon: Dict[str, Any], overlay: Dict[str, Any]) -> Dict[str, Dict[str, Any]]:
+        project_legacy = getattr(self.canonical_store, "project_legacy_record", None)
+        if callable(project_legacy):
+            overlay = project_legacy(overlay)
         _missing = object()
         diffs = {}
         all_keys = set(canon.keys()) | set(overlay.keys())
@@ -1258,8 +1261,7 @@ class RankingCanonicalAdapter:
             # the current owner projection, including legacy field aliases.
             for key in ("ranking_id", "title", "criteria", "entries", "status", "created_at", "updated_at"):
                 value = clean_entries if key == "entries" else data[key]
-                if key in res or key == "status":
-                    res[key] = value
+                res[key] = value
             for alias, value in (("id", ranking.ranking_id), ("snapshot_id", ranking.ranking_id),
                                  ("name", ranking.title), ("formula", ranking.criteria)):
                 if alias in res:
@@ -1267,6 +1269,12 @@ class RankingCanonicalAdapter:
             return res
         data["entries"] = clean_entries
         return data
+
+    def project_legacy_record(self, record: Dict[str, Any]) -> Dict[str, Any]:
+        """Compare legacy ranking aliases using the same owner schema as reads."""
+        if self._is_snapshot(record) or self._is_evaluation(record):
+            return dict(record)
+        return self._ranking_to_record(self._record_to_ranking(record))
 
     def _record_to_snapshot(self, record: Dict[str, Any]) -> Any:
         from services.rankings.store import RankingSnapshotRecord

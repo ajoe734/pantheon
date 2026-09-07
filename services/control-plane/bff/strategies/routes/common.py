@@ -172,7 +172,8 @@ class StrategyRouteContext:
             if isinstance(tenants, list) and len(tenants) == 1:
                 tenant = str(tenants[0] or "").strip()
         if not tenant:
-            raise self.bff_error(403, ErrorCode.FORBIDDEN, "Verified tenant required")
+            raise self.bff_error(403, ErrorCode.FORBIDDEN, "Verified tenant required",
+                                 "Strategy writes require an authenticated tenant claim")
         return {
             "actor_id": identity.operator_id,
             "roles": list(identity.roles),

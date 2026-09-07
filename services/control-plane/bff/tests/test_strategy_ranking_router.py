@@ -33,7 +33,7 @@ from services.source_ingestion.strategy_seed_builder import (  # noqa: E402
 )
 from services.source_ingestion.strategy_seed_store import StrategySpecSeedStore  # noqa: E402
 
-OPERATOR_HEADERS = {"Authorization": "Bearer strat-rank-op:operator"}
+OPERATOR_HEADERS = {"Authorization": "Bearer strat-rank-op:operator:tenant-corp"}
 IDEMPOTENT_HEADERS = {**OPERATOR_HEADERS, "Idempotency-Key": "strat-rank-test-key-1"}
 
 
@@ -152,6 +152,58 @@ def test_bff_strategy_create_list_get_round_trip() -> None:
         assert get_resp.status_code == 200
         assert get_resp.json()["data"]["name"] == "Momentum Alpha"
         assert get_resp.json()["data"]["risk"] == "high"
+
+
+def test_strategy_routes_bind_verified_principal_and_reject_foreign_patch(monkeypatch):
+    from services.registry.storage import RegistryStore
+    from services.control_plane.bff.ports.strategy_write_owner import CanonicalStrategyWriteOwner
+
+    store = RegistryStore()
+    writer = CanonicalStrategyWriteOwner(store)
+    with _client() as client:
+        monkeypatch.setattr(bff_main, "strategy_write_owner", writer)
+        create = client.post("/bff/strategies", headers={
+            "Authorization": "Bearer tenant-owner:operator:tenant-a", "Idempotency-Key": "tenant-create",
+        }, json={"name": "Original", "actor": {"tenant": "tenant-b", "roles": ["admin"]},
+                 "owner": "display-owner", "tenant_id": "tenant-b"})
+        assert create.status_code == 201, create.text
+        sid = create.json()["data"]["id"]
+        before = store.list_by_strategy(sid)[0].to_dict()
+        assert before["owner_tenant"] == "tenant-a"
+        assert before["last_actor"] == {"actor_id": "tenant-owner", "tenant": "tenant-a",
+                                        "roles": ["operator"], "token_kind": "stub"}
+
+        class ReadProjection:
+            def get_strategy_spec(self, strategy_id):
+                return writer.get_strategy(strategy_id)
+
+        monkeypatch.setattr(bff_main, "read_store", ReadProjection())
+        denied = client.patch(f"/bff/strategies/{sid}", headers={
+            "Authorization": "Bearer intruder:operator:tenant-b", "Idempotency-Key": "foreign-patch",
+        }, json={"name": "Foreign overwrite", "actor": before["last_actor"]})
+        assert denied.status_code == 403, denied.text
+        assert store.list_by_strategy(sid)[0].to_dict() == before
+        assert "foreign-patch" not in bff_main._STRATEGY_PERSONA_BFF_IDEMPOTENCY
+        allowed_headers = {"Authorization": "Bearer tenant-owner:operator:tenant-a",
+                           "Idempotency-Key": "owner-patch"}
+        allowed = client.patch(f"/bff/strategies/{sid}", headers=allowed_headers, json={"name": "After"})
+        assert allowed.status_code == 200, allowed.text
+        assert store.list_by_strategy(sid)[0].metadata["name"] == "After"
+        replay = client.patch(f"/bff/strategies/{sid}", headers=allowed_headers, json={"name": "After"})
+        assert replay.json() == allowed.json()
+        foreign_replay = client.patch(f"/bff/strategies/{sid}", headers={
+            **allowed_headers, "Authorization": "Bearer intruder:operator:tenant-b",
+        }, json={"name": "After"})
+        assert foreign_replay.status_code == 409, foreign_replay.text
+
+
+def test_strategy_create_rejects_tenantless_principal():
+    with _client() as client:
+        response = client.post("/bff/strategies", headers={
+            "Authorization": "Bearer tenantless:operator", "Idempotency-Key": "tenantless-create",
+        }, json={"name": "Untrusted", "tenant_id": "tenant-a"})
+        assert response.status_code == 403, response.text
+        assert "tenantless-create" not in bff_main._STRATEGY_PERSONA_BFF_IDEMPOTENCY
 
 
 def test_bff_strategy_get_missing_returns_404() -> None:

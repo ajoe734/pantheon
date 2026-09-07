@@ -133,12 +133,17 @@ class CanonicalStrategyWriteOwner:
                 authorize(entry)
                 if entry.artifact_state != art_state:
                     raise ValueError("Lifecycle changes require the governed state transition command")
-                merged_meta = dict(entry.metadata or {})
+                command_key = record.get("command_key") or record.get("idempotency_key")
+                receipt = reg_service.get_command_receipt(
+                    entry.registry_id, command_key, actor=actor,
+                ) if command_key else None
+                expected_metadata = receipt["expected_metadata"] if receipt else entry.metadata
+                merged_meta = dict(expected_metadata or {})
                 merged_meta.update(record)
                 reg_service.update_metadata(
-                    entry.registry_id, expected_metadata=entry.metadata,
+                    entry.registry_id, expected_metadata=expected_metadata,
                     new_metadata=merged_meta, actor=actor,
-                    command_key=record.get("command_key") or record.get("idempotency_key"),
+                    command_key=command_key,
                 )
 
             def _next_ver(ver: str) -> str:

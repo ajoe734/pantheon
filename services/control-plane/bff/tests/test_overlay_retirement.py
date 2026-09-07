@@ -427,7 +427,8 @@ def test_genuine_five_owner_disk_backed_restart_durability_and_multi_replica() -
 
         aggregates = [
             (AggregateKind.PERSONA, "pers-durable-rep-1", {"name": "Persona 1", "state": "active"}),
-            (AggregateKind.STRATEGY, "strat-durable-rep-1", {"title": "Strategy 1", "lifecycle_state": "active"}),
+            (AggregateKind.STRATEGY, "strat-durable-rep-1", {"title": "Strategy 1", "lifecycle_state": "active",
+                "actor": {"actor_id": "replica-test", "tenant": "tenant-corp", "roles": ["operator"], "token_kind": "service"}}),
             (AggregateKind.INCIDENT, "inc-durable-rep-1", {"title": "Incident 1", "status": "open"}),
             (AggregateKind.JOB, "job-durable-rep-1", {"name": "Job 1", "status": "running"}),
             (AggregateKind.RANKING, "rank-durable-rep-1", {"formula": "sharpe", "score": 2.5}),
@@ -436,7 +437,7 @@ def test_genuine_five_owner_disk_backed_restart_durability_and_multi_replica() -
         # Replica Alpha writes all five aggregates directly to persistent disk storage
         for agg, key, payload in aggregates:
             record = {"id": key, "aggregate": agg.value, **payload}
-            rep_alpha.write_canonical(key, record)
+            assert rep_alpha.write_canonical(key, record) is True
 
         # Simulate independent process restart: process memory wiped
         rep_alpha.restart_process()

@@ -17,6 +17,115 @@ from pathlib import Path
 from typing import Any, Dict
 import pytest
 
+
+def _strategy_actor(tenant="tenant-a", roles=None):
+    return {"actor_id": "migration-review", "tenant": tenant,
+            "roles": roles if roles is not None else ["operator"], "token_kind": "service"}
+
+
+@pytest.mark.parametrize("state", ["draft", "candidate", "approved", "retired"])
+def test_strategy_writer_rejects_foreign_tenant_without_mutation(state):
+    from fastapi import HTTPException
+    from services.registry.storage import RegistryStore
+    from services.registry.models import ArtifactState, ArtifactType, RegistryEntryCreate
+    from services.control_plane.bff.ports.strategy_write_owner import CanonicalStrategyWriteOwner
+
+    store = RegistryStore()
+    entry = store.create(RegistryEntryCreate(
+        artifact_type=ArtifactType.STRATEGY_SPEC, strategy_id="tenant-owned", version="1.0.0",
+        artifact_state=ArtifactState(state), metadata={"name": "Original"},
+    ), "tenant-owned-entry", actor=_strategy_actor())
+    before = entry.to_dict()
+    writer = CanonicalStrategyWriteOwner(store)
+    with pytest.raises(HTTPException) as exc:
+        writer.upsert_strategy({"id": "tenant-owned", "name": "Foreign overwrite",
+                                "state": "draft", "actor": _strategy_actor("tenant-b")})
+    assert exc.value.status_code == 403
+    assert store.get(entry.registry_id).to_dict() == before
+    assert len(store.list_by_strategy("tenant-owned")) == 1
+
+
+@pytest.mark.parametrize("actor", [None, {}, _strategy_actor(roles=["viewer"]),
+                                  _strategy_actor(tenant="")])
+def test_strategy_writer_never_synthesizes_missing_write_authority(actor):
+    from fastapi import HTTPException
+    from services.registry.storage import RegistryStore
+    from services.control_plane.bff.ports.strategy_write_owner import CanonicalStrategyWriteOwner
+
+    store = RegistryStore()
+    with pytest.raises(HTTPException) as exc:
+        CanonicalStrategyWriteOwner(store).upsert_strategy({
+            "id": "untrusted", "owner": "admin", "tenant_id": "tenant-a", "actor": actor,
+        })
+    assert exc.value.status_code == 403
+    assert store.list_by_strategy("untrusted") == []
+
+
+def test_strategy_writer_cas_and_durable_idempotency(tmp_path, monkeypatch):
+    from services.registry.storage import FileBackedRegistryStore, RegistryConcurrentUpdateError
+    from services.registry.split_api import RegistryConflictError
+    from services.control_plane.bff.ports.strategy_write_owner import CanonicalStrategyWriteOwner
+
+    path = tmp_path / "strategies.json"
+    store = FileBackedRegistryStore(path)
+    writer = CanonicalStrategyWriteOwner(store)
+    original = {"id": "owned", "name": "Before", "actor": _strategy_actor()}
+    writer.upsert_strategy(original)
+    updated = {**original, "name": "After", "command_key": "metadata-update"}
+    writer.upsert_strategy(updated)
+    entry = store.list_by_strategy("owned")[0]
+    before_replay = entry.to_dict()
+    fresh_store = FileBackedRegistryStore(path)
+    assert fresh_store.get_command_receipt(
+        "metadata-update", entry.registry_id, actor=_strategy_actor(),
+    ) is not None
+    fresh_writer = CanonicalStrategyWriteOwner(fresh_store)
+    fresh_writer.upsert_strategy(updated)
+    assert fresh_store.get(entry.registry_id).to_dict() == before_replay
+    with pytest.raises(RegistryConflictError):
+        fresh_writer.upsert_strategy({**updated, "name": "Divergent"})
+    assert fresh_store.get(entry.registry_id).to_dict() == before_replay
+
+    def reject_stale(**kwargs):
+        raise RegistryConcurrentUpdateError(kwargs["registry_id"])
+    monkeypatch.setattr(fresh_store, "commit_metadata_cas", reject_stale)
+    with pytest.raises(RegistryConflictError):
+        fresh_writer.upsert_strategy({**original, "name": "Stale", "command_key": "stale"})
+    assert FileBackedRegistryStore(path).get(entry.registry_id).to_dict() == before_replay
+
+
+def test_ranking_fresh_reader_projects_owner_updates_not_provenance(tmp_path):
+    from services.control_plane.bff.migrations.overlay_retirement import create_file_backed_ranking_store
+
+    path = tmp_path / "rankings.json"
+    initial = {"ranking_id": "ranking-review", "title": "Before", "name": "Before",
+               "criteria": "old", "formula": "old", "entries": [{"score": 1}],
+               "tenant_id": "tenant-a", "_migration_checksum": "source-digest",
+               "created_at": "2026-09-01T00:00:00Z", "updated_at": "2026-09-01T00:00:00Z"}
+    assert RankingCanonicalAdapter(path).insert(initial)
+    owner = create_file_backed_ranking_store(path)
+    current = owner.get_ranking("ranking-review")
+    current.title = "After"
+    current.criteria = "new"
+    current.entries[0]["score"] = 99
+    current.status = "retired"
+    current.updated_at = "2026-09-07T00:00:00Z"
+    owner.put_ranking(current)
+    fresh = RankingCanonicalAdapter(path)
+    row = fresh.get("ranking-review")
+    assert row["title"] == row["name"] == "After"
+    assert row["criteria"] == row["formula"] == "new"
+    assert row["entries"] == [{"score": 99}]
+    assert row["status"] == "retired"
+    assert row["updated_at"] == owner.get_ranking("ranking-review").updated_at
+    assert row["updated_at"] != initial["updated_at"]
+    assert row["_migration_checksum"] == "source-digest"
+    assert fresh.list_records(tenant_id="tenant-a") == [row]
+    report = OverlayMigrationEngine(aggregate=AggregateKind.RANKING, canonical_store=fresh,
+        overlay_data_source={"ranking-review": initial}).shadow_compare(tenant_id="tenant-a")
+    assert report.divergent_count == 1
+    assert set(report.conflicts[0].divergent_fields) >= {"title", "criteria", "entries"}
+
 from services.control_plane.bff.migrations.overlay_retirement import (
     AggregateKind,
     BackfillResult,
@@ -431,6 +540,7 @@ def test_genuine_five_owner_backfill_shadow_conflicts_and_idempotency(
             key_field: f"{aggregate.value}-canon-1",
             "name": f"Canonical {aggregate.value.title()} 1",
             "tenant_id": "tenant-corp",
+            "actor": {"actor_id": "migration-test", "tenant": "tenant-corp", "roles": ["operator"], "token_kind": "service"},
             "status": "active",
         }
         assert durable_store.insert(initial_canon) is True
@@ -444,18 +554,21 @@ def test_genuine_five_owner_backfill_shadow_conflicts_and_idempotency(
                 key_field: f"{aggregate.value}-canon-1",
                 "name": f"Canonical {aggregate.value.title()} 1",
                 "tenant_id": "tenant-corp",
+            "actor": {"actor_id": "migration-test", "tenant": "tenant-corp", "roles": ["operator"], "token_kind": "service"},
                 "status": "active",
             },
             f"{aggregate.value}-divergent": {
                 key_field: f"{aggregate.value}-divergent",
                 "name": "Overlay Version Divergent",
                 "tenant_id": "tenant-corp",
+            "actor": {"actor_id": "migration-test", "tenant": "tenant-corp", "roles": ["operator"], "token_kind": "service"},
                 "status": "draft",
             },
             f"{aggregate.value}-to-backfill": {
                 key_field: f"{aggregate.value}-to-backfill",
                 "name": f"Backfilled {aggregate.value.title()}",
                 "tenant_id": "tenant-corp",
+            "actor": {"actor_id": "migration-test", "tenant": "tenant-corp", "roles": ["operator"], "token_kind": "service"},
                 "status": "active",
             },
         }
@@ -465,6 +578,7 @@ def test_genuine_five_owner_backfill_shadow_conflicts_and_idempotency(
             key_field: f"{aggregate.value}-divergent",
             "name": "Canonical Version Divergent",
             "tenant_id": "tenant-corp",
+            "actor": {"actor_id": "migration-test", "tenant": "tenant-corp", "roles": ["operator"], "token_kind": "service"},
             "status": "active",
         }) is True
 
@@ -522,6 +636,7 @@ def test_genuine_five_owner_backfill_shadow_conflicts_and_idempotency(
                 key_field: f"{aggregate.value}-coord-write",
                 "name": f"Coordinator Written {aggregate.value.title()}",
                 "tenant_id": "tenant-corp",
+            "actor": {"actor_id": "migration-test", "tenant": "tenant-corp", "roles": ["operator"], "token_kind": "service"},
             },
             is_fallback=False,
         )
@@ -544,7 +659,7 @@ def test_genuine_five_owner_disk_backed_multi_replica_restart_durability() -> No
         # Test all 5 aggregates
         aggregates = [
             (AggregateKind.PERSONA, "pers-durable-1", {"name": "Persona 1", "state": "active"}),
-            (AggregateKind.STRATEGY, "strat-durable-1", {"title": "Strategy 1", "lifecycle_state": "active"}),
+            (AggregateKind.STRATEGY, "strat-durable-1", {"title": "Strategy 1", "lifecycle_state": "active", "actor": {"actor_id": "replica-test", "tenant": "tenant-corp", "roles": ["operator"], "token_kind": "service"}}),
             (AggregateKind.INCIDENT, "inc-durable-1", {"title": "Incident 1", "status": "open"}),
             (AggregateKind.JOB, "job-durable-1", {"name": "Job 1", "status": "running"}),
             (AggregateKind.RANKING, "rank-durable-1", {"formula": "sharpe", "score": 2.5}),
@@ -553,7 +668,7 @@ def test_genuine_five_owner_disk_backed_multi_replica_restart_durability() -> No
         # Replica Alpha writes all 5 aggregate canonical records directly to durable disk
         for agg, key, payload in aggregates:
             record = {"id": key, "aggregate": agg.value, **payload}
-            replica_alpha.write_canonical(key, record)
+            assert replica_alpha.write_canonical(key, record) is True
 
         # Simulate hard process restart on Replica Alpha (memory wiped, local handles dropped)
         replica_alpha.restart_process()
@@ -620,6 +735,7 @@ def test_strategy_write_governance_rejects_unreviewed_approval() -> None:
             "name": "Unreviewed Strategy",
             "status": "approved",
             "tenant_id": "tenant-corp",
+            "actor": {"actor_id": "migration-test", "tenant": "tenant-corp", "roles": ["operator"], "token_kind": "service"},
         })
         assert rejected is False
         assert adapter.get("strat-unreviewed-1") is None
@@ -630,6 +746,7 @@ def test_strategy_write_governance_rejects_unreviewed_approval() -> None:
             "name": "Draft Strategy",
             "status": "draft",
             "tenant_id": "tenant-corp",
+            "actor": {"actor_id": "migration-test", "tenant": "tenant-corp", "roles": ["operator"], "token_kind": "service"},
         })
         assert accepted is True
         fetched = adapter.get("strat-draft-1")
