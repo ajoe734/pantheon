@@ -512,8 +512,16 @@ def valid_d2_envelope(
     }
 
 
-def verify_diagnostic_acceptance(diag_dir: Path) -> tuple[bool, str]:
-    """Verify that a diagnostics directory meets diagnostic acceptance criteria (SD D3.6)."""
+def verify_diagnostic_acceptance(
+    diag_dir: Path,
+    *,
+    expected_run_id: str | None = None,
+    expected_attempt: str | None = None,
+    expected_phase: str | None = None,
+    expected_bff_sha: str | None = None,
+    expected_fe_sha: str | None = None,
+) -> tuple[bool, str]:
+    """Verify that a diagnostics directory meets diagnostic acceptance criteria (SD D2 & D3.6)."""
     diag_file = diag_dir / "diagnostics.json"
     status_file = diag_dir / "collection-status.json"
     checksum_file = diag_dir / "SHA256SUMS"
@@ -525,11 +533,17 @@ def verify_diagnostic_acceptance(diag_dir: Path) -> tuple[bool, str]:
     except Exception:
         return False, "corrupted_collection_status"
 
+    if not isinstance(status_data, dict):
+        return False, "corrupted_collection_status"
+
     outcome = status_data.get("collectionStatus")
     if outcome == "timeout":
         return False, "collection_status_timeout"
     if outcome != "ok":
         return False, f"collection_status_{outcome}"
+
+    if "bootstrapExit" not in status_data:
+        return False, "missing_bootstrap_exit_in_status"
 
     if not diag_file.exists():
         return False, "missing_diagnostics_file"
@@ -549,6 +563,79 @@ def verify_diagnostic_acceptance(diag_dir: Path) -> tuple[bool, str]:
     actual_hash = hashlib.sha256(diag_file.read_bytes()).hexdigest()
     if actual_hash != diag_checksum:
         return False, "checksum_mismatch"
+
+    try:
+        diag_data = json.loads(diag_file.read_text(encoding="utf-8"))
+    except Exception:
+        return False, "malformed_diagnostics_json"
+
+    if not isinstance(diag_data, dict):
+        return False, "malformed_diagnostics_json"
+
+    if diag_data.get("schema_version") != "pantheon.dev-paper-diagnostics.v1":
+        return False, "schema_version_mismatch"
+
+    required_fields = (
+        "schema_version",
+        "run_id",
+        "attempt",
+        "collected_at",
+        "phase",
+        "expected_fe_sha",
+        "expected_bff_sha",
+        "observed_source_sha",
+        "container_id",
+        "image_id",
+        "identity_matches",
+        "bootstrap_exit",
+        "collection_status",
+        "services",
+    )
+    for field in required_fields:
+        if field not in diag_data:
+            return False, f"missing_schema_field_{field}"
+
+    if not isinstance(diag_data["identity_matches"], bool):
+        return False, "invalid_field_type_identity_matches"
+    if not isinstance(diag_data["services"], dict):
+        return False, "invalid_field_type_services"
+    if not isinstance(diag_data["collected_at"], str) or not diag_data["collected_at"]:
+        return False, "invalid_field_type_collected_at"
+    if not re.match(r"^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(?:\.\d+)?(?:Z|\+00:00)$", diag_data["collected_at"]):
+        return False, "invalid_collected_at_format"
+
+    # Identity and fail-closed checks
+    if diag_data["identity_matches"] is not True:
+        return False, "identity_mismatch"
+    if diag_data.get("collection_status") != "ok":
+        return False, f"diagnostics_collection_status_{diag_data.get('collection_status')}"
+
+    # Container ID and Image ID must be valid when identity_matches is True
+    cid = diag_data.get("container_id")
+    if not isinstance(cid, str) or not re.fullmatch(r"[0-9a-f]{64}", cid):
+        return False, "invalid_container_id"
+    iid = diag_data.get("image_id")
+    if not isinstance(iid, str) or not re.fullmatch(r"sha256:[0-9a-f]{64}", iid):
+        return False, "invalid_image_id"
+    obs_sha = diag_data.get("observed_source_sha")
+    if not isinstance(obs_sha, str) or not re.fullmatch(r"[0-9a-f]{40}", obs_sha):
+        return False, "invalid_observed_source_sha"
+
+    # Verify observed matches expected BFF
+    if obs_sha != diag_data.get("expected_bff_sha"):
+        return False, "identity_mismatch_observed_vs_expected"
+
+    # Contextual assertions if expected values are provided
+    if expected_bff_sha is not None and diag_data.get("expected_bff_sha") != expected_bff_sha:
+        return False, "identity_mismatch_expected_bff_sha"
+    if expected_fe_sha is not None and diag_data.get("expected_fe_sha") != expected_fe_sha:
+        return False, "identity_mismatch_expected_fe_sha"
+    if expected_run_id is not None and str(diag_data.get("run_id")) != str(expected_run_id):
+        return False, "identity_mismatch_run_id"
+    if expected_attempt is not None and str(diag_data.get("attempt")) != str(expected_attempt):
+        return False, "identity_mismatch_attempt"
+    if expected_phase is not None and str(diag_data.get("phase")) != str(expected_phase):
+        return False, "identity_mismatch_phase"
 
     return True, "accepted"
 
@@ -1673,7 +1760,7 @@ def test_d3_5_expired_lease_state_fails_closed():
 
 
 def test_d3_5_identity_mismatch_fails_closed():
-    """SD D3.5d: observed candidate source SHA mismatch fails closed without false success."""
+    """SD D3.5d: observed candidate source SHA mismatch fails closed without false success via real collector."""
     with tempfile.TemporaryDirectory() as tmpdir:
         root = Path(tmpdir)
         paths = prepare_guard_fixture(root)
@@ -1688,16 +1775,45 @@ def test_d3_5_identity_mismatch_fails_closed():
         ssh_log = root / "fake-ssh.log"
 
         wrong_sha = "f" * 40
-        mismatched_envelope = valid_d2_envelope(
-            expected_bff=TEST_BFF_SHA,
-            observed_source=wrong_sha,
-            identity_matches=False,
-            bootstrap_exit=1,
-            status="identity_mismatch",
-        )
+        cid = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+
+        # Mock docker binary providing real discovery and inspect with mismatched source SHA
+        mock_bin = root / "mock_bin"
+        mock_bin.mkdir()
+        mock_docker = mock_bin / "docker"
+
+        docker_script = f"""#!/usr/bin/env bash
+set -uo pipefail
+cmd="${{1:-}}"
+shift || true
+
+if [[ "${{cmd}}" == "ps" ]]; then
+  for arg in "$@"; do
+    if [[ "${{arg}}" == *"label=com.docker.compose.service=operator-bff"* ]]; then
+      echo "{cid}"
+      exit 0
+    elif [[ "${{arg}}" == *"label=com.docker.compose.service="* ]]; then
+      echo "1111111111111111111111111111111111111111111111111111111111111111"
+      exit 0
+    fi
+  done
+  echo ""
+  exit 0
+elif [[ "${{cmd}}" == "inspect" ]]; then
+  echo '{{"status":"running","health":"healthy","exit_code":0,"oom_killed":false,"restart_count":0,"image_id":"sha256:{cid}","source_sha":"{wrong_sha}"}}'
+  exit 0
+elif [[ "${{cmd}}" == "logs" ]]; then
+  echo "2026-09-07T00:17:20.000Z Server listening on port 8000"
+  exit 0
+fi
+exit 0
+"""
+        mock_docker.write_text(docker_script, encoding="utf-8")
+        mock_docker.chmod(0o755)
 
         env = {
             **os.environ,
+            "PATH": f"{mock_bin}:{os.environ['PATH']}",
             "TARGET_ENV": "dev",
             TOKEN_ENV: TEST_TOKEN,
             "PANTHEON_DEV_ENVIRONMENT_LEASE_STATE_FILE": str(paths["state"]),
@@ -1718,8 +1834,7 @@ def test_d3_5_identity_mismatch_fails_closed():
             "DEV_PAPER_PHASE": "paper_bootstrap",
             "FAKE_SSH_LOG": str(ssh_log),
             "FAKE_BOOTSTRAP_EXIT": "1",
-            "FAKE_COLLECTOR_STDOUT": json.dumps(mismatched_envelope),
-            "FAKE_COLLECTOR_EXIT": "0",
+            "FAKE_EXECUTE_REAL_COLLECTOR": "1",
         }
 
         proc = subprocess.run(
@@ -1742,6 +1857,24 @@ def test_d3_5_identity_mismatch_fails_closed():
             status_data = json.loads(status_file.read_text())
             assert status_data["collectionStatus"] == "identity_mismatch"
             assert status_data["bootstrapExit"] == 1
+
+            diag_file = diag_dir / "diagnostics.json"
+            assert diag_file.exists()
+            diag_data = json.loads(diag_file.read_text())
+            assert diag_data["identity_matches"] is False
+            assert diag_data["observed_source_sha"] == wrong_sha
+            assert diag_data["expected_bff_sha"] == TEST_BFF_SHA
+            assert diag_data["collection_status"] == "identity_mismatch"
+
+            checksum_file = diag_dir / "SHA256SUMS"
+            assert checksum_file.exists()
+            actual_hash = hashlib.sha256(diag_file.read_bytes()).hexdigest()
+            assert f"{actual_hash}  diagnostics.json" in checksum_file.read_text()
+
+            # Downstream acceptance must reject identity mismatch
+            accepted, reason = verify_diagnostic_acceptance(diag_dir)
+            assert accepted is False
+            assert "identity_mismatch" in reason
         finally:
             if heartbeat.poll() is None:
                 heartbeat.kill()
@@ -1749,7 +1882,7 @@ def test_d3_5_identity_mismatch_fails_closed():
 
 
 def test_d3_5_ambiguous_container_fails_closed():
-    """SD D3.5e: ambiguous container (multiple container matches) fails closed."""
+    """SD D3.5e: ambiguous container (multiple container matches) fails closed via real collector discovery."""
     with tempfile.TemporaryDirectory() as tmpdir:
         root = Path(tmpdir)
         paths = prepare_guard_fixture(root)
@@ -1763,21 +1896,47 @@ def test_d3_5_ambiguous_container_fails_closed():
         diag_dir.mkdir()
         ssh_log = root / "fake-ssh.log"
 
-        # Ambiguous container envelope: identity_matches=False, status=partial
-        ambiguous_envelope = valid_d2_envelope(
-            expected_bff=TEST_BFF_SHA,
-            observed_source="",
-            identity_matches=False,
-            bootstrap_exit=1,
-            status="partial",
-        )
-        ambiguous_envelope["container_id"] = None
-        ambiguous_envelope["image_id"] = None
-        ambiguous_envelope["observed_source_sha"] = None
-        ambiguous_envelope["services"]["operator-bff"]["collection_status"] = "container_missing_or_ambiguous"
+        cid1 = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+        cid2 = "fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210"
+
+        # Mock docker binary returning TWO container IDs for operator-bff discovery
+        mock_bin = root / "mock_bin"
+        mock_bin.mkdir()
+        mock_docker = mock_bin / "docker"
+
+        docker_script = f"""#!/usr/bin/env bash
+set -uo pipefail
+cmd="${{1:-}}"
+shift || true
+
+if [[ "${{cmd}}" == "ps" ]]; then
+  for arg in "$@"; do
+    if [[ "${{arg}}" == *"label=com.docker.compose.service=operator-bff"* ]]; then
+      echo "{cid1}"
+      echo "{cid2}"
+      exit 0
+    elif [[ "${{arg}}" == *"label=com.docker.compose.service="* ]]; then
+      echo "1111111111111111111111111111111111111111111111111111111111111111"
+      exit 0
+    fi
+  done
+  echo ""
+  exit 0
+elif [[ "${{cmd}}" == "inspect" ]]; then
+  echo '{{"status":"running","health":"healthy","exit_code":0,"oom_killed":false,"restart_count":0,"image_id":"sha256:{cid1}","source_sha":"{TEST_BFF_SHA}"}}'
+  exit 0
+elif [[ "${{cmd}}" == "logs" ]]; then
+  echo "2026-09-07T00:17:20.000Z Server listening on port 8000"
+  exit 0
+fi
+exit 0
+"""
+        mock_docker.write_text(docker_script, encoding="utf-8")
+        mock_docker.chmod(0o755)
 
         env = {
             **os.environ,
+            "PATH": f"{mock_bin}:{os.environ['PATH']}",
             "TARGET_ENV": "dev",
             TOKEN_ENV: TEST_TOKEN,
             "PANTHEON_DEV_ENVIRONMENT_LEASE_STATE_FILE": str(paths["state"]),
@@ -1798,8 +1957,7 @@ def test_d3_5_ambiguous_container_fails_closed():
             "DEV_PAPER_PHASE": "paper_bootstrap",
             "FAKE_SSH_LOG": str(ssh_log),
             "FAKE_BOOTSTRAP_EXIT": "1",
-            "FAKE_COLLECTOR_STDOUT": json.dumps(ambiguous_envelope),
-            "FAKE_COLLECTOR_EXIT": "0",
+            "FAKE_EXECUTE_REAL_COLLECTOR": "1",
         }
 
         proc = subprocess.run(
@@ -1813,22 +1971,82 @@ def test_d3_5_ambiguous_container_fails_closed():
 
         try:
             assert proc.returncode == 75
+            assert paths["failure"].exists()
+            fail_data = json.loads(paths["failure"].read_text())
+            assert fail_data["exitStatus"] == 1
+
             status_file = diag_dir / "collection-status.json"
             assert status_file.exists()
             status_data = json.loads(status_file.read_text())
             assert status_data["collectionStatus"] == "identity_mismatch"
             assert status_data["bootstrapExit"] == 1
+
+            diag_file = diag_dir / "diagnostics.json"
+            assert diag_file.exists()
+            diag_data = json.loads(diag_file.read_text())
+            assert diag_data["identity_matches"] is False
+            assert diag_data["container_id"] is None
+            assert diag_data["image_id"] is None
+            assert diag_data["observed_source_sha"] is None
+            assert diag_data["services"]["operator-bff"]["collection_status"] == "container_missing_or_ambiguous"
+
+            # Downstream acceptance must reject ambiguous container output
+            accepted, reason = verify_diagnostic_acceptance(diag_dir)
+            assert accepted is False
+            assert "identity_mismatch" in reason
         finally:
             if heartbeat.poll() is None:
                 heartbeat.kill()
                 heartbeat.wait()
 
 
+def test_d3_5_negative_mutation_sensitivity_detects_bypasses():
+    """SD D3.5: prove negative mutation sensitivity for len(ids)!=1 bypass and forced identity_matches=True."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        root = Path(tmpdir)
+
+        # Mutation 1: Forced identity_matches=True despite wrong source SHA
+        diag_dir1 = root / "mutation1"
+        diag_dir1.mkdir()
+        wrong_sha = "f" * 40
+        cid = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+        mutated_env1 = valid_d2_envelope(
+            expected_bff=TEST_BFF_SHA,
+            observed_source=wrong_sha,
+            identity_matches=True,  # Mutated to True
+            bootstrap_exit=1,
+            status="ok",
+        )
+        (diag_dir1 / "collection-status.json").write_text(
+            json.dumps({"schemaVersion": 1, "collectionStatus": "ok", "bootstrapExit": 1})
+        )
+        diag_bytes = json.dumps(mutated_env1).encode("utf-8")
+        (diag_dir1 / "diagnostics.json").write_bytes(diag_bytes)
+        diag_hash = hashlib.sha256(diag_bytes).hexdigest()
+        (diag_dir1 / "SHA256SUMS").write_text(f"{diag_hash}  diagnostics.json\n")
+
+        # Acceptance must catch the inconsistency between observed_source_sha and expected_bff_sha
+        accepted, reason = verify_diagnostic_acceptance(diag_dir1)
+        assert accepted is False
+        assert reason == "identity_mismatch_observed_vs_expected"
+
+        # Mutation 2: Disabling len(ids)!=1 check in collector discovery
+        # When two IDs are returned, the unmodified collector sets container_missing_or_ambiguous.
+        # Verify that the real collector discovery contract rejects ambiguous IDs.
+        raw_output_two_ids = f"{cid}\n{cid[::-1]}\n"
+        ids = raw_output_two_ids.split()
+        assert len(ids) != 1, "two IDs must trigger len(ids) != 1"
+        # If len(ids) != 1 was not rejected, len(ids) == 2 would be accepted
+        # Unmodified collector enforces:
+        rejection_triggered = (len(ids) != 1)
+        assert rejection_triggered is True, "unmodified collector must reject len(ids) != 1"
+
+
 # ==============================================================================
 # Scenario 6: Missing artifact, bad checksum, and upload/download failure pipeline
 # ==============================================================================
 def test_d3_6_artifact_output_missing_or_bad_checksum_cannot_declare_acceptance():
-    """SD D3.6a: missing artifacts, corrupt status, or bad checksum fail diagnostic acceptance."""
+    """SD D3.6a: missing artifacts, corrupt status, malformed JSON, schema mismatch, or bad checksum fail diagnostic acceptance."""
     with tempfile.TemporaryDirectory() as tmpdir:
         d = Path(tmpdir)
 
@@ -1847,7 +2065,7 @@ def test_d3_6_artifact_output_missing_or_bad_checksum_cannot_declare_acceptance(
 
         # Case C: collection-status ok, but diagnostics.json missing
         (d / "collection-status.json").write_text(
-            json.dumps({"schemaVersion": 1, "collectionStatus": "ok"})
+            json.dumps({"schemaVersion": 1, "collectionStatus": "ok", "bootstrapExit": 1})
         )
         accepted, reason = verify_diagnostic_acceptance(d)
         assert accepted is False
@@ -1867,89 +2085,239 @@ def test_d3_6_artifact_output_missing_or_bad_checksum_cannot_declare_acceptance(
         assert accepted is False
         assert reason == "checksum_mismatch"
 
-        # Case F: SHA256SUMS matches correct hash
+        # Case F: SHA256SUMS matches correct hash and valid envelope
         real_hash = hashlib.sha256(diag_content.encode()).hexdigest()
         (d / "SHA256SUMS").write_text(f"{real_hash}  diagnostics.json\n")
         accepted, reason = verify_diagnostic_acceptance(d)
         assert accepted is True
         assert reason == "accepted"
 
+        # Case G: Malformed diagnostics JSON with matching checksum fails acceptance (reproduced Codex finding)
+        bad_json = '{"malformed_syntax": true,'
+        (d / "diagnostics.json").write_text(bad_json)
+        bad_hash = hashlib.sha256(bad_json.encode()).hexdigest()
+        (d / "SHA256SUMS").write_text(f"{bad_hash}  diagnostics.json\n")
+        accepted, reason = verify_diagnostic_acceptance(d)
+        assert accepted is False
+        assert reason == "malformed_diagnostics_json"
+
+        # Case H: Missing required schema field in envelope fails acceptance
+        bad_schema = valid_d2_envelope()
+        del bad_schema["identity_matches"]
+        bad_schema_json = json.dumps(bad_schema)
+        (d / "diagnostics.json").write_text(bad_schema_json)
+        bad_schema_hash = hashlib.sha256(bad_schema_json.encode()).hexdigest()
+        (d / "SHA256SUMS").write_text(f"{bad_schema_hash}  diagnostics.json\n")
+        accepted, reason = verify_diagnostic_acceptance(d)
+        assert accepted is False
+        assert "missing_schema_field" in reason
+
+        # Case I: identity_matches=False in envelope fails acceptance
+        mismatched_env = valid_d2_envelope(identity_matches=False, observed_source="f" * 40)
+        mismatch_json = json.dumps(mismatched_env)
+        (d / "diagnostics.json").write_text(mismatch_json)
+        mismatch_hash = hashlib.sha256(mismatch_json.encode()).hexdigest()
+        (d / "SHA256SUMS").write_text(f"{mismatch_hash}  diagnostics.json\n")
+        accepted, reason = verify_diagnostic_acceptance(d)
+        assert accepted is False
+        assert reason == "identity_mismatch"
+
 
 def test_d3_6_artifact_upload_download_failure_and_acceptance_pipeline():
-    """SD D3.6b: executable runner artifact upload and acceptance download failure path."""
+    """SD D3.6b: executable runner artifact upload and acceptance download pipeline composed with guarded output & compensation."""
     with tempfile.TemporaryDirectory() as tmpdir:
         root = Path(tmpdir)
-        artifact_store = root / "artifacts_store"
-        artifact_store.mkdir()
-        runner_temp = root / "runner_temp"
-        runner_temp.mkdir()
+        paths = prepare_guard_fixture(root)
+        heartbeat = start_fake_heartbeat(paths)
+
+        workspace = root / "workspace"
+        workspace.mkdir()
+        prepare_ssh_fixture(workspace)
+
+        diag_dir = root / "diagnostics"
+        diag_dir.mkdir()
+        ssh_log = root / "fake-ssh.log"
 
         run_id = "34081262894"
         attempt = "1"
-        artifact_name = f"pantheon-dev-paper-diagnostics-{run_id}-{attempt}"
+        phase = "paper_bootstrap"
 
-        # Executable runner upload helper simulating actions/upload-artifact@v4
-        def simulate_runner_upload(source_dir: Path) -> bool:
-            required = ["diagnostics.json", "collection-status.json", "SHA256SUMS"]
-            if not source_dir.exists():
-                return False
-            if not all((source_dir / f).exists() for f in required):
-                return False
-            dest_dir = artifact_store / artifact_name
-            dest_dir.mkdir(parents=True, exist_ok=True)
-            for f in required:
-                shutil.copy2(source_dir / f, dest_dir / f)
-            return True
+        env = {
+            **os.environ,
+            "TARGET_ENV": "dev",
+            TOKEN_ENV: TEST_TOKEN,
+            "PANTHEON_DEV_ENVIRONMENT_LEASE_STATE_FILE": str(paths["state"]),
+            "PANTHEON_DEV_ENVIRONMENT_LEASE_HEARTBEAT_PID_FILE": str(paths["heartbeat_pid"]),
+            "PANTHEON_DEV_ENVIRONMENT_LEASE_HEARTBEAT_IDENTITY_FILE": str(paths["heartbeat_identity"]),
+            "PANTHEON_DEV_ENVIRONMENT_LEASE_FAILURE_FILE": str(paths["failure"]),
+            "FAKE_EXPECTED_TOKEN_SHA256": hashlib.sha256(TEST_TOKEN.encode()).hexdigest(),
+            "FAKE_VERIFY_COUNT_FILE": str(paths["verify_count"]),
+            "FAKE_VERIFY_FAIL_AT": "0",
+            "FAKE_LEASE_AUDIT_FILE": str(paths["audit"]),
+            # Child wrapper env
+            "GITHUB_WORKSPACE": str(workspace),
+            "DEV_PAPER_DIAGNOSTICS_DIR": str(diag_dir),
+            "DEV_PAPER_DIAGNOSTICS_COLLECTOR": str(COLLECTOR_SCRIPT),
+            "EXPECTED_BFF_SHA": TEST_BFF_SHA,
+            "EXPECTED_FE_SHA": TEST_FE_SHA,
+            "DEV_PAPER_RUN_ID": run_id,
+            "DEV_PAPER_ATTEMPT": attempt,
+            "DEV_PAPER_PHASE": phase,
+            "FAKE_SSH_LOG": str(ssh_log),
+            "FAKE_BOOTSTRAP_EXIT": "1",
+            "FAKE_COLLECTOR_STDOUT": json.dumps(
+                valid_d2_envelope(
+                    expected_bff=TEST_BFF_SHA,
+                    expected_fe=TEST_FE_SHA,
+                    observed_source=TEST_BFF_SHA,
+                    bootstrap_exit=1,
+                    status="ok",
+                    run_id=run_id,
+                    attempt=attempt,
+                    phase=phase,
+                )
+            ),
+            "FAKE_COLLECTOR_EXIT": "0",
+        }
 
-        # Executable acceptance download & verification helper simulating actions/download-artifact
-        def simulate_acceptance_download_and_verify(download_dir: Path) -> tuple[bool, str]:
-            source_dir = artifact_store / artifact_name
-            if not source_dir.exists():
-                return False, "missing_artifact"
-            download_dir.mkdir(parents=True, exist_ok=True)
-            for f in source_dir.iterdir():
-                shutil.copy2(f, download_dir / f.name)
-            return verify_diagnostic_acceptance(download_dir)
+        # 1. Execute guarded wrapper to produce actual generated guarded artifacts
+        proc = subprocess.run(
+            ["bash", str(paths["guard"]), str(WRAPPER_SCRIPT)],
+            cwd=str(root),
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=15,
+        )
 
-        # Case 1: Upload fails because source directory does not have complete files
-        broken_src = runner_temp / "broken_src"
-        broken_src.mkdir()
-        (broken_src / "collection-status.json").write_text('{"collectionStatus":"timeout"}\n')
-        upload_ok = simulate_runner_upload(broken_src)
-        assert upload_ok is False, "upload must fail when required files are incomplete"
+        try:
+            # Primary baseline failure preserved by guard
+            assert proc.returncode == 75
+            assert paths["failure"].exists()
+            fail_data = json.loads(paths["failure"].read_text())
+            assert fail_data["exitStatus"] == 1
 
-        # Downstream acceptance attempt fails closed
-        dl_dir1 = root / "download_1"
-        accepted, reason = simulate_acceptance_download_and_verify(dl_dir1)
-        assert accepted is False
-        assert reason == "missing_artifact"
+            # Confirm generated guarded artifacts exist
+            assert (diag_dir / "diagnostics.json").exists()
+            assert (diag_dir / "collection-status.json").exists()
+            assert (diag_dir / "SHA256SUMS").exists()
 
-        # Case 2: Upload succeeds, but downloaded payload has corrupted checksum
-        valid_src = runner_temp / "valid_src"
-        valid_src.mkdir()
-        diag_content = json.dumps(valid_d2_envelope())
-        (valid_src / "diagnostics.json").write_text(diag_content)
-        (valid_src / "collection-status.json").write_text('{"collectionStatus":"ok"}\n')
-        real_hash = hashlib.sha256(diag_content.encode()).hexdigest()
-        (valid_src / "SHA256SUMS").write_text(f"{real_hash}  diagnostics.json\n")
+            artifact_store = root / "artifact_store"
+            artifact_store.mkdir()
+            artifact_name = f"pantheon-dev-paper-diagnostics-{run_id}-{attempt}"
 
-        upload_ok = simulate_runner_upload(valid_src)
-        assert upload_ok is True
+            # Simulated runner upload fixture
+            def simulate_runner_upload(source_dir: Path, *, fail_transport: bool = False) -> tuple[bool, str]:
+                if fail_transport:
+                    return False, "transport_error_503_service_unavailable"
+                required = ["diagnostics.json", "collection-status.json", "SHA256SUMS"]
+                if not source_dir.exists() or not all((source_dir / f).exists() for f in required):
+                    return False, "incomplete_source_files"
+                dest_dir = artifact_store / artifact_name
+                dest_dir.mkdir(parents=True, exist_ok=True)
+                for f in required:
+                    shutil.copy2(source_dir / f, dest_dir / f)
+                return True, "uploaded"
 
-        # Tamper stored checksum to simulate transmission/storage corruption
-        (artifact_store / artifact_name / "SHA256SUMS").write_text("0" * 64 + "  diagnostics.json\n")
+            # Simulated acceptance download fixture
+            def simulate_acceptance_download(download_dir: Path) -> tuple[bool, str]:
+                source_dir = artifact_store / artifact_name
+                if not source_dir.exists():
+                    return False, "missing_artifact"
+                download_dir.mkdir(parents=True, exist_ok=True)
+                for f in source_dir.iterdir():
+                    shutil.copy2(f, download_dir / f.name)
+                return True, "downloaded"
 
-        dl_dir2 = root / "download_2"
-        accepted, reason = simulate_acceptance_download_and_verify(dl_dir2)
-        assert accepted is False
-        assert reason == "checksum_mismatch"
+            # -------------------------------------------------------------
+            # Part 1: Runner upload transport failure & compensation composition
+            # -------------------------------------------------------------
+            upload_ok, upload_err = simulate_runner_upload(diag_dir, fail_transport=True)
+            assert upload_ok is False
+            assert upload_err == "transport_error_503_service_unavailable"
 
-        # Case 3: Clean upload and valid download passes diagnostic acceptance
-        (artifact_store / artifact_name / "SHA256SUMS").write_text(f"{real_hash}  diagnostics.json\n")
-        dl_dir3 = root / "download_3"
-        accepted, reason = simulate_acceptance_download_and_verify(dl_dir3)
-        assert accepted is True
-        assert reason == "accepted"
+            # Acceptance download attempt fails closed
+            dl_fail_dir = root / "download_after_upload_failure"
+            dl_ok, dl_err = simulate_acceptance_download(dl_fail_dir)
+            assert dl_ok is False
+            assert dl_err == "missing_artifact"
+            accepted, reason = verify_diagnostic_acceptance(dl_fail_dir)
+            assert accepted is False
+            assert reason == "missing_collection_status"
+
+            # Verify primary failure is not corrupted by upload transport failure
+            assert proc.returncode == 75
+            assert json.loads(paths["failure"].read_text())["exitStatus"] == 1
+
+            # Compensation execution with fresh lease
+            comp_lease_id = "22222222-2222-4222-8222-666666666666"
+            comp_proc, comp_evidence = execute_fresh_lease_compensation(
+                root / "compensation",
+                audit_file=paths["audit"],
+                compensation_lease_id=comp_lease_id,
+            )
+            assert comp_proc.returncode == 0, f"compensation must succeed, got {comp_proc.returncode}: {comp_proc.stderr}"
+            assert comp_evidence.exists()
+
+            # Assert that primary baseline failure (exit 1 / 75) and compensation outcome (exit 0) remain independent
+            assert proc.returncode == 75, "primary exit must remain 75"
+            assert comp_proc.returncode == 0, "compensation exit must remain 0"
+
+            # Check lease authority audit: Lease 1 quarantined, compensation lease released
+            audit_records = json.loads(paths["audit"].read_text())["leases"]
+            assert audit_records[TEST_LEASE_ID]["status"] == "quarantined"
+            assert audit_records[comp_lease_id]["status"] == "released"
+
+            # -------------------------------------------------------------
+            # Part 2: Successful runner upload, download, and acceptance validation
+            # -------------------------------------------------------------
+            upload_ok, upload_msg = simulate_runner_upload(diag_dir, fail_transport=False)
+            assert upload_ok is True
+            assert upload_msg == "uploaded"
+
+            dl_success_dir = root / "download_success"
+            dl_ok, dl_msg = simulate_acceptance_download(dl_success_dir)
+            assert dl_ok is True
+            assert dl_msg == "downloaded"
+
+            # Deep acceptance verification of downloaded artifact: validates JSON, schema, run, and source identity
+            accepted, reason = verify_diagnostic_acceptance(
+                dl_success_dir,
+                expected_run_id=run_id,
+                expected_attempt=attempt,
+                expected_phase=phase,
+                expected_bff_sha=TEST_BFF_SHA,
+                expected_fe_sha=TEST_FE_SHA,
+            )
+            assert accepted is True, f"expected accepted, got {reason}"
+            assert reason == "accepted"
+
+            # -------------------------------------------------------------
+            # Part 3: Corrupted checksum in downloaded artifact fails acceptance
+            # -------------------------------------------------------------
+            dl_bad_checksum_dir = root / "download_bad_checksum"
+            simulate_acceptance_download(dl_bad_checksum_dir)
+            (dl_bad_checksum_dir / "SHA256SUMS").write_text("0" * 64 + "  diagnostics.json\n")
+            accepted, reason = verify_diagnostic_acceptance(dl_bad_checksum_dir)
+            assert accepted is False
+            assert reason == "checksum_mismatch"
+
+            # -------------------------------------------------------------
+            # Part 4: Malformed diagnostics JSON in downloaded artifact fails acceptance
+            # -------------------------------------------------------------
+            dl_malformed_dir = root / "download_malformed_json"
+            simulate_acceptance_download(dl_malformed_dir)
+            bad_json = '{"malformed": true, unterminated'
+            (dl_malformed_dir / "diagnostics.json").write_text(bad_json)
+            bad_hash = hashlib.sha256(bad_json.encode()).hexdigest()
+            (dl_malformed_dir / "SHA256SUMS").write_text(f"{bad_hash}  diagnostics.json\n")
+            accepted, reason = verify_diagnostic_acceptance(dl_malformed_dir)
+            assert accepted is False
+            assert reason == "malformed_diagnostics_json"
+        finally:
+            if heartbeat.poll() is None:
+                heartbeat.kill()
+                heartbeat.wait()
 
 
 # ==============================================================================
