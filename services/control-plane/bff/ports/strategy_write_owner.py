@@ -81,34 +81,120 @@ class CanonicalStrategyWriteOwner:
 
         # Canonical RegistryStore / PostgresRegistryStore
         if hasattr(target, "create_if_absent") and hasattr(target, "list_by_strategy"):
-            from services.registry.models import ArtifactState, ArtifactType, RegistryEntryCreate
+            import re
+            from services.registry.models import ArtifactState, ArtifactType, Lineage, RegistryEntryCreate
             raw_state = str(record.get("lifecycle_state") or record.get("state") or "draft").lower()
             try:
                 art_state = ArtifactState(raw_state)
             except ValueError:
                 art_state = ArtifactState.DRAFT
-            existing_entries = target.list_by_strategy(sid)
-            if existing_entries:
-                entry = existing_entries[-1]
-                entry.artifact_state = art_state
-                entry.metadata = dict(record)
-                if hasattr(target, "update"):
-                    target.update(entry)
-                return record
+
+            actor = {
+                "actor_id": str(record.get("actor_id") or "bff-strategy-write-owner"),
+                "roles": ["operator"],
+                "tenant": str(record.get("tenant_id") or record.get("tenantId") or "default"),
+                "token_kind": "service",
+            }
+
+            def _next_ver(ver: str) -> str:
+                if re.match(r"^\d+\.\d+\.\d+$", str(ver)):
+                    parts = [int(p) for p in str(ver).split(".")]
+                    parts[-1] += 1
+                    return ".".join(str(p) for p in parts)
+                return "1.0.1"
+
+            # Strictly filter for STRATEGY_SPEC artifacts — never clobber evaluation_result or other artifacts!
+            strategy_spec_entries = [
+                e for e in target.list_by_strategy(sid)
+                if getattr(e, "artifact_type", None) in (
+                    ArtifactType.STRATEGY_SPEC,
+                    ArtifactType.STRATEGY_SPEC.value,
+                    "strategy_spec",
+                )
+            ]
+
+            if strategy_spec_entries:
+                draft_entries = [
+                    e for e in strategy_spec_entries
+                    if getattr(e, "artifact_state", None) in (
+                        ArtifactState.DRAFT,
+                        ArtifactState.CANDIDATE,
+                        "draft",
+                        "candidate",
+                    )
+                ]
+                if draft_entries:
+                    entry = draft_entries[-1]
+                    if not hasattr(target, "update"):
+                        raise RuntimeError("Target store does not implement update")
+                    expected_dict = entry.to_dict()
+                    entry.artifact_state = art_state
+                    merged_meta = dict(entry.metadata) if isinstance(entry.metadata, dict) else {}
+                    merged_meta.update(record)
+                    entry.metadata = merged_meta
+                    try:
+                        res = target.update(entry, expected=expected_dict, actor=actor)
+                    except TypeError:
+                        res = target.update(entry)
+                    if res is False:
+                        raise RuntimeError("Target store rejected strategy update")
+                    return record
+                else:
+                    # All existing strategy specs are approved/retired: create a new revision rather than clobbering approved state
+                    latest_entry = strategy_spec_entries[-1]
+                    target_ver = record.get("current_spec_version") or record.get("version")
+                    if not target_ver or any(getattr(e, "version", None) == target_ver for e in strategy_spec_entries):
+                        target_ver = _next_ver(getattr(latest_entry, "version", "1.0.0"))
+                    payload = RegistryEntryCreate(
+                        artifact_type=ArtifactType.STRATEGY_SPEC,
+                        strategy_id=sid,
+                        version=target_ver,
+                        artifact_state=art_state,
+                        metadata=dict(record),
+                        lineage=Lineage(source_strategy_spec_id=latest_entry.registry_id),
+                    )
+                    reg_id = f"reg-strategy-spec-{sid}-{target_ver}"
+                    entry, created = target.create_if_absent(payload, reg_id, actor=actor)
+                    if not created:
+                        if not hasattr(target, "update"):
+                            raise RuntimeError("Target store does not implement update")
+                        expected_dict = entry.to_dict()
+                        entry.artifact_state = art_state
+                        merged_meta = dict(entry.metadata) if isinstance(entry.metadata, dict) else {}
+                        merged_meta.update(record)
+                        entry.metadata = merged_meta
+                        try:
+                            res = target.update(entry, expected=expected_dict, actor=actor)
+                        except TypeError:
+                            res = target.update(entry)
+                        if res is False:
+                            raise RuntimeError("Target store rejected strategy update")
+                    return record
             else:
+                target_ver = record.get("current_spec_version") or record.get("version") or "1.0.0"
                 payload = RegistryEntryCreate(
                     artifact_type=ArtifactType.STRATEGY_SPEC,
                     strategy_id=sid,
-                    version="1.0.0",
+                    version=target_ver,
                     artifact_state=art_state,
                     metadata=dict(record),
                 )
-                reg_id = f"reg-{sid}"
-                entry, created = target.create_if_absent(payload, reg_id)
-                if not created and hasattr(target, "update"):
+                reg_id = f"reg-strategy-spec-{sid}-{target_ver}"
+                entry, created = target.create_if_absent(payload, reg_id, actor=actor)
+                if not created:
+                    if not hasattr(target, "update"):
+                        raise RuntimeError("Target store does not implement update")
+                    expected_dict = entry.to_dict()
                     entry.artifact_state = art_state
-                    entry.metadata = dict(record)
-                    target.update(entry)
+                    merged_meta = dict(entry.metadata) if isinstance(entry.metadata, dict) else {}
+                    merged_meta.update(record)
+                    entry.metadata = merged_meta
+                    try:
+                        res = target.update(entry, expected=expected_dict, actor=actor)
+                    except TypeError:
+                        res = target.update(entry)
+                    if res is False:
+                        raise RuntimeError("Target store rejected strategy update")
                 return record
 
         # Direct domain store methods
@@ -146,7 +232,15 @@ class CanonicalStrategyWriteOwner:
         if target is None:
             return None
         if hasattr(target, "list_by_strategy"):
-            entries = target.list_by_strategy(strategy_id)
+            from services.registry.models import ArtifactType
+            entries = [
+                e for e in target.list_by_strategy(strategy_id)
+                if getattr(e, "artifact_type", None) in (
+                    ArtifactType.STRATEGY_SPEC,
+                    ArtifactType.STRATEGY_SPEC.value,
+                    "strategy_spec",
+                )
+            ]
             if entries:
                 entry = entries[-1]
                 if isinstance(entry.metadata, dict) and entry.metadata:

@@ -18,6 +18,8 @@ import tempfile
 from contextlib import contextmanager
 from pathlib import Path
 
+os.environ.setdefault("REGISTRY_STORE_BACKEND", "memory")
+
 from fastapi.testclient import TestClient
 import pytest
 

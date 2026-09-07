@@ -65,9 +65,12 @@
       "services/control-plane/bff/test_mgmt_load_002_shell_summary.py",
       "services/control-plane/bff/test_mgmt_load_005_read_concurrency.py",
       "services/control-plane/bff/test_persona_provisioning_readback.py",
+      "services/control-plane/bff/tests/conftest.py",
       "services/control-plane/bff/tests/test_bff_b2_002_evolution_jobs_ops.py",
       "services/control-plane/bff/tests/test_overlay_retirement.py",
-      "services/control-plane/bff/tests/test_strategy_ranking_router.py"
+      "services/control-plane/bff/tests/test_strategy_ranking_router.py",
+      "services/registry/pg_store.py",
+      "services/registry/storage.py"
     ],
     "files_created": [
       "services/control-plane/bff/migrations/__init__.py",
@@ -101,47 +104,35 @@
     "review_probe_4_rejected_insert_records_conflict_zero_stored": true,
     "normative_sd_5_1_5_2_12_3_multi_replica_durable_evidence_verified": true,
     "review_reject_p1_strategy_write_owner_targets_canonical_registry_store": true,
+    "review_reject_p1_strategy_write_owner_filters_strategy_spec": true,
+    "review_reject_p1_strategy_write_owner_preserves_unrelated_artifacts": true,
+    "review_reject_p1_strategy_write_owner_propagates_update_rejection": true,
+    "review_reject_p1_registry_stores_public_query_list_all_entries": true,
+    "review_reject_p1_strategy_adapter_disk_durability_and_subprocess_restart": true,
     "review_reject_p1_fresh_reader_persistence_verified": true,
     "review_reject_p1_unsupported_and_rejecting_targets_fail_closed_without_cache": true,
-    "review_reject_p1_actual_five_domain_adapters_and_subprocess_restart_durability_verified": true
+    "review_reject_p1_actual_five_domain_adapters_and_subprocess_restart_durability_verified": true,
+    "review_reject_p1_isolated_test_fixtures_configured_memory_backend": true
   },
   "verification": {
     "commands": [
       {
-        "command": ".venv-pantheon/bin/python3 -m pytest services/control-plane/bff/tests/test_overlay_retirement.py",
-        "result": "23 passed in 11.10s",
-        "executed": 23,
-        "collected": 23
+        "command": ".venv-pantheon/bin/python3 -m pytest services/control-plane/bff/tests/test_overlay_retirement.py services/control-plane/bff/migrations/test_overlay_retirement.py services/control-plane/bff/tests/test_strategy_ranking_router.py services/control-plane/bff/tests/test_incident_router.py services/control-plane/bff/strategies/test_router_isolation.py services/control-plane/bff/personas/test_router_isolation.py -v -W ignore",
+        "result": "71 passed in 48.35s",
+        "executed": 71,
+        "collected": 71
       },
       {
-        "command": ".venv-pantheon/bin/python3 -m pytest services/control-plane/bff/migrations/test_overlay_retirement.py",
-        "result": "25 passed in 8.92s",
-        "executed": 25,
-        "collected": 25
-      },
-      {
-        "command": ".venv-pantheon/bin/python3 -m pytest services/control-plane/bff/tests/test_strategy_ranking_router.py",
-        "result": "9 passed in 8.19s",
+        "command": ".venv-pantheon/bin/python3 -m pytest services/control-plane/bff/tests/test_strategy_ranking_router.py -v -W ignore",
+        "result": "9 passed in 7.87s",
         "executed": 9,
         "collected": 9
       },
       {
-        "command": ".venv-pantheon/bin/python3 -m pytest services/control-plane/bff/tests/test_incident_router.py",
-        "result": "11 passed in 10.43s",
-        "executed": 11,
-        "collected": 11
-      },
-      {
-        "command": ".venv-pantheon/bin/python3 -m pytest services/control-plane/bff/strategies/test_router_isolation.py",
-        "result": "2 passed in 1.64s",
-        "executed": 2,
-        "collected": 2
-      },
-      {
-        "command": ".venv-pantheon/bin/python3 -m pytest services/control-plane/bff/personas/test_router_isolation.py",
-        "result": "1 passed in 3.11s",
-        "executed": 1,
-        "collected": 1
+        "command": ".venv-pantheon/bin/python3 -m pytest services/control-plane/bff/migrations/test_overlay_retirement.py -v -W ignore",
+        "result": "25 passed in 18.10s",
+        "executed": 25,
+        "collected": 25
       },
       {
         "command": "python3 scripts/dev/provision_python_distribution.py --check-only",
@@ -150,14 +141,14 @@
         "collected": 1
       },
       {
-        "command": "python3 /tmp/overlay-review-probes.py",
-        "result": "persona_no_writer: 503; tenantless_persona_patch: 404 writes: 0; production_strategy_write_methods: False/False; rejected_insert: backfilled: 0, conflicts: 1, receipt_persisted: False, stored_records: []",
-        "executed": 4,
-        "collected": 4
+        "command": "python3 -c '<three review rejection probes: durable fresh-adapter readback, unrelated artifact preservation, and fail-closed rejection propagation>'",
+        "result": "PROBE 1 PASSED: durable readback across adapter instances verified; PROBE 2 PASSED: unrelated artifact preserved; PROBE 3 PASSED: rejection propagated and persistence failure not acknowledged",
+        "executed": 3,
+        "collected": 3
       },
       {
-        "command": "pytest 9 migrated fixture and contract suites (pack a, b, c, detail smoke b, evolution experiment jobs events, governance runtime risk audit, rebaseline incidents, persona provisioning readback, evolution jobs ops)",
-        "result": "142 passed in 61.78s",
+        "command": ".venv-pantheon/bin/python3 -m pytest services/control-plane/bff/test_bff_consol_008_fixture_pack_a.py services/control-plane/bff/test_bff_consol_009_fixture_pack_b.py services/control-plane/bff/test_bff_consol_010_fixture_pack_c.py services/control-plane/bff/test_bff_consol_017_detail_smoke_b.py services/control-plane/bff/test_bff_evolution_experiment_jobs_events_contract.py services/control-plane/bff/test_bff_governance_runtime_risk_audit_contract.py services/control-plane/bff/test_inc001_rebaseline_incidents_contract.py services/control-plane/bff/test_persona_provisioning_readback.py services/control-plane/bff/tests/test_bff_b2_002_evolution_jobs_ops.py -W ignore",
+        "result": "142 passed in 64.41s",
         "executed": 142,
         "collected": 142
       }

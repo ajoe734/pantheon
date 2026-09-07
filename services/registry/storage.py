@@ -10,8 +10,10 @@ needs no changes to select between them.
 """
 from __future__ import annotations
 
+import json
 import os
 import threading
+from pathlib import Path
 from typing import Any, Callable, Optional
 
 from .models import (
@@ -225,6 +227,13 @@ class RegistryStore:
                 RegistryEntry.from_dict(self._entries[rid].to_dict())
                 for rid in ids
                 if rid in self._entries
+            ]
+
+    def list_all_entries(self) -> list[RegistryEntry]:
+        with self._lock:
+            return [
+                RegistryEntry.from_dict(entry.to_dict())
+                for entry in self._entries.values()
             ]
 
     def resolve_latest_approved(self, strategy_id: str) -> Optional[RegistryEntry]:
@@ -760,3 +769,113 @@ def reset_store() -> None:
     global _default_store
     with _store_lock:
         _default_store = None
+
+
+class FileBackedRegistryStore(RegistryStore):
+    """File-backed persistent RegistryStore for durable execution and multi-process readback."""
+
+    def __init__(self, file_path: Path | str) -> None:
+        super().__init__()
+        self._file_path = Path(file_path)
+        self._loaded_mtime_ns: Optional[int] = None
+        self._load_from_file()
+
+    def _load_from_file(self) -> None:
+        if not self._file_path.exists():
+            return
+        try:
+            with open(self._file_path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            entries_data = data.get("entries", {})
+            self._entries.clear()
+            self._strategy_index.clear()
+            for reg_id, edict in entries_data.items():
+                entry = RegistryEntry.from_dict(edict)
+                self._entries[reg_id] = entry
+                self._strategy_index.setdefault(entry.strategy_id, [])
+                if reg_id not in self._strategy_index[entry.strategy_id]:
+                    self._strategy_index[entry.strategy_id].append(reg_id)
+            self._creation_receipts.update(data.get("creation_receipts", {}))
+            self._command_receipts.update(data.get("command_receipts", {}))
+            self._loaded_mtime_ns = self._file_path.stat().st_mtime_ns
+        except Exception:
+            pass
+
+    def _refresh_from_disk(self) -> None:
+        if not self._file_path.exists():
+            return
+        mtime_ns = self._file_path.stat().st_mtime_ns
+        if self._loaded_mtime_ns == mtime_ns:
+            return
+        self._load_from_file()
+
+    def _flush_to_file(self) -> None:
+        self._file_path.parent.mkdir(parents=True, exist_ok=True)
+        tmp_path = self._file_path.with_name(f".{self._file_path.name}.tmp")
+        data = {
+            "entries": {k: v.to_dict() for k, v in self._entries.items()},
+            "creation_receipts": self._creation_receipts,
+            "command_receipts": self._command_receipts,
+        }
+        with open(tmp_path, "w", encoding="utf-8") as f:
+            json.dump(data, f, indent=2, default=str)
+        os.replace(tmp_path, self._file_path)
+        self._loaded_mtime_ns = self._file_path.stat().st_mtime_ns
+
+    def _put_unlocked(self, entry: RegistryEntry) -> None:
+        super()._put_unlocked(entry)
+        self._flush_to_file()
+
+    def create(
+        self,
+        payload: RegistryEntryCreate,
+        registry_id: str,
+        *,
+        actor: Optional[dict] = None,
+        unique_fields: tuple[str, ...] = (),
+    ) -> RegistryEntry:
+        self._refresh_from_disk()
+        res = super().create(payload, registry_id, actor=actor, unique_fields=unique_fields)
+        with self._lock:
+            self._flush_to_file()
+        return res
+
+    def create_if_absent(
+        self,
+        payload: RegistryEntryCreate,
+        registry_id: str,
+        *,
+        actor: Optional[dict] = None,
+        unique_fields: tuple[str, ...] = (),
+    ) -> tuple[RegistryEntry, bool]:
+        self._refresh_from_disk()
+        res = super().create_if_absent(payload, registry_id, actor=actor, unique_fields=unique_fields)
+        with self._lock:
+            self._flush_to_file()
+        return res
+
+    def update(
+        self,
+        entry: RegistryEntry,
+        *,
+        expected: Optional[dict] = None,
+        actor: Optional[dict] = None,
+    ) -> RegistryEntry:
+        self._refresh_from_disk()
+        res = super().update(entry, expected=expected, actor=actor)
+        with self._lock:
+            self._flush_to_file()
+        return res
+
+    def get(self, registry_id: str) -> Optional[RegistryEntry]:
+        self._refresh_from_disk()
+        return super().get(registry_id)
+
+    def list_by_strategy(self, strategy_id: str) -> list[RegistryEntry]:
+        self._refresh_from_disk()
+        return super().list_by_strategy(strategy_id)
+
+    def list_all_entries(self) -> list[RegistryEntry]:
+        self._refresh_from_disk()
+        return super().list_all_entries()
+

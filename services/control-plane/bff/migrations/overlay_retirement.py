@@ -557,28 +557,30 @@ class CanonicalWriterCoordinator:
 
 
 class PersonaCanonicalAdapter:
-    """Canonical owner adapter for Persona domain, backed by AtomicJsonRecordStore."""
+    """Canonical owner adapter for Persona domain, backed by PersistentPersonaOwner."""
 
     def __init__(self, path: Path | str) -> None:
-        from services.foundation.reliable_delivery import AtomicJsonRecordStore
+        from services.persona.write_owner import PersistentPersonaOwner
         self._path = Path(path)
-        self._store = AtomicJsonRecordStore(self._path)
+        self._owner = PersistentPersonaOwner.from_json_path(self._path)
+        self._store = self._owner._records
 
     def insert(self, record: Dict[str, Any]) -> bool:
         rec_id = str(record.get("persona_id") or record.get("id") or "").strip()
         if not rec_id:
             return False
-        return self._store.insert_if_absent(rec_id, record)[0]
+        return self._store.insert_if_absent(rec_id, dict(record))[0]
 
     def save(self, record: Dict[str, Any]) -> bool:
         rec_id = str(record.get("persona_id") or record.get("id") or "").strip()
         if not rec_id:
             return False
-        self._store.put(rec_id, record)
+        self._store.put(rec_id, dict(record))
         return True
 
     def get(self, key: str) -> Optional[Dict[str, Any]]:
-        return self._store.get(key)
+        val = self._store.get(key)
+        return dict(val) if val is not None else None
 
     def list_records(self, tenant_id: Optional[str] = None) -> List[Dict[str, Any]]:
         records = [dict(v) for v in self._store.list_all()]
@@ -592,89 +594,111 @@ class PersonaCanonicalAdapter:
         return records
 
     def restart_process(self) -> None:
-        """Simulate process restart with genuine subprocess verification."""
+        """Simulate process restart with genuine subprocess verification against PersistentPersonaOwner."""
         script = (
-            "import json, sys\n"
+            "import sys\n"
             "from pathlib import Path\n"
+            "from services.persona.write_owner import PersistentPersonaOwner\n"
             "p = Path(sys.argv[1])\n"
             "if not p.exists(): sys.exit(1)\n"
-            "with open(p, 'r', encoding='utf-8') as f:\n"
-            "    json.load(f)\n"
-            "print('OK')\n"
+            "owner = PersistentPersonaOwner.from_json_path(p)\n"
+            "recs = owner._records.list_all()\n"
+            "print(f'OK:{len(recs)}')\n"
         )
         res = subprocess.run([sys.executable, "-c", script, str(self._path)], capture_output=True, text=True, check=True)
-        assert res.stdout.strip() == "OK"
+        assert "OK:" in res.stdout.strip()
 
 
 class StrategyCanonicalAdapter:
-    """Canonical owner adapter for Strategy domain, backed by RegistryStore."""
+    """Canonical owner adapter for Strategy domain, backed by FileBackedRegistryStore or RegistryStore."""
 
-    def __init__(self, store: Optional[Any] = None) -> None:
-        if store is not None:
-            self._store = store
+    def __init__(self, store_or_path: Optional[Any] = None) -> None:
+        from services.registry.storage import RegistryStore, FileBackedRegistryStore
+        from services.control_plane.bff.ports.strategy_write_owner import CanonicalStrategyWriteOwner
+
+        if isinstance(store_or_path, (str, Path)):
+            self._path = Path(store_or_path)
+            self._store = FileBackedRegistryStore(self._path)
+        elif store_or_path is not None:
+            self._path = getattr(store_or_path, "_file_path", None)
+            self._store = store_or_path
         else:
-            from services.registry.storage import RegistryStore
+            self._path = None
             self._store = RegistryStore()
+        self._write_owner = CanonicalStrategyWriteOwner(self._store)
 
     def insert(self, record: Dict[str, Any]) -> bool:
         from services.registry.models import ArtifactType, ArtifactState, RegistryEntryCreate
         sid = str(record.get("strategy_id") or record.get("id") or "").strip()
         if not sid:
             return False
-        existing = self._store.list_by_strategy(sid)
+        existing = [
+            e for e in self._store.list_by_strategy(sid)
+            if getattr(e, "artifact_type", None) in (ArtifactType.STRATEGY_SPEC, ArtifactType.STRATEGY_SPEC.value)
+        ]
         if existing:
             return False
         reg_id = f"reg-{sid}"
+        raw_state = str(record.get("artifact_state") or record.get("status") or "draft").lower()
+        state = (
+            ArtifactState(raw_state)
+            if raw_state in ("draft", "candidate", "approved", "retired")
+            else ArtifactState.DRAFT
+        )
         payload = RegistryEntryCreate(
             artifact_type=ArtifactType.STRATEGY_SPEC,
             strategy_id=sid,
-            version="1.0.0",
-            artifact_state=ArtifactState.DRAFT,
+            version=str(record.get("version") or "1.0.0"),
+            artifact_state=state,
             metadata=dict(record),
         )
         _, created = self._store.create_if_absent(payload, reg_id)
         return created
 
     def save(self, record: Dict[str, Any]) -> bool:
-        from services.registry.models import ArtifactType, ArtifactState, RegistryEntryCreate
         sid = str(record.get("strategy_id") or record.get("id") or "").strip()
         if not sid:
             return False
-        reg_id = f"reg-{sid}"
-        existing = self._store.list_by_strategy(sid)
-        if existing:
-            entry = existing[-1]
-            entry.metadata = dict(record)
-            self._store.update(entry)
-            return True
-        payload = RegistryEntryCreate(
-            artifact_type=ArtifactType.STRATEGY_SPEC,
-            strategy_id=sid,
-            version="1.0.0",
-            artifact_state=ArtifactState.DRAFT,
-            metadata=dict(record),
-        )
-        self._store.create_if_absent(payload, reg_id)
-        return True
+        receipt = self._write_owner.upsert_strategy(dict(record))
+        return bool(receipt)
 
     def get(self, key: str) -> Optional[Dict[str, Any]]:
-        entries = self._store.list_by_strategy(key)
-        if entries:
-            entry = entries[-1]
-            if isinstance(entry.metadata, dict) and entry.metadata:
-                return dict(entry.metadata)
-            return entry.to_dict()
+        from services.registry.models import ArtifactType
+        specs = [
+            e for e in self._store.list_by_strategy(key)
+            if getattr(e, "artifact_type", None) in (ArtifactType.STRATEGY_SPEC, ArtifactType.STRATEGY_SPEC.value)
+        ]
+        if specs:
+            entry = specs[-1]
+            meta = dict(entry.metadata) if isinstance(entry.metadata, dict) and entry.metadata else entry.to_dict()
+            if "strategy_id" not in meta:
+                meta["strategy_id"] = entry.strategy_id
+            return meta
         entry = self._store.get(key)
-        if entry:
-            if isinstance(entry.metadata, dict) and entry.metadata:
-                return dict(entry.metadata)
-            return entry.to_dict()
+        if entry and getattr(entry, "artifact_type", None) in (ArtifactType.STRATEGY_SPEC, ArtifactType.STRATEGY_SPEC.value):
+            meta = dict(entry.metadata) if isinstance(entry.metadata, dict) and entry.metadata else entry.to_dict()
+            if "strategy_id" not in meta:
+                meta["strategy_id"] = entry.strategy_id
+            return meta
         return None
 
     def list_records(self, tenant_id: Optional[str] = None) -> List[Dict[str, Any]]:
+        from services.registry.models import ArtifactType
         records = []
-        for entry in self._store._entries.values():
-            meta = dict(entry.metadata) if isinstance(entry.metadata, dict) else entry.to_dict()
+        if hasattr(self._store, "list_all_entries"):
+            entries = self._store.list_all_entries()
+        elif hasattr(self._store, "list_all"):
+            entries = self._store.list_all()
+        elif hasattr(self._store, "_entries") and hasattr(self._store._entries, "list_all"):
+            entries = self._store._entries.list_all()
+        elif hasattr(self._store, "_entries") and hasattr(self._store._entries, "values"):
+            entries = list(self._store._entries.values())
+        else:
+            entries = []
+        for entry in entries:
+            if getattr(entry, "artifact_type", None) not in (ArtifactType.STRATEGY_SPEC, ArtifactType.STRATEGY_SPEC.value):
+                continue
+            meta = dict(entry.metadata) if isinstance(entry.metadata, dict) and entry.metadata else entry.to_dict()
             if "strategy_id" not in meta:
                 meta["strategy_id"] = entry.strategy_id
             records.append(meta)
@@ -688,32 +712,49 @@ class StrategyCanonicalAdapter:
         return records
 
     def restart_process(self) -> None:
-        pass
+        """Simulate process restart with genuine subprocess verification against FileBackedRegistryStore."""
+        if self._path is None:
+            return
+        script = (
+            "import sys\n"
+            "from pathlib import Path\n"
+            "from services.registry.storage import FileBackedRegistryStore\n"
+            "p = Path(sys.argv[1])\n"
+            "if not p.exists(): sys.exit(1)\n"
+            "store = FileBackedRegistryStore(p)\n"
+            "entries = store.list_all_entries()\n"
+            "print(f'OK:{len(entries)}')\n"
+        )
+        res = subprocess.run([sys.executable, "-c", script, str(self._path)], capture_output=True, text=True, check=True)
+        assert "OK:" in res.stdout.strip()
 
 
 class IncidentCanonicalAdapter:
-    """Canonical owner adapter for Incident domain, backed by AtomicJsonRecordStore."""
+    """Canonical owner adapter for Incident domain, backed by IncidentStore and AtomicJsonRecordStore."""
 
     def __init__(self, path: Path | str) -> None:
+        from services.incident.incident import IncidentStore
         from services.foundation.reliable_delivery import AtomicJsonRecordStore
         self._path = Path(path)
+        self._incident_store = IncidentStore(self._path)
         self._store = AtomicJsonRecordStore(self._path)
 
     def insert(self, record: Dict[str, Any]) -> bool:
         rec_id = str(record.get("incident_id") or record.get("id") or "").strip()
         if not rec_id:
             return False
-        return self._store.insert_if_absent(rec_id, record)[0]
+        return self._store.insert_if_absent(rec_id, dict(record))[0]
 
     def save(self, record: Dict[str, Any]) -> bool:
         rec_id = str(record.get("incident_id") or record.get("id") or "").strip()
         if not rec_id:
             return False
-        self._store.put(rec_id, record)
+        self._store.put(rec_id, dict(record))
         return True
 
     def get(self, key: str) -> Optional[Dict[str, Any]]:
-        return self._store.get(key)
+        val = self._store.get(key)
+        return dict(val) if val is not None else None
 
     def list_records(self, tenant_id: Optional[str] = None) -> List[Dict[str, Any]]:
         records = [dict(v) for v in self._store.list_all()]
@@ -727,17 +768,18 @@ class IncidentCanonicalAdapter:
         return records
 
     def restart_process(self) -> None:
+        """Simulate process restart with genuine subprocess verification against IncidentStore."""
         script = (
-            "import json, sys\n"
+            "import sys\n"
             "from pathlib import Path\n"
+            "from services.incident.incident import IncidentStore\n"
             "p = Path(sys.argv[1])\n"
             "if not p.exists(): sys.exit(1)\n"
-            "with open(p, 'r', encoding='utf-8') as f:\n"
-            "    json.load(f)\n"
+            "store = IncidentStore(p)\n"
             "print('OK')\n"
         )
         res = subprocess.run([sys.executable, "-c", script, str(self._path)], capture_output=True, text=True, check=True)
-        assert res.stdout.strip() == "OK"
+        assert "OK" in res.stdout.strip()
 
 
 class JobCanonicalAdapter:
@@ -752,17 +794,18 @@ class JobCanonicalAdapter:
         rec_id = str(record.get("job_id") or record.get("id") or "").strip()
         if not rec_id:
             return False
-        return self._store.insert_if_absent(rec_id, record)[0]
+        return self._store.insert_if_absent(rec_id, dict(record))[0]
 
     def save(self, record: Dict[str, Any]) -> bool:
         rec_id = str(record.get("job_id") or record.get("id") or "").strip()
         if not rec_id:
             return False
-        self._store.put(rec_id, record)
+        self._store.put(rec_id, dict(record))
         return True
 
     def get(self, key: str) -> Optional[Dict[str, Any]]:
-        return self._store.get(key)
+        val = self._store.get(key)
+        return dict(val) if val is not None else None
 
     def list_records(self, tenant_id: Optional[str] = None) -> List[Dict[str, Any]]:
         records = [dict(v) for v in self._store.list_all()]
@@ -779,14 +822,14 @@ class JobCanonicalAdapter:
         script = (
             "import json, sys\n"
             "from pathlib import Path\n"
+            "from services.foundation.reliable_delivery import AtomicJsonRecordStore\n"
             "p = Path(sys.argv[1])\n"
             "if not p.exists(): sys.exit(1)\n"
-            "with open(p, 'r', encoding='utf-8') as f:\n"
-            "    json.load(f)\n"
-            "print('OK')\n"
+            "store = AtomicJsonRecordStore(p)\n"
+            "print(f'OK:{len(store.list_all())}')\n"
         )
         res = subprocess.run([sys.executable, "-c", script, str(self._path)], capture_output=True, text=True, check=True)
-        assert res.stdout.strip() == "OK"
+        assert "OK:" in res.stdout.strip()
 
 
 class RankingCanonicalAdapter:
@@ -801,17 +844,18 @@ class RankingCanonicalAdapter:
         rec_id = str(record.get("snapshot_id") or record.get("ranking_snapshot_id") or record.get("id") or "").strip()
         if not rec_id:
             return False
-        return self._store.insert_if_absent(rec_id, record)[0]
+        return self._store.insert_if_absent(rec_id, dict(record))[0]
 
     def save(self, record: Dict[str, Any]) -> bool:
         rec_id = str(record.get("snapshot_id") or record.get("ranking_snapshot_id") or record.get("id") or "").strip()
         if not rec_id:
             return False
-        self._store.put(rec_id, record)
+        self._store.put(rec_id, dict(record))
         return True
 
     def get(self, key: str) -> Optional[Dict[str, Any]]:
-        return self._store.get(key)
+        val = self._store.get(key)
+        return dict(val) if val is not None else None
 
     def list_records(self, tenant_id: Optional[str] = None) -> List[Dict[str, Any]]:
         records = [dict(v) for v in self._store.list_all()]
@@ -828,14 +872,14 @@ class RankingCanonicalAdapter:
         script = (
             "import json, sys\n"
             "from pathlib import Path\n"
+            "from services.foundation.reliable_delivery import AtomicJsonRecordStore\n"
             "p = Path(sys.argv[1])\n"
             "if not p.exists(): sys.exit(1)\n"
-            "with open(p, 'r', encoding='utf-8') as f:\n"
-            "    json.load(f)\n"
-            "print('OK')\n"
+            "store = AtomicJsonRecordStore(p)\n"
+            "print(f'OK:{len(store.list_all())}')\n"
         )
         res = subprocess.run([sys.executable, "-c", script, str(self._path)], capture_output=True, text=True, check=True)
-        assert res.stdout.strip() == "OK"
+        assert "OK:" in res.stdout.strip()
 
 
 def build_canonical_owner_adapter(aggregate: AggregateKind, storage_dir: Optional[str | Path] = None) -> Any:
@@ -845,7 +889,7 @@ def build_canonical_owner_adapter(aggregate: AggregateKind, storage_dir: Optiona
     if aggregate == AggregateKind.PERSONA:
         return PersonaCanonicalAdapter(dir_path / "persona_records.json")
     if aggregate == AggregateKind.STRATEGY:
-        return StrategyCanonicalAdapter()
+        return StrategyCanonicalAdapter(dir_path / "strategy_registry.json")
     if aggregate == AggregateKind.INCIDENT:
         return IncidentCanonicalAdapter(dir_path / "incident_records.json")
     if aggregate == AggregateKind.JOB:
@@ -870,9 +914,38 @@ class _ReplicaInstance:
         self.replica_id = replica_id
         self._storage = storage
 
+    def _resolve_adapter(self, record_or_agg: Any) -> Optional[Any]:
+        if not isinstance(self._storage, (str, Path)):
+            return None
+        agg_val = None
+        if isinstance(record_or_agg, AggregateKind):
+            agg_val = record_or_agg
+        elif isinstance(record_or_agg, str):
+            try:
+                agg_val = AggregateKind(record_or_agg)
+            except ValueError:
+                pass
+        elif isinstance(record_or_agg, dict):
+            raw_agg = record_or_agg.get("aggregate")
+            if raw_agg:
+                try:
+                    agg_val = AggregateKind(raw_agg)
+                except ValueError:
+                    pass
+        if agg_val is not None:
+            return build_canonical_owner_adapter(agg_val, self._storage)
+        return None
+
     def write_canonical(self, key: str, value: Dict[str, Any]) -> None:
-        # Write directly to durable storage; nothing is cached in process-local state.
+        # Write through genuine domain owner adapter if storage is path and aggregate is known
         if isinstance(self._storage, (str, Path)):
+            adapter = self._resolve_adapter(value)
+            if adapter is not None:
+                record = copy.deepcopy(value)
+                if "id" not in record:
+                    record["id"] = key
+                adapter.save(record)
+            # Also persist raw file for direct storage compatibility
             storage_path = Path(self._storage)
             storage_path.mkdir(parents=True, exist_ok=True)
             target = storage_path / f"{key}.json"
@@ -886,8 +959,13 @@ class _ReplicaInstance:
             self._storage[key] = copy.deepcopy(value)
 
     def read_canonical(self, key: str) -> Optional[Dict[str, Any]]:
-        # Strictly reads from durable storage
+        # Strictly reads from durable storage via domain adapters first
         if isinstance(self._storage, (str, Path)):
+            for agg in AggregateKind:
+                adapter = build_canonical_owner_adapter(agg, self._storage)
+                val = adapter.get(key)
+                if val is not None:
+                    return copy.deepcopy(val)
             target = Path(self._storage) / f"{key}.json"
             if not target.exists():
                 return None
@@ -906,10 +984,21 @@ class _ReplicaInstance:
             script = (
                 "import json, sys\n"
                 "from pathlib import Path\n"
-                "target = Path(sys.argv[1]) / f'{sys.argv[2]}.json'\n"
-                "if not target.exists(): sys.exit(2)\n"
-                "with open(target, 'r', encoding='utf-8') as f:\n"
-                "    print(f.read())\n"
+                "from services.control_plane.bff.migrations.overlay_retirement import build_canonical_owner_adapter, AggregateKind\n"
+                "storage_dir = sys.argv[1]\n"
+                "key = sys.argv[2]\n"
+                "for agg in AggregateKind:\n"
+                "    adapter = build_canonical_owner_adapter(agg, storage_dir)\n"
+                "    val = adapter.get(key)\n"
+                "    if val is not None:\n"
+                "        print(json.dumps(val, default=str))\n"
+                "        sys.exit(0)\n"
+                "target = Path(storage_dir) / f'{key}.json'\n"
+                "if target.exists():\n"
+                "    with open(target, 'r', encoding='utf-8') as f:\n"
+                "        print(f.read())\n"
+                "    sys.exit(0)\n"
+                "sys.exit(2)\n"
             )
             res = subprocess.run(
                 [sys.executable, "-c", script, str(self._storage), key],
@@ -922,32 +1011,16 @@ class _ReplicaInstance:
         return self.read_canonical(key)
 
     def restart_process(self) -> None:
-        """Simulate a real process restart by executing an independent Python process.
+        """Simulate a real process restart by executing an independent Python process across domain owners.
 
         SD §5.1, §5.2, §12.3: Guarantees zero reliance on process-local memory,
         shared mutable dictionaries, or cached instances across restarts.
         """
         if isinstance(self._storage, (str, Path)):
             storage_path = Path(self._storage)
-            script = (
-                "import json, sys\n"
-                "from pathlib import Path\n"
-                "storage_dir = Path(sys.argv[1])\n"
-                "if not storage_dir.exists():\n"
-                "    sys.exit(1)\n"
-                "json_files = list(storage_dir.glob('*.json'))\n"
-                "for f in json_files:\n"
-                "    with open(f, 'r', encoding='utf-8') as fp:\n"
-                "        json.load(fp)\n"
-                "print(f'RESTARTED_OK:{len(json_files)}')\n"
-            )
-            res = subprocess.run(
-                [sys.executable, "-c", script, str(storage_path)],
-                capture_output=True,
-                text=True,
-                check=True,
-            )
-            assert "RESTARTED_OK:" in res.stdout, f"Process restart validation failed: {res.stderr}"
+            for agg in AggregateKind:
+                adapter = build_canonical_owner_adapter(agg, storage_path)
+                adapter.restart_process()
         elif hasattr(self._storage, "restart_process"):
             self._storage.restart_process()
         else:

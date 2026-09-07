@@ -1454,34 +1454,54 @@ class DefaultResearchKnowledgeSourcePort(ResearchKnowledgeSourcePort):
 
         known_sids = {str(item.get("strategy_id")) for item in items}
         try:
+            from services.registry.models import ArtifactType, RegistryEntry
             from services.registry.storage import get_store
             reg_store = get_store()
-            if hasattr(reg_store, "_entries"):
-                for entry in reg_store._entries.values():
-                    sid = entry.strategy_id
-                    if sid in known_sids:
-                        continue
-                    known_sids.add(sid)
-                    meta = dict(entry.metadata) if isinstance(entry.metadata, dict) else entry.to_dict()
-                    name = meta.get("title") or meta.get("name") or sid
-                    state = meta.get("lifecycle_state") or meta.get("status") or meta.get("state") or (entry.artifact_state.value if hasattr(entry.artifact_state, "value") else str(entry.artifact_state))
-                    if lifecycle_state and lifecycle_state != "all" and state != lifecycle_state:
-                        continue
-                    if not include_retired and lifecycle_state in {None, "", "all"} and state == "retired":
-                        continue
-                    items.append({
-                        "object_ref": {"uri": f"registry://strategy/{sid}"},
-                        "strategy_id": sid,
-                        "current_spec_version_id": "v1",
-                        "current_spec_version": entry.version or "1.0.0",
-                        "title": name,
-                        "lifecycle_state": state,
-                        "source_kind": "registry",
-                        "hypothesis_excerpt": "",
-                        "version_count": 1,
-                        "last_modified_at": entry.updated_at or entry.created_at,
-                        "route_href": self._kw05_strategy_route_href(sid),
-                    })
+            if hasattr(reg_store, "list_all_entries"):
+                all_entries = reg_store.list_all_entries()
+            elif hasattr(reg_store, "list_all"):
+                all_entries = [
+                    e if hasattr(e, "artifact_type") else RegistryEntry.from_dict(e)
+                    for e in reg_store.list_all()
+                ]
+            elif hasattr(reg_store, "_entries") and hasattr(reg_store._entries, "list_all"):
+                all_entries = [RegistryEntry.from_dict(raw) for raw in reg_store._entries.list_all()]
+            elif hasattr(reg_store, "_entries") and hasattr(reg_store._entries, "values"):
+                all_entries = list(reg_store._entries.values())
+            else:
+                all_entries = []
+
+            for entry in all_entries:
+                if getattr(entry, "artifact_type", None) not in (
+                    ArtifactType.STRATEGY_SPEC,
+                    ArtifactType.STRATEGY_SPEC.value,
+                    "strategy_spec",
+                ):
+                    continue
+                sid = entry.strategy_id
+                if sid in known_sids:
+                    continue
+                known_sids.add(sid)
+                meta = dict(entry.metadata) if isinstance(entry.metadata, dict) else entry.to_dict()
+                name = meta.get("title") or meta.get("name") or sid
+                state = meta.get("lifecycle_state") or meta.get("status") or meta.get("state") or (entry.artifact_state.value if hasattr(entry.artifact_state, "value") else str(entry.artifact_state))
+                if lifecycle_state and lifecycle_state != "all" and state != lifecycle_state:
+                    continue
+                if not include_retired and lifecycle_state in {None, "", "all"} and state == "retired":
+                    continue
+                items.append({
+                    "object_ref": {"uri": f"registry://strategy/{sid}"},
+                    "strategy_id": sid,
+                    "current_spec_version_id": "v1",
+                    "current_spec_version": entry.version or "1.0.0",
+                    "title": name,
+                    "lifecycle_state": state,
+                    "source_kind": "registry",
+                    "hypothesis_excerpt": "",
+                    "version_count": 1,
+                    "last_modified_at": entry.updated_at or entry.created_at,
+                    "route_href": self._kw05_strategy_route_href(sid),
+                })
         except Exception:
             pass
 
