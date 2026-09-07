@@ -65,13 +65,25 @@ class FixturePackATestReadPorts(ReadSurfacePorts):
 
     def list_personas(self, **kwargs: Any) -> list[dict[str, Any]]:
         ds = self._get_dataset("personas")
-        return list(ds.values()) if isinstance(ds, dict) else list(ds)
+        personas = list(ds.values()) if isinstance(ds, dict) else list(ds)
+        res = []
+        for p in personas:
+            p_copy = dict(p)
+            p_copy.setdefault("tenant_id", "pantheon-dev")
+            res.append(p_copy)
+        return res
 
     def get_persona(self, persona_id: str | None) -> dict[str, Any] | None:
         ds = self._get_dataset("personas")
+        p = None
         if isinstance(ds, dict):
-            return ds.get(str(persona_id or ""))
-        return next((p for p in ds if p.get("id") == persona_id or p.get("persona_id") == persona_id), None)
+            p = ds.get(str(persona_id or ""))
+        else:
+            p = next((p for p in ds if p.get("id") == persona_id or p.get("persona_id") == persona_id), None)
+        if p is not None:
+            p = dict(p)
+            p.setdefault("tenant_id", "pantheon-dev")
+        return p
 
     def list_capital_pools(self, **kwargs: Any) -> list[dict[str, Any]]:
         ds = self._get_dataset("capital_pools")
@@ -199,8 +211,6 @@ def _fresh_pack_a_client(td: str) -> TestClient:
     )
     bff_main._CAPITAL_BFF_IDEMPOTENCY.clear()
     bff_main._STRATEGY_PERSONA_BFF_IDEMPOTENCY.clear()
-    bff_main._STRATEGY_BFF_OVERLAY.clear()
-    bff_main._PERSONA_BFF_OVERLAY.clear()
     return TestClient(bff_main.app)
 
 

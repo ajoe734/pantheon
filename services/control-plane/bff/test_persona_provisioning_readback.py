@@ -11,9 +11,14 @@ from typing import Any
 
 import pytest
 
-import main as bff_main
-from personas.reconciliation import PersonaProvisioningReconciliationMutationPort
-from ports import ReadSurfacePorts, create_read_surface_ports
+from services.control_plane.bff import main as bff_main
+from services.control_plane.bff.personas.reconciliation import (
+    PersonaProvisioningReconciliationMutationPort,
+)
+from services.control_plane.bff.ports import (
+    ReadSurfacePorts,
+    create_read_surface_ports,
+)
 
 
 PERSONA_ID = "persona-dynamic-alpha"
@@ -299,7 +304,6 @@ def harness(monkeypatch: pytest.MonkeyPatch) -> _Harness:
         ),
     )
     monkeypatch.setattr(bff_main, "_PERSONA_PROVISIONING_STORE", provisioning_store)
-    monkeypatch.setattr(bff_main, "_PERSONA_BFF_OVERLAY", {})
     monkeypatch.setattr(bff_main, "_get_json", lambda *_args, **_kwargs: deepcopy(projection))
     monkeypatch.setattr(bff_main, "_runtime_manager_client", lambda: runtime_client)
     monkeypatch.setattr(
@@ -393,10 +397,10 @@ def test_required_cron_registration_polls_until_authoritative_readback(
         def _decode_job_event(job: dict[str, Any]) -> dict[str, Any] | None:
             return json.loads(str(job.get("payload", {}).get("text") or "{}"))
 
+    fake_module = SimpleNamespace(PersonaCronRegistrar=_DelayedReadbackRegistrar)
+    monkeypatch.setitem(sys.modules, "persona_cron_registrar", fake_module)
     monkeypatch.setitem(
-        sys.modules,
-        "persona_cron_registrar",
-        SimpleNamespace(PersonaCronRegistrar=_DelayedReadbackRegistrar),
+        sys.modules, "services.control_plane.cron.persona_cron_registrar", fake_module
     )
     monkeypatch.setenv(
         "PANTHEON_PERSONA_FIRST_EVALUATION_READBACK_TIMEOUT_SECONDS",
@@ -441,10 +445,10 @@ def test_required_cron_registration_remains_fail_closed_after_bounded_readback(
         def get_first_evaluation_registration(self, *_args: Any, **_kwargs: Any) -> None:
             return None
 
+    fake_module = SimpleNamespace(PersonaCronRegistrar=_MissingReadbackRegistrar)
+    monkeypatch.setitem(sys.modules, "persona_cron_registrar", fake_module)
     monkeypatch.setitem(
-        sys.modules,
-        "persona_cron_registrar",
-        SimpleNamespace(PersonaCronRegistrar=_MissingReadbackRegistrar),
+        sys.modules, "services.control_plane.cron.persona_cron_registrar", fake_module
     )
     monkeypatch.setenv(
         "PANTHEON_PERSONA_FIRST_EVALUATION_READBACK_TIMEOUT_SECONDS",

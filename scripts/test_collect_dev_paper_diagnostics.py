@@ -1,11 +1,82 @@
 import json
+import os
+import signal
+import stat
+import subprocess
 import sys
+import tempfile
+import time
 from pathlib import Path
 
 import pytest
 import yaml
 
 from scripts import collect_dev_paper_diagnostics as diag
+
+WRAPPER = Path(__file__).resolve().parents[1] / "scripts" / "run_dev_paper_baseline_with_diagnostics.sh"
+
+FAKE_SSH_TEMPLATE = """#!/usr/bin/env bash
+set -uo pipefail
+mode="$1"
+cmd="$2"
+echo "$cmd" >> "${FAKE_SSH_LOG}"
+cat >/dev/null
+if [[ "$cmd" == *"bootstrap_dev_paper_baseline.py"* ]]; then
+  [[ -n "${FAKE_SSH_BOOTSTRAP_SLEEP:-}" ]] && sleep "${FAKE_SSH_BOOTSTRAP_SLEEP}"
+  exit "${FAKE_SSH_BOOTSTRAP_EXIT:-1}"
+fi
+if [[ -n "${FAKE_SSH_COLLECTOR_MARKER:-}" ]]; then
+  echo "started" > "${FAKE_SSH_COLLECTOR_MARKER}"
+fi
+[[ -n "${FAKE_SSH_COLLECTOR_SLEEP:-}" ]] && sleep "${FAKE_SSH_COLLECTOR_SLEEP}"
+if [[ -n "${FAKE_SSH_COLLECTOR_MARKER:-}" ]]; then
+  echo "finished" >> "${FAKE_SSH_COLLECTOR_MARKER}"
+fi
+if [[ -n "${FAKE_SSH_COLLECTOR_STDERR:-}" ]]; then
+  printf '%s' "${FAKE_SSH_COLLECTOR_STDERR}" >&2
+fi
+if [[ -n "${FAKE_SSH_COLLECTOR_STDOUT:-}" ]]; then
+  printf '%s' "${FAKE_SSH_COLLECTOR_STDOUT}"
+fi
+exit "${FAKE_SSH_COLLECTOR_EXIT:-0}"
+"""
+
+
+def _run_wrapper(tmp_path, env_overrides, extra_env=None):
+    workspace = tmp_path / "workspace"
+    ssh_dir = workspace / ".agora-gate-controller" / "scripts"
+    ssh_dir.mkdir(parents=True)
+    ssh_path = ssh_dir / "dev_vm_ssh.sh"
+    ssh_path.write_text(FAKE_SSH_TEMPLATE)
+    ssh_path.chmod(ssh_path.stat().st_mode | stat.S_IEXEC)
+
+    diagnostic_dir = tmp_path / "diagnostics"
+    diagnostic_dir.mkdir()
+    collector_stub = tmp_path / "collector_stub.py"
+    collector_stub.write_text("# fixture only, never executed locally\n")
+    fake_ssh_log = tmp_path / "fake-ssh.log"
+
+    env = dict(os.environ)
+    env.update({
+        "GITHUB_WORKSPACE": str(workspace),
+        "DEV_PAPER_DIAGNOSTICS_DIR": str(diagnostic_dir),
+        "DEV_PAPER_DIAGNOSTICS_COLLECTOR": str(collector_stub),
+        "EXPECTED_BFF_SHA": "b" * 40,
+        "FAKE_SSH_LOG": str(fake_ssh_log),
+    })
+    env.update(extra_env or {})
+    env.update(env_overrides)
+
+    result = subprocess.run(
+        ["bash", str(WRAPPER)], env=env, cwd=str(tmp_path),
+        capture_output=True, text=True, timeout=30,
+    )
+    log_lines = fake_ssh_log.read_text().splitlines() if fake_ssh_log.exists() else []
+    return result, diagnostic_dir, log_lines
+
+
+def _status_document(diagnostic_dir):
+    return json.loads((diagnostic_dir / "collection-status.json").read_text())
 
 
 def test_exception_identifiers_and_frames_survive_without_values():
@@ -36,6 +107,105 @@ PRIVATE_KEY_BYTES
     assert all("message" not in event for event in events)
 
 
+def test_project_exception_allowlist_admits_named_types_only():
+    raw = (
+        "PersonaWriteOwnerUnavailable: persona owner call failed with SECRET_TOKEN\n"
+        "ProvisioningLeaseLost: lease revoked mid PRIVATE_DETAIL\n"
+        "services.control_plane.bff.ports.persona_write_owner.PersonaWriteOwnerUnavailable: qualified owner failure SECRET_QUALIFIED_OWNER\n"
+        "services.control_plane.bff.persona_provisioning.ProvisioningLeaseLost: qualified lease failure SECRET_QUALIFIED_LEASE\n"
+        "SomeUnknownFailure: raw request body SHOULD_NOT_LEAK\n"
+        "SYNTHETIC_PRIVATE_SENTINELError: arbitrary request body\n"
+        "CustomFakeError: sensitive payload\n"
+        "MaliciousException: leak data\n"
+        "PersonaWriteOwnerUnavailableError: spoofed type\n"
+        "evil.prefix.NameError: untrusted source\n"
+        "untrusted.module.PersonaWriteOwnerUnavailable: spoofed prefix\n"
+        "bad.ProvisioningLeaseLost: fake lease error\n"
+        "evil.services.control_plane.bff.ports.persona_write_owner.PersonaWriteOwnerUnavailable: spoofed qualified prefix\n"
+        "bad.services.control_plane.bff.persona_provisioning.ProvisioningLeaseLost: spoofed qualified prefix\n"
+        "services.control_plane.bff.ports.persona_write_owner.PersonaWriteOwnerUnavailableSpoofed: spoofed qualified suffix\n"
+        "services.control_plane.bff.persona_provisioning.ProvisioningLeaseLostSpoofed: spoofed qualified suffix\n"
+    )
+    events = diag.log_events(raw)
+    assert [event["type"] for event in events] == [
+        "PersonaWriteOwnerUnavailable",
+        "ProvisioningLeaseLost",
+        "services.control_plane.bff.ports.persona_write_owner.PersonaWriteOwnerUnavailable",
+        "services.control_plane.bff.persona_provisioning.ProvisioningLeaseLost",
+    ]
+    encoded = json.dumps(events)
+    for secret in (
+        "SECRET_TOKEN",
+        "PRIVATE_DETAIL",
+        "SECRET_QUALIFIED_OWNER",
+        "SECRET_QUALIFIED_LEASE",
+        "SomeUnknownFailure",
+        "SHOULD_NOT_LEAK",
+        "SYNTHETIC_PRIVATE_SENTINELError",
+        "arbitrary request body",
+        "CustomFakeError",
+        "MaliciousException",
+        "PersonaWriteOwnerUnavailableError",
+        "evil.prefix.NameError",
+        "untrusted.module.PersonaWriteOwnerUnavailable",
+        "bad.ProvisioningLeaseLost",
+        "evil.services.control_plane.bff.ports.persona_write_owner.PersonaWriteOwnerUnavailable",
+        "bad.services.control_plane.bff.persona_provisioning.ProvisioningLeaseLost",
+        "PersonaWriteOwnerUnavailableSpoofed",
+        "ProvisioningLeaseLostSpoofed",
+    ):
+        assert secret not in encoded
+
+
+def test_real_domain_exception_classes_formatted_traceback_capture():
+    import traceback
+    from services.control_plane.bff.ports.persona_write_owner import PersonaWriteOwnerUnavailable
+    from services.control_plane.bff.persona_provisioning import ProvisioningLeaseLost
+
+    exc_owner = PersonaWriteOwnerUnavailable("persona", "failed to reach owner with SECRET_OWNER_KEY")
+    exc_lease = ProvisioningLeaseLost("lease expired with SECRET_LEASE_KEY")
+
+    # traceback.format_exception_only outputs the real Python traceback line:
+    # 'services.control_plane.bff.ports.persona_write_owner.PersonaWriteOwnerUnavailable: failed to reach owner with SECRET_OWNER_KEY\n'
+    tb_owner = "".join(traceback.format_exception_only(type(exc_owner), exc_owner))
+    tb_lease = "".join(traceback.format_exception_only(type(exc_lease), exc_lease))
+
+    events_owner = diag.log_events(tb_owner)
+    assert len(events_owner) == 1
+    assert events_owner[0]["kind"] == "exception"
+    assert events_owner[0]["type"] == "services.control_plane.bff.ports.persona_write_owner.PersonaWriteOwnerUnavailable"
+    assert "SECRET_OWNER_KEY" not in json.dumps(events_owner)
+
+    events_lease = diag.log_events(tb_lease)
+    assert len(events_lease) == 1
+    assert events_lease[0]["kind"] == "exception"
+    assert events_lease[0]["type"] == "services.control_plane.bff.persona_provisioning.ProvisioningLeaseLost"
+    assert "SECRET_LEASE_KEY" not in json.dumps(events_lease)
+
+    # Full simulated traceback with timestamps and negative sentinel lines
+    raw_traceback = (
+        "2026-09-07T00:17:26.123Z Traceback (most recent call last):\n"
+        '2026-09-07T00:17:26.123Z   File "/workspace/services/control-plane/bff/personas/service.py", line 4000, in _coordinate_persona_create\n'
+        '2026-09-07T00:17:26.123Z     call(auth_token="SUPERSECRET")\n'
+        f"2026-09-07T00:17:26.123Z {tb_owner}"
+        "2026-09-07T00:17:27.456Z Traceback (most recent call last):\n"
+        '2026-09-07T00:17:27.456Z   File "/workspace/services/control-plane/bff/persona_provisioning.py", line 120, in release_lease\n'
+        '2026-09-07T00:17:27.456Z     verify(secret="LEAK")\n'
+        f"2026-09-07T00:17:27.456Z {tb_lease}"
+        "2026-09-07T00:17:28.789Z SYNTHETIC_PRIVATE_SENTINELError: should not be parsed\n"
+        "2026-09-07T00:17:29.000Z untrusted.services.control_plane.bff.persona_provisioning.ProvisioningLeaseLost: fake error\n"
+    )
+    events_full = diag.log_events(raw_traceback)
+    assert [e["type"] for e in events_full if e.get("kind") == "exception"] == [
+        "services.control_plane.bff.ports.persona_write_owner.PersonaWriteOwnerUnavailable",
+        "services.control_plane.bff.persona_provisioning.ProvisioningLeaseLost",
+    ]
+    encoded_full = json.dumps(events_full)
+    for secret in ("SUPERSECRET", "SECRET_OWNER_KEY", "LEAK", "SECRET_LEASE_KEY", "SYNTHETIC_PRIVATE_SENTINELError", "untrusted"):
+        assert secret not in encoded_full
+    assert all("message" not in e for e in events_full)
+
+
 def test_commands_are_bounded_in_bytes_and_time(monkeypatch):
     monkeypatch.setattr(diag, "MAX_BYTES", 1024)
     raw, status = diag.command([sys.executable, "-c", "print('x' * 4096)"])
@@ -60,10 +230,18 @@ def test_fixed_services_continue_after_failure_and_bind_observed_identity(monkey
         assert args[1:5] == ["logs", "--timestamps", "--since=15m", "--tail=240"]
         return "NameError: name 'missing_helper' is not defined", "ok"
     monkeypatch.setattr(diag, "command", run)
-    result = diag.collect("b" * 40)
+    result = diag.collect("b" * 40, run_id="34081262894", attempt="1", phase="paper_bootstrap",
+                          expected_fe_sha="e" * 40, bootstrap_exit="1")
+    assert "persona" in diag.SERVICES
     assert result["identity_matches"] is True
+    assert result["run_id"] == "34081262894"
+    assert result["bootstrap_exit"] == "1"
+    assert result["container_id"] == "a" * 64
+    assert result["observed_source_sha"] == "b" * 40
+    assert result["services"]["persona"]["collection_status"] == "ok"
     assert result["services"]["capital"]["collection_status"] == "command_failed"
     assert result["services"]["postgres"]["events"][0]["type"] == "NameError"
+    assert result["collection_status"] == "partial"
     assert "UNTRUSTED_ERROR" not in json.dumps(result)
     assert diag.collect("d" * 40)["identity_matches"] is False
     assert all(args[0] == "docker" and args[1] in {"ps", "inspect", "logs"} for args in calls)
@@ -71,18 +249,543 @@ def test_fixed_services_continue_after_failure_and_bind_observed_identity(monkey
         diag.collect("dev; unsafe")
 
 
-def test_failure_hook_precedes_compensation_and_artifact_is_bounded():
+def _paper_bootstrap_steps():
     workflow = yaml.safe_load((Path(__file__).resolve().parents[1] / ".github/workflows/nonprod-deploy.yml").read_text())
     steps = next(job["steps"] for job in workflow["jobs"].values() if any(step.get("id") == "paper_bootstrap" for step in job.get("steps", [])))
     names = [step.get("id") for step in steps]
-    capture = steps[names.index("paper_bootstrap_diagnostics")]
+    return steps, names
+
+
+def test_diagnostic_collection_happens_inside_the_guarded_baseline_child():
+    steps, names = _paper_bootstrap_steps()
+    baseline = steps[names.index("paper_bootstrap")]
     upload = steps[names.index("paper_bootstrap_diagnostics_upload")]
-    assert names.index("paper_bootstrap") < names.index("paper_bootstrap_diagnostics") < names.index("deploy_compensation")
-    assert "steps.paper_bootstrap.outcome == 'failure'" in capture["if"]
-    assert "always()" in capture["if"] and capture["continue-on-error"] is True
-    assert capture["timeout-minutes"] == 2
-    assert "StrictHostKeyChecking=no" not in capture["run"]
-    assert "run_with_dev_environment_lease.sh" in capture["run"]
-    assert "<" in capture["run"] and "collect_dev_paper_diagnostics.py" in capture["run"]
+
+    # The failure-capture ID from the broken cross-step design must not
+    # reappear: a second, separate guard invocation after the guard already
+    # quarantined the heartbeat can never observe a healthy lease.
+    assert "paper_bootstrap_diagnostics" not in names
+    assert names.index("paper_bootstrap") < names.index("deploy_compensation")
+
+    run = baseline["run"]
+    assert "run_dev_paper_baseline_with_diagnostics.sh" in run
+    assert "collect_dev_paper_diagnostics.py" in run
+    assert "run_with_dev_environment_lease.sh" in run
+    assert "StrictHostKeyChecking=no" not in run
+    # The baseline's own exit status must reach the outer step unchanged so
+    # deploy_compensation still triggers on the same condition as before.
+    assert 'exit "${baseline_status}"' in run
+    assert "|| true" not in run
+
+    # Predeclared fixed runner paths and initialized terminal evidence
+    assert 'diagnostic_dir="${RUNNER_TEMP}/dev-paper-diagnostics-${DEV_PAPER_RUN_ID}-${DEV_PAPER_ATTEMPT}"' in run
+    assert "collection-status.json" in run
+
     assert upload["with"]["retention-days"] == 7
     assert upload["continue-on-error"] is True
+    assert "steps.paper_bootstrap.conclusion != 'skipped'" in upload["if"]
+    # Upload does not depend on failed-step final outputs
+    assert "steps.paper_bootstrap.outputs" not in upload["if"]
+
+    # Only an explicit safe-file allowlist from fixed runner paths is uploaded;
+    # never the whole directory and never depending on final step outputs.
+    upload_path = upload["with"]["path"]
+    assert "${{ runner.temp }}/dev-paper-diagnostics-${{ github.run_id }}-${{ github.run_attempt }}/diagnostics.json" in upload_path
+    assert "${{ runner.temp }}/dev-paper-diagnostics-${{ github.run_id }}-${{ github.run_attempt }}/collection-status.json" in upload_path
+    assert "${{ runner.temp }}/dev-paper-diagnostics-${{ github.run_id }}-${{ github.run_attempt }}/SHA256SUMS" in upload_path
+    assert "steps.paper_bootstrap.outputs" not in upload_path
+    assert "artifact_path" not in upload_path
+
+    run = baseline["run"]
+    assert "EXPECTED_FE_SHA=" in run
+    assert "DEV_PAPER_RUN_ID=" in run
+    assert "DEV_PAPER_ATTEMPT=" in run
+    assert "DEV_PAPER_PHASE=" in run
+
+
+def test_diagnostics_script_preserves_baseline_exit_and_never_masks_it():
+    script = (Path(__file__).resolve().parents[1] / "scripts" / "run_dev_paper_baseline_with_diagnostics.sh").read_text()
+    assert "|| true" not in script
+    assert "bootstrap_status=$?" in script
+    assert 'exit "${bootstrap_status}"' in script
+    # A missing/failed/invalid collection must never overwrite the original
+    # baseline failure, and must never be forced into a fabricated success.
+    assert script.count('exit "${bootstrap_status}"') >= 1
+
+
+def test_collector_aggregate_status_flags_inspect_failure(monkeypatch):
+    # docker ps and docker logs can both report "ok" while docker inspect
+    # itself times out; that must still surface at the aggregate level
+    # instead of silently disappearing.
+    monkeypatch.setattr(diag, "SERVICES", ("operator-bff",))
+
+    def run(args):
+        if args[1] == "ps":
+            return "a" * 64, "ok"
+        if args[1] == "inspect":
+            return "", "timeout"
+        return "", "ok"
+
+    monkeypatch.setattr(diag, "command", run)
+    result = diag.collect("b" * 40)
+    assert result["services"]["operator-bff"]["state"]["collection_status"] == "timeout"
+    assert result["collection_status"] == "partial"
+
+
+def test_collector_aggregate_status_flags_identity_mismatch_even_when_all_ok(monkeypatch):
+    # A fully inspectable, fully logged container that is simply running the
+    # wrong source SHA must never be reported as an overall "ok" collection.
+    monkeypatch.setattr(diag, "SERVICES", ("operator-bff",))
+
+    def run(args):
+        if args[1] == "ps":
+            return "a" * 64, "ok"
+        if args[1] == "inspect":
+            return json.dumps({"source_sha": "c" * 40, "status": "running", "exit_code": 0,
+                               "restart_count": 0, "oom_killed": False,
+                               "image_id": "sha256:" + "d" * 64}), "ok"
+        return "", "ok"
+
+    monkeypatch.setattr(diag, "command", run)
+    result = diag.collect("b" * 40)
+    assert result["identity_matches"] is False
+    assert result["collection_status"] == "identity_mismatch"
+
+
+def _valid_diagnostics_payload(expected_bff_sha="b" * 40, *, bootstrap_exit="1",
+                               run_id=None, attempt=None, phase=None,
+                               expected_fe_sha=None, **overrides):
+    payload = {
+        "schema_version": "pantheon.dev-paper-diagnostics.v1",
+        "collected_at": "2026-09-07T14:00:00Z",
+        "run_id": run_id,
+        "attempt": attempt,
+        "phase": phase,
+        "expected_bff_sha": expected_bff_sha,
+        "expected_fe_sha": expected_fe_sha,
+        "observed_source_sha": expected_bff_sha,
+        "container_id": "a" * 64,
+        "image_id": "sha256:" + "c" * 64,
+        "identity_matches": True,
+        "bootstrap_exit": str(bootstrap_exit) if bootstrap_exit is not None else "1",
+        "collection_status": "ok",
+        "services": {},
+    }
+    payload.update(overrides)
+    return json.dumps(payload)
+
+
+def test_wrapper_never_uploads_raw_unbounded_collector_stderr(tmp_path):
+    secret = "Authorization: Bearer " + ("S3CRETTOKEN" * 10)
+    result, diagnostic_dir, _log = _run_wrapper(tmp_path, {}, extra_env={
+        "FAKE_SSH_BOOTSTRAP_EXIT": "1",
+        "FAKE_SSH_COLLECTOR_STDOUT": _valid_diagnostics_payload(),
+        "FAKE_SSH_COLLECTOR_STDERR": secret,
+        "FAKE_SSH_COLLECTOR_EXIT": "0",
+    })
+    assert result.returncode == 1, result.stderr
+
+    uploaded_names = sorted(p.name for p in diagnostic_dir.iterdir())
+    assert uploaded_names == ["SHA256SUMS", "collection-status.json", "diagnostics.json"]
+    for path in diagnostic_dir.iterdir():
+        assert secret not in path.read_text()
+        assert "collector-stderr" not in path.name
+
+    # Nothing raw was left behind as a sibling of the uploaded directory either.
+    for sibling in diagnostic_dir.parent.iterdir():
+        if sibling != diagnostic_dir and sibling.is_file():
+            assert secret not in sibling.read_text(errors="replace")
+
+    document = _status_document(diagnostic_dir)
+    assert document["collectionStatus"] == "ok"
+    assert secret not in json.dumps(document)
+    assert "S3CRETTOKEN" not in json.dumps(document)
+
+
+def test_wrapper_enforces_overall_collection_deadline(tmp_path):
+    started = time.monotonic()
+    result, diagnostic_dir, _log = _run_wrapper(tmp_path, {
+        "DEV_PAPER_DIAGNOSTICS_TIMEOUT_SECONDS": "1",
+    }, extra_env={
+        "FAKE_SSH_BOOTSTRAP_EXIT": "1",
+        "FAKE_SSH_COLLECTOR_SLEEP": "10",
+    })
+    elapsed = time.monotonic() - started
+    # A per-command SSH ConnectTimeout cannot bound an already-connected,
+    # stalled channel; only an overall wrapper-side deadline can.
+    assert elapsed < 8, f"collection deadline was not enforced ({elapsed}s elapsed)"
+    assert result.returncode == 1, result.stderr
+    document = _status_document(diagnostic_dir)
+    assert document["collectionStatus"] == "timeout"
+    assert document["bootstrapExit"] == 1
+    assert not (diagnostic_dir / "diagnostics.json").exists()
+
+
+def test_wrapper_wires_run_identity_into_collector_invocation(tmp_path):
+    result, diagnostic_dir, log_lines = _run_wrapper(tmp_path, {
+        "EXPECTED_FE_SHA": "e" * 40,
+        "DEV_PAPER_RUN_ID": "34081262894",
+        "DEV_PAPER_ATTEMPT": "2",
+        "DEV_PAPER_PHASE": "paper_bootstrap",
+    }, extra_env={
+        "FAKE_SSH_BOOTSTRAP_EXIT": "1",
+        "FAKE_SSH_COLLECTOR_STDOUT": _valid_diagnostics_payload(
+            expected_fe_sha="e" * 40,
+            run_id="34081262894",
+            attempt="2",
+            phase="paper_bootstrap",
+            bootstrap_exit="1",
+        ),
+    })
+    assert result.returncode == 1, result.stderr
+    assert len(log_lines) == 2
+    collector_invocation = log_lines[1]
+    assert "--expected-fe-sha " + "e" * 40 in collector_invocation
+    assert "--run-id 34081262894" in collector_invocation
+    assert "--attempt 2" in collector_invocation
+    assert "--phase paper_bootstrap" in collector_invocation
+    assert "--bootstrap-exit 1" in collector_invocation
+    document = _status_document(diagnostic_dir)
+    assert document["bootstrapExit"] == 1
+
+
+def test_wrapper_initializes_terminal_evidence_before_running_anything(tmp_path):
+    # A cancellation or lease loss mid-baseline must not erase evidence:
+    # the status file must already exist, with a non-terminal status, before
+    # the (slow) baseline command even finishes.
+    workspace_holder = {}
+
+    def launch():
+        env = dict(os.environ)
+        workspace = tmp_path / "workspace"
+        ssh_dir = workspace / ".agora-gate-controller" / "scripts"
+        ssh_dir.mkdir(parents=True)
+        ssh_path = ssh_dir / "dev_vm_ssh.sh"
+        ssh_path.write_text(FAKE_SSH_TEMPLATE)
+        ssh_path.chmod(ssh_path.stat().st_mode | stat.S_IEXEC)
+        diagnostic_dir = tmp_path / "diagnostics"
+        diagnostic_dir.mkdir()
+        collector_stub = tmp_path / "collector_stub.py"
+        collector_stub.write_text("# fixture only\n")
+        env.update({
+            "GITHUB_WORKSPACE": str(workspace),
+            "DEV_PAPER_DIAGNOSTICS_DIR": str(diagnostic_dir),
+            "DEV_PAPER_DIAGNOSTICS_COLLECTOR": str(collector_stub),
+            "EXPECTED_BFF_SHA": "b" * 40,
+            "FAKE_SSH_LOG": str(tmp_path / "fake-ssh.log"),
+            "FAKE_SSH_BOOTSTRAP_SLEEP": "2",
+            "FAKE_SSH_BOOTSTRAP_EXIT": "0",
+        })
+        workspace_holder["diagnostic_dir"] = diagnostic_dir
+        return subprocess.Popen(["bash", str(WRAPPER)], env=env, cwd=str(tmp_path),
+                                 stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+
+    proc = launch()
+    try:
+        diagnostic_dir = workspace_holder["diagnostic_dir"]
+        status_path = diagnostic_dir / "collection-status.json"
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline and not status_path.exists():
+            time.sleep(0.05)
+        assert status_path.exists(), "status file was not initialized before baseline completed"
+        early_document = json.loads(status_path.read_text())
+        assert early_document["collectionStatus"] == "not_started"
+    finally:
+        stdout, stderr = proc.communicate(timeout=30)
+    assert proc.returncode == 0, stderr
+    final_document = json.loads(status_path.read_text())
+    assert final_document["collectionStatus"] == "not_required"
+    assert final_document["bootstrapExit"] == 0
+
+
+def test_wrapper_keeps_collector_in_guard_process_group_for_cancellation(tmp_path):
+    marker = tmp_path / "collector_marker.txt"
+    workspace = tmp_path / "workspace"
+    ssh_dir = workspace / ".agora-gate-controller" / "scripts"
+    ssh_dir.mkdir(parents=True)
+    ssh_path = ssh_dir / "dev_vm_ssh.sh"
+    ssh_path.write_text(FAKE_SSH_TEMPLATE)
+    ssh_path.chmod(ssh_path.stat().st_mode | stat.S_IEXEC)
+
+    diagnostic_dir = tmp_path / "diagnostics"
+    diagnostic_dir.mkdir()
+    collector_stub = tmp_path / "collector_stub.py"
+    collector_stub.write_text("# fixture only\n")
+
+    env = dict(os.environ)
+    env.update({
+        "GITHUB_WORKSPACE": str(workspace),
+        "DEV_PAPER_DIAGNOSTICS_DIR": str(diagnostic_dir),
+        "DEV_PAPER_DIAGNOSTICS_COLLECTOR": str(collector_stub),
+        "EXPECTED_BFF_SHA": "b" * 40,
+        "FAKE_SSH_LOG": str(tmp_path / "fake-ssh.log"),
+        "FAKE_SSH_BOOTSTRAP_EXIT": "1",
+        "FAKE_SSH_COLLECTOR_SLEEP": "3",
+        "FAKE_SSH_COLLECTOR_MARKER": str(marker),
+    })
+
+    proc = subprocess.Popen(
+        ["bash", str(WRAPPER)],
+        env=env,
+        cwd=str(tmp_path),
+        start_new_session=True,
+    )
+    try:
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline and not marker.exists():
+            time.sleep(0.05)
+        assert marker.exists(), "collector marker was not created in time"
+
+        # Signal the process group (STOP, TERM, CONT) just like the pinned guard
+        pgid = os.getpgid(proc.pid)
+        os.killpg(pgid, signal.SIGSTOP)
+        os.killpg(pgid, signal.SIGTERM)
+        os.killpg(pgid, signal.SIGCONT)
+
+        proc.wait(timeout=5)
+        assert proc.returncode != 0
+    finally:
+        if proc.poll() is None:
+            try:
+                os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+            except OSError:
+                pass
+            proc.wait(timeout=5)
+
+    time.sleep(3.5)
+    marker_content = marker.read_text().splitlines()
+    assert "started" in marker_content
+    assert "finished" not in marker_content
+
+
+def test_wrapper_emits_only_allowlisted_structural_failure_fields_and_never_arbitrary_stderr(tmp_path):
+    secrets = [
+        '{"password": "SYNTHETIC_PRIVATE_SENTINEL", "api_key": "NESTED_SECRET"}',
+        "-----BEGIN RSA PRIVATE KEY-----\nMIIEowIBAAKCAQEA0...\n-----END RSA PRIVATE KEY-----",
+        "password=SYNTHETIC_PRIVATE_SENTINEL",
+        "Authorization: Bearer SECRET_BEARER_TOKEN",
+        "postgresql://user:SECRET_DB_PASS@localhost:5432/db",
+    ]
+    combined_stderr = "\n".join(secrets) + "\nConnection timed out during banner exchange\n"
+
+    result, diagnostic_dir, _log = _run_wrapper(tmp_path, {}, extra_env={
+        "FAKE_SSH_BOOTSTRAP_EXIT": "1",
+        "FAKE_SSH_COLLECTOR_STDOUT": "",
+        "FAKE_SSH_COLLECTOR_STDERR": combined_stderr,
+        "FAKE_SSH_COLLECTOR_EXIT": "1",
+    })
+    assert result.returncode == 1
+
+    doc = _status_document(diagnostic_dir)
+    assert doc["collectionStatus"] == "collector_command_failed"
+    assert doc["collectorExit"] == 1
+    assert doc["collectorErrorCategory"] == "ssh_connection_timeout"
+
+    doc_str = json.dumps(doc)
+    for s in ("SYNTHETIC_PRIVATE_SENTINEL", "NESTED_SECRET", "RSA PRIVATE KEY", "SECRET_BEARER_TOKEN", "SECRET_DB_PASS"):
+        assert s not in doc_str
+
+    for path in diagnostic_dir.iterdir():
+        content = path.read_text(errors="replace")
+        for s in ("SYNTHETIC_PRIVATE_SENTINEL", "NESTED_SECRET", "RSA PRIVATE KEY", "SECRET_BEARER_TOKEN", "SECRET_DB_PASS"):
+            assert s not in content
+
+
+def test_wrapper_validates_envelope_schema_and_propagates_truthful_status(tmp_path):
+    valid_payload = json.loads(_valid_diagnostics_payload())
+
+    # Case A: empty object missing schema -> schema_error
+    result, diag_dir, _ = _run_wrapper(tmp_path / "case_a", {}, extra_env={
+        "FAKE_SSH_BOOTSTRAP_EXIT": "1",
+        "FAKE_SSH_COLLECTOR_STDOUT": "{}",
+        "FAKE_SSH_COLLECTOR_EXIT": "0",
+    })
+    assert result.returncode == 1
+    doc_a = _status_document(diag_dir)
+    assert doc_a["collectionStatus"] == "schema_error"
+    assert doc_a["collectorErrorCategory"] == "schema_mismatch"
+    assert not (diag_dir / "diagnostics.json").exists()
+
+    # Case B: identity_matches=False -> identity_mismatch
+    payload_mismatch = dict(valid_payload, identity_matches=False, collection_status="identity_mismatch")
+    result, diag_dir, _ = _run_wrapper(tmp_path / "case_b", {}, extra_env={
+        "FAKE_SSH_BOOTSTRAP_EXIT": "1",
+        "FAKE_SSH_COLLECTOR_STDOUT": json.dumps(payload_mismatch),
+        "FAKE_SSH_COLLECTOR_EXIT": "0",
+    })
+    assert result.returncode == 1
+    doc_b = _status_document(diag_dir)
+    assert doc_b["collectionStatus"] == "identity_mismatch"
+    assert doc_b["collectorErrorCategory"] == "identity_mismatch"
+    assert (diag_dir / "diagnostics.json").exists()
+    assert (diag_dir / "SHA256SUMS").exists()
+
+    # Case C: collection_status=partial -> partial
+    payload_partial = dict(valid_payload, collection_status="partial")
+    result, diag_dir, _ = _run_wrapper(tmp_path / "case_c", {}, extra_env={
+        "FAKE_SSH_BOOTSTRAP_EXIT": "1",
+        "FAKE_SSH_COLLECTOR_STDOUT": json.dumps(payload_partial),
+        "FAKE_SSH_COLLECTOR_EXIT": "0",
+    })
+    assert result.returncode == 1
+    doc_c = _status_document(diag_dir)
+    assert doc_c["collectionStatus"] == "partial"
+    assert doc_c["collectorErrorCategory"] == "partial_collection"
+    assert (diag_dir / "diagnostics.json").exists()
+    assert (diag_dir / "SHA256SUMS").exists()
+
+    # Case D: collection_status=ok -> ok
+    result, diag_dir, _ = _run_wrapper(tmp_path / "case_d", {}, extra_env={
+        "FAKE_SSH_BOOTSTRAP_EXIT": "1",
+        "FAKE_SSH_COLLECTOR_STDOUT": json.dumps(valid_payload),
+        "FAKE_SSH_COLLECTOR_EXIT": "0",
+    })
+    assert result.returncode == 1
+    doc_d = _status_document(diag_dir)
+    assert doc_d["collectionStatus"] == "ok"
+    assert doc_d["collectorErrorCategory"] is None
+    assert (diag_dir / "diagnostics.json").exists()
+    assert (diag_dir / "SHA256SUMS").exists()
+
+
+def test_wrapper_baseline_phase_termination_does_not_invoke_collector(tmp_path):
+    workspace = tmp_path / "workspace"
+    ssh_dir = workspace / ".agora-gate-controller" / "scripts"
+    ssh_dir.mkdir(parents=True)
+    ssh_path = ssh_dir / "dev_vm_ssh.sh"
+    ssh_path.write_text(FAKE_SSH_TEMPLATE)
+    ssh_path.chmod(ssh_path.stat().st_mode | stat.S_IEXEC)
+
+    diagnostic_dir = tmp_path / "diagnostics"
+    diagnostic_dir.mkdir()
+    collector_stub = tmp_path / "collector_stub.py"
+    collector_stub.write_text("# fixture only\n")
+    fake_ssh_log = tmp_path / "fake-ssh.log"
+
+    env = dict(os.environ)
+    env.update({
+        "GITHUB_WORKSPACE": str(workspace),
+        "DEV_PAPER_DIAGNOSTICS_DIR": str(diagnostic_dir),
+        "DEV_PAPER_DIAGNOSTICS_COLLECTOR": str(collector_stub),
+        "EXPECTED_BFF_SHA": "b" * 40,
+        "FAKE_SSH_LOG": str(fake_ssh_log),
+        "FAKE_SSH_BOOTSTRAP_SLEEP": "3",
+        "FAKE_SSH_BOOTSTRAP_EXIT": "0",
+    })
+
+    proc = subprocess.Popen(
+        ["bash", str(WRAPPER)],
+        env=env,
+        cwd=str(tmp_path),
+        start_new_session=True,
+    )
+    try:
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline and not fake_ssh_log.exists():
+            time.sleep(0.05)
+        assert fake_ssh_log.exists(), "fake SSH log was not created in time"
+
+        # Signal the process group (STOP, TERM, CONT) just like the pinned guard does
+        pgid = os.getpgid(proc.pid)
+        os.killpg(pgid, signal.SIGSTOP)
+        os.killpg(pgid, signal.SIGTERM)
+        os.killpg(pgid, signal.SIGCONT)
+
+        proc.wait(timeout=5)
+        assert proc.returncode in (143, -signal.SIGTERM)
+    finally:
+        if proc.poll() is None:
+            try:
+                os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+            except OSError:
+                pass
+            proc.wait(timeout=5)
+
+    log_lines = fake_ssh_log.read_text().splitlines()
+    assert any("bootstrap_dev_paper_baseline.py" in line for line in log_lines)
+    assert not any("python3 -" in line for line in log_lines)
+    assert not any("collect_dev_paper_diagnostics.py" in line for line in log_lines)
+    assert not any("--bootstrap-exit" in line for line in log_lines)
+
+    doc = _status_document(diagnostic_dir)
+    assert doc["collectionStatus"] == "not_started"
+    assert doc["bootstrapExit"] is None
+    assert not (diagnostic_dir / "diagnostics.json").exists()
+
+
+def test_wrapper_rejects_missing_required_d2_fields_and_malformed_types(tmp_path):
+    base_valid = json.loads(_valid_diagnostics_payload())
+
+    # 1. Missing required fields individually
+    for field in (
+        "run_id",
+        "attempt",
+        "phase",
+        "bootstrap_exit",
+        "observed_source_sha",
+        "container_id",
+        "image_id",
+        "services",
+        "collected_at",
+        "expected_fe_sha",
+    ):
+        corrupted = dict(base_valid)
+        del corrupted[field]
+        result, diag_dir, _ = _run_wrapper(tmp_path / f"missing_{field}", {}, extra_env={
+            "FAKE_SSH_BOOTSTRAP_EXIT": "1",
+            "FAKE_SSH_COLLECTOR_STDOUT": json.dumps(corrupted),
+            "FAKE_SSH_COLLECTOR_EXIT": "0",
+        })
+        assert result.returncode == 1
+        doc = _status_document(diag_dir)
+        assert doc["collectionStatus"] == "schema_error"
+        assert not (diag_dir / "diagnostics.json").exists()
+        assert not (diag_dir / "SHA256SUMS").exists()
+
+    # 2. identity_matches string "false" instead of bool
+    corrupted = dict(base_valid, identity_matches="false")
+    result, diag_dir, _ = _run_wrapper(tmp_path / "id_matches_str_false", {}, extra_env={
+        "FAKE_SSH_BOOTSTRAP_EXIT": "1",
+        "FAKE_SSH_COLLECTOR_STDOUT": json.dumps(corrupted),
+        "FAKE_SSH_COLLECTOR_EXIT": "0",
+    })
+    assert result.returncode == 1
+    doc = _status_document(diag_dir)
+    assert doc["collectionStatus"] == "schema_error"
+    assert not (diag_dir / "diagnostics.json").exists()
+
+    # 3. services string "invalid" instead of dict
+    corrupted = dict(base_valid, services="invalid")
+    result, diag_dir, _ = _run_wrapper(tmp_path / "services_str_invalid", {}, extra_env={
+        "FAKE_SSH_BOOTSTRAP_EXIT": "1",
+        "FAKE_SSH_COLLECTOR_STDOUT": json.dumps(corrupted),
+        "FAKE_SSH_COLLECTOR_EXIT": "0",
+    })
+    assert result.returncode == 1
+    doc = _status_document(diag_dir)
+    assert doc["collectionStatus"] == "schema_error"
+    assert not (diag_dir / "diagnostics.json").exists()
+
+    # 4. collected_at is None
+    corrupted = dict(base_valid, collected_at=None)
+    result, diag_dir, _ = _run_wrapper(tmp_path / "collected_at_null", {}, extra_env={
+        "FAKE_SSH_BOOTSTRAP_EXIT": "1",
+        "FAKE_SSH_COLLECTOR_STDOUT": json.dumps(corrupted),
+        "FAKE_SSH_COLLECTOR_EXIT": "0",
+    })
+    assert result.returncode == 1
+    doc = _status_document(diag_dir)
+    assert doc["collectionStatus"] == "schema_error"
+    assert not (diag_dir / "diagnostics.json").exists()
+
+    # 5. bootstrap_exit mismatch
+    corrupted = dict(base_valid, bootstrap_exit="99")
+    result, diag_dir, _ = _run_wrapper(tmp_path / "bootstrap_exit_mismatch", {}, extra_env={
+        "FAKE_SSH_BOOTSTRAP_EXIT": "1",
+        "FAKE_SSH_COLLECTOR_STDOUT": json.dumps(corrupted),
+        "FAKE_SSH_COLLECTOR_EXIT": "0",
+    })
+    assert result.returncode == 1
+    doc = _status_document(diag_dir)
+    assert doc["collectionStatus"] == "schema_error"
+    assert not (diag_dir / "diagnostics.json").exists()

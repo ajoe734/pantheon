@@ -32,6 +32,11 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 CONFIG_FILE = ROOT / ".orchestrator" / "config.json"
 
+ORCHESTRATOR_DIR = ROOT / ".orchestrator"
+if str(ORCHESTRATOR_DIR) not in sys.path:
+    sys.path.insert(0, str(ORCHESTRATOR_DIR))
+from common import commit_subject_prefix_variants  # noqa: E402
+
 DEFAULT_REQUIRED = ("LLM-Agent", "Task-ID", "Reviewer")
 SUBJECT_PATTERN = re.compile(r"^[A-Z][A-Z0-9-]*[A-Z0-9]:\s+\S")
 
@@ -76,13 +81,32 @@ def required_trailers_for_delivery(required: tuple[str, ...], delivery_class: st
     return required
 
 
-def parse_trailers(body: str) -> dict[str, str]:
-    trailers: dict[str, str] = {}
+def extract_trailer_lines(body: str) -> list[tuple[str, str]]:
+    trailers: list[tuple[str, str]] = []
+    can_continue = False
     for line in body.splitlines():
         stripped = line.rstrip()
-        m = re.match(r"^([A-Za-z][A-Za-z0-9-]*):\s+(.+)$", stripped)
+        if not stripped:
+            can_continue = False
+            continue
+        if line.startswith((" ", "\t")):
+            if can_continue and trailers:
+                prev_key, prev_val = trailers[-1]
+                trailers[-1] = (prev_key, f"{prev_val} {stripped.strip()}".strip())
+            continue
+        m = re.match(r"^([A-Za-z][A-Za-z0-9-]*)[ \t]*:\s*(.*)$", stripped)
         if m:
-            trailers[m.group(1)] = m.group(2)
+            trailers.append((m.group(1), m.group(2).strip()))
+            can_continue = True
+        else:
+            can_continue = False
+    return trailers
+
+
+def parse_trailers(body: str) -> dict[str, str]:
+    trailers: dict[str, str] = {}
+    for key, val in extract_trailer_lines(body):
+        trailers[key] = val
     return trailers
 
 
@@ -90,32 +114,173 @@ def is_exempt_subject(subject: str) -> bool:
     return any(subject.startswith(p) for p in EXEMPT_SUBJECT_PREFIXES)
 
 
-def check_message(message: str, required: tuple[str, ...], prefix_required: bool) -> list[str]:
+def extract_subject_task_prefix(subject: str) -> str:
+    s = subject.strip()
+    changed = True
+    while changed:
+        changed = False
+        for p in EXEMPT_SUBJECT_PREFIXES:
+            if s.startswith(p):
+                s = s[len(p):].strip()
+                changed = True
+                break
+        if s.startswith(('"', "'")):
+            s = s[1:].strip()
+            changed = True
+    if ":" in s:
+        return s.split(":", 1)[0].strip().rstrip("\"'")
+    tokens = s.split()
+    return tokens[0].strip().rstrip("\"'") if tokens else ""
+
+
+def check_non_canonical_trailer_syntax(body: str, required: tuple[str, ...] = DEFAULT_REQUIRED) -> list[str]:
+    check_names = tuple(dict.fromkeys(list(required) + ["Task-ID"]))
+    canonical_map = {name.casefold(): name for name in check_names}
+    identity_keys = set(canonical_map) | {"task-id", "llm-agent", "reviewer"}
+    problems: list[str] = []
+    for line in body.splitlines():
+        stripped = line.rstrip()
+        if not stripped:
+            continue
+        m = re.match(r"^([A-Za-z][A-Za-z0-9-]*)[ \t]+:\s*(.*)$", stripped)
+        if m:
+            key = m.group(1)
+            if key.casefold() in identity_keys:
+                problems.append(
+                    f"non-canonical trailer syntax: '{stripped.strip()}' (unexpected whitespace before separator)"
+                )
+    return problems
+
+
+def check_trailer_continuation_problems(body: str, required: tuple[str, ...] = DEFAULT_REQUIRED) -> list[str]:
+    check_names = tuple(dict.fromkeys(list(required) + ["Task-ID"]))
+    canonical_map = {name.casefold(): name for name in check_names}
+    identity_keys = set(canonical_map) | {"task-id", "llm-agent", "reviewer"}
+    problems: list[str] = []
+    in_identity_trailer = False
+    for line in body.splitlines():
+        stripped = line.rstrip()
+        if not stripped:
+            in_identity_trailer = False
+            continue
+        is_indented = line.startswith((" ", "\t"))
+        if not is_indented:
+            m = re.match(r"^([A-Za-z][A-Za-z0-9-]*)[ \t]*:\s*(.*)$", stripped)
+            if m and m.group(1).casefold() in identity_keys:
+                in_identity_trailer = True
+            else:
+                in_identity_trailer = False
+        else:
+            m_indented = re.match(r"^[ \t]*([A-Za-z][A-Za-z0-9-]*)[ \t]*:\s*(.*)$", line)
+            has_identity_key = bool(m_indented and m_indented.group(1).casefold() in identity_keys)
+            if in_identity_trailer or has_identity_key:
+                problems.append(f"ambiguous trailer continuation: '{stripped.strip()}'")
+    return problems
+
+
+def duplicate_trailer_problems(body: str, required: tuple[str, ...]) -> list[str]:
+    trailer_lines = extract_trailer_lines(body)
+    check_names = tuple(dict.fromkeys(list(required) + ["Task-ID"]))
+    canonical_map = {name.casefold(): name for name in check_names}
+    occurrences_by_name: dict[str, list[str]] = {}
+    non_canonical_casing: list[str] = []
+
+    for key, val in trailer_lines:
+        folded = key.casefold()
+        if folded in canonical_map:
+            canon_name = canonical_map[folded]
+            if key != canon_name and key not in non_canonical_casing:
+                non_canonical_casing.append(key)
+            occurrences_by_name.setdefault(canon_name, []).append(val)
+        else:
+            occurrences_by_name.setdefault(key, []).append(val)
+
+    problems: list[str] = []
+    for non_canon in non_canonical_casing:
+        canon_name = canonical_map[non_canon.casefold()]
+        problems.append(f"non-canonical trailer casing: '{non_canon}' (expected '{canon_name}')")
+
+    for name in check_names:
+        occurrences = occurrences_by_name.get(name, [])
+        if len(occurrences) > 1:
+            distinct_values = sorted(set(occurrences))
+            if len(distinct_values) > 1:
+                problems.append(f"conflicting trailer: {name} has multiple values {distinct_values}")
+            else:
+                problems.append(f"duplicate trailer: {name} appears {len(occurrences)} times")
+    return problems
+
+
+def check_message(
+    message: str,
+    required: tuple[str, ...] = DEFAULT_REQUIRED,
+    prefix_required: bool = True,
+    expected_task_id: str | None = None,
+    delivery_class: str = "product",
+) -> list[str]:
     lines = message.splitlines()
-    subject = lines[0] if lines else ""
+    subject = lines[0].strip() if lines else ""
     body = "\n".join(lines[1:])
     problems: list[str] = []
 
-    if not subject.strip():
+    if not subject:
         return ["empty commit subject"]
-
-    if is_exempt_subject(subject):
-        return []
-
-    if prefix_required and not SUBJECT_PATTERN.match(subject):
-        problems.append(
-            f"subject must start with TASK-ID: '<TASK-ID>: <summary>'; got '{subject[:60]}'"
-        )
 
     if len(subject) > 72:
         problems.append(f"subject exceeds 72 chars ({len(subject)})")
 
+    effective_required = required_trailers_for_delivery(required, delivery_class)
+    all_required = tuple(dict.fromkeys(list(effective_required) + ["Task-ID"]))
+
     trailers = parse_trailers(body)
-    for name in required:
+    problems.extend(check_trailer_continuation_problems(body, all_required))
+    problems.extend(check_non_canonical_trailer_syntax(body, all_required))
+    problems.extend(duplicate_trailer_problems(body, all_required))
+
+    for name in all_required:
         if name not in trailers:
             problems.append(f"missing trailer: {name}")
         elif not trailers[name].strip():
             problems.append(f"empty trailer value: {name}")
+
+    task_id_trailer = trailers.get("Task-ID", "").strip()
+
+    if expected_task_id:
+        if task_id_trailer and task_id_trailer != expected_task_id:
+            problems.append(
+                f"commit Task-ID trailer '{task_id_trailer}' does not match task id '{expected_task_id}'"
+            )
+
+    target_task_id = expected_task_id or task_id_trailer
+
+    if prefix_required:
+        if not is_exempt_subject(subject):
+            if not SUBJECT_PATTERN.match(subject):
+                problems.append(
+                    f"subject must start with TASK-ID: '<TASK-ID>: <summary>'; got '{subject[:60]}'"
+                )
+            elif target_task_id:
+                full_prefix, bounded_prefix = commit_subject_prefix_variants(target_task_id)
+                actual_prefix = subject.split(":", 1)[0].strip()
+                if actual_prefix not in (target_task_id, full_prefix, bounded_prefix):
+                    ref_name = f"expected task id '{target_task_id}'" if expected_task_id else f"Task-ID trailer '{target_task_id}'"
+                    problems.append(
+                        f"subject prefix '{actual_prefix}' does not match {ref_name} "
+                        f"(latest commit subject must include task id {target_task_id}) "
+                        f"(expected '{full_prefix}' or bounded '{bounded_prefix}')"
+                    )
+        else:
+            if target_task_id:
+                full_prefix, bounded_prefix = commit_subject_prefix_variants(target_task_id)
+                actual_prefix = extract_subject_task_prefix(subject)
+                if actual_prefix not in (target_task_id, full_prefix, bounded_prefix):
+                    ref_name = f"expected task id '{target_task_id}'" if expected_task_id else f"Task-ID trailer '{target_task_id}'"
+                    problems.append(
+                        f"subject prefix '{actual_prefix}' does not match {ref_name} "
+                        f"(latest commit subject must include task id {target_task_id}) "
+                        f"(expected '{full_prefix}' or bounded '{bounded_prefix}')"
+                    )
+
     problems.extend(check_independent_review(trailers))
     return problems
 
@@ -195,6 +360,11 @@ def main() -> int:
         default="product",
         help="Tooling delivery does not require the product-reviewer trailer.",
     )
+    parser.add_argument(
+        "--task-id",
+        default=None,
+        help="Expected task id to validate against.",
+    )
     args = parser.parse_args()
 
     # Allow CI/cron jobs to bypass with explicit opt-out (used by automated merge bots).
@@ -234,7 +404,13 @@ def main() -> int:
             ).stdout.split()
             if len(parents) > 2:  # merge commit
                 continue
-        problems = check_message(msg, required, prefix_required)
+        problems = check_message(
+            msg,
+            required=required,
+            prefix_required=prefix_required,
+            expected_task_id=args.task_id,
+            delivery_class=args.delivery_class,
+        )
         if problems:
             exit_code = 1
             print(f"\n[trailers] {sha}:")

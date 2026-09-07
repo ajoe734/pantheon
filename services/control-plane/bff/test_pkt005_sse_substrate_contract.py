@@ -261,17 +261,37 @@ def test_execute_plans_sse_compatibility_aliases_share_replay_headers() -> None:
         ),
         (lambda: bff_main.bff_sse_deployment_events_alias(last_event_id=None, authorization=AUTH), "artifact"),
         (lambda: bff_main.bff_sse_review_updates_alias(last_event_id=None, authorization=AUTH), "approval"),
-        (lambda: bff_main.bff_sse_agora_signals_alias(last_event_id=None, authorization=AUTH), "signal"),
-        (
-            lambda: bff_main.bff_sse_agora_session_alias(
-                sessionId="ask-final-sse-001", last_event_id=None, authorization=AUTH,
-            ),
-            "ask",
-        ),
     ]
 
     for response_factory, expected_channel in route_factories:
         response = asyncio.run(response_factory())
+        assert response.media_type == "text/event-stream"
+        assert response.headers["X-SSE-Channel"] == expected_channel
+        assert response.headers["X-SSE-Replay-Supported"] == "true"
+        assert response.headers["X-SSE-Replay-Window-Events"] == "500"
+        assert response.headers["X-SSE-Replay-Store"] == "in-memory"
+
+    # Agora's signal/session SSE aliases are synchronous route handlers (not
+    # coroutines), unlike every other alias above, and resolve Last-Event-ID
+    # through a FastAPI Header() dependency default that only FastAPI's own
+    # request dependency-injection resolves to None; call them directly with
+    # that header dependency explicitly supplied rather than via asyncio.run.
+    for sync_factory, expected_channel in [
+        (
+            lambda: bff_main.bff_sse_agora_signals_alias(
+                last_event_id=None, authorization=AUTH, last_event_id_header=None,
+            ),
+            "signal",
+        ),
+        (
+            lambda: bff_main.bff_sse_agora_session_alias(
+                sessionId="ask-final-sse-001", last_event_id=None, authorization=AUTH,
+                last_event_id_header=None,
+            ),
+            "session:ask-final-sse-001",
+        ),
+    ]:
+        response = sync_factory()
         assert response.media_type == "text/event-stream"
         assert response.headers["X-SSE-Channel"] == expected_channel
         assert response.headers["X-SSE-Replay-Supported"] == "true"

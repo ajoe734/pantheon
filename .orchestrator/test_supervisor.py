@@ -16241,11 +16241,11 @@ class RealProcessReviewHandoffRecoveryFlowTests(unittest.TestCase):
                     queue_event_id=w["queue_event_id"], pid=w["pid"],
                     pid_start_ticks=w["pid_start_ticks"],
                 )
-                w["lease_expires_at"] = "2026-08-15T04:01:00Z"
+                now = datetime.now(timezone.utc)
+                w["lease_expires_at"] = (now - timedelta(hours=2)).isoformat()
                 state["workers"][w["run_id"]] = copy.deepcopy(w)
                 runtime_state.save_runtime_state(c, state)
 
-                now = datetime.now(timezone.utc)
                 self.assertTrue(supervisor.worker_lease_is_expired(c, w, now))
 
                 signals_sent = []
@@ -16300,14 +16300,17 @@ class RealProcessReviewHandoffRecoveryFlowTests(unittest.TestCase):
                     queue_event_id=w2["queue_event_id"], pid=w2["pid"],
                     pid_start_ticks=w2["pid_start_ticks"],
                 )
-                w2["lease_expires_at"] = "2026-09-07T12:00:00Z"
-                w2["last_heartbeat_at"] = datetime.now(timezone.utc).isoformat()
+                now2 = datetime.now(timezone.utc)
+                w2["last_heartbeat_at"] = now2.isoformat()
+                w2["lease_expires_at"] = (now2 + timedelta(hours=1)).isoformat()
                 state["workers"][w2["run_id"]] = copy.deepcopy(w2)
                 state["queue"]["events"][w2["queue_event_id"]] = {
                     "status": "processing",
                     "intent": {"event_id": w2["queue_event_id"], "task_id": t["id"]},
                 }
                 runtime_state.save_runtime_state(c, state)
+
+                self.assertFalse(supervisor.worker_lease_is_expired(c, w2, now2))
 
                 signals_sent2 = []
 
@@ -16367,13 +16370,16 @@ class RealProcessReviewHandoffRecoveryFlowTests(unittest.TestCase):
                     queue_event_id=w3["queue_event_id"], pid=w3["pid"],
                     pid_start_ticks=w3["pid_start_ticks"],
                 )
-                w3["lease_expires_at"] = "2026-08-15T04:01:00Z"
+                now3 = datetime.now(timezone.utc)
+                w3["lease_expires_at"] = (now3 - timedelta(hours=2)).isoformat()
                 state["workers"][w3["run_id"]] = copy.deepcopy(w3)
                 state["queue"]["events"][w3["queue_event_id"]] = {
                     "status": "processing",
                     "intent": {"event_id": w3["queue_event_id"], "task_id": t_intent["id"]},
                 }
                 runtime_state.save_runtime_state(c, state)
+
+                self.assertTrue(supervisor.worker_lease_is_expired(c, w3, now3))
 
                 signals_sent3 = []
 

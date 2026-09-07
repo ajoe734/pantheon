@@ -120,7 +120,6 @@ class StrategyRouteContext:
     normalize_risk_level: Callable[[Any], str] = lambda r: str(r or "medium")
     strategy_persona_idempotency_check: Callable[..., Optional[Dict[str, Any]]] = lambda k, h: None
     strategy_persona_action_command: Optional[Callable[..., Any]] = None
-    strategy_overlay: Dict[str, Dict[str, Any]] = field(default_factory=dict)
     strategy_persona_idempotency: Dict[str, Dict[str, Any]] = field(default_factory=dict)
     strategy_seed_replication_idempotency: Dict[str, Dict[str, Any]] = field(default_factory=dict)
     strategy_seed_review_idempotency: Dict[str, Dict[str, Any]] = field(default_factory=dict)
@@ -131,6 +130,8 @@ class StrategyRouteContext:
     bff_me_tenant_payload: Optional[Callable[..., Dict[str, Any]]] = None
     list_persona_records: Optional[Callable[..., List[Dict[str, Any]]]] = None
     list_strategy_summaries: Optional[Callable[[], List[Dict[str, Any]]]] = None
+    strategy_write_owner: Optional[Any] = None
+    get_strategy_write_owner: Optional[Callable[[], Any]] = None
 
     def get_read_store_port(self) -> Any:
         if self.read_surface is not None:
@@ -138,6 +139,19 @@ class StrategyRouteContext:
         if self.get_read_store is not None:
             return self.get_read_store()
         raise NotImplementedError("Neither read_surface nor get_read_store dependency was supplied")
+
+    def get_strategy_write_owner_port(self) -> Any:
+        if self.strategy_write_owner is not None:
+            return self.strategy_write_owner() if callable(self.strategy_write_owner) else self.strategy_write_owner
+        if self.get_strategy_write_owner is not None:
+            return self.get_strategy_write_owner()
+        try:
+            rs = self.get_read_store_port()
+            if hasattr(rs, "upsert_strategy") or hasattr(rs, "create_strategy_spec"):
+                return rs
+        except Exception:
+            pass
+        return None
 
     def list_strategy_summaries_records(self) -> List[Dict[str, Any]]:
         if self.list_strategy_summaries is not None:
@@ -149,9 +163,41 @@ class StrategyRouteContext:
             raise NotImplementedError("bff_me_tenant_payload dependency was not supplied")
         return str(self.bff_me_tenant_payload(identity, requested_tenant=None)["id"])
 
+    def write_principal(self, identity: Any) -> Dict[str, Any]:
+        """Bind writes to the authenticated identity, never request-body fields."""
+        claims = getattr(identity, "claims", {}) or {}
+        tenant = str(claims.get("tenant") or claims.get("tenant_id") or claims.get("tenantId") or "").strip()
+        if not tenant:
+            tenants = claims.get("tenant_ids") or claims.get("tenantIds")
+            if isinstance(tenants, list) and len(tenants) == 1:
+                tenant = str(tenants[0] or "").strip()
+        if not tenant:
+            raise self.bff_error(403, ErrorCode.FORBIDDEN, "Verified tenant required",
+                                 "Strategy writes require an authenticated tenant claim")
+        return {
+            "actor_id": identity.operator_id,
+            "roles": list(identity.roles),
+            "tenant": tenant,
+            "token_kind": identity.token_kind,
+        }
+
     def ensure_strategy_exists(self, strategy_id: str) -> None:
         read_store = self.get_read_store_port()
-        if read_store.get_strategy_spec(strategy_id) or strategy_id in self.strategy_overlay:
+        found = False
+        getter = getattr(read_store, "get_strategy_spec", None)
+        if callable(getter):
+            try:
+                found = bool(getter(strategy_id))
+            except Exception:
+                pass
+        if not found:
+            getter = getattr(read_store, "get_strategy", None)
+            if callable(getter):
+                try:
+                    found = bool(getter(strategy_id))
+                except Exception:
+                    pass
+        if found:
             return
         raise self.bff_error(
             404,
@@ -168,9 +214,16 @@ class StrategyRouteContext:
         overlay: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         strategy_id = str(summary.get("strategy_id") or summary.get("id") or "")
-        title = summary.get("title") or summary.get("name") or strategy_id
+        title = summary.get("title") or summary.get("name")
+        if not title and isinstance(summary.get("versions"), list):
+            for v in summary.get("versions") or []:
+                if isinstance(v, dict) and (v.get("name") or v.get("title")):
+                    title = v.get("name") or v.get("title")
+                    break
+        title = title or strategy_id
         lifecycle_raw = (detail or summary).get("lifecycle_state") or summary.get("lifecycle_state")
         governance = (detail or {}).get("governance") if detail else {}
+        governance = governance if isinstance(governance, dict) else (summary.get("governance") or {})
         governance = governance if isinstance(governance, dict) else {}
         market_scope = (detail or {}).get("market_scope") if detail else {}
         market_scope = market_scope if isinstance(market_scope, dict) else {}
@@ -195,6 +248,18 @@ class StrategyRouteContext:
         available_actions: List[str] = []
         if isinstance(allowed, dict):
             available_actions = sorted([k for k, v in allowed.items() if v])
+        risk_raw = governance.get("risk_level") or summary.get("risk") or (detail or {}).get("risk")
+        if not risk_raw and strategy_id:
+            try:
+                from services.registry.storage import get_store
+                reg_store = get_store()
+                if hasattr(reg_store, "list_by_strategy"):
+                    entries = reg_store.list_by_strategy(strategy_id)
+                    if entries:
+                        meta = dict(entries[-1].metadata) if isinstance(entries[-1].metadata, dict) else entries[-1].to_dict()
+                        risk_raw = meta.get("risk") or (meta.get("governance") or {}).get("risk_level")
+            except Exception:
+                pass
         dto: Dict[str, Any] = {
             "id": strategy_id,
             "name": title,
@@ -204,7 +269,7 @@ class StrategyRouteContext:
             or (detail or {}).get("created_at")
             or self.utc_now(),
             "state": self.normalize_lifecycle_state(lifecycle_raw),
-            "risk": self.normalize_risk_level(governance.get("risk_level")),
+            "risk": self.normalize_risk_level(risk_raw),
             "alpha": alpha,
             "capitalPoolId": capital_pool_id,
             "personaIds": persona_ids,
@@ -215,8 +280,6 @@ class StrategyRouteContext:
             "labelKey": f"strategy.{strategy_id}" if strategy_id else None,
             "lifecycleStatus": str(lifecycle_raw or ""),
         }
-        if overlay:
-            for k, v in overlay.items():
-                if v is not None:
-                    dto[k] = v
+        if overlay is not None:
+            raise AttributeError("strategy overlay is retired; process-local state overlays are deleted")
         return dto

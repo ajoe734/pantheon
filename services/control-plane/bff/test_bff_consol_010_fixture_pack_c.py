@@ -197,7 +197,6 @@ class FixturePackCTestReadPorts(ReadSurfacePorts):
 def _fresh_pack_c_client() -> Iterator[TestClient]:
     with tempfile.TemporaryDirectory() as td:
         original_store = bff_main.read_store
-        original_jobs = dict(bff_main._GOV_BFF_JOB_OVERLAY)
         original_mcp_servers = dict(bff_main._MCP_SERVER_REGISTRY)
         original_mcp_tools = dict(bff_main._MCP_TOOL_REGISTRY)
         original_tools = dict(bff_main._TOOL_REGISTRY)
@@ -206,7 +205,6 @@ def _fresh_pack_c_client() -> Iterator[TestClient]:
             bff_main.read_store = FixturePackCTestReadPorts(
                 allow_local_snapshot_fallback=True,
             )
-            bff_main._GOV_BFF_JOB_OVERLAY.clear()
             bff_main._MCP_SERVER_REGISTRY.clear()
             bff_main._MCP_TOOL_REGISTRY.clear()
             bff_main._TOOL_REGISTRY.clear()
@@ -214,8 +212,6 @@ def _fresh_pack_c_client() -> Iterator[TestClient]:
             yield TestClient(bff_main.app, raise_server_exceptions=False)
         finally:
             bff_main.read_store = original_store
-            bff_main._GOV_BFF_JOB_OVERLAY.clear()
-            bff_main._GOV_BFF_JOB_OVERLAY.update(original_jobs)
             bff_main._MCP_SERVER_REGISTRY.clear()
             bff_main._MCP_SERVER_REGISTRY.update(original_mcp_servers)
             bff_main._MCP_TOOL_REGISTRY.clear()
