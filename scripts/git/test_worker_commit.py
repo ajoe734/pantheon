@@ -292,6 +292,61 @@ class WorkerCommitPreflightTests(unittest.TestCase):
 
         self.assertEqual(res, 5)
 
+    def test_worker_commit_rejects_duplicate_identical_task_id_trailers(self) -> None:
+        (self.repo / "file1.py").write_text("print('updated')\n", encoding="utf-8")
+        msg_file = self.repo / "msg.txt"
+        msg_file.write_text(
+            "SUP-WORKER-SUBJECT-GUARD-20260811: anchor file1.py\n\n"
+            "LLM-Agent: Antigravity2\n"
+            "Task-ID: SUP-WORKER-SUBJECT-GUARD-20260811\n"
+            "Task-ID: SUP-WORKER-SUBJECT-GUARD-20260811\n"
+            "Reviewer: Codex2\n",
+            encoding="utf-8",
+        )
+        argv = [
+            "worker_commit.py",
+            "--task-id",
+            "SUP-WORKER-SUBJECT-GUARD-20260811",
+            "--message-file",
+            str(msg_file),
+            "--scope",
+            str(self.repo / "file1.py"),
+        ]
+        with (
+            mock.patch.object(sys, "argv", argv),
+            mock.patch.object(worker_commit, "ROOT", self.repo),
+            mock.patch.object(worker_commit, "STATUS_ROOT", self.repo),
+        ):
+            res = worker_commit.main()
+        self.assertEqual(res, 5)
+
+    def test_worker_commit_rejects_subject_prefix_collision(self) -> None:
+        (self.repo / "file1.py").write_text("print('updated')\n", encoding="utf-8")
+        msg_file = self.repo / "msg.txt"
+        msg_file.write_text(
+            "SUP-WORKER-SUBJECT-GUARD-20260811-OTHER: anchor file1.py\n\n"
+            "LLM-Agent: Antigravity2\n"
+            "Task-ID: SUP-WORKER-SUBJECT-GUARD-20260811\n"
+            "Reviewer: Codex2\n",
+            encoding="utf-8",
+        )
+        argv = [
+            "worker_commit.py",
+            "--task-id",
+            "SUP-WORKER-SUBJECT-GUARD-20260811",
+            "--message-file",
+            str(msg_file),
+            "--scope",
+            str(self.repo / "file1.py"),
+        ]
+        with (
+            mock.patch.object(sys, "argv", argv),
+            mock.patch.object(worker_commit, "ROOT", self.repo),
+            mock.patch.object(worker_commit, "STATUS_ROOT", self.repo),
+        ):
+            res = worker_commit.main()
+        self.assertEqual(res, 5)
+
 
 if __name__ == "__main__":
     unittest.main()

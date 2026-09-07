@@ -69,85 +69,59 @@ definition of "bounded" shared across consumers, now has one.
 
 ## Where it is enforced
 
+`scripts/git/check_commit_trailers.py`'s `check_message` is the single
+authoritative validator used across CI, worker preflight, and canonical status
+done/reconciliation. There are no divergent parsers or secondary validators.
+
 1. **`scripts/git/check_commit_trailers.py`** (`check_message`, used by
    `.githooks/commit-msg` for the single staged commit and by
    `.github/workflows/branch-ci.yml` for a PR's non-merge commit range):
    - unchanged: subject `<=72` chars, required trailers present and
-     non-empty, no self-review.
-   - if a `Task-ID:` trailer is present and the bounded-subject-prefix rule
-     applies (`prefix_required` true), the subject's prefix (the text before
-     the first `: `) must equal one of
-     `commit_subject_prefix_variants(<Task-ID trailer value>)`. This rejects
-     a subject that names a different or unrelated task (for example
-     `XYZ-001: mentions ABC-001` with `Task-ID: ABC-001`) even when the
-     trailers are otherwise well-formed, while still accepting either the
-     uncompacted or compacted form a genuine formatter output can carry.
+     non-empty, no self-review. Real git merge commits are skipped in rev-list
+     traversal via `--skip-merge` (parent count > 1); raw text messages starting
+     with `Merge ` or `wave-merge:` without structural git parents have no
+     provenance and are not exempt from trailer requirements.
+   - if `prefix_required` is true, the subject's prefix (the text before the
+     first `: `) must equal one of
+     `commit_subject_prefix_variants(<target task id>)`. This rejects
+     short-ID suffix collisions (for example `ABC-001-OTHER: repair` or
+     `ABC-0010: repair` with `Task-ID: ABC-001`) as well as long-prefix suffix
+     collisions, while accepting either the uncompacted or compacted form a
+     genuine formatter output can carry.
    - a required trailer (for example `Task-ID`) that appears more than once
-     with different values is rejected as `conflicting trailer: ...`.
-     `parse_trailers` still returns only the last occurrence for callers
-     that want a single value (last-write-wins), but `check_message` no
-     longer silently accepts a duplicated, conflicting trailer line.
+     is rejected as `duplicate trailer: ... appears N times` (or
+     `conflicting trailer: ...` if the values differ).
+   - supports explicit `--task-id` parameter to validate against the expected
+     canonical task id.
 
 2. **`scripts/git/worker_commit.py`** (the worker-safe commit wrapper):
-   preflight requires, before staging or committing, and unconditionally
-   (there is no fail-open fallback if `.orchestrator/common.py` is missing
-   the identity helpers -- an incoherent command-runtime/candidate-source
-   pairing is a hard error, not a silently disabled check):
-   - the subject's own prefix (the text before its first `:`) equals the
-     literal `--task-id` or one of `commit_subject_prefix_variants`, checked
-     as an exact match against that prefix rather than a substring anywhere
-     in the subject (the same `XYZ-001: mentions ABC-001` case CI rejects);
-   - the message body has exactly one `Task-ID:` trailer, and its value
-     equals `--task-id` exactly (missing, duplicated/conflicting, or
-     mismatched trailers are all rejected).
-
-   This mirrors the check the `commit-msg` hook / CI would apply, so a
-   worker gets the identity-mismatch diagnostic immediately instead of
-   discovering it later at push, CI, or `done` time.
+   preflight delegates directly to `check_commit_trailers.check_message(..., required=("Task-ID",), prefix_required=True, expected_task_id=args.task_id, delivery_class="tooling")`.
+   - unconditionally imports `common` and `check_commit_trailers` respecting
+     `PANTHEON_COMMAND_ROOT` with no target-cwd override and no fail-open
+     fallback (an incoherent command-runtime/candidate-source pairing is a
+     hard error, not a silently disabled check).
+   - subject prefix and Task-ID trailer validation mirror CI exactly, so a
+     worker gets the identity-mismatch diagnostic immediately instead of
+     discovering it later at push, CI, or `done` time.
 
 3. **`scripts/ai_status.py`** (`collect_done_delivery_metadata`, the
    canonical `done` finalize gate):
-   - for a subject that is exempt from the trailer-presence requirement
-     (`commit_subject_skips_trailer_check`: `Merge `, `Revert `, `promote:`,
-     `hotfix:`, `publish:`, or the `OPS-{GIT-WORKFLOW,GIT-REDESIGN,DOC,REBASE}-`
-     housekeeping styles), the task id may still appear anywhere in the
-     subject (unchanged, and still how a subject that merely embeds the id —
-     for example inside a merge commit's `task/<id>` branch name — passes);
-   - for every other subject, its own prefix must exactly equal the literal
-     task id or one of `commit_subject_prefix_variants(task_id)` -- the same
-     exact-prefix rule CI and `worker_commit.py` apply, replacing a looser
-     "task id or its bounded prefix appears anywhere as a substring" check
-     that could not tell `ABC-001: repair` apart from `XYZ-001: mentions
-     ABC-001`;
-   - a required trailer (including `Task-ID`) that appears more than once
-     with conflicting values is rejected the same way CI rejects it --
-     previously this path only used `parse_trailers`' last-write-wins value,
-     so a forged/duplicated `Task-ID:` line could bind silently to whichever
-     value happened to appear last;
-   - the trailer-presence exemption above means trailers *may be absent*, not
-     that a *present* `Task-ID:` trailer may lie: even for an exempt subject,
-     if a `Task-ID:` trailer is present it must equal the task's id, or the
-     transition is rejected.
-   - `check_commit_trailers.parse_trailers` and `check_commit_trailers.
-     duplicate_trailer_problems` are imported lazily, inside this function,
-     rather than at module load. `scripts/ai_status.py` otherwise has no
-     dependency on `scripts/git/`, and a command-runtime copy that omits
-     that directory (for example a synthetic fixture that only copies
-     `scripts/*.py`) must still be able to run every `ai_status.py` command
-     that does not reach commit-identity validation.
+   - validates the delivery commit via the shared `check_message(..., required=..., prefix_required=..., expected_task_id=task_id, delivery_class="product")`.
+   - short-ID suffix collisions (`ABC-001-OTHER:`, `ABC-0010:`) and duplicate
+     identical/conflicting trailers are rejected identically to CI and worker
+     preflight.
+   - for exempt subjects (`commit_subject_skips_trailer_check`), the task id
+     must still appear in the subject, and any present `Task-ID:` trailer must
+     match the task id exactly.
+   - `check_commit_trailers` is imported lazily inside `_commit_trailer_checker()`,
+     so synthetic test fixtures that omit `scripts/git/` can still run every
+     `ai_status.py` command that does not perform commit-identity validation.
 
 `scripts/ai_status.py`'s `validate_merged_tooling_done` (the Human/Ops
-direct-tooling-delivery reconciliation path) is a narrower consumer with its
-own reviewer-free `development_tooling` authority. It now also treats a
-present `Task-ID:` trailer as canonical identity: if the delivery commit
-carries one, it must equal the task's id exactly (rejecting both a duplicated/
-conflicting trailer and a trailer naming a different task), regardless of
-what the subject or rest of the message says. Only when no `Task-ID:` trailer
-is present at all does it fall back to its original whole-message,
-word-boundary-guarded regex match — this preserves the historical behavior
-for legacy tooling commits that never carried a trailer, while closing the
-gap where a commit's subject merely *mentioned* the right task id but its
-trailer bound a different one.
+direct-tooling-delivery reconciliation path) likewise delegates directly to
+the shared `checker.check_message(commit_message, required=("Task-ID",), prefix_required=True, expected_task_id=task_id, delivery_class="tooling")`,
+ensuring tooling delivery reconciliation enforces the exact same identity, prefix,
+and trailer constraints without drift.
 
 ## Recovering PR #5639
 

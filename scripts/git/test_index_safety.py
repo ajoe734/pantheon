@@ -210,6 +210,9 @@ class WorkerCommitWrapperTests(unittest.TestCase):
         (scripts_dir / "worker_commit.py").write_text(
             (HERE / "worker_commit.py").read_text()
         )
+        (scripts_dir / "check_commit_trailers.py").write_text(
+            (HERE / "check_commit_trailers.py").read_text()
+        )
         orchestrator_dir = root / ".orchestrator"
         orchestrator_dir.mkdir(parents=True)
         (orchestrator_dir / "common.py").write_text(
@@ -358,12 +361,50 @@ class WorkerCommitWrapperTests(unittest.TestCase):
             (runtime_orchestrator / "common.py").write_text(
                 (REPO_ROOT / ".orchestrator" / "common.py").read_text()
             )
+            runtime_scripts = runtime / "scripts" / "git"
+            runtime_scripts.mkdir(parents=True)
+            (runtime_scripts / "check_commit_trailers.py").write_text(
+                (HERE / "check_commit_trailers.py").read_text()
+            )
             (root / "cross_repo.py").write_text("runtime\n")
             msg = root / "msg.txt"
             msg.write_text("BAR-007: cross repo commit\n\nTask-ID: BAR-007\n")
             proc = self._wrapper(
                 root,
                 "--task-id", "BAR-007",
+                "--message-file", str(msg),
+                "--scope", "cross_repo.py",
+                env_extra={"PANTHEON_COMMAND_ROOT": str(runtime)},
+            )
+            self.assertEqual(proc.returncode, 0, msg=proc.stderr + proc.stdout)
+            self.assertIn("cross_repo.py", _git(root, "show", "--name-only", "--format=", "HEAD").stdout)
+        finally:
+            import shutil; shutil.rmtree(root); shutil.rmtree(runtime)
+
+    def test_cross_repo_worker_prefers_command_runtime_over_competing_target_orchestrator(self) -> None:
+        """When PANTHEON_COMMAND_ROOT is set, worker_commit must not import competing target common."""
+        root = self._setup_repo()
+        runtime = Path(tempfile.mkdtemp())
+        try:
+            # Poison target checkout's common.py so if target is loaded, it fails immediately.
+            target_common = root / ".orchestrator" / "common.py"
+            target_common.write_text("raise RuntimeError('Target repo common.py must not be imported when PANTHEON_COMMAND_ROOT is set')\n")
+            runtime_orchestrator = runtime / ".orchestrator"
+            runtime_orchestrator.mkdir()
+            (runtime_orchestrator / "common.py").write_text(
+                (REPO_ROOT / ".orchestrator" / "common.py").read_text()
+            )
+            runtime_scripts = runtime / "scripts" / "git"
+            runtime_scripts.mkdir(parents=True)
+            (runtime_scripts / "check_commit_trailers.py").write_text(
+                (HERE / "check_commit_trailers.py").read_text()
+            )
+            (root / "cross_repo.py").write_text("runtime\n")
+            msg = root / "msg.txt"
+            msg.write_text("BAR-008: cross repo commit\n\nTask-ID: BAR-008\n")
+            proc = self._wrapper(
+                root,
+                "--task-id", "BAR-008",
                 "--message-file", str(msg),
                 "--scope", "cross_repo.py",
                 env_extra={"PANTHEON_COMMAND_ROOT": str(runtime)},

@@ -3035,8 +3035,6 @@ def commit_subject_skips_trailer_check(subject: str) -> str | None:
     for prefix in COMMIT_TRAILER_SKIP_PREFIXES:
         if subject.startswith(prefix):
             return prefix.rstrip(": ")
-    if COMMIT_TRAILER_SKIP_RE.match(subject):
-        return "OPS"
     return None
 
 
@@ -3448,73 +3446,51 @@ def collect_done_delivery_metadata(task: dict[str, Any], actor: str) -> dict[str
 
         task_id = str(task.get("id") or "").strip()
         trailer_skip_reason = commit_subject_skips_trailer_check(subject)
-        if commit_rules["subject_must_include_task_id"] and task_id:
-            if trailer_skip_reason is not None:
-                # A subject exempt from the trailer *presence* requirement (a
-                # merge commit, an OPS-DOC/OPS-REBASE housekeeping commit,
-                # ...) is not required to follow the "<TASK-ID>: <summary>"
-                # prefix convention, so accept the task id embedded anywhere
-                # in the subject -- e.g. a merge commit's branch name.
-                subject_identifies_task = task_id in subject
-            else:
-                # A long task_id cannot fit verbatim into a bounded (<=72
-                # char) subject line (see
-                # docs/operations/commit-identity-contract.md);
-                # `bound_commit_subject` compacts the subject's prefix
-                # instead of dropping the id, so accept either the literal
-                # id or that same deterministic bounded prefix -- matched
-                # exactly against the subject's own prefix, not merely as a
-                # substring anywhere in the subject. A substring match would
-                # accept a subject like 'XYZ-001: mentions ABC-001' for
-                # task_id ABC-001, which names a different task. The full id
-                # is still required in the `Task-ID:` trailer, checked below.
-                full_prefix, bounded_prefix = commit_subject_prefix_variants(task_id)
-                subject_identifies_task = subject.startswith(
-                    (task_id, full_prefix, bounded_prefix)
-                )
-            if not subject_identifies_task:
-                raise SystemExit(
-                    f"Cannot finalize task: latest commit subject must include task id {task_id}."
-                )
-
+        full_message = f"{subject}\n\n{body}" if body else subject
         checker = _commit_trailer_checker()
-        metadata_fields = checker.parse_trailers(body)
-        expected_fields = {
-            "LLM-Agent": actor,
-            "Task-ID": task_id,
-            "Reviewer": canonical_agent_name(task.get("reviewer")),
-        }
-        required_fields = commit_rules.get("required_body_fields", [])
 
-        # A trailer line that appears more than once with conflicting values
-        # must never resolve silently to "whichever value came last" -- that
-        # is exactly how a forged/duplicated Task-ID trailer could bind to
-        # the wrong task while looking identical to CI's own duplicate-
-        # trailer rejection.
-        duplicate_problems = checker.duplicate_trailer_problems(body, tuple(required_fields))
-        if duplicate_problems:
-            raise SystemExit("Cannot finalize task: " + "; ".join(duplicate_problems))
-
-        if task_id and trailer_skip_reason is not None:
-            # The trailer-presence exemption above means trailers may be
-            # absent, not that a present Task-ID trailer may lie: a subject
-            # matching the OPS-DOC/OPS-REBASE/merge exemption must still not
-            # carry a Task-ID trailer naming a different task.
+        if trailer_skip_reason is not None:
+            # Genuine system commit (e.g. Merge pull request #...).
+            if commit_rules["subject_must_include_task_id"] and task_id:
+                full_prefix, bounded_prefix = commit_subject_prefix_variants(task_id)
+                if task_id not in subject and bounded_prefix not in subject:
+                    raise SystemExit(
+                        f"Cannot finalize task: latest commit subject must include task id {task_id}."
+                    )
+            metadata_fields = checker.parse_trailers(body)
             present_task_id = metadata_fields.get("Task-ID", "").strip()
             if present_task_id and present_task_id != task_id:
                 raise SystemExit(
                     f"Cannot finalize task: commit Task-ID trailer '{present_task_id}' "
                     f"does not match task id '{task_id}'."
                 )
+            delivery["commit_trailer_check_skipped"] = True
+            delivery["commit_trailer_skip_reason"] = trailer_skip_reason
+            delivery["commit_metadata"] = metadata_fields
+        else:
+            required_fields = list(commit_rules.get("required_body_fields", []))
+            if "Task-ID" not in required_fields:
+                required_fields.append("Task-ID")
 
-        missing_fields: list[str] = []
-        mismatched_fields: list[tuple[str, str]] = []
-        commit_timestamp = ""
-        if trailer_skip_reason is None:
+            prefix_required = bool(commit_rules.get("subject_must_include_task_id", True))
+            problems = checker.check_message(
+                full_message,
+                required=tuple(required_fields),
+                prefix_required=prefix_required,
+                expected_task_id=task_id,
+                delivery_class="product",
+            )
+            metadata_fields = checker.parse_trailers(body)
+            expected_fields = {
+                "LLM-Agent": actor,
+                "Task-ID": task_id,
+                "Reviewer": canonical_agent_name(task.get("reviewer")),
+            }
+            mismatched_fields: list[tuple[str, str]] = []
+            commit_timestamp = ""
             for field_name in required_fields:
                 actual_value = metadata_fields.get(field_name)
                 if not actual_value:
-                    missing_fields.append(field_name)
                     continue
                 expected_value = expected_fields.get(field_name)
                 if expected_value and actual_value != expected_value:
@@ -3550,22 +3526,32 @@ def collect_done_delivery_metadata(task: dict[str, Any], actor: str) -> dict[str
                         )
                         continue
                     mismatched_fields.append((field_name, expected_value))
-        else:
-            delivery["commit_trailer_check_skipped"] = True
-            delivery["commit_trailer_skip_reason"] = trailer_skip_reason
-        if missing_fields or mismatched_fields:
-            issues: list[str] = []
-            if missing_fields:
-                missing_list = ", ".join(f"`{field_name}: ...`" for field_name in missing_fields)
-                issues.append(f"latest commit body must include {missing_list}")
+
+            if problems:
+                missing_trailers = [
+                    p.split(": ", 1)[1] for p in problems if p.startswith("missing trailer: ")
+                ]
+                other_problems = [
+                    p for p in problems if not p.startswith("missing trailer: ")
+                ]
+                issue_parts = []
+                if missing_trailers:
+                    missing_list = ", ".join(f"`{f}: ...`" for f in missing_trailers)
+                    issue_parts.append(f"latest commit body must include {missing_list}")
+                if other_problems:
+                    issue_parts.extend(other_problems)
+                raise SystemExit(f"Cannot finalize task: {'; '.join(issue_parts)}.")
+
             if mismatched_fields:
                 mismatch_list = ", ".join(
                     f"`{field_name}` must be `{expected_value}`"
                     for field_name, expected_value in mismatched_fields
                 )
-                issues.append(f"latest commit body fields must match task metadata: {mismatch_list}")
-            raise SystemExit(f"Cannot finalize task: {'; '.join(issues)}.")
-        delivery["commit_metadata"] = metadata_fields
+                raise SystemExit(
+                    f"Cannot finalize task: latest commit body fields must match task metadata: {mismatch_list}."
+                )
+
+            delivery["commit_metadata"] = metadata_fields
 
     porcelain = run_git_command(
         ["status", "--porcelain"],
@@ -6498,30 +6484,19 @@ def validate_merged_tooling_done(task: dict[str, Any]) -> dict[str, Any]:
         raise SystemExit(
             "Cannot reconcile task: tooling delivery commit does not bind the task id."
         )
-    body = "\n".join(commit_message.splitlines()[1:])
     checker = _commit_trailer_checker()
-    duplicate_problems = checker.duplicate_trailer_problems(body, ("Task-ID",))
-    if duplicate_problems:
-        raise SystemExit("Cannot reconcile task: " + "; ".join(duplicate_problems))
-    trailer_task_id = checker.parse_trailers(body).get("Task-ID", "").strip()
-    if trailer_task_id:
-        # A present Task-ID trailer is canonical identity and must be exact
-        # -- a whole-message substring search (the prior behavior) accepted
-        # a subject/body that merely mentioned the right id anywhere while
-        # a Task-ID trailer named a different task entirely.
-        if trailer_task_id != task_id:
-            raise SystemExit(
-                "Cannot reconcile task: tooling delivery commit Task-ID trailer "
-                f"'{trailer_task_id}' does not match task id '{task_id}'."
-            )
-    else:
-        # Legacy tooling commits without a Task-ID trailer fall back to a
-        # word-boundary match against the whole message.
-        task_id_pattern = rf"(?<![A-Za-z0-9_-]){re.escape(task_id)}(?![A-Za-z0-9_-])"
-        if re.search(task_id_pattern, commit_message) is None:
-            raise SystemExit(
-                "Cannot reconcile task: tooling delivery commit does not bind the task id."
-            )
+    problems = checker.check_message(
+        commit_message,
+        required=("Task-ID",),
+        prefix_required=True,
+        expected_task_id=task_id,
+        delivery_class="tooling",
+    )
+    if problems:
+        raise SystemExit(
+            "Cannot reconcile task: tooling delivery commit does not bind the task id: "
+            + "; ".join(problems)
+        )
     return {
         "recorded_at": iso_now(),
         "reconciled_from_tooling_delivery": True,

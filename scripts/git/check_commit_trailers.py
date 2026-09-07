@@ -81,13 +81,20 @@ def required_trailers_for_delivery(required: tuple[str, ...], delivery_class: st
     return required
 
 
-def parse_trailers(body: str) -> dict[str, str]:
-    trailers: dict[str, str] = {}
+def extract_trailer_lines(body: str) -> list[tuple[str, str]]:
+    trailers: list[tuple[str, str]] = []
     for line in body.splitlines():
         stripped = line.rstrip()
-        m = re.match(r"^([A-Za-z][A-Za-z0-9-]*):\s+(.+)$", stripped)
+        m = re.match(r"^([A-Za-z][A-Za-z0-9-]*):\s*(.*)$", stripped)
         if m:
-            trailers[m.group(1)] = m.group(2)
+            trailers.append((m.group(1), m.group(2).strip()))
+    return trailers
+
+
+def parse_trailers(body: str) -> dict[str, str]:
+    trailers: dict[str, str] = {}
+    for key, val in extract_trailer_lines(body):
+        trailers[key] = val
     return trailers
 
 
@@ -95,60 +102,87 @@ def is_exempt_subject(subject: str) -> bool:
     return any(subject.startswith(p) for p in EXEMPT_SUBJECT_PREFIXES)
 
 
-def duplicate_trailer_problems(body: str, names: tuple[str, ...]) -> list[str]:
-    """Reject a trailer that appears more than once with conflicting values.
+def duplicate_trailer_problems(body: str, required: tuple[str, ...]) -> list[str]:
+    trailer_lines = extract_trailer_lines(body)
+    occurrences_by_name: dict[str, list[str]] = {}
+    for key, val in trailer_lines:
+        occurrences_by_name.setdefault(key, []).append(val)
 
-    `parse_trailers` keeps only the last occurrence of a repeated key, so a
-    duplicated or forged trailer line (for example two different `Task-ID:`
-    lines) would otherwise bind silently to whichever value happened to
-    appear last.
-    """
     problems: list[str] = []
-    for name in names:
-        pattern = re.compile(rf"^{re.escape(name)}:\s+(.+)$", re.MULTILINE)
-        values = sorted({value.strip() for value in pattern.findall(body)})
-        if len(values) > 1:
-            problems.append(f"conflicting trailer: {name} has multiple values {values}")
+    for name in required:
+        occurrences = occurrences_by_name.get(name, [])
+        if len(occurrences) > 1:
+            distinct_values = sorted(set(occurrences))
+            if len(distinct_values) > 1:
+                problems.append(f"conflicting trailer: {name} has multiple values {distinct_values}")
+            else:
+                problems.append(f"duplicate trailer: {name} appears {len(occurrences)} times")
     return problems
 
 
-def check_message(message: str, required: tuple[str, ...], prefix_required: bool) -> list[str]:
+def check_message(
+    message: str,
+    required: tuple[str, ...] = DEFAULT_REQUIRED,
+    prefix_required: bool = True,
+    expected_task_id: str | None = None,
+    delivery_class: str = "product",
+) -> list[str]:
     lines = message.splitlines()
-    subject = lines[0] if lines else ""
+    subject = lines[0].strip() if lines else ""
     body = "\n".join(lines[1:])
     problems: list[str] = []
 
-    if not subject.strip():
+    if not subject:
         return ["empty commit subject"]
-
-    if is_exempt_subject(subject):
-        return []
-
-    if prefix_required and not SUBJECT_PATTERN.match(subject):
-        problems.append(
-            f"subject must start with TASK-ID: '<TASK-ID>: <summary>'; got '{subject[:60]}'"
-        )
 
     if len(subject) > 72:
         problems.append(f"subject exceeds 72 chars ({len(subject)})")
 
+    effective_required = required_trailers_for_delivery(required, delivery_class)
+    all_required = tuple(dict.fromkeys(list(effective_required) + ["Task-ID"]))
+
     trailers = parse_trailers(body)
-    for name in required:
+    problems.extend(duplicate_trailer_problems(body, all_required))
+
+    for name in all_required:
         if name not in trailers:
             problems.append(f"missing trailer: {name}")
         elif not trailers[name].strip():
             problems.append(f"empty trailer value: {name}")
-    problems.extend(duplicate_trailer_problems(body, required))
 
     task_id_trailer = trailers.get("Task-ID", "").strip()
-    if prefix_required and task_id_trailer:
-        full_prefix, compacted_prefix = commit_subject_prefix_variants(task_id_trailer)
-        actual_prefix = subject.split(":", 1)[0].strip()
-        if actual_prefix not in (full_prefix, compacted_prefix):
+
+    if expected_task_id:
+        if task_id_trailer and task_id_trailer != expected_task_id:
             problems.append(
-                f"subject prefix '{actual_prefix}' does not match Task-ID trailer "
-                f"'{task_id_trailer}' (expected '{full_prefix}' or bounded '{compacted_prefix}')"
+                f"commit Task-ID trailer '{task_id_trailer}' does not match task id '{expected_task_id}'"
             )
+
+    target_task_id = expected_task_id or task_id_trailer
+
+    if prefix_required:
+        if not is_exempt_subject(subject):
+            if not SUBJECT_PATTERN.match(subject):
+                problems.append(
+                    f"subject must start with TASK-ID: '<TASK-ID>: <summary>'; got '{subject[:60]}'"
+                )
+            elif target_task_id:
+                full_prefix, bounded_prefix = commit_subject_prefix_variants(target_task_id)
+                actual_prefix = subject.split(":", 1)[0].strip()
+                if actual_prefix not in (target_task_id, full_prefix, bounded_prefix):
+                    ref_name = f"expected task id '{target_task_id}'" if expected_task_id else f"Task-ID trailer '{target_task_id}'"
+                    problems.append(
+                        f"subject prefix '{actual_prefix}' does not match {ref_name} "
+                        f"(latest commit subject must include task id {target_task_id}) "
+                        f"(expected '{full_prefix}' or bounded '{bounded_prefix}')"
+                    )
+        else:
+            if target_task_id:
+                full_prefix, bounded_prefix = commit_subject_prefix_variants(target_task_id)
+                if target_task_id not in subject and bounded_prefix not in subject:
+                    problems.append(
+                        f"latest commit subject must include task id {target_task_id}"
+                    )
 
     problems.extend(check_independent_review(trailers))
     return problems
@@ -229,6 +263,11 @@ def main() -> int:
         default="product",
         help="Tooling delivery does not require the product-reviewer trailer.",
     )
+    parser.add_argument(
+        "--task-id",
+        default=None,
+        help="Expected task id to validate against.",
+    )
     args = parser.parse_args()
 
     # Allow CI/cron jobs to bypass with explicit opt-out (used by automated merge bots).
@@ -268,7 +307,13 @@ def main() -> int:
             ).stdout.split()
             if len(parents) > 2:  # merge commit
                 continue
-        problems = check_message(msg, required, prefix_required)
+        problems = check_message(
+            msg,
+            required=required,
+            prefix_required=prefix_required,
+            expected_task_id=args.task_id,
+            delivery_class=args.delivery_class,
+        )
         if problems:
             exit_code = 1
             print(f"\n[trailers] {sha}:")

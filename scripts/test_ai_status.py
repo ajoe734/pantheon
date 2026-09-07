@@ -6796,7 +6796,7 @@ class ReviewApprovedWorkflowTests(unittest.TestCase):
             mock.patch.object(
                 ai_status,
                 "run_git_command",
-                return_value="REG-002: merged tooling delivery",
+                return_value="REG-002: merged tooling delivery\n\nTask-ID: REG-002\n",
             ),
         ):
             result = ai_status.validate_merged_tooling_done(task)
@@ -9930,6 +9930,56 @@ class DeliveryMetadataValidationTests(unittest.TestCase):
         ):
             ai_status.collect_done_delivery_metadata(task, "Claude")
 
+    def test_collect_done_delivery_metadata_rejects_duplicate_identical_task_id_trailers(self) -> None:
+        responses = iter(
+            [
+                "task/ABC-001",
+                "a" * 40,
+                "ABC-001: repair",
+                "LLM-Agent: Claude\nTask-ID: ABC-001\nTask-ID: ABC-001\nReviewer: Codex2\n",
+                "Claude",
+                "claude@example.com",
+            ]
+        )
+        task = {
+            "id": "ABC-001",
+            "owner": "Claude",
+            "reviewer": "Codex2",
+            "status": "in_progress",
+        }
+
+        with (
+            mock.patch.dict(os.environ, {"TASK_REQUIRE_MERGED_PR": "false"}, clear=False),
+            mock.patch.object(ai_status, "run_git_command", side_effect=lambda *args, **kwargs: next(responses)),
+            self.assertRaisesRegex(SystemExit, "duplicate trailer: Task-ID appears 2 times"),
+        ):
+            ai_status.collect_done_delivery_metadata(task, "Claude")
+
+    def test_collect_done_delivery_metadata_rejects_subject_prefix_collision(self) -> None:
+        responses = iter(
+            [
+                "task/ABC-001",
+                "a" * 40,
+                "ABC-001-OTHER: repair",
+                "LLM-Agent: Claude\nTask-ID: ABC-001\nReviewer: Codex2\n",
+                "Claude",
+                "claude@example.com",
+            ]
+        )
+        task = {
+            "id": "ABC-001",
+            "owner": "Claude",
+            "reviewer": "Codex2",
+            "status": "in_progress",
+        }
+
+        with (
+            mock.patch.dict(os.environ, {"TASK_REQUIRE_MERGED_PR": "false"}, clear=False),
+            mock.patch.object(ai_status, "run_git_command", side_effect=lambda *args, **kwargs: next(responses)),
+            self.assertRaisesRegex(SystemExit, "latest commit subject must include task id ABC-001"),
+        ):
+            ai_status.collect_done_delivery_metadata(task, "Claude")
+
     def test_collect_done_delivery_metadata_rejects_wrong_task_id_under_style_exemption(self) -> None:
         """A subject exempt from the trailer-presence requirement (e.g. the
         documented OPS-DOC-* housekeeping style) must still not carry a
@@ -9967,7 +10017,7 @@ class DeliveryMetadataValidationTests(unittest.TestCase):
             [
                 "bff-luv-fe-006-dev-deploy",
                 "abc123",
-                "FE-INT-GATE-DUMMY finalize execute-plans artifact",
+                "FE-INT-GATE-DUMMY: finalize execute-plans artifact",
                 "LLM-Agent: Codex2\nTask-ID: FE-INT-GATE-DUMMY\nReviewer: Claude\n",
                 "Codex2",
                 "codex2@example.com",
@@ -10066,7 +10116,7 @@ class DeliveryMetadataValidationTests(unittest.TestCase):
             if args == ["rev-parse", "HEAD"]:
                 return "abc123"
             if args == ["show", "-s", "--format=%s", "HEAD"]:
-                return "REG-002 finalize"
+                return "REG-002: finalize"
             if args == ["show", "-s", "--format=%b", "HEAD"]:
                 return "LLM-Agent: Codex\nTask-ID: REG-002\nReviewer: Claude\n"
             if args == ["show", "-s", "--format=%an", "HEAD"]:
@@ -10126,7 +10176,7 @@ class DeliveryMetadataValidationTests(unittest.TestCase):
             if args == ["rev-parse", "HEAD"]:
                 return "abc123"
             if args == ["show", "-s", "--format=%s", "HEAD"]:
-                return "REG-002 finalize"
+                return "REG-002: finalize"
             if args == ["show", "-s", "--format=%b", "HEAD"]:
                 return "LLM-Agent: Codex\nTask-ID: REG-002\nReviewer: Claude\n"
             if args == ["show", "-s", "--format=%an", "HEAD"]:

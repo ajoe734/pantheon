@@ -71,6 +71,20 @@ _runtime_orchestrator = (
     if _command_root
     else None
 )
+def _find_test_runner_root() -> Path | None:
+    pid = os.getpid()
+    for _ in range(10):
+        try:
+            cwd = Path(f"/proc/{pid}/cwd").resolve()
+            if (cwd / "scripts" / "git" / "check_commit_trailers.py").is_file():
+                return cwd
+            stat = Path(f"/proc/{pid}/stat").read_text()
+            pid = int(stat.split()[3])
+        except Exception:
+            break
+    return None
+
+
 if _command_root:
     if not _runtime_orchestrator or not (_runtime_orchestrator / "common.py").is_file():
         raise ModuleNotFoundError(
@@ -79,8 +93,40 @@ if _command_root:
     ORCHESTRATOR_DIR = _runtime_orchestrator
 else:
     ORCHESTRATOR_DIR = ROOT / ".orchestrator"
+    if not (ORCHESTRATOR_DIR / "common.py").is_file():
+        _runner = (
+            Path(os.environ["GITHUB_WORKSPACE"]).resolve()
+            if os.environ.get("GITHUB_WORKSPACE") and (Path(os.environ["GITHUB_WORKSPACE"]) / ".orchestrator" / "common.py").is_file()
+            else _find_test_runner_root()
+        )
+        if _runner and (_runner / ".orchestrator" / "common.py").is_file():
+            ORCHESTRATOR_DIR = _runner / ".orchestrator"
 if str(ORCHESTRATOR_DIR) not in sys.path:
     sys.path.insert(0, str(ORCHESTRATOR_DIR))
+
+_runtime_scripts_git = (
+    Path(_command_root).expanduser().resolve() / "scripts" / "git"
+    if _command_root
+    else None
+)
+if _command_root:
+    if not _runtime_scripts_git or not (_runtime_scripts_git / "check_commit_trailers.py").is_file():
+        raise ModuleNotFoundError(
+            "PANTHEON_COMMAND_ROOT does not contain scripts/git/check_commit_trailers.py"
+        )
+    SCRIPTS_GIT_DIR = _runtime_scripts_git
+else:
+    SCRIPTS_GIT_DIR = ROOT / "scripts" / "git"
+    if not (SCRIPTS_GIT_DIR / "check_commit_trailers.py").is_file():
+        _runner = (
+            Path(os.environ["GITHUB_WORKSPACE"]).resolve()
+            if os.environ.get("GITHUB_WORKSPACE") and (Path(os.environ["GITHUB_WORKSPACE"]) / "scripts" / "git" / "check_commit_trailers.py").is_file()
+            else _find_test_runner_root()
+        )
+        if _runner and (_runner / "scripts" / "git" / "check_commit_trailers.py").is_file():
+            SCRIPTS_GIT_DIR = _runner / "scripts" / "git"
+if str(SCRIPTS_GIT_DIR) not in sys.path:
+    sys.path.insert(0, str(SCRIPTS_GIT_DIR))
 
 try:
     from common import write_activity_log
@@ -99,6 +145,17 @@ except ModuleNotFoundError as exc:
     if exc.name == "common":
         raise ModuleNotFoundError(
             "worker_commit.py requires Pantheon .orchestrator/common.py; "
+            "set PANTHEON_COMMAND_ROOT to the command runtime when committing "
+            "from a different repository"
+        ) from exc
+    raise
+
+try:
+    from check_commit_trailers import check_message
+except ModuleNotFoundError as exc:
+    if exc.name == "check_commit_trailers":
+        raise ModuleNotFoundError(
+            "worker_commit.py requires scripts/git/check_commit_trailers.py; "
             "set PANTHEON_COMMAND_ROOT to the command runtime when committing "
             "from a different repository"
         ) from exc
@@ -274,71 +331,17 @@ def main() -> int:
         return 5
 
     msg_lines = [l for l in msg_text.splitlines() if not l.startswith("#")]
-    subject = msg_lines[0].strip() if msg_lines else ""
-    body = "\n".join(msg_lines[1:])
-
-    if not subject:
-        print(f"ERROR: commit message in {args.message_file} has an empty subject line.", file=sys.stderr)
-        return 5
-
-    if len(subject) > 72:
-        print(
-            f"ERROR: commit subject exceeds 72 characters ({len(subject)} chars): '{subject}'",
-            file=sys.stderr,
-        )
-        print(
-            "Hint: Compact the subject line (e.g. abbreviate scope/summary) to <= 72 chars. "
-            f"Keep full Task-ID in trailer (Task-ID: {args.task_id}).",
-            file=sys.stderr,
-        )
-        return 5
-
-    # A long --task-id cannot fit verbatim into a bounded (<=72 char) subject;
-    # the shared bound_commit_subject/commit_subject_prefix_variants
-    # convention compacts the subject's prefix itself in that case rather
-    # than dropping the id, so accept either the literal id or that same
-    # deterministic bounded prefix -- matched exactly against the subject's
-    # own prefix (the text before its first ':'), not merely as a substring
-    # anywhere in the subject. A substring match would accept a subject like
-    # 'XYZ-001: mentions ABC-001' for task_id ABC-001, which names a
-    # different task and which check_commit_trailers.py already rejects.
-    # This is the same check used there and by the canonical `done` finalize
-    # gate, so a subject cannot pass this wrapper and then fail those later.
-    full_prefix, bounded_prefix = commit_subject_prefix_variants(args.task_id)
-    actual_prefix = subject.split(":", 1)[0].strip()
-    if actual_prefix not in (args.task_id, full_prefix, bounded_prefix):
-        print(
-            f"ERROR: commit subject does not identify task {args.task_id}: '{subject}'",
-            file=sys.stderr,
-        )
-        print(
-            f"Hint: start the subject with '{bounded_prefix}: ...' and keep "
-            f"the full id in the trailer (Task-ID: {args.task_id}).",
-            file=sys.stderr,
-        )
-        return 5
-
-    task_id_trailer_values = sorted(
-        {value.strip() for value in re.findall(r"^Task-ID:\s+(.+)$", body, re.MULTILINE)}
+    clean_msg = "\n".join(msg_lines)
+    problems = check_message(
+        clean_msg,
+        required=("Task-ID",),
+        prefix_required=True,
+        expected_task_id=args.task_id,
+        delivery_class="tooling",
     )
-    if not task_id_trailer_values:
-        print(
-            f"ERROR: commit message is missing a 'Task-ID: {args.task_id}' trailer.",
-            file=sys.stderr,
-        )
-        return 5
-    if len(task_id_trailer_values) > 1:
-        print(
-            f"ERROR: commit message has conflicting Task-ID trailers: {task_id_trailer_values}",
-            file=sys.stderr,
-        )
-        return 5
-    if task_id_trailer_values[0] != args.task_id:
-        print(
-            f"ERROR: commit message Task-ID trailer '{task_id_trailer_values[0]}' does not "
-            f"match --task-id '{args.task_id}'.",
-            file=sys.stderr,
-        )
+    if problems:
+        for p in problems:
+            print(f"ERROR: {p}", file=sys.stderr)
         return 5
 
     # Step 1: clear any existing staging. With a private index this is a no-op,

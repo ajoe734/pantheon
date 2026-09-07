@@ -159,3 +159,41 @@ def test_accepts_uncompacted_prefix_for_boundary_length_id_with_short_descriptio
         "Reviewer: Codex2\n"
     )
     assert CHECK.check_message(message, REQUIRED, True) == []
+
+
+def test_rejects_duplicate_identical_task_id_trailers() -> None:
+    message = (
+        "TASK-ID-20260901: do a thing\n"
+        "\n"
+        "LLM-Agent: Claude\n"
+        "Task-ID: TASK-ID-20260901\n"
+        "Task-ID: TASK-ID-20260901\n"
+        "Reviewer: Codex2\n"
+    )
+    problems = CHECK.check_message(message, REQUIRED, True)
+    assert any("duplicate trailer: Task-ID appears 2 times" in p for p in problems), problems
+
+
+def test_rejects_subject_prefix_collision_with_other_task_id() -> None:
+    message = (
+        "ABC-001-OTHER: summary\n"
+        "\n"
+        "LLM-Agent: Claude\n"
+        "Task-ID: ABC-001\n"
+        "Reviewer: Codex2\n"
+    )
+    problems = CHECK.check_message(message, REQUIRED, True)
+    assert any("does not match Task-ID trailer" in p for p in problems), problems
+
+
+def test_rejects_unproven_system_commit_message_without_trailers() -> None:
+    message = "Merge pull request #1234 from promote/v2026.20.0\n\npromote: v2026.20.0\n"
+    problems = CHECK.check_message(message, REQUIRED, True)
+    assert any("missing trailer: Task-ID" in p for p in problems), problems
+
+
+def test_check_message_with_expected_task_id() -> None:
+    message = _message("Claude", "Codex2")
+    assert CHECK.check_message(message, REQUIRED, True, expected_task_id="TASK-ID-20260901") == []
+    problems = CHECK.check_message(message, REQUIRED, True, expected_task_id="DIFFERENT-TASK")
+    assert any("does not match task id 'DIFFERENT-TASK'" in p for p in problems), problems
