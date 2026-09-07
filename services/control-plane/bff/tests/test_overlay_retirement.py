@@ -311,9 +311,10 @@ def test_rollback_policy_strictly_forbids_restoring_dual_writes() -> None:
 
 def test_canonical_writer_coordinator_rejects_fallback_writes() -> None:
     """Canonical writer coordinator enforces sole owner and forbids fallback writes."""
-    coordinator = CanonicalWriterCoordinator()
+    persona_store: dict = {}
+    coordinator = CanonicalWriterCoordinator(canonical_stores={AggregateKind.PERSONA: persona_store})
 
-    # Sole canonical writer for Persona succeeds
+    # Sole canonical writer for Persona succeeds and actually persists the record.
     receipt = coordinator.handle_write(
         aggregate=AggregateKind.PERSONA,
         writer_identity="persona_provisioning_store",
@@ -322,6 +323,17 @@ def test_canonical_writer_coordinator_rejects_fallback_writes() -> None:
     )
     assert receipt["status"] == "acknowledged"
     assert receipt["writer"] == "persona_provisioning_store"
+    assert receipt["persisted"] is True
+    assert persona_store["p1"]["name"] == "Canonical Persona"
+
+    # No canonical store bound: refuse to fabricate a receipt.
+    with pytest.raises(FallbackAcknowledgementForbiddenError, match="No canonical store bound"):
+        CanonicalWriterCoordinator().handle_write(
+            aggregate=AggregateKind.STRATEGY,
+            writer_identity="strategy_spec_store",
+            payload={"strategy_id": "s1"},
+            is_fallback=False,
+        )
 
     # Unauthorized writer fails
     with pytest.raises(FallbackAcknowledgementForbiddenError, match="Unauthorized writer"):

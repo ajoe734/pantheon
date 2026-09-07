@@ -206,14 +206,93 @@ def test_backfill_respects_tenant_boundary() -> None:
     assert "per-b1" not in canonical_store
 
 
+def test_backfill_rejects_tenant_id_only_foreign_records_without_rewriting_ownership() -> None:
+    """A record whose only tenant field is `tenantId` for a foreign tenant must never be
+    backfilled under a different tenant's transaction, and its tenant identity must never be
+    silently rewritten (regression for the independent-review tenantId/tenant_id probe)."""
+    canonical_store: Dict[str, Any] = {}
+    overlay_data = {
+        "per-foreign": {"persona_id": "per-foreign", "tenantId": "tenant-b"},
+    }
+    engine = OverlayMigrationEngine(
+        aggregate=AggregateKind.PERSONA,
+        canonical_store=canonical_store,
+        overlay_data_source=overlay_data,
+    )
+
+    result = engine.backfill(tenant_id="tenant-a")
+    assert result.backfilled == 0
+    assert "per-foreign" not in canonical_store
+
+
+def test_backfill_reports_conflicting_tenant_identity_as_conflict() -> None:
+    canonical_store: Dict[str, Any] = {}
+    overlay_data = {
+        "per-conflict": {"persona_id": "per-conflict", "tenant_id": "tenant-a", "tenantId": "tenant-b"},
+    }
+    engine = OverlayMigrationEngine(
+        aggregate=AggregateKind.PERSONA,
+        canonical_store=canonical_store,
+        overlay_data_source=overlay_data,
+    )
+
+    result = engine.backfill(tenant_id="tenant-a")
+    assert result.backfilled == 0
+    assert "per-conflict" not in canonical_store
+    assert any(c.conflict_type == "tenant_identity_conflict" for c in result.conflicts)
+
+
+def test_backfill_fails_closed_on_unsupported_canonical_store() -> None:
+    """A store that supports neither insert/save nor dict semantics must never report a
+    fabricated backfilled=1; it must fail closed and surface a conflict instead."""
+    unsupported_store = object()
+    overlay_data = {"per-x": {"persona_id": "per-x", "tenant_id": "tenant-a"}}
+    engine = OverlayMigrationEngine(
+        aggregate=AggregateKind.PERSONA,
+        canonical_store=unsupported_store,
+        overlay_data_source=overlay_data,
+    )
+
+    result = engine.backfill(tenant_id="tenant-a")
+    assert result.backfilled == 0
+    assert any(c.conflict_type == "unsupported_canonical_store" for c in result.conflicts)
+
+
+def test_diff_records_detects_missing_canonical_field() -> None:
+    engine = OverlayMigrationEngine(
+        aggregate=AggregateKind.PERSONA,
+        canonical_store={},
+        overlay_data_source={},
+    )
+    diffs = engine._diff_records({"persona_id": "p1"}, {"persona_id": "p1", "name": "Algo"})
+    assert "name" in diffs
+    assert diffs["name"] == {"canonical": None, "overlay": "Algo"}
+
+
+def test_shadow_compare_reports_divergence_for_field_missing_only_in_canonical() -> None:
+    canonical_store = {"per-1": {"persona_id": "per-1", "tenant_id": "tenant-a"}}
+    overlay_data = {"per-1": {"persona_id": "per-1", "tenant_id": "tenant-a", "name": "Algo 1"}}
+    engine = OverlayMigrationEngine(
+        aggregate=AggregateKind.PERSONA,
+        canonical_store=canonical_store,
+        overlay_data_source=overlay_data,
+    )
+
+    report = engine.shadow_compare(tenant_id="tenant-a")
+    assert report.matched_count == 0
+    assert report.divergent_count == 1
+    assert report.parity_ratio == 0.0
+
+
 # ---------------------------------------------------------------------------
 # 4. Single Canonical Writer & Forbidden Fallback Acknowledgement
 # ---------------------------------------------------------------------------
 
 def test_canonical_writer_enforcement_and_rejection_of_fallbacks() -> None:
-    coordinator = CanonicalWriterCoordinator()
+    persona_store: Dict[str, Any] = {}
+    coordinator = CanonicalWriterCoordinator(canonical_stores={AggregateKind.PERSONA: persona_store})
 
-    # Canonical writer succeeds
+    # Canonical writer succeeds and actually persists the record.
     receipt = coordinator.handle_write(
         aggregate=AggregateKind.PERSONA,
         writer_identity="persona_provisioning_store",
@@ -222,6 +301,17 @@ def test_canonical_writer_enforcement_and_rejection_of_fallbacks() -> None:
     )
     assert receipt["status"] == "acknowledged"
     assert receipt["writer"] == "persona_provisioning_store"
+    assert receipt["persisted"] is True
+    assert persona_store["p1"]["name"] == "Algo 1"
+
+    # No canonical store bound for this aggregate: refuse to fabricate a receipt.
+    with pytest.raises(FallbackAcknowledgementForbiddenError, match="No canonical store bound"):
+        CanonicalWriterCoordinator().handle_write(
+            aggregate=AggregateKind.STRATEGY,
+            writer_identity="strategy_spec_store",
+            payload={"strategy_id": "s1"},
+            is_fallback=False,
+        )
 
     # Unauthorized writer fails
     with pytest.raises(FallbackAcknowledgementForbiddenError, match="Unauthorized writer"):

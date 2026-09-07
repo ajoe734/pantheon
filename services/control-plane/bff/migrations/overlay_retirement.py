@@ -216,6 +216,26 @@ class OverlayMigrationEngine:
                 return str(val).strip()
         return ""
 
+    def _resolve_record_tenant(self, record: Dict[str, Any]) -> Tuple[Optional[str], bool]:
+        """Normalize a record's tenant identity from `tenant_id`/`tenantId`.
+
+        Returns `(normalized_tenant_id_or_None, conflict)`. `conflict=True` means the record
+        carries two disagreeing tenant identities and must be rejected rather than silently
+        rewritten to whichever tenant happens to run the migration.
+        """
+        snake = record.get("tenant_id")
+        camel = record.get("tenantId")
+        if snake and camel and str(snake) != str(camel):
+            return None, True
+        resolved = snake or camel
+        return (str(resolved) if resolved else None), False
+
+    def _record_tenant_matches(self, record: Dict[str, Any], tenant_id: str) -> bool:
+        resolved, conflict = self._resolve_record_tenant(record)
+        if conflict or resolved is None:
+            return False
+        return resolved == tenant_id
+
     def shadow_compare(
         self,
         *,
@@ -296,17 +316,30 @@ class OverlayMigrationEngine:
         canonical_records = self._fetch_canonical_records(tenant_id=tenant_id)
         canonical_by_id = {self._extract_id(r): r for r in canonical_records if self._extract_id(r)}
 
-        overlay_items = [
-            (k, v)
-            for k, v in self._overlay_data_source.items()
-            if not v.get("tenant_id") or v.get("tenant_id") == tenant_id or v.get("tenantId") == tenant_id
-        ]
+        conflicts: List[RecordConflict] = []
+        overlay_items: List[Tuple[str, Dict[str, Any]]] = []
+        for k, v in self._overlay_data_source.items():
+            resolved_tenant, conflict = self._resolve_record_tenant(v)
+            if conflict:
+                conflicts.append(
+                    RecordConflict(
+                        record_id=k,
+                        aggregate=self.aggregate.value,
+                        conflict_type="tenant_identity_conflict",
+                        overlay_summary={"checksum": deterministic_checksum(v)},
+                    )
+                )
+                continue
+            if resolved_tenant is None or resolved_tenant != tenant_id:
+                # Unknown or foreign tenant identity: never silently reassign ownership.
+                continue
+            overlay_items.append((k, v))
+
         start = cursor or 0
         paged_overlay = overlay_items[start : start + page_size]
 
         backfilled = 0
         skipped = 0
-        conflicts: List[RecordConflict] = []
 
         for rec_id, overlay_record in paged_overlay:
             if rec_id in canonical_by_id:
@@ -318,14 +351,37 @@ class OverlayMigrationEngine:
             enriched_payload = copy.deepcopy(overlay_record)
             enriched_payload[self.metadata.key_field] = rec_id
             enriched_payload["tenant_id"] = tenant_id
+            enriched_payload["tenantId"] = tenant_id
             enriched_payload["_migration_metadata"] = {
                 "source": "overlay_retire_001",
                 "checksum": checksum,
                 "backfilled_at": utc_now_iso(),
             }
 
+            if not self._canonical_store_supports_insert():
+                conflicts.append(
+                    RecordConflict(
+                        record_id=rec_id,
+                        aggregate=self.aggregate.value,
+                        conflict_type="unsupported_canonical_store",
+                        overlay_summary={"checksum": checksum},
+                    )
+                )
+                continue
+
             if not dry_run:
-                self._insert_canonical_record(enriched_payload)
+                inserted = self._insert_canonical_record(enriched_payload)
+                if not inserted:
+                    # Insert-only concurrency: never overwrite a record that landed concurrently.
+                    conflicts.append(
+                        RecordConflict(
+                            record_id=rec_id,
+                            aggregate=self.aggregate.value,
+                            conflict_type="concurrent_insert_conflict",
+                            overlay_summary={"checksum": checksum},
+                        )
+                    )
+                    continue
             backfilled += 1
 
         next_cursor = str(start + len(paged_overlay)) if (start + len(paged_overlay)) < len(overlay_items) else None
@@ -342,54 +398,84 @@ class OverlayMigrationEngine:
         )
 
     def _diff_records(self, canon: Dict[str, Any], overlay: Dict[str, Any]) -> Dict[str, Dict[str, Any]]:
+        _missing = object()
         diffs = {}
         all_keys = set(canon.keys()) | set(overlay.keys())
         for k in all_keys:
             if k.startswith("_") or k in ("updated_at", "updatedAt", "last_modified_at", "created_at"):
                 continue
-            v_canon = canon.get(k)
-            v_overlay = overlay.get(k)
-            if v_canon != v_overlay and v_overlay is not None and v_canon is not None:
-                diffs[k] = {"canonical": v_canon, "overlay": v_overlay}
+            v_canon = canon.get(k, _missing)
+            v_overlay = overlay.get(k, _missing)
+            if v_canon != v_overlay:
+                diffs[k] = {
+                    "canonical": None if v_canon is _missing else v_canon,
+                    "overlay": None if v_overlay is _missing else v_overlay,
+                }
         return diffs
 
     def _fetch_canonical_records(self, tenant_id: Optional[str] = None) -> List[Dict[str, Any]]:
-        if hasattr(self.canonical_store, f"list_{self.aggregate.value}s"):
-            fn = getattr(self.canonical_store, f"list_{self.aggregate.value}s")
-            return list(fn() or [])
-        elif hasattr(self.canonical_store, f"list_{self.aggregate.value}_specs"):
-            fn = getattr(self.canonical_store, f"list_{self.aggregate.value}_specs")
-            return list(fn() or [])
-        elif hasattr(self.canonical_store, f"list_{self.aggregate.value}s_bff"):
-            fn = getattr(self.canonical_store, f"list_{self.aggregate.value}s_bff")
-            return list(fn() or [])
-        elif hasattr(self.canonical_store, "list_all"):
-            records = self.canonical_store.list_all()
-            return [getattr(r, "__dict__", dict(r)) for r in records]
-        elif isinstance(self.canonical_store, dict):
-            return list(self.canonical_store.values())
-        return []
+        records: Optional[List[Dict[str, Any]]] = None
+        for attr in (
+            f"list_{self.aggregate.value}s",
+            f"list_{self.aggregate.value}_specs",
+            f"list_{self.aggregate.value}s_bff",
+        ):
+            if hasattr(self.canonical_store, attr):
+                fn = getattr(self.canonical_store, attr)
+                try:
+                    records = list(fn(tenant_id=tenant_id) or []) if tenant_id else list(fn() or [])
+                except TypeError:
+                    records = list(fn() or [])
+                break
+        if records is None:
+            if hasattr(self.canonical_store, "list_all"):
+                records = [getattr(r, "__dict__", dict(r)) for r in (self.canonical_store.list_all() or [])]
+            elif isinstance(self.canonical_store, dict):
+                records = list(self.canonical_store.values())
+            else:
+                records = []
+        if tenant_id:
+            records = [r for r in records if self._record_tenant_matches(r, tenant_id)]
+        return records
 
-    def _insert_canonical_record(self, record: Dict[str, Any]) -> None:
+    def _canonical_store_supports_insert(self) -> bool:
+        return (
+            hasattr(self.canonical_store, "insert")
+            or hasattr(self.canonical_store, "save")
+            or isinstance(self.canonical_store, dict)
+        )
+
+    def _insert_canonical_record(self, record: Dict[str, Any]) -> bool:
+        """Persist `record` and return whether it was actually written.
+
+        Never fabricates success: an unsupported store type or a concurrent existing key
+        under insert-only semantics returns False instead of a fake acknowledgement.
+        """
         if hasattr(self.canonical_store, "insert"):
             self.canonical_store.insert(record)
-        elif hasattr(self.canonical_store, "save"):
+            return True
+        if hasattr(self.canonical_store, "save"):
             self.canonical_store.save(record)
-        elif isinstance(self.canonical_store, dict):
+            return True
+        if isinstance(self.canonical_store, dict):
             rec_id = self._extract_id(record)
+            if rec_id in self.canonical_store:
+                # Insert-only concurrency: never overwrite a record that already exists.
+                return False
             self.canonical_store[rec_id] = record
-        else:
-            logger.info("Canonical store accepted backfill record %s", self._extract_id(record))
+            return True
+        return False
 
 
 class CanonicalWriterCoordinator:
     """Enforces strictly one canonical domain write owner and forbids fallback writes/acknowledgements."""
 
-    def __init__(self) -> None:
+    def __init__(self, canonical_stores: Optional[Dict[AggregateKind, Any]] = None) -> None:
         self._canonical_writers: Dict[AggregateKind, str] = {
             agg: meta.authoritative_store_owner for agg, meta in AGGREGATE_REGISTRY.items()
         }
         self._fallback_acknowledged: bool = False
+        self._canonical_stores: Dict[AggregateKind, Any] = dict(canonical_stores or {})
 
     def assert_canonical_writer(self, aggregate: AggregateKind, writer_identity: str) -> None:
         expected = self._canonical_writers.get(aggregate)
@@ -412,13 +498,43 @@ class CanonicalWriterCoordinator:
                 "Process-local overlays are retired; no fallback acknowledgement allowed."
             )
         self.assert_canonical_writer(aggregate, writer_identity)
-        # Authoritative write acknowledged
+
+        store = self._canonical_stores.get(aggregate)
+        if store is None:
+            raise FallbackAcknowledgementForbiddenError(
+                f"No canonical store bound for aggregate {aggregate.value!r}; refusing to "
+                "acknowledge a write that was never actually persisted."
+            )
+        engine = OverlayMigrationEngine(aggregate=aggregate, canonical_store=store)
+        record = copy.deepcopy(payload)
+        rec_id = engine._extract_id(record) or record.get(AGGREGATE_REGISTRY[aggregate].key_field)
+        if not rec_id:
+            raise FallbackAcknowledgementForbiddenError(
+                f"Payload for aggregate {aggregate.value!r} is missing its key field "
+                f"{AGGREGATE_REGISTRY[aggregate].key_field!r}; refusing to fabricate a receipt."
+            )
+        if not engine._canonical_store_supports_insert():
+            raise FallbackAcknowledgementForbiddenError(
+                f"Canonical store bound for aggregate {aggregate.value!r} does not support "
+                "insert/save; refusing to fabricate a backfill acknowledgement."
+            )
+        if isinstance(store, dict) and rec_id in store:
+            store[rec_id] = record
+            persisted = True
+        else:
+            persisted = engine._insert_canonical_record(record)
+        if not persisted:
+            raise FallbackAcknowledgementForbiddenError(
+                f"Canonical write for aggregate {aggregate.value!r} record {rec_id!r} was not "
+                "actually persisted; refusing to acknowledge it."
+            )
         return {
             "status": "acknowledged",
             "writer": writer_identity,
             "aggregate": aggregate.value,
             "receipt_at": utc_now_iso(),
             "checksum": deterministic_checksum(payload),
+            "persisted": True,
         }
 
 
@@ -436,10 +552,9 @@ class _ReplicaInstance:
     def __init__(self, replica_id: str, storage: Dict[str, Any]) -> None:
         self.replica_id = replica_id
         self._storage = storage
-        self._process_memory_overlay: Dict[str, Any] = {}
 
     def write_canonical(self, key: str, value: Dict[str, Any]) -> None:
-        # Write directly to durable storage; process overlay remains empty
+        # Write directly to durable storage; nothing is cached in process-local state.
         self._storage[key] = copy.deepcopy(value)
 
     def read_canonical(self, key: str) -> Optional[Dict[str, Any]]:
@@ -448,8 +563,17 @@ class _ReplicaInstance:
         return copy.deepcopy(val) if val is not None else None
 
     def restart_process(self) -> None:
-        """Simulate a container / process restart by purging all process memory."""
-        self._process_memory_overlay.clear()
+        """Simulate a process restart by round-tripping durable storage through serialization.
+
+        This replica holds no process-local cache, so the only thing worth proving on
+        "restart" is that the durable storage's *contents* actually survive a serialization
+        boundary rather than being readable only because two Python objects share a live
+        reference. Re-encoding to JSON and rebuilding the dict in place forces every
+        subsequent read to prove the data, not the object identity, survived.
+        """
+        serialized = json.dumps(self._storage, default=str)
+        self._storage.clear()
+        self._storage.update(json.loads(serialized))
 
 
 def assert_mandatory_symbol_retirements() -> Dict[str, bool]:
