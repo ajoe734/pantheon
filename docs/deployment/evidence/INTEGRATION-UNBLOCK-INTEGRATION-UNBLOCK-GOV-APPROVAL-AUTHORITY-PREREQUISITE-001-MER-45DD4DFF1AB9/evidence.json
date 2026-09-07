@@ -1,0 +1,98 @@
+{
+  "task_id": "INTEGRATION-UNBLOCK-INTEGRATION-UNBLOCK-GOV-APPROVAL-AUTHORITY-PREREQUISITE-001-MER-45DD4DFF1AB9",
+  "owner": "Codex",
+  "reviewer": "Codex2",
+  "observed_on": "2026-09-07",
+  "command_runtime_sha": "621c6622cb82d4e55e08a76caeb781a1c0667e93",
+  "source_task_id": "INTEGRATION-UNBLOCK-GOV-APPROVAL-AUTHORITY-PREREQUISITE-001-MERGE-STATE-BLOCKED-B14932FE23E9",
+  "source_delivery": {
+    "pr": 5639,
+    "url": "https://github.com/ajoe734/pantheon/pull/5639",
+    "state": "MERGED",
+    "base": "dev",
+    "head_sha": "50adbe0c68cfcc5d42024061c91f86dedb45159c",
+    "merge_commit_sha": "c607359338026f4e440f62d052e19648d78d3f04",
+    "merged_at": "2026-09-06T18:05:28Z",
+    "auto_merge_request": null,
+    "canonical_status": "review_approved",
+    "canonical_generation": 2
+  },
+  "timeline": [
+    {
+      "at": "2026-09-06T18:01:35Z",
+      "actor": "Codex2",
+      "type": "review_approved",
+      "result": "Independent approval bound to PR 5639 and unchanged head 50adbe0c68cfcc5d42024061c91f86dedb45159c."
+    },
+    {
+      "at": "2026-09-06T18:07:18Z",
+      "actor": "Codex",
+      "type": "blocker",
+      "result": "Owner closeout encountered contradictory full-task-ID commit-subject requirements after the accepted merge."
+    },
+    {
+      "at": "2026-09-07T06:01:42Z",
+      "actor": "Human/Ops",
+      "type": "note",
+      "event_id": "ai-status-event-35ac094362cc26aaf18399f3dee780b43aa8ae480aa66bc40ee57079f835b080",
+      "trigger_excerpt": "Previous operational notice: Owner done rejected by canonical commit metadata gate",
+      "context": "The note documented an identity-metadata diagnostic, prohibited using unqualified WIP for closeout, and instructed resumption through the original approval/merge after qualified activation."
+    },
+    {
+      "at": "2026-09-07T15:17:17Z",
+      "actor": "Human/Ops",
+      "type": "integration_resumed",
+      "event_id": "ai-status-event-8d93275e936ba461e43712a2613f38ea86398b38db678aa9bd713f12e9a82ee9",
+      "message": "Qualified runtime 621c6622 postflight is healthy; resume the already-approved exact-head PR5639 integration closeout without reopening or changing delivery identity."
+    }
+  ],
+  "root_cause": {
+    "gate_reason": "approval_revoked",
+    "revocation_type": "note:do_not_merge",
+    "matched_marker": "rejected",
+    "implementation": "scripts/git/task_review_merge_gate.py:_is_rejection_note and load_approval_record",
+    "mechanism": "Substring matching classifies the quoted historical owner-metadata error as a rejection note. load_approval_record marks rejection notes non-resumable; integration_resumed clears only blocker revocations when no non-resumable event was seen.",
+    "assessment": "The note's rejection classification is a false positive relative to its diagnostic context and later explicit resume instruction. This assessment does not itself restore canonical authority.",
+    "integrator": "auto_integrator consumes the denied gate decision; PR rebase, CI rerun, or a second merge cannot restore the revoked authority for an already-merged delivery."
+  },
+  "verification": [
+    {
+      "command": "AI_NAME=Codex $PANTHEON_COMMAND_ROOT/scripts/ai-status.sh show <source-task-id>",
+      "exit_code": 0,
+      "result": "Canonical source remains review_approved with original exact-head binding and performed_merge receipt."
+    },
+    {
+      "command": "gh pr view 5639 --repo ajoe734/pantheon --json number,state,headRefOid,headRefName,baseRefName,mergedAt,mergeCommit,commits,autoMergeRequest",
+      "exit_code": 0,
+      "result": "Live GitHub identity matches source_delivery."
+    },
+    {
+      "command": "AI_NAME=Codex timeout 60 python3 $PANTHEON_COMMAND_ROOT/scripts/git/task_review_merge_gate.py check <source-task-id> --pr-json /tmp/pr5639-revocation-check.json --json",
+      "exit_code": 1,
+      "result": "allow_merge=false; approval_revoked by Human/Ops note at 2026-09-07T06:01:42Z. Expected reproduction of the blocker, not a passing integration check."
+    },
+    {
+      "command": "gh pr checks 5639 --repo ajoe734/pantheon --required",
+      "exit_code": 0,
+      "result": "All four required checks pass: Commit trailers, Runtime mirror guard, Smoke acceptance, Pantheon canonical review gate."
+    },
+    {
+      "command": "git merge-base --is-ancestor 50adbe0c68cfcc5d42024061c91f86dedb45159c origin/dev && git show -s --format='%H%n%P%n%s' c607359338026f4e440f62d052e19648d78d3f04",
+      "exit_code": 0,
+      "result": "Exact approved head is a direct parent of the merge and an ancestor of dev."
+    },
+    {
+      "command": "Read task-filtered stream_logical_activity through the supplied command runtime",
+      "exit_code": 0,
+      "result": "Archived approval, blocker and note plus active integration_resumed event establish the timeline above."
+    }
+  ],
+  "resolution": {
+    "state": "blocked_on_canonical_authority_resolution",
+    "required_actor": "Human/Ops",
+    "required_action": "Resolve the diagnostic-note revocation through an authorized governance correction or separately scoped, independently reviewed gate repair that preserves genuine rejection holds. Revalidate original PR 5639 authority before owner closeout; an ordinary progress/resume note is insufficient under the current gate.",
+    "acceptance": "Root cause documented. Source PR is already merged, but its canonical closeout remains unresolved; this task does not claim complete acceptance.",
+    "changes": "Task-scoped diagnostic evidence only.",
+    "limitations": "No source approval, task identity, canonical audit, gate code, command runtime, or product runtime was changed. No fresh approval or completed closeout is claimed."
+  }
+}
