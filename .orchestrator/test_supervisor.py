@@ -13785,8 +13785,13 @@ class RealProcessReviewHandoffRecoveryFlowTests(unittest.TestCase):
                 canonical_tasks_after_dispatch = supervisor.task_index_from_status(config, supervisor.load_status(config))
                 expected_generation = canonical_tasks_after_dispatch["TASK-QUEUE-001"]["generation"]
 
+                # The child's own internal `ai-status.sh show` call is bounded at
+                # 30s (see fake_worker_source above); this wait must stay longer
+                # than that bound plus scheduling margin, or a slow CI host can
+                # make the parent give up on real evidence the child has not
+                # failed to produce, merely not finished producing yet.
                 fake_worker_evidence: dict[str, Any] = {}
-                for _ in range(100):
+                for _ in range(400):
                     if fake_worker_evidence_path.exists():
                         try:
                             fake_worker_evidence = json.loads(fake_worker_evidence_path.read_text())

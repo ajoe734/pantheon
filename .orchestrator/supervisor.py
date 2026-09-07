@@ -918,51 +918,6 @@ def _canonical_json_sha256_for_receipt_proof(value: Any) -> str:
     return hashlib.sha256(payload).hexdigest()
 
 
-def _load_ai_status_archive_provenance(
-    config: dict[str, Any],
-) -> tuple[Any, dict[str, Any]] | None:
-    """Import ``ai_status`` and load its canonical state as a last resort.
-
-    Only used when a caller has no fresher canonical state of its own
-    (``active_worker_governance_lease_decision``'s ``state`` argument). Returns
-    ``None`` on any failure so a caller that needs canonical
-    ``archive_receipts``/``terminal_facts`` provenance fails closed instead of
-    trusting an unvalidated physical archive snapshot read straight off disk.
-    """
-
-    try:
-        repo_root = config_path(config, "status_file").parent
-    except KeyError:
-        repo_root = THIS_DIR.parent
-    scripts_dir = repo_root / "scripts"
-    if not scripts_dir.exists():
-        return None
-    scripts_path = str(scripts_dir)
-    if scripts_path not in sys.path:
-        sys.path.insert(0, scripts_path)
-    try:
-        ai_status_module = importlib.import_module("ai_status")
-    except Exception:
-        return None
-    try:
-        runtime_env = task_state_store_runtime_env(config)
-        previous_env = {name: os.environ.get(name) for name in runtime_env}
-        os.environ.update(runtime_env)
-        try:
-            canonical_state = ai_status_module.load_state()
-        finally:
-            for name, previous_value in previous_env.items():
-                if previous_value is None:
-                    os.environ.pop(name, None)
-                else:
-                    os.environ[name] = previous_value
-    except Exception:
-        return None
-    if not isinstance(canonical_state, dict):
-        return None
-    return ai_status_module, canonical_state
-
-
 def archived_task_owner_reviewer_with_receipt_proof(
     config: dict[str, Any],
     task_id: str,
@@ -991,10 +946,12 @@ def archived_task_owner_reviewer_with_receipt_proof(
 
     ``state`` is the caller's own freshly reloaded canonical task-state
     mapping (already carrying normalized ``archive_receipts``/
-    ``terminal_facts``) when the caller has one on hand; this avoids a second,
-    possibly differently-rooted, disk read under the caller's own lock/CAS
-    order. Only when no such state is supplied does this fall back to a fresh
-    ``ai_status.load_state()`` disk read.
+    ``terminal_facts``) when the caller has one on hand. This function does
+    not fall back to a second, separately imported ``ai_status`` disk read
+    when the caller's own fresh read is unavailable or failed: a failed
+    caller-side read is canonical evidence being unavailable, not permission
+    to trust a differently-configured module instance's disk state instead,
+    so it fails closed to ``("", "")`` the same as a missing receipt.
     """
 
     task_id = str(task_id or "").strip()
@@ -1003,27 +960,12 @@ def archived_task_owner_reviewer_with_receipt_proof(
     expected_archive_root = str(expected_archive_root or "").strip()
     if not expected_archive_root:
         return "", ""
-    canonical_state: Mapping[str, Any]
-    if isinstance(state, Mapping):
-        # scripts/ai_status.py's own key constants; duplicated here (rather than
-        # importing the module) because the caller already holds a fresh
-        # canonical state read under its own lock/CAS order, and a second
-        # cross-module import risks resolving a differently-configured module
-        # instance (e.g. a test that reconfigured ``scripts.ai_status``'s
-        # archive root but never touched a separately sys.path-imported
-        # ``ai_status``).
-        canonical_state = state
-        receipts = canonical_state.get("archive_receipts")
-        facts = canonical_state.get("terminal_facts")
-        canonical_json_sha256 = _canonical_json_sha256_for_receipt_proof
-    else:
-        provenance = _load_ai_status_archive_provenance(config)
-        if provenance is None:
-            return "", ""
-        ai_status_module, canonical_state = provenance
-        receipts = canonical_state.get(ai_status_module.ARCHIVE_RECEIPTS_KEY)
-        facts = canonical_state.get(ai_status_module.TERMINAL_FACTS_KEY)
-        canonical_json_sha256 = ai_status_module._canonical_json_sha256
+    if not isinstance(state, Mapping):
+        return "", ""
+    canonical_state: Mapping[str, Any] = state
+    receipts = canonical_state.get("archive_receipts")
+    facts = canonical_state.get("terminal_facts")
+    canonical_json_sha256 = _canonical_json_sha256_for_receipt_proof
     if not isinstance(receipts, Mapping) or not isinstance(facts, Mapping):
         return "", ""
     receipt = receipts.get(task_id)
