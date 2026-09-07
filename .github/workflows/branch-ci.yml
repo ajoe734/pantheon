@@ -240,8 +240,13 @@ jobs:
         timeout-minutes: 5
         run: |
           sudo apt-get update
-          sudo apt-get install --yes --no-install-recommends bubblewrap
-          dpkg-query --show --showformat='${Package} ${Version}\n' bubblewrap
+          sudo apt-get install --yes --no-install-recommends bubblewrap apparmor-profiles
+          dpkg-query --show --showformat='${Package} ${Version}\n' bubblewrap apparmor apparmor-profiles
+          # Ubuntu supplies this per-binary profile for restricted userns hosts.
+          # Load it unchanged; retain host-wide restrictions and child capability denial.
+          profile=/usr/share/apparmor/extra-profiles/bwrap-userns-restrict
+          sha256sum "$profile"
+          sudo apparmor_parser --replace "$profile"
           test "$(command -v bwrap)" = /usr/bin/bwrap
           /usr/bin/bwrap --version
           timeout 5s /usr/bin/bwrap --die-with-parent --unshare-pid \
