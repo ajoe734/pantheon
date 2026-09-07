@@ -65,9 +65,10 @@ def build_collection_router(ctx: StrategyRouteContext) -> APIRouter:
         """BFF: create strategy stub (execute-plans compatibility)."""
         identity = ctx.extract_identity(authorization)
         ctx.require_operator_role(identity)
+        principal = ctx.write_principal(identity)
         ctx.reject_body_idempotency_key(payload)
         resolved_key = ctx.resolve_final_idempotency_key(idempotency_key, x_idempotency_key)
-        request_hash = ctx.stable_json_hash({"route": "POST /bff/strategies", "payload": payload})
+        request_hash = ctx.stable_json_hash({"route": "POST /bff/strategies", "payload": payload, "principal": principal})
         dry_run = ctx.request_dry_run_requested()
         if not dry_run:
             cached = ctx.strategy_persona_idempotency_check(resolved_key, request_hash)
@@ -118,9 +119,9 @@ def build_collection_router(ctx: StrategyRouteContext) -> APIRouter:
         try:
             res = None
             if hasattr(writer, "upsert_strategy"):
-                res = writer.upsert_strategy(record)
+                res = writer.upsert_strategy({**record, "actor": principal, "command_key": resolved_key})
             elif hasattr(writer, "create_strategy_spec"):
-                res = writer.create_strategy_spec(record)
+                res = writer.create_strategy_spec({**record, "actor": principal, "command_key": resolved_key})
             if res:
                 written = True
         except HTTPException:

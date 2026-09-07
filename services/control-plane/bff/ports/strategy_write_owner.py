@@ -96,17 +96,50 @@ class CanonicalStrategyWriteOwner:
             except ValueError:
                 art_state = ArtifactState.DRAFT
 
-            if isinstance(record.get("actor"), dict):
-                actor = dict(record["actor"])
-            elif isinstance(record.get("principal"), dict):
-                actor = dict(record["principal"])
-            else:
-                actor = {
-                    "actor_id": str(record.get("actor_id") or record.get("operator_id") or record.get("owner") or "bff-strategy-write-owner"),
-                    "roles": list(record.get("roles") or ["operator"]),
-                    "tenant": str(record.get("tenant_id") or record.get("tenantId") or "default"),
-                    "token_kind": str(record.get("token_kind") or "service"),
-                }
+            from fastapi import HTTPException
+            from services.runtime_auth_inbound import AuthContext
+            from services.registry.service import _authorize_write
+            from services.registry.split_api import RegistryService, BUILTIN_TENANT
+
+            # The transport must supply its verified principal. Product fields
+            # such as owner/tenant_id never grant authority to write.
+            actor = record.get("actor")
+            if not isinstance(actor, dict) or not all(
+                str(actor.get(key) or "").strip()
+                for key in ("actor_id", "tenant", "token_kind")
+            ) or not isinstance(actor.get("roles"), (list, tuple, set, frozenset)):
+                raise HTTPException(403, "Verified strategy write principal required")
+            actor = dict(actor)
+            actor["tenant"] = str(actor["tenant"]).strip()
+            if actor["tenant"] == BUILTIN_TENANT or not set(actor["roles"]).intersection(
+                {"operator", "registry-writer", "admin"}
+            ):
+                raise HTTPException(403, "Registry write role and caller tenant required")
+            for tenant_key in ("tenant_id", "tenantId"):
+                if record.get(tenant_key) and str(record[tenant_key]).strip() != actor["tenant"]:
+                    raise HTTPException(403, "Strategy tenant differs from verified principal")
+            auth = AuthContext(
+                actor_id=actor["actor_id"], roles=frozenset(actor["roles"]),
+                claims={"tenant": actor["tenant"]}, token_kind=actor["token_kind"],
+            )
+            reg_service = RegistryService(target)
+
+            def authorize(entry: Any) -> None:
+                _authorize_write(auth, reg_service.get(entry.registry_id))
+
+            def update_entry(entry: Any) -> None:
+                # Recheck after create_if_absent too: a concurrent creator may
+                # have reserved this identity for another tenant.
+                authorize(entry)
+                if entry.artifact_state != art_state:
+                    raise ValueError("Lifecycle changes require the governed state transition command")
+                merged_meta = dict(entry.metadata or {})
+                merged_meta.update(record)
+                reg_service.update_metadata(
+                    entry.registry_id, expected_metadata=entry.metadata,
+                    new_metadata=merged_meta, actor=actor,
+                    command_key=record.get("command_key") or record.get("idempotency_key"),
+                )
 
             def _next_ver(ver: str) -> str:
                 if re.match(r"^\d+\.\d+\.\d+$", str(ver)):
@@ -124,6 +157,9 @@ class CanonicalStrategyWriteOwner:
                     "strategy_spec",
                 )
             ]
+
+            for existing in strategy_spec_entries:
+                authorize(existing)
 
             if art_state == ArtifactState.APPROVED:
                 from services.registry.service import RegistryService
@@ -169,19 +205,7 @@ class CanonicalStrategyWriteOwner:
                 ]
                 if draft_entries:
                     entry = draft_entries[-1]
-                    if not hasattr(target, "update"):
-                        raise RuntimeError("Target store does not implement update")
-                    expected_dict = entry.to_dict()
-                    entry.artifact_state = art_state
-                    merged_meta = dict(entry.metadata) if isinstance(entry.metadata, dict) else {}
-                    merged_meta.update(record)
-                    entry.metadata = merged_meta
-                    try:
-                        res = target.update(entry, expected=expected_dict, actor=actor)
-                    except TypeError:
-                        res = target.update(entry)
-                    if res is False:
-                        raise RuntimeError("Target store rejected strategy update")
+                    update_entry(entry)
                     return record
                 else:
                     # All existing strategy specs are approved/retired: create a new revision rather than clobbering approved state
@@ -200,19 +224,7 @@ class CanonicalStrategyWriteOwner:
                     reg_id = f"reg-strategy-spec-{sid}-{target_ver}"
                     entry, created = target.create_if_absent(payload, reg_id, actor=actor)
                     if not created:
-                        if not hasattr(target, "update"):
-                            raise RuntimeError("Target store does not implement update")
-                        expected_dict = entry.to_dict()
-                        entry.artifact_state = art_state
-                        merged_meta = dict(entry.metadata) if isinstance(entry.metadata, dict) else {}
-                        merged_meta.update(record)
-                        entry.metadata = merged_meta
-                        try:
-                            res = target.update(entry, expected=expected_dict, actor=actor)
-                        except TypeError:
-                            res = target.update(entry)
-                        if res is False:
-                            raise RuntimeError("Target store rejected strategy update")
+                        update_entry(entry)
                     return record
             else:
                 target_ver = record.get("current_spec_version") or record.get("version") or "1.0.0"
@@ -226,19 +238,7 @@ class CanonicalStrategyWriteOwner:
                 reg_id = f"reg-strategy-spec-{sid}-{target_ver}"
                 entry, created = target.create_if_absent(payload, reg_id, actor=actor)
                 if not created:
-                    if not hasattr(target, "update"):
-                        raise RuntimeError("Target store does not implement update")
-                    expected_dict = entry.to_dict()
-                    entry.artifact_state = art_state
-                    merged_meta = dict(entry.metadata) if isinstance(entry.metadata, dict) else {}
-                    merged_meta.update(record)
-                    entry.metadata = merged_meta
-                    try:
-                        res = target.update(entry, expected=expected_dict, actor=actor)
-                    except TypeError:
-                        res = target.update(entry)
-                    if res is False:
-                        raise RuntimeError("Target store rejected strategy update")
+                    update_entry(entry)
                 return record
 
         # Direct domain store methods

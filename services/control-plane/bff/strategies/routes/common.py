@@ -163,6 +163,23 @@ class StrategyRouteContext:
             raise NotImplementedError("bff_me_tenant_payload dependency was not supplied")
         return str(self.bff_me_tenant_payload(identity, requested_tenant=None)["id"])
 
+    def write_principal(self, identity: Any) -> Dict[str, Any]:
+        """Bind writes to the authenticated identity, never request-body fields."""
+        claims = getattr(identity, "claims", {}) or {}
+        tenant = str(claims.get("tenant") or claims.get("tenant_id") or claims.get("tenantId") or "").strip()
+        if not tenant:
+            tenants = claims.get("tenant_ids") or claims.get("tenantIds")
+            if isinstance(tenants, list) and len(tenants) == 1:
+                tenant = str(tenants[0] or "").strip()
+        if not tenant:
+            raise self.bff_error(403, ErrorCode.FORBIDDEN, "Verified tenant required")
+        return {
+            "actor_id": identity.operator_id,
+            "roles": list(identity.roles),
+            "tenant": tenant,
+            "token_kind": identity.token_kind,
+        }
+
     def ensure_strategy_exists(self, strategy_id: str) -> None:
         read_store = self.get_read_store_port()
         found = False

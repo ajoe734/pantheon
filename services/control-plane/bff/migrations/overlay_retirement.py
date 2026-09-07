@@ -1254,7 +1254,16 @@ class RankingCanonicalAdapter:
                 clean_entries.append(item)
         if provenance:
             res = dict(provenance)
-            res["status"] = ranking.status
+            # Provenance preserves migration-only fields; it cannot override
+            # the current owner projection, including legacy field aliases.
+            for key in ("ranking_id", "title", "criteria", "entries", "status", "created_at", "updated_at"):
+                value = clean_entries if key == "entries" else data[key]
+                if key in res or key == "status":
+                    res[key] = value
+            for alias, value in (("id", ranking.ranking_id), ("snapshot_id", ranking.ranking_id),
+                                 ("name", ranking.title), ("formula", ranking.criteria)):
+                if alias in res:
+                    res[alias] = value
             return res
         data["entries"] = clean_entries
         return data

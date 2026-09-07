@@ -71,13 +71,14 @@ def build_detail_router(ctx: StrategyRouteContext) -> APIRouter:
         idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
         x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
     ):
-        """BFF: patch strategy overlay fields."""
+        """BFF: patch strategy fields through the canonical writer."""
         identity = ctx.extract_identity(authorization)
         ctx.require_operator_role(identity)
+        principal = ctx.write_principal(identity)
         ctx.reject_body_idempotency_key(payload)
         resolved_key = ctx.resolve_final_idempotency_key(idempotency_key, x_idempotency_key)
         request_hash = ctx.stable_json_hash(
-            {"route": "PATCH /bff/strategies/{strategy_id}", "id": strategy_id, "payload": payload}
+            {"route": "PATCH /bff/strategies/{strategy_id}", "id": strategy_id, "payload": payload, "principal": principal}
         )
         cached = ctx.strategy_persona_idempotency_check(resolved_key, request_hash)
         if cached is not None:
@@ -138,9 +139,9 @@ def build_detail_router(ctx: StrategyRouteContext) -> APIRouter:
         try:
             res = None
             if hasattr(writer, "upsert_strategy"):
-                res = writer.upsert_strategy(base)
+                res = writer.upsert_strategy({**base, "actor": principal, "command_key": resolved_key})
             elif hasattr(writer, "create_strategy_spec"):
-                res = writer.create_strategy_spec(base)
+                res = writer.create_strategy_spec({**base, "actor": principal, "command_key": resolved_key})
             if res:
                 written = True
         except HTTPException:
