@@ -13405,7 +13405,7 @@ class RealProcessReviewHandoffRecoveryFlowTests(unittest.TestCase):
             # generation -- not merely that the parent could read the same file.
             fake_worker_source = (
                 "#!" + sys.executable + "\n"
-                "import json, os, sys, time, subprocess\n"
+                "import json, os, sys, time, subprocess, traceback\n"
                 "from pathlib import Path\n"
                 "workspace = Path(os.environ.get('ORCH_WORKSPACE_PATH', ''))\n"
                 "task_id = os.environ.get('ORCH_TASK_ID', '')\n"
@@ -13415,48 +13415,61 @@ class RealProcessReviewHandoffRecoveryFlowTests(unittest.TestCase):
                 "evidence_path = Path(os.environ.get('FAKE_WORKER_EVIDENCE_PATH', ''))\n"
                 "command_root = os.environ.get('PANTHEON_COMMAND_ROOT', '')\n"
                 "brief_path = workspace / '.orchestrator' / 'worker-runtime' / 'task-context' / (task_id.lower() + '.md')\n"
-                "brief_text = brief_path.read_text() if brief_path.is_file() else ''\n"
-                "header = '# Task Brief: ' + task_id\n"
-                "brief_verified = bool(\n"
-                "    task_id and launched_generation and expected_finding and brief_path.is_file()\n"
-                "    and header in brief_text and expected_finding in brief_text\n"
-                ")\n"
-                "canonical_generation = None\n"
-                "canonical_reason = ''\n"
-                "canonical_task_id = ''\n"
-                "error = ''\n"
                 "try:\n"
-                "    show_cmd = ['bash', command_root + '/scripts/ai-status.sh', 'show', task_id]\n"
-                "    proc = subprocess.run(show_cmd, env=os.environ.copy(), capture_output=True, text=True, timeout=30, check=True)\n"
-                "    payload = json.loads(proc.stdout)\n"
-                "    canonical_task = payload['task']\n"
-                "    canonical_task_id = str(canonical_task.get('id') or '')\n"
-                "    canonical_generation = canonical_task.get('generation')\n"
-                "    intent = canonical_task.get('review_requeue_intent') or {}\n"
-                "    canonical_reason = str(intent.get('reason') or canonical_task.get('next') or '')\n"
+                "    brief_text = brief_path.read_text() if brief_path.is_file() else ''\n"
+                "    header = '# Task Brief: ' + task_id\n"
+                "    brief_verified = bool(\n"
+                "        task_id and launched_generation and expected_finding and brief_path.is_file()\n"
+                "        and header in brief_text and expected_finding in brief_text\n"
+                "    )\n"
+                "    canonical_generation = None\n"
+                "    canonical_reason = ''\n"
+                "    canonical_task_id = ''\n"
+                "    error = ''\n"
+                "    try:\n"
+                "        show_cmd = ['bash', command_root + '/scripts/ai-status.sh', 'show', task_id]\n"
+                "        proc = subprocess.run(show_cmd, env=os.environ.copy(), capture_output=True, text=True, timeout=30)\n"
+                "        if proc.returncode != 0:\n"
+                "            error = f'show failed (exit {proc.returncode}): stdout={proc.stdout} stderr={proc.stderr}'\n"
+                "        else:\n"
+                "            payload = json.loads(proc.stdout)\n"
+                "            canonical_task = payload['task']\n"
+                "            canonical_task_id = str(canonical_task.get('id') or '')\n"
+                "            canonical_generation = canonical_task.get('generation')\n"
+                "            intent = canonical_task.get('review_requeue_intent') or {}\n"
+                "            canonical_reason = str(intent.get('reason') or canonical_task.get('next') or '')\n"
+                "    except Exception as exc:\n"
+                "        error = repr(exc)\n"
+                "    canonical_verified = bool(\n"
+                "        not error\n"
+                "        and canonical_task_id == task_id\n"
+                "        and launched_generation\n"
+                "        and str(canonical_generation) == str(launched_generation)\n"
+                "        and expected_finding\n"
+                "        and expected_finding in canonical_reason\n"
+                "    )\n"
+                "    evidence = {\n"
+                "        'run_id': run_id,\n"
+                "        'task_id': task_id,\n"
+                "        'launched_generation': launched_generation,\n"
+                "        'canonical_generation': canonical_generation,\n"
+                "        'finding': expected_finding,\n"
+                "        'canonical_reason': canonical_reason,\n"
+                "        'brief_verified': brief_verified,\n"
+                "        'canonical_verified': canonical_verified,\n"
+                "        'verified': bool(brief_verified and canonical_verified),\n"
+                "        'error': error,\n"
+                "    }\n"
+                "    evidence_path.write_text(json.dumps(evidence))\n"
                 "except Exception as exc:\n"
-                "    error = repr(exc)\n"
-                "canonical_verified = bool(\n"
-                "    not error\n"
-                "    and canonical_task_id == task_id\n"
-                "    and launched_generation\n"
-                "    and str(canonical_generation) == str(launched_generation)\n"
-                "    and expected_finding\n"
-                "    and expected_finding in canonical_reason\n"
-                ")\n"
-                "evidence = {\n"
-                "    'run_id': run_id,\n"
-                "    'task_id': task_id,\n"
-                "    'launched_generation': launched_generation,\n"
-                "    'canonical_generation': canonical_generation,\n"
-                "    'finding': expected_finding,\n"
-                "    'canonical_reason': canonical_reason,\n"
-                "    'brief_verified': brief_verified,\n"
-                "    'canonical_verified': canonical_verified,\n"
-                "    'verified': bool(brief_verified and canonical_verified),\n"
-                "    'error': error,\n"
-                "}\n"
-                "evidence_path.write_text(json.dumps(evidence))\n"
+                "    tb = traceback.format_exc()\n"
+                "    sys.stderr.write(f'fake_worker top-level exception: {tb}\\n')\n"
+                "    sys.stderr.flush()\n"
+                "    try:\n"
+                "        fallback_evidence = {'run_id': run_id, 'task_id': task_id, 'error': f'{repr(exc)}\\n{tb}'}\n"
+                "        evidence_path.write_text(json.dumps(fallback_evidence))\n"
+                "    except Exception:\n"
+                "        pass\n"
                 "time.sleep(300)\n"
                 "sys.exit(0)\n"
             )
@@ -13800,6 +13813,41 @@ class RealProcessReviewHandoffRecoveryFlowTests(unittest.TestCase):
                         if fake_worker_evidence:
                             break
                     time.sleep(0.1)
+
+                if not fake_worker_evidence:
+                    runner_pid = new_worker_rec.get("pid")
+                    runner_ticks = new_worker_rec.get("pid_start_ticks")
+                    runner_alive = supervisor.pid_is_alive(runner_pid) if isinstance(runner_pid, int) else False
+                    log_file = Path(str(new_worker_rec.get("log_path") or ""))
+                    log_tail = log_file.read_text(errors="replace")[-4000:] if log_file.is_file() else f"<log file missing: {log_file}>"
+                    st_file = Path(str(new_worker_rec.get("runner_status_path") or ""))
+                    st_tail = st_file.read_text(errors="replace")[-2000:] if st_file.is_file() else f"<runner status file missing: {st_file}>"
+                    hb_file = Path(str(new_worker_rec.get("heartbeat_path") or ""))
+                    hb_tail = hb_file.read_text(errors="replace")[-2000:] if hb_file.is_file() else f"<heartbeat file missing: {hb_file}>"
+                    child_pid = None
+                    if st_file.is_file():
+                        try:
+                            child_pid = json.loads(st_file.read_text()).get("child_pid")
+                        except Exception:
+                            pass
+                    child_alive = supervisor.pid_is_alive(child_pid) if isinstance(child_pid, int) else False
+                    ev_exists = fake_worker_evidence_path.exists()
+                    ev_content = fake_worker_evidence_path.read_text(errors="replace")[:1000] if ev_exists else "<missing>"
+                    diag_msg = (
+                        f"queue-launched child never published verification evidence.\n"
+                        f"Diagnostic details:\n"
+                        f"  run_id: {new_worker_rec.get('run_id')}\n"
+                        f"  runner_pid: {runner_pid} (alive={runner_alive}, ticks={runner_ticks})\n"
+                        f"  child_pid: {child_pid} (alive={child_alive})\n"
+                        f"  evidence_path: {fake_worker_evidence_path} (exists={ev_exists}, content={ev_content})\n"
+                        f"  runner_status_path: {st_file}\n"
+                        f"  --- runner_status tail ---\n{st_tail}\n"
+                        f"  heartbeat_path: {hb_file}\n"
+                        f"  --- heartbeat tail ---\n{hb_tail}\n"
+                        f"  log_path: {log_file}\n"
+                        f"  --- log tail ---\n{log_tail}\n"
+                    )
+                    self.assertTrue(fake_worker_evidence, diag_msg)
 
                 self.assertTrue(fake_worker_evidence, "queue-launched child never published verification evidence")
                 self.assertEqual(fake_worker_evidence.get("error"), "")
