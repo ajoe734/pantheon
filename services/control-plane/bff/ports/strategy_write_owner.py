@@ -134,10 +134,35 @@ class CanonicalStrategyWriteOwner:
                 if entry.artifact_state != art_state:
                     raise ValueError("Lifecycle changes require the governed state transition command")
                 command_key = record.get("command_key") or record.get("idempotency_key")
-                receipt = reg_service.get_command_receipt(
-                    entry.registry_id, command_key, actor=actor,
-                ) if command_key else None
-                expected_metadata = receipt["expected_metadata"] if receipt else entry.metadata
+                if command_key:
+                    # The canonical owner's committed receipt carries
+                    # committed_entry (the entry as it was actually written),
+                    # never an "expected_metadata" precondition field — that
+                    # field only ever existed on the retired in-memory-only
+                    # migration fixture and must not be read here. Detect a
+                    # replay of this exact command_key against the frozen
+                    # committed_entry so a later, unrelated mutation under a
+                    # different command_key cannot change the answer.
+                    receipt = reg_service.get_command_receipt(
+                        entry.registry_id, command_key, actor=actor,
+                    )
+                    if receipt is not None:
+                        committed_metadata = dict(
+                            (receipt.get("committed_entry") or {}).get("metadata") or {}
+                        )
+                        probe = dict(committed_metadata)
+                        probe.update(record)
+                        if probe != committed_metadata:
+                            from services.registry.split_api import RegistryConflictError
+                            raise RegistryConflictError(
+                                f"command_key={command_key!r} was already committed with "
+                                "different metadata for this strategy"
+                            )
+                        return
+                # First application of this command (or no idempotency key at
+                # all): the caller-bound CAS precondition is the entry's
+                # current durable metadata, read once here.
+                expected_metadata = entry.metadata
                 merged_meta = dict(expected_metadata or {})
                 merged_meta.update(record)
                 reg_service.update_metadata(

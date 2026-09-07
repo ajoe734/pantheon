@@ -2,12 +2,9 @@
 from __future__ import annotations
 
 import asyncio
-import os
 import sys
 from pathlib import Path
 from typing import Any
-
-os.environ.setdefault("REGISTRY_STORE_BACKEND", "memory")
 
 import httpx
 import pytest

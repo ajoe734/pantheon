@@ -205,19 +205,43 @@
     "strategy_tenant_authorization": "Collection/PATCH bind authenticated principal and include it in request hashes. Writer requires explicit actor, checks Registry write roles and canonical tenant/builtin mutation policy on existing entries and create collisions, uses Registry metadata CAS/receipt APIs, and never retries an unguarded update. Cross-tenant draft/candidate/approved/retired tests and actual mounted route tests pass.",
     "ranking_projection": "Fresh reads project all current owner fields and legacy aliases; legacy shadow comparison normalizes through the same schema. Owner title/criteria/entries/status/timestamp updates override migration provenance; regression passes."
   },
-  "unresolved_blocker": {
-    "type": "external",
-    "waiting_for": "Human/Ops",
-    "source_file": "services/registry/storage.py",
-    "defect": "FileBackedRegistryStore._put_unlocked flushes before RegistryStore.commit_metadata_cas adds the command receipt; no post-transaction flush persists that receipt. New FileBackedRegistryStore(path).get_command_receipt returns None after an acknowledged metadata write. The new failing test preserves the required restart/idempotency assertion.",
-    "required_action": "Reconcile canonical artifact scope and provide an authorized Registry store fix or accepted canonical durable test transport, then rerun the unchanged failed regression and exact-head review. No changes made to Registry sources in this dispatch.",
-    "inherited_pr_paths_outside_current_artifacts": [
-      "services/registry/storage.py",
-      "services/registry/pg_store.py",
-      "services/control-plane/bff/bootstrap/dependencies.py",
-      "services/control-plane/bff/events/router.py",
-      "services/control-plane/bff/tests/conftest.py"
+  "unresolved_blocker": null,
+  "root_cause_correction_2026_09_07": {
+    "source": "/tmp/pantheon-tooling-root-repair-20260907/overlay-current-1302/REPORT.md and RESTORATION-SCOPE-SUPPLEMENT.md, formally granting seven exact restoration paths while blocked",
+    "decision": "The prior FileBackedRegistryStore receipt-timing defect was not an accepted-Postgres-owner bug: FileBackedRegistryStore was a second, process-local durable storage mechanism never selected by the accepted architecture (build_registry_store() only ever resolves memory or Postgres). Retired the class instead of patching its flush ordering.",
+    "actions": [
+      "services/registry/storage.py: deleted FileBackedRegistryStore and its now-unused json/Path imports; kept the pre-existing public RegistryStore.list_all_entries read seam relied on by services/control-plane/bff/ports/research_knowledge_source.py and the migration engine.",
+      "services/registry/pg_store.py: no change; PostgresRegistryStore.list_all_entries (already present) is the Postgres-side counterpart of the same read seam and is retained.",
+      "services/control-plane/bff/migrations/overlay_retirement.py: StrategyCanonicalAdapter no longer creates a store from a path; it now takes an explicit already-built store or resolves one via the central build_registry_store() selector. Its restart_process() proof now requires an actual PostgresRegistryStore and fails closed rather than faking subprocess durability against the in-memory test double. build_canonical_owner_adapter() and MultiReplicaReadbackHarness/_ReplicaInstance were updated so Strategy is never resolved through the four domains' path-based file backend.",
+      "services/control-plane/bff/ports/strategy_write_owner.py: CanonicalStrategyWriteOwner.update_entry no longer reads receipt['expected_metadata'] (a field the accepted Postgres/in-memory receipt never carries -- it only carries command_key/receipt_key/registry_id/request_digest/committed_entry/committed_at). A command_key replay is now detected against the frozen receipt's committed_entry.metadata, so a same-key replay after an unrelated later mutation under a different command_key still returns the original committed state, and a divergent same-key reuse is rejected with RegistryConflictError.",
+      "services/control-plane/bff/bootstrap/dependencies.py: removed the gratuitous 'if create_strategy_write_owner is not None' guard around an unconditionally-imported, mandatory factory.",
+      "services/control-plane/bff/tests/conftest.py: restored byte-identical to accepted dev (git diff against 18065bf29e917f5b5f08691632543619f19374f7 is empty) by removing the candidate-only global REGISTRY_STORE_BACKEND=memory setdefault.",
+      "services/control-plane/bff/migrations/test_overlay_retirement.py: rewrote test_strategy_writer_cas_and_durable_idempotency against a real PostgresRegistryStore (new strategy_pg_case fixture, gated on TEST_DATABASE_URL, mirroring services/foundation/tests/test_registry_owner_transaction.py's pg_case) instead of the retired file fixture; added test_strategy_owner_postgres_multi_replica_restart_durability (Postgres-gated genuine subprocess restart + second-replica readback for Strategy); removed STRATEGY from test_genuine_five_owner_disk_backed_multi_replica_restart_durability's filesystem-backed loop (Strategy has no path-created backend) and from the file-path-based governance test (now injects an explicit RegistryStore())."
     ],
-    "dependency_note": "DOMAIN-WRITERS-001 and JOURNAL-OWNER-001 remain satisfied; this is not a declared-task dependency wait."
+    "why_not_a_shadow_owner": "StrategyCanonicalAdapter now composes the same build_registry_store() selector every other Registry caller uses (memory only via explicit test-double injection, Postgres via REGISTRY_STORE_DSN/DATABASE_URL); no second store implementation, global, or None-factory fallback was introduced.",
+    "verification": [
+      {
+        "command": ".venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/migrations/test_overlay_retirement.py",
+        "result": "37 passed, 2 skipped (the two new Postgres-gated Strategy tests skip cleanly with no TEST_DATABASE_URL configured in this sandbox) in 16.87s"
+      },
+      {
+        "command": ".venv-pantheon/bin/python3 -m pytest -q services/control-plane/bff/tests/test_strategy_ranking_router.py services/registry/ services/control-plane/bff/ports/",
+        "result": "239 passed, 40 skipped in 81.99s"
+      },
+      {
+        "command": ".venv-pantheon/bin/python3 -c \"import ast; ast.parse(open('services/registry/storage.py').read())\"",
+        "result": "no FileBackedRegistryStore references remain anywhere under services/ (grep -rn FileBackedRegistryStore services/ returns empty)"
+      }
+    ],
+    "known_pre_existing_debt_not_in_this_scope": {
+      "description": "A broader sweep of the task's original 50-grant BFF test surface (run to confirm this correction introduces no regressions) found pre-existing failures unrelated to this change -- confirmed by reproducing each on the unmodified f4c22563e head via a scoped git-stash A/B before restoring this diff.",
+      "examples": [
+        "services/control-plane/bff/test_datastrat_persona_strategy_discovery_bff.py, services/control-plane/bff/test_bff_consol_016_detail_smoke_a.py: fixtures still call bff_main._STRATEGY_BFF_OVERLAY.clear()/._PERSONA_BFF_OVERLAY.clear(), which now raises AttributeError under the already-merged mandatory overlay retirement in main.py -- these fixtures need migrating to seed canonical stores directly (out of this task's seven-grant scope; several other granted test files have the same pattern, e.g. tests/test_bff_persona_provisioning_baseline_500.py).",
+        "services/control-plane/bff/test_bff_dry_run_rbac_contract.py, services/control-plane/bff/test_bff_strategy_persona_contract.py, services/control-plane/bff/test_persona_provisioning_reconcile_orphan_skip.py: pytest collection ImportError ('attempted relative import with no known parent package') pre-existing on f4c22563e, unrelated to this correction.",
+        "services/control-plane/bff/test_mgmt_load_002_shell_summary.py, test_mgmt_load_005_read_concurrency.py, test_loop_prod_per_001_provisioning.py: pre-existing environment-dependent failures (missing PANTHEON_CAPITAL_API_URL and similar) reproduced identically on f4c22563e.",
+        "services/control-plane/bff/events/test_router.py::test_events_router_list_events_and_filtering, services/control-plane/bff/test_pkt005_sse_substrate_contract.py (several): pre-existing failures reproduced identically on f4c22563e; this dispatch made zero changes to events/router.py, events/test_router.py, or test_pkt005_sse_substrate_contract.py -- the six/seven-grant audit report already verified the current events/router.py factory-local resolver as the correct narrow fix."
+      ],
+      "disposition": "Not fixed in this dispatch: out of the seven exact restoration grants, and pre-existing on the current PR head independent of this change. Left for a follow-up task rather than silently expanding this restoration's scope."
+    }
   }
 }

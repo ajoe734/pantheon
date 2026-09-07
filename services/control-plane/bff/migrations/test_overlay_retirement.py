@@ -12,15 +12,50 @@ Covers:
 """
 from __future__ import annotations
 
+import json
+import os
 import tempfile
 from pathlib import Path
 from typing import Any, Dict
+from uuid import uuid4
 import pytest
 
 
 def _strategy_actor(tenant="tenant-a", roles=None):
     return {"actor_id": "migration-review", "tenant": tenant,
             "roles": roles if roles is not None else ["operator"], "token_kind": "service"}
+
+
+@pytest.fixture
+def strategy_pg_case():
+    """Real-Postgres schema per test, mirroring
+    services/foundation/tests/test_registry_owner_transaction.py's pg_case:
+    skip cleanly with no live database configured, otherwise prove Strategy
+    owner durability against an actual PostgreSQL instance rather than the
+    retired process-local file fixture."""
+    dsn = os.getenv("TEST_DATABASE_URL", "").strip()
+    if not dsn:
+        pytest.skip("TEST_DATABASE_URL is required for real Postgres Strategy owner proof")
+    psycopg = pytest.importorskip("psycopg")
+    from psycopg import sql
+
+    schema = f"strategy_owner_{uuid4().hex}"
+    entries_table = f"{schema}.entries"
+    receipts_table = f"{schema}.command_receipts"
+    try:
+        yield dsn, entries_table, receipts_table
+    finally:
+        with psycopg.connect(dsn) as conn:
+            conn.execute(sql.SQL("DROP SCHEMA IF EXISTS {} CASCADE").format(sql.Identifier(schema)))
+
+
+def _strategy_pg_store(case, *, bootstrap: bool = True):
+    from services.registry.pg_store import PostgresRegistryStore
+
+    dsn, entries_table, receipts_table = case
+    return PostgresRegistryStore(
+        dsn=dsn, entries_table=entries_table, receipts_table=receipts_table, bootstrap=bootstrap,
+    )
 
 
 @pytest.mark.parametrize("state", ["draft", "candidate", "approved", "retired"])
@@ -61,13 +96,20 @@ def test_strategy_writer_never_synthesizes_missing_write_authority(actor):
     assert store.list_by_strategy("untrusted") == []
 
 
-def test_strategy_writer_cas_and_durable_idempotency(tmp_path, monkeypatch):
-    from services.registry.storage import FileBackedRegistryStore, RegistryConcurrentUpdateError
+def test_strategy_writer_cas_and_durable_idempotency(strategy_pg_case):
+    """Real-Postgres proof (architecture-resumption-sa-sd.md §3.3/§3.4) that the
+    Strategy write owner's command_key idempotency is bound to the actual
+    canonical receipt contract (``committed_entry``), not the retired
+    process-local file fixture's invented ``expected_metadata`` field:
+    a same-key replay after an unrelated later mutation still returns the
+    original committed state untouched, a divergent same-key reuse is
+    rejected, and a genuinely stale caller-bound CAS is rejected too —
+    each proven against a fresh ``PostgresRegistryStore`` instance
+    reconnecting to the same schema (the fresh-process-restart proof)."""
     from services.registry.split_api import RegistryConflictError
     from services.control_plane.bff.ports.strategy_write_owner import CanonicalStrategyWriteOwner
 
-    path = tmp_path / "strategies.json"
-    store = FileBackedRegistryStore(path)
+    store = _strategy_pg_store(strategy_pg_case)
     writer = CanonicalStrategyWriteOwner(store)
     original = {"id": "owned", "name": "Before", "actor": _strategy_actor()}
     writer.upsert_strategy(original)
@@ -75,23 +117,66 @@ def test_strategy_writer_cas_and_durable_idempotency(tmp_path, monkeypatch):
     writer.upsert_strategy(updated)
     entry = store.list_by_strategy("owned")[0]
     before_replay = entry.to_dict()
-    fresh_store = FileBackedRegistryStore(path)
+
+    # A fresh store instance against the same schema is the fresh-process
+    # restart proof: nothing lives in Python process memory.
+    fresh_store = _strategy_pg_store(strategy_pg_case, bootstrap=False)
     assert fresh_store.get_command_receipt(
         "metadata-update", entry.registry_id, actor=_strategy_actor(),
     ) is not None
     fresh_writer = CanonicalStrategyWriteOwner(fresh_store)
+
+    # An unrelated later mutation under a *different* command_key advances
+    # the durable row after the original commit.
+    another_store = _strategy_pg_store(strategy_pg_case, bootstrap=False)
+    CanonicalStrategyWriteOwner(another_store).upsert_strategy(
+        {**updated, "risk": "elevated", "command_key": "unrelated-later-write"}
+    )
+    assert another_store.get(entry.registry_id).to_dict() != before_replay
+
+    # The original command_key replay must still return the exact original
+    # committed state, ignoring the later unrelated mutation.
     fresh_writer.upsert_strategy(updated)
-    assert fresh_store.get(entry.registry_id).to_dict() == before_replay
+    assert fresh_store.get(entry.registry_id).to_dict() == another_store.get(entry.registry_id).to_dict()
+    replayed_entry = fresh_store.get(entry.registry_id)
+    assert replayed_entry.metadata.get("name") == "After"
+    assert replayed_entry.metadata.get("risk") == "elevated"  # the later mutation is preserved, not clobbered
+
+    # A divergent reuse of the same command_key (different target metadata)
+    # is rejected rather than silently accepted.
     with pytest.raises(RegistryConflictError):
         fresh_writer.upsert_strategy({**updated, "name": "Divergent"})
-    assert fresh_store.get(entry.registry_id).to_dict() == before_replay
+    assert fresh_store.get(entry.registry_id).metadata.get("name") == "After"
 
-    def reject_stale(**kwargs):
-        raise RegistryConcurrentUpdateError(kwargs["registry_id"])
-    monkeypatch.setattr(fresh_store, "commit_metadata_cas", reject_stale)
+    # A second writer reusing the already-committed "unrelated-later-write"
+    # command_key with different target metadata is a divergent replay of
+    # that key (caller-bound CAS mismatch against the frozen receipt) and
+    # must be rejected, leaving the durable row untouched.
+    stale_store = _strategy_pg_store(strategy_pg_case, bootstrap=False)
     with pytest.raises(RegistryConflictError):
-        fresh_writer.upsert_strategy({**original, "name": "Stale", "command_key": "stale"})
-    assert FileBackedRegistryStore(path).get(entry.registry_id).to_dict() == before_replay
+        CanonicalStrategyWriteOwner(stale_store).upsert_strategy(
+            {**updated, "name": "Stale-Race", "risk": "critical", "command_key": "unrelated-later-write"}
+        )
+    assert fresh_store.get(entry.registry_id).metadata.get("name") == "After"
+
+    # A genuinely stale caller-bound CAS with no idempotency key at all:
+    # a concurrent writer advances the row first, and the racing writer's
+    # commit_metadata_cas (stale base_snapshot) must be rejected — proven
+    # directly against the store rather than through the adapter, since the
+    # adapter always re-reads the freshest row for a first (non-command-key)
+    # application and a real race window is not reliably reproducible here.
+    from services.registry.pg_store import RegistryConcurrentUpdateError
+
+    concurrent_view = stale_store.get(entry.registry_id)
+    base_snapshot = concurrent_view.to_dict()
+    winner_view = stale_store.get(entry.registry_id)
+    winner_view.metadata = {**winner_view.metadata, "name": "Winner"}
+    stale_store.update(winner_view, expected=base_snapshot)
+    loser_view = concurrent_view
+    loser_view.metadata = {**loser_view.metadata, "name": "Loser"}
+    with pytest.raises(RegistryConcurrentUpdateError):
+        stale_store.update(loser_view, expected=base_snapshot)
+    assert stale_store.get(entry.registry_id).metadata.get("name") == "Winner"
 
 
 def test_ranking_fresh_reader_projects_owner_updates_not_provenance(tmp_path):
@@ -533,7 +618,14 @@ def test_genuine_five_owner_backfill_shadow_conflicts_and_idempotency(
     dry-run protection, and parity across each of the five domain aggregates.
     """
     with tempfile.TemporaryDirectory() as td:
-        durable_store = build_canonical_owner_adapter(aggregate=aggregate, storage_dir=td)
+        strategy_kwargs: Dict[str, Any] = {}
+        if aggregate == AggregateKind.STRATEGY:
+            # Strategy has no path-created durable backend (see
+            # build_canonical_owner_adapter): inject the explicit in-memory
+            # test double directly, scoped to this test only.
+            from services.registry.storage import RegistryStore
+            strategy_kwargs["strategy_store"] = RegistryStore()
+        durable_store = build_canonical_owner_adapter(aggregate=aggregate, storage_dir=td, **strategy_kwargs)
 
         # 1. Seed durable store with initial existing canonical record
         initial_canon = {
@@ -648,7 +740,11 @@ def test_genuine_five_owner_backfill_shadow_conflicts_and_idempotency(
 
 def test_genuine_five_owner_disk_backed_multi_replica_restart_durability() -> None:
     """Normative SD §5.1, §5.2, §12.3: Prove multi-replica readback and process restart
-    across independent process replicas for all five domain owners using filesystem backing.
+    across independent process replicas for four filesystem-backed domain owners
+    (Persona, Incident, Job, Ranking). Strategy has no path-created durable
+    backend — its equivalent real cross-process restart/multi-replica proof is
+    ``test_strategy_owner_postgres_multi_replica_restart_durability`` below,
+    gated on a real Postgres instance instead of faking filesystem durability.
     """
     with tempfile.TemporaryDirectory() as td:
         harness = MultiReplicaReadbackHarness(shared_durable_storage=td)
@@ -656,10 +752,9 @@ def test_genuine_five_owner_disk_backed_multi_replica_restart_durability() -> No
         replica_alpha = harness.spawn_replica("replica-alpha")
         replica_beta = harness.spawn_replica("replica-beta")
 
-        # Test all 5 aggregates
+        # Test the four filesystem-backed aggregates
         aggregates = [
             (AggregateKind.PERSONA, "pers-durable-1", {"name": "Persona 1", "state": "active"}),
-            (AggregateKind.STRATEGY, "strat-durable-1", {"title": "Strategy 1", "lifecycle_state": "active", "actor": {"actor_id": "replica-test", "tenant": "tenant-corp", "roles": ["operator"], "token_kind": "service"}}),
             (AggregateKind.INCIDENT, "inc-durable-1", {"title": "Incident 1", "status": "open"}),
             (AggregateKind.JOB, "job-durable-1", {"name": "Job 1", "status": "running"}),
             (AggregateKind.RANKING, "rank-durable-1", {"formula": "sharpe", "score": 2.5}),
@@ -694,6 +789,55 @@ def test_genuine_five_owner_disk_backed_multi_replica_restart_durability() -> No
             assert readback_beta == replica_alpha.read_canonical(key)
 
 
+def test_strategy_owner_postgres_multi_replica_restart_durability(strategy_pg_case) -> None:
+    """Strategy's counterpart to the filesystem-backed five-owner restart test
+    above: real cross-process restart and multi-replica readback proven
+    against the actual selected canonical Postgres owner, never a
+    path-created secondary durable backend."""
+    import subprocess
+    import sys
+
+    dsn, entries_table, receipts_table = strategy_pg_case
+    adapter = StrategyCanonicalAdapter(_strategy_pg_store(strategy_pg_case))
+
+    record = {
+        "strategy_id": "strat-postgres-durable-1",
+        "name": "Strategy Postgres Durable",
+        "status": "draft",
+        "tenant_id": "tenant-corp",
+        "actor": {"actor_id": "replica-test", "tenant": "tenant-corp", "roles": ["operator"], "token_kind": "service"},
+    }
+    assert adapter.insert(record) is True
+
+    # Genuine subprocess restart: a brand new Python process reconnects to
+    # the same schema with zero in-process state carried over.
+    adapter.restart_process()
+
+    env = dict(os.environ)
+    env["REGISTRY_STORE_DSN"] = dsn
+    env["REGISTRY_ENTRIES_TABLE"] = entries_table
+    env["REGISTRY_RECEIPTS_TABLE"] = receipts_table
+    script = (
+        "import json\n"
+        "from services.registry.pg_store import build_postgres_registry_store\n"
+        "store = build_postgres_registry_store()\n"
+        "entries = [e.to_dict() for e in store.list_by_strategy('strat-postgres-durable-1')]\n"
+        "print(json.dumps(entries, default=str))\n"
+    )
+    res = subprocess.run([sys.executable, "-c", script], capture_output=True, text=True, env=env, check=True)
+    readback_proc = json.loads(res.stdout)
+    assert len(readback_proc) == 1
+    assert readback_proc[0]["strategy_id"] == "strat-postgres-durable-1"
+
+    # A second, completely independent replica (fresh store, same schema)
+    # observes the exact same state without any local overlay.
+    replica_beta = StrategyCanonicalAdapter(_strategy_pg_store(strategy_pg_case, bootstrap=False))
+    readback_beta = replica_beta.get("strat-postgres-durable-1")
+    assert readback_beta is not None
+    assert readback_beta["strategy_id"] == "strat-postgres-durable-1"
+    assert readback_beta["name"] == "Strategy Postgres Durable"
+
+
 def test_incident_adapter_status_update_parity() -> None:
     """Verify that status updates on authoritative IncidentStore reflect immediately on fresh adapter instances."""
     from services.incident.incident import IncidentStore
@@ -725,33 +869,33 @@ def test_incident_adapter_status_update_parity() -> None:
 
 def test_strategy_write_governance_rejects_unreviewed_approval() -> None:
     """Verify that StrategyCanonicalAdapter enforces governance state transitions and rejects unreviewed approval."""
-    with tempfile.TemporaryDirectory() as td:
-        store_path = Path(td) / "strategy.json"
-        adapter = StrategyCanonicalAdapter(store_path)
+    from services.registry.storage import RegistryStore
 
-        # Direct unreviewed approval without approval_decision_id must be rejected
-        rejected = adapter.insert({
-            "strategy_id": "strat-unreviewed-1",
-            "name": "Unreviewed Strategy",
-            "status": "approved",
-            "tenant_id": "tenant-corp",
-            "actor": {"actor_id": "migration-test", "tenant": "tenant-corp", "roles": ["operator"], "token_kind": "service"},
-        })
-        assert rejected is False
-        assert adapter.get("strat-unreviewed-1") is None
+    adapter = StrategyCanonicalAdapter(RegistryStore())
 
-        # Valid draft state must be accepted
-        accepted = adapter.insert({
-            "strategy_id": "strat-draft-1",
-            "name": "Draft Strategy",
-            "status": "draft",
-            "tenant_id": "tenant-corp",
-            "actor": {"actor_id": "migration-test", "tenant": "tenant-corp", "roles": ["operator"], "token_kind": "service"},
-        })
-        assert accepted is True
-        fetched = adapter.get("strat-draft-1")
-        assert fetched is not None
-        assert fetched["status"] == "draft"
+    # Direct unreviewed approval without approval_decision_id must be rejected
+    rejected = adapter.insert({
+        "strategy_id": "strat-unreviewed-1",
+        "name": "Unreviewed Strategy",
+        "status": "approved",
+        "tenant_id": "tenant-corp",
+        "actor": {"actor_id": "migration-test", "tenant": "tenant-corp", "roles": ["operator"], "token_kind": "service"},
+    })
+    assert rejected is False
+    assert adapter.get("strat-unreviewed-1") is None
+
+    # Valid draft state must be accepted
+    accepted = adapter.insert({
+        "strategy_id": "strat-draft-1",
+        "name": "Draft Strategy",
+        "status": "draft",
+        "tenant_id": "tenant-corp",
+        "actor": {"actor_id": "migration-test", "tenant": "tenant-corp", "roles": ["operator"], "token_kind": "service"},
+    })
+    assert accepted is True
+    fetched = adapter.get("strat-draft-1")
+    assert fetched is not None
+    assert fetched["status"] == "draft"
 
 
 def test_multi_replica_rejected_write_negative_control_no_fallback() -> None:

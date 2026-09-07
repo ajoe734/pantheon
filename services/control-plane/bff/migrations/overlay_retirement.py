@@ -620,21 +620,22 @@ class PersonaCanonicalAdapter:
 
 
 class StrategyCanonicalAdapter:
-    """Canonical owner adapter for Strategy domain, backed by FileBackedRegistryStore or RegistryStore."""
+    """Canonical owner adapter for Strategy domain.
 
-    def __init__(self, store_or_path: Optional[Any] = None) -> None:
-        from services.registry.storage import RegistryStore, FileBackedRegistryStore
+    Backed only by the explicitly selected canonical Registry owner —
+    ``RegistryStore`` (explicit in-memory test double) or
+    ``PostgresRegistryStore`` (the accepted durable owner). This adapter
+    never creates a second, path-derived durable storage mechanism: pass an
+    already-built store explicitly, or omit it to resolve one through the
+    same central selector (:func:`services.registry.storage.build_registry_store`)
+    every other Registry caller uses.
+    """
+
+    def __init__(self, store: Optional[Any] = None) -> None:
+        from services.registry.storage import build_registry_store
         from services.control_plane.bff.ports.strategy_write_owner import CanonicalStrategyWriteOwner
 
-        if isinstance(store_or_path, (str, Path)):
-            self._path = Path(store_or_path)
-            self._store = FileBackedRegistryStore(self._path)
-        elif store_or_path is not None:
-            self._path = getattr(store_or_path, "_file_path", None)
-            self._store = store_or_path
-        else:
-            self._path = None
-            self._store = RegistryStore()
+        self._store = store if store is not None else build_registry_store()
         self._write_owner = CanonicalStrategyWriteOwner(self._store)
 
     def insert(self, record: Dict[str, Any]) -> bool:
@@ -802,20 +803,29 @@ class StrategyCanonicalAdapter:
         return records
 
     def restart_process(self) -> None:
-        """Simulate process restart with genuine subprocess verification against FileBackedRegistryStore."""
-        if self._path is None:
-            return
+        """Verify durability via genuine subprocess reconnection to the
+        actually-selected canonical Postgres owner.
+
+        The in-memory ``RegistryStore`` is an explicit test double with no
+        cross-process durability to prove, so a Strategy adapter backed by
+        it must not fake this proof — only ``PostgresRegistryStore`` can be
+        genuinely verified here.
+        """
+        from services.registry.pg_store import PostgresRegistryStore
+
+        if not isinstance(self._store, PostgresRegistryStore):
+            raise RuntimeError(
+                "StrategyCanonicalAdapter.restart_process requires the "
+                "canonical Postgres-backed store; the in-memory RegistryStore "
+                "test double has no cross-process durability to prove."
+            )
         script = (
-            "import sys\n"
-            "from pathlib import Path\n"
-            "from services.registry.storage import FileBackedRegistryStore\n"
-            "p = Path(sys.argv[1])\n"
-            "if not p.exists(): sys.exit(1)\n"
-            "store = FileBackedRegistryStore(p)\n"
+            "from services.registry.pg_store import build_postgres_registry_store\n"
+            "store = build_postgres_registry_store()\n"
             "entries = store.list_all_entries()\n"
             "print(f'OK:{len(entries)}')\n"
         )
-        res = subprocess.run([sys.executable, "-c", script, str(self._path)], capture_output=True, text=True, check=True)
+        res = subprocess.run([sys.executable, "-c", script], capture_output=True, text=True, check=True)
         assert "OK:" in res.stdout.strip()
 
 
@@ -1434,14 +1444,27 @@ class RankingCanonicalAdapter:
         assert "OK:" in res.stdout.strip()
 
 
-def build_canonical_owner_adapter(aggregate: AggregateKind, storage_dir: Optional[str | Path] = None) -> Any:
-    """Build the genuine canonical domain owner adapter for the specified aggregate."""
+def build_canonical_owner_adapter(
+    aggregate: AggregateKind,
+    storage_dir: Optional[str | Path] = None,
+    *,
+    strategy_store: Optional[Any] = None,
+) -> Any:
+    """Build the genuine canonical domain owner adapter for the specified aggregate.
+
+    Strategy has no path-created secondary durable backend: ``strategy_store``
+    is the only way to inject its backing store explicitly (an in-memory
+    ``RegistryStore`` test double or a Postgres-backed store); omitting it
+    resolves one through the same central selector
+    (:func:`services.registry.storage.build_registry_store`) every other
+    Registry caller uses, which fails closed if unconfigured.
+    """
+    if aggregate == AggregateKind.STRATEGY:
+        return StrategyCanonicalAdapter(strategy_store)
     dir_path = Path(storage_dir) if storage_dir is not None else Path(tempfile.mkdtemp())
     dir_path.mkdir(parents=True, exist_ok=True)
     if aggregate == AggregateKind.PERSONA:
         return PersonaCanonicalAdapter(dir_path / "persona_records.json")
-    if aggregate == AggregateKind.STRATEGY:
-        return StrategyCanonicalAdapter(dir_path / "strategy_registry.json")
     if aggregate == AggregateKind.INCIDENT:
         return IncidentCanonicalAdapter(dir_path / "incident_records.json")
     if aggregate == AggregateKind.JOB:
@@ -1484,7 +1507,10 @@ class _ReplicaInstance:
                     agg_val = AggregateKind(raw_agg)
                 except ValueError:
                     pass
-        if agg_val is not None:
+        if agg_val is not None and agg_val != AggregateKind.STRATEGY:
+            # Strategy has no path-created durable backend (see
+            # build_canonical_owner_adapter); a plain directory-backed
+            # replica has no explicit Strategy store to resolve here.
             return build_canonical_owner_adapter(agg_val, self._storage)
         return None
 
@@ -1510,6 +1536,9 @@ class _ReplicaInstance:
         # Strictly reads from durable storage via domain adapters
         if isinstance(self._storage, (str, Path)):
             for agg in AggregateKind:
+                if agg == AggregateKind.STRATEGY:
+                    # No path-created Strategy backend to probe here.
+                    continue
                 adapter = build_canonical_owner_adapter(agg, self._storage)
                 val = adapter.get(key)
                 if val is not None:
@@ -1532,6 +1561,8 @@ class _ReplicaInstance:
                 "storage_dir = sys.argv[1]\n"
                 "key = sys.argv[2]\n"
                 "for agg in AggregateKind:\n"
+                "    if agg.value == 'strategy':\n"
+                "        continue\n"
                 "    adapter = build_canonical_owner_adapter(agg, storage_dir)\n"
                 "    val = adapter.get(key)\n"
                 "    if val is not None:\n"
@@ -1558,6 +1589,9 @@ class _ReplicaInstance:
         if isinstance(self._storage, (str, Path)):
             storage_path = Path(self._storage)
             for agg in AggregateKind:
+                if agg == AggregateKind.STRATEGY:
+                    # No path-created Strategy backend to restart here.
+                    continue
                 adapter = build_canonical_owner_adapter(agg, storage_path)
                 adapter.restart_process()
         elif hasattr(self._storage, "restart_process"):
