@@ -60,6 +60,7 @@ class CanonicalStrategyWriteOwner:
                 "through the governed state machine."
             )
         record = dict(strategy)
+        caller_supplied_versions = "versions" in record
         if "strategy_id" not in record:
             record["strategy_id"] = sid
         if "id" not in record:
@@ -134,15 +135,40 @@ class CanonicalStrategyWriteOwner:
                 if entry.artifact_state != art_state:
                     raise ValueError("Lifecycle changes require the governed state transition command")
                 command_key = record.get("command_key") or record.get("idempotency_key")
+
+                def _declared_metadata(source: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+                    # ``record`` is the caller's full declared intent (the
+                    # BFF route projects the complete DTO, not a sparse
+                    # patch), so it is written through verbatim: silently
+                    # backfilling an omitted field from ``source`` would mask
+                    # a genuinely different intent as an idempotent replay.
+                    # The sole exception is registry-internal bookkeeping
+                    # that ``record`` never carries at all (the DTO has no
+                    # field for it) and that the top of this method stubs to
+                    # a fresh placeholder whenever it is absent: preserve
+                    # ``source``'s real value for those specific keys instead
+                    # of clobbering existing version history with that
+                    # placeholder.
+                    declared = dict(record)
+                    if not caller_supplied_versions and source:
+                        for internal_key in ("versions", "current_spec_version_id"):
+                            if internal_key in source:
+                                declared[internal_key] = source[internal_key]
+                    return declared
+
                 if command_key:
-                    # The canonical owner's committed receipt carries
-                    # committed_entry (the entry as it was actually written),
-                    # never an "expected_metadata" precondition field — that
-                    # field only ever existed on the retired in-memory-only
-                    # migration fixture and must not be read here. Detect a
-                    # replay of this exact command_key against the frozen
-                    # committed_entry so a later, unrelated mutation under a
-                    # different command_key cannot change the answer.
+                    # Carry the command identity through the sole canonical
+                    # digest/receipt authority
+                    # (RegistryService.get_command_receipt): a genuine replay
+                    # of this exact command_key returns the frozen
+                    # ``committed_entry`` from that receipt, never a fresh
+                    # read of whatever the entry has become since under an
+                    # unrelated command_key. The comparison against that
+                    # frozen snapshot must be exact -- a same-key request
+                    # that merely omits a field the original request carried
+                    # is a genuinely different intent, not an idempotent
+                    # no-op, so it must be rejected rather than silently
+                    # accepted (unlike a lossy dict-merge/subset comparison).
                     receipt = reg_service.get_command_receipt(
                         entry.registry_id, command_key, actor=actor,
                     )
@@ -150,24 +176,20 @@ class CanonicalStrategyWriteOwner:
                         committed_metadata = dict(
                             (receipt.get("committed_entry") or {}).get("metadata") or {}
                         )
-                        probe = dict(committed_metadata)
-                        probe.update(record)
-                        if probe != committed_metadata:
-                            from services.registry.split_api import RegistryConflictError
-                            raise RegistryConflictError(
-                                f"command_key={command_key!r} was already committed with "
-                                "different metadata for this strategy"
-                            )
-                        return
-                # First application of this command (or no idempotency key at
+                        if _declared_metadata(committed_metadata) == committed_metadata:
+                            return
+                        from services.registry.split_api import RegistryConflictError
+                        raise RegistryConflictError(
+                            f"command_key={command_key!r} was already committed with "
+                            "different metadata for this strategy"
+                        )
+                # First application of this command_key (or no command_key at
                 # all): the caller-bound CAS precondition is the entry's
                 # current durable metadata, read once here.
                 expected_metadata = entry.metadata
-                merged_meta = dict(expected_metadata or {})
-                merged_meta.update(record)
                 reg_service.update_metadata(
                     entry.registry_id, expected_metadata=expected_metadata,
-                    new_metadata=merged_meta, actor=actor,
+                    new_metadata=_declared_metadata(expected_metadata), actor=actor,
                     command_key=command_key,
                 )
 

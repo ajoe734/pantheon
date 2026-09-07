@@ -58,6 +58,37 @@ def _strategy_pg_store(case, *, bootstrap: bool = True):
     )
 
 
+@pytest.fixture
+def ranking_pg_case():
+    """Real-Postgres schema per test, mirroring ``strategy_pg_case``: skip
+    cleanly with no live database configured, otherwise prove the Ranking
+    owner's durability against the actual selected canonical backend
+    (``services.rankings.store.RankingWriteStore`` /
+    ``PostgresJsonOwnerStore`` — Generation 2 narrows this domain to that
+    single concrete backend), never a path-created secondary file-backed
+    harness."""
+    dsn = os.getenv("TEST_DATABASE_URL", "").strip()
+    if not dsn:
+        pytest.skip("TEST_DATABASE_URL is required for real Postgres Ranking owner proof")
+    psycopg = pytest.importorskip("psycopg")
+    from psycopg import sql
+
+    schema = f"ranking_owner_{uuid4().hex}"
+    table = f"{schema}.rankings"
+    try:
+        yield dsn, table
+    finally:
+        with psycopg.connect(dsn) as conn:
+            conn.execute(sql.SQL("DROP SCHEMA IF EXISTS {} CASCADE").format(sql.Identifier(schema)))
+
+
+def _ranking_pg_store(case, *, bootstrap: bool = True):
+    from services.rankings.store import RankingWriteStore
+
+    dsn, table = case
+    return RankingWriteStore(dsn=dsn, table=table, bootstrap=bootstrap)
+
+
 @pytest.mark.parametrize("state", ["draft", "candidate", "approved", "retired"])
 def test_strategy_writer_rejects_foreign_tenant_without_mutation(state):
     from fastapi import HTTPException
@@ -739,12 +770,21 @@ def test_genuine_five_owner_backfill_shadow_conflicts_and_idempotency(
 
 
 def test_genuine_five_owner_disk_backed_multi_replica_restart_durability() -> None:
-    """Normative SD §5.1, §5.2, §12.3: Prove multi-replica readback and process restart
-    across independent process replicas for four filesystem-backed domain owners
-    (Persona, Incident, Job, Ranking). Strategy has no path-created durable
-    backend — its equivalent real cross-process restart/multi-replica proof is
-    ``test_strategy_owner_postgres_multi_replica_restart_durability`` below,
-    gated on a real Postgres instance instead of faking filesystem durability.
+    """Normative SD §5.1, §5.2, §12.3: Prove multi-replica readback and process
+    restart across independent process replicas for the domain-agnostic
+    ``OverlayMigrationEngine``/adapter framework, using the two aggregates
+    whose actual accepted production owner genuinely is filesystem-backed
+    (Persona -- ``services.persona.write_owner.PersistentPersonaOwner`` --
+    and Incident -- ``services.incident.incident.IncidentStore``), plus Job,
+    which has no separate accepted production owner module of its own (this
+    migration's own durable JSON file store is it). Strategy and Ranking each
+    have a real accepted Postgres-backed production owner and no
+    path-created durable backend of their own; their equivalent real
+    cross-process restart/multi-replica proofs are
+    ``test_strategy_owner_postgres_multi_replica_restart_durability`` and
+    ``test_ranking_owner_postgres_multi_replica_restart_durability`` below,
+    each gated on a real Postgres instance instead of faking filesystem
+    durability for those two.
     """
     with tempfile.TemporaryDirectory() as td:
         harness = MultiReplicaReadbackHarness(shared_durable_storage=td)
@@ -787,6 +827,54 @@ def test_genuine_five_owner_disk_backed_multi_replica_restart_durability() -> No
             readback_beta = replica_beta.read_canonical(key)
             assert readback_beta is not None
             assert readback_beta == replica_alpha.read_canonical(key)
+
+
+def test_ranking_owner_postgres_multi_replica_restart_durability(ranking_pg_case) -> None:
+    """Ranking's counterpart to the filesystem-backed five-owner restart test
+    above: real cross-process restart and multi-replica readback proven
+    against the actual selected canonical Postgres owner
+    (``RankingWriteStore`` / ``PostgresJsonOwnerStore``), never the
+    path-created ``FileBackedPostgresJsonOwnerStore`` secondary durable
+    backend used only for the domain-agnostic backfill/shadow-compare
+    engine tests above."""
+    import subprocess
+    import sys
+
+    dsn, table = ranking_pg_case
+    adapter = RankingCanonicalAdapter(_ranking_pg_store(ranking_pg_case))
+
+    record = {
+        "ranking_id": "rank-postgres-durable-1",
+        "title": "Ranking Postgres Durable",
+        "criteria": "sharpe",
+        "status": "active",
+        "tenant_id": "tenant-corp",
+    }
+    assert adapter.insert(record) is True
+
+    # Genuine subprocess restart: a brand new Python process reconnects to
+    # the same DSN/table with zero in-process state carried over.
+    adapter.restart_process()
+
+    script = (
+        "import json\n"
+        "from services.rankings.store import RankingWriteStore\n"
+        f"store = RankingWriteStore(dsn={dsn!r}, table={table!r}, bootstrap=False)\n"
+        "rankings = [r.__dict__ for r in store.list_rankings()]\n"
+        "print(json.dumps(rankings, default=str))\n"
+    )
+    res = subprocess.run([sys.executable, "-c", script], capture_output=True, text=True, check=True)
+    readback_proc = json.loads(res.stdout)
+    assert len(readback_proc) == 1
+    assert readback_proc[0]["ranking_id"] == "rank-postgres-durable-1"
+
+    # A second, completely independent replica (fresh store, same schema)
+    # observes the exact same state without any local overlay.
+    replica_beta = RankingCanonicalAdapter(_ranking_pg_store(ranking_pg_case, bootstrap=False))
+    readback_beta = replica_beta.get("rank-postgres-durable-1")
+    assert readback_beta is not None
+    assert readback_beta["ranking_id"] == "rank-postgres-durable-1"
+    assert readback_beta["title"] == "Ranking Postgres Durable"
 
 
 def test_strategy_owner_postgres_multi_replica_restart_durability(strategy_pg_case) -> None:

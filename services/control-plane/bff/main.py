@@ -19271,6 +19271,22 @@ async def stream_generic_events(
     _require_read_role(identity)
 
     return _handle_sse_stream(channel, _sse_buffers[channel], _sse_subscribers[channel], last_event_id)
+
+
+async def stream_approval_events(
+    last_event_id: Optional[str] = None,
+    authorization: Optional[str] = None,
+):
+    """Per-channel alias for the generic approval-channel SSE stream."""
+    return await stream_generic_events("approval", last_event_id, authorization)
+
+
+async def stream_ask_events(
+    last_event_id: Optional[str] = None,
+    authorization: Optional[str] = None,
+):
+    """Per-channel alias for the generic ask-channel SSE stream."""
+    return await stream_generic_events("ask", last_event_id, authorization)
 _EVOL_EXP_BFF_IDEMPOTENCY: Dict[str, Dict[str, Any]] = {}
 def _evol_exp_bff_idempotency_check(
     resolved_key: str,
@@ -22337,19 +22353,22 @@ async def bff_events_stream_alias(
 
 
 from .events.router import create_events_router as _create_events_router
-app.include_router(
-    _create_events_router(
-        read_surface=app_deps.read_surface,
-        command_store=app_deps.command_store,
-        get_read_store=lambda: read_store,
-        extract_identity=_extract_identity,
-        require_read_role=_require_read_role,
-        bff_error=_bff_error,
-        utc_now=utc_now,
-        snapshot_meta=_snapshot_meta,
-        include_domain_sse_aliases=False,
-    )
+_events_router = _create_events_router(
+    read_surface=app_deps.read_surface,
+    command_store=app_deps.command_store,
+    get_read_store=lambda: read_store,
+    extract_identity=_extract_identity,
+    require_read_role=_require_read_role,
+    bff_error=_bff_error,
+    utc_now=utc_now,
+    snapshot_meta=_snapshot_meta,
+    sse_buffers=_sse_buffers,
+    sse_subscribers=_sse_subscribers,
+    sse_channels=SSE_CHANNELS,
+    handle_sse_stream=_handle_sse_stream,
+    include_domain_sse_aliases=False,
 )
+app.include_router(_events_router)
 from .evolution.router import create_evolution_router as _create_evolution_router
 app.include_router(
     _create_evolution_router(
@@ -22462,7 +22481,7 @@ _runtime_router = _create_runtime_router(
 )
 app.routes.extend(_runtime_router.routes)
 from .deployment.router import create_deployment_router as _create_deployment_router
-app.include_router(
+_deployment_router = (
     _create_deployment_router(
         queries=app_deps.deployment_queries,
         commands=app_deps.deployment_commands,
@@ -22495,6 +22514,7 @@ app.include_router(
         surface_degradation_reason=_surface_degradation_reason,
     )
 )
+app.include_router(_deployment_router)
 from .command_adapters.router import (
     create_action_command_router as _create_action_command_router,
     create_command_adapters_router as _create_command_adapters_router,
@@ -22995,6 +23015,31 @@ app.include_router(_agora_router)
 interaction_lifecycle = _agora_router.interaction_lifecycle
 workshop_store = _agora_router.workshop_store
 proposal_store = _agora_router.proposal_store
+
+
+def _mounted_router_endpoint(router: Any, path: str) -> Any:
+    """Return the real handler mounted at ``path`` on an already-built router.
+
+    Re-exposes the exact ASGI-registered callable under its historical
+    direct-call name instead of re-implementing SSE alias logic here.
+    """
+    for route in router.routes:
+        if getattr(route, "path", None) == path:
+            return route.endpoint
+    raise RuntimeError(f"No route registered for path {path!r} on {router!r}")
+
+
+stream_bff_events = _mounted_router_endpoint(_events_router, "/bff/events/stream")
+bff_sse_notifications_alias = _mounted_router_endpoint(_events_router, "/bff/sse/notifications")
+bff_sse_cc_kpi_alias = _mounted_router_endpoint(_events_router, "/bff/sse/command-center/kpi")
+bff_sse_cc_events_alias = _mounted_router_endpoint(_events_router, "/bff/sse/command-center/events")
+bff_sse_job_progress_alias = _mounted_router_endpoint(_events_router, "/bff/sse/jobs/{jobId}/progress")
+bff_sse_alerts_alias = _mounted_router_endpoint(_events_router, "/bff/sse/alerts")
+bff_sse_incident_timeline_alias = _mounted_router_endpoint(_events_router, "/bff/sse/incidents/{incidentId}/timeline")
+bff_sse_review_updates_alias = _mounted_router_endpoint(_events_router, "/bff/sse/review/updates")
+bff_sse_deployment_events_alias = _mounted_router_endpoint(_deployment_router, "/bff/sse/deployment/events")
+bff_sse_agora_signals_alias = _mounted_router_endpoint(_agora_router, "/bff/sse/agora/signals")
+bff_sse_agora_session_alias = _mounted_router_endpoint(_agora_router, "/bff/sse/agora/sessions/{sessionId}")
 
 import types as _types
 class _BffMainModule(_types.ModuleType):

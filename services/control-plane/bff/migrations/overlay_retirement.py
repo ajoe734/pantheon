@@ -1440,6 +1440,26 @@ class RankingCanonicalAdapter:
 
     def restart_process(self) -> None:
         """Simulate process restart with genuine subprocess verification against RankingWriteStore."""
+        dsn = getattr(self._backend, "dsn", None)
+        if dsn:
+            # Real Postgres-backed store: a brand new Python process
+            # reconnects to the exact same DSN/table with zero in-process
+            # state carried over -- the genuine fresh-process restart proof
+            # for the actual selected canonical Ranking owner
+            # (``services.rankings.store.RankingWriteStore`` /
+            # ``PostgresJsonOwnerStore``), never the path-created secondary
+            # file-backed harness below.
+            table = getattr(self._backend, "table_name", "rankings.rankings")
+            script = (
+                "import sys\n"
+                "from services.rankings.store import RankingWriteStore\n"
+                f"store = RankingWriteStore(dsn={dsn!r}, table={table!r}, bootstrap=False)\n"
+                "rankings = store.list_rankings()\n"
+                "print(f'OK:{len(rankings)}')\n"
+            )
+            res = subprocess.run([sys.executable, "-c", script], capture_output=True, text=True, check=True)
+            assert "OK:" in res.stdout.strip()
+            return
         if self._path is None:
             return
         script = (
