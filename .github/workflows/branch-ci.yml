@@ -236,6 +236,23 @@ jobs:
         with:
           python-version: "3.12"
 
+      - name: Provision real worker sandbox
+        timeout-minutes: 5
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends bubblewrap apparmor-profiles
+          dpkg-query --show --showformat='${Package} ${Version}\n' bubblewrap apparmor apparmor-profiles
+          # Ubuntu supplies this per-binary profile for restricted userns hosts.
+          # Load it unchanged; retain host-wide restrictions and child capability denial.
+          profile=/usr/share/apparmor/extra-profiles/bwrap-userns-restrict
+          sha256sum "$profile"
+          sudo apparmor_parser --replace "$profile"
+          test "$(command -v bwrap)" = /usr/bin/bwrap
+          /usr/bin/bwrap --version
+          timeout 5s /usr/bin/bwrap --die-with-parent --unshare-pid \
+            --ro-bind / / --dev-bind /dev /dev --proc /proc -- /bin/true
+          echo "Real worker sandbox capability probe passed (exit 0)"
+
       - name: Install deps (best-effort)
         run: |
           if [[ -f requirements.txt ]]; then
@@ -249,6 +266,39 @@ jobs:
           # Keep these explicit: requirements.txt intentionally does not pull
           # product service dependencies into a tooling-only change.
           python3 -m pip install cryptography pyyaml "pydantic>=2" pytest
+
+      # Run the existing real boundary cases even for a workflow-only change.
+      # unittest normally treats skipped tests as success; these are required.
+      - name: Verify real worker sandbox boundaries
+        timeout-minutes: 3
+        env:
+          PANTHEON_SANDBOX_BINARY: /usr/bin/bwrap
+          SOURCE_BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
+          SOURCE_HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          echo "Source base=${SOURCE_BASE_SHA} head=${SOURCE_HEAD_SHA} checkout=$(git rev-parse HEAD)"
+          manifest=docs/deployment/evidence/OPS-CI-WORKER-SANDBOX-PREREQUISITE-001/evidence.json
+          git rev-parse "${SOURCE_HEAD_SHA}:${manifest}"
+          PYTHONPATH=.orchestrator python3 - <<'PY'
+          import json
+          import unittest
+          import test_worker_runner_heartbeat as tests
+
+          if tests._FUNCTIONAL_BWRAP != "/usr/bin/bwrap":
+              raise SystemExit("Required real bubblewrap capability is unavailable")
+          names = [
+              "TestCoordinationRootValidation.test_provider_cannot_chmod_or_write_command_runtime",
+              "TestCrossRepoLeasedWorktreeWriteBoundary.test_reproduce_and_prevent_20260827_reviewer_checkout_mutation",
+              "TestCrossRepoLeasedWorktreeWriteBoundary.test_prevent_cross_repo_file_mutations",
+          ]
+          suite = unittest.defaultTestLoader.loadTestsFromNames(names, tests)
+          result = unittest.TextTestRunner(verbosity=2).run(suite)
+          passed = result.wasSuccessful() and not result.skipped and result.testsRun == len(names)
+          print(json.dumps({"tests": result.testsRun, "skips": len(result.skipped),
+                            "failures": len(result.failures), "errors": len(result.errors),
+                            "exit_code": 0 if passed else 1}))
+          raise SystemExit(0 if passed else 1)
+          PY
 
       - name: Classify changed components
         id: boundary
