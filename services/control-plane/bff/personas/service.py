@@ -784,6 +784,13 @@ class _PersonaOwnerHttpTransport:
             "X-Tenant-Id": tenant_id,
             "X-Pantheon-Service": "control-plane-bff",
         }
+        idempotency_key = str(
+            (payload or {}).get("idempotency_key")
+            or (payload or {}).get("idempotencyKey")
+            or ""
+        ).strip()
+        if idempotency_key:
+            headers["Idempotency-Key"] = idempotency_key
         if owner in {"capital", "registry", "governance"}:
             headers["Authorization"] = f"Bearer {self._service_jwt(owner)}"
         else:
