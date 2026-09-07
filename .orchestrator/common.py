@@ -1309,6 +1309,28 @@ def canonical_commit_subject_prefix(task_id: str | None, max_len: int = 72) -> s
     return _compacted_task_prefix(clean_prefix, max_len)
 
 
+def commit_subject_prefix_variants(task_id: str | None, max_len: int = 72) -> tuple[str, str]:
+    """Return the two subject prefixes `bound_commit_subject` can emit for task_id.
+
+    `bound_commit_subject` only compacts the prefix as a last resort: it
+    first tries the full, uncompacted normalized task_id, and only falls
+    back to the compacted form when the literal candidate (full prefix plus
+    the *actual* description) still exceeds `max_len`. That means whether a
+    given task_id's prefix is compacted or not depends on the description
+    length, not on the task_id alone -- e.g. a 61-char id paired with a
+    3-char description ("fix") keeps its full, uncompacted 61-char prefix
+    (61 + 2 + 3 = 66 <= 72), while the same id paired with a longer
+    description gets the compacted prefix instead.
+
+    A validator that only has the task_id (not the description that
+    produced the subject being checked) cannot know which form to expect,
+    so it must accept either of the two: the full normalized prefix, or
+    `canonical_commit_subject_prefix`'s deterministic compacted form.
+    """
+    clean_prefix = _normalized_task_prefix(task_id)
+    return clean_prefix, canonical_commit_subject_prefix(task_id, max_len)
+
+
 def bound_commit_subject(task_id: str | None, description: str | None, max_len: int = 72) -> str:
     r"""Format a commit subject to guarantee max_len (default 72 chars) and match SUBJECT_PATTERN.
 

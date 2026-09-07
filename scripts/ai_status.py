@@ -193,6 +193,7 @@ from common import (
     activity_audit_source_paths_unlocked,
     append_activity_log_entries_unlocked,
     canonical_commit_subject_prefix,
+    commit_subject_prefix_variants,
     canonical_task_state_lock_path,
     durable_write_bytes,
     first_symlink_component,
@@ -210,9 +211,25 @@ from common import (
 )
 
 GIT_TOOLS_DIR = ROOT / "scripts" / "git"
-if str(GIT_TOOLS_DIR) not in sys.path:
-    sys.path.insert(0, str(GIT_TOOLS_DIR))
-from check_commit_trailers import parse_trailers as parse_commit_trailers
+
+
+def _commit_trailer_checker():
+    """Lazily import the shared Git commit-identity checker.
+
+    Deferred (rather than a module-level import) so a process that never
+    reaches `done`-finalize commit-identity validation -- for example the
+    reopen/handoff CLI paths -- does not require
+    scripts/git/check_commit_trailers.py to be importable. A command root
+    copy that only carries `scripts/*.py` (no `scripts/git/`) must still be
+    able to run every ai_status.py command except the one that actually
+    needs this module.
+    """
+    if str(GIT_TOOLS_DIR) not in sys.path:
+        sys.path.insert(0, str(GIT_TOOLS_DIR))
+    import check_commit_trailers
+
+    return check_commit_trailers
+
 
 # Derived dashboard rendering intentionally uses an atomic projection-only
 # reader. Canonical mutation/admission callers must use runtime_state's locked
@@ -3430,30 +3447,66 @@ def collect_done_delivery_metadata(task: dict[str, Any], actor: str) -> dict[str
         }
 
         task_id = str(task.get("id") or "").strip()
+        trailer_skip_reason = commit_subject_skips_trailer_check(subject)
         if commit_rules["subject_must_include_task_id"] and task_id:
-            # A long task_id cannot fit verbatim into a bounded (<=72 char)
-            # subject line (see docs/operations/commit-identity-contract.md);
-            # `bound_commit_subject` compacts the subject's prefix instead of
-            # dropping the id, so accept either the literal id (the common,
-            # short-id case, kept for backward compatibility with subjects
-            # that legitimately embed it outside a strict prefix position,
-            # e.g. a merge commit's branch name) or that same deterministic
-            # bounded prefix. The full id is still required in the `Task-ID:`
-            # trailer, checked below.
-            expected_bounded_prefix = canonical_commit_subject_prefix(task_id)
-            if task_id not in subject and expected_bounded_prefix not in subject:
+            if trailer_skip_reason is not None:
+                # A subject exempt from the trailer *presence* requirement (a
+                # merge commit, an OPS-DOC/OPS-REBASE housekeeping commit,
+                # ...) is not required to follow the "<TASK-ID>: <summary>"
+                # prefix convention, so accept the task id embedded anywhere
+                # in the subject -- e.g. a merge commit's branch name.
+                subject_identifies_task = task_id in subject
+            else:
+                # A long task_id cannot fit verbatim into a bounded (<=72
+                # char) subject line (see
+                # docs/operations/commit-identity-contract.md);
+                # `bound_commit_subject` compacts the subject's prefix
+                # instead of dropping the id, so accept either the literal
+                # id or that same deterministic bounded prefix -- matched
+                # exactly against the subject's own prefix, not merely as a
+                # substring anywhere in the subject. A substring match would
+                # accept a subject like 'XYZ-001: mentions ABC-001' for
+                # task_id ABC-001, which names a different task. The full id
+                # is still required in the `Task-ID:` trailer, checked below.
+                full_prefix, bounded_prefix = commit_subject_prefix_variants(task_id)
+                subject_identifies_task = subject.startswith(
+                    (task_id, full_prefix, bounded_prefix)
+                )
+            if not subject_identifies_task:
                 raise SystemExit(
                     f"Cannot finalize task: latest commit subject must include task id {task_id}."
                 )
 
-        trailer_skip_reason = commit_subject_skips_trailer_check(subject)
-        metadata_fields = parse_commit_trailers(body)
+        checker = _commit_trailer_checker()
+        metadata_fields = checker.parse_trailers(body)
         expected_fields = {
             "LLM-Agent": actor,
             "Task-ID": task_id,
             "Reviewer": canonical_agent_name(task.get("reviewer")),
         }
         required_fields = commit_rules.get("required_body_fields", [])
+
+        # A trailer line that appears more than once with conflicting values
+        # must never resolve silently to "whichever value came last" -- that
+        # is exactly how a forged/duplicated Task-ID trailer could bind to
+        # the wrong task while looking identical to CI's own duplicate-
+        # trailer rejection.
+        duplicate_problems = checker.duplicate_trailer_problems(body, tuple(required_fields))
+        if duplicate_problems:
+            raise SystemExit("Cannot finalize task: " + "; ".join(duplicate_problems))
+
+        if task_id and trailer_skip_reason is not None:
+            # The trailer-presence exemption above means trailers may be
+            # absent, not that a present Task-ID trailer may lie: a subject
+            # matching the OPS-DOC/OPS-REBASE/merge exemption must still not
+            # carry a Task-ID trailer naming a different task.
+            present_task_id = metadata_fields.get("Task-ID", "").strip()
+            if present_task_id and present_task_id != task_id:
+                raise SystemExit(
+                    f"Cannot finalize task: commit Task-ID trailer '{present_task_id}' "
+                    f"does not match task id '{task_id}'."
+                )
+
         missing_fields: list[str] = []
         mismatched_fields: list[tuple[str, str]] = []
         commit_timestamp = ""
@@ -6441,11 +6494,34 @@ def validate_merged_tooling_done(task: dict[str, Any]) -> dict[str, Any]:
         cwd=Path(delivery["repository_path"]),
         failure_message="Cannot reconcile task: tooling delivery commit message is unavailable.",
     )
-    task_id_pattern = rf"(?<![A-Za-z0-9_-]){re.escape(task_id)}(?![A-Za-z0-9_-])"
-    if not task_id or re.search(task_id_pattern, commit_message) is None:
+    if not task_id:
         raise SystemExit(
             "Cannot reconcile task: tooling delivery commit does not bind the task id."
         )
+    body = "\n".join(commit_message.splitlines()[1:])
+    checker = _commit_trailer_checker()
+    duplicate_problems = checker.duplicate_trailer_problems(body, ("Task-ID",))
+    if duplicate_problems:
+        raise SystemExit("Cannot reconcile task: " + "; ".join(duplicate_problems))
+    trailer_task_id = checker.parse_trailers(body).get("Task-ID", "").strip()
+    if trailer_task_id:
+        # A present Task-ID trailer is canonical identity and must be exact
+        # -- a whole-message substring search (the prior behavior) accepted
+        # a subject/body that merely mentioned the right id anywhere while
+        # a Task-ID trailer named a different task entirely.
+        if trailer_task_id != task_id:
+            raise SystemExit(
+                "Cannot reconcile task: tooling delivery commit Task-ID trailer "
+                f"'{trailer_task_id}' does not match task id '{task_id}'."
+            )
+    else:
+        # Legacy tooling commits without a Task-ID trailer fall back to a
+        # word-boundary match against the whole message.
+        task_id_pattern = rf"(?<![A-Za-z0-9_-]){re.escape(task_id)}(?![A-Za-z0-9_-])"
+        if re.search(task_id_pattern, commit_message) is None:
+            raise SystemExit(
+                "Cannot reconcile task: tooling delivery commit does not bind the task id."
+            )
     return {
         "recorded_at": iso_now(),
         "reconciled_from_tooling_delivery": True,

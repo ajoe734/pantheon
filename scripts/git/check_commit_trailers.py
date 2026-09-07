@@ -35,7 +35,7 @@ CONFIG_FILE = ROOT / ".orchestrator" / "config.json"
 ORCHESTRATOR_DIR = ROOT / ".orchestrator"
 if str(ORCHESTRATOR_DIR) not in sys.path:
     sys.path.insert(0, str(ORCHESTRATOR_DIR))
-from common import canonical_commit_subject_prefix  # noqa: E402
+from common import canonical_commit_subject_prefix, commit_subject_prefix_variants  # noqa: E402
 
 DEFAULT_REQUIRED = ("LLM-Agent", "Task-ID", "Reviewer")
 SUBJECT_PATTERN = re.compile(r"^[A-Z][A-Z0-9-]*[A-Z0-9]:\s+\S")
@@ -142,12 +142,12 @@ def check_message(message: str, required: tuple[str, ...], prefix_required: bool
 
     task_id_trailer = trailers.get("Task-ID", "").strip()
     if prefix_required and task_id_trailer:
-        expected_prefix = canonical_commit_subject_prefix(task_id_trailer)
+        full_prefix, compacted_prefix = commit_subject_prefix_variants(task_id_trailer)
         actual_prefix = subject.split(":", 1)[0].strip()
-        if actual_prefix != expected_prefix:
+        if actual_prefix not in (full_prefix, compacted_prefix):
             problems.append(
                 f"subject prefix '{actual_prefix}' does not match Task-ID trailer "
-                f"'{task_id_trailer}' (expected bounded prefix '{expected_prefix}')"
+                f"'{task_id_trailer}' (expected '{full_prefix}' or bounded '{compacted_prefix}')"
             )
 
     problems.extend(check_independent_review(trailers))

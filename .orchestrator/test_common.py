@@ -3005,5 +3005,56 @@ class CanonicalCommitSubjectPrefixTests(unittest.TestCase):
         self.assertEqual(common.canonical_commit_subject_prefix(None), "TASK")
 
 
+class CommitSubjectPrefixVariantsTests(unittest.TestCase):
+    """OPS-COMMIT-IDENTITY-001: a validator without the description must
+    accept either prefix `bound_commit_subject` can actually emit.
+
+    `bound_commit_subject` only compacts a task_id's prefix as a last
+    resort -- it first tries the full, uncompacted normalized task_id and
+    only falls back to the compacted form when the *actual* description is
+    long enough that the literal candidate still exceeds 72 chars. That
+    means the same 61-char task_id produces an uncompacted 61-char prefix
+    when paired with a short description ("fix") and a compacted 35-char
+    prefix when paired with a longer one. `canonical_commit_subject_prefix`
+    alone assumed compaction was forced once the id crossed ~60 chars
+    regardless of the actual description, so a genuine formatter-emitted
+    subject with a short description could fail a validator that only
+    compared against that single "expected" value.
+    """
+
+    BOUNDARY_ID = "A" * 61
+
+    def test_short_description_keeps_full_uncompacted_prefix(self):
+        subject = common.bound_commit_subject(self.BOUNDARY_ID, "fix")
+        actual_prefix = subject.split(":", 1)[0]
+        self.assertEqual(actual_prefix, self.BOUNDARY_ID)
+        self.assertLessEqual(len(subject), 72)
+
+        full_prefix, compacted_prefix = common.commit_subject_prefix_variants(
+            self.BOUNDARY_ID
+        )
+        self.assertEqual(full_prefix, self.BOUNDARY_ID)
+        self.assertNotEqual(compacted_prefix, actual_prefix)
+        self.assertIn(actual_prefix, (full_prefix, compacted_prefix))
+
+    def test_longer_description_forces_compacted_prefix(self):
+        subject = common.bound_commit_subject(
+            self.BOUNDARY_ID, "implement a much longer description here"
+        )
+        actual_prefix = subject.split(":", 1)[0]
+        full_prefix, compacted_prefix = common.commit_subject_prefix_variants(
+            self.BOUNDARY_ID
+        )
+        self.assertEqual(actual_prefix, compacted_prefix)
+        self.assertIn(actual_prefix, (full_prefix, compacted_prefix))
+
+    def test_short_task_id_full_and_compacted_prefix_coincide(self):
+        full_prefix, compacted_prefix = common.commit_subject_prefix_variants(
+            "REG-002"
+        )
+        self.assertEqual(full_prefix, "REG-002")
+        self.assertEqual(compacted_prefix, "REG-002")
+
+
 if __name__ == "__main__":
     unittest.main()

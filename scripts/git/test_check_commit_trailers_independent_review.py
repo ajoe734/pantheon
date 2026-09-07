@@ -135,3 +135,27 @@ def test_rejects_conflicting_task_id_trailers() -> None:
     )
     problems = CHECK.check_message(message, REQUIRED, True)
     assert any("conflicting trailer: Task-ID" in p for p in problems), problems
+
+
+# OPS-COMMIT-IDENTITY-001 follow-up: `canonical_commit_subject_prefix` alone
+# assumed a task_id needed its prefix compacted once it crossed ~60 chars,
+# regardless of the description actually used. `bound_commit_subject` only
+# compacts as a last resort (when the literal full prefix + real description
+# still exceeds 72 chars), so a 61-char id paired with a short description
+# ("fix") legitimately keeps its full, uncompacted prefix. CI must accept
+# that genuine formatter output instead of only comparing against the
+# (here, wrongly-compacted) single expected value.
+
+
+def test_accepts_uncompacted_prefix_for_boundary_length_id_with_short_description() -> None:
+    task_id = "A" * 61
+    subject = CHECK.commit_subject_prefix_variants(task_id)[0] + ": fix"
+    assert len(subject) <= 72
+    message = (
+        f"{subject}\n"
+        "\n"
+        "LLM-Agent: Claude\n"
+        f"Task-ID: {task_id}\n"
+        "Reviewer: Codex2\n"
+    )
+    assert CHECK.check_message(message, REQUIRED, True) == []

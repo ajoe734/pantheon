@@ -6833,6 +6833,71 @@ class ReviewApprovedWorkflowTests(unittest.TestCase):
         ):
             ai_status.validate_merged_tooling_done(task)
 
+    def test_validate_merged_tooling_done_rejects_wrong_task_id_trailer(self) -> None:
+        """A whole-message substring search previously accepted a commit
+        whose subject merely *mentioned* the right task id while its
+        Task-ID trailer named a completely different task. A present
+        Task-ID trailer is canonical identity and must be exact."""
+        task = {
+            "id": "ABC-001",
+            "task_class": "development_tooling",
+        }
+        delivery = {
+            "repository_id": "pantheon",
+            "repository_slug": "ajoe734/pantheon",
+            "repository_path": "/tmp/pantheon",
+            "commit": "a" * 40,
+            "merge_target_ref": "origin/dev",
+            "merge_target_sha": "b" * 40,
+            "head_merged_to_target": True,
+        }
+        with (
+            mock.patch.object(
+                ai_status,
+                "_validated_reconcile_delivery",
+                return_value=delivery,
+            ),
+            mock.patch.object(
+                ai_status,
+                "run_git_command",
+                return_value="ABC-001: repair\n\nTask-ID: XYZ-001\n",
+            ),
+            self.assertRaisesRegex(
+                SystemExit,
+                "Task-ID trailer 'XYZ-001' does not match task id 'ABC-001'",
+            ),
+        ):
+            ai_status.validate_merged_tooling_done(task)
+
+    def test_validate_merged_tooling_done_rejects_conflicting_task_id_trailers(self) -> None:
+        task = {
+            "id": "ABC-001",
+            "task_class": "development_tooling",
+        }
+        delivery = {
+            "repository_id": "pantheon",
+            "repository_slug": "ajoe734/pantheon",
+            "repository_path": "/tmp/pantheon",
+            "commit": "a" * 40,
+            "merge_target_ref": "origin/dev",
+            "merge_target_sha": "b" * 40,
+            "head_merged_to_target": True,
+        }
+        with (
+            mock.patch.object(
+                ai_status,
+                "_validated_reconcile_delivery",
+                return_value=delivery,
+            ),
+            mock.patch.object(
+                ai_status,
+                "run_git_command",
+                return_value="ABC-001: repair\n\nTask-ID: ABC-001\nTask-ID: XYZ-001\n",
+            ),
+            self.assertRaisesRegex(SystemExit, "conflicting trailer: Task-ID"),
+        ):
+            ai_status.validate_merged_tooling_done(task)
+
     def _init_repo(self, root: Path, *, remote: str, files: dict[str, str]) -> str:
         root.mkdir(parents=True)
         subprocess.run(["git", "init", "-b", "dev"], cwd=root, check=True, capture_output=True)
@@ -9834,6 +9899,65 @@ class DeliveryMetadataValidationTests(unittest.TestCase):
             self.assertRaisesRegex(
                 SystemExit,
                 f"latest commit subject must include task id {re.escape(long_task_id)}",
+            ),
+        ):
+            ai_status.collect_done_delivery_metadata(task, "Claude")
+
+    def test_collect_done_delivery_metadata_rejects_conflicting_task_id_trailers(self) -> None:
+        """A forged/duplicated Task-ID trailer must not silently resolve to
+        "whichever value came last" -- the same conflict CI already rejects."""
+        responses = iter(
+            [
+                "task/ABC-001",
+                "a" * 40,
+                "ABC-001: repair",
+                "LLM-Agent: Claude\nTask-ID: XYZ-001\nTask-ID: ABC-001\nReviewer: Codex2\n",
+                "Claude",
+                "claude@example.com",
+            ]
+        )
+        task = {
+            "id": "ABC-001",
+            "owner": "Claude",
+            "reviewer": "Codex2",
+            "status": "in_progress",
+        }
+
+        with (
+            mock.patch.dict(os.environ, {"TASK_REQUIRE_MERGED_PR": "false"}, clear=False),
+            mock.patch.object(ai_status, "run_git_command", side_effect=lambda *args, **kwargs: next(responses)),
+            self.assertRaisesRegex(SystemExit, "conflicting trailer: Task-ID"),
+        ):
+            ai_status.collect_done_delivery_metadata(task, "Claude")
+
+    def test_collect_done_delivery_metadata_rejects_wrong_task_id_under_style_exemption(self) -> None:
+        """A subject exempt from the trailer-presence requirement (e.g. the
+        documented OPS-DOC-* housekeeping style) must still not carry a
+        Task-ID trailer that names a different task -- the exemption means
+        trailers may be absent, not that a present one may lie."""
+        responses = iter(
+            [
+                "task/OPS-DOC-ABC-001",
+                "a" * 40,
+                "OPS-DOC-ABC-001: repair",
+                "Task-ID: XYZ-001\n",
+                "Claude",
+                "claude@example.com",
+            ]
+        )
+        task = {
+            "id": "OPS-DOC-ABC-001",
+            "owner": "Claude",
+            "reviewer": "Codex2",
+            "status": "in_progress",
+        }
+
+        with (
+            mock.patch.dict(os.environ, {"TASK_REQUIRE_MERGED_PR": "false"}, clear=False),
+            mock.patch.object(ai_status, "run_git_command", side_effect=lambda *args, **kwargs: next(responses)),
+            self.assertRaisesRegex(
+                SystemExit,
+                "commit Task-ID trailer 'XYZ-001' does not match task id 'OPS-DOC-ABC-001'",
             ),
         ):
             ai_status.collect_done_delivery_metadata(task, "Claude")

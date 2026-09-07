@@ -94,14 +94,15 @@ except ModuleNotFoundError as exc:
     raise
 
 try:
-    # OPS-COMMIT-IDENTITY-001: added alongside this file. A worker whose
-    # PANTHEON_COMMAND_ROOT still points at a command runtime pinned before
-    # that task promoted keeps the prior length-only preflight instead of
-    # crashing; the identity cross-check activates automatically once the
-    # pinned runtime is promoted.
-    from common import canonical_commit_subject_prefix
-except ImportError:
-    canonical_commit_subject_prefix = None
+    from common import canonical_commit_subject_prefix, commit_subject_prefix_variants
+except ModuleNotFoundError as exc:
+    if exc.name == "common":
+        raise ModuleNotFoundError(
+            "worker_commit.py requires Pantheon .orchestrator/common.py; "
+            "set PANTHEON_COMMAND_ROOT to the command runtime when committing "
+            "from a different repository"
+        ) from exc
+    raise
 
 
 def _git(*args: str, env: dict[str, str] | None = None, check: bool = True) -> subprocess.CompletedProcess:
@@ -293,25 +294,29 @@ def main() -> int:
         return 5
 
     # A long --task-id cannot fit verbatim into a bounded (<=72 char) subject;
-    # the shared bound_commit_subject/canonical_commit_subject_prefix
+    # the shared bound_commit_subject/commit_subject_prefix_variants
     # convention compacts the subject's prefix itself in that case rather
     # than dropping the id, so accept either the literal id or that same
-    # deterministic bounded prefix. This is the same check used by
-    # check_commit_trailers.py and the canonical `done` finalize gate, so a
-    # subject cannot pass this wrapper and then fail those later.
-    if canonical_commit_subject_prefix is not None:
-        bounded_prefix = canonical_commit_subject_prefix(args.task_id)
-        if args.task_id not in subject and bounded_prefix not in subject:
-            print(
-                f"ERROR: commit subject does not identify task {args.task_id}: '{subject}'",
-                file=sys.stderr,
-            )
-            print(
-                f"Hint: start the subject with '{bounded_prefix}: ...' and keep "
-                f"the full id in the trailer (Task-ID: {args.task_id}).",
-                file=sys.stderr,
-            )
-            return 5
+    # deterministic bounded prefix -- matched exactly against the subject's
+    # own prefix (the text before its first ':'), not merely as a substring
+    # anywhere in the subject. A substring match would accept a subject like
+    # 'XYZ-001: mentions ABC-001' for task_id ABC-001, which names a
+    # different task and which check_commit_trailers.py already rejects.
+    # This is the same check used there and by the canonical `done` finalize
+    # gate, so a subject cannot pass this wrapper and then fail those later.
+    full_prefix, bounded_prefix = commit_subject_prefix_variants(args.task_id)
+    actual_prefix = subject.split(":", 1)[0].strip()
+    if actual_prefix not in (args.task_id, full_prefix, bounded_prefix):
+        print(
+            f"ERROR: commit subject does not identify task {args.task_id}: '{subject}'",
+            file=sys.stderr,
+        )
+        print(
+            f"Hint: start the subject with '{bounded_prefix}: ...' and keep "
+            f"the full id in the trailer (Task-ID: {args.task_id}).",
+            file=sys.stderr,
+        )
+        return 5
 
     task_id_trailer_values = sorted(
         {value.strip() for value in re.findall(r"^Task-ID:\s+(.+)$", body, re.MULTILINE)}
