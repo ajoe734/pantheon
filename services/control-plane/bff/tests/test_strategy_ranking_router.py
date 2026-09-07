@@ -18,34 +18,45 @@ import tempfile
 from contextlib import contextmanager
 from pathlib import Path
 
+os.environ.setdefault("REGISTRY_STORE_BACKEND", "memory")
+
 from fastapi.testclient import TestClient
+import pytest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
 import main as bff_main  # noqa: E402
-from ports import create_in_memory_read_surface_ports  # noqa: E402
+from ports import create_in_memory_read_surface_ports, create_strategy_write_owner  # noqa: E402
 from services.source_ingestion.strategy_seed_builder import (  # noqa: E402
     StrategySpecSeed,
     StrategySpecSeedStatus,
 )
 from services.source_ingestion.strategy_seed_store import StrategySpecSeedStore  # noqa: E402
 
-OPERATOR_HEADERS = {"Authorization": "Bearer strat-rank-op:operator"}
+OPERATOR_HEADERS = {"Authorization": "Bearer strat-rank-op:operator:tenant-corp"}
 IDEMPOTENT_HEADERS = {**OPERATOR_HEADERS, "Idempotency-Key": "strat-rank-test-key-1"}
 
 
 @contextmanager
-def _client():
+def _client(store: Optional[Any] = None):
     original_store = bff_main.read_store
-    bff_main.read_store = create_in_memory_read_surface_ports()
+    original_writer = getattr(bff_main, "strategy_write_owner", None)
+    read_store = store if store is not None else create_in_memory_read_surface_ports()
+    bff_main.read_store = read_store
+    if store is not None:
+        if hasattr(store, "upsert_strategy") or hasattr(store, "create_strategy_spec"):
+            bff_main.strategy_write_owner = create_strategy_write_owner(store=store)
+        else:
+            bff_main.strategy_write_owner = None
+    else:
+        bff_main.strategy_write_owner = create_strategy_write_owner()
     bff_main._STRATEGY_PERSONA_BFF_IDEMPOTENCY.clear()
-    bff_main._STRATEGY_BFF_OVERLAY.clear()
     try:
         yield TestClient(bff_main.app)
     finally:
         bff_main.read_store = original_store
+        bff_main.strategy_write_owner = original_writer
         bff_main._STRATEGY_PERSONA_BFF_IDEMPOTENCY.clear()
-        bff_main._STRATEGY_BFF_OVERLAY.clear()
 
 
 def _seed(seed_id: str, *, status=StrategySpecSeedStatus.DRAFT) -> StrategySpecSeed:
@@ -124,6 +135,14 @@ def test_bff_strategy_create_list_get_round_trip() -> None:
         assert create_resp.status_code == 201, create_resp.text
         strategy_id = create_resp.json()["data"]["id"]
 
+        rks = getattr(bff_main.read_store, "research_knowledge_source", None)
+        if rks and hasattr(rks, "_strategy_specs"):
+            rks._strategy_specs[strategy_id] = {
+                "strategy_id": strategy_id,
+                "versions": [{"version_id": "v1", "lifecycle_state": "draft", "name": "Momentum Alpha", "persona_ids": []}],
+                "current_version_id": "v1",
+            }
+
         list_resp = client.get("/bff/strategies", headers=OPERATOR_HEADERS)
         assert list_resp.status_code == 200
         ids = [item["id"] for item in list_resp.json()["data"]]
@@ -133,6 +152,58 @@ def test_bff_strategy_create_list_get_round_trip() -> None:
         assert get_resp.status_code == 200
         assert get_resp.json()["data"]["name"] == "Momentum Alpha"
         assert get_resp.json()["data"]["risk"] == "high"
+
+
+def test_strategy_routes_bind_verified_principal_and_reject_foreign_patch(monkeypatch):
+    from services.registry.storage import RegistryStore
+    from services.control_plane.bff.ports.strategy_write_owner import CanonicalStrategyWriteOwner
+
+    store = RegistryStore()
+    writer = CanonicalStrategyWriteOwner(store)
+    with _client() as client:
+        monkeypatch.setattr(bff_main, "strategy_write_owner", writer)
+        create = client.post("/bff/strategies", headers={
+            "Authorization": "Bearer tenant-owner:operator:tenant-a", "Idempotency-Key": "tenant-create",
+        }, json={"name": "Original", "actor": {"tenant": "tenant-b", "roles": ["admin"]},
+                 "owner": "display-owner", "tenant_id": "tenant-b"})
+        assert create.status_code == 201, create.text
+        sid = create.json()["data"]["id"]
+        before = store.list_by_strategy(sid)[0].to_dict()
+        assert before["owner_tenant"] == "tenant-a"
+        assert before["last_actor"] == {"actor_id": "tenant-owner", "tenant": "tenant-a",
+                                        "roles": ["operator"], "token_kind": "stub"}
+
+        class ReadProjection:
+            def get_strategy_spec(self, strategy_id):
+                return writer.get_strategy(strategy_id)
+
+        monkeypatch.setattr(bff_main, "read_store", ReadProjection())
+        denied = client.patch(f"/bff/strategies/{sid}", headers={
+            "Authorization": "Bearer intruder:operator:tenant-b", "Idempotency-Key": "foreign-patch",
+        }, json={"name": "Foreign overwrite", "actor": before["last_actor"]})
+        assert denied.status_code == 403, denied.text
+        assert store.list_by_strategy(sid)[0].to_dict() == before
+        assert "foreign-patch" not in bff_main._STRATEGY_PERSONA_BFF_IDEMPOTENCY
+        allowed_headers = {"Authorization": "Bearer tenant-owner:operator:tenant-a",
+                           "Idempotency-Key": "owner-patch"}
+        allowed = client.patch(f"/bff/strategies/{sid}", headers=allowed_headers, json={"name": "After"})
+        assert allowed.status_code == 200, allowed.text
+        assert store.list_by_strategy(sid)[0].metadata["name"] == "After"
+        replay = client.patch(f"/bff/strategies/{sid}", headers=allowed_headers, json={"name": "After"})
+        assert replay.json() == allowed.json()
+        foreign_replay = client.patch(f"/bff/strategies/{sid}", headers={
+            **allowed_headers, "Authorization": "Bearer intruder:operator:tenant-b",
+        }, json={"name": "After"})
+        assert foreign_replay.status_code == 409, foreign_replay.text
+
+
+def test_strategy_create_rejects_tenantless_principal():
+    with _client() as client:
+        response = client.post("/bff/strategies", headers={
+            "Authorization": "Bearer tenantless:operator", "Idempotency-Key": "tenantless-create",
+        }, json={"name": "Untrusted", "tenant_id": "tenant-a"})
+        assert response.status_code == 403, response.text
+        assert "tenantless-create" not in bff_main._STRATEGY_PERSONA_BFF_IDEMPOTENCY
 
 
 def test_bff_strategy_get_missing_returns_404() -> None:
@@ -212,3 +283,69 @@ def test_bff_strategy_seed_review_and_merge_round_trip() -> None:
         )
         assert card_resp.status_code == 200
         assert card_resp.json()["data"]["status"] == "accepted"
+
+
+def test_bff_strategy_write_fails_closed_without_canonical_writer() -> None:
+    """Strategy write must fail closed with 503 and never fall back to mutating read_store._data."""
+    class OnlyDataReadStore:
+        def __init__(self) -> None:
+            self._data: dict = {"strategies": {}}
+
+        def list_strategy_specs(self) -> list:
+            return []
+
+    only_data_store = OnlyDataReadStore()
+    with _client(store=only_data_store) as client:
+        resp = client.post(
+            "/bff/strategies",
+            headers={**OPERATOR_HEADERS, "Idempotency-Key": "strat-fail-closed-test-1"},
+            json={"name": "Fail Closed Strategy", "risk": "medium"},
+        )
+        assert resp.status_code == 503, resp.text
+        # Crucially: _data must NOT have been written to
+        assert len(only_data_store._data["strategies"]) == 0
+
+
+def test_bff_create_strategies_router_rejects_strategy_overlay() -> None:
+    from services.control_plane.bff.strategies.router import create_strategies_router
+
+    with pytest.raises(AttributeError, match="strategy_overlay is retired"):
+        create_strategies_router(strategy_overlay={"s-1": {"name": "illegal"}})
+
+
+def test_project_strategy_dto_rejects_overlay() -> None:
+    from services.control_plane.bff.strategies.routes.common import StrategyRouteContext
+
+    ctx = StrategyRouteContext(
+        read_surface=None,
+        get_read_store=lambda: None,
+        extract_identity=lambda *a: {},
+        require_read_role=lambda *a: None,
+        require_operator_role=lambda *a: None,
+        bff_error=lambda *a, **k: Exception(),
+        utc_now=lambda: "2026-09-07T00:00:00Z",
+        page_slice=lambda items, *a: (items, None),
+        read_surface_meta=lambda *a, **k: {},
+        reject_body_idempotency_key=lambda *a: None,
+        resolve_final_idempotency_key=lambda *a: "",
+        stable_json_hash=lambda *a: "",
+        request_dry_run_requested=lambda: False,
+        dry_run_success_response=lambda *a, **k: {},
+        normalize_lifecycle_state=lambda s: str(s or "draft"),
+        normalize_risk_level=lambda r: str(r or "medium"),
+        strategy_persona_idempotency_check=lambda *a: None,
+        strategy_persona_action_command=None,
+        strategy_persona_idempotency={},
+        strategy_seed_replication_idempotency={},
+        strategy_seed_review_idempotency={},
+        list_governance_audit_events=None,
+        ooda_packet_list_payload=None,
+        require_ooda_packet_routes_enabled=None,
+        deprecated_bff_path_response=None,
+        bff_me_tenant_payload=None,
+        list_persona_records=None,
+        list_strategy_summaries=None,
+    )
+
+    with pytest.raises(AttributeError, match="strategy overlay is retired"):
+        ctx.project_strategy_dto({"id": "s-1"}, overlay={"name": "illegal"})

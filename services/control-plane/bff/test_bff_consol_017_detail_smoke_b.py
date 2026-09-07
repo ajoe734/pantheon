@@ -188,7 +188,6 @@ def _pack_b_client() -> Iterator[TestClient]:
         original_store = bff_main.read_store
         original_program_overlay = dict(bff_main._GOV_BFF_EVOLUTION_PROGRAM_OVERLAY)
         original_experiment_overlay = dict(bff_main._GOV_BFF_EXPERIMENT_OVERLAY)
-        original_job_overlay = dict(bff_main._GOV_BFF_JOB_OVERLAY)
         original_idempotency = dict(bff_main._GOV_BFF_IDEMPOTENCY)
         env = {
             **SERVICE_ENV_BLANKS,
@@ -202,7 +201,6 @@ def _pack_b_client() -> Iterator[TestClient]:
                 )
                 bff_main._GOV_BFF_EVOLUTION_PROGRAM_OVERLAY.clear()
                 bff_main._GOV_BFF_EXPERIMENT_OVERLAY.clear()
-                bff_main._GOV_BFF_JOB_OVERLAY.clear()
                 bff_main._GOV_BFF_IDEMPOTENCY.clear()
                 yield TestClient(bff_main.app)
         finally:
@@ -211,8 +209,6 @@ def _pack_b_client() -> Iterator[TestClient]:
             bff_main._GOV_BFF_EVOLUTION_PROGRAM_OVERLAY.update(original_program_overlay)
             bff_main._GOV_BFF_EXPERIMENT_OVERLAY.clear()
             bff_main._GOV_BFF_EXPERIMENT_OVERLAY.update(original_experiment_overlay)
-            bff_main._GOV_BFF_JOB_OVERLAY.clear()
-            bff_main._GOV_BFF_JOB_OVERLAY.update(original_job_overlay)
             bff_main._GOV_BFF_IDEMPOTENCY.clear()
             bff_main._GOV_BFF_IDEMPOTENCY.update(original_idempotency)
 

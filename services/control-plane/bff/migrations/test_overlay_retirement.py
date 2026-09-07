@@ -1,0 +1,1018 @@
+"""Comprehensive test suite for OVERLAY-RETIRE-001 migration engine and acceptance criteria.
+
+Covers:
+  1. Shadow-comparison and conflict reports across Persona, Strategy, Incident, Job, Ranking.
+  2. Parity detection, field divergence, and checksum provenance.
+  3. Resumable cursor pagination and dry-run safety for backfill.
+  4. Tenant transaction boundary isolation.
+  5. Single canonical writer enforcement and FallbackAcknowledgementForbiddenError.
+  6. Restart durability and multi-replica readback pass with 0 overlay reliance.
+  7. Rollback policy assertions: never re-enable dual writes.
+  8. Verification of mandatory symbol retirements.
+"""
+from __future__ import annotations
+
+import json
+import os
+import tempfile
+from pathlib import Path
+from typing import Any, Dict
+from uuid import uuid4
+import pytest
+
+
+def _strategy_actor(tenant="tenant-a", roles=None):
+    return {"actor_id": "migration-review", "tenant": tenant,
+            "roles": roles if roles is not None else ["operator"], "token_kind": "service"}
+
+
+@pytest.fixture
+def strategy_pg_case():
+    """Real-Postgres schema per test, mirroring
+    services/foundation/tests/test_registry_owner_transaction.py's pg_case:
+    skip cleanly with no live database configured, otherwise prove Strategy
+    owner durability against an actual PostgreSQL instance rather than the
+    retired process-local file fixture."""
+    dsn = os.getenv("TEST_DATABASE_URL", "").strip()
+    if not dsn:
+        pytest.skip("TEST_DATABASE_URL is required for real Postgres Strategy owner proof")
+    psycopg = pytest.importorskip("psycopg")
+    from psycopg import sql
+
+    schema = f"strategy_owner_{uuid4().hex}"
+    entries_table = f"{schema}.entries"
+    receipts_table = f"{schema}.command_receipts"
+    try:
+        yield dsn, entries_table, receipts_table
+    finally:
+        with psycopg.connect(dsn) as conn:
+            conn.execute(sql.SQL("DROP SCHEMA IF EXISTS {} CASCADE").format(sql.Identifier(schema)))
+
+
+def _strategy_pg_store(case, *, bootstrap: bool = True):
+    from services.registry.pg_store import PostgresRegistryStore
+
+    dsn, entries_table, receipts_table = case
+    return PostgresRegistryStore(
+        dsn=dsn, entries_table=entries_table, receipts_table=receipts_table, bootstrap=bootstrap,
+    )
+
+
+@pytest.fixture
+def ranking_pg_case():
+    """Real-Postgres schema per test, mirroring ``strategy_pg_case``: skip
+    cleanly with no live database configured, otherwise prove the Ranking
+    owner's durability against the actual selected canonical backend
+    (``services.rankings.store.RankingWriteStore`` /
+    ``PostgresJsonOwnerStore`` — Generation 2 narrows this domain to that
+    single concrete backend), never a path-created secondary file-backed
+    harness."""
+    dsn = os.getenv("TEST_DATABASE_URL", "").strip()
+    if not dsn:
+        pytest.skip("TEST_DATABASE_URL is required for real Postgres Ranking owner proof")
+    psycopg = pytest.importorskip("psycopg")
+    from psycopg import sql
+
+    schema = f"ranking_owner_{uuid4().hex}"
+    table = f"{schema}.rankings"
+    try:
+        yield dsn, table
+    finally:
+        with psycopg.connect(dsn) as conn:
+            conn.execute(sql.SQL("DROP SCHEMA IF EXISTS {} CASCADE").format(sql.Identifier(schema)))
+
+
+def _ranking_pg_store(case, *, bootstrap: bool = True):
+    from services.rankings.store import RankingWriteStore
+
+    dsn, table = case
+    return RankingWriteStore(dsn=dsn, table=table, bootstrap=bootstrap)
+
+
+@pytest.mark.parametrize("state", ["draft", "candidate", "approved", "retired"])
+def test_strategy_writer_rejects_foreign_tenant_without_mutation(state):
+    from fastapi import HTTPException
+    from services.registry.storage import RegistryStore
+    from services.registry.models import ArtifactState, ArtifactType, RegistryEntryCreate
+    from services.control_plane.bff.ports.strategy_write_owner import CanonicalStrategyWriteOwner
+
+    store = RegistryStore()
+    entry = store.create(RegistryEntryCreate(
+        artifact_type=ArtifactType.STRATEGY_SPEC, strategy_id="tenant-owned", version="1.0.0",
+        artifact_state=ArtifactState(state), metadata={"name": "Original"},
+    ), "tenant-owned-entry", actor=_strategy_actor())
+    before = entry.to_dict()
+    writer = CanonicalStrategyWriteOwner(store)
+    with pytest.raises(HTTPException) as exc:
+        writer.upsert_strategy({"id": "tenant-owned", "name": "Foreign overwrite",
+                                "state": "draft", "actor": _strategy_actor("tenant-b")})
+    assert exc.value.status_code == 403
+    assert store.get(entry.registry_id).to_dict() == before
+    assert len(store.list_by_strategy("tenant-owned")) == 1
+
+
+@pytest.mark.parametrize("actor", [None, {}, _strategy_actor(roles=["viewer"]),
+                                  _strategy_actor(tenant="")])
+def test_strategy_writer_never_synthesizes_missing_write_authority(actor):
+    from fastapi import HTTPException
+    from services.registry.storage import RegistryStore
+    from services.control_plane.bff.ports.strategy_write_owner import CanonicalStrategyWriteOwner
+
+    store = RegistryStore()
+    with pytest.raises(HTTPException) as exc:
+        CanonicalStrategyWriteOwner(store).upsert_strategy({
+            "id": "untrusted", "owner": "admin", "tenant_id": "tenant-a", "actor": actor,
+        })
+    assert exc.value.status_code == 403
+    assert store.list_by_strategy("untrusted") == []
+
+
+def test_strategy_writer_cas_and_durable_idempotency(strategy_pg_case):
+    """Real-Postgres proof (architecture-resumption-sa-sd.md §3.3/§3.4) that the
+    Strategy write owner's command_key idempotency is bound to the actual
+    canonical receipt contract (``committed_entry``), not the retired
+    process-local file fixture's invented ``expected_metadata`` field:
+    a same-key replay after an unrelated later mutation still returns the
+    original committed state untouched, a divergent same-key reuse is
+    rejected, and a genuinely stale caller-bound CAS is rejected too —
+    each proven against a fresh ``PostgresRegistryStore`` instance
+    reconnecting to the same schema (the fresh-process-restart proof)."""
+    from services.registry.split_api import RegistryConflictError
+    from services.control_plane.bff.ports.strategy_write_owner import CanonicalStrategyWriteOwner
+
+    store = _strategy_pg_store(strategy_pg_case)
+    writer = CanonicalStrategyWriteOwner(store)
+    original = {"id": "owned", "name": "Before", "actor": _strategy_actor()}
+    writer.upsert_strategy(original)
+    updated = {**original, "name": "After", "command_key": "metadata-update"}
+    writer.upsert_strategy(updated)
+    entry = store.list_by_strategy("owned")[0]
+    before_replay = entry.to_dict()
+
+    # A fresh store instance against the same schema is the fresh-process
+    # restart proof: nothing lives in Python process memory.
+    fresh_store = _strategy_pg_store(strategy_pg_case, bootstrap=False)
+    assert fresh_store.get_command_receipt(
+        "metadata-update", entry.registry_id, actor=_strategy_actor(),
+    ) is not None
+    fresh_writer = CanonicalStrategyWriteOwner(fresh_store)
+
+    # An unrelated later mutation under a *different* command_key advances
+    # the durable row after the original commit.
+    another_store = _strategy_pg_store(strategy_pg_case, bootstrap=False)
+    CanonicalStrategyWriteOwner(another_store).upsert_strategy(
+        {**updated, "risk": "elevated", "command_key": "unrelated-later-write"}
+    )
+    assert another_store.get(entry.registry_id).to_dict() != before_replay
+
+    # The original command_key replay must still return the exact original
+    # committed state, ignoring the later unrelated mutation.
+    fresh_writer.upsert_strategy(updated)
+    assert fresh_store.get(entry.registry_id).to_dict() == another_store.get(entry.registry_id).to_dict()
+    replayed_entry = fresh_store.get(entry.registry_id)
+    assert replayed_entry.metadata.get("name") == "After"
+    assert replayed_entry.metadata.get("risk") == "elevated"  # the later mutation is preserved, not clobbered
+
+    # A divergent reuse of the same command_key (different target metadata)
+    # is rejected rather than silently accepted.
+    with pytest.raises(RegistryConflictError):
+        fresh_writer.upsert_strategy({**updated, "name": "Divergent"})
+    assert fresh_store.get(entry.registry_id).metadata.get("name") == "After"
+
+    # A second writer reusing the already-committed "unrelated-later-write"
+    # command_key with different target metadata is a divergent replay of
+    # that key (caller-bound CAS mismatch against the frozen receipt) and
+    # must be rejected, leaving the durable row untouched.
+    stale_store = _strategy_pg_store(strategy_pg_case, bootstrap=False)
+    with pytest.raises(RegistryConflictError):
+        CanonicalStrategyWriteOwner(stale_store).upsert_strategy(
+            {**updated, "name": "Stale-Race", "risk": "critical", "command_key": "unrelated-later-write"}
+        )
+    assert fresh_store.get(entry.registry_id).metadata.get("name") == "After"
+
+    # A genuinely stale caller-bound CAS with no idempotency key at all:
+    # a concurrent writer advances the row first, and the racing writer's
+    # commit_metadata_cas (stale base_snapshot) must be rejected — proven
+    # directly against the store rather than through the adapter, since the
+    # adapter always re-reads the freshest row for a first (non-command-key)
+    # application and a real race window is not reliably reproducible here.
+    from services.registry.pg_store import RegistryConcurrentUpdateError
+
+    concurrent_view = stale_store.get(entry.registry_id)
+    base_snapshot = concurrent_view.to_dict()
+    winner_view = stale_store.get(entry.registry_id)
+    winner_view.metadata = {**winner_view.metadata, "name": "Winner"}
+    stale_store.update(winner_view, expected=base_snapshot)
+    loser_view = concurrent_view
+    loser_view.metadata = {**loser_view.metadata, "name": "Loser"}
+    with pytest.raises(RegistryConcurrentUpdateError):
+        stale_store.update(loser_view, expected=base_snapshot)
+    assert stale_store.get(entry.registry_id).metadata.get("name") == "Winner"
+
+
+def test_ranking_fresh_reader_projects_owner_updates_not_provenance(tmp_path):
+    from services.control_plane.bff.migrations.overlay_retirement import create_file_backed_ranking_store
+
+    path = tmp_path / "rankings.json"
+    initial = {"ranking_id": "ranking-review", "title": "Before", "name": "Before",
+               "criteria": "old", "formula": "old", "entries": [{"score": 1}],
+               "tenant_id": "tenant-a", "_migration_checksum": "source-digest",
+               "created_at": "2026-09-01T00:00:00Z", "updated_at": "2026-09-01T00:00:00Z"}
+    assert RankingCanonicalAdapter(path).insert(initial)
+    owner = create_file_backed_ranking_store(path)
+    current = owner.get_ranking("ranking-review")
+    current.title = "After"
+    current.criteria = "new"
+    current.entries[0]["score"] = 99
+    current.status = "retired"
+    current.updated_at = "2026-09-07T00:00:00Z"
+    owner.put_ranking(current)
+    fresh = RankingCanonicalAdapter(path)
+    row = fresh.get("ranking-review")
+    assert row["title"] == row["name"] == "After"
+    assert row["criteria"] == row["formula"] == "new"
+    assert row["entries"] == [{"score": 99}]
+    assert row["status"] == "retired"
+    assert row["updated_at"] == owner.get_ranking("ranking-review").updated_at
+    assert row["updated_at"] != initial["updated_at"]
+    assert row["_migration_checksum"] == "source-digest"
+    assert fresh.list_records(tenant_id="tenant-a") == [row]
+    report = OverlayMigrationEngine(aggregate=AggregateKind.RANKING, canonical_store=fresh,
+        overlay_data_source={"ranking-review": initial}).shadow_compare(tenant_id="tenant-a")
+    assert report.divergent_count == 1
+    assert set(report.conflicts[0].divergent_fields) >= {"title", "criteria", "entries"}
+
+from services.control_plane.bff.migrations.overlay_retirement import (
+    AggregateKind,
+    BackfillResult,
+    CanonicalWriterCoordinator,
+    ConflictReport,
+    DualWriteForbiddenError,
+    FallbackAcknowledgementForbiddenError,
+    MultiReplicaReadbackHarness,
+    OverlayMigrationEngine,
+    RollbackPolicy,
+    build_canonical_owner_adapter,
+    assert_mandatory_symbol_retirements,
+    deterministic_checksum,
+    IncidentCanonicalAdapter,
+    StrategyCanonicalAdapter,
+    RankingCanonicalAdapter,
+)
+
+
+# ---------------------------------------------------------------------------
+# 1. Shadow-Compare & Conflict Reporting (Persona, Strategy, Incident, Job, Ranking)
+# ---------------------------------------------------------------------------
+
+@pytest.mark.parametrize(
+    "aggregate,key_field",
+    [
+        (AggregateKind.PERSONA, "persona_id"),
+        (AggregateKind.STRATEGY, "strategy_id"),
+        (AggregateKind.INCIDENT, "incident_id"),
+        (AggregateKind.JOB, "job_id"),
+        (AggregateKind.RANKING, "snapshot_id"),
+    ],
+)
+def test_shadow_compare_all_aggregates_clean_parity(aggregate: AggregateKind, key_field: str) -> None:
+    canonical_store = {
+        "item-1": {key_field: "item-1", "name": "Item One", "status": "active", "tenant_id": "tenant-a"},
+        "item-2": {key_field: "item-2", "name": "Item Two", "status": "active", "tenant_id": "tenant-a"},
+    }
+    overlay_data = {
+        "item-1": {key_field: "item-1", "name": "Item One", "status": "active", "tenant_id": "tenant-a"},
+        "item-2": {key_field: "item-2", "name": "Item Two", "status": "active", "tenant_id": "tenant-a"},
+    }
+    engine = OverlayMigrationEngine(
+        aggregate=aggregate,
+        canonical_store=canonical_store,
+        overlay_data_source=overlay_data,
+    )
+    report = engine.shadow_compare(tenant_id="tenant-a")
+
+    assert isinstance(report, ConflictReport)
+    assert report.aggregate == aggregate
+    assert report.scanned_canonical == 2
+    assert report.scanned_overlay == 2
+    assert report.matched_count == 2
+    assert report.missing_in_canonical_count == 0
+    assert report.divergent_count == 0
+    assert report.parity_ratio == 1.0
+    assert len(report.conflicts) == 0
+
+
+def test_shadow_compare_divergence_and_missing_records() -> None:
+    canonical_store = {
+        "strat-1": {"strategy_id": "strat-1", "title": "Strat 1", "lifecycle_state": "active"},
+        "strat-2": {"strategy_id": "strat-2", "title": "Strat 2 Canonical", "lifecycle_state": "active"},
+    }
+    overlay_data = {
+        "strat-1": {"strategy_id": "strat-1", "title": "Strat 1", "lifecycle_state": "active"},
+        "strat-2": {"strategy_id": "strat-2", "title": "Strat 2 Overlay Modified", "lifecycle_state": "active"},
+        "strat-3": {"strategy_id": "strat-3", "title": "Strat 3 Only in Overlay", "lifecycle_state": "draft"},
+    }
+    engine = OverlayMigrationEngine(
+        aggregate=AggregateKind.STRATEGY,
+        canonical_store=canonical_store,
+        overlay_data_source=overlay_data,
+    )
+    report = engine.shadow_compare()
+
+    assert report.matched_count == 1
+    assert report.divergent_count == 1
+    assert report.missing_in_canonical_count == 1
+    assert report.parity_ratio == pytest.approx(1 / 3)
+    assert len(report.conflicts) == 2
+
+    conflict_types = {c.conflict_type for c in report.conflicts}
+    assert "missing_in_canonical" in conflict_types
+    assert "field_divergence" in conflict_types
+
+    diff_conflict = next(c for c in report.conflicts if c.conflict_type == "field_divergence")
+    assert diff_conflict.record_id == "strat-2"
+    assert "title" in diff_conflict.divergent_fields
+
+
+# ---------------------------------------------------------------------------
+# 2. Backfill with Dry Run, Resumable Cursor, and Checksum Provenance
+# ---------------------------------------------------------------------------
+
+def test_backfill_dry_run_does_not_mutate_canonical_store() -> None:
+    canonical_store = {
+        "per-1": {"persona_id": "per-1", "name": "Persona 1", "tenant_id": "tenant-corp"},
+    }
+    overlay_data = {
+        "per-1": {"persona_id": "per-1", "name": "Persona 1", "tenant_id": "tenant-corp"},
+        "per-2": {"persona_id": "per-2", "name": "Persona 2", "tenant_id": "tenant-corp"},
+    }
+    engine = OverlayMigrationEngine(
+        aggregate=AggregateKind.PERSONA,
+        canonical_store=canonical_store,
+        overlay_data_source=overlay_data,
+    )
+    result = engine.backfill(tenant_id="tenant-corp", dry_run=True)
+
+    assert result.dry_run is True
+    assert result.backfilled == 1
+    assert result.skipped_existing == 1
+    assert "per-2" not in canonical_store  # not mutated due to dry_run
+
+
+def test_backfill_mutates_with_checksum_and_provenance() -> None:
+    canonical_store = {
+        "inc-1": {"incident_id": "inc-1", "status": "open", "tenant_id": "tenant-corp"},
+    }
+    overlay_data = {
+        "inc-1": {"incident_id": "inc-1", "status": "open", "tenant_id": "tenant-corp"},
+        "inc-2": {"incident_id": "inc-2", "status": "investigating", "severity": "high", "tenant_id": "tenant-corp"},
+    }
+    engine = OverlayMigrationEngine(
+        aggregate=AggregateKind.INCIDENT,
+        canonical_store=canonical_store,
+        overlay_data_source=overlay_data,
+    )
+    result = engine.backfill(tenant_id="tenant-corp", dry_run=False)
+
+    assert result.dry_run is False
+    assert result.backfilled == 1
+    assert result.skipped_existing == 1
+    assert "inc-2" in canonical_store
+
+    backfilled_record = canonical_store["inc-2"]
+    assert backfilled_record["_migration_metadata"]["source"] == "overlay_retire_001"
+    assert "checksum" in backfilled_record["_migration_metadata"]
+    assert "backfilled_at" in backfilled_record["_migration_metadata"]
+
+
+def test_backfill_resumable_cursor_pagination() -> None:
+    canonical_store = {}
+    overlay_data = {
+        f"job-{i}": {"job_id": f"job-{i}", "status": "completed", "tenant_id": "tenant-x"}
+        for i in range(10)
+    }
+    engine = OverlayMigrationEngine(
+        aggregate=AggregateKind.JOB,
+        canonical_store=canonical_store,
+        overlay_data_source=overlay_data,
+    )
+
+    # Page 1: 4 items
+    res1 = engine.backfill(tenant_id="tenant-x", cursor=0, page_size=4)
+    assert res1.backfilled == 4
+    assert res1.next_cursor == "4"
+    assert len(canonical_store) == 4
+
+    # Page 2: 4 items
+    res2 = engine.backfill(tenant_id="tenant-x", cursor=int(res1.next_cursor), page_size=4)
+    assert res2.backfilled == 4
+    assert res2.next_cursor == "8"
+    assert len(canonical_store) == 8
+
+    # Page 3: remaining 2 items
+    res3 = engine.backfill(tenant_id="tenant-x", cursor=int(res2.next_cursor), page_size=4)
+    assert res3.backfilled == 2
+    assert res3.next_cursor is None
+    assert len(canonical_store) == 10
+
+
+# ---------------------------------------------------------------------------
+# 3. Tenant Boundary Isolation
+# ---------------------------------------------------------------------------
+
+def test_backfill_respects_tenant_boundary() -> None:
+    canonical_store = {}
+    overlay_data = {
+        "per-a1": {"persona_id": "per-a1", "tenant_id": "tenant-alpha"},
+        "per-b1": {"persona_id": "per-b1", "tenant_id": "tenant-beta"},
+    }
+    engine = OverlayMigrationEngine(
+        aggregate=AggregateKind.PERSONA,
+        canonical_store=canonical_store,
+        overlay_data_source=overlay_data,
+    )
+
+    engine.backfill(tenant_id="tenant-alpha")
+    assert "per-a1" in canonical_store
+    assert "per-b1" not in canonical_store
+
+
+def test_backfill_rejects_tenant_id_only_foreign_records_without_rewriting_ownership() -> None:
+    """A record whose only tenant field is `tenantId` for a foreign tenant must never be
+    backfilled under a different tenant's transaction, and its tenant identity must never be
+    silently rewritten (regression for the independent-review tenantId/tenant_id probe)."""
+    canonical_store: Dict[str, Any] = {}
+    overlay_data = {
+        "per-foreign": {"persona_id": "per-foreign", "tenantId": "tenant-b"},
+    }
+    engine = OverlayMigrationEngine(
+        aggregate=AggregateKind.PERSONA,
+        canonical_store=canonical_store,
+        overlay_data_source=overlay_data,
+    )
+
+    result = engine.backfill(tenant_id="tenant-a")
+    assert result.backfilled == 0
+    assert "per-foreign" not in canonical_store
+
+
+def test_backfill_reports_conflicting_tenant_identity_as_conflict() -> None:
+    canonical_store: Dict[str, Any] = {}
+    overlay_data = {
+        "per-conflict": {"persona_id": "per-conflict", "tenant_id": "tenant-a", "tenantId": "tenant-b"},
+    }
+    engine = OverlayMigrationEngine(
+        aggregate=AggregateKind.PERSONA,
+        canonical_store=canonical_store,
+        overlay_data_source=overlay_data,
+    )
+
+    result = engine.backfill(tenant_id="tenant-a")
+    assert result.backfilled == 0
+    assert "per-conflict" not in canonical_store
+    assert any(c.conflict_type == "tenant_identity_conflict" for c in result.conflicts)
+
+
+def test_backfill_fails_closed_on_unsupported_canonical_store() -> None:
+    """A store that supports neither insert/save nor dict semantics must never report a
+    fabricated backfilled=1; it must fail closed and surface a conflict instead."""
+    unsupported_store = object()
+    overlay_data = {"per-x": {"persona_id": "per-x", "tenant_id": "tenant-a"}}
+    engine = OverlayMigrationEngine(
+        aggregate=AggregateKind.PERSONA,
+        canonical_store=unsupported_store,
+        overlay_data_source=overlay_data,
+    )
+
+    result = engine.backfill(tenant_id="tenant-a")
+    assert result.backfilled == 0
+    assert any(c.conflict_type == "unsupported_canonical_store" for c in result.conflicts)
+
+
+def test_diff_records_detects_missing_canonical_field() -> None:
+    engine = OverlayMigrationEngine(
+        aggregate=AggregateKind.PERSONA,
+        canonical_store={},
+        overlay_data_source={},
+    )
+    diffs = engine._diff_records({"persona_id": "p1"}, {"persona_id": "p1", "name": "Algo"})
+    assert "name" in diffs
+    assert diffs["name"] == {"canonical": None, "overlay": "Algo"}
+
+
+def test_shadow_compare_reports_divergence_for_field_missing_only_in_canonical() -> None:
+    canonical_store = {"per-1": {"persona_id": "per-1", "tenant_id": "tenant-a"}}
+    overlay_data = {"per-1": {"persona_id": "per-1", "tenant_id": "tenant-a", "name": "Algo 1"}}
+    engine = OverlayMigrationEngine(
+        aggregate=AggregateKind.PERSONA,
+        canonical_store=canonical_store,
+        overlay_data_source=overlay_data,
+    )
+
+    report = engine.shadow_compare(tenant_id="tenant-a")
+    assert report.matched_count == 0
+    assert report.divergent_count == 1
+    assert report.parity_ratio == 0.0
+
+
+# ---------------------------------------------------------------------------
+# 4. Single Canonical Writer & Forbidden Fallback Acknowledgement
+# ---------------------------------------------------------------------------
+
+def test_canonical_writer_enforcement_and_rejection_of_fallbacks() -> None:
+    persona_store: Dict[str, Any] = {}
+    coordinator = CanonicalWriterCoordinator(canonical_stores={AggregateKind.PERSONA: persona_store})
+
+    # Canonical writer succeeds and actually persists the record.
+    receipt = coordinator.handle_write(
+        aggregate=AggregateKind.PERSONA,
+        writer_identity="persona_provisioning_store",
+        payload={"persona_id": "p1", "name": "Algo 1"},
+        is_fallback=False,
+    )
+    assert receipt["status"] == "acknowledged"
+    assert receipt["writer"] == "persona_provisioning_store"
+    assert receipt["persisted"] is True
+    assert persona_store["p1"]["name"] == "Algo 1"
+
+    # No canonical store bound for this aggregate: refuse to fabricate a receipt.
+    with pytest.raises(FallbackAcknowledgementForbiddenError, match="No canonical store bound"):
+        CanonicalWriterCoordinator().handle_write(
+            aggregate=AggregateKind.STRATEGY,
+            writer_identity="strategy_spec_store",
+            payload={"strategy_id": "s1"},
+            is_fallback=False,
+        )
+
+    # Unauthorized writer fails
+    with pytest.raises(FallbackAcknowledgementForbiddenError, match="Unauthorized writer"):
+        coordinator.handle_write(
+            aggregate=AggregateKind.PERSONA,
+            writer_identity="random_unauthorized_service",
+            payload={"persona_id": "p1"},
+            is_fallback=False,
+        )
+
+    # Fallback acknowledgement write strictly forbidden
+    with pytest.raises(FallbackAcknowledgementForbiddenError, match="Fallback write attempt forbidden"):
+        coordinator.handle_write(
+            aggregate=AggregateKind.PERSONA,
+            writer_identity="persona_provisioning_store",
+            payload={"persona_id": "p1"},
+            is_fallback=True,
+        )
+
+
+# ---------------------------------------------------------------------------
+# 5. Restart Durability & Multi-Replica Readback Verification
+# ---------------------------------------------------------------------------
+
+def test_restart_durability_and_multi_replica_readback() -> None:
+    shared_storage: Dict[str, Any] = {}
+    harness = MultiReplicaReadbackHarness(shared_storage)
+
+    replica_1 = harness.spawn_replica("replica-east-1")
+    replica_2 = harness.spawn_replica("replica-east-2")
+
+    # Replica 1 performs write to canonical store
+    record = {
+        "persona_id": "pers-canonical-999",
+        "name": "Market Maker Canary",
+        "state": "paper_running",
+    }
+    replica_1.write_canonical("pers-canonical-999", record)
+
+    # Simulate crash / restart of replica 1
+    replica_1.restart_process()
+
+    # Replica 1 reads back after restart: must survive
+    readback_rep1 = replica_1.read_canonical("pers-canonical-999")
+    assert readback_rep1 is not None
+    assert readback_rep1["persona_id"] == "pers-canonical-999"
+    assert readback_rep1["name"] == "Market Maker Canary"
+
+    # Replica 2 immediately observes the exact same state without local overlay
+    readback_rep2 = replica_2.read_canonical("pers-canonical-999")
+    assert readback_rep2 is not None
+    assert readback_rep2 == readback_rep1
+
+
+# ---------------------------------------------------------------------------
+# 6. Governed Rollback Policy
+# ---------------------------------------------------------------------------
+
+def test_rollback_policy_strictly_forbids_dual_writes() -> None:
+    policy = RollbackPolicy.get_policy_declaration()
+    assert policy["rule"] == "Deploy the exact prior compatible release; never re-enable dual writes."
+    assert policy["dual_writes_permitted"] is False
+    assert policy["fallback_acknowledgement_permitted"] is False
+
+    # Safe rollback assertion passes
+    RollbackPolicy.assert_safe_rollback(allow_dual_writes=False)
+
+    # Attempt to enable dual writes during rollback is forbidden
+    with pytest.raises(DualWriteForbiddenError, match="Never re-enable dual writes"):
+        RollbackPolicy.assert_safe_rollback(allow_dual_writes=True)
+
+
+# ---------------------------------------------------------------------------
+# 7. Mandatory Symbol Retirements
+# ---------------------------------------------------------------------------
+
+def test_mandatory_symbol_retirements_in_codebase() -> None:
+    results = assert_mandatory_symbol_retirements()
+    assert results["_PERSONA_BFF_OVERLAY"] is True
+    assert results["_STRATEGY_BFF_OVERLAY"] is True
+    assert results["_GOV_BFF_INCIDENT_OVERLAY"] is True
+    assert results["_GOV_BFF_JOB_OVERLAY"] is True
+    assert results["ReadSurfacePorts._ranking_snapshots"] is True
+
+
+# ---------------------------------------------------------------------------
+# 8. Genuine Five-Owner Durable Backfill, Shadow Conflicts & Multi-Replica Durability
+# ---------------------------------------------------------------------------
+
+@pytest.mark.parametrize(
+    "aggregate,key_field,canonical_owner",
+    [
+        (AggregateKind.PERSONA, "persona_id", "persona_provisioning_store"),
+        (AggregateKind.STRATEGY, "strategy_id", "strategy_spec_store"),
+        (AggregateKind.INCIDENT, "incident_id", "incident_reconciliation_store"),
+        (AggregateKind.JOB, "job_id", "job_service_store"),
+        (AggregateKind.RANKING, "snapshot_id", "ranking_domain_store"),
+    ],
+)
+def test_genuine_five_owner_backfill_shadow_conflicts_and_idempotency(
+    aggregate: AggregateKind, key_field: str, canonical_owner: str
+) -> None:
+    """Normative SD §5.1, §5.2: verify genuine durable owner backfill, shadow conflict reporting,
+    dry-run protection, and parity across each of the five domain aggregates.
+    """
+    with tempfile.TemporaryDirectory() as td:
+        strategy_kwargs: Dict[str, Any] = {}
+        if aggregate == AggregateKind.STRATEGY:
+            # Strategy has no path-created durable backend (see
+            # build_canonical_owner_adapter): inject the explicit in-memory
+            # test double directly, scoped to this test only.
+            from services.registry.storage import RegistryStore
+            strategy_kwargs["strategy_store"] = RegistryStore()
+        durable_store = build_canonical_owner_adapter(aggregate=aggregate, storage_dir=td, **strategy_kwargs)
+
+        # 1. Seed durable store with initial existing canonical record
+        initial_canon = {
+            key_field: f"{aggregate.value}-canon-1",
+            "name": f"Canonical {aggregate.value.title()} 1",
+            "tenant_id": "tenant-corp",
+            "actor": {"actor_id": "migration-test", "tenant": "tenant-corp", "roles": ["operator"], "token_kind": "service"},
+            "status": "active",
+        }
+        assert durable_store.insert(initial_canon) is True
+
+        # 2. Prepare overlay data source with:
+        #   - 1 matching record
+        #   - 1 divergent record (field divergence conflict)
+        #   - 1 missing record (to be backfilled)
+        overlay_data = {
+            f"{aggregate.value}-canon-1": {
+                key_field: f"{aggregate.value}-canon-1",
+                "name": f"Canonical {aggregate.value.title()} 1",
+                "tenant_id": "tenant-corp",
+            "actor": {"actor_id": "migration-test", "tenant": "tenant-corp", "roles": ["operator"], "token_kind": "service"},
+                "status": "active",
+            },
+            f"{aggregate.value}-divergent": {
+                key_field: f"{aggregate.value}-divergent",
+                "name": "Overlay Version Divergent",
+                "tenant_id": "tenant-corp",
+            "actor": {"actor_id": "migration-test", "tenant": "tenant-corp", "roles": ["operator"], "token_kind": "service"},
+                "status": "draft",
+            },
+            f"{aggregate.value}-to-backfill": {
+                key_field: f"{aggregate.value}-to-backfill",
+                "name": f"Backfilled {aggregate.value.title()}",
+                "tenant_id": "tenant-corp",
+            "actor": {"actor_id": "migration-test", "tenant": "tenant-corp", "roles": ["operator"], "token_kind": "service"},
+                "status": "active",
+            },
+        }
+
+        # Seed the divergent record into canonical store with different status
+        assert durable_store.insert({
+            key_field: f"{aggregate.value}-divergent",
+            "name": "Canonical Version Divergent",
+            "tenant_id": "tenant-corp",
+            "actor": {"actor_id": "migration-test", "tenant": "tenant-corp", "roles": ["operator"], "token_kind": "service"},
+            "status": "active",
+        }) is True
+
+        engine = OverlayMigrationEngine(
+            aggregate=aggregate,
+            canonical_store=durable_store,
+            overlay_data_source=overlay_data,
+        )
+
+        # 3. Shadow-compare: must detect 1 match, 1 divergence, 1 missing
+        report = engine.shadow_compare(tenant_id="tenant-corp")
+        assert report.aggregate == aggregate
+        assert report.scanned_canonical == 2
+        assert report.scanned_overlay == 3
+        assert report.matched_count == 1
+        assert report.divergent_count == 1
+        assert report.missing_in_canonical_count == 1
+        assert len(report.conflicts) == 2
+        conflict_types = {c.conflict_type for c in report.conflicts}
+        assert "field_divergence" in conflict_types
+        assert "missing_in_canonical" in conflict_types
+
+        # 4. Dry-run backfill: must report 1 backfillable record without mutating persistent storage
+        dry_result = engine.backfill(tenant_id="tenant-corp", dry_run=True)
+        assert dry_result.dry_run is True
+        assert dry_result.backfilled == 1
+        assert dry_result.skipped_existing == 2
+        # Verify durable store on disk still only contains the original 2 records
+        assert len(durable_store.list_records(tenant_id="tenant-corp")) == 2
+
+        # 5. Live backfill: persists missing record to disk with provenance
+        live_result = engine.backfill(tenant_id="tenant-corp", dry_run=False)
+        assert live_result.dry_run is False
+        assert live_result.backfilled == 1
+        assert live_result.skipped_existing == 2
+        # Verify durable store on disk now contains 3 records
+        persisted_records = durable_store.list_records(tenant_id="tenant-corp")
+        assert len(persisted_records) == 3
+        backfilled_rec = durable_store.get(f"{aggregate.value}-to-backfill")
+        assert backfilled_rec is not None
+        assert backfilled_rec["_migration_metadata"]["source"] == "overlay_retire_001"
+        assert backfilled_rec["_migration_metadata"]["checksum"] is not None
+
+        # 6. Re-run backfill: must be strictly idempotent (0 backfilled, 3 skipped)
+        idempotent_result = engine.backfill(tenant_id="tenant-corp", dry_run=False)
+        assert idempotent_result.backfilled == 0
+        assert idempotent_result.skipped_existing == 3
+
+        # 7. CanonicalWriterCoordinator sole owner verification for this aggregate
+        coordinator = CanonicalWriterCoordinator(canonical_stores={aggregate: durable_store})
+        receipt = coordinator.handle_write(
+            aggregate=aggregate,
+            writer_identity=canonical_owner,
+            payload={
+                key_field: f"{aggregate.value}-coord-write",
+                "name": f"Coordinator Written {aggregate.value.title()}",
+                "tenant_id": "tenant-corp",
+            "actor": {"actor_id": "migration-test", "tenant": "tenant-corp", "roles": ["operator"], "token_kind": "service"},
+            },
+            is_fallback=False,
+        )
+        assert receipt["status"] == "acknowledged"
+        assert receipt["persisted"] is True
+        assert receipt["writer"] == canonical_owner
+        assert durable_store.get(f"{aggregate.value}-coord-write") is not None
+
+
+def test_genuine_five_owner_disk_backed_multi_replica_restart_durability() -> None:
+    """Normative SD §5.1, §5.2, §12.3: Prove multi-replica readback and process
+    restart across independent process replicas for the domain-agnostic
+    ``OverlayMigrationEngine``/adapter framework, using the two aggregates
+    whose actual accepted production owner genuinely is filesystem-backed
+    (Persona -- ``services.persona.write_owner.PersistentPersonaOwner`` --
+    and Incident -- ``services.incident.incident.IncidentStore``), plus Job,
+    which has no separate accepted production owner module of its own (this
+    migration's own durable JSON file store is it). Strategy and Ranking each
+    have a real accepted Postgres-backed production owner and no
+    path-created durable backend of their own; their equivalent real
+    cross-process restart/multi-replica proofs are
+    ``test_strategy_owner_postgres_multi_replica_restart_durability`` and
+    ``test_ranking_owner_postgres_multi_replica_restart_durability`` below,
+    each gated on a real Postgres instance instead of faking filesystem
+    durability for those two.
+    """
+    with tempfile.TemporaryDirectory() as td:
+        harness = MultiReplicaReadbackHarness(shared_durable_storage=td)
+
+        replica_alpha = harness.spawn_replica("replica-alpha")
+        replica_beta = harness.spawn_replica("replica-beta")
+
+        # Test the four filesystem-backed aggregates
+        aggregates = [
+            (AggregateKind.PERSONA, "pers-durable-1", {"name": "Persona 1", "state": "active"}),
+            (AggregateKind.INCIDENT, "inc-durable-1", {"title": "Incident 1", "status": "open"}),
+            (AggregateKind.JOB, "job-durable-1", {"name": "Job 1", "status": "running"}),
+            (AggregateKind.RANKING, "rank-durable-1", {"formula": "sharpe", "score": 2.5}),
+        ]
+
+        # Replica Alpha writes all 5 aggregate canonical records directly to durable disk
+        for agg, key, payload in aggregates:
+            record = {"id": key, "aggregate": agg.value, **payload}
+            assert replica_alpha.write_canonical(key, record) is True
+
+        # Simulate hard process restart on Replica Alpha (memory wiped, local handles dropped)
+        replica_alpha.restart_process()
+
+        # Replica Alpha reads back after restart: must survive on disk
+        for agg, key, payload in aggregates:
+            readback_alpha = replica_alpha.read_canonical(key)
+            assert readback_alpha is not None
+            assert readback_alpha["id"] == key
+            assert readback_alpha["aggregate"] == agg.value
+
+            # Verify genuine independent subprocess readback
+            readback_proc = replica_alpha.read_canonical_via_restarted_process(key)
+            assert readback_proc is not None
+            assert readback_proc["id"] == key
+            assert readback_proc["aggregate"] == agg.value
+            assert readback_proc == readback_alpha
+
+        # Replica Beta (completely independent replica) reads directly from durable storage
+        for agg, key, payload in aggregates:
+            readback_beta = replica_beta.read_canonical(key)
+            assert readback_beta is not None
+            assert readback_beta == replica_alpha.read_canonical(key)
+
+
+def test_ranking_owner_postgres_multi_replica_restart_durability(ranking_pg_case) -> None:
+    """Ranking's counterpart to the filesystem-backed five-owner restart test
+    above: real cross-process restart and multi-replica readback proven
+    against the actual selected canonical Postgres owner
+    (``RankingWriteStore`` / ``PostgresJsonOwnerStore``), never the
+    path-created ``FileBackedPostgresJsonOwnerStore`` secondary durable
+    backend used only for the domain-agnostic backfill/shadow-compare
+    engine tests above."""
+    import subprocess
+    import sys
+
+    dsn, table = ranking_pg_case
+    adapter = RankingCanonicalAdapter(_ranking_pg_store(ranking_pg_case))
+
+    record = {
+        "ranking_id": "rank-postgres-durable-1",
+        "title": "Ranking Postgres Durable",
+        "criteria": "sharpe",
+        "status": "active",
+        "tenant_id": "tenant-corp",
+    }
+    assert adapter.insert(record) is True
+
+    # Genuine subprocess restart: a brand new Python process reconnects to
+    # the same DSN/table with zero in-process state carried over.
+    adapter.restart_process()
+
+    script = (
+        "import json\n"
+        "from services.rankings.store import RankingWriteStore\n"
+        f"store = RankingWriteStore(dsn={dsn!r}, table={table!r}, bootstrap=False)\n"
+        "rankings = [r.__dict__ for r in store.list_rankings()]\n"
+        "print(json.dumps(rankings, default=str))\n"
+    )
+    res = subprocess.run([sys.executable, "-c", script], capture_output=True, text=True, check=True)
+    readback_proc = json.loads(res.stdout)
+    assert len(readback_proc) == 1
+    assert readback_proc[0]["ranking_id"] == "rank-postgres-durable-1"
+
+    # A second, completely independent replica (fresh store, same schema)
+    # observes the exact same state without any local overlay.
+    replica_beta = RankingCanonicalAdapter(_ranking_pg_store(ranking_pg_case, bootstrap=False))
+    readback_beta = replica_beta.get("rank-postgres-durable-1")
+    assert readback_beta is not None
+    assert readback_beta["ranking_id"] == "rank-postgres-durable-1"
+    assert readback_beta["title"] == "Ranking Postgres Durable"
+
+
+def test_strategy_owner_postgres_multi_replica_restart_durability(strategy_pg_case) -> None:
+    """Strategy's counterpart to the filesystem-backed five-owner restart test
+    above: real cross-process restart and multi-replica readback proven
+    against the actual selected canonical Postgres owner, never a
+    path-created secondary durable backend."""
+    import subprocess
+    import sys
+
+    dsn, entries_table, receipts_table = strategy_pg_case
+    adapter = StrategyCanonicalAdapter(_strategy_pg_store(strategy_pg_case))
+
+    record = {
+        "strategy_id": "strat-postgres-durable-1",
+        "name": "Strategy Postgres Durable",
+        "status": "draft",
+        "tenant_id": "tenant-corp",
+        "actor": {"actor_id": "replica-test", "tenant": "tenant-corp", "roles": ["operator"], "token_kind": "service"},
+    }
+    assert adapter.insert(record) is True
+
+    # Genuine subprocess restart: a brand new Python process reconnects to
+    # the same schema with zero in-process state carried over.
+    adapter.restart_process()
+
+    env = dict(os.environ)
+    env["REGISTRY_STORE_DSN"] = dsn
+    env["REGISTRY_ENTRIES_TABLE"] = entries_table
+    env["REGISTRY_RECEIPTS_TABLE"] = receipts_table
+    script = (
+        "import json\n"
+        "from services.registry.pg_store import build_postgres_registry_store\n"
+        "store = build_postgres_registry_store()\n"
+        "entries = [e.to_dict() for e in store.list_by_strategy('strat-postgres-durable-1')]\n"
+        "print(json.dumps(entries, default=str))\n"
+    )
+    res = subprocess.run([sys.executable, "-c", script], capture_output=True, text=True, env=env, check=True)
+    readback_proc = json.loads(res.stdout)
+    assert len(readback_proc) == 1
+    assert readback_proc[0]["strategy_id"] == "strat-postgres-durable-1"
+
+    # A second, completely independent replica (fresh store, same schema)
+    # observes the exact same state without any local overlay.
+    replica_beta = StrategyCanonicalAdapter(_strategy_pg_store(strategy_pg_case, bootstrap=False))
+    readback_beta = replica_beta.get("strat-postgres-durable-1")
+    assert readback_beta is not None
+    assert readback_beta["strategy_id"] == "strat-postgres-durable-1"
+    assert readback_beta["name"] == "Strategy Postgres Durable"
+
+
+def test_incident_adapter_status_update_parity() -> None:
+    """Verify that status updates on authoritative IncidentStore reflect immediately on fresh adapter instances."""
+    from services.incident.incident import IncidentStore
+
+    with tempfile.TemporaryDirectory() as td:
+        store_path = Path(td) / "incident.json"
+        adapter1 = IncidentCanonicalAdapter(store_path)
+        inserted = adapter1.insert({
+            "incident_id": "inc-parity-1",
+            "title": "Parity Incident",
+            "status": "open",
+            "severity": "high",
+            "tenant_id": "tenant-parity",
+        })
+        assert inserted is True
+
+        # Directly update status on domain owner store
+        owner = IncidentStore(store_path)
+        owner.update_incident_status("inc-parity-1", "resolved")
+
+        # Fresh adapter instance simulating a second process or subsequent read
+        adapter2 = IncidentCanonicalAdapter(store_path)
+        record = adapter2.get("inc-parity-1")
+        assert record is not None
+        assert record["status"] == "resolved"
+        assert record["tenant_id"] == "tenant-parity"
+        assert record["title"] == "Parity Incident"
+
+
+def test_strategy_write_governance_rejects_unreviewed_approval() -> None:
+    """Verify that StrategyCanonicalAdapter enforces governance state transitions and rejects unreviewed approval."""
+    from services.registry.storage import RegistryStore
+
+    adapter = StrategyCanonicalAdapter(RegistryStore())
+
+    # Direct unreviewed approval without approval_decision_id must be rejected
+    rejected = adapter.insert({
+        "strategy_id": "strat-unreviewed-1",
+        "name": "Unreviewed Strategy",
+        "status": "approved",
+        "tenant_id": "tenant-corp",
+        "actor": {"actor_id": "migration-test", "tenant": "tenant-corp", "roles": ["operator"], "token_kind": "service"},
+    })
+    assert rejected is False
+    assert adapter.get("strat-unreviewed-1") is None
+
+    # Valid draft state must be accepted
+    accepted = adapter.insert({
+        "strategy_id": "strat-draft-1",
+        "name": "Draft Strategy",
+        "status": "draft",
+        "tenant_id": "tenant-corp",
+        "actor": {"actor_id": "migration-test", "tenant": "tenant-corp", "roles": ["operator"], "token_kind": "service"},
+    })
+    assert accepted is True
+    fetched = adapter.get("strat-draft-1")
+    assert fetched is not None
+    assert fetched["status"] == "draft"
+
+
+def test_multi_replica_rejected_write_negative_control_no_fallback() -> None:
+    """Negative control: verify that rejected writes are never persisted to secondary files or read back."""
+    from unittest.mock import patch
+
+    class RejectingOwner:
+        def save(self, record):
+            return False
+
+        def get(self, key):
+            return None
+
+    with tempfile.TemporaryDirectory() as td:
+        harness = MultiReplicaReadbackHarness(shared_durable_storage=td)
+        replica = harness.spawn_replica("replica-test")
+
+        with patch(
+            "services.control_plane.bff.migrations.overlay_retirement.build_canonical_owner_adapter",
+            return_value=RejectingOwner(),
+        ):
+            # Attempt write that is rejected by owner
+            result = replica.write_canonical("rejected-key", {
+                "id": "rejected-key",
+                "aggregate": "ranking",
+                "score": 42,
+            })
+            assert result is False
+
+            # Verify no fallback file exists and readback returns None
+            assert replica.read_canonical("rejected-key") is None
+            assert replica.read_canonical_via_restarted_process("rejected-key") is None

@@ -15,6 +15,7 @@ from fastapi.testclient import TestClient
 sys.path.insert(0, os.path.dirname(__file__))
 
 import main as bff_main
+from services.control_plane.bff.personas import service as _persona_service_module
 from persona_provisioning import MemoryPersonaProvisioningStore
 from ports import create_read_surface_ports
 from test_persona_provisioning_coordinator import FakeOwnerTransport, _schedule_receipt
@@ -224,11 +225,18 @@ def mock_external_services(monkeypatch):
 
 
 def _fresh_client(td: str) -> TestClient:
-    bff_main.read_store = _provisioning_read_surface_double()
+    read_surface_double = _provisioning_read_surface_double()
+    bff_main.read_store = read_surface_double
+    # The fixture double is the single canonical Persona write owner for this
+    # test process: no fallback writer, no process-local overlay. The live
+    # request path resolves the write owner from `main.persona_service`
+    # (bound into request context per-call), not from the module-global
+    # fallback, so both must point at the same double.
+    _persona_service_module.persona_write_owner = read_surface_double
+    bff_main.persona_service._write_owner = read_surface_double
+    bff_main.persona_service._read_store = read_surface_double
     bff_main.command_store = bff_main.CommandStore(os.path.join(td, "commands.jsonl"))
     bff_main._STRATEGY_PERSONA_BFF_IDEMPOTENCY.clear()
-    bff_main._STRATEGY_BFF_OVERLAY.clear()
-    bff_main._PERSONA_BFF_OVERLAY.clear()
     bff_main._COMMAND_AUTH_CONTEXT.clear()
     return TestClient(bff_main.app)
 

@@ -579,15 +579,16 @@ class PersonaProvisioningCoordinator:
         owner: str,
         get_path: str,
         post_path: str,
-        payload: Mapping[str, Any],
+        payload: Mapping[str, Any] | Callable[[Mapping[str, Any] | None], Mapping[str, Any]],
         ready: Callable[[Mapping[str, Any]], bool],
         validate: Callable[[Mapping[str, Any]], None],
     ) -> dict[str, Any]:
         receipt = self._owner_get(owner, get_path)
         mutation_error: Exception | None = None
         if receipt is None or not ready(receipt):
+            resolved_payload = payload(receipt) if callable(payload) else payload
             try:
-                self.transport.post(owner, post_path, deepcopy(dict(payload)))
+                self.transport.post(owner, post_path, deepcopy(dict(resolved_payload)))
             except Exception as exc:  # response loss is reconciled by authoritative GET
                 mutation_error = exc
             receipt = self._owner_get(owner, get_path)
@@ -1079,6 +1080,7 @@ class PersonaProvisioningCoordinator:
         checkpoint_step = f"{checkpoint_key}_readback"
         payload = {
             "decision_id": decision_id,
+            "expected_version": 0,
             "target_type": "registry_entry",
             "target_id": registry_id,
             "target_version": version,
@@ -1163,11 +1165,23 @@ class PersonaProvisioningCoordinator:
                     "ApprovalDecision was not accepted for review"
                 )
 
+        def build_payload(current: Mapping[str, Any] | None) -> Mapping[str, Any]:
+            # CAS-bind the review transition to the exact proposed-state
+            # version this coordinator just observed (the same pre-read
+            # ``_transition_then_get`` uses to decide whether to POST), per
+            # governance ApprovalCommand's mandatory expected_version
+            # (architecture-resumption-sa-sd.md §3.3).
+            return {
+                "actor_role": "automated_gate",
+                "actor_id": self.actor_id,
+                "expected_version": int((current or {}).get("version") or 0),
+            }
+
         receipt = self._transition_then_get(
             owner="governance",
             get_path=get_path,
             post_path=f"{get_path}/review",
-            payload={"actor_role": "automated_gate", "actor_id": self.actor_id},
+            payload=build_payload,
             ready=ready,
             validate=validate,
         )
@@ -1221,11 +1235,11 @@ class PersonaProvisioningCoordinator:
                     "ApprovalDecision readback is not decided/approved"
                 )
 
-        receipt = self._transition_then_get(
-            owner="governance",
-            get_path=get_path,
-            post_path=f"{get_path}/decide",
-            payload={
+        def build_payload(current: Mapping[str, Any] | None) -> Mapping[str, Any]:
+            # CAS-bind the decide transition to the exact under-review-state
+            # version this coordinator just observed (same rationale as the
+            # review transition above).
+            return {
                 "actor_role": "automated_gate",
                 "actor_id": self.actor_id,
                 "outcome": "approved",
@@ -1233,7 +1247,14 @@ class PersonaProvisioningCoordinator:
                 "evidence_refs": [
                     {"ref_type": "registry_entry", "ref_id": registry_id}
                 ],
-            },
+                "expected_version": int((current or {}).get("version") or 0),
+            }
+
+        receipt = self._transition_then_get(
+            owner="governance",
+            get_path=get_path,
+            post_path=f"{get_path}/decide",
+            payload=build_payload,
             ready=ready,
             validate=validate,
         )
@@ -1281,6 +1302,7 @@ class PersonaProvisioningCoordinator:
             post_path=f"{get_path}/advance",
             payload={
                 "target_state": "approved",
+                "expected_artifact_state": "candidate",
                 "approver": self.actor_id,
                 "approval_decision_id": decision_id,
             },

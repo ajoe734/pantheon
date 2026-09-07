@@ -12,6 +12,7 @@ import re
 import threading
 import time
 import uuid
+import sys as _sys
 from collections import deque
 from copy import deepcopy
 from concurrent.futures import Executor, ThreadPoolExecutor
@@ -74,6 +75,8 @@ from services.control_plane.persona.persona_strategy_discovery import (
     PersonaStrategyDiscoveryService,
     extract_persona_strategy_profile,
 )
+if not __package__:
+    __package__ = "services.control_plane.bff"
 from .models import (
     ActionCommandStatus,
     ApproveMutationCommandPayload,
@@ -177,6 +180,7 @@ from .loop_inventory import (
     truth_label_payload,
 )
 from .management_read_models import loop_truth
+from .management_read_models.service import _SHELL_SUMMARY_COUNT_CACHE
 from .operations_read_model import (
     DataConfidence,
     OperationsReadModelEnvelope,
@@ -977,6 +981,7 @@ session_lifecycle_store = SessionLifecycleStore(os.path.join(BFF_DATA_DIR, "sess
 agora_audit_store = AgoraAuditStore()
 persona_write_owner = app_deps.persona_write_owner
 ranking_write_owner = app_deps.ranking_write_owner
+strategy_write_owner = app_deps.strategy_write_owner
 persona_reconciliation_mutation_port = PersonaProvisioningReconciliationMutationPort(
     persona_mutation_port=persona_write_owner,
 )
@@ -8285,6 +8290,8 @@ def _require_agora_bulk_feedback_role(identity: OperatorIdentity) -> None:
             suggestion="Escalate to a user with analyst, operator, reviewer, approver, or admin role",
         )
 _MCP_TOOL_REGISTRY: Dict[str, Dict[str, Any]] = {}
+_TOOL_REGISTRY: Dict[str, Dict[str, Any]] = {}
+_SKILL_REGISTRY: Dict[str, Dict[str, Any]] = {}
 _CAPITAL_BFF_IDEMPOTENCY: Dict[str, Dict[str, Any]] = {}
 def _capital_bff_idempotency_identity(operator_id: str, resolved_key: str) -> str:
     return f"{operator_id}\x00{resolved_key}"
@@ -8850,10 +8857,24 @@ _STRATEGY_BFF_RISK_MAP = {
     "critical": "critical",
 }
 _STRATEGY_PERSONA_BFF_IDEMPOTENCY: Dict[str, Dict[str, Any]] = {}
-_STRATEGY_BFF_OVERLAY: Dict[str, Dict[str, Any]] = {}
 _STRATEGY_SEED_REPLICATION_BFF_IDEMPOTENCY: Dict[str, Dict[str, Any]] = {}
 _STRATEGY_SEED_REVIEW_BFF_IDEMPOTENCY: Dict[str, Dict[str, Any]] = {}
-_PERSONA_BFF_OVERLAY: Dict[str, Dict[str, Any]] = {}
+
+_RETIRED_PROCESS_OVERLAYS = frozenset({
+    "_PERSONA_BFF_OVERLAY",
+    "_STRATEGY_BFF_OVERLAY",
+    "_GOV_BFF_INCIDENT_OVERLAY",
+    "_GOV_BFF_JOB_OVERLAY",
+})
+
+def __getattr__(name: str) -> Any:
+    if name in _RETIRED_PROCESS_OVERLAYS:
+        raise AttributeError(
+            f"{name} has been retired and deleted under OVERLAY-RETIRE-001; "
+            "process-local overlays are forbidden and canonical domain stores must be used directly."
+        )
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
 _PERSONA_PROVISIONING_STORE = None
 _PERSONA_PROVISIONING_STORE_LOCK = threading.Lock()
 _PERSONA_FIRST_EVALUATION_WORKFLOW_ID = "pantheon.persona.first-evaluation"
@@ -9432,13 +9453,6 @@ def _materialize_terminal_persona_provisioning_ledger(
         lifecycle_state=new_state,
         metadata=metadata_updates,
     )
-    if persona_id in _PERSONA_BFF_OVERLAY:
-        _PERSONA_BFF_OVERLAY[persona_id]["state"] = _normalize_lifecycle_state(new_state)
-        _PERSONA_BFF_OVERLAY[persona_id]["lifecycleStatus"] = new_state
-        if runtime_binding_id:
-            _PERSONA_BFF_OVERLAY[persona_id]["runtimeBindingId"] = runtime_binding_id
-        if runtime_id:
-            _PERSONA_BFF_OVERLAY[persona_id]["runtimeId"] = runtime_id
     raw["lifecycle_state"] = new_state
     raw["status"] = new_state
     raw.setdefault("metadata", {}).update(metadata_updates)
@@ -10047,13 +10061,6 @@ def _evaluate_persona_provisioning_status(
             lifecycle_state=new_state,
             metadata=metadata_updates,
         )
-        if persona_id in _PERSONA_BFF_OVERLAY:
-            _PERSONA_BFF_OVERLAY[persona_id]["state"] = _normalize_lifecycle_state(new_state)
-            _PERSONA_BFF_OVERLAY[persona_id]["lifecycleStatus"] = new_state
-            if binding_id:
-                _PERSONA_BFF_OVERLAY[persona_id]["runtimeBindingId"] = binding_id
-            if runtime_id:
-                _PERSONA_BFF_OVERLAY[persona_id]["runtimeId"] = runtime_id
         raw["lifecycle_state"] = new_state
         raw["status"] = new_state
         raw.setdefault("metadata", {}).update(metadata_updates)
@@ -10212,20 +10219,9 @@ def _routed_strategies_for_persona(persona_id: str) -> int:
     items = read_store.list_strategy_specs(persona_id=persona_id) or []
     return len(items)
 def _list_strategy_summaries() -> List[Dict[str, Any]]:
-    """Combine canonical strategy_specs with overlay records created via /bff."""
-    items = list(read_store.list_strategy_specs() or [])
-    seen = {str(item.get("strategy_id") or "") for item in items}
-    for sid, overlay in _STRATEGY_BFF_OVERLAY.items():
-        if sid in seen:
-            continue
-        items.append({
-            "strategy_id": sid,
-            "title": overlay.get("name"),
-            "lifecycle_state": overlay.get("state") or "draft",
-            "last_modified_at": overlay.get("updatedAt"),
-            "owner": overlay.get("owner"),
-        })
-    return items
+    """Return canonical strategy specs from read_store."""
+    return list(read_store.list_strategy_specs() or [])
+
 def _list_persona_records(tenant_id: Optional[str] = None) -> List[Dict[str, Any]]:
     """Combine canonical personas with durable store and overlay records created via /bff."""
     items = list(read_store.list_personas() or [])
@@ -10273,22 +10269,6 @@ def _list_persona_records(tenant_id: Optional[str] = None) -> List[Dict[str, Any
             if record.state == "succeeded" and existing.get("lifecycle_state") in {None, "draft", "provisioning"}:
                 existing["lifecycle_state"] = "paper_running"
 
-    for pid, overlay in _PERSONA_BFF_OVERLAY.items():
-        if pid not in records_by_id:
-            records_by_id[pid] = {
-                "id": pid,
-                "persona_id": pid,
-                "name": overlay.get("name"),
-                "lifecycle_state": overlay.get("state") or "draft",
-                "updated_at": overlay.get("updatedAt"),
-                "metadata": {
-                    "archetype": overlay.get("archetype"),
-                    "owner": overlay.get("owner"),
-                    "risk_level": overlay.get("risk"),
-                    "tenant_id": overlay.get("tenantId"),
-                },
-            }
-
     result = list(records_by_id.values())
     if clean_tenant:
         # Registry provenance is not tenant ownership.  A tenant-scoped
@@ -10306,6 +10286,7 @@ def _list_persona_records(tenant_id: Optional[str] = None) -> List[Dict[str, Any
         )
     )
     return result
+@dataclass(frozen=True)
 class PersonaDirectorySnapshot:
     tenant_id: str
     snapshot_at: str
@@ -11173,9 +11154,8 @@ def _project_persona_fleet_item(
     all_evolution_decisions: List[Dict[str, Any]],
 ) -> Dict[str, Any]:
     persona_id = str(raw_persona.get("persona_id") or raw_persona.get("id") or "").strip()
-    overlay = _PERSONA_BFF_OVERLAY.get(persona_id)
     routed = _routed_strategies_for_persona(persona_id)
-    persona_dto = _project_persona_dto(raw_persona, overlay=overlay, routed_strategies=routed)
+    persona_dto = _project_persona_dto(raw_persona, overlay=None, routed_strategies=routed)
 
     bindings = list(read_store.get_bindings_for_persona(persona_id) or [])
     binding_ids = {
@@ -19291,6 +19271,22 @@ async def stream_generic_events(
     _require_read_role(identity)
 
     return _handle_sse_stream(channel, _sse_buffers[channel], _sse_subscribers[channel], last_event_id)
+
+
+async def stream_approval_events(
+    last_event_id: Optional[str] = None,
+    authorization: Optional[str] = None,
+):
+    """Per-channel alias for the generic approval-channel SSE stream."""
+    return await stream_generic_events("approval", last_event_id, authorization)
+
+
+async def stream_ask_events(
+    last_event_id: Optional[str] = None,
+    authorization: Optional[str] = None,
+):
+    """Per-channel alias for the generic ask-channel SSE stream."""
+    return await stream_generic_events("ask", last_event_id, authorization)
 _EVOL_EXP_BFF_IDEMPOTENCY: Dict[str, Dict[str, Any]] = {}
 def _evol_exp_bff_idempotency_check(
     resolved_key: str,
@@ -19433,8 +19429,9 @@ def _merged_mcp_tool_records() -> List[Dict[str, Any]]:
         [dict(record) for record in _MCP_TOOL_REGISTRY.values()],
         ("tool_id", "id"),
     )
+_GOV_BFF_EVOLUTION_PROGRAM_OVERLAY: Dict[str, Dict[str, Any]] = {}
+_GOV_BFF_EXPERIMENT_OVERLAY: Dict[str, Dict[str, Any]] = {}
 _GOV_BFF_IDEMPOTENCY: Dict[str, Dict[str, Any]] = {}
-_GOV_BFF_INCIDENT_OVERLAY: Dict[str, Dict[str, Any]] = {}
 _ACKNOWLEDGED_ALERTS: Dict[str, Dict[str, Any]] = {}
 _INCIDENT_CASE_ALIAS_FIELDS = {
     "binding_id": ("binding_id", "runtime_binding_id"),
@@ -19504,17 +19501,6 @@ def _list_bff_incidents(
             affected_pool_id=affected_pool_id,
         )
     ]
-    seen = {str(item.get("incident_id") or item.get("id") or "") for item in incidents}
-    for incident_id, incident in _GOV_BFF_INCIDENT_OVERLAY.items():
-        if incident_id in seen:
-            continue
-        if _bff_incident_matches_filters(
-            incident,
-            status=status,
-            severity=severity,
-            affected_pool_id=affected_pool_id,
-        ):
-            incidents.append(_project_bff_incident_case(incident))
     anchor = [
         incident
         for incident in incidents
@@ -19534,8 +19520,7 @@ def _get_bff_incident(incident_id: str) -> Optional[Dict[str, Any]]:
     incident = read_store.get_incident(incident_id)
     if incident:
         return _project_bff_incident_case(incident)
-    overlay = _GOV_BFF_INCIDENT_OVERLAY.get(incident_id)
-    return _project_bff_incident_case(overlay) if overlay else None
+    return None
 def _gov_bff_action_command(
     entity_type: ObjectType,
     entity_id: str,
@@ -19635,9 +19620,10 @@ def _gov_bff_action_command(
         status=CommandStatus.SUBMITTED,
         staleness_warning=staleness_warning,
     )
-    _GOV_BFF_IDEMPOTENCY[resolved_key] = {"request_hash": request_hash, "result": result}
-    return result
-_GOV_BFF_JOB_OVERLAY: Dict[str, Dict[str, Any]] = {}
+    res_dict = result.model_dump(mode="json") if hasattr(result, "model_dump") else result
+    _GOV_BFF_IDEMPOTENCY[resolved_key] = {"request_hash": request_hash, "result": res_dict}
+    return res_dict
+
 def _research_experiments_surface_source(records: Sequence[Dict[str, Any]]) -> Optional[str]:
     if read_store.dataset_source("research_experiments") != "missing":
         return None
@@ -22345,7 +22331,6 @@ app.include_router(
         read_surface_meta=_read_surface_meta,
         dataset_surface_status=_dataset_surface_status,
         raise_if_read_surface_unavailable=_raise_if_read_surface_unavailable,
-        get_job_overlay=lambda: _GOV_BFF_JOB_OVERLAY,
         reject_body_idempotency_key=_reject_body_idempotency_key,
         resolve_final_idempotency_key=_resolve_final_idempotency_key,
         submit_job_action=lambda job_id, action_id, resolved_key, identity, payload: _evol_exp_bff_action_command(
@@ -22359,19 +22344,31 @@ app.include_router(
         ),
     )
 )
+async def bff_events_stream_alias(
+    channel: str = "system",
+    last_event_id: Optional[str] = None,
+    authorization: Optional[str] = None,
+):
+    return await stream_generic_events(channel, last_event_id, authorization)
+
+
 from .events.router import create_events_router as _create_events_router
-app.include_router(
-    _create_events_router(
-        read_surface=app_deps.read_surface,
-        command_store=app_deps.command_store,
-        extract_identity=_extract_identity,
-        require_read_role=_require_read_role,
-        bff_error=_bff_error,
-        utc_now=utc_now,
-        snapshot_meta=_snapshot_meta,
-        include_domain_sse_aliases=False,
-    )
+_events_router = _create_events_router(
+    read_surface=app_deps.read_surface,
+    command_store=app_deps.command_store,
+    get_read_store=lambda: read_store,
+    extract_identity=_extract_identity,
+    require_read_role=_require_read_role,
+    bff_error=_bff_error,
+    utc_now=utc_now,
+    snapshot_meta=_snapshot_meta,
+    sse_buffers=_sse_buffers,
+    sse_subscribers=_sse_subscribers,
+    sse_channels=SSE_CHANNELS,
+    handle_sse_stream=_handle_sse_stream,
+    include_domain_sse_aliases=False,
 )
+app.include_router(_events_router)
 from .evolution.router import create_evolution_router as _create_evolution_router
 app.include_router(
     _create_evolution_router(
@@ -22484,7 +22481,7 @@ _runtime_router = _create_runtime_router(
 )
 app.routes.extend(_runtime_router.routes)
 from .deployment.router import create_deployment_router as _create_deployment_router
-app.include_router(
+_deployment_router = (
     _create_deployment_router(
         queries=app_deps.deployment_queries,
         commands=app_deps.deployment_commands,
@@ -22517,6 +22514,7 @@ app.include_router(
         surface_degradation_reason=_surface_degradation_reason,
     )
 )
+app.include_router(_deployment_router)
 from .command_adapters.router import (
     create_action_command_router as _create_action_command_router,
     create_command_adapters_router as _create_command_adapters_router,
@@ -22617,7 +22615,6 @@ app.include_router(
         normalize_risk_level=_normalize_risk_level,
         strategy_persona_idempotency_check=_strategy_persona_idempotency_check,
         strategy_persona_action_command=_strategy_persona_action_command,
-        strategy_overlay=_STRATEGY_BFF_OVERLAY,
         strategy_persona_idempotency_store=_STRATEGY_PERSONA_BFF_IDEMPOTENCY,
         strategy_seed_replication_idempotency_store=_STRATEGY_SEED_REPLICATION_BFF_IDEMPOTENCY,
         strategy_seed_review_idempotency_store=_STRATEGY_SEED_REVIEW_BFF_IDEMPOTENCY,
@@ -22628,6 +22625,7 @@ app.include_router(
         bff_me_tenant_payload=_bff_me_tenant_payload,
         list_persona_records=_list_persona_records,
         list_strategy_summaries=_list_strategy_summaries,
+        strategy_write_owner=lambda: strategy_write_owner,
     )
 )
 from .incidents.router import create_incident_router as _create_incident_router
@@ -22657,12 +22655,9 @@ app.include_router(
         dry_run_success_response=_dry_run_success_response,
         build_operator_alerts_payload=lambda s: _build_operator_alerts_payload(s),
         list_governance_audit_events=_list_governance_audit_events,
-        get_bff_incident=_get_bff_incident,
-        list_bff_incidents=_list_bff_incidents,
         incident_events=_incident_events,
         incident_subscribers=_incident_subscribers,
         acknowledged_alerts=_ACKNOWLEDGED_ALERTS,
-        incident_overlay=_GOV_BFF_INCIDENT_OVERLAY,
         idempotency_ledger=_GOV_BFF_IDEMPOTENCY,
     )
 )
@@ -22956,6 +22951,7 @@ app.include_router(
         read_surface=app_deps.read_surface,
         loop_truth_adapter=loop_truth,
         downstream_health_monitor=downstream_health_monitor,
+        intervention_records_provider=_v5_intervention_records,
         submit_sem_command=_sem_command_response,
         submit_final_command_admission=_submit_final_command_admission,
         reject_body_idempotency_key=_reject_body_idempotency_key,
@@ -23020,9 +23016,47 @@ interaction_lifecycle = _agora_router.interaction_lifecycle
 workshop_store = _agora_router.workshop_store
 proposal_store = _agora_router.proposal_store
 
+
+def _mounted_router_endpoint(router: Any, path: str) -> Any:
+    """Return the real handler mounted at ``path`` on an already-built router.
+
+    Re-exposes the exact ASGI-registered callable under its historical
+    direct-call name instead of re-implementing SSE alias logic here.
+    """
+    for route in router.routes:
+        if getattr(route, "path", None) == path:
+            return route.endpoint
+    raise RuntimeError(f"No route registered for path {path!r} on {router!r}")
+
+
+stream_bff_events = _mounted_router_endpoint(_events_router, "/bff/events/stream")
+bff_sse_notifications_alias = _mounted_router_endpoint(_events_router, "/bff/sse/notifications")
+bff_sse_cc_kpi_alias = _mounted_router_endpoint(_events_router, "/bff/sse/command-center/kpi")
+bff_sse_cc_events_alias = _mounted_router_endpoint(_events_router, "/bff/sse/command-center/events")
+bff_sse_job_progress_alias = _mounted_router_endpoint(_events_router, "/bff/sse/jobs/{jobId}/progress")
+bff_sse_alerts_alias = _mounted_router_endpoint(_events_router, "/bff/sse/alerts")
+bff_sse_incident_timeline_alias = _mounted_router_endpoint(_events_router, "/bff/sse/incidents/{incidentId}/timeline")
+bff_sse_review_updates_alias = _mounted_router_endpoint(_events_router, "/bff/sse/review/updates")
+bff_sse_deployment_events_alias = _mounted_router_endpoint(_deployment_router, "/bff/sse/deployment/events")
+bff_sse_agora_signals_alias = _mounted_router_endpoint(_agora_router, "/bff/sse/agora/signals")
+bff_sse_agora_session_alias = _mounted_router_endpoint(_agora_router, "/bff/sse/agora/sessions/{sessionId}")
+
 import types as _types
 class _BffMainModule(_types.ModuleType):
+    def __getattr__(self, name: str) -> Any:
+        if name in _RETIRED_PROCESS_OVERLAYS:
+            raise AttributeError(
+                f"{name} has been retired and deleted under OVERLAY-RETIRE-001; "
+                "process-local overlays are forbidden and canonical domain stores must be used directly."
+            )
+        raise AttributeError(f"module {self.__name__!r} has no attribute {name!r}")
+
     def __setattr__(self, name: str, value: Any) -> None:
+        if name in _RETIRED_PROCESS_OVERLAYS:
+            raise AttributeError(
+                f"{name} has been retired and deleted under OVERLAY-RETIRE-001; "
+                "process-local overlays are forbidden and cannot be reinstated."
+            )
         super().__setattr__(name, value)
         if name == "read_store" and hasattr(self, "app_deps") and hasattr(self.app_deps, "read_surface"):
             if value is not self.app_deps.read_surface:

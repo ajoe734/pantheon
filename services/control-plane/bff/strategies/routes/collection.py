@@ -4,7 +4,7 @@ from __future__ import annotations
 import uuid
 from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter, Body, Header, Query
+from fastapi import APIRouter, Body, Header, HTTPException, Query
 
 from .common import StrategyRouteContext
 
@@ -35,14 +35,12 @@ def build_collection_router(ctx: StrategyRouteContext) -> APIRouter:
             summaries = [
                 s for s in summaries
                 if persona_id in (s.get("persona_ids") or [])
-                or s.get("strategy_id") in ctx.strategy_overlay
             ]
         items = []
         for summary in summaries:
             strategy_id = str(summary.get("strategy_id") or "")
             detail = read_store.get_strategy_spec_detail(strategy_id, version_selector="current")
-            overlay = ctx.strategy_overlay.get(strategy_id)
-            items.append(ctx.project_strategy_dto(summary, detail=detail, overlay=overlay))
+            items.append(ctx.project_strategy_dto(summary, detail=detail))
         if state:
             items = [s for s in items if s.get("state") == state]
         total = len(items)
@@ -67,9 +65,10 @@ def build_collection_router(ctx: StrategyRouteContext) -> APIRouter:
         """BFF: create strategy stub (execute-plans compatibility)."""
         identity = ctx.extract_identity(authorization)
         ctx.require_operator_role(identity)
+        principal = ctx.write_principal(identity)
         ctx.reject_body_idempotency_key(payload)
         resolved_key = ctx.resolve_final_idempotency_key(idempotency_key, x_idempotency_key)
-        request_hash = ctx.stable_json_hash({"route": "POST /bff/strategies", "payload": payload})
+        request_hash = ctx.stable_json_hash({"route": "POST /bff/strategies", "payload": payload, "principal": principal})
         dry_run = ctx.request_dry_run_requested()
         if not dry_run:
             cached = ctx.strategy_persona_idempotency_check(resolved_key, request_hash)
@@ -84,8 +83,9 @@ def build_collection_router(ctx: StrategyRouteContext) -> APIRouter:
             )
         snapshot_at = ctx.utc_now()
         strategy_id = f"strategy-{snapshot_at[:10].replace('-', '')}-{uuid.uuid4().hex[:8]}"
-        overlay = {
+        record = {
             "id": strategy_id,
+            "strategy_id": strategy_id,
             "name": name,
             "owner": str(payload.get("owner") or identity.operator_id),
             "updatedAt": snapshot_at,
@@ -102,14 +102,47 @@ def build_collection_router(ctx: StrategyRouteContext) -> APIRouter:
         }
         if dry_run:
             return ctx.dry_run_success_response(
-                overlay,
+                record,
                 snapshot_at=snapshot_at,
                 idempotency_key=resolved_key,
                 evidence_kind="strategy.create",
             )
-        ctx.strategy_overlay[strategy_id] = overlay
+        writer = ctx.get_strategy_write_owner_port()
+        if writer is None:
+            raise ctx.bff_error(
+                503,
+                ErrorCode.DEPENDENCY_UNAVAILABLE,
+                "Canonical strategy writer unavailable",
+                "Cannot persist strategy without an authoritative domain store",
+            )
+        written = False
+        try:
+            res = None
+            if hasattr(writer, "upsert_strategy"):
+                res = writer.upsert_strategy({**record, "actor": principal, "command_key": resolved_key})
+            elif hasattr(writer, "create_strategy_spec"):
+                res = writer.create_strategy_spec({**record, "actor": principal, "command_key": resolved_key})
+            if res:
+                written = True
+        except HTTPException:
+            raise
+        except Exception as exc:
+            raise ctx.bff_error(
+                503,
+                ErrorCode.DEPENDENCY_UNAVAILABLE,
+                "Canonical strategy persistence failed",
+                str(exc),
+            ) from exc
+
+        if not written:
+            raise ctx.bff_error(
+                503,
+                ErrorCode.DEPENDENCY_UNAVAILABLE,
+                "Canonical strategy writer unavailable",
+                "Cannot persist strategy without an authoritative domain store",
+            )
         result = {
-            "data": overlay,
+            "data": record,
             "meta": {"snapshot_at": snapshot_at},
         }
         ctx.strategy_persona_idempotency[resolved_key] = {"request_hash": request_hash, "result": result}

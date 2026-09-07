@@ -794,6 +794,12 @@ class PostgresRegistryStore:
             if raw.get("strategy_id") == strategy_id
         ]
 
+    def list_all_entries(self) -> list[RegistryEntry]:
+        return [
+            RegistryEntry.from_dict(raw)
+            for raw in self._entries.list_all()
+        ]
+
     def resolve_latest_approved(self, strategy_id: str) -> Optional[RegistryEntry]:
         entries = self.list_by_strategy(strategy_id)
         approved = [e for e in entries if e.artifact_state.value == "approved"]

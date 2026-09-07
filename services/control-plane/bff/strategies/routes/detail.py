@@ -4,7 +4,7 @@ from __future__ import annotations
 import uuid
 from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter, Body, Header, Query
+from fastapi import APIRouter, Body, Header, HTTPException, Query
 
 from .common import StrategyRouteContext
 
@@ -27,17 +27,34 @@ def build_detail_router(ctx: StrategyRouteContext) -> APIRouter:
         ctx.require_read_role(identity)
         read_store = ctx.get_read_store_port()
         snapshot_at = ctx.utc_now()
-        overlay = ctx.strategy_overlay.get(strategy_id)
-        summary = read_store.get_strategy_spec(strategy_id)
-        if not summary and not overlay:
+        summary = None
+        getter = getattr(read_store, "get_strategy_spec", None)
+        if callable(getter):
+            try:
+                summary = getter(strategy_id)
+            except Exception:
+                pass
+        if not summary:
+            getter = getattr(read_store, "get_strategy", None)
+            if callable(getter):
+                try:
+                    summary = getter(strategy_id)
+                except Exception:
+                    pass
+        if not summary:
             raise ctx.bff_error(
                 404, ErrorCode.RESOURCE_NOT_FOUND,
                 "Strategy not found",
                 f"Strategy {strategy_id} does not exist",
             )
-        summary_for_dto = summary or {"strategy_id": strategy_id, "title": (overlay or {}).get("name")}
-        detail = read_store.get_strategy_spec_detail(strategy_id, version_selector="current")
-        dto = ctx.project_strategy_dto(summary_for_dto, detail=detail, overlay=overlay)
+        detail = None
+        detail_getter = getattr(read_store, "get_strategy_spec_detail", None)
+        if callable(detail_getter):
+            try:
+                detail = detail_getter(strategy_id, version_selector="current")
+            except Exception:
+                pass
+        dto = ctx.project_strategy_dto(summary, detail=detail)
         return {
             "data": dto,
             "meta": ctx.read_surface_meta(
@@ -54,31 +71,48 @@ def build_detail_router(ctx: StrategyRouteContext) -> APIRouter:
         idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
         x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
     ):
-        """BFF: patch strategy overlay fields."""
+        """BFF: patch strategy fields through the canonical writer."""
         identity = ctx.extract_identity(authorization)
         ctx.require_operator_role(identity)
+        principal = ctx.write_principal(identity)
         ctx.reject_body_idempotency_key(payload)
         resolved_key = ctx.resolve_final_idempotency_key(idempotency_key, x_idempotency_key)
         request_hash = ctx.stable_json_hash(
-            {"route": "PATCH /bff/strategies/{strategy_id}", "id": strategy_id, "payload": payload}
+            {"route": "PATCH /bff/strategies/{strategy_id}", "id": strategy_id, "payload": payload, "principal": principal}
         )
         cached = ctx.strategy_persona_idempotency_check(resolved_key, request_hash)
         if cached is not None:
             return cached
         read_store = ctx.get_read_store_port()
-        summary = read_store.get_strategy_spec(strategy_id)
-        overlay = ctx.strategy_overlay.get(strategy_id)
-        if not summary and not overlay:
+        summary = None
+        getter = getattr(read_store, "get_strategy_spec", None)
+        if callable(getter):
+            try:
+                summary = getter(strategy_id)
+            except Exception:
+                pass
+        if not summary:
+            getter = getattr(read_store, "get_strategy", None)
+            if callable(getter):
+                try:
+                    summary = getter(strategy_id)
+                except Exception:
+                    pass
+        if not summary:
             raise ctx.bff_error(
                 404, ErrorCode.RESOURCE_NOT_FOUND,
                 "Strategy not found",
                 f"Strategy {strategy_id} does not exist",
             )
         snapshot_at = ctx.utc_now()
-        base = dict(overlay) if overlay else {}
-        if not base:
-            detail = read_store.get_strategy_spec_detail(strategy_id, version_selector="current")
-            base = ctx.project_strategy_dto(summary or {"strategy_id": strategy_id}, detail=detail)
+        detail = None
+        detail_getter = getattr(read_store, "get_strategy_spec_detail", None)
+        if callable(detail_getter):
+            try:
+                detail = detail_getter(strategy_id, version_selector="current")
+            except Exception:
+                pass
+        base = ctx.project_strategy_dto(summary or {"strategy_id": strategy_id}, detail=detail)
         for field_name in (
             "name", "owner", "state", "risk", "alpha",
             "capitalPoolId", "personaIds", "pnl30d", "sharpe", "drawdown",
@@ -92,7 +126,41 @@ def build_detail_router(ctx: StrategyRouteContext) -> APIRouter:
             base["risk"] = ctx.normalize_risk_level(payload["risk"])
         base["updatedAt"] = snapshot_at
         base["id"] = strategy_id
-        ctx.strategy_overlay[strategy_id] = base
+
+        writer = ctx.get_strategy_write_owner_port()
+        if writer is None:
+            raise ctx.bff_error(
+                503,
+                ErrorCode.DEPENDENCY_UNAVAILABLE,
+                "Canonical strategy writer unavailable",
+                "Cannot persist strategy without an authoritative domain store",
+            )
+        written = False
+        try:
+            res = None
+            if hasattr(writer, "upsert_strategy"):
+                res = writer.upsert_strategy({**base, "actor": principal, "command_key": resolved_key})
+            elif hasattr(writer, "create_strategy_spec"):
+                res = writer.create_strategy_spec({**base, "actor": principal, "command_key": resolved_key})
+            if res:
+                written = True
+        except HTTPException:
+            raise
+        except Exception as exc:
+            raise ctx.bff_error(
+                503,
+                ErrorCode.DEPENDENCY_UNAVAILABLE,
+                "Canonical strategy persistence failed",
+                str(exc),
+            ) from exc
+
+        if not written:
+            raise ctx.bff_error(
+                503,
+                ErrorCode.DEPENDENCY_UNAVAILABLE,
+                "Canonical strategy writer unavailable",
+                "Cannot persist strategy without an authoritative domain store",
+            )
         result = {"data": base, "meta": {"snapshot_at": snapshot_at}}
         ctx.strategy_persona_idempotency[resolved_key] = {"request_hash": request_hash, "result": result}
         return result

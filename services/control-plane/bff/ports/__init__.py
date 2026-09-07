@@ -92,6 +92,11 @@ from services.control_plane.bff.ports.rankings import (
     RankingSnapshotWriteOwnerPort,
     create_ranking_write_owner,
 )
+from services.control_plane.bff.ports.strategy_write_owner import (
+    StrategyWriteOwnerPort,
+    CanonicalStrategyWriteOwner,
+    create_strategy_write_owner,
+)
 
 __all__ = [
     # Operations & Consultation
@@ -163,4 +168,8 @@ __all__ = [
     # Ranking snapshot write owner (deliberately outside ReadSurfacePorts)
     "RankingSnapshotWriteOwnerPort",
     "create_ranking_write_owner",
+    # Strategy write owner (deliberately outside ReadSurfacePorts)
+    "StrategyWriteOwnerPort",
+    "CanonicalStrategyWriteOwner",
+    "create_strategy_write_owner",
 ]
