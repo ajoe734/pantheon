@@ -157,7 +157,7 @@ The scoped commits are made by that runtime's existing worker wrapper;
 candidate test subprocesses clear the runtime binding and use the isolated
 checkout environment provisioned by `scripts/dev/provision_python_distribution.py`.
 
-After Antigravity independently approves the frozen PR #5654 head, required
+After Codex2 independently approves the frozen PR #5654 head, required
 checks pass and the sole supervisor integrator merges that exact head, the
 activation coordinator records the actual merge SHA and verifies that it is
 on `origin/dev`. Use the existing `scripts/sync-dev-root.sh` entrypoint with
