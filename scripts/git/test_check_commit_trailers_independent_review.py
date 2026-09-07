@@ -288,3 +288,68 @@ def test_rejects_trailer_continuation_and_case_conflicts() -> None:
     p4 = CHECK.check_message(msg4, REQUIRED, True, expected_task_id="ABC-001")
     assert any("non-canonical trailer casing: 'task-id'" in p for p in p4), p4
 
+
+def test_accepts_non_identity_prose_and_details_multiline() -> None:
+    msg_details = (
+        "ABC-001: repair\n\n"
+        "Details:\n"
+        "  preserve the single authority\n"
+        "  retain exact commit binding\n\n"
+        "LLM-Agent: Claude\n"
+        "Task-ID: ABC-001\n"
+        "Reviewer: Codex2\n"
+    )
+    assert CHECK.check_message(msg_details, REQUIRED, True, expected_task_id="ABC-001") == []
+
+    import subprocess
+    msg_887b = subprocess.run(
+        ["git", "log", "-1", "--format=%B", "887b7a7c5fb5ccd35c55cc33adb4a12eb0f50d39"],
+        capture_output=True,
+        text=True,
+    ).stdout
+    if msg_887b.strip():
+        assert (
+            CHECK.check_message(
+                msg_887b,
+                REQUIRED,
+                True,
+                expected_task_id="OPS-REVIEW-HANDOFF-RECOVERY-CONTRACT-001",
+            )
+            == []
+        )
+
+
+def test_rejects_trailer_whitespace_before_separator() -> None:
+    cases = [
+        ("Task-ID : OTHER", ["non-canonical trailer syntax", "conflicting trailer: Task-ID"]),
+        ("Task-ID\t: OTHER", ["non-canonical trailer syntax", "conflicting trailer: Task-ID"]),
+        ("task-id : OTHER", ["non-canonical trailer syntax", "non-canonical trailer casing", "conflicting trailer: Task-ID"]),
+        ("Task-ID : ABC-001", ["non-canonical trailer syntax", "duplicate trailer: Task-ID"]),
+    ]
+    for extra, expected_patterns in cases:
+        message = (
+            "ABC-001: repair\n\n"
+            "LLM-Agent: Claude\n"
+            "Task-ID: ABC-001\n"
+            "Reviewer: Codex2\n"
+            f"{extra}\n"
+        )
+        problems = CHECK.check_message(message, REQUIRED, True, expected_task_id="ABC-001")
+        for pattern in expected_patterns:
+            assert any(pattern in p for p in problems), f"Pattern {pattern!r} not in {problems} for {extra!r}"
+
+    # Standalone non-canonical trailer syntax with space/tab before separator
+    standalone_cases = [
+        "Task-ID : ABC-001",
+        "Task-ID\t: ABC-001",
+        "LLM-Agent : Claude",
+        "Reviewer\t: Codex2",
+    ]
+    for trailer_line in standalone_cases:
+        lines = ["ABC-001: repair", "", "LLM-Agent: Claude", "Task-ID: ABC-001", "Reviewer: Codex2"]
+        # Replace the canonical line with the non-canonical syntax line
+        key = trailer_line.split()[0].rstrip(":\t")
+        lines = [trailer_line if l.startswith(key + ":") else l for l in lines]
+        msg = "\n".join(lines) + "\n"
+        problems = CHECK.check_message(msg, REQUIRED, True, expected_task_id="ABC-001")
+        assert any("non-canonical trailer syntax" in p for p in problems), f"Expected non-canonical syntax problem in {problems} for {trailer_line!r}"

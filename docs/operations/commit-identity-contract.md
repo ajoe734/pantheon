@@ -95,9 +95,13 @@ done/reconciliation. There are no divergent parsers or secondary validators.
    - trailer parsing follows Git trailer semantics for key case-insensitivity
      and continuation folding while strictly enforcing canonical syntax:
      required trailers must use canonical casing (`Task-ID`, `LLM-Agent`,
-     `Reviewer`). Non-canonical casing (`task-id`) and duplicate or conflicting
+     `Reviewer`). Non-canonical casing (`task-id`), whitespace (space or tab)
+     before the separator colon (`Task-ID :`), and duplicate or conflicting
      trailers across case variations are rejected. Indented multiline
-     trailer continuation lines are rejected as ambiguous trailer syntax.
+     trailer continuation lines bearing identity keys or continuing identity
+     trailers are rejected as ambiguous trailer syntax, while ordinary
+     non-identity prose (such as multiline `Details:` or verification descriptions)
+     is cleanly distinguished and accepted.
    - supports explicit `--task-id` parameter to validate against the expected
      canonical task id.
 

@@ -437,7 +437,72 @@ class WorkerCommitPreflightTests(unittest.TestCase):
             res = worker_commit.main()
         self.assertEqual(res, 5)
 
+    def test_worker_commit_rejects_trailer_whitespace_before_separator(self) -> None:
+        (self.repo / "file1.py").write_text("print('updated')\n", encoding="utf-8")
+        msg_file = self.repo / "msg.txt"
+        for extra in (
+            "Task-ID : OTHER",
+            "Task-ID\t: OTHER",
+            "task-id : OTHER",
+            "Task-ID : SUP-WORKER-SUBJECT-GUARD-20260811",
+        ):
+            msg_file.write_text(
+                "SUP-WORKER-SUBJECT-GUARD-20260811: anchor file1.py\n\n"
+                "LLM-Agent: Antigravity2\n"
+                "Task-ID: SUP-WORKER-SUBJECT-GUARD-20260811\n"
+                "Reviewer: Codex2\n"
+                f"{extra}\n",
+                encoding="utf-8",
+            )
+            argv = [
+                "worker_commit.py",
+                "--task-id",
+                "SUP-WORKER-SUBJECT-GUARD-20260811",
+                "--message-file",
+                str(msg_file),
+                "--scope",
+                str(self.repo / "file1.py"),
+                "--dry-run",
+            ]
+            with (
+                mock.patch.object(sys, "argv", argv),
+                mock.patch.object(worker_commit, "ROOT", self.repo),
+                mock.patch.object(worker_commit, "STATUS_ROOT", self.repo),
+            ):
+                res = worker_commit.main()
+            self.assertEqual(res, 5, f"Expected exit 5 for extra trailer {extra!r}")
+
+    def test_worker_commit_accepts_details_multiline_prose(self) -> None:
+        (self.repo / "file1.py").write_text("print('updated')\n", encoding="utf-8")
+        msg_file = self.repo / "msg.txt"
+        msg_file.write_text(
+            "SUP-WORKER-SUBJECT-GUARD-20260811: anchor file1.py\n\n"
+            "Details:\n"
+            "  preserve the single authority\n"
+            "  retain exact commit binding\n\n"
+            "LLM-Agent: Antigravity2\n"
+            "Task-ID: SUP-WORKER-SUBJECT-GUARD-20260811\n"
+            "Reviewer: Codex2\n",
+            encoding="utf-8",
+        )
+        argv = [
+            "worker_commit.py",
+            "--task-id",
+            "SUP-WORKER-SUBJECT-GUARD-20260811",
+            "--message-file",
+            str(msg_file),
+            "--scope",
+            str(self.repo / "file1.py"),
+            "--dry-run",
+        ]
+        with (
+            mock.patch.object(sys, "argv", argv),
+            mock.patch.object(worker_commit, "ROOT", self.repo),
+            mock.patch.object(worker_commit, "STATUS_ROOT", self.repo),
+        ):
+            res = worker_commit.main()
+        self.assertEqual(res, 0)
+
 
 if __name__ == "__main__":
     unittest.main()
-

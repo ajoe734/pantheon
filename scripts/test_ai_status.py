@@ -10216,6 +10216,72 @@ class DeliveryMetadataValidationTests(unittest.TestCase):
         ):
             ai_status.collect_done_delivery_metadata(task, "Claude")
 
+    def test_collect_done_delivery_metadata_rejects_trailer_whitespace_before_separator(self) -> None:
+        task = {
+            "id": "ABC-001",
+            "owner": "Claude",
+            "reviewer": "Codex2",
+            "status": "in_progress",
+        }
+        for extra in (
+            "Task-ID : OTHER",
+            "Task-ID\t: OTHER",
+            "task-id : OTHER",
+            "Task-ID : ABC-001",
+        ):
+            responses = iter(
+                [
+                    "task/ABC-001",
+                    "a" * 40,
+                    "ABC-001: repair",
+                    f"LLM-Agent: Claude\nTask-ID: ABC-001\nReviewer: Codex2\n{extra}\n",
+                    "Claude",
+                    "claude@example.com",
+                    "",
+                    "",
+                ]
+            )
+            with (
+                mock.patch.dict(os.environ, {"TASK_REQUIRE_MERGED_PR": "false"}, clear=False),
+                mock.patch.object(ai_status, "run_git_command", side_effect=lambda *args, **kwargs: next(responses)),
+                self.assertRaisesRegex(SystemExit, "non-canonical trailer syntax"),
+            ):
+                ai_status.collect_done_delivery_metadata(task, "Claude")
+
+    def test_collect_done_delivery_metadata_accepts_details_multiline_prose(self) -> None:
+        task = {
+            "id": "ABC-001",
+            "owner": "Claude",
+            "reviewer": "Codex2",
+            "status": "in_progress",
+        }
+        body = (
+            "Details:\n"
+            "  preserve the single authority\n"
+            "  retain exact commit binding\n\n"
+            "LLM-Agent: Claude\n"
+            "Task-ID: ABC-001\n"
+            "Reviewer: Codex2\n"
+        )
+        responses = iter(
+            [
+                "task/ABC-001",
+                "a" * 40,
+                "ABC-001: repair",
+                body,
+                "Claude",
+                "claude@example.com",
+                "",
+                "",
+            ]
+        )
+        with (
+            mock.patch.dict(os.environ, {"TASK_REQUIRE_MERGED_PR": "false"}, clear=False),
+            mock.patch.object(ai_status, "run_git_command", side_effect=lambda *args, **kwargs: next(responses)),
+        ):
+            delivery = ai_status.collect_done_delivery_metadata(task, "Claude")
+        self.assertEqual(delivery["commit_metadata"]["Task-ID"], "ABC-001")
+
     def test_collect_done_delivery_metadata_uses_execute_plans_artifact_repo(self) -> None:
         responses = iter(
             [
