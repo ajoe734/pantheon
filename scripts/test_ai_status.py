@@ -9785,7 +9785,7 @@ class DeliveryMetadataValidationTests(unittest.TestCase):
         self.assertIn("`Task-ID: ...`", message)
         self.assertIn("`Reviewer: ...`", message)
 
-    def test_collect_done_delivery_metadata_skips_trailers_for_merge_commit(self) -> None:
+    def test_collect_done_delivery_metadata_rejects_unproven_merge_subject(self) -> None:
         responses = iter(
             [
                 "task/REG-002",
@@ -9809,11 +9809,46 @@ class DeliveryMetadataValidationTests(unittest.TestCase):
             mock.patch.dict(os.environ, {"TASK_REQUIRE_MERGED_PR": "false"}, clear=False),
             mock.patch.object(ai_status, "run_git_command", side_effect=lambda *args, **kwargs: next(responses)),
         ):
-            delivery = ai_status.collect_done_delivery_metadata(task, "Codex")
+            with self.assertRaisesRegex(SystemExit, "Task-ID"):
+                ai_status.collect_done_delivery_metadata(task, "Codex")
 
-        self.assertEqual(delivery["commit"], "merge123")
-        self.assertEqual(delivery["commit_trailer_skip_reason"], "Merge")
-        self.assertTrue(delivery["commit_trailer_check_skipped"])
+    def test_collect_done_style_subjects_keep_identity_and_authority_checks(self) -> None:
+        task = {"id": "ABC-001", "owner": "Claude", "reviewer": "Codex2",
+                "status": "in_progress"}
+        valid_body = "LLM-Agent: Claude\nTask-ID: ABC-001\nReviewer: Codex2\n"
+        bodies = (
+            (valid_body, None),
+            (valid_body.replace("Task-ID: ABC-001\n", ""), "Task-ID"),
+            ("Task-ID: XYZ-001\n" + valid_body, "conflicting trailer"),
+            (valid_body + "Task-ID: ABC-001\n", "duplicate trailer"),
+            (valid_body.replace("Claude", "Gemini"), "owner reassignment denied"),
+            (valid_body.replace("Codex2", "Gemini"), "reviewer reassignment denied"),
+            (valid_body.replace("Codex2", "Claude"), "reviewer|self-review"),
+        )
+        for prefix in ("Merge ", "Revert ", "promote: ", "hotfix: ", "publish: "):
+            for body, error in bodies:
+                with self.subTest(prefix=prefix, body=body):
+                    responses = iter(["task/ABC-001", "a" * 40,
+                                      prefix + "ABC-001: repair", body,
+                                      "Claude", "claude@example.com", "", ""])
+                    with (
+                        mock.patch.dict(os.environ, {"TASK_REQUIRE_MERGED_PR": "false"}),
+                        mock.patch.object(ai_status, "run_git_command", side_effect=lambda *a, **kw: next(responses)),
+                        mock.patch.object(ai_status, "_delivered_commit_timestamp", return_value="2026-09-07T00:00:00Z"),
+                        mock.patch.object(ai_status, "_verified_done_owner_reassignment", side_effect=SystemExit("owner reassignment denied")) as owner_check,
+                        mock.patch.object(ai_status, "_verified_done_reviewer_reassignment", side_effect=SystemExit("reviewer reassignment denied")) as reviewer_check,
+                    ):
+                        if error:
+                            with self.assertRaisesRegex(SystemExit, error):
+                                ai_status.collect_done_delivery_metadata(task, "Claude")
+                        else:
+                            delivery = ai_status.collect_done_delivery_metadata(task, "Claude")
+                            self.assertEqual(delivery["commit_metadata"]["Task-ID"], task["id"])
+                            self.assertNotIn("commit_trailer_check_skipped", delivery)
+                        if "LLM-Agent: Gemini" in body:
+                            owner_check.assert_called_once()
+                        if "Reviewer: Gemini" in body:
+                            reviewer_check.assert_called_once()
 
     def test_collect_done_delivery_metadata_accepts_bounded_prefix_for_long_task_id(self) -> None:
         """OPS-COMMIT-IDENTITY-001: reproduces the merged PR5639 contradiction.
@@ -9981,10 +10016,7 @@ class DeliveryMetadataValidationTests(unittest.TestCase):
             ai_status.collect_done_delivery_metadata(task, "Claude")
 
     def test_collect_done_delivery_metadata_rejects_wrong_task_id_under_style_exemption(self) -> None:
-        """A subject exempt from the trailer-presence requirement (e.g. the
-        documented OPS-DOC-* housekeeping style) must still not carry a
-        Task-ID trailer that names a different task -- the exemption means
-        trailers may be absent, not that a present one may lie."""
+        """Housekeeping subject styles retain mandatory exact identity."""
         responses = iter(
             [
                 "task/OPS-DOC-ABC-001",

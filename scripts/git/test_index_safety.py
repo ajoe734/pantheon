@@ -414,6 +414,43 @@ class WorkerCommitWrapperTests(unittest.TestCase):
         finally:
             import shutil; shutil.rmtree(root); shutil.rmtree(runtime)
 
+    def test_missing_local_modules_do_not_use_parent_or_github_workspace(self) -> None:
+        # The parent runs inside the real candidate checkout; neither its cwd
+        # nor GITHUB_WORKSPACE may supply missing target modules implicitly.
+        import shutil
+        for missing in (".orchestrator/common.py", "scripts/git/check_commit_trailers.py"):
+            with self.subTest(missing=missing):
+                root = self._setup_repo()
+                try:
+                    (root / missing).unlink()
+                    env = dict(os.environ)
+                    env.pop("PANTHEON_COMMAND_ROOT", None)
+                    env.pop("PANTHEON_COMMAND_RUNTIME_SHA", None)
+                    env.pop("PYTHONPATH", None)
+                    env["GITHUB_WORKSPACE"] = str(REPO_ROOT)
+                    proc = subprocess.run(
+                        [sys.executable, str(root / "scripts/git/worker_commit.py"), "--help"],
+                        cwd=root, env=env, capture_output=True, text=True,
+                    )
+                    self.assertNotEqual(proc.returncode, 0, proc.stdout)
+                    self.assertIn("ModuleNotFoundError", proc.stderr)
+                finally:
+                    shutil.rmtree(root)
+
+    def test_explicit_incomplete_runtime_cannot_fall_back_to_complete_target(self) -> None:
+        import shutil
+        for missing in (".orchestrator/common.py", "scripts/git/check_commit_trailers.py"):
+            root = self._setup_repo()
+            runtime = self._setup_repo()
+            try:
+                (runtime / missing).unlink()
+                proc = self._wrapper(root, "--help", env_extra={"PANTHEON_COMMAND_ROOT": str(runtime)})
+                self.assertNotEqual(proc.returncode, 0, proc.stdout)
+                self.assertIn("PANTHEON_COMMAND_ROOT does not contain", proc.stderr)
+            finally:
+                shutil.rmtree(root)
+                shutil.rmtree(runtime)
+
     def test_directory_scope_does_not_force_add_ignored_children(self) -> None:
         root = self._setup_repo()
         try:

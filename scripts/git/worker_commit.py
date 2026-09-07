@@ -35,7 +35,6 @@ from __future__ import annotations
 
 import argparse
 import os
-import re
 import subprocess
 import sys
 import time
@@ -71,20 +70,6 @@ _runtime_orchestrator = (
     if _command_root
     else None
 )
-def _find_test_runner_root() -> Path | None:
-    pid = os.getpid()
-    for _ in range(10):
-        try:
-            cwd = Path(f"/proc/{pid}/cwd").resolve()
-            if (cwd / "scripts" / "git" / "check_commit_trailers.py").is_file():
-                return cwd
-            stat = Path(f"/proc/{pid}/stat").read_text()
-            pid = int(stat.split()[3])
-        except Exception:
-            break
-    return None
-
-
 if _command_root:
     if not _runtime_orchestrator or not (_runtime_orchestrator / "common.py").is_file():
         raise ModuleNotFoundError(
@@ -93,14 +78,6 @@ if _command_root:
     ORCHESTRATOR_DIR = _runtime_orchestrator
 else:
     ORCHESTRATOR_DIR = ROOT / ".orchestrator"
-    if not (ORCHESTRATOR_DIR / "common.py").is_file():
-        _runner = (
-            Path(os.environ["GITHUB_WORKSPACE"]).resolve()
-            if os.environ.get("GITHUB_WORKSPACE") and (Path(os.environ["GITHUB_WORKSPACE"]) / ".orchestrator" / "common.py").is_file()
-            else _find_test_runner_root()
-        )
-        if _runner and (_runner / ".orchestrator" / "common.py").is_file():
-            ORCHESTRATOR_DIR = _runner / ".orchestrator"
 if str(ORCHESTRATOR_DIR) not in sys.path:
     sys.path.insert(0, str(ORCHESTRATOR_DIR))
 
@@ -117,30 +94,11 @@ if _command_root:
     SCRIPTS_GIT_DIR = _runtime_scripts_git
 else:
     SCRIPTS_GIT_DIR = ROOT / "scripts" / "git"
-    if not (SCRIPTS_GIT_DIR / "check_commit_trailers.py").is_file():
-        _runner = (
-            Path(os.environ["GITHUB_WORKSPACE"]).resolve()
-            if os.environ.get("GITHUB_WORKSPACE") and (Path(os.environ["GITHUB_WORKSPACE"]) / "scripts" / "git" / "check_commit_trailers.py").is_file()
-            else _find_test_runner_root()
-        )
-        if _runner and (_runner / "scripts" / "git" / "check_commit_trailers.py").is_file():
-            SCRIPTS_GIT_DIR = _runner / "scripts" / "git"
 if str(SCRIPTS_GIT_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPTS_GIT_DIR))
 
 try:
     from common import write_activity_log
-except ModuleNotFoundError as exc:
-    if exc.name == "common":
-        raise ModuleNotFoundError(
-            "worker_commit.py requires Pantheon .orchestrator/common.py; "
-            "set PANTHEON_COMMAND_ROOT to the command runtime when committing "
-            "from a different repository"
-        ) from exc
-    raise
-
-try:
-    from common import canonical_commit_subject_prefix, commit_subject_prefix_variants
 except ModuleNotFoundError as exc:
     if exc.name == "common":
         raise ModuleNotFoundError(

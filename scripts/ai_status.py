@@ -192,8 +192,6 @@ from common import (
     activity_audit_lock_path,
     activity_audit_source_paths_unlocked,
     append_activity_log_entries_unlocked,
-    canonical_commit_subject_prefix,
-    commit_subject_prefix_variants,
     canonical_task_state_lock_path,
     durable_write_bytes,
     first_symlink_component,
@@ -1253,14 +1251,6 @@ DEFAULT_COMMIT_CONVENTIONS = {
     "subject_must_include_task_id": True,
     "required_body_fields": ["LLM-Agent", "Task-ID", "Reviewer"],
 }
-COMMIT_TRAILER_SKIP_PREFIXES = (
-    "Merge ",
-    "Revert ",
-    "promote:",
-    "hotfix:",
-    "publish:",
-)
-COMMIT_TRAILER_SKIP_RE = re.compile(r"^OPS-(?:GIT-(?:WORKFLOW|REDESIGN)|DOC|REBASE)-")
 FIRST_PROMPT_PRIORITY = [
     "AI_COLLABORATION_GUIDE.md",
     "ai-status.json",
@@ -3031,13 +3021,6 @@ def approved_closeout_metadata_ref(
         metadata_ref = authored_parent
 
 
-def commit_subject_skips_trailer_check(subject: str) -> str | None:
-    for prefix in COMMIT_TRAILER_SKIP_PREFIXES:
-        if subject.startswith(prefix):
-            return prefix.rstrip(": ")
-    return None
-
-
 def validate_loop_completion_claim(task: dict[str, Any]) -> None:
     """Gate the done transition for loop-autopilot tasks.
 
@@ -3445,113 +3428,93 @@ def collect_done_delivery_metadata(task: dict[str, Any], actor: str) -> dict[str
         }
 
         task_id = str(task.get("id") or "").strip()
-        trailer_skip_reason = commit_subject_skips_trailer_check(subject)
         full_message = f"{subject}\n\n{body}" if body else subject
         checker = _commit_trailer_checker()
 
-        if trailer_skip_reason is not None:
-            # Genuine system commit (e.g. Merge pull request #...).
-            if commit_rules["subject_must_include_task_id"] and task_id:
-                full_prefix, bounded_prefix = commit_subject_prefix_variants(task_id)
-                if task_id not in subject and bounded_prefix not in subject:
-                    raise SystemExit(
-                        f"Cannot finalize task: latest commit subject must include task id {task_id}."
+        required_fields = list(commit_rules.get("required_body_fields", []))
+        if "Task-ID" not in required_fields:
+            required_fields.append("Task-ID")
+
+        prefix_required = bool(commit_rules.get("subject_must_include_task_id", True))
+        problems = checker.check_message(
+            full_message,
+            required=tuple(required_fields),
+            prefix_required=prefix_required,
+            expected_task_id=task_id,
+            delivery_class="product",
+        )
+        metadata_fields = checker.parse_trailers(body)
+        expected_fields = {
+            "LLM-Agent": actor,
+            "Task-ID": task_id,
+            "Reviewer": canonical_agent_name(task.get("reviewer")),
+        }
+        mismatched_fields: list[tuple[str, str]] = []
+        commit_timestamp = ""
+        for field_name in required_fields:
+            actual_value = metadata_fields.get(field_name)
+            if not actual_value:
+                continue
+            expected_value = expected_fields.get(field_name)
+            if expected_value and actual_value != expected_value:
+                # The supervisor reassigns owner and reviewer as a pair when
+                # a lane goes unavailable, so a merged delivery can carry
+                # stale `LLM-Agent` and `Reviewer` trailers at once. Both are
+                # verified against the audited reassignment chain instead of
+                # failing closed and requiring a Human/Ops sign-off.
+                if field_name in {"LLM-Agent", "Reviewer"} and not commit_timestamp:
+                    commit_timestamp = _delivered_commit_timestamp(
+                        repository_root,
+                        task,
+                        commit_ref=metadata_ref if approved_ref else "",
                     )
-            metadata_fields = checker.parse_trailers(body)
-            present_task_id = metadata_fields.get("Task-ID", "").strip()
-            if present_task_id and present_task_id != task_id:
-                raise SystemExit(
-                    f"Cannot finalize task: commit Task-ID trailer '{present_task_id}' "
-                    f"does not match task id '{task_id}'."
-                )
-            delivery["commit_trailer_check_skipped"] = True
-            delivery["commit_trailer_skip_reason"] = trailer_skip_reason
-            delivery["commit_metadata"] = metadata_fields
-        else:
-            required_fields = list(commit_rules.get("required_body_fields", []))
-            if "Task-ID" not in required_fields:
-                required_fields.append("Task-ID")
-
-            prefix_required = bool(commit_rules.get("subject_must_include_task_id", True))
-            problems = checker.check_message(
-                full_message,
-                required=tuple(required_fields),
-                prefix_required=prefix_required,
-                expected_task_id=task_id,
-                delivery_class="product",
-            )
-            metadata_fields = checker.parse_trailers(body)
-            expected_fields = {
-                "LLM-Agent": actor,
-                "Task-ID": task_id,
-                "Reviewer": canonical_agent_name(task.get("reviewer")),
-            }
-            mismatched_fields: list[tuple[str, str]] = []
-            commit_timestamp = ""
-            for field_name in required_fields:
-                actual_value = metadata_fields.get(field_name)
-                if not actual_value:
-                    continue
-                expected_value = expected_fields.get(field_name)
-                if expected_value and actual_value != expected_value:
-                    # The supervisor reassigns owner and reviewer as a pair when
-                    # a lane goes unavailable, so a merged delivery can carry
-                    # stale `LLM-Agent` and `Reviewer` trailers at once. Both are
-                    # verified against the audited reassignment chain instead of
-                    # failing closed and requiring a Human/Ops sign-off.
-                    if field_name in {"LLM-Agent", "Reviewer"} and not commit_timestamp:
-                        commit_timestamp = _delivered_commit_timestamp(
-                            repository_root,
+                if field_name == "LLM-Agent":
+                    delivery["commit_owner_reassignment"] = (
+                        _verified_done_owner_reassignment(
                             task,
-                            commit_ref=metadata_ref if approved_ref else "",
+                            commit_owner=actual_value,
+                            current_owner=actor,
+                            commit_timestamp=commit_timestamp,
                         )
-                    if field_name == "LLM-Agent":
-                        delivery["commit_owner_reassignment"] = (
-                            _verified_done_owner_reassignment(
-                                task,
-                                commit_owner=actual_value,
-                                current_owner=actor,
-                                commit_timestamp=commit_timestamp,
-                            )
+                    )
+                    continue
+                if field_name == "Reviewer":
+                    delivery["commit_reviewer_reassignment"] = (
+                        _verified_done_reviewer_reassignment(
+                            task,
+                            commit_reviewer=actual_value,
+                            current_reviewer=expected_value,
+                            commit_timestamp=commit_timestamp,
                         )
-                        continue
-                    if field_name == "Reviewer":
-                        delivery["commit_reviewer_reassignment"] = (
-                            _verified_done_reviewer_reassignment(
-                                task,
-                                commit_reviewer=actual_value,
-                                current_reviewer=expected_value,
-                                commit_timestamp=commit_timestamp,
-                            )
-                        )
-                        continue
-                    mismatched_fields.append((field_name, expected_value))
+                    )
+                    continue
+                mismatched_fields.append((field_name, expected_value))
 
-            if problems:
-                missing_trailers = [
-                    p.split(": ", 1)[1] for p in problems if p.startswith("missing trailer: ")
-                ]
-                other_problems = [
-                    p for p in problems if not p.startswith("missing trailer: ")
-                ]
-                issue_parts = []
-                if missing_trailers:
-                    missing_list = ", ".join(f"`{f}: ...`" for f in missing_trailers)
-                    issue_parts.append(f"latest commit body must include {missing_list}")
-                if other_problems:
-                    issue_parts.extend(other_problems)
-                raise SystemExit(f"Cannot finalize task: {'; '.join(issue_parts)}.")
+        if problems:
+            missing_trailers = [
+                p.split(": ", 1)[1] for p in problems if p.startswith("missing trailer: ")
+            ]
+            other_problems = [
+                p for p in problems if not p.startswith("missing trailer: ")
+            ]
+            issue_parts = []
+            if missing_trailers:
+                missing_list = ", ".join(f"`{f}: ...`" for f in missing_trailers)
+                issue_parts.append(f"latest commit body must include {missing_list}")
+            if other_problems:
+                issue_parts.extend(other_problems)
+            raise SystemExit(f"Cannot finalize task: {'; '.join(issue_parts)}.")
 
-            if mismatched_fields:
-                mismatch_list = ", ".join(
-                    f"`{field_name}` must be `{expected_value}`"
-                    for field_name, expected_value in mismatched_fields
-                )
-                raise SystemExit(
-                    f"Cannot finalize task: latest commit body fields must match task metadata: {mismatch_list}."
-                )
+        if mismatched_fields:
+            mismatch_list = ", ".join(
+                f"`{field_name}` must be `{expected_value}`"
+                for field_name, expected_value in mismatched_fields
+            )
+            raise SystemExit(
+                f"Cannot finalize task: latest commit body fields must match task metadata: {mismatch_list}."
+            )
 
-            delivery["commit_metadata"] = metadata_fields
+        delivery["commit_metadata"] = metadata_fields
 
     porcelain = run_git_command(
         ["status", "--porcelain"],

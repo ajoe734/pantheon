@@ -35,7 +35,7 @@ CONFIG_FILE = ROOT / ".orchestrator" / "config.json"
 ORCHESTRATOR_DIR = ROOT / ".orchestrator"
 if str(ORCHESTRATOR_DIR) not in sys.path:
     sys.path.insert(0, str(ORCHESTRATOR_DIR))
-from common import canonical_commit_subject_prefix, commit_subject_prefix_variants  # noqa: E402
+from common import commit_subject_prefix_variants  # noqa: E402
 
 DEFAULT_REQUIRED = ("LLM-Agent", "Task-ID", "Reviewer")
 SUBJECT_PATTERN = re.compile(r"^[A-Z][A-Z0-9-]*[A-Z0-9]:\s+\S")
