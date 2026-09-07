@@ -81,16 +81,23 @@ done/reconciliation. There are no divergent parsers or secondary validators.
      traversal via `--skip-merge` (parent count > 1); raw text messages starting
      with `Merge ` or `wave-merge:` without structural git parents have no
      provenance and are not exempt from trailer requirements.
-   - if `prefix_required` is true, the subject's prefix (the text before the
-     first `: `) must equal one of
+   - if `prefix_required` is true, both standard subjects and supported
+     exempt-style subjects (`Revert `, `hotfix:`, `fixup!`, `squash!`, etc.)
+     must identify the expected task id (or its valid bounded prefix). The
+     checker extracts the underlying task prefix by peeling off exempt wrappers
+     and requires exact equality against one of
      `commit_subject_prefix_variants(<target task id>)`. This rejects
      short-ID suffix collisions (for example `ABC-001-OTHER: repair` or
-     `ABC-0010: repair` with `Task-ID: ABC-001`) as well as long-prefix suffix
-     collisions, while accepting either the uncompacted or compacted form a
-     genuine formatter output can carry.
-   - a required trailer (for example `Task-ID`) that appears more than once
-     is rejected as `duplicate trailer: ... appears N times` (or
-     `conflicting trailer: ...` if the values differ).
+     `ABC-0010: repair` with `Task-ID: ABC-001`), descriptions that merely
+     mention the ID (for example `fixup! XYZ-001: mentions ABC-001`), and
+     exempt collisions (`Revert ABC-001X`), while accepting either the
+     uncompacted or compacted form a genuine formatter output can carry.
+   - trailer parsing follows Git trailer semantics for key case-insensitivity
+     and continuation folding while strictly enforcing canonical syntax:
+     required trailers must use canonical casing (`Task-ID`, `LLM-Agent`,
+     `Reviewer`). Non-canonical casing (`task-id`) and duplicate or conflicting
+     trailers across case variations are rejected. Indented multiline
+     trailer continuation lines are rejected as ambiguous trailer syntax.
    - supports explicit `--task-id` parameter to validate against the expected
      canonical task id.
 

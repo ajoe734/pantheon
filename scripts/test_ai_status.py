@@ -6898,6 +6898,100 @@ class ReviewApprovedWorkflowTests(unittest.TestCase):
         ):
             ai_status.validate_merged_tooling_done(task)
 
+    def test_validate_merged_tooling_done_rejects_exempt_subject_prefix_collision(self) -> None:
+        task = {
+            "id": "ABC-001",
+            "task_class": "development_tooling",
+        }
+        delivery = {
+            "repository_id": "pantheon",
+            "repository_slug": "ajoe734/pantheon",
+            "repository_path": "/tmp/pantheon",
+            "commit": "a" * 40,
+            "merge_target_ref": "origin/dev",
+            "merge_target_sha": "b" * 40,
+            "head_merged_to_target": True,
+        }
+        invalid_subjects = [
+            "Revert ABC-001-OTHER: repair",
+            "hotfix: ABC-0010: repair",
+            "fixup! XYZ-001: mentions ABC-001",
+        ]
+        for subject in invalid_subjects:
+            with (
+                mock.patch.object(
+                    ai_status,
+                    "_validated_reconcile_delivery",
+                    return_value=delivery,
+                ),
+                mock.patch.object(
+                    ai_status,
+                    "run_git_command",
+                    return_value=f"{subject}\n\nTask-ID: ABC-001\n",
+                ),
+                self.assertRaisesRegex(SystemExit, "latest commit subject must include task id ABC-001"),
+            ):
+                ai_status.validate_merged_tooling_done(task)
+
+    def test_validate_merged_tooling_done_rejects_trailer_continuation(self) -> None:
+        task = {
+            "id": "ABC-001",
+            "task_class": "development_tooling",
+        }
+        delivery = {
+            "repository_id": "pantheon",
+            "repository_slug": "ajoe734/pantheon",
+            "repository_path": "/tmp/pantheon",
+            "commit": "a" * 40,
+            "merge_target_ref": "origin/dev",
+            "merge_target_sha": "b" * 40,
+            "head_merged_to_target": True,
+        }
+        with (
+            mock.patch.object(
+                ai_status,
+                "_validated_reconcile_delivery",
+                return_value=delivery,
+            ),
+            mock.patch.object(
+                ai_status,
+                "run_git_command",
+                return_value="ABC-001: repair\n\nTask-ID: ABC-001\n Task-ID: OTHER\n",
+            ),
+            self.assertRaisesRegex(SystemExit, "ambiguous trailer continuation"),
+        ):
+            ai_status.validate_merged_tooling_done(task)
+
+    def test_validate_merged_tooling_done_rejects_trailer_case_conflict(self) -> None:
+        task = {
+            "id": "ABC-001",
+            "task_class": "development_tooling",
+        }
+        delivery = {
+            "repository_id": "pantheon",
+            "repository_slug": "ajoe734/pantheon",
+            "repository_path": "/tmp/pantheon",
+            "commit": "a" * 40,
+            "merge_target_ref": "origin/dev",
+            "merge_target_sha": "b" * 40,
+            "head_merged_to_target": True,
+        }
+        with (
+            mock.patch.object(
+                ai_status,
+                "_validated_reconcile_delivery",
+                return_value=delivery,
+            ),
+            mock.patch.object(
+                ai_status,
+                "run_git_command",
+                return_value="ABC-001: repair\n\nTask-ID: ABC-001\ntask-id: OTHER\n",
+            ),
+            self.assertRaisesRegex(SystemExit, "conflicting trailer: Task-ID"),
+        ):
+            ai_status.validate_merged_tooling_done(task)
+
+
     def _init_repo(self, root: Path, *, remote: str, files: dict[str, str]) -> str:
         root.mkdir(parents=True)
         subprocess.run(["git", "init", "-b", "dev"], cwd=root, check=True, capture_output=True)
@@ -10041,6 +10135,84 @@ class DeliveryMetadataValidationTests(unittest.TestCase):
                 SystemExit,
                 "commit Task-ID trailer 'XYZ-001' does not match task id 'OPS-DOC-ABC-001'",
             ),
+        ):
+            ai_status.collect_done_delivery_metadata(task, "Claude")
+
+    def test_collect_done_delivery_metadata_rejects_exempt_subject_prefix_collision(self) -> None:
+        task = {
+            "id": "ABC-001",
+            "owner": "Claude",
+            "reviewer": "Codex2",
+            "status": "in_progress",
+        }
+        invalid_subjects = [
+            "Revert ABC-001-OTHER: repair",
+            "hotfix: ABC-0010: repair",
+            "fixup! XYZ-001: mentions ABC-001",
+        ]
+        for subject in invalid_subjects:
+            responses = iter(
+                [
+                    "task/ABC-001",
+                    "a" * 40,
+                    subject,
+                    "LLM-Agent: Claude\nTask-ID: ABC-001\nReviewer: Codex2\n",
+                    "Claude",
+                    "claude@example.com",
+                ]
+            )
+            with (
+                mock.patch.dict(os.environ, {"TASK_REQUIRE_MERGED_PR": "false"}, clear=False),
+                mock.patch.object(ai_status, "run_git_command", side_effect=lambda *args, **kwargs: next(responses)),
+                self.assertRaisesRegex(SystemExit, "latest commit subject must include task id ABC-001"),
+            ):
+                ai_status.collect_done_delivery_metadata(task, "Claude")
+
+    def test_collect_done_delivery_metadata_rejects_trailer_continuation(self) -> None:
+        task = {
+            "id": "ABC-001",
+            "owner": "Claude",
+            "reviewer": "Codex2",
+            "status": "in_progress",
+        }
+        responses = iter(
+            [
+                "task/ABC-001",
+                "a" * 40,
+                "ABC-001: repair",
+                "LLM-Agent: Claude\nTask-ID: ABC-001\n Task-ID: OTHER\nReviewer: Codex2\n",
+                "Claude",
+                "claude@example.com",
+            ]
+        )
+        with (
+            mock.patch.dict(os.environ, {"TASK_REQUIRE_MERGED_PR": "false"}, clear=False),
+            mock.patch.object(ai_status, "run_git_command", side_effect=lambda *args, **kwargs: next(responses)),
+            self.assertRaisesRegex(SystemExit, "ambiguous trailer continuation"),
+        ):
+            ai_status.collect_done_delivery_metadata(task, "Claude")
+
+    def test_collect_done_delivery_metadata_rejects_trailer_case_conflict(self) -> None:
+        task = {
+            "id": "ABC-001",
+            "owner": "Claude",
+            "reviewer": "Codex2",
+            "status": "in_progress",
+        }
+        responses = iter(
+            [
+                "task/ABC-001",
+                "a" * 40,
+                "ABC-001: repair",
+                "LLM-Agent: Claude\nTask-ID: ABC-001\ntask-id: OTHER\nReviewer: Codex2\n",
+                "Claude",
+                "claude@example.com",
+            ]
+        )
+        with (
+            mock.patch.dict(os.environ, {"TASK_REQUIRE_MERGED_PR": "false"}, clear=False),
+            mock.patch.object(ai_status, "run_git_command", side_effect=lambda *args, **kwargs: next(responses)),
+            self.assertRaisesRegex(SystemExit, "conflicting trailer: Task-ID"),
         ):
             ai_status.collect_done_delivery_metadata(task, "Claude")
 

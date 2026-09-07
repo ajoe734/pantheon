@@ -198,3 +198,93 @@ def test_check_message_with_expected_task_id() -> None:
     assert CHECK.check_message(message, REQUIRED, True, expected_task_id="TASK-ID-20260901") == []
     problems = CHECK.check_message(message, REQUIRED, True, expected_task_id="DIFFERENT-TASK")
     assert any("does not match task id 'DIFFERENT-TASK'" in p for p in problems), problems
+
+
+def test_rejects_exempt_subject_prefix_collision() -> None:
+    """OPS-COMMIT-IDENTITY-001: exempt-style subjects must still identify the exact task id."""
+    invalid_subjects = [
+        "Revert ABC-001-OTHER: repair",
+        "hotfix: ABC-0010: repair",
+        "fixup! XYZ-001: mentions ABC-001",
+        "Revert ABC-001X",
+        "fixup! ABC-001-OTHER: summary",
+        "hotfix: ABC-001-OTHER",
+    ]
+    for subject in invalid_subjects:
+        message = (
+            f"{subject}\n\n"
+            "LLM-Agent: Claude\n"
+            "Task-ID: ABC-001\n"
+            "Reviewer: Codex2\n"
+        )
+        problems = CHECK.check_message(message, REQUIRED, True, expected_task_id="ABC-001")
+        assert any(
+            "does not match expected task id 'ABC-001'" in p
+            or "latest commit subject must include task id ABC-001" in p
+            for p in problems
+        ), f"subject {subject!r} was wrongly accepted: {problems}"
+
+
+def test_accepts_valid_exempt_subject_prefixes() -> None:
+    valid_subjects = [
+        "hotfix: ABC-001",
+        "hotfix: ABC-001: repair",
+        'Revert "ABC-001: repair"',
+        "Revert ABC-001: repair",
+        "fixup! ABC-001: repair",
+        "squash! ABC-001: repair",
+    ]
+    for subject in valid_subjects:
+        message = (
+            f"{subject}\n\n"
+            "LLM-Agent: Claude\n"
+            "Task-ID: ABC-001\n"
+            "Reviewer: Codex2\n"
+        )
+        assert CHECK.check_message(message, REQUIRED, True, expected_task_id="ABC-001") == []
+
+
+def test_rejects_trailer_continuation_and_case_conflicts() -> None:
+    # 1. Indented trailer continuation
+    msg1 = (
+        "ABC-001: summary\n\n"
+        "LLM-Agent: Claude\n"
+        "Task-ID: ABC-001\n"
+        " Task-ID: OTHER\n"
+        "Reviewer: Codex2\n"
+    )
+    p1 = CHECK.check_message(msg1, REQUIRED, True, expected_task_id="ABC-001")
+    assert any("ambiguous trailer continuation" in p for p in p1), p1
+
+    # 2. Case-variant conflicting trailer
+    msg2 = (
+        "ABC-001: summary\n\n"
+        "LLM-Agent: Claude\n"
+        "Task-ID: ABC-001\n"
+        "task-id: OTHER\n"
+        "Reviewer: Codex2\n"
+    )
+    p2 = CHECK.check_message(msg2, REQUIRED, True, expected_task_id="ABC-001")
+    assert any("conflicting trailer: Task-ID" in p for p in p2), p2
+
+    # 3. Case-variant duplicate trailer
+    msg3 = (
+        "ABC-001: summary\n\n"
+        "LLM-Agent: Claude\n"
+        "Task-ID: ABC-001\n"
+        "task-id: ABC-001\n"
+        "Reviewer: Codex2\n"
+    )
+    p3 = CHECK.check_message(msg3, REQUIRED, True, expected_task_id="ABC-001")
+    assert any("duplicate trailer: Task-ID" in p for p in p3), p3
+
+    # 4. Non-canonical casing alone
+    msg4 = (
+        "ABC-001: summary\n\n"
+        "LLM-Agent: Claude\n"
+        "task-id: ABC-001\n"
+        "Reviewer: Codex2\n"
+    )
+    p4 = CHECK.check_message(msg4, REQUIRED, True, expected_task_id="ABC-001")
+    assert any("non-canonical trailer casing: 'task-id'" in p for p in p4), p4
+

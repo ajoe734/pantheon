@@ -103,15 +103,15 @@
       ".orchestrator/common.py": "000bfa722c76264e93616b8149f541b9ba72526c5558720400be7d716cb1f3e2",
       ".orchestrator/test_common.py": "d724a9a492b3ff3ad9c423f10904837b6d36b431cc0e952d130b71f4da33d140",
       "scripts/ai_status.py": "4506ad8993ba519e2993ce82e2e632fffd0aa965472367b9c7af1465cc8676df",
-      "scripts/test_ai_status.py": "8383f1a6d22fc91abc68eeb520177e609b48ca47e74cda682c011de67e582e2e",
-      "scripts/git/check_commit_trailers.py": "b7a7e8d597d5cfa1678afae6a7276c0fe1ba5ea1341b51bc5d71796c0c86e27c",
-      "scripts/git/test_check_commit_trailers_independent_review.py": "feca99b4e6c85f30ba9a3e29b6fe60d48897157a08c3ad85c88c0e28dcc12576",
+      "scripts/test_ai_status.py": "705380bd2c9fb13200a57f000f8c35d734ecd81284330a9dec49cc801a40f467",
+      "scripts/git/check_commit_trailers.py": "c77689821c2038cda30e5b2e6de351011b591123daa0142884228e4769f4764b",
+      "scripts/git/test_check_commit_trailers_independent_review.py": "fbbc0ffb8937dd6251d0aea61344b16f2369274848eed262d681082377635ad5",
       "scripts/git/worker_commit.py": "e253c9618c1d40a79743a7d800cf9d1eecb804f71e26e8bd4d22109ffa816061",
-      "scripts/git/test_worker_commit.py": "8b082ae563fcd541079cf005e21d8401ab0e52ead5ce4544de10cf3f621e5406",
+      "scripts/git/test_worker_commit.py": "81b3e77af6e584cd3061847eee98d143ccfabb15b092f0f2097afc7ebb29a88d",
       "scripts/git/test_index_safety.py": "8290ed0d15b48bd643f6be6c5e83000e44b0d88868c78f9c8917bfc235133297",
       "scripts/git/test_git_workflow_helpers.py": "1504b250a3d02fe51ae1e836a969121d2bf457eb9abd95bf989c0f8737682b12",
       "scripts/git/test_task_review_merge_gate.py": "dc902557c4d8550ad40fc90da211885a96986f5919619a50a679f108d5896966",
-      "docs/operations/commit-identity-contract.md": "fe5cfe10f0bba231001f053a42609c1dd649d0044e00c9c229383eeb2e077417"
+      "docs/operations/commit-identity-contract.md": "376495fb2615fe0634054c4306f87943329d189332a6c7c8b4d5ebd257579627"
     },
     "prior_head_runs": [
       {
@@ -140,22 +140,27 @@
       },
       {
         "command": "env -u PANTHEON_COMMAND_ROOT -u PANTHEON_COMMAND_RUNTIME_SHA timeout 120 .venv-pantheon/bin/python3 -m pytest -q .orchestrator/test_supervisor.py -k test_real_runner_queue_consumer_launches_exactly_one_owner_across_restart",
-        "result": "1 passed, 294 deselected in 23.31s",
+        "result": "1 passed, 294 deselected in 21.59s",
         "exit_status": 0
       },
       {
         "command": "env -u PANTHEON_COMMAND_ROOT -u PANTHEON_COMMAND_RUNTIME_SHA timeout 120 .venv-pantheon/bin/python3 -m pytest -q scripts/git/test_worker_commit.py scripts/git/test_check_commit_trailers_independent_review.py scripts/git/test_index_safety.py scripts/git/test_git_workflow_helpers.py",
-        "result": "117 passed, 2 subtests passed in 18.31s",
+        "result": "123 passed, 2 subtests passed in 18.62s",
+        "exit_status": 0
+      },
+      {
+        "command": "env -u PANTHEON_COMMAND_ROOT -u PANTHEON_COMMAND_RUNTIME_SHA timeout 120 .venv-pantheon/bin/python3 -m pytest -q .orchestrator/test_common.py",
+        "result": "104 passed, 52 subtests passed in 22.11s",
         "exit_status": 0
       },
       {
         "command": "env -u PANTHEON_COMMAND_ROOT -u PANTHEON_COMMAND_RUNTIME_SHA timeout 120 .venv-pantheon/bin/python3 -m pytest -q scripts/git/test_task_review_merge_gate.py",
-        "result": "111 passed in 18.58s",
+        "result": "111 passed in 17.22s",
         "exit_status": 0
       },
       {
-        "command": "env -u PANTHEON_COMMAND_ROOT -u PANTHEON_COMMAND_RUNTIME_SHA timeout 600 .venv-pantheon/bin/python3 -m pytest -q scripts/test_ai_status.py",
-        "result": "446 passed in 189.98s",
+        "command": "env -u PANTHEON_COMMAND_ROOT -u PANTHEON_COMMAND_RUNTIME_SHA timeout 600 python3 -m unittest scripts/test_ai_status.py",
+        "result": "Ran 452 tests in 162.318s, OK",
         "exit_status": 0
       }
     ],
@@ -165,8 +170,8 @@
       "source_hashes": {
         ".orchestrator/common.py": "000bfa722c76264e93616b8149f541b9ba72526c5558720400be7d716cb1f3e2",
         "scripts/ai_status.py": "4506ad8993ba519e2993ce82e2e632fffd0aa965472367b9c7af1465cc8676df",
-        "scripts/test_ai_status.py": "8383f1a6d22fc91abc68eeb520177e609b48ca47e74cda682c011de67e582e2e",
-        "scripts/git/check_commit_trailers.py": "b7a7e8d597d5cfa1678afae6a7276c0fe1ba5ea1341b51bc5d71796c0c86e27c"
+        "scripts/test_ai_status.py": "705380bd2c9fb13200a57f000f8c35d734ecd81284330a9dec49cc801a40f467",
+        "scripts/git/check_commit_trailers.py": "c77689821c2038cda30e5b2e6de351011b591123daa0142884228e4769f4764b"
       },
       "source_unchanged": true,
       "commit": "50adbe0c68cfcc5d42024061c91f86dedb45159c",

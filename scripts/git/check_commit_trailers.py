@@ -85,6 +85,13 @@ def extract_trailer_lines(body: str) -> list[tuple[str, str]]:
     trailers: list[tuple[str, str]] = []
     for line in body.splitlines():
         stripped = line.rstrip()
+        if not stripped:
+            continue
+        if line.startswith((" ", "\t")):
+            if trailers:
+                prev_key, prev_val = trailers[-1]
+                trailers[-1] = (prev_key, f"{prev_val} {stripped.strip()}".strip())
+            continue
         m = re.match(r"^([A-Za-z][A-Za-z0-9-]*):\s*(.*)$", stripped)
         if m:
             trailers.append((m.group(1), m.group(2).strip()))
@@ -102,13 +109,62 @@ def is_exempt_subject(subject: str) -> bool:
     return any(subject.startswith(p) for p in EXEMPT_SUBJECT_PREFIXES)
 
 
+def extract_subject_task_prefix(subject: str) -> str:
+    s = subject.strip()
+    changed = True
+    while changed:
+        changed = False
+        for p in EXEMPT_SUBJECT_PREFIXES:
+            if s.startswith(p):
+                s = s[len(p):].strip()
+                changed = True
+                break
+        if s.startswith(('"', "'")):
+            s = s[1:].strip()
+            changed = True
+    if ":" in s:
+        return s.split(":", 1)[0].strip().rstrip("\"'")
+    tokens = s.split()
+    return tokens[0].strip().rstrip("\"'") if tokens else ""
+
+
+def check_trailer_continuation_problems(body: str) -> list[str]:
+    problems: list[str] = []
+    in_trailer = False
+    for line in body.splitlines():
+        stripped = line.rstrip()
+        if not stripped:
+            in_trailer = False
+            continue
+        if re.match(r"^[A-Za-z][A-Za-z0-9-]*:\s*", stripped):
+            in_trailer = True
+            continue
+        if in_trailer and (line.startswith(" ") or line.startswith("\t")):
+            problems.append(f"ambiguous trailer continuation: '{stripped.strip()}'")
+    return problems
+
+
 def duplicate_trailer_problems(body: str, required: tuple[str, ...]) -> list[str]:
     trailer_lines = extract_trailer_lines(body)
+    canonical_map = {name.casefold(): name for name in required}
     occurrences_by_name: dict[str, list[str]] = {}
+    non_canonical_casing: list[str] = []
+
     for key, val in trailer_lines:
-        occurrences_by_name.setdefault(key, []).append(val)
+        folded = key.casefold()
+        if folded in canonical_map:
+            canon_name = canonical_map[folded]
+            if key != canon_name and key not in non_canonical_casing:
+                non_canonical_casing.append(key)
+            occurrences_by_name.setdefault(canon_name, []).append(val)
+        else:
+            occurrences_by_name.setdefault(key, []).append(val)
 
     problems: list[str] = []
+    for non_canon in non_canonical_casing:
+        canon_name = canonical_map[non_canon.casefold()]
+        problems.append(f"non-canonical trailer casing: '{non_canon}' (expected '{canon_name}')")
+
     for name in required:
         occurrences = occurrences_by_name.get(name, [])
         if len(occurrences) > 1:
@@ -142,6 +198,7 @@ def check_message(
     all_required = tuple(dict.fromkeys(list(effective_required) + ["Task-ID"]))
 
     trailers = parse_trailers(body)
+    problems.extend(check_trailer_continuation_problems(body))
     problems.extend(duplicate_trailer_problems(body, all_required))
 
     for name in all_required:
@@ -179,9 +236,13 @@ def check_message(
         else:
             if target_task_id:
                 full_prefix, bounded_prefix = commit_subject_prefix_variants(target_task_id)
-                if target_task_id not in subject and bounded_prefix not in subject:
+                actual_prefix = extract_subject_task_prefix(subject)
+                if actual_prefix not in (target_task_id, full_prefix, bounded_prefix):
+                    ref_name = f"expected task id '{target_task_id}'" if expected_task_id else f"Task-ID trailer '{target_task_id}'"
                     problems.append(
-                        f"latest commit subject must include task id {target_task_id}"
+                        f"subject prefix '{actual_prefix}' does not match {ref_name} "
+                        f"(latest commit subject must include task id {target_task_id}) "
+                        f"(expected '{full_prefix}' or bounded '{bounded_prefix}')"
                     )
 
     problems.extend(check_independent_review(trailers))
