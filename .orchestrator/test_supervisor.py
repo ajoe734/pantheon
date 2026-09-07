@@ -13184,7 +13184,7 @@ class RealProcessReviewHandoffRecoveryFlowTests(unittest.TestCase):
             fake_bin = temp_path / "bin"
             fake_bin.mkdir()
             fake_worker = fake_bin / "fake_worker"
-            fake_worker.write_text("#!/bin/sh\nsleep 30\nexit 0\n")
+            fake_worker.write_text("#!/bin/sh\nsleep 300\nexit 0\n")
             fake_worker.chmod(0o755)
 
             subprocess.run(["git", "branch", "task/TASK-QUEUE-001"], cwd=worktree, check=True)
@@ -13422,10 +13422,11 @@ class RealProcessReviewHandoffRecoveryFlowTests(unittest.TestCase):
                     "with open(state_path, \"w\", encoding=\"utf-8\") as f:\n"
                     "    json.dump(state, f, indent=2)\n"
                 )
-                subprocess.run(
+                proc_res0 = subprocess.run(
                     [sys.executable, "-c", restart_script, str(central), str(central / ".orchestrator"), json.dumps(config)],
-                    capture_output=True, text=True, check=True
+                    capture_output=True, text=True
                 )
+                self.assertEqual(proc_res0.returncode, 0, f"Restart subprocess 0 failed (exit {proc_res0.returncode}):\nSTDOUT:\n{proc_res0.stdout}\nSTDERR:\n{proc_res0.stderr}")
 
                 st_data = json.loads((central / ".orchestrator" / "state.json").read_text())
                 st_data["delivery_health"] = {
@@ -13453,10 +13454,11 @@ class RealProcessReviewHandoffRecoveryFlowTests(unittest.TestCase):
                 succ_event_id = new_event_ids[0]
 
                 (central / ".orchestrator" / "state.json").write_text(json.dumps(st_data, indent=2) + "\n")
-                subprocess.run(
+                proc_res1 = subprocess.run(
                     [sys.executable, "-c", restart_script, str(central), str(central / ".orchestrator"), json.dumps(config)],
-                    capture_output=True, text=True, check=True
+                    capture_output=True, text=True
                 )
+                self.assertEqual(proc_res1.returncode, 0, f"Restart subprocess 1 failed (exit {proc_res1.returncode}):\nSTDOUT:\n{proc_res1.stdout}\nSTDERR:\n{proc_res1.stderr}")
 
                 boot_state = json.loads((central / ".orchestrator" / "state.json").read_text())
                 self.assertIn(succ_event_id, boot_state["queue"]["events"])
@@ -13505,10 +13507,11 @@ class RealProcessReviewHandoffRecoveryFlowTests(unittest.TestCase):
 
                 # Persist boot_state to disk and verify restart retains the running worker and started queue event
                 (central / ".orchestrator" / "state.json").write_text(json.dumps(boot_state, indent=2) + "\n")
-                subprocess.run(
+                proc_res = subprocess.run(
                     [sys.executable, "-c", restart_script, str(central), str(central / ".orchestrator"), json.dumps(config)],
-                    capture_output=True, text=True, check=True
+                    capture_output=True, text=True
                 )
+                self.assertEqual(proc_res.returncode, 0, f"Restart subprocess failed (exit {proc_res.returncode}):\nSTDOUT:\n{proc_res.stdout}\nSTDERR:\n{proc_res.stderr}")
                 restarted_state = json.loads((central / ".orchestrator" / "state.json").read_text())
                 self.assertEqual(restarted_state["queue"]["events"][succ_event_id]["status"], "started")
                 self.assertIn(new_worker_rec["run_id"], restarted_state.get("workers", {}))
@@ -15907,6 +15910,115 @@ class RealProcessReviewHandoffRecoveryFlowTests(unittest.TestCase):
                     except subprocess.TimeoutExpired:
                         proc3.kill()
                         proc3.wait(timeout=3)
+
+    def test_reserved_phase_preserves_pending_intent_but_reaps_dead_worker(self) -> None:
+        """Verify reserved-phase final CAS allows reason-specific dead-worker cleanup when review_decision_intent is pending."""
+        for consumer in ("recovery", "poll"):
+            with self.subTest(consumer=consumer):
+                with tempfile.TemporaryDirectory(prefix="pantheon-pending-reap-") as directory:
+                    root = Path(directory)
+                    status_root = root / "status"
+                    (status_root / ".orchestrator").mkdir(parents=True)
+                    c = config_fixture(status_root)
+                    c["paths"]["approval_queue"] = str(Path(c["paths"]["state_file"]).with_name("approval-queue.json"))
+                    journal = root / "events.jsonl"
+                    c["task_state_store"] = {"mode": "authoritative", "event_log": str(journal)}
+                    t = task_fixture(status="review")
+                    t["delivery_binding"] = review_admission_binding()
+                    unsigned = {
+                        "schema_version": 1,
+                        "nonce": "2" * 32,
+                        "actor": "Codex2",
+                        "command": "reopen",
+                        "decision": "reopen",
+                        "task_id": t["id"],
+                        "task_digest": ai_status.review_decision_task_digest(t),
+                        "message": "Isolated fixture review decision awaiting replay",
+                        "repository": "ajoe734/pantheon",
+                        "binding": {k: t["delivery_binding"][k] for k in ("pr", "head_sha", "head_branch", "base")},
+                        "transition_payload": {},
+                        "created_at": "2026-08-15T04:00:00Z",
+                    }
+                    t["review_decision_intent"] = {**unsigned, "intent_sha256": ai_status._canonical_json_sha256(unsigned)}
+                    ai_status.validate_review_decision_intent(t["review_decision_intent"])
+                    rewrite_task_state_store.append_state_commit(
+                        journal,
+                        {"tasks": [t], "agents": [], "handoffs": [], "blockers": []},
+                        source="isolated pending fixture",
+                    )
+                    w = RuntimeAndFailureSemanticsTests._owner_worker(generation=1)
+                    w.update(agent_id="codex2", provider="codex2", logical_agent_id="codex2")
+                    w["request_snapshot"]["reason"] = supervisor.REASON_REVIEW_READY
+                    proc = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(1)"])
+                    try:
+                        w["pid"] = proc.pid
+                        w["pid_start_ticks"] = supervisor.worker_pid_start_ticks(proc.pid)
+                        w["process_generation"] = supervisor.worker_process_generation_id(
+                            task_id=w["task_id"], worker_run_id=w["run_id"],
+                            queue_event_id=w["queue_event_id"], pid=w["pid"],
+                            pid_start_ticks=w["pid_start_ticks"],
+                        )
+                        proc.wait(timeout=5)
+                        w["lease_expires_at"] = "2026-08-15T04:01:00Z"
+                        self.assertFalse(supervisor.worker_process_generation_is_current(w))
+
+                        state = runtime_state.default_state()
+                        state["workers"][w["run_id"]] = copy.deepcopy(w)
+                        state["queue"]["events"][w["queue_event_id"]] = {
+                            "status": "processing",
+                            "intent": {"event_id": w["queue_event_id"], "task_id": t["id"]},
+                        }
+                        runtime_state.save_runtime_state(c, state)
+
+                        before = copy.deepcopy(supervisor.load_status(c))
+
+                        def operation(scratch):
+                            if consumer == "poll":
+                                changed = supervisor.poll_workers(c, scratch)
+                            else:
+                                changed = supervisor.recover_lost_worker_lease(
+                                    c, scratch, scratch["workers"][w["run_id"]],
+                                    reason_kind="worker_process_missing",
+                                    reason="Isolated already-exited worker with pending decision",
+                                    status=supervisor.load_status(c),
+                                )
+                            self.assertEqual(scratch["workers"][w["run_id"]]["status"], "superseded")
+                            self.assertEqual(scratch["queue"]["events"][w["queue_event_id"]]["status"], "completed")
+                            self.assertFalse(supervisor._DEFERRED_WORKER_TERMINATIONS.get())
+                            return changed
+
+                        with mock.patch.object(supervisor, "update_worker_runtime_markers", return_value=False), \
+                             mock.patch.object(supervisor, "update_from_log", return_value=False), \
+                             mock.patch.object(supervisor, "update_worker_commit_progress", return_value=(False, False)), \
+                             mock.patch.object(supervisor, "sync_status_pipeline", return_value=True):
+                            committed = supervisor._run_reserved_runtime_phase(c, "poll_workers", operation)
+
+                        after = supervisor.load_status(c)
+                        final = runtime_state.load_runtime_state(c)
+                        self.assertTrue(committed, "authorized pending-intent dead-worker cleanup must commit")
+                        self.assertEqual(
+                            ai_status.review_decision_task_digest(after["tasks"][0]),
+                            ai_status.review_decision_task_digest(before["tasks"][0]),
+                            "business truth and canonical generation must remain untouched",
+                        )
+                        self.assertEqual(after["tasks"][0]["review_decision_intent"], before["tasks"][0]["review_decision_intent"])
+                        self.assertIn(final["workers"].get(w["run_id"], {}).get("status", "reaped"), {"superseded", "reaped"})
+                        self.assertEqual(final["queue"]["events"][w["queue_event_id"]]["status"], "completed")
+
+                        with mock.patch.object(supervisor, "sync_status_pipeline", return_value=True):
+                            supervisor.reconcile_review_decision_intent_lease_recovery(c, final)
+
+                        task_with_receipt = supervisor.load_status(c)["tasks"][0]
+                        decision = planner_decision(c, task_with_receipt, state=final, target="Codex2")
+                        self.assertIsNotNone(
+                            supervisor.task_execution_dispatch_candidate(c, task_with_receipt, "Codex2", {t["id"]: task_with_receipt}),
+                            "replay candidate must exist",
+                        )
+                        self.assertNotEqual(decision.get("first_blocking_gate"), "task_leased", "task_leased gate must be cleared")
+                    finally:
+                        if proc.poll() is None:
+                            proc.kill()
+                            proc.wait(timeout=2)
 
 
 if __name__ == "__main__":

@@ -7517,9 +7517,6 @@ def _run_reserved_runtime_phase(
                             fresh_task = _safe_load_canonical_task(config, {}, t_id)
                             if fresh_task is None:
                                 continue
-                            if fresh_task.get("review_decision_intent") not in (None, {}, []):
-                                cas_matches = False
-                                break
 
                             is_gen_fence = not worker_matches_current_task_generation(r_worker, fresh_task)
                             fresh_decision = active_worker_governance_lease_decision(
@@ -7541,9 +7538,21 @@ def _run_reserved_runtime_phase(
                             )
                             is_actor_mismatch = bool(expected_actor and r_actor and r_actor != expected_actor)
 
-                            if not (is_gen_fence or is_gov_terminate or is_actor_mismatch):
-                                cas_matches = False
-                                break
+                            has_pending_intent = fresh_task.get("review_decision_intent") not in (None, {}, [])
+                            if has_pending_intent:
+                                now_dt = datetime.now(timezone.utc)
+                                is_dead_attempt = (
+                                    not pid_is_alive(r_worker.get("pid"))
+                                    or not worker_process_generation_is_current(r_worker)
+                                )
+                                is_expired_lease = worker_lease_is_expired(config, r_worker, now_dt)
+                                if not (is_dead_attempt or is_expired_lease or is_gen_fence or is_gov_terminate or is_actor_mismatch):
+                                    cas_matches = False
+                                    break
+                            else:
+                                if not (is_gen_fence or is_gov_terminate or is_actor_mismatch):
+                                    cas_matches = False
+                                    break
 
                         elif transitioned_to_completed or queue_transitioned_to_completed:
                             fresh_task = _safe_load_canonical_task(config, {}, t_id)
