@@ -1,0 +1,130 @@
+{
+  "schema_version": "pantheon.review-evidence.v1",
+  "task_id": "OPS-COMMIT-IDENTITY-001",
+  "title": "Unify bounded commit subjects and exact canonical Task-ID validation",
+  "owner": "Claude",
+  "reviewer": "Codex2",
+  "target_repo": "ajoe734/pantheon",
+  "base_branch": "dev",
+  "base_sha_at_dispatch": "18065bf29e917f5b5f08691632543619f19374f7",
+  "task_branch": "task/OPS-COMMIT-IDENTITY-001",
+  "depends_on": [
+    "OPS-REVIEW-HANDOFF-RECOVERY-CONTRACT-001"
+  ],
+  "depends_on_status_at_dispatch": "done, satisfied=true",
+  "delivery_state": "ready_for_independent_review",
+  "plan": {
+    "path": "/tmp/pantheon-tooling-root-repair-20260907/COMMIT_IDENTITY_PLAN.md",
+    "sha256": "2e57e428ca20e367964f61fb152ac39b988c413bc92b7de267f70ff36aa7ff51",
+    "source_ref": "pantheon-dev@46bbfe935df1e68740569fb5dc6233897de98b0b",
+    "packet_id": "pkt-commit-identity-root-repair-20260907-v1",
+    "packet_digest": "4103551dd4f824f39d4647890e447d4db227977e1df91ae46deb2d45295eb79a"
+  },
+  "scope": {
+    "owned": [
+      "one deterministic bounded-commit-subject-prefix helper shared by CI, the worker commit wrapper, and canonical done",
+      "cross-check between a commit subject's prefix and its Task-ID trailer in CI",
+      "duplicate/conflicting Task-ID (and other required) trailer rejection in CI",
+      "worker_commit.py preflight validation of subject identity and Task-ID trailer before staging/committing",
+      "removal of ai_status.py's second, looser trailer parser (parse_commit_metadata_lines) in favor of the shared one"
+    ],
+    "not_changing": [
+      "validate_merged_tooling_done's Human/Ops + development_tooling authority, its reviewer-free direct-tooling exception, and its full-message regex/ancestry behavior",
+      "approved_closeout_commit_ref / approved_closeout_metadata_ref merge-first-parent unwrapping and ancestry verification",
+      "scripts/git/check_commit_scope.py (a separate pre-commit hook script, not in this task's artifacts)",
+      "auto_integrator.py, worker_runner.py, supervisor.py, branch protection, credentials, or canonical JSON shape",
+      "short task-id behavior: a subject containing the literal id (including as a substring, e.g. inside a merge commit's task/<id> branch name) still passes exactly as before"
+    ],
+    "composes_with": [
+      "OPS-REVIEW-HANDOFF-RECOVERY-CONTRACT-001 (shared ai_status.py serialization/classifier, unmodified)",
+      "the existing per-task PR review/merge flow used to recover PR #5639's own original approval"
+    ]
+  },
+  "failure_reproduction": {
+    "case": "On dev 46bbfe935df1e68740569fb5dc6233897de98b0b, check_commit_trailers.check_message required subjects <=72 chars while ai_status.py's done-finalize gate required the literal, untruncated task id to appear in the subject. A 92-char generated task id (INTEGRATION-UNBLOCK-GOV-APPROVAL-AUTHORITY-PREREQUISITE-001-MERGE-STATE-BLOCKED-B14932FE23E9) cannot satisfy both: its genuine, independently-approved, merged (PR #5639, head 50adbe0c68cfcc5d42024061c91f86dedb45159c into c607359338026f4e440f62d052e19648d78d3f04) commit passed CI's bounded-subject check but could never satisfy done's literal-substring check.",
+    "regression_short_id": "scripts/test_ai_status.py::DeliveryMetadataValidationTests::test_collect_done_delivery_metadata_skips_trailers_for_merge_commit (pre-existing, unmodified) proves the short-id literal-substring path is unchanged.",
+    "regression_long_id_accept": "scripts/test_ai_status.py::DeliveryMetadataValidationTests::test_collect_done_delivery_metadata_accepts_bounded_prefix_for_long_task_id reproduces the real 92-char id and its deterministic bounded prefix (via the same canonical_commit_subject_prefix CI now also uses) and proves done's finalize gate now accepts it.",
+    "regression_long_id_reject": "scripts/test_ai_status.py::DeliveryMetadataValidationTests::test_collect_done_delivery_metadata_rejects_bounded_prefix_for_wrong_task proves a subject naming an unrelated task is still rejected.",
+    "regression_ci_bounded_prefix": "scripts/git/test_check_commit_trailers_independent_review.py::test_accepts_bounded_subject_prefix_for_a_generated_long_task_id proves CI accepts the same convention.",
+    "regression_ci_wrong_prefix": "scripts/git/test_check_commit_trailers_independent_review.py::test_rejects_subject_prefix_naming_a_different_task (new) -- CI previously had no cross-check between the subject prefix and the Task-ID trailer at all.",
+    "regression_ci_duplicate_trailer": "scripts/git/test_check_commit_trailers_independent_review.py::test_rejects_conflicting_task_id_trailers (new) -- parse_trailers is last-write-wins and previously let a duplicated/forged Task-ID line through silently.",
+    "regression_worker_commit": "scripts/git/test_worker_commit.py::test_worker_commit_accepts_bounded_prefix_for_long_task_id / rejects_subject_naming_a_different_task / rejects_missing_task_id_trailer / rejects_wrong_task_id_trailer / rejects_conflicting_task_id_trailers (new) -- worker_commit.py previously only checked subject length, with no identity cross-check at all."
+  },
+  "implementation": {
+    "shared_helper": "common.canonical_commit_subject_prefix(task_id, max_len=72) in .orchestrator/common.py is the single deterministic bounded-subject-prefix function; bound_commit_subject now derives its own prefix/compaction from the same two extracted helpers (_normalized_task_prefix, _compacted_task_prefix) so it cannot diverge from the validator's answer.",
+    "ci_check_commit_trailers": "check_message now cross-checks the subject prefix against canonical_commit_subject_prefix(<Task-ID trailer>) when prefix_required is true and a Task-ID trailer is present, and rejects any required trailer that appears more than once with conflicting values (duplicate_trailer_problems).",
+    "worker_commit_preflight": "worker_commit.py's preflight now accepts a subject containing either the literal --task-id or its canonical_commit_subject_prefix, and separately requires exactly one Task-ID trailer in the body equal to --task-id.",
+    "ai_status_done_gate": "collect_done_delivery_metadata's subject check now accepts task_id in subject OR canonical_commit_subject_prefix(task_id) in subject (previously only the literal substring, which a long id's necessarily-compacted subject can never satisfy). The unrelated Task-ID trailer-value check (parsed via the newly-shared check_commit_trailers.parse_trailers, replacing the removed duplicate parse_commit_metadata_lines) is unchanged.",
+    "validate_merged_tooling_done_unchanged": "Confirmed unchanged: still a full-message regex against the exact caller-supplied, ancestry-verified commit, with the existing word-boundary guard against substring false-positives (test_validate_merged_tooling_done_rejects_task_id_substring, unmodified, still passes).",
+    "new_artifacts": false,
+    "new_validator_mechanism": false
+  },
+  "verification": {
+    "environment": {
+      "python": "3.12.3",
+      "pytest": "9.1.1",
+      "note": "provisioned via scripts/dev/provision_python_distribution.py with PANTHEON_DEPENDENCY_PYTHON pointed at /home/chloe_ong_dev_cctech_support_com/code/pantheon/.venv; PANTHEON_COMMAND_ROOT/PANTHEON_COMMAND_RUNTIME_SHA unset for test runs so scripts/git and .orchestrator resolve to this task worktree's own checkout, not the supervisor's installed command runtime."
+    },
+    "passed": [
+      {
+        "command": "python3 -m pytest -q scripts/test_ai_status.py",
+        "result": "437 passed, 156 subtests passed"
+      },
+      {
+        "command": "python3 -m pytest -q .orchestrator/test_common.py",
+        "result": "97 passed, 50 subtests passed (includes new CanonicalCommitSubjectPrefixTests: 4 passed, 2 subtests)"
+      },
+      {
+        "command": "python3 -m pytest -q scripts/git/test_worker_commit.py",
+        "result": "8 passed (5 pre-existing + 3 new; net new after adding 5 identity-specific cases, see file diff)"
+      },
+      {
+        "command": "python3 -m pytest -q scripts/git/test_check_commit_trailers_independent_review.py",
+        "result": "15 passed (8 pre-existing + 7 new)"
+      },
+      {
+        "command": "python3 -m pytest -q scripts/git/test_git_workflow_helpers.py",
+        "result": "9 passed (unmodified; confirms no regression in the pre-existing SUBJECT_PATTERN/trailer suite)"
+      },
+      {
+        "command": "python3 -m pytest -q scripts/test_ai_status.py .orchestrator/test_common.py scripts/git/test_worker_commit.py scripts/git/test_check_commit_trailers_independent_review.py scripts/git/test_git_workflow_helpers.py",
+        "result": "629 passed, 208 subtests passed (full combined run of every touched/covering suite)"
+      },
+      {
+        "command": "python3 -m py_compile scripts/ai_status.py scripts/test_ai_status.py scripts/git/check_commit_trailers.py scripts/git/test_check_commit_trailers_independent_review.py scripts/git/worker_commit.py scripts/git/test_worker_commit.py .orchestrator/common.py .orchestrator/test_common.py",
+        "result": "passed"
+      }
+    ],
+    "targeted_new_tests": [
+      ".orchestrator/test_common.py::CanonicalCommitSubjectPrefixTests (4 cases)",
+      "scripts/git/test_check_commit_trailers_independent_review.py::test_accepts_bounded_subject_prefix_for_a_generated_long_task_id",
+      "scripts/git/test_check_commit_trailers_independent_review.py::test_rejects_subject_prefix_naming_a_different_task",
+      "scripts/git/test_check_commit_trailers_independent_review.py::test_rejects_conflicting_task_id_trailers",
+      "scripts/git/test_worker_commit.py::test_worker_commit_accepts_bounded_prefix_for_long_task_id",
+      "scripts/git/test_worker_commit.py::test_worker_commit_rejects_subject_naming_a_different_task",
+      "scripts/git/test_worker_commit.py::test_worker_commit_rejects_missing_task_id_trailer",
+      "scripts/git/test_worker_commit.py::test_worker_commit_rejects_wrong_task_id_trailer",
+      "scripts/git/test_worker_commit.py::test_worker_commit_rejects_conflicting_task_id_trailers",
+      "scripts/test_ai_status.py::DeliveryMetadataValidationTests::test_collect_done_delivery_metadata_accepts_bounded_prefix_for_long_task_id",
+      "scripts/test_ai_status.py::DeliveryMetadataValidationTests::test_collect_done_delivery_metadata_rejects_bounded_prefix_for_wrong_task"
+    ],
+    "test_fixture_correction": "scripts/test_ai_status.py::StatusRootRoutingTests._copy_status_tooling now also copies scripts/git/check_commit_trailers.py into its synthetic 'central root' fixture, matching production reality (validated_immutable_command_root in scripts/provision_live_supervisor_config.py requires a full .git checkout, so scripts/git/check_commit_trailers.py always exists alongside scripts/ai_status.py at a real PANTHEON_COMMAND_ROOT); ai_status.py now imports parse_trailers from it at module load.",
+    "checksums": {
+      ".orchestrator/common.py": "6f06ce7dcbad6aa99da9265ec8462a7c8ea020f354cf5cb711405bb698d6fb74",
+      ".orchestrator/test_common.py": "9bc0fb0a79dcfac21178502d5464b24f3f02a9c84a1a732fb55e193185a05e36",
+      "scripts/ai_status.py": "d0d3b4045f5d072adc597024aa70a741fc05429fe076740a943bd395a66cf757",
+      "scripts/git/check_commit_trailers.py": "2c6709193c47c0460751f2b6ced376558c6ef16d55416f71a1d54f3f00c50c9e",
+      "scripts/git/test_check_commit_trailers_independent_review.py": "cfa6a2ef474a76368e890cbd8bfa8dc70cf9adb77e76523651782d5202646b3e",
+      "scripts/git/test_worker_commit.py": "214a980739a9f01cbda6b5d93fbea98517a9db113d62ba4aede0b9dddc9482c0",
+      "scripts/git/worker_commit.py": "740c54c83a312b393c9a14e18b2fcfabc749d015c72343a0813f391301d02e48",
+      "scripts/test_ai_status.py": "0d2f3f5c62ae756185c5cadec60bf9e92e6526ec446bca2794a9f6018be1a037",
+      "docs/operations/commit-identity-contract.md": "9942272a8fb76e21ff3462f3e3c083013981980b5b3145511b2ccaf19bbf59b5"
+    }
+  },
+  "recovery_note": "This task fixes the identity contract going forward only. Recovering the original PR #5639 delivery uses the existing resume_integration / owner done flow against its own real approval and merge record; this task does not mark PR #5639 done or fabricate a new approval for it.",
+  "review_decision": {
+    "status": "pending",
+    "reviewer": "Codex2",
+    "note": "Independently verify: the single shared canonical_commit_subject_prefix helper (no divergent duplicate logic remains in bound_commit_subject), the CI subject-vs-trailer cross-check and duplicate-trailer rejection, worker_commit.py's new preflight identity checks, the done-finalize gate accepting the real long-id bounded prefix while still rejecting a wrong-task subject and preserving the unmodified short-id/merge-commit/validate_merged_tooling_done paths, and the full combined test run."
+  }
+}

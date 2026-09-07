@@ -9,6 +9,7 @@ import json
 import contextlib
 import multiprocessing
 import os
+import re
 import shutil
 import subprocess
 import tempfile
@@ -2741,6 +2742,7 @@ class StatusRootRoutingTests(unittest.TestCase):
             "scripts/ai-status.sh",
             "scripts/human-ops-status.sh",
             "scripts/loop_done_guardrail.py",
+            "scripts/git/check_commit_trailers.py",
             ".orchestrator/common.py",
             ".orchestrator/dispatch_policy.py",
             ".orchestrator/execution_authorization.py",
@@ -9747,6 +9749,94 @@ class DeliveryMetadataValidationTests(unittest.TestCase):
         self.assertEqual(delivery["commit"], "merge123")
         self.assertEqual(delivery["commit_trailer_skip_reason"], "Merge")
         self.assertTrue(delivery["commit_trailer_check_skipped"])
+
+    def test_collect_done_delivery_metadata_accepts_bounded_prefix_for_long_task_id(self) -> None:
+        """OPS-COMMIT-IDENTITY-001: reproduces the merged PR5639 contradiction.
+
+        A generated 92-char task_id cannot fit verbatim into a bounded
+        (<=72 char) commit subject. CI's `bound_commit_subject` compacts the
+        subject's own prefix in that case (see
+        .orchestrator/test_common.py::CanonicalCommitSubjectPrefixTests), so
+        the genuine, already-merged, independently reviewed commit legally
+        carries that compacted prefix rather than the literal id -- with the
+        full id still required in the `Task-ID:` trailer. Canonical `done`
+        previously demanded the untruncated id appear in the subject, which
+        no compacted-prefix subject could ever satisfy; it must accept the
+        same bounded convention CI already does.
+        """
+        long_task_id = (
+            "INTEGRATION-UNBLOCK-GOV-APPROVAL-AUTHORITY-PREREQUISITE-001-"
+            "MERGE-STATE-BLOCKED-B14932FE23E9"
+        )
+        self.assertGreater(len(long_task_id), 72)
+        bounded_prefix = common.canonical_commit_subject_prefix(long_task_id)
+        subject = f"{bounded_prefix}: repair merge state"
+        self.assertLessEqual(len(subject), 72)
+        self.assertNotIn(long_task_id, subject)
+
+        responses = iter(
+            [
+                "task/integration-unblock",
+                "a" * 40,
+                subject,
+                f"LLM-Agent: Claude\nTask-ID: {long_task_id}\nReviewer: Codex2\n",
+                "Claude",
+                "claude@example.com",
+                "",
+                "",
+            ]
+        )
+        task = {
+            "id": long_task_id,
+            "owner": "Claude",
+            "reviewer": "Codex2",
+            "status": "in_progress",
+        }
+
+        with (
+            mock.patch.dict(os.environ, {"TASK_REQUIRE_MERGED_PR": "false"}, clear=False),
+            mock.patch.object(ai_status, "run_git_command", side_effect=lambda *args, **kwargs: next(responses)),
+        ):
+            delivery = ai_status.collect_done_delivery_metadata(task, "Claude")
+
+        self.assertEqual(delivery["commit_subject"], subject)
+        self.assertEqual(delivery["commit_metadata"]["Task-ID"], long_task_id)
+
+    def test_collect_done_delivery_metadata_rejects_bounded_prefix_for_wrong_task(self) -> None:
+        """A subject naming an unrelated task must still fail, even though it
+        is a validly-bounded (<=72 char) subject on its own."""
+        long_task_id = (
+            "INTEGRATION-UNBLOCK-GOV-APPROVAL-AUTHORITY-PREREQUISITE-001-"
+            "MERGE-STATE-BLOCKED-B14932FE23E9"
+        )
+        subject = "OTHER-TASK-001: repair merge state"
+
+        responses = iter(
+            [
+                "task/integration-unblock",
+                "a" * 40,
+                subject,
+                f"LLM-Agent: Claude\nTask-ID: {long_task_id}\nReviewer: Codex2\n",
+                "Claude",
+                "claude@example.com",
+            ]
+        )
+        task = {
+            "id": long_task_id,
+            "owner": "Claude",
+            "reviewer": "Codex2",
+            "status": "in_progress",
+        }
+
+        with (
+            mock.patch.dict(os.environ, {"TASK_REQUIRE_MERGED_PR": "false"}, clear=False),
+            mock.patch.object(ai_status, "run_git_command", side_effect=lambda *args, **kwargs: next(responses)),
+            self.assertRaisesRegex(
+                SystemExit,
+                f"latest commit subject must include task id {re.escape(long_task_id)}",
+            ),
+        ):
+            ai_status.collect_done_delivery_metadata(task, "Claude")
 
     def test_collect_done_delivery_metadata_uses_execute_plans_artifact_repo(self) -> None:
         responses = iter(

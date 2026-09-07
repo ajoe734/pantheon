@@ -35,6 +35,7 @@ from __future__ import annotations
 
 import argparse
 import os
+import re
 import subprocess
 import sys
 import time
@@ -91,6 +92,16 @@ except ModuleNotFoundError as exc:
             "from a different repository"
         ) from exc
     raise
+
+try:
+    # OPS-COMMIT-IDENTITY-001: added alongside this file. A worker whose
+    # PANTHEON_COMMAND_ROOT still points at a command runtime pinned before
+    # that task promoted keeps the prior length-only preflight instead of
+    # crashing; the identity cross-check activates automatically once the
+    # pinned runtime is promoted.
+    from common import canonical_commit_subject_prefix
+except ImportError:
+    canonical_commit_subject_prefix = None
 
 
 def _git(*args: str, env: dict[str, str] | None = None, check: bool = True) -> subprocess.CompletedProcess:
@@ -263,6 +274,7 @@ def main() -> int:
 
     msg_lines = [l for l in msg_text.splitlines() if not l.startswith("#")]
     subject = msg_lines[0].strip() if msg_lines else ""
+    body = "\n".join(msg_lines[1:])
 
     if not subject:
         print(f"ERROR: commit message in {args.message_file} has an empty subject line.", file=sys.stderr)
@@ -276,6 +288,50 @@ def main() -> int:
         print(
             "Hint: Compact the subject line (e.g. abbreviate scope/summary) to <= 72 chars. "
             f"Keep full Task-ID in trailer (Task-ID: {args.task_id}).",
+            file=sys.stderr,
+        )
+        return 5
+
+    # A long --task-id cannot fit verbatim into a bounded (<=72 char) subject;
+    # the shared bound_commit_subject/canonical_commit_subject_prefix
+    # convention compacts the subject's prefix itself in that case rather
+    # than dropping the id, so accept either the literal id or that same
+    # deterministic bounded prefix. This is the same check used by
+    # check_commit_trailers.py and the canonical `done` finalize gate, so a
+    # subject cannot pass this wrapper and then fail those later.
+    if canonical_commit_subject_prefix is not None:
+        bounded_prefix = canonical_commit_subject_prefix(args.task_id)
+        if args.task_id not in subject and bounded_prefix not in subject:
+            print(
+                f"ERROR: commit subject does not identify task {args.task_id}: '{subject}'",
+                file=sys.stderr,
+            )
+            print(
+                f"Hint: start the subject with '{bounded_prefix}: ...' and keep "
+                f"the full id in the trailer (Task-ID: {args.task_id}).",
+                file=sys.stderr,
+            )
+            return 5
+
+    task_id_trailer_values = sorted(
+        {value.strip() for value in re.findall(r"^Task-ID:\s+(.+)$", body, re.MULTILINE)}
+    )
+    if not task_id_trailer_values:
+        print(
+            f"ERROR: commit message is missing a 'Task-ID: {args.task_id}' trailer.",
+            file=sys.stderr,
+        )
+        return 5
+    if len(task_id_trailer_values) > 1:
+        print(
+            f"ERROR: commit message has conflicting Task-ID trailers: {task_id_trailer_values}",
+            file=sys.stderr,
+        )
+        return 5
+    if task_id_trailer_values[0] != args.task_id:
+        print(
+            f"ERROR: commit message Task-ID trailer '{task_id_trailer_values[0]}' does not "
+            f"match --task-id '{args.task_id}'.",
             file=sys.stderr,
         )
         return 5

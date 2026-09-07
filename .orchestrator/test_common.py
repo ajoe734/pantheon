@@ -2958,5 +2958,52 @@ class LogicalActivityReaderTests(unittest.TestCase):
                 build_snapshot.assert_not_called()
 
 
+class CanonicalCommitSubjectPrefixTests(unittest.TestCase):
+    """OPS-COMMIT-IDENTITY-001: one bounded-prefix rule for CI and `done`.
+
+    A merged PR5639-style task carried a 92-char generated task_id. CI's
+    bounded-subject helper (`bound_commit_subject`) and canonical `done`'s
+    subject check disagreed about whether the literal full id had to appear
+    in the subject, because each had its own idea of what a "bounded"
+    subject looked like. `canonical_commit_subject_prefix` is now the single
+    source of truth both consult.
+    """
+
+    SHORT_ID = "REG-002"
+    LONG_ID = (
+        "INTEGRATION-UNBLOCK-GOV-APPROVAL-AUTHORITY-PREREQUISITE-001-"
+        "MERGE-STATE-BLOCKED-B14932FE23E9"
+    )
+
+    def test_short_task_id_prefix_is_returned_unchanged(self):
+        self.assertGreater(72, len(self.SHORT_ID) + 2 + 10)
+        self.assertEqual(
+            common.canonical_commit_subject_prefix(self.SHORT_ID),
+            self.SHORT_ID,
+        )
+
+    def test_long_task_id_is_compacted_deterministically(self):
+        self.assertGreater(len(self.LONG_ID), 72)
+        prefix = common.canonical_commit_subject_prefix(self.LONG_ID)
+        self.assertLessEqual(len(prefix), 35)
+        self.assertTrue(self.LONG_ID.startswith(prefix))
+        # Deterministic: repeated calls agree, so a validator and a subject
+        # generator derive the identical bounded prefix independently.
+        self.assertEqual(prefix, common.canonical_commit_subject_prefix(self.LONG_ID))
+
+    def test_matches_bound_commit_subject_prefix_for_short_and_long_ids(self):
+        for task_id in (self.SHORT_ID, self.LONG_ID):
+            with self.subTest(task_id=task_id):
+                expected_prefix = common.canonical_commit_subject_prefix(task_id)
+                subject = common.bound_commit_subject(task_id, "repair merge state")
+                actual_prefix = subject.split(":", 1)[0]
+                self.assertEqual(actual_prefix, expected_prefix)
+                self.assertLessEqual(len(subject), 72)
+
+    def test_empty_task_id_normalizes_to_task_placeholder(self):
+        self.assertEqual(common.canonical_commit_subject_prefix(""), "TASK")
+        self.assertEqual(common.canonical_commit_subject_prefix(None), "TASK")
+
+
 if __name__ == "__main__":
     unittest.main()

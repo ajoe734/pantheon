@@ -32,6 +32,11 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 CONFIG_FILE = ROOT / ".orchestrator" / "config.json"
 
+ORCHESTRATOR_DIR = ROOT / ".orchestrator"
+if str(ORCHESTRATOR_DIR) not in sys.path:
+    sys.path.insert(0, str(ORCHESTRATOR_DIR))
+from common import canonical_commit_subject_prefix  # noqa: E402
+
 DEFAULT_REQUIRED = ("LLM-Agent", "Task-ID", "Reviewer")
 SUBJECT_PATTERN = re.compile(r"^[A-Z][A-Z0-9-]*[A-Z0-9]:\s+\S")
 
@@ -90,6 +95,23 @@ def is_exempt_subject(subject: str) -> bool:
     return any(subject.startswith(p) for p in EXEMPT_SUBJECT_PREFIXES)
 
 
+def duplicate_trailer_problems(body: str, names: tuple[str, ...]) -> list[str]:
+    """Reject a trailer that appears more than once with conflicting values.
+
+    `parse_trailers` keeps only the last occurrence of a repeated key, so a
+    duplicated or forged trailer line (for example two different `Task-ID:`
+    lines) would otherwise bind silently to whichever value happened to
+    appear last.
+    """
+    problems: list[str] = []
+    for name in names:
+        pattern = re.compile(rf"^{re.escape(name)}:\s+(.+)$", re.MULTILINE)
+        values = sorted({value.strip() for value in pattern.findall(body)})
+        if len(values) > 1:
+            problems.append(f"conflicting trailer: {name} has multiple values {values}")
+    return problems
+
+
 def check_message(message: str, required: tuple[str, ...], prefix_required: bool) -> list[str]:
     lines = message.splitlines()
     subject = lines[0] if lines else ""
@@ -116,6 +138,18 @@ def check_message(message: str, required: tuple[str, ...], prefix_required: bool
             problems.append(f"missing trailer: {name}")
         elif not trailers[name].strip():
             problems.append(f"empty trailer value: {name}")
+    problems.extend(duplicate_trailer_problems(body, required))
+
+    task_id_trailer = trailers.get("Task-ID", "").strip()
+    if prefix_required and task_id_trailer:
+        expected_prefix = canonical_commit_subject_prefix(task_id_trailer)
+        actual_prefix = subject.split(":", 1)[0].strip()
+        if actual_prefix != expected_prefix:
+            problems.append(
+                f"subject prefix '{actual_prefix}' does not match Task-ID trailer "
+                f"'{task_id_trailer}' (expected bounded prefix '{expected_prefix}')"
+            )
+
     problems.extend(check_independent_review(trailers))
     return problems
 

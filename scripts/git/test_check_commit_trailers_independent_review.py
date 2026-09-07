@@ -85,3 +85,53 @@ def test_tooling_delivery_does_not_require_reviewer() -> None:
 
 def test_product_delivery_still_requires_reviewer() -> None:
     assert CHECK.required_trailers_for_delivery(REQUIRED, "product") == REQUIRED
+
+
+# OPS-COMMIT-IDENTITY-001: a subject prefix must actually name the same task
+# as the Task-ID trailer. Reproduces the dev46bbfe contradiction: a real
+# >72-char generated task_id cannot appear verbatim in a bounded subject, so
+# the subject legitimately carries `bound_commit_subject`'s deterministic
+# compacted prefix instead, and CI must accept that -- while still rejecting
+# a subject that names an unrelated task or a forged/duplicated trailer.
+
+LONG_TASK_ID = (
+    "INTEGRATION-UNBLOCK-GOV-APPROVAL-AUTHORITY-PREREQUISITE-001-"
+    "MERGE-STATE-BLOCKED-B14932FE23E9"
+)
+
+
+def test_accepts_bounded_subject_prefix_for_a_generated_long_task_id() -> None:
+    bounded_prefix = CHECK.canonical_commit_subject_prefix(LONG_TASK_ID)
+    message = (
+        f"{bounded_prefix}: repair merge state\n"
+        "\n"
+        "LLM-Agent: Claude\n"
+        f"Task-ID: {LONG_TASK_ID}\n"
+        "Reviewer: Codex2\n"
+    )
+    assert CHECK.check_message(message, REQUIRED, True) == []
+
+
+def test_rejects_subject_prefix_naming_a_different_task() -> None:
+    message = (
+        "TASK-ID-OTHER: unrelated summary\n"
+        "\n"
+        "LLM-Agent: Claude\n"
+        "Task-ID: TASK-ID-20260901\n"
+        "Reviewer: Codex2\n"
+    )
+    problems = CHECK.check_message(message, REQUIRED, True)
+    assert any("does not match Task-ID trailer" in p for p in problems), problems
+
+
+def test_rejects_conflicting_task_id_trailers() -> None:
+    message = (
+        "TASK-ID-20260901: do a thing\n"
+        "\n"
+        "LLM-Agent: Claude\n"
+        "Task-ID: TASK-ID-20260901\n"
+        "Task-ID: TASK-ID-FORGED\n"
+        "Reviewer: Codex2\n"
+    )
+    problems = CHECK.check_message(message, REQUIRED, True)
+    assert any("conflicting trailer: Task-ID" in p for p in problems), problems

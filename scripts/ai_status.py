@@ -192,6 +192,7 @@ from common import (
     activity_audit_lock_path,
     activity_audit_source_paths_unlocked,
     append_activity_log_entries_unlocked,
+    canonical_commit_subject_prefix,
     canonical_task_state_lock_path,
     durable_write_bytes,
     first_symlink_component,
@@ -207,6 +208,11 @@ from common import (
     validated_activity_event_digests_unlocked,
     worker_process_generation_id,
 )
+
+GIT_TOOLS_DIR = ROOT / "scripts" / "git"
+if str(GIT_TOOLS_DIR) not in sys.path:
+    sys.path.insert(0, str(GIT_TOOLS_DIR))
+from check_commit_trailers import parse_trailers as parse_commit_trailers
 
 # Derived dashboard rendering intentionally uses an atomic projection-only
 # reader. Canonical mutation/admission callers must use runtime_state's locked
@@ -3008,20 +3014,6 @@ def approved_closeout_metadata_ref(
         metadata_ref = authored_parent
 
 
-def parse_commit_metadata_lines(body: str) -> dict[str, str]:
-    metadata: dict[str, str] = {}
-    for raw_line in body.splitlines():
-        line = raw_line.strip()
-        if not line or ":" not in line:
-            continue
-        key, value = line.split(":", 1)
-        key = key.strip()
-        value = value.strip()
-        if key and value:
-            metadata[key] = value
-    return metadata
-
-
 def commit_subject_skips_trailer_check(subject: str) -> str | None:
     for prefix in COMMIT_TRAILER_SKIP_PREFIXES:
         if subject.startswith(prefix):
@@ -3438,19 +3430,30 @@ def collect_done_delivery_metadata(task: dict[str, Any], actor: str) -> dict[str
         }
 
         task_id = str(task.get("id") or "").strip()
-        if commit_rules["subject_must_include_task_id"] and task_id and task_id not in subject:
-            raise SystemExit(
-                f"Cannot finalize task: latest commit subject must include task id {task_id}."
-            )
+        if commit_rules["subject_must_include_task_id"] and task_id:
+            # A long task_id cannot fit verbatim into a bounded (<=72 char)
+            # subject line (see docs/operations/commit-identity-contract.md);
+            # `bound_commit_subject` compacts the subject's prefix instead of
+            # dropping the id, so accept either the literal id (the common,
+            # short-id case, kept for backward compatibility with subjects
+            # that legitimately embed it outside a strict prefix position,
+            # e.g. a merge commit's branch name) or that same deterministic
+            # bounded prefix. The full id is still required in the `Task-ID:`
+            # trailer, checked below.
+            expected_bounded_prefix = canonical_commit_subject_prefix(task_id)
+            if task_id not in subject and expected_bounded_prefix not in subject:
+                raise SystemExit(
+                    f"Cannot finalize task: latest commit subject must include task id {task_id}."
+                )
 
-        metadata_fields = parse_commit_metadata_lines(body)
+        trailer_skip_reason = commit_subject_skips_trailer_check(subject)
+        metadata_fields = parse_commit_trailers(body)
         expected_fields = {
             "LLM-Agent": actor,
             "Task-ID": task_id,
             "Reviewer": canonical_agent_name(task.get("reviewer")),
         }
         required_fields = commit_rules.get("required_body_fields", [])
-        trailer_skip_reason = commit_subject_skips_trailer_check(subject)
         missing_fields: list[str] = []
         mismatched_fields: list[tuple[str, str]] = []
         commit_timestamp = ""
