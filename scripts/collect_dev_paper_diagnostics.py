@@ -1,0 +1,168 @@
+#!/usr/bin/env python3
+"""Read bounded Docker diagnostics on the dev host; emit only structural fields.
+
+The trusted deployment controller sends this file over its existing pinned SSH
+channel on stdin, before rollback replaces the failed containers. Raw log lines,
+environment, request bodies and exception values never leave the host.
+"""
+from __future__ import annotations
+
+import argparse
+import datetime as dt
+import json
+import os
+import re
+import selectors
+import subprocess
+import time
+
+SERVICES = ("operator-bff", "capital", "registry", "governance", "deployment", "postgres")
+MAX_BYTES = 256 * 1024
+COMMAND_SECONDS = 5
+SHA = re.compile(r"[0-9a-f]{40}")
+IDENTIFIER = r"[A-Za-z_][A-Za-z_0-9.]{0,120}"
+FRAME = re.compile(
+    r'File "(?:/workspace/|/usr/local/lib/python[0-9.]+/site-packages/)'
+    r'([A-Za-z_0-9./-]{1,240}\.py)", line ([0-9]{1,7}), in (' + IDENTIFIER + r'|<module>)$'
+)
+EXCEPTION = re.compile(
+    r"(?:^|\s)((?:[A-Za-z_][A-Za-z_0-9]*\.)*"
+    r"(?:[A-Za-z_][A-Za-z_0-9]*(?:Error|Exception)|"
+    r"UndefinedTable|UndefinedColumn|InsufficientPrivilege|UniqueViolation|"
+    r"ForeignKeyViolation|NotNullViolation|SerializationFailure|DeadlockDetected)):\s*(.*)$"
+)
+
+
+def command(args: list[str]) -> tuple[str, str]:
+    """Bound elapsed time and bytes even for a single extremely long log line."""
+    process = subprocess.Popen(args, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+    output = bytearray()
+    status = "ok"
+    deadline = time.monotonic() + COMMAND_SECONDS
+    try:
+        with selectors.DefaultSelector() as selector:
+            selector.register(process.stdout, selectors.EVENT_READ)
+            while True:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    status = "timeout"
+                    break
+                if not selector.select(remaining):
+                    status = "timeout"
+                    break
+                chunk = os.read(process.stdout.fileno(), min(8192, MAX_BYTES + 1 - len(output)))
+                if not chunk:
+                    break
+                output.extend(chunk)
+                if len(output) > MAX_BYTES:
+                    status = "truncated"
+                    break
+        if status == "ok":
+            try:
+                if process.wait(timeout=max(0.01, deadline - time.monotonic())):
+                    status = "command_failed"
+            except subprocess.TimeoutExpired:
+                status = "timeout"
+    finally:
+        if process.poll() is None:
+            process.kill()
+        process.wait()
+        process.stdout.close()
+    return bytes(output[:MAX_BYTES]).decode("utf-8", errors="replace"), status
+
+
+def log_events(raw: str) -> list[dict]:
+    """Allowlist traceback structure; no raw line or free-form message output."""
+    events = []
+    for line in raw.splitlines():
+        timestamp = re.match(r"^(\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(?:\.\d+)?Z)\s+", line)
+        text = line[timestamp.end():] if timestamp else line
+        text = text.strip()
+        event = None
+        frame = FRAME.search(text)
+        error = EXCEPTION.search(text)
+        if frame:
+            event = {"kind": "frame", "file": frame[1], "line": int(frame[2]), "function": frame[3]}
+        elif error:
+            event = {"kind": "exception", "type": error[1]}
+            # These patterns preserve program identifiers, never argument values.
+            patterns = (
+                (r"name '(" + IDENTIFIER + r")' is not defined$", "undefined_name"),
+                (r"'" + IDENTIFIER + r"' object has no attribute '(" + IDENTIFIER + r")'$", "missing_attribute"),
+                (r".* got an unexpected keyword argument '(" + IDENTIFIER + r")'$", "unexpected_keyword"),
+                (r".* missing \d+ required .* argument[s]?: '(" + IDENTIFIER + r")'$", "missing_argument"),
+                (r'relation "(' + IDENTIFIER + r')" does not exist$', "missing_relation"),
+                (r'column "(' + IDENTIFIER + r')" does not exist$', "missing_column"),
+            )
+            for pattern, category in patterns:
+                match = re.fullmatch(pattern, error[2])
+                if match:
+                    event.update(category=category, identifier=match[1])
+                    break
+            http = re.match(r"HTTP Error ([45][0-9]{2})(?::|$)", error[2])
+            if http:
+                event["http_status"] = int(http[1])
+        if event:
+            if timestamp:
+                event["timestamp"] = timestamp[1]
+            events.append(event)
+    return events[-240:]
+
+
+def container_state(container_id: str) -> dict:
+    # Never inspect .Config.Env or .State.Error (both may contain credentials).
+    template = ('{"status":{{json .State.Status}},"health":'
+                '{{if .State.Health}}{{json .State.Health.Status}}{{else}}null{{end}},'
+                '"exit_code":{{.State.ExitCode}},"oom_killed":{{.State.OOMKilled}},'
+                '"restart_count":{{.RestartCount}},"image_id":{{json .Image}},'
+                '"source_sha":{{json (index .Config.Labels "org.opencontainers.image.revision")}}}')
+    raw, status = command(["docker", "inspect", "--format", template, container_id])
+    if status != "ok":
+        return {"collection_status": status}
+    value = json.loads(raw)
+    result = {"collection_status": "ok"}
+    for key, choices in (("status", {"created", "running", "paused", "restarting", "removing", "exited", "dead"}),
+                         ("health", {"healthy", "unhealthy", "starting"})):
+        result[key] = value.get(key) if value.get(key) in choices else None
+    for key in ("exit_code", "restart_count"):
+        result[key] = value.get(key) if type(value.get(key)) is int else None
+    result["oom_killed"] = value.get("oom_killed") if type(value.get("oom_killed")) is bool else None
+    result["image_id"] = value.get("image_id") if re.fullmatch(r"sha256:[0-9a-f]{64}", str(value.get("image_id"))) else None
+    result["source_sha"] = value.get("source_sha") if SHA.fullmatch(str(value.get("source_sha"))) else None
+    return result
+
+
+def collect(expected_sha: str) -> dict:
+    if not SHA.fullmatch(expected_sha):
+        raise ValueError("expected BFF SHA must be a full commit")
+    result = {"schema_version": "pantheon.dev-paper-diagnostics.v1", "environment": "dev",
+              "expected_bff_sha": expected_sha, "collected_at": dt.datetime.now(dt.timezone.utc).isoformat(),
+              "read_only": True, "raw_logs_included": False, "services": {}}
+    for service in SERVICES:
+        row = {}
+        result["services"][service] = row
+        try:
+            raw, status = command(["docker", "ps", "--all", "--no-trunc", "--quiet",
+                                   "--filter", "label=com.docker.compose.project=pantheon",
+                                   "--filter", f"label=com.docker.compose.service={service}"])
+            ids = raw.split()
+            if status != "ok" or len(ids) != 1 or not re.fullmatch(r"[0-9a-f]{64}", ids[0]):
+                row["collection_status"] = status if status != "ok" else "container_missing_or_ambiguous"
+                continue
+            row.update(container_id=ids[0], state=container_state(ids[0]))
+            if service == "operator-bff":
+                result["identity_matches"] = row["state"].get("source_sha") == expected_sha
+            raw, status = command(["docker", "logs", "--timestamps", "--since=15m", "--tail=240", ids[0]])
+            row.update(collection_status=status, events=log_events(raw))
+        except Exception:
+            # Even local Docker/JSON exceptions can embed raw output. Fail closed.
+            row["collection_status"] = "collector_error"
+    result.setdefault("identity_matches", False)
+    return result
+
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--expected-bff-sha", required=True)
+    args = parser.parse_args()
+    print(json.dumps(collect(args.expected_bff_sha), indent=2, sort_keys=True))
