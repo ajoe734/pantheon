@@ -40,8 +40,13 @@ def route_harness(tmp_path, monkeypatch: pytest.MonkeyPatch) -> _RouteHarness:
         build_persona_runtime_profile,
         raising=False,
     )
-    monkeypatch.setattr(bff_main, "_PERSONA_BFF_OVERLAY", {})
     monkeypatch.setattr(bff_main, "_STRATEGY_PERSONA_BFF_IDEMPOTENCY", {})
+    # The fixture double is the single canonical Persona write owner for this
+    # test process: no fallback writer, no process-local overlay. The live
+    # request path resolves the write owner from `main.persona_service`
+    # context binding, so both must point at the same double.
+    monkeypatch.setattr(bff_main.persona_service, "_write_owner", read_store)
+    monkeypatch.setattr(bff_main.persona_service, "_read_store", read_store)
     return _RouteHarness(TestClient(bff_main.app), transport, store)
 
 
@@ -279,9 +284,8 @@ def test_patch_overlay_and_cached_replay_preserve_tenant_snapshot(
     )
     first_body = first.json()
     assert first_body["data"]["tenantId"] == "tenant-a"
-    assert bff_main._PERSONA_BFF_OVERLAY[persona_id]["tenantId"] == "tenant-a"
+    assert bff_main.read_store.get_persona(persona_id)["metadata"]["tenant_id"] == "tenant-a"
 
-    bff_main._PERSONA_BFF_OVERLAY[persona_id]["state"] = "failed"
     replay = route_harness.client.patch(
         f"/bff/personas/{persona_id}",
         headers=_headers("operator-a", "persona-overlay-tenant-patch"),
@@ -290,7 +294,6 @@ def test_patch_overlay_and_cached_replay_preserve_tenant_snapshot(
 
     assert replay.status_code == 200, replay.text
     assert replay.json() == first_body
-    assert replay.json()["data"]["state"] != "failed"
 
 
 def test_patch_preserves_newer_canonical_lifecycle_over_stale_overlay(
@@ -308,7 +311,6 @@ def test_patch_preserves_newer_canonical_lifecycle_over_stale_overlay(
         lifecycle_state="paper_running",
         metadata={"paper_runtime_state": "running"},
     )
-    bff_main._PERSONA_BFF_OVERLAY[persona_id]["state"] = "provisioning"
 
     patched = route_harness.client.patch(
         f"/bff/personas/{persona_id}",

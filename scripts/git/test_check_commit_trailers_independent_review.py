@@ -24,6 +24,7 @@ def _load():
 
 
 CHECK = _load()
+from common import canonical_commit_subject_prefix  # noqa: E402
 REQUIRED = ("LLM-Agent", "Task-ID", "Reviewer")
 
 
@@ -85,3 +86,270 @@ def test_tooling_delivery_does_not_require_reviewer() -> None:
 
 def test_product_delivery_still_requires_reviewer() -> None:
     assert CHECK.required_trailers_for_delivery(REQUIRED, "product") == REQUIRED
+
+
+# OPS-COMMIT-IDENTITY-001: a subject prefix must actually name the same task
+# as the Task-ID trailer. Reproduces the dev46bbfe contradiction: a real
+# >72-char generated task_id cannot appear verbatim in a bounded subject, so
+# the subject legitimately carries `bound_commit_subject`'s deterministic
+# compacted prefix instead, and CI must accept that -- while still rejecting
+# a subject that names an unrelated task or a forged/duplicated trailer.
+
+LONG_TASK_ID = (
+    "INTEGRATION-UNBLOCK-GOV-APPROVAL-AUTHORITY-PREREQUISITE-001-"
+    "MERGE-STATE-BLOCKED-B14932FE23E9"
+)
+
+
+def test_accepts_bounded_subject_prefix_for_a_generated_long_task_id() -> None:
+    bounded_prefix = canonical_commit_subject_prefix(LONG_TASK_ID)
+    message = (
+        f"{bounded_prefix}: repair merge state\n"
+        "\n"
+        "LLM-Agent: Claude\n"
+        f"Task-ID: {LONG_TASK_ID}\n"
+        "Reviewer: Codex2\n"
+    )
+    assert CHECK.check_message(message, REQUIRED, True) == []
+
+
+def test_rejects_subject_prefix_naming_a_different_task() -> None:
+    message = (
+        "TASK-ID-OTHER: unrelated summary\n"
+        "\n"
+        "LLM-Agent: Claude\n"
+        "Task-ID: TASK-ID-20260901\n"
+        "Reviewer: Codex2\n"
+    )
+    problems = CHECK.check_message(message, REQUIRED, True)
+    assert any("does not match Task-ID trailer" in p for p in problems), problems
+
+
+def test_rejects_conflicting_task_id_trailers() -> None:
+    message = (
+        "TASK-ID-20260901: do a thing\n"
+        "\n"
+        "LLM-Agent: Claude\n"
+        "Task-ID: TASK-ID-20260901\n"
+        "Task-ID: TASK-ID-FORGED\n"
+        "Reviewer: Codex2\n"
+    )
+    problems = CHECK.check_message(message, REQUIRED, True)
+    assert any("conflicting trailer: Task-ID" in p for p in problems), problems
+
+
+# OPS-COMMIT-IDENTITY-001 follow-up: `canonical_commit_subject_prefix` alone
+# assumed a task_id needed its prefix compacted once it crossed ~60 chars,
+# regardless of the description actually used. `bound_commit_subject` only
+# compacts as a last resort (when the literal full prefix + real description
+# still exceeds 72 chars), so a 61-char id paired with a short description
+# ("fix") legitimately keeps its full, uncompacted prefix. CI must accept
+# that genuine formatter output instead of only comparing against the
+# (here, wrongly-compacted) single expected value.
+
+
+def test_accepts_uncompacted_prefix_for_boundary_length_id_with_short_description() -> None:
+    task_id = "A" * 61
+    subject = CHECK.commit_subject_prefix_variants(task_id)[0] + ": fix"
+    assert len(subject) <= 72
+    message = (
+        f"{subject}\n"
+        "\n"
+        "LLM-Agent: Claude\n"
+        f"Task-ID: {task_id}\n"
+        "Reviewer: Codex2\n"
+    )
+    assert CHECK.check_message(message, REQUIRED, True) == []
+
+
+def test_rejects_duplicate_identical_task_id_trailers() -> None:
+    message = (
+        "TASK-ID-20260901: do a thing\n"
+        "\n"
+        "LLM-Agent: Claude\n"
+        "Task-ID: TASK-ID-20260901\n"
+        "Task-ID: TASK-ID-20260901\n"
+        "Reviewer: Codex2\n"
+    )
+    problems = CHECK.check_message(message, REQUIRED, True)
+    assert any("duplicate trailer: Task-ID appears 2 times" in p for p in problems), problems
+
+
+def test_rejects_subject_prefix_collision_with_other_task_id() -> None:
+    message = (
+        "ABC-001-OTHER: summary\n"
+        "\n"
+        "LLM-Agent: Claude\n"
+        "Task-ID: ABC-001\n"
+        "Reviewer: Codex2\n"
+    )
+    problems = CHECK.check_message(message, REQUIRED, True)
+    assert any("does not match Task-ID trailer" in p for p in problems), problems
+
+
+def test_rejects_unproven_system_commit_message_without_trailers() -> None:
+    message = "Merge pull request #1234 from promote/v2026.20.0\n\npromote: v2026.20.0\n"
+    problems = CHECK.check_message(message, REQUIRED, True)
+    assert any("missing trailer: Task-ID" in p for p in problems), problems
+
+
+def test_check_message_with_expected_task_id() -> None:
+    message = _message("Claude", "Codex2")
+    assert CHECK.check_message(message, REQUIRED, True, expected_task_id="TASK-ID-20260901") == []
+    problems = CHECK.check_message(message, REQUIRED, True, expected_task_id="DIFFERENT-TASK")
+    assert any("does not match task id 'DIFFERENT-TASK'" in p for p in problems), problems
+
+
+def test_rejects_exempt_subject_prefix_collision() -> None:
+    """OPS-COMMIT-IDENTITY-001: exempt-style subjects must still identify the exact task id."""
+    invalid_subjects = [
+        "Revert ABC-001-OTHER: repair",
+        "hotfix: ABC-0010: repair",
+        "fixup! XYZ-001: mentions ABC-001",
+        "Revert ABC-001X",
+        "fixup! ABC-001-OTHER: summary",
+        "hotfix: ABC-001-OTHER",
+    ]
+    for subject in invalid_subjects:
+        message = (
+            f"{subject}\n\n"
+            "LLM-Agent: Claude\n"
+            "Task-ID: ABC-001\n"
+            "Reviewer: Codex2\n"
+        )
+        problems = CHECK.check_message(message, REQUIRED, True, expected_task_id="ABC-001")
+        assert any(
+            "does not match expected task id 'ABC-001'" in p
+            or "latest commit subject must include task id ABC-001" in p
+            for p in problems
+        ), f"subject {subject!r} was wrongly accepted: {problems}"
+
+
+def test_accepts_valid_exempt_subject_prefixes() -> None:
+    valid_subjects = [
+        "hotfix: ABC-001",
+        "hotfix: ABC-001: repair",
+        'Revert "ABC-001: repair"',
+        "Revert ABC-001: repair",
+        "fixup! ABC-001: repair",
+        "squash! ABC-001: repair",
+    ]
+    for subject in valid_subjects:
+        message = (
+            f"{subject}\n\n"
+            "LLM-Agent: Claude\n"
+            "Task-ID: ABC-001\n"
+            "Reviewer: Codex2\n"
+        )
+        assert CHECK.check_message(message, REQUIRED, True, expected_task_id="ABC-001") == []
+
+
+def test_rejects_trailer_continuation_and_case_conflicts() -> None:
+    # 1. Indented trailer continuation
+    msg1 = (
+        "ABC-001: summary\n\n"
+        "LLM-Agent: Claude\n"
+        "Task-ID: ABC-001\n"
+        " Task-ID: OTHER\n"
+        "Reviewer: Codex2\n"
+    )
+    p1 = CHECK.check_message(msg1, REQUIRED, True, expected_task_id="ABC-001")
+    assert any("ambiguous trailer continuation" in p for p in p1), p1
+
+    # 2. Case-variant conflicting trailer
+    msg2 = (
+        "ABC-001: summary\n\n"
+        "LLM-Agent: Claude\n"
+        "Task-ID: ABC-001\n"
+        "task-id: OTHER\n"
+        "Reviewer: Codex2\n"
+    )
+    p2 = CHECK.check_message(msg2, REQUIRED, True, expected_task_id="ABC-001")
+    assert any("conflicting trailer: Task-ID" in p for p in p2), p2
+
+    # 3. Case-variant duplicate trailer
+    msg3 = (
+        "ABC-001: summary\n\n"
+        "LLM-Agent: Claude\n"
+        "Task-ID: ABC-001\n"
+        "task-id: ABC-001\n"
+        "Reviewer: Codex2\n"
+    )
+    p3 = CHECK.check_message(msg3, REQUIRED, True, expected_task_id="ABC-001")
+    assert any("duplicate trailer: Task-ID" in p for p in p3), p3
+
+    # 4. Non-canonical casing alone
+    msg4 = (
+        "ABC-001: summary\n\n"
+        "LLM-Agent: Claude\n"
+        "task-id: ABC-001\n"
+        "Reviewer: Codex2\n"
+    )
+    p4 = CHECK.check_message(msg4, REQUIRED, True, expected_task_id="ABC-001")
+    assert any("non-canonical trailer casing: 'task-id'" in p for p in p4), p4
+
+
+def test_accepts_non_identity_prose_and_details_multiline() -> None:
+    msg_details = (
+        "ABC-001: repair\n\n"
+        "Details:\n"
+        "  preserve the single authority\n"
+        "  retain exact commit binding\n\n"
+        "LLM-Agent: Claude\n"
+        "Task-ID: ABC-001\n"
+        "Reviewer: Codex2\n"
+    )
+    assert CHECK.check_message(msg_details, REQUIRED, True, expected_task_id="ABC-001") == []
+
+    import subprocess
+    msg_887b = subprocess.run(
+        ["git", "log", "-1", "--format=%B", "887b7a7c5fb5ccd35c55cc33adb4a12eb0f50d39"],
+        capture_output=True,
+        text=True,
+    ).stdout
+    if msg_887b.strip():
+        assert (
+            CHECK.check_message(
+                msg_887b,
+                REQUIRED,
+                True,
+                expected_task_id="OPS-REVIEW-HANDOFF-RECOVERY-CONTRACT-001",
+            )
+            == []
+        )
+
+
+def test_rejects_trailer_whitespace_before_separator() -> None:
+    cases = [
+        ("Task-ID : OTHER", ["non-canonical trailer syntax", "conflicting trailer: Task-ID"]),
+        ("Task-ID\t: OTHER", ["non-canonical trailer syntax", "conflicting trailer: Task-ID"]),
+        ("task-id : OTHER", ["non-canonical trailer syntax", "non-canonical trailer casing", "conflicting trailer: Task-ID"]),
+        ("Task-ID : ABC-001", ["non-canonical trailer syntax", "duplicate trailer: Task-ID"]),
+    ]
+    for extra, expected_patterns in cases:
+        message = (
+            "ABC-001: repair\n\n"
+            "LLM-Agent: Claude\n"
+            "Task-ID: ABC-001\n"
+            "Reviewer: Codex2\n"
+            f"{extra}\n"
+        )
+        problems = CHECK.check_message(message, REQUIRED, True, expected_task_id="ABC-001")
+        for pattern in expected_patterns:
+            assert any(pattern in p for p in problems), f"Pattern {pattern!r} not in {problems} for {extra!r}"
+
+    # Standalone non-canonical trailer syntax with space/tab before separator
+    standalone_cases = [
+        "Task-ID : ABC-001",
+        "Task-ID\t: ABC-001",
+        "LLM-Agent : Claude",
+        "Reviewer\t: Codex2",
+    ]
+    for trailer_line in standalone_cases:
+        lines = ["ABC-001: repair", "", "LLM-Agent: Claude", "Task-ID: ABC-001", "Reviewer: Codex2"]
+        # Replace the canonical line with the non-canonical syntax line
+        key = trailer_line.split()[0].rstrip(":\t")
+        lines = [trailer_line if l.startswith(key + ":") else l for l in lines]
+        msg = "\n".join(lines) + "\n"
+        problems = CHECK.check_message(msg, REQUIRED, True, expected_task_id="ABC-001")
+        assert any("non-canonical trailer syntax" in p for p in problems), f"Expected non-canonical syntax problem in {problems} for {trailer_line!r}"

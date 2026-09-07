@@ -44,7 +44,6 @@ def _isolated_incident_bff(
 ) -> Iterator[TestClient]:
     original_store = bff_main.read_store
     original_env = {key: os.environ.get(key) for key in _TRACKED_ENV}
-    original_overlay = dict(bff_main._GOV_BFF_INCIDENT_OVERLAY)
     original_idempotency = dict(bff_main._GOV_BFF_IDEMPOTENCY)
     with tempfile.TemporaryDirectory(prefix="inc001_bff_") as td:
         root = Path(td)
@@ -72,14 +71,11 @@ def _isolated_incident_bff(
             store = create_in_memory_read_surface_ports()
             store.dataset_source = lambda ds: "missing" if ds == "incidents" else "typed_store"
         bff_main.read_store = store
-        bff_main._GOV_BFF_INCIDENT_OVERLAY.clear()
         bff_main._GOV_BFF_IDEMPOTENCY.clear()
         try:
             yield TestClient(bff_main.app, raise_server_exceptions=False)
         finally:
             bff_main.read_store = original_store
-            bff_main._GOV_BFF_INCIDENT_OVERLAY.clear()
-            bff_main._GOV_BFF_INCIDENT_OVERLAY.update(original_overlay)
             bff_main._GOV_BFF_IDEMPOTENCY.clear()
             bff_main._GOV_BFF_IDEMPOTENCY.update(original_idempotency)
             for key, value in original_env.items():

@@ -63,8 +63,11 @@ def create_strategies_router(
     bff_me_tenant_payload: Optional[Callable[..., Dict[str, Any]]] = None,
     list_persona_records: Optional[Callable[..., List[Dict[str, Any]]]] = None,
     list_strategy_summaries: Optional[Callable[[], List[Dict[str, Any]]]] = None,
+    strategy_write_owner: Optional[Any] = None,
+    get_strategy_write_owner: Optional[Callable[[], Any]] = None,
 ) -> APIRouter:
-    """Create the focused APIRouter for the Strategies and StrategySpecSeed surfaces."""
+    if strategy_overlay is not None:
+        raise AttributeError("strategy_overlay is retired; process-local state overlays are deleted")
     _extract_identity = extract_identity or default_extract_identity
     _require_read_role = require_read_role or default_require_read_role
     _bff_error = bff_error or default_bff_error
@@ -75,9 +78,6 @@ def create_strategies_router(
     _page_slice = page_slice or default_page_slice
     _read_surface_meta = read_surface_meta or default_read_surface_meta
 
-    _strategy_overlay: Dict[str, Dict[str, Any]] = (
-        strategy_overlay if strategy_overlay is not None else {}
-    )
     _strategy_persona_idempotency: Dict[str, Dict[str, Any]] = (
         strategy_persona_idempotency_store if strategy_persona_idempotency_store is not None else {}
     )
@@ -111,7 +111,6 @@ def create_strategies_router(
         normalize_risk_level=normalize_risk_level or (lambda r: str(r or "medium")),
         strategy_persona_idempotency_check=strategy_persona_idempotency_check or (lambda k, h: None),
         strategy_persona_action_command=strategy_persona_action_command,
-        strategy_overlay=_strategy_overlay,
         strategy_persona_idempotency=_strategy_persona_idempotency,
         strategy_seed_replication_idempotency=_strategy_seed_replication_idempotency,
         strategy_seed_review_idempotency=_strategy_seed_review_idempotency,
@@ -122,6 +121,8 @@ def create_strategies_router(
         bff_me_tenant_payload=bff_me_tenant_payload,
         list_persona_records=list_persona_records,
         list_strategy_summaries=list_strategy_summaries,
+        strategy_write_owner=strategy_write_owner,
+        get_strategy_write_owner=get_strategy_write_owner,
     )
 
     router = APIRouter()

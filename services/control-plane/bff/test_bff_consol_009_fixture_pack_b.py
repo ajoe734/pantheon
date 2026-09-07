@@ -130,8 +130,6 @@ def _fresh_pack_b_client(td: str) -> TestClient:
     )
     bff_main._CAPITAL_BFF_IDEMPOTENCY.clear()
     bff_main._STRATEGY_PERSONA_BFF_IDEMPOTENCY.clear()
-    bff_main._STRATEGY_BFF_OVERLAY.clear()
-    bff_main._PERSONA_BFF_OVERLAY.clear()
     return TestClient(bff_main.app)
 
 

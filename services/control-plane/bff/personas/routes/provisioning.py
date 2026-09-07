@@ -9,7 +9,6 @@ from fastapi import APIRouter, Header, HTTPException
 
 from services.control_plane.bff.models import ErrorCode
 from ..service import (
-    _PERSONA_BFF_OVERLAY,
     _bff_me_tenant_payload,
     _evaluate_persona_provisioning_status,
     _get_persona_directory_snapshot,
@@ -73,7 +72,7 @@ def build_provisioning_router(ctx: PersonaRouteContext) -> APIRouter:
         )
         dto = _project_persona_dto(
             raw,
-            overlay=_PERSONA_BFF_OVERLAY.get(persona_id),
+            overlay=None,
             routed_strategies=_routed_strategies_for_persona(persona_id),
             evaluate_provisioning=False,
         )
