@@ -86,11 +86,15 @@ class CheckCommitTrailersTests(unittest.TestCase):
 
     def test_exempts_merge_subject(self) -> None:
         msg = "Merge pull request #1234 from promote/v2026.20.0\n\npromote: v2026.20.0\n"
-        self.assertEqual(check_trailers.check_message(msg, self.REQ, True), [])
+        problems = check_trailers.check_message(msg, self.REQ, True)
+        self.assertFalse(any("subject must start with TASK-ID" in p for p in problems))
+        self.assertTrue(any("missing trailer: Task-ID" in p for p in problems))
 
     def test_exempts_wave_merge_subject(self) -> None:
         msg = "wave-merge: claude EP5-FOO-001\n"
-        self.assertEqual(check_trailers.check_message(msg, self.REQ, True), [])
+        problems = check_trailers.check_message(msg, self.REQ, True)
+        self.assertFalse(any("subject must start with TASK-ID" in p for p in problems))
+        self.assertTrue(any("missing trailer: Task-ID" in p for p in problems))
 
     def test_rejects_overlong_subject(self) -> None:
         long_subject = "EP5-FOO-004: " + ("x" * 80)

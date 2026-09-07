@@ -504,6 +504,7 @@ def test_owner_payload_contract_and_checkpointed_dispatch_admission() -> None:
     )
     assert advance == {
         "target_state": "approved",
+        "expected_artifact_state": "candidate",
         "approver": "pantheon-persona-provisioner",
         "approval_decision_id": ids.approval_decision_id,
     }
@@ -513,6 +514,7 @@ def test_owner_payload_contract_and_checkpointed_dispatch_admission() -> None:
     )
     assert artifact_advance == {
         "target_state": "approved",
+        "expected_artifact_state": "candidate",
         "approver": "pantheon-persona-provisioner",
         "approval_decision_id": ids.strategy_artifact_approval_decision_id,
     }

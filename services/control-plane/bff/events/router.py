@@ -283,6 +283,11 @@ def create_events_router(
     _subscribers = _event_stream.subscribers
     _frontend_stream = frontend_bff_event_stream or _default_frontend_bff_event_stream
 
+    def _resolve_read_store() -> Any:
+        if get_read_store is not None:
+            return get_read_store()
+        return read_surface
+
     def _stream_channel(
         channel: str,
         last_event_id: Optional[str],
@@ -353,6 +358,12 @@ def create_events_router(
                 )
             elif hasattr(read_store, "list_events_bff"):
                 events = read_store.list_events_bff(event_type=event_type, page_size=page_size)
+
+        if event_type:
+            events = [
+                e for e in events
+                if e.get("action_type") == event_type or e.get("type") == event_type
+            ]
 
         if dataset_surface_status is not None:
             surface = dataset_surface_status("audit_log", snapshot_at=snapshot_at)

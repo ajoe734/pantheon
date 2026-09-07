@@ -227,6 +227,13 @@ class RegistryStore:
                 if rid in self._entries
             ]
 
+    def list_all_entries(self) -> list[RegistryEntry]:
+        with self._lock:
+            return [
+                RegistryEntry.from_dict(entry.to_dict())
+                for entry in self._entries.values()
+            ]
+
     def resolve_latest_approved(self, strategy_id: str) -> Optional[RegistryEntry]:
         """Return the newest approved entry for a strategy family (semver comparison)."""
         entries = self.list_by_strategy(strategy_id)
@@ -760,3 +767,4 @@ def reset_store() -> None:
     global _default_store
     with _store_lock:
         _default_store = None
+

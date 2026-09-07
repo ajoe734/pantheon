@@ -2443,6 +2443,7 @@ class TaskFinalizeShellTests(unittest.TestCase):
         helpers.mkdir(parents=True)
         source = Path(__file__).resolve().parent
         for name in (
+            "check_commit_trailers.py",
             "safe_pr.sh",
             "task_finalize.sh",
             "task_review_merge_gate.py",
@@ -2455,8 +2456,10 @@ class TaskFinalizeShellTests(unittest.TestCase):
             (source.parents[1] / ".orchestrator" / "common.py").read_text(encoding="utf-8"),
             encoding="utf-8",
         )
+        (helpers / "check_commit_trailers.py").chmod(0o755)
         (helpers / "safe_pr.sh").chmod(0o755)
         (helpers / "task_finalize.sh").chmod(0o755)
+        (helpers / "worker_commit.py").chmod(0o755)
         (repo / "ai-status.json").write_text(json.dumps({"tasks": [task]}), encoding="utf-8")
         self._git(["add", "-A"], cwd=repo)
         self._git(["commit", "-m", "base", "--no-verify"], cwd=repo)
@@ -2504,6 +2507,7 @@ class TaskFinalizeShellTests(unittest.TestCase):
         env["GH_PR_LIST_FAIL"] = "1" if pr_lookup_fails else "0"
         env["GH_REQUIRE_OFF_BEFORE_PUSH"] = "1" if require_off_before_push else "0"
         env["PANTHEON_STATUS_ROOT"] = str(repo)
+        env["PANTHEON_COMMAND_ROOT"] = str(repo)
         return env
 
     def _run_finalize(

@@ -326,6 +326,8 @@ def create_incident_router(
     Registers exactly 27 route decorators covering Incident, Alert, Kill Switch,
     and Audit endpoints.
     """
+    if incident_overlay is not None:
+        raise AttributeError("incident_overlay is retired; process-local state overlays are deleted")
     router = APIRouter()
 
     _utc_now = utc_now or _default_utc_now

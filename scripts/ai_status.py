@@ -208,6 +208,27 @@ from common import (
     worker_process_generation_id,
 )
 
+GIT_TOOLS_DIR = ROOT / "scripts" / "git"
+
+
+def _commit_trailer_checker():
+    """Lazily import the shared Git commit-identity checker.
+
+    Deferred (rather than a module-level import) so a process that never
+    reaches `done`-finalize commit-identity validation -- for example the
+    reopen/handoff CLI paths -- does not require
+    scripts/git/check_commit_trailers.py to be importable. A command root
+    copy that only carries `scripts/*.py` (no `scripts/git/`) must still be
+    able to run every ai_status.py command except the one that actually
+    needs this module.
+    """
+    if str(GIT_TOOLS_DIR) not in sys.path:
+        sys.path.insert(0, str(GIT_TOOLS_DIR))
+    import check_commit_trailers
+
+    return check_commit_trailers
+
+
 # Derived dashboard rendering intentionally uses an atomic projection-only
 # reader. Canonical mutation/admission callers must use runtime_state's locked
 # APIs instead; taking a runtime lock here while task-state is held would
@@ -1230,14 +1251,6 @@ DEFAULT_COMMIT_CONVENTIONS = {
     "subject_must_include_task_id": True,
     "required_body_fields": ["LLM-Agent", "Task-ID", "Reviewer"],
 }
-COMMIT_TRAILER_SKIP_PREFIXES = (
-    "Merge ",
-    "Revert ",
-    "promote:",
-    "hotfix:",
-    "publish:",
-)
-COMMIT_TRAILER_SKIP_RE = re.compile(r"^OPS-(?:GIT-(?:WORKFLOW|REDESIGN)|DOC|REBASE)-")
 FIRST_PROMPT_PRIORITY = [
     "AI_COLLABORATION_GUIDE.md",
     "ai-status.json",
@@ -3008,29 +3021,6 @@ def approved_closeout_metadata_ref(
         metadata_ref = authored_parent
 
 
-def parse_commit_metadata_lines(body: str) -> dict[str, str]:
-    metadata: dict[str, str] = {}
-    for raw_line in body.splitlines():
-        line = raw_line.strip()
-        if not line or ":" not in line:
-            continue
-        key, value = line.split(":", 1)
-        key = key.strip()
-        value = value.strip()
-        if key and value:
-            metadata[key] = value
-    return metadata
-
-
-def commit_subject_skips_trailer_check(subject: str) -> str | None:
-    for prefix in COMMIT_TRAILER_SKIP_PREFIXES:
-        if subject.startswith(prefix):
-            return prefix.rstrip(": ")
-    if COMMIT_TRAILER_SKIP_RE.match(subject):
-        return "OPS"
-    return None
-
-
 def validate_loop_completion_claim(task: dict[str, Any]) -> None:
     """Gate the done transition for loop-autopilot tasks.
 
@@ -3438,77 +3428,92 @@ def collect_done_delivery_metadata(task: dict[str, Any], actor: str) -> dict[str
         }
 
         task_id = str(task.get("id") or "").strip()
-        if commit_rules["subject_must_include_task_id"] and task_id and task_id not in subject:
-            raise SystemExit(
-                f"Cannot finalize task: latest commit subject must include task id {task_id}."
-            )
+        full_message = f"{subject}\n\n{body}" if body else subject
+        checker = _commit_trailer_checker()
 
-        metadata_fields = parse_commit_metadata_lines(body)
+        required_fields = list(commit_rules.get("required_body_fields", []))
+        if "Task-ID" not in required_fields:
+            required_fields.append("Task-ID")
+
+        prefix_required = bool(commit_rules.get("subject_must_include_task_id", True))
+        problems = checker.check_message(
+            full_message,
+            required=tuple(required_fields),
+            prefix_required=prefix_required,
+            expected_task_id=task_id,
+            delivery_class="product",
+        )
+        metadata_fields = checker.parse_trailers(body)
         expected_fields = {
             "LLM-Agent": actor,
             "Task-ID": task_id,
             "Reviewer": canonical_agent_name(task.get("reviewer")),
         }
-        required_fields = commit_rules.get("required_body_fields", [])
-        trailer_skip_reason = commit_subject_skips_trailer_check(subject)
-        missing_fields: list[str] = []
         mismatched_fields: list[tuple[str, str]] = []
         commit_timestamp = ""
-        if trailer_skip_reason is None:
-            for field_name in required_fields:
-                actual_value = metadata_fields.get(field_name)
-                if not actual_value:
-                    missing_fields.append(field_name)
-                    continue
-                expected_value = expected_fields.get(field_name)
-                if expected_value and actual_value != expected_value:
-                    # The supervisor reassigns owner and reviewer as a pair when
-                    # a lane goes unavailable, so a merged delivery can carry
-                    # stale `LLM-Agent` and `Reviewer` trailers at once. Both are
-                    # verified against the audited reassignment chain instead of
-                    # failing closed and requiring a Human/Ops sign-off.
-                    if field_name in {"LLM-Agent", "Reviewer"} and not commit_timestamp:
-                        commit_timestamp = _delivered_commit_timestamp(
-                            repository_root,
+        for field_name in required_fields:
+            actual_value = metadata_fields.get(field_name)
+            if not actual_value:
+                continue
+            expected_value = expected_fields.get(field_name)
+            if expected_value and actual_value != expected_value:
+                # The supervisor reassigns owner and reviewer as a pair when
+                # a lane goes unavailable, so a merged delivery can carry
+                # stale `LLM-Agent` and `Reviewer` trailers at once. Both are
+                # verified against the audited reassignment chain instead of
+                # failing closed and requiring a Human/Ops sign-off.
+                if field_name in {"LLM-Agent", "Reviewer"} and not commit_timestamp:
+                    commit_timestamp = _delivered_commit_timestamp(
+                        repository_root,
+                        task,
+                        commit_ref=metadata_ref if approved_ref else "",
+                    )
+                if field_name == "LLM-Agent":
+                    delivery["commit_owner_reassignment"] = (
+                        _verified_done_owner_reassignment(
                             task,
-                            commit_ref=metadata_ref if approved_ref else "",
+                            commit_owner=actual_value,
+                            current_owner=actor,
+                            commit_timestamp=commit_timestamp,
                         )
-                    if field_name == "LLM-Agent":
-                        delivery["commit_owner_reassignment"] = (
-                            _verified_done_owner_reassignment(
-                                task,
-                                commit_owner=actual_value,
-                                current_owner=actor,
-                                commit_timestamp=commit_timestamp,
-                            )
+                    )
+                    continue
+                if field_name == "Reviewer":
+                    delivery["commit_reviewer_reassignment"] = (
+                        _verified_done_reviewer_reassignment(
+                            task,
+                            commit_reviewer=actual_value,
+                            current_reviewer=expected_value,
+                            commit_timestamp=commit_timestamp,
                         )
-                        continue
-                    if field_name == "Reviewer":
-                        delivery["commit_reviewer_reassignment"] = (
-                            _verified_done_reviewer_reassignment(
-                                task,
-                                commit_reviewer=actual_value,
-                                current_reviewer=expected_value,
-                                commit_timestamp=commit_timestamp,
-                            )
-                        )
-                        continue
-                    mismatched_fields.append((field_name, expected_value))
-        else:
-            delivery["commit_trailer_check_skipped"] = True
-            delivery["commit_trailer_skip_reason"] = trailer_skip_reason
-        if missing_fields or mismatched_fields:
-            issues: list[str] = []
-            if missing_fields:
-                missing_list = ", ".join(f"`{field_name}: ...`" for field_name in missing_fields)
-                issues.append(f"latest commit body must include {missing_list}")
-            if mismatched_fields:
-                mismatch_list = ", ".join(
-                    f"`{field_name}` must be `{expected_value}`"
-                    for field_name, expected_value in mismatched_fields
-                )
-                issues.append(f"latest commit body fields must match task metadata: {mismatch_list}")
-            raise SystemExit(f"Cannot finalize task: {'; '.join(issues)}.")
+                    )
+                    continue
+                mismatched_fields.append((field_name, expected_value))
+
+        if problems:
+            missing_trailers = [
+                p.split(": ", 1)[1] for p in problems if p.startswith("missing trailer: ")
+            ]
+            other_problems = [
+                p for p in problems if not p.startswith("missing trailer: ")
+            ]
+            issue_parts = []
+            if missing_trailers:
+                missing_list = ", ".join(f"`{f}: ...`" for f in missing_trailers)
+                issue_parts.append(f"latest commit body must include {missing_list}")
+            if other_problems:
+                issue_parts.extend(other_problems)
+            raise SystemExit(f"Cannot finalize task: {'; '.join(issue_parts)}.")
+
+        if mismatched_fields:
+            mismatch_list = ", ".join(
+                f"`{field_name}` must be `{expected_value}`"
+                for field_name, expected_value in mismatched_fields
+            )
+            raise SystemExit(
+                f"Cannot finalize task: latest commit body fields must match task metadata: {mismatch_list}."
+            )
+
         delivery["commit_metadata"] = metadata_fields
 
     porcelain = run_git_command(
@@ -6438,10 +6443,22 @@ def validate_merged_tooling_done(task: dict[str, Any]) -> dict[str, Any]:
         cwd=Path(delivery["repository_path"]),
         failure_message="Cannot reconcile task: tooling delivery commit message is unavailable.",
     )
-    task_id_pattern = rf"(?<![A-Za-z0-9_-]){re.escape(task_id)}(?![A-Za-z0-9_-])"
-    if not task_id or re.search(task_id_pattern, commit_message) is None:
+    if not task_id:
         raise SystemExit(
             "Cannot reconcile task: tooling delivery commit does not bind the task id."
+        )
+    checker = _commit_trailer_checker()
+    problems = checker.check_message(
+        commit_message,
+        required=("Task-ID",),
+        prefix_required=True,
+        expected_task_id=task_id,
+        delivery_class="tooling",
+    )
+    if problems:
+        raise SystemExit(
+            "Cannot reconcile task: tooling delivery commit does not bind the task id: "
+            + "; ".join(problems)
         )
     return {
         "recorded_at": iso_now(),

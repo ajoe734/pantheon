@@ -1278,6 +1278,59 @@ def render_template(path: Path, variables: dict[str, Any]) -> str:
     return text
 
 
+def _normalized_task_prefix(task_id: str | None) -> str:
+    raw_prefix = str(task_id or "").strip()
+    clean_prefix = re.sub(r"[^A-Za-z0-9-]+", "-", raw_prefix).strip("-").upper()
+    return clean_prefix or "TASK"
+
+
+def _compacted_task_prefix(clean_prefix: str, max_len: int) -> str:
+    max_prefix_len = min(35, max(10, max_len - 15))
+    compact_prefix = re.sub(r"-+$", "", clean_prefix[:max_prefix_len])
+    return compact_prefix or "TASK"
+
+
+def canonical_commit_subject_prefix(task_id: str | None, max_len: int = 72) -> str:
+    """Return the deterministic subject prefix `bound_commit_subject` uses for task_id.
+
+    A long task_id makes `bound_commit_subject` compact the prefix itself
+    (not just the description) once the prefix alone would leave no room for
+    a description. Deriving that same compacted form here lets a validator
+    check a subject's prefix against a task_id directly, without requiring
+    the literal full task_id to appear in the subject -- the contradiction
+    that let a merged >72-char task_id commit satisfy CI's bounded-subject
+    check while canonical `done` still demanded the untruncated id in the
+    subject.
+    """
+    clean_prefix = _normalized_task_prefix(task_id)
+    avail_desc = max_len - (len(clean_prefix) + 2)
+    if avail_desc >= 10:
+        return clean_prefix
+    return _compacted_task_prefix(clean_prefix, max_len)
+
+
+def commit_subject_prefix_variants(task_id: str | None, max_len: int = 72) -> tuple[str, str]:
+    """Return the two subject prefixes `bound_commit_subject` can emit for task_id.
+
+    `bound_commit_subject` only compacts the prefix as a last resort: it
+    first tries the full, uncompacted normalized task_id, and only falls
+    back to the compacted form when the literal candidate (full prefix plus
+    the *actual* description) still exceeds `max_len`. That means whether a
+    given task_id's prefix is compacted or not depends on the description
+    length, not on the task_id alone -- e.g. a 61-char id paired with a
+    3-char description ("fix") keeps its full, uncompacted 61-char prefix
+    (61 + 2 + 3 = 66 <= 72), while the same id paired with a longer
+    description gets the compacted prefix instead.
+
+    A validator that only has the task_id (not the description that
+    produced the subject being checked) cannot know which form to expect,
+    so it must accept either of the two: the full normalized prefix, or
+    `canonical_commit_subject_prefix`'s deterministic compacted form.
+    """
+    clean_prefix = _normalized_task_prefix(task_id)
+    return clean_prefix, canonical_commit_subject_prefix(task_id, max_len)
+
+
 def bound_commit_subject(task_id: str | None, description: str | None, max_len: int = 72) -> str:
     r"""Format a commit subject to guarantee max_len (default 72 chars) and match SUBJECT_PATTERN.
 
@@ -1285,10 +1338,7 @@ def bound_commit_subject(task_id: str | None, description: str | None, max_len: 
     Matches pattern: ^[A-Z][A-Z0-9-]*[A-Z0-9]:\s+\S
     Full Task-ID remains in required trailers.
     """
-    raw_prefix = str(task_id or "").strip()
-    clean_prefix = re.sub(r"[^A-Za-z0-9-]+", "-", raw_prefix).strip("-").upper()
-    if not clean_prefix:
-        clean_prefix = "TASK"
+    clean_prefix = _normalized_task_prefix(task_id)
 
     raw_desc = str(description or "").strip()
     raw_desc = re.sub(r"\s+", " ", raw_desc)
@@ -1316,10 +1366,7 @@ def bound_commit_subject(task_id: str | None, description: str | None, max_len: 
         if len(candidate) <= max_len:
             return candidate
 
-    max_prefix_len = min(35, max(10, max_len - 15))
-    compact_prefix = re.sub(r"-+$", "", clean_prefix[:max_prefix_len])
-    if not compact_prefix:
-        compact_prefix = "TASK"
+    compact_prefix = _compacted_task_prefix(clean_prefix, max_len)
 
     prefix_cost = len(compact_prefix) + 2
     avail_desc = max_len - prefix_cost
