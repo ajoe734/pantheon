@@ -25,16 +25,107 @@ FRAME = re.compile(
     r'File "(?:/workspace/|/usr/local/lib/python[0-9.]+/site-packages/)'
     r'([A-Za-z_0-9./-]{1,240}\.py)", line ([0-9]{1,7}), in (' + IDENTIFIER + r'|<module>)$'
 )
-# Explicit project exception allowlist. Only names listed here or ending in
-# Error/Exception (plus the fixed psycopg names below) are surfaced; an
-# arbitrary "Something: <request text>" line is never treated as an event.
-PROJECT_EXCEPTION_NAMES = ("PersonaWriteOwnerUnavailable", "ProvisioningLeaseLost")
+# Explicit bounded allowlist of trusted exception names only (SD D2).
+# Arbitrary regex admission on Error/Exception suffixes or arbitrary dotted
+# prefixes is strictly forbidden: untrusted request bodies or free-form strings
+# like SYNTHETIC_PRIVATE_SENTINELError must never be admitted as exception types.
+TRUSTED_EXCEPTION_NAMES = (
+    # Builtins
+    "ArithmeticError",
+    "AssertionError",
+    "AttributeError",
+    "BufferError",
+    "BlockingIOError",
+    "BrokenPipeError",
+    "ChildProcessError",
+    "ConnectionAbortedError",
+    "ConnectionError",
+    "ConnectionRefusedError",
+    "ConnectionResetError",
+    "EOFError",
+    "Exception",
+    "FileExistsError",
+    "FileNotFoundError",
+    "FloatingPointError",
+    "ImportError",
+    "IndexError",
+    "InterruptedError",
+    "IsADirectoryError",
+    "KeyError",
+    "LookupError",
+    "MemoryError",
+    "ModuleNotFoundError",
+    "NameError",
+    "NotADirectoryError",
+    "NotImplementedError",
+    "OSError",
+    "OverflowError",
+    "PermissionError",
+    "ProcessLookupError",
+    "RecursionError",
+    "ReferenceError",
+    "RuntimeError",
+    "StopAsyncIteration",
+    "StopIteration",
+    "SyntaxError",
+    "SystemError",
+    "TabError",
+    "TimeoutError",
+    "TypeError",
+    "UnboundLocalError",
+    "UnicodeDecodeError",
+    "UnicodeEncodeError",
+    "UnicodeError",
+    "UnicodeTranslateError",
+    "ValueError",
+    "ZeroDivisionError",
+    # Standard library / framework exceptions (exact qualified and unqualified)
+    "urllib.error.HTTPError",
+    "HTTPError",
+    "urllib.error.URLError",
+    "URLError",
+    "json.decoder.JSONDecodeError",
+    "json.JSONDecodeError",
+    "JSONDecodeError",
+    "asyncio.TimeoutError",
+    "asyncio.CancelledError",
+    "asyncio.exceptions.CancelledError",
+    "asyncio.exceptions.TimeoutError",
+    # Psycopg / database exceptions (exact qualified and unqualified)
+    "psycopg.errors.UndefinedTable",
+    "UndefinedTable",
+    "psycopg.errors.UndefinedColumn",
+    "UndefinedColumn",
+    "psycopg.errors.InsufficientPrivilege",
+    "InsufficientPrivilege",
+    "psycopg.errors.UniqueViolation",
+    "UniqueViolation",
+    "psycopg.errors.ForeignKeyViolation",
+    "ForeignKeyViolation",
+    "psycopg.errors.NotNullViolation",
+    "NotNullViolation",
+    "psycopg.errors.SerializationFailure",
+    "SerializationFailure",
+    "psycopg.errors.DeadlockDetected",
+    "DeadlockDetected",
+    "psycopg.OperationalError",
+    "OperationalError",
+    "psycopg.DatabaseError",
+    "DatabaseError",
+    "psycopg.DataError",
+    "DataError",
+    "psycopg.IntegrityError",
+    "IntegrityError",
+    "psycopg.ProgrammingError",
+    "ProgrammingError",
+    # Domain / project exceptions (exact names only)
+    "PersonaWriteOwnerUnavailable",
+    "ProvisioningLeaseLost",
+)
 EXCEPTION = re.compile(
-    r"(?:^|\s)((?:[A-Za-z_][A-Za-z_0-9]*\.)*"
-    r"(?:[A-Za-z_][A-Za-z_0-9]*(?:Error|Exception)|"
-    + "|".join(re.escape(name) for name in PROJECT_EXCEPTION_NAMES) + r"|"
-    r"UndefinedTable|UndefinedColumn|InsufficientPrivilege|UniqueViolation|"
-    r"ForeignKeyViolation|NotNullViolation|SerializationFailure|DeadlockDetected)):\s*(.*)$"
+    r"(?:^|(?<=\s))("
+    + "|".join(re.escape(name) for name in sorted(TRUSTED_EXCEPTION_NAMES, key=len, reverse=True))
+    + r"):\s*(.*)$"
 )
 
 

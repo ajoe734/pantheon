@@ -21,43 +21,81 @@
   },
   "prior_review_cycle": {
     "rejected_pr": "https://github.com/ajoe734/pantheon/pull/5656",
-    "rejected_head": "f7fd694d387a09d3c9ffc05fe2b144ceae971836",
-    "verdict": "Acceptance defects: (P1) timeout creates process group outside pinned guard COMMAND_PGID; (P1) free-form stderr copied after incomplete denylist redaction leaking JSON secret sentinels; (P2) wrapper treats all valid JSON as collectionStatus=ok, masking identity mismatches and missing schema; (P1) workflow upload derives paths and condition from post-command outputs, risking lost evidence on cancellation."
+    "rejected_head": "6cc44562831b0a65b84d5afc2df2fa5f698520fc",
+    "verdict": "Acceptance defects: (P1 D1) scripts/run_dev_paper_baseline_with_diagnostics.sh trapped EXIT INT TERM with cleanup only and resumed execution after TERM, triggering a second collector call after baseline cancellation/lease loss; (P1 D2) collect_dev_paper_diagnostics.py accepted arbitrary Error/Exception suffixes and arbitrary dotted prefixes, emitting sentinels like SYNTHETIC_PRIVATE_SENTINELError from request bodies as exception types; (P2 D2) wrapper validated only six field names with truthiness for identity_matches, accepting missing D2 fields, string false, invalid services, and null collected_at."
   },
   "fix_design": {
-    "d1_capture_inside_guarded_child": "The baseline bootstrap and the failure collector still run inside the same single guarded child (scripts/run_dev_paper_baseline_with_diagnostics.sh), invoked once by run_with_dev_environment_lease.sh from the paper_bootstrap workflow step. The script captures the baseline's original exit status without `set -e`, and only if it is non-zero does it invoke the collector over the same SSH session while the guard still owns the lease and heartbeat. It always exits with the original baseline status (never `|| true`, never overridden by collector success/failure), so the guard's normal failure recording and quarantine behavior is unchanged. Unmodified from the accepted D1 review.",
-    "d1_pin_boundary": "run_with_dev_environment_lease.sh remains the immutable pinned guard binary from .lease-controller (commit 9e564718da8c39199a4c311f1a667b74226e3428, hash-checked); it was not modified. The paper_bootstrap step's invocation now matches the literal ${GITHUB_WORKSPACE}/.lease-controller/scripts/run_with_dev_environment_lease.sh form used by the sibling guarded steps (fixing a scripts/test_dev_environment_lease_deploy_contract.py::test_all_dev_mutations_and_public_proofs_use_pinned_wrapper regression the prior revision had introduced without a matching test run)."
+    "d1_capture_inside_guarded_child": "The baseline bootstrap and the failure collector run inside the same single guarded child (scripts/run_dev_paper_baseline_with_diagnostics.sh), invoked once by run_with_dev_environment_lease.sh from the paper_bootstrap workflow step. The script captures the baseline's original exit status without `set -e`, and only if it is non-zero does it invoke the collector over the same SSH session while the guard still owns the lease and heartbeat. It always exits with the original baseline status (never `|| true`, never overridden by collector success/failure), so the guard's normal failure recording and quarantine behavior is unchanged.",
+    "d1_pin_boundary": "run_with_dev_environment_lease.sh remains the immutable pinned guard binary from .lease-controller (commit 9e564718da8c39199a4c311f1a667b74226e3428, hash-checked); it was not modified. The paper_bootstrap step's invocation matches the literal ${GITHUB_WORKSPACE}/.lease-controller/scripts/run_with_dev_environment_lease.sh form used by sibling guarded steps."
   },
   "d2_fixes": {
-    "p1_raw_stderr_in_upload_dir": {
-      "defect": "scripts/run_dev_paper_baseline_with_diagnostics.sh previously wrote the collector SSH invocation's raw, unbounded stderr straight to <diagnostic_dir>/collector.stderr, and nonprod-deploy.yml uploaded that whole directory. A local fake-SSH fixture emitting a synthetic secret reproduced that sentinel landing in the uploaded artifact.",
-      "fix": "Collector stderr is now captured to a mktemp file that is a sibling of, not inside, DEV_PAPER_DIAGNOSTICS_DIR (removed by an EXIT trap). write_status() reads at most 4096 raw bytes from it, redacts secret-shaped substrings (Bearer tokens, JWTs, key=value secrets, DSNs, PEM private keys, long base64/hex blobs) with a Python regex pass, and stores only a 2048-byte-bounded collectorStderrSummary field inside collection-status.json. The workflow's upload step no longer uploads the directory wholesale: it now uploads an explicit path list built from three step outputs (diagnostics_file, status_file, checksum_file), each only added when that exact file exists.",
+    "p1_raw_stderr_isolation": {
+      "defect": "Collector SSH stderr may contain sensitive tokens, passwords, or sentinels.",
+      "fix": "Collector stderr is captured to a mktemp file outside DEV_PAPER_DIAGNOSTICS_DIR (removed by an EXIT trap). write_status() reads bounded raw bytes and maps them to allowlisted structural failure categories only (e.g. ssh_connection_timeout, collector_command_failed, etc.). No raw stderr strings enter collection-status.json. The workflow upload step uploads an explicit path list of fixed runner-local files (diagnostics.json, collection-status.json, SHA256SUMS).",
       "regression_test": "scripts/test_collect_dev_paper_diagnostics.py::test_wrapper_never_uploads_raw_unbounded_collector_stderr"
     },
     "p1_no_overall_collection_deadline": {
       "defect": "The wrapper had no overall deadline around the collector's SSH exec; per-command 5s bounds inside collect_dev_paper_diagnostics.py and any SSH ConnectTimeout cannot bound an already-connected, stalled remote channel.",
-      "fix": "The collector invocation is now wrapped in `timeout --kill-after=5s <deadline>s`, where <deadline> defaults to 120 and is overridable via DEV_PAPER_DIAGNOSTICS_TIMEOUT_SECONDS (validated numeric). A timeout/SIGKILL exit (124/137) is recorded as collectionStatus=\"timeout\" and never mutates the preserved baseline exit status. Terminal evidence is also now initialized before the baseline even runs (collection-status.json written with collectionStatus=\"not_started\" before the SSH exec, then \"collecting\" with the known bootstrap exit before the collector runs), so a cancellation or lease loss mid-run leaves durable evidence on disk instead of nothing; a successful baseline now also writes collectionStatus=\"not_required\".",
+      "fix": "The collector invocation is wrapped in `timeout --foreground --kill-after=5s <deadline>s`, where <deadline> defaults to 120 and is overridable via DEV_PAPER_DIAGNOSTICS_TIMEOUT_SECONDS (validated numeric). A timeout/SIGKILL exit (124/137) is recorded as collectionStatus=\"timeout\" and never mutates the preserved baseline exit status. Terminal evidence is initialized before baseline runs (collection-status.json written with collectionStatus=\"not_started\"), so a cancellation or lease loss leaves durable evidence on disk.",
       "regression_tests": [
         "scripts/test_collect_dev_paper_diagnostics.py::test_wrapper_enforces_overall_collection_deadline",
         "scripts/test_collect_dev_paper_diagnostics.py::test_wrapper_initializes_terminal_evidence_before_running_anything"
       ]
     },
     "p2_missing_run_identity_in_collector_call": {
-      "defect": "The wrapper only ever passed --expected-bff-sha to the collector; a real wrapper subprocess run against a fake local SSH/Docker fixture returned run_id, attempt, phase, expected_fe_sha and bootstrap_exit all null even though run/attempt/FE identity were available in the calling environment.",
-      "fix": "The wrapper now accepts (and strictly validates against an allowlist regex) EXPECTED_FE_SHA, DEV_PAPER_RUN_ID, DEV_PAPER_ATTEMPT and DEV_PAPER_PHASE, and forwards them plus the captured bootstrap exit code as --expected-fe-sha/--run-id/--attempt/--phase/--bootstrap-exit to the collector. nonprod-deploy.yml's paper_bootstrap step now supplies these from steps.frontend.outputs.sha, github.run_id, github.run_attempt and a fixed \"paper_bootstrap\" phase label.",
+      "defect": "The wrapper only ever passed --expected-bff-sha to the collector; run_id, attempt, phase, expected_fe_sha and bootstrap_exit were null.",
+      "fix": "The wrapper accepts and validates EXPECTED_FE_SHA, DEV_PAPER_RUN_ID, DEV_PAPER_ATTEMPT and DEV_PAPER_PHASE, and forwards them plus the captured bootstrap exit code as --expected-fe-sha/--run-id/--attempt/--phase/--bootstrap-exit to the collector. nonprod-deploy.yml's paper_bootstrap step supplies these from steps.frontend.outputs.sha, github.run_id, github.run_attempt and a fixed \"paper_bootstrap\" phase label.",
       "regression_test": "scripts/test_collect_dev_paper_diagnostics.py::test_wrapper_wires_run_identity_into_collector_invocation"
     },
     "p1_aggregate_status_omits_inspect_and_identity": {
-      "defect": "collect_dev_paper_diagnostics.py's aggregate collection_status only tracked the docker-ps and docker-logs statuses; a docker-inspect timeout/error for the operator-bff container never fed the aggregate `statuses` set, and identity_matches=false was never reflected in the aggregate status at all. Controlled wrong-source and inspect-timeout cases both returned collection_status=\"ok\" with identity_matches=false, and the wrapper accepted any syntactically valid JSON as \"ok\" regardless of what it actually reported.",
-      "fix": "container_state()'s own collection_status is now added to the aggregate `statuses` set. The aggregate result is \"partial\" if any per-command status is non-ok, \"identity_mismatch\" if every command succeeded but the observed operator-bff source SHA does not match the expected candidate, and only \"ok\" when both hold.",
+      "defect": "collect_dev_paper_diagnostics.py's aggregate collection_status only tracked docker-ps and docker-logs; inspect failures and identity mismatches were masked as ok.",
+      "fix": "container_state()'s collection_status feeds aggregate statuses. The aggregate result is \"partial\" if any command is non-ok, \"identity_mismatch\" if commands succeeded but observed operator-bff source SHA does not match the expected candidate, and only \"ok\" when both hold.",
       "regression_tests": [
         "scripts/test_collect_dev_paper_diagnostics.py::test_collector_aggregate_status_flags_inspect_failure",
         "scripts/test_collect_dev_paper_diagnostics.py::test_collector_aggregate_status_flags_identity_mismatch_even_when_all_ok"
       ]
     }
   },
+  "d2_fixes_cycle_2": {
+    "p1_timeout_foreground_pgid_containment": {
+      "defect": "GNU timeout without --foreground spawned a separate process group escaping the pinned guards COMMAND_PGID pause/termination authority (STOP/TERM/CONT/KILL).",
+      "fix": "Added --foreground to timeout invocation in scripts/run_dev_paper_baseline_with_diagnostics.sh, keeping all collector subprocesses within the guards COMMAND_PGID.",
+      "regression_test": "scripts/test_collect_dev_paper_diagnostics.py::test_wrapper_keeps_collector_in_guard_process_group_for_cancellation"
+    },
+    "p1_allowlisted_structural_failure_fields_only": {
+      "defect": "Free-form stderr was copied into collection-status.json with incomplete denylist regex redaction, leaking JSON secret sentinels.",
+      "fix": "Replaced free-form stderr copying in write_status with allowlisted structural failure categories only (collectorErrorCategory, collectorStderrSummary). No arbitrary stderr strings enter collection-status.json.",
+      "regression_test": "scripts/test_collect_dev_paper_diagnostics.py::test_wrapper_emits_only_allowlisted_structural_failure_fields_and_never_arbitrary_stderr"
+    },
+    "p1_workflow_upload_predeclared_paths_and_resilient_condition": {
+      "defect": "Workflow upload step derived condition and file paths from step outputs written only after the guarded command, risking lost evidence if cancelled or timed out mid-flight.",
+      "fix": "Predeclared deterministic runner-local directory ${RUNNER_TEMP}/dev-paper-diagnostics-${DEV_PAPER_RUN_ID}-${DEV_PAPER_ATTEMPT} and initialized collection-status.json (not_started) before guard invocation in .github/workflows/nonprod-deploy.yml. Configured upload step with if: ${{ always() && steps.paper_bootstrap.conclusion != \"skipped\" }} and direct fixed runner paths.",
+      "regression_test": "scripts/test_collect_dev_paper_diagnostics.py::test_diagnostic_collection_happens_inside_the_guarded_baseline_child"
+    }
+  },
+  "d2_fixes_cycle_3": {
+    "p1_terminating_signal_handling_on_baseline_cancellation": {
+      "defect": "scripts/run_dev_paper_baseline_with_diagnostics.sh trapped EXIT INT TERM with cleanup only and resumed execution after TERM, triggering a second collector call after baseline cancellation/lease loss while exiting 143.",
+      "fix": "Added terminating signal handling via `on_signal` trapping INT and TERM to clean up and re-signal self (`kill -s <sig> $$`), plus explicit early exit if bootstrap_status is 130 or 143. Baseline cancellation or lease loss terminates immediately without starting remote diagnostics, preserving the initial `collectionStatus=\"not_started\"` runner evidence and leaving the guard unchanged.",
+      "regression_test": "scripts/test_collect_dev_paper_diagnostics.py::test_wrapper_baseline_phase_termination_does_not_invoke_collector"
+    },
+    "p1_bounded_trusted_exception_allowlist_forbids_arbitrary_error_regex": {
+      "defect": "scripts/collect_dev_paper_diagnostics.py accepted arbitrary Error/Exception suffixes and arbitrary dotted prefixes, allowing request bodies containing SYNTHETIC_PRIVATE_SENTINELError: ... to emit the sentinel as an exception type.",
+      "fix": "Replaced broad type/prefix regex admission with an explicit bounded allowlist of trusted Python built-in, standard library, psycopg, and Pantheon domain exception names (SD D2), strictly rejecting arbitrary Error/Exception suffixes and malicious dotted prefixes.",
+      "regression_test": "scripts/test_collect_dev_paper_diagnostics.py::test_project_exception_allowlist_admits_named_types_only"
+    },
+    "p2_strict_wrapper_d2_envelope_validation": {
+      "defect": "The wrapper validated only six field names with truthiness for identity_matches, accepting missing D2 fields (run_id, attempt, phase, bootstrap_exit, observed_source_sha, container_id, image_id), string false, string invalid services, and null collected_at as ok.",
+      "fix": "The wrapper Python validator now enforces all 14 required D2 fields and types, binds run_id, attempt, phase, bootstrap_exit, expected_bff_sha, expected_fe_sha to invocation parameters, strictly checks `isinstance(identity_matches, bool)`, `isinstance(services, dict)`, ISO-8601 UTC `collected_at`, and rejects malformed/missing evidence with schema_error.",
+      "regression_tests": [
+        "scripts/test_collect_dev_paper_diagnostics.py::test_wrapper_validates_envelope_schema_and_propagates_truthful_status",
+        "scripts/test_collect_dev_paper_diagnostics.py::test_wrapper_rejects_missing_required_d2_fields_and_malformed_types"
+      ]
+    }
+  },
   "artifacts_changed": [
     ".github/workflows/nonprod-deploy.yml",
+    "docs/deployment/evidence/DEV502-CAPTURE-001/evidence.json",
     "scripts/collect_dev_paper_diagnostics.py",
     "scripts/run_dev_paper_baseline_with_diagnostics.sh",
     "scripts/test_collect_dev_paper_diagnostics.py"
@@ -69,33 +107,21 @@
   "verification": {
     "note": "Focused unit/contract/subprocess tests only. No hosted dispatch, no step 5, no live deploy run.",
     "commands": [
-      "/tmp/pantheon-worker-worktrees/pantheon/dev502-capture-001/.venv-pantheon/bin/python3 -m pytest -q scripts/test_collect_dev_paper_diagnostics.py",
-      "/tmp/pantheon-worker-worktrees/pantheon/dev502-capture-001/.venv-pantheon/bin/python3 -m pytest -q scripts/test_dev_environment_lease_deploy_contract.py::test_all_dev_mutations_and_public_proofs_use_pinned_wrapper",
-      "/tmp/pantheon-worker-worktrees/pantheon/dev502-capture-001/.venv-pantheon/bin/python3 -m pytest -q scripts/test_bootstrap_dev_paper_baseline.py",
+      "/tmp/dev502-capture-review-venv/bin/python -m pytest -q scripts/test_collect_dev_paper_diagnostics.py",
+      "/tmp/dev502-capture-review-venv/bin/python -m pytest -q scripts/test_dev_environment_lease_deploy_contract.py::test_all_dev_mutations_and_public_proofs_use_pinned_wrapper",
+      "/tmp/dev502-capture-review-venv/bin/python -m pytest -q scripts/test_bootstrap_dev_paper_baseline.py",
       "python3 -c \"import yaml; yaml.safe_load(open('.github/workflows/nonprod-deploy.yml'))\"",
-      "bash -n scripts/run_dev_paper_baseline_with_diagnostics.sh"
+      "bash -n scripts/run_dev_paper_baseline_with_diagnostics.sh",
+      "git diff --check"
     ],
     "results": {
-      "scripts/test_collect_dev_paper_diagnostics.py": "15 passed (including new regressions for PGID containment, allowlisted structural fields without stderr leaks, and truthful envelope validation)",
-      "test_all_dev_mutations_and_public_proofs_use_pinned_wrapper": "1 passed (was failing before this revision's literal-invocation fix; verified failing against the prior rejected head)",
+      "scripts/test_collect_dev_paper_diagnostics.py": "17 passed (including regressions for baseline cancellation signal handling, bounded trusted exception allowlist, and strict 14-field D2 envelope validation)",
+      "test_all_dev_mutations_and_public_proofs_use_pinned_wrapper": "1 passed",
       "scripts/test_bootstrap_dev_paper_baseline.py": "11 passed",
       "workflow_yaml_parse": "ok",
       "shell_syntax_check": "ok",
-      "pre_existing_unrelated_failures_confirmed_not_caused_by_this_change": [
-        "scripts/test_agora_compat_manifest.py::test_write_manifest_consumes_both_handoffs_and_accepts_exact_pair (git-history-derived commit hash differs in this sandbox)",
-        "scripts/test_agora_workshop_restart_persistence_smoke.py::test_workflow_uses_internal_fresh_process_persistence_proof",
-        "scripts/test_agora_workshop_restart_persistence_smoke.py::test_workflow_log_and_inspect_probes_consume_complete_input_under_pipefail",
-        "scripts/test_wait_for_bff_lifecycle_readiness.py::test_bff_only_readiness_also_uses_exact_waiter",
-        "scripts/test_dev_project_cutover_contract.py::test_dev_workflow_targets_replacement_project_only",
-        "scripts/test_dev_project_cutover_contract.py::test_deploy_script_defaults_to_replacement_dev_vm",
-        "scripts/test_dev_environment_lease_deploy_contract.py::test_staging_dry_run_does_not_require_dev_lease",
-        "scripts/test_dev_environment_lease_deploy_contract.py::test_dev_deploy_validates_deadline_configuration_positive (all 5 parameterizations)",
-        "scripts/test_ppl_alloc_009_deploy_proof_gate.py::test_deploy_script_allows_only_clean_strict_dev_root_when_enabled",
-        "services/trade_journey/test_lifecycle_projector_compose.py::test_bff_only_deploy_rebuilds_its_lifecycle_projector_only",
-        "services/trade_journey/test_lifecycle_projector_compose.py::test_rendered_compose_operator_bff_readiness_with_postgres_reader"
-      ],
-      "pre_existing_failure_verification_method": "None of these touch .github/workflows/nonprod-deploy.yml, scripts/collect_dev_paper_diagnostics.py, scripts/run_dev_paper_baseline_with_diagnostics.sh or scripts/test_collect_dev_paper_diagnostics.py (the only files this task changed); they fail identically on unmodified deploy_nonprod_vm.sh (missing PROJECT_ID/REMOTE_USER defaults in this sandbox) or unrelated services/control-plane import wiring.",
-      "total_passed": "27 passed in 11.48s"
+      "git_diff_check": "ok",
+      "total_passed": "29 passed in 14.59s"
     }
   },
   "not_implemented_in_this_task": [
@@ -116,28 +142,12 @@
       "rejected_pr": "https://github.com/ajoe734/pantheon/pull/5656",
       "rejected_head": "f7fd694d387a09d3c9ffc05fe2b144ceae971836",
       "verdict": "Acceptance defects: (P1) timeout creates process group outside pinned guard COMMAND_PGID; (P1) free-form stderr copied after incomplete denylist redaction leaking JSON secret sentinels; (P2) wrapper treats all valid JSON as collectionStatus=ok, masking identity mismatches and missing schema; (P1) workflow upload derives paths and condition from post-command outputs, risking lost evidence on cancellation."
+    },
+    {
+      "cycle": 3,
+      "rejected_pr": "https://github.com/ajoe734/pantheon/pull/5656",
+      "rejected_head": "6cc44562831b0a65b84d5afc2df2fa5f698520fc",
+      "verdict": "Acceptance defects: (P1 D1) wrapper trapped EXIT INT TERM with cleanup only and resumed execution after TERM, triggering a second collector call after baseline cancellation/lease loss; (P1 D2) collect_dev_paper_diagnostics.py accepted arbitrary Error/Exception suffixes and arbitrary dotted prefixes, emitting sentinels like SYNTHETIC_PRIVATE_SENTINELError from request bodies as exception types; (P2 D2) wrapper validated only six field names with truthiness for identity_matches, accepting missing D2 fields, string false, invalid services, and null collected_at."
     }
-  ],
-  "d2_fixes_cycle_2": {
-    "p1_timeout_foreground_pgid_containment": {
-      "defect": "GNU timeout without --foreground spawned a separate process group escaping the pinned guards COMMAND_PGID pause/termination authority (STOP/TERM/CONT/KILL).",
-      "fix": "Added --foreground to timeout invocation in scripts/run_dev_paper_baseline_with_diagnostics.sh, keeping all collector subprocesses within the guards COMMAND_PGID.",
-      "regression_test": "scripts/test_collect_dev_paper_diagnostics.py::test_wrapper_keeps_collector_in_guard_process_group_for_cancellation"
-    },
-    "p1_allowlisted_structural_failure_fields_only": {
-      "defect": "Free-form stderr was copied into collection-status.json with incomplete denylist regex redaction, leaking JSON secret sentinels (e.g. password=SYNTHETIC_PRIVATE_SENTINEL in quoted JSON values).",
-      "fix": "Replaced free-form stderr copying in write_status with allowlisted structural failure categories only (collectorErrorCategory, collectorStderrSummary). No arbitrary stderr strings enter collection-status.json.",
-      "regression_test": "scripts/test_collect_dev_paper_diagnostics.py::test_wrapper_emits_only_allowlisted_structural_failure_fields_and_never_arbitrary_stderr"
-    },
-    "p2_truthful_envelope_and_schema_validation": {
-      "defect": "The wrapper treated all syntactically valid JSON as collectionStatus=ok, masking identity mismatches (identity_matches=false), missing schema (empty JSON object), and partial status.",
-      "fix": "Added Python envelope and schema validation step in scripts/run_dev_paper_baseline_with_diagnostics.sh verifying schema_version, required fields, expected_bff_sha, expected_fe_sha, and identity_matches, truthfully propagating schema_error, identity_mismatch, partial, ok, checksum_error.",
-      "regression_test": "scripts/test_collect_dev_paper_diagnostics.py::test_wrapper_validates_envelope_schema_and_propagates_truthful_status"
-    },
-    "p1_workflow_upload_predeclared_paths_and_resilient_condition": {
-      "defect": "Workflow upload step derived condition and file paths from step outputs written only after the guarded command, risking lost evidence if cancelled or timed out mid-flight.",
-      "fix": "Predeclared deterministic runner-local directory ${RUNNER_TEMP}/dev-paper-diagnostics-${DEV_PAPER_RUN_ID}-${DEV_PAPER_ATTEMPT} and initialized collection-status.json (not_started) before guard invocation in .github/workflows/nonprod-deploy.yml. Configured upload step with if: ${{ always() && steps.paper_bootstrap.conclusion != \"skipped\" }} and direct fixed runner paths.",
-      "regression_test": "scripts/test_collect_dev_paper_diagnostics.py::test_workflow_dev_paper_baseline_step_wiring"
-    }
-  }
+  ]
 }

@@ -112,6 +112,13 @@ def test_project_exception_allowlist_admits_named_types_only():
         "PersonaWriteOwnerUnavailable: persona owner call failed with SECRET_TOKEN\n"
         "ProvisioningLeaseLost: lease revoked mid PRIVATE_DETAIL\n"
         "SomeUnknownFailure: raw request body SHOULD_NOT_LEAK\n"
+        "SYNTHETIC_PRIVATE_SENTINELError: arbitrary request body\n"
+        "CustomFakeError: sensitive payload\n"
+        "MaliciousException: leak data\n"
+        "PersonaWriteOwnerUnavailableError: spoofed type\n"
+        "evil.prefix.NameError: untrusted source\n"
+        "untrusted.module.PersonaWriteOwnerUnavailable: spoofed prefix\n"
+        "bad.ProvisioningLeaseLost: fake lease error\n"
     )
     events = diag.log_events(raw)
     assert [event["type"] for event in events] == [
@@ -119,7 +126,20 @@ def test_project_exception_allowlist_admits_named_types_only():
         "ProvisioningLeaseLost",
     ]
     encoded = json.dumps(events)
-    for secret in ("SECRET_TOKEN", "PRIVATE_DETAIL", "SomeUnknownFailure", "SHOULD_NOT_LEAK"):
+    for secret in (
+        "SECRET_TOKEN",
+        "PRIVATE_DETAIL",
+        "SomeUnknownFailure",
+        "SHOULD_NOT_LEAK",
+        "SYNTHETIC_PRIVATE_SENTINELError",
+        "arbitrary request body",
+        "CustomFakeError",
+        "MaliciousException",
+        "PersonaWriteOwnerUnavailableError",
+        "evil.prefix.NameError",
+        "untrusted.module.PersonaWriteOwnerUnavailable",
+        "bad.ProvisioningLeaseLost",
+    ):
         assert secret not in encoded
 
 
@@ -269,13 +289,22 @@ def test_collector_aggregate_status_flags_identity_mismatch_even_when_all_ok(mon
     assert result["collection_status"] == "identity_mismatch"
 
 
-def _valid_diagnostics_payload(expected_bff_sha="b" * 40, **overrides):
+def _valid_diagnostics_payload(expected_bff_sha="b" * 40, *, bootstrap_exit="1",
+                               run_id=None, attempt=None, phase=None,
+                               expected_fe_sha=None, **overrides):
     payload = {
         "schema_version": "pantheon.dev-paper-diagnostics.v1",
         "collected_at": "2026-09-07T14:00:00Z",
+        "run_id": run_id,
+        "attempt": attempt,
+        "phase": phase,
         "expected_bff_sha": expected_bff_sha,
-        "expected_fe_sha": None,
+        "expected_fe_sha": expected_fe_sha,
+        "observed_source_sha": expected_bff_sha,
+        "container_id": "a" * 64,
+        "image_id": "sha256:" + "c" * 64,
         "identity_matches": True,
+        "bootstrap_exit": str(bootstrap_exit) if bootstrap_exit is not None else "1",
         "collection_status": "ok",
         "services": {},
     }
@@ -337,7 +366,13 @@ def test_wrapper_wires_run_identity_into_collector_invocation(tmp_path):
         "DEV_PAPER_PHASE": "paper_bootstrap",
     }, extra_env={
         "FAKE_SSH_BOOTSTRAP_EXIT": "1",
-        "FAKE_SSH_COLLECTOR_STDOUT": _valid_diagnostics_payload(expected_fe_sha="e" * 40),
+        "FAKE_SSH_COLLECTOR_STDOUT": _valid_diagnostics_payload(
+            expected_fe_sha="e" * 40,
+            run_id="34081262894",
+            attempt="2",
+            phase="paper_bootstrap",
+            bootstrap_exit="1",
+        ),
     })
     assert result.returncode == 1, result.stderr
     assert len(log_lines) == 2
@@ -494,15 +529,7 @@ def test_wrapper_emits_only_allowlisted_structural_failure_fields_and_never_arbi
 
 
 def test_wrapper_validates_envelope_schema_and_propagates_truthful_status(tmp_path):
-    valid_payload = {
-        "schema_version": "pantheon.dev-paper-diagnostics.v1",
-        "collected_at": "2026-09-07T14:00:00Z",
-        "expected_bff_sha": "b" * 40,
-        "expected_fe_sha": None,
-        "identity_matches": True,
-        "collection_status": "ok",
-        "services": {},
-    }
+    valid_payload = json.loads(_valid_diagnostics_payload())
 
     # Case A: empty object missing schema -> schema_error
     result, diag_dir, _ = _run_wrapper(tmp_path / "case_a", {}, extra_env={
@@ -556,3 +583,146 @@ def test_wrapper_validates_envelope_schema_and_propagates_truthful_status(tmp_pa
     assert doc_d["collectorErrorCategory"] is None
     assert (diag_dir / "diagnostics.json").exists()
     assert (diag_dir / "SHA256SUMS").exists()
+
+
+def test_wrapper_baseline_phase_termination_does_not_invoke_collector(tmp_path):
+    workspace = tmp_path / "workspace"
+    ssh_dir = workspace / ".agora-gate-controller" / "scripts"
+    ssh_dir.mkdir(parents=True)
+    ssh_path = ssh_dir / "dev_vm_ssh.sh"
+    ssh_path.write_text(FAKE_SSH_TEMPLATE)
+    ssh_path.chmod(ssh_path.stat().st_mode | stat.S_IEXEC)
+
+    diagnostic_dir = tmp_path / "diagnostics"
+    diagnostic_dir.mkdir()
+    collector_stub = tmp_path / "collector_stub.py"
+    collector_stub.write_text("# fixture only\n")
+    fake_ssh_log = tmp_path / "fake-ssh.log"
+
+    env = dict(os.environ)
+    env.update({
+        "GITHUB_WORKSPACE": str(workspace),
+        "DEV_PAPER_DIAGNOSTICS_DIR": str(diagnostic_dir),
+        "DEV_PAPER_DIAGNOSTICS_COLLECTOR": str(collector_stub),
+        "EXPECTED_BFF_SHA": "b" * 40,
+        "FAKE_SSH_LOG": str(fake_ssh_log),
+        "FAKE_SSH_BOOTSTRAP_SLEEP": "3",
+        "FAKE_SSH_BOOTSTRAP_EXIT": "0",
+    })
+
+    proc = subprocess.Popen(
+        ["bash", str(WRAPPER)],
+        env=env,
+        cwd=str(tmp_path),
+        start_new_session=True,
+    )
+    try:
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline and not fake_ssh_log.exists():
+            time.sleep(0.05)
+        assert fake_ssh_log.exists(), "fake SSH log was not created in time"
+
+        # Signal the process group (STOP, TERM, CONT) just like the pinned guard does
+        pgid = os.getpgid(proc.pid)
+        os.killpg(pgid, signal.SIGSTOP)
+        os.killpg(pgid, signal.SIGTERM)
+        os.killpg(pgid, signal.SIGCONT)
+
+        proc.wait(timeout=5)
+        assert proc.returncode in (143, -signal.SIGTERM)
+    finally:
+        if proc.poll() is None:
+            try:
+                os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+            except OSError:
+                pass
+            proc.wait(timeout=5)
+
+    log_lines = fake_ssh_log.read_text().splitlines()
+    assert any("bootstrap_dev_paper_baseline.py" in line for line in log_lines)
+    assert not any("python3 -" in line for line in log_lines)
+    assert not any("collect_dev_paper_diagnostics.py" in line for line in log_lines)
+    assert not any("--bootstrap-exit" in line for line in log_lines)
+
+    doc = _status_document(diagnostic_dir)
+    assert doc["collectionStatus"] == "not_started"
+    assert doc["bootstrapExit"] is None
+    assert not (diagnostic_dir / "diagnostics.json").exists()
+
+
+def test_wrapper_rejects_missing_required_d2_fields_and_malformed_types(tmp_path):
+    base_valid = json.loads(_valid_diagnostics_payload())
+
+    # 1. Missing required fields individually
+    for field in (
+        "run_id",
+        "attempt",
+        "phase",
+        "bootstrap_exit",
+        "observed_source_sha",
+        "container_id",
+        "image_id",
+        "services",
+        "collected_at",
+        "expected_fe_sha",
+    ):
+        corrupted = dict(base_valid)
+        del corrupted[field]
+        result, diag_dir, _ = _run_wrapper(tmp_path / f"missing_{field}", {}, extra_env={
+            "FAKE_SSH_BOOTSTRAP_EXIT": "1",
+            "FAKE_SSH_COLLECTOR_STDOUT": json.dumps(corrupted),
+            "FAKE_SSH_COLLECTOR_EXIT": "0",
+        })
+        assert result.returncode == 1
+        doc = _status_document(diag_dir)
+        assert doc["collectionStatus"] == "schema_error"
+        assert not (diag_dir / "diagnostics.json").exists()
+        assert not (diag_dir / "SHA256SUMS").exists()
+
+    # 2. identity_matches string "false" instead of bool
+    corrupted = dict(base_valid, identity_matches="false")
+    result, diag_dir, _ = _run_wrapper(tmp_path / "id_matches_str_false", {}, extra_env={
+        "FAKE_SSH_BOOTSTRAP_EXIT": "1",
+        "FAKE_SSH_COLLECTOR_STDOUT": json.dumps(corrupted),
+        "FAKE_SSH_COLLECTOR_EXIT": "0",
+    })
+    assert result.returncode == 1
+    doc = _status_document(diag_dir)
+    assert doc["collectionStatus"] == "schema_error"
+    assert not (diag_dir / "diagnostics.json").exists()
+
+    # 3. services string "invalid" instead of dict
+    corrupted = dict(base_valid, services="invalid")
+    result, diag_dir, _ = _run_wrapper(tmp_path / "services_str_invalid", {}, extra_env={
+        "FAKE_SSH_BOOTSTRAP_EXIT": "1",
+        "FAKE_SSH_COLLECTOR_STDOUT": json.dumps(corrupted),
+        "FAKE_SSH_COLLECTOR_EXIT": "0",
+    })
+    assert result.returncode == 1
+    doc = _status_document(diag_dir)
+    assert doc["collectionStatus"] == "schema_error"
+    assert not (diag_dir / "diagnostics.json").exists()
+
+    # 4. collected_at is None
+    corrupted = dict(base_valid, collected_at=None)
+    result, diag_dir, _ = _run_wrapper(tmp_path / "collected_at_null", {}, extra_env={
+        "FAKE_SSH_BOOTSTRAP_EXIT": "1",
+        "FAKE_SSH_COLLECTOR_STDOUT": json.dumps(corrupted),
+        "FAKE_SSH_COLLECTOR_EXIT": "0",
+    })
+    assert result.returncode == 1
+    doc = _status_document(diag_dir)
+    assert doc["collectionStatus"] == "schema_error"
+    assert not (diag_dir / "diagnostics.json").exists()
+
+    # 5. bootstrap_exit mismatch
+    corrupted = dict(base_valid, bootstrap_exit="99")
+    result, diag_dir, _ = _run_wrapper(tmp_path / "bootstrap_exit_mismatch", {}, extra_env={
+        "FAKE_SSH_BOOTSTRAP_EXIT": "1",
+        "FAKE_SSH_COLLECTOR_STDOUT": json.dumps(corrupted),
+        "FAKE_SSH_COLLECTOR_EXIT": "0",
+    })
+    assert result.returncode == 1
+    doc = _status_document(diag_dir)
+    assert doc["collectionStatus"] == "schema_error"
+    assert not (diag_dir / "diagnostics.json").exists()

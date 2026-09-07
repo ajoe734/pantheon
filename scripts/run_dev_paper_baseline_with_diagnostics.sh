@@ -67,7 +67,15 @@ collector_stderr_raw="$(mktemp "${DEV_PAPER_DIAGNOSTICS_DIR%/}.collector-stderr.
 cleanup() {
   rm -f "${collector_stderr_raw}" "${diagnostic_tmp}" 2>/dev/null
 }
-trap cleanup EXIT INT TERM
+on_signal() {
+  local sig="$1"
+  cleanup
+  trap - "${sig}"
+  kill -s "${sig}" $$
+}
+trap cleanup EXIT
+trap 'on_signal INT' INT
+trap 'on_signal TERM' TERM
 
 write_status() {
   local collection_status="$1"
@@ -167,6 +175,12 @@ if [[ "${bootstrap_status}" -eq 0 ]]; then
   exit 0
 fi
 
+# Baseline termination due to signal (e.g. lease loss or cancellation by guard)
+# must terminate the wrapper immediately without invoking remote diagnostics.
+if [[ "${bootstrap_status}" -eq 130 || "${bootstrap_status}" -eq 143 ]]; then
+  exit "${bootstrap_status}"
+fi
+
 # Baseline failed. The lease and heartbeat are still owned by this guarded
 # child; collect now, while capture is still possible, then return the
 # original failure unchanged. Record that collection is in flight (with the
@@ -206,13 +220,17 @@ elif [[ "${collector_rc}" -ne 0 ]]; then
   write_status "${collection_status}" "${bootstrap_status}" "${collector_rc}" ""
 else
   validation_outcome="$(
-    python3 - "${diagnostic_tmp}" "${diagnostic_file}" "${checksum_file}" "${EXPECTED_BFF_SHA}" "${EXPECTED_FE_SHA:-}" <<'PY'
+    python3 - "${diagnostic_tmp}" "${diagnostic_file}" "${checksum_file}" \
+      "${EXPECTED_BFF_SHA}" "${EXPECTED_FE_SHA:-}" \
+      "${DEV_PAPER_RUN_ID:-}" "${DEV_PAPER_ATTEMPT:-}" "${DEV_PAPER_PHASE:-}" \
+      "${bootstrap_status}" <<'PY'
 import hashlib
 import json
 import os
+import re
 import sys
 
-diag_tmp, diag_dest, checksum_dest, expected_bff, expected_fe = sys.argv[1:6]
+diag_tmp, diag_dest, checksum_dest, expected_bff, expected_fe, invoked_run_id, invoked_attempt, invoked_phase, bootstrap_status = sys.argv[1:10]
 
 try:
     with open(diag_tmp, "r", encoding="utf-8") as handle:
@@ -231,9 +249,17 @@ if data.get("schema_version") != "pantheon.dev-paper-diagnostics.v1":
 
 required_fields = (
     "schema_version",
+    "run_id",
+    "attempt",
     "collected_at",
+    "phase",
+    "expected_fe_sha",
     "expected_bff_sha",
+    "observed_source_sha",
+    "container_id",
+    "image_id",
     "identity_matches",
+    "bootstrap_exit",
     "collection_status",
     "services",
 )
@@ -241,20 +267,78 @@ if not all(field in data for field in required_fields):
     print("schema_error")
     sys.exit(0)
 
-if data.get("expected_bff_sha") != expected_bff:
-    print("identity_mismatch")
+# Validate types
+if not isinstance(data["identity_matches"], bool):
+    print("schema_error")
     sys.exit(0)
 
-if expected_fe and data.get("expected_fe_sha") != expected_fe:
-    print("identity_mismatch")
+if not isinstance(data["services"], dict):
+    print("schema_error")
     sys.exit(0)
 
-outcome = data.get("collection_status")
-if not data.get("identity_matches") or outcome == "identity_mismatch":
-    outcome = "identity_mismatch"
-elif outcome not in ("ok", "partial"):
+if not isinstance(data["collected_at"], str) or not data["collected_at"]:
+    print("schema_error")
+    sys.exit(0)
+
+if not re.match(r"^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(?:\.\d+)?(?:Z|\+00:00)$", data["collected_at"]):
+    print("schema_error")
+    sys.exit(0)
+
+# Bind expected BFF SHA
+if data["expected_bff_sha"] != expected_bff:
+    print("schema_error")
+    sys.exit(0)
+
+# Bind expected FE SHA
+expected_fe_val = expected_fe if expected_fe else None
+if data["expected_fe_sha"] != expected_fe_val:
+    print("schema_error")
+    sys.exit(0)
+
+# Bind run_id
+invoked_run_id_val = invoked_run_id if invoked_run_id else None
+if data["run_id"] != invoked_run_id_val:
+    print("schema_error")
+    sys.exit(0)
+
+# Bind attempt
+invoked_attempt_val = invoked_attempt if invoked_attempt else None
+if data["attempt"] != invoked_attempt_val:
+    print("schema_error")
+    sys.exit(0)
+
+# Bind phase
+invoked_phase_val = invoked_phase if invoked_phase else None
+if data["phase"] != invoked_phase_val:
+    print("schema_error")
+    sys.exit(0)
+
+# Bind bootstrap_exit
+if str(data["bootstrap_exit"]) != str(bootstrap_status):
+    print("schema_error")
+    sys.exit(0)
+
+outcome = data["collection_status"]
+if outcome not in ("ok", "partial", "identity_mismatch"):
     print("invalid_envelope")
     sys.exit(0)
+
+# Validate identity_matches and identity fields
+if data["identity_matches"] is True:
+    if data["observed_source_sha"] != expected_bff:
+        print("identity_mismatch")
+        sys.exit(0)
+    if not (isinstance(data["container_id"], str) and re.fullmatch(r"[0-9a-f]{64}", data["container_id"])):
+        print("schema_error")
+        sys.exit(0)
+    if not (isinstance(data["image_id"], str) and re.fullmatch(r"sha256:[0-9a-f]{64}", data["image_id"])):
+        print("schema_error")
+        sys.exit(0)
+    if outcome == "identity_mismatch":
+        print("invalid_envelope")
+        sys.exit(0)
+else:
+    outcome = "identity_mismatch"
 
 try:
     with open(diag_tmp, "rb") as handle:
@@ -291,17 +375,17 @@ PY
       ;;
     schema_error)
       collection_status="schema_error"
-      rm -f "${diagnostic_tmp}"
+      rm -f "${diagnostic_tmp}" "${diagnostic_file}" "${checksum_file}"
       write_status "${collection_status}" "${bootstrap_status}" "${collector_rc}" "schema_mismatch"
       ;;
     invalid_envelope)
       collection_status="invalid_envelope"
-      rm -f "${diagnostic_tmp}"
+      rm -f "${diagnostic_tmp}" "${diagnostic_file}" "${checksum_file}"
       write_status "${collection_status}" "${bootstrap_status}" "${collector_rc}" "invalid_envelope_status"
       ;;
     *)
       collection_status="invalid_json"
-      rm -f "${diagnostic_tmp}"
+      rm -f "${diagnostic_tmp}" "${diagnostic_file}" "${checksum_file}"
       write_status "${collection_status}" "${bootstrap_status}" "${collector_rc}" "invalid_json"
       ;;
   esac
