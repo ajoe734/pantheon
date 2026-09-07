@@ -270,10 +270,7 @@ def _get_active_write_owner(explicit: Optional[Any] = None) -> Any:
         return svc.get_write_owner()
     if persona_write_owner is not None:
         return persona_write_owner
-    try:
-        return create_persona_registry_write_owner()
-    except Exception:
-        return None
+    return create_persona_registry_write_owner()
 
 class _DefaultCommandStore:
     def _get_all_commands(self) -> List[Dict[str, Any]]:
@@ -1293,24 +1290,15 @@ def _materialize_terminal_persona_provisioning_ledger(
     _active_writer = _get_active_write_owner()
     _updater = getattr(_active_writer, "update_persona", None) if _active_writer else None
     if _updater is None:
-        _updater = getattr(_get_active_read_store(), "update_persona", None)
-    if _updater is not None:
-        try:
-            _updater(
-                persona_id,
-                lifecycle_state=new_state,
-                metadata=metadata_updates,
-            )
-        except Exception:
-            fallback_updater = getattr(_get_active_read_store(), "update_persona", None)
-            if fallback_updater and fallback_updater != _updater:
-                fallback_updater(
-                    persona_id,
-                    lifecycle_state=new_state,
-                    metadata=metadata_updates,
-                )
-            else:
-                raise
+        raise RuntimeError(
+            f"Persona write owner unavailable for lifecycle update of {persona_id!r}; "
+            "no fallback writer is permitted."
+        )
+    _updater(
+        persona_id,
+        lifecycle_state=new_state,
+        metadata=metadata_updates,
+    )
     raw["lifecycle_state"] = new_state
     raw["status"] = new_state
     raw.setdefault("metadata", {}).update(metadata_updates)
@@ -1398,13 +1386,15 @@ def _evaluate_persona_provisioning_status(
             _active_writer = _get_active_write_owner()
             _updater = getattr(_active_writer, "update_persona", None) if _active_writer else None
             if _updater is None:
-                _updater = getattr(_get_active_read_store(), "update_persona", None)
-            if _updater is not None:
-                _updater(
-                    persona_id,
-                    lifecycle_state="provisioning_failed",
-                    metadata=changed_updates,
+                raise RuntimeError(
+                    f"Persona write owner unavailable for terminal lifecycle update of "
+                    f"{persona_id!r}; no fallback writer is permitted."
                 )
+            _updater(
+                persona_id,
+                lifecycle_state="provisioning_failed",
+                metadata=changed_updates,
+            )
             raw.setdefault("metadata", {}).update(changed_updates)
         return "provisioning_failed"
     if current_state not in ("provisioning", "draft", "paper_running"):
@@ -1926,24 +1916,15 @@ def _evaluate_persona_provisioning_status(
         _active_writer = _get_active_write_owner()
         _updater = getattr(_active_writer, "update_persona", None) if _active_writer else None
         if _updater is None:
-            _updater = getattr(_get_active_read_store(), "update_persona", None)
-        if _updater is not None:
-            try:
-                _updater(
-                    persona_id,
-                    lifecycle_state=new_state,
-                    metadata=metadata_updates,
-                )
-            except Exception:
-                fallback_updater = getattr(_get_active_read_store(), "update_persona", None)
-                if fallback_updater and fallback_updater != _updater:
-                    fallback_updater(
-                        persona_id,
-                        lifecycle_state=new_state,
-                        metadata=metadata_updates,
-                    )
-                else:
-                    raise
+            raise RuntimeError(
+                f"Persona write owner unavailable for lifecycle update of {persona_id!r}; "
+                "no fallback writer is permitted."
+            )
+        _updater(
+            persona_id,
+            lifecycle_state=new_state,
+            metadata=metadata_updates,
+        )
         raw["lifecycle_state"] = new_state
         raw["status"] = new_state
         raw.setdefault("metadata", {}).update(metadata_updates)
@@ -3800,68 +3781,29 @@ def _persona_record_for_provisioning(
     )
     _active_writer = _get_active_write_owner()
     creator = getattr(_active_writer, "create_persona", None) if _active_writer else None
-    if creator is None:
-        creator = getattr(_get_active_read_store(), "create_persona", None)
     updater = getattr(_active_writer, "update_persona", None) if _active_writer else None
-    if updater is None:
-        updater = getattr(_get_active_read_store(), "update_persona", None)
     existing = _get_active_read_store().get_persona(record.persona_id)
     if existing is None:
-        if mutate_store and callable(creator):
-            try:
-                persona = creator(
-                    persona_id=record.persona_id,
-                    name=str(payload.get("name") or record.normalized_name),
-                    actor_id=canonical_owner,
-                    created_at=record.created_at,
-                    archetype=archetype,
-                    lifecycle_state=lifecycle_state,
-                    risk_level=risk,
-                    mandate=mandate,
-                    strategy_family=strategy_family,
-                    traits=traits,
-                    metadata=metadata,
-                    required_data_sources=_persona_create_required_data_sources(payload),
+        if mutate_store:
+            if not callable(creator):
+                raise RuntimeError(
+                    f"Persona write owner unavailable for create of {record.persona_id!r}; "
+                    "no fallback writer is permitted."
                 )
-            except Exception:
-                fallback_creator = getattr(_get_active_read_store(), "create_persona", None)
-                if fallback_creator and fallback_creator != creator:
-                    try:
-                        persona = fallback_creator(
-                            persona_id=record.persona_id,
-                            name=str(payload.get("name") or record.normalized_name),
-                            actor_id=canonical_owner,
-                            created_at=record.created_at,
-                            archetype=archetype,
-                            lifecycle_state=lifecycle_state,
-                            risk_level=risk,
-                            mandate=mandate,
-                            strategy_family=strategy_family,
-                            traits=traits,
-                            metadata=metadata,
-                            required_data_sources=_persona_create_required_data_sources(payload),
-                        )
-                    except Exception:
-                        persona = None
-                else:
-                    persona = None
-                if persona is None:
-                    persona = {
-                        "id": record.persona_id,
-                        "persona_id": record.persona_id,
-                        "name": str(payload.get("name") or record.normalized_name),
-                        "actor_id": canonical_owner,
-                        "created_by": canonical_owner,
-                        "created_at": record.created_at,
-                        "archetype": archetype,
-                        "lifecycle_state": lifecycle_state,
-                        "risk_level": risk,
-                        "mandate": mandate,
-                        "strategy_family": strategy_family,
-                        "traits": traits,
-                        "metadata": metadata,
-                        "required_data_sources": _persona_create_required_data_sources(payload),
-                    }
+            persona = creator(
+                persona_id=record.persona_id,
+                name=str(payload.get("name") or record.normalized_name),
+                actor_id=canonical_owner,
+                created_at=record.created_at,
+                archetype=archetype,
+                lifecycle_state=lifecycle_state,
+                risk_level=risk,
+                mandate=mandate,
+                strategy_family=strategy_family,
+                traits=traits,
+                metadata=metadata,
+                required_data_sources=_persona_create_required_data_sources(payload),
+            )
         else:
             persona = {
                 "id": record.persona_id,
@@ -3897,23 +3839,17 @@ def _persona_record_for_provisioning(
             lifecycle_state = "paper_running"
         elif existing.get("lifecycle_state") and record.state == "succeeded":
             lifecycle_state = str(existing.get("lifecycle_state"))
-        if mutate_store and callable(updater):
-            try:
-                persona = updater(
-                    record.persona_id,
-                    lifecycle_state=lifecycle_state,
-                    metadata=metadata,
-                ) or existing
-            except Exception:
-                fallback_updater = getattr(_get_active_read_store(), "update_persona", None)
-                if fallback_updater and fallback_updater != updater:
-                    persona = fallback_updater(
-                        record.persona_id,
-                        lifecycle_state=lifecycle_state,
-                        metadata=metadata,
-                    ) or existing
-                else:
-                    raise
+        if mutate_store:
+            if not callable(updater):
+                raise RuntimeError(
+                    f"Persona write owner unavailable for update of {record.persona_id!r}; "
+                    "no fallback writer is permitted."
+                )
+            persona = updater(
+                record.persona_id,
+                lifecycle_state=lifecycle_state,
+                metadata=metadata,
+            ) or existing
         else:
             persona = {
                 **existing,
