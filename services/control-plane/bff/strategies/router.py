@@ -63,6 +63,8 @@ def create_strategies_router(
     bff_me_tenant_payload: Optional[Callable[..., Dict[str, Any]]] = None,
     list_persona_records: Optional[Callable[..., List[Dict[str, Any]]]] = None,
     list_strategy_summaries: Optional[Callable[[], List[Dict[str, Any]]]] = None,
+    strategy_write_owner: Optional[Any] = None,
+    get_strategy_write_owner: Optional[Callable[[], Any]] = None,
 ) -> APIRouter:
     if strategy_overlay is not None:
         raise AttributeError("strategy_overlay is retired; process-local state overlays are deleted")
@@ -119,6 +121,8 @@ def create_strategies_router(
         bff_me_tenant_payload=bff_me_tenant_payload,
         list_persona_records=list_persona_records,
         list_strategy_summaries=list_strategy_summaries,
+        strategy_write_owner=strategy_write_owner,
+        get_strategy_write_owner=get_strategy_write_owner,
     )
 
     router = APIRouter()

@@ -42,14 +42,30 @@
   },
   "implementation": {
     "files_modified": [
+      "services/control-plane/bff/bootstrap/dependencies.py",
+      "services/control-plane/bff/events/router.py",
       "services/control-plane/bff/main.py",
-      "services/control-plane/bff/incidents/router.py",
-      "services/control-plane/bff/jobs/router.py",
+      "services/control-plane/bff/migrations/overlay_retirement.py",
+      "services/control-plane/bff/migrations/test_overlay_retirement.py",
+      "services/control-plane/bff/personas/routes/detail.py",
       "services/control-plane/bff/personas/service.py",
+      "services/control-plane/bff/ports/__init__.py",
+      "services/control-plane/bff/ports/research_knowledge_source.py",
       "services/control-plane/bff/strategies/router.py",
       "services/control-plane/bff/strategies/routes/collection.py",
       "services/control-plane/bff/strategies/routes/common.py",
       "services/control-plane/bff/strategies/routes/detail.py",
+      "services/control-plane/bff/test_bff_consol_008_fixture_pack_a.py",
+      "services/control-plane/bff/test_bff_consol_009_fixture_pack_b.py",
+      "services/control-plane/bff/test_bff_consol_010_fixture_pack_c.py",
+      "services/control-plane/bff/test_bff_consol_017_detail_smoke_b.py",
+      "services/control-plane/bff/test_bff_evolution_experiment_jobs_events_contract.py",
+      "services/control-plane/bff/test_bff_governance_runtime_risk_audit_contract.py",
+      "services/control-plane/bff/test_inc001_rebaseline_incidents_contract.py",
+      "services/control-plane/bff/test_mgmt_load_002_shell_summary.py",
+      "services/control-plane/bff/test_mgmt_load_005_read_concurrency.py",
+      "services/control-plane/bff/test_persona_provisioning_readback.py",
+      "services/control-plane/bff/tests/test_bff_b2_002_evolution_jobs_ops.py",
       "services/control-plane/bff/tests/test_overlay_retirement.py",
       "services/control-plane/bff/tests/test_strategy_ranking_router.py"
     ],
@@ -57,6 +73,7 @@
       "services/control-plane/bff/migrations/__init__.py",
       "services/control-plane/bff/migrations/overlay_retirement.py",
       "services/control-plane/bff/migrations/test_overlay_retirement.py",
+      "services/control-plane/bff/ports/strategy_write_owner.py",
       "services/control-plane/bff/tests/test_overlay_retirement.py",
       "docs/deployment/evidence/OVERLAY-RETIRE-001/evidence.json"
     ],
@@ -77,48 +94,72 @@
     "fallback_reads_excised_from_main_and_jobs_router": true,
     "canonical_read_paths_strictly_verified": true,
     "restart_durability_and_multi_replica_readback_verified": true,
-    "rollback_strictly_forbids_dual_writes": true
+    "rollback_strictly_forbids_dual_writes": true,
+    "review_probe_1_persona_no_writer_fails_closed_503": true,
+    "review_probe_2_tenantless_persona_patch_fails_closed_404": true,
+    "review_probe_3_read_surface_ports_has_no_write_methods": true,
+    "review_probe_4_rejected_insert_records_conflict_zero_stored": true,
+    "normative_sd_5_1_5_2_12_3_multi_replica_durable_evidence_verified": true
   },
   "verification": {
     "commands": [
       {
-        "command": ".venv-pantheon/bin/pytest services/control-plane/bff/tests/test_overlay_retirement.py",
-        "result": "22 passed in 8.35s",
-        "executed": 22,
-        "collected": 22
+        "command": ".venv-pantheon/bin/python3 -m pytest services/control-plane/bff/tests/test_overlay_retirement.py",
+        "result": "23 passed in 11.10s",
+        "executed": 23,
+        "collected": 23
       },
       {
-        "command": ".venv-pantheon/bin/pytest services/control-plane/bff/migrations/test_overlay_retirement.py",
-        "result": "19 passed in 6.47s",
-        "executed": 19,
-        "collected": 19
+        "command": ".venv-pantheon/bin/python3 -m pytest services/control-plane/bff/migrations/test_overlay_retirement.py",
+        "result": "25 passed in 8.92s",
+        "executed": 25,
+        "collected": 25
       },
       {
-        "command": ".venv-pantheon/bin/pytest services/control-plane/bff/tests/test_strategy_ranking_router.py",
-        "result": "9 passed in 7.79s",
+        "command": ".venv-pantheon/bin/python3 -m pytest services/control-plane/bff/tests/test_strategy_ranking_router.py",
+        "result": "9 passed in 8.19s",
         "executed": 9,
         "collected": 9
       },
       {
-        "command": ".venv-pantheon/bin/pytest services/control-plane/bff/tests/test_incident_router.py",
-        "result": "11 passed in 9.50s",
+        "command": ".venv-pantheon/bin/python3 -m pytest services/control-plane/bff/tests/test_incident_router.py",
+        "result": "11 passed in 10.43s",
         "executed": 11,
         "collected": 11
       },
       {
-        "command": ".venv-pantheon/bin/pytest services/control-plane/bff/strategies/test_router_isolation.py",
-        "result": "2 passed in 0.65s",
+        "command": ".venv-pantheon/bin/python3 -m pytest services/control-plane/bff/strategies/test_router_isolation.py",
+        "result": "2 passed in 1.64s",
         "executed": 2,
         "collected": 2
       },
       {
-        "command": ".venv-pantheon/bin/pytest services/control-plane/bff/personas/test_router_isolation.py",
-        "result": "1 passed in 0.58s",
+        "command": ".venv-pantheon/bin/python3 -m pytest services/control-plane/bff/personas/test_router_isolation.py",
+        "result": "1 passed in 3.11s",
         "executed": 1,
         "collected": 1
+      },
+      {
+        "command": "python3 scripts/dev/provision_python_distribution.py --check-only",
+        "result": "exit 0",
+        "executed": 1,
+        "collected": 1
+      },
+      {
+        "command": "python3 /tmp/overlay-review-probes.py",
+        "result": "persona_no_writer: 503; tenantless_persona_patch: 404 writes: 0; production_strategy_write_methods: False/False; rejected_insert: backfilled: 0, conflicts: 1, receipt_persisted: False, stored_records: []",
+        "executed": 4,
+        "collected": 4
+      },
+      {
+        "command": "pytest 9 migrated fixture and contract suites (pack a, b, c, detail smoke b, evolution experiment jobs events, governance runtime risk audit, rebaseline incidents, persona provisioning readback, evolution jobs ops)",
+        "result": "142 passed in 61.78s",
+        "executed": 142,
+        "collected": 142
       }
     ],
-    "total_tests_passed": 64
+    "total_manifest_tests_passed": 71,
+    "total_regression_tests_passed": 142
   },
   "rollback_strategy": {
     "rule": "Deploy the exact prior compatible release; never re-enable dual writes.",

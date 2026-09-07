@@ -180,6 +180,7 @@ from .loop_inventory import (
     truth_label_payload,
 )
 from .management_read_models import loop_truth
+from .management_read_models.service import _SHELL_SUMMARY_COUNT_CACHE
 from .operations_read_model import (
     DataConfidence,
     OperationsReadModelEnvelope,
@@ -980,6 +981,7 @@ session_lifecycle_store = SessionLifecycleStore(os.path.join(BFF_DATA_DIR, "sess
 agora_audit_store = AgoraAuditStore()
 persona_write_owner = app_deps.persona_write_owner
 ranking_write_owner = app_deps.ranking_write_owner
+strategy_write_owner = app_deps.strategy_write_owner
 persona_reconciliation_mutation_port = PersonaProvisioningReconciliationMutationPort(
     persona_mutation_port=persona_write_owner,
 )
@@ -8288,6 +8290,8 @@ def _require_agora_bulk_feedback_role(identity: OperatorIdentity) -> None:
             suggestion="Escalate to a user with analyst, operator, reviewer, approver, or admin role",
         )
 _MCP_TOOL_REGISTRY: Dict[str, Dict[str, Any]] = {}
+_TOOL_REGISTRY: Dict[str, Dict[str, Any]] = {}
+_SKILL_REGISTRY: Dict[str, Dict[str, Any]] = {}
 _CAPITAL_BFF_IDEMPOTENCY: Dict[str, Dict[str, Any]] = {}
 def _capital_bff_idempotency_identity(operator_id: str, resolved_key: str) -> str:
     return f"{operator_id}\x00{resolved_key}"
@@ -19409,6 +19413,8 @@ def _merged_mcp_tool_records() -> List[Dict[str, Any]]:
         [dict(record) for record in _MCP_TOOL_REGISTRY.values()],
         ("tool_id", "id"),
     )
+_GOV_BFF_EVOLUTION_PROGRAM_OVERLAY: Dict[str, Dict[str, Any]] = {}
+_GOV_BFF_EXPERIMENT_OVERLAY: Dict[str, Dict[str, Any]] = {}
 _GOV_BFF_IDEMPOTENCY: Dict[str, Dict[str, Any]] = {}
 _ACKNOWLEDGED_ALERTS: Dict[str, Dict[str, Any]] = {}
 _INCIDENT_CASE_ALIAS_FIELDS = {
@@ -19598,8 +19604,9 @@ def _gov_bff_action_command(
         status=CommandStatus.SUBMITTED,
         staleness_warning=staleness_warning,
     )
-    _GOV_BFF_IDEMPOTENCY[resolved_key] = {"request_hash": request_hash, "result": result}
-    return result
+    res_dict = result.model_dump(mode="json") if hasattr(result, "model_dump") else result
+    _GOV_BFF_IDEMPOTENCY[resolved_key] = {"request_hash": request_hash, "result": res_dict}
+    return res_dict
 
 def _research_experiments_surface_source(records: Sequence[Dict[str, Any]]) -> Optional[str]:
     if read_store.dataset_source("research_experiments") != "missing":
@@ -22321,11 +22328,20 @@ app.include_router(
         ),
     )
 )
+async def bff_events_stream_alias(
+    channel: str = "system",
+    last_event_id: Optional[str] = None,
+    authorization: Optional[str] = None,
+):
+    return await stream_generic_events(channel, last_event_id, authorization)
+
+
 from .events.router import create_events_router as _create_events_router
 app.include_router(
     _create_events_router(
         read_surface=app_deps.read_surface,
         command_store=app_deps.command_store,
+        get_read_store=lambda: read_store,
         extract_identity=_extract_identity,
         require_read_role=_require_read_role,
         bff_error=_bff_error,
@@ -22589,6 +22605,7 @@ app.include_router(
         bff_me_tenant_payload=_bff_me_tenant_payload,
         list_persona_records=_list_persona_records,
         list_strategy_summaries=_list_strategy_summaries,
+        strategy_write_owner=lambda: strategy_write_owner,
     )
 )
 from .incidents.router import create_incident_router as _create_incident_router
@@ -22618,8 +22635,6 @@ app.include_router(
         dry_run_success_response=_dry_run_success_response,
         build_operator_alerts_payload=lambda s: _build_operator_alerts_payload(s),
         list_governance_audit_events=_list_governance_audit_events,
-        get_bff_incident=_get_bff_incident,
-        list_bff_incidents=_list_bff_incidents,
         incident_events=_incident_events,
         incident_subscribers=_incident_subscribers,
         acknowledged_alerts=_ACKNOWLEDGED_ALERTS,
@@ -22916,6 +22931,7 @@ app.include_router(
         read_surface=app_deps.read_surface,
         loop_truth_adapter=loop_truth,
         downstream_health_monitor=downstream_health_monitor,
+        intervention_records_provider=_v5_intervention_records,
         submit_sem_command=_sem_command_response,
         submit_final_command_admission=_submit_final_command_admission,
         reject_body_idempotency_key=_reject_body_idempotency_key,

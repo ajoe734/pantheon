@@ -428,7 +428,7 @@ def build_detail_router(ctx: PersonaRouteContext) -> APIRouter:
             directory = _get_persona_directory_snapshot(caller_tenant)
             raw = directory.records_by_id.get(persona_id)
         raw_tenant = _persona_record_tenant_id(raw) if raw else ""
-        if raw and raw_tenant not in {"", caller_tenant}:
+        if raw and (not raw_tenant or raw_tenant != caller_tenant):
             raw = None
         if not raw:
             raise _bff_error(
@@ -492,13 +492,16 @@ def build_detail_router(ctx: PersonaRouteContext) -> APIRouter:
             },
             reason="persona_updated",
         )
-        updater = (
-            getattr(ctx.write_owner, "update_persona", None)
-            if hasattr(ctx, "write_owner") and ctx.write_owner is not None
-            else getattr(read_store, "update_persona", None)
-        )
-        if updater is None:
-            updater = getattr(read_store, "update_persona", None)
+        updater = getattr(ctx.write_owner, "update_persona", None) if hasattr(ctx, "write_owner") and ctx.write_owner is not None else None
+        if updater is None or not callable(updater):
+            raise _bff_error(
+                503,
+                ErrorCode.DEPENDENCY_UNAVAILABLE,
+                "Persona write owner unavailable",
+                "Cannot mutate persona: canonical write owner is not configured or unavailable",
+                precondition_failed="persona_write_owner_unavailable",
+                suggestion="Check persona registry service availability or configure write_owner.",
+            )
         persona_record = updater(
             persona_id,
             name=str(base.get("name") or persona_id),
@@ -511,18 +514,25 @@ def build_detail_router(ctx: PersonaRouteContext) -> APIRouter:
             lifecycle_state=None,
             risk_level=str(base.get("risk") or "low"),
             metadata=update_metadata,
-        ) if updater is not None else None
-        if persona_record is not None:
-            routed = _routed_strategies_for_persona(persona_id)
-            base = _project_persona_dto(
-                persona_record,
-                overlay={
-                    "routedStrategies": int(base.get("routedStrategies") or routed),
-                    "successRate": float(base.get("successRate") or 0.0),
-                    "tenantId": caller_tenant,
-                },
-                routed_strategies=routed,
+        )
+        if persona_record is None:
+            raise _bff_error(
+                503,
+                ErrorCode.DEPENDENCY_UNAVAILABLE,
+                "Persona update failed",
+                f"Failed to persist update for persona {persona_id} in canonical write owner",
+                precondition_failed="persona_update_persistence_failed",
             )
+        routed = _routed_strategies_for_persona(persona_id)
+        base = _project_persona_dto(
+            persona_record,
+            overlay={
+                "routedStrategies": int(base.get("routedStrategies") or routed),
+                "successRate": float(base.get("successRate") or 0.0),
+                "tenantId": caller_tenant,
+            },
+            routed_strategies=routed,
+        )
         result = {"data": deepcopy(base), "meta": {"snapshot_at": snapshot_at}}
         _STRATEGY_PERSONA_BFF_IDEMPOTENCY[cache_key] = {
             "request_hash": request_hash,

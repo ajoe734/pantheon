@@ -1250,6 +1250,7 @@ class DefaultResearchKnowledgeSourcePort(ResearchKnowledgeSourcePort):
             ).strip()
             title = (
                 raw_version.get("title")
+                or raw_version.get("name")
                 or strategy_spec.get("title")
                 or strategy_spec.get("name")
             )
@@ -1320,6 +1321,11 @@ class DefaultResearchKnowledgeSourcePort(ResearchKnowledgeSourcePort):
                     or provenance.get("created_at")
                 ),
             }
+            risk_val = raw_version.get("risk") or strategy_spec.get("risk")
+            if risk_val:
+                version["risk"] = risk_val
+                if isinstance(version.get("governance"), dict) and "risk_level" not in version["governance"]:
+                    version["governance"]["risk_level"] = risk_val
             version["allowedActions"] = cls._kw05_allowed_actions(version)
             versions.append(version)
 

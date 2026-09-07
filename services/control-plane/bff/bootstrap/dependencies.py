@@ -19,9 +19,11 @@ from services.control_plane.bff.ports import (
     PersonaRegistryHttpWritePort,
     RankingSnapshotWriteOwnerPort,
     ReadSurfacePorts,
+    StrategyWriteOwnerPort,
     create_persona_registry_write_owner,
     create_ranking_write_owner,
     create_read_surface_ports,
+    create_strategy_write_owner,
 )
 from services.control_plane.bff.settings_store import SettingsStore
 
@@ -40,6 +42,7 @@ class AppDependencies:
     command_store: CommandStore
     persona_write_owner: PersonaRegistryHttpWritePort
     ranking_write_owner: RankingSnapshotWriteOwnerPort
+    strategy_write_owner: StrategyWriteOwnerPort
     settings_store: SettingsStore
 
     @classmethod
@@ -52,6 +55,7 @@ class AppDependencies:
         command_store: Optional[CommandStore] = None,
         persona_write_owner: Optional[PersonaRegistryHttpWritePort] = None,
         ranking_write_owner: Optional[RankingSnapshotWriteOwnerPort] = None,
+        strategy_write_owner: Optional[StrategyWriteOwnerPort] = None,
         settings_store: Optional[SettingsStore] = None,
     ) -> AppDependencies:
         """Construct the concrete production dependencies once during startup.
@@ -127,6 +131,19 @@ class AppDependencies:
                 f"settings_store must be an instance of SettingsStore, got {type(resolved_settings_store)}"
             )
 
+        resolved_strategy_write_owner = strategy_write_owner
+        if resolved_strategy_write_owner is None:
+            if create_strategy_write_owner is not None:
+                resolved_strategy_write_owner = create_strategy_write_owner(
+                    store=lambda: resolved_read_surface
+                )
+            if resolved_strategy_write_owner is None:
+                raise RuntimeError("Required strategy write owner is absent; failing startup closed.")
+        if not isinstance(resolved_strategy_write_owner, StrategyWriteOwnerPort):
+            raise TypeError(
+                f"strategy_write_owner must implement StrategyWriteOwnerPort, got {type(resolved_strategy_write_owner)}"
+            )
+
         return cls(
             deployment_queries=resolved_deployment_queries,
             deployment_commands=resolved_deployment_commands,
@@ -134,6 +151,7 @@ class AppDependencies:
             command_store=resolved_command_store,
             persona_write_owner=resolved_persona_write_owner,
             ranking_write_owner=resolved_ranking_write_owner,
+            strategy_write_owner=resolved_strategy_write_owner,
             settings_store=resolved_settings_store,
         )
 

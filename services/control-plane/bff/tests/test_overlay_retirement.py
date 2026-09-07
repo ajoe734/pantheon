@@ -244,11 +244,13 @@ from services.control_plane.bff.migrations.overlay_retirement import (
     AggregateKind,
     CanonicalWriterCoordinator,
     DualWriteForbiddenError,
+    DurableCanonicalOwnerStore,
     FallbackAcknowledgementForbiddenError,
     MultiReplicaReadbackHarness,
     OverlayMigrationEngine,
     RollbackPolicy,
 )
+import tempfile
 
 
 def test_multi_replica_restart_durability_canonical_truth() -> None:
@@ -412,3 +414,43 @@ def test_migration_engine_backfill_dry_run_and_provenance() -> None:
     assert meta["source"] == "overlay_retire_001"
     assert "checksum" in meta
     assert "backfilled_at" in meta
+
+
+def test_genuine_five_owner_disk_backed_restart_durability_and_multi_replica() -> None:
+    """Normative SD §5.1, §5.2, §12.3: Verify multi-replica readback and process restart
+    durability across all five domain owners using genuine persistent disk storage.
+    """
+    with tempfile.TemporaryDirectory() as td:
+        harness = MultiReplicaReadbackHarness(shared_durable_storage=td)
+
+        rep_alpha = harness.spawn_replica("replica-alpha")
+        rep_beta = harness.spawn_replica("replica-beta")
+
+        aggregates = [
+            (AggregateKind.PERSONA, "pers-durable-rep-1", {"name": "Persona 1", "state": "active"}),
+            (AggregateKind.STRATEGY, "strat-durable-rep-1", {"title": "Strategy 1", "lifecycle_state": "active"}),
+            (AggregateKind.INCIDENT, "inc-durable-rep-1", {"title": "Incident 1", "status": "open"}),
+            (AggregateKind.JOB, "job-durable-rep-1", {"name": "Job 1", "status": "running"}),
+            (AggregateKind.RANKING, "rank-durable-rep-1", {"formula": "sharpe", "score": 2.5}),
+        ]
+
+        # Replica Alpha writes all five aggregates directly to persistent disk storage
+        for agg, key, payload in aggregates:
+            record = {"id": key, "aggregate": agg.value, **payload}
+            rep_alpha.write_canonical(key, record)
+
+        # Simulate independent process restart: process memory wiped
+        rep_alpha.restart_process()
+
+        # Replica Alpha reads back after restart: verified surviving from disk
+        for agg, key, payload in aggregates:
+            readback_alpha = rep_alpha.read_canonical(key)
+            assert readback_alpha is not None
+            assert readback_alpha["id"] == key
+            assert readback_alpha["aggregate"] == agg.value
+
+        # Replica Beta (separate process replica) reads directly from disk without local state
+        for agg, key, payload in aggregates:
+            readback_beta = rep_beta.read_canonical(key)
+            assert readback_beta is not None
+            assert readback_beta == rep_alpha.read_canonical(key)

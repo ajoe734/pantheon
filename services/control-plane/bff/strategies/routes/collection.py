@@ -106,15 +106,24 @@ def build_collection_router(ctx: StrategyRouteContext) -> APIRouter:
                 idempotency_key=resolved_key,
                 evidence_kind="strategy.create",
             )
+        writer = ctx.get_strategy_write_owner_port()
+        if writer is None:
+            raise ctx.bff_error(
+                503,
+                ErrorCode.DEPENDENCY_UNAVAILABLE,
+                "Canonical strategy writer unavailable",
+                "Cannot persist strategy without an authoritative domain store",
+            )
         written = False
         try:
-            rs = ctx.get_read_store_port()
-            if hasattr(rs, "upsert_strategy"):
-                rs.upsert_strategy(record)
+            if hasattr(writer, "upsert_strategy"):
+                writer.upsert_strategy(record)
                 written = True
-            elif hasattr(rs, "create_strategy_spec"):
-                rs.create_strategy_spec(record)
+            elif hasattr(writer, "create_strategy_spec"):
+                writer.create_strategy_spec(record)
                 written = True
+        except HTTPException:
+            raise
         except Exception as exc:
             raise ctx.bff_error(
                 503,

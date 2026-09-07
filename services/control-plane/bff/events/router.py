@@ -283,6 +283,11 @@ def create_events_router(
     _subscribers = _event_stream.subscribers
     _frontend_stream = frontend_bff_event_stream or _default_frontend_bff_event_stream
 
+    def _resolve_read_store() -> Any:
+        if get_read_store is not None:
+            return get_read_store()
+        return read_surface
+
     def _stream_channel(
         channel: str,
         last_event_id: Optional[str],

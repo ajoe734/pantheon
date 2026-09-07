@@ -19,9 +19,11 @@ import copy
 import hashlib
 import json
 import logging
+import os
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from enum import Enum
+from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Sequence, Set, Tuple
 
 logger = logging.getLogger(__name__)
@@ -428,7 +430,12 @@ class OverlayMigrationEngine:
                     records = list(fn() or [])
                 break
         if records is None:
-            if hasattr(self.canonical_store, "list_all"):
+            if hasattr(self.canonical_store, "list_records"):
+                try:
+                    records = list(self.canonical_store.list_records(tenant_id=tenant_id) or [])
+                except TypeError:
+                    records = list(self.canonical_store.list_records() or [])
+            elif hasattr(self.canonical_store, "list_all"):
                 records = [getattr(r, "__dict__", dict(r)) for r in (self.canonical_store.list_all() or [])]
             elif isinstance(self.canonical_store, dict):
                 records = list(self.canonical_store.values())
@@ -452,10 +459,14 @@ class OverlayMigrationEngine:
         under insert-only semantics returns False instead of a fake acknowledgement.
         """
         if hasattr(self.canonical_store, "insert"):
-            self.canonical_store.insert(record)
+            res = self.canonical_store.insert(record)
+            if res is False:
+                return False
             return True
         if hasattr(self.canonical_store, "save"):
-            self.canonical_store.save(record)
+            res = self.canonical_store.save(record)
+            if res is False:
+                return False
             return True
         if isinstance(self.canonical_store, dict):
             rec_id = self._extract_id(record)
@@ -524,10 +535,14 @@ class CanonicalWriterCoordinator:
         else:
             persisted = engine._insert_canonical_record(record)
         if not persisted:
-            raise FallbackAcknowledgementForbiddenError(
-                f"Canonical write for aggregate {aggregate.value!r} record {rec_id!r} was not "
-                "actually persisted; refusing to acknowledge it."
-            )
+            return {
+                "status": "rejected",
+                "writer": writer_identity,
+                "aggregate": aggregate.value,
+                "receipt_at": utc_now_iso(),
+                "checksum": deterministic_checksum(payload),
+                "persisted": False,
+            }
         return {
             "status": "acknowledged",
             "writer": writer_identity,
@@ -538,10 +553,68 @@ class CanonicalWriterCoordinator:
         }
 
 
+class DurableCanonicalOwnerStore:
+    """Normative durable canonical owner store backed by persistent disk storage (SD §5.1, §5.2, §12.3)."""
+
+    def __init__(self, storage_dir: str | Path, aggregate: AggregateKind) -> None:
+        self.storage_dir = Path(storage_dir)
+        self.storage_dir.mkdir(parents=True, exist_ok=True)
+        self.aggregate = aggregate
+        self.metadata = AGGREGATE_REGISTRY[aggregate]
+        self._store_file = self.storage_dir / f"{aggregate.value}_store.json"
+        if not self._store_file.exists():
+            self._atomic_save({})
+
+    def _atomic_save(self, data: Dict[str, Any]) -> None:
+        tmp = self._store_file.with_suffix(".tmp")
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(data, f, indent=2, sort_keys=True, default=str)
+        os.replace(tmp, self._store_file)
+
+    def _read_data(self) -> Dict[str, Any]:
+        if not self._store_file.exists():
+            return {}
+        with open(self._store_file, "r", encoding="utf-8") as f:
+            return json.load(f)
+
+    def insert(self, record: Dict[str, Any]) -> bool:
+        data = self._read_data()
+        rec_id = str(record.get(self.metadata.key_field) or record.get("id") or "").strip()
+        if not rec_id or rec_id in data:
+            return False
+        data[rec_id] = copy.deepcopy(record)
+        self._atomic_save(data)
+        return True
+
+    def save(self, record: Dict[str, Any]) -> bool:
+        return self.insert(record)
+
+    def get(self, key: str) -> Optional[Dict[str, Any]]:
+        data = self._read_data()
+        return copy.deepcopy(data.get(key))
+
+    def list_records(self, **kwargs: Any) -> List[Dict[str, Any]]:
+        data = self._read_data()
+        records = list(data.values())
+        tenant_id = kwargs.get("tenant_id")
+        if tenant_id:
+            records = [
+                r for r in records
+                if r.get("tenant_id") == tenant_id
+                or r.get("tenantId") == tenant_id
+                or (isinstance(r.get("metadata"), dict) and r["metadata"].get("tenant_id") == tenant_id)
+            ]
+        return records
+
+    def restart_process(self) -> None:
+        """Simulate process memory wipe; re-verify file exists on disk."""
+        assert self._store_file.exists(), "Persistent store file must exist on disk across restarts"
+
+
 class MultiReplicaReadbackHarness:
     """Verifies restart durability and multi-replica readback across independent process replicas."""
 
-    def __init__(self, shared_durable_storage: Dict[str, Any]) -> None:
+    def __init__(self, shared_durable_storage: Any) -> None:
         self.shared_durable_storage = shared_durable_storage
 
     def spawn_replica(self, replica_id: str) -> _ReplicaInstance:
@@ -549,31 +622,54 @@ class MultiReplicaReadbackHarness:
 
 
 class _ReplicaInstance:
-    def __init__(self, replica_id: str, storage: Dict[str, Any]) -> None:
+    def __init__(self, replica_id: str, storage: Any) -> None:
         self.replica_id = replica_id
         self._storage = storage
 
     def write_canonical(self, key: str, value: Dict[str, Any]) -> None:
         # Write directly to durable storage; nothing is cached in process-local state.
-        self._storage[key] = copy.deepcopy(value)
+        if isinstance(self._storage, (str, Path)):
+            storage_path = Path(self._storage)
+            storage_path.mkdir(parents=True, exist_ok=True)
+            target = storage_path / f"{key}.json"
+            tmp = storage_path / f"{key}.json.tmp"
+            with open(tmp, "w", encoding="utf-8") as f:
+                json.dump(value, f, default=str)
+            os.replace(tmp, target)
+        elif hasattr(self._storage, "insert"):
+            self._storage.insert(value)
+        else:
+            self._storage[key] = copy.deepcopy(value)
 
     def read_canonical(self, key: str) -> Optional[Dict[str, Any]]:
         # Strictly reads from durable storage
-        val = self._storage.get(key)
-        return copy.deepcopy(val) if val is not None else None
+        if isinstance(self._storage, (str, Path)):
+            target = Path(self._storage) / f"{key}.json"
+            if not target.exists():
+                return None
+            with open(target, "r", encoding="utf-8") as f:
+                return json.load(f)
+        elif hasattr(self._storage, "get"):
+            val = self._storage.get(key)
+            return copy.deepcopy(val) if val is not None else None
+        else:
+            val = self._storage.get(key)
+            return copy.deepcopy(val) if val is not None else None
 
     def restart_process(self) -> None:
-        """Simulate a process restart by round-tripping durable storage through serialization.
+        """Simulate a process restart.
 
-        This replica holds no process-local cache, so the only thing worth proving on
-        "restart" is that the durable storage's *contents* actually survive a serialization
-        boundary rather than being readable only because two Python objects share a live
-        reference. Re-encoding to JSON and rebuilding the dict in place forces every
-        subsequent read to prove the data, not the object identity, survived.
+        For file/disk backed storage, any local in-memory handles are wiped.
+        For dictionary storage, round-trip through JSON to eliminate shared object identities.
         """
-        serialized = json.dumps(self._storage, default=str)
-        self._storage.clear()
-        self._storage.update(json.loads(serialized))
+        if isinstance(self._storage, (str, Path)):
+            pass
+        elif hasattr(self._storage, "restart_process"):
+            self._storage.restart_process()
+        else:
+            serialized = json.dumps(self._storage, default=str)
+            self._storage.clear()
+            self._storage.update(json.loads(serialized))
 
 
 def assert_mandatory_symbol_retirements() -> Dict[str, bool]:

@@ -24,7 +24,7 @@ import pytest
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
 import main as bff_main  # noqa: E402
-from ports import create_in_memory_read_surface_ports  # noqa: E402
+from ports import create_in_memory_read_surface_ports, create_strategy_write_owner  # noqa: E402
 from services.source_ingestion.strategy_seed_builder import (  # noqa: E402
     StrategySpecSeed,
     StrategySpecSeedStatus,
@@ -35,71 +35,25 @@ OPERATOR_HEADERS = {"Authorization": "Bearer strat-rank-op:operator"}
 IDEMPOTENT_HEADERS = {**OPERATOR_HEADERS, "Idempotency-Key": "strat-rank-test-key-1"}
 
 
-from ports import ReadSurfacePorts, create_in_memory_read_surface_ports  # noqa: E402
-
-
-class _StrategyRankingTestReadPorts(ReadSurfacePorts):
-    def __init__(self, delegate: ReadSurfacePorts) -> None:
-        super().__init__(
-            operations_consultation=delegate.operations_consultation,
-            persona_capital_runtime=delegate.persona_capital_runtime,
-            ooda_management=delegate.ooda_management,
-            research_knowledge_source=delegate.research_knowledge_source,
-            lifecycle_telemetry_governance=delegate.lifecycle_telemetry_governance,
-            persona_training=delegate.persona_training,
-        )
-        self._strategies: dict[str, Any] = {}
-
-    def upsert_strategy(self, strategy: dict[str, Any]) -> dict[str, Any]:
-        sid = str(strategy.get("id") or strategy.get("strategy_id") or "")
-        self._strategies[sid] = strategy
-        rks = getattr(self, "research_knowledge_source", None)
-        if rks and hasattr(rks, "_strategy_specs"):
-            rks._strategy_specs[sid] = {
-                "strategy_id": sid,
-                "name": strategy.get("name"),
-                "risk": strategy.get("risk"),
-                "lifecycle_state": strategy.get("state") or "draft",
-                "versions": [{"version_id": "v1", "lifecycle_state": strategy.get("state") or "draft", "name": strategy.get("name"), "persona_ids": []}],
-                "current_version_id": "v1",
-            }
-        return strategy
-
-    def get_strategy_spec(self, spec_id: str) -> Optional[dict[str, Any]]:
-        rks = getattr(self, "research_knowledge_source", None)
-        spec = dict(rks._strategy_specs[spec_id]) if (rks and hasattr(rks, "_strategy_specs") and spec_id in rks._strategy_specs) else None
-        strat = self._strategies.get(spec_id)
-        if spec and strat:
-            merged = {**strat, **spec}
-            if not spec.get("risk") and strat.get("risk"):
-                merged["risk"] = strat["risk"]
-            return merged
-        if spec:
-            return spec
-        if strat:
-            return {
-                "strategy_id": spec_id,
-                "name": strat.get("name"),
-                "risk": strat.get("risk"),
-                "lifecycle_state": strat.get("state") or "draft",
-                "versions": [{"version_id": "v1", "lifecycle_state": strat.get("state") or "draft", "name": strat.get("name"), "persona_ids": []}],
-                "current_version_id": "v1",
-            }
-        return super().get_strategy_spec(spec_id)
-
-    def get_strategy(self, strategy_id: str) -> Optional[dict[str, Any]]:
-        return self._strategies.get(strategy_id)
-
-
 @contextmanager
 def _client(store: Optional[Any] = None):
     original_store = bff_main.read_store
-    bff_main.read_store = store if store is not None else _StrategyRankingTestReadPorts(create_in_memory_read_surface_ports())
+    original_writer = getattr(bff_main, "strategy_write_owner", None)
+    read_store = store if store is not None else create_in_memory_read_surface_ports()
+    bff_main.read_store = read_store
+    if store is not None:
+        if hasattr(store, "upsert_strategy") or hasattr(store, "create_strategy_spec"):
+            bff_main.strategy_write_owner = create_strategy_write_owner(store=store)
+        else:
+            bff_main.strategy_write_owner = None
+    else:
+        bff_main.strategy_write_owner = create_strategy_write_owner(store=read_store)
     bff_main._STRATEGY_PERSONA_BFF_IDEMPOTENCY.clear()
     try:
         yield TestClient(bff_main.app)
     finally:
         bff_main.read_store = original_store
+        bff_main.strategy_write_owner = original_writer
         bff_main._STRATEGY_PERSONA_BFF_IDEMPOTENCY.clear()
 
 

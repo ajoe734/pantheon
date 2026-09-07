@@ -130,6 +130,8 @@ class StrategyRouteContext:
     bff_me_tenant_payload: Optional[Callable[..., Dict[str, Any]]] = None
     list_persona_records: Optional[Callable[..., List[Dict[str, Any]]]] = None
     list_strategy_summaries: Optional[Callable[[], List[Dict[str, Any]]]] = None
+    strategy_write_owner: Optional[Any] = None
+    get_strategy_write_owner: Optional[Callable[[], Any]] = None
 
     def get_read_store_port(self) -> Any:
         if self.read_surface is not None:
@@ -137,6 +139,19 @@ class StrategyRouteContext:
         if self.get_read_store is not None:
             return self.get_read_store()
         raise NotImplementedError("Neither read_surface nor get_read_store dependency was supplied")
+
+    def get_strategy_write_owner_port(self) -> Any:
+        if self.strategy_write_owner is not None:
+            return self.strategy_write_owner() if callable(self.strategy_write_owner) else self.strategy_write_owner
+        if self.get_strategy_write_owner is not None:
+            return self.get_strategy_write_owner()
+        try:
+            rs = self.get_read_store_port()
+            if hasattr(rs, "upsert_strategy") or hasattr(rs, "create_strategy_spec"):
+                return rs
+        except Exception:
+            pass
+        return None
 
     def list_strategy_summaries_records(self) -> List[Dict[str, Any]]:
         if self.list_strategy_summaries is not None:

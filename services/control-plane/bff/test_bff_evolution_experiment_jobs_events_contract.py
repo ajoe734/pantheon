@@ -13,11 +13,9 @@ from typing import Any, Iterator
 
 from fastapi.testclient import TestClient
 
-sys.path.insert(0, os.path.dirname(__file__))
-
-import main as bff_main
-from command_queue import CommandStore
-from ports import ReadSurfacePorts
+from services.control_plane.bff import main as bff_main
+from services.control_plane.bff.command_queue import CommandStore
+from services.control_plane.bff.ports import ReadSurfacePorts
 
 
 OPERATOR_TOKEN = "Bearer op-gap-004:operator"
@@ -187,6 +185,12 @@ class EvolutionExperimentJobsEventsTestReadPorts(ReadSurfacePorts):
             items = [i for i in items if i.get("job_type") == job_type or i.get("type") == job_type]
         return items
 
+    def get_job_bff(self, job_id: str | None, **kwargs: Any) -> dict[str, Any] | None:
+        ds = self._get_dataset("jobs")
+        if isinstance(ds, dict):
+            return ds.get(str(job_id or ""))
+        return next((j for j in ds if j.get("id") == job_id or j.get("job_id") == job_id), None)
+
     def list_governance_events(self, **kwargs: Any) -> list[dict[str, Any]]:
         ds = self._get_dataset("governance_events")
         return list(ds.values()) if isinstance(ds, dict) else list(ds)
@@ -205,20 +209,12 @@ def _isolated_bff() -> Iterator[tuple[TestClient, EvolutionExperimentJobsEventsT
         bff_main.read_store = store
         bff_main.command_store = CommandStore(os.path.join(td, "commands.jsonl"))
         bff_main._GOV_BFF_IDEMPOTENCY.clear()
-        bff_main._GOV_BFF_INCIDENT_OVERLAY.clear()
-        bff_main._GOV_BFF_EVOLUTION_PROGRAM_OVERLAY.clear()
-        bff_main._GOV_BFF_EXPERIMENT_OVERLAY.clear()
-        bff_main._GOV_BFF_JOB_OVERLAY.clear()
         try:
             yield TestClient(bff_main.app), store
         finally:
             bff_main.read_store = original_store
             bff_main.command_store = original_command_store
             bff_main._GOV_BFF_IDEMPOTENCY.clear()
-            bff_main._GOV_BFF_INCIDENT_OVERLAY.clear()
-            bff_main._GOV_BFF_EVOLUTION_PROGRAM_OVERLAY.clear()
-            bff_main._GOV_BFF_EXPERIMENT_OVERLAY.clear()
-            bff_main._GOV_BFF_JOB_OVERLAY.clear()
 
 
 def _assert_final_command_envelope(payload: dict, command: str) -> str:
@@ -510,7 +506,7 @@ def test_experiments_idempotency_conflict() -> None:
 # ---------------------------------------------------------------------------
 
 def _seed_job(client: TestClient, job_id: str) -> dict:
-    bff_main._GOV_BFF_JOB_OVERLAY[job_id] = {
+    record = {
         "id": job_id,
         "job_id": job_id,
         "status": "running",
@@ -520,7 +516,10 @@ def _seed_job(client: TestClient, job_id: str) -> dict:
         "progress": {"percent": 50},
         "logs": [{"level": "info", "message": "Job started", "ts": "2026-05-08T10:00:01Z"}],
     }
-    return bff_main._GOV_BFF_JOB_OVERLAY[job_id]
+    ds = bff_main.read_store._get_dataset("jobs")
+    if isinstance(ds, dict):
+        ds[job_id] = record
+    return record
 
 
 def test_jobs_list_empty() -> None:

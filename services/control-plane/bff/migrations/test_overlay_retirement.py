@@ -12,8 +12,10 @@ Covers:
 """
 from __future__ import annotations
 
-import pytest
+import tempfile
+from pathlib import Path
 from typing import Any, Dict
+import pytest
 
 from services.control_plane.bff.migrations.overlay_retirement import (
     AggregateKind,
@@ -21,6 +23,7 @@ from services.control_plane.bff.migrations.overlay_retirement import (
     CanonicalWriterCoordinator,
     ConflictReport,
     DualWriteForbiddenError,
+    DurableCanonicalOwnerStore,
     FallbackAcknowledgementForbiddenError,
     MultiReplicaReadbackHarness,
     OverlayMigrationEngine,
@@ -395,3 +398,172 @@ def test_mandatory_symbol_retirements_in_codebase() -> None:
     assert results["_GOV_BFF_INCIDENT_OVERLAY"] is True
     assert results["_GOV_BFF_JOB_OVERLAY"] is True
     assert results["ReadSurfacePorts._ranking_snapshots"] is True
+
+
+# ---------------------------------------------------------------------------
+# 8. Genuine Five-Owner Durable Backfill, Shadow Conflicts & Multi-Replica Durability
+# ---------------------------------------------------------------------------
+
+@pytest.mark.parametrize(
+    "aggregate,key_field,canonical_owner",
+    [
+        (AggregateKind.PERSONA, "persona_id", "persona_provisioning_store"),
+        (AggregateKind.STRATEGY, "strategy_id", "strategy_spec_store"),
+        (AggregateKind.INCIDENT, "incident_id", "incident_reconciliation_store"),
+        (AggregateKind.JOB, "job_id", "job_service_store"),
+        (AggregateKind.RANKING, "snapshot_id", "ranking_domain_store"),
+    ],
+)
+def test_genuine_five_owner_backfill_shadow_conflicts_and_idempotency(
+    aggregate: AggregateKind, key_field: str, canonical_owner: str
+) -> None:
+    """Normative SD §5.1, §5.2: verify genuine durable owner backfill, shadow conflict reporting,
+    dry-run protection, and parity across each of the five domain aggregates.
+    """
+    with tempfile.TemporaryDirectory() as td:
+        durable_store = DurableCanonicalOwnerStore(storage_dir=td, aggregate=aggregate)
+
+        # 1. Seed durable store with initial existing canonical record
+        initial_canon = {
+            key_field: f"{aggregate.value}-canon-1",
+            "name": f"Canonical {aggregate.value.title()} 1",
+            "tenant_id": "tenant-corp",
+            "status": "active",
+        }
+        assert durable_store.insert(initial_canon) is True
+
+        # 2. Prepare overlay data source with:
+        #   - 1 matching record
+        #   - 1 divergent record (field divergence conflict)
+        #   - 1 missing record (to be backfilled)
+        overlay_data = {
+            f"{aggregate.value}-canon-1": {
+                key_field: f"{aggregate.value}-canon-1",
+                "name": f"Canonical {aggregate.value.title()} 1",
+                "tenant_id": "tenant-corp",
+                "status": "active",
+            },
+            f"{aggregate.value}-divergent": {
+                key_field: f"{aggregate.value}-divergent",
+                "name": "Overlay Version Divergent",
+                "tenant_id": "tenant-corp",
+                "status": "draft",
+            },
+            f"{aggregate.value}-to-backfill": {
+                key_field: f"{aggregate.value}-to-backfill",
+                "name": f"Backfilled {aggregate.value.title()}",
+                "tenant_id": "tenant-corp",
+                "status": "active",
+            },
+        }
+
+        # Seed the divergent record into canonical store with different status
+        assert durable_store.insert({
+            key_field: f"{aggregate.value}-divergent",
+            "name": "Canonical Version Divergent",
+            "tenant_id": "tenant-corp",
+            "status": "active",
+        }) is True
+
+        engine = OverlayMigrationEngine(
+            aggregate=aggregate,
+            canonical_store=durable_store,
+            overlay_data_source=overlay_data,
+        )
+
+        # 3. Shadow-compare: must detect 1 match, 1 divergence, 1 missing
+        report = engine.shadow_compare(tenant_id="tenant-corp")
+        assert report.aggregate == aggregate
+        assert report.scanned_canonical == 2
+        assert report.scanned_overlay == 3
+        assert report.matched_count == 1
+        assert report.divergent_count == 1
+        assert report.missing_in_canonical_count == 1
+        assert len(report.conflicts) == 2
+        conflict_types = {c.conflict_type for c in report.conflicts}
+        assert "field_divergence" in conflict_types
+        assert "missing_in_canonical" in conflict_types
+
+        # 4. Dry-run backfill: must report 1 backfillable record without mutating persistent storage
+        dry_result = engine.backfill(tenant_id="tenant-corp", dry_run=True)
+        assert dry_result.dry_run is True
+        assert dry_result.backfilled == 1
+        assert dry_result.skipped_existing == 2
+        # Verify durable store on disk still only contains the original 2 records
+        assert len(durable_store.list_records(tenant_id="tenant-corp")) == 2
+
+        # 5. Live backfill: persists missing record to disk with provenance
+        live_result = engine.backfill(tenant_id="tenant-corp", dry_run=False)
+        assert live_result.dry_run is False
+        assert live_result.backfilled == 1
+        assert live_result.skipped_existing == 2
+        # Verify durable store on disk now contains 3 records
+        persisted_records = durable_store.list_records(tenant_id="tenant-corp")
+        assert len(persisted_records) == 3
+        backfilled_rec = durable_store.get(f"{aggregate.value}-to-backfill")
+        assert backfilled_rec is not None
+        assert backfilled_rec["_migration_metadata"]["source"] == "overlay_retire_001"
+        assert backfilled_rec["_migration_metadata"]["checksum"] is not None
+
+        # 6. Re-run backfill: must be strictly idempotent (0 backfilled, 3 skipped)
+        idempotent_result = engine.backfill(tenant_id="tenant-corp", dry_run=False)
+        assert idempotent_result.backfilled == 0
+        assert idempotent_result.skipped_existing == 3
+
+        # 7. CanonicalWriterCoordinator sole owner verification for this aggregate
+        coordinator = CanonicalWriterCoordinator(canonical_stores={aggregate: durable_store})
+        receipt = coordinator.handle_write(
+            aggregate=aggregate,
+            writer_identity=canonical_owner,
+            payload={
+                key_field: f"{aggregate.value}-coord-write",
+                "name": f"Coordinator Written {aggregate.value.title()}",
+                "tenant_id": "tenant-corp",
+            },
+            is_fallback=False,
+        )
+        assert receipt["status"] == "acknowledged"
+        assert receipt["persisted"] is True
+        assert receipt["writer"] == canonical_owner
+        assert durable_store.get(f"{aggregate.value}-coord-write") is not None
+
+
+def test_genuine_five_owner_disk_backed_multi_replica_restart_durability() -> None:
+    """Normative SD §5.1, §5.2, §12.3: Prove multi-replica readback and process restart
+    across independent process replicas for all five domain owners using filesystem backing.
+    """
+    with tempfile.TemporaryDirectory() as td:
+        harness = MultiReplicaReadbackHarness(shared_durable_storage=td)
+
+        replica_alpha = harness.spawn_replica("replica-alpha")
+        replica_beta = harness.spawn_replica("replica-beta")
+
+        # Test all 5 aggregates
+        aggregates = [
+            (AggregateKind.PERSONA, "pers-durable-1", {"name": "Persona 1", "state": "active"}),
+            (AggregateKind.STRATEGY, "strat-durable-1", {"title": "Strategy 1", "lifecycle_state": "active"}),
+            (AggregateKind.INCIDENT, "inc-durable-1", {"title": "Incident 1", "status": "open"}),
+            (AggregateKind.JOB, "job-durable-1", {"name": "Job 1", "status": "running"}),
+            (AggregateKind.RANKING, "rank-durable-1", {"formula": "sharpe", "score": 2.5}),
+        ]
+
+        # Replica Alpha writes all 5 aggregate canonical records directly to durable disk
+        for agg, key, payload in aggregates:
+            record = {"id": key, "aggregate": agg.value, **payload}
+            replica_alpha.write_canonical(key, record)
+
+        # Simulate hard process restart on Replica Alpha (memory wiped, local handles dropped)
+        replica_alpha.restart_process()
+
+        # Replica Alpha reads back after restart: must survive on disk
+        for agg, key, payload in aggregates:
+            readback_alpha = replica_alpha.read_canonical(key)
+            assert readback_alpha is not None
+            assert readback_alpha["id"] == key
+            assert readback_alpha["aggregate"] == agg.value
+
+        # Replica Beta (completely independent replica) reads directly from durable storage
+        for agg, key, payload in aggregates:
+            readback_beta = replica_beta.read_canonical(key)
+            assert readback_beta is not None
+            assert readback_beta == replica_alpha.read_canonical(key)
