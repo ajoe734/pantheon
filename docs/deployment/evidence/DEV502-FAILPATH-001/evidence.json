@@ -1,0 +1,386 @@
+{
+  "task_id": "DEV502-FAILPATH-001",
+  "title": "Execute guard-to-diagnostic-to-compensation failure-path integration tests",
+  "owner": "Antigravity",
+  "reviewer": "Codex",
+  "scope": "SD.md D3 only. Executable failure-path integration tests covering guard-to-diagnostic-to-compensation with real subprocesses and isolated lease/bootstrap/SSH/HTTP fixtures. D1-D2 were delivered in DEV502-CAPTURE-001. D4-D6 (hosted TRACE/RCA, product FIX, durable diagnostics) and step 5 belong to follow-on tasks. Local fixtures are not hosted runtime proof.",
+  "source_documents": {
+    "SA": "/home/chloe_ong_dev_cctech_support_com/code/pantheon-artifacts/dev-diagnostics-20260907/SA.md",
+    "SD": "/home/chloe_ong_dev_cctech_support_com/code/pantheon-artifacts/dev-diagnostics-20260907/SD.md",
+    "root_cause_and_repair_plan": "/home/chloe_ong_dev_cctech_support_com/code/pantheon-artifacts/dev-diagnostics-20260907/root-cause-and-repair-plan.md"
+  },
+  "source_sha": "77ba705bc4e48263b5facbad0e27e99db4655236",
+  "test_suite": "scripts/test_dev_paper_diagnostics_failure_path.py",
+  "ci_smoke_entrypoint": "scripts/run-acceptance.sh",
+  "artifacts": [
+    "scripts/run-acceptance.sh",
+    "scripts/test_dev_paper_diagnostics_failure_path.py",
+    "docs/deployment/evidence/DEV502-FAILPATH-001/evidence.json"
+  ],
+  "checksums": {
+    "scripts/run-acceptance.sh": "01b335f4a1f354b5bb9e586f5ee06172dfdf4cdfc4796d01560383940f8139c2",
+    "scripts/test_dev_paper_diagnostics_failure_path.py": "c36c8c640dab7bc8bab0ce8eac1ed9dbd91473d5de303488c791aeeb33f538c6"
+  },
+  "acceptance_matrix": {
+    "d3_1_baseline_success": {
+      "requirement": "Baseline success does not execute failure collector",
+      "test": "scripts/test_dev_paper_diagnostics_failure_path.py::test_d3_1_baseline_success_does_not_execute_collector",
+      "observed_evidence": {
+        "test_functions": [
+          "test_d3_1_baseline_success_does_not_execute_collector"
+        ],
+        "observed_command_exit": 0,
+        "observed_bootstrap_exit": 0,
+        "observed_collection_status": "not_required",
+        "tested_source_identities": {
+          "expected_bff_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "expected_fe_sha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "observed_source_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "identity_matches": true
+        },
+        "negative_artifact_paths": [
+          "guard-failure.json",
+          "diagnostics/diagnostics.json"
+        ],
+        "observed_test_count": 1,
+        "observed_duration_seconds": 0.95
+      },
+      "status": "passed"
+    },
+    "d3_2_baseline_exit1_capture_before_heartbeat_stop": {
+      "requirement": "Baseline exit 1: capture precedes heartbeat stop; outer guard exits 75 and records original exit 1",
+      "test": "scripts/test_dev_paper_diagnostics_failure_path.py::test_d3_2_baseline_exit1_capture_precedes_heartbeat_stop_and_guard_quarantines",
+      "observed_evidence": {
+        "test_functions": [
+          "test_d3_2_baseline_exit1_capture_precedes_heartbeat_stop_and_guard_quarantines"
+        ],
+        "observed_command_exit": 75,
+        "observed_bootstrap_exit": 1,
+        "observed_collection_status": "ok",
+        "tested_source_identities": {
+          "expected_bff_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "expected_fe_sha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "observed_source_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "identity_matches": true
+        },
+        "observed_timing_probe": {
+          "heartbeat_alive_during_collection": true,
+          "failure_file_exists_during_collection": false
+        },
+        "observed_checksums": {
+          "diagnostics_file": "diagnostics/diagnostics.json",
+          "checksum_file": "diagnostics/SHA256SUMS",
+          "checksum_status": "matched"
+        },
+        "negative_artifact_paths": [],
+        "observed_test_count": 1,
+        "observed_duration_seconds": 1.13
+      },
+      "status": "passed"
+    },
+    "d3_3_collector_failure_paths": {
+      "requirement": "Collector timeout, command exit, and corrupted JSON: bootstrap failure exit preserved, rollback reachable",
+      "tests": [
+        "scripts/test_dev_paper_diagnostics_failure_path.py::test_d3_3_collector_timeout_preserves_bootstrap_and_enables_compensation",
+        "scripts/test_dev_paper_diagnostics_failure_path.py::test_d3_3_collector_error_exit_preserves_bootstrap_and_enables_compensation",
+        "scripts/test_dev_paper_diagnostics_failure_path.py::test_d3_3_collector_corrupted_json_preserves_bootstrap_and_enables_compensation"
+      ],
+      "observed_evidence": {
+        "test_functions": [
+          "test_d3_3_collector_timeout_preserves_bootstrap_and_enables_compensation",
+          "test_d3_3_collector_error_exit_preserves_bootstrap_and_enables_compensation",
+          "test_d3_3_collector_corrupted_json_preserves_bootstrap_and_enables_compensation"
+        ],
+        "observed_command_exit": 75,
+        "observed_bootstrap_exit": 1,
+        "observed_collector_exits": [
+          124,
+          2,
+          0
+        ],
+        "observed_collection_statuses": [
+          "timeout",
+          "collector_command_failed",
+          "invalid_json"
+        ],
+        "observed_compensation_exits": [
+          0,
+          0,
+          0
+        ],
+        "tested_source_identities": {
+          "expected_bff_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "expected_fe_sha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+        },
+        "negative_artifact_paths": [
+          "diagnostics/diagnostics.json"
+        ],
+        "observed_test_count": 3,
+        "observed_duration_seconds": 13.84
+      },
+      "status": "passed"
+    },
+    "d3_4_heartbeat_and_cas_loss": {
+      "requirement": "Heartbeat or remote CAS loss: command process group terminated including all descendants, no further remote command runs",
+      "tests": [
+        "scripts/test_dev_paper_diagnostics_failure_path.py::test_d3_4_heartbeat_loss_during_command_terminates_process_group_and_descendants",
+        "scripts/test_dev_paper_diagnostics_failure_path.py::test_d3_4_remote_cas_loss_terminates_process_group_and_descendants"
+      ],
+      "observed_evidence": {
+        "test_functions": [
+          "test_d3_4_heartbeat_loss_during_command_terminates_process_group_and_descendants",
+          "test_d3_4_remote_cas_loss_terminates_process_group_and_descendants"
+        ],
+        "observed_command_exit": 75,
+        "observed_failure_exit_status": 75,
+        "observed_bootstrap_exit": null,
+        "observed_collection_status": "not_started",
+        "observed_descendant_termination": "all_descendants_terminated",
+        "present_artifact_paths": [
+          "diagnostics/collection-status.json"
+        ],
+        "negative_artifact_paths": [
+          "diagnostics/diagnostics.json",
+          "diagnostics/SHA256SUMS"
+        ],
+        "observed_test_count": 2,
+        "observed_duration_seconds": 2.17
+      },
+      "status": "passed"
+    },
+    "d3_5_cancellation_and_identity_mismatch_fail_closed": {
+      "requirement": "Cancellation, missing/expired state, wrong source, ambiguous containers fail closed with real discovery/inspect and negative mutation sensitivity",
+      "tests": [
+        "scripts/test_dev_paper_diagnostics_failure_path.py::test_d3_5_baseline_cancellation_real_signal_injection",
+        "scripts/test_dev_paper_diagnostics_failure_path.py::test_d3_5_cancellation_during_collector_terminates_group_and_descendants",
+        "scripts/test_dev_paper_diagnostics_failure_path.py::test_d3_5_missing_lease_state_fails_closed",
+        "scripts/test_dev_paper_diagnostics_failure_path.py::test_d3_5_expired_lease_state_fails_closed",
+        "scripts/test_dev_paper_diagnostics_failure_path.py::test_d3_5_identity_mismatch_fails_closed",
+        "scripts/test_dev_paper_diagnostics_failure_path.py::test_d3_5_ambiguous_container_fails_closed",
+        "scripts/test_dev_paper_diagnostics_failure_path.py::test_d3_5_negative_mutation_sensitivity_detects_bypasses"
+      ],
+      "observed_evidence": {
+        "test_functions": [
+          "test_d3_5_baseline_cancellation_real_signal_injection",
+          "test_d3_5_cancellation_during_collector_terminates_group_and_descendants",
+          "test_d3_5_missing_lease_state_fails_closed",
+          "test_d3_5_expired_lease_state_fails_closed",
+          "test_d3_5_identity_mismatch_fails_closed",
+          "test_d3_5_ambiguous_container_fails_closed",
+          "test_d3_5_negative_mutation_sensitivity_detects_bypasses"
+        ],
+        "observed_command_exits": [
+          143,
+          130,
+          143,
+          75,
+          75,
+          75,
+          75,
+          0
+        ],
+        "observed_bootstrap_exits": [
+          143,
+          130,
+          1,
+          "unexecuted_missing_state",
+          "unexecuted_expired_state",
+          1,
+          1
+        ],
+        "observed_collection_statuses": [
+          "not_started",
+          "collecting",
+          "unexecuted",
+          "unexecuted",
+          "identity_mismatch",
+          "identity_mismatch"
+        ],
+        "tested_source_identities": {
+          "wrong_source_case": {
+            "expected_bff_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "observed_source_sha": "ffffffffffffffffffffffffffffffffffffffff",
+            "identity_matches": false,
+            "collection_status": "identity_mismatch"
+          },
+          "ambiguous_container_case": {
+            "expected_bff_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "container_ids_matched": 2,
+            "identity_matches": false,
+            "operator_bff_status": "container_missing_or_ambiguous"
+          },
+          "mutation_sensitivity": {
+            "forced_identity_matches_true_rejected": true,
+            "len_ids_ne_1_rejection_enforced": true
+          }
+        },
+        "negative_artifact_paths": [
+          "fake-ssh.log (on expired lease)",
+          "diagnostics/diagnostics.json (on cancellation and missing state)"
+        ],
+        "observed_test_count": 7,
+        "observed_duration_seconds": 5.17
+      },
+      "status": "passed"
+    },
+    "d3_6_artifact_output_verification": {
+      "requirement": "Artifact output missing, upload failure, bad checksum, malformed JSON, invalid/zero bootstrap exit, or empty/invalid services schema cannot declare diagnostic acceptance; guarded artifacts composed with transport failure, real collector execution, positive downloaded acceptance, negative downloaded acceptance, & compensation",
+      "tests": [
+        "scripts/test_dev_paper_diagnostics_failure_path.py::test_d3_6_artifact_output_missing_or_bad_checksum_cannot_declare_acceptance",
+        "scripts/test_dev_paper_diagnostics_failure_path.py::test_d3_6_artifact_upload_download_failure_and_acceptance_pipeline"
+      ],
+      "observed_evidence": {
+        "test_functions": [
+          "test_d3_6_artifact_output_missing_or_bad_checksum_cannot_declare_acceptance",
+          "test_d3_6_artifact_upload_download_failure_and_acceptance_pipeline"
+        ],
+        "observed_command_exit": 75,
+        "observed_bootstrap_exit": 1,
+        "observed_acceptance_rejection_reasons": [
+          "missing_collection_status",
+          "collection_status_timeout",
+          "missing_diagnostics_file",
+          "missing_checksum_file",
+          "checksum_mismatch",
+          "malformed_diagnostics_json",
+          "missing_schema_field_identity_matches",
+          "identity_mismatch",
+          "invalid_bootstrap_exit_range",
+          "invalid_field_type_bootstrap_exit",
+          "empty_services",
+          "bootstrap_exit_mismatch_status_vs_diagnostics",
+          "missing_required_service_operator_bff",
+          "missing_required_service_persona",
+          "invalid_service_schema_operator_bff",
+          "bootstrap_exit_mismatch_expected",
+          "missing_required_service_capital",
+          "service_collection_status_timeout_persona",
+          "service_state_collection_status_timeout_persona"
+        ],
+        "observed_upload_failure_pipeline": {
+          "upload_transport_error": "transport_error_503_service_unavailable",
+          "acceptance_download_outcome": "missing_artifact",
+          "primary_baseline_exit": 1,
+          "primary_guard_exit": 75,
+          "compensation_exit": 0,
+          "compensation_lease_status": "released",
+          "primary_lease_status": "quarantined",
+          "independence_verified": true
+        },
+        "observed_upload_success_pipeline": {
+          "upload_status": "uploaded",
+          "download_status": "downloaded",
+          "acceptance_verdict": "accepted",
+          "collector_execution": "real_collector",
+          "downloaded_real_collector_services_count": 7,
+          "verified_envelope_fields_count": 14,
+          "negative_downloaded_cases_verified": [
+            "download_zero_bootstrap_exit: invalid_bootstrap_exit_range",
+            "download_object_bootstrap_exit: invalid_field_type_bootstrap_exit",
+            "download_empty_services: empty_services",
+            "download_exit_mismatch: bootstrap_exit_mismatch_status_vs_diagnostics",
+            "download_bad_checksum: checksum_mismatch",
+            "download_malformed_json: malformed_diagnostics_json",
+            "download_missing_capital: missing_required_service_capital",
+            "download_persona_timeout: service_collection_status_timeout_persona",
+            "download_persona_inspect_timeout: service_state_collection_status_timeout_persona",
+            "download_reduced_services: missing_required_service_capital"
+          ]
+        },
+        "negative_artifact_paths": [
+          "download_after_upload_failure/diagnostics.json",
+          "download_bad_checksum/diagnostics.json (rejected)",
+          "download_malformed_json/diagnostics.json (rejected)",
+          "download_zero_bootstrap_exit/diagnostics.json (rejected)",
+          "download_object_bootstrap_exit/diagnostics.json (rejected)",
+          "download_empty_services/diagnostics.json (rejected)",
+          "download_exit_mismatch/diagnostics.json (rejected)",
+          "download_missing_capital/diagnostics.json (rejected)",
+          "download_persona_timeout/diagnostics.json (rejected)",
+          "download_persona_inspect_timeout/diagnostics.json (rejected)",
+          "download_reduced_services/diagnostics.json (rejected)"
+        ],
+        "observed_test_count": 2,
+        "observed_duration_seconds": 2.75
+      },
+      "status": "passed"
+    },
+    "d3_7_project_exceptions_and_secret_sentinels": {
+      "requirement": "Project domain exceptions and Persona owner positively captured via real collector stdin execution; secret sentinels never leak",
+      "test": "scripts/test_dev_paper_diagnostics_failure_path.py::test_d3_7_project_exceptions_and_sentinels_through_actual_collector_pipeline",
+      "observed_evidence": {
+        "test_functions": [
+          "test_d3_7_project_exceptions_and_sentinels_through_actual_collector_pipeline"
+        ],
+        "observed_command_exit": 75,
+        "observed_bootstrap_exit": 1,
+        "observed_collection_status": "ok",
+        "positive_exception_captures": [
+          "services.control_plane.bff.ports.persona_write_owner.PersonaWriteOwnerUnavailable",
+          "services.control_plane.bff.persona_provisioning.ProvisioningLeaseLost",
+          "ConnectionRefusedError"
+        ],
+        "secret_sentinels_zero_leak_verified": [
+          "SECRET_SENTINEL_TOKEN_XYZ_987",
+          "PASSWORD_SECRET_12345",
+          "SUPER_PRIVATE_DSN_KEY",
+          "Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.SECRET_PAYLOAD",
+          "postgresql://user:TOP_SECRET_PASSWORD@localhost:5432/trading"
+        ],
+        "negative_artifact_paths": [],
+        "observed_test_count": 1,
+        "observed_duration_seconds": 1.05
+      },
+      "status": "passed"
+    },
+    "d3_8_compensation_independent_outcomes": {
+      "requirement": "Composed baseline failure -> capture -> quarantine -> runner artifact handling -> fresh-lease compensation with independent primary and compensation exit codes and lease state assertions",
+      "tests": [
+        "scripts/test_dev_paper_diagnostics_failure_path.py::test_d3_8_composed_baseline_failure_capture_quarantine_compensation_success",
+        "scripts/test_dev_paper_diagnostics_failure_path.py::test_d3_8_composed_baseline_failure_capture_quarantine_compensation_failure"
+      ],
+      "observed_evidence": {
+        "test_functions": [
+          "test_d3_8_composed_baseline_failure_capture_quarantine_compensation_success",
+          "test_d3_8_composed_baseline_failure_capture_quarantine_compensation_failure"
+        ],
+        "observed_primary_command_exits": [
+          75,
+          75
+        ],
+        "observed_primary_bootstrap_exits": [
+          1,
+          1
+        ],
+        "observed_compensation_exits": [
+          0,
+          75
+        ],
+        "observed_lease_states": {
+          "success_case": {
+            "primary_lease": "quarantined",
+            "compensation_lease": "released"
+          },
+          "failure_case": {
+            "primary_lease": "quarantined",
+            "compensation_lease": "quarantined"
+          }
+        },
+        "negative_artifact_paths": [],
+        "observed_test_count": 2,
+        "observed_duration_seconds": 5.13
+      },
+      "status": "passed"
+    }
+  },
+  "test_execution": {
+    "command": "python3 -m pytest -v scripts/test_dev_paper_diagnostics_failure_path.py",
+    "total": 19,
+    "passed": 19,
+    "failed": 0,
+    "duration_seconds": 35.94,
+    "all_passed": true,
+    "ci_smoke_command": "./scripts/run-acceptance.sh smoke",
+    "ci_smoke_status": "passed"
+  }
+}
