@@ -1,5 +1,6 @@
 import json
 import os
+import signal
 import stat
 import subprocess
 import sys
@@ -24,7 +25,13 @@ if [[ "$cmd" == *"bootstrap_dev_paper_baseline.py"* ]]; then
   [[ -n "${FAKE_SSH_BOOTSTRAP_SLEEP:-}" ]] && sleep "${FAKE_SSH_BOOTSTRAP_SLEEP}"
   exit "${FAKE_SSH_BOOTSTRAP_EXIT:-1}"
 fi
+if [[ -n "${FAKE_SSH_COLLECTOR_MARKER:-}" ]]; then
+  echo "started" > "${FAKE_SSH_COLLECTOR_MARKER}"
+fi
 [[ -n "${FAKE_SSH_COLLECTOR_SLEEP:-}" ]] && sleep "${FAKE_SSH_COLLECTOR_SLEEP}"
+if [[ -n "${FAKE_SSH_COLLECTOR_MARKER:-}" ]]; then
+  echo "finished" >> "${FAKE_SSH_COLLECTOR_MARKER}"
+fi
 if [[ -n "${FAKE_SSH_COLLECTOR_STDERR:-}" ]]; then
   printf '%s' "${FAKE_SSH_COLLECTOR_STDERR}" >&2
 fi
@@ -187,16 +194,23 @@ def test_diagnostic_collection_happens_inside_the_guarded_baseline_child():
     assert 'exit "${baseline_status}"' in run
     assert "|| true" not in run
 
+    # Predeclared fixed runner paths and initialized terminal evidence
+    assert 'diagnostic_dir="${RUNNER_TEMP}/dev-paper-diagnostics-${DEV_PAPER_RUN_ID}-${DEV_PAPER_ATTEMPT}"' in run
+    assert "collection-status.json" in run
+
     assert upload["with"]["retention-days"] == 7
     assert upload["continue-on-error"] is True
-    assert "steps.paper_bootstrap.outputs.diagnostics_file" in upload["if"]
-    assert "steps.paper_bootstrap.outputs.status_file" in upload["if"]
-    # Only an explicit safe-file allowlist is uploaded; never the whole
-    # runner-local directory the wrapper wrote into.
+    assert "steps.paper_bootstrap.conclusion != 'skipped'" in upload["if"]
+    # Upload does not depend on failed-step final outputs
+    assert "steps.paper_bootstrap.outputs" not in upload["if"]
+
+    # Only an explicit safe-file allowlist from fixed runner paths is uploaded;
+    # never the whole directory and never depending on final step outputs.
     upload_path = upload["with"]["path"]
-    assert "${{ steps.paper_bootstrap.outputs.diagnostics_file }}" in upload_path
-    assert "${{ steps.paper_bootstrap.outputs.status_file }}" in upload_path
-    assert "${{ steps.paper_bootstrap.outputs.checksum_file }}" in upload_path
+    assert "${{ runner.temp }}/dev-paper-diagnostics-${{ github.run_id }}-${{ github.run_attempt }}/diagnostics.json" in upload_path
+    assert "${{ runner.temp }}/dev-paper-diagnostics-${{ github.run_id }}-${{ github.run_attempt }}/collection-status.json" in upload_path
+    assert "${{ runner.temp }}/dev-paper-diagnostics-${{ github.run_id }}-${{ github.run_attempt }}/SHA256SUMS" in upload_path
+    assert "steps.paper_bootstrap.outputs" not in upload_path
     assert "artifact_path" not in upload_path
 
     run = baseline["run"]
@@ -255,11 +269,25 @@ def test_collector_aggregate_status_flags_identity_mismatch_even_when_all_ok(mon
     assert result["collection_status"] == "identity_mismatch"
 
 
+def _valid_diagnostics_payload(expected_bff_sha="b" * 40, **overrides):
+    payload = {
+        "schema_version": "pantheon.dev-paper-diagnostics.v1",
+        "collected_at": "2026-09-07T14:00:00Z",
+        "expected_bff_sha": expected_bff_sha,
+        "expected_fe_sha": None,
+        "identity_matches": True,
+        "collection_status": "ok",
+        "services": {},
+    }
+    payload.update(overrides)
+    return json.dumps(payload)
+
+
 def test_wrapper_never_uploads_raw_unbounded_collector_stderr(tmp_path):
     secret = "Authorization: Bearer " + ("S3CRETTOKEN" * 10)
     result, diagnostic_dir, _log = _run_wrapper(tmp_path, {}, extra_env={
         "FAKE_SSH_BOOTSTRAP_EXIT": "1",
-        "FAKE_SSH_COLLECTOR_STDOUT": '{"ok":true}',
+        "FAKE_SSH_COLLECTOR_STDOUT": _valid_diagnostics_payload(),
         "FAKE_SSH_COLLECTOR_STDERR": secret,
         "FAKE_SSH_COLLECTOR_EXIT": "0",
     })
@@ -278,10 +306,8 @@ def test_wrapper_never_uploads_raw_unbounded_collector_stderr(tmp_path):
 
     document = _status_document(diagnostic_dir)
     assert document["collectionStatus"] == "ok"
-    # A bounded, redacted summary is allowed to survive; the raw secret text
-    # must not.
     assert secret not in json.dumps(document)
-    assert "[REDACTED]" in document["collectorStderrSummary"]
+    assert "S3CRETTOKEN" not in json.dumps(document)
 
 
 def test_wrapper_enforces_overall_collection_deadline(tmp_path):
@@ -311,7 +337,7 @@ def test_wrapper_wires_run_identity_into_collector_invocation(tmp_path):
         "DEV_PAPER_PHASE": "paper_bootstrap",
     }, extra_env={
         "FAKE_SSH_BOOTSTRAP_EXIT": "1",
-        "FAKE_SSH_COLLECTOR_STDOUT": '{"ok":true}',
+        "FAKE_SSH_COLLECTOR_STDOUT": _valid_diagnostics_payload(expected_fe_sha="e" * 40),
     })
     assert result.returncode == 1, result.stderr
     assert len(log_lines) == 2
@@ -372,3 +398,161 @@ def test_wrapper_initializes_terminal_evidence_before_running_anything(tmp_path)
     final_document = json.loads(status_path.read_text())
     assert final_document["collectionStatus"] == "not_required"
     assert final_document["bootstrapExit"] == 0
+
+
+def test_wrapper_keeps_collector_in_guard_process_group_for_cancellation(tmp_path):
+    marker = tmp_path / "collector_marker.txt"
+    workspace = tmp_path / "workspace"
+    ssh_dir = workspace / ".agora-gate-controller" / "scripts"
+    ssh_dir.mkdir(parents=True)
+    ssh_path = ssh_dir / "dev_vm_ssh.sh"
+    ssh_path.write_text(FAKE_SSH_TEMPLATE)
+    ssh_path.chmod(ssh_path.stat().st_mode | stat.S_IEXEC)
+
+    diagnostic_dir = tmp_path / "diagnostics"
+    diagnostic_dir.mkdir()
+    collector_stub = tmp_path / "collector_stub.py"
+    collector_stub.write_text("# fixture only\n")
+
+    env = dict(os.environ)
+    env.update({
+        "GITHUB_WORKSPACE": str(workspace),
+        "DEV_PAPER_DIAGNOSTICS_DIR": str(diagnostic_dir),
+        "DEV_PAPER_DIAGNOSTICS_COLLECTOR": str(collector_stub),
+        "EXPECTED_BFF_SHA": "b" * 40,
+        "FAKE_SSH_LOG": str(tmp_path / "fake-ssh.log"),
+        "FAKE_SSH_BOOTSTRAP_EXIT": "1",
+        "FAKE_SSH_COLLECTOR_SLEEP": "3",
+        "FAKE_SSH_COLLECTOR_MARKER": str(marker),
+    })
+
+    proc = subprocess.Popen(
+        ["bash", str(WRAPPER)],
+        env=env,
+        cwd=str(tmp_path),
+        start_new_session=True,
+    )
+    try:
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline and not marker.exists():
+            time.sleep(0.05)
+        assert marker.exists(), "collector marker was not created in time"
+
+        # Signal the process group (STOP, TERM, CONT) just like the pinned guard
+        pgid = os.getpgid(proc.pid)
+        os.killpg(pgid, signal.SIGSTOP)
+        os.killpg(pgid, signal.SIGTERM)
+        os.killpg(pgid, signal.SIGCONT)
+
+        proc.wait(timeout=5)
+        assert proc.returncode != 0
+    finally:
+        if proc.poll() is None:
+            try:
+                os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+            except OSError:
+                pass
+            proc.wait(timeout=5)
+
+    time.sleep(3.5)
+    marker_content = marker.read_text().splitlines()
+    assert "started" in marker_content
+    assert "finished" not in marker_content
+
+
+def test_wrapper_emits_only_allowlisted_structural_failure_fields_and_never_arbitrary_stderr(tmp_path):
+    secrets = [
+        '{"password": "SYNTHETIC_PRIVATE_SENTINEL", "api_key": "NESTED_SECRET"}',
+        "-----BEGIN RSA PRIVATE KEY-----\nMIIEowIBAAKCAQEA0...\n-----END RSA PRIVATE KEY-----",
+        "password=SYNTHETIC_PRIVATE_SENTINEL",
+        "Authorization: Bearer SECRET_BEARER_TOKEN",
+        "postgresql://user:SECRET_DB_PASS@localhost:5432/db",
+    ]
+    combined_stderr = "\n".join(secrets) + "\nConnection timed out during banner exchange\n"
+
+    result, diagnostic_dir, _log = _run_wrapper(tmp_path, {}, extra_env={
+        "FAKE_SSH_BOOTSTRAP_EXIT": "1",
+        "FAKE_SSH_COLLECTOR_STDOUT": "",
+        "FAKE_SSH_COLLECTOR_STDERR": combined_stderr,
+        "FAKE_SSH_COLLECTOR_EXIT": "1",
+    })
+    assert result.returncode == 1
+
+    doc = _status_document(diagnostic_dir)
+    assert doc["collectionStatus"] == "collector_command_failed"
+    assert doc["collectorExit"] == 1
+    assert doc["collectorErrorCategory"] == "ssh_connection_timeout"
+
+    doc_str = json.dumps(doc)
+    for s in ("SYNTHETIC_PRIVATE_SENTINEL", "NESTED_SECRET", "RSA PRIVATE KEY", "SECRET_BEARER_TOKEN", "SECRET_DB_PASS"):
+        assert s not in doc_str
+
+    for path in diagnostic_dir.iterdir():
+        content = path.read_text(errors="replace")
+        for s in ("SYNTHETIC_PRIVATE_SENTINEL", "NESTED_SECRET", "RSA PRIVATE KEY", "SECRET_BEARER_TOKEN", "SECRET_DB_PASS"):
+            assert s not in content
+
+
+def test_wrapper_validates_envelope_schema_and_propagates_truthful_status(tmp_path):
+    valid_payload = {
+        "schema_version": "pantheon.dev-paper-diagnostics.v1",
+        "collected_at": "2026-09-07T14:00:00Z",
+        "expected_bff_sha": "b" * 40,
+        "expected_fe_sha": None,
+        "identity_matches": True,
+        "collection_status": "ok",
+        "services": {},
+    }
+
+    # Case A: empty object missing schema -> schema_error
+    result, diag_dir, _ = _run_wrapper(tmp_path / "case_a", {}, extra_env={
+        "FAKE_SSH_BOOTSTRAP_EXIT": "1",
+        "FAKE_SSH_COLLECTOR_STDOUT": "{}",
+        "FAKE_SSH_COLLECTOR_EXIT": "0",
+    })
+    assert result.returncode == 1
+    doc_a = _status_document(diag_dir)
+    assert doc_a["collectionStatus"] == "schema_error"
+    assert doc_a["collectorErrorCategory"] == "schema_mismatch"
+    assert not (diag_dir / "diagnostics.json").exists()
+
+    # Case B: identity_matches=False -> identity_mismatch
+    payload_mismatch = dict(valid_payload, identity_matches=False, collection_status="identity_mismatch")
+    result, diag_dir, _ = _run_wrapper(tmp_path / "case_b", {}, extra_env={
+        "FAKE_SSH_BOOTSTRAP_EXIT": "1",
+        "FAKE_SSH_COLLECTOR_STDOUT": json.dumps(payload_mismatch),
+        "FAKE_SSH_COLLECTOR_EXIT": "0",
+    })
+    assert result.returncode == 1
+    doc_b = _status_document(diag_dir)
+    assert doc_b["collectionStatus"] == "identity_mismatch"
+    assert doc_b["collectorErrorCategory"] == "identity_mismatch"
+    assert (diag_dir / "diagnostics.json").exists()
+    assert (diag_dir / "SHA256SUMS").exists()
+
+    # Case C: collection_status=partial -> partial
+    payload_partial = dict(valid_payload, collection_status="partial")
+    result, diag_dir, _ = _run_wrapper(tmp_path / "case_c", {}, extra_env={
+        "FAKE_SSH_BOOTSTRAP_EXIT": "1",
+        "FAKE_SSH_COLLECTOR_STDOUT": json.dumps(payload_partial),
+        "FAKE_SSH_COLLECTOR_EXIT": "0",
+    })
+    assert result.returncode == 1
+    doc_c = _status_document(diag_dir)
+    assert doc_c["collectionStatus"] == "partial"
+    assert doc_c["collectorErrorCategory"] == "partial_collection"
+    assert (diag_dir / "diagnostics.json").exists()
+    assert (diag_dir / "SHA256SUMS").exists()
+
+    # Case D: collection_status=ok -> ok
+    result, diag_dir, _ = _run_wrapper(tmp_path / "case_d", {}, extra_env={
+        "FAKE_SSH_BOOTSTRAP_EXIT": "1",
+        "FAKE_SSH_COLLECTOR_STDOUT": json.dumps(valid_payload),
+        "FAKE_SSH_COLLECTOR_EXIT": "0",
+    })
+    assert result.returncode == 1
+    doc_d = _status_document(diag_dir)
+    assert doc_d["collectionStatus"] == "ok"
+    assert doc_d["collectorErrorCategory"] is None
+    assert (diag_dir / "diagnostics.json").exists()
+    assert (diag_dir / "SHA256SUMS").exists()

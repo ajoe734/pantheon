@@ -1311,7 +1311,18 @@ jobs:
           [[ -f "${diagnostics_script}" && ! -L "${diagnostics_script}" ]]
           collector="${GITHUB_WORKSPACE}/.agora-gate-controller/scripts/collect_dev_paper_diagnostics.py"
           [[ -f "${collector}" && ! -L "${collector}" ]]
-          diagnostic_dir="$(mktemp -d "${RUNNER_TEMP}/dev-paper-diagnostics-XXXXXX")"
+          diagnostic_dir="${RUNNER_TEMP}/dev-paper-diagnostics-${DEV_PAPER_RUN_ID}-${DEV_PAPER_ATTEMPT}"
+          mkdir -p "${diagnostic_dir}"
+          # Predeclare fixed run/attempt runner paths and initialize terminal
+          # evidence before guard invocation. A cancellation or lease loss that
+          # terminates the step mid-flight still leaves behind durable status on
+          # disk, and the upload step finds it via the fixed path without depending
+          # on outputs written only after the guarded command returns.
+          echo "diagnostic_dir=${diagnostic_dir}" >> "${GITHUB_OUTPUT}"
+          echo "diagnostics_file=${diagnostic_dir}/diagnostics.json" >> "${GITHUB_OUTPUT}"
+          echo "status_file=${diagnostic_dir}/collection-status.json" >> "${GITHUB_OUTPUT}"
+          echo "checksum_file=${diagnostic_dir}/SHA256SUMS" >> "${GITHUB_OUTPUT}"
+          python3 -c "import datetime as dt, json, sys; doc = {'schemaVersion': 1, 'collectionStatus': 'not_started', 'bootstrapExit': None, 'collectedAt': dt.datetime.now(dt.timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ'), 'collectorExit': None, 'collectorErrorCategory': None, 'collectorStderrSummary': None}; open(sys.argv[1], 'w', encoding='utf-8').write(json.dumps(doc, sort_keys=True) + '\n')" "${diagnostic_dir}/collection-status.json"
           baseline_status=0
           # Collection happens inside this same guarded child, before the
           # guard observes the failure and quarantines the lease/heartbeat.
@@ -1327,35 +1338,20 @@ jobs:
             DEV_PAPER_PHASE="${DEV_PAPER_PHASE}" \
             "${GITHUB_WORKSPACE}/.lease-controller/scripts/run_with_dev_environment_lease.sh" \
             "${diagnostics_script}" || baseline_status=$?
-          # Upload only this explicit safe-file allowlist, never the whole
-          # directory: the wrapper never writes raw/unbounded remote output
-          # here, but the artifact upload boundary must not rely on that
-          # alone. collection-status.json is written for every outcome
-          # (not_started/collecting/timeout/ok/...), so it is the durable
-          # terminal-evidence file even when diagnostics.json never appears.
-          if [[ -f "${diagnostic_dir}/diagnostics.json" ]]; then
-            echo "diagnostics_file=${diagnostic_dir}/diagnostics.json" >> "${GITHUB_OUTPUT}"
-          fi
-          if [[ -f "${diagnostic_dir}/collection-status.json" ]]; then
-            echo "status_file=${diagnostic_dir}/collection-status.json" >> "${GITHUB_OUTPUT}"
-          fi
-          if [[ -f "${diagnostic_dir}/SHA256SUMS" ]]; then
-            echo "checksum_file=${diagnostic_dir}/SHA256SUMS" >> "${GITHUB_OUTPUT}"
-          fi
           exit "${baseline_status}"
 
       - name: Upload dev paper failure diagnostics
         id: paper_bootstrap_diagnostics_upload
-        if: ${{ always() && (steps.paper_bootstrap.outputs.diagnostics_file != '' || steps.paper_bootstrap.outputs.status_file != '') }}
+        if: ${{ always() && steps.paper_bootstrap.conclusion != 'skipped' }}
         continue-on-error: true
         timeout-minutes: 2
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: pantheon-dev-paper-diagnostics-${{ github.run_id }}-${{ github.run_attempt }}
           path: |
-            ${{ steps.paper_bootstrap.outputs.diagnostics_file }}
-            ${{ steps.paper_bootstrap.outputs.status_file }}
-            ${{ steps.paper_bootstrap.outputs.checksum_file }}
+            ${{ runner.temp }}/dev-paper-diagnostics-${{ github.run_id }}-${{ github.run_attempt }}/diagnostics.json
+            ${{ runner.temp }}/dev-paper-diagnostics-${{ github.run_id }}-${{ github.run_attempt }}/collection-status.json
+            ${{ runner.temp }}/dev-paper-diagnostics-${{ github.run_id }}-${{ github.run_attempt }}/SHA256SUMS
           if-no-files-found: warn
           retention-days: 7
 
