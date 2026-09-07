@@ -1,0 +1,72 @@
+{
+  "task_id": "DEV502-CAPTURE-001",
+  "title": "Repair failure capture before lease quarantine without changing guard safety",
+  "owner": "Claude",
+  "reviewer": "Codex",
+  "scope": "SD.md D1-D2 only. D3 (failure-path integration tests), D4-D6 (hosted TRACE/RCA, product FIX, durable diagnostics) and step 5 belong to separate follow-on tasks (DEV502-FAILPATH-001, DEV502-TRACE-001, DEV502-FIX-001, DEV502-OBSERVE-001, DEV502-STOP-001). No hosted dispatch was performed by this task.",
+  "source_documents": {
+    "SA": "/home/chloe_ong_dev_cctech_support_com/code/pantheon-artifacts/dev-diagnostics-20260907/SA.md",
+    "SD": "/home/chloe_ong_dev_cctech_support_com/code/pantheon-artifacts/dev-diagnostics-20260907/SD.md",
+    "root_cause_and_repair_plan": "/home/chloe_ong_dev_cctech_support_com/code/pantheon-artifacts/dev-diagnostics-20260907/root-cause-and-repair-plan.md"
+  },
+  "root_cause": {
+    "summary": "The prior design ran failure diagnostics as a second, independent invocation of scripts/run_with_dev_environment_lease.sh (workflow step id paper_bootstrap_diagnostics) after the paper_bootstrap step had already failed. run_with_dev_environment_lease.sh's own EXIT trap (cleanup_command -> stop_heartbeat_for_quarantine) stops the lease heartbeat synchronously as soon as the first guarded command returns non-zero, so the second guard invocation always failed its own pre-flight heartbeat_is_healthy check with 'lease heartbeat is not healthy before command start', and the collector never ran.",
+    "hosted_evidence_run": "https://github.com/ajoe734/pantheon/actions/runs/34081262894",
+    "hosted_evidence_job": "https://github.com/ajoe734/pantheon/actions/runs/34081262894/job/101616831665",
+    "exact_source_lines": [
+      "scripts/run_with_dev_environment_lease.sh:211 (EXIT trap runs stop_heartbeat_for_quarantine)",
+      "scripts/run_with_dev_environment_lease.sh:336-340 (heartbeat_is_healthy pre-flight check)",
+      ".github/workflows/nonprod-deploy.yml (pre-fix): separate paper_bootstrap_diagnostics step reused the same lease/heartbeat state files as a second guard invocation"
+    ]
+  },
+  "fix_design": {
+    "d1_capture_inside_guarded_child": "The baseline bootstrap and the failure collector now run inside the same single guarded child (scripts/run_dev_paper_baseline_with_diagnostics.sh), invoked once by run_with_dev_environment_lease.sh from the paper_bootstrap workflow step. The script captures the baseline's original exit status without `set -e`, and only if it is non-zero does it invoke the collector over the same SSH session while the guard still owns the lease and heartbeat. It always exits with the original baseline status (never `|| true`, never overridden by collector success/failure), so the guard's normal failure recording and quarantine behavior is unchanged.",
+    "d1_pin_boundary": "run_with_dev_environment_lease.sh remains the immutable pinned guard binary from .lease-controller (commit 9e564718da8c39199a4c311f1a667b74226e3428, hash-checked); it was not modified. The new guarded script and the updated collector live under .agora-gate-controller (checked out at the moving dev tip), so this change takes effect on the next deploy run once merged, without moving the lease guard's trust pin.",
+    "d1_no_bypass": "No invalid-lease bypass, heartbeat restart, IAM change, or public endpoint was introduced. The lease-loss fallback capture described in SD D1 (best-effort read after a new lease is acquired by compensation) is out of scope for this task and was not implemented.",
+    "d2_collector_scope": "scripts/collect_dev_paper_diagnostics.py now includes the persona service in the fixed SERVICES tuple (matching the actual call path through _persona_record_for_provisioning), and adds an explicit project exception allowlist (PersonaWriteOwnerUnavailable, ProvisioningLeaseLost) alongside the existing generic *Error/*Exception and Postgres-specific matches. An arbitrary 'SomeType: <free text>' line is still never surfaced as an event.",
+    "d2_envelope_fields": "collect() now accepts and records run_id, attempt, phase, expected_fe_sha, and bootstrap_exit, and the result envelope carries top-level container_id/image_id/observed_source_sha (mirrored from the operator-bff row) plus a top-level collection_status ('ok' when every per-service collection_status is 'ok', otherwise 'partial'). Missing/timeout/truncated/identity-mismatch statuses are never rewritten as success.",
+    "d2_upload_independent_of_failed_step_output": "The workflow's upload step (paper_bootstrap_diagnostics_upload) now reads steps.paper_bootstrap.outputs.artifact_path directly. That output is written by the outer (ungated) portion of the paper_bootstrap step after the guard returns, based on whether the runner-local diagnostic directory actually contains collection-status.json or diagnostics.json -- not on the step's own reported outcome text. Collection or upload failure never changes steps.paper_bootstrap's outcome, so deploy_compensation's existing condition (steps.paper_bootstrap.outcome != 'success') is unaffected."
+  },
+  "artifacts_changed": [
+    ".github/workflows/nonprod-deploy.yml",
+    "scripts/collect_dev_paper_diagnostics.py",
+    "scripts/run_dev_paper_baseline_with_diagnostics.sh",
+    "scripts/test_collect_dev_paper_diagnostics.py"
+  ],
+  "overlap_and_scheduling": {
+    "dev_delivery_001": "DEV-DELIVERY-001 continues to hold the nonprod workflow/lease scope for FE release protocol; this task only touches the diagnostic-capture timing in nonprod-deploy.yml's dev paper baseline steps and does not modify the release/switch protocol. Both share the existing pantheon-dev exclusive resource and serialize through it.",
+    "pinned_guard_unchanged": "scripts/run_with_dev_environment_lease.sh was read but not modified; the pinned guard algorithm and its hash pin in nonprod-deploy.yml are untouched."
+  },
+  "verification": {
+    "note": "Focused unit/contract tests only. No hosted dispatch, no step 5, no live deploy run.",
+    "commands": [
+      "PANTHEON_DEPENDENCY_PYTHON=<main-checkout>/.venv/bin/python3 python3 scripts/dev/provision_python_distribution.py",
+      "$PANTHEON_PY -m pytest -q scripts/test_collect_dev_paper_diagnostics.py",
+      "$PANTHEON_PY -m pytest -q scripts/test_loop_prod_tel_002_hosted_workflow.py::test_nonprod_workflow_has_opt_in_read_only_canonical_lifecycle_probe",
+      "python3 -c \"import yaml; yaml.safe_load(open('.github/workflows/nonprod-deploy.yml'))\"",
+      "bash -n scripts/run_dev_paper_baseline_with_diagnostics.sh"
+    ],
+    "results": {
+      "scripts/test_collect_dev_paper_diagnostics.py": "6 passed",
+      "workflow_yaml_parse": "ok",
+      "shell_syntax_check": "ok",
+      "test_loop_prod_tel_002_hosted_workflow.py (regression fixed)": "1 passed",
+      "pre_existing_unrelated_failures_confirmed_not_caused_by_this_change": [
+        "scripts/test_agora_compat_manifest.py::test_write_manifest_consumes_both_handoffs_and_accepts_exact_pair",
+        "scripts/test_agora_workshop_restart_persistence_smoke.py::test_workflow_uses_internal_fresh_process_persistence_proof",
+        "scripts/test_agora_workshop_restart_persistence_smoke.py::test_workflow_log_and_inspect_probes_consume_complete_input_under_pipefail",
+        "scripts/test_probe_agora_hosted_service_journey.py::test_hosted_workflow_requires_exact_head_lease_and_recreated_instance",
+        "scripts/test_dev_project_cutover_contract.py::test_dev_workflow_targets_replacement_project_only",
+        "scripts/test_dev_project_cutover_contract.py::test_deploy_script_defaults_to_replacement_dev_vm",
+        "scripts/test_ppl_alloc_009_deploy_proof_gate.py::test_deploy_script_allows_only_clean_strict_dev_root_when_enabled"
+      ],
+      "pre_existing_failure_verification_method": "Ran the same failing tests against a pristine `git archive HEAD` copy (before this task's changes) in an isolated directory; all 7 already failed identically (environment-dependent: git-history-derived commit hashes and a missing REMOTE_USER var in this sandbox), confirming they are not regressions introduced by this task."
+    }
+  },
+  "not_implemented_in_this_task": [
+    "SD D3 executable failure-path subprocess tests against the real guard (DEV502-FAILPATH-001)",
+    "SD D1 lease-loss fallback best-effort capture after a new lease is acquired by compensation",
+    "SD D4-D6 hosted TRACE/RCA, product FIX, durable sanitized diagnostics",
+    "Step 5 full acceptance (explicitly on hold, DEV502-ACCEPTANCE-HOLD-001)"
+  ]
+}

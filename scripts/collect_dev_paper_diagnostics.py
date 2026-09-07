@@ -16,7 +16,7 @@ import selectors
 import subprocess
 import time
 
-SERVICES = ("operator-bff", "capital", "registry", "governance", "deployment", "postgres")
+SERVICES = ("operator-bff", "persona", "capital", "registry", "governance", "deployment", "postgres")
 MAX_BYTES = 256 * 1024
 COMMAND_SECONDS = 5
 SHA = re.compile(r"[0-9a-f]{40}")
@@ -25,9 +25,14 @@ FRAME = re.compile(
     r'File "(?:/workspace/|/usr/local/lib/python[0-9.]+/site-packages/)'
     r'([A-Za-z_0-9./-]{1,240}\.py)", line ([0-9]{1,7}), in (' + IDENTIFIER + r'|<module>)$'
 )
+# Explicit project exception allowlist. Only names listed here or ending in
+# Error/Exception (plus the fixed psycopg names below) are surfaced; an
+# arbitrary "Something: <request text>" line is never treated as an event.
+PROJECT_EXCEPTION_NAMES = ("PersonaWriteOwnerUnavailable", "ProvisioningLeaseLost")
 EXCEPTION = re.compile(
     r"(?:^|\s)((?:[A-Za-z_][A-Za-z_0-9]*\.)*"
     r"(?:[A-Za-z_][A-Za-z_0-9]*(?:Error|Exception)|"
+    + "|".join(re.escape(name) for name in PROJECT_EXCEPTION_NAMES) + r"|"
     r"UndefinedTable|UndefinedColumn|InsufficientPrivilege|UniqueViolation|"
     r"ForeignKeyViolation|NotNullViolation|SerializationFailure|DeadlockDetected)):\s*(.*)$"
 )
@@ -132,12 +137,18 @@ def container_state(container_id: str) -> dict:
     return result
 
 
-def collect(expected_sha: str) -> dict:
+def collect(expected_sha: str, *, run_id: str | None = None, attempt: str | None = None,
+            phase: str | None = None, expected_fe_sha: str | None = None,
+            bootstrap_exit: str | None = None) -> dict:
     if not SHA.fullmatch(expected_sha):
         raise ValueError("expected BFF SHA must be a full commit")
     result = {"schema_version": "pantheon.dev-paper-diagnostics.v1", "environment": "dev",
-              "expected_bff_sha": expected_sha, "collected_at": dt.datetime.now(dt.timezone.utc).isoformat(),
+              "run_id": run_id, "attempt": attempt, "phase": phase,
+              "expected_fe_sha": expected_fe_sha, "expected_bff_sha": expected_sha,
+              "bootstrap_exit": bootstrap_exit,
+              "collected_at": dt.datetime.now(dt.timezone.utc).isoformat(),
               "read_only": True, "raw_logs_included": False, "services": {}}
+    statuses = set()
     for service in SERVICES:
         row = {}
         result["services"][service] = row
@@ -148,21 +159,43 @@ def collect(expected_sha: str) -> dict:
             ids = raw.split()
             if status != "ok" or len(ids) != 1 or not re.fullmatch(r"[0-9a-f]{64}", ids[0]):
                 row["collection_status"] = status if status != "ok" else "container_missing_or_ambiguous"
+                statuses.add(row["collection_status"])
                 continue
             row.update(container_id=ids[0], state=container_state(ids[0]))
             if service == "operator-bff":
                 result["identity_matches"] = row["state"].get("source_sha") == expected_sha
+                result["container_id"] = ids[0]
+                result["image_id"] = row["state"].get("image_id")
+                result["observed_source_sha"] = row["state"].get("source_sha")
             raw, status = command(["docker", "logs", "--timestamps", "--since=15m", "--tail=240", ids[0]])
             row.update(collection_status=status, events=log_events(raw))
+            statuses.add(status)
         except Exception:
             # Even local Docker/JSON exceptions can embed raw output. Fail closed.
             row["collection_status"] = "collector_error"
+            statuses.add("collector_error")
     result.setdefault("identity_matches", False)
+    result.setdefault("container_id", None)
+    result.setdefault("image_id", None)
+    result.setdefault("observed_source_sha", None)
+    result["collection_status"] = "ok" if statuses <= {"ok"} else "partial"
     return result
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--expected-bff-sha", required=True)
+    parser.add_argument("--expected-fe-sha", default=None)
+    parser.add_argument("--run-id", default=None)
+    parser.add_argument("--attempt", default=None)
+    parser.add_argument("--phase", default=None)
+    parser.add_argument("--bootstrap-exit", default=None)
     args = parser.parse_args()
-    print(json.dumps(collect(args.expected_bff_sha), indent=2, sort_keys=True))
+    print(json.dumps(collect(
+        args.expected_bff_sha,
+        run_id=args.run_id,
+        attempt=args.attempt,
+        phase=args.phase,
+        expected_fe_sha=args.expected_fe_sha,
+        bootstrap_exit=args.bootstrap_exit,
+    ), indent=2, sort_keys=True))
