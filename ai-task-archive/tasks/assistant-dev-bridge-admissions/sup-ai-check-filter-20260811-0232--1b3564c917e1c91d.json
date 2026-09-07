@@ -1,0 +1,78 @@
+{
+  "actor": {
+    "capabilities": [
+      "integration",
+      "delivery-governance",
+      "acceptance"
+    ],
+    "id": "Human/Ops",
+    "roles": [
+      "operator",
+      "integration"
+    ]
+  },
+  "admission_record_path": "ai-task-archive/tasks/assistant-dev-bridge-admissions/sup-ai-check-filter-20260811-0232--1b3564c917e1c91d.json",
+  "admitted_at": "2026-08-11T02:36:39Z",
+  "audit_conversation_href": "task:SUPERVISOR-FLEET-THROUGHPUT-20260811",
+  "constraints": {
+    "allowedRepos": [
+      "pantheon"
+    ],
+    "noDirectShellFromWeb": true,
+    "requiresBranchPrMerge": true
+  },
+  "conversation_id": "SUPERVISOR-FLEET-THROUGHPUT-20260811",
+  "dispatch_records": [
+    {
+      "error": null,
+      "owner": "Antigravity2",
+      "reviewer": "Codex2",
+      "status": "dispatched",
+      "taskId": "SUP-AI-CHECK-FILTER-20260811"
+    }
+  ],
+  "documents": [],
+  "durable": true,
+  "emitted_at": "2026-08-11T02:31:21.885059Z",
+  "intent": "source_only_remediation_dispatch",
+  "mode": "supervisor_source_only",
+  "packet_digest": "1b3564c917e1c91d97ed4ba9cf5c551d995605e080c3140ad781d73c4c8d9dfb",
+  "packet_id": "sup-ai-check-filter-20260811-0232",
+  "packet_version": "pantheon.assistant.dev-task.v1",
+  "record_kind": "assistant_dev_bridge_admission",
+  "record_payload_sha256": "dd77e5daa8e94d2ab9ae0ad191ae679f2be0848defc2194f97e5d2a31f31783f",
+  "schema": "pantheon.assistant-dev-bridge-admission.v1",
+  "source_turn_ids": [
+    "auto-integrator-dry-run-4741-20260811",
+    "root-cause-remediation-execution-20260811"
+  ],
+  "tasks": [
+    {
+      "task_id": "SUP-AI-CHECK-FILTER-20260811",
+      "task_spec": {
+        "acceptance": [
+          "Reproduce the current dry-run for SUP-PROVIDER-REPORT-CALL-SIGNATURE-20260811 / PR #4741 and capture the exact classification input that incorrectly treats the explicitly non-required issuer audit as blocking.",
+          "Implement a data-driven required-versus-diagnostic status classifier in auto_integrator. A check may be ignored only when it is positively identified as non-required; missing, ambiguous, required, stale-head, review, trailer, or actual CI failures must continue to block fail closed.",
+          "Do not add a broad name-only ignore, direct gh merge bypass, branch-protection change, reviewer impersonation, or canonical task-state workaround.",
+          "Add focused regression tests for PR #4741-shaped diagnostic failure, required failure, ambiguous requiredness, failing trailer, canonical review gate, and exact-head drift; update the integrator contract.",
+          "Record exact-head evidence. Every new commit subject must be at most 72 characters with required trailers. Deliver through a clean branch, PR, independent exact-head review, required checks, and protected merge.",
+          "No live runtime promotion or manual merge is in scope; after merge, the supervisor-owned integrator must perform a fresh governed dry-run and merge attempt."
+        ],
+        "artifacts": [
+          "scripts/git/auto_integrator.py",
+          "scripts/git/test_auto_integrator.py",
+          "scripts/git/auto_integrator_contract.md",
+          "docs/deployment/evidence/supervisor/SUP-AI-CHECK-FILTER-20260811/"
+        ],
+        "depends_on": [],
+        "id": "SUP-AI-CHECK-FILTER-20260811",
+        "owner": "Antigravity2",
+        "phase": "Supervisor Delivery / Auto-integrator required-check classification",
+        "reviewer": "Codex2",
+        "summary": "The governed dry-run for PR #4741 fails only because auto_integrator treats the diagnostic check Audit signed canonical review (not required issuer) as a merge-blocking failure. Implement a narrow required-versus-diagnostic check classifier so an explicitly non-required status cannot block a protected merge, while every required, unknown-requiredness, stale-head, review-binding, trailer, or actual CI failure remains fail closed. Source-only; do not direct-merge #4741 or change branch protection.",
+        "title": "Classify optional PR diagnostics without blocking merges"
+      },
+      "task_spec_hash": "a0fcdb8b1508bb4c496bdadfc6f6092f6bea68ea685bb961c0965b28f74b9e60"
+    }
+  ]
+}

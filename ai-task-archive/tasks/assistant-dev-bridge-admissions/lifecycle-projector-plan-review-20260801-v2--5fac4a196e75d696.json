@@ -1,0 +1,85 @@
+{
+  "actor": {
+    "capabilities": [
+      "assistant.kernel.repair",
+      "assistant.dev-task.dispatch",
+      "fleet.dispatch"
+    ],
+    "id": "Human/Ops",
+    "roles": [
+      "operator"
+    ]
+  },
+  "admission_record_path": "ai-task-archive/tasks/assistant-dev-bridge-admissions/lifecycle-projector-plan-review-20260801-v2--5fac4a196e75d696.json",
+  "admitted_at": "2026-08-01T09:37:41Z",
+  "audit_conversation_href": "https://github.com/ajoe734/pantheon/pull/4449",
+  "constraints": {
+    "allowedRepos": [
+      "pantheon"
+    ],
+    "noDirectShellFromWeb": true,
+    "requiresBranchPrMerge": true
+  },
+  "conversation_id": "codex-lifecycle-projector-incident-20260801",
+  "dispatch_records": [
+    {
+      "error": null,
+      "owner": "Antigravity",
+      "reviewer": "Human/Ops",
+      "status": "dispatched",
+      "taskId": "LIFECYCLE-PROJ-PLAN-REVIEW-R2-20260801"
+    }
+  ],
+  "documents": [
+    {
+      "kind": "SA_SD_PLAN",
+      "path": "docs/04/pantheon_lifecycle_projector_incremental_redesign_2026-08-01/archive/LIFECYCLE_PROJECTOR_INCREMENTAL_REDESIGN_PLAN_2026-08-01.md",
+      "sourceRefs": [
+        "https://github.com/ajoe734/pantheon/pull/4449",
+        "8d75a3bc2ca9389eec56c12e6f94725326c1f575"
+      ]
+    }
+  ],
+  "durable": true,
+  "emitted_at": "2026-08-01T09:37:19.263588+00:00",
+  "intent": "review_plan_after_metadata_only_task_id_trailer_correction",
+  "mode": "kernel_repair",
+  "packet_digest": "5fac4a196e75d6960572335248f977116e47f78575ef452537daa4e9cc78737c",
+  "packet_id": "lifecycle-projector-plan-review-20260801-v2",
+  "packet_version": "pantheon.assistant.dev-task.v1",
+  "record_kind": "assistant_dev_bridge_admission",
+  "record_payload_sha256": "3d0bdca5bd68ec03ee8b86f8fd1a803723e040fb40dc5dbc40485cd8f0932bcb",
+  "schema": "pantheon.assistant-dev-bridge-admission.v1",
+  "source_turn_ids": [
+    "plan-pr-4449",
+    "commit-trailer-ci-correction"
+  ],
+  "tasks": [
+    {
+      "task_id": "LIFECYCLE-PROJ-PLAN-REVIEW-R2-20260801",
+      "task_spec": {
+        "acceptance": [
+          "Treat LIFECYCLE-PROJ-PLAN-REVIEW-20260801 as stale-head/superseded and do not approve or merge its pinned commit.",
+          "Resolve the current PR #4449 head after the metadata-only Task-ID trailer amendment and confirm its tree is identical to source tree 8d75a3bc2ca9389eec56c12e6f94725326c1f575.",
+          "Review the current PR #4449 head independently; Codex and Codex2 are the same identity and are ineligible reviewers.",
+          "Confirm the design and seven tasks cover the complete objective, evidence, scopes, dependencies, acceptance, validation, rollout, rollback, security, and non-goals described in the packet.",
+          "Validate JSON, DevTaskPacket schema, CI, and no authorization for production, live capital, source deletion, supervisor redesign, or pre-approval legacy deletion.",
+          "If accepted, approve and merge the current PR #4449 head to dev, record the merge SHA, and leave implementation dispatch to the post-merge seven-task packet."
+        ],
+        "artifacts": [
+          "docs/04/pantheon_lifecycle_projector_incremental_redesign_2026-08-01/",
+          "docs/bff/execution-tasks/2026-08-01-lifecycle-projector-incremental-redesign/",
+          "docs/deployment/evidence/lifecycle-projector/LIFECYCLE-PROJ-INCIDENT-20260801/"
+        ],
+        "depends_on": [],
+        "id": "LIFECYCLE-PROJ-PLAN-REVIEW-R2-20260801",
+        "owner": "Antigravity",
+        "phase": "design-review-r2",
+        "reviewer": "Human/Ops",
+        "summary": "Replacement review authority necessitated only by the CI-required Task-ID trailer. The document tree must remain identical to the prior source commit.",
+        "title": "Review lifecycle projector plan after trailer-only correction"
+      },
+      "task_spec_hash": "1a35c0f34385174f547ceb81cbbb04213cdb8fa28db4fe9c4cffdb79906e040e"
+    }
+  ]
+}

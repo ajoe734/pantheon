@@ -1,0 +1,88 @@
+{
+  "actor": {
+    "capabilities": [
+      "integration",
+      "supervisor-runtime",
+      "acceptance"
+    ],
+    "id": "Human/Ops",
+    "roles": [
+      "operator"
+    ]
+  },
+  "admission_record_path": "ai-task-archive/tasks/assistant-dev-bridge-admissions/pkt-sup-poll-worker-worktree-failopen-20260809T1444Z--bb96bd39ff117fa1.json",
+  "admitted_at": "2026-08-09T14:43:54Z",
+  "audit_conversation_href": "task:SUP-RUNTIME-V10-GOVERNED-ROLLOUT-VERIFY-20260808",
+  "constraints": {
+    "allowedRepos": [
+      "pantheon"
+    ],
+    "noDirectShellFromWeb": true,
+    "requiresBranchPrMerge": true
+  },
+  "conversation_id": "ops-runtime-retry-recovery-20260809",
+  "dispatch_records": [
+    {
+      "error": null,
+      "owner": "Codex",
+      "reviewer": "Antigravity2",
+      "status": "dispatched",
+      "taskId": "SUP-POLL-WORKER-WORKTREE-FAILOPEN-20260809"
+    }
+  ],
+  "documents": [
+    {
+      "kind": "LIVE_RUNTIME_EVIDENCE",
+      "path": "ai-activity-log.jsonl",
+      "sourceRefs": [
+        "temporary_live_repair_stale_chair_worker_released",
+        "worker:codex-20260809T123839Z-ddc8ad73",
+        "workspace:/tmp/pantheon-worker-worktrees/pantheon/chair-review-20260809-123821-codex",
+        "supervisor-log:poll_workers_pre_dispatch_reserved FileNotFoundError"
+      ]
+    }
+  ],
+  "durable": true,
+  "emitted_at": "2026-08-09T14:43:31Z",
+  "intent": "source_only_runtime_recovery_dispatch",
+  "mode": "supervisor_source_only",
+  "packet_digest": "bb96bd39ff117fa1fd2d4b66027d50093695ba7d7b7d40f44f72fb43dd65ae43",
+  "packet_id": "pkt-sup-poll-worker-worktree-failopen-20260809T1444Z",
+  "packet_version": "pantheon.assistant.dev-task.v1",
+  "record_kind": "assistant_dev_bridge_admission",
+  "record_payload_sha256": "4fc836b5161625493d3ac77b8ba46f76548331aea5b539df8949f69d9d1b5eb5",
+  "schema": "pantheon.assistant-dev-bridge-admission.v1",
+  "source_turn_ids": [
+    "operator-authorization:2026-08-09",
+    "audit:temporary_live_repair_stale_chair_worker_released:codex-20260809T123839Z-ddc8ad73",
+    "audit:poll_workers_missing_workspace_phase_abort"
+  ],
+  "tasks": [
+    {
+      "task_id": "SUP-POLL-WORKER-WORKTREE-FAILOPEN-20260809",
+      "task_spec": {
+        "acceptance": [
+          "Reproduce the live shape: a taskless chair-review worker is retry_backoff, has no live PID, and references a missing worktree; its observation, commit-progress, cleanup, and lifecycle paths must not raise FileNotFoundError out of poll_workers.",
+          "A per-worker missing or unreadable workspace must be handled fail-closed for that worker with an auditable worker-scoped terminal or recoverable outcome, while poll_workers continues to evaluate unrelated workers and due retry delivery in the same phase.",
+          "Preserve live-worker identity, lease, task-governance, queue, provider-pause, retry-budget, and worktree safety guards; do not merely catch all exceptions or silently delete active state.",
+          "Add focused regressions covering missing taskless chair workspace, missing completed-task workspace, and an unrelated due retry proving poll continuation; preserve existing valid workspace behavior.",
+          "Commit pre-review evidence bound to the exact head: changed paths, focused and relevant supervisor tests, full required supervisor suite, git diff --check, rollout boundary, and rollback by normal merge revert.",
+          "Use a clean task branch and protected PR to dev, fresh independent Antigravity2 exact-head review, required checks, and merge. This source task must not edit live runtime state, queue files, canonical task state, provider configuration, account grouping, scheduler policy, or services."
+        ],
+        "artifacts": [
+          ".orchestrator/supervisor.py",
+          ".orchestrator/test_supervisor.py",
+          "docs/deployment/evidence/supervisor/SUP-POLL-WORKER-WORKTREE-FAILOPEN-20260809/"
+        ],
+        "depends_on": [],
+        "id": "SUP-POLL-WORKER-WORKTREE-FAILOPEN-20260809",
+        "owner": "Codex",
+        "phase": "Supervisor Runtime / Poll Worker Failure Isolation",
+        "reviewer": "Antigravity2",
+        "summary": "Restore fleet progress without manual cleanup: a missing workspace for one taskless, dead chair-review worker must not abort the entire reserved poll phase or strand unrelated due retries. Deliver a narrowly scoped source fix and evidence through the normal protected PR flow.",
+        "title": "Isolate missing worker worktree poll failures"
+      },
+      "task_spec_hash": "637e1e8f74f25d24b402979d87fccdb41ec9a6415f6c13cff49cafb92f1311a7"
+    }
+  ]
+}

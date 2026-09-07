@@ -1,0 +1,624 @@
+{
+  "actor": {
+    "capabilities": [
+      "dev-task.dispatch",
+      "fleet.dispatch"
+    ],
+    "id": "Codex",
+    "roles": [
+      "coordination-agent"
+    ]
+  },
+  "admission_record_path": "ai-task-archive/tasks/assistant-dev-bridge-admissions/pkt-l12-minimum-functional-a-20260808-f56e2bc91--5cdd77b6a6d30f29.json",
+  "admitted_at": "2026-08-08T14:46:54Z",
+  "audit_conversation_href": null,
+  "constraints": {
+    "allowedRepos": [
+      "pantheon"
+    ],
+    "minimumFunctionalScopeOnly": true,
+    "noDirectShellFromWeb": true,
+    "noOrchestratorConfigEdits": true,
+    "requiresBranchPrMerge": true,
+    "supervisorOnlyDispatcher": true
+  },
+  "conversation_id": "codex-root-l12-minimum-functional-closure-20260808",
+  "dispatch_records": [
+    {
+      "error": null,
+      "owner": "Antigravity",
+      "reviewer": "Claude",
+      "status": "dispatched",
+      "taskId": "SUP-L12-MIN-FUNCTION-DAG-RECONCILE-20260808"
+    },
+    {
+      "error": null,
+      "owner": "Claude",
+      "reviewer": "Antigravity",
+      "status": "dispatched",
+      "taskId": "L12-MIN-SRC-20260808"
+    },
+    {
+      "error": null,
+      "owner": "Antigravity",
+      "reviewer": "Claude",
+      "status": "dispatched",
+      "taskId": "L12-MIN-DIST-20260808"
+    },
+    {
+      "error": null,
+      "owner": "Claude",
+      "reviewer": "Antigravity",
+      "status": "dispatched",
+      "taskId": "L12-MIN-ALPHA-20260808"
+    },
+    {
+      "error": null,
+      "owner": "Antigravity",
+      "reviewer": "Claude",
+      "status": "dispatched",
+      "taskId": "L12-MIN-TEACH-20260808"
+    },
+    {
+      "error": null,
+      "owner": "Claude",
+      "reviewer": "Antigravity",
+      "status": "dispatched",
+      "taskId": "L12-MIN-AGORA-20260808"
+    },
+    {
+      "error": null,
+      "owner": "Antigravity",
+      "reviewer": "Claude",
+      "status": "dispatched",
+      "taskId": "L12-MIN-IMIT-20260808"
+    },
+    {
+      "error": null,
+      "owner": "Claude",
+      "reviewer": "Antigravity",
+      "status": "dispatched",
+      "taskId": "L12-MIN-CONS-20260808"
+    },
+    {
+      "error": null,
+      "owner": "Antigravity",
+      "reviewer": "Claude",
+      "status": "dispatched",
+      "taskId": "L12-MIN-DEP-20260808"
+    },
+    {
+      "error": null,
+      "owner": "Claude",
+      "reviewer": "Antigravity",
+      "status": "dispatched",
+      "taskId": "L12-MIN-CAP-20260808"
+    },
+    {
+      "error": null,
+      "owner": "Antigravity",
+      "reviewer": "Claude",
+      "status": "dispatched",
+      "taskId": "L12-MIN-TELREC-20260808"
+    },
+    {
+      "error": null,
+      "owner": "Claude",
+      "reviewer": "Antigravity",
+      "status": "dispatched",
+      "taskId": "L12-MIN-EVO-20260808"
+    },
+    {
+      "error": null,
+      "owner": "Antigravity",
+      "reviewer": "Claude",
+      "status": "dispatched",
+      "taskId": "L12-MIN-BFF-20260808"
+    },
+    {
+      "error": null,
+      "owner": "Claude",
+      "reviewer": "Antigravity",
+      "status": "dispatched",
+      "taskId": "L12-MIN-INTEGRATE-20260808"
+    },
+    {
+      "error": null,
+      "owner": "Antigravity",
+      "reviewer": "Claude",
+      "status": "dispatched",
+      "taskId": "L12-MIN-E2E-20260808"
+    }
+  ],
+  "documents": [
+    {
+      "kind": "MINIMUM_FUNCTIONAL_GAP_DESIGN",
+      "path": "docs/bff/execution-tasks/2026-08-08-l12-minimum-functional-closure/INDEX.md",
+      "sourceRefs": [
+        "https://github.com/ajoe734/pantheon/pull/4621",
+        "f56e2bc91",
+        "a55721bce2a7bc0a4dc01dd6eba1b48a58b78312"
+      ]
+    },
+    {
+      "kind": "EXECUTION_TASK_DAG",
+      "path": "docs/bff/execution-tasks/2026-08-08-l12-minimum-functional-closure/execution-tasks.json",
+      "sourceRefs": [
+        "packet_a",
+        "pantheon-twelve-loop-minimum-functional-closure-2026-08-08"
+      ]
+    },
+    {
+      "kind": "LEGACY_DAG_RECONCILIATION",
+      "path": "docs/bff/execution-tasks/2026-08-08-l12-minimum-functional-closure/legacy-28-reconciliation.json",
+      "sourceRefs": [
+        "28-old-ids-zero-materialized-at-snapshot"
+      ]
+    }
+  ],
+  "durable": true,
+  "emitted_at": "2026-08-08T09:23:00Z",
+  "intent": "generate_sa_sd_and_dispatch",
+  "mode": "kernel_repair",
+  "packet_digest": "5cdd77b6a6d30f29be21fde8d9bcf3d0c4b1dcda7b1b95f2ddf04e540e2be5b9",
+  "packet_id": "pkt-l12-minimum-functional-a-20260808-f56e2bc91",
+  "packet_version": "pantheon.assistant.dev-task.v1",
+  "record_kind": "assistant_dev_bridge_admission",
+  "record_payload_sha256": "3a8e991bbbb7b994071e6d4e29b1b0ce1e8816f229dd34fb4c3edf4e2e7a68c6",
+  "schema": "pantheon.assistant-dev-bridge-admission.v1",
+  "source_turn_ids": [
+    "user-explicit-l12-minimum-functional-closure-dispatch-20260808"
+  ],
+  "tasks": [
+    {
+      "task_id": "SUP-L12-MIN-FUNCTION-DAG-RECONCILE-20260808",
+      "task_spec": {
+        "acceptance": [
+          "Verify all 28 old catalog IDs remain absent from active tasks, successful archive, open PRs, branches, and worktrees at admission time.",
+          "Record that the new task IDs supersede the old unmaterialized catalog for the minimum functional milestone; do not edit the old catalog or canonical state by hand.",
+          "Confirm the two signed packets, receipt paths, task hashes, dependency graph, and declared scopes match execution-tasks.json.",
+          "Do not edit .orchestrator/config.json and do not implement product code."
+        ],
+        "artifacts": [
+          "docs/bff/execution-tasks/2026-08-08-l12-minimum-functional-closure/"
+        ],
+        "depends_on": [],
+        "id": "SUP-L12-MIN-FUNCTION-DAG-RECONCILE-20260808",
+        "owner": "Antigravity",
+        "phase": "M0 plan reconciliation",
+        "reviewer": "Claude",
+        "summary": null,
+        "title": "Admit the minimum functional L12 successor without dispatching the old 28-task DAG"
+      },
+      "task_spec_hash": "8f8409756482761d618efd03eaff82cb08bee5de2aecbd31fc40cd6fee4ddc20"
+    },
+    {
+      "task_id": "L12-MIN-SRC-20260808",
+      "task_spec": {
+        "acceptance": [
+          "Fix the current readiness/worker blockage so one scheduled or manual tick completes.",
+          "Persist one real SourceRecord and expose its identifier through actual-state readback.",
+          "Prove Strategy Distillation can read that SourceRecord.",
+          "Do not edit shared catalog, Compose, BFF binding, security, or orchestration files."
+        ],
+        "artifacts": [
+          "services/source_ingestion/main.py",
+          "services/source_ingestion/controller_worker.py",
+          "services/source_ingestion/scheduler_worker.py",
+          "services/source_ingestion/tests/test_controller_worker.py",
+          "services/source_ingestion/tests/test_scheduler_worker.py",
+          "docs/deployment/evidence/twelve-loop-gap/L12-MIN-SRC-20260808/"
+        ],
+        "depends_on": [
+          "SUP-L12-MIN-FUNCTION-DAG-RECONCILE-20260808"
+        ],
+        "id": "L12-MIN-SRC-20260808",
+        "owner": "Claude",
+        "phase": "M1 loop closure",
+        "reviewer": "Antigravity",
+        "summary": null,
+        "title": "Run Source Ingestion from one tick to SourceRecord readback"
+      },
+      "task_spec_hash": "b26a0b546d674baba3f6f64df7994e87d7d67529cdbb3f1074e4d4e750609d51"
+    },
+    {
+      "task_id": "L12-MIN-DIST-20260808",
+      "task_spec": {
+        "acceptance": [
+          "Consume the SourceRecord produced by L12-MIN-SRC-20260808.",
+          "Persist one terminal StrategySpec draft and expose job and terminal readback.",
+          "Prove Alpha Replication discovery can read the resulting strategy identifier.",
+          "Do not edit shared integration or security files."
+        ],
+        "artifacts": [
+          "services/source_ingestion/distillation_controller.py",
+          "services/source_ingestion/distillation_worker.py",
+          "services/source_ingestion/tests/test_distillation_controller.py",
+          "services/source_ingestion/tests/test_distillation_worker.py",
+          "docs/deployment/evidence/twelve-loop-gap/L12-MIN-DIST-20260808/"
+        ],
+        "depends_on": [
+          "SUP-L12-MIN-FUNCTION-DAG-RECONCILE-20260808",
+          "L12-MIN-SRC-20260808"
+        ],
+        "id": "L12-MIN-DIST-20260808",
+        "owner": "Antigravity",
+        "phase": "M1 loop closure",
+        "reviewer": "Claude",
+        "summary": null,
+        "title": "Run Strategy Distillation from SourceRecord to terminal StrategySpec draft"
+      },
+      "task_spec_hash": "0fc45c3494b33c30fd6bd185f79a4ed2a73edf56075675eaf61c20e28a3493bf"
+    },
+    {
+      "task_id": "L12-MIN-ALPHA-20260808",
+      "task_spec": {
+        "acceptance": [
+          "Consume one approved strategy descended from the Distillation output.",
+          "Complete one replication/revalidation run and persist a terminal result.",
+          "Make the terminal experiment identifier readable by the next research/teaching surface.",
+          "Fix the currently non-terminating focused controller proof if it reproduces; do not add broad hardening."
+        ],
+        "artifacts": [
+          "services/research/alpha_replication/replication_controller.py",
+          "services/research/alpha_replication/revalidation_worker.py",
+          "services/research/alpha_replication/test_replication_controller.py",
+          "services/research/alpha_replication/test_revalidation_worker.py",
+          "docs/deployment/evidence/twelve-loop-gap/L12-MIN-ALPHA-20260808/"
+        ],
+        "depends_on": [
+          "SUP-L12-MIN-FUNCTION-DAG-RECONCILE-20260808",
+          "L12-MIN-DIST-20260808"
+        ],
+        "id": "L12-MIN-ALPHA-20260808",
+        "owner": "Claude",
+        "phase": "M1 loop closure",
+        "reviewer": "Antigravity",
+        "summary": null,
+        "title": "Run Alpha Replication from approved strategy to terminal experiment result"
+      },
+      "task_spec_hash": "dc901b0015456336d37e158758dfe8b5b11af108d1dd72041c915ae0aa79c379"
+    },
+    {
+      "task_id": "L12-MIN-TEACH-20260808",
+      "task_spec": {
+        "acceptance": [
+          "Reuse the existing preview/evaluation worker rather than build a second controller.",
+          "Run one teaching command to a persisted terminal teaching/evaluation session.",
+          "Expose the terminal session identifier for the Learning verifier.",
+          "Do not edit shared catalog or Compose in this task."
+        ],
+        "artifacts": [
+          "services/training-session/main.py",
+          "services/training-session/preview_eval_worker.py",
+          "services/training-session/tests/test_preview_eval_worker.py",
+          "docs/deployment/evidence/twelve-loop-gap/L12-MIN-TEACH-20260808/"
+        ],
+        "depends_on": [
+          "SUP-L12-MIN-FUNCTION-DAG-RECONCILE-20260808"
+        ],
+        "id": "L12-MIN-TEACH-20260808",
+        "owner": "Antigravity",
+        "phase": "M1 loop closure",
+        "reviewer": "Claude",
+        "summary": null,
+        "title": "Register and run the existing Teaching worker to a terminal session"
+      },
+      "task_spec_hash": "5e0a446d74d22c36f819701f57325e2991118ad6ccba6d5d38ce80e3731fe026"
+    },
+    {
+      "task_id": "L12-MIN-AGORA-20260808",
+      "task_spec": {
+        "acceptance": [
+          "Implement the minimum worker/controller in the real Agora implementation path, not the schema-only specs directory.",
+          "Consume one interaction or journal event and persist one evidence/dataset handoff.",
+          "Prove the Imitation loop can read the produced dataset identifier.",
+          "Do not add unrelated BFF, security, or frontend work."
+        ],
+        "artifacts": [
+          "services/control-plane/bff/agora/dataset_extraction/",
+          "services/control-plane/bff/agora/router.py",
+          "services/control-plane/bff/tests/test_agora_persona_interactions.py",
+          "docs/deployment/evidence/twelve-loop-gap/L12-MIN-AGORA-20260808/"
+        ],
+        "depends_on": [
+          "SUP-L12-MIN-FUNCTION-DAG-RECONCILE-20260808",
+          "LIFECYCLE-PROJ-BFF-001",
+          "LIFECYCLE-PROJ-RETIRE-001"
+        ],
+        "id": "L12-MIN-AGORA-20260808",
+        "owner": "Claude",
+        "phase": "M1 loop closure",
+        "reviewer": "Antigravity",
+        "summary": null,
+        "title": "Run one Agora interaction into persisted evidence and dataset handoff"
+      },
+      "task_spec_hash": "e5395117a42a170326d081eb2425ade016101ff8d6fcbb2ffb68ac0268d4afe3"
+    },
+    {
+      "task_id": "L12-MIN-IMIT-20260808",
+      "task_spec": {
+        "acceptance": [
+          "Reuse the existing scheduler and consume the Agora dataset handoff.",
+          "Complete one shadow evaluation and persist a terminal candidate.",
+          "Expose the candidate identifier to the Learning verifier without sending it to live execution.",
+          "Do not edit shared catalog or Compose in this task."
+        ],
+        "artifacts": [
+          "services/policy-learning/main.py",
+          "services/policy-learning/scheduler_worker.py",
+          "services/policy-learning/tests/test_policy_learning_shadow_eval_scheduler.py",
+          "docs/deployment/evidence/twelve-loop-gap/L12-MIN-IMIT-20260808/"
+        ],
+        "depends_on": [
+          "SUP-L12-MIN-FUNCTION-DAG-RECONCILE-20260808",
+          "L12-MIN-AGORA-20260808"
+        ],
+        "id": "L12-MIN-IMIT-20260808",
+        "owner": "Antigravity",
+        "phase": "M1 loop closure",
+        "reviewer": "Claude",
+        "summary": null,
+        "title": "Register and run one shadow-evaluation dataset to a terminal candidate"
+      },
+      "task_spec_hash": "7819c46f9aa1917f7fd10811a744995eb94746045fa1ce3a2d7f5cf28e096670"
+    },
+    {
+      "task_id": "L12-MIN-CONS-20260808",
+      "task_spec": {
+        "acceptance": [
+          "Reuse the existing consultation reconciler.",
+          "Run one ConsultRequest to a persisted terminal ConsultMemo or outcome.",
+          "Expose the terminal identifier for Promotion/Deployment input.",
+          "Do not add broad governance or security work."
+        ],
+        "artifacts": [
+          "services/consultation/supervisor.py",
+          "services/consultation/workflow_executor.py",
+          "services/consultation/test_workflow_executor.py",
+          "docs/deployment/evidence/twelve-loop-gap/L12-MIN-CONS-20260808/"
+        ],
+        "depends_on": [
+          "SUP-L12-MIN-FUNCTION-DAG-RECONCILE-20260808"
+        ],
+        "id": "L12-MIN-CONS-20260808",
+        "owner": "Claude",
+        "phase": "M1 loop closure",
+        "reviewer": "Antigravity",
+        "summary": null,
+        "title": "Register and run one consultation request to a terminal memo"
+      },
+      "task_spec_hash": "2dd5858d64fe44e3716cbb2b5a1fd17d7d50264072cd01daeddd5cc20fac0a04"
+    },
+    {
+      "task_id": "L12-MIN-DEP-20260808",
+      "task_spec": {
+        "acceptance": [
+          "Submit one approved paper deployment command through the existing outbox consumer.",
+          "Persist a terminal DeploymentPlan and one valid RuntimeBinding.",
+          "Prove Capital can read the binding and remove the current missing-plan inconsistency.",
+          "Do not implement live deployment or unrelated governance hardening."
+        ],
+        "artifacts": [
+          "services/deployment/outbox_consumer_worker.py",
+          "services/deployment/runtime_manager_dispatch_adapter.py",
+          "services/deployment/service.py",
+          "services/deployment/test_l12_dep_001_dispatcher.py",
+          "services/deployment/test_outbox_consumer_worker.py",
+          "services/runtime-manager/deploy_authority.py",
+          "services/runtime-manager/test_deploy_authority.py",
+          "docs/deployment/evidence/twelve-loop-gap/L12-MIN-DEP-20260808/"
+        ],
+        "depends_on": [
+          "SUP-L12-MIN-FUNCTION-DAG-RECONCILE-20260808",
+          "L12-MIN-CONS-20260808"
+        ],
+        "id": "L12-MIN-DEP-20260808",
+        "owner": "Antigravity",
+        "phase": "M1 loop closure",
+        "reviewer": "Claude",
+        "summary": null,
+        "title": "Run one approved paper deployment command to RuntimeBinding"
+      },
+      "task_spec_hash": "4c95f3a4f50f92b75a65802389447049f9bbdbb00238bd39045fbd909152f61b"
+    },
+    {
+      "task_id": "L12-MIN-CAP-20260808",
+      "task_spec": {
+        "acceptance": [
+          "Start the paper fleet reconciler for the RuntimeBinding produced by Deployment.",
+          "Consume one paper signal and persist paper order, fill, and position readback.",
+          "Fix the duplicate-signal loss reproduced by the current Runtime verifier.",
+          "Emit one runtime event for Telemetry; do not enable live capital."
+        ],
+        "artifacts": [
+          "services/execution/runtime-manager/paper_fleet_reconciler.py",
+          "services/execution/runtime-manager/test_paper_fleet_reconciler.py",
+          "services/execution/lean_runtime/paper_runtime.py",
+          "services/execution/lean_runtime/signal_consumer.py",
+          "services/execution/lean_runtime/test_signal_consumer.py",
+          "services/runtime-manager/fleet_desired_state.py",
+          "services/runtime-manager/test_fleet_desired_state.py",
+          "docs/deployment/evidence/twelve-loop-gap/L12-MIN-CAP-20260808/"
+        ],
+        "depends_on": [
+          "SUP-L12-MIN-FUNCTION-DAG-RECONCILE-20260808",
+          "L12-MIN-DEP-20260808"
+        ],
+        "id": "L12-MIN-CAP-20260808",
+        "owner": "Claude",
+        "phase": "M1 loop closure",
+        "reviewer": "Antigravity",
+        "summary": null,
+        "title": "Run one paper RuntimeBinding through fleet execution to order, fill, and position"
+      },
+      "task_spec_hash": "1bf02b5538fa2c9a95d653b9717d1e241cdaab620e2e02bf63f174fee8583a96"
+    },
+    {
+      "task_id": "L12-MIN-TELREC-20260808",
+      "task_spec": {
+        "acceptance": [
+          "Consume the Capital runtime event through the existing telemetry ingest.",
+          "Run reconciliation and persist one terminal DriftReport or IncidentCase.",
+          "Expose the terminal incident identifier for Evolution input.",
+          "Do not add unrelated incident service or infrastructure hardening."
+        ],
+        "artifacts": [
+          "services/telemetry/main.py",
+          "services/telemetry/test_l12_tel_001_durable_ingest.py",
+          "services/reconciliation-drift/consumer.py",
+          "services/reconciliation-drift/scheduler_worker.py",
+          "services/reconciliation-drift/incident_listener.py",
+          "services/reconciliation-drift/tests/test_reconciliation_drift_consumer.py",
+          "services/reconciliation-drift/tests/test_reconciliation_drift_incident_listener.py",
+          "docs/deployment/evidence/twelve-loop-gap/L12-MIN-TELREC-20260808/"
+        ],
+        "depends_on": [
+          "SUP-L12-MIN-FUNCTION-DAG-RECONCILE-20260808",
+          "L12-MIN-CAP-20260808"
+        ],
+        "id": "L12-MIN-TELREC-20260808",
+        "owner": "Antigravity",
+        "phase": "M1 loop closure",
+        "reviewer": "Claude",
+        "summary": null,
+        "title": "Run one runtime event through telemetry and reconciliation to a terminal incident"
+      },
+      "task_spec_hash": "72d73bbdacfee280b15c66c2a25f1b1a08a4901b67b9db91612a2b7a32ebf529"
+    },
+    {
+      "task_id": "L12-MIN-EVO-20260808",
+      "task_spec": {
+        "acceptance": [
+          "Consume the IncidentCase produced by Telemetry/Reconciliation.",
+          "Persist one terminal EvolutionDecision and one downstream dispatch receipt.",
+          "Expose both identifiers to BFF/operator readback.",
+          "Do not redesign evolution governance or add broad resilience work."
+        ],
+        "artifacts": [
+          "services/evolution/postmortem_bridge.py",
+          "services/evolution/scheduler_worker.py",
+          "services/evolution/threshold_sweep_worker.py",
+          "services/evolution/dispatch_worker.py",
+          "services/evolution/test_l12_evo_001_downstream_integration.py",
+          "services/postmortems/consumer.py",
+          "services/control-plane/governance/evolution_controller.py",
+          "services/control-plane/governance/test_evolution_controller.py",
+          "docs/deployment/evidence/twelve-loop-gap/L12-MIN-EVO-20260808/"
+        ],
+        "depends_on": [
+          "SUP-L12-MIN-FUNCTION-DAG-RECONCILE-20260808",
+          "L12-MIN-TELREC-20260808"
+        ],
+        "id": "L12-MIN-EVO-20260808",
+        "owner": "Claude",
+        "phase": "M1 loop closure",
+        "reviewer": "Antigravity",
+        "summary": null,
+        "title": "Run one eligible incident through EvolutionDecision to downstream receipt"
+      },
+      "task_spec_hash": "b19c8d7df53bc276b06a85f7a0a261077f3cf7b8f0430f47653fc48276b86fcd"
+    },
+    {
+      "task_id": "L12-MIN-BFF-20260808",
+      "task_spec": {
+        "acceptance": [
+          "Reuse the existing downstream health monitor and observe one dependency state change.",
+          "Persist one health event into Telemetry and expose current BFF status.",
+          "Prove the operator health readback references that event.",
+          "Do not edit lifecycle projector files or add security work."
+        ],
+        "artifacts": [
+          "services/control-plane/bff/downstream_health_monitor.py",
+          "services/control-plane/bff/test_bff_downstream_health_monitor.py",
+          "services/telemetry/test_infrastructure_health_ingest.py",
+          "docs/deployment/evidence/twelve-loop-gap/L12-MIN-BFF-20260808/"
+        ],
+        "depends_on": [
+          "SUP-L12-MIN-FUNCTION-DAG-RECONCILE-20260808",
+          "LIFECYCLE-PROJ-BFF-001",
+          "LIFECYCLE-PROJ-RETIRE-001"
+        ],
+        "id": "L12-MIN-BFF-20260808",
+        "owner": "Antigravity",
+        "phase": "M1 loop closure",
+        "reviewer": "Claude",
+        "summary": null,
+        "title": "Run one dependency health observation into telemetry and current BFF readback"
+      },
+      "task_spec_hash": "6ce9276e0d52bca20b5de451319bf519d348131b3626f5ecd6e1a807113e9cda"
+    },
+    {
+      "task_id": "L12-MIN-INTEGRATE-20260808",
+      "task_spec": {
+        "acceptance": [
+          "Register 12/12 controller identities and render 12/12 Compose ownership entries.",
+          "Expose non-null desired-state, actual-state, controller, last terminal result, and source identity for all twelve BFF rows.",
+          "Run focused catalog, loop-control, inventory, and health tests to completion with no functional skips.",
+          "Do not add security, HA, or unrelated frontend work."
+        ],
+        "artifacts": [
+          "docs/deployment/loop-catalog.registry.json",
+          "docker-compose.yml",
+          "services/loop-control/",
+          "services/control-plane/bff/loop_inventory.py",
+          "services/control-plane/bff/test_loop_inventory_read_model_contract.py",
+          "services/control-plane/bff/test_loop_health_read_model_contract.py",
+          "docs/deployment/evidence/twelve-loop-gap/L12-MIN-INTEGRATE-20260808/"
+        ],
+        "depends_on": [
+          "L12-MIN-SRC-20260808",
+          "L12-MIN-DIST-20260808",
+          "L12-MIN-ALPHA-20260808",
+          "L12-MIN-TEACH-20260808",
+          "L12-MIN-AGORA-20260808",
+          "L12-MIN-IMIT-20260808",
+          "L12-MIN-CONS-20260808",
+          "L12-MIN-DEP-20260808",
+          "L12-MIN-CAP-20260808",
+          "L12-MIN-TELREC-20260808",
+          "L12-MIN-EVO-20260808",
+          "L12-MIN-BFF-20260808",
+          "LIFECYCLE-PROJ-BFF-001",
+          "LIFECYCLE-PROJ-MIGRATE-001",
+          "LIFECYCLE-PROJ-CAPACITY-001",
+          "LIFECYCLE-PROJ-CUTOVER-001",
+          "LIFECYCLE-PROJ-RETIRE-001"
+        ],
+        "id": "L12-MIN-INTEGRATE-20260808",
+        "owner": "Claude",
+        "phase": "M2 shared integration",
+        "reviewer": "Antigravity",
+        "summary": null,
+        "title": "Integrate all twelve minimum loop owners into catalog, Compose, loop-control, and BFF readback"
+      },
+      "task_spec_hash": "c72ecd5fc0d2d47e7efd358d7c6b75b4eb5ca66036c97e39a4566c1fdd12b8a6"
+    },
+    {
+      "task_id": "L12-MIN-E2E-20260808",
+      "task_spec": {
+        "acceptance": [
+          "Run twelve service-bound happy-path cases from one verifier invocation.",
+          "Run one correlated chain whose identifiers connect Source through BFF readback.",
+          "Report exactly which loop failed without changing product implementation in the verifier task.",
+          "Require 12/12 pass; do not add load, chaos, security, or enterprise acceptance gates."
+        ],
+        "artifacts": [
+          "scripts/verify_l12_minimum_functional_closure.py",
+          "scripts/test_verify_l12_minimum_functional_closure.py",
+          "docs/deployment/evidence/twelve-loop-gap/L12-MIN-E2E-20260808/"
+        ],
+        "depends_on": [
+          "L12-MIN-INTEGRATE-20260808"
+        ],
+        "id": "L12-MIN-E2E-20260808",
+        "owner": "Antigravity",
+        "phase": "M3 complete functional verifier",
+        "reviewer": "Claude",
+        "summary": null,
+        "title": "Verify twelve minimum happy paths and one correlated chain"
+      },
+      "task_spec_hash": "1aeb2706e36712ed510b6bf83cc21a32edf39fe285f217d82f3bf9349cdea889"
+    }
+  ]
+}

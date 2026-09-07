@@ -1,0 +1,158 @@
+{
+  "version": 1,
+  "task_id": "SUP-L12-REVIEW-PRIORITY-GATE-20260729",
+  "archived_at": "2026-07-29T10:16:49Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "acceptance": [
+      "Reproduce L12 OBS review waiting while non-L12 OPS review consumes Claude2",
+      "Fresh L12 review tasks outrank non-L12 OPS reviews under shared provider quota",
+      "Same-tier preemption frees provider slot for pending L12 review",
+      "Regression covers queue ordering and preemption",
+      "No .orchestrator/config.json edits"
+    ],
+    "artifacts": [
+      ".orchestrator/supervisor.py",
+      ".orchestrator/test_supervisor.py"
+    ],
+    "depends_on": [],
+    "github_review_bridge": {
+      "actor": "Antigravity",
+      "base": "dev",
+      "decision": "approve",
+      "head_branch": "task/SUP-L12-REVIEW-PRIORITY-GATE-20260729",
+      "head_sha": "cbcb4574da48e353e3e33673f81dce5dc13e790d",
+      "mode": "required_commit_status",
+      "pr": 4365,
+      "pr_url": "https://github.com/ajoe734/pantheon/pull/4365",
+      "recorded_at": "2026-07-29T10:04:14Z",
+      "repository": "ajoe734/pantheon",
+      "review_error": "gh: Unprocessable Entity (HTTP 422)",
+      "status_context": "Pantheon canonical review gate",
+      "status_id": 51281529437,
+      "status_state": "success"
+    },
+    "id": "SUP-L12-REVIEW-PRIORITY-GATE-20260729",
+    "last_update": "2026-07-29T10:16:49Z",
+    "next": "PR #4365 merged to dev as 18e102a1950ab3aa9a2e9f97ad50313d1fa93d5d; closeout evidence PR #4366 merged as 8ea01a8e3993b3dabc6cd475c7058d299eaf4a01; Antigravity exact-head review gate and root-freeze statuses verified; supervisor L12 review priority gate archived.",
+    "owner": "Codex2",
+    "phase": "Twelve Loop Remediation / Fleet Priority Gate",
+    "review_binding": {
+      "base": "dev",
+      "head_branch": "task/SUP-L12-REVIEW-PRIORITY-GATE-20260729",
+      "head_sha": "cbcb4574da48e353e3e33673f81dce5dc13e790d",
+      "pr": 4365
+    },
+    "reviewer": "Antigravity",
+    "status": "done",
+    "summary_zh": "修復 supervisor priority gate，避免 Claude2/Antigravity review slot 被非 L12 review 佔用，讓 L12/SUP-L12 review 在同 tier 內優先。",
+    "title": "SUP-L12-REVIEW-PRIORITY-GATE-20260729: bound exact-head review ready for integration",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-07-29T10:16:49Z",
+      "reconciled_from_merged_evidence": true,
+      "repository_id": "pantheon",
+      "repository_slug": "ajoe734/pantheon",
+      "repository_path": "/home/lupin/pantheon-ci-deploy/dev-root",
+      "commit": "18e102a1950ab3aa9a2e9f97ad50313d1fa93d5d",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "8ea01a8e3993b3dabc6cd475c7058d299eaf4a01",
+      "head_merged_to_target": true,
+      "review_evidence": {
+        "file": ".orchestrator/task-briefs/sup_l12_review_priority_gate_20260729_closeout_evidence.md",
+        "commit": "8ea01a8e3993b3dabc6cd475c7058d299eaf4a01",
+        "merge_target_ref": "origin/dev",
+        "merge_target_sha": "8ea01a8e3993b3dabc6cd475c7058d299eaf4a01",
+        "owner": "Codex2",
+        "reviewer": "Antigravity",
+        "canonical_reviewer": "Antigravity",
+        "status": "review_approved"
+      }
+    }
+  },
+  "handoffs": [
+    {
+      "created_at": "2026-07-29T09:02:27Z",
+      "from": "Human/Ops",
+      "message": "Auto-reassigned SUP-L12-REVIEW-PRIORITY-GATE-20260729 away from unavailable lane Human/Ops (disabled, paused, sidecar-only, or auth-down); owner Human/Ops -> Claude2.",
+      "resolved_at": "2026-07-29T09:02:44Z",
+      "status": "done",
+      "task_id": "SUP-L12-REVIEW-PRIORITY-GATE-20260729",
+      "to": "Claude2"
+    },
+    {
+      "created_at": "2026-07-29T09:15:35Z",
+      "from": "Codex",
+      "message": "PR #4365 is ready for independent review at exact head f9a4484542fd9d194cc1253ab20e31ee4a7915d8. Net scope is .orchestrator/supervisor.py and .orchestrator/test_supervisor.py only; shared-account queue ordering and capacity-aware one-way preemption regressions pass (6 focused, 98 related). Please approve with REVIEW_PR=4365 and REVIEW_HEAD_SHA=f9a4484542fd9d194cc1253ab20e31ee4a7915d8 after checks/review.",
+      "resolved_at": "2026-07-29T09:20:48Z",
+      "status": "done",
+      "task_id": "SUP-L12-REVIEW-PRIORITY-GATE-20260729",
+      "to": "Antigravity"
+    },
+    {
+      "created_at": "2026-07-29T09:19:41Z",
+      "from": "Codex",
+      "message": "Reviewed priority gate for L12 reviews in supervisor.py and test_supervisor.py. Verified ready-dispatcher priority rank, preemption order, and failure fallback restrictions for L12/SUP-L12 tasks. Ran full supervisor unit test suite (452 tests passed cleanly).",
+      "resolved_at": "2026-07-29T10:02:05Z",
+      "status": "done",
+      "task_id": "SUP-L12-REVIEW-PRIORITY-GATE-20260729",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-07-29T10:02:05Z",
+      "from": "Antigravity",
+      "message": "Ownership updated",
+      "resolved_at": "2026-07-29T10:02:09Z",
+      "status": "done",
+      "task_id": "SUP-L12-REVIEW-PRIORITY-GATE-20260729",
+      "to": "Human/Ops"
+    },
+    {
+      "created_at": "2026-07-29T10:02:13Z",
+      "from": "Human/Ops",
+      "message": "Re-review PR #4365 exact head cbcb4574da48e353e3e33673f81dce5dc13e790d and approve only with REVIEW_PR=4365 REVIEW_HEAD_SHA=cbcb4574da48e353e3e33673f81dce5dc13e790d REVIEW_BASE=dev, or reopen with exact defects. Do not review/push local WIP anchor 8d5f1ef/9267e555; remote PR head is still cbcb4574.",
+      "resolved_at": "2026-07-29T10:04:14Z",
+      "status": "done",
+      "task_id": "SUP-L12-REVIEW-PRIORITY-GATE-20260729",
+      "to": "Antigravity"
+    },
+    {
+      "created_at": "2026-07-29T10:04:14Z",
+      "from": "Antigravity",
+      "message": "Verified PR #4365 remote exact head cbcb4574da48e353e3e33673f81dce5dc13e790d against dev. Verified supervisor unit tests for same-tier L12 review priority dispatch ordering, worker preemption, and provider-first failure fallbacks.",
+      "resolved_at": "2026-07-29T10:04:22Z",
+      "status": "done",
+      "task_id": "SUP-L12-REVIEW-PRIORITY-GATE-20260729",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-07-29T10:04:53Z",
+      "from": "Antigravity",
+      "message": "Auto-reassigned ownership from Codex2 to Codex after repeated Codex2 terminal: Worker process missing during supervisor boot reconciliation.",
+      "resolved_at": "2026-07-29T10:05:40Z",
+      "status": "done",
+      "task_id": "SUP-L12-REVIEW-PRIORITY-GATE-20260729",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-07-29T10:05:40Z",
+      "from": "Antigravity",
+      "message": "Ownership updated",
+      "resolved_at": "2026-07-29T10:14:39Z",
+      "status": "done",
+      "task_id": "SUP-L12-REVIEW-PRIORITY-GATE-20260729",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-07-29T10:14:39Z",
+      "from": "Codex2",
+      "message": "Closeout receipt PR #4367 is ready at exact head 574e420ec4e78b58a6fdc530fffe2d9ab4220295; implementation files remain identical to reviewed cbcb4574, 452 supervisor tests passed, and only the task receipt differs from dev. Please bind this exact head for final integration.",
+      "status": "done",
+      "task_id": "SUP-L12-REVIEW-PRIORITY-GATE-20260729",
+      "to": "Antigravity",
+      "resolved_at": "2026-07-29T10:16:49Z"
+    }
+  ],
+  "blockers": []
+}

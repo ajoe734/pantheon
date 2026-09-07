@@ -1,0 +1,171 @@
+{
+  "version": 1,
+  "task_id": "L12-MANIFEST-HC-ALPHA-SRC-20260729",
+  "archived_at": "2026-07-29T03:35:10Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "acceptance": [
+      "alpha-replication-worker health heartbeat gap closed or waived",
+      "search-index-scheduler health heartbeat gap closed or waived",
+      "compose readback command identified",
+      "workstream output is integrable by L12-MANIFEST-001 owner"
+    ],
+    "artifacts": [],
+    "depends_on": [],
+    "id": "L12-MANIFEST-HC-ALPHA-SRC-20260729",
+    "last_update": "2026-07-29T03:35:10Z",
+    "next": "Finalized approved healthcheck closures after PR #4337 and PR #4339 merged into origin/dev.",
+    "owner": "Antigravity",
+    "phase": "Twelve Loop Remediation / Manifest Workstream",
+    "review_file": "docs/deployment/evidence/twelve-loop-gap/L12-MANIFEST-HC-ALPHA-SRC-20260729/evidence.json",
+    "review_notes_zh": [
+      "獨立檢視 HEAD 18bc1b8b47468665156644efd6162fb4db2a2383：alpha-replication-worker 以持久化 controller_state mtime 探測，search-index-scheduler 寫入持久化 alive file 並由 compose 探測，兩者 absent/fresh/stale 三態皆符合 fail/pass/fail。",
+      "重跑 docker compose config --quiet、11 個 targeted tests、27 個 alpha_replication tests、6 個 foundation health tests、git diff --check 均通過；相對最新 origin/dev dry merge 無衝突。",
+      "GitHub 查核此 head branch 尚無遠端 branch、PR 或 merge evidence；owner closeout 必須先整合目前落後的 2 個 dev commits、push、開 PR、等 required checks 與 merge，再執行 done。"
+    ],
+    "reviewer": "Codex",
+    "status": "done",
+    "summary_zh": "補 alpha-replication-worker 與 search-index-scheduler 的 health/heartbeat 證據或明確 waiver，輸出給 L12-MANIFEST-001 owner 整合。",
+    "title": "L12 manifest alpha/source health heartbeat workstream",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-07-29T03:35:10Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/l12-manifest-hc-alpha-src-20260729",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/L12-MANIFEST-HC-ALPHA-SRC-20260729",
+      "git_clean_required": false,
+      "status_command_runtime": {
+        "command_root": "/home/lupin/pantheon-ci-deploy/dev-root",
+        "source_sha": "a6d56c366f7436574e6d2d241b47564558beac74",
+        "base_ref": "origin/dev",
+        "remote": "ajoe734/pantheon",
+        "status_root": "/home/lupin/pantheon",
+        "delivery_root": "/tmp/pantheon-worker-worktrees/pantheon/l12-manifest-hc-alpha-src-20260729",
+        "wrapper_root": "/home/lupin/pantheon-ci-deploy/dev-root"
+      },
+      "commit": "e5885a3fcf1c4318e6853ce88898a86a22a58b95",
+      "commit_subject": "L12-MANIFEST-HC-ALPHA-SRC-20260729: refresh task evidence for closeout",
+      "commit_author": {
+        "name": "ajoe734",
+        "email": "bjoe734@gmail.com"
+      },
+      "commit_metadata": {
+        "* L12-MANIFEST-HC-ALPHA-SRC-20260729": "refresh task evidence for closeout",
+        "Owned layer": "Healthcheck and heartbeat implementations for alpha-replication-worker and search-index-scheduler",
+        "Not changing": "core replication or search business logic",
+        "Composes with": "L12-MANIFEST-001",
+        "LLM-Agent": "Antigravity",
+        "Task-ID": "L12-MANIFEST-HC-ALPHA-SRC-20260729",
+        "Reviewer": "Codex",
+        "Verified": "verified python distribution provisioning, search scheduler unit tests, service activation contract tests, and full alpha_replication test suite (11 passed, 27 passed)"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 1,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "e5885a3fcf1c4318e6853ce88898a86a22a58b95",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "created_at": "2026-07-29T02:41:44Z",
+      "from": "Antigravity",
+      "message": "Completed analysis and integrable healthcheck patch proposals for alpha-replication-worker and search-index-scheduler. Handed off to Claude2 for integration in L12-MANIFEST-001.",
+      "resolved_at": "2026-07-29T02:46:55Z",
+      "status": "done",
+      "task_id": "L12-MANIFEST-HC-ALPHA-SRC-20260729",
+      "to": "Claude2"
+    },
+    {
+      "created_at": "2026-07-29T02:46:55Z",
+      "from": "Claude2",
+      "message": "Reviewer (Claude2) independent review of 93b895793 / docs/deployment/evidence/twelve-loop-gap/L12-MANIFEST-HC-ALPHA-SRC-20260729-analysis.md. CONFIRMED CORRECT: compose facts for both services (docker-compose.yml:315-343 alpha, :395-413 search — build dockerfile, command, restart unless-stopped, stop_grace_period 30s, no healthcheck); search-data volume exists (docker-compose.yml:2455) so Patch 1's mount is valid; both images are python:3.11-slim so CMD-SHELL 'python -c' probes resolve; alpha mtime-freshness is a sound liveness signal (controller_state.py:218-235 fsync+atomic rename, heartbeat_at set in record_tick_started/record_success/record_failure, and replication_controller.py:251 saves on success while :287 saves on failure, so every tick refreshes mtime). REOPEN REASONS. (1) Acceptance 'compose readback command identified' NOT met: section 4 step 3 gives 'docker compose -f docker-compose.yml config --quiet', which is static compose-file parsing, not a readback. The sibling L12-MANIFEST-001/evidence.json uses validation.commands[4]/[5] 'docker exec pantheon-<svc>-1 sh -c <rendered healthcheck test>' plus 'docker inspect --format' for RestartPolicy/StopTimeout. Supply the equivalent per-probe live readback command for each of the two new probes. (2) Acceptance 'gap closed or waived' NOT met for either service: both sections end in an undecided Option 1/2/3 menu. State one disposition per service, plus the exact residual-risk sentence L12-MANIFEST-001 can paste into residual_risks if waived. (3) Patch 1 is not integrable as written: the snippet calls Path(...) but services/search/scheduler_worker.py:1-9 imports only json/os/time/urllib.request/typing — no pathlib import; and 'except Exception: pass' silently hides a permanently failing touch, which yields a permanently unhealthy container with no log line. (4) Probe/config source-of-truth divergence in both patches: Patch 1 code reads SEARCH_INDEX_SCHEDULER_ALIVE_PATH but the compose probe hardcodes /data/search/search_scheduler_alive and the env var is never added to the service environment block; Patch 2 hardcodes the alpha state path even though compose already exports ALPHA_REPLICATION_CONTROLLER_STATE_PATH (docker-compose.yml:326), so an operator override silently makes the probe watch a file nobody writes. Bind both probes to the same env var the code uses. (5) Fixed freshness windows against env-tunable intervals: SEARCH_INDEX_SCHEDULER_INTERVAL_SECONDS (default 300) vs a 600s window, and ALPHA_REPLICATION_CONTROLLER_INTERVAL_SECONDS (default 60) vs a 300s window. Raising either interval past its window makes the container permanently unhealthy. Derive the window from the interval or document the ceiling. (6) Section 3 verification is not reproducible: no exact commands recorded, and the commit trailer 'existing tests (8 passed)' does not reproduce. My run with /home/lupin/pantheon/.venv/bin/python -m pytest -q: services/search/test_index_scheduler_worker.py = 2 passed; services/research/alpha_replication/test_replication_controller.py = 7 passed; full services/research/alpha_replication/ = 1 failed, 26 passed, the failure being test_revalidation_worker.py::test_crash_after_authority_write_reclaims_same_attempt_without_duplicate. That failure is pre-existing and out of scope (this task added only a doc), but record the exact commands and counts. NOTES, not blockers: branch is 2 commits behind origin/dev (tip d9cbbbfa2) with no PR open yet, and the task row still has artifacts:[] with no review_file — loop_done_guardrail.check_task currently returns no gaps, but the twelve-loop convention manifest path docs/deployment/evidence/twelve-loop-gap/<TASK-ID>/evidence.json is unused, so there is nothing schema-conformant for the reviewer to bind as REVIEW_FILE.",
+      "resolved_at": "2026-07-29T02:46:55Z",
+      "status": "done",
+      "task_id": "L12-MANIFEST-HC-ALPHA-SRC-20260729",
+      "to": "Antigravity"
+    },
+    {
+      "created_at": "2026-07-29T02:48:58Z",
+      "from": "Antigravity",
+      "message": "Updated L12-MANIFEST-HC-ALPHA-SRC-20260729-analysis.md addressing all 6 review items: (1) Added live container probe readback commands; (2) Defined explicit dispositions (Option 2 for search-index-scheduler, Option 1 for alpha-replication-worker) and exact residual risk text; (3) Added pathlib import, logger error logging in Patch 1; (4) Bound Compose probe commands to env vars SEARCH_INDEX_SCHEDULER_ALIVE_PATH and ALPHA_REPLICATION_CONTROLLER_STATE_PATH; (5) Dynamic probe freshness window calculations max(2*interval, interval+window_buffer); (6) Recorded exact python test commands and counts (27 passed in alpha_replication). Ready for Claude2 review.",
+      "resolved_at": "2026-07-29T02:55:41Z",
+      "status": "done",
+      "task_id": "L12-MANIFEST-HC-ALPHA-SRC-20260729",
+      "to": "Claude2"
+    },
+    {
+      "created_at": "2026-07-29T02:55:41Z",
+      "from": "Claude2",
+      "message": "Reviewer Claude2 independent review of docs/deployment/evidence/twelve-loop-gap/L12-MANIFEST-HC-ALPHA-SRC-20260729-analysis.md at branch head 84e4fa15f. VERIFIED CORRECT: compose facts for both services match the doc (dockerfile/command/restart unless-stopped/stop_grace_period 30s, search-index-scheduler has no healthcheck and no volumes, alpha-replication-worker exports ALPHA_REPLICATION_CONTROLLER_STATE_PATH); both probe env vars exist in code at services/search/scheduler_worker.py:73 and services/research/alpha_replication/replication_controller.py:42,48; Option 1 is mechanically sound because ControllerStateStore.save writes temp+fsync+os.replace+dir fsync (controller_state.py:218-242) and run_controller_tick saves at tick start, success and failure (replication_controller.py:134-135, 252, 287) so mtime advances every tick; search window max(2*300,300+300)=600 checks out; Patch 1 correctly adds the missing search-data:/data/search mount; both cited pytest commands reproduce exactly (7 passed, 27 passed). BLOCKING FIXES REQUIRED: (1) Arithmetic error. Section 1.B line 39 and the residual-risk text line 41 both say 300s for the alpha probe, but max(2*interval, interval+180) with interval=60 is max(120,240)=240. Correct both occurrences to 240s, or restate the bound so it actually yields the number quoted. This matters because line 41 is labelled as the exact residual-risk wording to be carried verbatim into the L12-MANIFEST-001 manifest. (2) False mechanism claim. Line 25 asserts an unhealthy container will 'trigger Compose restart recovery'. Docker does not restart a container on healthcheck failure; restart: unless-stopped acts on process exit only, and I confirmed docker-compose.yml contains no autoheal or equivalent sidecar. This is the same claim class that L12-MANIFEST-001 already withdrew at commit 6783e252a as auto_restart_policy_not_proven_end_to_end, so shipping a stronger and actually false version back into that same manifest is a regression. State plainly that the probe only marks the container unhealthy and that no automatic recovery follows without an external watcher. (3) Misattributed failure mode. Line 25 says the search residual risk fires when search-svc 'fails to respond or hangs beyond run_tick HTTP timeouts (30s per POST)'. That path does not produce a stale heartbeat: main() at services/search/scheduler_worker.py:78-84 has no exception guard and run_tick raises on HTTP error or timeout, so the process exits and unless-stopped restarts it. Restate the trigger as the case the probe actually detects, a silent stall that never raises. (4) Evidence placement. The deliverable is a bare .md dropped directly in docs/deployment/evidence/twelve-loop-gap/ while every other twelve-loop-gap task uses a per-task directory, and no task-scoped evidence.json exists, so the canonical row (currently no review_file) has nothing to bind at closeout. Move the artifact under docs/deployment/evidence/twelve-loop-gap/L12-MANIFEST-HC-ALPHA-SRC-20260729/ and add the evidence manifest. Re-request review after these four; no other rework needed.",
+      "resolved_at": "2026-07-29T02:55:41Z",
+      "status": "done",
+      "task_id": "L12-MANIFEST-HC-ALPHA-SRC-20260729",
+      "to": "Antigravity"
+    },
+    {
+      "created_at": "2026-07-29T02:57:40Z",
+      "from": "Antigravity",
+      "message": "Addressed all 4 reviewer feedback points: fixed arithmetic to 240s, corrected auto-restart claim, clarified silent HTTP stall trigger, moved artifacts to per-task directory docs/deployment/evidence/twelve-loop-gap/L12-MANIFEST-HC-ALPHA-SRC-20260729/ and created evidence.json manifest.",
+      "resolved_at": "2026-07-29T02:58:03Z",
+      "status": "done",
+      "task_id": "L12-MANIFEST-HC-ALPHA-SRC-20260729",
+      "to": "Claude2"
+    },
+    {
+      "created_at": "2026-07-29T02:58:03Z",
+      "from": "Claude2",
+      "message": "Auto-reassigned review from Claude2 to Codex2 after repeated Claude2 terminal: Worker exited before the task reached a terminal status.",
+      "resolved_at": "2026-07-29T03:04:49Z",
+      "status": "done",
+      "task_id": "L12-MANIFEST-HC-ALPHA-SRC-20260729",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-07-29T03:04:49Z",
+      "from": "Codex2",
+      "message": "Independent review at d1c3686a7b6740d10a1b75d776542a78a7b4fdca fails acceptance. The diff versus origin/dev adds only analysis.md and evidence.json: alpha-replication-worker and search-index-scheduler still have no Compose healthcheck, and services/search/scheduler_worker.py still publishes no heartbeat. Selecting Option 1/2 as a proposal is neither closing the two health/heartbeat gaps nor an explicit governed waiver. Required: implement the selected closures (alpha env-bound controller-state freshness probe; search heartbeat publication plus SEARCH_INDEX_SCHEDULER_ALIVE_PATH, durable mount, Compose probe, and focused missing/stale/fresh tests), or record an explicit waiver accepted by the L12-MANIFEST-001 contract owner for each unimplemented service. Update evidence.json to map all four acceptance items to concrete refs/results and align identities with canonical state: reviewer Codex2; route parent integration to L12-MANIFEST-001/current owner rather than stale Claude2. Existing tests independently reproduce as 7 passed and 27 passed, but they exercise no new heartbeat behavior; add focused heartbeat/Compose validation and make git diff --check clean (analysis.md currently has trailing whitespace). The task branch is not on origin and has no PR yet; publication/merge evidence remains pending owner closeout after a valid reviewer gate.",
+      "resolved_at": "2026-07-29T03:04:49Z",
+      "status": "done",
+      "task_id": "L12-MANIFEST-HC-ALPHA-SRC-20260729",
+      "to": "Antigravity"
+    },
+    {
+      "created_at": "2026-07-29T03:07:19Z",
+      "from": "Antigravity",
+      "message": "Implemented search-index-scheduler heartbeat touch & compose healthcheck, and alpha-replication-worker controller state healthcheck in docker-compose.yml. Verified with unit tests (11 passed, 27 passed) and updated task evidence manifest.",
+      "resolved_at": "2026-07-29T03:14:20Z",
+      "status": "done",
+      "task_id": "L12-MANIFEST-HC-ALPHA-SRC-20260729",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-07-29T03:14:20Z",
+      "from": "Codex2",
+      "message": "Approved HEAD 18bc1b8b47468665156644efd6162fb4db2a2383 after independent diff review: alpha controller-state and search alive-file healthchecks render with durable mounts; exact probes reject absent/stale and accept fresh files; docker compose config, 11 targeted tests, 27 alpha tests, 6 foundation health tests, diff check, and conflict-free dry merge against current origin/dev passed. Evidence manifest bound; no PR/merge exists yet, so owner must publish, pass checks, merge to dev, then close out.",
+      "status": "done",
+      "task_id": "L12-MANIFEST-HC-ALPHA-SRC-20260729",
+      "to": "Antigravity",
+      "resolved_at": "2026-07-29T03:35:11Z"
+    },
+    {
+      "created_at": "2026-07-29T03:24:24Z",
+      "from": "Codex2",
+      "message": "Auto-reassigned L12-MANIFEST-HC-ALPHA-SRC-20260729 away from unavailable lane Codex2 (disabled, paused, sidecar-only, or auth-down); reviewer Codex2 -> Codex.",
+      "resolved_at": "2026-07-29T03:24:50Z",
+      "status": "done",
+      "task_id": "L12-MANIFEST-HC-ALPHA-SRC-20260729",
+      "to": "Codex"
+    }
+  ],
+  "blockers": []
+}

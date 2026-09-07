@@ -6,30 +6,15 @@ Do not read `current-work.md` by default for implementation context.
 
 ## Task
 - Title: Refresh and close L12-FLEET-STATUS-SYNC-001 closeout evidence
-- Status: in_progress
-- Owner: Codex
-- Reviewer: Antigravity
+- Status: todo
+- Owner: Codex2
+- Reviewer: Codex
 - Phase: Twelve Loop Remediation / Wave 0 Fleet Status Sync Closeout
-- Last update: 2026-08-04T14:43:16Z
-- Next: Wrapper evidence has been refreshed against current GitHub and governed-status observations. Source task L12-FLEET-STATUS-SYNC-001 remains owned by Codex2 and cannot close while its canonical review binding is stale and PR #4297 is behind dev. Antigravity must independently review this updated wrapper receipt after its PR is refreshed.
+- Last update: 2026-07-28T16:38:34Z
+- Next: Supervisor preempted L12-FLEET-STATUS-SYNC-CLOSEOUT-20260728 to free Codex2 for higher-priority review/finalize work; task returned to todo until a fresh run restarts it.
 
 ## Summary
 刷新並完成 L12-FLEET-STATUS-SYNC-001 closeout；不得重做已 merged implementation。
-
-## Owner Result
-
-- PR #4282 implementation head `e806affaa279f8b9d4b41bae6117a9431c99b90e`
-  and merge `a0020c5ac50e510467a5e80c412c7703245cf4dd` remain ancestors of
-  `origin/dev`; no implementation was restarted.
-- Live GitHub observation shows source PR #4297 open at
-  `23a7d3244ad89d093a006ff6ace86f13053d794c`, mergeable but behind `dev`,
-  with no GitHub review decision. Its retained Branch CI checks are green but
-  do not make the stale review binding current.
-- Governed status records L12-FLEET-STATUS-SYNC-001 as `review_approved`,
-  owned by Codex2, but binds review to old SHA
-  `38057216e8e2a02f2acb3f375a119286af6e01b2`. The same row's source metadata
-  also differs from the live PR identity. This task records the discrepancy;
-  only the source owner may repair the source review path and close it.
 
 ## Dependencies
 - none

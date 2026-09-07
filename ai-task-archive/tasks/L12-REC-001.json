@@ -1,0 +1,182 @@
+{
+  "version": 1,
+  "task_id": "L12-REC-001",
+  "archived_at": "2026-07-26T11:53:05Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "acceptance": [
+      "Scheduled reconciliation completes within a measured configurable SLA",
+      "Two schedulers or consumers cannot duplicate one logical window",
+      "Records and DriftReports are authoritative durable tenant-scoped state",
+      "Corrupt worker state fails closed and cannot be silently overwritten",
+      "Retry DLQ replay and dependency restart recover without duplicate incidents"
+    ],
+    "actual_state_sources": [
+      "telemetry runtime summaries",
+      "DriftReport",
+      "IncidentCase"
+    ],
+    "artifact_conflict_guard": {
+      "allowed_overlap_task_ids": [],
+      "artifact_scope": [
+        {
+          "path": "docs/deployment/evidence/twelve-loop-gap/L12-REC-001",
+          "repo": "pantheon"
+        },
+        {
+          "path": "services/reconciliation-drift",
+          "repo": "pantheon"
+        }
+      ],
+      "catalog_sha256": "a7fbbaa560bd7f2d97750b25cd20af69b64d4f522b293689849b0e1b1763717f",
+      "program_id": "pantheon-twelve-loop-gap-2026-07-26",
+      "schema_version": 1,
+      "task_id": "L12-REC-001"
+    },
+    "artifacts": [
+      "services/reconciliation-drift",
+      "docs/deployment/evidence/twelve-loop-gap/L12-REC-001"
+    ],
+    "auto_created_by": "dispatch_twelve_loop_gap_2026_07_26",
+    "catalog_task_contract_sha256": "9d4ed9584b887094ae6286a2a98427a918d75818ca47af7842c133e94c08941c",
+    "current_maturity": "api-only",
+    "depends_on": [
+      "L12-FLEET-001"
+    ],
+    "desired_state_sources": [
+      "reconciliation policy",
+      "incident trigger",
+      "scheduled observation window"
+    ],
+    "dispatch_rules": [
+      "Do not fabricate identity or metrics",
+      "Use deterministic window idempotency",
+      "Keep reconciliation advisory"
+    ],
+    "evidence_root": "docs/deployment/evidence/twelve-loop-gap/L12-REC-001",
+    "fleet_lane": "reconciliation",
+    "id": "L12-REC-001",
+    "last_update": "2026-07-26T11:53:05Z",
+    "loop_ids": [
+      "telemetry_reconciliation"
+    ],
+    "merge_target": "dev",
+    "mutates_canonical": true,
+    "next": "Owner finalized merged implementation PR #4150 (917d281ae10b0426dae0667cf452b2d64263777f) and product closeout PR #4167 (6fe77c25d4008c1d434016ebe729542a94a689fd). Candidate validation: reconciliation suite 98 passed with one known deprecation warning; affected persistence/lifecycle suite 26 passed; py_compile, Ruff F/E9, product evidence schema, loop done guardrail, evidence checksums/JSON assertions, git diff check, and required PR checks passed.",
+    "non_goals": [
+      "No panel-only closure",
+      "No seed fixture as live proof",
+      "No approval gate bypass",
+      "No runtime mutation from reconciliation"
+    ],
+    "owner": "Codex",
+    "phase": "Twelve Loop Remediation / Reconciliation",
+    "product_level_required": true,
+    "program_id": "pantheon-twelve-loop-gap-2026-07-26",
+    "proof_required": [
+      "two-worker lease tests",
+      "scheduler latency and timeout recovery",
+      "corrupt-state and restart tests",
+      "tenant auth and incident correlation tests"
+    ],
+    "requires_human_ops_signoff": false,
+    "reviewer": "Codex2",
+    "status": "done",
+    "summary_zh": "修正 scheduled-reconcile timeout，將 record/report 與 worker state 轉為 durable authority，加入 scheduler/consumer lease、corruption fail-closed 與 tenant auth。",
+    "target_maturity": "reconciled",
+    "target_repo": "pantheon",
+    "task_doc": "docs/bff/execution-tasks/2026-07-26-twelve-loop-gap/L12-REC-001.md",
+    "title": "Harden reconciliation scheduling, storage, and recovery",
+    "wave": 1,
+    "review_file": "docs/deployment/evidence/twelve-loop-gap/L12-REC-001/closeout/evidence.json",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-07-26T11:53:05Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/l12-rec-001",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/L12-REC-001",
+      "git_clean_required": false,
+      "status_command_runtime": {
+        "command_root": "/home/lupin/pantheon-ci-deploy/dev-root",
+        "source_sha": "6a0281e8f8996883faae3ddaab7505b2ddc68ac1",
+        "base_ref": "origin/dev",
+        "remote": "ajoe734/pantheon",
+        "status_root": "/home/lupin/pantheon",
+        "delivery_root": "/tmp/pantheon-worker-worktrees/pantheon/l12-rec-001",
+        "wrapper_root": "/home/lupin/pantheon-ci-deploy/dev-root"
+      },
+      "commit": "82448453ad4b303e6bc13e09a845bf8ede0a95bf",
+      "commit_subject": "Merge remote-tracking branch 'origin/dev' into task/L12-REC-001",
+      "commit_author": {
+        "name": "pantheon-dev",
+        "email": "bjoe734@gmail.com"
+      },
+      "commit_trailer_check_skipped": true,
+      "commit_trailer_skip_reason": "Merge",
+      "commit_metadata": {},
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "022bb35f4cd93c82571fcaf2799905a7043efcd2",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "created_at": "2026-07-26T10:04:13Z",
+      "from": "Codex",
+      "message": "Please review task/L12-REC-001 at 46ee200fa. Evidence: docs/deployment/evidence/twelve-loop-gap/L12-REC-001 (checksum verified). Validation: reconciliation suite 94 passed; affected foundation/Postgres/lifecycle suite 26 passed; py_compile and Ruff F/E9 passed. Focus review on CAS lease recovery, equal external IDs across tenants, token-bound tenant filtering, SLA/timeout behavior, corrupt-state preservation, and no duplicate incident side effects.",
+      "resolved_at": "2026-07-26T10:26:39Z",
+      "status": "done",
+      "task_id": "L12-REC-001",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-07-26T10:26:39Z",
+      "from": "Codex2",
+      "message": "Review rejected at 46ee200fa / PR #4150. Required fixes: (1) bind ConsumerWorkerState checkpoint save/release to the acquired lease_token with CAS and renewal or fail-closed ownership checks; regression must prove that after lease expiry a successor acquires and the stale worker cannot overwrite the successor token/checkpoints (current reproduction: successor_lease_preserved=False). (2) tenant-scope consumer pending/dead_letters/completed identity by tenant+event, or strictly constrain the worker to one configured tenant; equal external event IDs for tenant-a and tenant-b must both enqueue/deliver (current second enqueue=False). (3) tenant-aware JSON and Postgres get_* legacy/raw-key fallback must verify exact tenant before returning; current tenant-b get_drift_report returns a tenant-a record. Existing 94 reconciliation tests and 26 affected tests pass, as do py_compile, evidence checksum and PR required checks, so add regression coverage for these acceptance failures before re-handoff.",
+      "resolved_at": "2026-07-26T10:26:39Z",
+      "status": "done",
+      "task_id": "L12-REC-001",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-07-26T10:47:09Z",
+      "from": "Codex",
+      "message": "PR #4150 updated at ba5090aa558455aabd2afe39a30cf22be077b32e. Fixed all rejected acceptance gaps: token-CAS/renewed consumer checkpoints and token-bound release preserve successor state after expiry (including same worker_id); pending/DLQ/completed use tenant+event identity so equal IDs for two tenants both deliver; all JSON/Postgres get_* raw fallbacks require exact tenant. Evidence checksum verified. Validation at merged dev: reconciliation 98 passed; affected 26 passed; py_compile and Ruff F/E9 passed.",
+      "resolved_at": "2026-07-26T11:05:17Z",
+      "status": "done",
+      "task_id": "L12-REC-001",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-07-26T11:05:17Z",
+      "from": "Codex2",
+      "message": "Independent review approved PR #4150 head ba5090aa558455aabd2afe39a30cf22be077b32e: stale consumer save/release is fenced by acquired lease-token CAS and successor checkpoint preservation; consumer delivery identity is tenant+event; JSON/Postgres legacy fallback enforces exact tenant. Reviewer validation: 4 targeted regressions passed, full reconciliation suite 98 passed with one known deprecation warning, affected persistence/lifecycle suite 26 passed, py_compile/evidence checksum/JSON assertions/git diff check passed, and all six PR required checks succeeded. PR remains draft/BEHIND for owner refresh, merge, and closeout.",
+      "status": "done",
+      "task_id": "L12-REC-001",
+      "to": "Codex",
+      "resolved_at": "2026-07-26T11:53:06Z"
+    }
+  ],
+  "blockers": [],
+  "correction_context": {
+    "version": 1,
+    "corrected_at": "2026-07-26T12:54:24Z",
+    "actor": "Human/Ops",
+    "reason": "Replace disposable worker path with the merged ProductEvidence manifest after checksum and done-guard replay.",
+    "field": "task.review_file",
+    "from": "/tmp/pantheon-worker-worktrees/pantheon/l12-rec-001/docs/deployment/evidence/twelve-loop-gap/L12-REC-001/closeout/evidence.json",
+    "to": "docs/deployment/evidence/twelve-loop-gap/L12-REC-001/closeout/evidence.json",
+    "evidence_sha256": "130e0729e83c56aa8249269e5655f101e97eb415f9fc1cc3a08639b9032f0dce"
+  }
+}

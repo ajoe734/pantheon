@@ -1,0 +1,112 @@
+{
+  "actor": {
+    "capabilities": [
+      "assistant.kernel.repair",
+      "dev-task.dispatch",
+      "fleet.dispatch"
+    ],
+    "id": "Human/Ops",
+    "roles": [
+      "operator"
+    ]
+  },
+  "admission_record_path": "ai-task-archive/tasks/assistant-dev-bridge-admissions/pkt-sup-explicit-human-reviewer-preservation-v8-20260802T1335Z--fd231e9ae4a437ad.json",
+  "admitted_at": "2026-08-02T13:21:51Z",
+  "audit_conversation_href": "codex://root/supervisor-v8-governance-reconciliation-20260802#explicit-human-reviewer-preservation",
+  "constraints": {
+    "allowedRepos": [
+      "pantheon"
+    ],
+    "noDirectShellFromWeb": true,
+    "requiresBranchPrMerge": true
+  },
+  "conversation_id": "codex-root-supervisor-v8-governance-reconciliation-20260802",
+  "dispatch_records": [
+    {
+      "error": null,
+      "owner": "Antigravity",
+      "reviewer": "Human/Ops",
+      "status": "dispatched",
+      "taskId": "SUP-EXPLICIT-HUMAN-REVIEWER-PRESERVATION-OPERATOR-V8-20260802"
+    }
+  ],
+  "documents": [
+    {
+      "kind": "ACTIVE_REPOSITORY_AUTHORITY",
+      "path": "AGENTS.md",
+      "sourceRefs": [
+        "integration-and-coordination lane",
+        "single supervisor dispatch authority"
+      ]
+    },
+    {
+      "kind": "MERGED_DEPENDENCY",
+      "path": "ai-task-archive/tasks/SUP-ASSIGNMENT-FALLBACK-ATOMIC-REBINDS-OPERATOR-V4-20260802.json",
+      "sourceRefs": [
+        "PR #4501 merge 66621e3484a690921032d93e26ec2c9867708d2a"
+      ]
+    },
+    {
+      "kind": "BLOCKED_EXACT_HEAD",
+      "path": "https://github.com/ajoe734/pantheon/pull/4508",
+      "sourceRefs": [
+        "head 7b268b468ca9cd619481fb8bc6a95ac663ac9cd4",
+        "canonical Human/Ops approval is revoked by fallback reassignment"
+      ]
+    },
+    {
+      "kind": "ROOT_CAUSE_SOURCE",
+      "path": ".orchestrator/supervisor.py",
+      "sourceRefs": [
+        "normalize_mainline_task_assignment replaces an unavailable Human/Ops reviewer",
+        "helper claim can also overwrite reviewer assignment"
+      ]
+    }
+  ],
+  "durable": true,
+  "emitted_at": "2026-08-02T13:20:56.109675Z",
+  "intent": "repair_explicit_human_reviewer_fallback_deadlock_before_v8_lease_merge",
+  "mode": "kernel_repair",
+  "packet_digest": "fd231e9ae4a437ade39958c2641b3c35ddc96f507b5d4ec9013e8af6e6554e48",
+  "packet_id": "pkt-sup-explicit-human-reviewer-preservation-v8-20260802T1335Z",
+  "packet_version": "pantheon.assistant.dev-task.v1",
+  "record_kind": "assistant_dev_bridge_admission",
+  "record_payload_sha256": "9cb67e555d1c62c76712b181529d0d3f078fe9876cd480c18ef47547147b8bb8",
+  "schema": "pantheon.assistant-dev-bridge-admission.v1",
+  "source_turn_ids": [
+    "operator-requires-supervisor-autoworker-dispatch",
+    "v8-exact-head-review-deadlock-reconciliation"
+  ],
+  "tasks": [
+    {
+      "task_id": "SUP-EXPLICIT-HUMAN-REVIEWER-PRESERVATION-OPERATOR-V8-20260802",
+      "task_spec": {
+        "acceptance": [
+          "Reproduce PR #4508 lifecycle: an explicitly assigned Human/Ops reviewer with an exact-head approval must not be replaced, helper-claimed, or have its approval invalidated by a supervisor scan.",
+          "When an explicit Human/Ops reviewer is not a dispatchable worker, preserve it as the human review gate and fail closed or await that reviewer; never substitute an auto-worker merely to make assignment eligible.",
+          "Keep valid fallback/reassignment for non-protected reviewers and owner recovery unchanged, including existing bounded atomic owner/reviewer pair planning.",
+          "Cover mainline normalization, helper claim, reviewer-failure planning, owner-failure planning, review-approved reconciliation, and concurrent stale-CAS paths with positive and negative supervisor regressions.",
+          "Do not change account identity policy, quota groups, provider configuration, fallback ordering for non-Human/Ops agents, ai-status command semantics, canonical runtime state, live services, deployment, product tasks, or the source already delivered by PR #4508.",
+          "Use a clean governed worktree from current origin/dev and branch task/SUP-EXPLICIT-HUMAN-REVIEWER-PRESERVATION-OPERATOR-V8-20260802; deliver one scoped PR to dev with complete focused and relevant supervisor regressions, py_compile, evidence JSON parse, diff/trailer checks, exact-head Human/Ops review, and governed merge.",
+          "Merge this corrective PR before rebasing and reapproving PR #4508. Then revalidate #4508 without unrelated code changes. Rollback is a revert of this corrective merge; no runtime rollout is included in this task."
+        ],
+        "artifacts": [
+          ".orchestrator/supervisor.py",
+          ".orchestrator/test_supervisor.py",
+          "docs/deployment/evidence/supervisor/SUP-EXPLICIT-HUMAN-REVIEWER-PRESERVATION-OPERATOR-V8-20260802/"
+        ],
+        "depends_on": [
+          "SUP-ASSIGNMENT-FALLBACK-ATOMIC-REBINDS-OPERATOR-V4-20260802",
+          "SUP-ASSISTANT-DEV-BRIDGE-ASSIGN-LOCK-TIMEOUT-OPERATOR-V8-20260802"
+        ],
+        "id": "SUP-EXPLICIT-HUMAN-REVIEWER-PRESERVATION-OPERATOR-V8-20260802",
+        "owner": "Antigravity",
+        "phase": "Supervisor governance / protected reviewer preservation / operator V8",
+        "reviewer": "Human/Ops",
+        "summary": "Prevent supervisor availability fallback from silently replacing explicit Human/Ops review gates and breaking canonical exact-head approvals.",
+        "title": "Preserve explicit Human/Ops reviewer assignments through fallback"
+      },
+      "task_spec_hash": "2e887974c9f5a94bd5733db38bed0ab6b1b770427da7461fea7bd0a7161236c7"
+    }
+  ]
+}

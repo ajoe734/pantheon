@@ -1,0 +1,62 @@
+{
+  "version": 1,
+  "task_id": "MGMT-GAP-001",
+  "archived_at": "2026-07-27T14:12:45Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "acceptance": [
+      "control-room-legacy 不再 render 舊頁; deployment singular routes redirect; nav 收斂或每項有 production readiness; route tests + hosted probe 綠"
+    ],
+    "artifacts": [
+      "frontend-checkout:src/App.tsx",
+      "frontend-checkout:src/management/ManagementLayout.tsx",
+      "frontend-checkout:e2e",
+      "docs/04/pantheon_management_console_gap_2026-06-30"
+    ],
+    "auto_created_by": "dispatch_management_console_gap_2026-06-30",
+    "auto_generated": true,
+    "batch": 1,
+    "completion_evidence": {
+      "bff_healthz": "https://pantheon-lupin-dev-bff.35.201.239.38.sslip.io/healthz",
+      "deployed_at": "20260630T143840Z",
+      "deployment_json": "https://pantheon-lupin-dev-fe.35.201.239.38.sslip.io/deployment.json",
+      "dev_deploy_run": "https://github.com/ajoe734/execute-plans/actions/runs/28452499928",
+      "dev_integration_gate_run": "https://github.com/ajoe734/execute-plans/actions/runs/28452500411",
+      "hosted_probe": [
+        "/management/control-room-legacy -> /management/cockpit",
+        "/management/deployment -> /management/deployments",
+        "/management/deployment/dep-9?tab=events -> /management/deployments/dep-9?tab=events",
+        "primary nav excludes /management/studios/formula, /management/studios/skill-sandbox, /management/loops/research, /management/loops/execution, /management/loops/optimization; /management/loops remains"
+      ],
+      "implementation_commit": "806f53fe5e9ac6e0e909621ba0c13b775679adc7",
+      "implementation_pr": "https://github.com/ajoe734/execute-plans/pull/120",
+      "implementation_repo": "ajoe734/execute-plans",
+      "merge_commit": "6218e67d4119bcfc663681935d2a98e5af73e55a"
+    },
+    "delivery_layer": "primary",
+    "depends_on": [],
+    "fleet_lane": "frontend-route-ia",
+    "id": "MGMT-GAP-001",
+    "last_update": "2026-06-30T14:45:55Z",
+    "mutates_canonical": true,
+    "next": "Closed by execute-plans PR #120; deployed commit 6218e67d4119bcfc663681935d2a98e5af73e55a verified on pantheon-dev-fe.",
+    "owner": "Antigravity",
+    "phase": "MGMT Console Production Gap / Batch 1 route IA",
+    "reviewer": "Claude",
+    "source_ref": {
+      "archive": "docs/04/pantheon_management_console_gap_2026-06-30/archive/live-audit-2026-06-30.md",
+      "doc": "docs/04/pantheon_management_console_gap_2026-06-30/README.md",
+      "packet": "docs/bff/execution-tasks/2026-06-30-management-console-production-gap/INDEX.md",
+      "reaudit": "docs/04/pantheon_management_console_gap_2026-06-30/archive/full-reaudit-addendum-2026-07-01.md",
+      "route_control_raw": "docs/04/pantheon_management_console_gap_2026-06-30/archive/route-control-reaudit-2026-07-01.json",
+      "route_control_reaudit": "docs/04/pantheon_management_console_gap_2026-06-30/archive/route-control-reaudit-2026-07-01.md"
+    },
+    "status": "done",
+    "summary_zh": "清除 management console 真重複入口: control-room-legacy 不再 render 舊 ControlRoom; deployment/deployment/:id 改 canonical deployments redirect; 收斂一級 nav 中非 production 的 studios/empty registry/loop 子頁。",
+    "task_class": "execution",
+    "title": "Management route and IA cleanup"
+  },
+  "handoffs": [],
+  "blockers": []
+}

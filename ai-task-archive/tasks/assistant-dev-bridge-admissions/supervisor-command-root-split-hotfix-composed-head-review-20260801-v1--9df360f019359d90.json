@@ -1,0 +1,92 @@
+{
+  "actor": {
+    "capabilities": [
+      "assistant.kernel.repair",
+      "assistant.dev-task.dispatch",
+      "fleet.dispatch"
+    ],
+    "id": "Human/Ops",
+    "roles": [
+      "operator"
+    ]
+  },
+  "admission_record_path": "ai-task-archive/tasks/assistant-dev-bridge-admissions/supervisor-command-root-split-hotfix-composed-head-review-20260801-v1--9df360f019359d90.json",
+  "admitted_at": "2026-08-01T15:39:56Z",
+  "audit_conversation_href": "https://github.com/ajoe734/pantheon/pull/4451",
+  "constraints": {
+    "allowedRepos": [
+      "pantheon"
+    ],
+    "noDirectShellFromWeb": true,
+    "requiresBranchPrMerge": true
+  },
+  "conversation_id": "codex-supervisor-command-root-incident-20260801",
+  "dispatch_records": [
+    {
+      "error": null,
+      "owner": "Codex",
+      "reviewer": "Antigravity",
+      "status": "dispatched",
+      "taskId": "SUP-COMMAND-ROOT-SPLIT-HOTFIX-COMPOSED-HEAD-REVIEW-20260801"
+    }
+  ],
+  "documents": [
+    {
+      "kind": "INCIDENT_HOTFIX",
+      "path": "scripts/sync-dev-root.sh",
+      "sourceRefs": [
+        "https://github.com/ajoe734/pantheon/pull/4451",
+        "reviewed-implementation:671a15e7dbf4ba278482fa7764a07d3972ae7237",
+        "composed-head:83a91bc2571c20424302916ea6129f421642549d",
+        "composed-base:3578f993b1b02f2ba4aa579a40325943cc0674e3",
+        "task-brief-sha256:2e081b6b4435b61fed414f4a83ca7fe537acbd2cb2b04fe357aeaf557b83a1ec"
+      ]
+    }
+  ],
+  "durable": true,
+  "emitted_at": "2026-08-01T15:36:00Z",
+  "intent": "independent_review_of_strict_base_composed_supervisor_command_root_hotfix",
+  "mode": "kernel_repair",
+  "packet_digest": "9df360f019359d90c55dfa3069c4d0adb7e418597aaae58a6cbd5f0f6984da53",
+  "packet_id": "supervisor-command-root-split-hotfix-composed-head-review-20260801-v1",
+  "packet_version": "pantheon.assistant.dev-task.v1",
+  "record_kind": "assistant_dev_bridge_admission",
+  "record_payload_sha256": "3caf378d5e8e6889f4e8ff0457d1d8ae278c9ca876a62ea3b54b6b48e49036b4",
+  "schema": "pantheon.assistant-dev-bridge-admission.v1",
+  "source_turn_ids": [
+    "temporary-live-rescue",
+    "permanent-hotfix-pr-4451",
+    "exact-head-review-r2-approved",
+    "strict-base-update-branch"
+  ],
+  "tasks": [
+    {
+      "task_id": "SUP-COMMAND-ROOT-SPLIT-HOTFIX-COMPOSED-HEAD-REVIEW-20260801",
+      "task_spec": {
+        "acceptance": [
+          "Independently review exact PR #4451 composed head 83a91bc2571c20424302916ea6129f421642549d; Codex and Codex2 are the same identity and are ineligible reviewers.",
+          "Confirm the composed head contains independently reviewed implementation 671a15e7dbf4ba278482fa7764a07d3972ae7237 and current dev 3578f993b1b02f2ba4aa579a40325943cc0674e3 without conflict resolution or newly authored implementation.",
+          "Confirm the PR delta remains exactly scripts/sync-dev-root.sh and scripts/test_sync_dev_root.py and preserves PID-bound restart intent before SIGTERM, mismatch-triggered restart, and matching-root no-op behavior.",
+          "Run bash syntax validation, the full focused sync-dev-root test suite, and git diff --check; record exact results and require every GitHub check on the exact head to pass.",
+          "Publish an independent exact-head verdict before Human/Ops supplies the root-freeze context and merges PR #4451.",
+          "Do not broaden into supervisor scheduling or fleet-policy redesign, directly patch dev-root, restart the projector, or delete runtime/projection state."
+        ],
+        "artifacts": [
+          "scripts/sync-dev-root.sh",
+          "scripts/test_sync_dev_root.py",
+          "docs/deployment/evidence/supervisor/SUP-COMMAND-ROOT-SPLIT-HOTFIX-REVIEW-R2-20260801/"
+        ],
+        "depends_on": [
+          "SUP-COMMAND-ROOT-SPLIT-HOTFIX-REVIEW-R2-20260801"
+        ],
+        "id": "SUP-COMMAND-ROOT-SPLIT-HOTFIX-COMPOSED-HEAD-REVIEW-20260801",
+        "owner": "Codex",
+        "phase": "incident-hotfix-review",
+        "reviewer": "Antigravity",
+        "summary": "Strict branch protection required a merge-only update after independent implementation approval; validate the final composed PR #4451 head before merge and runtime promotion.",
+        "title": "Independently review the strict-base-composed supervisor command-root hotfix"
+      },
+      "task_spec_hash": "d147b54992ba727e077afc208b45ec52f7aa16cad44528f9e41066d7f872a53a"
+    }
+  ]
+}

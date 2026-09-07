@@ -1,0 +1,172 @@
+{
+  "version": 1,
+  "task_id": "AGORA-L12-REAL-VERIFIER-20260808",
+  "archived_at": "2026-08-13T02:59:49Z",
+  "terminal_status": "done",
+  "terminal_outcome": "superseded",
+  "task": {
+    "acceptance": [
+      "Invoke actual authenticated service routes and durable API or database readbacks; fail closed when any required service is absent.",
+      "Capture exact interaction, evidence, dataset version, handoff, acknowledgement, candidate, consultation request, and memo identifiers in one correlated result.",
+      "Verify duplicate/idempotency conflict behavior, acknowledgement ordering, tenant isolation, restart readback, failure-to-DLQ, and replay to successful terminal output.",
+      "Record safe write posture and prove unauthorized or disallowed writes fail without weakening strict authentication.",
+      "Record aggregate backlog counts before and after the test and never purge or bulk-acknowledge historical rows.",
+      "The verifier must return nonzero for a missing service, mismatched tenant, missing durable readback, unacknowledged handoff, missing candidate, or missing consultation memo.",
+      "Independent review must inspect the verifier source and raw evidence; owner-authored review_approved is invalid."
+    ],
+    "artifacts": [
+      "scripts/verify_agora_learning_cross_loop.py",
+      "scripts/test_verify_agora_learning_cross_loop.py",
+      "docs/deployment/evidence/agora/AGORA-L12-REAL-VERIFIER-20260808/"
+    ],
+    "depends_on": [
+      "AGORA-L12-CROSS-LOOP-INTEGRATE-20260808",
+      "L12-MIN-E2E-20260808"
+    ],
+    "dev_bridge": {
+      "actor": {
+        "capabilities": [
+          "dev-task.dispatch",
+          "fleet.dispatch"
+        ],
+        "id": "Codex",
+        "roles": [
+          "coordination-agent"
+        ]
+      },
+      "audit_conversation_href": "codex://root/agora-current-gap-execution-20260808",
+      "conversation_id": "codex-root-agora-current-gap-execution-20260808",
+      "documents": [
+        {
+          "kind": "AGORA_CURRENT_GAP_AUDIT",
+          "path": "docs/bff/execution-tasks/2026-08-08-agora-current-environment-gap/GAP-AUDIT.md",
+          "sourceRefs": [
+            "https://github.com/ajoe734/pantheon/pull/4628",
+            "e765bcbed",
+            "deployment run 31250996848"
+          ]
+        },
+        {
+          "kind": "AGORA_CURRENT_GAP_PLAN",
+          "path": "docs/bff/execution-tasks/2026-08-08-agora-current-environment-gap/INDEX.md",
+          "sourceRefs": [
+            "https://github.com/ajoe734/pantheon/pull/4628",
+            "origin/dev 0f2ab06f8"
+          ]
+        },
+        {
+          "kind": "EXECUTION_TASK_DAG",
+          "path": "docs/bff/execution-tasks/2026-08-08-agora-current-environment-gap/execution-tasks.json",
+          "sourceRefs": [
+            "seven unique addendum tasks",
+            "unique sink AGORA-CURRENT-CLOSE-20260808"
+          ]
+        }
+      ],
+      "emitted_at": "2026-08-08T10:50:00Z",
+      "intent": "generate_sa_sd_and_dispatch",
+      "mode": "kernel_repair",
+      "packet_digest": "e32265e892a924d69b69ce3de5d83d0ea8c5ccad56114a0638299192686a41c6",
+      "packet_id": "pkt-agora-current-environment-gap-20260808-e765bcbed",
+      "source_turn_ids": [
+        "user-request-agora-gap-and-execution-tasks-for-supervisor",
+        "codex-readonly-agora-current-state-audit-20260808"
+      ],
+      "task_spec": {
+        "acceptance": [
+          "Invoke actual authenticated service routes and durable API or database readbacks; fail closed when any required service is absent.",
+          "Capture exact interaction, evidence, dataset version, handoff, acknowledgement, candidate, consultation request, and memo identifiers in one correlated result.",
+          "Verify duplicate/idempotency conflict behavior, acknowledgement ordering, tenant isolation, restart readback, failure-to-DLQ, and replay to successful terminal output.",
+          "Record safe write posture and prove unauthorized or disallowed writes fail without weakening strict authentication.",
+          "Record aggregate backlog counts before and after the test and never purge or bulk-acknowledge historical rows.",
+          "The verifier must return nonzero for a missing service, mismatched tenant, missing durable readback, unacknowledged handoff, missing candidate, or missing consultation memo.",
+          "Independent review must inspect the verifier source and raw evidence; owner-authored review_approved is invalid."
+        ],
+        "artifacts": [
+          "scripts/verify_agora_learning_cross_loop.py",
+          "scripts/test_verify_agora_learning_cross_loop.py",
+          "docs/deployment/evidence/agora/AGORA-L12-REAL-VERIFIER-20260808/"
+        ],
+        "depends_on": [
+          "AGORA-L12-CROSS-LOOP-INTEGRATE-20260808",
+          "L12-MIN-E2E-20260808"
+        ],
+        "id": "AGORA-L12-REAL-VERIFIER-20260808",
+        "owner": "Claude",
+        "phase": "A3 real verifier",
+        "reviewer": "Antigravity",
+        "summary": "Verify the correlated tenant-safe chain with real service calls, durable readbacks, restart and negative controls rather than literal pass output.",
+        "title": "Build a non-self-attesting Agora cross-loop verifier"
+      },
+      "task_spec_hash": "c35fc2bcba3ebb43dea7a2bda9202398cfafef63496eeff3f5fed765ba133a81"
+    },
+    "generation": 1,
+    "id": "AGORA-L12-REAL-VERIFIER-20260808",
+    "last_update": "2026-08-13T02:59:49Z",
+    "next": "Superseded by the 2026-08-13 V2 board reset. Preserve merged/archive evidence; remaining product work is rematerialized as dependency-free, current-source V2 roots.",
+    "owner": "Antigravity",
+    "phase": "A3 real verifier",
+    "reviewer": "Codex",
+    "status": "done",
+    "summary_zh": "Verify the correlated tenant-safe chain with real service calls, durable readbacks, restart and negative controls rather than literal pass output.",
+    "title": "Build a non-self-attesting Agora cross-loop verifier",
+    "terminal_outcome": "superseded"
+  },
+  "handoffs": [
+    {
+      "created_at": "2026-08-08T14:44:10Z",
+      "from": "Claude",
+      "message": "Auto-reassigned AGORA-L12-REAL-VERIFIER-20260808 away from unavailable lane Claude, Antigravity (disabled, paused, sidecar-only, or auth-down); owner Claude -> Codex, reviewer Antigravity -> Codex2.",
+      "resolved_at": "2026-08-09T10:23:51Z",
+      "status": "done",
+      "task_id": "AGORA-L12-REAL-VERIFIER-20260808",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-08-09T10:19:40Z",
+      "from": "Codex2",
+      "message": "Auto-reassigned AGORA-L12-REAL-VERIFIER-20260808 away from unavailable lane Codex2 (disabled, paused, sidecar-only, or auth-down); reviewer Codex2 -> Claude.",
+      "resolved_at": "2026-08-09T10:45:46Z",
+      "status": "done",
+      "task_id": "AGORA-L12-REAL-VERIFIER-20260808",
+      "to": "Claude"
+    },
+    {
+      "created_at": "2026-08-09T10:45:46Z",
+      "from": "Claude",
+      "message": "Auto-reassigned AGORA-L12-REAL-VERIFIER-20260808 away from unavailable lane Claude (disabled, paused, sidecar-only, or auth-down); reviewer Claude -> Antigravity.",
+      "resolved_at": "2026-08-09T15:41:00Z",
+      "status": "done",
+      "task_id": "AGORA-L12-REAL-VERIFIER-20260808",
+      "to": "Antigravity"
+    },
+    {
+      "created_at": "2026-08-09T15:18:33Z",
+      "from": "Codex",
+      "message": "Auto-reassigned AGORA-L12-REAL-VERIFIER-20260808 away from unavailable lane Codex (disabled, paused, sidecar-only, or auth-down); owner Codex -> Codex2.",
+      "resolved_at": "2026-08-12T03:09:43Z",
+      "status": "done",
+      "task_id": "AGORA-L12-REAL-VERIFIER-20260808",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-08-12T03:09:43Z",
+      "from": "Codex2",
+      "message": "Auto-reassigned AGORA-L12-REAL-VERIFIER-20260808 away from unavailable lane Codex2 (disabled, paused, sidecar-only, or auth-down); owner Codex2 -> Antigravity, reviewer Antigravity -> Claude.",
+      "resolved_at": "2026-08-13T02:00:40Z",
+      "status": "done",
+      "task_id": "AGORA-L12-REAL-VERIFIER-20260808",
+      "to": "Antigravity"
+    },
+    {
+      "created_at": "2026-08-12T04:39:31Z",
+      "from": "Claude",
+      "message": "Auto-reassigned AGORA-L12-REAL-VERIFIER-20260808 away from unavailable lane Claude (disabled, paused, sidecar-only, or auth-down); reviewer Claude -> Codex.",
+      "status": "done",
+      "task_id": "AGORA-L12-REAL-VERIFIER-20260808",
+      "to": "Codex",
+      "resolved_at": "2026-08-13T02:59:49Z"
+    }
+  ],
+  "blockers": []
+}

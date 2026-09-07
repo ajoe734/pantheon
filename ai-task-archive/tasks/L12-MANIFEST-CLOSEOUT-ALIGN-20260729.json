@@ -1,0 +1,57 @@
+{
+  "version": 1,
+  "task_id": "L12-MANIFEST-CLOSEOUT-ALIGN-20260729",
+  "archived_at": "2026-07-31T20:53:56Z",
+  "terminal_status": "done",
+  "terminal_outcome": "superseded",
+  "task": {
+    "acceptance": [
+      "All five workstream outputs are review-approved or explicitly waived",
+      "Final L12-MANIFEST-001 branch integrates accepted outputs without conflicting parallel docker-compose ownership",
+      "PR #4329 or replacement PR is rebased onto dev",
+      "manifest evidence/readback/checksum are regenerated",
+      "exact-head canonical review gate succeeds",
+      "L12-MANIFEST-001 can merge and archive"
+    ],
+    "artifacts": [],
+    "depends_on": [
+      "L12-MANIFEST-HC-ALPHA-SRC-20260729",
+      "L12-MANIFEST-HC-IMIT-CAP-20260729",
+      "L12-MANIFEST-HC-REC-20260729",
+      "L12-MANIFEST-AUTH-VOLUME-MATRIX-20260729",
+      "L12-MANIFEST-RESTART-PROOF-20260729"
+    ],
+    "id": "L12-MANIFEST-CLOSEOUT-ALIGN-20260729",
+    "last_update": "2026-07-31T20:53:56Z",
+    "next": "Superseded by the completed L12-MANIFEST-001 replacement delivery; two legacy sub-workstreams are formally superseded and must not be treated as successful dependencies or trigger duplicate manifest integration.",
+    "owner": "Antigravity",
+    "phase": "Twelve Loop Remediation / Manifest Integration",
+    "reviewer": "Human/Ops",
+    "status": "done",
+    "summary_zh": "等待五個 manifest workstream 完成後，整合 health/heartbeat、auth/volume matrix、restart proof 與 evidence wording 到 L12-MANIFEST-001 / #4329 或替代 PR。",
+    "title": "Integrate L12 manifest review-reopen workstreams into final manifest PR",
+    "terminal_outcome": "superseded",
+    "superseded_by": "L12-MANIFEST-001"
+  },
+  "handoffs": [
+    {
+      "created_at": "2026-07-29T03:25:28Z",
+      "from": "Codex2",
+      "message": "Auto-reassigned L12-MANIFEST-CLOSEOUT-ALIGN-20260729 away from unavailable lane Codex2 (disabled, paused, sidecar-only, or auth-down); owner Codex2 -> Antigravity.",
+      "resolved_at": "2026-07-29T09:20:48Z",
+      "status": "done",
+      "task_id": "L12-MANIFEST-CLOSEOUT-ALIGN-20260729",
+      "to": "Antigravity"
+    },
+    {
+      "created_at": "2026-07-29T09:19:35Z",
+      "from": "Codex",
+      "message": "Auto-reassigned L12-MANIFEST-CLOSEOUT-ALIGN-20260729 away from unavailable lane Codex (disabled, paused, sidecar-only, or auth-down); reviewer Codex -> Codex2.",
+      "status": "done",
+      "task_id": "L12-MANIFEST-CLOSEOUT-ALIGN-20260729",
+      "to": "Codex2",
+      "resolved_at": "2026-07-31T20:53:56Z"
+    }
+  ],
+  "blockers": []
+}

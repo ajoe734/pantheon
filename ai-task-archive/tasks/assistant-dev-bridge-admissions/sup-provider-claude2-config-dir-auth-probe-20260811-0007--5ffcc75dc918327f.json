@@ -1,0 +1,85 @@
+{
+  "actor": {
+    "capabilities": [
+      "integration",
+      "status-system",
+      "acceptance"
+    ],
+    "id": "Human/Ops",
+    "roles": [
+      "operator"
+    ]
+  },
+  "admission_record_path": "ai-task-archive/tasks/assistant-dev-bridge-admissions/sup-provider-claude2-config-dir-auth-probe-20260811-0007--5ffcc75dc918327f.json",
+  "admitted_at": "2026-08-11T00:08:07Z",
+  "audit_conversation_href": "task:SUP-RUNTIME-V10-GOVERNED-ROLLOUT-VERIFY-20260808",
+  "constraints": {
+    "allowedRepos": [
+      "pantheon"
+    ],
+    "noDirectShellFromWeb": true,
+    "requiresBranchPrMerge": true
+  },
+  "conversation_id": "SUP-RUNTIME-V10-GOVERNED-ROLLOUT-VERIFY-20260808",
+  "dispatch_records": [
+    {
+      "error": null,
+      "owner": "Antigravity2",
+      "reviewer": "Codex2",
+      "status": "dispatched",
+      "taskId": "SUP-PROVIDER-CLAUDE2-CONFIG-DIR-AUTH-PROBE-20260811"
+    }
+  ],
+  "documents": [
+    {
+      "kind": "CLAUDE2_AUTH_PATH_EVIDENCE",
+      "path": ".orchestrator/config.json",
+      "sourceRefs": [
+        "live config claude2 runtime home=/home/lupin/.claude2 without CLAUDE_CONFIG_DIR",
+        "probe resolves /home/lupin/.claude2/.claude/.credentials.json and reports auth_not_ready",
+        "explicit CLAUDE_CONFIG_DIR=/home/lupin/.claude2 auth status loggedIn=true"
+      ]
+    }
+  ],
+  "durable": true,
+  "emitted_at": "2026-08-11T00:07:00Z",
+  "intent": "source_only_remediation_dispatch",
+  "mode": "supervisor_source_only",
+  "packet_digest": "5ffcc75dc918327f28ff10f8e133462a0931cb25e7f49782b44cf23d3c3ae191",
+  "packet_id": "sup-provider-claude2-config-dir-auth-probe-20260811-0007",
+  "packet_version": "pantheon.assistant.dev-task.v1",
+  "record_kind": "assistant_dev_bridge_admission",
+  "record_payload_sha256": "9d6aef1aa7cfd13dc1dfc7c6e8974503007740172da8fd43dd80f82bfa230113",
+  "schema": "pantheon.assistant-dev-bridge-admission.v1",
+  "source_turn_ids": [
+    "live-auth-probe-20260811T000338Z",
+    "claude2-auth-path-readback-20260811T0005Z"
+  ],
+  "tasks": [
+    {
+      "task_id": "SUP-PROVIDER-CLAUDE2-CONFIG-DIR-AUTH-PROBE-20260811",
+      "task_spec": {
+        "acceptance": [
+          "Reproduce the live false negative: claude2 runtime sets HOME=/home/lupin/.claude2 but omits CLAUDE_CONFIG_DIR, so the provider probe reads /home/lupin/.claude2/.claude/.credentials.json while the authenticated credentials are /home/lupin/.claude2/.credentials.json.",
+          "Add CLAUDE_CONFIG_DIR=/home/lupin/.claude2 to the claude2 runtime environment in source config, preserving account isolation from Claude and without copying, exposing, or editing credentials.",
+          "Add regression coverage proving the configured claude2 probe environment resolves the intended credentials path and reports ready when the isolated auth material is present; prove Claude continues using its own config directory.",
+          "Run focused provider-permission tests, relevant supervisor tests, JSON validation, and git diff --check; commit evidence with all subjects <=72 characters and required trailers.",
+          "Keep this source-only: no live config edit, no direct auth pause clearing, no credential rotation, no provider/account regrouping, no reviewer-policy or scheduler change. After merge, supervisor must perform the live auth probe and clear the stale pause transactionally."
+        ],
+        "artifacts": [
+          ".orchestrator/config.json",
+          ".orchestrator/test_provider_permissions.py",
+          "docs/deployment/evidence/supervisor/SUP-PROVIDER-CLAUDE2-CONFIG-DIR-AUTH-PROBE-20260811/"
+        ],
+        "depends_on": [],
+        "id": "SUP-PROVIDER-CLAUDE2-CONFIG-DIR-AUTH-PROBE-20260811",
+        "owner": "Antigravity2",
+        "phase": "Supervisor Provider Auth / Claude2 Config Isolation",
+        "reviewer": "Codex2",
+        "summary": "The account is logged in, but supervisor auth probe uses the wrong Claude2 config path because runtime HOME is set without CLAUDE_CONFIG_DIR. Bind the explicit config directory in source and let supervisor clear the pause only after a fresh live probe.",
+        "title": "Bind Claude2 config directory for live auth probe"
+      },
+      "task_spec_hash": "a71304301ffe1a6f0048b16289acb77a930e46f7e1cddf4ff6d49187496eba75"
+    }
+  ]
+}

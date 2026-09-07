@@ -1,0 +1,84 @@
+{
+  "actor": {
+    "capabilities": [
+      "integration",
+      "supervisor",
+      "bridge-governance",
+      "acceptance"
+    ],
+    "id": "Human/Ops",
+    "roles": [
+      "operator",
+      "integration"
+    ]
+  },
+  "admission_record_path": "ai-task-archive/tasks/assistant-dev-bridge-admissions/sup-bridge-retry-fairness-r3-20260811-0317--6586c813284e9769.json",
+  "admitted_at": "2026-08-11T03:39:09Z",
+  "audit_conversation_href": "task:SUPERVISOR-FLEET-THROUGHPUT-20260811",
+  "constraints": {
+    "allowedRepos": [
+      "pantheon"
+    ],
+    "noDirectShellFromWeb": true,
+    "requiresBranchPrMerge": true
+  },
+  "conversation_id": "SUPERVISOR-FLEET-THROUGHPUT-20260811",
+  "dispatch_records": [
+    {
+      "error": null,
+      "owner": "Antigravity",
+      "reviewer": "Codex2",
+      "status": "dispatched",
+      "taskId": "SUP-BRIDGE-RETRY-FAIRNESS-R3-20260811"
+    }
+  ],
+  "documents": [],
+  "durable": true,
+  "emitted_at": "2026-08-11T03:18:11.412875Z",
+  "intent": "source_only_remediation_dispatch",
+  "mode": "supervisor_source_only",
+  "packet_digest": "6586c813284e97696760519cb4c5d7789ffd6608178e854b3ac11b25b3bc6ecd",
+  "packet_id": "sup-bridge-retry-fairness-r3-20260811-0317",
+  "packet_version": "pantheon.assistant.dev-task.v1",
+  "record_kind": "assistant_dev_bridge_admission",
+  "record_payload_sha256": "fa5c674ce381dd78bb99827e9a3c95a601a10c14c3ee1323ef19b521ec863639",
+  "schema": "pantheon.assistant-dev-bridge-admission.v1",
+  "source_turn_ids": [
+    "retry-fairness-r2-independent-review-20260811",
+    "worker-subject-guard-merged-20260811"
+  ],
+  "tasks": [
+    {
+      "task_id": "SUP-BRIDGE-RETRY-FAIRNESS-R3-20260811",
+      "task_spec": {
+        "acceptance": [
+          "Start from clean current origin/dev after the merged worker subject guard. Create only task/SUP-BRIDGE-RETRY-FAIRNESS-R3-20260811; do not reuse PR #4743, its branch, or any R2 commits.",
+          "Reproduce a bounded starvation case in which retryable paths sort before a newer valid signed fresh packet and a public claim/drain limit would previously select only retryables. Prove the fresh packet is admitted within the bound while retryables remain, preserving signature verification, replay protection, packet fences, canonical locks, duplicate-materialization protection, claim expiry, and concurrent drainer behavior.",
+          "Add a task-scoped exact-head evidence manifest mapping acceptance to tests, clean origin/dev base, reviewed head, scope/no-live-mutation boundary, and exact validation output. Ensure git diff --check is clean with no EOF whitespace.",
+          "Use the worker commit wrapper or equivalent local trailer preflight before every commit. Every subject must be at most 72 characters; use the compact R3 task label in subjects and retain the full Task-ID only in required trailers.",
+          "Do not move/delete live inbox packets, edit canonical state, change CI or branch protection, signal processes, or perform any runtime promotion.",
+          "Deliver through clean PR, independent Codex2 exact-head review, required checks, protected merge, then mark R2 superseded only after R3 materializes. No manual merge bypass."
+        ],
+        "artifacts": [
+          ".orchestrator/supervisor.py",
+          "services/control-plane/bff/assistant/dev_bridge_inbox.py",
+          "services/control-plane/bff/assistant/dev_bridge_dispatcher.py",
+          ".orchestrator/test_supervisor.py",
+          "services/control-plane/bff/assistant/tests/test_dev_bridge_inbox.py",
+          "docs/deployment/evidence/supervisor/SUP-BRIDGE-RETRY-FAIRNESS-R3-20260811/"
+        ],
+        "depends_on": [
+          "SUP-ASSISTANT-DEV-BRIDGE-PARTIAL-ASSIGN-RECOVERY-R2-20260809",
+          "SUP-WORKER-SUBJECT-GUARD-20260811"
+        ],
+        "id": "SUP-BRIDGE-RETRY-FAIRNESS-R3-20260811",
+        "owner": "Antigravity",
+        "phase": "Supervisor Bridge / Retry Fairness Recovery R3",
+        "reviewer": "Codex2",
+        "summary": "Reissue bridge retry fairness on a clean branch after PR #4743 acquired a noncompliant 107-character published commit subject. Preserve the bounded fairness design but deliver a new clean PR with a real starvation regression and exact-head evidence.",
+        "title": "Deliver clean bridge retry fairness R3"
+      },
+      "task_spec_hash": "6ed848c5880a8223b04a204f12a823a9b45f928d463bc2af8120406e20df760d"
+    }
+  ]
+}

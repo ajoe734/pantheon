@@ -1,0 +1,99 @@
+{
+  "actor": {
+    "capabilities": [
+      "fleet.dispatch",
+      "dev-task.dispatch"
+    ],
+    "id": "Human/Ops",
+    "roles": [
+      "operator"
+    ]
+  },
+  "admission_record_path": "ai-task-archive/tasks/assistant-dev-bridge-admissions/pkt-review-handoff-owner-stability-20260731T1623Z--ef32f6b3c76ac60d.json",
+  "admitted_at": "2026-07-31T16:25:18Z",
+  "audit_conversation_href": "codex://root/l12-current-gap-supervisor-dispatch-20260731#owner-stability-gap",
+  "constraints": {
+    "allowedRepos": [
+      "pantheon"
+    ],
+    "noDirectShellFromWeb": true,
+    "requiresBranchPrMerge": true
+  },
+  "conversation_id": "codex-root-l12-current-gap-supervisor-dispatch-20260731",
+  "dispatch_records": [
+    {
+      "error": null,
+      "owner": "Antigravity",
+      "reviewer": "Claude2",
+      "status": "dispatched",
+      "taskId": "SUP-REVIEW-HANDOFF-OWNER-STABILITY-20260731"
+    }
+  ],
+  "documents": [
+    {
+      "kind": "RUNTIME_FAILURE_AUDIT",
+      "path": ".orchestrator/supervisor.py",
+      "sourceRefs": [
+        "PR#4390 merge 314e02f2b922f75c6aa25f200b6f326fb674a24c",
+        "PR#4407 merge d07dfd6202a1200cd864dfcb2e8903ff5e369359",
+        "canonical task_reassigned events after successful handoff/review"
+      ]
+    },
+    {
+      "kind": "REGRESSION_TARGET",
+      "path": ".orchestrator/test_supervisor.py",
+      "sourceRefs": [
+        "reconcile_runtime_on_boot",
+        "missing worker owner handoff",
+        "owned finalize identity stability"
+      ]
+    }
+  ],
+  "durable": true,
+  "emitted_at": "2026-07-31T16:24:54Z",
+  "intent": "repair_supervisor_review_handoff_owner_stability",
+  "mode": "kernel_repair",
+  "packet_digest": "ef32f6b3c76ac60d099dffbdd225dc98d7642b58c1b8d0726f34e955a7d188a3",
+  "packet_id": "pkt-review-handoff-owner-stability-20260731T1623Z",
+  "packet_version": "pantheon.assistant.dev-task.v1",
+  "record_kind": "assistant_dev_bridge_admission",
+  "record_payload_sha256": "5a471a7202e0c4ea87c4c1ffd08ca865465cf3df860bddba88d489b151a02a61",
+  "schema": "pantheon.assistant-dev-bridge-admission.v1",
+  "source_turn_ids": [
+    "user-authorized-full-sequence",
+    "observed-pr-4390-pr-4407-closeout-owner-drift"
+  ],
+  "tasks": [
+    {
+      "task_id": "SUP-REVIEW-HANDOFF-OWNER-STABILITY-20260731",
+      "task_spec": {
+        "acceptance": [
+          "A successful owner worker whose canonical task advanced to review or review_approved is completed, not retried, failed, or owner-reassigned during boot reconciliation",
+          "A missing or cleanly exited owned_finalize worker may retry or block fail-closed but must not change owner after PR/review/delivery identity is bound",
+          "Normal done may accept a prior-owner LLM-Agent trailer only when an exact audited supervisor task_reassigned event proves old_owner, new_owner, task id, reviewer continuity, and event ordering; otherwise fail closed",
+          "Regression covers successful owner handoff to review, reviewer advance to review_approved after owner exit, owned_finalize exit without done, repeated boot reconciliation, and forged/stale reassignment negatives",
+          "Recover and canonically finish the already merged #4390 and #4407 tasks after the repair is merged/live, without rewriting their implementation or evidence claims",
+          "No .orchestrator/config.json edit, direct canonical JSON mutation, generic product-task materialization, or identity impersonation",
+          "Deliver by task branch, focused/full supervisor and ai_status tests, PR, exact-head independent review, protected merge, live promotion, and post-promotion closeout canary"
+        ],
+        "artifacts": [
+          ".orchestrator/supervisor.py",
+          ".orchestrator/test_supervisor.py",
+          "scripts/ai_status.py",
+          "scripts/test_ai_status.py",
+          "docs/deployment/evidence/twelve-loop-gap/SUP-REVIEW-HANDOFF-OWNER-STABILITY-20260731"
+        ],
+        "depends_on": [
+          "SUP-PREEMPTION-DISPATCH-ELIGIBILITY-20260731"
+        ],
+        "id": "SUP-REVIEW-HANDOFF-OWNER-STABILITY-20260731",
+        "owner": "Antigravity",
+        "phase": "Supervisor Runtime Repair / Review and Closeout Stability",
+        "reviewer": "Claude2",
+        "summary": "Repair the supervisor failure-loop/closeout boundary so a successful review handoff does not look like a missing outcome and immutable delivery identity remains valid through governed reassignment.",
+        "title": "Preserve owner identity across review handoff and closeout"
+      },
+      "task_spec_hash": "c7b93c5c66d4f237db2b37e8837dd7f8eb8b077adc0ba64f8d5f8dc31d6835b7"
+    }
+  ]
+}

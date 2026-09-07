@@ -1,0 +1,439 @@
+{
+  "version": 1,
+  "task_id": "OPS-PR-REVIEW-BEFORE-MERGE-GATE-001",
+  "archived_at": "2026-07-28T13:32:47Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "acceptance": [
+      "Canonical task marked review-before-merge never enables or performs merge before exact assigned reviewer approval",
+      "Approval is bound to exact task PR head expected base reviewer identity and non-stale timestamp",
+      "Reviewer rejection head change missing state GitHub ambiguity and concurrent finalize all fail closed",
+      "Tasks explicitly governed as merge-then-review retain their documented integration behavior",
+      "Regression fixtures cover PRs 4212 4213 and 4214 without impersonating owner or reviewer",
+      "Focused workflow tests branch commit push PR checks independent review merge and evidence archive complete"
+    ],
+    "artifacts": [
+      "scripts/git/task_finalize.sh",
+      "scripts/git/safe_pr.sh",
+      "scripts/git/auto_integrator.py",
+      "scripts/git/test_task_review_merge_gate.py",
+      "docs/deployment/evidence/supervisor/OPS-PR-REVIEW-BEFORE-MERGE-GATE-001"
+    ],
+    "depends_on": [],
+    "github_review_bridge": {
+      "actor": "Codex2",
+      "base": "dev",
+      "decision": "approve",
+      "head_branch": "task/OPS-PR-REVIEW-BEFORE-MERGE-GATE-001",
+      "head_sha": "1deadaed884378eea4455af9eed16ae499020552",
+      "mode": "required_commit_status",
+      "pr": 4218,
+      "pr_url": "https://github.com/ajoe734/pantheon/pull/4218",
+      "recorded_at": "2026-07-28T12:11:02Z",
+      "repository": "ajoe734/pantheon",
+      "review_error": "gh: Unprocessable Entity (HTTP 422)",
+      "status_context": "Pantheon canonical review gate",
+      "status_id": 51213484086,
+      "status_state": "success"
+    },
+    "human_ops_reassignment_history": [
+      {
+        "at": "2026-07-27T18:29:29Z",
+        "owner": "Antigravity",
+        "previous": {
+          "last_update": "2026-07-27T18:11:47Z",
+          "next": "Supervisor re-dispatched OPS-PR-REVIEW-BEFORE-MERGE-GATE-001; task remains in progress.",
+          "owner": "Codex",
+          "reviewer": "Codex2"
+        },
+        "reason": "canonical fleet dispatch repair: prioritize Claude/Antigravity where available; avoid config mutation",
+        "reviewer": "Codex2"
+      }
+    ],
+    "id": "OPS-PR-REVIEW-BEFORE-MERGE-GATE-001",
+    "last_update": "2026-07-28T13:32:47Z",
+    "next": "Owner closeout complete: PR #4218 merged as 9e4bb8e1fa9495d8802da58336b05ae68c7756ad from exact Codex2-reviewed head 1deadaed884378eea4455af9eed16ae499020552; current revalidation passed 360 tests plus 31 subtests, scripts/git 208 tests, and shell/compile/evidence/policy/ancestry static gates; superseded PR #4294 closed unmerged.",
+    "owner": "Codex",
+    "phase": "Fleet delivery governance",
+    "review_binding": {
+      "base": "dev",
+      "head_branch": "task/OPS-PR-REVIEW-BEFORE-MERGE-GATE-001",
+      "head_sha": "1deadaed884378eea4455af9eed16ae499020552",
+      "pr": 4218
+    },
+    "review_file": "docs/deployment/evidence/supervisor/OPS-PR-REVIEW-BEFORE-MERGE-GATE-001/evidence.json",
+    "review_notes_zh": [
+      "PR #4218 exact head 1deadaed884378eea4455af9eed16ae499020552 已獨立核對；相對已核准 parent d489750abe396e8696bba2c502d23d8f8640ffd9 僅 task brief 2 行狀態／證據更新。",
+      "origin/dev 11858f4d445565064e630cce9b89ea8b475a6598 為 exact head ancestor（0 base-only）；remote branch 與 PR head 一致，autoMergeRequest=null，8 個 Branch CI checks 全部 SUCCESS。",
+      "獨立重跑 focused matrix：360 passed、31 subtests passed；bash syntax、py_compile、evidence JSON、diff checks、commit trailers 全部通過；AC1-AC6 與 fail-closed gate 行為維持成立。"
+    ],
+    "reviewer": "Codex2",
+    "status": "done",
+    "summary_zh": "讓需要獨立審查的任務在 reviewer 核准且 head 未變前不得 auto-merge；保留明確允許 merge 後審查的既有路徑。",
+    "title": "Gate task auto-merge on exact independent review when required",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-07-28T13:32:47Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-ops-pr-review-gate-rebuild",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/OPS-PR-REVIEW-BEFORE-MERGE-GATE-001",
+      "git_clean_required": false,
+      "status_command_runtime": {
+        "command_root": "/home/lupin/pantheon-ci-deploy/dev-root",
+        "source_sha": "061408b09aa06943813c97334054bfa29b79e236",
+        "base_ref": "origin/dev",
+        "remote": "ajoe734/pantheon",
+        "status_root": "/home/lupin/pantheon",
+        "delivery_root": "/tmp/pantheon-ops-pr-review-gate-rebuild",
+        "wrapper_root": "/home/lupin/pantheon-ci-deploy/dev-root"
+      },
+      "commit": "1deadaed884378eea4455af9eed16ae499020552",
+      "commit_subject": "OPS-PR-REVIEW-BEFORE-MERGE-GATE-001: record approved closeout",
+      "commit_author": {
+        "name": "pantheon-dev",
+        "email": "bjoe734@gmail.com"
+      },
+      "commit_metadata": {
+        "Owned layer": "task brief closeout status and exact-head review summary.",
+        "Not changing": "gate implementation, evidence manifest, canonical task state,",
+        "Composes with": "PR #4218 and a fresh Codex2 review of this documentation-only",
+        "LLM-Agent": "Codex",
+        "Task-ID": "OPS-PR-REVIEW-BEFORE-MERGE-GATE-001",
+        "Reviewer": "Codex2",
+        "Verified": "git diff --check; evidence JSON parses; prior 360-case matrix plus 31 subtests and static gates approved on parent"
+      },
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "061408b09aa06943813c97334054bfa29b79e236",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "created_at": "2026-07-27T00:25:26Z",
+      "from": "Claude",
+      "message": "Codex2 exact-head review requested on PR #4218 head 190fb7fe8c95fa060a33e45edc0e6ac0a0e55a59, unchanged since the Human/Ops audit. Re-verified at this head after the dev merges: 64 gate, 9 integrator, 52 workflow-helper, 24 PR-triage, 17 index-safety tests OK; bash -n on task_finalize.sh and safe_pr.sh; py_compile on auto_integrator.py and task_review_merge_gate.py. Review file docs/deployment/evidence/supervisor/OPS-PR-REVIEW-BEFORE-MERGE-GATE-001/evidence.json records all six acceptance items pass, ten live regressions (#4212-#4214, #4217, #4222, #4225, #4226, #4227, #4230, #4201) and a seven-row merge_entry_point_coverage table. Auto-merge is revoked on #4218 and must stay off until your approval binds this exact head; merge then comes from auto_integrator.py --execute. Residual program blocker stands and must be preserved: live dev protection is still required_approving_review_count=0, dismiss_stale_reviews=false, require_last_push_approval=false, enforce_admins=false, so web UI, direct REST and GraphQL merges by the shared owner credential remain outside this PR. Do not describe the GitHub boundary as fully closed; follow-up OPS-GITHUB-CANONICAL-REVIEW-ENFORCEMENT-001 is todo, depends on this task, and needs Human/Ops authorization before any live protection mutation. Only worktree diff is the supervisor-regenerated task brief status mirror, left uncommitted on purpose so the reviewed head stays the audited head.",
+      "resolved_at": "2026-07-27T01:17:23Z",
+      "status": "done",
+      "task_id": "OPS-PR-REVIEW-BEFORE-MERGE-GATE-001",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-07-27T01:17:23Z",
+      "from": "Codex2",
+      "message": "Review rejected at exact PR #4218 head 190fb7fe8c95fa060a33e45edc0e6ac0a0e55a59. Blocking findings: (1) approval is not structurally bound to the reviewed head. command_approve records only actor, timestamp, and free-text message; ApprovalRecord carries no approved head; evaluate_gate merely checks current head commit time <= approval time. Reproduced by approving bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb then replacing the PR head with cccccccccccccccccccccccccccccccccccccccc committed before approval: gate returned allow_merge=True reason=exact_head_approved. Required: record immutable PR/head and expected-base binding in canonical approval evidence, compare exact identities in the gate, and add an older/pre-dated head replacement regression. (2) auto_integrator.py ignores a failed gh pr merge --disable-auto on an approved gated PR and proceeds to direct --match-head-commit merge. Reproduced disable-auto return code 1; result still action=merged and emitted both commands. Required: failed revocation must block or wait and must never emit the direct merge; add a nonzero revocation regression. The existing 64 gate, 9 integrator, 52 workflow-helper, 24 triage, and 17 index-safety tests plus bash -n and py_compile pass, but omit these fail-open cases. Update evidence AC2/AC3 and revalidate. PR remained OPEN, autoMergeRequest=null, mergeStateStatus=BEHIND at review time.",
+      "resolved_at": "2026-07-27T01:17:23Z",
+      "status": "done",
+      "task_id": "OPS-PR-REVIEW-BEFORE-MERGE-GATE-001",
+      "to": "Claude"
+    },
+    {
+      "created_at": "2026-07-27T12:58:51Z",
+      "from": "Codex",
+      "message": "Review PR #4218 exact head 33db28f2ce24277ac9633b3b6ae8478901df0322 and docs/deployment/evidence/supervisor/OPS-PR-REVIEW-BEFORE-MERGE-GATE-001/evidence.json. Re-test the rejected pre-dated head replacement and nonzero disable-auto paths; verify approval binding covers PR/head/base/reviewer/timestamp, merge-then-review remains explicit-only, all 79/9/52/24/17/137 suites and 6 GitHub checks pass, and autoMergeRequest remains null. Installed command runtime 1434effd predates this change, so review repository delivery only and do not claim live activation.",
+      "resolved_at": "2026-07-27T13:08:18Z",
+      "status": "done",
+      "task_id": "OPS-PR-REVIEW-BEFORE-MERGE-GATE-001",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-07-27T13:08:18Z",
+      "from": "Codex2",
+      "message": "Repository delivery independently approved for PR #4218 exact head 33db28f2ce24277ac9633b3b6ae8478901df0322 targeting dev. Verified exact PR/head/base and committed evidence digest; pre-dated replacement rejects with approval_head_mismatch; nonzero disable-auto emits no subsequent merge; explicit merge_then_review path remains; local suites pass 79/9/52/24/17/137 plus bash -n, py_compile, JSON parse; 6 GitHub checks SUCCESS; PR remains OPEN with autoMergeRequest=null. Installed command runtime 1434effdc88fb79abd0125351a5206af8fe4a7c7 predates review_binding support, so this is repository-only approval: merge only this exact head and do not claim live activation until runtime refresh is proven.",
+      "resolved_at": "2026-07-27T14:15:34Z",
+      "status": "done",
+      "task_id": "OPS-PR-REVIEW-BEFORE-MERGE-GATE-001",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-07-27T14:15:34Z",
+      "from": "Codex",
+      "message": "GitHub branch protection rejected exact-head merge because PR #4218 was BEHIND; no admin bypass or auto-merge used. Composed latest origin/dev 73ab2777d into the task branch as head 5a9ad1643eba2580bf8a51c71a6f3a43ad8c57b6. Revalidated 79 gate, 9 integrator, 52 workflow, 24 triage, 17 index, and 137 ai-status tests plus bash -n, py_compile, JSON parse, and diff check. Please independently re-approve PR #4218 exact head 5a9ad1643eba2580bf8a51c71a6f3a43ad8c57b6 targeting dev after checks finish; autoMergeRequest remains null. Installed command runtime still predates live review_binding support.",
+      "resolved_at": "2026-07-27T14:25:44Z",
+      "status": "done",
+      "task_id": "OPS-PR-REVIEW-BEFORE-MERGE-GATE-001",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-07-27T14:25:44Z",
+      "from": "Codex2",
+      "message": "Independent review rejects PR #4218 head 5a9ad1643eba2580bf8a51c71a6f3a43ad8c57b6 despite all declared suites passing. Required fixes: (1) scripts/git/task_review_merge_gate.py:376 lowercases archive filenames, while .orchestrator/task_archive.py archive_task_path preserves task-id case; live proof: ai-task-archive/tasks/LUV-REACTIVATE-KW01-001.json exists but gate policy reports source=missing. Use the canonical case-preserving archive path/escaping and replace the lowercase-only fixture with an uppercase production-shape regression. (2) scripts/git/task_finalize.sh:128 and scripts/git/safe_pr.sh:195 swallow gh pr merge --disable-auto failure with '|| true' and then claim auto-merge is off. An armed request can remain live. Verify autoMergeRequest after revocation, distinguish already-off from failed/still-armed, abort fail-closed when it remains present, and add shell regressions for a standing request plus failed revoke in both helpers. Also compose current origin/dev 558c42352129737117dbe9fafb1f863b72e0fe24 because PR #4218 is BEHIND, then revalidate and hand off the new exact head with autoMergeRequest=null. Validation observed: 79 gate, 9 integrator, 52 workflow, 24 triage, 17 index, 137 ai-status tests all pass; bash -n, py_compile, evidence JSON parse and diff check pass, so the missing regressions must be added rather than relying on the current green suites.",
+      "resolved_at": "2026-07-27T14:25:44Z",
+      "status": "done",
+      "task_id": "OPS-PR-REVIEW-BEFORE-MERGE-GATE-001",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-07-27T14:43:02Z",
+      "from": "Codex",
+      "message": "PR #4218 exact head bb3d956b804a17826e701d2975c3a9b2217557bd is CLEAN/MERGEABLE, level with origin/dev, all required checks pass, and autoMergeRequest=null. Review uppercase canonical archive lookup plus task_finalize.sh/safe_pr.sh fail-closed revocation readback. Evidence: docs/deployment/evidence/supervisor/OPS-PR-REVIEW-BEFORE-MERGE-GATE-001/evidence.json. Approve only this exact PR/head with REVIEW_PR=4218 REVIEW_HEAD_SHA=bb3d956b804a17826e701d2975c3a9b2217557bd.",
+      "resolved_at": "2026-07-27T14:52:01Z",
+      "status": "done",
+      "task_id": "OPS-PR-REVIEW-BEFORE-MERGE-GATE-001",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-07-27T14:52:01Z",
+      "from": "Codex2",
+      "message": "Independent exact-head review passed for PR #4218 at bb3d956b804a17826e701d2975c3a9b2217557bd: CLEAN/MERGEABLE, level with origin/dev, required checks green, autoMergeRequest=null; 84 gate, 9 integrator, 52 workflow-helper, 24 triage, 17 index-safety, and 141 ai-status tests passed; uppercase canonical archive resolved source=archive; task_finalize.sh and safe_pr.sh revocation/readback paths passed. Governed runtime 1434effdc88fb79abd0125351a5206af8fe4a7c7 bootstrap remains explicitly unactivated until post-merge refresh.",
+      "resolved_at": "2026-07-27T15:00:43Z",
+      "status": "done",
+      "task_id": "OPS-PR-REVIEW-BEFORE-MERGE-GATE-001",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-07-27T15:06:29Z",
+      "from": "Codex",
+      "message": "Fresh exact-head review required after closeout refresh: PR #4218, REVIEW_PR=4218, REVIEW_HEAD_SHA=23109d468ea1c5ccda9318253d5b4221eac92d61, REVIEW_BASE=dev. Authoritative dev is eecb96fa3826e8e3527a77da7f187a32b33c6c93; PR is CLEAN/MERGEABLE, autoMergeRequest=null, and all 8 GitHub checks are SUCCESS. Local validation passed: gate 84, integrator 9, workflow-helper 52, triage 24, index-safety 17, ai-status 141, refspec pytest 2, plus shell syntax, py_compile, evidence JSON parse, and diff check. Evidence manifest: docs/deployment/evidence/supervisor/OPS-PR-REVIEW-BEFORE-MERGE-GATE-001/evidence.json. Owner/reviewer unchanged; runtime 1434effdc88fb79abd0125351a5206af8fe4a7c7 remains a documented bootstrap boundary.",
+      "resolved_at": "2026-07-27T15:13:49Z",
+      "status": "done",
+      "task_id": "OPS-PR-REVIEW-BEFORE-MERGE-GATE-001",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-07-27T15:13:49Z",
+      "from": "Codex2",
+      "message": "Independent review rejects PR #4218 exact head 23109d468ea1c5ccda9318253d5b4221eac92d61 because its base became stale during review: git ls-remote reports origin/dev=436e88de8f4267208b1ceee2283759c6a3e31542, while GitHub REST reports PR base.sha=eecb96fa3826e8e3527a77da7f187a32b33c6c93 and mergeable_state=behind. Required fix: compose the current authoritative origin/dev using an explicit remote-tracking refspec, refresh the committed evidence/validation base and new PR head, rerun 84 gate + 9 integrator + 52 workflow-helper + 24 triage + 17 index-safety + 141 ai-status + 2 refspec and syntax/compile/JSON/diff checks, then re-handoff only after the new exact head is pushed, autoMergeRequest remains null, and all GitHub checks succeed. Current implementation tests passed independently, but stale-base exact-head acceptance is not met.",
+      "resolved_at": "2026-07-27T15:13:49Z",
+      "status": "done",
+      "task_id": "OPS-PR-REVIEW-BEFORE-MERGE-GATE-001",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-07-27T15:24:32Z",
+      "from": "Codex",
+      "message": "PR #4218 is ready for exact independent review at head dcd4b9ccf80d520c6d95cb84e5e4a83091c71dc3 on current dev base 6692d51c9bc5a48ffcbaac8cf817b635351a7c9a. autoMergeRequest is null, mergeStateStatus is CLEAN, all GitHub checks succeeded, and the owner reran 329 focused tests plus syntax/compile/JSON/diff checks. Please approve or reopen only against this exact head.",
+      "resolved_at": "2026-07-27T15:29:43Z",
+      "status": "done",
+      "task_id": "OPS-PR-REVIEW-BEFORE-MERGE-GATE-001",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-07-27T15:29:43Z",
+      "from": "Codex2",
+      "message": "PR #4218 exact head dcd4b9ccf80d520c6d95cb84e5e4a83091c71dc3 on dev base 6692d51c9bc5a48ffcbaac8cf817b635351a7c9a fails the claimed fail-closed revocation readback. scripts/git/auto_integrator.py disable_auto_merge (lines 552-564) treats gh pr merge --disable-auto exit 0 as proof of revocation and integrate_candidate then emits the exact-head merge without re-reading autoMergeRequest. Independent FakeRunner reproduction retained autoMergeRequest after exit 0 yet returned action=merged with both --disable-auto and --match-head-commit commands; the existing 84 gate + 9 integrator tests still passed because they cover only nonzero revocation failure. Required: read back the live PR autoMergeRequest after every attempted integrator revocation, block on unreadable or still-armed state, add an exit-0/still-armed regression (and preferably nonzero/already-off behavior matching the evidence), correct evidence claims, compose current dev, rerun the focused matrix, and re-handoff the new exact head.",
+      "resolved_at": "2026-07-27T15:29:43Z",
+      "status": "done",
+      "task_id": "OPS-PR-REVIEW-BEFORE-MERGE-GATE-001",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-07-27T15:55:44Z",
+      "from": "Codex",
+      "message": "PR #4218 exact head 30b57020d73ba7aefd261a12326b83114d83eec2 is CLEAN/MERGEABLE on current dev 125cf21c21d1570eba59904d809f774131f33d9e; autoMergeRequest is null and all GitHub checks succeeded. Independently review the mandatory revocation readback plus exit-zero/still-armed, unreadable, nonzero/still-armed, and nonzero/already-off regressions against docs/deployment/evidence/supervisor/OPS-PR-REVIEW-BEFORE-MERGE-GATE-001/evidence.json. If approved, bind REVIEW_FILE to that manifest and exact REVIEW_PR=4218 REVIEW_HEAD_SHA=30b57020d73ba7aefd261a12326b83114d83eec2 REVIEW_BASE=dev; do not approve any moved head.",
+      "resolved_at": "2026-07-27T16:03:19Z",
+      "status": "done",
+      "task_id": "OPS-PR-REVIEW-BEFORE-MERGE-GATE-001",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-07-27T16:03:19Z",
+      "from": "Codex2",
+      "message": "Rejected dispatched exact head 30b57020d73ba7aefd261a12326b83114d83eec2 because PR #4218 moved during review to 4cfd09852fc3dcaf6490cd25e6d5a35e5d6b6873; the bound old-head review must not be reused. At rejection time origin/dev=33e1c4d64e4accceab4d803e7b4ce2324f44306a and GitHub reports CONFLICTING/DIRTY with autoMergeRequest=null. Independent old-head validation passed the four required revocation cases (exit-zero/still-armed, unreadable, nonzero/still-armed, nonzero/already-off), the complete 87 gate + 9 integrator tests, and the 52 helper + 2 refspec + 24 triage + 17 index + 141 ai-status matrix. Required before re-review: compose the then-current origin/dev, resolve any ai_status.py/test_ai_status.py overlap while preserving review_binding plus command-runtime REVIEW_* isolation changes, update evidence.json/evidence.md/validation.txt to the new dev base/validated tree/exact PR head, rerun the same matrix, push, confirm autoMergeRequest=null and CLEAN/MERGEABLE, and hand off that exact immutable head.",
+      "resolved_at": "2026-07-27T16:03:19Z",
+      "status": "done",
+      "task_id": "OPS-PR-REVIEW-BEFORE-MERGE-GATE-001",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-07-27T16:21:16Z",
+      "from": "Codex",
+      "message": "Review PR #4218 exact immutable head f93ab06e67eff8e5e197172608a97d0e3b01fb77 against dev base e1512d207d9b5df3739ac7b7d0cac202b2798ac8. GitHub is CLEAN/MERGEABLE with all required checks successful and autoMergeRequest=null. Evidence: docs/deployment/evidence/supervisor/OPS-PR-REVIEW-BEFORE-MERGE-GATE-001/evidence.json; validation includes four revocation readback cases, 87+9+52+2+24+17+142 direct tests, 96 package tests, 333+31 and 341+45 pytest matrices, and static checks. Do not reuse any review bound to 30b57020 or earlier heads.",
+      "resolved_at": "2026-07-27T16:22:46Z",
+      "status": "done",
+      "task_id": "OPS-PR-REVIEW-BEFORE-MERGE-GATE-001",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-07-27T16:47:10Z",
+      "from": "Codex",
+      "message": "Review PR #4218 exact immutable head 0105b507b17f839577acb69d5a99e37ae483f435 against dev base b79d3a540a797fe69851f4dbb3a119ddb647cf9a. GitHub is CLEAN/MERGEABLE, every required check succeeded, and autoMergeRequest=null. This head includes d8549af42 pre-push existing-PR revocation: live task_finalize proved auto-merge off before push, reused PR #4218, proved off after push/open, and exited zero. Evidence: docs/deployment/evidence/supervisor/OPS-PR-REVIEW-BEFORE-MERGE-GATE-001/evidence.json. Validation: 91 gate, 9 integrator, 58 helper, 2 refspec, 24 triage, 17 index, 142 ai-status, four revocation cases, 100 package, 343+31 focused, sequential 351+45 post-compose, and static checks. Do not reuse any review for f93ab06e, c6d38ea7, b27af571, or earlier heads.",
+      "resolved_at": "2026-07-27T17:00:28Z",
+      "status": "done",
+      "task_id": "OPS-PR-REVIEW-BEFORE-MERGE-GATE-001",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-07-27T17:00:28Z",
+      "from": "Codex2",
+      "message": "Independent review rejects PR #4218 head 0105b507b17f839577acb69d5a99e37ae483f435: GitHub reports mergeStateStatus=BEHIND; current origin/dev is 4974824687ef5c3acf665fa22a4306e5d3d664f1 with 0 base-only commits. Dev branch protection requires the base up to date, while the gated integrator returns rebase_required and refuses to push a reviewed head, so approving this head cannot produce an accepted merge and the mandatory compose would invalidate it. Owner must compose current origin/dev, keep autoMergeRequest null, rerun gate, integrator, helper, ai-status and static checks, correct the evidence validation count because reviewer observed 144 ai-status tests versus recorded 142, push one new immutable head, confirm CLEAN, and redispatch exact-head review.",
+      "resolved_at": "2026-07-27T17:00:28Z",
+      "status": "done",
+      "task_id": "OPS-PR-REVIEW-BEFORE-MERGE-GATE-001",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-07-27T17:14:24Z",
+      "from": "Codex",
+      "message": "PR #4218 is ready for independent exact-head review at 7d275dafdee4e2320d0bb897c72b0075523c06e0 on base dev. origin/dev is an ancestor with 0 base-only commits; autoMergeRequest is null; Commit trailers, Runtime mirror guard, and Smoke acceptance are green; temporary Pantheon canonical review gate is pending for Codex2. Owner reran 91 gate, 9 integrator, 58 helper, 2 refspec, 24 PR-triage, 17 index-safety, 144 ai-status tests plus the 345-passed/31-subtest focused matrix and static checks. Review against docs/deployment/evidence/supervisor/OPS-PR-REVIEW-BEFORE-MERGE-GATE-001/evidence.json only; approve with REVIEW_PR=4218 REVIEW_HEAD_SHA=7d275dafdee4e2320d0bb897c72b0075523c06e0 REVIEW_BASE=dev and do not reuse any older-head review.",
+      "resolved_at": "2026-07-27T17:25:52Z",
+      "status": "done",
+      "task_id": "OPS-PR-REVIEW-BEFORE-MERGE-GATE-001",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-07-27T17:25:52Z",
+      "from": "Codex2",
+      "message": "Independent exact-head review rejected: PR #4218 head 7d275dafdee4e2320d0bb897c72b0075523c06e0 is now BEHIND current origin/dev 4580fc5d19b5bff8c0014006324c56d6368ec5dc with 12 base-only commits (52 head-only). GitHub requires the base up to date, while the gated integrator must not force-push or merge a reviewed stale head. Owner must compose current origin/dev, keep autoMergeRequest null, rerun the 91 gate / 9 integrator / 58 helper / 2 refspec / 24 triage / 17 index / 144 ai-status suites plus combined matrix and static checks on the composed tree, update evidence.json with the exact new base/tree and observed counts, push one new immutable head, confirm CLEAN and 0 base-only commits, then redispatch fresh exact-head review; do not reuse this review.",
+      "resolved_at": "2026-07-27T17:25:52Z",
+      "status": "done",
+      "task_id": "OPS-PR-REVIEW-BEFORE-MERGE-GATE-001",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-07-27T17:42:14Z",
+      "from": "Codex",
+      "message": "Fresh exact-head review requested for PR #4218 at 9d54d773c67588cb28ea63da838deee352ec744a against composed dev base 4688bd252911b91ea0459a38a694c5faa53e3bbd. Do not reuse any prior review. Local/remote head match, worktree is clean, base-only commits are 0 (57 head-only), autoMergeRequest is null, PR is MERGEABLE and all Branch CI Gate checks pass; GitHub BLOCKED is the expected canonical review gate. Evidence: docs/deployment/evidence/supervisor/OPS-PR-REVIEW-BEFORE-MERGE-GATE-001/evidence.json. Tested compose commit 64d8a6c6a59d3035cc6b8d1eac29bf90a2550cab: 91 gate / 9 integrator / 58 helper / 2 refspec / 24 triage / 17 index / 144 ai-status; combined 345 passed, 31 subtests; static checks pass. Approve only with REVIEW_PR=4218 and REVIEW_HEAD_SHA=9d54d773c67588cb28ea63da838deee352ec744a.",
+      "resolved_at": "2026-07-27T17:49:19Z",
+      "status": "done",
+      "task_id": "OPS-PR-REVIEW-BEFORE-MERGE-GATE-001",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-07-27T17:49:19Z",
+      "from": "Codex2",
+      "message": "Independent exact-head review rejected at PR #4218 head 9d54d773c67588cb28ea63da838deee352ec744a: origin/dev 4688bd252911b91ea0459a38a694c5faa53e3bbd is the exact merge-base (0 base-only, 57 head-only), GitHub reports MERGEABLE, all checks green, and autoMergeRequest null, but scripts/git/auto_integrator.py run_rebase_smoke unconditionally runs git rebase origin/dev on the approved gated head (lines 487-526, invoked at 879-908). Exact-head reproduction returned (False, rebase_conflict), so after approval the documented integrator would open an unblock and never reach gh pr merge --match-head-commit; AC6 and the post-approval delivery path are not met. Fix the gated path to detect that dev is already an ancestor/current and smoke the immutable reviewed head without rebasing; require owner refresh/reapproval only when the base is genuinely not contained. Add a real-git merge-rich graph regression proving a 0-base-only exact head reaches the match-head merge with no rebase or force-push, update evidence, rerun the full matrix/static checks, compose latest dev if it changes, and redispatch a fresh exact-head review. The existing matrix passed 345 tests plus 31 subtests, confirming this is a coverage gap.",
+      "resolved_at": "2026-07-27T17:49:19Z",
+      "status": "done",
+      "task_id": "OPS-PR-REVIEW-BEFORE-MERGE-GATE-001",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-07-27T18:29:42Z",
+      "from": "Antigravity",
+      "message": "Auto-reassigned OPS-PR-REVIEW-BEFORE-MERGE-GATE-001 away from unavailable lane Antigravity (disabled, paused, sidecar-only, or auth-down); owner Antigravity -> Claude.",
+      "resolved_at": "2026-07-27T18:30:51Z",
+      "status": "done",
+      "task_id": "OPS-PR-REVIEW-BEFORE-MERGE-GATE-001",
+      "to": "Claude"
+    },
+    {
+      "created_at": "2026-07-27T20:52:24Z",
+      "from": "Codex",
+      "message": "Fresh independent exact-head review requested for PR #4218 head 5f904bc7cc2666525e7e5432ec599c341e57aaa7 on expected base dev. At dispatch origin/dev 852da0aa71d4e0d0293d5fcc8b5dff6d886386f7 is an ancestor (0 base-only), autoMergeRequest is null, and the PR is mergeable. Review docs/deployment/evidence/supervisor/OPS-PR-REVIEW-BEFORE-MERGE-GATE-001/evidence.json; bind any approval to REVIEW_PR=4218 REVIEW_HEAD_SHA=5f904bc7cc2666525e7e5432ec599c341e57aaa7 REVIEW_BASE=dev. Do not reuse any prior approval. Full focused matrix passed 346 plus 31 subtests before the no-overlap latest-dev compose; the current compose passed 101 gate/integrator cases and static checks.",
+      "resolved_at": "2026-07-27T20:58:02Z",
+      "status": "done",
+      "task_id": "OPS-PR-REVIEW-BEFORE-MERGE-GATE-001",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-07-27T20:58:02Z",
+      "from": "Codex2",
+      "message": "Exact-head review of PR #4218 at 5f904bc7cc2666525e7e5432ec599c341e57aaa7: implementation and evidence passed 346 pytest cases plus 31 subtests, static checks, and all visible GitHub checks; autoMergeRequest is null. Reopen because origin/dev advanced after dispatch to 7f545a33bf41e5682dc67f50333c84b42f09d17e (2 base-only commits), PR is now BEHIND, and origin/dev is not an ancestor of the reviewed head. The gated immutable-head integrator therefore returns rebase_required and cannot merge this approval. Owner must compose current origin/dev into the task branch, refresh evidence/base/head, rerun focused validation, push with autoMergeRequest still null, then request a fresh Codex2 exact-head review; do not reuse this review.",
+      "resolved_at": "2026-07-27T20:58:02Z",
+      "status": "done",
+      "task_id": "OPS-PR-REVIEW-BEFORE-MERGE-GATE-001",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-07-27T21:28:15Z",
+      "from": "Claude",
+      "message": "Auto-reassigned OPS-PR-REVIEW-BEFORE-MERGE-GATE-001 away from unavailable lane Claude (disabled, paused, sidecar-only, or auth-down); owner Claude -> Codex.",
+      "resolved_at": "2026-07-28T11:23:43Z",
+      "status": "done",
+      "task_id": "OPS-PR-REVIEW-BEFORE-MERGE-GATE-001",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-07-28T11:34:53Z",
+      "from": "Codex",
+      "message": "PR #4218 is ready for fresh independent review at exact head d489750abe396e8696bba2c502d23d8f8640ffd9 on base dev. Auto-merge is disabled and read back null before and after push; origin/dev 11858f4d445565064e630cce9b89ea8b475a6598 is contained. Evidence: docs/deployment/evidence/supervisor/OPS-PR-REVIEW-BEFORE-MERGE-GATE-001/evidence.json. Validation: 360 focused tests plus 31 subtests, including 92 gate, 9 integrator, 58 helper, 152 ai-status, and 6 GitHub review bridge tests. Approve only this exact head with REVIEW_PR=4218 REVIEW_HEAD_SHA=d489750abe396e8696bba2c502d23d8f8640ffd9; do not reuse any prior review.",
+      "resolved_at": "2026-07-28T11:46:34Z",
+      "status": "done",
+      "task_id": "OPS-PR-REVIEW-BEFORE-MERGE-GATE-001",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-07-28T11:46:34Z",
+      "from": "Codex2",
+      "message": "Independent review approved PR #4218 exact head d489750abe396e8696bba2c502d23d8f8640ffd9: origin/dev 11858f4d445565064e630cce9b89ea8b475a6598 is contained (0 base-only), autoMergeRequest is null, CI checks pass, independent 360-test matrix plus 31 subtests and all static gates pass, and AC1-AC6 exact-head/rejection/ambiguity/revocation/compatibility/archive behavior is verified.",
+      "resolved_at": "2026-07-28T11:54:18Z",
+      "status": "done",
+      "task_id": "OPS-PR-REVIEW-BEFORE-MERGE-GATE-001",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-07-28T11:54:18Z",
+      "from": "Codex2",
+      "message": "Owner closeout revalidation passed on exact reviewed head d489750abe396e8696bba2c502d23d8f8640ffd9: 360 pytest cases plus 31 subtests and all static gates pass; PR #4218 is MERGEABLE with CI and canonical review status green, but GitHub still blocks merge solely because required context 'Pantheon root merge freeze 2026-07-27' is unsatisfied. Waiting for explicit Human/Ops release of that temporary branch-protection hold; head remains unchanged and autoMergeRequest remains off.",
+      "resolved_at": "2026-07-28T12:00:35Z",
+      "status": "done",
+      "task_id": "OPS-PR-REVIEW-BEFORE-MERGE-GATE-001",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-07-28T12:00:35Z",
+      "from": "Codex2",
+      "message": "Owner closeout rechecked exact reviewed head d489750abe396e8696bba2c502d23d8f8640ffd9: origin/dev remains contained, PR #4218 remains MERGEABLE with CI and Pantheon canonical review gate green, autoMergeRequest null, and dry-run integrator correctly returns action=blocked because required context 'Pantheon root merge freeze 2026-07-27' is still unsatisfied. Await explicit Human/Ops release of that temporary branch-protection hold; preserve review_approved and exact head.",
+      "resolved_at": "2026-07-28T12:02:22Z",
+      "status": "done",
+      "task_id": "OPS-PR-REVIEW-BEFORE-MERGE-GATE-001",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-07-28T12:02:22Z",
+      "from": "Codex",
+      "message": "Closeout artifact committed and pushed to PR #4218 at exact head 1deadaed884378eea4455af9eed16ae499020552. Review only the documentation-only delta from approved parent d489750abe396e8696bba2c502d23d8f8640ffd9: task brief now durably records your review_approved decision and prior exact-head evidence. Confirm autoMergeRequest remains null, origin/dev is contained, CI/static gates are green, and approve with REVIEW_PR=4218 REVIEW_HEAD_SHA=1deadaed884378eea4455af9eed16ae499020552. Temporary root merge freeze still requires separate Human/Ops release after exact-head approval.",
+      "resolved_at": "2026-07-28T12:11:02Z",
+      "status": "done",
+      "task_id": "OPS-PR-REVIEW-BEFORE-MERGE-GATE-001",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-07-28T12:11:02Z",
+      "from": "Codex2",
+      "message": "Approved PR #4218 exact head 1deadaed884378eea4455af9eed16ae499020552 after independent verification: the delta from approved parent d489750abe396e8696bba2c502d23d8f8640ffd9 is task-brief-only; origin/dev 11858f4d445565064e630cce9b89ea8b475a6598 is contained with 0 base-only commits; remote/PR heads match; autoMergeRequest is null; all 8 CI checks pass; 360 focused tests plus 31 subtests and shell, compile, JSON, diff, and trailer gates pass. Human/Ops merge freeze remains a separate release action.",
+      "resolved_at": "2026-07-28T12:49:11Z",
+      "status": "done",
+      "task_id": "OPS-PR-REVIEW-BEFORE-MERGE-GATE-001",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-07-28T12:49:26Z",
+      "from": "Codex2",
+      "message": "Auto-reassigned ownership from Codex to Claude after repeated Codex terminal: Worker process missing during supervisor boot reconciliation.",
+      "resolved_at": "2026-07-28T13:20:21Z",
+      "status": "done",
+      "task_id": "OPS-PR-REVIEW-BEFORE-MERGE-GATE-001",
+      "to": "Claude"
+    },
+    {
+      "created_at": "2026-07-28T12:52:36Z",
+      "from": "Codex2",
+      "message": "Auto-reassigned OPS-PR-REVIEW-BEFORE-MERGE-GATE-001 away from unavailable lane Codex2 (disabled, paused, sidecar-only, or auth-down); reviewer Codex2 -> Codex.",
+      "resolved_at": "2026-07-28T12:53:02Z",
+      "status": "done",
+      "task_id": "OPS-PR-REVIEW-BEFORE-MERGE-GATE-001",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-07-28T13:12:02Z",
+      "from": "Codex",
+      "message": "Auto-reassigned OPS-PR-REVIEW-BEFORE-MERGE-GATE-001 away from unavailable lane Codex (disabled, paused, sidecar-only, or auth-down); reviewer Codex -> Codex2.",
+      "resolved_at": "2026-07-28T13:12:20Z",
+      "status": "done",
+      "task_id": "OPS-PR-REVIEW-BEFORE-MERGE-GATE-001",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-07-28T13:24:06Z",
+      "from": "Codex2",
+      "message": "Auto-reassigned ownership from Claude to Codex after repeated Claude terminal: Worker process missing during supervisor boot reconciliation.",
+      "status": "done",
+      "task_id": "OPS-PR-REVIEW-BEFORE-MERGE-GATE-001",
+      "to": "Codex",
+      "resolved_at": "2026-07-28T13:32:48Z"
+    }
+  ],
+  "blockers": []
+}

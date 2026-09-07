@@ -1,0 +1,127 @@
+{
+  "actor": {
+    "capabilities": [
+      "fleet.dispatch",
+      "dev-task.dispatch"
+    ],
+    "id": "Codex",
+    "roles": [
+      "operator-delegate"
+    ]
+  },
+  "admission_record_path": "ai-task-archive/tasks/assistant-dev-bridge-admissions/pkt-l12-wave0-exact-head-reconcile-20260731T1213Z--0d0f43f50af6a92f.json",
+  "admitted_at": "2026-07-31T12:11:46Z",
+  "audit_conversation_href": "codex://root/l12-current-gap-supervisor-dispatch-20260731#wave0-exact-head-reconcile",
+  "constraints": {
+    "allowedRepos": [
+      "pantheon"
+    ],
+    "noDirectShellFromWeb": true,
+    "requiresBranchPrMerge": true
+  },
+  "conversation_id": "codex-root-l12-current-gap-supervisor-dispatch-20260731",
+  "dispatch_records": [
+    {
+      "error": null,
+      "owner": "Antigravity",
+      "reviewer": "Claude2",
+      "status": "dispatched",
+      "taskId": "SUP-L12-STALE-REAPER-EXACT-HEAD-RECONCILE-20260731"
+    },
+    {
+      "error": null,
+      "owner": "Antigravity",
+      "reviewer": "Claude2",
+      "status": "dispatched",
+      "taskId": "SUP-L12-RUNNING-OWNER-EXACT-HEAD-RECONCILE-20260731"
+    }
+  ],
+  "documents": [
+    {
+      "kind": "CURRENT_THREE_PASS_GAP_AUDIT_ADDENDUM",
+      "path": "docs/04/pantheon_twelve_loop_gap_2026-07-26/archive/CURRENT_THREE_PASS_GAP_AUDIT_2026-07-31T0640Z.md",
+      "sourceRefs": [
+        "PR#4394",
+        "head a8c2691f35c103d8be6e51e468b9e34c81e379cf"
+      ]
+    },
+    {
+      "kind": "PR_COMMENT_EVIDENCE",
+      "path": "https://github.com/ajoe734/pantheon/pull/4385#issuecomment-5142713899",
+      "sourceRefs": [
+        "#4385 current head f5e70e86e01bde005dae5fed94b151c9bc07f389 differs from canonical reviewed 86dd9006b15bba67a83886e4a2d672e511aa8709"
+      ]
+    },
+    {
+      "kind": "PR_COMMENT_EVIDENCE",
+      "path": "https://github.com/ajoe734/pantheon/pull/4386#issuecomment-5142713897",
+      "sourceRefs": [
+        "#4386 current head 2d5f692e960a22eef7c4b6d63002996a68468079 differs from canonical reviewed 0528e5cab1df5386adfdb3113b8653411635fe86"
+      ]
+    }
+  ],
+  "durable": true,
+  "emitted_at": "2026-07-31T12:11:38Z",
+  "intent": "dispatch_parallel_wave0_exact_head_reconcile_tasks",
+  "mode": "kernel_repair",
+  "packet_digest": "0d0f43f50af6a92fd7af9c0e705776978aafa8cc79e983d1f1ae4e8ed2e6f44e",
+  "packet_id": "pkt-l12-wave0-exact-head-reconcile-20260731T1213Z",
+  "packet_version": "pantheon.assistant.dev-task.v1",
+  "record_kind": "assistant_dev_bridge_admission",
+  "record_payload_sha256": "fa1228ff78b027afda425f8544f61fc75fb7c9b9e81ec79246ff6740b37975fc",
+  "schema": "pantheon.assistant-dev-bridge-admission.v1",
+  "source_turn_ids": [
+    "user-complete-gap-audit-and-supervisor-dispatch",
+    "codex-wave0-exact-head-mismatch-4385-4386"
+  ],
+  "tasks": [
+    {
+      "task_id": "SUP-L12-STALE-REAPER-EXACT-HEAD-RECONCILE-20260731",
+      "task_spec": {
+        "acceptance": [
+          "Do not count SUP-L12-STALE-FAILURE-STREAK-REAPER-20260729 review_approved row alone as done",
+          "Inspect PR #4385 exact current head f5e70e86e01bde005dae5fed94b151c9bc07f389 against canonical reviewed head 86dd9006b15bba67a83886e4a2d672e511aa8709",
+          "Classify all added files since the reviewed head, including workflow/publish-promote changes and additional evidence artifacts",
+          "Either produce an exact-head review approval bound to f5e70e86e01bde005dae5fed94b151c9bc07f389 or reopen/supersede with concrete changes",
+          "If approved, ensure protected merge/root-freeze and governed closeout are still required before Wave 0 dependency is satisfied",
+          "Archive evidence in this task-specific artifact directory and keep .orchestrator/config.json untouched"
+        ],
+        "artifacts": [
+          "docs/deployment/evidence/twelve-loop-gap/SUP-L12-STALE-REAPER-EXACT-HEAD-RECONCILE-20260731"
+        ],
+        "depends_on": [],
+        "id": "SUP-L12-STALE-REAPER-EXACT-HEAD-RECONCILE-20260731",
+        "owner": "Antigravity",
+        "phase": "Supervisor Runtime Repair / Wave 0 Exact-Head Reconcile",
+        "reviewer": "Claude2",
+        "summary": "PR #4385 current head differs from the reviewed task row head; reconcile exact-head proof before treating stale failure-streak reaper as a Wave 0 dependency.",
+        "title": "Reconcile stale failure-streak reaper exact PR head before Wave 0 closeout"
+      },
+      "task_spec_hash": "877134a7dd1daa7bf07f07590c89c6bb7e824edd3f30d8593575928ce97af5d0"
+    },
+    {
+      "task_id": "SUP-L12-RUNNING-OWNER-EXACT-HEAD-RECONCILE-20260731",
+      "task_spec": {
+        "acceptance": [
+          "Do not count SUP-L12-RUNNING-OWNER-RECONCILE-20260729 review_approved row alone as done",
+          "Inspect PR #4386 exact current head 2d5f692e960a22eef7c4b6d63002996a68468079 against canonical reviewed head 0528e5cab1df5386adfdb3113b8653411635fe86",
+          "Classify all added files since the reviewed head and verify whether they are metadata-only or require re-review",
+          "Either produce an exact-head review approval bound to 2d5f692e960a22eef7c4b6d63002996a68468079 or reopen/supersede with concrete changes",
+          "If approved, ensure protected merge/root-freeze and governed closeout are still required before downstream L12 closeout counts it",
+          "Archive evidence in this task-specific artifact directory and keep .orchestrator/config.json untouched"
+        ],
+        "artifacts": [
+          "docs/deployment/evidence/twelve-loop-gap/SUP-L12-RUNNING-OWNER-EXACT-HEAD-RECONCILE-20260731"
+        ],
+        "depends_on": [],
+        "id": "SUP-L12-RUNNING-OWNER-EXACT-HEAD-RECONCILE-20260731",
+        "owner": "Antigravity",
+        "phase": "Supervisor Runtime Repair / Support Exact-Head Reconcile",
+        "reviewer": "Claude2",
+        "summary": "PR #4386 current head differs from the reviewed task row head; reconcile exact-head proof before treating running-owner reconcile as support evidence.",
+        "title": "Reconcile running-owner PR exact head before support closeout is counted"
+      },
+      "task_spec_hash": "151faafafefa288e2c004f5200484839602f7a0e8addde3c7fc1c300c9ccf86b"
+    }
+  ]
+}

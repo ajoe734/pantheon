@@ -1,0 +1,185 @@
+{
+  "version": 1,
+  "task_id": "SUP-APPROVAL-BINDING-LIVE-DISCOVERY-20260808",
+  "archived_at": "2026-08-08T11:25:44Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "acceptance": [
+      "resolve_approval_binding must ask GitHub directly (gh pr view <branch>) for an open PR at the task's own branch when REVIEW_PR/REVIEW_HEAD_SHA are absent",
+      "before falling back to the metadata-based warn/refuse path.",
+      "task_has_pr_review_target's source_ref/github metadata check is confirmed dead in practice: source_ref is written only by one-off dispatch_*.py batch scripts (unrelated provenance)",
+      "github is never written anywhere; neither reflects normal assign/handoff/approve-created tasks.",
+      "Verified live: SUP-BLOCKED-TASK-RECONCILIATION-20260804's genuine",
+      "substantive Antigravity approval produced zero GitHub interaction (no review",
+      "no status",
+      "no tag) because binding was silently empty.",
+      "Regression tests: live discovery is used when found and passed to the GitHub bridge; falls back to unbound-warning when nothing found; discover_open_pr_binding unit-tested for open/closed/missing PR cases; full suite confirms no live gh calls happen under the test fixture's unconfigured repository registry."
+    ],
+    "artifacts": [
+      "scripts/ai_status.py",
+      "scripts/test_ai_status.py"
+    ],
+    "depends_on": [],
+    "failure_streak": 0,
+    "github_review_bridge": {
+      "actor": "Codex2",
+      "base": "dev",
+      "decision": "approve",
+      "head_branch": "task/SUP-APPROVAL-BINDING-LIVE-DISCOVERY-20260808",
+      "head_sha": "b8777cfc79bac3aa90bc645764a088b758de4b48",
+      "mode": "required_commit_status",
+      "pr": 4627,
+      "pr_url": "https://github.com/ajoe734/pantheon/pull/4627",
+      "recorded_at": "2026-08-08T11:17:22Z",
+      "repository": "ajoe734/pantheon",
+      "review_error": "gh: Unprocessable Entity (HTTP 422)",
+      "review_proof_ref": "refs/tags/pantheon-review/approve/b8777cfc79bac3aa90bc645764a088b758de4b48",
+      "status_context": "Pantheon canonical review gate",
+      "status_id": 51880922153,
+      "status_state": "success"
+    },
+    "id": "SUP-APPROVAL-BINDING-LIVE-DISCOVERY-20260808",
+    "last_update": "2026-08-08T11:25:44Z",
+    "next": "Owner finalized approved task and verified PR #4627 merged into dev.",
+    "owner": "Antigravity",
+    "phase": "Supervisor Dispatch Reliability",
+    "review_binding": {
+      "base": "dev",
+      "head_branch": "task/SUP-APPROVAL-BINDING-LIVE-DISCOVERY-20260808",
+      "head_sha": "b8777cfc79bac3aa90bc645764a088b758de4b48",
+      "pr": 4627
+    },
+    "review_file": "docs/deployment/evidence/sup-approval-binding-live-discovery-20260808/review-manifest.json",
+    "reviewer": "Codex2",
+    "status": "done",
+    "summary_zh": null,
+    "title": "Discover PR binding live instead of trusting stale/never-populated task metadata",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-08-08T11:25:44Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/claude-1002/-home-lupin-pantheon/2aa7998c-b94d-4f58-9f72-94b05e83b830/scratchpad/worktrees/sup-approval-binding-live-discovery",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "HEAD",
+      "git_clean_required": false,
+      "status_command_runtime": {
+        "command_root": "/home/lupin/pantheon-ci-deploy/dev-root",
+        "source_sha": "a55721bce2a7bc0a4dc01dd6eba1b48a58b78312",
+        "base_ref": "origin/dev",
+        "remote": "ajoe734/pantheon",
+        "status_root": "/home/lupin/pantheon",
+        "delivery_root": "/tmp/claude-1002/-home-lupin-pantheon/2aa7998c-b94d-4f58-9f72-94b05e83b830/scratchpad/worktrees/sup-approval-binding-live-discovery",
+        "wrapper_root": "/home/lupin/pantheon-ci-deploy/dev-root",
+        "worker_lease": {
+          "schema_version": 1,
+          "task_id": "SUP-APPROVAL-BINDING-LIVE-DISCOVERY-20260808",
+          "worker_run_id": "antigravity1-1-20260808T112055Z-577b2b09",
+          "queue_event_id": "evt-20260808T112023Z-90c43830",
+          "pid": 2820311,
+          "pid_start_ticks": 2710317,
+          "process_generation": "worker-process-generation-sha256:07c104bc451d3ab8f1d5b452b130d63d0cdd801f072ab352dbc3426a5c0b3d71"
+        }
+      },
+      "commit": "de8635aa958593ca332395baba1880aacf096952",
+      "commit_subject": "SUP-APPROVAL-BINDING-LIVE-DISCOVERY-20260808: discover PR binding live (#4627)",
+      "commit_author": {
+        "name": "ajoe734",
+        "email": "bjoe734@gmail.com"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Antigravity",
+        "Task-ID": "SUP-APPROVAL-BINDING-LIVE-DISCOVERY-20260808",
+        "Reviewer": "Codex2",
+        "Verified": "python3 scripts/test_ai_status.py"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 1,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "de8635aa958593ca332395baba1880aacf096952",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "created_at": "2026-08-08T10:52:24Z",
+      "from": "Claude",
+      "message": "Auto-reassigned SUP-APPROVAL-BINDING-LIVE-DISCOVERY-20260808 away from unavailable lane Claude, Claude2 (disabled, paused, sidecar-only, or auth-down); owner Claude -> Antigravity, reviewer Claude2 -> Codex2.",
+      "resolved_at": "2026-08-08T10:53:21Z",
+      "status": "done",
+      "task_id": "SUP-APPROVAL-BINDING-LIVE-DISCOVERY-20260808",
+      "to": "Antigravity"
+    },
+    {
+      "created_at": "2026-08-08T10:54:19Z",
+      "from": "Antigravity",
+      "message": "Implementation and tests verified.  implementation in scripts/ai_status.py and unit tests in scripts/test_ai_status.py are confirmed passing. Handing off to Codex2 for code review.",
+      "resolved_at": "2026-08-08T10:54:27Z",
+      "status": "done",
+      "task_id": "SUP-APPROVAL-BINDING-LIVE-DISCOVERY-20260808",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-08-08T10:54:27Z",
+      "from": "Antigravity",
+      "message": "Implementation and tests verified. discover_open_pr_binding implementation in scripts/ai_status.py and unit tests in scripts/test_ai_status.py are confirmed passing. Handing off to Codex2 for code review.",
+      "resolved_at": "2026-08-08T10:58:44Z",
+      "status": "done",
+      "task_id": "SUP-APPROVAL-BINDING-LIVE-DISCOVERY-20260808",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-08-08T10:58:44Z",
+      "from": "Codex2",
+      "message": "Review rejected despite passing focused and full ai-status tests: PR #4627 HEAD 3c5dcfcfbf0bf06f3acf43d951b10d2682a29227 has no committed task-scoped review evidence manifest/review_file, so reviewer cannot bind REVIEW_FILE or satisfy the closeout evidence rule; canonical review gate correctly reports no review-proof tag. Add the manifest to the PR before requesting a fresh review, with task ID, exact HEAD, acceptance mapping, and verification evidence. Also add a new task-scoped commit (do not amend the pushed commit) whose trailers identify the canonical roles: LLM-Agent: Antigravity; Task-ID: SUP-APPROVAL-BINDING-LIVE-DISCOVERY-20260808; Reviewer: Codex2; Verified: python3 scripts/test_ai_status.py. Re-run the full suite against the new PR head and return task to review.",
+      "resolved_at": "2026-08-08T10:58:44Z",
+      "status": "done",
+      "task_id": "SUP-APPROVAL-BINDING-LIVE-DISCOVERY-20260808",
+      "to": "Antigravity"
+    },
+    {
+      "created_at": "2026-08-08T11:01:47Z",
+      "from": "Antigravity",
+      "message": "Added review evidence manifest docs/deployment/evidence/sup-approval-binding-live-discovery-20260808/review-manifest.json, committed task commit 28b73713afc555db27ea597bf49e00cf9dddd5f4 with LLM-Agent/Task-ID/Reviewer/Verified trailers, pushed to origin PR #4627. Full test suite python3 scripts/test_ai_status.py (201 tests) passed clean. Returning task to Codex2 for review.",
+      "resolved_at": "2026-08-08T11:07:26Z",
+      "status": "done",
+      "task_id": "SUP-APPROVAL-BINDING-LIVE-DISCOVERY-20260808",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-08-08T11:07:26Z",
+      "from": "Codex2",
+      "message": "Review rejected: implementation is functionally verified (live gh discovery finds open PR #4627 at 28b73713afc555db27ea597bf49e00cf9dddd5f4; python3 scripts/test_ai_status.py passed 201 tests), but PR #4627 cannot merge. Branch CI rejects 28b73713afc555db27ea597bf49e00cf9dddd5f4 because its subject is 79 chars, above the 72-char gate; current canonical review gate also has no proof tag before approval. Recreate/replace the invalid task PR history through the approved recovery flow (do not merely append) so every retained task commit has a <=72-character subject and canonical trailers LLM-Agent: Antigravity, Task-ID: SUP-APPROVAL-BINDING-LIVE-DISCOVERY-20260808, Reviewer: Codex2. Preserve the same reviewed 3-file diff and pre-review committed manifest, rerun the full suite, then return for fresh review.",
+      "resolved_at": "2026-08-08T11:07:26Z",
+      "status": "done",
+      "task_id": "SUP-APPROVAL-BINDING-LIVE-DISCOVERY-20260808",
+      "to": "Antigravity"
+    },
+    {
+      "created_at": "2026-08-08T11:10:59Z",
+      "from": "Antigravity",
+      "message": "Recreated task PR branch commit history with commit b8777cfc79bac3aa90bc645764a088b758de4b48 (subject length 71 chars <= 72, carrying trailers LLM-Agent: Antigravity, Task-ID: SUP-APPROVAL-BINDING-LIVE-DISCOVERY-20260808, Reviewer: Codex2). PR #4627 updated and force-pushed. Full test suite scripts/test_ai_status.py passed (201 tests).",
+      "resolved_at": "2026-08-08T11:17:22Z",
+      "status": "done",
+      "task_id": "SUP-APPROVAL-BINDING-LIVE-DISCOVERY-20260808",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-08-08T11:17:22Z",
+      "from": "Codex2",
+      "message": "PASS: independently inspected the three-file diff and acceptance mapping; live probe resolved open PR #4627 at exact b8777cfc79bac3aa90bc645764a088b758de4b48; scripts/test_ai_status.py exited 0 (201 tests), git diff --check and trailer validation passed.",
+      "status": "done",
+      "task_id": "SUP-APPROVAL-BINDING-LIVE-DISCOVERY-20260808",
+      "to": "Antigravity",
+      "resolved_at": "2026-08-08T11:25:45Z"
+    }
+  ],
+  "blockers": []
+}

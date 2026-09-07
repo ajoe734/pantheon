@@ -1,0 +1,83 @@
+{
+  "actor": {
+    "capabilities": [
+      "fleet.dispatch",
+      "dev-task.dispatch"
+    ],
+    "id": "Claude",
+    "roles": [
+      "operator-delegate"
+    ]
+  },
+  "admission_record_path": "ai-task-archive/tasks/assistant-dev-bridge-admissions/pkt-sup-post-approval-closeout-removal-20260804T1410Z--022e339b4366ebca.json",
+  "admitted_at": "2026-08-08T14:47:59Z",
+  "audit_conversation_href": null,
+  "constraints": {
+    "allowedRepos": [
+      "pantheon"
+    ],
+    "noDirectShellFromWeb": true,
+    "requiresBranchPrMerge": true
+  },
+  "conversation_id": "claude-root-closeout-commit-removal-20260804",
+  "dispatch_records": [
+    {
+      "error": null,
+      "owner": "Codex2",
+      "reviewer": "Codex",
+      "status": "dispatched",
+      "taskId": "SUP-POST-APPROVAL-CLOSEOUT-COMMIT-REMOVAL-20260804"
+    }
+  ],
+  "documents": [
+    {
+      "kind": "REFACTOR_PROPOSAL",
+      "path": "docs/04/supervisor_dispatch_refactor_proposal_2026-08-04.md",
+      "sourceRefs": [
+        "Problem 6 section, added 2026-08-04 after a live repro on PR #4532"
+      ]
+    }
+  ],
+  "durable": true,
+  "emitted_at": "2026-08-04T14:10:00Z",
+  "intent": "remove_self_invalidating_post_approval_commit",
+  "mode": "kernel_repair",
+  "packet_digest": "022e339b4366ebca1c058788a1b2c2043debe90b41aa02c1424906e606452123",
+  "packet_id": "pkt-sup-post-approval-closeout-removal-20260804T1410Z",
+  "packet_version": "pantheon.assistant.dev-task.v1",
+  "record_kind": "assistant_dev_bridge_admission",
+  "record_payload_sha256": "73d8d7a50454127701bf6e4d11939e5fcc34d71a490b320631f203db3ed43b6f",
+  "schema": "pantheon.assistant-dev-bridge-admission.v1",
+  "source_turn_ids": [
+    "user-angry-at-self-invalidating-review-commit",
+    "claude-diagnosed-taskbrief-closeout-commit-pattern",
+    "user-demanded-removal"
+  ],
+  "tasks": [
+    {
+      "task_id": "SUP-POST-APPROVAL-CLOSEOUT-COMMIT-REMOVAL-20260804",
+      "task_spec": {
+        "acceptance": [
+          "Read docs/04/supervisor_dispatch_refactor_proposal_2026-08-04.md section 'Problem 6' in full before starting -- it contains the confirmed live repro (PR #4532 head 4aae7942 was review_approved at 13:39:50, then commit b84acd1e3003 six minutes later -- a 2-line task-brief closeout note -- invalidated that exact approval and forced a second full review round-trip for zero code change).",
+          "Find and remove whatever workflow/finalize step commits a post-approval 'closeout record' write to .orchestrator/task-briefs/*.md after review_approved. The live task-state written by ai_status.py's approve command already durably records the approval; a redundant git-committed copy created AFTER the reviewed diff is not needed and is actively harmful because it moves the exact head the approval is bound to.",
+          "If a durable git-reachable evidence record of approval is still wanted for recovery paths like reconcile_merged_done, it must be produced as part of the SAME commit/diff the reviewer reviews and approves once -- never as a follow-up commit after approval. Do not simply relocate the same after-the-fact write to a different file; fix the ordering.",
+          "As defense in depth (not a substitute for the above): teach scripts/git/github_review_bridge.py's exact-head binding check to treat a commit landing after review_approved that touches ONLY paths under .orchestrator/task-briefs/ as a no-op relative to the reviewed content, and carry the existing approval forward onto the new head automatically instead of forcing a second review pass. This should rarely fire once the root habit above is removed -- it exists only to catch cases you can't fully control (e.g. legacy worker behavior).",
+          "Add a regression test: review_approved -> task-brief-only commit -> approval must still hold (either because no such commit gets produced anymore, or because the carry-forward exemption catches it) -- assert the task does NOT bounce back into a fresh review cycle for a diff containing zero code changes.",
+          "Do not touch poll_workers, process_queue, dispatch_ready_tasks, or reconcile_queue_records."
+        ],
+        "artifacts": [
+          "scripts/git/github_review_bridge.py",
+          "scripts/ai_status.py"
+        ],
+        "depends_on": [],
+        "id": "SUP-POST-APPROVAL-CLOSEOUT-COMMIT-REMOVAL-20260804",
+        "owner": "Codex2",
+        "phase": "Supervisor Dispatch Reliability",
+        "reviewer": "Codex",
+        "summary": "A live incident on 2026-08-04: this fleet's own finalize step writes a 'closeout record' commit to a task's task-brief file immediately after review_approved, purely to document that approval happened -- and that commit's changed head invalidates the exact-head-bound approval it exists to record, forcing a pointless second review round-trip. Standard code review never produces a commit as a side effect of approving one; this habit is redundant with the live task-state ai_status.py approve already durably records, and self-defeating. Remove the habit at the source; add a narrow carry-forward exemption as a safety net only.",
+        "title": "Stop writing a post-approval closeout commit that invalidates its own review"
+      },
+      "task_spec_hash": "79b386361894ce40cc86b70eade59cf5b3b42e89d164c1a01fe60d4ba00572cc"
+    }
+  ]
+}

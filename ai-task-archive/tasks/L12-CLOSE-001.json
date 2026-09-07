@@ -1,0 +1,130 @@
+{
+  "version": 1,
+  "task_id": "L12-CLOSE-001",
+  "archived_at": "2026-08-08T10:02:22Z",
+  "terminal_status": "done",
+  "terminal_outcome": "superseded",
+  "task": {
+    "acceptance": [
+      "Every predecessor is done with merged reviewed current evidence",
+      "Every evidence manifest passes schema checksum and closeout truth replay",
+      "All twelve controller records and terminal actual-state readbacks are current and accepted",
+      "No blocking residual risk stale deployment contradiction or missing security proof remains",
+      "Catalog maturity exactly matches proved scope and formal Human-Ops verdict is archived"
+    ],
+    "actual_state_sources": [
+      "task archives and reviewed evidence manifests",
+      "current controller and BFF truth",
+      "formal Human-Ops verdict"
+    ],
+    "artifact_conflict_guard": {
+      "allowed_overlap_task_ids": [
+        "L12-TRUTH-001"
+      ],
+      "artifact_scope": [
+        {
+          "path": "docs/04/pantheon_twelve_loop_gap_2026-07-26",
+          "repo": "pantheon"
+        },
+        {
+          "path": "docs/deployment/evidence/twelve-loop-gap/L12-CLOSE-001",
+          "repo": "pantheon"
+        },
+        {
+          "path": "docs/deployment/loop-catalog.registry.json",
+          "repo": "pantheon"
+        }
+      ],
+      "catalog_sha256": "8c7610b0e6bbba31c36cb0ecd1ddce4bf843fc6de89dcaecc4a5e3154af8933d",
+      "program_id": "pantheon-twelve-loop-gap-2026-07-26",
+      "schema_version": 1,
+      "task_id": "L12-CLOSE-001"
+    },
+    "artifacts": [
+      "docs/deployment/loop-catalog.registry.json",
+      "docs/04/pantheon_twelve_loop_gap_2026-07-26",
+      "docs/deployment/evidence/twelve-loop-gap/L12-CLOSE-001"
+    ],
+    "auto_created_by": "dispatch_twelve_loop_gap_2026_07_26",
+    "catalog_task_contract_sha256": "807aa54dfff9f9132c974964c0fe8cf0851b6dd9fa11243d21ad48a9c70d9e64",
+    "current_maturity": "reconciled",
+    "depends_on": [
+      "L12-HOSTED-001",
+      "L12-TRUTH-001",
+      "L12-SIGNOFF-001"
+    ],
+    "desired_state_sources": [
+      "complete task DAG",
+      "current hosted deployment and evidence policy"
+    ],
+    "dispatch_rules": [
+      "This is the unique program sink",
+      "Do not waive blocking risk",
+      "Do not close from local tests or queued receipts"
+    ],
+    "evidence_root": "docs/deployment/evidence/twelve-loop-gap/L12-CLOSE-001",
+    "fleet_lane": "program-closeout",
+    "human_ops_reassignment_history": [
+      {
+        "at": "2026-07-27T18:29:29Z",
+        "owner": "Codex2",
+        "previous": {
+          "last_update": "2026-07-27T16:22:49Z",
+          "next": "Human/Ops fleet recovery: reassigned to active supervisor lanes. Close only after hosted evidence, truth, signoff, schemas/checksums/guardrails and formal Human/Ops verdict pass.",
+          "owner": "Codex2",
+          "reviewer": "Codex"
+        },
+        "reason": "canonical fleet dispatch repair: prioritize Claude/Antigravity where available; avoid config mutation",
+        "reviewer": "Claude"
+      }
+    ],
+    "id": "L12-CLOSE-001",
+    "last_update": "2026-08-08T10:02:22Z",
+    "loop_ids": [
+      "source_ingestion",
+      "strategy_distillation",
+      "alpha_replication",
+      "persona_teaching",
+      "agora_interaction_evidence",
+      "human_imitation_shadow_evaluation",
+      "consultation",
+      "promotion_deployment",
+      "capital_pool_execution",
+      "telemetry_reconciliation",
+      "evolution",
+      "bff_health_monitoring"
+    ],
+    "merge_target": "dev",
+    "mutates_canonical": true,
+    "next": "Superseded by the operator-approved minimum functional closeout after active-DAG reconciliation; preserve the archived legacy record and do not dispatch its broader security/evidence gate.",
+    "non_goals": [
+      "No panel-only closure",
+      "No seed fixture as live proof",
+      "No approval gate bypass",
+      "No maturity claim above evidence"
+    ],
+    "owner": "Human/Ops",
+    "phase": "Twelve Loop Remediation / Closeout",
+    "product_level_required": true,
+    "program_id": "pantheon-twelve-loop-gap-2026-07-26",
+    "proof_required": [
+      "all evidence schema and checksum validation",
+      "zero-failure loop closeout guardrail",
+      "current deployment/controller readback",
+      "formal reviewer and Human-Ops verdict"
+    ],
+    "requires_human_ops_signoff": true,
+    "reviewer": "Claude",
+    "status": "done",
+    "summary_zh": "重跑所有 evidence schema/checksum/guardrail，逐 loop 確認 current controller/terminal truth，取得正式 reviewer 與 Human/Ops verdict，只提升實際證明的 maturity。",
+    "target_maturity": "product-level",
+    "target_repo": "pantheon",
+    "task_doc": "docs/bff/execution-tasks/2026-07-26-twelve-loop-gap/L12-CLOSE-001.md",
+    "title": "Final twelve-loop signoff",
+    "wave": 5,
+    "terminal_outcome": "superseded",
+    "superseded_by": "L12-MIN-CLOSE-20260808"
+  },
+  "handoffs": [],
+  "blockers": []
+}

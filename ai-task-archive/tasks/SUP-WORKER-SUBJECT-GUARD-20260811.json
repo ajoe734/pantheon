@@ -1,0 +1,194 @@
+{
+  "version": 1,
+  "task_id": "SUP-WORKER-SUBJECT-GUARD-20260811",
+  "archived_at": "2026-08-11T03:09:07Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "acceptance": [
+      "Reproduce both current failure shapes: wakeup guidance renders a full long TASK-ID anchor subject, and supervisor _anchor_commit_task_wip fallback can still exceed 72 characters for a long task ID.",
+      "Make one small deterministic subject-label rule shared or equivalently tested across worker wakeup guidance, worker anchor protocol, worker_commit preflight, and supervisor automatic anchor behavior. Every generated or worker-wrapper commit subject must be at most 72 characters while the full Task-ID remains in required trailers.",
+      "Add regression tests with a long task ID covering rendered wakeup text, automatic supervisor WIP anchor commit, and worker_commit rejecting an overlong message before staging or committing. Preserve valid short-task behavior.",
+      "Do not weaken the existing Commit trailers 72-character gate, add exemptions, change branch protection, alter merge classification, modify scheduler policy, or touch live runtime/state.",
+      "Record exact-head evidence. Every delivery commit subject must be at most 72 characters with required trailers. Deliver through a clean task branch, PR, independent exact-head review, required checks, and protected merge.",
+      "Published bad heads on PR #4743 and PR #4744 are outside this task; their owners must repair them through their existing governed task lifecycles after this guard is available."
+    ],
+    "artifacts": [
+      ".orchestrator/watch_events.py",
+      ".orchestrator/test_watch_events.py",
+      ".orchestrator/supervisor.py",
+      ".orchestrator/test_supervisor.py",
+      ".orchestrator/skills/worker-anchor-commit.md",
+      "scripts/git/worker_commit.py",
+      "scripts/git/test_worker_commit.py",
+      "docs/deployment/evidence/supervisor/SUP-WORKER-SUBJECT-GUARD-20260811/"
+    ],
+    "depends_on": [],
+    "dev_bridge": {
+      "actor": {
+        "capabilities": [
+          "integration",
+          "supervisor",
+          "delivery-governance",
+          "acceptance"
+        ],
+        "id": "Human/Ops",
+        "roles": [
+          "operator",
+          "integration"
+        ]
+      },
+      "audit_conversation_href": "task:SUPERVISOR-FLEET-THROUGHPUT-20260811",
+      "conversation_id": "SUPERVISOR-FLEET-THROUGHPUT-20260811",
+      "documents": [],
+      "emitted_at": "2026-08-11T02:47:14.813002Z",
+      "intent": "source_only_remediation_dispatch",
+      "mode": "supervisor_source_only",
+      "packet_digest": "992383a5a6f8090984ff840385a90fe441b481fd2f112b6bbb5e3d79c00a17b9",
+      "packet_id": "sup-worker-subject-guard-20260811-0248",
+      "source_turn_ids": [
+        "systematic-root-cause-investigation-20260811",
+        "commit-subject-gate-root-cause-20260811"
+      ],
+      "task_spec": {
+        "acceptance": [
+          "Reproduce both current failure shapes: wakeup guidance renders a full long TASK-ID anchor subject, and supervisor _anchor_commit_task_wip fallback can still exceed 72 characters for a long task ID.",
+          "Make one small deterministic subject-label rule shared or equivalently tested across worker wakeup guidance, worker anchor protocol, worker_commit preflight, and supervisor automatic anchor behavior. Every generated or worker-wrapper commit subject must be at most 72 characters while the full Task-ID remains in required trailers.",
+          "Add regression tests with a long task ID covering rendered wakeup text, automatic supervisor WIP anchor commit, and worker_commit rejecting an overlong message before staging or committing. Preserve valid short-task behavior.",
+          "Do not weaken the existing Commit trailers 72-character gate, add exemptions, change branch protection, alter merge classification, modify scheduler policy, or touch live runtime/state.",
+          "Record exact-head evidence. Every delivery commit subject must be at most 72 characters with required trailers. Deliver through a clean task branch, PR, independent exact-head review, required checks, and protected merge.",
+          "Published bad heads on PR #4743 and PR #4744 are outside this task; their owners must repair them through their existing governed task lifecycles after this guard is available."
+        ],
+        "artifacts": [
+          ".orchestrator/watch_events.py",
+          ".orchestrator/test_watch_events.py",
+          ".orchestrator/supervisor.py",
+          ".orchestrator/test_supervisor.py",
+          ".orchestrator/skills/worker-anchor-commit.md",
+          "scripts/git/worker_commit.py",
+          "scripts/git/test_worker_commit.py",
+          "docs/deployment/evidence/supervisor/SUP-WORKER-SUBJECT-GUARD-20260811/"
+        ],
+        "depends_on": [],
+        "id": "SUP-WORKER-SUBJECT-GUARD-20260811",
+        "owner": "Antigravity2",
+        "phase": "Supervisor Delivery / Worker commit subject guard",
+        "reviewer": "Codex2",
+        "summary": "Prevent long governed task IDs from producing commit subjects that fail the 72-character Commit trailers gate. Keep full identity in trailers while using a deterministic compact subject label. This is source-only and must not alter CI policy or live state.",
+        "title": "Bound worker commit subjects before CI"
+      },
+      "task_spec_hash": "942990c09116d7a46ba35a96de16775007a6da25f51065df93c9894796dd1383"
+    },
+    "failure_streak": 0,
+    "github_review_bridge": {
+      "actor": "Codex2",
+      "base": "dev",
+      "decision": "approve",
+      "head_branch": "task/SUP-WORKER-SUBJECT-GUARD-20260811",
+      "head_sha": "12afca18f10cb24e2555be35478ba0fb7d4f416c",
+      "mode": "required_commit_status",
+      "pr": 4745,
+      "pr_url": "https://github.com/ajoe734/pantheon/pull/4745",
+      "recorded_at": "2026-08-11T03:04:22Z",
+      "repository": "ajoe734/pantheon",
+      "review_error": "gh: Unprocessable Entity (HTTP 422)",
+      "review_proof_ref": "refs/tags/pantheon-review/approve/12afca18f10cb24e2555be35478ba0fb7d4f416c",
+      "status_context": "Pantheon canonical review gate",
+      "status_id": 51996598119,
+      "status_state": "success"
+    },
+    "id": "SUP-WORKER-SUBJECT-GUARD-20260811",
+    "last_update": "2026-08-11T03:09:07Z",
+    "next": "Owner finalized review_approved task; PR #4745 merged into dev at commit 6cc8fc2aed98f051f847561931ee6a1b068118c8 with reviewer approval for head 12afca18f10cb24e2555be35478ba0fb7d4f416c and verified evidence manifest at docs/deployment/evidence/supervisor/SUP-WORKER-SUBJECT-GUARD-20260811/evidence.json.",
+    "owner": "Antigravity2",
+    "phase": "Supervisor Delivery / Worker commit subject guard",
+    "review_binding": {
+      "base": "dev",
+      "head_branch": "task/SUP-WORKER-SUBJECT-GUARD-20260811",
+      "head_sha": "12afca18f10cb24e2555be35478ba0fb7d4f416c",
+      "pr": 4745
+    },
+    "review_file": "docs/deployment/evidence/supervisor/SUP-WORKER-SUBJECT-GUARD-20260811/evidence.json",
+    "reviewer": "Codex2",
+    "status": "done",
+    "summary_zh": "Prevent long governed task IDs from producing commit subjects that fail the 72-character Commit trailers gate. Keep full identity in trailers while using a deterministic compact subject label. This is source-only and must not alter CI policy or live state.",
+    "title": "Bound worker commit subjects before CI",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-08-11T03:09:07Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/sup-worker-subject-guard-20260811",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/SUP-WORKER-SUBJECT-GUARD-20260811",
+      "git_clean_required": false,
+      "status_command_runtime": {
+        "command_root": "/home/lupin/pantheon-ci-deploy/command-runtimes/0bd7cf8842a622fb40eca125f490d4073b3a1044",
+        "source_sha": "0bd7cf8842a622fb40eca125f490d4073b3a1044",
+        "base_ref": "origin/dev",
+        "remote": "ajoe734/pantheon",
+        "status_root": "/home/lupin/pantheon",
+        "delivery_root": "/tmp/pantheon-worker-worktrees/pantheon/sup-worker-subject-guard-20260811",
+        "wrapper_root": "/home/lupin/pantheon-ci-deploy/command-runtimes/0bd7cf8842a622fb40eca125f490d4073b3a1044",
+        "worker_lease": {
+          "schema_version": 1,
+          "task_id": "SUP-WORKER-SUBJECT-GUARD-20260811",
+          "worker_run_id": "antigravity2-20260811T030707Z-d2e66dd3",
+          "queue_event_id": "evt-20260811T030629Z-fbfb9c5b",
+          "pid": 2488315,
+          "pid_start_ticks": 25667559,
+          "process_generation": "worker-process-generation-sha256:da96c623372302ae06e97a5dee81b4350c9c5dcd216eda9b60d261151876aa7c"
+        }
+      },
+      "commit": "12afca18f10cb24e2555be35478ba0fb7d4f416c",
+      "commit_subject": "SUP-WORKER-SUBJECT-GUARD-20260811: anchor commit subject guard",
+      "commit_author": {
+        "name": "pantheon-dev",
+        "email": "bjoe734@gmail.com"
+      },
+      "commit_metadata": {
+        "Owned layer": "Commit subject bounding helper in common.py, worker wakeup guidance in watch_events.py, supervisor auto-anchor fallback in supervisor.py, worker_commit preflight validation in worker_commit.py, documentation in worker-anchor-commit.md, unit/regression tests, and task evidence manifest.",
+        "Not changing": "Commit trailers 72-character gate, branch protection, CI policy, merge classification, scheduler policy, or live runtime state.",
+        "Composes with": "Per-task PR delivery flow and supervisor auto-worker dispatch.",
+        "LLM-Agent": "Antigravity2",
+        "Task-ID": "SUP-WORKER-SUBJECT-GUARD-20260811",
+        "Reviewer": "Codex2",
+        "Verified": "PYTHONPATH=.orchestrator:scripts/git pytest -v .orchestrator/test_watch_events.py scripts/git/test_worker_commit.py .orchestrator/test_supervisor.py -> 6 passed"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 1,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/SUP-WORKER-SUBJECT-GUARD-20260811",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "6cc8fc2aed98f051f847561931ee6a1b068118c8",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "created_at": "2026-08-11T02:55:41Z",
+      "from": "Antigravity2",
+      "message": "Implementation complete, anchor commit 12afca18f, PR #4745 open. Please perform independent exact-head review.",
+      "resolved_at": "2026-08-11T03:04:22Z",
+      "status": "done",
+      "task_id": "SUP-WORKER-SUBJECT-GUARD-20260811",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-08-11T03:04:22Z",
+      "from": "Codex2",
+      "message": "Independent exact-head review passed for PR #4745 at 12afca18f10cb24e2555be35478ba0fb7d4f416c: subject is 63 chars with required trailers; bounded helper covers wakeup and supervisor auto-anchor; worker_commit rejects >72 before staging; 6 focused acceptance tests passed; Branch CI Gate, Canonical Review Gate, and Orchestrator Sync succeeded.",
+      "status": "done",
+      "task_id": "SUP-WORKER-SUBJECT-GUARD-20260811",
+      "to": "Antigravity2",
+      "resolved_at": "2026-08-11T03:09:08Z"
+    }
+  ],
+  "blockers": []
+}

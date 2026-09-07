@@ -1,0 +1,366 @@
+{
+  "actor": {
+    "capabilities": [
+      "assistant.kernel.repair",
+      "dev-task.dispatch",
+      "fleet.dispatch"
+    ],
+    "id": "Human/Ops",
+    "roles": [
+      "operator"
+    ]
+  },
+  "admission_record_path": "ai-task-archive/tasks/assistant-dev-bridge-admissions/pkt-operator-supervisor-sequenced-repair-chain-v2-20260802T0903Z--6c2c51b805064c8a.json",
+  "admitted_at": "2026-08-02T09:03:12Z",
+  "audit_conversation_href": "codex://root/supervisor-autoworker-complete-audit-20260802#sequenced-source-and-canary-chain",
+  "constraints": {
+    "allowedRepos": [
+      "pantheon"
+    ],
+    "noDirectShellFromWeb": true,
+    "requiresBranchPrMerge": true
+  },
+  "conversation_id": "codex-root-supervisor-autoworker-complete-audit-20260802",
+  "dispatch_records": [
+    {
+      "error": null,
+      "owner": "Codex",
+      "reviewer": "Human/Ops",
+      "status": "dispatched",
+      "taskId": "SUP-ASSISTANT-DEV-BRIDGE-ASSIGN-LOCK-TIMEOUT-OPERATOR-V2-20260802"
+    },
+    {
+      "error": null,
+      "owner": "Codex",
+      "reviewer": "Human/Ops",
+      "status": "dispatched",
+      "taskId": "SUP-GOVERNANCE-HANDOFF-ACTIVE-LEASE-GUARD-OPERATOR-V2-20260802"
+    },
+    {
+      "error": null,
+      "owner": "Codex",
+      "reviewer": "Human/Ops",
+      "status": "dispatched",
+      "taskId": "SUP-SCHEDULER-FIXED-CADENCE-BATCH-MUTATIONS-OPERATOR-V2-20260802"
+    },
+    {
+      "error": null,
+      "owner": "Codex",
+      "reviewer": "Human/Ops",
+      "status": "dispatched",
+      "taskId": "SUP-RUNTIME-PROMOTION-ROLLBACK-TRANSACTION-OPERATOR-V2-20260802"
+    },
+    {
+      "error": null,
+      "owner": "Codex",
+      "reviewer": "Human/Ops",
+      "status": "dispatched",
+      "taskId": "SUP-RUNTIME-PROMOTION-FAILURE-MATRIX-INTEGRATION-OPERATOR-V2-20260802"
+    },
+    {
+      "error": null,
+      "owner": "Codex",
+      "reviewer": "Human/Ops",
+      "status": "dispatched",
+      "taskId": "SUP-AUTOWORKER-QUOTA-ROUTING-LIVE-CANARY-OPERATOR-V2-20260802"
+    }
+  ],
+  "documents": [
+    {
+      "kind": "OPERATOR_CONSTRAINT",
+      "path": "codex://root/supervisor-autoworker-complete-audit-20260802#operator-account-constraint",
+      "sourceRefs": [
+        "keep Codex/Codex2 quota groups distinct",
+        "no global mutual-review ban",
+        "complete remaining remediation"
+      ]
+    },
+    {
+      "kind": "MERGED_LAUNCH_PREFLIGHT",
+      "path": "https://github.com/ajoe734/pantheon/pull/4497",
+      "sourceRefs": [
+        "merge 79e02ee059387044eec1d21a283e4848f814f49a",
+        "source only; live promotion still pending"
+      ]
+    },
+    {
+      "kind": "STALE_TASK_ARCHIVES",
+      "path": "ai-task-archive/tasks/",
+      "sourceRefs": [
+        "SUP-ASSISTANT-DEV-BRIDGE-ASSIGN-LOCK-TIMEOUT-20260801",
+        "SUP-GOVERNANCE-HANDOFF-ACTIVE-LEASE-GUARD-20260802",
+        "SUP-SCHEDULER-FIXED-CADENCE-BATCH-MUTATIONS-20260802",
+        "SUP-RUNTIME-PROMOTION-ROLLBACK-TRANSACTION-20260801",
+        "SUP-RUNTIME-PROMOTION-FAILURE-MATRIX-INTEGRATION-20260801",
+        "SUP-AUTOWORKER-QUOTA-ROUTING-LIVE-CANARY-20260802"
+      ]
+    },
+    {
+      "kind": "LIVE_PROVIDER_EVIDENCE",
+      "path": ".orchestrator/provider_capabilities.json",
+      "sourceRefs": [
+        "Codex healthy/auth_ready",
+        "Codex2 token_revoked",
+        "Antigravity quota_reached"
+      ]
+    }
+  ],
+  "durable": true,
+  "emitted_at": "2026-08-02T09:03:00Z",
+  "intent": "replace_stale_dependency_ids_and_sequence_bridge_handoff_scheduler_runtime_transaction_and_live_canary",
+  "mode": "kernel_repair",
+  "packet_digest": "6c2c51b805064c8a721df2c7521387944137d518eda0036d37b4ed8c33b05824",
+  "packet_id": "pkt-operator-supervisor-sequenced-repair-chain-v2-20260802T0903Z",
+  "packet_version": "pantheon.assistant.dev-task.v1",
+  "record_kind": "assistant_dev_bridge_admission",
+  "record_payload_sha256": "58694e16bbee607e41d3374889a7560a7388c303e3441c8b938b95ed2a9c6f14",
+  "schema": "pantheon.assistant-dev-bridge-admission.v1",
+  "source_turn_ids": [
+    "operator-complete-quota-aware-supervisor-audit-20260802",
+    "operator-account-neutral-constraint-20260802",
+    "stale-dependency-chain-repair-20260802"
+  ],
+  "tasks": [
+    {
+      "task_id": "SUP-ASSISTANT-DEV-BRIDGE-ASSIGN-LOCK-TIMEOUT-OPERATOR-V2-20260802",
+      "task_spec": {
+        "acceptance": [
+          "Explicit operator constraint is authoritative: Codex and Codex2 may use different accounts; do not merge configured quota groups, hardcode account equivalence, or add a global mutual-review prohibition.",
+          "Owner Codex and reviewer Human/Ops are task-scoped live-provider fallbacks because the current Antigravity lane reports quota_reached and Codex2 reports token_revoked. This does not change provider/account/reviewer policy.",
+          "Start from current origin/dev in a clean governed worktree and deliver only through commit, PR to dev, exact-head checks/review, merge, and canonical archive. Do not reuse the superseded task state or approval binding.",
+          "Start only after the declared failure-streak chain is terminal/superseded, from current origin/dev in a clean governed task worktree; do not reuse rejected PR code.",
+          "Reproduce both 2026-08-01 receipts where signed packets moved to processing then failed with ai_status.py assign timed out after 30s and no canonical task, while the same signed task metadata succeeded through canonical assign after drain returned.",
+          "Identify the exact lock owner, lock ordering, call stack, and elapsed phases using scratch-root instrumentation; do not assume the cause from timing alone.",
+          "Ensure supervisor packet draining never waits on a governed ai-status subprocess while holding runtime-admission, canonical task-state, event-log, inbox, or replay locks needed by that subprocess. Fetch/verify/claim and apply phases require freshness and ownership checks.",
+          "A transient task-state lock timeout must be retryable and must not irreversibly move a valid packet to failed with retryable=false. Define bounded backoff and exact recovery preserving packet identity, signature, replay protection, and at-most-once canonical materialization.",
+          "After successful drain require processed receipt, durable admission record, exact task-spec hash, canonical active/archive readback for every task ID, and no receipt-only success. Partial multi-task materialization must have a resumable deterministic fail-closed outcome.",
+          "Add deterministic concurrent integration tests with a real canonical event-log fixture, an active full supervisor cycle, signed packet drain, and simultaneous approve/assign/note/reopen commands. Prove governed assign under two seconds p95 and processed plus canonical readback.",
+          "Add negatives for duplicate/replay, timeout before any task, timeout after one task, crash between inbox rename and receipt, stale processing claim, forged retry, concurrent drainers, mismatched spec, and restart recovery without duplicate assignment.",
+          "Preserve journal integrity, runtime lock ordering, provider dispatch, worker leases, reviewer independence, signature verification, artifact guards, and existing successful bridge receipts.",
+          "Run focused bridge/supervisor suites, relevant full supervisor regression, captured 2000-event concurrency benchmark, py_compile, JSON evidence validation, local trailer gate, and git diff --check.",
+          "No config, canonical runtime JSON/event-log, provider policy, product controller, live service, signal/restart, or product-task materialization changes in this source task.",
+          "Keep generated task briefs, packets, dashboards, runtime state, and unrelated files out. Evidence stays review_pending until Human/Ops exact-head approval.",
+          "Deliver clean PR to dev with <=72-character Task-ID-prefixed subjects and exact Codex/Task-ID/Human-Ops/truthful Verified trailers; wait checks and independent review.",
+          "Rollout is source merge followed by separately governed runtime promotion canary. Rollback is revert; no config migration.",
+          "All task evidence, commit trailers, PR binding, and rollback records use exact replacement Task-ID SUP-ASSISTANT-DEV-BRIDGE-ASSIGN-LOCK-TIMEOUT-OPERATOR-V2-20260802; the superseded source Task-ID is evidence only."
+        ],
+        "artifacts": [
+          ".orchestrator/supervisor.py",
+          ".orchestrator/test_supervisor.py",
+          "services/control-plane/bff/assistant/dev_bridge_dispatcher.py",
+          "services/control-plane/bff/assistant/dev_bridge_inbox.py",
+          "services/control-plane/bff/assistant/tests/test_dev_bridge_reliability.py",
+          "services/control-plane/bff/assistant/tests/test_dev_bridge_inbox.py",
+          "docs/deployment/evidence/supervisor/SUP-ASSISTANT-DEV-BRIDGE-ASSIGN-LOCK-TIMEOUT-OPERATOR-V2-20260802/"
+        ],
+        "depends_on": [
+          "SUP-ASSIGNMENT-FALLBACK-ATOMIC-REBINDS-OPERATOR-V3-20260802",
+          "SUP-FAILURE-STREAK-PROGRESS-EVIDENCE-V2-20260801",
+          "SUP-FAILURE-STREAK-RECORD-WIRING-V3-20260801",
+          "SUP-FAILURE-STREAK-ACTIVITY-NORMALIZER-V3-20260801",
+          "SUP-FAILURE-STREAK-RECOVERY-DECISION-V2-20260801",
+          "SUP-FAILURE-STREAK-DISPATCH-CONSUMPTION-V2-20260801"
+        ],
+        "id": "SUP-ASSISTANT-DEV-BRIDGE-ASSIGN-LOCK-TIMEOUT-OPERATOR-V2-20260802",
+        "owner": "Codex",
+        "phase": "Supervisor Dispatch Pipeline / Dev Bridge Lock Boundary / operator V2",
+        "reviewer": "Human/Ops",
+        "summary": "Repair the observed supervisor dev-bridge lock boundary so signed packets materialize canonically with bounded retry instead of two consecutive 30-second receipt failures.",
+        "title": "Remove canonical assign lock timeout from supervisor dev bridge"
+      },
+      "task_spec_hash": "433275274f587f630a83f653e9301e9d0cea91d03eb6980fbf3270a5231829b9"
+    },
+    {
+      "task_id": "SUP-GOVERNANCE-HANDOFF-ACTIVE-LEASE-GUARD-OPERATOR-V2-20260802",
+      "task_spec": {
+        "acceptance": [
+          "Explicit operator constraint is authoritative: Codex and Codex2 may use different accounts; do not merge configured quota groups, hardcode account equivalence, or add a global mutual-review prohibition.",
+          "Owner Codex and reviewer Human/Ops are task-scoped live-provider fallbacks because the current Antigravity lane reports quota_reached and Codex2 reports token_revoked. This does not change provider/account/reviewer policy.",
+          "Start from current origin/dev in a clean governed worktree and deliver only through commit, PR to dev, exact-head checks/review, merge, and canonical archive. Do not reuse the superseded task state or approval binding.",
+          "Reproduce the 01:44 to 01:48 Human/Ops exact-head handoff incident",
+          "A governance-only assign or reopen cannot supersede a healthy active implementation lease",
+          "Explicit cancel eligible preemption or terminal task truth may end the lease",
+          "Execution responsibility and review handoff provenance remain separately auditable",
+          "Lease decisions use exact task run process generation and canonical event ordering",
+          "Concurrent owner mutation fails closed without killing unrelated work",
+          "Focused supervisor and ai_status regressions pass",
+          "No account-group or reviewer-policy changes",
+          "All task evidence, commit trailers, PR binding, and rollback records use exact replacement Task-ID SUP-GOVERNANCE-HANDOFF-ACTIVE-LEASE-GUARD-OPERATOR-V2-20260802; the superseded source Task-ID is evidence only."
+        ],
+        "artifacts": [
+          ".orchestrator/supervisor.py",
+          ".orchestrator/test_supervisor.py",
+          "scripts/ai_status.py",
+          "scripts/test_ai_status.py",
+          "docs/deployment/evidence/supervisor/SUP-GOVERNANCE-HANDOFF-ACTIVE-LEASE-GUARD-OPERATOR-V2-20260802/"
+        ],
+        "depends_on": [
+          "SUP-ASSIGNMENT-FALLBACK-ATOMIC-REBINDS-OPERATOR-V3-20260802",
+          "SUP-ASSISTANT-DEV-BRIDGE-ASSIGN-LOCK-TIMEOUT-OPERATOR-V2-20260802"
+        ],
+        "id": "SUP-GOVERNANCE-HANDOFF-ACTIVE-LEASE-GUARD-OPERATOR-V2-20260802",
+        "owner": "Codex",
+        "phase": "Supervisor reliability / execution lease ownership / operator V2",
+        "reviewer": "Human/Ops",
+        "summary": "治理用 assign/reopen 不得被當成取消 active implementation worker；只有明確 cancel 或合法 preemption 才能終止 lease。",
+        "title": "Guard governance handoff against active worker leases"
+      },
+      "task_spec_hash": "4bb72b55f4784f20b3e2450541fdb45e9619e68d3cd059098d8532accd6e5ff3"
+    },
+    {
+      "task_id": "SUP-SCHEDULER-FIXED-CADENCE-BATCH-MUTATIONS-OPERATOR-V2-20260802",
+      "task_spec": {
+        "acceptance": [
+          "Explicit operator constraint is authoritative: Codex and Codex2 may use different accounts; do not merge configured quota groups, hardcode account equivalence, or add a global mutual-review prohibition.",
+          "Owner Codex and reviewer Human/Ops are task-scoped live-provider fallbacks because the current Antigravity lane reports quota_reached and Codex2 reports token_revoked. This does not change provider/account/reviewer policy.",
+          "Start from current origin/dev in a clean governed worktree and deliver only through commit, PR to dev, exact-head checks/review, merge, and canonical archive. Do not reuse the superseded task state or approval binding.",
+          "Schedule the next tick from a monotonic cadence instead of sleeping a full poll interval after each cycle",
+          "Missed ticks coalesce without overlapping supervisor cycles",
+          "Plan policy mutations outside exclusive runtime admission and apply a bounded compare-and-swap batch",
+          "Git and provider network probes remain outside canonical locks",
+          "Reviewer approve assign and note commands are not blocked by long policy scans",
+          "Regression proves dispatch semantics priorities leases and retries are unchanged",
+          "Emit p50 p95 max loop and lock metrics",
+          "Canary target is near 30 second cadence with no lock hold above 30 seconds",
+          "No account-group reviewer-policy or product changes",
+          "All task evidence, commit trailers, PR binding, and rollback records use exact replacement Task-ID SUP-SCHEDULER-FIXED-CADENCE-BATCH-MUTATIONS-OPERATOR-V2-20260802; the superseded source Task-ID is evidence only."
+        ],
+        "artifacts": [
+          ".orchestrator/supervisor.py",
+          ".orchestrator/test_supervisor.py",
+          "docs/deployment/evidence/supervisor/SUP-SCHEDULER-FIXED-CADENCE-BATCH-MUTATIONS-OPERATOR-V2-20260802/"
+        ],
+        "depends_on": [
+          "SUP-GOVERNANCE-HANDOFF-ACTIVE-LEASE-GUARD-OPERATOR-V2-20260802"
+        ],
+        "id": "SUP-SCHEDULER-FIXED-CADENCE-BATCH-MUTATIONS-OPERATOR-V2-20260802",
+        "owner": "Codex",
+        "phase": "Supervisor reliability / scheduler throughput / operator V2",
+        "reviewer": "Human/Ops",
+        "summary": "把實際約 56.7 秒的 30 秒 fixed-delay loop 改為 monotonic fixed cadence，並縮短大量改派造成的 runtime lock convoy。",
+        "title": "Run fixed cadence with bounded batched policy mutations"
+      },
+      "task_spec_hash": "a6e52eb63c8acf39f92563a4a6e20b9cbef9c84a39805d46f1f56baad68ab6d7"
+    },
+    {
+      "task_id": "SUP-RUNTIME-PROMOTION-ROLLBACK-TRANSACTION-OPERATOR-V2-20260802",
+      "task_spec": {
+        "acceptance": [
+          "Explicit operator constraint is authoritative: Codex and Codex2 may use different accounts; do not merge configured quota groups, hardcode account equivalence, or add a global mutual-review prohibition.",
+          "Owner Codex and reviewer Human/Ops are task-scoped live-provider fallbacks because the current Antigravity lane reports quota_reached and Codex2 reports token_revoked. This does not change provider/account/reviewer policy.",
+          "Start from current origin/dev in a clean governed worktree and deliver only through commit, PR to dev, exact-head checks/review, merge, and canonical archive. Do not reuse the superseded task state or approval binding.",
+          "Use an explicit transaction state machine with idempotent lock ownership. Under the runtime-admission lock revalidate exact incumbent identity, state snapshot and config bytes immediately before recording intent and TERM.",
+          "Record watchdog intentional restart with the actual incumbent PID and exact candidate commit, terminate only that captured identity, and launch with the governed interpreter, cwd, environment and durable logs.",
+          "Candidate acceptance requires the exact launched PID/starttime/root/commit/tree and at least three distinct fresh successful loops after launch from that PID, with unchanged config and every snapshot invariant passing each time.",
+          "Any launch, identity, timeout or postcheck failure reacquires or retains the same governed admission protocol without self-deadlock, records the actual candidate PID, terminates only the verified bad candidate and restores the captured incumbent root and launch contract.",
+          "Rollback success requires a new verified rollback PID, exact incumbent commit/tree, at least three fresh successful loops, projection equality, worker/queue parity, provider baseline and byte-identical config. Return nonzero and write durable rolled-back evidence.",
+          "Rollback launch or rollback postcheck failure must still return nonzero with durable rollback_failed evidence that includes the original failure, rollback failure, PIDs, roots, commits, trees and config hashes.",
+          "Tests inject candidate launch failure, missing heartbeat, wrong candidate cwd, wrong commit, wrong tree, projection mismatch, lease mismatch, duplicate worker, provider not ready, config drift, rollback launch failure, rollback config drift and self-lock reentry.",
+          "No live promotion in implementation or tests.",
+          "No edits to .orchestrator/config.json, live-supervisor-mainroot-config.json, canonical JSON, provider policy, product controllers, or live services.",
+          "Work only in a clean governed task worktree on the exact task branch, target dev, and keep unrelated or generated task-brief changes out of commits.",
+          "Deliver focused commits with LLM-Agent: Antigravity, exact Task-ID, Reviewer: Human/Ops and Verified trailers; push, open a correctly titled PR to dev, wait for all checks, and require exact-head Human/Ops review before merge.",
+          "Rollout is source merge after dependency merge. Rollback is revert of this task merge commit.",
+          "All task evidence, commit trailers, PR binding, and rollback records use exact replacement Task-ID SUP-RUNTIME-PROMOTION-ROLLBACK-TRANSACTION-OPERATOR-V2-20260802; the superseded source Task-ID is evidence only."
+        ],
+        "artifacts": [
+          "scripts/promote_supervisor_runtime.py",
+          "scripts/promote-supervisor-runtime.sh",
+          "scripts/test_promote_supervisor_runtime.py",
+          "docs/deployment/evidence/supervisor/SUP-RUNTIME-PROMOTION-ROLLBACK-TRANSACTION-OPERATOR-V2-20260802/"
+        ],
+        "depends_on": [
+          "SUP-RUNTIME-IDENTITY-LAUNCH-PREFLIGHT-V2-20260801"
+        ],
+        "id": "SUP-RUNTIME-PROMOTION-ROLLBACK-TRANSACTION-OPERATOR-V2-20260802",
+        "owner": "Codex",
+        "phase": "Supervisor Runtime Promotion / 3 Transaction / operator V2",
+        "reviewer": "Human/Ops",
+        "summary": "Implement the explicit swap and rollback state machine using the two merged invariant layers. Tests use mocks/fixtures only and must never signal the live PID.",
+        "title": "Implement transactional supervisor swap with automatic rollback"
+      },
+      "task_spec_hash": "58023a0e7e42e70567ca1a621fc2010ae52aa65eba3c62c2b33840cd220d9687"
+    },
+    {
+      "task_id": "SUP-RUNTIME-PROMOTION-FAILURE-MATRIX-INTEGRATION-OPERATOR-V2-20260802",
+      "task_spec": {
+        "acceptance": [
+          "Explicit operator constraint is authoritative: Codex and Codex2 may use different accounts; do not merge configured quota groups, hardcode account equivalence, or add a global mutual-review prohibition.",
+          "Owner Codex and reviewer Human/Ops are task-scoped live-provider fallbacks because the current Antigravity lane reports quota_reached and Codex2 reports token_revoked. This does not change provider/account/reviewer policy.",
+          "Start from current origin/dev in a clean governed worktree and deliver only through commit, PR to dev, exact-head checks/review, merge, and canonical archive. Do not reuse the superseded task state or approval binding.",
+          "Review the complete architecture across sync-dev-root, command-runtime refresh helpers, watchdog intentional restart, status-command runtime pinning, task-worktree cleanup, authoritative projection, worker and queue leases and provider readiness; document the failure chain from the deleted-cwd incident and how each invariant closes it.",
+          "Run a deterministic matrix covering successful promotion plus every negative required by the three predecessor tasks. Tests use fixtures/mocks only and prove the live supervisor PID is never signalled.",
+          "Run focused promotion tests, watchdog deployment contract tests and the full relevant supervisor and ai_status regression. Record exact commands, counts and outputs; no claimed test count may disagree with collected output.",
+          "Evidence must state review pending until Human/Ops approval and must not self-write review_approved. Runtime evidence defaults outside executable source and cannot dirty a candidate command root.",
+          "Create one clean integration PR from current dev with correct title/body and only this task ancestry; every commit and PR body uses the exact Task-ID, LLM-Agent Codex, Reviewer Human/Ops and validation trailers.",
+          "Close polluted PR #4433 only after the clean integration PR exists and links the supersession. Do not reuse or approve any prior #4433 head.",
+          "All repository checks and root merge-freeze status must be green on the exact reviewed head before Human/Ops approval and protected merge.",
+          "After merge, do not promote live automatically. Hand off the merged helper to SUP-AGENT-ALIAS-GUARD-LIVE-PROMOTION-20260731 as the resolved rollback-contract dependency and use the next already-governed runtime promotion as canary.",
+          "No edits to .orchestrator/config.json, live-supervisor-mainroot-config.json, canonical JSON, provider policy, product controllers, or live services.",
+          "Work only in a clean governed task worktree on the exact task branch, target dev, and keep unrelated or generated task-brief changes out of commits.",
+          "Deliver focused commits with LLM-Agent: Antigravity, exact Task-ID, Reviewer: Human/Ops and Verified trailers; push, open a correctly titled PR to dev, wait for all checks, and require exact-head Human/Ops review before merge.",
+          "Rollout: merge source, then separate Human/Ops-governed live canary with gate-before-switch. Rollback: revert the integration and predecessor merge commits in reverse order; live canary rollback restores its captured incumbent.",
+          "All task evidence, commit trailers, PR binding, and rollback records use exact replacement Task-ID SUP-RUNTIME-PROMOTION-FAILURE-MATRIX-INTEGRATION-OPERATOR-V2-20260802; the superseded source Task-ID is evidence only."
+        ],
+        "artifacts": [
+          "scripts/promote_supervisor_runtime.py",
+          "scripts/promote-supervisor-runtime.sh",
+          "scripts/test_promote_supervisor_runtime.py",
+          "docs/deployment/evidence/supervisor/SUP-RUNTIME-PROMOTION-FAILURE-MATRIX-INTEGRATION-OPERATOR-V2-20260802/"
+        ],
+        "depends_on": [
+          "SUP-RUNTIME-PROMOTION-ROLLBACK-TRANSACTION-OPERATOR-V2-20260802"
+        ],
+        "id": "SUP-RUNTIME-PROMOTION-FAILURE-MATRIX-INTEGRATION-OPERATOR-V2-20260802",
+        "owner": "Codex",
+        "phase": "Supervisor Runtime Promotion / 4 Qualification / operator V2",
+        "reviewer": "Human/Ops",
+        "summary": "Perform the final architecture integration and qualification, retire polluted PR #4433, and produce the exact reviewed source contract for the next governed live canary.",
+        "title": "Integrate and qualify the supervisor promotion transaction"
+      },
+      "task_spec_hash": "9a05978224034153514d3f58ae6c9a4c56383b8b8ba077104788d26d352e8cff"
+    },
+    {
+      "task_id": "SUP-AUTOWORKER-QUOTA-ROUTING-LIVE-CANARY-OPERATOR-V2-20260802",
+      "task_spec": {
+        "acceptance": [
+          "Explicit operator constraint is authoritative: Codex and Codex2 may use different accounts; do not merge configured quota groups, hardcode account equivalence, or add a global mutual-review prohibition.",
+          "Owner Codex and reviewer Human/Ops are task-scoped live-provider fallbacks because the current Antigravity lane reports quota_reached and Codex2 reports token_revoked. This does not change provider/account/reviewer policy.",
+          "Start from current origin/dev in a clean governed worktree and deliver only through commit, PR to dev, exact-head checks/review, merge, and canonical archive. Do not reuse the superseded task state or approval binding.",
+          "Bind every accepted source task to exact merged dev commits and green checks",
+          "Promote through the reviewed supervisor runtime transaction with gate-before-switch",
+          "Prove captured quota fixture lines cannot pause Codex or Codex2",
+          "Prove a healthy post-cooldown Antigravity live probe clears quota pause without manual state edits",
+          "Prove stale eligible missing_process streak recovery is bounded and auth quota failures remain fail closed",
+          "Prove the stranded fallback fixture yields a legal pair without changing account policy",
+          "Prove governance handoff does not kill an active lease",
+          "Observe at least thirty scheduler intervals near configured cadence with no lock hold over 30 seconds",
+          "Record worker start completion supersede retry and reassignment deltas",
+          "Rollback automatically on any failed invariant",
+          "Do not enable real writes trading capital or product controllers",
+          "All task evidence, commit trailers, PR binding, and rollback records use exact replacement Task-ID SUP-AUTOWORKER-QUOTA-ROUTING-LIVE-CANARY-OPERATOR-V2-20260802; the superseded source Task-ID is evidence only."
+        ],
+        "artifacts": [
+          "docs/deployment/evidence/supervisor/SUP-AUTOWORKER-QUOTA-ROUTING-LIVE-CANARY-OPERATOR-V2-20260802/"
+        ],
+        "depends_on": [
+          "SUP-WORKER-FAILURE-ENVELOPE-GATE-20260802",
+          "SUP-PROVIDER-PAUSE-RECOVERY-PROBE-20260802",
+          "SUP-FAILURE-STREAK-DISPATCH-CONSUMPTION-V2-20260801",
+          "SUP-ASSIGNMENT-FALLBACK-ATOMIC-REBINDS-OPERATOR-V3-20260802",
+          "SUP-ASSISTANT-DEV-BRIDGE-ASSIGN-LOCK-TIMEOUT-OPERATOR-V2-20260802",
+          "SUP-GOVERNANCE-HANDOFF-ACTIVE-LEASE-GUARD-OPERATOR-V2-20260802",
+          "SUP-SCHEDULER-FIXED-CADENCE-BATCH-MUTATIONS-OPERATOR-V2-20260802",
+          "SUP-RUNTIME-PROMOTION-FAILURE-MATRIX-INTEGRATION-OPERATOR-V2-20260802"
+        ],
+        "id": "SUP-AUTOWORKER-QUOTA-ROUTING-LIVE-CANARY-OPERATOR-V2-20260802",
+        "owner": "Codex",
+        "phase": "Supervisor reliability / governed live promotion / operator V2",
+        "reviewer": "Human/Ops",
+        "summary": "在所有 source 修補與既有 streak chain 完成後，以交易式 promotion 驗證真實 Supervisor 與 auto-worker 恢復。",
+        "title": "Promote and canary quota routing and scheduler repairs"
+      },
+      "task_spec_hash": "03246cff1976c9e6db8a6c4d0c6353770c75e57c4ebd7ebbaef3f3a4de2ed948"
+    }
+  ]
+}

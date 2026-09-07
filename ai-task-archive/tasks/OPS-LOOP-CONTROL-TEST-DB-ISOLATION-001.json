@@ -1,0 +1,142 @@
+{
+  "version": 1,
+  "task_id": "OPS-LOOP-CONTROL-TEST-DB-ISOLATION-001",
+  "archived_at": "2026-07-27T13:16:54Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "acceptance": [
+      "The loop-control tests fail closed when they inherit a Pantheon dev or production DATABASE_URL",
+      "Real database tests require an explicit isolated test database or unique schema and leave no rows or schema behind",
+      "A regression captures the legitimate loop_controller_records count and digest before and after the suite and proves they are unchanged",
+      "The cleanup utility is dry-run by default and can target only the enumerated test contamination rows",
+      "Human/Ops evidence is required before any live cleanup and legitimate source_ingestion and strategy_distillation rows must be preserved",
+      "The task is delivered by PR to dev with green checks and independent Claude review"
+    ],
+    "artifact_conflict_guard": {
+      "allowed_overlap_task_ids": [],
+      "artifact_scope": [
+        {
+          "path": "docs/deployment/evidence/twelve-loop-gap/OPS-LOOP-CONTROL-TEST-DB-ISOLATION-001",
+          "repo": "pantheon"
+        },
+        {
+          "path": "scripts/cleanup_loop_control_test_rows.py",
+          "repo": "pantheon"
+        },
+        {
+          "path": "scripts/test_cleanup_loop_control_test_rows.py",
+          "repo": "pantheon"
+        },
+        {
+          "path": "services/loop-control/conftest.py",
+          "repo": "pantheon"
+        },
+        {
+          "path": "services/loop-control/test_db_isolation.py",
+          "repo": "pantheon"
+        },
+        {
+          "path": "services/loop-control/test_loop_control.py",
+          "repo": "pantheon"
+        }
+      ],
+      "catalog_sha256": "a7fbbaa560bd7f2d97750b25cd20af69b64d4f522b293689849b0e1b1763717f",
+      "program_id": "pantheon-twelve-loop-gap-2026-07-26",
+      "schema_version": 1,
+      "task_id": "OPS-LOOP-CONTROL-TEST-DB-ISOLATION-001"
+    },
+    "artifacts": [
+      "docs/deployment/evidence/twelve-loop-gap/OPS-LOOP-CONTROL-TEST-DB-ISOLATION-001",
+      "scripts/cleanup_loop_control_test_rows.py",
+      "scripts/test_cleanup_loop_control_test_rows.py",
+      "services/loop-control/conftest.py",
+      "services/loop-control/test_db_isolation.py",
+      "services/loop-control/test_loop_control.py"
+    ],
+    "depends_on": [
+      "L12-CTRL-001"
+    ],
+    "id": "OPS-LOOP-CONTROL-TEST-DB-ISOLATION-001",
+    "last_update": "2026-07-27T13:16:54Z",
+    "mutates_canonical": true,
+    "next": "Owner closeout complete: implementation PR #4241 merged as ab63b3c4c14cb47fd5ddaec0c0ae6a3cd18afc8c, evidence PR #4243 merged as 5e5e0c4bf081a9b8271f0287643188b496e025bf, and task-record PR #4246 merged as e23c37e2c979d723c6ce949a942b1efce7306593. Codex independently approved the reviewed manifest; Codex2 final rerun passed 33 tests with 7 expected DB skips, evidence schema/checksums, and git diff --check. No live database mutation was performed.",
+    "owner": "Codex2",
+    "phase": "Unassigned",
+    "program_id": "pantheon-twelve-loop-gap-2026-07-26",
+    "review_file": "docs/deployment/evidence/twelve-loop-gap/OPS-LOOP-CONTROL-TEST-DB-ISOLATION-001/evidence.json",
+    "reviewer": "Codex",
+    "status": "done",
+    "summary_zh": null,
+    "title": "Isolate loop-control database tests from live dev state",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-07-27T13:16:54Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/ops-loop-control-test-db-isolation-001",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/OPS-LOOP-CONTROL-TEST-DB-ISOLATION-001",
+      "git_clean_required": false,
+      "status_command_runtime": {
+        "command_root": "/home/lupin/pantheon-ci-deploy/dev-root-1434effdc88f",
+        "source_sha": "1434effdc88fb79abd0125351a5206af8fe4a7c7",
+        "base_ref": "origin/dev",
+        "remote": "ajoe734/pantheon",
+        "status_root": "/home/lupin/pantheon",
+        "delivery_root": "/tmp/pantheon-worker-worktrees/pantheon/ops-loop-control-test-db-isolation-001",
+        "wrapper_root": "/home/lupin/pantheon-ci-deploy/dev-root-1434effdc88f"
+      },
+      "commit": "e1939ff7ae5a53647c3b5385b6c03e1a8567e30c",
+      "commit_subject": "Merge remote-tracking branch 'origin/dev' into task/OPS-LOOP-CONTROL-TEST-DB-ISOLATION-001",
+      "commit_author": {
+        "name": "pantheon-dev",
+        "email": "bjoe734@gmail.com"
+      },
+      "commit_trailer_check_skipped": true,
+      "commit_trailer_skip_reason": "Merge",
+      "commit_metadata": {},
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "e23c37e2c979d723c6ce949a942b1efce7306593",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "created_at": "2026-07-27T12:27:34Z",
+      "from": "Antigravity",
+      "message": "Auto-reassigned OPS-LOOP-CONTROL-TEST-DB-ISOLATION-001 away from unavailable lane Antigravity, Claude (disabled, paused, sidecar-only, or auth-down); owner Antigravity -> Codex2, reviewer Claude -> Codex.",
+      "resolved_at": "2026-07-27T12:35:47Z",
+      "status": "done",
+      "task_id": "OPS-LOOP-CONTROL-TEST-DB-ISOLATION-001",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-07-27T12:52:58Z",
+      "from": "Codex2",
+      "message": "PR #4241 merged to dev as ab63b3c4c14cb47fd5ddaec0c0ae6a3cd18afc8c with all required checks green. Please independently review the explicit-DSN fail-closed fixture, unique-schema teardown/count-digest regression, exact eight-signature dry-run cleanup and plan-bound Human/Ops apply gate. Append the independent decision plus PR/check evidence to docs/deployment/evidence/twelve-loop-gap/OPS-LOOP-CONTROL-TEST-DB-ISOLATION-001/evidence.json, commit/merge the review evidence if approved, and approve with REVIEW_FILE bound to that manifest.",
+      "resolved_at": "2026-07-27T13:08:15Z",
+      "status": "done",
+      "task_id": "OPS-LOOP-CONTROL-TEST-DB-ISOLATION-001",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-07-27T13:08:15Z",
+      "from": "Codex",
+      "message": "Independent review approved: implementation PR #4241 merged as ab63b3c4c14cb47fd5ddaec0c0ae6a3cd18afc8c with both Branch CI Gate runs green; evidence PR #4243 merged as 5e5e0c4bf081a9b8271f0287643188b496e025bf. Reviewer reran 33 passed/7 skipped without DB, confirmed ambient-only DSN refusal before connection, reran 28 passed against throwaway PostgreSQL with legitimate count/digest unchanged and no schema residue, and proved dry-run selected exactly 8 of 11 rows while preserving canonical rows and a decoy.",
+      "status": "done",
+      "task_id": "OPS-LOOP-CONTROL-TEST-DB-ISOLATION-001",
+      "to": "Codex2",
+      "resolved_at": "2026-07-27T13:16:55Z"
+    }
+  ],
+  "blockers": []
+}

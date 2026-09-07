@@ -1,0 +1,157 @@
+{
+  "version": 1,
+  "task_id": "AGORA-CURRENT-CLOSE-20260808",
+  "archived_at": "2026-08-13T02:59:54Z",
+  "terminal_status": "done",
+  "terminal_outcome": "superseded",
+  "task": {
+    "acceptance": [
+      "Publish one gap-by-gap table linking task IDs, implementation PRs, merge SHAs, independent exact-head reviews, required checks, deployed FE/BFF identities, runtime readbacks, and rollback evidence.",
+      "Verify every predecessor is canonical done/archived and no accepted evidence points to a superseded or unserved pair.",
+      "Re-probe public BFF readiness/version and the deployment manifest at closeout time.",
+      "Require the hosted correlated Agora-to-Imitation-to-Consultation result, tenant and auth negatives, restart readback, and safe write posture.",
+      "Record residual non-blocking work separately with owner and expiry; do not relabel a blocker as residual risk.",
+      "Close only after independent reviewer approval; owner self-approval or historical exact-pair evidence is insufficient."
+    ],
+    "artifacts": [
+      "docs/deployment/evidence/agora/AGORA-CURRENT-CLOSE-20260808/"
+    ],
+    "depends_on": [
+      "AGORA-CURRENT-HOSTED-REACCEPT-20260808",
+      "AGORA-UI-LIFECYCLE-RECONCILE-20260808"
+    ],
+    "dev_bridge": {
+      "actor": {
+        "capabilities": [
+          "dev-task.dispatch",
+          "fleet.dispatch"
+        ],
+        "id": "Codex",
+        "roles": [
+          "coordination-agent"
+        ]
+      },
+      "audit_conversation_href": "codex://root/agora-current-gap-execution-20260808",
+      "conversation_id": "codex-root-agora-current-gap-execution-20260808",
+      "documents": [
+        {
+          "kind": "AGORA_CURRENT_GAP_AUDIT",
+          "path": "docs/bff/execution-tasks/2026-08-08-agora-current-environment-gap/GAP-AUDIT.md",
+          "sourceRefs": [
+            "https://github.com/ajoe734/pantheon/pull/4628",
+            "e765bcbed",
+            "deployment run 31250996848"
+          ]
+        },
+        {
+          "kind": "AGORA_CURRENT_GAP_PLAN",
+          "path": "docs/bff/execution-tasks/2026-08-08-agora-current-environment-gap/INDEX.md",
+          "sourceRefs": [
+            "https://github.com/ajoe734/pantheon/pull/4628",
+            "origin/dev 0f2ab06f8"
+          ]
+        },
+        {
+          "kind": "EXECUTION_TASK_DAG",
+          "path": "docs/bff/execution-tasks/2026-08-08-agora-current-environment-gap/execution-tasks.json",
+          "sourceRefs": [
+            "seven unique addendum tasks",
+            "unique sink AGORA-CURRENT-CLOSE-20260808"
+          ]
+        }
+      ],
+      "emitted_at": "2026-08-08T10:50:00Z",
+      "intent": "generate_sa_sd_and_dispatch",
+      "mode": "kernel_repair",
+      "packet_digest": "e32265e892a924d69b69ce3de5d83d0ea8c5ccad56114a0638299192686a41c6",
+      "packet_id": "pkt-agora-current-environment-gap-20260808-e765bcbed",
+      "source_turn_ids": [
+        "user-request-agora-gap-and-execution-tasks-for-supervisor",
+        "codex-readonly-agora-current-state-audit-20260808"
+      ],
+      "task_spec": {
+        "acceptance": [
+          "Publish one gap-by-gap table linking task IDs, implementation PRs, merge SHAs, independent exact-head reviews, required checks, deployed FE/BFF identities, runtime readbacks, and rollback evidence.",
+          "Verify every predecessor is canonical done/archived and no accepted evidence points to a superseded or unserved pair.",
+          "Re-probe public BFF readiness/version and the deployment manifest at closeout time.",
+          "Require the hosted correlated Agora-to-Imitation-to-Consultation result, tenant and auth negatives, restart readback, and safe write posture.",
+          "Record residual non-blocking work separately with owner and expiry; do not relabel a blocker as residual risk.",
+          "Close only after independent reviewer approval; owner self-approval or historical exact-pair evidence is insufficient."
+        ],
+        "artifacts": [
+          "docs/deployment/evidence/agora/AGORA-CURRENT-CLOSE-20260808/"
+        ],
+        "depends_on": [
+          "AGORA-CURRENT-HOSTED-REACCEPT-20260808",
+          "AGORA-UI-LIFECYCLE-RECONCILE-20260808"
+        ],
+        "id": "AGORA-CURRENT-CLOSE-20260808",
+        "owner": "Antigravity",
+        "phase": "A6 closeout",
+        "reviewer": "Claude",
+        "summary": "Publish the final exact evidence matrix and close only when serving deployment, cross-loop chain, safety posture, and lifecycle truth all pass.",
+        "title": "Close the Agora current-environment milestone"
+      },
+      "task_spec_hash": "898b407537ee2cb50511b64a25e73adec786812352f1e0f17037999ec1f1fef8"
+    },
+    "generation": 1,
+    "id": "AGORA-CURRENT-CLOSE-20260808",
+    "last_update": "2026-08-13T02:59:54Z",
+    "next": "Superseded by the 2026-08-13 V2 board reset. Preserve merged/archive evidence; remaining product work is rematerialized as dependency-free, current-source V2 roots.",
+    "owner": "Antigravity",
+    "phase": "A6 closeout",
+    "reviewer": "Codex",
+    "status": "done",
+    "summary_zh": "Publish the final exact evidence matrix and close only when serving deployment, cross-loop chain, safety posture, and lifecycle truth all pass.",
+    "title": "Close the Agora current-environment milestone",
+    "terminal_outcome": "superseded"
+  },
+  "handoffs": [
+    {
+      "created_at": "2026-08-08T14:45:08Z",
+      "from": "Antigravity",
+      "message": "Auto-reassigned AGORA-CURRENT-CLOSE-20260808 away from unavailable lane Antigravity, Claude (disabled, paused, sidecar-only, or auth-down); owner Antigravity -> Codex2, reviewer Claude -> Codex.",
+      "resolved_at": "2026-08-09T10:20:46Z",
+      "status": "done",
+      "task_id": "AGORA-CURRENT-CLOSE-20260808",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-08-09T10:20:46Z",
+      "from": "Codex2",
+      "message": "Auto-reassigned AGORA-CURRENT-CLOSE-20260808 away from unavailable lane Codex2 (disabled, paused, sidecar-only, or auth-down); owner Codex2 -> Codex, reviewer Codex -> Antigravity.",
+      "resolved_at": "2026-08-09T15:19:45Z",
+      "status": "done",
+      "task_id": "AGORA-CURRENT-CLOSE-20260808",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-08-09T15:19:45Z",
+      "from": "Codex",
+      "message": "Auto-reassigned AGORA-CURRENT-CLOSE-20260808 away from unavailable lane Codex (disabled, paused, sidecar-only, or auth-down); owner Codex -> Codex2.",
+      "resolved_at": "2026-08-12T03:11:15Z",
+      "status": "done",
+      "task_id": "AGORA-CURRENT-CLOSE-20260808",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-08-12T03:11:15Z",
+      "from": "Codex2",
+      "message": "Auto-reassigned AGORA-CURRENT-CLOSE-20260808 away from unavailable lane Codex2 (disabled, paused, sidecar-only, or auth-down); owner Codex2 -> Antigravity, reviewer Antigravity -> Claude.",
+      "resolved_at": "2026-08-13T02:00:40Z",
+      "status": "done",
+      "task_id": "AGORA-CURRENT-CLOSE-20260808",
+      "to": "Antigravity"
+    },
+    {
+      "created_at": "2026-08-12T04:41:36Z",
+      "from": "Claude",
+      "message": "Auto-reassigned AGORA-CURRENT-CLOSE-20260808 away from unavailable lane Claude (disabled, paused, sidecar-only, or auth-down); reviewer Claude -> Codex.",
+      "status": "done",
+      "task_id": "AGORA-CURRENT-CLOSE-20260808",
+      "to": "Codex",
+      "resolved_at": "2026-08-13T02:59:54Z"
+    }
+  ],
+  "blockers": []
+}

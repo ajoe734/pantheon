@@ -1,0 +1,191 @@
+{
+  "version": 1,
+  "task_id": "L12-FLEET-WORKER-OUTCOME-001",
+  "archived_at": "2026-07-28T18:32:53Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "acceptance": [
+      "A worker marked missing during boot reconciliation cannot leave a task pretending to progress.|The supervisor records a bounded retry",
+      "reopen",
+      "or terminal failure with task id",
+      "run id",
+      "provider",
+      "and reason.|Regression test covers missing closeout worker for review_approved task."
+    ],
+    "artifacts": [
+      ".orchestrator/supervisor.py",
+      ".orchestrator/worker_runner.py",
+      ".orchestrator/test_supervisor.py",
+      ".orchestrator/test_supervisor_watchdog.py"
+    ],
+    "depends_on": [],
+    "dispatch_mode": "supervisor_auto_worker",
+    "github_review_bridge": {
+      "actor": "Codex2",
+      "base": "dev",
+      "decision": "approve",
+      "head_branch": "task/L12-FLEET-WORKER-OUTCOME-001",
+      "head_sha": "25f238f94282f2cd8541ff488b003b5e983fd864",
+      "mode": "required_commit_status",
+      "pr": 4301,
+      "pr_url": "https://github.com/ajoe734/pantheon/pull/4301",
+      "recorded_at": "2026-07-28T14:24:33Z",
+      "repository": "ajoe734/pantheon",
+      "review_error": "gh: Unprocessable Entity (HTTP 422)",
+      "status_context": "Pantheon canonical review gate",
+      "status_id": 51221960481,
+      "status_state": "success"
+    },
+    "id": "L12-FLEET-WORKER-OUTCOME-001",
+    "lane_fallback_reason": "Antigravity/Claude not observed as healthy admitted supervisor workers at dispatch time",
+    "last_update": "2026-07-28T18:32:53Z",
+    "next": "Human/Ops reconciled already-merged L12-FLEET-WORKER-OUTCOME-001: review_approved task brief on dev binds owner Codex, reviewer Codex2, repository ajoe734/pantheon, and reviewed delivery commit 25f238f94282f2cd8541ff488b003b5e983fd864.",
+    "owner": "Codex",
+    "phase": "fleet-control",
+    "preferred_lane_order": [
+      "Antigravity",
+      "Claude",
+      "Codex2",
+      "Codex"
+    ],
+    "reassigned_reason": "preferred Antigravity lane is idle while Codex/Codex2 lanes are blocked by active stale tasks and provider gh-auth pauses",
+    "review_binding": {
+      "base": "dev",
+      "head_branch": "task/L12-FLEET-WORKER-OUTCOME-001",
+      "head_sha": "25f238f94282f2cd8541ff488b003b5e983fd864",
+      "pr": 4301
+    },
+    "reviewer": "Codex2",
+    "source_head": "2a2d6b7c50d60a940a891d9e18e0ea8a1e7a961e",
+    "source_pr": "https://github.com/ajoe734/pantheon/pull/4277",
+    "status": "done",
+    "summary_zh": "Make missing worker processes become bounded retry/reopen outcomes",
+    "title": "Claude-priority closeout: orphaned worktree condition was resolved by supervisor cleanup; do not restart implementation. Close out merged PR #4279 exact head 3c5f1a2774263f920f02032358b07b84717c7ce5 / merge 6c57f19932d84903ec6bea700205f4a87229f59c, then handoff to Codex.",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-07-28T18:32:53Z",
+      "reconciled_from_merged_evidence": true,
+      "repository_id": "pantheon",
+      "repository_slug": "ajoe734/pantheon",
+      "repository_path": "/tmp/pantheon-bff-closeout-20260728-ZgxYgy/repo",
+      "commit": "25f238f94282f2cd8541ff488b003b5e983fd864",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "a6d56c366f7436574e6d2d241b47564558beac74",
+      "head_merged_to_target": true,
+      "review_evidence": {
+        "file": ".orchestrator/task-briefs/l12_fleet_worker_outcome_001.md",
+        "commit": "a6d56c366f7436574e6d2d241b47564558beac74",
+        "merge_target_ref": "origin/dev",
+        "merge_target_sha": "a6d56c366f7436574e6d2d241b47564558beac74",
+        "owner": "Codex",
+        "reviewer": "Codex2",
+        "canonical_reviewer": "Codex2",
+        "status": "review_approved"
+      }
+    }
+  },
+  "handoffs": [
+    {
+      "created_at": "2026-07-27T21:28:21Z",
+      "from": "Claude",
+      "message": "Auto-reassigned L12-FLEET-WORKER-OUTCOME-001 away from unavailable lane Claude (disabled, paused, sidecar-only, or auth-down); owner Claude -> Codex.",
+      "resolved_at": "2026-07-28T11:23:50Z",
+      "status": "done",
+      "task_id": "L12-FLEET-WORKER-OUTCOME-001",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-07-28T12:51:24Z",
+      "from": "Codex2",
+      "message": "Auto-reassigned L12-FLEET-WORKER-OUTCOME-001 away from unavailable lane Codex2 (disabled, paused, sidecar-only, or auth-down); reviewer Codex2 -> Claude.",
+      "resolved_at": "2026-07-28T12:51:52Z",
+      "status": "done",
+      "task_id": "L12-FLEET-WORKER-OUTCOME-001",
+      "to": "Claude"
+    },
+    {
+      "created_at": "2026-07-28T13:14:20Z",
+      "from": "Codex",
+      "message": "Auto-reassigned L12-FLEET-WORKER-OUTCOME-001 away from unavailable lane Codex (disabled, paused, sidecar-only, or auth-down); reviewer Codex -> Codex2.",
+      "resolved_at": "2026-07-28T13:15:38Z",
+      "status": "done",
+      "task_id": "L12-FLEET-WORKER-OUTCOME-001",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-07-28T13:27:14Z",
+      "from": "Codex",
+      "message": "PR #4279 is already merged to dev at exact head 3c5f1a2774263f920f02032358b07b84717c7ce5 / merge 6c57f19932d84903ec6bea700205f4a87229f59c; both are origin/dev ancestors and all visible PR checks succeeded. Fresh verification on current dev: .venv-pantheon/bin/python .orchestrator/test_supervisor.py RuntimeLeaseReconciliationTests (14 passed), py_compile supervisor.py/test_supervisor.py, and git diff --check. Root pytest node collection is incompatible with this sibling-import legacy module (ModuleNotFoundError: supervisor), so the merged commit's direct-file unittest entrypoint was used. No implementation restart and no new repo changes; please perform independent review.",
+      "resolved_at": "2026-07-28T13:29:57Z",
+      "status": "done",
+      "task_id": "L12-FLEET-WORKER-OUTCOME-001",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-07-28T13:29:57Z",
+      "from": "Codex2",
+      "message": "Reviewer preflight blocked before acceptance review: task worktree contains unrelated untracked .orchestrator/task-briefs/ops_lease_002.md alongside the L12 task brief. Preserve or remove that prior-task artifact in its owning lane, then redispatch this exact merged PR #4279 review in a clean L12 task worktree; do not restart implementation.",
+      "resolved_at": "2026-07-28T13:29:57Z",
+      "status": "done",
+      "task_id": "L12-FLEET-WORKER-OUTCOME-001",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-07-28T13:52:45Z",
+      "from": "Codex",
+      "message": "PR #4279 is already merged to dev at 6c57f19932d84903ec6bea700205f4a87229f59c from exact head 3c5f1a2774263f920f02032358b07b84717c7ce5. Owner closeout verification on current dev passed: 15 RuntimeLeaseReconciliationTests, py_compile for supervisor.py/test_supervisor.py, and merge diff --check. Please independently review the bounded retry/reopen/terminal missing-worker outcomes; no implementation restart is requested.",
+      "resolved_at": "2026-07-28T13:59:10Z",
+      "status": "done",
+      "task_id": "L12-FLEET-WORKER-OUTCOME-001",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-07-28T13:59:10Z",
+      "from": "Codex2",
+      "message": "Review failed on a boot-crash edge: with an existing status_activity_outbox and retry budget exhausted, _prepare_missing_worker_terminal_outcome_locked returns None; the worker/queue become failed but the task remains in_progress with zero blocker, so it still pretends to progress. Reproduced independently: worker_status=failed, task_status=in_progress, blocker_count=0, outbox_still_pending=true. Recover or safely compose the pending outbox before atomically persisting the missing-worker terminal outcome, and add a regression test for this case; retain task/run/provider/reason evidence. PR #4279 head 3c5f1a2774263f920f02032358b07b84717c7ce5 and merge 6c57f19932d84903ec6bea700205f4a87229f59c were otherwise verified; 14 RuntimeLeaseReconciliationTests, py_compile, diff --check, Branch CI Gate and Orchestrator Sync passed.",
+      "resolved_at": "2026-07-28T13:59:10Z",
+      "status": "done",
+      "task_id": "L12-FLEET-WORKER-OUTCOME-001",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-07-28T14:17:08Z",
+      "from": "Codex",
+      "message": "PR #4301 is ready for independent review at exact head 25f238f94282f2cd8541ff488b003b5e983fd864. Follow-up to merged PR #4279: the missing-worker terminal path now validates and composes a pending status_activity_outbox under the task-state lock, atomically preserving the blocked task, blocker, prior audit event, and task/run/provider/reason terminal evidence. Regression first reproduced worker/queue failed with task still in_progress, then passed after repair. Local: 15 RuntimeLeaseReconciliationTests, py_compile, diff --check. GitHub: all 8 visible Branch CI Gate checks passed. Please review the exact head and bind REVIEW_PR=4301 plus REVIEW_HEAD_SHA on approval; auto-merge remains off until approval.",
+      "resolved_at": "2026-07-28T14:24:33Z",
+      "status": "done",
+      "task_id": "L12-FLEET-WORKER-OUTCOME-001",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-07-28T14:24:33Z",
+      "from": "Codex2",
+      "message": "Codex2 independent review approved PR #4301 at exact head 25f238f94282f2cd8541ff488b003b5e983fd864. Verified merged predecessor PR #4279 head 3c5f1a2774263f920f02032358b07b84717c7ce5 / merge 6c57f19932d84903ec6bea700205f4a87229f59c; inspected the exact diff and confirmed pending status_activity_outbox validation/composition occurs under the canonical task-state lock, preserves prior audit events, atomically blocks the task, and retains task/run/provider/reason terminal evidence. Independent local validation: 445 supervisor tests, 15 RuntimeLeaseReconciliationTests, 59 watchdog tests, 11 canonical activity recovery tests, py_compile, and git diff --check passed; all 8 visible Branch CI Gate checks passed.",
+      "status": "done",
+      "task_id": "L12-FLEET-WORKER-OUTCOME-001",
+      "to": "Codex",
+      "resolved_at": "2026-07-28T18:32:53Z"
+    }
+  ],
+  "blockers": [
+    {
+      "created_at": "2026-07-28T11:24:40Z",
+      "message": "Task branch is correct, but the worktree contains orphaned untracked .orchestrator/task-briefs/ops_lease_002.md; canonical status has no OPS-LEASE-002 row. Per task worktree rules, Codex will not stash, delete, or absorb unrelated prior-task state. Human/Ops must preserve or remove the orphaned artifact and redispatch; PR #4279 / merge 6c57f19932d84903ec6bea700205f4a87229f59c remains the merged delivery to reconcile, so implementation must not be restarted.",
+      "owner": "Codex",
+      "resolved_at": "2026-07-28T12:57:15Z",
+      "status": "resolved",
+      "task_id": "L12-FLEET-WORKER-OUTCOME-001",
+      "waiting_for": "Human/Ops"
+    },
+    {
+      "created_at": "2026-07-28T13:33:48Z",
+      "message": "Blocked before PR #4279 verification: task worktree contains untracked .orchestrator/task-briefs/ops_lease_002.md from unrelated OPS-LEASE-002. Per dispatch rules this is prior-task contamination; do not stash, delete, or continue. Supervisor/Human/Ops must cleanly preserve or remove the unrelated artifact and redispatch a clean lease.",
+      "owner": "Codex",
+      "resolved_at": "2026-07-28T13:49:53Z",
+      "status": "resolved",
+      "task_id": "L12-FLEET-WORKER-OUTCOME-001",
+      "waiting_for": "Human/Ops"
+    }
+  ]
+}

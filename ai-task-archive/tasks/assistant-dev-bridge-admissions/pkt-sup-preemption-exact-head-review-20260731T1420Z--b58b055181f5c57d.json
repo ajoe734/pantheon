@@ -1,0 +1,95 @@
+{
+  "actor": {
+    "capabilities": [
+      "fleet.dispatch",
+      "dev-task.dispatch"
+    ],
+    "id": "Codex",
+    "roles": [
+      "operator-delegate"
+    ]
+  },
+  "admission_record_path": "ai-task-archive/tasks/assistant-dev-bridge-admissions/pkt-sup-preemption-exact-head-review-20260731T1420Z--b58b055181f5c57d.json",
+  "admitted_at": "2026-07-31T14:21:13Z",
+  "audit_conversation_href": "codex://root/l12-current-gap-supervisor-dispatch-20260731#scheduler-exact-head-review-live-rescue",
+  "constraints": {
+    "allowedRepos": [
+      "pantheon"
+    ],
+    "noDirectShellFromWeb": true,
+    "requiresBranchPrMerge": true
+  },
+  "conversation_id": "codex-root-l12-current-gap-supervisor-dispatch-20260731",
+  "dispatch_records": [
+    {
+      "error": null,
+      "owner": "Human/Ops",
+      "reviewer": "Antigravity",
+      "status": "dispatched",
+      "taskId": "SUP-PREEMPTION-EXACT-HEAD-REVIEW-20260731"
+    }
+  ],
+  "documents": [
+    {
+      "kind": "PR_EXACT_HEAD_REVIEW_TARGET",
+      "path": "https://github.com/ajoe734/pantheon/pull/4399",
+      "sourceRefs": [
+        "head a924a6f3c0c54982d7efe145750cc99c57bc7f2e",
+        "Branch CI success",
+        "486 focused tests plus 4 subtests reported",
+        "live post-#4397 replay still SIGTERM-kills workers in four seconds"
+      ]
+    },
+    {
+      "kind": "SCHEDULER_LIVE_RESCUE_EVIDENCE",
+      "path": "docs/deployment/evidence/twelve-loop-gap/SUP-PREEMPTION-DISPATCH-ELIGIBILITY-20260731",
+      "sourceRefs": [
+        "#4397 merge cf6a8fed7baeb102330bf32af3f59cc347d1e92a live-promoted",
+        "worker runs codex-20260731T141614Z-62ed770a and codex-20260731T141730Z-d2604461 exited signal 15 before closeout"
+      ]
+    }
+  ],
+  "durable": true,
+  "emitted_at": "2026-07-31T14:20:00Z",
+  "intent": "supervisor_dispatch_independent_exact_head_review_for_scheduler_live_rescue",
+  "mode": "kernel_repair",
+  "packet_digest": "b58b055181f5c57d56ce4ed3791a19e69e8c69067d848909cf82175cbeb16fdd",
+  "packet_id": "pkt-sup-preemption-exact-head-review-20260731T1420Z",
+  "packet_version": "pantheon.assistant.dev-task.v1",
+  "record_kind": "assistant_dev_bridge_admission",
+  "record_payload_sha256": "c10f1cdc9b8c737ccc63b597ab462cc1a97228a46fde891c6c859611bc94b425",
+  "schema": "pantheon.assistant-dev-bridge-admission.v1",
+  "source_turn_ids": [
+    "user-authorized-root-freeze-and-full-sequence",
+    "codex-live-replay-proved-preemption-catch22-20260731T1417Z",
+    "codex-emergency-exact-head-review-dispatch-20260731T1420Z"
+  ],
+  "tasks": [
+    {
+      "task_id": "SUP-PREEMPTION-EXACT-HEAD-REVIEW-20260731",
+      "task_spec": {
+        "acceptance": [
+          "Independently inspect PR #4399 exact head a924a6f3c0c54982d7efe145750cc99c57bc7f2e and do not rely only on its PR description",
+          "Verify preemption and dispatch consume the same lifecycle candidate decision, including provider readiness, cooldown, failure-loop triage, dependency and worker-capacity eligibility",
+          "Verify a five-minute new-worker grace cannot be bypassed by ordinary priority preemption and does not block legitimate terminal cleanup",
+          "Reproduce focused tests for dispatch policy and supervisor, plus py_compile and diff checks, and inspect the actual post-#4397 four-second SIGTERM evidence",
+          "If and only if accepted, bind canonical review to PR 4399 and the exact head with REVIEW_PR=4399 and REVIEW_HEAD_SHA=a924a6f3c0c54982d7efe145750cc99c57bc7f2e",
+          "On any defect, reopen with exact file, line, failing command, and required correction; do not merge or modify implementation as reviewer",
+          "Do not edit .orchestrator/config.json, do not impersonate Human/Ops, and do not claim live canary success before exact merged code is promoted and a real auto worker survives the grace window or legitimately terminates"
+        ],
+        "artifacts": [
+          "PR#4399",
+          "docs/deployment/evidence/twelve-loop-gap/SUP-PREEMPTION-DISPATCH-ELIGIBILITY-20260731"
+        ],
+        "depends_on": [],
+        "id": "SUP-PREEMPTION-EXACT-HEAD-REVIEW-20260731",
+        "owner": "Human/Ops",
+        "phase": "Supervisor Runtime Repair / Wave 0 Emergency Exact-Head Review",
+        "reviewer": "Antigravity",
+        "summary": "Emergency independent review lane for the already implemented #4399 scheduler architecture fix. Human/Ops hands this review-only task to Antigravity so the true supervisor launches the reviewer without waiting on the closeout task that the old scheduler itself keeps killing.",
+        "title": "Independently review scheduler eligibility and grace exact head for live rescue"
+      },
+      "task_spec_hash": "5f6d44403fab72307ea7452f9e66610a477897be591122b8d4c22404b80755ee"
+    }
+  ]
+}

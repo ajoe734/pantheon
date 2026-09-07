@@ -1,0 +1,165 @@
+{
+  "version": 1,
+  "task_id": "SUP-ASSISTANT-DEV-BRIDGE-ASSIGN-LOCK-TIMEOUT-20260801",
+  "archived_at": "2026-08-02T09:01:53Z",
+  "terminal_status": "done",
+  "terminal_outcome": "superseded",
+  "task": {
+    "acceptance": [
+      "Start only after the declared failure-streak chain is terminal/superseded, from current origin/dev in a clean governed task worktree; do not reuse rejected PR code.",
+      "Reproduce both 2026-08-01 receipts where signed packets moved to processing then failed with ai_status.py assign timed out after 30s and no canonical task, while the same signed task metadata succeeded through canonical assign after drain returned.",
+      "Identify the exact lock owner, lock ordering, call stack, and elapsed phases using scratch-root instrumentation; do not assume the cause from timing alone.",
+      "Ensure supervisor packet draining never waits on a governed ai-status subprocess while holding runtime-admission, canonical task-state, event-log, inbox, or replay locks needed by that subprocess. Fetch/verify/claim and apply phases require freshness and ownership checks.",
+      "A transient task-state lock timeout must be retryable and must not irreversibly move a valid packet to failed with retryable=false. Define bounded backoff and exact recovery preserving packet identity, signature, replay protection, and at-most-once canonical materialization.",
+      "After successful drain require processed receipt, durable admission record, exact task-spec hash, canonical active/archive readback for every task ID, and no receipt-only success. Partial multi-task materialization must have a resumable deterministic fail-closed outcome.",
+      "Add deterministic concurrent integration tests with a real canonical event-log fixture, an active full supervisor cycle, signed packet drain, and simultaneous approve/assign/note/reopen commands. Prove governed assign under two seconds p95 and processed plus canonical readback.",
+      "Add negatives for duplicate/replay, timeout before any task, timeout after one task, crash between inbox rename and receipt, stale processing claim, forged retry, concurrent drainers, mismatched spec, and restart recovery without duplicate assignment.",
+      "Preserve journal integrity, runtime lock ordering, provider dispatch, worker leases, reviewer independence, signature verification, artifact guards, and existing successful bridge receipts.",
+      "Run focused bridge/supervisor suites, relevant full supervisor regression, captured 2000-event concurrency benchmark, py_compile, JSON evidence validation, local trailer gate, and git diff --check.",
+      "No config, canonical runtime JSON/event-log, provider policy, product controller, live service, signal/restart, or product-task materialization changes in this source task.",
+      "Keep generated task briefs, packets, dashboards, runtime state, and unrelated files out. Evidence stays review_pending until Human/Ops exact-head approval.",
+      "Deliver clean PR to dev with <=72-character Task-ID-prefixed subjects and exact Antigravity/Task-ID/Human-Ops/truthful Verified trailers; wait checks and independent review.",
+      "Rollout is source merge followed by separately governed runtime promotion canary. Rollback is revert; no config migration."
+    ],
+    "artifacts": [
+      ".orchestrator/supervisor.py",
+      ".orchestrator/test_supervisor.py",
+      "services/control-plane/bff/assistant/dev_bridge_dispatcher.py",
+      "services/control-plane/bff/assistant/dev_bridge_inbox.py",
+      "services/control-plane/bff/assistant/tests/test_dev_bridge_reliability.py",
+      "services/control-plane/bff/assistant/tests/test_dev_bridge_inbox.py",
+      "docs/deployment/evidence/supervisor/SUP-ASSISTANT-DEV-BRIDGE-ASSIGN-LOCK-TIMEOUT-20260801/"
+    ],
+    "depends_on": [
+      "SUP-FAILURE-STREAK-PROGRESS-EVIDENCE-V2-20260801",
+      "SUP-FAILURE-STREAK-RECORD-WIRING-V3-20260801",
+      "SUP-FAILURE-STREAK-ACTIVITY-NORMALIZER-V3-20260801",
+      "SUP-FAILURE-STREAK-RECOVERY-DECISION-V2-20260801",
+      "SUP-FAILURE-STREAK-DISPATCH-CONSUMPTION-V2-20260801"
+    ],
+    "dev_bridge": {
+      "actor": {
+        "capabilities": [
+          "assistant.kernel.repair",
+          "dev-task.dispatch",
+          "fleet.dispatch"
+        ],
+        "id": "Human/Ops",
+        "roles": [
+          "operator"
+        ]
+      },
+      "audit_conversation_href": "codex://root/l12-current-gap-auto-sequence-20260731#dev-bridge-assign-lock-timeout-20260801",
+      "conversation_id": "codex-root-l12-current-gap-auto-sequence-20260731",
+      "documents": [
+        {
+          "kind": "FIRST_FAILED_RECEIPT",
+          "path": ".orchestrator/assistant-dev-packets/receipts/pkt-l12-current-gap-three-pass-reaudit-20260801T0355Z.json",
+          "sourceRefs": [
+            "ai_status.py assign timed out after 30s",
+            "task absent from canonical readback"
+          ]
+        },
+        {
+          "kind": "SECOND_FAILED_RECEIPT",
+          "path": ".orchestrator/assistant-dev-packets/receipts/pkt-l12-current-gap-three-pass-reaudit-20260801T0357Z-r1.json",
+          "sourceRefs": [
+            "ai_status.py assign timed out after 30s",
+            "task absent from canonical readback"
+          ]
+        },
+        {
+          "kind": "PRIOR_LOCK_LATENCY_BASELINE",
+          "path": "ai-task-archive/tasks/SUP-TASK-STATE-LOCK-LATENCY-001.json",
+          "sourceRefs": [
+            "PR #4266",
+            "merge a6966b13d84430387da9c3a33fcf224c841bc5c6"
+          ]
+        }
+      ],
+      "emitted_at": "2026-08-01T05:40:27Z",
+      "intent": "repair_reproducible_supervisor_dev_bridge_assign_lock_timeout",
+      "mode": "kernel_repair",
+      "packet_digest": "1840c1963ff58cdb75a6e85d9571a4240c5425225f408c8c74b72b7c697b7d7e",
+      "packet_id": "pkt-sup-assistant-dev-bridge-assign-lock-timeout-20260801T0536Z",
+      "source_turn_ids": [
+        "bridge-receipt-timeout-20260801T0356Z",
+        "bridge-retry-timeout-20260801T0357Z",
+        "canonical-assign-success-20260801T0359Z"
+      ],
+      "task_spec": {
+        "acceptance": [
+          "Start only after the declared failure-streak chain is terminal/superseded, from current origin/dev in a clean governed task worktree; do not reuse rejected PR code.",
+          "Reproduce both 2026-08-01 receipts where signed packets moved to processing then failed with ai_status.py assign timed out after 30s and no canonical task, while the same signed task metadata succeeded through canonical assign after drain returned.",
+          "Identify the exact lock owner, lock ordering, call stack, and elapsed phases using scratch-root instrumentation; do not assume the cause from timing alone.",
+          "Ensure supervisor packet draining never waits on a governed ai-status subprocess while holding runtime-admission, canonical task-state, event-log, inbox, or replay locks needed by that subprocess. Fetch/verify/claim and apply phases require freshness and ownership checks.",
+          "A transient task-state lock timeout must be retryable and must not irreversibly move a valid packet to failed with retryable=false. Define bounded backoff and exact recovery preserving packet identity, signature, replay protection, and at-most-once canonical materialization.",
+          "After successful drain require processed receipt, durable admission record, exact task-spec hash, canonical active/archive readback for every task ID, and no receipt-only success. Partial multi-task materialization must have a resumable deterministic fail-closed outcome.",
+          "Add deterministic concurrent integration tests with a real canonical event-log fixture, an active full supervisor cycle, signed packet drain, and simultaneous approve/assign/note/reopen commands. Prove governed assign under two seconds p95 and processed plus canonical readback.",
+          "Add negatives for duplicate/replay, timeout before any task, timeout after one task, crash between inbox rename and receipt, stale processing claim, forged retry, concurrent drainers, mismatched spec, and restart recovery without duplicate assignment.",
+          "Preserve journal integrity, runtime lock ordering, provider dispatch, worker leases, reviewer independence, signature verification, artifact guards, and existing successful bridge receipts.",
+          "Run focused bridge/supervisor suites, relevant full supervisor regression, captured 2000-event concurrency benchmark, py_compile, JSON evidence validation, local trailer gate, and git diff --check.",
+          "No config, canonical runtime JSON/event-log, provider policy, product controller, live service, signal/restart, or product-task materialization changes in this source task.",
+          "Keep generated task briefs, packets, dashboards, runtime state, and unrelated files out. Evidence stays review_pending until Human/Ops exact-head approval.",
+          "Deliver clean PR to dev with <=72-character Task-ID-prefixed subjects and exact Antigravity/Task-ID/Human-Ops/truthful Verified trailers; wait checks and independent review.",
+          "Rollout is source merge followed by separately governed runtime promotion canary. Rollback is revert; no config migration."
+        ],
+        "artifacts": [
+          ".orchestrator/supervisor.py",
+          ".orchestrator/test_supervisor.py",
+          "services/control-plane/bff/assistant/dev_bridge_dispatcher.py",
+          "services/control-plane/bff/assistant/dev_bridge_inbox.py",
+          "services/control-plane/bff/assistant/tests/test_dev_bridge_reliability.py",
+          "services/control-plane/bff/assistant/tests/test_dev_bridge_inbox.py",
+          "docs/deployment/evidence/supervisor/SUP-ASSISTANT-DEV-BRIDGE-ASSIGN-LOCK-TIMEOUT-20260801/"
+        ],
+        "depends_on": [
+          "SUP-FAILURE-STREAK-PROGRESS-EVIDENCE-V2-20260801",
+          "SUP-FAILURE-STREAK-RECORD-WIRING-V3-20260801",
+          "SUP-FAILURE-STREAK-ACTIVITY-NORMALIZER-V3-20260801",
+          "SUP-FAILURE-STREAK-RECOVERY-DECISION-V2-20260801",
+          "SUP-FAILURE-STREAK-DISPATCH-CONSUMPTION-V2-20260801"
+        ],
+        "id": "SUP-ASSISTANT-DEV-BRIDGE-ASSIGN-LOCK-TIMEOUT-20260801",
+        "owner": "Antigravity",
+        "phase": "Supervisor Dispatch Pipeline / Dev Bridge Lock Boundary",
+        "reviewer": "Human/Ops",
+        "summary": "Repair the observed supervisor dev-bridge lock boundary so signed packets materialize canonically with bounded retry instead of two consecutive 30-second receipt failures.",
+        "title": "Remove canonical assign lock timeout from supervisor dev bridge"
+      },
+      "task_spec_hash": "4e043656179da8e5981604915e6621ef5669c9e77755ea514972842d873fd6eb"
+    },
+    "id": "SUP-ASSISTANT-DEV-BRIDGE-ASSIGN-LOCK-TIMEOUT-20260801",
+    "last_update": "2026-08-02T09:01:53Z",
+    "next": "Superseded to repair stale dependency IDs, sequence overlapping source scopes, and use task-scoped live provider availability. The replacement preserves configured Codex/Codex2 quota groups and adds no global mutual-review prohibition.",
+    "owner": "Codex",
+    "phase": "Supervisor Dispatch Pipeline / Dev Bridge Lock Boundary",
+    "reviewer": "Human/Ops",
+    "status": "done",
+    "summary_zh": "Repair the observed supervisor dev-bridge lock boundary so signed packets materialize canonically with bounded retry instead of two consecutive 30-second receipt failures.",
+    "title": "Remove canonical assign lock timeout from supervisor dev bridge",
+    "terminal_outcome": "superseded",
+    "superseded_by": "SUP-ASSISTANT-DEV-BRIDGE-ASSIGN-LOCK-TIMEOUT-OPERATOR-V2-20260802"
+  },
+  "handoffs": [
+    {
+      "created_at": "2026-08-01T14:28:31Z",
+      "from": "Human/Ops",
+      "message": "Auto-reassigned SUP-ASSISTANT-DEV-BRIDGE-ASSIGN-LOCK-TIMEOUT-20260801 away from unavailable lane Human/Ops (disabled, paused, sidecar-only, or auth-down); reviewer Human/Ops -> Codex.",
+      "resolved_at": "2026-08-01T15:31:07Z",
+      "status": "done",
+      "task_id": "SUP-ASSISTANT-DEV-BRIDGE-ASSIGN-LOCK-TIMEOUT-20260801",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-08-01T15:31:07Z",
+      "from": "Codex",
+      "message": "Auto-reassigned SUP-ASSISTANT-DEV-BRIDGE-ASSIGN-LOCK-TIMEOUT-20260801 away from unavailable lane Codex (disabled, paused, sidecar-only, or auth-down); reviewer Codex -> Codex2.",
+      "status": "done",
+      "task_id": "SUP-ASSISTANT-DEV-BRIDGE-ASSIGN-LOCK-TIMEOUT-20260801",
+      "to": "Codex2",
+      "resolved_at": "2026-08-02T09:01:53Z"
+    }
+  ],
+  "blockers": []
+}

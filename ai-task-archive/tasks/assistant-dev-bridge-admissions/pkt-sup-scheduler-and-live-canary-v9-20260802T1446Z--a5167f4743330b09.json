@@ -1,0 +1,162 @@
+{
+  "actor": {
+    "capabilities": [
+      "assistant.kernel.repair",
+      "dev-task.dispatch",
+      "fleet.dispatch"
+    ],
+    "id": "Human/Ops",
+    "roles": [
+      "operator"
+    ]
+  },
+  "admission_record_path": "ai-task-archive/tasks/assistant-dev-bridge-admissions/pkt-sup-scheduler-and-live-canary-v9-20260802T1446Z--a5167f4743330b09.json",
+  "admitted_at": "2026-08-02T14:46:34Z",
+  "audit_conversation_href": "codex://root/supervisor-autoworker-full-audit-20260802#scheduler-live-canary-v9",
+  "constraints": {
+    "allowedRepos": [
+      "pantheon"
+    ],
+    "noDirectShellFromWeb": true,
+    "requiresBranchPrMerge": true
+  },
+  "conversation_id": "codex-root-supervisor-autoworker-full-audit-20260802",
+  "dispatch_records": [
+    {
+      "error": null,
+      "owner": "Codex2",
+      "reviewer": "Human/Ops",
+      "status": "dispatched",
+      "taskId": "SUP-SCHEDULER-FIXED-CADENCE-BATCH-MUTATIONS-OPERATOR-V9-20260802"
+    },
+    {
+      "error": null,
+      "owner": "Codex2",
+      "reviewer": "Human/Ops",
+      "status": "dispatched",
+      "taskId": "SUP-AUTOWORKER-QUOTA-ROUTING-LIVE-CANARY-OPERATOR-V9-20260802"
+    }
+  ],
+  "documents": [
+    {
+      "kind": "ACTIVE_REPOSITORY_AUTHORITY",
+      "path": "AGENTS.md",
+      "sourceRefs": [
+        "Pantheon supervisor is the only routine implementation dispatcher",
+        "Codex and Codex2 may be different accounts and remain distinct configured quota groups",
+        "Live rollout must use the governed gate-before-switch path with rollback"
+      ]
+    },
+    {
+      "kind": "LIVE_SCHEDULER_EVIDENCE",
+      "path": ".orchestrator/logs/supervisor-watchdog-restart-20260801T154745Z.log",
+      "sourceRefs": [
+        "Observed live cycles remain approximately 51 to 80 seconds despite configured short polling",
+        "Each cycle adds a full interval after serial provider, repository, canonical-state, and evidence work",
+        "Queue-to-start latency and lock convoying make auto-workers appear slow even when slots are free"
+      ]
+    },
+    {
+      "kind": "MERGED_DEPENDENCY",
+      "path": "ai-task-archive/tasks/SUP-GOVERNANCE-HANDOFF-ACTIVE-LEASE-GUARD-OPERATOR-V8-20260802.json",
+      "sourceRefs": [
+        "merge d15eb5266b911116d6f0c92ea33e1e5d6a2bb532",
+        "healthy worker leases and resumed process generation are protected"
+      ]
+    },
+    {
+      "kind": "MERGED_DEPENDENCY",
+      "path": "ai-task-archive/tasks/SUP-FAILURE-STREAK-DISPATCH-CONSUMPTION-V2-20260801.json",
+      "sourceRefs": [
+        "PR 4491 merge a385c0be5b8d4c71f6d0bd728e237b61d5eadaa4",
+        "newer task evidence can consume stale missing-process streaks without global threshold weakening"
+      ]
+    }
+  ],
+  "durable": true,
+  "emitted_at": "2026-08-02T14:44:00Z",
+  "intent": "complete_supervisor_scheduler_quota_fallback_and_live_canary_chain",
+  "mode": "kernel_repair",
+  "packet_digest": "a5167f4743330b0994e7aa32c4386917a3d687753d5565b97632d383e3166d5a",
+  "packet_id": "pkt-sup-scheduler-and-live-canary-v9-20260802T1446Z",
+  "packet_version": "pantheon.assistant.dev-task.v1",
+  "record_kind": "assistant_dev_bridge_admission",
+  "record_payload_sha256": "3749a02fb121bed9f5fbe097f598385c85de8b0871204514327ee73f44effe75",
+  "schema": "pantheon.assistant-dev-bridge-admission.v1",
+  "source_turn_ids": [
+    "operator-complete-auto-worker-quota-fallback-audit",
+    "operator-preserve-distinct-codex-accounts"
+  ],
+  "tasks": [
+    {
+      "task_id": "SUP-SCHEDULER-FIXED-CADENCE-BATCH-MUTATIONS-OPERATOR-V9-20260802",
+      "task_spec": {
+        "acceptance": [
+          "Reproduce the live 2026-08-02 cadence evidence: nominal short polling produces roughly 51 to 80 second cycles and delayed queue-to-start because serial cycle work is followed by another full sleep.",
+          "Schedule from a monotonic deadline: subtract elapsed cycle work from the target interval, do not add a full interval after slow work, and define deterministic overrun/catch-up behavior that cannot busy-loop.",
+          "Keep provider/network, git/GitHub, evidence rendering, and other slow I/O outside runtime-admission, canonical task-state, and activity locks; document and test the global lock order.",
+          "Batch logically related runtime and canonical mutations per phase and reuse one authoritative snapshot where safe instead of reloading and journaling per task; preserve fail-closed CAS and audit ordering.",
+          "Expose bounded per-phase elapsed time, lock-hold time, cycle elapsed time, cadence overshoot, queue-to-start latency, and batch counts without logging credentials or unbounded task data.",
+          "Regression tests use a fake monotonic clock and injected slow phases to prove fixed cadence, overrun behavior, no busy loop, bounded lock holds, batch atomicity, crash recovery, and unchanged dispatch decisions.",
+          "Preserve dependency, priority, worker limits, failure-loop/chair triage, task-scoped quota/auth fallback, exact-head review, active leases, explicit Human/Ops reviewer, and existing rollback semantics.",
+          "Codex and Codex2 remain separate configured account and quota groups. Do not hardcode account equivalence and do not add a global mutual-review ban.",
+          "Use a clean task worktree from current origin/dev, commit only declared scope, run focused and full supervisor plus ai-status regressions, py_compile, JSON, diff and trailer checks, open PR to dev, obtain exact-head Human/Ops review, merge and canonical archive.",
+          "No live service restart or deployment belongs to this source task. Rollback is merge revert; live promotion is the dependent governed V8 canary."
+        ],
+        "artifacts": [
+          ".orchestrator/supervisor.py",
+          ".orchestrator/test_supervisor.py",
+          "scripts/ai_status.py",
+          "scripts/test_ai_status.py",
+          "docs/deployment/evidence/supervisor/SUP-SCHEDULER-FIXED-CADENCE-BATCH-MUTATIONS-OPERATOR-V9-20260802/"
+        ],
+        "depends_on": [
+          "SUP-GOVERNANCE-HANDOFF-ACTIVE-LEASE-GUARD-OPERATOR-V8-20260802",
+          "SUP-CODEX-MODELS-CACHE-QUOTA-CLASSIFICATION-OPERATOR-V8-20260802"
+        ],
+        "id": "SUP-SCHEDULER-FIXED-CADENCE-BATCH-MUTATIONS-OPERATOR-V9-20260802",
+        "owner": "Codex2",
+        "phase": "Supervisor scheduler / fixed cadence / lock and mutation batching V9",
+        "reviewer": "Human/Ops",
+        "summary": "Remove full-sleep drift and per-task mutation convoys so dispatch cadence tracks its deadline while preserving fail-closed governance.",
+        "title": "Make supervisor cadence deadline-based and batch canonical/runtime mutations"
+      },
+      "task_spec_hash": "85c1b7e1e87a01f23c445f2840641d704cdef5612679972080331f78551be7d8"
+    },
+    {
+      "task_id": "SUP-AUTOWORKER-QUOTA-ROUTING-LIVE-CANARY-OPERATOR-V9-20260802",
+      "task_spec": {
+        "acceptance": [
+          "Start only after every source dependency is merged, independently exact-head reviewed, canonically archived, and present in the exact dev candidate SHA.",
+          "Promote only through the existing transactional gate-before-switch path; do not patch dev-root, directly restart a service, or switch to an unreviewed tree.",
+          "Record prior and candidate runtime SHA, config hash, PID/start ticks, command root, provider homes, account/quota groups, task snapshot, queue snapshot, and rollback target without exposing credentials.",
+          "Prove Codex and Codex2 remain distinct configured account/quota groups and retain the repository reviewer policy; no same-account assumption or global mutual-review ban is introduced.",
+          "With a sanitized isolated fixture or current live evidence, prove an incompatible provider-local models cache is quarantined outside locks, a fresh probe runs once, actual usage-limit output becomes quota_reached with sanitized reset time, and auth.json/key material is untouched.",
+          "While Codex is quota-blocked, prove only eligible task-scoped owner/reviewer pairs can atomically fall back to healthy Codex2; dependencies, priority, capacity, cooldown, failure-loop, chair triage, exact-head review and active leases remain unchanged.",
+          "Prove stale auth cache readmission, explicit Human/Ops reviewer preservation, healthy governance handoff, and resume PID/starttime/process-generation refresh on the promoted runtime.",
+          "Observe at least ten fresh cycles and report median, p95, maximum, cadence overshoot, lock-hold, queue-to-start, duplicate-probe, duplicate-dispatch, and worker-heartbeat evidence; fixed cadence must not busy-loop or add a full sleep after cycle work.",
+          "Run negative canaries for revoked auth, quota without reset, timeout, ambiguous cache path, overlapping task artifacts, reused PID, and stale exact-head review; all remain fail closed without consuming unrelated workers.",
+          "Automatically roll back on any source, config, lock, lease, queue, provider, reviewer, cadence, or dispatch invariant failure and prove the prior runtime resumes for at least three cycles.",
+          "Commit only exact canary/rollback evidence through a clean PR to dev, obtain exact-head Human/Ops review, merge, and canonical archive."
+        ],
+        "artifacts": [
+          "docs/deployment/evidence/supervisor/SUP-AUTOWORKER-QUOTA-ROUTING-LIVE-CANARY-OPERATOR-V9-20260802/"
+        ],
+        "depends_on": [
+          "SUP-PROVIDER-STALE-CACHE-READMISSION-PROBE-20260802",
+          "SUP-CODEX-MODELS-CACHE-QUOTA-CLASSIFICATION-OPERATOR-V8-20260802",
+          "SUP-SCHEDULER-FIXED-CADENCE-BATCH-MUTATIONS-OPERATOR-V9-20260802",
+          "SUP-GOVERNANCE-HANDOFF-ACTIVE-LEASE-GUARD-OPERATOR-V8-20260802",
+          "SUP-EXPLICIT-HUMAN-REVIEWER-PRESERVATION-OPERATOR-V8-20260802"
+        ],
+        "id": "SUP-AUTOWORKER-QUOTA-ROUTING-LIVE-CANARY-OPERATOR-V9-20260802",
+        "owner": "Codex2",
+        "phase": "Supervisor governed live promotion / integrated V9 canary",
+        "reviewer": "Human/Ops",
+        "summary": "Transactionally promote the full repair chain and prove fast cadence plus distinct-account quota fallback without weakening governance.",
+        "title": "Promote and prove scheduler, quota fallback, lease, and reviewer invariants"
+      },
+      "task_spec_hash": "2a6c7d329d675e2fe7e6567f288be070ac7c70aa698e4c58f032d782d56d7398"
+    }
+  ]
+}

@@ -1,0 +1,156 @@
+{
+  "version": 1,
+  "task_id": "SUP-ASSIGNMENT-FALLBACK-ATOMIC-REBINDS-20260802",
+  "archived_at": "2026-08-02T08:45:25Z",
+  "terminal_status": "done",
+  "terminal_outcome": "superseded",
+  "task": {
+    "acceptance": [
+      "Reproduce the 23 Antigravity todo tasks stranded by Claude unavailable and Codex2 already reviewer",
+      "Plan a viable owner and reviewer pair before any canonical mutation",
+      "Rebind owner and reviewer in one governed compare-and-swap operation",
+      "Configured and preferred fallback traversal is bounded deterministic and cycle safe",
+      "Catalog-locked assignments remain immutable",
+      "No partial mutation occurs when no legal pair exists",
+      "Helper claim and mainline normalization consume the same planner",
+      "Focused and full supervisor regressions pass",
+      "No Codex and Codex2 account-group merge or mutual-review ban"
+    ],
+    "artifacts": [
+      ".orchestrator/supervisor.py",
+      ".orchestrator/test_supervisor.py",
+      "docs/deployment/evidence/supervisor/SUP-ASSIGNMENT-FALLBACK-ATOMIC-REBINDS-20260802/"
+    ],
+    "coordination_packet": {
+      "expected_branch": "task/SUP-ASSIGNMENT-FALLBACK-ATOMIC-REBINDS-20260802",
+      "independent_reviewer_capability": "Human/Ops exact-head independent reviewer",
+      "merge_target": "dev",
+      "objective": "Replace field-by-field fallback with an atomic assignment-pair planner shared by normalization and helper claim.",
+      "out_of_scope": "Account or quota-group policy; global reviewer bans; catalog contract changes; product task implementation; direct canonical JSON edits.",
+      "owner_capability": "supervisor runtime reliability implementer",
+      "remote": "ajoe734/pantheon",
+      "required_artifacts": [
+        "branch",
+        "commits",
+        "PR",
+        "checks",
+        "exact-head review",
+        "merge commit",
+        "live evidence when rollout task"
+      ],
+      "rollback": "Revert the merge commit to restore incumbent fallback behavior.",
+      "rollout": "Merge after provider recovery and accepted streak-consumption source then promote in the final governed canary.",
+      "schema_version": 1,
+      "source": "codex_chatbox_readonly_audit_20260802"
+    },
+    "depends_on": [
+      "SUP-PROVIDER-PAUSE-RECOVERY-PROBE-20260802",
+      "SUP-FAILURE-STREAK-DISPATCH-CONSUMPTION-V2-20260801"
+    ],
+    "github_review_bridge": {
+      "actor": "Human/Ops",
+      "base": "dev",
+      "decision": "approve",
+      "head_branch": "task/SUP-ASSIGNMENT-FALLBACK-ATOMIC-REBINDS-20260802",
+      "head_sha": "cfa2b668fcb4029de2a2bae1c8111eb9b82c0033",
+      "mode": "required_commit_status",
+      "pr": 4496,
+      "pr_url": "https://github.com/ajoe734/pantheon/pull/4496",
+      "recorded_at": "2026-08-02T08:43:15Z",
+      "repository": "ajoe734/pantheon",
+      "review_error": "gh: Unprocessable Entity (HTTP 422)",
+      "status_context": "Pantheon canonical review gate",
+      "status_id": 51499824821,
+      "status_state": "success"
+    },
+    "id": "SUP-ASSIGNMENT-FALLBACK-ATOMIC-REBINDS-20260802",
+    "last_update": "2026-08-02T08:45:25Z",
+    "next": "Superseded because its acceptance and PR #4496 exact head cfa2b668 explicitly allow Codex/Codex2 mutual review, contradicting current AGENTS.md lines 76-78. Replacement was admitted through the governed bridge at 2026-08-02T08:44:25Z with authoritative materialization readback eventCount 8526 and taskSpecHash c7ce65ff719a70d31700c4d402fbb188edf2639c1d5abc0475ef02ba6e5cd6b1. Do not merge #4496.",
+    "owner": "Codex",
+    "phase": "Supervisor reliability / assignment fallback topology",
+    "review_binding": {
+      "base": "dev",
+      "head_branch": "task/SUP-ASSIGNMENT-FALLBACK-ATOMIC-REBINDS-20260802",
+      "head_sha": "cfa2b668fcb4029de2a2bae1c8111eb9b82c0033",
+      "pr": 4496
+    },
+    "review_file": "docs/deployment/evidence/supervisor/SUP-ASSIGNMENT-FALLBACK-ATOMIC-REBINDS-20260802/evidence.json",
+    "review_notes_zh": [
+      "Operator override：Codex/Codex2 維持不同 quota group，不新增全域互審禁令。",
+      "|Detached exact-head：focused 38、full 513 + 147 subtests、py_compile、JSON、diff/scope 全通過。",
+      "|五檔 scope 無 provider policy、config、canonical JSON 或 live runtime 變更。"
+    ],
+    "reviewer": "Human/Ops",
+    "status": "done",
+    "summary_zh": "讓 unavailable owner 的 fallback 同時計算合法 owner/reviewer pair，避免唯一 fallback 已是 reviewer 時整批卡死。",
+    "title": "Atomically rebind owner and reviewer across fallback dead ends",
+    "terminal_outcome": "superseded",
+    "superseded_by": "SUP-ASSIGNMENT-FALLBACK-ACCOUNT-INDEPENDENT-REBIND-V2-20260802"
+  },
+  "handoffs": [
+    {
+      "created_at": "2026-08-02T08:34:39Z",
+      "from": "Codex",
+      "message": "PR #4496 is ready for independent exact-head review at cfa2b668fcb4029de2a2bae1c8111eb9b82c0033 after merging current dev. Scope is supervisor assignment-pair planner/CAS, regression tests, task brief, and review-pending evidence. Post-merge owner verification: focused 38; full supervisor 513 + 147 subtests; py_compile; JSON parse; git diff --check. Please bind REVIEW_FILE=docs/deployment/evidence/supervisor/SUP-ASSIGNMENT-FALLBACK-ATOMIC-REBINDS-20260802/evidence.json with REVIEW_PR=4496 and REVIEW_HEAD_SHA=cfa2b668fcb4029de2a2bae1c8111eb9b82c0033 when approving.",
+      "resolved_at": "2026-08-02T08:36:46Z",
+      "status": "done",
+      "task_id": "SUP-ASSIGNMENT-FALLBACK-ATOMIC-REBINDS-20260802",
+      "to": "Human/Ops"
+    },
+    {
+      "created_at": "2026-08-02T08:36:46Z",
+      "from": "Human/Ops",
+      "message": "Exact-head cfa2b668 rejected: AGENTS.md lines 76-78 prohibit treating Codex and Codex2 as independent capacity or review identities. Replace identity-only pair independence with effective account/quota-group independence; regressions must reject or replan Codex/Codex2 mutual-review pairs while preserving atomic pair CAS, catalog locks, bounded fallback traversal, and zero config/runtime mutation. GitHub review: https://github.com/ajoe734/pantheon/pull/4496#issuecomment-5156582323",
+      "resolved_at": "2026-08-02T08:36:46Z",
+      "status": "done",
+      "task_id": "SUP-ASSIGNMENT-FALLBACK-ATOMIC-REBINDS-20260802",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-08-02T08:39:14Z",
+      "from": "Codex",
+      "message": "Operator override supersedes the stale account-equivalence rejection. Exact PR #4496 head cfa2b668fcb4029de2a2bae1c8111eb9b82c0033 is unchanged and ready for canonical Human/Ops independent review; preserve distinct Codex/Codex2 quota groups and do not add a global mutual-review ban. Revalidated in detached review: focused 38 passed; full supervisor 513 passed plus 147 subtests; py_compile, evidence JSON, diff and five-file scope checks passed.",
+      "resolved_at": "2026-08-02T08:39:57Z",
+      "status": "done",
+      "task_id": "SUP-ASSIGNMENT-FALLBACK-ATOMIC-REBINDS-20260802",
+      "to": "Human/Ops"
+    },
+    {
+      "created_at": "2026-08-02T08:39:57Z",
+      "from": "Human/Ops",
+      "message": "Human/Ops exact-head approval for PR #4496 at cfa2b668fcb4029de2a2bae1c8111eb9b82c0033. Operator direction supersedes the stale account-equivalence rejection: Codex and Codex2 remain distinct quota groups and no global mutual-review ban is added. Independent detached validation passed focused 38, full supervisor 513 plus 147 subtests, py_compile, evidence JSON, diff check, five-file scope, and all 8 GitHub checks. Atomic pair planning, owner/reviewer/status CAS, 23-task reproduction, cycle bounds, catalog lock and no-pair fail-closed behavior verified. Approved for source merge and owner closeout only; no live promotion.",
+      "resolved_at": "2026-08-02T08:40:36Z",
+      "status": "done",
+      "task_id": "SUP-ASSIGNMENT-FALLBACK-ATOMIC-REBINDS-20260802",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-08-02T08:40:36Z",
+      "from": "Human/Ops",
+      "message": "Administrative exact-head binding correction only: prior approval omitted REVIEW_PR/REVIEW_HEAD_SHA. Preserve unchanged PR #4496 head cfa2b668fcb4029de2a2bae1c8111eb9b82c0033 and immediately hand back to Human/Ops; no code/evidence behavior change. Operator override remains: distinct Codex/Codex2 quota groups, no global mutual-review ban.",
+      "resolved_at": "2026-08-02T08:40:36Z",
+      "status": "done",
+      "task_id": "SUP-ASSIGNMENT-FALLBACK-ATOMIC-REBINDS-20260802",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-08-02T08:42:53Z",
+      "from": "Codex",
+      "message": "Administrative exact-head review handoff: PR #4496 remains unchanged at cfa2b668fcb4029de2a2bae1c8111eb9b82c0033; please re-approve with REVIEW_PR=4496 and REVIEW_HEAD_SHA=cfa2b668fcb4029de2a2bae1c8111eb9b82c0033. No code or evidence behavior changed; preserve the operator override that Codex and Codex2 are distinct quota groups with no global mutual-review ban.",
+      "resolved_at": "2026-08-02T08:43:15Z",
+      "status": "done",
+      "task_id": "SUP-ASSIGNMENT-FALLBACK-ATOMIC-REBINDS-20260802",
+      "to": "Human/Ops"
+    },
+    {
+      "created_at": "2026-08-02T08:43:15Z",
+      "from": "Human/Ops",
+      "message": "Human/Ops exact-head approval for PR #4496 at cfa2b668fcb4029de2a2bae1c8111eb9b82c0033. Operator direction supersedes the stale account-equivalence rejection: Codex and Codex2 remain distinct quota groups and no global mutual-review ban is added. Independent detached validation passed focused 38, full supervisor 513 plus 147 subtests, py_compile, evidence JSON, diff check, five-file scope, and all 8 GitHub checks. Atomic pair planning, owner/reviewer/status CAS, 23-task reproduction, cycle bounds, catalog lock and no-pair fail-closed behavior verified. Approved for source merge and owner closeout only; no live promotion.",
+      "status": "done",
+      "task_id": "SUP-ASSIGNMENT-FALLBACK-ATOMIC-REBINDS-20260802",
+      "to": "Codex",
+      "resolved_at": "2026-08-02T08:45:25Z"
+    }
+  ],
+  "blockers": []
+}

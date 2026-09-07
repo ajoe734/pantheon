@@ -1,0 +1,99 @@
+{
+  "actor": {
+    "capabilities": [
+      "integration",
+      "status-system",
+      "schema",
+      "acceptance"
+    ],
+    "id": "Human/Ops",
+    "roles": [
+      "operator",
+      "integration-coordinator"
+    ]
+  },
+  "admission_record_path": "ai-task-archive/tasks/assistant-dev-bridge-admissions/pkt-bridge-recovery-rearm-20260809T0851Z--d029b672b2aa564a.json",
+  "admitted_at": "2026-08-09T08:53:18Z",
+  "audit_conversation_href": "task:SUP-ASSISTANT-DEV-BRIDGE-PARTIAL-ASSIGN-RECOVERY-R2-20260809",
+  "constraints": {
+    "allowedRepos": [
+      "pantheon"
+    ],
+    "noDirectShellFromWeb": true,
+    "requiresBranchPrMerge": true
+  },
+  "conversation_id": "SUP-ASSISTANT-DEV-BRIDGE-PARTIAL-ASSIGN-RECOVERY-R2-20260809",
+  "dispatch_records": [
+    {
+      "error": null,
+      "owner": "Codex",
+      "reviewer": "Codex2",
+      "status": "dispatched",
+      "taskId": "SUP-ASSISTANT-DEV-BRIDGE-RECOVERY-REARM-20260809"
+    }
+  ],
+  "documents": [
+    {
+      "kind": "ASSISTANT_DEV_BRIDGE_RECOVERY_REARM_INCIDENT",
+      "path": "docs/deployment/evidence/supervisor/SUP-ASSISTANT-DEV-BRIDGE-RECOVERY-REARM-20260809/evidence.json",
+      "sourceRefs": [
+        "merged-pr:4662",
+        "merged-commit:93e321b4fb703faac2114d29e498cd94c08d269c",
+        "failed-packet:sup-runtime-v10-legacy-drift-bootstrap-followup-20260809-0629",
+        "recovery-record:.orchestrator/assistant-dev-packets/recoveries/sup-runtime-v10-legacy-drift-bootstrap-followup-20260809-0629.json",
+        "failure:missing-PANTHEON_COMMAND_RUNTIME_SHA-before-assign"
+      ]
+    }
+  ],
+  "durable": true,
+  "emitted_at": "2026-08-09T08:51:00Z",
+  "intent": "source_only_remediation_dispatch",
+  "mode": "supervisor_source_only",
+  "packet_digest": "d029b672b2aa564a85b00ca8179799a3f372bd82aff06ac27a7be5c23e0b2c5a",
+  "packet_id": "pkt-bridge-recovery-rearm-20260809T0851Z",
+  "packet_version": "pantheon.assistant.dev-task.v1",
+  "record_kind": "assistant_dev_bridge_admission",
+  "record_payload_sha256": "a11887b5b0c40264f198ccce5818ea9945ee936a27f9a77820f441a05fb69b3b",
+  "schema": "pantheon.assistant-dev-bridge-admission.v1",
+  "source_turn_ids": [
+    "r2-merge-93e321b4fb703faac2114d29e498cd94c08d269c",
+    "legacy-packet-recovered-20260809T084950Z",
+    "legacy-drain-failed-runtime-sha-binding-20260809T085013Z",
+    "queued-recovery-failed-leaf-collision-20260809T0850Z"
+  ],
+  "tasks": [
+    {
+      "task_id": "SUP-ASSISTANT-DEV-BRIDGE-RECOVERY-REARM-20260809",
+      "task_spec": {
+        "acceptance": [
+          "Start from a clean current origin/dev worktree containing PR #4662 merge 93e321b4fb703faac2114d29e498cd94c08d269c; do not reuse the rejected PR #4658 history or amend the merged R2 branch.",
+          "Reproduce in isolated temporary roots the exact post-recovery failure state: the signed packet has returned to failed storage with a new exact failed/error receipt, no pending/processing/processed leaf, no admission or replay record, and its matching durable recovery record remains state queued.",
+          "Extend the supported --recover-failed-packet-id operation so this exact state can be safely rearmed and requeued under the existing queue lock plus processing and dispatch fences. The operator must not move, delete, or edit queue, recovery, receipt, replay, admission, or canonical-state files by hand.",
+          "Permit rearm only when the failed leaf signature, packet digest, complete task specs and signed provenance exactly match the existing recovery record, and the current failed/error receipt exactly binds the same packet id and digest. Bind the previous recovery record digest and current receipt digest in durable retry evidence before the failed-to-pending rename.",
+          "Fail closed on any pending/processing/processed collision, admission or replay collision, changed packet or task-spec hash, changed signed provenance, changed signature, missing or malformed receipt, non-failed receipt, prepared-record ambiguity, live fence, stale or tampered retry evidence, or unprovable packet leaf.",
+          "Keep the ordinary first recovery, crash-after-rename resume, already-recovered, and already-completed behavior unchanged. Multiple rearm attempts and a crash on either side of the rearm rename must be idempotent and must not duplicate task materialization or admission.",
+          "Add focused unit and CLI regressions for recover-drain-fail-recover success, rearm crash/retry, exact prior/current digest binding, all mismatch/collision rejections, and the existing R2 cases. All tests must use explicit temporary status, audit, journal, inbox, and runtime paths and prove zero access to the live Pantheon audit/state/inbox.",
+          "Record the 2026-08-09 incident and exact before/after state in a committed evidence manifest. Do not mutate the live legacy packet as part of this source task; its retry after merge is a separate governed operation.",
+          "Run focused bridge inbox/reliability suites, CLI tests, py_compile, JSON validation, git diff --check, commit trailer checks, and required CI. Use commit subjects at most 72 characters.",
+          "Push only the declared clean task branch, open a PR to dev, obtain fresh independent Codex2 exact-head approval with REVIEW_FILE binding, merge through the protected flow, and leave rollback as a normal revert followed by governed runtime promotion."
+        ],
+        "artifacts": [
+          "services/control-plane/bff/assistant/dev_bridge_inbox.py",
+          "services/control-plane/bff/assistant/tests/test_dev_bridge_inbox.py",
+          "services/control-plane/bff/assistant/tests/test_dev_bridge_inbox_cli.py",
+          "docs/deployment/evidence/supervisor/SUP-ASSISTANT-DEV-BRIDGE-RECOVERY-REARM-20260809/"
+        ],
+        "depends_on": [
+          "SUP-ASSISTANT-DEV-BRIDGE-PARTIAL-ASSIGN-RECOVERY-R2-20260809"
+        ],
+        "id": "SUP-ASSISTANT-DEV-BRIDGE-RECOVERY-REARM-20260809",
+        "owner": "Codex",
+        "phase": "Supervisor Runtime / Source-only Assistant Bridge Recovery Rearm",
+        "reviewer": "Codex2",
+        "summary": "Repair the narrow retry gap where an exact failed packet was recovered successfully, its governed drain failed before assignment, and the packet returned to failed storage while its durable recovery record remained queued. Add a fail-closed supported rearm path without permitting manual queue or recovery-record edits.",
+        "title": "Rearm exact recovery after a failed recovered-packet drain"
+      },
+      "task_spec_hash": "1a17ea52b10aa8bc169d5f55b961a6aa87f772b68dcbe3cfaf691c25386bf236"
+    }
+  ]
+}

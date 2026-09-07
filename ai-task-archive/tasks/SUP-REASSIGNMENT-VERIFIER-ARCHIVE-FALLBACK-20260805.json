@@ -1,0 +1,151 @@
+{
+  "version": 1,
+  "task_id": "SUP-REASSIGNMENT-VERIFIER-ARCHIVE-FALLBACK-20260805",
+  "archived_at": "2026-08-05T15:28:23Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "acceptance": [
+      "_verified_reviewer_reassignment and _verified_done_owner_reassignment must find an audited task_reassigned event even after ordinary rotation has moved it out of LOG_FILE into archive/logs/*.gz.",
+      "Add a shared helper used by both verifiers instead of each reading LOG_FILE directly; existing ordering/self-consistency/error-message semantics unchanged.",
+      "Regression tests force a real rotation (maybe_rotate_activity_log) before invoking each verifier and confirm both still succeed; confirm both fail on the pre-fix code with the exact error messages seen on the real stuck task SUP-TASK-FAILURE-STREAK-SCHEMA-20260804."
+    ],
+    "artifacts": [
+      "scripts/ai_status.py",
+      "scripts/test_ai_status.py"
+    ],
+    "depends_on": [],
+    "failure_streak": 0,
+    "github_review_bridge": {
+      "actor": "Antigravity",
+      "base": "dev",
+      "decision": "approve",
+      "head_branch": "task/SUP-REASSIGNMENT-VERIFIER-ARCHIVE-FALLBACK-20260805",
+      "head_sha": "46109e65aa3a46c16cc37b0aebdc402155c4905a",
+      "mode": "required_commit_status",
+      "pr": 4567,
+      "pr_url": "https://github.com/ajoe734/pantheon/pull/4567",
+      "recorded_at": "2026-08-05T15:21:46Z",
+      "repository": "ajoe734/pantheon",
+      "review_error": "gh: Unprocessable Entity (HTTP 422)",
+      "review_proof_ref": "refs/tags/pantheon-review/approve/46109e65aa3a46c16cc37b0aebdc402155c4905a",
+      "status_context": "Pantheon canonical review gate",
+      "status_id": 51700660557,
+      "status_state": "success"
+    },
+    "id": "SUP-REASSIGNMENT-VERIFIER-ARCHIVE-FALLBACK-20260805",
+    "last_update": "2026-08-05T15:28:23Z",
+    "next": "Closeout: PR #4567 merged into dev as 235157bc446f72fe8a319bc7053f29f257518a51 at the exact approved head 46109e65aa3a46c16cc37b0aebdc402155c4905a. _activity_events_across_sources now backs both _verified_reviewer_reassignment and _verified_done_owner_reassignment across LOG_FILE plus archive/logs/*.gz. Verified: PYTHONPATH=.orchestrator .venv/bin/python -m pytest scripts/test_ai_status.py -q -> 186 passed, 31 subtests passed. Stale pre-approval review-gate check was re-run on the same head (no new commits); reviewer-bound review_file preserved.",
+    "owner": "Claude",
+    "phase": "Supervisor Dispatch Reliability",
+    "review_binding": {
+      "base": "dev",
+      "head_branch": "task/SUP-REASSIGNMENT-VERIFIER-ARCHIVE-FALLBACK-20260805",
+      "head_sha": "46109e65aa3a46c16cc37b0aebdc402155c4905a",
+      "pr": 4567
+    },
+    "review_file": "docs/deployment/evidence/supervisor/SUP-REASSIGNMENT-VERIFIER-ARCHIVE-FALLBACK-20260805/evidence.json",
+    "reviewer": "Antigravity",
+    "status": "done",
+    "summary_zh": null,
+    "title": "Reassignment verifiers must search live+archived activity-log sources, not just LOG_FILE",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-08-05T15:28:23Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/claude-1002/-home-lupin-pantheon/2aa7998c-b94d-4f58-9f72-94b05e83b830/scratchpad/worktrees/sup-reassignment-archive-fallback",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/SUP-REASSIGNMENT-VERIFIER-ARCHIVE-FALLBACK-20260805",
+      "git_clean_required": false,
+      "status_command_runtime": {
+        "command_root": "/home/lupin/pantheon-ci-deploy/dev-root",
+        "source_sha": "f90e0aae6cb5e86f18b20db9f30bc834f6115745",
+        "base_ref": "origin/dev",
+        "remote": "ajoe734/pantheon",
+        "status_root": "/home/lupin/pantheon",
+        "delivery_root": "/tmp/claude-1002/-home-lupin-pantheon/2aa7998c-b94d-4f58-9f72-94b05e83b830/scratchpad/worktrees/sup-reassignment-archive-fallback",
+        "wrapper_root": "/home/lupin/pantheon-ci-deploy/dev-root",
+        "worker_lease": {
+          "schema_version": 1,
+          "task_id": "SUP-REASSIGNMENT-VERIFIER-ARCHIVE-FALLBACK-20260805",
+          "worker_run_id": "claude1-1-20260805T152208Z-10a722a4",
+          "queue_event_id": "evt-20260805T152204Z-cb669f59",
+          "pid": 497518,
+          "pid_start_ticks": 38038005,
+          "process_generation": "worker-process-generation-sha256:09b5ac899beedd41c5b902e0b25d6b379ed54c5f4a30a8285e9c28f27313172b"
+        }
+      },
+      "commit": "235157bc446f72fe8a319bc7053f29f257518a51",
+      "commit_subject": "Merge pull request #4567 from ajoe734/task/SUP-REASSIGNMENT-VERIFIER-ARCHIVE-FALLBACK-20260805",
+      "commit_author": {
+        "name": "ajoe734",
+        "email": "bjoe734@gmail.com"
+      },
+      "commit_trailer_check_skipped": true,
+      "commit_trailer_skip_reason": "Merge",
+      "commit_metadata": {
+        "SUP-REASSIGNMENT-VERIFIER-ARCHIVE-FALLBACK": "reassignment verifiers must search archives, not just LOG_FILE"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 1,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "235157bc446f72fe8a319bc7053f29f257518a51",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "created_at": "2026-08-05T14:24:58Z",
+      "from": "Claude2",
+      "message": "Auto-reassigned SUP-REASSIGNMENT-VERIFIER-ARCHIVE-FALLBACK-20260805 away from unavailable lane Claude2 (disabled, paused, sidecar-only, or auth-down); reviewer Claude2 -> Antigravity.",
+      "resolved_at": "2026-08-05T14:25:23Z",
+      "status": "done",
+      "task_id": "SUP-REASSIGNMENT-VERIFIER-ARCHIVE-FALLBACK-20260805",
+      "to": "Antigravity"
+    },
+    {
+      "created_at": "2026-08-05T15:11:44Z",
+      "from": "Claude",
+      "message": "PR #4567 head 46109e65aa3a46c16cc37b0aebdc402155c4905a ready for review. Fix: _audited_reassignment_events now reads the validated live+archive activity source list via the new _activity_events_across_sources, so a rotated task_reassigned event is still found (the SUP-TASK-FAILURE-STREAK-SCHEMA-20260804 stuck-at-done incident). dev's PR #4577 refactor was merged in and kept wholesale; this task's duplicate refactor was dropped, so all four gates get the fallback from one read site. Evidence: docs/deployment/evidence/supervisor/SUP-REASSIGNMENT-VERIFIER-ARCHIVE-FALLBACK-20260805/evidence.json. Verified: PYTHONPATH=.orchestrator pytest scripts/test_ai_status.py -q = 186 passed, 31 subtests; both rotation regressions re-fail on a LOG_FILE-only read. CI green except the review gate awaiting your approval tag.",
+      "resolved_at": "2026-08-05T15:14:21Z",
+      "status": "done",
+      "task_id": "SUP-REASSIGNMENT-VERIFIER-ARCHIVE-FALLBACK-20260805",
+      "to": "Antigravity"
+    },
+    {
+      "created_at": "2026-08-05T15:14:21Z",
+      "from": "Antigravity",
+      "message": "Review passed: _activity_events_across_sources correctly falls back to archived activity logs (.gz) while preserving strict JSON parsing, event ordering, and supervisor digest verification. All 186 unit/subtests pass in scripts/test_ai_status.py.",
+      "resolved_at": "2026-08-05T15:19:28Z",
+      "status": "done",
+      "task_id": "SUP-REASSIGNMENT-VERIFIER-ARCHIVE-FALLBACK-20260805",
+      "to": "Claude"
+    },
+    {
+      "created_at": "2026-08-05T15:19:28Z",
+      "from": "Claude",
+      "message": "Re-approve needed with an exact-head binding: your 15:14:21Z approve landed unbound, so scripts/git/task_review_merge_gate.py check returns allow_merge=false reason=approval_head_binding_missing and the 'Pantheon canonical review gate' status on 46109e65aa3a is still failure ('no review-proof tag pantheon-review/approve/46109e65aa3a46c16cc37b0aebdc402155c4905a'). PR #4567 is OPEN/MERGEABLE/BLOCKED, 0 commits behind dev, all other checks green; nothing on the branch changed since you reviewed it (head is still 46109e65aa3a46c16cc37b0aebdc402155c4905a) and the reviewed evidence manifest docs/deployment/evidence/supervisor/SUP-REASSIGNMENT-VERIFIER-ARCHIVE-FALLBACK-20260805/evidence.json is already committed in the PR diff. Re-run with: AI_NAME=Antigravity REVIEW_PR=4567 REVIEW_HEAD_SHA=46109e65aa3a46c16cc37b0aebdc402155c4905a REVIEW_FILE=docs/deployment/evidence/supervisor/SUP-REASSIGNMENT-VERIFIER-ARCHIVE-FALLBACK-20260805/evidence.json \"$PANTHEON_COMMAND_ROOT/scripts/ai-status.sh\" approve SUP-REASSIGNMENT-VERIFIER-ARCHIVE-FALLBACK-20260805 \"<your evidence>\" -- the binding is what pushes the review-proof tag and flips the required status to success. Owner re-verified this head: PYTHONPATH=.orchestrator pytest scripts/test_ai_status.py -q => 186 passed, 31 subtests passed. Root cause of the unbound approve: the task row carries no source_ref/github PR field, so task_has_pr_review_target() returned False and resolve_approval_binding() only warned instead of refusing.",
+      "resolved_at": "2026-08-05T15:21:46Z",
+      "status": "done",
+      "task_id": "SUP-REASSIGNMENT-VERIFIER-ARCHIVE-FALLBACK-20260805",
+      "to": "Antigravity"
+    },
+    {
+      "created_at": "2026-08-05T15:21:46Z",
+      "from": "Antigravity",
+      "message": "Review re-approved with exact-head binding 46109e65aa3a46c16cc37b0aebdc402155c4905a. PR #4567 verified: _activity_events_across_sources correctly falls back to archive/logs/*.gz for reassignment audit chains while keeping exact ordering, Orchestrator-actor filter, and strict digest validation; regression tests pass (186 passed, 31 subtests passed).",
+      "status": "done",
+      "task_id": "SUP-REASSIGNMENT-VERIFIER-ARCHIVE-FALLBACK-20260805",
+      "to": "Claude",
+      "resolved_at": "2026-08-05T15:28:24Z"
+    }
+  ],
+  "blockers": []
+}

@@ -1,0 +1,103 @@
+{
+  "version": 1,
+  "task_id": "SUP-WORKER-TRUTH-RECONCILE-001",
+  "archived_at": "2026-07-26T22:13:00Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "acceptance": [
+      "Seven ownerless in_progress fixtures reconcile from terminal outcome and durable worker evidence without resetting any live worker",
+      "Allowed rate_limit warning remains nonterminal and redispatchable",
+      "Fresh provider auth_ready false keeps the lane unavailable until a later fresh successful probe without any config edit",
+      "Merged owner delivery with no implementation remaining transitions through governed review handoff instead of repeated owner redispatch",
+      "Authoritative event log projection and queue worker lease state remain consistent under concurrent outcomes",
+      "Focused supervisor tests reproduce all observed failures and pass",
+      "Branch commit push PR checks independent Codex2 review merge and evidence archive complete"
+    ],
+    "artifacts": [
+      ".orchestrator/supervisor.py",
+      ".orchestrator/test_supervisor.py",
+      "docs/deployment/evidence/supervisor/SUP-WORKER-TRUTH-RECONCILE-001"
+    ],
+    "depends_on": [],
+    "id": "SUP-WORKER-TRUTH-RECONCILE-001",
+    "last_update": "2026-07-26T22:13:00Z",
+    "next": "Owner closeout after Codex2 approval. Delivery PR #4215 merged to dev as 6445eacd603f; records-only closeout PR #4223 merged as branch head 16d4e504ab90, an ancestor of origin/dev. Reviewed manifest docs/deployment/evidence/supervisor/SUP-WORKER-TRUTH-RECONCILE-001/evidence.json already bound as review_file and tracked on dev; no new binding introduced. Closeout verification re-run in the task worktree: python3 -m unittest test_supervisor 399/399 OK, and the seven focused reconciliation classes (AllowedRateLimitNotice, FreshAuthProbeLaneHold, OwnerlessInProgressReconciliation, MergedDeliveryEvidence, SquashMergedDeliveryEvidence, MergedPullRequestLookup, WorkerDeliveryIdentity) 65/65 OK, both matching the reviewer's recorded counts. No supervisor logic, test, evidence or config changed after approval; generated dashboard mirrors touched by the test run were reverted, not committed.",
+    "owner": "Claude",
+    "phase": "Supervisor Runtime Repair",
+    "review_file": "docs/deployment/evidence/supervisor/SUP-WORKER-TRUTH-RECONCILE-001/evidence.json",
+    "reviewer": "Codex2",
+    "status": "done",
+    "summary_zh": "修正 supervisor 對 terminal worker outcome、allowed_warning、provider fresh probe 與 ownerless in_progress 的 authoritative reconciliation；不得直接改 config 或手改 task board。",
+    "title": "Reconcile supervisor worker truth without config mutation",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-07-26T22:13:00Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/sup-worker-truth-reconcile-001",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/SUP-WORKER-TRUTH-RECONCILE-001",
+      "git_clean_required": false,
+      "status_command_runtime": {
+        "command_root": "/home/lupin/pantheon-ci-deploy/dev-root-bdbd0a99bf68",
+        "source_sha": "bdbd0a99bf68e6a635d9bd936782c659298b7bb7",
+        "base_ref": "origin/dev",
+        "remote": "ajoe734/pantheon",
+        "status_root": "/home/lupin/pantheon",
+        "delivery_root": "/tmp/pantheon-worker-worktrees/pantheon/sup-worker-truth-reconcile-001",
+        "wrapper_root": "/home/lupin/pantheon-ci-deploy/dev-root-bdbd0a99bf68"
+      },
+      "commit": "16d4e504ab90e04a46abc7f30923f0dfdf59659f",
+      "commit_subject": "Merge remote-tracking branch 'origin/dev' into task/SUP-WORKER-TRUTH-RECONCILE-001",
+      "commit_author": {
+        "name": "pantheon-dev",
+        "email": "bjoe734@gmail.com"
+      },
+      "commit_trailer_check_skipped": true,
+      "commit_trailer_skip_reason": "Merge",
+      "commit_metadata": {},
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "6578ef968f7e0374b046de0afb5b07ce2f81558e",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "created_at": "2026-07-26T20:06:45Z",
+      "from": "Claude",
+      "message": "Supervisor worker-truth reconciliation implemented in PR #4212 (commits 8d97da02a, 0ffc9404c). Four observed failures fixed in .orchestrator/supervisor.py with no config edit and no hand-edited task board: allowed_warning rate_limit notices are no longer worker failures; a fresh live not-ready auth probe holds the lane until a later live success; reconcile_ownerless_in_progress_tasks resolves ownerless in_progress rows from terminal worker outcome plus Task-ID trailer merge evidence; the review handoff runs inside canonical_task_state_lock_file and finalizes the queue record and lease. Please review worker-state safety and live-task non-interference; evidence at docs/deployment/evidence/supervisor/SUP-WORKER-TRUTH-RECONCILE-001/evidence.json. 19 of 23 new tests fail pre-fix, 357 supervisor tests pass after.",
+      "resolved_at": "2026-07-26T20:12:48Z",
+      "status": "done",
+      "task_id": "SUP-WORKER-TRUTH-RECONCILE-001",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-07-26T21:07:46Z",
+      "from": "Claude",
+      "message": "PR #4215 merged into dev as 6445eacd6 at 2026-07-26T20:58:40Z. Ready for formal independent review. Both rejections are answered. Rejection 1 (unbound evidence): reconciliation now requires the latest owner-dispatch worker to resolve through the agent registry to the task current owner, to have recorded commit progress during that run, and to carry a full-sha delivery head; the merged Task-ID trailer commit must be dated at or after that worker dispatch. Rejection 2 (squash inertness, PR #4213 head 9e484e252 to 0410a89f0): merged_delivery_commits now recognises merge_ancestry via exact git ancestry, tried first and needing no network, and squash_pr_metadata via authoritative GitHub PR metadata requiring exactly one merged PR whose headRefOid equals the worker delivery head, state MERGED, baseRefName the expected integration branch, mergedAt at or after dispatch, and a mergeCommit that is an ancestor of the base and itself carries the Task-ID trailer dated at or after dispatch. Branch name is only the lookup key; task id alone never implies a squash; provider prose and pr_url are never consulted and pr_url is recorded with pr_url_is_authoritative false. Every lookup failure, metadata disagreement, duplicate same-head record and git error fails closed. Live unmocked verification against the real repository is in the LIVE BINDING section of prefix-reproduction.txt. 44 of 55 focused tests fail against merged round-1 dev f687d7aeb, 6 of them reproducing the false positives directly; all 55 pass after; full suite 399 OK; rewrite suite 95 of 97 with the 2 pre-existing pytest-import errors. No config edit and no hand-edited task board. Evidence manifest: docs/deployment/evidence/supervisor/SUP-WORKER-TRUTH-RECONCILE-001/evidence.json.",
+      "resolved_at": "2026-07-26T21:45:08Z",
+      "status": "done",
+      "task_id": "SUP-WORKER-TRUTH-RECONCILE-001",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-07-26T21:45:08Z",
+      "from": "Codex2",
+      "message": "Independent review passed: PR #4215 head aa70767538baefc1a331b5e7ef51a0cad903c6b9 merged to dev as 6445eacd603f0bcfb8893508fbffe341a67dd309 with all visible trailer/runtime-mirror/smoke checks successful. Verified current-owner identity, observed commit progress, full delivery head, dispatch-time trailer, exact merge ancestry, squash PR metadata, branch movement, and all lookup/git ambiguity gates fail closed. Independent focused run: 65/65 OK; full supervisor: 399/399 OK; live real-repo probes bind PR #4213 as squash_pr_metadata and PR #4212 as merge_ancestry while wrong-head and post-merge dispatch return None. Rewrite suite matches evidence at 95/97 with only the two pre-existing missing-pytest import errors. No config or hand-edited task-board change; reviewed manifest is merged at docs/deployment/evidence/supervisor/SUP-WORKER-TRUTH-RECONCILE-001/evidence.json.",
+      "status": "done",
+      "task_id": "SUP-WORKER-TRUTH-RECONCILE-001",
+      "to": "Claude",
+      "resolved_at": "2026-07-26T22:13:01Z"
+    }
+  ],
+  "blockers": []
+}

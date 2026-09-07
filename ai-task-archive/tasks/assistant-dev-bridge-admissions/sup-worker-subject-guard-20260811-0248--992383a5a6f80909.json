@@ -1,0 +1,83 @@
+{
+  "actor": {
+    "capabilities": [
+      "integration",
+      "supervisor",
+      "delivery-governance",
+      "acceptance"
+    ],
+    "id": "Human/Ops",
+    "roles": [
+      "operator",
+      "integration"
+    ]
+  },
+  "admission_record_path": "ai-task-archive/tasks/assistant-dev-bridge-admissions/sup-worker-subject-guard-20260811-0248--992383a5a6f80909.json",
+  "admitted_at": "2026-08-11T02:48:39Z",
+  "audit_conversation_href": "task:SUPERVISOR-FLEET-THROUGHPUT-20260811",
+  "constraints": {
+    "allowedRepos": [
+      "pantheon"
+    ],
+    "noDirectShellFromWeb": true,
+    "requiresBranchPrMerge": true
+  },
+  "conversation_id": "SUPERVISOR-FLEET-THROUGHPUT-20260811",
+  "dispatch_records": [
+    {
+      "error": null,
+      "owner": "Antigravity2",
+      "reviewer": "Codex2",
+      "status": "dispatched",
+      "taskId": "SUP-WORKER-SUBJECT-GUARD-20260811"
+    }
+  ],
+  "documents": [],
+  "durable": true,
+  "emitted_at": "2026-08-11T02:47:14.813002Z",
+  "intent": "source_only_remediation_dispatch",
+  "mode": "supervisor_source_only",
+  "packet_digest": "992383a5a6f8090984ff840385a90fe441b481fd2f112b6bbb5e3d79c00a17b9",
+  "packet_id": "sup-worker-subject-guard-20260811-0248",
+  "packet_version": "pantheon.assistant.dev-task.v1",
+  "record_kind": "assistant_dev_bridge_admission",
+  "record_payload_sha256": "18a72a9d83b1c4dabaf5d7bb7a72d7f7e4908751bce0d9e7eedcc01d3de4098a",
+  "schema": "pantheon.assistant-dev-bridge-admission.v1",
+  "source_turn_ids": [
+    "systematic-root-cause-investigation-20260811",
+    "commit-subject-gate-root-cause-20260811"
+  ],
+  "tasks": [
+    {
+      "task_id": "SUP-WORKER-SUBJECT-GUARD-20260811",
+      "task_spec": {
+        "acceptance": [
+          "Reproduce both current failure shapes: wakeup guidance renders a full long TASK-ID anchor subject, and supervisor _anchor_commit_task_wip fallback can still exceed 72 characters for a long task ID.",
+          "Make one small deterministic subject-label rule shared or equivalently tested across worker wakeup guidance, worker anchor protocol, worker_commit preflight, and supervisor automatic anchor behavior. Every generated or worker-wrapper commit subject must be at most 72 characters while the full Task-ID remains in required trailers.",
+          "Add regression tests with a long task ID covering rendered wakeup text, automatic supervisor WIP anchor commit, and worker_commit rejecting an overlong message before staging or committing. Preserve valid short-task behavior.",
+          "Do not weaken the existing Commit trailers 72-character gate, add exemptions, change branch protection, alter merge classification, modify scheduler policy, or touch live runtime/state.",
+          "Record exact-head evidence. Every delivery commit subject must be at most 72 characters with required trailers. Deliver through a clean task branch, PR, independent exact-head review, required checks, and protected merge.",
+          "Published bad heads on PR #4743 and PR #4744 are outside this task; their owners must repair them through their existing governed task lifecycles after this guard is available."
+        ],
+        "artifacts": [
+          ".orchestrator/watch_events.py",
+          ".orchestrator/test_watch_events.py",
+          ".orchestrator/supervisor.py",
+          ".orchestrator/test_supervisor.py",
+          ".orchestrator/skills/worker-anchor-commit.md",
+          "scripts/git/worker_commit.py",
+          "scripts/git/test_worker_commit.py",
+          "docs/deployment/evidence/supervisor/SUP-WORKER-SUBJECT-GUARD-20260811/"
+        ],
+        "depends_on": [],
+        "id": "SUP-WORKER-SUBJECT-GUARD-20260811",
+        "owner": "Antigravity2",
+        "phase": "Supervisor Delivery / Worker commit subject guard",
+        "reviewer": "Codex2",
+        "summary": "Prevent long governed task IDs from producing commit subjects that fail the 72-character Commit trailers gate. Keep full identity in trailers while using a deterministic compact subject label. This is source-only and must not alter CI policy or live state.",
+        "title": "Bound worker commit subjects before CI"
+      },
+      "task_spec_hash": "942990c09116d7a46ba35a96de16775007a6da25f51065df93c9894796dd1383"
+    }
+  ]
+}

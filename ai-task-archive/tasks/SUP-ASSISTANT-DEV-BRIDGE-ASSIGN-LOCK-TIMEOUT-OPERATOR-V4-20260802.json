@@ -1,0 +1,50 @@
+{
+  "version": 1,
+  "task_id": "SUP-ASSISTANT-DEV-BRIDGE-ASSIGN-LOCK-TIMEOUT-OPERATOR-V4-20260802",
+  "archived_at": "2026-08-02T10:01:42Z",
+  "terminal_status": "done",
+  "terminal_outcome": "superseded",
+  "task": {
+    "acceptance": [
+      "Operator constraint remains authoritative: Codex and Codex2 may be different accounts with distinct configured quota groups and no global mutual-review ban",
+      "This V4 replaces blocked V3 because SUP-FAILURE-STREAK-PROGRESS-EVIDENCE-V2 is archived superseded and must be evidence only rather than a scheduler dependency",
+      "Reproduce both signed packet receipts that timed out in canonical assign while direct canonical assign later succeeded",
+      "Identify exact lock owner and elapsed phases using scratch-root instrumentation",
+      "Do not wait on governed ai-status subprocesses while holding runtime-admission task-state event-log inbox or replay locks required by that subprocess",
+      "Make transient task-state timeouts retryable with bounded backoff exact packet identity replay protection and at-most-once canonical materialization",
+      "Require processed receipt durable admission exact task-spec hash and canonical active-or-archive readback for every task ID",
+      "Add concurrent real-event-log integration tests with full supervisor cycle plus approve assign note and reopen and prove governed assign under two seconds p95",
+      "Add timeout-before-task timeout-after-one crash-after-rename stale-claim forged-retry concurrent-drainer mismatched-spec and restart-recovery negatives",
+      "Preserve provider dispatch worker leases reviewer identity signature checks artifact guards and journal integrity",
+      "Run focused bridge suites relevant full supervisor regression 2000-event benchmark py_compile evidence JSON trailer gate and diff check",
+      "Do not modify config live runtime canonical JSON by hand provider policy services or product tasks",
+      "Deliver clean PR to dev exact-head Human/Ops review merge and canonical archive before rollout; rollback is merge revert"
+    ],
+    "artifacts": [
+      ".orchestrator/supervisor.py",
+      ".orchestrator/test_supervisor.py",
+      "services/control-plane/bff/assistant/dev_bridge_dispatcher.py",
+      "services/control-plane/bff/assistant/dev_bridge_inbox.py",
+      "services/control-plane/bff/assistant/tests/test_dev_bridge_reliability.py",
+      "services/control-plane/bff/assistant/tests/test_dev_bridge_inbox.py",
+      "docs/deployment/evidence/supervisor/SUP-ASSISTANT-DEV-BRIDGE-ASSIGN-LOCK-TIMEOUT-OPERATOR-V4-20260802/"
+    ],
+    "depends_on": [
+      "SUP-ASSIGNMENT-FALLBACK-ATOMIC-REBINDS-OPERATOR-V4-20260802",
+      "SUP-FAILURE-STREAK-DISPATCH-CONSUMPTION-V2-20260801"
+    ],
+    "id": "SUP-ASSISTANT-DEV-BRIDGE-ASSIGN-LOCK-TIMEOUT-OPERATOR-V4-20260802",
+    "last_update": "2026-08-02T10:01:42Z",
+    "next": "Superseded before implementation because V4 contains false Codex/Codex2 independent-review acceptance. V5 depends on the corrected shared identity guard and preserves the same functional bridge lock scope.",
+    "owner": "Codex",
+    "phase": "Supervisor Dispatch Pipeline / Dev Bridge Lock Boundary / operator V4",
+    "reviewer": "Human/Ops",
+    "status": "done",
+    "summary_zh": "Replace the permanently blocked V3 dependency set and repair signed-packet canonical assignment lock contention with bounded replay-safe recovery.",
+    "title": "Remove canonical assign lock timeout from supervisor dev bridge",
+    "terminal_outcome": "superseded",
+    "superseded_by": "SUP-ASSISTANT-DEV-BRIDGE-ASSIGN-LOCK-TIMEOUT-OPERATOR-V5-20260802"
+  },
+  "handoffs": [],
+  "blockers": []
+}

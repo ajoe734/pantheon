@@ -1,0 +1,309 @@
+{
+  "version": 1,
+  "task_id": "SUP-RUNTIME-V10-MUTABLE-INCUMBENT-SPLIT-ENTRYPOINT-20260810",
+  "archived_at": "2026-08-10T17:15:57Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "acceptance": [
+      "Reproduce transaction abb8b9095026b526 exactly: clean candidate 0305c861/tree 249eecac has zero ignored bytecode, while live PID 1393542/starttime 21477145 has cwd /home/lupin/pantheon-ci-deploy/dev-root but its exact argv and watchdog command execute command-runtimes/5877b644/.orchestrator/supervisor.py; current preparation aborts before baseline, config, signal, launch, or rollback.",
+      "Keep scripts/sync-dev-root.sh non-signalling. Do not revive or compose the obsolete direct restart-intent hotfix from SUP-COMMAND-ROOT-SPLIT-HOTFIX-REVIEW-20260801; promote_supervisor_runtime.py remains the only authority for intent, config CAS, exact-generation TERM, launch, postchecks, and rollback.",
+      "Add only an explicit legacy mutable-incumbent split-entrypoint capture boundary. Bind PID/starttime/executable/full argv/live config, the cwd and argv-derived entrypoint root as separate descriptor identities, every path component, device/inode/mode, canonical non-symlink layout, Git HEAD/tree/remote/accepted-dev ancestry, and exact governed launch-source file identities. Require the two roots to prove the same Pantheon repository and captured commit/tree for this compatibility path, and revalidate every binding before signalling authority.",
+      "Reject relative or repeated entrypoints, path traversal, symlink substitution, repository/commit/tree/remote mismatch, changed launch-source bytes, tracked/staged governed-source drift, config-command mismatch, PID generation change, unknown environment expansion, and every cwd or entrypoint-root race. Do not infer entrypoint_root from cwd and do not treat a SHA-shaped directory name as Git identity.",
+      "The compatibility path may tolerate only already-governed legacy mutable-incumbent environment and generated-residue boundaries. Candidate and all newly launched candidate/rollback processes must still bind one exact cwd/entrypoint/command root, PANTHEON_COMMAND_ROOT, PANTHEON_COMMAND_RUNTIME_SHA, PYTHONDONTWRITEBYTECODE=1, and python -B; candidate cleanliness and status-child zero-bytecode checks remain deny-by-default.",
+      "Never relaunch from either dirty live root. Materialize a separately clean immutable rollback checkout from the descriptor-bound accepted commit/tree, preserve candidate/rollback path and config distinction even when the accepted commit equals the candidate commit, and fail closed if a non-aliasing clean rollback identity cannot be proved.",
+      "Preserve config CAS, restart-intent-before-TERM, exact process-generation signalling, child absence proofs, three fresh loops, authoritative-shadow catch-up, queue/worker parity, provider baseline, rollback cleanup, and all merged Git-layout, log-leaf, task-brief provenance, and incumbent-bytecode residue guards. Add focused positive and adversarial split-root regressions plus the complete promotion suite, and commit a task-scoped evidence manifest before independent review.",
+      "Keep this task source-only: no live config edit, direct process signal, runtime promotion, candidate/incumbent cleanup or deletion, canonical state edit, scheduling change, provider/account change, or fleet-routing policy change. Any rollout retry remains a separately governed supervisor dispatch."
+    ],
+    "artifacts": [
+      "scripts/promote_supervisor_runtime.py",
+      "scripts/test_promote_supervisor_runtime.py",
+      "docs/deployment/evidence/supervisor/SUP-RUNTIME-V10-MUTABLE-INCUMBENT-SPLIT-ENTRYPOINT-20260810/"
+    ],
+    "depends_on": [
+      "SUP-RUNTIME-V10-IMMUTABLE-INCUMBENT-PYCACHE-RESIDUE-20260810"
+    ],
+    "dev_bridge": {
+      "actor": {
+        "capabilities": [
+          "integration",
+          "status-system",
+          "schema",
+          "acceptance"
+        ],
+        "id": "Codex",
+        "roles": [
+          "auto-worker"
+        ]
+      },
+      "audit_conversation_href": "task:SUP-RUNTIME-V10-GOVERNED-ROLLOUT-VERIFY-20260808",
+      "conversation_id": "SUP-RUNTIME-V10-GOVERNED-ROLLOUT-VERIFY-20260808",
+      "documents": [
+        {
+          "kind": "RUNTIME_FAIL_CLOSED_EVIDENCE",
+          "path": "docs/deployment/evidence/supervisor/SUP-RUNTIME-V10-GOVERNED-ROLLOUT-VERIFY-20260808/evidence.json",
+          "sourceRefs": [
+            "/home/lupin/pantheon-ci-deploy/runtime/promotion-evidence/supervisor-runtime-promotion-20260810T153550063892Z-1438136.json",
+            "sha256:abb8b9095026b5261f989e2b8ab0c49683732218c056b348765a309db0b55459",
+            "candidate:0305c861f54c4082060120afdfbc012622e5ac0a",
+            "candidate-tree:249eecac3a5a1a3eb41e80006afee566bfabdd92",
+            "incumbent-pid:1393542",
+            "incumbent-starttime-ticks:21477145",
+            "incumbent-cwd:/home/lupin/pantheon-ci-deploy/dev-root",
+            "incumbent-entrypoint-root:/home/lupin/pantheon-ci-deploy/command-runtimes/5877b64425c8d6aede147d6cbbc6fbb9e228c259",
+            "failure:Mutable incumbent argv does not bind its exact cwd entrypoint"
+          ]
+        }
+      ],
+      "emitted_at": "2026-08-10T15:39:20Z",
+      "intent": "source_only_remediation_dispatch",
+      "mode": "supervisor_source_only",
+      "packet_digest": "79c41796836dd90ea3a15851b433c6687812a8a1d540d0232366b47edb863f7b",
+      "packet_id": "sup-runtime-v10-mutable-incumbent-split-entrypoint-20260810-1539",
+      "source_turn_ids": [
+        "promotion-evidence-20260810T153550063892Z-1438136",
+        "post-abort-readback-20260810T153900Z"
+      ],
+      "task_spec": {
+        "acceptance": [
+          "Reproduce transaction abb8b9095026b526 exactly: clean candidate 0305c861/tree 249eecac has zero ignored bytecode, while live PID 1393542/starttime 21477145 has cwd /home/lupin/pantheon-ci-deploy/dev-root but its exact argv and watchdog command execute command-runtimes/5877b644/.orchestrator/supervisor.py; current preparation aborts before baseline, config, signal, launch, or rollback.",
+          "Keep scripts/sync-dev-root.sh non-signalling. Do not revive or compose the obsolete direct restart-intent hotfix from SUP-COMMAND-ROOT-SPLIT-HOTFIX-REVIEW-20260801; promote_supervisor_runtime.py remains the only authority for intent, config CAS, exact-generation TERM, launch, postchecks, and rollback.",
+          "Add only an explicit legacy mutable-incumbent split-entrypoint capture boundary. Bind PID/starttime/executable/full argv/live config, the cwd and argv-derived entrypoint root as separate descriptor identities, every path component, device/inode/mode, canonical non-symlink layout, Git HEAD/tree/remote/accepted-dev ancestry, and exact governed launch-source file identities. Require the two roots to prove the same Pantheon repository and captured commit/tree for this compatibility path, and revalidate every binding before signalling authority.",
+          "Reject relative or repeated entrypoints, path traversal, symlink substitution, repository/commit/tree/remote mismatch, changed launch-source bytes, tracked/staged governed-source drift, config-command mismatch, PID generation change, unknown environment expansion, and every cwd or entrypoint-root race. Do not infer entrypoint_root from cwd and do not treat a SHA-shaped directory name as Git identity.",
+          "The compatibility path may tolerate only already-governed legacy mutable-incumbent environment and generated-residue boundaries. Candidate and all newly launched candidate/rollback processes must still bind one exact cwd/entrypoint/command root, PANTHEON_COMMAND_ROOT, PANTHEON_COMMAND_RUNTIME_SHA, PYTHONDONTWRITEBYTECODE=1, and python -B; candidate cleanliness and status-child zero-bytecode checks remain deny-by-default.",
+          "Never relaunch from either dirty live root. Materialize a separately clean immutable rollback checkout from the descriptor-bound accepted commit/tree, preserve candidate/rollback path and config distinction even when the accepted commit equals the candidate commit, and fail closed if a non-aliasing clean rollback identity cannot be proved.",
+          "Preserve config CAS, restart-intent-before-TERM, exact process-generation signalling, child absence proofs, three fresh loops, authoritative-shadow catch-up, queue/worker parity, provider baseline, rollback cleanup, and all merged Git-layout, log-leaf, task-brief provenance, and incumbent-bytecode residue guards. Add focused positive and adversarial split-root regressions plus the complete promotion suite, and commit a task-scoped evidence manifest before independent review.",
+          "Keep this task source-only: no live config edit, direct process signal, runtime promotion, candidate/incumbent cleanup or deletion, canonical state edit, scheduling change, provider/account change, or fleet-routing policy change. Any rollout retry remains a separately governed supervisor dispatch."
+        ],
+        "artifacts": [
+          "scripts/promote_supervisor_runtime.py",
+          "scripts/test_promote_supervisor_runtime.py",
+          "docs/deployment/evidence/supervisor/SUP-RUNTIME-V10-MUTABLE-INCUMBENT-SPLIT-ENTRYPOINT-20260810/"
+        ],
+        "depends_on": [
+          "SUP-RUNTIME-V10-IMMUTABLE-INCUMBENT-PYCACHE-RESIDUE-20260810"
+        ],
+        "id": "SUP-RUNTIME-V10-MUTABLE-INCUMBENT-SPLIT-ENTRYPOINT-20260810",
+        "owner": "Antigravity2",
+        "phase": "Supervisor Runtime / Source-only Split Incumbent Bootstrap",
+        "reviewer": "Codex2",
+        "summary": "The 0305c861 candidate is clean, but the live legacy supervisor has mutable dev-root as cwd while its exact configured argv entrypoint comes from a different command runtime. Implement only descriptor-bound split-root provenance capture plus a clean rollback boundary inside the existing transaction; do not revive sync-script signalling or weaken new-runtime identity.",
+        "title": "Bind split mutable incumbent entrypoint provenance"
+      },
+      "task_spec_hash": "1799c310cb188b73e83976229243da7f1a701c59847c4098eac1b5749916a1e1"
+    },
+    "failure_streak": 0,
+    "github_review_bridge": {
+      "actor": "Codex2",
+      "base": "dev",
+      "decision": "approve",
+      "head_branch": "task/SUP-RUNTIME-V10-MUTABLE-INCUMBENT-SPLIT-ENTRYPOINT-20260810-R2",
+      "head_sha": "6920db97b1fbd6b78546a41f809fa1a6857f5f62",
+      "mode": "required_commit_status",
+      "pr": 4724,
+      "pr_url": "https://github.com/ajoe734/pantheon/pull/4724",
+      "recorded_at": "2026-08-10T17:09:55Z",
+      "repository": "ajoe734/pantheon",
+      "review_error": "gh: Unprocessable Entity (HTTP 422)",
+      "review_proof_ref": "refs/tags/pantheon-review/approve/6920db97b1fbd6b78546a41f809fa1a6857f5f62",
+      "status_context": "Pantheon canonical review gate",
+      "status_id": 51965686295,
+      "status_state": "success"
+    },
+    "id": "SUP-RUNTIME-V10-MUTABLE-INCUMBENT-SPLIT-ENTRYPOINT-20260810",
+    "last_update": "2026-08-10T17:15:57Z",
+    "next": "Finalized review_approved task SUP-RUNTIME-V10-MUTABLE-INCUMBENT-SPLIT-ENTRYPOINT-20260810 after PR #4724 merged to dev at 6920db97b1fbd6b78546a41f809fa1a6857f5f62",
+    "owner": "Antigravity2",
+    "phase": "Supervisor Runtime / Source-only Split Incumbent Bootstrap",
+    "review_binding": {
+      "base": "dev",
+      "head_branch": "task/SUP-RUNTIME-V10-MUTABLE-INCUMBENT-SPLIT-ENTRYPOINT-20260810-R2",
+      "head_sha": "6920db97b1fbd6b78546a41f809fa1a6857f5f62",
+      "pr": 4724
+    },
+    "review_file": "docs/deployment/evidence/supervisor/SUP-RUNTIME-V10-MUTABLE-INCUMBENT-SPLIT-ENTRYPOINT-20260810/evidence.json",
+    "review_notes_zh": [
+      "獨立審查通過：PR #4724 的 exact head 6920db97b1fbd6b78546a41f809fa1a6857f5f62 已核對 split-root descriptor 綁定、拒絕邊界與 immutable rollback；隔離驗證為 328 passed、split 7 passed/321 deselected、git diff --check 通過。"
+    ],
+    "reviewer": "Codex2",
+    "status": "done",
+    "summary_zh": "The 0305c861 candidate is clean, but the live legacy supervisor has mutable dev-root as cwd while its exact configured argv entrypoint comes from a different command runtime. Implement only descriptor-bound split-root provenance capture plus a clean rollback boundary inside the existing transaction; do not revive sync-script signalling or weaken new-runtime identity.",
+    "title": "Bind split mutable incumbent entrypoint provenance",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-08-10T17:15:57Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/sup-runtime-v10-mutable-incumbent-split-entrypoint-20260810",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/SUP-RUNTIME-V10-MUTABLE-INCUMBENT-SPLIT-ENTRYPOINT-20260810",
+      "git_clean_required": false,
+      "status_command_runtime": {
+        "command_root": "/home/lupin/pantheon-ci-deploy/command-runtimes/5877b64425c8d6aede147d6cbbc6fbb9e228c259",
+        "source_sha": "0305c861f54c4082060120afdfbc012622e5ac0a",
+        "base_ref": "origin/dev",
+        "remote": "ajoe734/pantheon",
+        "status_root": "/home/lupin/pantheon",
+        "delivery_root": "/tmp/pantheon-worker-worktrees/pantheon/sup-runtime-v10-mutable-incumbent-split-entrypoint-20260810",
+        "wrapper_root": "/home/lupin/pantheon-ci-deploy/command-runtimes/5877b64425c8d6aede147d6cbbc6fbb9e228c259",
+        "worker_lease": {
+          "schema_version": 1,
+          "task_id": "SUP-RUNTIME-V10-MUTABLE-INCUMBENT-SPLIT-ENTRYPOINT-20260810",
+          "worker_run_id": "antigravity2-20260810T171259Z-a9d3d709",
+          "queue_event_id": "evt-20260810T171223Z-0fac63d6",
+          "pid": 2351954,
+          "pid_start_ticks": 22102748,
+          "process_generation": "worker-process-generation-sha256:ba68cbda8e9a1cc91418ebfda67091e9ac8d1f778f6f47da3ee1e23b4c700c7b"
+        }
+      },
+      "commit": "6920db97b1fbd6b78546a41f809fa1a6857f5f62",
+      "commit_subject": "SUP-RUNTIME-V10-MUTABLE-INCUMBENT-SPLIT-ENTRYPOINT-20260810: fix test",
+      "commit_author": {
+        "name": "pantheon-dev",
+        "email": "bjoe734@gmail.com"
+      },
+      "commit_metadata": {
+        "Owned layer": "Test fix in test_promote_supervisor_runtime.py removing redundant ai-status.json overwrite.",
+        "Not changing": "Supervisor runtime promotion logic or legacy mutable incumbent capture behavior.",
+        "Composes with": "PR #4724 delivery head for SUP-RUNTIME-V10-MUTABLE-INCUMBENT-SPLIT-ENTRYPOINT-20260810.",
+        "LLM-Agent": "Antigravity2",
+        "Task-ID": "SUP-RUNTIME-V10-MUTABLE-INCUMBENT-SPLIT-ENTRYPOINT-20260810",
+        "Reviewer": "Codex2",
+        "Verified": "python3 scripts/dev/provision_python_distribution.py && PANTHEON_PY=\"$(python3 scripts/dev/provision_python_distribution.py --print-python)\" && \"$PANTHEON_PY\" -m pytest -v scripts/test_promote_supervisor_runtime.py (328 passed in 58.48s)"
+      },
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/SUP-RUNTIME-V10-MUTABLE-INCUMBENT-SPLIT-ENTRYPOINT-20260810",
+      "ahead": 3,
+      "behind": 3,
+      "push_status": "diverged",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "8b77e779efed6a3a8eea574969c4374a78e22c1e",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "created_at": "2026-08-10T15:50:59Z",
+      "from": "Antigravity2",
+      "message": "Implementation complete and PR #4722 opened (head 03baba9ad0dfe7e1dbb11b28832fdc0acca2879a). Handed off to Codex2 for independent review.",
+      "resolved_at": "2026-08-10T15:58:37Z",
+      "status": "done",
+      "task_id": "SUP-RUNTIME-V10-MUTABLE-INCUMBENT-SPLIT-ENTRYPOINT-20260810",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-08-10T15:58:37Z",
+      "from": "Codex2",
+      "message": "PR #4722 cannot pass review: Branch CI Gate run 31405794716 failed Commit trailers because 03baba9ad0dfe7e1dbb11b28832fdc0acca2879a has a 111-character subject (limit 72). Recreate the same scoped delivery on a fresh non-force branch/PR with a <=72-character task subject and required trailers; do not merely add a commit because the PR checks origin/dev..head and retain the invalid commit. Keep the committed evidence manifest, rerun pytest -v scripts/test_promote_supervisor_runtime.py, git diff --check, and check_commit_trailers over the fresh range, then request a new exact-head review.",
+      "resolved_at": "2026-08-10T15:58:37Z",
+      "status": "done",
+      "task_id": "SUP-RUNTIME-V10-MUTABLE-INCUMBENT-SPLIT-ENTRYPOINT-20260810",
+      "to": "Antigravity2"
+    },
+    {
+      "created_at": "2026-08-10T16:01:33Z",
+      "from": "Antigravity2",
+      "message": "Implementation complete, commit 9d3da5caca0598f7cf7748bfcb5dec67211e73eb pushed, PR #4722 open; handed off to Codex2 for independent review.",
+      "resolved_at": "2026-08-10T16:12:49Z",
+      "status": "done",
+      "task_id": "SUP-RUNTIME-V10-MUTABLE-INCUMBENT-SPLIT-ENTRYPOINT-20260810",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-08-10T16:12:49Z",
+      "from": "Codex2",
+      "message": "Reject: _mutable_process_contract still sets ExpectedSupervisorProcessContract.command_root=str(cwd.path) (line 6609). For the required live split-root process, PANTHEON_COMMAND_ROOT is the argv-derived command-runtime entrypoint root, so discovery still fails PANTHEON_COMMAND_ROOT mismatch after the old argv/cwd check is removed. The new positive test leaves reader PANTHEON_COMMAND_ROOT at the cwd, so it misses this. Bind the legacy split expected contract to the descriptor-validated entrypoint-root identity in capture, prepare baseline, and transaction revalidation; add a live-like positive test (cwd dev-root, argv/env command root runtime) and an adversarial wrong-command-root test. Keep new candidate/rollback single-root contracts strict.",
+      "resolved_at": "2026-08-10T16:12:49Z",
+      "status": "done",
+      "task_id": "SUP-RUNTIME-V10-MUTABLE-INCUMBENT-SPLIT-ENTRYPOINT-20260810",
+      "to": "Antigravity2"
+    },
+    {
+      "created_at": "2026-08-10T16:15:33Z",
+      "from": "Antigravity2",
+      "message": "Bound ExpectedSupervisorProcessContract.command_root to entrypoint_root in _mutable_process_contract; 130 tests passed (7 split tests passed); evidence manifest committed.",
+      "resolved_at": "2026-08-10T16:23:33Z",
+      "status": "done",
+      "task_id": "SUP-RUNTIME-V10-MUTABLE-INCUMBENT-SPLIT-ENTRYPOINT-20260810",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-08-10T16:23:33Z",
+      "from": "Codex2",
+      "message": "Review rejected: PR #4722 head is 9d3da5caca0598f7cf7748bfcb5dec67211e73eb, but the required split command-root repair is only local at 513212ab7343063deb9084e4805bf91601b9cd6b. Push the corrected task head (or a successor) to this branch/PR, then wait for checks. Before re-review, correct the committed task evidence manifest to record the exact full-suite result: independent collection is 328 tests (split run: 7 passed, 321 deselected), not the current 130 claim; run the manifest command and record its exit/result. Ensure this corrected manifest is present in the PR diff and request a fresh exact-head review.",
+      "resolved_at": "2026-08-10T16:23:33Z",
+      "status": "done",
+      "task_id": "SUP-RUNTIME-V10-MUTABLE-INCUMBENT-SPLIT-ENTRYPOINT-20260810",
+      "to": "Antigravity2"
+    },
+    {
+      "created_at": "2026-08-10T16:27:07Z",
+      "from": "Antigravity2",
+      "message": "Pushed corrected PR #4722 head 2798c8aee468286ea772d9b4d8be702934b7279c with split command-root repair in _mutable_process_contract and updated committed evidence.json reflecting exact full-suite test results (328 collected/passed, split run 7 passed, 321 deselected). Ready for reviewer exact-head review.",
+      "resolved_at": "2026-08-10T16:32:32Z",
+      "status": "done",
+      "task_id": "SUP-RUNTIME-V10-MUTABLE-INCUMBENT-SPLIT-ENTRYPOINT-20260810",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-08-10T16:32:32Z",
+      "from": "Codex2",
+      "message": "Independent code review and verification passed (328/328 promotion tests; split 7 passed, 321 deselected; git diff --check clean), but PR #4722 head 2798c8aee468286ea772d9b4d8be702934b7279c is unmergeable: required Commit trailers CI fails because 513212ab7343063deb9084e4805bf91601b9cd6b has a 113-character subject and 2798c8aee468286ea772d9b4d8be702934b7279c has a 100-character subject. Rebuild the reviewed source/evidence commits from dev on a clean successor branch/PR with every subject <=72 characters and required trailers; do not force-push/amend the already-pushed branch. Ensure the manifest remains committed, then request fresh exact-head review.",
+      "resolved_at": "2026-08-10T16:32:32Z",
+      "status": "done",
+      "task_id": "SUP-RUNTIME-V10-MUTABLE-INCUMBENT-SPLIT-ENTRYPOINT-20260810",
+      "to": "Antigravity2"
+    },
+    {
+      "created_at": "2026-08-10T16:37:06Z",
+      "from": "Antigravity2",
+      "message": "Rebuilt clean successor PR #4724 (head d69c3e66e543c8d290c792d07c65d843ea0cda95) on task/SUP-RUNTIME-V10-MUTABLE-INCUMBENT-SPLIT-ENTRYPOINT-20260810-R2 with all commit subjects <=72 chars and trailers verified. Ready for independent exact-head review.",
+      "resolved_at": "2026-08-10T16:46:15Z",
+      "status": "done",
+      "task_id": "SUP-RUNTIME-V10-MUTABLE-INCUMBENT-SPLIT-ENTRYPOINT-20260810",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-08-10T16:46:15Z",
+      "from": "Codex2",
+      "message": "Independent exact-head review of PR #4724 d69c3e66e543c8d290c792d07c65d843ea0cda95: clean scoped diff; task manifest valid and committed; 328/328 promotion tests plus 7 split regressions passed in detached worktree; diff, ancestry, source-only boundary, and commit trailers verified.",
+      "resolved_at": "2026-08-10T16:47:37Z",
+      "status": "done",
+      "task_id": "SUP-RUNTIME-V10-MUTABLE-INCUMBENT-SPLIT-ENTRYPOINT-20260810",
+      "to": "Antigravity2"
+    },
+    {
+      "created_at": "2026-08-10T16:47:37Z",
+      "from": "Codex2",
+      "message": "Invalid approval binding: the governed command auto-bound review_approved to stale PR #4722 head 2798c8aee468286ea772d9b4d8be702934b7279c, while the independently reviewed successor is PR #4724 head d69c3e66e543c8d290c792d07c65d843ea0cda95. Do not close #4722. Materialize #4724/d69c3e66e543c8d290c792d07c65d843ea0cda95 as the canonical delivery binding, retain the committed task evidence manifest, then request fresh exact-head review.",
+      "resolved_at": "2026-08-10T16:47:37Z",
+      "status": "done",
+      "task_id": "SUP-RUNTIME-V10-MUTABLE-INCUMBENT-SPLIT-ENTRYPOINT-20260810",
+      "to": "Antigravity2"
+    },
+    {
+      "created_at": "2026-08-10T16:56:34Z",
+      "from": "Antigravity2",
+      "message": "Materialized PR #4724 head 6920db97b1fbd6b78546a41f809fa1a6857f5f62 on task/SUP-RUNTIME-V10-MUTABLE-INCUMBENT-SPLIT-ENTRYPOINT-20260810-R2 as canonical delivery binding; evidence manifest committed and 328/328 promotion tests passed. Ready for fresh exact-head review.",
+      "resolved_at": "2026-08-10T17:09:55Z",
+      "status": "done",
+      "task_id": "SUP-RUNTIME-V10-MUTABLE-INCUMBENT-SPLIT-ENTRYPOINT-20260810",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-08-10T17:09:55Z",
+      "from": "Codex2",
+      "message": "Approved exact PR #4724 head 6920db97b1fbd6b78546a41f809fa1a6857f5f62: descriptor-bound split entrypoint root is independently revalidated, command-root identity is exact, and immutable rollback remains isolated; independent 328/328 promotion tests, 7 split tests, and diff check passed.",
+      "status": "done",
+      "task_id": "SUP-RUNTIME-V10-MUTABLE-INCUMBENT-SPLIT-ENTRYPOINT-20260810",
+      "to": "Antigravity2",
+      "resolved_at": "2026-08-10T17:15:58Z"
+    }
+  ],
+  "blockers": []
+}

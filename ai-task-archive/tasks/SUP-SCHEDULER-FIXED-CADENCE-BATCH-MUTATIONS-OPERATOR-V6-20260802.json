@@ -1,0 +1,46 @@
+{
+  "version": 1,
+  "task_id": "SUP-SCHEDULER-FIXED-CADENCE-BATCH-MUTATIONS-OPERATOR-V6-20260802",
+  "archived_at": "2026-08-02T10:10:34Z",
+  "terminal_status": "done",
+  "terminal_outcome": "superseded",
+  "task": {
+    "acceptance": [
+      "Operator constraint remains authoritative: Codex and Codex2 may be different accounts with distinct configured quota groups and no global mutual-review ban",
+      "This V6 replaces V3 and starts only after handoff lease guard V4 is completed",
+      "Reproduce observed 55 to 71 second steady ticks plus 94 and 133 second ticks and 33 to 73 second runtime-admission lock holds on 2026-08-02",
+      "Schedule next tick from monotonic fixed cadence instead of sleeping a full interval after cycle work",
+      "Missed ticks coalesce without overlapping supervisor cycles",
+      "Plan policy mutations outside exclusive runtime admission and apply bounded compare-and-swap batches",
+      "Git provider network and evidence probes remain outside canonical and runtime-admission locks",
+      "Reviewer approve assign note reopen and bridge commands are not blocked by long policy scans or serial mutations",
+      "Regression proves dispatch priority dependencies leases retries quota routing and failure streak behavior are unchanged",
+      "Emit p50 p95 max cycle duration cadence lag and lock-hold metrics",
+      "Source canary target is near 30 second cadence with no runtime-admission or canonical lock hold above 30 seconds",
+      "Run focused scheduler and full relevant supervisor regressions benchmark py_compile evidence JSON trailer and diff checks",
+      "Do not modify account groups quota groups reviewer policy provider config live services or product tasks",
+      "Deliver clean PR to dev exact-head Human/Ops review merge and canonical archive before rollout; rollback is merge revert"
+    ],
+    "artifacts": [
+      ".orchestrator/supervisor.py",
+      ".orchestrator/test_supervisor.py",
+      "docs/deployment/evidence/supervisor/SUP-SCHEDULER-FIXED-CADENCE-BATCH-MUTATIONS-OPERATOR-V6-20260802/"
+    ],
+    "depends_on": [
+      "SUP-GOVERNANCE-HANDOFF-ACTIVE-LEASE-GUARD-OPERATOR-V6-20260802"
+    ],
+    "id": "SUP-SCHEDULER-FIXED-CADENCE-BATCH-MUTATIONS-OPERATOR-V6-20260802",
+    "last_update": "2026-08-02T10:10:34Z",
+    "next": "Superseded before start: dependency chain was created from a stale session whose acceptance contradicts active AGENTS.md shared-review-identity authority. Replacement will be signed, bridge-admitted, and dependency-bound to the corrective identity guard.",
+    "owner": "Codex",
+    "phase": "Supervisor Scheduler / Fixed Cadence Batch Mutations / operator V6",
+    "reviewer": "Human/Ops",
+    "status": "done",
+    "summary_zh": "Replace full-interval-after-work sleeping and long serial canonical mutations with monotonic fixed cadence and bounded compare-and-swap batches.",
+    "title": "Run supervisor on fixed cadence with bounded mutation batches",
+    "terminal_outcome": "superseded",
+    "superseded_by": "SUP-SCHEDULER-FIXED-CADENCE-BATCH-MUTATIONS-OPERATOR-V7-20260802"
+  },
+  "handoffs": [],
+  "blockers": []
+}

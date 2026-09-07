@@ -1,0 +1,132 @@
+{
+  "actor": {
+    "capabilities": [
+      "fleet.dispatch",
+      "dev-task.dispatch"
+    ],
+    "id": "Codex",
+    "roles": [
+      "operator-delegate"
+    ]
+  },
+  "admission_record_path": "ai-task-archive/tasks/assistant-dev-bridge-admissions/pkt-l12-wave0x-fleet-reconcile-fallout-20260731T1225Z--24fcc3087b0aa6e1.json",
+  "admitted_at": "2026-07-31T12:29:49Z",
+  "audit_conversation_href": "codex://root/l12-current-gap-supervisor-dispatch-20260731#wave0x-fleet-reconcile-fallout",
+  "constraints": {
+    "allowedRepos": [
+      "pantheon"
+    ],
+    "noDirectShellFromWeb": true,
+    "requiresBranchPrMerge": true
+  },
+  "conversation_id": "codex-root-l12-current-gap-supervisor-dispatch-20260731",
+  "dispatch_records": [
+    {
+      "error": null,
+      "owner": "Antigravity",
+      "reviewer": "Claude2",
+      "status": "dispatched",
+      "taskId": "SUP-L12-STALE-REAPER-EVIDENCE-ANCHOR-REPAIR-20260731"
+    },
+    {
+      "error": null,
+      "owner": "Antigravity",
+      "reviewer": "Claude2",
+      "status": "dispatched",
+      "taskId": "SUP-L12-RUNNING-OWNER-EXACT-HEAD-PR-CLOSEOUT-20260731"
+    }
+  ],
+  "documents": [
+    {
+      "kind": "CURRENT_THREE_PASS_GAP_AUDIT_ADDENDUM",
+      "path": "docs/04/pantheon_twelve_loop_gap_2026-07-26/archive/CURRENT_THREE_PASS_GAP_AUDIT_2026-07-31T0640Z.md",
+      "sourceRefs": [
+        "PR#4394",
+        "head 8861d5231f577c85b947c75ce9e4e8cc13ee487a"
+      ]
+    },
+    {
+      "kind": "EXECUTION_TASK_GRAPH",
+      "path": "docs/bff/execution-tasks/2026-07-31-l12-current-gap-supervisor-dispatch/tasks.json",
+      "sourceRefs": [
+        "Wave 0X added at 2026-07-31T12:25:00Z"
+      ]
+    },
+    {
+      "kind": "RECONCILE_EVIDENCE_PR",
+      "path": "https://github.com/ajoe734/pantheon/pull/4395",
+      "sourceRefs": [
+        "#4385 evidence names nonexistent anchor 9d53a94a265c55af4c8d15c50ab3751f1440ac0f"
+      ]
+    },
+    {
+      "kind": "RECONCILE_EVIDENCE_PR",
+      "path": "https://github.com/ajoe734/pantheon/pull/4396",
+      "sourceRefs": [
+        "#4386 current-head support proof is review_approved but PR #4396 is draft"
+      ]
+    }
+  ],
+  "durable": true,
+  "emitted_at": "2026-07-31T12:29:08Z",
+  "intent": "dispatch_parallel_wave0x_reconcile_fallout_repairs",
+  "mode": "kernel_repair",
+  "packet_digest": "24fcc3087b0aa6e1aa1d99cd1d03387f2f2fc59f36c1eab79314e5a8192986fc",
+  "packet_id": "pkt-l12-wave0x-fleet-reconcile-fallout-20260731T1225Z",
+  "packet_version": "pantheon.assistant.dev-task.v1",
+  "record_kind": "assistant_dev_bridge_admission",
+  "record_payload_sha256": "54c6defc9b2857beaf9573f1b28767abaf88c39969e584b2fed716084e6aa2ca",
+  "schema": "pantheon.assistant-dev-bridge-admission.v1",
+  "source_turn_ids": [
+    "user-complete-gap-audit-and-supervisor-dispatch",
+    "codex-wave0x-fleet-reconcile-fallout-20260731"
+  ],
+  "tasks": [
+    {
+      "task_id": "SUP-L12-STALE-REAPER-EVIDENCE-ANCHOR-REPAIR-20260731",
+      "task_spec": {
+        "acceptance": [
+          "Verify PR #4385 current head f5e70e86e01bde005dae5fed94b151c9bc07f389 and PR #4395 evidence before editing",
+          "Repair subject README/evidence.json references from nonexistent 9d53a94a265c55af4c8d15c50ab3751f1440ac0f to actual 9d53a94a295d71ee49aea6f4b96e47fbcfd29093, or reopen/supersede #4385 with an equivalent concrete fix if the head moved",
+          "Re-run focused stale failure-streak reaper tests, evidence JSON validation, git diff --check, commit trailer check, and config-boundary check",
+          "Deliver through task branch, PR, visible checks, reviewer approval, and governed closeout; do not edit .orchestrator/config.json and do not count review_approved row state alone"
+        ],
+        "artifacts": [
+          "docs/deployment/evidence/twelve-loop-gap/SUP-L12-STALE-REAPER-EVIDENCE-ANCHOR-REPAIR-20260731",
+          "docs/deployment/evidence/twelve-loop-gap/SUP-L12-STALE-FAILURE-STREAK-REAPER-20260729"
+        ],
+        "depends_on": [],
+        "id": "SUP-L12-STALE-REAPER-EVIDENCE-ANCHOR-REPAIR-20260731",
+        "owner": "Antigravity",
+        "phase": "Supervisor Runtime Repair / Wave 0X Reconcile Fallout",
+        "reviewer": "Claude2",
+        "summary": "Repair the concrete nonexistent-anchor defect found by the real auto-worker exact-head reconciliation for PR #4385 before stale failure-streak reaper can satisfy Wave 0.",
+        "title": "Repair #4385 stale-reaper evidence anchor and revalidate exact head"
+      },
+      "task_spec_hash": "c5a998ac1677d802a3929d63c2d65f5bd60970060ade7d5356776dfac59d39a2"
+    },
+    {
+      "task_id": "SUP-L12-RUNNING-OWNER-EXACT-HEAD-PR-CLOSEOUT-20260731",
+      "task_spec": {
+        "acceptance": [
+          "Verify #4396 head c4346b8d53941d665acd931d32a98b3802b1e7b2 and task row review_approved evidence before changing PR state",
+          "If #4396 is intended to be integrated evidence, make it ready for review, confirm Branch CI remains green, and run auto-integrator eligibility dry-run",
+          "If #4396 is only a ReviewBus artifact and should stay draft, record a governed closeout path that does not block #4386 support proof on a draft PR",
+          "Do not count #4386 subject row as complete until protected merge and governed closeout rules are satisfied"
+        ],
+        "artifacts": [
+          "docs/deployment/evidence/twelve-loop-gap/SUP-L12-RUNNING-OWNER-EXACT-HEAD-PR-CLOSEOUT-20260731",
+          "docs/deployment/evidence/twelve-loop-gap/SUP-L12-RUNNING-OWNER-EXACT-HEAD-RECONCILE-20260731"
+        ],
+        "depends_on": [],
+        "id": "SUP-L12-RUNNING-OWNER-EXACT-HEAD-PR-CLOSEOUT-20260731",
+        "owner": "Antigravity",
+        "phase": "Supervisor Runtime Repair / Wave 0X Reconcile Fallout",
+        "reviewer": "Claude2",
+        "summary": "Resolve the draft ReviewBus PR #4396 integration gap so current-head running-owner support evidence is either governably integrated or explicitly routed without draft-PR blockage.",
+        "title": "Move #4396 running-owner exact-head proof through governed PR/closeout"
+      },
+      "task_spec_hash": "c8668db8bc7a7af97044001566e77df54d40dde70f8453bfc2c99acd6e535be4"
+    }
+  ]
+}

@@ -1,0 +1,70 @@
+{
+  "version": 1,
+  "task_id": "OPS-ANTIGRAVITY2-DISPATCHER-ENABLE-20260808",
+  "archived_at": "2026-08-13T02:01:37Z",
+  "terminal_status": "done",
+  "terminal_outcome": "superseded",
+  "task": {
+    "acceptance": [],
+    "artifacts": [],
+    "depends_on": [],
+    "description": "antigravity2 Google account was ineligible for Antigravity product access, so dispatcher config had it fully disabled. Human/Ops re-authenticated with a working account. PR #4619 re-enables dispatch (concurrency 6) in the repo-declared config to match the live fix and prevent drift-repair from reverting it.",
+    "generation": 1,
+    "github_review_bridge": {
+      "actor": "Antigravity",
+      "base": "dev",
+      "decision": "approve",
+      "head_branch": "task/OPS-ANTIGRAVITY2-DISPATCHER-ENABLE-20260808",
+      "head_sha": "dffa07ed9e12ba8db1293ad7a9d78d159be4858c",
+      "mode": "required_commit_status",
+      "pr": 4619,
+      "pr_url": "https://github.com/ajoe734/pantheon/pull/4619",
+      "recorded_at": "2026-08-08T08:47:33Z",
+      "repository": "ajoe734/pantheon",
+      "review_error": "gh: Unprocessable Entity (HTTP 422)",
+      "review_proof_ref": "refs/tags/pantheon-review/approve/dffa07ed9e12ba8db1293ad7a9d78d159be4858c",
+      "status_context": "Pantheon canonical review gate",
+      "status_id": 51878683292,
+      "status_state": "success"
+    },
+    "id": "OPS-ANTIGRAVITY2-DISPATCHER-ENABLE-20260808",
+    "last_update": "2026-08-13T02:01:37Z",
+    "next": "Retired during the Supervisor Authority V2 board reset: this legacy control, routing, rollout, or verification row is no longer an execution authority; merged source and archive evidence remain preserved.",
+    "owner": "Codex2",
+    "phase": "Unassigned",
+    "priority": "P2",
+    "review_binding": {
+      "base": "dev",
+      "head_branch": "task/OPS-ANTIGRAVITY2-DISPATCHER-ENABLE-20260808",
+      "head_sha": "dffa07ed9e12ba8db1293ad7a9d78d159be4858c",
+      "pr": 4619
+    },
+    "reviewer": "Antigravity",
+    "status": "done",
+    "summary_zh": null,
+    "title": "Re-enable antigravity2 dispatcher config after account re-login",
+    "terminal_outcome": "superseded"
+  },
+  "handoffs": [
+    {
+      "created_at": "2026-08-08T08:47:33Z",
+      "from": "Antigravity",
+      "message": "PR #4619 reviewed and approved. Changes in .orchestrator/config.json correctly remove Antigravity2 from disabled_agents and update target_workload, max_tasks_per_agent_by_agent, and max_concurrent_per_account for antigravity2 to 6, matching the re-authenticated account live state.",
+      "resolved_at": "2026-08-08T09:07:43Z",
+      "status": "done",
+      "task_id": "OPS-ANTIGRAVITY2-DISPATCHER-ENABLE-20260808",
+      "to": "Codex2"
+    }
+  ],
+  "blockers": [
+    {
+      "created_at": "2026-08-08T09:07:43Z",
+      "message": "Closeout blocked: command root is detached at c726258c and does not contain merged PR #4619 (a55721b); it is also dirty. Focused RuntimeConfigTests.test_primary_antigravity_lane_is_enabled_and_alternate_stays_disabled fails because it still asserts Antigravity2 is disabled/capacity 0. Need Human/Ops to sync a clean dev root, then route a fresh independently reviewed test-alignment PR; do not add a post-approval commit to #4619.",
+      "owner": "Codex2",
+      "status": "resolved",
+      "task_id": "OPS-ANTIGRAVITY2-DISPATCHER-ENABLE-20260808",
+      "waiting_for": "Human/Ops",
+      "resolved_at": "2026-08-13T02:01:37Z"
+    }
+  ]
+}

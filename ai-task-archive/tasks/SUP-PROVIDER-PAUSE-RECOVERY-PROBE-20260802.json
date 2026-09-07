@@ -1,0 +1,169 @@
+{
+  "version": 1,
+  "task_id": "SUP-PROVIDER-PAUSE-RECOVERY-PROBE-20260802",
+  "archived_at": "2026-08-02T06:22:49Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "acceptance": [
+      "quota_reached is classified as quota or capacity and never sticky auth",
+      "Expired quota pause schedules a targeted live probe even while dispatch remains blocked",
+      "Only a fresh authoritative live success clears a probe-gated pause",
+      "auto_refresh_provider_capabilities false still permits bounded recovery probes",
+      "True authentication failures remain sticky until live success",
+      "Provider probing runs outside the runtime admission lock",
+      "Focused and full supervisor regressions pass",
+      "No credential config account-group or reviewer-policy changes"
+    ],
+    "artifacts": [
+      ".orchestrator/supervisor.py",
+      ".orchestrator/rewrite/provider_health.py",
+      ".orchestrator/test_supervisor.py",
+      "docs/deployment/evidence/supervisor/SUP-PROVIDER-PAUSE-RECOVERY-PROBE-20260802/"
+    ],
+    "coordination_packet": {
+      "expected_branch": "task/SUP-PROVIDER-PAUSE-RECOVERY-PROBE-20260802",
+      "independent_reviewer_capability": "Human/Ops exact-head independent reviewer",
+      "merge_target": "dev",
+      "objective": "Break the pause-before-probe recovery deadlock and keep auth and quota semantics distinct.",
+      "out_of_scope": "Credential rotation; account grouping; reviewer policy; arbitrary pause clearing; direct runtime-state edits; service restart in the source task.",
+      "owner_capability": "supervisor runtime reliability implementer",
+      "remote": "ajoe734/pantheon",
+      "required_artifacts": [
+        "branch",
+        "commits",
+        "PR",
+        "checks",
+        "exact-head review",
+        "merge commit",
+        "live evidence when rollout task"
+      ],
+      "rollback": "Revert the merge commit; the prior fail-closed pause behavior remains available.",
+      "rollout": "Merge after the failure-envelope gate and promote only through the final governed runtime canary.",
+      "schema_version": 1,
+      "source": "codex_chatbox_readonly_audit_20260802"
+    },
+    "depends_on": [
+      "SUP-WORKER-FAILURE-ENVELOPE-GATE-20260802"
+    ],
+    "github_review_bridge": {
+      "actor": "Human/Ops",
+      "base": "dev",
+      "decision": "approve",
+      "head_branch": "task/SUP-PROVIDER-PAUSE-RECOVERY-PROBE-20260802",
+      "head_sha": "01a409caa8eabdaa6900481a897b2e6c1c4c9a6e",
+      "mode": "required_commit_status",
+      "pr": 4487,
+      "pr_url": "https://github.com/ajoe734/pantheon/pull/4487",
+      "recorded_at": "2026-08-02T06:19:21Z",
+      "repository": "ajoe734/pantheon",
+      "review_error": "gh: Unprocessable Entity (HTTP 422)",
+      "status_context": "Pantheon canonical review gate",
+      "status_id": 51497696258,
+      "status_state": "success"
+    },
+    "id": "SUP-PROVIDER-PAUSE-RECOVERY-PROBE-20260802",
+    "last_update": "2026-08-02T06:22:49Z",
+    "next": "Owner finalized after Human/Ops exact-head approval: docs-only PR #4487 merged to dev as 16135f2316541591e54cba6d58f0a80273731bc1; implementation PR #4486 remains merged as 71fea47cbe65bb3e07792afa7e9f0134fd0066f5. Verified closeout HEAD 01a409caa8eabdaa6900481a897b2e6c1c4c9a6e is an ancestor of origin/dev, evidence.json parses, git diff --check passes, scope is exactly the task brief and two evidence files, and the worktree is clean.",
+    "owner": "Codex",
+    "phase": "Supervisor reliability / provider pause recovery",
+    "review_binding": {
+      "base": "dev",
+      "head_branch": "task/SUP-PROVIDER-PAUSE-RECOVERY-PROBE-20260802",
+      "head_sha": "01a409caa8eabdaa6900481a897b2e6c1c4c9a6e",
+      "pr": 4487
+    },
+    "review_file": "docs/deployment/evidence/supervisor/SUP-PROVIDER-PAUSE-RECOVERY-PROBE-20260802/evidence.json",
+    "review_notes_zh": [
+      "Human/Ops closeout exact-head review：PR #4487 head 01a409caa8eabdaa6900481a897b2e6c1c4c9a6e 僅修改 task brief 與兩份 evidence；implementation 仍綁定已審核且已合併的 116f0cafd0142cfa8a018144fbcba0f83d04f046 / PR #4486 / merge 71fea47cbe65bb3e07792afa7e9f0134fd0066f5；所有 checks 全綠；未變更 runtime code、Codex/Codex2 account 或 quota groups、亦未變更全域 reviewer policy。"
+    ],
+    "reviewer": "Human/Ops",
+    "status": "done",
+    "summary_zh": "修正 quota_reached 被當成永久 auth，以及 paused lane 永遠無法執行恢復 probe 的 deadlock。",
+    "title": "Make quota pauses probeable and self-recovering",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-08-02T06:22:49Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/sup-provider-pause-recovery-probe-20260802",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/SUP-PROVIDER-PAUSE-RECOVERY-PROBE-20260802",
+      "git_clean_required": false,
+      "status_command_runtime": {
+        "command_root": "/home/lupin/pantheon-ci-deploy/dev-root",
+        "source_sha": "941c15a34208e54e96cdd148ba3a5bfcd339abab",
+        "base_ref": "origin/dev",
+        "remote": "ajoe734/pantheon",
+        "status_root": "/home/lupin/pantheon",
+        "delivery_root": "/tmp/pantheon-worker-worktrees/pantheon/sup-provider-pause-recovery-probe-20260802",
+        "wrapper_root": "/home/lupin/pantheon-ci-deploy/dev-root"
+      },
+      "commit": "01a409caa8eabdaa6900481a897b2e6c1c4c9a6e",
+      "commit_subject": "SUP-PROVIDER-PAUSE-RECOVERY-PROBE-20260802: close evidence",
+      "commit_author": {
+        "name": "pantheon-dev",
+        "email": "bjoe734@gmail.com"
+      },
+      "commit_metadata": {
+        "Owned layer": "durable exact-head review, merged delivery, and closeout evidence.",
+        "Not changing": "provider recovery implementation, credentials, account groups, runtime state, reviewer policy, or rollout.",
+        "Composes with": "Human/Ops closeout-head review and governed owner done finalization.",
+        "LLM-Agent": "Codex",
+        "Task-ID": "SUP-PROVIDER-PAUSE-RECOVERY-PROBE-20260802",
+        "Reviewer": "Human/Ops",
+        "Verified": "provider-health 14; focused supervisor 93; py_compile; JSON parse; diff check"
+      },
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "16135f2316541591e54cba6d58f0a80273731bc1",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "created_at": "2026-08-02T06:03:57Z",
+      "from": "Codex",
+      "message": "PR #4486 is ready for independent exact-head review at 116f0cafd0142cfa8a018144fbcba0f83d04f046. Declared diff is six files: provider_health.py, its test, supervisor.py, its test, and two task evidence files. Owner validation: provider-health 14, focused supervisor 93, full supervisor 486, py_compile, evidence JSON parse, git diff --check; all nine visible GitHub checks passed. Please bind REVIEW_FILE=docs/deployment/evidence/supervisor/SUP-PROVIDER-PAUSE-RECOVERY-PROBE-20260802/evidence.json and REVIEW_PR=4486 / REVIEW_HEAD_SHA=116f0cafd0142cfa8a018144fbcba0f83d04f046 when approving.",
+      "resolved_at": "2026-08-02T06:10:11Z",
+      "status": "done",
+      "task_id": "SUP-PROVIDER-PAUSE-RECOVERY-PROBE-20260802",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-08-02T06:10:11Z",
+      "from": "Human/Ops",
+      "message": "Human/Ops exact-head approval for PR #4486 at 116f0cafd0142cfa8a018144fbcba0f83d04f046 after independent code review and clean-worktree validation: provider-health 14, focused supervisor 93, full supervisor 486, py_compile and diff checks passed; all nine GitHub checks are green; scope remains provider pause recovery only with no account-group or global reviewer-policy change.",
+      "resolved_at": "2026-08-02T06:17:34Z",
+      "status": "done",
+      "task_id": "SUP-PROVIDER-PAUSE-RECOVERY-PROBE-20260802",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-08-02T06:17:34Z",
+      "from": "Codex",
+      "message": "Runtime PR #4486 merged as 71fea47cbe65bb3e07792afa7e9f0134fd0066f5, but governed done correctly rejected the pre-reassignment Reviewer: Codex2 trailer. Docs-only closeout PR #4487 is ready for Human/Ops exact-head review at 01a409caa8eabdaa6900481a897b2e6c1c4c9a6e; scope is only the task brief and two evidence files, with no runtime code change.",
+      "resolved_at": "2026-08-02T06:19:21Z",
+      "status": "done",
+      "task_id": "SUP-PROVIDER-PAUSE-RECOVERY-PROBE-20260802",
+      "to": "Human/Ops"
+    },
+    {
+      "created_at": "2026-08-02T06:19:21Z",
+      "from": "Human/Ops",
+      "message": "Human/Ops approved docs-only closeout PR #4487 at exact head 01a409caa8eabdaa6900481a897b2e6c1c4c9a6e after all checks passed; scope remains three evidence/task-brief files only.",
+      "status": "done",
+      "task_id": "SUP-PROVIDER-PAUSE-RECOVERY-PROBE-20260802",
+      "to": "Codex",
+      "resolved_at": "2026-08-02T06:22:50Z"
+    }
+  ],
+  "blockers": []
+}

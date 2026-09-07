@@ -1,0 +1,127 @@
+{
+  "version": 1,
+  "task_id": "SUP-PROVIDER-STALE-CACHE-READMISSION-LIVE-CANARY-20260802",
+  "archived_at": "2026-08-02T14:48:34Z",
+  "terminal_status": "done",
+  "terminal_outcome": "superseded",
+  "task": {
+    "acceptance": [
+      "Start only after the source task is merged, checks are green, independently reviewed, and canonically complete; bind the exact dev merge commit.",
+      "Promote through the existing gate-before-switch transactional runtime path with automatic rollback; do not patch dev-root or restart an unreviewed tree.",
+      "Canary begins with a derived cached auth_ready=false fixture or supported isolated equivalent, then uses fresh valid task-scoped Codex2 auth; no credential contents appear in evidence.",
+      "Without manual provider-capability or runtime-state edits and with auto_refresh_provider_capabilities=false, one bounded targeted probe changes only Codex2 to healthy and an eligible Codex2 worker starts with CODEX_HOME=/home/lupin/.codex2.",
+      "Negative canary proves failed/revoked/timeout auth remains closed and does not burn a worker; unrelated Codex lane, quota groups, reviewer policy, queues, and active workers remain unchanged.",
+      "Observe at least three fresh supervisor cycles, worker heartbeats, PID starttime, queue/task binding, no duplicate recovery probes, no lock hold caused by network probing, and exact live source/config hashes.",
+      "Rollback automatically on any auth, identity, queue, lease, lock, config, or source invariant failure and prove the prior runtime PID/root/commit/config hash resumes for three cycles.",
+      "Commit exact canary and rollback evidence through clean PR to dev, independent exact-head review, merge, and canonical archive."
+    ],
+    "artifacts": [
+      "docs/deployment/evidence/supervisor/SUP-PROVIDER-STALE-CACHE-READMISSION-LIVE-CANARY-20260802/"
+    ],
+    "depends_on": [
+      "SUP-PROVIDER-STALE-CACHE-READMISSION-PROBE-20260802"
+    ],
+    "dev_bridge": {
+      "actor": {
+        "capabilities": [
+          "fleet.dispatch",
+          "dev-task.dispatch"
+        ],
+        "id": "Human/Ops",
+        "roles": [
+          "operator"
+        ]
+      },
+      "audit_conversation_href": "codex://root/autoworker-capacity-codex2-recovery-20260802",
+      "conversation_id": "codex-root-autoworker-capacity-20260802",
+      "documents": [
+        {
+          "kind": "ACTIVE_REPOSITORY_AUTHORITY",
+          "path": "AGENTS.md",
+          "sourceRefs": [
+            "Pantheon supervisor is the only routine implementation dispatcher",
+            "Configured Codex and Codex2 identities remain distinct; account and reviewer relationships require current task-scoped live evidence",
+            "Urgent auth/runtime rescue may be minimal and temporary; permanent source work uses governed worktree and PR flow"
+          ]
+        },
+        {
+          "kind": "LIVE_AUTH_RECOVERY_EVIDENCE",
+          "path": ".orchestrator/provider_capabilities.json",
+          "sourceRefs": [
+            "cached Codex2 probe at 2026-08-02T05:21:10Z reported token_revoked",
+            "operator completed fresh device login into /home/lupin/.codex2",
+            "targeted supervisor refresh at 2026-08-02T12:38:30Z reported healthy/auth_ready true",
+            "Codex2 worker codex-20260802T124015Z-d11ee28f started on codex2_1 at 2026-08-02T12:40:15Z with CODEX_HOME=/home/lupin/.codex2"
+          ]
+        },
+        {
+          "kind": "SOURCE_GAP",
+          "path": ".orchestrator/supervisor.py",
+          "sourceRefs": [
+            "live config sets supervisor.auto_refresh_provider_capabilities=false",
+            "dispatch_ready_tasks calls agent_auto_dispatch_block_reason before a queue event exists",
+            "refresh_provider_auth_before_dispatch runs later in process_queue, so cached auth_ready false can prevent the recovery probe from ever being reached",
+            "SUP-PROVIDER-PAUSE-RECOVERY-PROBE-20260802 is merged but does not cover stale false cache with no already-queued delivery"
+          ]
+        },
+        {
+          "kind": "CAPACITY_GAP",
+          "path": ".orchestrator/state.json",
+          "sourceRefs": [
+            "read-only snapshot after auth recovery found 13 task-agent failure-loop pairs at chair threshold",
+            "old Codex and Codex2 primary candidates were excluded by failure_loop plus chair_triage rather than current slot capacity",
+            "current configured logical capacity remains four Codex slots and four Codex2 slots"
+          ]
+        }
+      ],
+      "emitted_at": "2026-08-02T12:43:03.834177Z",
+      "intent": "restore_self_healing_codex2_admission_and_recover_parallel_dispatch_capacity",
+      "mode": "kernel_repair",
+      "packet_digest": "7d359cc63b5a960a0b238e579661b6c2f929ecf9aa51017e3d5f89475a14f7fc",
+      "packet_id": "pkt-codex2-recovery-and-fleet-capacity-20260802T1242Z",
+      "source_turn_ids": [
+        "user-codex-should-run-four-in-parallel",
+        "user-login-codex2-device-code",
+        "user-request-help-make-autoworker-run"
+      ],
+      "task_spec": {
+        "acceptance": [
+          "Start only after the source task is merged, checks are green, independently reviewed, and canonically complete; bind the exact dev merge commit.",
+          "Promote through the existing gate-before-switch transactional runtime path with automatic rollback; do not patch dev-root or restart an unreviewed tree.",
+          "Canary begins with a derived cached auth_ready=false fixture or supported isolated equivalent, then uses fresh valid task-scoped Codex2 auth; no credential contents appear in evidence.",
+          "Without manual provider-capability or runtime-state edits and with auto_refresh_provider_capabilities=false, one bounded targeted probe changes only Codex2 to healthy and an eligible Codex2 worker starts with CODEX_HOME=/home/lupin/.codex2.",
+          "Negative canary proves failed/revoked/timeout auth remains closed and does not burn a worker; unrelated Codex lane, quota groups, reviewer policy, queues, and active workers remain unchanged.",
+          "Observe at least three fresh supervisor cycles, worker heartbeats, PID starttime, queue/task binding, no duplicate recovery probes, no lock hold caused by network probing, and exact live source/config hashes.",
+          "Rollback automatically on any auth, identity, queue, lease, lock, config, or source invariant failure and prove the prior runtime PID/root/commit/config hash resumes for three cycles.",
+          "Commit exact canary and rollback evidence through clean PR to dev, independent exact-head review, merge, and canonical archive."
+        ],
+        "artifacts": [
+          "docs/deployment/evidence/supervisor/SUP-PROVIDER-STALE-CACHE-READMISSION-LIVE-CANARY-20260802/"
+        ],
+        "depends_on": [
+          "SUP-PROVIDER-STALE-CACHE-READMISSION-PROBE-20260802"
+        ],
+        "id": "SUP-PROVIDER-STALE-CACHE-READMISSION-LIVE-CANARY-20260802",
+        "owner": "Codex2",
+        "phase": "Supervisor Provider Admission / Live Promotion Canary",
+        "reviewer": "Codex",
+        "summary": "Transactionally promote the merged stale-cache recovery and prove a revoked-to-new-login Codex2 lane resumes without manual cache edits.",
+        "title": "Promote and prove self-healing provider readmission after fresh login"
+      },
+      "task_spec_hash": "0f3ffcb81163a871dded5d70fbe04cd64be475945a3fecb47da2c369a633b813"
+    },
+    "id": "SUP-PROVIDER-STALE-CACHE-READMISSION-LIVE-CANARY-20260802",
+    "last_update": "2026-08-02T14:48:34Z",
+    "next": "Superseded by integrated V9 canary so live promotion waits for stale-auth, exact model-cache quota classification, fixed cadence, active lease, and explicit Human/Ops reviewer preservation together.",
+    "owner": "Codex2",
+    "phase": "Supervisor Provider Admission / Live Promotion Canary",
+    "reviewer": "Human/Ops",
+    "status": "done",
+    "summary_zh": "Transactionally promote the merged stale-cache recovery and prove a revoked-to-new-login Codex2 lane resumes without manual cache edits.",
+    "title": "Promote and prove self-healing provider readmission after fresh login",
+    "terminal_outcome": "superseded",
+    "superseded_by": "SUP-AUTOWORKER-QUOTA-ROUTING-LIVE-CANARY-OPERATOR-V9-20260802"
+  },
+  "handoffs": [],
+  "blockers": []
+}

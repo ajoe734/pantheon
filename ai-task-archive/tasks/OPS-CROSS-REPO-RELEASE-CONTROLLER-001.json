@@ -1,0 +1,147 @@
+{
+  "version": 1,
+  "task_id": "OPS-CROSS-REPO-RELEASE-CONTROLLER-001",
+  "archived_at": "2026-07-27T18:55:09Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "acceptance": [
+      "A single immutable release candidate record binds exact pantheon backend commit and execute-plans frontend commit before deployment",
+      "candidate admission fails closed unless both repo manifests match and compatibility_status is compatible",
+      "FE is built and smoke tested against the exact BFF candidate before public switch",
+      "dev switch is atomic or compensated with rollback proof and no live symlink changes before candidate probes pass",
+      "workflow refuses out of order or main branch frontend delivery and uses execute-plans dev only",
+      "no intermediate hosted deployment is triggered for individual bug fixes in this repair batch",
+      "branch PR checks review merge and evidence are complete for both repos as applicable"
+    ],
+    "artifacts": [
+      "docs/deployment/nonprod-ci-cd.md",
+      "scripts/agora_compat_manifest.py",
+      ".github/workflows/nonprod-deploy.yml",
+      "execute-plans:.github/workflows/pantheon-integration-gate.yml",
+      "execute-plans:.github/workflows/pantheon-dev-fe-deploy.yml",
+      "execute-plans:scripts/release-candidate.mjs",
+      "docs/deployment/evidence/release-platform/OPS-CROSS-REPO-RELEASE-CONTROLLER-001"
+    ],
+    "auto_created_by": "codex-root-architecture-pass-20260727",
+    "depends_on": [
+      "OPS-PUBLISH-ENGINE-UNIFICATION-001"
+    ],
+    "id": "OPS-CROSS-REPO-RELEASE-CONTROLLER-001",
+    "last_update": "2026-07-27T18:55:09Z",
+    "mutates_canonical": true,
+    "next": "Owner finalized Codex-approved exact heads; execute-plans PR #558 merged f24c26330c7fb5afe6c2f1c735ea5fb06b3d87ef, Pantheon PR #4268 merged b854c2bdeba672d107314c51c7588455be96221e, and closeout evidence PR #4272 merged 5a2fc69a3b432e0d1bc528981d66a2ee32defa71. Owner rerun passed 64 Pantheon tests, 58 frontend tests plus typecheck, JSON/diff and cross-repo merge ancestry checks; no hosted deployment was dispatched.",
+    "non_goals": [
+      "Do not edit docker-compose.yml in this task",
+      "Do not edit scripts/deploy_nonprod_vm.sh in this task",
+      "Do not copy execute-plans source into the pantheon checkout",
+      "Do not deploy after each intermediate fix"
+    ],
+    "owner": "Codex2",
+    "phase": "Release Platform / Cross-Repo Dev Delivery",
+    "review_file": "docs/deployment/evidence/release-platform/OPS-CROSS-REPO-RELEASE-CONTROLLER-001/evidence.json",
+    "review_notes_zh": [
+      "已核對 Pantheon PR #4268 exact head b25b269956dc24eab3a2fc12b76bf731810c143f 與 execute-plans PR #558 exact head 1081deb765c5313731ae5813ee6f3d618e7103cd，皆以 dev 為 base；Pantheon commit MERGEABLE 且 Branch CI 全綠但仍受 canonical review、merge-freeze contexts 與 GitHub review requirement 阻擋，execute-plans 為 CLEAN/MERGEABLE 且 Branch CI 與 integration gate run 30292727311 全綠。",
+      "獨立重跑 Pantheon 64 tests 與 execute-plans 58 tests 加 typecheck 全通過；另驗證 Python/Bash/Node/YAML/JSON syntax、兩 repo git diff --check、prohibited-file 與 repository-boundary checks。",
+      "靜態核對 deterministic exact FE/BFF ledger、compatible-only雙邊重算、controller-only deployable artifact、BFF-first 與 FE 原子切換、失敗時 fresh lease 回復及雙 hosted identity compensation proof；未改 docker-compose.yml、deploy_nonprod_vm.sh 或 execute-plans deploy-dev-vm.sh。",
+      "查核 shared workflows 仍 active，PR controller-specific steps未產生 deployable artifact，且兩 repo 在本 task 建立後無 nonprod 或 FE hosted deployment；owner closeout 必須合併兩個 PR並把 review heads、merge commits與 reviewer decision寫回 evidence.json。"
+    ],
+    "reviewer": "Codex",
+    "source_packet_ids": [
+      "pkt_pantheon_batch_architecture_20260727_supervisor_autodrain_001"
+    ],
+    "status": "done",
+    "summary_zh": "建立 Pantheon backend 與 execute-plans frontend 的單一 dev release candidate controller：先產生 immutable FE/BFF pair ledger 與 compatibility admission，再一次切換 Pantheon-owned dev FE/BFF；不再每修一個症狀就單獨部署。runtime compose manifest 與 deploy_nonprod_vm.sh 由 L12-MANIFEST-001 compose，不在本任務 ownership 內。",
+    "target_repo": "pantheon",
+    "title": "Coordinate exact FE/BFF release candidate and dev deployment switch",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-07-27T18:55:09Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/ops-cross-repo-release-controller-001",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/OPS-CROSS-REPO-RELEASE-CONTROLLER-001",
+      "git_clean_required": false,
+      "status_command_runtime": {
+        "command_root": "/home/lupin/pantheon-ci-deploy/dev-root-6692d51c9bc5",
+        "source_sha": "a6966b13d84430387da9c3a33fcf224c841bc5c6",
+        "base_ref": "origin/dev",
+        "remote": "ajoe734/pantheon",
+        "status_root": "/home/lupin/pantheon",
+        "delivery_root": "/tmp/pantheon-worker-worktrees/pantheon/ops-cross-repo-release-controller-001",
+        "wrapper_root": "/home/lupin/pantheon-ci-deploy/dev-root-6692d51c9bc5"
+      },
+      "repository_fallback": {
+        "from_repository_id": "execute_plans",
+        "missing_repository_path": "/home/lupin/pantheon-ci-deploy/execute-plans",
+        "reason": "non-Pantheon artifact repository local_path is unavailable; using Pantheon because the task also has Pantheon artifacts"
+      },
+      "commit": "affa36885da2801f947949bb26d3659cb01e401d",
+      "commit_subject": "OPS-CROSS-REPO-RELEASE-CONTROLLER-001: finalize evidence",
+      "commit_author": {
+        "name": "pantheon-dev",
+        "email": "bjoe734@gmail.com"
+      },
+      "commit_metadata": {
+        "Owned layer": "task-scoped exact-head review, merge, and closeout evidence.",
+        "Not changing": "release controller behavior, runtime Compose, deploy scripts, or hosted dev state.",
+        "Composes with": "Pantheon PR #4268 and execute-plans PR #558 on dev.",
+        "LLM-Agent": "Codex2",
+        "Task-ID": "OPS-CROSS-REPO-RELEASE-CONTROLLER-001",
+        "Reviewer": "Codex",
+        "Verified": "64 Pantheon tests; 58 frontend tests and typecheck; merge ancestry and JSON/diff checks"
+      },
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "5a2fc69a3b432e0d1bc528981d66a2ee32defa71",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "created_at": "2026-07-27T14:33:02Z",
+      "from": "Antigravity",
+      "message": "Auto-reassigned OPS-CROSS-REPO-RELEASE-CONTROLLER-001 away from unavailable lane Antigravity, Claude (disabled, paused, sidecar-only, or auth-down); owner Antigravity -> Codex2, reviewer Claude -> Codex.",
+      "resolved_at": "2026-07-27T16:15:16Z",
+      "status": "done",
+      "task_id": "OPS-CROSS-REPO-RELEASE-CONTROLLER-001",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-07-27T18:30:51Z",
+      "from": "Codex2",
+      "message": "Review exact heads b25b269956dc24eab3a2fc12b76bf731810c143f (Pantheon PR #4268) and 1081deb765c5313731ae5813ee6f3d618e7103cd (execute-plans PR #558). Both PRs are ready and mergeable with visible checks green. Review evidence: docs/deployment/evidence/release-platform/OPS-CROSS-REPO-RELEASE-CONTROLLER-001/evidence.json. No hosted deployment was run.",
+      "resolved_at": "2026-07-27T18:30:51Z",
+      "status": "done",
+      "task_id": "OPS-CROSS-REPO-RELEASE-CONTROLLER-001",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-07-27T18:30:51Z",
+      "from": "Codex2",
+      "message": "Independent exact-head review requested. Pantheon PR #4268 head b25b269956dc24eab3a2fc12b76bf731810c143f is READY/MERGEABLE with all Branch CI checks green; execute-plans PR #558 head 1081deb765c5313731ae5813ee6f3d618e7103cd is READY/CLEAN/MERGEABLE with Branch CI and full FE-BFF integration-gate run 30292727311 green. Evidence: docs/deployment/evidence/release-platform/OPS-CROSS-REPO-RELEASE-CONTROLLER-001/evidence.json. Local revalidation: 64 directly affected Pantheon tests; 58 frontend tests plus typecheck; syntax/JSON/YAML/diff and repository-boundary checks pass. Two broader Agora workflow assertions fail identically on untouched Pantheon origin/dev because they expect an obsolete step name, so they are not task regressions. Verify exact-pair ledger, controller-only gate/deploy admission, BFF-first/FE-atomic switch, compensation proof, no prohibited runtime/Compose edits, and no hosted deployment.",
+      "resolved_at": "2026-07-27T18:41:20Z",
+      "status": "done",
+      "task_id": "OPS-CROSS-REPO-RELEASE-CONTROLLER-001",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-07-27T18:41:20Z",
+      "from": "Codex",
+      "message": "Codex exact-head review approved: Pantheon b25b269956dc24eab3a2fc12b76bf731810c143f and execute-plans 1081deb765c5313731ae5813ee6f3d618e7103cd satisfy exact-pair admission, controller-only FE gate/deploy, BFF-first atomic-or-compensated switching, dev-only ordering, safe defaults, repository boundaries, and no-intermediate-deploy acceptance. Independent validation passed 64 Pantheon tests, 58 frontend tests plus typecheck, syntax/diff checks, and exact GitHub check evidence. Pantheon PR remains branch-protection blocked pending canonical/GitHub review contexts; owner must merge both PRs and record final review/merge evidence before done.",
+      "status": "done",
+      "task_id": "OPS-CROSS-REPO-RELEASE-CONTROLLER-001",
+      "to": "Codex2",
+      "resolved_at": "2026-07-27T18:55:10Z"
+    }
+  ],
+  "blockers": []
+}

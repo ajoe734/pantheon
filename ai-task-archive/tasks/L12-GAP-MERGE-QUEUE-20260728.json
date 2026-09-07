@@ -1,0 +1,159 @@
+{
+  "version": 1,
+  "task_id": "L12-GAP-MERGE-QUEUE-20260728",
+  "archived_at": "2026-07-29T05:00:00Z",
+  "terminal_status": "done",
+  "terminal_outcome": "superseded",
+  "task": {
+    "acceptance": [],
+    "artifacts": [],
+    "depends_on": [],
+    "github_review_bridge": {
+      "actor": "Codex2",
+      "base": "dev",
+      "decision": "approve",
+      "head_branch": "task/L12-GAP-MERGE-QUEUE-20260728",
+      "head_sha": "80a0ac56f9bebdb68d2ae3d8ad77462dd937c90d",
+      "mode": "required_commit_status",
+      "pr": 4311,
+      "pr_url": "https://github.com/ajoe734/pantheon/pull/4311",
+      "recorded_at": "2026-07-28T18:58:32Z",
+      "repository": "ajoe734/pantheon",
+      "review_error": "gh: Unprocessable Entity (HTTP 422)",
+      "status_context": "Pantheon canonical review gate",
+      "status_id": 51241398881,
+      "status_state": "success"
+    },
+    "id": "L12-GAP-MERGE-QUEUE-20260728",
+    "last_update": "2026-07-29T05:00:00Z",
+    "next": "Superseded by completed SUP-L12-OPEN-PR-DRAIN-20260729: PR #4311 was closed unmerged as a stale merge-queue receipt; PR #4346 merged the authoritative drain record, and the 2026-07-29 final-gap fleet packet governs all remaining L12 work. Do not restart implementation or count #4311 as acceptance proof.",
+    "owner": "Codex",
+    "phase": "Unassigned",
+    "review_binding": {
+      "base": "dev",
+      "head_branch": "task/L12-GAP-MERGE-QUEUE-20260728",
+      "head_sha": "80a0ac56f9bebdb68d2ae3d8ad77462dd937c90d",
+      "pr": 4311
+    },
+    "review_file": "docs/deployment/evidence/twelve-loop-gap/L12-THREE-PASS-GAP-AUDIT-20260728/merge-queue/evidence.json",
+    "reviewer": "Codex2",
+    "status": "done",
+    "summary_zh": null,
+    "title": "Claude-priority merge queue for L12 closeout PRs: handle #4286 exact-head reapproval path, #4285 reviewer gate, #4290 closeout review/merge, and safe root-freeze/merge only when gates are green.",
+    "terminal_outcome": "superseded",
+    "superseded_by": "SUP-L12-OPEN-PR-DRAIN-20260729"
+  },
+  "handoffs": [
+    {
+      "created_at": "2026-07-28T13:08:42Z",
+      "from": "Codex",
+      "message": "Auto-reassigned L12-GAP-MERGE-QUEUE-20260728 away from unavailable lane Codex (disabled, paused, sidecar-only, or auth-down); reviewer Codex -> Codex2.",
+      "resolved_at": "2026-07-28T13:16:40Z",
+      "status": "done",
+      "task_id": "L12-GAP-MERGE-QUEUE-20260728",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-07-28T18:51:30Z",
+      "from": "Codex",
+      "message": "PR #4311 exact head 80a0ac56f9bebdb68d2ae3d8ad77462dd937c90d is ready for independent review. Review the two-file receipt scope, verify #4285/#4286/#4290/#4300/#4301/#4302 exact heads and merge commits, confirm #4300 canonical review status 51228991081 and root-freeze status 51229316818 both bind c95b614b6f4dfb251b0ad6858b596c21d6f62d41, and confirm the five canonical tasks are archived done. Review file: docs/deployment/evidence/twelve-loop-gap/L12-THREE-PASS-GAP-AUDIT-20260728/merge-queue/evidence.json. Approve only with REVIEW_PR=4311 and REVIEW_HEAD_SHA=80a0ac56f9bebdb68d2ae3d8ad77462dd937c90d; auto-merge remains off.",
+      "resolved_at": "2026-07-28T18:58:32Z",
+      "status": "done",
+      "task_id": "L12-GAP-MERGE-QUEUE-20260728",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-07-28T18:58:32Z",
+      "from": "Codex2",
+      "message": "Codex2 independent exact-head review approved PR #4311 at 80a0ac56f9bebdb68d2ae3d8ad77462dd937c90d. The diff is limited to the task brief and merge-queue evidence receipt; JSON parse, receipt assertions, git diff --check, remote head identity, and all 9 visible exact-head checks pass with auto-merge disabled. GitHub metadata and merge-parent/dev-ancestry checks confirm #4285/#4286/#4290/#4300/#4301/#4302 exact heads and merge commits. PR #4300 exact head c95b614b6f4dfb251b0ad6858b596c21d6f62d41 has canonical review status 51228991081 and root-freeze status 51229316818 success. Governed archive reads confirm L12-DIST-001, L12-EVO-001, L12-THREE-PASS-GAP-AUDIT-20260728, L12-FLEET-WORKER-OUTCOME-001, and OPS-L12-CLAUDE-DISPATCH-SMOKE-20260728 are done/completed. No runtime implementation or hosted-deployment claim was added.",
+      "resolved_at": "2026-07-28T19:33:35Z",
+      "status": "done",
+      "task_id": "L12-GAP-MERGE-QUEUE-20260728",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-07-28T19:31:14Z",
+      "from": "Codex2",
+      "message": "Auto-reassigned L12-GAP-MERGE-QUEUE-20260728 away from unavailable lane Codex2 (disabled, paused, sidecar-only, or auth-down); reviewer Codex2 -> Antigravity.",
+      "resolved_at": "2026-07-28T19:31:47Z",
+      "status": "done",
+      "task_id": "L12-GAP-MERGE-QUEUE-20260728",
+      "to": "Antigravity"
+    },
+    {
+      "created_at": "2026-07-28T19:34:08Z",
+      "from": "Antigravity",
+      "message": "Auto-reassigned ownership from Codex to Codex2 after repeated Codex terminal: Worker process missing during supervisor boot reconciliation.",
+      "resolved_at": "2026-07-28T19:38:20Z",
+      "status": "done",
+      "task_id": "L12-GAP-MERGE-QUEUE-20260728",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-07-28T20:04:53Z",
+      "from": "Codex2",
+      "message": "Auto-reassigned L12-GAP-MERGE-QUEUE-20260728 away from unavailable lane Codex2 (disabled, paused, sidecar-only, or auth-down); owner Codex2 -> Codex.",
+      "resolved_at": "2026-07-28T20:05:15Z",
+      "status": "done",
+      "task_id": "L12-GAP-MERGE-QUEUE-20260728",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-07-29T04:56:43Z",
+      "from": "Codex",
+      "message": "Chair reassigned owner from Codex to Codex2: Codex2 is auth-ready, live, unpaused, and distinct from reviewer Antigravity; resume from committed PR #4311/review binding to reconcile the closed-unmerged handoff without repeating implementation. Task returned to todo for a blocked-owner rescue dispatch.",
+      "resolved_at": "2026-07-29T04:57:49Z",
+      "status": "done",
+      "task_id": "L12-GAP-MERGE-QUEUE-20260728",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-07-29T04:56:58Z",
+      "from": "Codex2",
+      "message": "Helper-claimed by idle Codex; previous owner Codex2 becomes reviewer.",
+      "resolved_at": "2026-07-29T04:57:49Z",
+      "status": "done",
+      "task_id": "L12-GAP-MERGE-QUEUE-20260728",
+      "to": "Codex"
+    }
+  ],
+  "blockers": [
+    {
+      "created_at": "2026-07-28T13:55:32Z",
+      "message": "PR #4285 exact head 6c631ae074a3c1be185f1cf99091012823e02a8e contains current dev, both Branch CI runs are green, auto-merge is off, ReviewBus bound the head at 2026-07-28T13:49:31Z, and root freeze remains withheld. No Claude review_ready_dispatch appeared through the next supervisor window; waiting for assigned reviewer Claude exact-head approve/reopen. This queue worker cannot legally handoff L12-EVO-001 because its governed lease is scoped to L12-GAP-MERGE-QUEUE-20260728.",
+      "owner": "Codex",
+      "resolved_at": "2026-07-28T14:01:14Z",
+      "status": "resolved",
+      "task_id": "L12-GAP-MERGE-QUEUE-20260728",
+      "waiting_for": "Claude"
+    },
+    {
+      "created_at": "2026-07-28T14:34:32Z",
+      "message": "PR #4285 exact head 0fc918b747cf38262360b6045dadd25f157ed9d9 composes current dev d97c25d3cc8860118dd4d0f3c9fafd38490d89c0 and both fresh Branch CI runs are green. Governed lease correctly prevents this merge-queue worker from mutating L12-EVO-001 status; Human/Ops/supervisor must dispatch that task-scoped owner run to hand the exact head to Codex2. Canonical review and root-freeze remain withheld; do not merge or enable auto-merge.",
+      "owner": "Codex",
+      "resolved_at": "2026-07-28T15:30:45Z",
+      "status": "resolved",
+      "task_id": "L12-GAP-MERGE-QUEUE-20260728",
+      "waiting_for": "Human/Ops"
+    },
+    {
+      "created_at": "2026-07-28T15:44:14Z",
+      "message": "Merge queue fail-closed after live verification: PR #4300 remains OPEN and BEHIND origin/dev 9f7f95e1a10a46248a81b26159e373f75525222f at old reviewed head 607df32e1dc658080a282858aa1441967c3df700; the old Codex2 approval cannot be reused and the root-freeze context is absent. No active task-scoped #4300 worker is running; dispatch its owner to compose current dev, push and pass fresh Branch CI, then obtain new exact-head Codex2 approval before redispatching this queue for single-head root-freeze release and merge. PR #4286 merge cf94be38a548a31df020456904ea10ff95ffb4dd and PR #4301 merge d97c25d3cc8860118dd4d0f3c9fafd38490d89c0 are both ancestors of current dev.",
+      "owner": "Codex",
+      "resolved_at": "2026-07-28T16:05:56Z",
+      "status": "resolved",
+      "task_id": "L12-GAP-MERGE-QUEUE-20260728",
+      "waiting_for": "Human/Ops"
+    },
+    {
+      "created_at": "2026-07-28T19:38:20Z",
+      "message": "PR #4311 exact head 80a0ac56f9bebdb68d2ae3d8ad77462dd937c90d is pushed and unchanged; Branch CI, Smoke acceptance, and canonical review status 51241398881 are green, auto-merge remains off, and the queue evidence is complete. GitHub still blocks merge solely because required context 'Pantheon root merge freeze 2026-07-27' is absent. Waiting for explicit Human/Ops release on this same head; do not change the branch head or restart L12 implementation.",
+      "owner": "Codex2",
+      "resolution_ref": "chair_reassignment:L12-GAP-MERGE-QUEUE-20260728",
+      "resolved_at": "2026-07-29T04:56:43Z",
+      "status": "resolved",
+      "task_id": "L12-GAP-MERGE-QUEUE-20260728",
+      "waiting_for": "Human/Ops"
+    }
+  ]
+}

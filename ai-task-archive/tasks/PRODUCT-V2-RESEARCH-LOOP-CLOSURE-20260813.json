@@ -1,0 +1,35 @@
+{
+  "version": 1,
+  "task_id": "PRODUCT-V2-RESEARCH-LOOP-CLOSURE-20260813",
+  "archived_at": "2026-08-13T03:00:13Z",
+  "terminal_status": "done",
+  "terminal_outcome": "superseded",
+  "task": {
+    "acceptance": [
+      "Start from current origin/dev and ignore retired L12 routing metadata",
+      "Run one real SourceRecord through distillation readback",
+      "Prove the resulting strategy input reaches alpha replication without fixtures standing in for product truth",
+      "Land one reviewed PR with current evidence"
+    ],
+    "artifacts": [
+      "services/source_ingestion/",
+      "services/research/strategy_spec/",
+      "services/research/alpha_replication/",
+      "docs/deployment/evidence/product-v2/research-loop-closure/"
+    ],
+    "depends_on": [],
+    "generation": 1,
+    "id": "PRODUCT-V2-RESEARCH-LOOP-CLOSURE-20260813",
+    "last_update": "2026-08-13T03:00:13Z",
+    "next": "Superseded by the 2026-08-13 V2 board reset; remaining product work is rematerialized as current-source dependency-free roots.",
+    "owner": "Antigravity2",
+    "phase": "V2 Product Delivery",
+    "reviewer": "Codex",
+    "status": "done",
+    "summary_zh": "以目前 dev 為準，驗證 SourceRecord 經 distillation 到 alpha replication 的最短實際路徑；只補仍缺的產品功能。",
+    "title": "Close the current source-to-research product path",
+    "terminal_outcome": "superseded"
+  },
+  "handoffs": [],
+  "blockers": []
+}

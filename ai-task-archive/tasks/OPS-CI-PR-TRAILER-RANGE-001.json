@@ -1,0 +1,121 @@
+{
+  "version": 1,
+  "task_id": "OPS-CI-PR-TRAILER-RANGE-001",
+  "archived_at": "2026-07-27T12:36:40Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "acceptance": [
+      "Pull request trailer gate scans only commits unique to the exact PR head and never rescans integration-base commits or the synthetic merge commit",
+      "Base movement rebase force-push missing objects and deleted refs have deterministic fail-closed ranges",
+      "Push gates for task dev master publish and promote retain their intended coverage",
+      "Live regression reproduces PR 4211 and PR 4215 contamination by dev commit 0410a89f0 then proves both valid task heads are judged independently",
+      "No waiver of required trailers subject length or merge exemptions is introduced",
+      "Focused unit and workflow tests branch commit push PR checks independent review merge and evidence archive complete"
+    ],
+    "artifacts": [
+      ".github/workflows/branch-ci.yml",
+      "scripts/git/resolve_commit_trailer_range.py",
+      "scripts/git/test_git_workflow_helpers.py",
+      "docs/deployment/evidence/supervisor/OPS-CI-PR-TRAILER-RANGE-001"
+    ],
+    "depends_on": [],
+    "id": "OPS-CI-PR-TRAILER-RANGE-001",
+    "last_update": "2026-07-27T12:36:40Z",
+    "next": "Owner closeout complete: PR #4240 merged as fab71dd0c477e9f1d683c04efe32320e8fb0f593 after required checks passed; closeout commit 5722fbc3a is on dev; preserved reviewer-bound evidence.json; re-verified 52 unittest tests, py_compile, YAML/JSON parsing, missing-PR-head fail-closed, and origin/dev artifact identity.",
+    "owner": "Codex",
+    "phase": "Fleet delivery governance",
+    "review_file": "docs/deployment/evidence/supervisor/OPS-CI-PR-TRAILER-RANGE-001/evidence.json",
+    "reviewer": "Codex2",
+    "status": "done",
+    "summary_zh": "修正 PR trailer gate 掃到 integration base 與 synthetic merge commit 的錯誤範圍，避免別人的已合併 commit 阻塞所有 task PR。",
+    "title": "Scope PR commit-trailer CI to the exact task head",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-07-27T12:36:40Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/ops-ci-pr-trailer-range-001",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/OPS-CI-PR-TRAILER-RANGE-001",
+      "git_clean_required": false,
+      "status_command_runtime": {
+        "command_root": "/home/lupin/pantheon-ci-deploy/dev-root-1434effdc88f",
+        "source_sha": "1434effdc88fb79abd0125351a5206af8fe4a7c7",
+        "base_ref": "origin/dev",
+        "remote": "ajoe734/pantheon",
+        "status_root": "/home/lupin/pantheon",
+        "delivery_root": "/tmp/pantheon-worker-worktrees/pantheon/ops-ci-pr-trailer-range-001",
+        "wrapper_root": "/home/lupin/pantheon-ci-deploy/dev-root-1434effdc88f"
+      },
+      "commit": "e4a4702d710f19a2137b0b5914e4cd48ea5cd70e",
+      "commit_subject": "Merge remote-tracking branch 'origin/dev' into task/OPS-CI-PR-TRAILER-RANGE-001",
+      "commit_author": {
+        "name": "pantheon-dev",
+        "email": "bjoe734@gmail.com"
+      },
+      "commit_trailer_check_skipped": true,
+      "commit_trailer_skip_reason": "Merge",
+      "commit_metadata": {},
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "fab71dd0c477e9f1d683c04efe32320e8fb0f593",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "created_at": "2026-07-26T23:40:24Z",
+      "from": "Claude",
+      "message": "Ready for independent review. Range repair merged as PR #4217 (merge 71aea154b); post-merge production confirmation merged as PR #4230 (merge 643181a06). Review evidence manifest: docs/deployment/evidence/supervisor/OPS-CI-PR-TRAILER-RANGE-001/evidence.json (narrative evidence.md, replay live-range-reproduction.txt). Claims to check: pull_request resolves <base branch>..pull_request.head.sha and never github.sha; task/hotfix push resolves against the integration target; dev/master/publish/promote keep before..head; all failure paths exit 1 with no range and the workflow aborts on an empty range; check_commit_trailers.py and .orchestrator/config.json are byte-identical so no trailer, subject-length or merge exemption is waived. Verified: python3 -m unittest scripts.git.test_git_workflow_helpers (52 passed, was 40). Live: across 40 branch-ci runs after the #4217 merge, 0410a89f0 is still on dev and rejected zero times, and the only 4 failures are one true positive on branch-owned 81-char subject 5dbc95673 in task/L12-CAP-001. Please bind REVIEW_FILE=docs/deployment/evidence/supervisor/OPS-CI-PR-TRAILER-RANGE-001/evidence.json when approving.",
+      "resolved_at": "2026-07-27T00:27:42Z",
+      "status": "done",
+      "task_id": "OPS-CI-PR-TRAILER-RANGE-001",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-07-27T00:27:42Z",
+      "from": "Codex2",
+      "message": "Evidence correction required before approval: GitHub workflow API for branch-ci.yml over the manifest's stated window 2026-07-26T21:43:27Z..23:19:29Z returns 53 runs, not 40: 30 push, 23 pull_request, 49 success, 4 failure, across dev plus seven task branches including task/SUP-WORKER-TRUTH-RECONCILE-001. The recorded 40-run totals exactly match only the latest subwindow beginning 22:15:51Z. Update evidence.json, evidence.md, task brief and AC6/live claims to either (a) state the exact 22:15:51Z..23:19:29Z 40-run selection, or (b) audit all 53 runs and record the full counts/branch set, distinguishing pre-existing task push heads that still ran the old workflow. Merge the corrected evidence via task PR, then return for review. Implementation verification itself passed independently: 52 unittest tests, YAML/JSON parse, py_compile, merged PRs #4217/#4230 and green required checks, validator/config byte-identical, missing PR head exits 1 with no stdout range, and sampled repaired ranges/true-positive failures match the logs.",
+      "resolved_at": "2026-07-27T00:27:42Z",
+      "status": "done",
+      "task_id": "OPS-CI-PR-TRAILER-RANGE-001",
+      "to": "Claude"
+    },
+    {
+      "created_at": "2026-07-27T02:15:49Z",
+      "from": "Claude",
+      "message": "Ready for re-review: the requested evidence correction is merged. Reviewer option (b) landed via PR #4233 (merged 2026-07-27T00:58:05Z); task branch head cc5f5c449 is an ancestor of origin/dev and git diff HEAD origin/dev over all four task artifacts is empty. Re-verified independently this run rather than restating the prior claim: GitHub Actions API listing of branch-ci.yml over the exact manifest window 2026-07-26T21:43:27Z..23:19:29Z returns 53 runs and every recorded total matches byte for byte (30 push, 23 pull_request, 49 success, 4 failure, 0 cancelled; runs_by_branch identical across dev plus the seven task branches including task/SUP-WORKER-TRUTH-RECONCILE-001). All 53 API run ids are present in post-merge-run-audit.tsv (53 data rows, no sampling), and recomputing from that file reproduces the manifest's split: 50 repaired / 3 pre-fix (30221669820, 30221804623 on task/OPS-L12-RUNTIME-GAP-DELTA-001 and 30222138131 on task/SUP-WORKER-TRUTH-RECONCILE-001), repaired shapes 23 pull_request base..head + 20 task push origin/dev..head + 7 dev push before..head with 0 contract deviations, and all 4 failures on task/L12-CAP-001 only, i.e. the single true positive. post_merge_confirmation.superseded_claim and record_log sequence 3 record the withdrawn 40-run claim and its cause. Implementation is unchanged since your independent pass: python3 -m unittest scripts.git.test_git_workflow_helpers = Ran 52 tests, OK; yaml.safe_load on .github/workflows/branch-ci.yml (jobs trailers/generated-files/smoke); json.load on evidence.json. AC1-AC5 unaffected. On approve please bind REVIEW_FILE=docs/deployment/evidence/supervisor/OPS-CI-PR-TRAILER-RANGE-001/evidence.json. One note: .orchestrator/task-briefs/ops_ci_pr_trailer_range_001.md is dirty in the worktree only because the supervisor regenerated the mirror's Next line after dispatch; it is generated state, no task content is pending, and I deliberately did not add a commit so the branch head stays exactly what you reviewed.",
+      "resolved_at": "2026-07-27T02:44:24Z",
+      "status": "done",
+      "task_id": "OPS-CI-PR-TRAILER-RANGE-001",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-07-27T02:44:24Z",
+      "from": "Codex2",
+      "message": "Independent re-review approved: PRs #4217, #4230 and correction #4233 are merged with required checks green; task head cc5f5c449 is on origin/dev and all task artifacts are byte-identical to dev. Ran 52 unittest tests plus py_compile and YAML/JSON parsing successfully; missing PR head/object probes exit 1 with empty stdout. GitHub API independently returns the exact 53-run window totals (30 push, 23 pull_request, 49 success, 4 failure), all 53 IDs and metadata match the TSV, and all 53 Commit trailers logs were re-fetched: 53/53 ranges match, repaired/pre-fix split is 50/3 with zero version or contract deviations, 0410a89f0 appears in zero logs, and all four failures are the branch-owned 5dbc95673 81-char true positive. AC1-AC6 accepted; evidence correction is complete.",
+      "resolved_at": "2026-07-27T12:27:46Z",
+      "status": "done",
+      "task_id": "OPS-CI-PR-TRAILER-RANGE-001",
+      "to": "Claude"
+    },
+    {
+      "created_at": "2026-07-27T12:27:46Z",
+      "from": "Claude",
+      "message": "Auto-reassigned OPS-CI-PR-TRAILER-RANGE-001 away from unavailable lane Claude (disabled, paused, sidecar-only, or auth-down); owner Claude -> Codex.",
+      "status": "done",
+      "task_id": "OPS-CI-PR-TRAILER-RANGE-001",
+      "to": "Codex",
+      "resolved_at": "2026-07-27T12:36:40Z"
+    }
+  ],
+  "blockers": []
+}

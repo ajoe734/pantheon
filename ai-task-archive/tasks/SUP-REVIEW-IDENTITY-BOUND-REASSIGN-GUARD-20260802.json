@@ -1,0 +1,298 @@
+{
+  "version": 1,
+  "task_id": "SUP-REVIEW-IDENTITY-BOUND-REASSIGN-GUARD-20260802",
+  "archived_at": "2026-08-02T09:45:53Z",
+  "terminal_status": "done",
+  "terminal_outcome": "superseded",
+  "task": {
+    "acceptance": [
+      "Start from current origin/dev; reference PRs #4414 and #4445 as evidence only and do not rewrite V3 failure-record behavior.",
+      "For a task in review or review_approved with a valid exact-head review binding or pending reviewer handoff, automatic provider or lane recovery preserves the reviewer identity and cannot substitute an unavailable reviewer.",
+      "Identity equivalence rejects Codex and Codex2 as an owner/reviewer pair at reassignment persistence, governed approval, merged-done reconciliation, and merge authorization.",
+      "Normal unbound task reassignment remains available only to a genuinely independent reviewer lane; no broad scheduler redesign.",
+      "Regression tests reproduce the #4445 incident shape and prove that unavailable Human/Ops review cannot be replaced by Codex2 when Codex owns the task.",
+      "Regression tests cover valid independent unbound reassignment plus forged and stale binding negatives.",
+      "Delivery diff is limited to the revised canonical artifacts; remove .orchestrator/task-briefs/sup_review_identity_bound_reassign_guard_20260802.md from the PR.",
+      "Do not modify config, live runtime JSON, retry thresholds, provider readiness policy, deployment configuration, V3 failure-record schema, or product tasks.",
+      "Compose current origin/dev without rewriting reviewed history, run focused and complete supervisor, ai-status, and merge-gate regressions, push a clean exact head, and require Human/Ops exact-head review plus protected merge.",
+      "Rollout is source merge only; rollback is revert of this task merge."
+    ],
+    "artifacts": [
+      ".orchestrator/review_identity.py",
+      ".orchestrator/supervisor.py",
+      ".orchestrator/test_supervisor.py",
+      "scripts/ai_status.py",
+      "scripts/test_ai_status.py",
+      "scripts/git/task_review_merge_gate.py",
+      "scripts/git/test_task_review_merge_gate.py",
+      "docs/deployment/evidence/supervisor/SUP-REVIEW-IDENTITY-BOUND-REASSIGN-GUARD-20260802/"
+    ],
+    "coordination_revision": {
+      "actor": "Human/Ops",
+      "catalog_delta": "none",
+      "excluded_delivery_paths": [
+        ".orchestrator/task-briefs/sup_review_identity_bound_reassign_guard_20260802.md"
+      ],
+      "owner": "Codex",
+      "previous_owner": "Codex",
+      "previous_reviewer": "Gemini",
+      "reason": "Declare the implementation files required by the identity gate, exclude the task brief from delivery, and replace unavailable Gemini review with independent Human/Ops review.",
+      "reviewer": "Human/Ops",
+      "schema_version": 1
+    },
+    "depends_on": [],
+    "dev_bridge": {
+      "actor": {
+        "capabilities": [
+          "fleet.dispatch",
+          "dev-task.dispatch"
+        ],
+        "id": "Human/Ops",
+        "roles": [
+          "operator"
+        ]
+      },
+      "audit_conversation_href": "codex://root/follow-original-plan-review-identity-20260802",
+      "conversation_id": "codex-root-follow-original-plan-review-identity-20260802",
+      "documents": [
+        {
+          "kind": "RUNTIME_REGRESSION",
+          "path": ".orchestrator/supervisor.py",
+          "sourceRefs": [
+            "PR #4414 merge dc5136394eb1041ceea1dcc066e55ac2179ca0e5",
+            "PR #4445 merge 2350e4e85c69009b52e7fbb75e621b04f83f66c9",
+            "Human/Ops reviewer was automatically replaced by Codex2 before exact-head approval"
+          ]
+        },
+        {
+          "kind": "REGRESSION_TARGET",
+          "path": "scripts/ai_status.py",
+          "sourceRefs": [
+            "Codex and Codex2 share one ChatGPT account",
+            "same-account reviewer must be rejected"
+          ]
+        },
+        {
+          "kind": "REGRESSION_TARGET",
+          "path": ".orchestrator/test_supervisor.py",
+          "sourceRefs": [
+            "bound-review reassignment and unavailable reviewer paths"
+          ]
+        }
+      ],
+      "emitted_at": "2026-08-02T05:45:00Z",
+      "intent": "repair_bound_review_identity_continuity_after_same_account_auto_approval",
+      "mode": "kernel_repair",
+      "packet_digest": "e04aa654bbbe4742e17dec6ec7937d8189e1e2f9bb2ef0fd6ba08c2abf403bf6",
+      "packet_id": "pkt-sup-review-identity-bound-reassign-guard-20260802T0545Z",
+      "source_turn_ids": [
+        "user-questioned-unplanned-changes",
+        "user-authorized-supervisor-fleet-completion"
+      ],
+      "task_spec": {
+        "acceptance": [
+          "Start from current origin/dev; reference #4414 and #4445 as evidence only and do not rewrite V3 failure-record behavior.",
+          "For a task in review or review_approved with a valid exact-head review binding or pending reviewer handoff, automatic provider/lane recovery must preserve the reviewer identity; it must block or retain the handoff rather than substitute an unavailable reviewer.",
+          "The identity-equivalence policy must reject Codex/Codex2 as an owner/reviewer pair for approval or merge gating, even when their agent labels differ.",
+          "Normal unbound task reassignment remains available only to a genuinely independent reviewer lane; no broad scheduler redesign.",
+          "Regression tests reproduce #4445: owner Codex, reviewer Human/Ops, exact head binding, Human/Ops unavailable, Codex2 selectable; assert reviewer is not changed, approval cannot be created, and no merge-ready state results.",
+          "Regression tests cover a valid independent reassignment for an unbound task and forged/stale binding negatives.",
+          "Do not modify .orchestrator/config.json, live runtime JSON, retry thresholds, provider readiness policy, deployment configuration, V3 failure-record schema, or product tasks.",
+          "Use a clean governed worktree and task branch task/SUP-REVIEW-IDENTITY-BOUND-REASSIGN-GUARD-20260802; PR target dev; run focused and complete supervisor/ai-status regressions plus diff/trailer checks.",
+          "Require Gemini exact-head review and protected merge after all checks; rollout is source merge only and rollback is revert of this follow-up merge."
+        ],
+        "artifacts": [
+          ".orchestrator/supervisor.py",
+          ".orchestrator/test_supervisor.py",
+          "scripts/ai_status.py",
+          "scripts/test_ai_status.py",
+          "docs/deployment/evidence/supervisor/SUP-REVIEW-IDENTITY-BOUND-REASSIGN-GUARD-20260802/"
+        ],
+        "depends_on": [],
+        "id": "SUP-REVIEW-IDENTITY-BOUND-REASSIGN-GUARD-20260802",
+        "owner": "Claude2",
+        "phase": "Supervisor Runtime Repair / Bound Review Identity",
+        "reviewer": "Gemini",
+        "summary": "Fail closed when an exact-head review binding would lose its designated independent reviewer; reject same-account reviewer pairs.",
+        "title": "Guard bound review identity from auto reassignment"
+      },
+      "task_spec_hash": "a32f724204c52c95c7a185a647b4527d88daae35d681aa967d2ab4810928b1ff"
+    },
+    "github_review_bridge": {
+      "actor": "Human/Ops",
+      "base": "dev",
+      "decision": "reopen",
+      "head_branch": "task/SUP-REVIEW-IDENTITY-BOUND-REASSIGN-GUARD-20260802",
+      "head_sha": "f0924348fecadf5cddc5c52707a5503eee9a1000",
+      "mode": "required_commit_status",
+      "pr": 4488,
+      "pr_url": "https://github.com/ajoe734/pantheon/pull/4488",
+      "recorded_at": "2026-08-02T09:39:27Z",
+      "repository": "ajoe734/pantheon",
+      "review_error": "gh: Unprocessable Entity (HTTP 422)",
+      "status_context": "Pantheon canonical review gate",
+      "status_id": 51498927240,
+      "status_state": "failure"
+    },
+    "id": "SUP-REVIEW-IDENTITY-BOUND-REASSIGN-GUARD-20260802",
+    "last_update": "2026-08-02T09:45:53Z",
+    "next": "Superseded by explicit operator direction on 2026-08-02: Codex and Codex2 may use different accounts; keep configured quota groups distinct and do not impose hardcoded account equivalence or a global mutual-review prohibition. No implementation or merge is authorized. PR #4499 account-neutral governance remains authoritative.",
+    "owner": "Codex",
+    "phase": "Supervisor Runtime Repair / Bound Review Identity",
+    "review_binding": {
+      "base": "dev",
+      "head_branch": "task/SUP-REVIEW-IDENTITY-BOUND-REASSIGN-GUARD-20260802",
+      "head_sha": "f0924348fecadf5cddc5c52707a5503eee9a1000",
+      "pr": 4488
+    },
+    "review_file": "docs/deployment/evidence/supervisor/SUP-REVIEW-IDENTITY-BOUND-REASSIGN-GUARD-20260802/evidence.json",
+    "review_notes_zh": [
+      "獨立核對 exact head f0924348：Codex/Codex2 distinct-label equivalent-account merge_then_review 繞過已 fail closed；同-label legacy contract 保留；7 個精準 regression、舊漏洞重播、diff scope、current-dev ancestry 與 GitHub 8/8 checks 全數通過。"
+    ],
+    "reviewer": "Human/Ops",
+    "status": "done",
+    "summary_zh": "Fail closed when an exact-head review binding would lose its designated independent reviewer; reject same-account reviewer pairs.",
+    "title": "Guard bound review identity from auto reassignment",
+    "terminal_outcome": "superseded",
+    "superseded_by": "OPS-CODEX-CHATBOX-ROUTING-RULES-OPERATOR-V4-20260802"
+  },
+  "handoffs": [
+    {
+      "created_at": "2026-08-02T06:18:15Z",
+      "from": "Claude2",
+      "message": "Helper-claimed by Codex while Claude2 is dispatch-paused.",
+      "resolved_at": "2026-08-02T06:18:46Z",
+      "status": "done",
+      "task_id": "SUP-REVIEW-IDENTITY-BOUND-REASSIGN-GUARD-20260802",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-08-02T06:37:14Z",
+      "from": "Codex",
+      "message": "PR #4488 is ready for independent exact-head review at e98db58d50395c1ee7281ba7f702b28e6a261919. Review the bound reviewer retention, Codex/Codex2 identity equivalence, focused/full regressions, and task evidence manifest; approve with REVIEW_PR=4488 REVIEW_HEAD_SHA=e98db58d50395c1ee7281ba7f702b28e6a261919 REVIEW_FILE=docs/deployment/evidence/supervisor/SUP-REVIEW-IDENTITY-BOUND-REASSIGN-GUARD-20260802/evidence.json.",
+      "resolved_at": "2026-08-02T07:00:51Z",
+      "status": "done",
+      "task_id": "SUP-REVIEW-IDENTITY-BOUND-REASSIGN-GUARD-20260802",
+      "to": "Gemini"
+    },
+    {
+      "created_at": "2026-08-02T07:00:51Z",
+      "from": "Human/Ops",
+      "message": "PR #4488 head e98db58d50395c1ee7281ba7f702b28e6a261919 is behind current dev and exceeds its original declared scope. Compose current origin/dev, remove the task brief from the PR, keep the revised eight artifact scopes only, update pending-review evidence to Human/Ops, rerun focused and full regressions, and hand off the new exact head.",
+      "resolved_at": "2026-08-02T07:00:51Z",
+      "status": "done",
+      "task_id": "SUP-REVIEW-IDENTITY-BOUND-REASSIGN-GUARD-20260802",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-08-02T07:09:32Z",
+      "from": "Codex",
+      "message": "PR #4488 exact head 0b05455f0c96e1900825f888d36c638a61dcce51 is composed with origin/dev 5cb03dd5ebe3ce13435c848175c5dab5450e9ea5; the task brief is excluded and only the revised eight artifact scopes remain. Focused 9, supervisor 495 + 102 subtests, ai-status 159 + 31 subtests, merge-gate 94, py_compile, diff check, and all new-head Branch CI checks passed. Please perform Human/Ops exact-head review and protected merge using the task evidence manifest.",
+      "resolved_at": "2026-08-02T07:15:15Z",
+      "status": "done",
+      "task_id": "SUP-REVIEW-IDENTITY-BOUND-REASSIGN-GUARD-20260802",
+      "to": "Human/Ops"
+    },
+    {
+      "created_at": "2026-08-02T07:15:15Z",
+      "from": "Human/Ops",
+      "message": "Human/Ops approved PR #4488 exact head 0b05455f0c96e1900825f888d36c638a61dcce51 after independent scope, source, negative-gate, and focused regression review.",
+      "resolved_at": "2026-08-02T07:16:34Z",
+      "status": "done",
+      "task_id": "SUP-REVIEW-IDENTITY-BOUND-REASSIGN-GUARD-20260802",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-08-02T07:16:34Z",
+      "from": "Human/Ops",
+      "message": "Exact-head review rejects 0b05455f0c96e1900825f888d36c638a61dcce51: .orchestrator/review_identity.py aliases Codex3 without verified shared-account evidence. Remove Codex3 from the equivalence set, add a negative regression proving Codex and Codex3 remain independent absent explicit configured evidence, rerun focused/full supervisor, ai-status and merge-gate suites, update evidence, and hand off a new exact head. Change nothing else.",
+      "resolved_at": "2026-08-02T07:16:34Z",
+      "status": "done",
+      "task_id": "SUP-REVIEW-IDENTITY-BOUND-REASSIGN-GUARD-20260802",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-08-02T07:17:47Z",
+      "from": "Human/Ops",
+      "message": "撤銷無效 approval：exact head 0b05455 仍將未證實的 Codex3 視為 Codex/Codex2 同帳號，違反 canonical acceptance 與已記錄 reviewer finding。不得 finalize、merge 或部署；只可移除 Codex3 alias、加入其獨立負向測試，重新驗證並重新 handoff。",
+      "resolved_at": "2026-08-02T07:17:47Z",
+      "status": "done",
+      "task_id": "SUP-REVIEW-IDENTITY-BOUND-REASSIGN-GUARD-20260802",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-08-02T07:25:01Z",
+      "from": "Codex",
+      "message": "PR #4488 exact head 3ee3aaa86f6a1850b2cf1b3eeca60a1b2b6e8d7b removes unsupported Codex3 same-account alias, adds the independent negative regression, composes origin/dev 79ba3f431127bf9718697d2ba9e9ddce97969ec3, and passes focused 10, supervisor 503 + 147 subtests, ai-status 159 + 31 subtests, merge-gate 95, py_compile, JSON, trailer range, and committed diff checks. Please perform fresh Human/Ops exact-head review against the bound evidence manifest.",
+      "resolved_at": "2026-08-02T07:29:54Z",
+      "status": "done",
+      "task_id": "SUP-REVIEW-IDENTITY-BOUND-REASSIGN-GUARD-20260802",
+      "to": "Human/Ops"
+    },
+    {
+      "created_at": "2026-08-02T07:29:54Z",
+      "from": "Human/Ops",
+      "message": "Human/Ops 獨立核可 PR #4488 exact head 3ee3aaa86f6a1850b2cf1b3eeca60a1b2b6e8d7b；可進入受保護 root merge gate。",
+      "resolved_at": "2026-08-02T07:35:02Z",
+      "status": "done",
+      "task_id": "SUP-REVIEW-IDENTITY-BOUND-REASSIGN-GUARD-20260802",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-08-02T07:35:02Z",
+      "from": "Human/Ops",
+      "message": "Exact-head review rejects 3ee3aaa86f6a1850b2cf1b3eeca60a1b2b6e8d7b: same-account identity still opens a merge authorization bypass under the documented merge_then_review policy. Exact reproduction on this head with owner=Codex, reviewer=Codex2, status=in_progress, merge_policy=merge_then_review returns policy=merge_then_review, requires_independent_review=false, declaration_honored=true, allow_merge=true, allow_auto_merge=true, reason=merge_then_review_permitted. This violates canonical acceptance that Codex/Codex2 must be rejected as an owner/reviewer pair at merge authorization. Keep legacy explicitly same-label owner=reviewer merge_then_review behavior only if policy requires it, but distinguish an invalid equivalent-alias pair from an intentional single-identity no-review contract. Add contract, evaluate_gate, integrator, and finalize regressions proving Codex/Codex2 cannot merge or auto-merge under merge_then_review while Codex/Codex remains documented behavior; rerun full suites, update evidence, compose current dev, and hand off a new exact head. No config or live action.",
+      "resolved_at": "2026-08-02T07:35:02Z",
+      "status": "done",
+      "task_id": "SUP-REVIEW-IDENTITY-BOUND-REASSIGN-GUARD-20260802",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-08-02T07:42:32Z",
+      "from": "Codex",
+      "message": "Review PR #4488 exact head f0924348fecadf5cddc5c52707a5503eee9a1000. Prior 3ee3aaa was rejected because Codex/Codex2 could use merge_then_review; new contract honors that policy only for explicit same-label roles and adds evaluator, integrator, task_finalize, and safe_pr fail-closed regressions. Focused 19; supervisor 503+147; ai-status 159+31; merge-gate 101; py_compile/JSON/diff/trailers and GitHub CI 8/8 pass; auto-merge is off. Bind evidence.json and this exact head if approved.",
+      "resolved_at": "2026-08-02T07:43:28Z",
+      "status": "done",
+      "task_id": "SUP-REVIEW-IDENTITY-BOUND-REASSIGN-GUARD-20260802",
+      "to": "Human/Ops"
+    },
+    {
+      "created_at": "2026-08-02T07:43:28Z",
+      "from": "Human/Ops",
+      "message": "Review approved for PR #4488 exact head f0924348fecadf5cddc5c52707a5503eee9a1000 after independent replay of the prior merge_then_review alias bypass. Equivalent Codex/Codex2 labels now force review_before_merge and block merge/auto-merge; intentional exact same-label behavior remains. Exact scope, current-dev ancestry, focused regressions, diff check, trailers, and all visible GitHub checks verified.",
+      "resolved_at": "2026-08-02T07:44:15Z",
+      "status": "done",
+      "task_id": "SUP-REVIEW-IDENTITY-BOUND-REASSIGN-GUARD-20260802",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-08-02T07:44:15Z",
+      "from": "Human/Ops",
+      "message": "Operator scope correction rejects exact head f0924348fecadf5cddc5c52707a5503eee9a1000: Codex and Codex2 may be different accounts. Do not merge them into one identity/quota group and do not install a global rule that forbids them from reviewing each other. Remove the cross-label Codex/Codex2 equivalence from review_identity, approval, reconciliation, and merge authorization plus its tests/evidence. Preserve only the separate authorized repair: an already-bound exact-head reviewer or pending reviewer handoff must not be silently substituted when that designated reviewer is unavailable. Account/quota groups remain distinct; any auth/quota fallback is task-scoped and evidence-driven. Recompose current dev, rerun the bounded suites, and hand off a new exact head.",
+      "resolved_at": "2026-08-02T07:44:15Z",
+      "status": "done",
+      "task_id": "SUP-REVIEW-IDENTITY-BOUND-REASSIGN-GUARD-20260802",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-08-02T09:39:27Z",
+      "from": "Human/Ops",
+      "message": "Resume in a newly prepared clean supervisor worktree from current origin/dev; do not reuse the dirty lease or merge the conflicting old branch history. PR #4488 head f0924348fecadf5cddc5c52707a5503eee9a1000 is evidence/source material only. Recompose exactly the nine declared identity-gate code/test/evidence paths so Codex and Codex2 remain one non-independent review identity at reassignment persistence, approval, closeout, and merge gates; preserve genuinely independent configured agents. Re-run focused + full supervisor, ai-status, integrator/finalize/safe-PR/merge-gate suites, exact diff/trailers/CI, then update #4488 or open a superseding PR with no unrelated generated files. This task must merge before SUP-ASSIGNMENT-FALLBACK-ATOMIC-REBINDS-OPERATOR-V4-20260802 can be accepted; that planner must consume this shared reviewer-eligibility predicate. No config/runtime/live mutation.",
+      "resolved_at": "2026-08-02T09:39:27Z",
+      "status": "done",
+      "task_id": "SUP-REVIEW-IDENTITY-BOUND-REASSIGN-GUARD-20260802",
+      "to": "Codex"
+    }
+  ],
+  "blockers": [
+    {
+      "created_at": "2026-08-02T07:46:37Z",
+      "message": "Closeout is not authorized: the governed task row is in_progress after Human/Ops rejected exact head f0924348fecadf5cddc5c52707a5503eee9a1000, PR #4488 remains open with Pantheon canonical review gate=failure, and this lease contains unrelated generated dashboard-bundle diffs plus assistant-dev-packet lock files. The dispatch brief's review_approved/3ee3aaa snapshot is stale. Need supervisor/Human-Ops to provide a clean task lease after preserving or removing the unrelated runtime-generated changes; then Codex can apply the bounded identity correction, revalidate, and request fresh exact-head review.",
+      "owner": "Codex",
+      "resolved_at": "2026-08-02T09:39:27Z",
+      "status": "resolved",
+      "task_id": "SUP-REVIEW-IDENTITY-BOUND-REASSIGN-GUARD-20260802",
+      "waiting_for": "Human/Ops"
+    }
+  ]
+}

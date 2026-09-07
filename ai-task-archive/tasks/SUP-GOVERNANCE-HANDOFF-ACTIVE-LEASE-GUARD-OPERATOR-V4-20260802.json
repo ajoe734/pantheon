@@ -1,0 +1,47 @@
+{
+  "version": 1,
+  "task_id": "SUP-GOVERNANCE-HANDOFF-ACTIVE-LEASE-GUARD-OPERATOR-V4-20260802",
+  "archived_at": "2026-08-02T10:01:52Z",
+  "terminal_status": "done",
+  "terminal_outcome": "superseded",
+  "task": {
+    "acceptance": [
+      "Operator constraint remains authoritative: Codex and Codex2 may be different accounts with distinct configured quota groups and no global mutual-review ban",
+      "This V4 replaces V3 and depends on the dispatchable bridge V4 rather than the permanently blocked V3 chain",
+      "Reproduce healthy workers killed with exit 143 immediately after their own review handoff or canonical review transition at 09:45 and 09:50 on 2026-08-02",
+      "A governance-only assign note reopen review or handoff cannot supersede a healthy active implementation lease",
+      "Explicit cancel eligible preemption exact reassignment or terminal task truth may end the lease",
+      "Execution responsibility review provenance and canonical task lifecycle remain separately auditable",
+      "Lease decisions use exact task run PID starttime queue event process generation and canonical event order",
+      "Concurrent owner reviewer or status mutation fails closed without killing unrelated work",
+      "Protect genuine stale-worker supersession and failure-recovery behavior with positive and negative tests",
+      "Run focused supervisor and ai-status suites full relevant regression py_compile evidence JSON trailer and diff checks",
+      "Do not modify account groups quota groups reviewer policy provider config live runtime services or product tasks",
+      "Deliver clean PR to dev exact-head Human/Ops review merge and canonical archive before rollout; rollback is merge revert"
+    ],
+    "artifacts": [
+      ".orchestrator/supervisor.py",
+      ".orchestrator/test_supervisor.py",
+      "scripts/ai_status.py",
+      "scripts/test_ai_status.py",
+      "docs/deployment/evidence/supervisor/SUP-GOVERNANCE-HANDOFF-ACTIVE-LEASE-GUARD-OPERATOR-V4-20260802/"
+    ],
+    "depends_on": [
+      "SUP-ASSIGNMENT-FALLBACK-ATOMIC-REBINDS-OPERATOR-V4-20260802",
+      "SUP-ASSISTANT-DEV-BRIDGE-ASSIGN-LOCK-TIMEOUT-OPERATOR-V4-20260802"
+    ],
+    "id": "SUP-GOVERNANCE-HANDOFF-ACTIVE-LEASE-GUARD-OPERATOR-V4-20260802",
+    "last_update": "2026-08-02T10:01:52Z",
+    "next": "Superseded before implementation because V4 contains false Codex/Codex2 independent-review acceptance. V5 preserves the active-lease scope and depends on the policy-correct bridge V5.",
+    "owner": "Codex",
+    "phase": "Supervisor Governance Handoff / Active Lease Guard / operator V4",
+    "reviewer": "Human/Ops",
+    "status": "done",
+    "summary_zh": "Prevent governance-only review or handoff transitions from killing the still-healthy worker that just produced them.",
+    "title": "Preserve active worker lease across governance handoff",
+    "terminal_outcome": "superseded",
+    "superseded_by": "SUP-GOVERNANCE-HANDOFF-ACTIVE-LEASE-GUARD-OPERATOR-V5-20260802"
+  },
+  "handoffs": [],
+  "blockers": []
+}

@@ -1,0 +1,190 @@
+{
+  "version": 1,
+  "task_id": "LIFECYCLE-PROJ-CAPACITY-001",
+  "archived_at": "2026-08-13T02:59:20Z",
+  "terminal_status": "done",
+  "terminal_outcome": "superseded",
+  "task": {
+    "acceptance": [
+      "At one million events and 150,000 loop runs, meet steady RSS <=2.0 GiB, peak <=2.5 GiB, and memory-growth <=256 MiB from 500k to 1M.",
+      "Meet documented batch/backlog/catch-up/read latency and indexed-query gates on the target-dev profile.",
+      "Pass transactional fault/restart/second-writer cases with RPO=0 and publish reproducible reviewed checksummed evidence."
+    ],
+    "artifacts": [
+      "services/trade_journey/lifecycle_projector_capacity.py",
+      "services/trade_journey/test_lifecycle_projector_capacity.py",
+      "services/trade_journey/test_lifecycle_projector_compose.py",
+      "docker-compose.yml",
+      "docs/deployment/evidence/lifecycle-projector/LIFECYCLE-PROJ-CAPACITY-001/"
+    ],
+    "depends_on": [
+      "LIFECYCLE-PROJ-REDUCER-001",
+      "LIFECYCLE-PROJ-BFF-001"
+    ],
+    "dev_bridge": {
+      "actor": {
+        "capabilities": [
+          "assistant.kernel.repair",
+          "assistant.dev-task.dispatch",
+          "fleet.dispatch"
+        ],
+        "id": "Human/Ops",
+        "roles": [
+          "operator"
+        ]
+      },
+      "audit_conversation_href": "docs/deployment/evidence/lifecycle-projector/LIFECYCLE-PROJ-INCIDENT-20260801/README.md",
+      "conversation_id": "codex-lifecycle-projector-incident-20260801",
+      "documents": [
+        {
+          "kind": "SA_SD_PLAN",
+          "path": "docs/04/pantheon_lifecycle_projector_incremental_redesign_2026-08-01/archive/LIFECYCLE_PROJECTOR_INCREMENTAL_REDESIGN_PLAN_2026-08-01.md",
+          "sourceRefs": [
+            "docs/deployment/evidence/lifecycle-projector/LIFECYCLE-PROJ-INCIDENT-20260801/evidence.json",
+            "docs/bff/execution-tasks/2026-08-01-lifecycle-projector-incremental-redesign/tasks.json",
+            "https://github.com/ajoe734/pantheon/pull/4448"
+          ]
+        }
+      ],
+      "emitted_at": "2026-08-01T09:30:00Z",
+      "intent": "implement_incremental_lifecycle_projector_through_governed_supervisor_tasks",
+      "mode": "kernel_repair",
+      "packet_digest": "cd6a4ef322dcc0bcd4c1567b0b88cc827745e9740ad1015cc8a8a4810f37a18c",
+      "packet_id": "lifecycle-projector-incremental-redesign-20260801-v1",
+      "source_turn_ids": [
+        "incident-analysis",
+        "emergency-containment",
+        "incremental-redesign-plan"
+      ],
+      "task_spec": {
+        "acceptance": [
+          "At one million events and 150,000 loop runs, meet steady RSS <=2.0 GiB, peak <=2.5 GiB, and memory-growth <=256 MiB from 500k to 1M.",
+          "Meet documented batch/backlog/catch-up/read latency and indexed-query gates on the target-dev profile.",
+          "Pass transactional fault/restart/second-writer cases with RPO=0 and publish reproducible reviewed checksummed evidence."
+        ],
+        "artifacts": [
+          "services/trade_journey/lifecycle_projector_capacity.py",
+          "services/trade_journey/test_lifecycle_projector_capacity.py",
+          "services/trade_journey/test_lifecycle_projector_compose.py",
+          "docker-compose.yml",
+          "docs/deployment/evidence/lifecycle-projector/LIFECYCLE-PROJ-CAPACITY-001/"
+        ],
+        "depends_on": [
+          "LIFECYCLE-PROJ-REDUCER-001",
+          "LIFECYCLE-PROJ-BFF-001"
+        ],
+        "id": "LIFECYCLE-PROJ-CAPACITY-001",
+        "owner": "Antigravity",
+        "phase": "wave-3-capacity",
+        "reviewer": "Human/Ops",
+        "summary": "Exact scope, non-goals, validation, rollout, and rollback are authoritative in tasks.json and LIFECYCLE-PROJ-CAPACITY-001.md.",
+        "title": "Prove bounded lifecycle projection capacity and failure behavior"
+      },
+      "task_spec_hash": "f6a4f9374bb31cd5f96e318f49cf96d96c826ad794cc0c888faf6a6c6c6bfb68"
+    },
+    "generation": 1,
+    "id": "LIFECYCLE-PROJ-CAPACITY-001",
+    "last_update": "2026-08-13T02:59:20Z",
+    "next": "Superseded by the 2026-08-13 V2 board reset. Preserve merged/archive evidence; remaining product work is rematerialized as dependency-free, current-source V2 roots.",
+    "owner": "Antigravity",
+    "phase": "wave-3-capacity",
+    "reviewer": "Codex",
+    "status": "done",
+    "summary_zh": "Exact scope, non-goals, validation, rollout, and rollback are authoritative in tasks.json and LIFECYCLE-PROJ-CAPACITY-001.md.",
+    "title": "Prove bounded lifecycle projection capacity and failure behavior",
+    "terminal_outcome": "superseded"
+  },
+  "handoffs": [
+    {
+      "created_at": "2026-08-01T15:37:33Z",
+      "from": "Human/Ops",
+      "message": "Auto-reassigned LIFECYCLE-PROJ-CAPACITY-001 away from unavailable lane Human/Ops (disabled, paused, sidecar-only, or auth-down); reviewer Human/Ops -> Codex.",
+      "resolved_at": "2026-08-01T15:51:25Z",
+      "status": "done",
+      "task_id": "LIFECYCLE-PROJ-CAPACITY-001",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-08-01T15:51:25Z",
+      "from": "Codex",
+      "message": "Auto-reassigned LIFECYCLE-PROJ-CAPACITY-001 away from unavailable lane Codex (disabled, paused, sidecar-only, or auth-down); reviewer Codex -> Codex2.",
+      "resolved_at": "2026-08-04T13:30:22Z",
+      "status": "done",
+      "task_id": "LIFECYCLE-PROJ-CAPACITY-001",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-08-04T13:24:57Z",
+      "from": "Antigravity",
+      "message": "Auto-reassigned LIFECYCLE-PROJ-CAPACITY-001 away from unavailable lane Antigravity (disabled, paused, sidecar-only, or auth-down); owner Antigravity -> Codex2, reviewer Codex2 -> Codex.",
+      "resolved_at": "2026-08-05T01:32:42Z",
+      "status": "done",
+      "task_id": "LIFECYCLE-PROJ-CAPACITY-001",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-08-07T12:25:14Z",
+      "from": "Claude",
+      "message": "Auto-reassigned LIFECYCLE-PROJ-CAPACITY-001 away from unavailable lane Claude (disabled, paused, sidecar-only, or auth-down); reviewer Claude -> Codex2.",
+      "resolved_at": "2026-08-07T13:13:01Z",
+      "status": "done",
+      "task_id": "LIFECYCLE-PROJ-CAPACITY-001",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-08-07T13:13:01Z",
+      "from": "Codex2",
+      "message": "Auto-reassigned LIFECYCLE-PROJ-CAPACITY-001 away from unavailable lane Codex2 (disabled, paused, sidecar-only, or auth-down); reviewer Codex2 -> Codex.",
+      "resolved_at": "2026-08-08T14:27:57Z",
+      "status": "done",
+      "task_id": "LIFECYCLE-PROJ-CAPACITY-001",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-08-08T14:24:45Z",
+      "from": "Antigravity",
+      "message": "Auto-reassigned LIFECYCLE-PROJ-CAPACITY-001 away from unavailable lane Antigravity (disabled, paused, sidecar-only, or auth-down); owner Antigravity -> Codex2.",
+      "resolved_at": "2026-08-09T10:10:27Z",
+      "status": "done",
+      "task_id": "LIFECYCLE-PROJ-CAPACITY-001",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-08-09T10:10:27Z",
+      "from": "Codex2",
+      "message": "Auto-reassigned LIFECYCLE-PROJ-CAPACITY-001 away from unavailable lane Codex2 (disabled, paused, sidecar-only, or auth-down); owner Codex2 -> Codex, reviewer Codex -> Antigravity.",
+      "resolved_at": "2026-08-09T15:08:24Z",
+      "status": "done",
+      "task_id": "LIFECYCLE-PROJ-CAPACITY-001",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-08-09T15:08:24Z",
+      "from": "Codex",
+      "message": "Auto-reassigned LIFECYCLE-PROJ-CAPACITY-001 away from unavailable lane Codex (disabled, paused, sidecar-only, or auth-down); owner Codex -> Codex2.",
+      "resolved_at": "2026-08-12T02:57:15Z",
+      "status": "done",
+      "task_id": "LIFECYCLE-PROJ-CAPACITY-001",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-08-12T02:57:15Z",
+      "from": "Codex2",
+      "message": "Auto-reassigned LIFECYCLE-PROJ-CAPACITY-001 away from unavailable lane Codex2 (disabled, paused, sidecar-only, or auth-down); owner Codex2 -> Antigravity, reviewer Antigravity -> Claude.",
+      "resolved_at": "2026-08-13T02:00:40Z",
+      "status": "done",
+      "task_id": "LIFECYCLE-PROJ-CAPACITY-001",
+      "to": "Antigravity"
+    },
+    {
+      "created_at": "2026-08-12T04:31:24Z",
+      "from": "Claude",
+      "message": "Auto-reassigned LIFECYCLE-PROJ-CAPACITY-001 away from unavailable lane Claude (disabled, paused, sidecar-only, or auth-down); reviewer Claude -> Codex.",
+      "status": "done",
+      "task_id": "LIFECYCLE-PROJ-CAPACITY-001",
+      "to": "Codex",
+      "resolved_at": "2026-08-13T02:59:20Z"
+    }
+  ],
+  "blockers": []
+}

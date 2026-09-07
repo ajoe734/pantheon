@@ -1,0 +1,52 @@
+{
+  "version": 1,
+  "task_id": "SUP-AUTOWORKER-QUOTA-ROUTING-LIVE-CANARY-OPERATOR-V4-20260802",
+  "archived_at": "2026-08-02T10:02:12Z",
+  "terminal_status": "done",
+  "terminal_outcome": "superseded",
+  "task": {
+    "acceptance": [
+      "Operator constraint remains authoritative: Codex and Codex2 may be different accounts with distinct configured quota groups and no global mutual-review ban",
+      "This V4 replaces the V3 task whose bridge dependency is permanently blocked by a superseded prerequisite",
+      "Bind every accepted source task to exact merged dev commit green checks and canonical completed archive",
+      "Promote only through the reviewed transactional runtime promotion path with gate-before-switch and automatic rollback",
+      "Prove captured fixture quota lines cannot pause Codex or Codex2",
+      "Prove task-scoped live authentication or quota unavailability triggers bounded legal owner and reviewer pair fallback without changing configured account policy",
+      "Prove a healthy post-cooldown Antigravity live probe clears quota pause without manual state edits",
+      "Prove stale eligible missing-process streak recovery is bounded while live auth and quota failures remain fail closed",
+      "Prove governance review and handoff do not kill the active worker lease",
+      "Observe at least thirty scheduler intervals near configured 30 second cadence and record p50 p95 max lag and every lock hold",
+      "Require no runtime-admission or canonical lock hold above 30 seconds and no overlapping supervisor cycles",
+      "Record worker start completion supersede retry reassignment provider and queue deltas",
+      "Rollback automatically on any identity cadence projection lease provider config or queue invariant failure",
+      "Do not enable real writes trading capital product controllers or account policy changes",
+      "Commit evidence in a clean PR to dev with exact-head Human/Ops review merge and canonical archive; rollback evidence must identify restored PID root commit tree and config hash"
+    ],
+    "artifacts": [
+      "docs/deployment/evidence/supervisor/SUP-AUTOWORKER-QUOTA-ROUTING-LIVE-CANARY-OPERATOR-V4-20260802/"
+    ],
+    "depends_on": [
+      "SUP-WORKER-FAILURE-ENVELOPE-GATE-20260802",
+      "SUP-PROVIDER-PAUSE-RECOVERY-PROBE-20260802",
+      "SUP-FAILURE-STREAK-DISPATCH-CONSUMPTION-V2-20260801",
+      "SUP-ASSIGNMENT-FALLBACK-ATOMIC-REBINDS-OPERATOR-V4-20260802",
+      "SUP-ASSISTANT-DEV-BRIDGE-ASSIGN-LOCK-TIMEOUT-OPERATOR-V4-20260802",
+      "SUP-GOVERNANCE-HANDOFF-ACTIVE-LEASE-GUARD-OPERATOR-V4-20260802",
+      "SUP-SCHEDULER-FIXED-CADENCE-BATCH-MUTATIONS-OPERATOR-V4-20260802",
+      "SUP-RUNTIME-PROMOTION-FAILURE-MATRIX-INTEGRATION-OPERATOR-V2-20260802"
+    ],
+    "id": "SUP-AUTOWORKER-QUOTA-ROUTING-LIVE-CANARY-OPERATOR-V4-20260802",
+    "last_update": "2026-08-02T10:02:12Z",
+    "next": "Superseded before implementation because V4 contains false reviewer policy and omits the corrective identity and guarded-dispatcher dependencies. V5 is the only authorized transactional live canary.",
+    "owner": "Codex",
+    "phase": "Supervisor Live Canary / Quota Routing and Cadence / operator V4",
+    "reviewer": "Human/Ops",
+    "status": "done",
+    "summary_zh": "Promote the fully reviewed supervisor source transactionally and prove quota fallback handoff leases and cadence under live observation with automatic rollback.",
+    "title": "Run transactional live quota-routing and cadence canary",
+    "terminal_outcome": "superseded",
+    "superseded_by": "SUP-AUTOWORKER-QUOTA-ROUTING-LIVE-CANARY-OPERATOR-V5-20260802"
+  },
+  "handoffs": [],
+  "blockers": []
+}

@@ -1,0 +1,308 @@
+{
+  "version": 1,
+  "task_id": "SUP-L12-MIN-LATE-MATERIALIZATION-RECONCILE-20260809",
+  "archived_at": "2026-08-11T19:19:58Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "acceptance": [
+      "Start from current origin/dev in a clean task worktree and inspect authoritative active tasks, successful archives, open PRs, branches, worktrees, the two minimum-functional bridge receipts, and the later Agora packet before changing documentation or task state.",
+      "Treat the reviewed 8/08 minimum-functional task family as the declared successor to the unmaterialized 7/31 28-task DAG. Do not revive or apply the old previous-current catalog solely to make SUP-L12-HELD-CLOSE-OVERLAP-GUARD-20260731 pass.",
+      "Explain and reconcile the late materialization of L12-VERIFY-LEARN-REAL-VERIFIER-001: it is reused by the later Agora/minimum-functional chain and must not be simultaneously classified as an absent legacy ID. Update the minimum-functional reconciliation documents and task hashes/DAG only where required by that truth.",
+      "Resolve the SUP-L12-MIN-FUNCTION-DAG-RECONCILE-20260808 deadlock and the L12-CONTROLLER-TEACH-20260731 versus L12-MIN-TEACH-20260808 ownership collision through explicit successor/supersession or dependency truth. Do not add a TEACH special-case exemption and do not weaken the generic live nonterminal artifact-overlap guard.",
+      "Use only governed ai-status commands for canonical task transitions. Never edit ai-status.json, current-work.md, task-state events, queue JSON, or runtime state by hand.",
+      "Produce a committed pre-review evidence manifest that records the authoritative snapshot digest, packet/receipt digests, old-to-successor mapping, active task IDs, dependency validation, artifact-overlap result, and why SUP-L12-HELD-CLOSE-OVERLAP-GUARD-20260731 is now superseded rather than eligible for old-DAG materialization.",
+      "Validate JSON and DAG structure, prove every active minimum-functional task dependency resolves to one canonical task, prove no two runnable successor tasks have unordered overlapping declared artifacts, and run git diff --check. No product tasks may be launched by this reconciliation task.",
+      "Commit with required trailers, push the exact task branch, open a PR to dev, obtain fresh independent Codex exact-head review with REVIEW_FILE bound, wait for every required check, and merge through the protected flow.",
+      "After merge, mark this reconciliation task done and hand Human/Ops exact evidence for governed supersession of SUP-L12-HELD-CLOSE-OVERLAP-GUARD-20260731 and the obsolete blocked M0 reconciliation row, plus release of successor dependencies. Do not claim the old --previous-current profile is admissible.",
+      "Rollback is a normal revert of the reconciliation PR plus governed restoration of any task transitions recorded by the evidence; never restore the old 28-task lane by direct state editing."
+    ],
+    "artifacts": [
+      "docs/bff/execution-tasks/2026-08-08-l12-minimum-functional-closure/INDEX.md",
+      "docs/bff/execution-tasks/2026-08-08-l12-minimum-functional-closure/execution-tasks.json",
+      "docs/bff/execution-tasks/2026-08-08-l12-minimum-functional-closure/legacy-28-reconciliation.json",
+      "docs/deployment/evidence/twelve-loop-gap/SUP-L12-MIN-LATE-MATERIALIZATION-RECONCILE-20260809/"
+    ],
+    "depends_on": [],
+    "dev_bridge": {
+      "actor": {
+        "capabilities": [
+          "dev-task.dispatch",
+          "fleet.dispatch",
+          "integration.plan"
+        ],
+        "id": "Codex",
+        "roles": [
+          "coordination-agent",
+          "operator-delegate"
+        ]
+      },
+      "audit_conversation_href": null,
+      "conversation_id": "codex-root-two-blocker-dev-closeout-20260809",
+      "documents": [
+        {
+          "kind": "MERGED_ENOTDIR_EVIDENCE",
+          "path": "docs/deployment/evidence/twelve-loop-gap/SUP-RUNTIME-V10-PROMOTION-GIT-DIR-ENOTDIR-20260808/evidence.json",
+          "sourceRefs": [
+            "https://github.com/ajoe734/pantheon/pull/4642",
+            "reviewed head ebf8afe08bf5353db9f158acc496c03b5c4766a8",
+            "merge fee6f738a58b82ccc269ed8481ddc5a1a7a68b85",
+            "canonical task blocker recorded 2026-08-09T05:47:01Z"
+          ]
+        },
+        {
+          "kind": "CLOSEOUT_RULE",
+          "path": ".orchestrator/skills/task-closeout-finalization.md",
+          "sourceRefs": [
+            "Review Evidence Manifest Rule",
+            "reconcile_merged_done recovery rules"
+          ]
+        },
+        {
+          "kind": "MINIMUM_FUNCTIONAL_SUCCESSOR_PLAN",
+          "path": "docs/bff/execution-tasks/2026-08-08-l12-minimum-functional-closure/INDEX.md",
+          "sourceRefs": [
+            "PR #4621",
+            "pkt-l12-minimum-functional-a-20260808-f56e2bc91",
+            "pkt-l12-minimum-functional-b-20260808-f56e2bc91"
+          ]
+        },
+        {
+          "kind": "LEGACY_DAG_RECONCILIATION",
+          "path": "docs/bff/execution-tasks/2026-08-08-l12-minimum-functional-closure/legacy-28-reconciliation.json",
+          "sourceRefs": [
+            "SUP-L12-MIN-FUNCTION-DAG-RECONCILE-20260808",
+            "late materialization of L12-VERIFY-LEARN-REAL-VERIFIER-001",
+            "fresh governed dry-run failure L12-CONTROLLER-TEACH-20260731 <-> L12-MIN-TEACH-20260808"
+          ]
+        }
+      ],
+      "emitted_at": "2026-08-09T06:00:36Z",
+      "intent": "close_two_merged_but_blocked_delivery_gaps",
+      "mode": "kernel_repair",
+      "packet_digest": "10c73f05ddc28f134e678ef5a36b6739930605572b54753038fcb206cef9fb3f",
+      "packet_id": "pkt-two-blocker-dev-closeout-20260809T060036Z",
+      "source_turn_ids": [
+        "user-asked-why-two-tasks-stuck",
+        "codex-readonly-two-task-root-cause-20260809",
+        "user-authorized-complete-and-merge-dev-20260809"
+      ],
+      "task_spec": {
+        "acceptance": [
+          "Start from current origin/dev in a clean task worktree and inspect authoritative active tasks, successful archives, open PRs, branches, worktrees, the two minimum-functional bridge receipts, and the later Agora packet before changing documentation or task state.",
+          "Treat the reviewed 8/08 minimum-functional task family as the declared successor to the unmaterialized 7/31 28-task DAG. Do not revive or apply the old previous-current catalog solely to make SUP-L12-HELD-CLOSE-OVERLAP-GUARD-20260731 pass.",
+          "Explain and reconcile the late materialization of L12-VERIFY-LEARN-REAL-VERIFIER-001: it is reused by the later Agora/minimum-functional chain and must not be simultaneously classified as an absent legacy ID. Update the minimum-functional reconciliation documents and task hashes/DAG only where required by that truth.",
+          "Resolve the SUP-L12-MIN-FUNCTION-DAG-RECONCILE-20260808 deadlock and the L12-CONTROLLER-TEACH-20260731 versus L12-MIN-TEACH-20260808 ownership collision through explicit successor/supersession or dependency truth. Do not add a TEACH special-case exemption and do not weaken the generic live nonterminal artifact-overlap guard.",
+          "Use only governed ai-status commands for canonical task transitions. Never edit ai-status.json, current-work.md, task-state events, queue JSON, or runtime state by hand.",
+          "Produce a committed pre-review evidence manifest that records the authoritative snapshot digest, packet/receipt digests, old-to-successor mapping, active task IDs, dependency validation, artifact-overlap result, and why SUP-L12-HELD-CLOSE-OVERLAP-GUARD-20260731 is now superseded rather than eligible for old-DAG materialization.",
+          "Validate JSON and DAG structure, prove every active minimum-functional task dependency resolves to one canonical task, prove no two runnable successor tasks have unordered overlapping declared artifacts, and run git diff --check. No product tasks may be launched by this reconciliation task.",
+          "Commit with required trailers, push the exact task branch, open a PR to dev, obtain fresh independent Codex exact-head review with REVIEW_FILE bound, wait for every required check, and merge through the protected flow.",
+          "After merge, mark this reconciliation task done and hand Human/Ops exact evidence for governed supersession of SUP-L12-HELD-CLOSE-OVERLAP-GUARD-20260731 and the obsolete blocked M0 reconciliation row, plus release of successor dependencies. Do not claim the old --previous-current profile is admissible.",
+          "Rollback is a normal revert of the reconciliation PR plus governed restoration of any task transitions recorded by the evidence; never restore the old 28-task lane by direct state editing."
+        ],
+        "artifacts": [
+          "docs/bff/execution-tasks/2026-08-08-l12-minimum-functional-closure/INDEX.md",
+          "docs/bff/execution-tasks/2026-08-08-l12-minimum-functional-closure/execution-tasks.json",
+          "docs/bff/execution-tasks/2026-08-08-l12-minimum-functional-closure/legacy-28-reconciliation.json",
+          "docs/deployment/evidence/twelve-loop-gap/SUP-L12-MIN-LATE-MATERIALIZATION-RECONCILE-20260809/"
+        ],
+        "depends_on": [],
+        "id": "SUP-L12-MIN-LATE-MATERIALIZATION-RECONCILE-20260809",
+        "owner": "Codex2",
+        "phase": "L12 Minimum Functional Closure / DAG Reconciliation",
+        "reviewer": "Codex",
+        "summary": "Resolve the race between the reviewed 8/08 minimum-functional successor packet and later materialization of reused legacy IDs. Make the successor DAG and canonical task truth consistent, retire the old 7/31 materialization lane, and unblock the minimum-functional tasks without weakening live artifact-overlap guards or implementing product code.",
+        "title": "Reconcile the minimum L12 successor with late legacy IDs"
+      },
+      "task_spec_hash": "83146804f0625f6468f48e9b7c7f1a005aa57b868d71679986cbce5546452e21"
+    },
+    "failure_streak": 0,
+    "github_review_bridge": {
+      "actor": "Codex",
+      "base": "dev",
+      "decision": "approve",
+      "head_branch": "task/SUP-L12-MIN-LATE-MATERIALIZATION-RECONCILE-20260809",
+      "head_sha": "b32892abd6640e3d45ba290ef8a72aeb364d9340",
+      "mode": "required_commit_status",
+      "pr": 4758,
+      "pr_url": "https://github.com/ajoe734/pantheon/pull/4758",
+      "recorded_at": "2026-08-11T19:15:03Z",
+      "repository": "ajoe734/pantheon",
+      "review_error": "gh: Unprocessable Entity (HTTP 422)",
+      "review_proof_ref": "refs/tags/pantheon-review/approve/b32892abd6640e3d45ba290ef8a72aeb364d9340",
+      "status_context": "Pantheon canonical review gate",
+      "status_id": 52050208409,
+      "status_state": "success"
+    },
+    "id": "SUP-L12-MIN-LATE-MATERIALIZATION-RECONCILE-20260809",
+    "last_update": "2026-08-11T19:19:58Z",
+    "next": "Owner finalized approved task after PR #4758 merged into dev tip",
+    "owner": "Antigravity",
+    "phase": "L12 Minimum Functional Closure / DAG Reconciliation",
+    "review_binding": {
+      "base": "dev",
+      "head_branch": "task/SUP-L12-MIN-LATE-MATERIALIZATION-RECONCILE-20260809",
+      "head_sha": "b32892abd6640e3d45ba290ef8a72aeb364d9340",
+      "pr": 4758
+    },
+    "review_file": "docs/deployment/evidence/twelve-loop-gap/SUP-L12-MIN-LATE-MATERIALIZATION-RECONCILE-20260809/evidence.json",
+    "review_notes_zh": [
+      "PR #4758 exact head b32892abd 已獨立核對；唯一 repo diff 為預先提交的 task evidence manifest，未改 product code、orchestrator config 或 generic overlap guard。",
+      "28/28 legacy IDs 現況為 0 active、1 archived superseded、0 open PR/remote branch/worktree；Agora 晚到 L12-VERIFY-LEARN-REAL-VERIFIER-001 已明確 supersede_by L12-MIN-E2E-20260808。",
+      "17/17 successor task receipt hashes、17 個 canonical dependency resolution、DAG 與 artifact scopes 均核對通過；無 unordered successor overlap。JSON、git diff --check、95 個 merge-gate tests 與 required non-review CI 通過。"
+    ],
+    "reviewer": "Codex",
+    "status": "done",
+    "summary_zh": "Resolve the race between the reviewed 8/08 minimum-functional successor packet and later materialization of reused legacy IDs. Make the successor DAG and canonical task truth consistent, retire the old 7/31 materialization lane, and unblock the minimum-functional tasks without weakening live artifact-overlap guards or implementing product code.",
+    "title": "Reconcile the minimum L12 successor with late legacy IDs",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-08-11T19:19:58Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/sup-l12-min-late-materialization-reconcile-20260809",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/SUP-L12-MIN-LATE-MATERIALIZATION-RECONCILE-20260809",
+      "git_clean_required": false,
+      "status_command_runtime": {
+        "command_root": "/home/lupin/pantheon-ci-deploy/command-runtimes/9e023f7eeadce48fbc161de431fe2edbf4e1b805",
+        "source_sha": "9e023f7eeadce48fbc161de431fe2edbf4e1b805",
+        "base_ref": "origin/dev",
+        "remote": "ajoe734/pantheon",
+        "status_root": "/home/lupin/pantheon",
+        "delivery_root": "/tmp/pantheon-worker-worktrees/pantheon/sup-l12-min-late-materialization-reconcile-20260809",
+        "wrapper_root": "/home/lupin/pantheon-ci-deploy/command-runtimes/9e023f7eeadce48fbc161de431fe2edbf4e1b805",
+        "worker_lease": {
+          "schema_version": 1,
+          "task_id": "SUP-L12-MIN-LATE-MATERIALIZATION-RECONCILE-20260809",
+          "worker_run_id": "antigravity1-1-20260811T191709Z-86d21cf2",
+          "queue_event_id": "evt-20260811T191554Z-24d6dae9",
+          "pid": 390034,
+          "pid_start_ticks": 31487690,
+          "process_generation": "worker-process-generation-sha256:ddf0553d01efb6de17ee74dc9a6e83f01af33072797720f2b2d9ed2852efead5"
+        }
+      },
+      "commit": "b32892abd6640e3d45ba290ef8a72aeb364d9340",
+      "commit_subject": "SUP-L12-MIN-LATE-MATERIALIZATION-RECONCILE-20260809: bind journal",
+      "commit_author": {
+        "name": "pantheon-dev",
+        "email": "bjoe734@gmail.com"
+      },
+      "commit_metadata": {
+        "Owned layer": "evidence manifest authoritative journal binding",
+        "Not changing": "task execution DAG definitions and mappings",
+        "Composes with": "origin PR #4758",
+        "LLM-Agent": "Antigravity",
+        "Task-ID": "SUP-L12-MIN-LATE-MATERIALIZATION-RECONCILE-20260809",
+        "Reviewer": "Codex",
+        "Verified": "verified_at, sequence 16871, event_id, state_sha256, and archive SHA256s bound"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 1,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/SUP-L12-MIN-LATE-MATERIALIZATION-RECONCILE-20260809",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "eb5702950cfb7e897e4ce92f66fef6560649adc7",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "created_at": "2026-08-11T18:04:08Z",
+      "from": "Antigravity",
+      "message": "PR #4758 opened with pre-review evidence manifest docs/deployment/evidence/twelve-loop-gap/SUP-L12-MIN-LATE-MATERIALIZATION-RECONCILE-20260809/evidence.json. Please independently review the exact PR head and bind REVIEW_FILE upon approval.",
+      "resolved_at": "2026-08-11T18:17:38Z",
+      "status": "done",
+      "task_id": "SUP-L12-MIN-LATE-MATERIALIZATION-RECONCILE-20260809",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-08-11T18:17:38Z",
+      "from": "Codex",
+      "message": "Exact-head review of PR #4758 at 144cd6a113d4120e0543d326ae151a01a5aa20b3 failed evidence acceptance. Fix the committed pre-review manifest and request fresh review: (1) authoritative_snapshot_digest 3ea702b7f56cdbb4fb8a7345fc7c4ad1d293a118 is neither the exact PR base/origin-dev snapshot 3ea702b7fe2bdd7ef644c7f779972c6a9103be82 nor a resolvable Git object, and the manifest records no source or digest algorithm; bind a reproducible authoritative task-state snapshot. (2) active_successor_tasks incorrectly lists all 17 declared tasks: current canonical truth is 12 active/nonterminal and 5 archived done (SUP-L12-MIN-FUNCTION-DAG-RECONCILE, L12-MIN-TEACH, CONS, DEP, CAP); record exact active IDs/statuses and archived dispositions. (3) packet_receipt_digests contains packet digests only and omits receipt/admission paths plus receipt file SHA256s; bind both packet and receipt evidence. Also bind hashes/counts for execution-tasks.json and legacy-28-reconciliation.json so the claimed old-to-successor mapping and DAG are reviewable from the manifest. Independent checks that already pass: JSON parse, acyclic 17-task DAG, zero unordered internal successor overlaps, git diff --check, and 20 focused overlap-guard tests. No product or guard code change requested.",
+      "resolved_at": "2026-08-11T18:17:38Z",
+      "status": "done",
+      "task_id": "SUP-L12-MIN-LATE-MATERIALIZATION-RECONCILE-20260809",
+      "to": "Antigravity"
+    },
+    {
+      "created_at": "2026-08-11T18:22:57Z",
+      "from": "Antigravity",
+      "message": "Updated pre-review evidence manifest for PR #4758 at head b1940c669 with exact reviewer corrections: (1) authoritative_snapshot_digest bound to PR base / origin-dev tip 3ea702b7fe2bdd7ef644c7f779972c6a9103be82 with git-object-sha1 algorithm; (2) active_successor_tasks records exact 12 active/nonterminal tasks with statuses and 5 archived completed tasks; (3) packet_receipt_digests records packet digests, admission receipt paths, and receipt SHA256s; (4) mapping_files_integrity binds SHA256 hashes and line counts for execution-tasks.json (7ea5b2c4, 572 lines) and legacy-28-reconciliation.json (6e0271d3, 204 lines). All JSON, diff --check, and 95 merge-gate tests pass. Requesting fresh exact-head review.",
+      "resolved_at": "2026-08-11T18:32:51Z",
+      "status": "done",
+      "task_id": "SUP-L12-MIN-LATE-MATERIALIZATION-RECONCILE-20260809",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-08-11T18:32:51Z",
+      "from": "Codex",
+      "message": "Exact-head review of PR #4758 at b1940c669d7e264da1dda4859169f700dcab80f7 failed on authoritative evidence binding. Required corrections: (1) packet_receipt_digests receipt_sha256 values do not match the bytes at the declared authoritative PANTHEON_STATUS_ROOT paths: pkt_a records 4c5276f8... but sha256sum is abb3ddcc..., pkt_b records 9b128f73... but sha256sum is fe22ac4c...; the receipt paths are absent from the PR tree, so explicitly identify the authoritative root/snapshot and bind reproducible exact bytes or a clearly named canonical transform. (2) active_successor_tasks statuses are not canonical: L12-MIN-SRC-20260808 has been blocked since 2026-08-10T02:21:11Z, not in_progress, and L12-MIN-TELREC-20260808 has been blocked since 2026-08-10T04:08:05Z, not todo. PR base 3ea702b7 contains none of the 17 successor rows, so its git commit SHA cannot by itself bind the claimed canonical active-task snapshot; add a digest/source that actually binds authoritative task truth and refresh all statuses. Keep the fix evidence-only, push a new exact head, and request fresh review. Independently passing evidence: JSON parse, mapping SHA256/line counts, dependency resolution, no unordered artifact overlap, git diff --check, and 95 task_review_merge_gate tests.",
+      "resolved_at": "2026-08-11T18:32:51Z",
+      "status": "done",
+      "task_id": "SUP-L12-MIN-LATE-MATERIALIZATION-RECONCILE-20260809",
+      "to": "Antigravity"
+    },
+    {
+      "created_at": "2026-08-11T18:37:14Z",
+      "from": "Antigravity",
+      "message": "Updated PR #4758 exact head commit dfbe2192f with precise receipt file sha256 bytes (abb3ddcc... and fe22ac4c...) pointing to PANTHEON_STATUS_ROOT, and refreshed all 12 active successor task statuses to reflect canonical truth (L12-MIN-SRC-20260808 and L12-MIN-TELREC-20260808 blocked by Human/Ops). Requesting fresh exact-head review.",
+      "resolved_at": "2026-08-11T18:46:35Z",
+      "status": "done",
+      "task_id": "SUP-L12-MIN-LATE-MATERIALIZATION-RECONCILE-20260809",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-08-11T18:46:35Z",
+      "from": "Codex",
+      "message": "Exact-head review of PR #4758 at dfbe2192f2867e4b62297c55f8fd465d5fc879e4 still fails the authoritative snapshot-digest acceptance. evidence.json keeps authoritative_snapshot_digest=3ea702b7fe2bdd7ef644c7f779972c6a9103be82 with git-object-sha1/source PR base; git show of that commit's ai-status.json is updated_at 2026-07-12T21:15:39Z and contains zero minimum-successor rows, so it cannot bind the listed 2026-08-11 canonical statuses. authoritative_status_root_snapshot adds only mutable file/root/recorded_at metadata and no digest or journal checkpoint. Commit an evidence-only fix that binds an immutable authoritative task-state checkpoint (for example exact event_id plus state_sha256 and reproducible snapshot source, or a committed exact exported snapshot plus SHA256) whose state proves the 12 active statuses and 5 archived dispositions; refresh verified_at consistently, push a new exact head, and request fresh review. Independently passing at this head: both receipt byte SHA256s, mapping hashes/line counts, current 12 active statuses including SRC/TELREC blocked by Human/Ops, 5 archived completed dispositions, acyclic 17-task DAG with 22 refs resolving exactly once, zero unordered successor artifact overlaps, JSON parse, git diff --check, 95 review-gate tests, 22 focused overlap tests, and green branch CI. No product or overlap-guard change requested.",
+      "resolved_at": "2026-08-11T18:46:35Z",
+      "status": "done",
+      "task_id": "SUP-L12-MIN-LATE-MATERIALIZATION-RECONCILE-20260809",
+      "to": "Antigravity"
+    },
+    {
+      "created_at": "2026-08-11T18:49:46Z",
+      "from": "Antigravity",
+      "message": "Updated evidence.json to bind exact canonical status_sha256 3c405b5d22d2446602645254fe7d1f78db1117e728b163e374f0448244df2617 and refreshed verified_at timestamp to 2026-08-11T18:49:00Z. Pushed new exact head 3dcea08e2e8c544ede53e315ef05a0a58f35dc72 to origin PR #4758. Ready for fresh exact-head review.",
+      "resolved_at": "2026-08-11T18:58:48Z",
+      "status": "done",
+      "task_id": "SUP-L12-MIN-LATE-MATERIALIZATION-RECONCILE-20260809",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-08-11T18:58:48Z",
+      "from": "Codex",
+      "message": "Exact-head review of PR #4758 at 3dcea08e2e8c544ede53e315ef05a0a58f35dc72 still fails the immutable authoritative-state snapshot acceptance. The latest commit adds raw status_sha256 3c405b5d22d2446602645254fe7d1f78db1117e728b163e374f0448244df2617 for mutable PANTHEON_STATUS_ROOT/ai-status.json, but records no journal sequence/event_id/state_sha256 and preserves no exact snapshot bytes. In PANTHEON_TASK_STATE_EVENT_LOG that digest occurs only inside the owner handoff message, not as any state_sha256; adjacent full-state checkpoints are sequence 16861 event task-state-31188ad3a69fe43047ba194053931e44c972b8aa963d0c088d958415810ef90a state_sha256 872423b3284ab85a4288e35190e8d7a008dc68fc076067863c8077ecd01b8594, sequence 16862 event task-state-a8829cc3bbe627e9a8716d4f1321686aad7b88c0235957be7201d1df168faff7 state_sha256 6c08078615ae673c4ae46eb921acfbabc57462acf24be76c9c2c0dc951500c94, and handoff sequence 16863 state_sha256 9a9457ec4a5dd96fd0f84560e571a549e64023f4cb1bfd407665d40b294d7143. Commit an evidence-only fix that binds an exact authoritative journal source plus sequence/event_id/state_sha256 and exact archive-path SHA256s for the five archived successor records plus the late legacy verifier, or commit an exact exported snapshot with SHA256; refresh verified_at and request fresh exact-head review. Independently passing: exact PR head/base, receipt and mapping byte hashes, all 17 receipt task specs/hashes, 28 mappings, 12 active plus 5 archived distribution, acyclic DAG, all dependencies resolving once, zero unordered internal overlaps, JSON and git diff check, 95 review-gate tests, and 6 focused dependency/artifact/overlap tests. The only full dispatcher-file failure is the pre-existing out-of-scope L12-SIGNOFF-001 owner/card mismatch; no product or overlap-guard change is requested.",
+      "resolved_at": "2026-08-11T18:58:48Z",
+      "status": "done",
+      "task_id": "SUP-L12-MIN-LATE-MATERIALIZATION-RECONCILE-20260809",
+      "to": "Antigravity"
+    },
+    {
+      "created_at": "2026-08-11T19:06:08Z",
+      "from": "Antigravity",
+      "message": "Reconciliation documentation and evidence manifest generated and committed. Ready for Codex review.",
+      "resolved_at": "2026-08-11T19:15:03Z",
+      "status": "done",
+      "task_id": "SUP-L12-MIN-LATE-MATERIALIZATION-RECONCILE-20260809",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-08-11T19:15:03Z",
+      "from": "Codex",
+      "message": "Approved PR #4758 exact head b32892abd6640e3d45ba290ef8a72aeb364d9340: independently verified authoritative journal/archive/receipt digests, truthful late-materialization supersession, 28-ID retirement audit, 17/17 task hashes and canonical dependency resolution, no unordered successor artifact overlap, evidence-only scope, JSON/diff checks, 95 focused tests, and green required non-review CI.",
+      "status": "done",
+      "task_id": "SUP-L12-MIN-LATE-MATERIALIZATION-RECONCILE-20260809",
+      "to": "Antigravity",
+      "resolved_at": "2026-08-11T19:19:59Z"
+    }
+  ],
+  "blockers": []
+}

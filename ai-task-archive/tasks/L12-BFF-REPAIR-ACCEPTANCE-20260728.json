@@ -1,0 +1,189 @@
+{
+  "version": 1,
+  "task_id": "L12-BFF-REPAIR-ACCEPTANCE-20260728",
+  "archived_at": "2026-07-28T18:31:48Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "acceptance": [
+      "Repair telemetry admission authority; repair incident resolution via actual app routes; add durable restart/two-replica dedup",
+      "registry target coverage",
+      "error-rate spike trigger",
+      "retry/DLQ/replay and proof drills; open PR for exact-head review/root-freeze/merge."
+    ],
+    "artifacts": [
+      "docs/deployment/evidence/twelve-loop-gap/L12-BFF-REPAIR-ACCEPTANCE-20260728"
+    ],
+    "depends_on": [],
+    "github_review_bridge": {
+      "actor": "Codex2",
+      "base": "dev",
+      "decision": "approve",
+      "head_branch": "task/L12-BFF-REPAIR-ACCEPTANCE-20260728",
+      "head_sha": "e603207718d7b463510a7d9f82e35908c2cdbb2b",
+      "mode": "required_commit_status",
+      "pr": 4305,
+      "pr_url": "https://github.com/ajoe734/pantheon/pull/4305",
+      "recorded_at": "2026-07-28T18:07:05Z",
+      "repository": "ajoe734/pantheon",
+      "review_error": "gh: Unprocessable Entity (HTTP 422)",
+      "status_context": "Pantheon canonical review gate",
+      "status_id": 51237901514,
+      "status_state": "success"
+    },
+    "id": "L12-BFF-REPAIR-ACCEPTANCE-20260728",
+    "last_update": "2026-07-28T18:31:48Z",
+    "next": "Human/Ops reconciled already-merged BFF acceptance closeout: PR #4305 head e603207718d7b463510a7d9f82e35908c2cdbb2b is on dev, PR #4309 and PR #4310 merged the closeout evidence/brief metadata, and the review_approved task brief at a6d56c366f7436574e6d2d241b47564558beac74 binds owner Codex, reviewer Codex2, repository ajoe734/pantheon, and delivery commit.",
+    "owner": "Codex",
+    "phase": "Twelve Loop Remediation / Wave 0 BFF Acceptance",
+    "review_binding": {
+      "base": "dev",
+      "head_branch": "task/L12-BFF-REPAIR-ACCEPTANCE-20260728",
+      "head_sha": "e603207718d7b463510a7d9f82e35908c2cdbb2b",
+      "pr": 4305
+    },
+    "review_file": "docs/deployment/evidence/twelve-loop-gap/L12-BFF-REPAIR-ACCEPTANCE-20260728/evidence.json",
+    "review_notes_zh": [
+      "PR #4305 exact head e603207718d7b463510a7d9f82e35908c2cdbb2b 與 local/origin/GitHub 三方一致；相對 dev ahead 5/behind 0，4 個 task-scoped evidence 檔，兩輪共 8 個 Branch CI jobs 全綠。",
+      "獨立重跑 168 focused tests、9 個 L12 drills、5 個 incidents app-route tests、十條 evidence validator、來源與 follow-up 兩組 checksum、jq 結構、py_compile、diff 與 ancestry checks，全部通過。",
+      "靜態核對 strict telemetry admission、SQLite WAL restart/two-replica dedupe、完整 registry/error-rate trigger、409 DLQ/MFA replay audit、retention-safe incident recovery 與 hosted-proof boundary，符合 AC1-AC4；AC5 的 root-freeze/merge/owner closeout 留給後續 governed flow。"
+    ],
+    "reviewer": "Codex2",
+    "status": "done",
+    "summary_zh": "完成 L12-BFF-001 剩餘 acceptance defects 與 proof drills。",
+    "title": "Finish L12-BFF-001 acceptance defects and proof drills",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-07-28T18:31:48Z",
+      "reconciled_from_merged_evidence": true,
+      "repository_id": "pantheon",
+      "repository_slug": "ajoe734/pantheon",
+      "repository_path": "/tmp/pantheon-bff-closeout-20260728-ZgxYgy/repo",
+      "commit": "e603207718d7b463510a7d9f82e35908c2cdbb2b",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "a6d56c366f7436574e6d2d241b47564558beac74",
+      "head_merged_to_target": true,
+      "review_evidence": {
+        "file": ".orchestrator/task-briefs/l12_bff_repair_acceptance_20260728.md",
+        "commit": "a6d56c366f7436574e6d2d241b47564558beac74",
+        "merge_target_ref": "origin/dev",
+        "merge_target_sha": "a6d56c366f7436574e6d2d241b47564558beac74",
+        "owner": "Codex",
+        "reviewer": "Codex2",
+        "canonical_reviewer": "Codex2",
+        "status": "review_approved"
+      }
+    }
+  },
+  "handoffs": [
+    {
+      "created_at": "2026-07-28T16:24:48Z",
+      "from": "Claude",
+      "message": "Auto-reassigned L12-BFF-REPAIR-ACCEPTANCE-20260728 away from unavailable lane Claude, Antigravity (disabled, paused, sidecar-only, or auth-down); owner Claude -> Codex, reviewer Antigravity -> Codex2.",
+      "resolved_at": "2026-07-28T16:28:27Z",
+      "status": "done",
+      "task_id": "L12-BFF-REPAIR-ACCEPTANCE-20260728",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-07-28T16:26:56Z",
+      "from": "Claude",
+      "message": "Auto-reassigned L12-BFF-REPAIR-ACCEPTANCE-20260728 away from unavailable lane Claude, Antigravity (disabled, paused, sidecar-only, or auth-down); owner Claude -> Codex, reviewer Antigravity -> Codex2.",
+      "resolved_at": "2026-07-28T16:28:27Z",
+      "status": "done",
+      "task_id": "L12-BFF-REPAIR-ACCEPTANCE-20260728",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-07-28T16:37:23Z",
+      "from": "Codex",
+      "message": "PR #4305 exact head af53d05542796243df7ca198913ff57d53c42529 is ready for independent review. Evidence: docs/deployment/evidence/twelve-loop-gap/L12-BFF-REPAIR-ACCEPTANCE-20260728/evidence.json. Verified 168 focused BFF/telemetry/incidents tests, 9 L12 proof drills, 5 real incidents app-route tests, source L12-BFF-001 ten-rule evidence validator, and both checksums. No product-code diff; hosted deployment/restart remains explicitly out of scope.",
+      "resolved_at": "2026-07-28T16:50:33Z",
+      "status": "done",
+      "task_id": "L12-BFF-REPAIR-ACCEPTANCE-20260728",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-07-28T16:50:33Z",
+      "from": "Codex2",
+      "message": "Approved PR #4305 exact head af53d05542796243df7ca198913ff57d53c42529: local/remote/PR heads match; all 8 Branch CI checks succeeded; source PR #4274 head 414546226003bce04a60f2d5941d999e96afd075 and merge 7ba7b5e19fbd16aa36bf569c6a46d244eb9da3e1 ancestry verified; independently reran 168 focused tests, 9 L12 drills, 5 incidents application-route tests, ten-rule source evidence validator, py_compile, both source/follow-up checksums, and diff checks. PR contains only task brief/evidence files with no product-code diff. Hosted deployment, credentials, retained volume, and hosted restart remain explicitly out of scope.",
+      "resolved_at": "2026-07-28T16:59:01Z",
+      "status": "done",
+      "task_id": "L12-BFF-REPAIR-ACCEPTANCE-20260728",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-07-28T16:59:01Z",
+      "from": "Codex2",
+      "message": "Reopen: PR #4305 head moved to ca966ed65d2167cdfea4bd52b887ebeb1c2e6097 after dev update; prior approval at af53d05542796243df7ca198913ff57d53c42529 is stale and lacked review_binding. Re-run owner/reviewer exact-head flow.",
+      "resolved_at": "2026-07-28T16:59:01Z",
+      "status": "done",
+      "task_id": "L12-BFF-REPAIR-ACCEPTANCE-20260728",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-07-28T17:29:55Z",
+      "from": "Codex",
+      "message": "PR #4305 exact head ca966ed65d2167cdfea4bd52b887ebeb1c2e6097 is locally synchronized and GitHub-visible. Task evidence checksum, source L12-BFF-001 ten-rule validator, and evidence JSON parse pass; all eight Branch CI jobs are green. Please perform independent exact-head review, bind docs/deployment/evidence/twelve-loop-gap/L12-BFF-REPAIR-ACCEPTANCE-20260728/evidence.json, approve the canonical review gate, run the governed integrator after approval, and return the merged task to Codex for owner closeout.",
+      "resolved_at": "2026-07-28T17:38:34Z",
+      "status": "done",
+      "task_id": "L12-BFF-REPAIR-ACCEPTANCE-20260728",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-07-28T17:38:34Z",
+      "from": "Codex2",
+      "message": "Independent exact-head review approved for PR #4305 at ca966ed65d2167cdfea4bd52b887ebeb1c2e6097: 168 focused tests, 9 L12 drills, 5 incidents route tests, source ten-rule validator, both evidence checksums, py_compile, trailer/diff/ancestry checks, and all 8 Branch CI jobs pass. PR scope is four task evidence files; source PR #4274 merge evidence and hosted-proof exclusions are accurate. PR is currently BEHIND dev 4a1801df863ea6477b87c2e957320529e84d3cee, so governed integration must preserve this exact-head binding and fail closed if refresh is required.",
+      "resolved_at": "2026-07-28T17:41:10Z",
+      "status": "done",
+      "task_id": "L12-BFF-REPAIR-ACCEPTANCE-20260728",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-07-28T17:41:10Z",
+      "from": "Codex2",
+      "message": "Reopen: PR #4305 branch updated to be6ec8c65b8642fb4abfdd90334688afe972e44a after root-required base update; prior approval at ca966ed65d2167cdfea4bd52b887ebeb1c2e6097 is stale. Re-run owner/reviewer exact-head flow.",
+      "resolved_at": "2026-07-28T17:41:10Z",
+      "status": "done",
+      "task_id": "L12-BFF-REPAIR-ACCEPTANCE-20260728",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-07-28T17:49:32Z",
+      "from": "Codex",
+      "message": "Owner exact-head refresh complete for PR #4305 at be6ec8c65b8642fb4abfdd90334688afe972e44a after root-required dev merge: prior reviewed task evidence paths are byte-identical to ca966ed65d2167cdfea4bd52b887ebeb1c2e6097; local/origin/GitHub heads agree; 168 focused tests, 9 L12 drills, 5 incidents route tests, source ten-rule validator, both evidence checksums, py_compile, trailer/diff/ancestry checks pass; all 8 Branch CI jobs pass. Please independently re-review this exact head and bind the existing review_file; canonical gate is intentionally red until approval.",
+      "resolved_at": "2026-07-28T17:53:43Z",
+      "status": "done",
+      "task_id": "L12-BFF-REPAIR-ACCEPTANCE-20260728",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-07-28T17:53:43Z",
+      "from": "Codex2",
+      "message": "Reopen: PR #4305 branch updated to e603207718d7b463510a7d9f82e35908c2cdbb2b after PR #4306 merged into dev; prior review target be6ec8c65b8642fb4abfdd90334688afe972e44a is stale. Re-run owner/reviewer exact-head flow.",
+      "resolved_at": "2026-07-28T17:53:43Z",
+      "status": "done",
+      "task_id": "L12-BFF-REPAIR-ACCEPTANCE-20260728",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-07-28T17:59:03Z",
+      "from": "Codex",
+      "message": "Please independently review PR #4305 exact head e603207718d7b463510a7d9f82e35908c2cdbb2b. Owner revalidation is green: 168 focused tests, 9 L12 drills, 5 incidents routes, ten-rule validator, both checksums, structural and ancestry checks. Bind docs/deployment/evidence/twelve-loop-gap/L12-BFF-REPAIR-ACCEPTANCE-20260728/evidence.json if approved.",
+      "resolved_at": "2026-07-28T18:07:05Z",
+      "status": "done",
+      "task_id": "L12-BFF-REPAIR-ACCEPTANCE-20260728",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-07-28T18:07:05Z",
+      "from": "Codex2",
+      "message": "Independent exact-head review approved for PR #4305 at e603207718d7b463510a7d9f82e35908c2cdbb2b: local/origin/GitHub heads match; PR is ahead 5/behind 0 with 4 task-scoped evidence files and 8 green Branch CI jobs; independently reproduced 168 focused tests, 9 L12 drills, 5 incidents app-route tests, ten-rule validator, both checksum sets, jq structure, py_compile, diff and ancestry checks; static review confirms AC1-AC4 and the declared hosted-proof boundary. AC5 merge and owner closeout remain pending.",
+      "status": "done",
+      "task_id": "L12-BFF-REPAIR-ACCEPTANCE-20260728",
+      "to": "Codex",
+      "resolved_at": "2026-07-28T18:31:48Z"
+    }
+  ],
+  "blockers": []
+}

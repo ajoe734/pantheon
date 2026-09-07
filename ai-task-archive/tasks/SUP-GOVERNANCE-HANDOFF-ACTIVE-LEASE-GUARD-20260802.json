@@ -1,0 +1,64 @@
+{
+  "version": 1,
+  "task_id": "SUP-GOVERNANCE-HANDOFF-ACTIVE-LEASE-GUARD-20260802",
+  "archived_at": "2026-08-02T09:00:53Z",
+  "terminal_status": "done",
+  "terminal_outcome": "superseded",
+  "task": {
+    "acceptance": [
+      "Reproduce the 01:44 to 01:48 Human/Ops exact-head handoff incident",
+      "A governance-only assign or reopen cannot supersede a healthy active implementation lease",
+      "Explicit cancel eligible preemption or terminal task truth may end the lease",
+      "Execution responsibility and review handoff provenance remain separately auditable",
+      "Lease decisions use exact task run process generation and canonical event ordering",
+      "Concurrent owner mutation fails closed without killing unrelated work",
+      "Focused supervisor and ai_status regressions pass",
+      "No account-group or reviewer-policy changes"
+    ],
+    "artifacts": [
+      ".orchestrator/supervisor.py",
+      ".orchestrator/test_supervisor.py",
+      "scripts/ai_status.py",
+      "scripts/test_ai_status.py",
+      "docs/deployment/evidence/supervisor/SUP-GOVERNANCE-HANDOFF-ACTIVE-LEASE-GUARD-20260802/"
+    ],
+    "coordination_packet": {
+      "expected_branch": "task/SUP-GOVERNANCE-HANDOFF-ACTIVE-LEASE-GUARD-20260802",
+      "independent_reviewer_capability": "Human/Ops exact-head independent reviewer",
+      "merge_target": "dev",
+      "objective": "Add a governed distinction between execution lease responsibility and governance or review handoff metadata.",
+      "out_of_scope": "Provider account policy; reviewer bans; generic task-state redesign outside lease semantics; direct live-state edits; product code.",
+      "owner_capability": "supervisor runtime reliability implementer",
+      "remote": "ajoe734/pantheon",
+      "required_artifacts": [
+        "branch",
+        "commits",
+        "PR",
+        "checks",
+        "exact-head review",
+        "merge commit",
+        "live evidence when rollout task"
+      ],
+      "rollback": "Revert both supervisor and ai_status merge changes and restore the prior promotion manifest.",
+      "rollout": "Merge after atomic fallback and promote only through the final governed runtime canary.",
+      "schema_version": 1,
+      "source": "codex_chatbox_readonly_audit_20260802"
+    },
+    "depends_on": [
+      "SUP-ASSIGNMENT-FALLBACK-ATOMIC-REBINDS-20260802"
+    ],
+    "id": "SUP-GOVERNANCE-HANDOFF-ACTIVE-LEASE-GUARD-20260802",
+    "last_update": "2026-08-02T09:00:53Z",
+    "next": "Superseded to repair its dependency on the stale archived atomic task and to sequence overlapping supervisor.py work after the operator-aligned atomic and bridge fixes. Account/quota groups and global reviewer policy remain unchanged.",
+    "owner": "Codex",
+    "phase": "Supervisor reliability / execution lease ownership",
+    "reviewer": "Human/Ops",
+    "status": "done",
+    "summary_zh": "治理用 assign/reopen 不得被當成取消 active implementation worker；只有明確 cancel 或合法 preemption 才能終止 lease。",
+    "title": "Guard governance handoff against active worker leases",
+    "terminal_outcome": "superseded",
+    "superseded_by": "SUP-GOVERNANCE-HANDOFF-ACTIVE-LEASE-GUARD-OPERATOR-V2-20260802"
+  },
+  "handoffs": [],
+  "blockers": []
+}

@@ -1,0 +1,221 @@
+{
+  "version": 1,
+  "task_id": "SUP-RUNTIME-V10-IMMUTABLE-INCUMBENT-CONFIG-ENTRYPOINT-20260811",
+  "archived_at": "2026-08-11T05:08:22Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "acceptance": [
+      "Reproduce durable transaction bdddb0cbfbeaa15a0f1d0ac2d49672579643962e62fda6e9408d78fd21233543: accepted candidate 7f93be09/tree fd309970 and live immutable incumbent 0bd7cf88/PID 1795141 have exact cwd, argv, config, process-generation, -B, PYTHONDONTWRITEBYTECODE, command-root/runtime-SHA, authoritative-shadow, and baseline bindings, but the transaction aborts before config CAS or signalling when its live-config check is made against separately materialized rollback-command-runtimes/0bd7cf88.",
+      "Make the pre-CAS live-config/process contract bind the proven active incumbent command-runtime identity, while retaining the separately materialized rollback root as a distinct immutable artifact used only for rollback configuration and launch after the transaction boundary. Do not permit a current live config to reference the candidate or rollback path before CAS merely to satisfy validation.",
+      "Retain exact canonical absolute-path, descriptor, Git commit/tree/remote, process PID/starttime, cwd, argv, environment, live-config byte/hash/CAS, admission-lock, task-state, provider, candidate cleanliness, and rollback non-alias checks. A wrong active entrypoint, candidate entrypoint, rollback entrypoint, root alias, process/config race, changed inode/tree/env, or stale rollback artifact must fail before TERM.",
+      "Add focused regression coverage for a valid active immutable incumbent whose live config names its active command-runtime entrypoint and whose rollback root has the same commit but a distinct path; verify candidate and rollback config variants are prepared without mutating live config. Add negative tests for each mismatched root and verify no config install, signal, candidate launch, rollback launch, or child survives on rejection.",
+      "Run focused promotion and sync suites plus directly affected supervisor tests. Commit a task-scoped evidence manifest before independent review and bind that manifest to the exact reviewed task PR head before merge into dev.",
+      "Keep this task source-only: no live config or state edit, direct signal or termination, runtime promotion, candidate/incumbent/rollback mutation or deletion, canonical state edit outside governed commands, scheduler/fleet-routing/provider/account change, or rollout retry. A retry is separately supervisor-dispatched only after protected source merge."
+    ],
+    "artifacts": [
+      "scripts/promote_supervisor_runtime.py",
+      "scripts/test_promote_supervisor_runtime.py",
+      "scripts/test_sync_dev_root.sh",
+      "docs/deployment/evidence/supervisor/SUP-RUNTIME-V10-IMMUTABLE-INCUMBENT-CONFIG-ENTRYPOINT-20260811/"
+    ],
+    "depends_on": [
+      "SUP-RUNTIME-V10-APPEND-ONLY-EVENT-LOG-CAPTURE-20260811"
+    ],
+    "dev_bridge": {
+      "actor": {
+        "capabilities": [
+          "integration",
+          "status-system",
+          "schema",
+          "acceptance"
+        ],
+        "id": "Codex2",
+        "roles": [
+          "auto-worker"
+        ]
+      },
+      "audit_conversation_href": "task:SUP-RUNTIME-V10-GOVERNED-ROLLOUT-VERIFY-20260808",
+      "conversation_id": "SUP-RUNTIME-V10-GOVERNED-ROLLOUT-VERIFY-20260808",
+      "documents": [
+        {
+          "kind": "RUNTIME_FAIL_CLOSED_EVIDENCE",
+          "path": "docs/deployment/evidence/supervisor/SUP-RUNTIME-V10-GOVERNED-ROLLOUT-VERIFY-20260808/evidence.json",
+          "sourceRefs": [
+            "/home/lupin/pantheon-ci-deploy/runtime/promotion-evidence/supervisor-runtime-promotion-20260811T033415569849Z-2668260.json",
+            "sha256:bdddb0cbfbeaa15a0f1d0ac2d49672579643962e62fda6e9408d78fd21233543",
+            "candidate:7f93be09e3f40e9f11a28cf6c0766e116a54adc6",
+            "candidate-tree:fd309970d03fdabba4adeb421a43801054376e4c",
+            "active-incumbent:0bd7cf8842a622fb40eca125f490d4073b3a1044",
+            "active-incumbent-pid:1795141",
+            "rollback-root:/home/lupin/pantheon-ci-deploy/rollback-command-runtimes/0bd7cf8842a622fb40eca125f490d4073b3a1044",
+            "live-config-sha256:54ec4bef83549339a323c66b57b7af4d37dcef92ef009a5663d42451752643b6",
+            "failure:Captured live config does not bind the exact canonical supervisor entrypoint",
+            "prerequisite-prs:4740,4741"
+          ]
+        }
+      ],
+      "emitted_at": "2026-08-11T03:40:00Z",
+      "intent": "source_only_remediation_dispatch",
+      "mode": "supervisor_source_only",
+      "packet_digest": "73c48898922fb8eb12b61d6877ac7d77b6a4b99a90fc63e0f6a3e843303cd31b",
+      "packet_id": "sup-runtime-v10-immutable-incumbent-config-entrypoint-20260811-0340",
+      "source_turn_ids": [
+        "promotion-evidence-20260811T033415569849Z-2668260",
+        "post-abort-readback-20260811T0338Z",
+        "immutable-incumbent-config-entrypoint-dedupe-20260811T0340Z"
+      ],
+      "task_spec": {
+        "acceptance": [
+          "Reproduce durable transaction bdddb0cbfbeaa15a0f1d0ac2d49672579643962e62fda6e9408d78fd21233543: accepted candidate 7f93be09/tree fd309970 and live immutable incumbent 0bd7cf88/PID 1795141 have exact cwd, argv, config, process-generation, -B, PYTHONDONTWRITEBYTECODE, command-root/runtime-SHA, authoritative-shadow, and baseline bindings, but the transaction aborts before config CAS or signalling when its live-config check is made against separately materialized rollback-command-runtimes/0bd7cf88.",
+          "Make the pre-CAS live-config/process contract bind the proven active incumbent command-runtime identity, while retaining the separately materialized rollback root as a distinct immutable artifact used only for rollback configuration and launch after the transaction boundary. Do not permit a current live config to reference the candidate or rollback path before CAS merely to satisfy validation.",
+          "Retain exact canonical absolute-path, descriptor, Git commit/tree/remote, process PID/starttime, cwd, argv, environment, live-config byte/hash/CAS, admission-lock, task-state, provider, candidate cleanliness, and rollback non-alias checks. A wrong active entrypoint, candidate entrypoint, rollback entrypoint, root alias, process/config race, changed inode/tree/env, or stale rollback artifact must fail before TERM.",
+          "Add focused regression coverage for a valid active immutable incumbent whose live config names its active command-runtime entrypoint and whose rollback root has the same commit but a distinct path; verify candidate and rollback config variants are prepared without mutating live config. Add negative tests for each mismatched root and verify no config install, signal, candidate launch, rollback launch, or child survives on rejection.",
+          "Run focused promotion and sync suites plus directly affected supervisor tests. Commit a task-scoped evidence manifest before independent review and bind that manifest to the exact reviewed task PR head before merge into dev.",
+          "Keep this task source-only: no live config or state edit, direct signal or termination, runtime promotion, candidate/incumbent/rollback mutation or deletion, canonical state edit outside governed commands, scheduler/fleet-routing/provider/account change, or rollout retry. A retry is separately supervisor-dispatched only after protected source merge."
+        ],
+        "artifacts": [
+          "scripts/promote_supervisor_runtime.py",
+          "scripts/test_promote_supervisor_runtime.py",
+          "scripts/test_sync_dev_root.sh",
+          "docs/deployment/evidence/supervisor/SUP-RUNTIME-V10-IMMUTABLE-INCUMBENT-CONFIG-ENTRYPOINT-20260811/"
+        ],
+        "depends_on": [
+          "SUP-RUNTIME-V10-APPEND-ONLY-EVENT-LOG-CAPTURE-20260811"
+        ],
+        "id": "SUP-RUNTIME-V10-IMMUTABLE-INCUMBENT-CONFIG-ENTRYPOINT-20260811",
+        "owner": "Antigravity2",
+        "phase": "Supervisor Runtime / Source-only Active Incumbent Config Entrypoint",
+        "reviewer": "Claude2",
+        "summary": "The 7f93be09 promotion captured a valid active immutable incumbent, but source code later validates pre-CAS live config against a distinct rollback materialization path. Repair only that active-incumbent-versus-rollback identity boundary and retain every other promotion guard.",
+        "title": "Bind active incumbent config entrypoint separately from rollback root"
+      },
+      "task_spec_hash": "e8a0e9bdc39377747ec3cfabab8cbf749cf29518fe6195def135f38c4d3aff60"
+    },
+    "failure_streak": 0,
+    "github_review_bridge": {
+      "actor": "Antigravity",
+      "base": "dev",
+      "decision": "approve",
+      "head_branch": "task/SUP-RUNTIME-V10-IMMUTABLE-INCUMBENT-CONFIG-ENTRYPOINT-20260811",
+      "head_sha": "ac1649da22a49ff4a2b4fa4238cb999c0759beec",
+      "mode": "required_commit_status",
+      "pr": 4747,
+      "pr_url": "https://github.com/ajoe734/pantheon/pull/4747",
+      "recorded_at": "2026-08-11T04:43:18Z",
+      "repository": "ajoe734/pantheon",
+      "review_error": "gh: Unprocessable Entity (HTTP 422)",
+      "review_proof_ref": "refs/tags/pantheon-review/approve/ac1649da22a49ff4a2b4fa4238cb999c0759beec",
+      "status_context": "Pantheon canonical review gate",
+      "status_id": 51999619292,
+      "status_state": "success"
+    },
+    "id": "SUP-RUNTIME-V10-IMMUTABLE-INCUMBENT-CONFIG-ENTRYPOINT-20260811",
+    "last_update": "2026-08-11T05:08:22Z",
+    "next": "Owner closeout: PR #4747 merged into dev as 5c6d58c6cf78494919152719d9cbc53ddbafdeba; task branch synced to that merged commit; focused promotion 5 passed, sync-dev-root 7 passed, supervisor-watchdog 5 passed, and git diff --check passed. Reviewed evidence manifest bound.",
+    "owner": "Codex2",
+    "phase": "Supervisor Runtime / Source-only Active Incumbent Config Entrypoint",
+    "review_binding": {
+      "base": "dev",
+      "head_branch": "task/SUP-RUNTIME-V10-IMMUTABLE-INCUMBENT-CONFIG-ENTRYPOINT-20260811",
+      "head_sha": "ac1649da22a49ff4a2b4fa4238cb999c0759beec",
+      "pr": 4747
+    },
+    "reviewer": "Antigravity",
+    "status": "done",
+    "summary_zh": "The 7f93be09 promotion captured a valid active immutable incumbent, but source code later validates pre-CAS live config against a distinct rollback materialization path. Repair only that active-incumbent-versus-rollback identity boundary and retain every other promotion guard.",
+    "title": "Bind active incumbent config entrypoint separately from rollback root",
+    "review_file": "docs/deployment/evidence/supervisor/SUP-RUNTIME-V10-IMMUTABLE-INCUMBENT-CONFIG-ENTRYPOINT-20260811/evidence.json",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-08-11T05:08:22Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/sup-runtime-v10-immutable-incumbent-config-entrypoint-20260811",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/SUP-RUNTIME-V10-IMMUTABLE-INCUMBENT-CONFIG-ENTRYPOINT-20260811",
+      "git_clean_required": false,
+      "status_command_runtime": {
+        "command_root": "/home/lupin/pantheon-ci-deploy/command-runtimes/0bd7cf8842a622fb40eca125f490d4073b3a1044",
+        "source_sha": "0bd7cf8842a622fb40eca125f490d4073b3a1044",
+        "base_ref": "origin/dev",
+        "remote": "ajoe734/pantheon",
+        "status_root": "/home/lupin/pantheon",
+        "delivery_root": "/tmp/pantheon-worker-worktrees/pantheon/sup-runtime-v10-immutable-incumbent-config-entrypoint-20260811",
+        "wrapper_root": "/home/lupin/pantheon-ci-deploy/command-runtimes/0bd7cf8842a622fb40eca125f490d4073b3a1044",
+        "worker_lease": {
+          "schema_version": 1,
+          "task_id": "SUP-RUNTIME-V10-IMMUTABLE-INCUMBENT-CONFIG-ENTRYPOINT-20260811",
+          "worker_run_id": "codex-20260811T045308Z-6f86c07f",
+          "queue_event_id": "evt-20260811T045244Z-be6a4f05",
+          "pid": 3387212,
+          "pid_start_ticks": 26303623,
+          "process_generation": "worker-process-generation-sha256:3b1081e864f0e41e8d561a407a1ffa48d87850ef0cac92bad88368dbb22abc37"
+        }
+      },
+      "commit": "5c6d58c6cf78494919152719d9cbc53ddbafdeba",
+      "commit_subject": "Merge pull request #4747 from ajoe734/task/SUP-RUNTIME-V10-IMMUTABLE-INCUMBENT-CONFIG-ENTRYPOINT-20260811",
+      "commit_author": {
+        "name": "ajoe734",
+        "email": "bjoe734@gmail.com"
+      },
+      "commit_trailer_check_skipped": true,
+      "commit_trailer_skip_reason": "Merge",
+      "commit_metadata": {
+        "SUP-RUNTIME-V10-IMMUTABLE-INCUMBENT": "bind active entrypoint"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 1,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/SUP-RUNTIME-V10-IMMUTABLE-INCUMBENT-CONFIG-ENTRYPOINT-20260811",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "363c27237cc907c2e6c26e954c473aa3dabf74ee",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "created_at": "2026-08-11T03:54:32Z",
+      "from": "Claude2",
+      "message": "Auto-reassigned SUP-RUNTIME-V10-IMMUTABLE-INCUMBENT-CONFIG-ENTRYPOINT-20260811 away from unavailable lane Claude2 (disabled, paused, sidecar-only, or auth-down); reviewer Claude2 -> Antigravity.",
+      "resolved_at": "2026-08-11T03:56:13Z",
+      "status": "done",
+      "task_id": "SUP-RUNTIME-V10-IMMUTABLE-INCUMBENT-CONFIG-ENTRYPOINT-20260811",
+      "to": "Antigravity"
+    },
+    {
+      "created_at": "2026-08-11T04:41:04Z",
+      "from": "Codex2",
+      "message": "PR #4747 is ready for independent review at ac1649da22a49ff4a2b4fa4238cb999c0759beec. Review evidence manifest: docs/deployment/evidence/supervisor/SUP-RUNTIME-V10-IMMUTABLE-INCUMBENT-CONFIG-ENTRYPOINT-20260811/evidence.json. Source-only active-incumbent/rollback entrypoint repair; focused promotion 5 passed, sync-dev-root 7 passed, watchdog 5 passed.",
+      "resolved_at": "2026-08-11T04:41:29Z",
+      "status": "done",
+      "task_id": "SUP-RUNTIME-V10-IMMUTABLE-INCUMBENT-CONFIG-ENTRYPOINT-20260811",
+      "to": "Antigravity"
+    },
+    {
+      "created_at": "2026-08-11T04:41:29Z",
+      "from": "Codex2",
+      "message": "PR #4747 is ready for independent review at ac1649da22a49ff4a2b4fa4238cb999c0759beec. Review evidence manifest: docs/deployment/evidence/supervisor/SUP-RUNTIME-V10-IMMUTABLE-INCUMBENT-CONFIG-ENTRYPOINT-20260811/evidence.json. Source-only active-incumbent/rollback entrypoint repair; focused promotion 5 passed, sync-dev-root 7 passed, watchdog 5 passed.",
+      "resolved_at": "2026-08-11T04:43:18Z",
+      "status": "done",
+      "task_id": "SUP-RUNTIME-V10-IMMUTABLE-INCUMBENT-CONFIG-ENTRYPOINT-20260811",
+      "to": "Antigravity"
+    },
+    {
+      "created_at": "2026-08-11T04:43:18Z",
+      "from": "Antigravity",
+      "message": "Independent review passed for PR #4747 (ac1649da22a49ff4a2b4fa4238cb999c0759beec). Verified active-incumbent identity separation, live config pre-CAS revalidation, byte-race guards, evidence.json manifest (docs/deployment/evidence/supervisor/SUP-RUNTIME-V10-IMMUTABLE-INCUMBENT-CONFIG-ENTRYPOINT-20260811/evidence.json), git diff --check, and all focused promotion, sync-dev-root, and watchdog tests.",
+      "status": "done",
+      "task_id": "SUP-RUNTIME-V10-IMMUTABLE-INCUMBENT-CONFIG-ENTRYPOINT-20260811",
+      "to": "Codex2",
+      "resolved_at": "2026-08-11T05:08:23Z"
+    }
+  ],
+  "blockers": []
+}

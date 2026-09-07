@@ -1,0 +1,119 @@
+{
+  "version": 1,
+  "task_id": "SUP-SEEN-EVENT-KEYS-NONNULL-CLOSEOUT-20260731",
+  "archived_at": "2026-07-31T18:54:48Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "acceptance": [
+      "Merged closeout has exact original Task Brief id and Status review_approved",
+      "Merged closeout binds Owner Antigravity and Reviewer Human/Ops",
+      "Merged closeout cites ajoe734/pantheon and delivery commit fd67904e2c1adb7256d4d9d9dc618105346be424",
+      "Merged closeout records watcher regression and live no-TypeError proof",
+      "No implementation or config changes",
+      "PR targets current dev and passes required checks"
+    ],
+    "artifacts": [
+      "docs/deployment/evidence/twelve-loop-gap/SUP-SEEN-EVENT-KEYS-NONNULL-20260731/merged-closeout.md"
+    ],
+    "depends_on": [],
+    "github_review_bridge": {
+      "actor": "Human/Ops",
+      "base": "dev",
+      "decision": "approve",
+      "head_branch": "task/SUP-SEEN-EVENT-KEYS-NONNULL-CLOSEOUT-20260731",
+      "head_sha": "be17ad4f29bfbe3c44d4944d4b1e355d51bd21df",
+      "mode": "required_commit_status",
+      "pr": 4420,
+      "pr_url": "https://github.com/ajoe734/pantheon/pull/4420",
+      "recorded_at": "2026-07-31T18:54:10Z",
+      "repository": "ajoe734/pantheon",
+      "review_error": "gh: Unprocessable Entity (HTTP 422)",
+      "status_context": "Pantheon canonical review gate",
+      "status_id": 51453667413,
+      "status_state": "success"
+    },
+    "id": "SUP-SEEN-EVENT-KEYS-NONNULL-CLOSEOUT-20260731",
+    "last_update": "2026-07-31T18:54:48Z",
+    "next": "Finalized task SUP-SEEN-EVENT-KEYS-NONNULL-CLOSEOUT-20260731 after PR #4420 was merged into dev",
+    "owner": "Antigravity",
+    "phase": "Supervisor Runtime Repair / Watcher Closeout",
+    "review_binding": {
+      "base": "dev",
+      "head_branch": "task/SUP-SEEN-EVENT-KEYS-NONNULL-CLOSEOUT-20260731",
+      "head_sha": "be17ad4f29bfbe3c44d4944d4b1e355d51bd21df",
+      "pr": 4420
+    },
+    "review_file": "docs/deployment/evidence/twelve-loop-gap/SUP-SEEN-EVENT-KEYS-NONNULL-20260731/merged-closeout.md",
+    "review_notes_zh": [
+      "精確兩檔 scope 符合 closeout 任務,merged-closeout 綁定原 task owner reviewer repository delivery commit,commit subject 與 trailers 合規,GitHub 8 checks 全綠,未修改 implementation 或 config"
+    ],
+    "reviewer": "Human/Ops",
+    "status": "done",
+    "summary_zh": null,
+    "title": "Add merged watcher terminal reconciliation evidence",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-07-31T18:54:48Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/sup-seen-event-keys-nonnull-closeout-20260731",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/SUP-SEEN-EVENT-KEYS-NONNULL-CLOSEOUT-20260731",
+      "git_clean_required": false,
+      "status_command_runtime": {
+        "command_root": "/home/lupin/pantheon-ci-deploy/dev-root-98760e3d1e6b-live",
+        "source_sha": "98760e3d1e6be1318ee769848195d8a5a14f0230",
+        "base_ref": "origin/dev",
+        "remote": "ajoe734/pantheon",
+        "status_root": "/home/lupin/pantheon",
+        "delivery_root": "/tmp/pantheon-worker-worktrees/pantheon/sup-seen-event-keys-nonnull-closeout-20260731",
+        "wrapper_root": "/home/lupin/pantheon-ci-deploy/dev-root-98760e3d1e6b-live"
+      },
+      "commit": "be17ad4f29bfbe3c44d4944d4b1e355d51bd21df",
+      "commit_subject": "SUP-SEEN-EVENT-KEYS-NONNULL-CLOSEOUT-20260731: close",
+      "commit_author": {
+        "name": "pantheon-dev",
+        "email": "bjoe734@gmail.com"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Antigravity",
+        "Task-ID": "SUP-SEEN-EVENT-KEYS-NONNULL-CLOSEOUT-20260731",
+        "Reviewer": "Human/Ops",
+        "Verified": "verified exact file contents and structure"
+      },
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "03eaac0014f93e236f5b9a54cc54dfbb97801f49",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "created_at": "2026-07-31T18:53:23Z",
+      "from": "Antigravity",
+      "message": "Rewrote task commit subject to SUP-SEEN-EVENT-KEYS-NONNULL-CLOSEOUT-20260731: close (exact new head be17ad4f29bfbe3c44d4944d4b1e355d51bd21df), force-pushed to PR #4420, and all GitHub status checks passed green. Ready for final review/merge.",
+      "resolved_at": "2026-07-31T18:54:10Z",
+      "status": "done",
+      "task_id": "SUP-SEEN-EVENT-KEYS-NONNULL-CLOSEOUT-20260731",
+      "to": "Human/Ops"
+    },
+    {
+      "created_at": "2026-07-31T18:54:10Z",
+      "from": "Human/Ops",
+      "message": "Human/Ops approves PR #4420 exact head be17ad4f29bfbe3c44d4944d4b1e355d51bd21df after exact diff and 8 green checks.",
+      "status": "done",
+      "task_id": "SUP-SEEN-EVENT-KEYS-NONNULL-CLOSEOUT-20260731",
+      "to": "Antigravity",
+      "resolved_at": "2026-07-31T18:54:49Z"
+    }
+  ],
+  "blockers": []
+}

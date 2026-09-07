@@ -1,0 +1,172 @@
+{
+  "version": 1,
+  "task_id": "SUP-L12-GUARDED-REMEDIATION-DISPATCHER-20260731-V2",
+  "archived_at": "2026-07-31T18:37:00Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "acceptance": [
+      "PR #4417 exact head eaf521876594bb1904307b0dc33aea10995cf404 is byte-equivalent across the seven intended paths to previously accepted dispatcher head 3c1af232d5480bef6b1162ffbda1c571b35e7dc8",
+      "PR #4417 parent is current dev f5ca90ae5c8e9655b6fbff1dc69c776fd1a68495 and contains only the seven intended files",
+      "All current and legacy dispatcher tests, schema validation, py_compile, and GitHub required checks pass",
+      "Human/Ops independently reviews exact head and the canonical review bridge accepts the V2 task/branch binding",
+      "Do not materialize any product task until merge and immutable live promotion"
+    ],
+    "artifacts": [
+      "scripts/dispatch_twelve_loop_gap_2026_07_26.py",
+      "docs/bff/execution-tasks/2026-07-31-l12-current-gap-supervisor-dispatch/guarded-remediation-tasks.json",
+      "docs/deployment/evidence/twelve-loop-gap/SUP-L12-GUARDED-REMEDIATION-DISPATCHER-20260731"
+    ],
+    "delivery_identity_reason": "Clean non-force replacement branch after PR #4410 history failed commit-subject policy and an out-of-scope change; V2 task ID matches PR #4417 branch.",
+    "depends_on": [
+      "SUP-PREEMPTION-DISPATCH-ELIGIBILITY-20260731"
+    ],
+    "github_review_bridge": {
+      "actor": "Human/Ops",
+      "base": "dev",
+      "decision": "approve",
+      "head_branch": "task/SUP-L12-GUARDED-REMEDIATION-DISPATCHER-20260731-V2",
+      "head_sha": "559a4057216c873432222b2564ed284592d7ec32",
+      "mode": "required_commit_status",
+      "pr": 4417,
+      "pr_url": "https://github.com/ajoe734/pantheon/pull/4417",
+      "recorded_at": "2026-07-31T18:36:04Z",
+      "repository": "ajoe734/pantheon",
+      "review_error": "gh: Unprocessable Entity (HTTP 422)",
+      "status_context": "Pantheon canonical review gate",
+      "status_id": 51452614226,
+      "status_state": "success"
+    },
+    "id": "SUP-L12-GUARDED-REMEDIATION-DISPATCHER-20260731-V2",
+    "last_update": "2026-07-31T18:37:00Z",
+    "next": "Finalized approved task SUP-L12-GUARDED-REMEDIATION-DISPATCHER-20260731-V2 after PR #4417 merged into dev (merge commit 98760e3d1e6be1318ee769848195d8a5a14f0230).",
+    "owner": "Antigravity",
+    "phase": "Supervisor Runtime Repair / Wave 0 Program Dispatcher Gate",
+    "replaces_task_id": "SUP-L12-GUARDED-REMEDIATION-DISPATCHER-20260731",
+    "review_binding": {
+      "base": "dev",
+      "head_branch": "task/SUP-L12-GUARDED-REMEDIATION-DISPATCHER-20260731-V2",
+      "head_sha": "559a4057216c873432222b2564ed284592d7ec32",
+      "pr": 4417
+    },
+    "review_file": "docs/deployment/evidence/twelve-loop-gap/SUP-L12-GUARDED-REMEDIATION-DISPATCHER-20260731/evidence.json",
+    "review_notes_zh": [
+      "Human/Ops exact-head audit: final PR net diff is exactly seven intended files; all seven are byte-identical to accepted head 3c1af232d5480bef6b1162ffbda1c571b35e7dc8.",
+      "Independent validation: 25 current tests pass; 31 legacy pass with one documented baseline exclusion; py_compile, product-evidence schema, current and legacy validate-only all pass.",
+      "GitHub required CI is fully green; final task identity commits have <=72-character subjects and canonical Antigravity/V2/Human-Ops trailers; no config or product task mutation."
+    ],
+    "reviewer": "Human/Ops",
+    "source_ref": {
+      "base": "dev",
+      "head_branch": "task/SUP-L12-GUARDED-REMEDIATION-DISPATCHER-20260731-V2",
+      "head_sha": "559a4057216c873432222b2564ed284592d7ec32",
+      "pr": 4417,
+      "repository": "ajoe734/pantheon"
+    },
+    "status": "done",
+    "summary_zh": "以符合 canonical branch/task identity 的 V2 任務承接已完成的 guarded dispatcher 實作與 PR #4417 exact-head 審查；不改寫 28-task catalog。",
+    "title": "Extend the program-specific guarded dispatcher for current-proof remediation (V2 delivery identity)",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-07-31T18:37:00Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/sup-l12-guarded-remediation-dispatcher-20260731-v2",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/SUP-L12-GUARDED-REMEDIATION-DISPATCHER-20260731-V2",
+      "git_clean_required": false,
+      "status_command_runtime": {
+        "command_root": "/home/lupin/pantheon-ci-deploy/dev-root-dc5136394eb1-live",
+        "source_sha": "dc5136394eb1041ceea1dcc066e55ac2179ca0e5",
+        "base_ref": "origin/dev",
+        "remote": "ajoe734/pantheon",
+        "status_root": "/home/lupin/pantheon",
+        "delivery_root": "/tmp/pantheon-worker-worktrees/pantheon/sup-l12-guarded-remediation-dispatcher-20260731-v2",
+        "wrapper_root": "/home/lupin/pantheon-ci-deploy/dev-root-dc5136394eb1-live"
+      },
+      "commit": "559a4057216c873432222b2564ed284592d7ec32",
+      "commit_subject": "SUP-L12-GUARDED-REMEDIATION-DISPATCHER-20260731-V2: prune brief",
+      "commit_author": {
+        "name": "pantheon-dev",
+        "email": "bjoe734@gmail.com"
+      },
+      "commit_metadata": {
+        "Owned layer": "task brief cleanup",
+        "Not changing": "seven accepted guarded dispatcher implementation files",
+        "Composes with": "dev tip / PR #4417",
+        "LLM-Agent": "Antigravity",
+        "Task-ID": "SUP-L12-GUARDED-REMEDIATION-DISPATCHER-20260731-V2",
+        "Reviewer": "Human/Ops",
+        "Verified": "verified exact seven-file match against eaf521876594bb1904307b0dc33aea10995cf404"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 1,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "98760e3d1e6be1318ee769848195d8a5a14f0230",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "created_at": "2026-07-31T18:22:52Z",
+      "from": "Antigravity",
+      "message": "PR #4417 is MERGEABLE with exact head eaf521876594bb1904307b0dc33aea10995cf404 on task/SUP-L12-GUARDED-REMEDIATION-DISPATCHER-20260731-V2. All GitHub action workflows pass. Awaiting Human/Ops review approval and status update to review_approved.",
+      "resolved_at": "2026-07-31T18:24:28Z",
+      "status": "done",
+      "task_id": "SUP-L12-GUARDED-REMEDIATION-DISPATCHER-20260731-V2",
+      "to": "Human/Ops"
+    },
+    {
+      "created_at": "2026-07-31T18:24:28Z",
+      "from": "Human/Ops",
+      "message": "Exact content and tests pass, but the latest commit subject and Task-ID trailer still name SUP-L12-GUARDED-REMEDIATION-DISPATCHER-20260731. Add one empty task-scoped closeout commit whose subject includes SUP-L12-GUARDED-REMEDIATION-DISPATCHER-20260731-V2 and trailers bind LLM-Agent: Antigravity, Task-ID: SUP-L12-GUARDED-REMEDIATION-DISPATCHER-20260731-V2, Reviewer: Human/Ops; do not change the seven-file tree, config, catalog, or product tasks. Push #4417, wait CI, update exact source/review binding, then hand off.",
+      "resolved_at": "2026-07-31T18:24:28Z",
+      "status": "done",
+      "task_id": "SUP-L12-GUARDED-REMEDIATION-DISPATCHER-20260731-V2",
+      "to": "Antigravity"
+    },
+    {
+      "created_at": "2026-07-31T18:31:10Z",
+      "from": "Antigravity",
+      "message": "Rebound V2 task commit identity (89f11b35f) pushed to PR #4417, all 8 CI checks green. Ready for Human/Ops review approval and final merge closeout.",
+      "resolved_at": "2026-07-31T18:32:02Z",
+      "status": "done",
+      "task_id": "SUP-L12-GUARDED-REMEDIATION-DISPATCHER-20260731-V2",
+      "to": "Human/Ops"
+    },
+    {
+      "created_at": "2026-07-31T18:32:02Z",
+      "from": "Human/Ops",
+      "message": "PR #4417 head 89f11b35fb646fecf23512448c837c9a97c678a4 passes CI and V2 identity rules, but it added .orchestrator/task-briefs/sup_l12_guarded_remediation_dispatcher_20260731_v2.md, making the net PR scope eight files instead of the accepted exact seven. Create one normal follow-up commit (no amend, reset, force, or force-with-lease) that deletes only this V2 brief. Keep the seven accepted dispatcher files byte-identical to eaf521876594bb1904307b0dc33aea10995cf404; use a <=72-char subject containing SUP-L12-GUARDED-REMEDIATION-DISPATCHER-20260731-V2 and canonical trailers; push, wait all CI, then hand off exact head.",
+      "resolved_at": "2026-07-31T18:32:02Z",
+      "status": "done",
+      "task_id": "SUP-L12-GUARDED-REMEDIATION-DISPATCHER-20260731-V2",
+      "to": "Antigravity"
+    },
+    {
+      "created_at": "2026-07-31T18:35:15Z",
+      "from": "Antigravity",
+      "message": "PR #4417 exact head 559a4057216c873432222b2564ed284592d7ec32 has passed all GitHub required CI checks and local unit/schema tests. Awaiting independent review and merge by Human/Ops.",
+      "resolved_at": "2026-07-31T18:36:04Z",
+      "status": "done",
+      "task_id": "SUP-L12-GUARDED-REMEDIATION-DISPATCHER-20260731-V2",
+      "to": "Human/Ops"
+    },
+    {
+      "created_at": "2026-07-31T18:36:04Z",
+      "from": "Human/Ops",
+      "message": "APPROVED exact head 559a4057216c873432222b2564ed284592d7ec32: exact seven-file scope, byte-equal accepted dispatcher content, independent 25+31 tests/schema/compile/validate-only pass, and all GitHub required checks green.",
+      "status": "done",
+      "task_id": "SUP-L12-GUARDED-REMEDIATION-DISPATCHER-20260731-V2",
+      "to": "Antigravity",
+      "resolved_at": "2026-07-31T18:37:01Z"
+    }
+  ],
+  "blockers": []
+}

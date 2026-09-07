@@ -1,0 +1,171 @@
+{
+  "version": 1,
+  "task_id": "L12-DEP-001",
+  "archived_at": "2026-07-26T10:49:32Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "acceptance": [
+      "Deployment mutations authenticate authoritative actor and tenant",
+      "Two consumers cannot concurrently own the same outbox event",
+      "Crash after RuntimeBinding side effect and before ack does not duplicate binding",
+      "Retry DLQ replay compensation and idle health recovery are visible",
+      "Approval plan saga binding and runtime stages retain shared correlation"
+    ],
+    "actual_state_sources": [
+      "deployment saga",
+      "RuntimeBinding",
+      "outbox DLQ and compensation receipt"
+    ],
+    "artifact_conflict_guard": {
+      "allowed_overlap_task_ids": [],
+      "artifact_scope": [
+        {
+          "path": "docs/deployment/evidence/twelve-loop-gap/L12-DEP-001",
+          "repo": "pantheon"
+        },
+        {
+          "path": "services/deployment",
+          "repo": "pantheon"
+        },
+        {
+          "path": "services/promotion",
+          "repo": "pantheon"
+        }
+      ],
+      "catalog_sha256": "a7fbbaa560bd7f2d97750b25cd20af69b64d4f522b293689849b0e1b1763717f",
+      "program_id": "pantheon-twelve-loop-gap-2026-07-26",
+      "schema_version": 1,
+      "task_id": "L12-DEP-001"
+    },
+    "artifacts": [
+      "services/deployment",
+      "services/promotion",
+      "docs/deployment/evidence/twelve-loop-gap/L12-DEP-001"
+    ],
+    "auto_created_by": "dispatch_twelve_loop_gap_2026_07_26",
+    "catalog_task_contract_sha256": "3d7cdbf9c59d67584075caf09b571c5025dda488d4c04c88fd8e43957bed361e",
+    "current_maturity": "api-only",
+    "depends_on": [
+      "L12-FLEET-001"
+    ],
+    "desired_state_sources": [
+      "immutable approved artifact",
+      "ApprovalDecision and DeploymentPlan"
+    ],
+    "dispatch_rules": [
+      "Consume immutable approved artifacts only",
+      "Kill switch retains priority",
+      "Do not treat submitted receipt as terminal success"
+    ],
+    "evidence_root": "docs/deployment/evidence/twelve-loop-gap/L12-DEP-001",
+    "fleet_lane": "deployment",
+    "id": "L12-DEP-001",
+    "last_update": "2026-07-26T10:49:32Z",
+    "loop_ids": [
+      "promotion_deployment"
+    ],
+    "merge_target": "dev",
+    "mutates_canonical": true,
+    "next": "Owner closeout complete: implementation/initial closeout PR #4153 merged at 7e62bc6fde22f9abe93090be893f02faf70631d5 and schema-complete evidence PR #4154 merged at c73c623be1bccb3149d1c067ac7791ec89b63dca; approved implementation d9bc76c2d9580d7da9130247f428bd7668d8ab57; deployment/promotion suite 166 passed with one existing warning; py_compile, evidence checksums, product schema/guardrail, git diff check, and required CI passed.",
+    "non_goals": [
+      "No panel-only closure",
+      "No seed fixture as live proof",
+      "No approval gate bypass",
+      "No live-capital activation"
+    ],
+    "owner": "Codex2",
+    "phase": "Twelve Loop Remediation / Deployment",
+    "product_level_required": true,
+    "program_id": "pantheon-twelve-loop-gap-2026-07-26",
+    "proof_required": [
+      "two-consumer claim test",
+      "side-effect-before-ack crash test",
+      "auth and tenant negatives",
+      "current downstream terminal readback"
+    ],
+    "requires_human_ops_signoff": false,
+    "reviewer": "Codex",
+    "status": "done",
+    "summary_zh": "為 Deployment mutation 與 consumer 加 service/operator auth、tenant partition、transactional outbox claim/ack、idle health recovery及 crash-after-side-effect compensation。",
+    "target_maturity": "reconciled",
+    "target_repo": "pantheon",
+    "task_doc": "docs/bff/execution-tasks/2026-07-26-twelve-loop-gap/L12-DEP-001.md",
+    "title": "Lease and authenticate the Deployment saga dispatcher",
+    "wave": 1,
+    "review_file": "docs/deployment/evidence/twelve-loop-gap/L12-DEP-001/closeout/evidence.json",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-07-26T10:49:32Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/l12-dep-001",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/L12-DEP-001",
+      "git_clean_required": false,
+      "status_command_runtime": {
+        "command_root": "/home/lupin/pantheon-ci-deploy/dev-root",
+        "source_sha": "09159159fbac9b43d3e97011a12a224699677620",
+        "base_ref": "origin/dev",
+        "remote": "ajoe734/pantheon",
+        "status_root": "/home/lupin/pantheon",
+        "delivery_root": "/tmp/pantheon-worker-worktrees/pantheon/l12-dep-001",
+        "wrapper_root": "/home/lupin/pantheon-ci-deploy/dev-root"
+      },
+      "commit": "41a1ba34694cf971c9ea994dd1d6d98bbf9af43f",
+      "commit_subject": "L12-DEP-001: add product closeout manifest",
+      "commit_author": {
+        "name": "pantheon-dev",
+        "email": "bjoe734@gmail.com"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex2",
+        "Task-ID": "L12-DEP-001",
+        "Reviewer": "Codex",
+        "Verified": "post-dev-update deployment/promotion suite 166 passed with 1 existing warning"
+      },
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "c73c623be1bccb3149d1c067ac7791ec89b63dca",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "created_at": "2026-07-26T10:11:27Z",
+      "from": "Codex2",
+      "message": "Implementation committed at d9bc76c2d with authenticated tenant-partitioned Deployment/Promotion mutations, exclusive outbox lease claim/ack/recovery, crash-after-side-effect no-duplicate proof, idle health recovery, and product evidence at docs/deployment/evidence/twelve-loop-gap/L12-DEP-001. Validation: focused 98 passed; full services/deployment services/promotion 166 passed; evidence checksum OK. RuntimeBinding ownership and Compose activation remain unchanged; L12-MANIFEST-001 owns token/tenant/auth-mode wiring.",
+      "resolved_at": "2026-07-26T10:21:43Z",
+      "status": "done",
+      "task_id": "L12-DEP-001",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-07-26T10:21:43Z",
+      "from": "Codex",
+      "message": "Independent review approved commit d9bc76c2d9580d7da9130247f428bd7668d8ab57: authenticated server-authoritative actor/tenant partition; process-safe exclusive claim plus token-bound ack/release/expiry recovery; RuntimeBinding response-loss preflight and recorded-binding replay prevent duplicate side effects; retry/DLQ/replay/compensation/idle recovery are observable; plan-saga-binding correlation and terminal downstream readback remain intact. Independent validation: /home/lupin/pantheon/.venv/bin/pytest -q services/deployment services/promotion => 166 passed, 1 existing warning; changed modules py_compile passed; evidence checksum passed from its evidence directory; git diff --check passed; merge-tree with latest origin/dev clean. No PR exists yet, correctly deferred to Codex2 owner closeout.",
+      "status": "done",
+      "task_id": "L12-DEP-001",
+      "to": "Codex2",
+      "resolved_at": "2026-07-26T10:49:33Z"
+    }
+  ],
+  "blockers": [],
+  "correction_context": {
+    "version": 1,
+    "corrected_at": "2026-07-26T12:53:17Z",
+    "actor": "Human/Ops",
+    "reason": "Replace disposable worker path with the merged ProductEvidence manifest after checksum and done-guard replay.",
+    "field": "task.review_file",
+    "from": "/tmp/pantheon-worker-worktrees/pantheon/l12-dep-001/docs/deployment/evidence/twelve-loop-gap/L12-DEP-001/closeout/evidence.json",
+    "to": "docs/deployment/evidence/twelve-loop-gap/L12-DEP-001/closeout/evidence.json",
+    "evidence_sha256": "262f4c80dad423c547272662801450967671042e99347dd9f67aa991301fa683"
+  }
+}

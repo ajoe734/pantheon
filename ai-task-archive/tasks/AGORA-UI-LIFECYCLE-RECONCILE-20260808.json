@@ -1,0 +1,168 @@
+{
+  "version": 1,
+  "task_id": "AGORA-UI-LIFECYCLE-RECONCILE-20260808",
+  "archived_at": "2026-08-13T02:59:52Z",
+  "terminal_status": "done",
+  "terminal_outcome": "superseded",
+  "task": {
+    "acceptance": [
+      "Build a complete UI polish 001-011 matrix from exact execute-plans and Pantheon PRs, merge SHAs, checks, and hosted evidence.",
+      "Distinguish exact task-scoped hosted proof from proof that a task merge is merely an ancestor of a later accepted frontend.",
+      "Record UI polish 010 as source-delivered and present in later hosted ancestry, but do not claim an equivalent standalone task-specific hosted closeout unless new evidence proves it.",
+      "Remove stale draft labels only where canonical merge/evidence truth supports the transition.",
+      "Update the remaining-work index to distinguish historical completion from the newly accepted current pair and cross-loop result.",
+      "Keep evidence review_pending until independent exact-head review."
+    ],
+    "artifacts": [
+      "docs/bff/execution-tasks/2026-07-13-agora-ui-polish/",
+      "docs/bff/execution-tasks/2026-07-22-pantheon-agora-remaining-work/INDEX.md",
+      "docs/deployment/evidence/agora/AGORA-UI-LIFECYCLE-RECONCILE-20260808/"
+    ],
+    "depends_on": [
+      "AGORA-CURRENT-HOSTED-REACCEPT-20260808"
+    ],
+    "dev_bridge": {
+      "actor": {
+        "capabilities": [
+          "dev-task.dispatch",
+          "fleet.dispatch"
+        ],
+        "id": "Codex",
+        "roles": [
+          "coordination-agent"
+        ]
+      },
+      "audit_conversation_href": "codex://root/agora-current-gap-execution-20260808",
+      "conversation_id": "codex-root-agora-current-gap-execution-20260808",
+      "documents": [
+        {
+          "kind": "AGORA_CURRENT_GAP_AUDIT",
+          "path": "docs/bff/execution-tasks/2026-08-08-agora-current-environment-gap/GAP-AUDIT.md",
+          "sourceRefs": [
+            "https://github.com/ajoe734/pantheon/pull/4628",
+            "e765bcbed",
+            "deployment run 31250996848"
+          ]
+        },
+        {
+          "kind": "AGORA_CURRENT_GAP_PLAN",
+          "path": "docs/bff/execution-tasks/2026-08-08-agora-current-environment-gap/INDEX.md",
+          "sourceRefs": [
+            "https://github.com/ajoe734/pantheon/pull/4628",
+            "origin/dev 0f2ab06f8"
+          ]
+        },
+        {
+          "kind": "EXECUTION_TASK_DAG",
+          "path": "docs/bff/execution-tasks/2026-08-08-agora-current-environment-gap/execution-tasks.json",
+          "sourceRefs": [
+            "seven unique addendum tasks",
+            "unique sink AGORA-CURRENT-CLOSE-20260808"
+          ]
+        }
+      ],
+      "emitted_at": "2026-08-08T10:50:00Z",
+      "intent": "generate_sa_sd_and_dispatch",
+      "mode": "kernel_repair",
+      "packet_digest": "e32265e892a924d69b69ce3de5d83d0ea8c5ccad56114a0638299192686a41c6",
+      "packet_id": "pkt-agora-current-environment-gap-20260808-e765bcbed",
+      "source_turn_ids": [
+        "user-request-agora-gap-and-execution-tasks-for-supervisor",
+        "codex-readonly-agora-current-state-audit-20260808"
+      ],
+      "task_spec": {
+        "acceptance": [
+          "Build a complete UI polish 001-011 matrix from exact execute-plans and Pantheon PRs, merge SHAs, checks, and hosted evidence.",
+          "Distinguish exact task-scoped hosted proof from proof that a task merge is merely an ancestor of a later accepted frontend.",
+          "Record UI polish 010 as source-delivered and present in later hosted ancestry, but do not claim an equivalent standalone task-specific hosted closeout unless new evidence proves it.",
+          "Remove stale draft labels only where canonical merge/evidence truth supports the transition.",
+          "Update the remaining-work index to distinguish historical completion from the newly accepted current pair and cross-loop result.",
+          "Keep evidence review_pending until independent exact-head review."
+        ],
+        "artifacts": [
+          "docs/bff/execution-tasks/2026-07-13-agora-ui-polish/",
+          "docs/bff/execution-tasks/2026-07-22-pantheon-agora-remaining-work/INDEX.md",
+          "docs/deployment/evidence/agora/AGORA-UI-LIFECYCLE-RECONCILE-20260808/"
+        ],
+        "depends_on": [
+          "AGORA-CURRENT-HOSTED-REACCEPT-20260808"
+        ],
+        "id": "AGORA-UI-LIFECYCLE-RECONCILE-20260808",
+        "owner": "Claude",
+        "phase": "A5 documentation truth",
+        "reviewer": "Antigravity",
+        "summary": "Synchronize stale draft/index state with exact merged and hosted evidence while preserving the UI polish 010 task-specific evidence limitation.",
+        "title": "Reconcile Agora UI polish and current lifecycle truth"
+      },
+      "task_spec_hash": "7561a5fd8f1834ab00582dfa1d758414b490ea0bdf56431185b4c0bdcc8ec11f"
+    },
+    "generation": 1,
+    "id": "AGORA-UI-LIFECYCLE-RECONCILE-20260808",
+    "last_update": "2026-08-13T02:59:52Z",
+    "next": "Superseded by the 2026-08-13 V2 board reset. Preserve merged/archive evidence; remaining product work is rematerialized as dependency-free, current-source V2 roots.",
+    "owner": "Antigravity",
+    "phase": "A5 documentation truth",
+    "reviewer": "Codex",
+    "status": "done",
+    "summary_zh": "Synchronize stale draft/index state with exact merged and hosted evidence while preserving the UI polish 010 task-specific evidence limitation.",
+    "title": "Reconcile Agora UI polish and current lifecycle truth",
+    "terminal_outcome": "superseded"
+  },
+  "handoffs": [
+    {
+      "created_at": "2026-08-08T14:44:49Z",
+      "from": "Claude",
+      "message": "Auto-reassigned AGORA-UI-LIFECYCLE-RECONCILE-20260808 away from unavailable lane Claude, Antigravity (disabled, paused, sidecar-only, or auth-down); owner Claude -> Codex, reviewer Antigravity -> Codex2.",
+      "resolved_at": "2026-08-09T10:23:51Z",
+      "status": "done",
+      "task_id": "AGORA-UI-LIFECYCLE-RECONCILE-20260808",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-08-09T10:20:24Z",
+      "from": "Codex2",
+      "message": "Auto-reassigned AGORA-UI-LIFECYCLE-RECONCILE-20260808 away from unavailable lane Codex2 (disabled, paused, sidecar-only, or auth-down); reviewer Codex2 -> Claude.",
+      "resolved_at": "2026-08-09T10:46:09Z",
+      "status": "done",
+      "task_id": "AGORA-UI-LIFECYCLE-RECONCILE-20260808",
+      "to": "Claude"
+    },
+    {
+      "created_at": "2026-08-09T10:46:09Z",
+      "from": "Claude",
+      "message": "Auto-reassigned AGORA-UI-LIFECYCLE-RECONCILE-20260808 away from unavailable lane Claude (disabled, paused, sidecar-only, or auth-down); reviewer Claude -> Antigravity.",
+      "resolved_at": "2026-08-09T15:41:00Z",
+      "status": "done",
+      "task_id": "AGORA-UI-LIFECYCLE-RECONCILE-20260808",
+      "to": "Antigravity"
+    },
+    {
+      "created_at": "2026-08-09T15:19:21Z",
+      "from": "Codex",
+      "message": "Auto-reassigned AGORA-UI-LIFECYCLE-RECONCILE-20260808 away from unavailable lane Codex (disabled, paused, sidecar-only, or auth-down); owner Codex -> Codex2.",
+      "resolved_at": "2026-08-12T03:10:44Z",
+      "status": "done",
+      "task_id": "AGORA-UI-LIFECYCLE-RECONCILE-20260808",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-08-12T03:10:44Z",
+      "from": "Codex2",
+      "message": "Auto-reassigned AGORA-UI-LIFECYCLE-RECONCILE-20260808 away from unavailable lane Codex2 (disabled, paused, sidecar-only, or auth-down); owner Codex2 -> Antigravity, reviewer Antigravity -> Claude.",
+      "resolved_at": "2026-08-13T02:00:40Z",
+      "status": "done",
+      "task_id": "AGORA-UI-LIFECYCLE-RECONCILE-20260808",
+      "to": "Antigravity"
+    },
+    {
+      "created_at": "2026-08-12T04:40:54Z",
+      "from": "Claude",
+      "message": "Auto-reassigned AGORA-UI-LIFECYCLE-RECONCILE-20260808 away from unavailable lane Claude (disabled, paused, sidecar-only, or auth-down); reviewer Claude -> Codex.",
+      "status": "done",
+      "task_id": "AGORA-UI-LIFECYCLE-RECONCILE-20260808",
+      "to": "Codex",
+      "resolved_at": "2026-08-13T02:59:52Z"
+    }
+  ],
+  "blockers": []
+}

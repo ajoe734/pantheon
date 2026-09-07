@@ -1,0 +1,87 @@
+{
+  "actor": {
+    "capabilities": [
+      "integration",
+      "status-system",
+      "acceptance"
+    ],
+    "id": "Human/Ops",
+    "roles": [
+      "operator"
+    ]
+  },
+  "admission_record_path": "ai-task-archive/tasks/assistant-dev-bridge-admissions/pkt-worker-failure-sigterm-transcript-false-positive-20260809T1027Z--00482bc26b0d3cb0.json",
+  "admitted_at": "2026-08-09T10:29:54Z",
+  "audit_conversation_href": "task:SUP-RUNTIME-V10-LEGACY-DRIFT-BOOTSTRAP-FOLLOWUP-20260809",
+  "constraints": {
+    "allowedRepos": [
+      "pantheon"
+    ],
+    "noDirectShellFromWeb": true,
+    "requiresBranchPrMerge": true
+  },
+  "conversation_id": "SUP-RUNTIME-V10-LEGACY-DRIFT-BOOTSTRAP-FOLLOWUP-20260809",
+  "dispatch_records": [
+    {
+      "error": null,
+      "owner": "Claude",
+      "reviewer": "Codex",
+      "status": "dispatched",
+      "taskId": "SUP-WORKER-FAILURE-SIGTERM-TRANSCRIPT-GATE-20260809"
+    }
+  ],
+  "documents": [
+    {
+      "kind": "LIVE_FALSE_POSITIVE_EVIDENCE",
+      "path": ".orchestrator/evidence/codex_20260809t095151z_200962bd.json",
+      "sourceRefs": [
+        "run:codex-20260809T095151Z-200962bd",
+        "log:20260809T095151094458Z-codex-codex2_2-0d4c19.log:27295"
+      ]
+    }
+  ],
+  "durable": true,
+  "emitted_at": "2026-08-09T10:27:00Z",
+  "intent": "source_only_remediation_dispatch",
+  "mode": "supervisor_source_only",
+  "packet_digest": "00482bc26b0d3cb0a1a753f096eb3b3b6e96171c15be59447834079a4647ccf8",
+  "packet_id": "pkt-worker-failure-sigterm-transcript-false-positive-20260809T1027Z",
+  "packet_version": "pantheon.assistant.dev-task.v1",
+  "record_kind": "assistant_dev_bridge_admission",
+  "record_payload_sha256": "43eb49669cac683b88220f4137ce883455edd061ec8cc4886e5d2dad9bf0801c",
+  "schema": "pantheon.assistant-dev-bridge-admission.v1",
+  "source_turn_ids": [
+    "worker-run:codex-20260809T095151Z-200962bd",
+    "evidence:codex_20260809t095151z_200962bd.json"
+  ],
+  "tasks": [
+    {
+      "task_id": "SUP-WORKER-FAILURE-SIGTERM-TRANSCRIPT-GATE-20260809",
+      "task_spec": {
+        "acceptance": [
+          "Reproduce worker run codex-20260809T095151Z-200962bd: after a supervisor-originated SIGTERM/exit 143, a plain source-code line in the mixed-trust transcript was incorrectly classified as a provider terminal failure and created a provider dispatch pause.",
+          "Generic runner termination, supervisor preemption, missing process, signal exit, or other non-provider runner failure must never authorize regex classification of arbitrary transcript plaintext as a provider failure.",
+          "Provider failure classification must remain bound to an authoritative structured provider terminal envelope or an explicit runner-owned provider failure record; source, tests, prompts, tool output, notes, diffs, and assistant prose remain non-authoritative.",
+          "Preserve correct classification and guardrail behavior for genuine provider terminal failures, authentication failures, real provider capacity failures, malformed envelopes, missing processes, and supported structured Claude/Qwen streams.",
+          "Add exact regression coverage for source text following supervisor SIGTERM, source text following generic exit, and genuine provider terminal evidence; prove the first two do not pause any Codex lane while the last still fails closed.",
+          "Publish committed pre-review evidence with the captured run/evidence references, focused and full supervisor test results, exact changed paths, rollout boundary, and rollback by merge revert. Do not edit live state, provider config, account grouping, reviewer policy, task governance, scheduler policy, or runtime processes in this source task."
+        ],
+        "artifacts": [
+          ".orchestrator/supervisor.py",
+          ".orchestrator/test_supervisor.py",
+          "docs/deployment/evidence/supervisor/SUP-WORKER-FAILURE-SIGTERM-TRANSCRIPT-GATE-20260809/"
+        ],
+        "depends_on": [
+          "SUP-RUNTIME-V10-LEGACY-DRIFT-BOOTSTRAP-FOLLOWUP-20260809"
+        ],
+        "id": "SUP-WORKER-FAILURE-SIGTERM-TRANSCRIPT-GATE-20260809",
+        "owner": "Claude",
+        "phase": "Supervisor Runtime / Worker Failure Classification",
+        "reviewer": "Codex",
+        "summary": "Close the remaining worker-failure envelope gap exposed live on 2026-08-09: a supervisor-terminated Codex2 worker had its mixed-trust transcript rescanned, and a source snippet was misclassified as a provider failure. Bind classification to authoritative provider evidence without changing provider or scheduling policy.",
+        "title": "Prevent SIGTERM transcript source false positives"
+      },
+      "task_spec_hash": "d53ebf72ea4136dc939b36e3c84ac10a871c746647edca890f5e75ac2aee49ce"
+    }
+  ]
+}

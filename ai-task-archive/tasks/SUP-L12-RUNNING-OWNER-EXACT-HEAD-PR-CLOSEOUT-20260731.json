@@ -1,0 +1,414 @@
+{
+  "version": 1,
+  "task_id": "SUP-L12-RUNNING-OWNER-EXACT-HEAD-PR-CLOSEOUT-20260731",
+  "archived_at": "2026-08-06T14:02:10Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "acceptance": [
+      "Verify #4396 head c4346b8d53941d665acd931d32a98b3802b1e7b2 and task row review_approved evidence before changing PR state",
+      "If #4396 is intended to be integrated evidence, make it ready for review, confirm Branch CI remains green, and run auto-integrator eligibility dry-run",
+      "If #4396 is only a ReviewBus artifact and should stay draft, record a governed closeout path that does not block #4386 support proof on a draft PR",
+      "Do not count #4386 subject row as complete until protected merge and governed closeout rules are satisfied"
+    ],
+    "artifacts": [
+      "docs/deployment/evidence/twelve-loop-gap/SUP-L12-RUNNING-OWNER-EXACT-HEAD-PR-CLOSEOUT-20260731",
+      "docs/deployment/evidence/twelve-loop-gap/SUP-L12-RUNNING-OWNER-EXACT-HEAD-RECONCILE-20260731"
+    ],
+    "depends_on": [],
+    "dev_bridge": {
+      "actor": {
+        "capabilities": [
+          "fleet.dispatch",
+          "dev-task.dispatch"
+        ],
+        "id": "Codex",
+        "roles": [
+          "operator-delegate"
+        ]
+      },
+      "audit_conversation_href": "codex://root/l12-current-gap-supervisor-dispatch-20260731#wave0x-fleet-reconcile-fallout",
+      "conversation_id": "codex-root-l12-current-gap-supervisor-dispatch-20260731",
+      "documents": [
+        {
+          "kind": "CURRENT_THREE_PASS_GAP_AUDIT_ADDENDUM",
+          "path": "docs/04/pantheon_twelve_loop_gap_2026-07-26/archive/CURRENT_THREE_PASS_GAP_AUDIT_2026-07-31T0640Z.md",
+          "sourceRefs": [
+            "PR#4394",
+            "head 8861d5231f577c85b947c75ce9e4e8cc13ee487a"
+          ]
+        },
+        {
+          "kind": "EXECUTION_TASK_GRAPH",
+          "path": "docs/bff/execution-tasks/2026-07-31-l12-current-gap-supervisor-dispatch/tasks.json",
+          "sourceRefs": [
+            "Wave 0X added at 2026-07-31T12:25:00Z"
+          ]
+        },
+        {
+          "kind": "RECONCILE_EVIDENCE_PR",
+          "path": "https://github.com/ajoe734/pantheon/pull/4395",
+          "sourceRefs": [
+            "#4385 evidence names nonexistent anchor 9d53a94a265c55af4c8d15c50ab3751f1440ac0f"
+          ]
+        },
+        {
+          "kind": "RECONCILE_EVIDENCE_PR",
+          "path": "https://github.com/ajoe734/pantheon/pull/4396",
+          "sourceRefs": [
+            "#4386 current-head support proof is review_approved but PR #4396 is draft"
+          ]
+        }
+      ],
+      "emitted_at": "2026-07-31T12:29:08Z",
+      "intent": "dispatch_parallel_wave0x_reconcile_fallout_repairs",
+      "mode": "kernel_repair",
+      "packet_digest": "24fcc3087b0aa6e1aa1d99cd1d03387f2f2fc59f36c1eab79314e5a8192986fc",
+      "packet_id": "pkt-l12-wave0x-fleet-reconcile-fallout-20260731T1225Z",
+      "source_turn_ids": [
+        "user-complete-gap-audit-and-supervisor-dispatch",
+        "codex-wave0x-fleet-reconcile-fallout-20260731"
+      ],
+      "task_spec": {
+        "acceptance": [
+          "Verify #4396 head c4346b8d53941d665acd931d32a98b3802b1e7b2 and task row review_approved evidence before changing PR state",
+          "If #4396 is intended to be integrated evidence, make it ready for review, confirm Branch CI remains green, and run auto-integrator eligibility dry-run",
+          "If #4396 is only a ReviewBus artifact and should stay draft, record a governed closeout path that does not block #4386 support proof on a draft PR",
+          "Do not count #4386 subject row as complete until protected merge and governed closeout rules are satisfied"
+        ],
+        "artifacts": [
+          "docs/deployment/evidence/twelve-loop-gap/SUP-L12-RUNNING-OWNER-EXACT-HEAD-PR-CLOSEOUT-20260731",
+          "docs/deployment/evidence/twelve-loop-gap/SUP-L12-RUNNING-OWNER-EXACT-HEAD-RECONCILE-20260731"
+        ],
+        "depends_on": [],
+        "id": "SUP-L12-RUNNING-OWNER-EXACT-HEAD-PR-CLOSEOUT-20260731",
+        "owner": "Antigravity",
+        "phase": "Supervisor Runtime Repair / Wave 0X Reconcile Fallout",
+        "reviewer": "Claude2",
+        "summary": "Resolve the draft ReviewBus PR #4396 integration gap so current-head running-owner support evidence is either governably integrated or explicitly routed without draft-PR blockage.",
+        "title": "Move #4396 running-owner exact-head proof through governed PR/closeout"
+      },
+      "task_spec_hash": "c8668db8bc7a7af97044001566e77df54d40dde70f8453bfc2c99acd6e535be4"
+    },
+    "failure_streak": 0,
+    "github_review_bridge": {
+      "actor": "Claude",
+      "base": "dev",
+      "decision": "approve",
+      "head_branch": "task/SUP-L12-RUNNING-OWNER-EXACT-HEAD-PR-CLOSEOUT-20260731",
+      "head_sha": "1f55273e22e9e7110f8f8cc96fe627c6f6ec5218",
+      "mode": "required_commit_status",
+      "pr": 4550,
+      "pr_url": "https://github.com/ajoe734/pantheon/pull/4550",
+      "recorded_at": "2026-08-06T13:54:54Z",
+      "repository": "ajoe734/pantheon",
+      "review_error": "gh: Unprocessable Entity (HTTP 422)",
+      "review_proof_ref": "refs/tags/pantheon-review/approve/1f55273e22e9e7110f8f8cc96fe627c6f6ec5218",
+      "status_context": "Pantheon canonical review gate",
+      "status_id": 51768108256,
+      "status_state": "success"
+    },
+    "id": "SUP-L12-RUNNING-OWNER-EXACT-HEAD-PR-CLOSEOUT-20260731",
+    "last_update": "2026-08-06T14:02:10Z",
+    "next": "Owner finalized approved task and verified PR #4550 merged to dev (squash eca6b7de6313027d4c943679a1fa8fb7d93028ba)",
+    "owner": "Antigravity",
+    "phase": "Supervisor Runtime Repair / Wave 0X Reconcile Fallout",
+    "review_binding": {
+      "base": "dev",
+      "head_branch": "task/SUP-L12-RUNNING-OWNER-EXACT-HEAD-PR-CLOSEOUT-20260731",
+      "head_sha": "1f55273e22e9e7110f8f8cc96fe627c6f6ec5218",
+      "pr": 4550
+    },
+    "review_file": "docs/deployment/evidence/twelve-loop-gap/SUP-L12-RUNNING-OWNER-EXACT-HEAD-PR-CLOSEOUT-20260731/evidence.json",
+    "reviewer": "Claude",
+    "status": "done",
+    "summary_zh": "Resolve the draft ReviewBus PR #4396 integration gap so current-head running-owner support evidence is either governably integrated or explicitly routed without draft-PR blockage.",
+    "title": "Move #4396 running-owner exact-head proof through governed PR/closeout",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-08-06T14:02:10Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/sup-l12-running-owner-exact-head-pr-closeout-20260731",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/SUP-L12-RUNNING-OWNER-EXACT-HEAD-PR-CLOSEOUT-20260731",
+      "git_clean_required": false,
+      "status_command_runtime": {
+        "command_root": "/home/lupin/pantheon-ci-deploy/dev-root",
+        "source_sha": "f90e0aae6cb5e86f18b20db9f30bc834f6115745",
+        "base_ref": "origin/dev",
+        "remote": "ajoe734/pantheon",
+        "status_root": "/home/lupin/pantheon",
+        "delivery_root": "/tmp/pantheon-worker-worktrees/pantheon/sup-l12-running-owner-exact-head-pr-closeout-20260731",
+        "wrapper_root": "/home/lupin/pantheon-ci-deploy/dev-root",
+        "worker_lease": {
+          "schema_version": 1,
+          "task_id": "SUP-L12-RUNNING-OWNER-EXACT-HEAD-PR-CLOSEOUT-20260731",
+          "worker_run_id": "antigravity1-3-20260806T135905Z-2d11c3c6",
+          "queue_event_id": "evt-20260806T135835Z-8d339a95",
+          "pid": 3367814,
+          "pid_start_ticks": 46179784,
+          "process_generation": "worker-process-generation-sha256:2e1f84ff744c92e980740fdb142d30b720b81b80e01bd6c351a25b37500b5079"
+        }
+      },
+      "commit": "eca6b7de6313027d4c943679a1fa8fb7d93028ba",
+      "commit_subject": "SUP-L12-RUNNING-OWNER-EXACT-HEAD-PR-CLOSEOUT-20260731: governed closeout evidence (#4550)",
+      "commit_author": {
+        "name": "ajoe734",
+        "email": "bjoe734@gmail.com"
+      },
+      "commit_metadata": {
+        "* SUP-L12-RUNNING-OWNER-EXACT-HEAD-PR-CLOSEOUT-20260731": "update evidence",
+        "Owned layer": "docs/deployment/evidence/twelve-loop-gap/SUP-L12-RUNNING-OWNER-EXACT-HEAD-PR-CLOSEOUT-20260731",
+        "Not changing": "supervisor core, routing, task state schemas",
+        "Composes with": "PR #4550 exact-head review by Claude",
+        "Findings": "PR #4396 is MERGED into dev (squash",
+        "9cb030dc1b6944334f3717af6c0d5f2fc5f10cd9, 2026-08-05T02": "00:30Z), so the",
+        "LLM-Agent": "Antigravity",
+        "Task-ID": "SUP-L12-RUNNING-OWNER-EXACT-HEAD-PR-CLOSEOUT-20260731",
+        "Reviewer": "Claude",
+        "Verified": "gh pr view 4386 live status check rollup (4 required SUCCESS, review gate ABSENT)"
+      },
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "eca6b7de6313027d4c943679a1fa8fb7d93028ba",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "created_at": "2026-07-31T12:30:05Z",
+      "from": "Claude2",
+      "message": "Auto-reassigned SUP-L12-RUNNING-OWNER-EXACT-HEAD-PR-CLOSEOUT-20260731 away from unavailable lane Claude2 (disabled, paused, sidecar-only, or auth-down); reviewer Claude2 -> Codex2.",
+      "resolved_at": "2026-07-31T12:31:28Z",
+      "status": "done",
+      "task_id": "SUP-L12-RUNNING-OWNER-EXACT-HEAD-PR-CLOSEOUT-20260731",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-07-31T12:30:30Z",
+      "from": "Antigravity",
+      "message": "Helper-claimed by idle Codex2; previous owner Antigravity becomes reviewer.",
+      "resolved_at": "2026-07-31T12:31:41Z",
+      "status": "done",
+      "task_id": "SUP-L12-RUNNING-OWNER-EXACT-HEAD-PR-CLOSEOUT-20260731",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-08-01T14:43:47Z",
+      "from": "Codex2",
+      "message": "Auto-reassigned SUP-L12-RUNNING-OWNER-EXACT-HEAD-PR-CLOSEOUT-20260731 away from unavailable lane Codex2 (disabled, paused, sidecar-only, or auth-down); owner Codex2 -> Codex.",
+      "resolved_at": "2026-08-01T15:11:00Z",
+      "status": "done",
+      "task_id": "SUP-L12-RUNNING-OWNER-EXACT-HEAD-PR-CLOSEOUT-20260731",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-08-01T15:09:50Z",
+      "from": "Codex",
+      "message": "Helper-claimed by idle Codex2; previous owner Codex becomes reviewer.",
+      "resolved_at": "2026-08-01T15:11:16Z",
+      "status": "done",
+      "task_id": "SUP-L12-RUNNING-OWNER-EXACT-HEAD-PR-CLOSEOUT-20260731",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-08-01T15:28:47Z",
+      "from": "Codex",
+      "message": "Auto-reassigned SUP-L12-RUNNING-OWNER-EXACT-HEAD-PR-CLOSEOUT-20260731 away from unavailable lane Codex (disabled, paused, sidecar-only, or auth-down); reviewer Codex -> Antigravity.",
+      "resolved_at": "2026-08-01T16:19:40Z",
+      "status": "done",
+      "task_id": "SUP-L12-RUNNING-OWNER-EXACT-HEAD-PR-CLOSEOUT-20260731",
+      "to": "Antigravity"
+    },
+    {
+      "created_at": "2026-08-01T16:19:40Z",
+      "from": "Antigravity",
+      "message": "Auto-reassigned SUP-L12-RUNNING-OWNER-EXACT-HEAD-PR-CLOSEOUT-20260731 away from unavailable lane Antigravity (disabled, paused, sidecar-only, or auth-down); reviewer Antigravity -> Codex.",
+      "resolved_at": "2026-08-04T14:42:48Z",
+      "status": "done",
+      "task_id": "SUP-L12-RUNNING-OWNER-EXACT-HEAD-PR-CLOSEOUT-20260731",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-08-04T14:43:41Z",
+      "from": "Antigravity",
+      "message": "Helper-claimed by idle Codex previous owner Antigravity becomes reviewer.",
+      "resolved_at": "2026-08-04T14:45:31Z",
+      "status": "done",
+      "task_id": "SUP-L12-RUNNING-OWNER-EXACT-HEAD-PR-CLOSEOUT-20260731",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-08-04T14:58:31Z",
+      "from": "Codex",
+      "message": "Review PR #4550 exact head ed0cf2509c51183ae5811bb9086fc03d03618dca and the task manifest. Confirm #4396 remains denied (approval_reviewer_mismatch, auto-merge null), #4386 is still conflicting, and neither is counted complete. Evidence: docs/deployment/evidence/twelve-loop-gap/SUP-L12-RUNNING-OWNER-EXACT-HEAD-PR-CLOSEOUT-20260731/evidence.json; local json.tool, diff check, and trailer check passed.",
+      "resolved_at": "2026-08-04T15:01:46Z",
+      "status": "done",
+      "task_id": "SUP-L12-RUNNING-OWNER-EXACT-HEAD-PR-CLOSEOUT-20260731",
+      "to": "Antigravity"
+    },
+    {
+      "created_at": "2026-08-04T15:01:46Z",
+      "from": "Antigravity",
+      "message": "Auto-reassigned SUP-L12-RUNNING-OWNER-EXACT-HEAD-PR-CLOSEOUT-20260731 away from unavailable lane Antigravity (disabled, paused, sidecar-only, or auth-down); reviewer Antigravity -> Codex2.",
+      "resolved_at": "2026-08-04T15:08:51Z",
+      "status": "done",
+      "task_id": "SUP-L12-RUNNING-OWNER-EXACT-HEAD-PR-CLOSEOUT-20260731",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-08-04T15:08:51Z",
+      "from": "Codex2",
+      "message": "Independent review: PR #4550 exact head ed0cf2509c51183ae5811bb9086fc03d03618dca contains the committed task manifest and only the declared brief/evidence files; JSON, committed-head equality, diff check, and commit trailers pass. Live #4396 gate and auto-integrator dry-run both deny approval_reviewer_mismatch with no auto-merge, while #4386 remains conflicting and explicitly non-countable.",
+      "resolved_at": "2026-08-04T15:09:31Z",
+      "status": "done",
+      "task_id": "SUP-L12-RUNNING-OWNER-EXACT-HEAD-PR-CLOSEOUT-20260731",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-08-04T15:09:31Z",
+      "from": "Codex2",
+      "message": "Return for a bound re-review only: the prior approve transition lacked REVIEW_PR=4550 and REVIEW_HEAD_SHA=ed0cf2509c51183ae5811bb9086fc03d03618dca, so no exact-head review-proof tag or approval binding was created and #4550 remains unmergeable. Do not change the reviewed evidence unless its contents change; return the task to review, then reviewer must approve with REVIEW_FILE=docs/deployment/evidence/twelve-loop-gap/SUP-L12-RUNNING-OWNER-EXACT-HEAD-PR-CLOSEOUT-20260731/evidence.json REVIEW_PR=4550 REVIEW_BASE=dev REVIEW_HEAD_SHA=ed0cf2509c51183ae5811bb9086fc03d03618dca.",
+      "resolved_at": "2026-08-04T15:09:31Z",
+      "status": "done",
+      "task_id": "SUP-L12-RUNNING-OWNER-EXACT-HEAD-PR-CLOSEOUT-20260731",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-08-04T15:19:00Z",
+      "from": "Codex",
+      "message": "Bound re-review required for unchanged PR #4550 head ed0cf2509c51183ae5811bb9086fc03d03618dca. Evidence manifest is already committed at docs/deployment/evidence/twelve-loop-gap/SUP-L12-RUNNING-OWNER-EXACT-HEAD-PR-CLOSEOUT-20260731/evidence.json and validates with python3 -m json.tool; git diff --check ed0cf2509c51183ae5811bb9086fc03d03618dca passed. Approve only with AI_NAME=Codex2 REVIEW_FILE=docs/deployment/evidence/twelve-loop-gap/SUP-L12-RUNNING-OWNER-EXACT-HEAD-PR-CLOSEOUT-20260731/evidence.json REVIEW_PR=4550 REVIEW_BASE=dev REVIEW_HEAD_SHA=ed0cf2509c51183ae5811bb9086fc03d03618dca $PANTHEON_COMMAND_ROOT/scripts/ai-status.sh approve SUP-L12-RUNNING-OWNER-EXACT-HEAD-PR-CLOSEOUT-20260731 <independent-review-message>. Do not alter evidence or PR head before that approval.",
+      "resolved_at": "2026-08-04T15:29:34Z",
+      "status": "done",
+      "task_id": "SUP-L12-RUNNING-OWNER-EXACT-HEAD-PR-CLOSEOUT-20260731",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-08-04T15:29:34Z",
+      "from": "Codex2",
+      "message": "Approval cannot complete: command-root review_evidence_file_committed calls gh api with -f ref=<sha> but no --method GET, so GitHub performs POST and returns 404. Independent explicit GET confirms the required manifest exists at PR #4550 head ed0cf2509c51183ae5811bb9086fc03d03618dca (blob 6428c9dd23a3e9e8ca9e1e4e29276090723c616e). Repair the validator to force a read-only GET/query ref, add a regression test covering exact-head evidence lookup, publish the corrected task PR head, then request a fresh exact-head review with the committed manifest unchanged unless the correction necessarily changes it.",
+      "resolved_at": "2026-08-04T15:29:34Z",
+      "status": "done",
+      "task_id": "SUP-L12-RUNNING-OWNER-EXACT-HEAD-PR-CLOSEOUT-20260731",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-08-04T15:40:50Z",
+      "from": "Codex",
+      "message": "Fresh exact-head review requested for PR #4550 at 8d07d8d5c5ebbec0b3381df4ae3eed8d4ebb64c8. Scope: force GET for GitHub Contents ref lookup so -f ref cannot default to POST; regression locks GET plus exact-head query. Existing evidence.json is unchanged and read back at this exact head (blob 6428c9dd23a3e9e8ca9e1e4e29276090723c616e). Owner verification: python3 -m unittest scripts.test_ai_status.ReviewApprovedWorkflowTests (39 passed); python3 -m py_compile scripts/ai_status.py scripts/test_ai_status.py; direct review_evidence_file_committed exact-head lookup returned True; git diff --check. Auto-merge is off. After independent diff/CI review, approve only this head using REVIEW_PR=4550 REVIEW_HEAD_SHA=8d07d8d5c5ebbec0b3381df4ae3eed8d4ebb64c8 and the existing review_file.",
+      "resolved_at": "2026-08-04T16:53:33Z",
+      "status": "done",
+      "task_id": "SUP-L12-RUNNING-OWNER-EXACT-HEAD-PR-CLOSEOUT-20260731",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-08-04T16:53:33Z",
+      "from": "Codex2",
+      "message": "Review cannot be recorded on GitHub: live credential and PR #4550 author are both ajoe734, so GitHub rejects the governed PR review with HTTP 422 (self-review). The dev required-status policy contains only Commit trailers, Runtime mirror guard, and Smoke acceptance; it does not require Pantheon canonical review gate, so the bridge status fallback is not policy-recognized. Arrange a reviewer authenticated as a distinct GitHub principal, or update the dev branch policy to require the canonical-review context, then request a fresh exact-head review of 8d07d8d5c5ebbec0b3381df4ae3eed8d4ebb64c8; preserve the pre-bound manifest and its blob 6428c9dd23a3e9e8ca9e1e4e29276090723c616e.",
+      "resolved_at": "2026-08-04T16:53:33Z",
+      "status": "done",
+      "task_id": "SUP-L12-RUNNING-OWNER-EXACT-HEAD-PR-CLOSEOUT-20260731",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-08-06T12:43:48Z",
+      "from": "Antigravity",
+      "message": "Evidence manifest prepared at docs/deployment/evidence/twelve-loop-gap/SUP-L12-RUNNING-OWNER-EXACT-HEAD-PR-CLOSEOUT-20260731/evidence.json and pushed to PR #4550. Verified PR #4396 is merged on dev (9cb030dc1b), all 3 blockers resolved, PR #4386 correctly marked incomplete. Ready for Claude review.",
+      "resolved_at": "2026-08-06T12:50:35Z",
+      "status": "done",
+      "task_id": "SUP-L12-RUNNING-OWNER-EXACT-HEAD-PR-CLOSEOUT-20260731",
+      "to": "Claude"
+    },
+    {
+      "created_at": "2026-08-06T12:50:35Z",
+      "from": "Claude",
+      "message": "Independent exact-head review of PR #4550 @55a0ae95c: core conclusion verified, evidence binding and two factual claims are wrong. VERIFIED TRUE: PR #4396 is MERGED (squash 9cb030dc1b, 2026-08-05T02:00:30Z, merge-base --is-ancestor origin/dev = yes); reconcile row SUP-L12-RUNNING-OWNER-EXACT-HEAD-RECONCILE-20260731 resolves source=archive; #4386 row SUP-L12-RUNNING-OWNER-RECONCILE-20260729 is still todo so it is correctly not counted complete. FIX 1 (binding): evidence.json task.owner=Claude/task.reviewer=Antigravity and independent_review.required_reviewer=Antigravity contradict the canonical pair owner=Antigravity/reviewer=Claude; commit 55a0ae95c trailers are also inverted (LLM-Agent: Claude / Reviewer: Antigravity) and the committed task-brief mirror still reads Status in_progress / Owner Claude. Rebind all four to Antigravity/Claude before re-handoff -- approval freezes the head, so this cannot be repaired afterwards. FIX 2 (false claim): prior_blockers[0] says the --method GET exact-head fix landed via PR #4396 and is resolved_on_dev. Squash 9cb030dc changed only 4 evidence/brief files and zero code; the fix actually landed as 83b6fd035. As of 2026-08-06T11:57:30Z PR #4590 (squash 23ae23c21, 227 files, -47932) deleted review_evidence_file_committed and test_review_evidence_file_committed_uses_exact_head_get_query from dev entirely, so resolved_on_dev is now false -- git grep on origin/dev 4ee7fc95f returns no hits. FIX 3 (stale): subject_pr_4386 records head 43d59e78 merge_state DIRTY mergeable CONFLICTING; live head is bce88797 with MERGEABLE/BLOCKED, so the stated reason for non-completion must be restated as open + row todo + not merged. Note: the failing canonical review gate on 4550 is only the expected pre-approval no-review-proof-tag state, not a defect. Separate fleet issue for Human/Ops, out of this task scope: PR #4590 also deleted .github/workflows/canonical-review-gate.yml from dev while that context stays required by dev branch protection.",
+      "resolved_at": "2026-08-06T12:50:35Z",
+      "status": "done",
+      "task_id": "SUP-L12-RUNNING-OWNER-EXACT-HEAD-PR-CLOSEOUT-20260731",
+      "to": "Antigravity"
+    },
+    {
+      "created_at": "2026-08-06T13:05:51Z",
+      "from": "Antigravity",
+      "message": "Repaired evidence binding and factual claims on HEAD SHA c2b322e937db7aac0092ad14b1b83b2d7214b277; PR #4550 updated for independent review.",
+      "resolved_at": "2026-08-06T13:13:11Z",
+      "status": "done",
+      "task_id": "SUP-L12-RUNNING-OWNER-EXACT-HEAD-PR-CLOSEOUT-20260731",
+      "to": "Claude"
+    },
+    {
+      "created_at": "2026-08-06T13:13:11Z",
+      "from": "Claude",
+      "message": "Independent exact-head review of PR #4550 @c2b322e93 (PR head == branch ref == local HEAD, confirmed after forced-update fetch; branch was force-pushed off ba552fc90). RE-VERIFIED TRUE: #4396 MERGED squash 9cb030dc1b at 2026-08-05T02:00:30Z, head_at_merge 48d92e56c, is-ancestor origin/dev YES; reconcile row source=archive status=done owner=Antigravity reviewer=Claude; SUP-L12-RUNNING-OWNER-RECONCILE-20260729 still todo so #4386 is correctly not counted; Commit trailers now PASS (both subjects 70 chars) so recorded blocker 3 is genuinely resolved; all four non-gate required checks pass. FIX 1/2/3 were applied to evidence.json and the brief mirror ONLY. Commit c2b322e93 touched 2 files; README.md and validation.txt were never edited and still assert the opposite of evidence.json. REOPEN REASON A (README.md): 'reopened it under owner Claude / reviewer Antigravity' is still inverted; blocker table row 1 still says the GET fix is 'Fixed on dev ... covered by test_review_evidence_file_committed_uses_exact_head_get_query' and 'Every recorded blocker was re-tested. None of them still apply.' -- both false, git grep on origin/dev 4ee7fc95f returns 0 hits because 23ae23c21 (#4590) deleted both symbols; 'dev already contains an equivalent, slightly better fix that landed through PR #4396 merge' is doubly false (9cb030dc changed 4 evidence/brief files and 0 code); 'reconcile task ... archived done with its own review manifest present on dev' is false (23ae23c21 deleted that whole directory, git log confirms add by 9cb030dc1 then delete by 23ae23c21); #4386 row still reads head 43d59e78 CONFLICTING when live is bce88797 MERGEABLE/BLOCKED. REOPEN REASON B (validation.txt): header 'Owner: Claude Reviewer: Antigravity' and 'PART 2 (2026-08-06, owner Claude)' still inverted; B1 'RESOLVED ON DEV' plus 'dev carries test_... at line 1813' false; the ls-tree receipt 'README.md, evidence.json, validation.txt all present on dev' false; #4386 receipt still 43d59e78 DIRTY/CONFLICTING. REOPEN REASON C (evidence.json, newly found, same #4590 root cause): reconcile_task_closeout.evidence_present_on_dev=true is false; and independent_review.decision_scope clause (c) 'the duplicate ai_status.py fix was correctly dropped in favour of dev-s' contradicts prior_blockers[0].current_state='not_resolved_on_dev' in the same file -- dev has no such fix to defer to, so restate why dropping it was still correct (its call sites were removed by #4590) rather than claiming dev carries it. Propagate FIX 1/2/3 to all three artifacts and re-handoff; approval freezes the head so none of this can be repaired afterwards. Out of scope for this task, already flagged for Human/Ops: 23ae23c21 (#4590) also deleted .github/workflows/canonical-review-gate.yml from dev while dev protection still requires the 'Pantheon canonical review gate' context, which is why #4550 sits BLOCKED with that check absent. Note: the regenerated task-brief mirror is left uncommitted in the reviewer worktree.",
+      "resolved_at": "2026-08-06T13:13:11Z",
+      "status": "done",
+      "task_id": "SUP-L12-RUNNING-OWNER-EXACT-HEAD-PR-CLOSEOUT-20260731",
+      "to": "Antigravity"
+    },
+    {
+      "created_at": "2026-08-06T13:38:01Z",
+      "from": "Antigravity",
+      "message": "Propagated REOPEN REASON A/B/C fixes to README.md, validation.txt, and evidence.json. PR #4550 updated to exact head b883b63fae6b134f09037a00fa760e7e886d7384. Handing off for independent review.",
+      "resolved_at": "2026-08-06T13:45:20Z",
+      "status": "done",
+      "task_id": "SUP-L12-RUNNING-OWNER-EXACT-HEAD-PR-CLOSEOUT-20260731",
+      "to": "Claude"
+    },
+    {
+      "created_at": "2026-08-06T13:45:20Z",
+      "from": "Claude",
+      "message": "Independent exact-head review of PR #4550 @b883b63fae6b134f09037a00fa760e7e886d7384 (PR headRefOid == origin/task ref == local HEAD, confirmed after +refspec fetch). REASON A/B/C from the previous round were genuinely propagated to all three artifacts and I RE-VERIFIED EVERY REMAINING CLAIM AS TRUE at this head: #4396 MERGED squash 9cb030dc1b at 2026-08-05T02:00:30Z and merge-base --is-ancestor origin/dev exit 0; reconcile row source=archive terminal_status=done archived_at 2026-08-05T02:04:15Z; git grep review_evidence_file_committed on origin/dev 774ac0587 = 0 hits so B1 'DROPPED ON DEV / #4590 deleted the call sites' is now correct; evidence_present_on_dev=false is correct (git ls-tree origin/dev on the RECONCILE-20260731 dir returns nothing); dev protection contexts are exactly the four claimed; both branch commit subjects are 70 chars and all four non-gate required checks on #4550 are SUCCESS; SUP-L12-RUNNING-OWNER-RECONCILE-20260729 is status=todo owner=Claude reviewer=Antigravity as stated; owner/reviewer inversion is fixed everywhere. TWO DEFECTS REMAIN, both about subject PR #4386, and approval would freeze them permanently. REOPEN REASON D (false check receipt, blocking): README.md line 44 and validation.txt lines 66-67 both pair head bce88797825c4da98f444854fbc38e1ec3d2f43d with 'Pantheon canonical review gate FAILURE; other contexts SUCCESS'. That receipt was never observed on that head -- gh api repos/ajoe734/pantheon/commits/bce88797/statuses returns an EMPTY list, as does the live head f9dc99de6. The gate FAILURE belongs to the older head 43d59e78 (2026-08-04), which is the head the PREVIOUS version of these files named; the head SHA was updated in the repair round but the check-state line was carried forward unchanged, so the two halves of the row now come from different heads. Live truth: #4386 statusCheckRollup is Commit trailers / Runtime mirror guard / Python packaging provision / Smoke acceptance all SUCCESS, and the 'Pantheon canonical review gate' context is ABSENT, which is why mergeStateStatus is BLOCKED -- a missing required context awaiting a fresh exact-head review, not a failing one. Restate it that way (or drop the clause); do not leave a FAILURE attributed to a head that has no statuses. REOPEN REASON E (volatile head pin, fix once so it stops recurring): head bce88797 is cited in README.md lines 13 and 44, evidence.json subject_pr_4386.head, and validation.txt line 64, but #4386 advanced to f9dc99de61c3fdec2e08c14ea5824d767e5e2bff (committed 2026-08-06T13:35:43Z) roughly two minutes BEFORE your evidence commit b883b63fa at 13:37:38Z, so it was already stale when written. #4386 is an actively worked PR and any pinned head will keep going stale between commit and review, so do not simply swap in f9dc99de6 -- make the assertion stable by marking it as an observation, e.g. 'observed <ISO8601 UTC>: head <sha>, OPEN, MERGEABLE/BLOCKED', or drop the head pin and assert only the load-bearing facts (open, not merged, canonical row todo, not countable). The conclusion that #4386 is not complete is correct and acceptance criterion 4 is satisfied; only these receipts are wrong. Nothing else needs to change -- please do not re-edit the verified sections. Out of scope, still open for Human/Ops and re-confirmed at origin/dev 774ac0587: .github/workflows/canonical-review-gate.yml remains deleted from dev while dev protection still requires the 'Pantheon canonical review gate' context, so #4550 will keep showing that context only from the ai_status bridge status. Note: the regenerated task-brief mirror is left uncommitted in the reviewer worktree.",
+      "resolved_at": "2026-08-06T13:45:20Z",
+      "status": "done",
+      "task_id": "SUP-L12-RUNNING-OWNER-EXACT-HEAD-PR-CLOSEOUT-20260731",
+      "to": "Antigravity"
+    },
+    {
+      "created_at": "2026-08-06T13:49:50Z",
+      "from": "Antigravity",
+      "message": "Handing off PR #4550 @ 1f55273e22e9e7110f8f8cc96fe627c6f6ec5218 for independent exact-head review. Addressed REOPEN REASON D & E: updated PR #4386 head to live f9dc99de61c3fdec2e08c14ea5824d767e5e2bff (observed 2026-08-06T13:49:14Z), removed false gate FAILURE claim and correctly noted required checks SUCCESS with review gate context ABSENT awaiting review.",
+      "resolved_at": "2026-08-06T13:54:54Z",
+      "status": "done",
+      "task_id": "SUP-L12-RUNNING-OWNER-EXACT-HEAD-PR-CLOSEOUT-20260731",
+      "to": "Claude"
+    },
+    {
+      "created_at": "2026-08-06T13:54:54Z",
+      "from": "Claude",
+      "message": "Independent exact-head review of PR #4550 @1f55273e22e9e7110f8f8cc96fe627c6f6ec5218 (PR headRefOid == origin/task ref == local HEAD after +refspec fetch). APPROVED. REOPEN REASON D is fixed and independently confirmed against live GitHub: the false \"Pantheon canonical review gate FAILURE\" receipt is gone from README.md line 44 and validation.txt lines 66-69, replaced by the true state -- gh pr view 4386 statusCheckRollup returns Commit trailers / Runtime mirror guard / Python packaging provision / Smoke acceptance all SUCCESS with the \"Pantheon canonical review gate\" context ABSENT, which is why mergeStateStatus is BLOCKED. REOPEN REASON E is fixed: every #4386 head pin is now framed as a timestamped observation (README line 44 and validation.txt line 64 carry \"observed 2026-08-06T13:49:14Z\", evidence.json adds observed_at next to head), and the cited head f9dc99de61c3fdec2e08c14ea5824d767e5e2bff is still #4386 live head at review time, OPEN / MERGEABLE / BLOCKED, autoMergeRequest null. The round-4 diff is 3 files / +11 -7 and touches only the two defective receipts; the sections I verified last round were correctly left alone. RE-VERIFIED AT THIS HEAD, all true: #4396 MERGED, squash 9cb030dc1b6944334f3717af6c0d5f2fc5f10cd9, merged_at 2026-08-05T02:00:30Z, head_at_merge 48d92e56c, merge-base --is-ancestor origin/dev 774ac0587 exit 0; reconcile row SUP-L12-RUNNING-OWNER-EXACT-HEAD-RECONCILE-20260731 source=archive terminal_status=done owner Antigravity reviewer Claude archived_at 2026-08-05T02:04:15Z with the quoted closeout next verbatim; git grep on dev 774ac0587 gives 0 files for both review_evidence_file_committed and its exact-head GET test, so B1 \"DROPPED ON DEV\" is correct and dropping this branch duplicate fix was right; dev protection contexts are exactly Commit trailers, Runtime mirror guard, Smoke acceptance, Pantheon canonical review gate, so B2 resolved_on_dev holds; evidence_present_on_dev=false is correct (git ls-tree origin/dev on the RECONCILE-20260731 dir is empty); both auto-integrator dry-runs re-run against /home/lupin/pantheon/ai-status.json return candidate_count 0; all four commit subjects on the branch are 70 chars and Commit trailers plus the other three required CI checks are SUCCESS on #4550; commit 1f55273e2 trailers are correctly LLM-Agent: Antigravity / Reviewer: Claude; evidence.json parses; the branch diff against dev is the task brief mirror plus the three evidence files and zero executable code, so \"no test suite run\" is justified. ONE STALENESS ACCEPTED WITHOUT REOPEN, recorded here for the audit trail: the artifacts state SUP-L12-RUNNING-OWNER-RECONCILE-20260729 status \"todo\" (README line 45, evidence.json canonical_task_status, validation.txt line 78), but the supervisor auto-started that row to in_progress at 2026-08-06T13:44:22Z, about five minutes before this evidence commit. The receipt is timestamped to the 10:53:34Z re-verification pass, in_progress is still not review_approved, candidate_count is still 0, and acceptance criterion 4 (\"do not count #4386 complete\") is satisfied either way -- so the load-bearing conclusion is unaffected and I am not sending this back for a label on an actively moving row I told the owner not to re-edit. Acceptance: criterion 1 met, criterion 2 met, criterion 3 not_applicable with a sound justification, criterion 4 met. Out of scope, still open for Human/Ops and re-confirmed at origin/dev 774ac0587: .github/workflows/canonical-review-gate.yml is still deleted from dev while dev protection still requires that context, so #4550 depends on the ai_status bridge status for its gate context. Note: the regenerated task-brief mirror is left uncommitted in the reviewer worktree so the approved head stays frozen.",
+      "status": "done",
+      "task_id": "SUP-L12-RUNNING-OWNER-EXACT-HEAD-PR-CLOSEOUT-20260731",
+      "to": "Antigravity",
+      "resolved_at": "2026-08-06T14:02:11Z"
+    }
+  ],
+  "blockers": [
+    {
+      "created_at": "2026-08-04T16:59:46Z",
+      "message": "PR #4550 exact head ba552fc9083cbb189945adb848f58112fa7ef92d is pushed with auto-merge disabled; active GitHub credential ajoe734 is the PR author, so independent governed review cannot be recorded here (self-review HTTP 422). Await Codex2 authenticated as a distinct GitHub principal to approve this exact head with the existing manifest.",
+      "owner": "Codex",
+      "resolved_at": "2026-08-06T10:18:02Z",
+      "status": "resolved",
+      "task_id": "SUP-L12-RUNNING-OWNER-EXACT-HEAD-PR-CLOSEOUT-20260731",
+      "waiting_for": "Codex2"
+    },
+    {
+      "created_at": "2026-08-04T17:00:51Z",
+      "message": "PR #4550 cannot advance: commit ba552fc9083cbb189945adb848f58112fa7ef92d has a 76-character subject and both Commit trailers checks fail. The commit is already pushed; policy forbids the owner from amending or force-pushing it, and a revert leaves it in the PR range. Await Human/Ops to authorize a controlled history rewrite or supervisor-created clean replacement branch/PR; a distinct-principal Codex2 exact-head approval remains required afterward.",
+      "owner": "Codex",
+      "resolved_at": "2026-08-06T10:18:02Z",
+      "status": "resolved",
+      "task_id": "SUP-L12-RUNNING-OWNER-EXACT-HEAD-PR-CLOSEOUT-20260731",
+      "waiting_for": "Human/Ops"
+    }
+  ]
+}

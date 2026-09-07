@@ -1,0 +1,227 @@
+{
+  "actor": {
+    "capabilities": [
+      "integration",
+      "status-system",
+      "supervisor-runtime",
+      "fleet-dispatch",
+      "deployment"
+    ],
+    "id": "Human/Ops",
+    "roles": [
+      "operator",
+      "integration-coordinator"
+    ]
+  },
+  "admission_record_path": "ai-task-archive/tasks/assistant-dev-bridge-admissions/pkt-supervisor-work-conserving-canonical-cutover-20260811T120612Z--4a3def49a2f3bc02.json",
+  "admitted_at": "2026-08-11T12:21:55Z",
+  "audit_conversation_href": null,
+  "constraints": {
+    "allowedRepos": [
+      "pantheon"
+    ],
+    "noDirectShellFromWeb": true,
+    "noSharedCheckoutImplementation": true,
+    "requiresBranchPrMerge": true,
+    "supervisorOnlyDispatcher": true,
+    "transactionalRuntimePromotion": true
+  },
+  "conversation_id": "codex-root-supervisor-work-conserving-architecture-20260811",
+  "dispatch_records": [
+    {
+      "error": null,
+      "owner": "Codex",
+      "reviewer": "Antigravity",
+      "status": "dispatched",
+      "taskId": "SUP-CANONICAL-PACKET-ATOMIC-MATERIALIZATION-20260811"
+    },
+    {
+      "error": null,
+      "owner": "Antigravity",
+      "reviewer": "Codex2",
+      "status": "dispatched",
+      "taskId": "SUP-WORK-CONSERVING-CANONICAL-ROUTING-20260811"
+    },
+    {
+      "error": null,
+      "owner": "Codex2",
+      "reviewer": "Codex",
+      "status": "dispatched",
+      "taskId": "OPS-SUPERVISOR-ARCHITECTURE-LIVE-ROLLOUT-20260811"
+    }
+  ],
+  "documents": [
+    {
+      "kind": "GOVERNANCE",
+      "path": "AGENTS.md",
+      "sourceRefs": [
+        "Integration And Coordination Lane",
+        "Single Dispatch Authority",
+        "Completion Definition For Repo Changes",
+        "Live Repair Rule"
+      ]
+    },
+    {
+      "kind": "CURRENT_BRIDGE_RUNBOOK",
+      "path": "docs/operations/management-ai-openclaw-dev-bridge.md",
+      "sourceRefs": [
+        "assistant dev bridge inbox",
+        "supervisor receipt and canonical materialization"
+      ]
+    },
+    {
+      "kind": "INCIDENT_EVIDENCE",
+      "path": ".orchestrator/assistant-dev-packets/receipts/pkt-two-blocker-dev-closeout-20260809T060036Z.json",
+      "sourceRefs": [
+        "partial per-task materialization",
+        "assign timeout retry loop"
+      ]
+    },
+    {
+      "kind": "CURRENT_SCHEDULER",
+      "path": ".orchestrator/supervisor.py",
+      "sourceRefs": [
+        "assistant_dev_bridge_task_is_admitted",
+        "dispatch_ready_tasks",
+        "canonical routing and lease reconciliation"
+      ]
+    },
+    {
+      "kind": "ROLLOUT_RUNBOOK",
+      "path": "scripts/promote_supervisor_runtime.py",
+      "sourceRefs": [
+        "gate before switch",
+        "transactional rollback"
+      ]
+    }
+  ],
+  "durable": true,
+  "emitted_at": "2026-08-11T12:06:12Z",
+  "intent": "governed_supervisor_architecture_cutover",
+  "mode": "supervisor_architecture_governed_delivery",
+  "packet_digest": "4a3def49a2f3bc0292adf89d45884871ed57477244fc8608ef8c4b83d00ef878",
+  "packet_id": "pkt-supervisor-work-conserving-canonical-cutover-20260811T120612Z",
+  "packet_version": "pantheon.assistant.dev-task.v1",
+  "record_kind": "assistant_dev_bridge_admission",
+  "record_payload_sha256": "babbf7df637e6e4de81da24cd760ab4d8fbd6cb56216d8d49f1a70ab30c8cc4a",
+  "schema": "pantheon.assistant-dev-bridge-admission.v1",
+  "source_turn_ids": [
+    "operator-requested-complete-merge-rollout-20260811",
+    "positive-objective-architecture-review-20260811",
+    "active-task-pr-runtime-dedup-20260811"
+  ],
+  "tasks": [
+    {
+      "task_id": "SUP-CANONICAL-PACKET-ATOMIC-MATERIALIZATION-20260811",
+      "task_spec": {
+        "acceptance": [
+          "Start from a clean worktree at current origin/dev. Inventory the merged bridge implementation and current authoritative task-state transaction primitive; do not reuse or extend dirty PR #4658 or #4636.",
+          "Keep the signed packet as the only pre-materialization request. Verify signature, allowed repository, task ids, immutable declared scope, dependencies, and original provenance before any canonical write; direct assign must not forge bridge provenance.",
+          "Add one bounded canonical batch-materialization operation that creates all packet tasks in one authoritative event-store commit under the existing task-state transaction and lock order. A failure in any row commits none. Reuse the current store, locks, inbox, and supervisor; add no database, queue, service, scheduler, or recovery daemon.",
+          "Bind the canonical commit to packet id, packet digest, task-spec hashes, actor, source conversation and turns, and documents. Exact matching retries are idempotent; any digest, provenance, scope, dependency, or task-spec mismatch fails closed.",
+          "After a timeout or nonzero command result, perform authoritative readback for the exact packet and all task hashes. Accept only one matching committed batch; never infer success from repository-local projections and never repeat a partial prefix.",
+          "Publish current-work views, archive stubs, receipts, and admission records only after the canonical commit. Projection or receipt failure must be recoverable and must not invalidate the committed task batch or become an execution gate; pre-commit validation failures must create no tasks.",
+          "Preserve initial packet owner and reviewer as signed provenance while allowing later Human/Ops or supervisor-governed owner and reviewer changes in canonical current state. Replay validates immutable scope and original provenance, not the current routing choice.",
+          "Retain the existing admission artifact only as an audit projection in this task. Removing its supervisor execution gate belongs to the dependent scheduler task after this transaction is merged.",
+          "Add focused tests for a second-row failure, crash before and after the canonical commit, timeout plus authoritative readback, duplicate retry, digest and scope mismatch, direct metadata forgery, projection and receipt failure, and a valid post-materialization owner or reviewer reassignment.",
+          "Run focused ai-status, task-state-store, bridge, reliability, and CLI suites plus repository-required static checks, git diff --check, and JSON validation. Produce exact-head pre-review evidence before requesting review.",
+          "Use concise commits with required trailers, push only the clean task branch, open a PR to dev, obtain fresh independent Antigravity exact-head approval with REVIEW_FILE binding, wait for all required checks, and merge through the protected flow.",
+          "Rollback is a normal source revert. Do not roll back canonical task history and do not promote or mutate the live runtime from this source task."
+        ],
+        "artifacts": [
+          "scripts/ai_status.py",
+          "scripts/test_ai_status.py",
+          ".orchestrator/rewrite/task_state_store.py",
+          ".orchestrator/rewrite/test_task_state_store.py",
+          "services/control-plane/bff/assistant/dev_bridge_dispatcher.py",
+          "services/control-plane/bff/assistant/dev_bridge_admission.py",
+          "services/control-plane/bff/assistant/dev_bridge_models.py",
+          "services/control-plane/bff/assistant/tests/dev_bridge_test_support.py",
+          "services/control-plane/bff/assistant/tests/test_dev_bridge.py",
+          "services/control-plane/bff/assistant/tests/test_dev_bridge_reliability.py",
+          "services/control-plane/bff/assistant/tests/test_dev_bridge_dispatch_cli.py",
+          "scripts/dispatch_assistant_dev_task_packet.py",
+          "docs/deployment/evidence/supervisor/SUP-CANONICAL-PACKET-ATOMIC-MATERIALIZATION-20260811/"
+        ],
+        "depends_on": [],
+        "id": "SUP-CANONICAL-PACKET-ATOMIC-MATERIALIZATION-20260811",
+        "owner": "Codex",
+        "phase": "Canonical Task Materialization / Atomic Packet Commit",
+        "reviewer": "Antigravity",
+        "summary": "Make a signed dev-bridge packet a pre-materialization input only. Verify it once, materialize every task in one all-or-none authoritative task-state transaction, and treat receipts and admission projections as audit evidence rather than a second execution authority.",
+        "title": "Make signed packet materialization one canonical transaction"
+      },
+      "task_spec_hash": "f123dccaf577dd0778e76e47d4a178a8660dcdf6001ee860c83057584a9addfa"
+    },
+    {
+      "task_id": "SUP-WORK-CONSERVING-CANONICAL-ROUTING-20260811",
+      "task_spec": {
+        "acceptance": [
+          "Start from a clean current origin/dev worktree that contains the merged atomic-materialization task. Do not reuse or extend dirty PR #4636, #4617, or #4658.",
+          "Remove assistant_dev_bridge_task_is_admitted and all admission lookup results from owner, helper, reviewer, or ready execution predicates. A malformed or unauthorized packet must already have been rejected atomically at canonical materialization; admission remains audit-only.",
+          "Stop treating catalog-bound initial owner or reviewer hashes as an execution lock. Preserve immutable artifact scope, task contract, merge target, and signed provenance, but use canonical current owner and reviewer for routing and completion checks after a governed reassignment.",
+          "Keep the existing supervisor as the only scheduler. Routine dispatch and failover must use canonical dependencies, current owner and reviewer, current live provider authentication and quota evidence, configured capability and account-group capacity, Human/Ops gates, and reviewer independence. Chair review must not be the routine owner or reviewer failover path.",
+          "Make each loop work-conserving: deterministically scan candidates and reserve or launch tasks until no runnable task or no eligible capacity remains. Never preempt an active lease, exceed an agent or account-group cap, or create two launch intents for one task; retain CAS and durable queue or process evidence.",
+          "Normalize legacy ready rows into the canonical todo lifecycle. A task may be in_progress only with a durable launch intent plus a current queue receipt, worker lease, or live process. Reconciliation must return a false in_progress row to todo, review, or blocked based on actual delivery evidence and dependencies.",
+          "Resolve a superseded dependency through one bounded acyclic successor chain. A missing successor, cycle, or terminally rejected lineage is a structural blocker and must never be converted to in_progress.",
+          "Run dispatch before slow external GitHub bus synchronization or consume a bounded cached GitHub snapshot. Do no network I/O while holding task-state, runtime-admission, or worker-lease locks, and ensure external bus latency cannot suppress otherwise eligible local dispatch.",
+          "Make scripts/explain_dispatch.py call the same ordered eligibility predicates and read the same authoritative status root as live dispatch, so each skip reason corresponds to the first actual gate.",
+          "Add deterministic tests for idle capacity with multiple runnable roots, mixed provider quota and auth health, capacity saturation, current owner and reviewer failover, Human/Ops gates, reviewer independence, ownerless tasks, superseded dependency chains and cycles, legacy ready, orphaned in_progress, slow GitHub synchronization, and malformed provenance rejected at materialization.",
+          "Run the full supervisor suite plus focused ai-status and explain-dispatch tests, repository-required static checks, git diff --check, and JSON validation. Produce exact-head pre-review evidence that includes scheduler predicate order and before/after synthetic fleet utilization.",
+          "Use concise commits with required trailers, push only the clean task branch, open a PR to dev, obtain fresh independent Codex2 exact-head approval with REVIEW_FILE binding, wait for all required checks, and merge through the protected flow.",
+          "Rollback is a normal source revert after a governed live runtime rollback. Do not alter live capacity configuration, provider credentials, canonical tasks, queues, or processes from this source task."
+        ],
+        "artifacts": [
+          ".orchestrator/supervisor.py",
+          ".orchestrator/test_supervisor.py",
+          "scripts/ai_status.py",
+          "scripts/test_ai_status.py",
+          "scripts/explain_dispatch.py",
+          "scripts/test_explain_dispatch.py",
+          "docs/deployment/evidence/supervisor/SUP-WORK-CONSERVING-CANONICAL-ROUTING-20260811/"
+        ],
+        "depends_on": [
+          "SUP-CANONICAL-PACKET-ATOMIC-MATERIALIZATION-20260811"
+        ],
+        "id": "SUP-WORK-CONSERVING-CANONICAL-ROUTING-20260811",
+        "owner": "Antigravity",
+        "phase": "Supervisor Scheduler / Canonical Work-Conserving Cutover",
+        "reviewer": "Codex2",
+        "summary": "Use canonical current task state as the single durable execution and routing authority. Make the existing supervisor fill all safe eligible capacity, remove admission and catalog-assignment execution gates, and derive in-progress state from durable launch and lease evidence.",
+        "title": "Make canonical scheduling work-conserving and lease-truthful"
+      },
+      "task_spec_hash": "46d95ab41fb543e56c5bb3202186d7f6bc35145170864edcc2f973dc17ce7ef1"
+    },
+    {
+      "task_id": "OPS-SUPERVISOR-ARCHITECTURE-LIVE-ROLLOUT-20260811",
+      "task_spec": {
+        "acceptance": [
+          "Wait until both dependency tasks are canonical done and both exact merge commits are ancestors of current origin/dev with all required checks and independent reviews complete.",
+          "Record a read-only preflight inventory of the live supervisor generation, command root, source and config SHA, authoritative shadow lag, provider authentication and quota probes, configured per-agent and account-group capacity, active workers, queue receipts, leases, and nonterminal task counts.",
+          "Use only scripts/promote_supervisor_runtime.py and the existing transactional gate-before-switch and rollback path to promote an exact origin/dev source containing both merges. Do not manually signal the process, edit live config, force a rescue ref, or modify canonical task state.",
+          "Verify the new live PID and process generation, exact command root and source SHA, unchanged intended config SHA, at least three fresh supervisor loops, singleton ownership, watchdog health, authoritative shadow caught up, and provider probes at or better than the recorded preflight baseline.",
+          "For the current dependency-free canonical root tasks, capture explain-dispatch output and live behavior. The old bridge-admission and chair gates must be absent. Every task with real eligible owner capacity must obtain a durable queue receipt or worker lease within two complete supervisor cycles; otherwise record the exact first true capacity, dependency, Human/Ops, reviewer-independence, or provider-health gate.",
+          "Verify that no ownerless or lease-less task remains in_progress, no task receives duplicate queue or worker leases, no signed packet is partially materialized, provider and account-group limits are respected, and slow GitHub synchronization does not prevent a local dispatch cycle.",
+          "If promotion or canary validation fails, use the same transaction to roll back to the recorded prior runtime and prove health recovery. Do not patch the live command root or compensate by editing tasks, queues, admissions, capacity, or credentials.",
+          "Record exact commands, timestamps, before and after runtime manifests, source and config hashes, loop receipts, canonical task snapshots, worker and queue lease evidence, canary outcomes, and rollback procedure in the declared evidence directory.",
+          "Deliver only the evidence directory from a clean evidence branch to dev, obtain fresh independent Codex exact-head approval with REVIEW_FILE binding, wait for all required checks, merge through the protected flow, and mark the task done only after the evidence PR merge is canonical.",
+          "After the evidence merge, confirm the live runtime still reports the promoted source and that at least one post-merge loop remains healthy."
+        ],
+        "artifacts": [
+          "docs/deployment/evidence/supervisor/OPS-SUPERVISOR-ARCHITECTURE-LIVE-ROLLOUT-20260811/"
+        ],
+        "depends_on": [
+          "SUP-CANONICAL-PACKET-ATOMIC-MATERIALIZATION-20260811",
+          "SUP-WORK-CONSERVING-CANONICAL-ROUTING-20260811"
+        ],
+        "id": "OPS-SUPERVISOR-ARCHITECTURE-LIVE-ROLLOUT-20260811",
+        "owner": "Codex2",
+        "phase": "Supervisor Runtime / Governed Architecture Rollout",
+        "reviewer": "Codex",
+        "summary": "After both source changes merge, promote the exact dev source through the existing transactional supervisor runtime path, verify generation and state convergence, and prove with live canaries that runnable roots dispatch without chair or admission gates while real capacity and dependency gates remain enforced.",
+        "title": "Promote and verify the canonical work-conserving supervisor"
+      },
+      "task_spec_hash": "2843e9271088bceeec6d2fd55bcea81c74612529d4c69a49f9f610e8467db6ff"
+    }
+  ]
+}

@@ -1,0 +1,46 @@
+{
+  "version": 1,
+  "task_id": "L12-PR-4273-CLOSE-001",
+  "archived_at": "2026-07-27T20:58:08Z",
+  "terminal_status": "done",
+  "terminal_outcome": "superseded",
+  "task": {
+    "acceptance": [
+      "PR #4273 exact head 141d06ec5d1aa5b0ea7d1b7bdc148ad28060a443 has recognized independent review.|PR #4273 is merged to dev or reopened with exact corrective findings.|Task archive binds merge SHA",
+      "evidence manifest",
+      "checksum",
+      "and validation commands."
+    ],
+    "artifacts": [
+      "docs/deployment/evidence/twelve-loop-gap/OPS-L12-TELEMETRY-DISCOVERY-IMPORT-001",
+      "scripts/test_ops_l12_telemetry_discovery_import_evidence.py",
+      "services/telemetry/test_discovery_imports.py"
+    ],
+    "depends_on": [
+      "L12-GITHUB-REVIEW-BRIDGE-001"
+    ],
+    "dispatch_mode": "supervisor_auto_worker",
+    "id": "L12-PR-4273-CLOSE-001",
+    "lane_fallback_reason": "Antigravity/Claude not observed as healthy admitted supervisor workers at dispatch time",
+    "last_update": "2026-07-27T20:58:08Z",
+    "next": "Duplicate standalone closeout superseded; PR #4273 is owned by OPS-L12-TELEMETRY-DISCOVERY-IMPORT-001 and must close there.",
+    "owner": "Human/Ops",
+    "phase": "delivery-closeout",
+    "preferred_lane_order": [
+      "Antigravity",
+      "Claude",
+      "Codex2",
+      "Codex"
+    ],
+    "reviewer": "Codex",
+    "source_head": "2a2d6b7c50d60a940a891d9e18e0ea8a1e7a961e",
+    "source_pr": "https://github.com/ajoe734/pantheon/pull/4277",
+    "status": "done",
+    "summary_zh": "Close OPS-L12 telemetry discovery evidence PR #4273",
+    "title": "Duplicate PR #4273 closeout task superseded by canonical OPS task",
+    "terminal_outcome": "superseded",
+    "superseded_by": "OPS-L12-TELEMETRY-DISCOVERY-IMPORT-001"
+  },
+  "handoffs": [],
+  "blockers": []
+}

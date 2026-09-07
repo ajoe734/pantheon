@@ -1,0 +1,107 @@
+{
+  "actor": {
+    "capabilities": [
+      "assistant.kernel.repair",
+      "dev-task.dispatch",
+      "fleet.dispatch"
+    ],
+    "id": "Human/Ops",
+    "roles": [
+      "operator"
+    ]
+  },
+  "admission_record_path": "ai-task-archive/tasks/assistant-dev-bridge-admissions/pkt-ops-chatbox-dispatch-authority-restore-v5-20260802T0915Z--4781d850235d0508.json",
+  "admitted_at": "2026-08-02T09:14:14Z",
+  "audit_conversation_href": "codex://root/supervisor-autoworker-complete-audit-20260802#authoritative-policy-restore-v5",
+  "constraints": {
+    "allowedRepos": [
+      "pantheon"
+    ],
+    "noDirectShellFromWeb": true,
+    "requiresBranchPrMerge": true
+  },
+  "conversation_id": "codex-root-supervisor-autoworker-complete-audit-20260802",
+  "dispatch_records": [
+    {
+      "error": null,
+      "owner": "Antigravity",
+      "reviewer": "Human/Ops",
+      "status": "dispatched",
+      "taskId": "OPS-CHATBOX-DISPATCH-AUTHORITY-RESTORE-V5-20260802"
+    }
+  ],
+  "documents": [
+    {
+      "kind": "AUTHORITATIVE_REPOSITORY_INSTRUCTION",
+      "path": "AGENTS.md",
+      "sourceRefs": [
+        "Chatbox Work Classification And Dispatch Authority",
+        "Single Dispatch Authority",
+        "Codex and Codex2 currently share one ChatGPT account"
+      ]
+    },
+    {
+      "kind": "EXACT_EXISTING_POLICY_PATCH",
+      "path": "https://github.com/ajoe734/pantheon/pull/4401",
+      "sourceRefs": [
+        "closed unmerged exact +74 AGENTS.md patch",
+        "head 1cc28e07ecaee0b03c4d26c76e05dcea31952d79"
+      ]
+    },
+    {
+      "kind": "CONFLICTING_TASK_TO_SUPERSEDE",
+      "path": "ai-status://OPS-CODEX-CHATBOX-ROUTING-RULES-OPERATOR-V4-20260802",
+      "sourceRefs": [
+        "PR #4499 exact head d40b73adabec3eba27f6fa111586fc956d7bfe74",
+        "canonical review gate failure",
+        "unsupported account-neutral override conflicts with authoritative AGENTS.md"
+      ]
+    }
+  ],
+  "durable": true,
+  "emitted_at": "2026-08-02T09:15:00Z",
+  "intent": "restore_authoritative_single_dispatch_and_shared_account_policy_then_unblock_supervisor_assignment_chain",
+  "mode": "kernel_repair",
+  "packet_digest": "4781d850235d0508268eb99ed9f5bca11f1d7d5ae3c96716ce3a0ee4647c8627",
+  "packet_id": "pkt-ops-chatbox-dispatch-authority-restore-v5-20260802T0915Z",
+  "packet_version": "pantheon.assistant.dev-task.v1",
+  "record_kind": "assistant_dev_bridge_admission",
+  "record_payload_sha256": "5cfb293662561fe62e93eeeb53a70c2ec346226a9a5fd42f9e3df5e2fb4b812e",
+  "schema": "pantheon.assistant-dev-bridge-admission.v1",
+  "source_turn_ids": [
+    "operator-supervisor-auto-worker-only",
+    "operator-focus-dispatch-and-verification",
+    "authoritative-agents-shared-account-policy-20260802"
+  ],
+  "tasks": [
+    {
+      "task_id": "OPS-CHATBOX-DISPATCH-AUTHORITY-RESTORE-V5-20260802",
+      "task_spec": {
+        "acceptance": [
+          "Treat the repository AGENTS.md instructions supplied to the active operator session as authoritative: Codex and Codex2 currently share one ChatGPT account and are not independent capacity or independent review identities.",
+          "Restore the exact useful +74 policy content carried by closed PR #4401: direct-component versus integration/coordination classification, supervisor-only routine implementation dispatch, governed task packets, no parallel chatbox implementation fleet, no direct pantheon-ci-deploy/dev-root patching, narrow temporary live-repair exception, and the exact shared-account paragraph.",
+          "Do not merge or reuse PR #4499 head d40b73adabec3eba27f6fa111586fc956d7bfe74 because it removes the authoritative shared-account restriction and its Pantheon canonical review gate is failed.",
+          "Start from current origin/dev in a clean supervisor-managed worktree. If PR #4401 cannot be safely refreshed without force or duplicate delivery, create one V5 branch and PR containing only AGENTS.md plus this task brief and review evidence.",
+          "After a valid V5 PR exists, leave traceable comments linking superseded PR #4499 and closed PR #4401; do not delete branches or history.",
+          "Do not modify supervisor code, config, provider policy, canonical JSON, runtime state, product code, services, deployments, or the fixed 28-task catalog.",
+          "Add deterministic assertions for every retained governance clause and the exact shared-account paragraph. Assertions must reject the account-neutral replacement language from PR #4499.",
+          "Run git diff --check, deterministic policy assertions, commit-trailer validation, and all exact-head GitHub checks. Evidence stays review_pending until independent Human/Ops exact-head approval.",
+          "Deliver a clean PR to dev, all checks, independent exact-head review, governed merge, canonical done/archive. Rollback is merge-commit revert."
+        ],
+        "artifacts": [
+          "AGENTS.md",
+          ".orchestrator/task-briefs/ops_chatbox_dispatch_authority_restore_v5_20260802.md",
+          "docs/reviews/ops-chatbox-dispatch-authority-restore-v5-20260802.md"
+        ],
+        "depends_on": [],
+        "id": "OPS-CHATBOX-DISPATCH-AUTHORITY-RESTORE-V5-20260802",
+        "owner": "Antigravity",
+        "phase": "Repository governance / dispatch authority source of truth",
+        "reviewer": "Human/Ops",
+        "summary": "Land the authoritative chatbox coordination and sole-supervisor dispatch policy, including the current shared-account independent-review restriction, and supersede the contradictory V4 delivery.",
+        "title": "Restore authoritative single-dispatch and shared-account policy"
+      },
+      "task_spec_hash": "fb4df42090a1028160832cd801ca5b64ecc7daf6d9a05fbf71519e86276fc6ed"
+    }
+  ]
+}

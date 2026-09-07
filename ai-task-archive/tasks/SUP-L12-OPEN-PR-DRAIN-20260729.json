@@ -1,0 +1,97 @@
+{
+  "version": 1,
+  "task_id": "SUP-L12-OPEN-PR-DRAIN-20260729",
+  "archived_at": "2026-07-29T04:59:07Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "acceptance": [
+      "Every listed PR is merged closed or exact-blocked",
+      "No stale PR counted as accepted proof",
+      "No config edit"
+    ],
+    "artifacts": [
+      "docs/bff/execution-tasks/2026-07-29-l12-final-gap-fleet-dispatch/tasks.json"
+    ],
+    "depends_on": [],
+    "id": "SUP-L12-OPEN-PR-DRAIN-20260729",
+    "last_update": "2026-07-29T04:59:07Z",
+    "next": "PR drain task reconciled done from merged #4346 delivery and #4348 evidence; only #4297/#4313 remain exact-blocked, no config edit.",
+    "owner": "Codex",
+    "phase": "Twelve Loop Remediation / Fleet Dispatch",
+    "reviewer": "Codex2",
+    "status": "done",
+    "summary_zh": null,
+    "title": "Drain stale/superseded L12 PRs after final gap packet",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-07-29T04:59:07Z",
+      "reconciled_from_merged_evidence": true,
+      "repository_id": "pantheon",
+      "repository_slug": "ajoe734/pantheon",
+      "repository_path": "/tmp/l12-pr-drain-reconcile-m5kFYx/pantheon",
+      "commit": "22fb0b6ba2c1beccfd55a32b3e48bca250375192",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "cbe565feb345dbf39a229392af8a544b4e85e6e2",
+      "head_merged_to_target": true,
+      "review_evidence": {
+        "file": ".orchestrator/task-briefs/sup_l12_open_pr_drain_20260729.md",
+        "commit": "cbe565feb345dbf39a229392af8a544b4e85e6e2",
+        "merge_target_ref": "origin/dev",
+        "merge_target_sha": "cbe565feb345dbf39a229392af8a544b4e85e6e2",
+        "owner": "Codex",
+        "reviewer": "Codex2",
+        "canonical_reviewer": "Codex2",
+        "status": "review_approved"
+      }
+    }
+  },
+  "handoffs": [
+    {
+      "created_at": "2026-07-29T04:25:32Z",
+      "from": "Antigravity",
+      "message": "Helper-claimed by Codex2 while Antigravity is dispatch-paused.",
+      "resolved_at": "2026-07-29T04:26:15Z",
+      "status": "done",
+      "task_id": "SUP-L12-OPEN-PR-DRAIN-20260729",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-07-29T04:31:27Z",
+      "from": "Codex2",
+      "message": "Helper-claimed by idle Codex; previous owner Codex2 becomes reviewer.",
+      "resolved_at": "2026-07-29T04:32:45Z",
+      "status": "done",
+      "task_id": "SUP-L12-OPEN-PR-DRAIN-20260729",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-07-29T04:42:27Z",
+      "from": "Codex",
+      "message": "PR #4346 exact head 5ee041763be1388c0e9c7d33d12b9f1814ef2ec0 is ready for independent review. Verify GitHub final states for #4297/#4311/#4313/#4323/#4328/#4340/#4341, supersession comments, exact blockers/owners for the three retained open PRs, and no .orchestrator/config.json change. Bind REVIEW_FILE=.orchestrator/task-briefs/sup_l12_open_pr_drain_20260729.md with REVIEW_PR=4346 and REVIEW_HEAD_SHA=5ee041763be1388c0e9c7d33d12b9f1814ef2ec0 when approving, or reopen with exact defects.",
+      "resolved_at": "2026-07-29T04:48:05Z",
+      "status": "done",
+      "task_id": "SUP-L12-OPEN-PR-DRAIN-20260729",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-07-29T04:48:05Z",
+      "from": "Codex2",
+      "message": "Review rejected at PR #4346 head 5ee041763be1388c0e9c7d33d12b9f1814ef2ec0: the #4328 receipt is stale. Live GitHub now reports head f28b913738dedacc37bf9e4dfeb002bb7b47aeb8 with mergeable=MERGEABLE and mergeStateStatus=BEHIND, not recorded head e90ab851a8324ac3930ea2cf14e394edc7a24351 / BLOCKED. Governed task SUP-L12-FLEET-DISPATCH-HEALTH-20260729 is review_approved with review binding f28b913738dedacc37bf9e4dfeb002bb7b47aeb8, owner Codex and reviewer Antigravity, not owner Codex2. Refresh the task brief with the current exact head, merge blocker, owner/reviewer and root-freeze state; commit/push a new PR head and hand it back for exact-head review. The other six listed PR dispositions, four supersession comments, replacement merge receipts, one-file scope, and no .orchestrator/config.json change were independently verified.",
+      "resolved_at": "2026-07-29T04:48:05Z",
+      "status": "done",
+      "task_id": "SUP-L12-OPEN-PR-DRAIN-20260729",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-07-29T04:58:37Z",
+      "from": "Codex",
+      "message": "Correction PR #4349 is ready for independent exact-head review at 1862f9abc800273406294bccf9c1b128e97e6c83. Review file: .orchestrator/task-briefs/sup_l12_open_pr_drain_20260729.md. Verify #4328 final head f28b913738dedacc37bf9e4dfeb002bb7b47aeb8, MERGEABLE/BEHIND pre-close blocker, archived owner Human/Ops and reviewer Codex, Human/Ops supersession/root-freeze disposition, the retained #4297/#4313 exact blockers, five unmerged closures, replacement merge receipts, one-file scope, and no .orchestrator/config.json change. Approve only with REVIEW_PR=4349 REVIEW_HEAD_SHA=1862f9abc800273406294bccf9c1b128e97e6c83 REVIEW_BASE=dev REVIEW_FILE=.orchestrator/task-briefs/sup_l12_open_pr_drain_20260729.md after the exact-head checks pass; auto-merge is off.",
+      "status": "done",
+      "task_id": "SUP-L12-OPEN-PR-DRAIN-20260729",
+      "to": "Codex2",
+      "resolved_at": "2026-07-29T04:59:07Z"
+    }
+  ],
+  "blockers": []
+}

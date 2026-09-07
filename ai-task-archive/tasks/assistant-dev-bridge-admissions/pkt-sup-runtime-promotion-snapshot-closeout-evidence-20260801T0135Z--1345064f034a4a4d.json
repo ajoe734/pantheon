@@ -1,0 +1,92 @@
+{
+  "actor": {
+    "capabilities": [
+      "dev-task.dispatch",
+      "fleet.dispatch"
+    ],
+    "id": "Human/Ops",
+    "roles": [
+      "operator"
+    ]
+  },
+  "admission_record_path": "ai-task-archive/tasks/assistant-dev-bridge-admissions/pkt-sup-runtime-promotion-snapshot-closeout-evidence-20260801T0135Z--1345064f034a4a4d.json",
+  "admitted_at": "2026-08-01T01:35:05Z",
+  "audit_conversation_href": "codex://root/l12-current-gap-auto-sequence-20260731#snapshot-closeout-evidence",
+  "constraints": {
+    "allowedRepos": [
+      "pantheon"
+    ],
+    "noDirectShellFromWeb": true,
+    "requiresBranchPrMerge": true
+  },
+  "conversation_id": "codex-root-l12-current-gap-auto-sequence-20260731",
+  "dispatch_records": [
+    {
+      "error": null,
+      "owner": "Antigravity",
+      "reviewer": "Human/Ops",
+      "status": "dispatched",
+      "taskId": "SUP-RUNTIME-PROMOTION-SNAPSHOT-CLOSEOUT-EVIDENCE-20260801"
+    }
+  ],
+  "documents": [
+    {
+      "kind": "MERGED_DELIVERY",
+      "path": "docs/deployment/evidence/supervisor/SUP-RUNTIME-PROMOTION-SNAPSHOT-INVARIANTS-20260801/evidence.json",
+      "sourceRefs": [
+        "PR #4434 head c91ad696f42fc4533b118c884acb359582573905",
+        "merge cd770e5dca6c13fb1d0679a1bdba9f8934ae80c2",
+        "mergedAt 2026-08-01T01:27:44Z"
+      ]
+    },
+    {
+      "kind": "CANONICAL_RECOVERY_CONTRACT",
+      "path": "scripts/ai_status.py",
+      "sourceRefs": [
+        "validate_merged_done_evidence lines 6220-6386",
+        "reconcile_merged_done requires merged tracked task brief"
+      ]
+    }
+  ],
+  "durable": true,
+  "emitted_at": "2026-08-01T01:34:26.579881Z",
+  "intent": "materialize_merged_review_evidence_for_strict_closeout_reconciliation",
+  "mode": "kernel_repair",
+  "packet_digest": "1345064f034a4a4dcdc4fefaad6bb86080648e2abf2fc5cb03d5a84f7966bd1e",
+  "packet_id": "pkt-sup-runtime-promotion-snapshot-closeout-evidence-20260801T0135Z",
+  "packet_version": "pantheon.assistant.dev-task.v1",
+  "record_kind": "assistant_dev_bridge_admission",
+  "record_payload_sha256": "72890e62e4c6ba44b071eddd8fd08463dc9e9d21bd1f1e0916749d1b42abbe24",
+  "schema": "pantheon.assistant-dev-bridge-admission.v1",
+  "source_turn_ids": [
+    "pr4434-merged-cd770e5d",
+    "strict-reconcile-missing-task-brief"
+  ],
+  "tasks": [
+    {
+      "task_id": "SUP-RUNTIME-PROMOTION-SNAPSHOT-CLOSEOUT-EVIDENCE-20260801",
+      "task_spec": {
+        "acceptance": [
+          "From current origin/dev at cd770e5dca6c13fb1d0679a1bdba9f8934ae80c2, add exactly one tracked artifact: .orchestrator/task-briefs/sup_runtime_promotion_snapshot_invariants_20260801.md; no generated recovery-task brief or unrelated file may be committed.",
+          "The artifact must contain exact validator lines: # Task Brief: SUP-RUNTIME-PROMOTION-SNAPSHOT-INVARIANTS-20260801; - Status: review_approved; - Owner: Antigravity; - Reviewer: Human/Ops.",
+          "Bind delivery repository ajoe734/pantheon, exact reviewed delivery head c91ad696f42fc4533b118c884acb359582573905, PR #4434, merge commit cd770e5dca6c13fb1d0679a1bdba9f8934ae80c2, mergedAt 2026-08-01T01:27:44Z, exact 29/29 independent validation, and both required success contexts.",
+          "State why the original implementation PR correctly excluded generated task-brief churn and why this separate evidence-only PR is now required by strict post-merge reconciliation; do not claim any new implementation or live promotion.",
+          "Run the strict validator preconditions read-only: tracked regular file, exact working-tree bytes equal the candidate commit, evidence commit reachable from origin/dev after merge, delivery head reachable from origin/dev, repository remote exactly ajoe734/pantheon, and required metadata/citations present.",
+          "Use branch task/SUP-RUNTIME-PROMOTION-SNAPSHOT-CLOSEOUT-EVIDENCE-20260801 from current origin/dev, PR target dev, one <=72-character commit with LLM-Agent: Antigravity, exact Task-ID, Reviewer: Human/Ops and Verified trailers.",
+          "Wait all CI and exact-head Human/Ops review before merge. Rollout is evidence-only merge; rollback is revert of that merge. No config, supervisor logic, runtime state, task state, provider policy, process signal, or service action."
+        ],
+        "artifacts": [
+          ".orchestrator/task-briefs/sup_runtime_promotion_snapshot_invariants_20260801.md"
+        ],
+        "depends_on": [],
+        "id": "SUP-RUNTIME-PROMOTION-SNAPSHOT-CLOSEOUT-EVIDENCE-20260801",
+        "owner": "Antigravity",
+        "phase": "Supervisor Runtime Promotion / strict closeout recovery",
+        "reviewer": "Human/Ops",
+        "summary": "Create the single immutable task brief required by validate_merged_done_evidence so the already-reviewed and merged PR #4434 can be reconciled honestly from blocked to done without direct canonical-state edits or owner impersonation.",
+        "title": "Bind merged snapshot task closeout evidence"
+      },
+      "task_spec_hash": "9e927b459728248f4963888328b59cb797b50545ec21a3b2c91c66ad5d38e8a4"
+    }
+  ]
+}

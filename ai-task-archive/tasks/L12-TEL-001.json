@@ -1,0 +1,214 @@
+{
+  "version": 1,
+  "task_id": "L12-TEL-001",
+  "archived_at": "2026-07-26T15:03:44Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "acceptance": [
+      "HTTP success is returned only after durable tenant-scoped ingest",
+      "A later heartbeat cannot erase authoritative lifecycle trace identity",
+      "Ingest read and DLQ replay enforce service or operator authority and tenant scope",
+      "Process death before batch flush loses no accepted event",
+      "Existing six runtime summaries expose consumer-compatible identity"
+    ],
+    "actual_state_sources": [
+      "durable telemetry rows",
+      "runtime summaries",
+      "telemetry DLQ"
+    ],
+    "artifact_conflict_guard": {
+      "allowed_overlap_task_ids": [],
+      "artifact_scope": [
+        {
+          "path": "docs/deployment/evidence/twelve-loop-gap/L12-TEL-001",
+          "repo": "pantheon"
+        },
+        {
+          "path": "services/telemetry",
+          "repo": "pantheon"
+        }
+      ],
+      "catalog_sha256": "8c7610b0e6bbba31c36cb0ecd1ddce4bf843fc6de89dcaecc4a5e3154af8933d",
+      "program_id": "pantheon-twelve-loop-gap-2026-07-26",
+      "schema_version": 1,
+      "task_id": "L12-TEL-001"
+    },
+    "artifacts": [
+      "services/telemetry",
+      "docs/deployment/evidence/twelve-loop-gap/L12-TEL-001"
+    ],
+    "auto_created_by": "dispatch_twelve_loop_gap_2026_07_26",
+    "catalog_task_contract_sha256": "37af6a7aef72039e611abab8f5589a8f96b1376e4bb213ab58c78e8c1ddb50f2",
+    "current_maturity": "api-only",
+    "depends_on": [
+      "L12-FLEET-001"
+    ],
+    "desired_state_sources": [
+      "TelemetryEvent ingest contract",
+      "active RuntimeBinding identity"
+    ],
+    "dispatch_rules": [
+      "Preserve append-only telemetry identity",
+      "Do not fabricate missing correlation",
+      "Fail closed on unauthorised replay"
+    ],
+    "evidence_root": "docs/deployment/evidence/twelve-loop-gap/L12-TEL-001",
+    "fleet_lane": "telemetry",
+    "id": "L12-TEL-001",
+    "last_update": "2026-07-26T15:03:44Z",
+    "loop_ids": [
+      "telemetry_reconciliation"
+    ],
+    "merge_target": "dev",
+    "mutates_canonical": true,
+    "next": "Finalized approved L12-TEL-001 task with merged evidence manifest docs/deployment/evidence/twelve-loop-gap/L12-TEL-001/evidence.json",
+    "non_goals": [
+      "No panel-only closure",
+      "No seed fixture as live proof",
+      "No approval gate bypass",
+      "No live-capital activation"
+    ],
+    "owner": "Antigravity",
+    "phase": "Twelve Loop Remediation / Telemetry",
+    "product_level_required": true,
+    "program_id": "pantheon-twelve-loop-gap-2026-07-26",
+    "proof_required": [
+      "crash-before-flush recovery",
+      "lifecycle then heartbeat regression",
+      "auth and tenant negative tests",
+      "current-runtime summary readback"
+    ],
+    "requires_human_ops_signoff": false,
+    "review_file": "docs/deployment/evidence/twelve-loop-gap/L12-TEL-001/evidence.json",
+    "review_notes_zh": [
+      "獨立審查確認 PR #4148/#4155/#4170/#4181 均已合併 dev，merge/CI 身分與 manifest 一致。",
+      "重跑 167 focused tests（含真實 NATS crash recovery）、TEL-002 smoke、compileall、trade-journal JSON、ProductEvidenceManifest schema/assertions、checksums、diff-check 全綠；廣域 discovery 僅保留已揭露的非 task baseline setup error。",
+      "Owner closeout 必須在 evidence.json append Codex 正式 approval verdict、切換 overall_admission、更新 validation metadata/checksum，經 task-scoped PR 合併後才可 done。"
+    ],
+    "reviewer": "Codex",
+    "status": "done",
+    "summary_zh": "移除 202-before-durable-write 遺失窗，修復 heartbeat 抹除 trace identity，加入 auth/tenant 與可重播 durable buffer。",
+    "target_maturity": "reconciled",
+    "target_repo": "pantheon",
+    "task_doc": "docs/bff/execution-tasks/2026-07-26-twelve-loop-gap/L12-TEL-001.md",
+    "title": "Make telemetry acknowledgement durable and preserve lifecycle identity",
+    "wave": 1,
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-07-26T15:03:44Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/l12-tel-001",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/L12-TEL-001",
+      "git_clean_required": false,
+      "status_command_runtime": {
+        "command_root": "/home/lupin/pantheon-ci-deploy/dev-root-bdbd0a99bf68",
+        "source_sha": "bdbd0a99bf68e6a635d9bd936782c659298b7bb7",
+        "base_ref": "origin/dev",
+        "remote": "ajoe734/pantheon",
+        "status_root": "/home/lupin/pantheon",
+        "delivery_root": "/tmp/pantheon-worker-worktrees/pantheon/l12-tel-001",
+        "wrapper_root": "/home/lupin/pantheon-ci-deploy/dev-root-bdbd0a99bf68"
+      },
+      "commit": "a11ff700b3be841887db404a7dd2938a76a698db",
+      "commit_subject": "L12-TEL-001: update closeout evidence owner and reviewer verdict",
+      "commit_author": {
+        "name": "pantheon-dev",
+        "email": "bjoe734@gmail.com"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Antigravity",
+        "Task-ID": "L12-TEL-001",
+        "Reviewer": "Codex"
+      },
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "6ec0b1365d698ab1c31eae6fd61d062967e57ad7",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "created_at": "2026-07-26T10:53:13Z",
+      "from": "Codex2",
+      "message": "Implementation and evidence are ready for independent review. Base PR #4148 and hardening PR #4155 are merged; merge commit 4f905c5a563483ff15eee9221c47eb720b8cecce. Focused acceptance: 127/127 including real NATS child-process crash recovery; smoke/compile/schema/checksums passed. Please review fail-closed role/service-tenant authority, tenant/content-bound JetStream receipts, lifecycle identity, and checksummed evidence.",
+      "resolved_at": "2026-07-26T11:31:29Z",
+      "status": "done",
+      "task_id": "L12-TEL-001",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-07-26T11:31:29Z",
+      "from": "Codex",
+      "message": "Reviewer rejection with three acceptance blockers. (1) POST /api/telemetry/ingest/batch unconditionally returns 202 at services/telemetry/main.py:864-871; existing fixture reproduced 202 with {'ingested': 0, 'rejected': 1} for an unknown binding, so HTTP success is emitted with no durable receipt. Return non-2xx when zero events are durably accepted and define/test mixed-batch semantics. (2) RuntimeSummaryProjectionStore is keyed only by runtime_id and does not reject tenant changes: tenant-beta heartbeat on tenant-001 lifecycle produced tenant_id=tenant-001 with last_event_id/last_heartbeat_event_id from tenant-beta. Isolate by (tenant_id,runtime_id) or fail closed on cross-tenant collision; add lifecycle+heartbeat and restart/list/get negative regressions. (3) telemetry lineage GET routes authenticate X-Tenant-Id but _lineage_query_response does not pass/filter tenant; tenant-beta reproduced HTTP 200 with the complete evt-lineage-001 trace. Make every lineage read tenant-aware and fail closed for unscoped legacy records, with cross-tenant negative tests. Refresh checksummed evidence after fixes. Positive reviewer validation passed: PRs #4148/#4155 and merge commits are on origin/dev with all gates green; 127 focused tests including real NATS child-process crash recovery passed, TEL-002 smoke passed, compile/schema passed, and evidence checksums passed.",
+      "resolved_at": "2026-07-26T11:31:29Z",
+      "status": "done",
+      "task_id": "L12-TEL-001",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-07-26T12:10:08Z",
+      "from": "Codex2",
+      "message": "Reviewer fixes are merged in PR #4170 at c762af14d56d141c59efc31b255c3814ef4378b3. Please independently review evidence.json and anchor 064366e8f: zero-accept batches fail HTTP, mixed batches report partially_accepted, runtime summaries isolate (tenant_id,runtime_id), and all five lineage GET families fail closed cross-tenant and for legacy-unscoped nodes. Owner revalidation: 167 focused tests passed including real NATS crash recovery; TEL-002 smoke, compileall, schema validation, evidence checksums, diff check, and all PR gates passed.",
+      "resolved_at": "2026-07-26T12:24:06Z",
+      "status": "done",
+      "task_id": "L12-TEL-001",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-07-26T12:24:06Z",
+      "from": "Codex",
+      "message": "Reviewer reopen: implementation and merge evidence are acceptable (#4170 merged as c762af14d56d141c59efc31b255c3814ef4378b3; 167 focused tests including real NATS crash recovery, TEL-002 smoke, compileall, trade-journal schema, checksums, and diff-check passed independently). Blocking closeout defect: product_level_required evidence.json does not validate against schemas/product-evidence.schema.json (schema_version is integer; required schema_status/evidence_policy/task/authorities/implementation_delivery/hosted_readback/behavioral_proof/security_and_safety/integrity/record_log are absent; validation and acceptance have the wrong shapes). REVIEW_FILE would therefore make loop_done_guardrail reject done. Replace evidence.json with a schema-valid ProductEvidenceManifest carrying the existing proofs, exact repo-relative task.review_file, positive overall_admission, PR #4148/#4155/#4170 merge evidence, acceptance/security statuses, restart proof, residuals and checksums; refresh README/checksum, merge via task PR, and return for review. Do not predeclare reviewer approval; after a later approval, owner closeout must append the actual Codex formal verdict to record_log before done.",
+      "resolved_at": "2026-07-26T12:24:06Z",
+      "status": "done",
+      "task_id": "L12-TEL-001",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-07-26T12:56:40Z",
+      "from": "Codex2",
+      "message": "PR #4181 merged to dev as 0916ea8d44bf1aa3171187a6f3900568080387b5. Review docs/deployment/evidence/twelve-loop-gap/L12-TEL-001/evidence.json: ProductEvidenceManifest schema passes, task.review_file is exact repo-relative, overall_admission=pass_owner_evidence_ready, PR #4148/#4155/#4170 identities and CI are bound, all acceptance/security statuses pass or not_applicable, real NATS restart proof and residuals are present, and both checksums pass. Owner reran 167 focused tests, TEL-002 smoke, compileall, trade-journal JSON, schema/assertions, checksums, and diff-check. Guardrail replay now has exactly one expected pre-approval gap: no approved Codex formal reviewer verdict in record_log. Please review independently; do not use done. If approved, bind REVIEW_FILE to the exact repo-relative manifest so owner can append the actual formal verdict in a later closeout PR before done.",
+      "resolved_at": "2026-07-26T12:57:05Z",
+      "status": "done",
+      "task_id": "L12-TEL-001",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-07-26T12:57:05Z",
+      "from": "Codex2",
+      "message": "PR #4181 merged to dev as 0916ea8d44bf1aa3171187a6f3900568080387b5. Review docs/deployment/evidence/twelve-loop-gap/L12-TEL-001/evidence.json: ProductEvidenceManifest schema passes, task.review_file is exact repo-relative, overall_admission=pass_owner_evidence_ready, PR #4148/#4155/#4170 identities and CI are bound, all acceptance/security statuses pass or not_applicable, real NATS restart proof and residuals are present, and both checksums pass. Owner reran 167 focused tests, TEL-002 smoke, compileall, trade-journal JSON, schema/assertions, checksums, and diff-check. Guardrail replay now has exactly one expected pre-approval gap: no approved Codex formal reviewer verdict in record_log. Please review independently; do not use done. If approved, bind REVIEW_FILE to the exact repo-relative manifest so owner can append the actual formal verdict in a later closeout PR before done.",
+      "resolved_at": "2026-07-26T13:15:32Z",
+      "status": "done",
+      "task_id": "L12-TEL-001",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-07-26T13:15:32Z",
+      "from": "Codex",
+      "message": "Independent review approved: PRs #4148/#4155/#4170/#4181 are merged to dev (latest 0916ea8d44bf1aa3171187a6f3900568080387b5) with green required checks; diff review confirms JetStream PubAck before HTTP success, broker ACK only after canonical write or fsynced tenant DLQ, zero-accepted batch 400 and explicit partial semantics, strict role/tenant read/replay plus tenant-scoped lineage, and composite tenant/runtime lifecycle identity preservation. Reproduced 167 focused tests including real NATS process-death redelivery, TEL-002 smoke, compile/JSON/schema/assertions/checksums/diff-check; broad discovery has only the disclosed unrelated RuntimeManagerClient fixture error. REVIEW_FILE bound exactly. Owner must append this formal Codex verdict, advance admission and validation metadata, refresh checksum, and merge the closeout PR before done.",
+      "resolved_at": "2026-07-26T14:21:38Z",
+      "status": "done",
+      "task_id": "L12-TEL-001",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-07-26T14:21:38Z",
+      "from": "Codex",
+      "message": "Independent review approved PRs #4148/#4155/#4170/#4181 with 167 focused tests including real NATS process-death redelivery. Catalog owner restored after helper-claim drift. Codex2 owner must append the formal verdict, refresh checksum/admission metadata, merge closeout PR, and then done.",
+      "status": "done",
+      "task_id": "L12-TEL-001",
+      "to": "Antigravity",
+      "resolved_at": "2026-07-26T15:03:45Z"
+    }
+  ],
+  "blockers": []
+}

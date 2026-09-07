@@ -1,0 +1,194 @@
+{
+  "version": 1,
+  "task_id": "L12-ALPHA-001",
+  "archived_at": "2026-07-26T11:48:00Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "acceptance": [
+      "Only an approved reviewed immutable StrategySpec enters replication",
+      "Discovery uses the canonical StrategySpec identifier and tenant-scoped keys",
+      "Claims expire and stale work can be safely reclaimed or replayed",
+      "Research authority stores a non-stub ExperimentTask and ExperimentRun",
+      "Duplicate review restart failure and DLQ replay are deterministic"
+    ],
+    "actual_state_sources": [
+      "research ExperimentTask",
+      "research ExperimentRun",
+      "replication queue and DLQ"
+    ],
+    "artifact_conflict_guard": {
+      "allowed_overlap_task_ids": [],
+      "artifact_scope": [
+        {
+          "path": "docs/deployment/evidence/twelve-loop-gap/L12-ALPHA-001",
+          "repo": "pantheon"
+        },
+        {
+          "path": "services/research/alpha_replication",
+          "repo": "pantheon"
+        },
+        {
+          "path": "services/research/experiment_orchestrator",
+          "repo": "pantheon"
+        },
+        {
+          "path": "services/research/experiments",
+          "repo": "pantheon"
+        }
+      ],
+      "catalog_sha256": "a7fbbaa560bd7f2d97750b25cd20af69b64d4f522b293689849b0e1b1763717f",
+      "program_id": "pantheon-twelve-loop-gap-2026-07-26",
+      "schema_version": 1,
+      "task_id": "L12-ALPHA-001"
+    },
+    "artifacts": [
+      "services/research/alpha_replication",
+      "services/research/experiment_orchestrator",
+      "services/research/experiments",
+      "docs/deployment/evidence/twelve-loop-gap/L12-ALPHA-001"
+    ],
+    "auto_created_by": "dispatch_twelve_loop_gap_2026_07_26",
+    "catalog_task_contract_sha256": "2ea87258fa517ff271ee17e845e14b4a163486f497fc05bef66d79f2399af5f6",
+    "current_maturity": "api-only",
+    "depends_on": [
+      "L12-FLEET-001"
+    ],
+    "desired_state_sources": [
+      "approved StrategySpec review decision",
+      "revalidation due policy"
+    ],
+    "dispatch_rules": [
+      "Do not label stub output authoritative",
+      "Keep production activation disabled unless separately approved",
+      "Tenant must participate in every key"
+    ],
+    "evidence_root": "docs/deployment/evidence/twelve-loop-gap/L12-ALPHA-001",
+    "fleet_lane": "alpha",
+    "id": "L12-ALPHA-001",
+    "last_update": "2026-07-26T11:48:00Z",
+    "loop_ids": [
+      "alpha_replication"
+    ],
+    "merge_target": "dev",
+    "mutates_canonical": true,
+    "next": "Owner closeout complete: implementation PR #4147 merged as dd9d83722b24598a623692c2b6ca8b80f159fe04; reviewer fixes and closeout PR #4161 merged as cba34f5bd37ebb8056a9317f4a7e6b062c6111e4; formal product-evidence PR #4165 merged as f675682007b74ba33e6f2dcfe2335797a8bb4bc5. Codex2 approved fix tip 03264cb0eaebd2bf9d2ddcf002096e57fa731c57. Validation: 60 scoped passed, 15 acceptance passed, py_compile, product schema, loop done guard, JSON/SHA-256, git diff --check, clean tree, and merged ancestry passed.",
+    "non_goals": [
+      "No panel-only closure",
+      "No seed fixture as live proof",
+      "No approval gate bypass",
+      "No automatic replication of every draft"
+    ],
+    "owner": "Codex",
+    "phase": "Twelve Loop Remediation / Alpha",
+    "product_level_required": true,
+    "program_id": "pantheon-twelve-loop-gap-2026-07-26",
+    "proof_required": [
+      "approved and unapproved gate tests",
+      "tenant collision tests",
+      "claim expiry and crash recovery",
+      "real research service-boundary readback"
+    ],
+    "requires_human_ops_signoff": false,
+    "reviewer": "Codex2",
+    "status": "done",
+    "summary_zh": "統一 StrategySpec identifier，限制 approved review 才能進 queue，補 tenant、lease、DLQ/replay，將結果寫入真實 research authority 而非 stub/local run。",
+    "target_maturity": "reconciled",
+    "target_repo": "pantheon",
+    "task_doc": "docs/bff/execution-tasks/2026-07-26-twelve-loop-gap/L12-ALPHA-001.md",
+    "title": "Dispatch approved Alpha replication into authoritative ExperimentRuns",
+    "wave": 1,
+    "review_file": "docs/deployment/evidence/twelve-loop-gap/L12-ALPHA-001/evidence.json",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-07-26T11:48:00Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/l12-alpha-001",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/L12-ALPHA-001",
+      "git_clean_required": false,
+      "status_command_runtime": {
+        "command_root": "/home/lupin/pantheon-ci-deploy/dev-root",
+        "source_sha": "6a0281e8f8996883faae3ddaab7505b2ddc68ac1",
+        "base_ref": "origin/dev",
+        "remote": "ajoe734/pantheon",
+        "status_root": "/home/lupin/pantheon",
+        "delivery_root": "/tmp/pantheon-worker-worktrees/pantheon/l12-alpha-001",
+        "wrapper_root": "/home/lupin/pantheon-ci-deploy/dev-root"
+      },
+      "commit": "21330e9ca2cfa9bf923f03ccd00e81d1a8af85bd",
+      "commit_subject": "L12-ALPHA-001: merge current dev for manifest closeout",
+      "commit_author": {
+        "name": "pantheon-dev",
+        "email": "bjoe734@gmail.com"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Codex",
+        "Task-ID": "L12-ALPHA-001",
+        "Reviewer": "Codex2",
+        "Verified": "product evidence schema; loop done guard; JSON/SHA-256; git diff --check"
+      },
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "f675682007b74ba33e6f2dcfe2335797a8bb4bc5",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "created_at": "2026-07-26T10:10:58Z",
+      "from": "Codex",
+      "message": "PR #4147 merged at dd9d83722b24598a623692c2b6ca8b80f159fe04. Review approved-only tenant-scoped queue, fenced lease/DLQ/replay, authoritative ExperimentTask/ExperimentRun readback, and evidence at docs/deployment/evidence/twelve-loop-gap/L12-ALPHA-001/evidence.json. Validation: 58 scoped pytest plus 13 focused proof cases; Branch CI Gate green.",
+      "resolved_at": "2026-07-26T10:26:08Z",
+      "status": "done",
+      "task_id": "L12-ALPHA-001",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-07-26T10:26:08Z",
+      "from": "Codex2",
+      "message": "Review requires two acceptance fixes despite 58 scoped tests passing: (1) AlphaReplicationQueue.replay_dlq only compares last_replay_id, so an older replay ID is accepted again after another replay. Independent ABA repro produced first_A=True, B=True, reused_A=True, replay_count=3. Persist all consumed replay IDs (tenant/spec scoped) and add an A-B-A regression proving duplicate replay is always a no-op. (2) AlphaRevalidationWorker stores/returns nested domain etask/erun IDs and ReplicationController publishes research-authority evidence refs from them, while the real service GET routes are keyed by AuthoritativeTaskReceipt.authority_task_id and AuthoritativeRunReceipt.authority_run_id. Independent transport repro produced domain_run_id=erun-alpha-tenant-a-spec-a-attempt-1 and authority_run_id=rrun-1. Carry resolvable authority IDs through queue acknowledgement, controller result, and evidence refs, and add a real FastAPI test that dereferences the emitted task/run references. Update evidence after the fixes.",
+      "resolved_at": "2026-07-26T10:26:08Z",
+      "status": "done",
+      "task_id": "L12-ALPHA-001",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-07-26T10:43:10Z",
+      "from": "Codex",
+      "message": "Reviewer fixes published at 03264cb0eaebd2bf9d2ddcf002096e57fa731c57: tenant/spec consumed replay IDs reject A-B-A after restart; queue/controller now carry resolvable authority task/run IDs separately from domain lineage; emitted refs dereference through real FastAPI GET routes. Evidence refreshed. Validation: 60 scoped passed, 15 acceptance passed, py_compile/digest/diff checks passed.",
+      "resolved_at": "2026-07-26T11:06:05Z",
+      "status": "done",
+      "task_id": "L12-ALPHA-001",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-07-26T11:06:05Z",
+      "from": "Codex2",
+      "message": "審查通過：初版 PR #4147 已合併 dev（merge dd9d83722b24598a623692c2b6ca8b80f159fe04）且 required checks 全綠；review fixes 03264cb0eaebd2bf9d2ddcf002096e57fa731c57 已推送，該 SHA 的 Commit trailers、Runtime mirror guard、Smoke acceptance 均 success。獨立重跑 scoped 60 passed、acceptance 15 passed，覆蓋 approved-only、canonical tenant/spec key、lease fencing/expiry、A-B-A replay restart、crash/failure/DLQ、真 FastAPI authority task/run readback與 evidence refs；py_compile、evidence SHA-256/JSON、git diff --check 皆通過。請 owner 依 closeout skill 開修正 PR、合併 dev 後再 done。",
+      "status": "done",
+      "task_id": "L12-ALPHA-001",
+      "to": "Codex",
+      "resolved_at": "2026-07-26T11:48:01Z"
+    }
+  ],
+  "blockers": [],
+  "correction_context": {
+    "version": 1,
+    "corrected_at": "2026-07-26T12:52:04Z",
+    "actor": "Human/Ops",
+    "reason": "Replace disposable worker path with the merged ProductEvidence manifest after checksum and done-guard replay.",
+    "field": "task.review_file",
+    "from": "/tmp/pantheon-worker-worktrees/pantheon/l12-alpha-001/docs/deployment/evidence/twelve-loop-gap/L12-ALPHA-001/evidence.json",
+    "to": "docs/deployment/evidence/twelve-loop-gap/L12-ALPHA-001/evidence.json",
+    "evidence_sha256": "546d427cd56036e3e5113dfabadbec068010146d37c3aa7145bc86377e3599d7"
+  }
+}

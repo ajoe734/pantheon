@@ -1,0 +1,186 @@
+{
+  "actor": {
+    "capabilities": [
+      "fleet.dispatch",
+      "dev-task.dispatch"
+    ],
+    "id": "Claude",
+    "roles": [
+      "operator-delegate"
+    ]
+  },
+  "admission_record_path": "ai-task-archive/tasks/assistant-dev-bridge-admissions/pkt-supervisor-dispatch-refactor-20260804T0400Z--7817c06070eabd85.json",
+  "admitted_at": "2026-08-04T03:52:00Z",
+  "audit_conversation_href": null,
+  "constraints": {
+    "allowedRepos": [
+      "pantheon"
+    ],
+    "noDirectShellFromWeb": true,
+    "requiresBranchPrMerge": true
+  },
+  "conversation_id": "claude-root-supervisor-dispatch-refactor-20260804",
+  "dispatch_records": [
+    {
+      "error": null,
+      "owner": "Antigravity",
+      "reviewer": "Claude2",
+      "status": "dispatched",
+      "taskId": "SUP-DISPATCH-EXPLAIN-TOOL-20260804"
+    },
+    {
+      "error": null,
+      "owner": "Claude2",
+      "reviewer": "Antigravity",
+      "status": "dispatched",
+      "taskId": "SUP-PROVIDER-PROBE-HYSTERESIS-20260804"
+    },
+    {
+      "error": null,
+      "owner": "Antigravity",
+      "reviewer": "Claude2",
+      "status": "dispatched",
+      "taskId": "SUP-TASK-FAILURE-STREAK-SCHEMA-20260804"
+    },
+    {
+      "error": null,
+      "owner": "Claude2",
+      "reviewer": "Antigravity",
+      "status": "dispatched",
+      "taskId": "SUP-STATUS-OUTBOX-INTEGRITY-VISIBILITY-20260804"
+    }
+  ],
+  "documents": [
+    {
+      "kind": "REFACTOR_PROPOSAL",
+      "path": "docs/04/supervisor_dispatch_refactor_proposal_2026-08-04.md",
+      "sourceRefs": [
+        "Written after a live debugging session on 2026-08-04 tracing a real multi-hour dispatch stall",
+        "Corrects a stale assumption that poll_workers was never decomposed (it was, in supervisor-rewrite memory) -- verified live against current source"
+      ]
+    }
+  ],
+  "durable": true,
+  "emitted_at": "2026-08-04T04:00:00Z",
+  "intent": "supervisor_dispatch_observability_and_reliability_refactor",
+  "mode": "kernel_repair",
+  "packet_digest": "7817c06070eabd856c25491e217622d54237f3ed98109fda604563e83ac17001",
+  "packet_id": "pkt-supervisor-dispatch-refactor-20260804T0400Z",
+  "packet_version": "pantheon.assistant.dev-task.v1",
+  "record_kind": "assistant_dev_bridge_admission",
+  "record_payload_sha256": "d39ce2949c95100e7d3df64fbfb3ce41c13ee6b0d0c05e71d969b33a4ae9eab1",
+  "schema": "pantheon.assistant-dev-bridge-admission.v1",
+  "source_turn_ids": [
+    "user-asked-is-it-working-now",
+    "claude-live-debugged-dispatch-stall-20260804",
+    "claude-wrote-refactor-proposal-20260804",
+    "user-requested-execution-tasks-20260804"
+  ],
+  "tasks": [
+    {
+      "task_id": "SUP-DISPATCH-EXPLAIN-TOOL-20260804",
+      "task_spec": {
+        "acceptance": [
+          "Read docs/04/supervisor_dispatch_refactor_proposal_2026-08-04.md section 'Problem 2' for full context before starting.",
+          "Add scripts/explain_dispatch.py <task-id> [--agent <agent-id>] that composes the EXISTING pure gate functions in .orchestrator/supervisor.py (agent_auto_dispatch_block_reason, task_execution_dispatch_candidate, agent_can_take_task, quota_group_concurrency_limit, agent_dispatch_capacity, dependencies_satisfied, task_assignment_is_catalog_locked, dispatch_event_is_in_unchanged_cooldown) in the exact order dispatch_ready_tasks evaluates them.",
+          "For the given task, evaluate every currently-enabled agent and print a structured trace: which gate returned a blocking verdict first and its exact reason string, or 'no blocking gate found' if none did.",
+          "Read-only: must not mutate config.json, state, or provider_capabilities.json. Must not require the canonical task-state lock (use the same read-only loading pattern as read_only_commands in scripts/ai_status.py).",
+          "Add unit tests covering at least: capability-blocked agent, quota-exhausted agent, capacity-exhausted agent, catalog-locked task, unmet dependency, cooldown-suppressed event, and the all-clear case.",
+          "Do not touch poll_workers, process_queue, or reconcile_queue_records."
+        ],
+        "artifacts": [
+          "scripts/explain_dispatch.py",
+          "services/control-plane/bff"
+        ],
+        "depends_on": [],
+        "id": "SUP-DISPATCH-EXPLAIN-TOOL-20260804",
+        "owner": "Antigravity",
+        "phase": "Supervisor Dispatch Observability",
+        "reviewer": "Claude2",
+        "summary": "Composes existing pure dispatch-gate functions into a single read-only CLI that answers 'why was task X not dispatched this tick' without hand-writing a throwaway script against internal functions, as had to be done live on 2026-08-04.",
+        "title": "Add a dispatch-explain diagnostic tool for supervisor.py"
+      },
+      "task_spec_hash": "5bcefbd9e4bea3107fc170d0f1a29073ccc2dd0193703d17d362a36f5343a7b7"
+    },
+    {
+      "task_id": "SUP-PROVIDER-PROBE-HYSTERESIS-20260804",
+      "task_spec": {
+        "acceptance": [
+          "Read docs/04/supervisor_dispatch_refactor_proposal_2026-08-04.md section 'Problem 1' for full context, including the confirmed live repro (agy/claude flipping to 'not installed' under load_1m ~3-4 within seconds of a healthy probe, same binaries, same PATH, no state change).",
+          "load_provider_report's default auto_refresh_provider_capabilities=true currently re-invokes live CLI binaries synchronously inside dispatch_ready_tasks's call path every cycle. Move probing to its own timer/tick, independent of the dispatch cycle; dispatch must read the last good cached provider_capabilities.json with a configurable staleness bound and never trigger a live probe itself.",
+          "Add hysteresis: an agent's can_auto_deliver must only flip from true to false after N consecutive failed probes (configurable, default suggestion 2-3), not one. Flipping false to true may remain immediate.",
+          "When a probe result's effective can_auto_deliver actually changes (not just re-confirms the same value), emit a distinct activity-log event type (e.g. provider_capability_transitioned) with old/new state and the raw probe failure detail, instead of only being visible by diffing provider_capabilities.json.",
+          "Use scripts/explain_dispatch.py (SUP-DISPATCH-EXPLAIN-TOOL-20260804) to verify: force a synthetic single-probe failure and confirm dispatch is NOT blocked (hysteresis holds), then force N consecutive failures and confirm it IS blocked with the transition event present.",
+          "Shadow-verify against current behavior per the rewrite/shadow.py discipline before cutover; ship behind a flag, incumbent one flag away, consistent with every other SUPERVISOR-REWRITE phase."
+        ],
+        "artifacts": [
+          ".orchestrator/supervisor.py",
+          ".orchestrator/provider_capabilities.json"
+        ],
+        "depends_on": [
+          "SUP-DISPATCH-EXPLAIN-TOOL-20260804"
+        ],
+        "id": "SUP-PROVIDER-PROBE-HYSTERESIS-20260804",
+        "owner": "Claude2",
+        "phase": "Supervisor Dispatch Reliability",
+        "reviewer": "Antigravity",
+        "summary": "The single highest-value fix from the 2026-08-04 session: a flaky, auto-refreshing, inline capability probe silently zeroed out dispatch for Claude/Claude2/Antigravity for hours because one transient CLI timeout under load was treated as ground truth with no debounce and no visible signal.",
+        "title": "Decouple provider capability probing from the dispatch hot path and add failure hysteresis"
+      },
+      "task_spec_hash": "423ebcbea4100881dcfa309b824668b28c7078d916993dec9c8285be35168d57"
+    },
+    {
+      "task_id": "SUP-TASK-FAILURE-STREAK-SCHEMA-20260804",
+      "task_spec": {
+        "acceptance": [
+          "Read docs/04/supervisor_dispatch_refactor_proposal_2026-08-04.md section 'Problem 4' for full context, including the confirmed live repro (boot reconciliation retried SUP-L12-GUARDED-REMEDIATION-CATALOG-CORRECTION-20260803 four times then gave up with worker_failed, while the task record stayed at its original todo/last_update with zero visible trace).",
+          "Add a failure_streak integer field directly on the task record, incremented on worker_failed, reset to 0 on worker_completed or a successful review/handoff transition.",
+          "Past a configured threshold (reuse or align with existing SUP-L12-STALE-FAILURE-STREAK-REAPER conventions already in this codebase), transition the task to an explicit status: \"quarantined\" rather than leaving it silently stuck at its prior status.",
+          "A quarantined task must require an explicit operator or auto-worker action (e.g. reopen) to clear, and that action must reset failure_streak.",
+          "This is purely additive to the task schema; must not change any existing gate's pass/fail behavior for tasks below the threshold.",
+          "Add tests for: streak increments on repeated failure, reset on success, quarantine transition at threshold, and that quarantine blocks normal ready-dispatch pickup until cleared."
+        ],
+        "artifacts": [
+          ".orchestrator/supervisor.py",
+          "scripts/ai_status.py"
+        ],
+        "depends_on": [],
+        "id": "SUP-TASK-FAILURE-STREAK-SCHEMA-20260804",
+        "owner": "Antigravity",
+        "phase": "Supervisor Dispatch Reliability",
+        "reviewer": "Claude2",
+        "summary": "Makes repeated dispatch failure visible on the board itself instead of only in raw activity-log JSONL, closing the exact gap that made SUP-L12-GUARDED-REMEDIATION-CATALOG-CORRECTION-20260803 indistinguishable from an untouched task after 5 failed attempts.",
+        "title": "Add a failure_streak counter and quarantined status to the task schema"
+      },
+      "task_spec_hash": "7b81073dad0e39f8e1fbdc2f90e2423687bb686c050832b629fcc2547b29fe7e"
+    },
+    {
+      "task_id": "SUP-STATUS-OUTBOX-INTEGRITY-VISIBILITY-20260804",
+      "task_spec": {
+        "acceptance": [
+          "Read docs/04/supervisor_dispatch_refactor_proposal_2026-08-04.md section 'Problem 3' for full context, including the confirmed live repro (ActivityAuditInvariantError: 'activity content-addressed archives do not match lineage', transient, tied to a concurrency burst right after a supervisor restart, which silently dropped a worker's status write-back with zero trace on the task record).",
+          "Do not weaken _validate_active_lineage_head_unlocked or any other fail-closed integrity check itself -- the guarantee is real and intentional (see the original PR #4221 incident this protects against).",
+          "Extend the existing outbox concept (STATUS_ARCHIVE_OUTBOX_KEY / STATUS_ACTIVITY_OUTBOX_KEY) so that a status write which cannot clear the integrity check is durably queued for retry AND marks the task itself (e.g. status_write_pending: true plus a pending count), rather than leaving the task record byte-identical to its pre-attempt state.",
+          "A human or auto-worker reading the board must be able to distinguish 'this task's displayed state may be stale, N writes queued behind an integrity block' from 'this task genuinely has not been touched.'",
+          "This touches the exact mechanism responsible for a prior 4-hour production outage (see SUPERVISOR_REWRITE_PLAN.md motivation). Shadow-verify behavior-equivalence against the incumbent per rewrite/shadow.py discipline before any cutover; ship behind a flag.",
+          "Land only after SUP-PROVIDER-PROBE-HYSTERESIS-20260804 and SUP-TASK-FAILURE-STREAK-SCHEMA-20260804 are merged, per the risk-based sequencing in the proposal doc."
+        ],
+        "artifacts": [
+          "scripts/ai_status.py",
+          ".orchestrator/common.py"
+        ],
+        "depends_on": [
+          "SUP-PROVIDER-PROBE-HYSTERESIS-20260804",
+          "SUP-TASK-FAILURE-STREAK-SCHEMA-20260804"
+        ],
+        "id": "SUP-STATUS-OUTBOX-INTEGRITY-VISIBILITY-20260804",
+        "owner": "Claude2",
+        "phase": "Supervisor Dispatch Reliability",
+        "reviewer": "Antigravity",
+        "summary": "Closes the gap where a transient, already-self-resolving integrity check failure left a task's board record indistinguishable from one that was never dispatched at all -- the highest-risk of the four fixes since it touches the same mechanism a prior real outage came from, so it is sequenced last and gated on the other two landing first.",
+        "title": "Make activity-log-integrity-blocked status writes durable and visible instead of silently dropped"
+      },
+      "task_spec_hash": "804f971cb5be7534b75006feb43da69ba685d569378725bad68f1e7412dba36d"
+    }
+  ]
+}

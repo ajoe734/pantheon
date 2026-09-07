@@ -1,0 +1,230 @@
+{
+  "version": 1,
+  "task_id": "SUP-POLL-WORKER-WORKTREE-FAILOPEN-20260809",
+  "archived_at": "2026-08-10T01:17:52Z",
+  "terminal_status": "done",
+  "terminal_outcome": "superseded",
+  "task": {
+    "acceptance": [
+      "Reproduce the live shape: a taskless chair-review worker is retry_backoff, has no live PID, and references a missing worktree; its observation, commit-progress, cleanup, and lifecycle paths must not raise FileNotFoundError out of poll_workers.",
+      "A per-worker missing or unreadable workspace must be handled fail-closed for that worker with an auditable worker-scoped terminal or recoverable outcome, while poll_workers continues to evaluate unrelated workers and due retry delivery in the same phase.",
+      "Preserve live-worker identity, lease, task-governance, queue, provider-pause, retry-budget, and worktree safety guards; do not merely catch all exceptions or silently delete active state.",
+      "Add focused regressions covering missing taskless chair workspace, missing completed-task workspace, and an unrelated due retry proving poll continuation; preserve existing valid workspace behavior.",
+      "Commit pre-review evidence bound to the exact head: changed paths, focused and relevant supervisor tests, full required supervisor suite, git diff --check, rollout boundary, and rollback by normal merge revert.",
+      "Use a clean task branch and protected PR to dev, fresh independent Antigravity2 exact-head review, required checks, and merge. This source task must not edit live runtime state, queue files, canonical task state, provider configuration, account grouping, scheduler policy, or services."
+    ],
+    "artifacts": [
+      ".orchestrator/supervisor.py",
+      ".orchestrator/test_supervisor.py",
+      "docs/deployment/evidence/supervisor/SUP-POLL-WORKER-WORKTREE-FAILOPEN-20260809/"
+    ],
+    "depends_on": [],
+    "dev_bridge": {
+      "actor": {
+        "capabilities": [
+          "integration",
+          "supervisor-runtime",
+          "acceptance"
+        ],
+        "id": "Human/Ops",
+        "roles": [
+          "operator"
+        ]
+      },
+      "audit_conversation_href": "task:SUP-RUNTIME-V10-GOVERNED-ROLLOUT-VERIFY-20260808",
+      "conversation_id": "ops-runtime-retry-recovery-20260809",
+      "documents": [
+        {
+          "kind": "LIVE_RUNTIME_EVIDENCE",
+          "path": "ai-activity-log.jsonl",
+          "sourceRefs": [
+            "temporary_live_repair_stale_chair_worker_released",
+            "worker:codex-20260809T123839Z-ddc8ad73",
+            "workspace:/tmp/pantheon-worker-worktrees/pantheon/chair-review-20260809-123821-codex",
+            "supervisor-log:poll_workers_pre_dispatch_reserved FileNotFoundError"
+          ]
+        }
+      ],
+      "emitted_at": "2026-08-09T14:43:31Z",
+      "intent": "source_only_runtime_recovery_dispatch",
+      "mode": "supervisor_source_only",
+      "packet_digest": "bb96bd39ff117fa1fd2d4b66027d50093695ba7d7b7d40f44f72fb43dd65ae43",
+      "packet_id": "pkt-sup-poll-worker-worktree-failopen-20260809T1444Z",
+      "source_turn_ids": [
+        "operator-authorization:2026-08-09",
+        "audit:temporary_live_repair_stale_chair_worker_released:codex-20260809T123839Z-ddc8ad73",
+        "audit:poll_workers_missing_workspace_phase_abort"
+      ],
+      "task_spec": {
+        "acceptance": [
+          "Reproduce the live shape: a taskless chair-review worker is retry_backoff, has no live PID, and references a missing worktree; its observation, commit-progress, cleanup, and lifecycle paths must not raise FileNotFoundError out of poll_workers.",
+          "A per-worker missing or unreadable workspace must be handled fail-closed for that worker with an auditable worker-scoped terminal or recoverable outcome, while poll_workers continues to evaluate unrelated workers and due retry delivery in the same phase.",
+          "Preserve live-worker identity, lease, task-governance, queue, provider-pause, retry-budget, and worktree safety guards; do not merely catch all exceptions or silently delete active state.",
+          "Add focused regressions covering missing taskless chair workspace, missing completed-task workspace, and an unrelated due retry proving poll continuation; preserve existing valid workspace behavior.",
+          "Commit pre-review evidence bound to the exact head: changed paths, focused and relevant supervisor tests, full required supervisor suite, git diff --check, rollout boundary, and rollback by normal merge revert.",
+          "Use a clean task branch and protected PR to dev, fresh independent Antigravity2 exact-head review, required checks, and merge. This source task must not edit live runtime state, queue files, canonical task state, provider configuration, account grouping, scheduler policy, or services."
+        ],
+        "artifacts": [
+          ".orchestrator/supervisor.py",
+          ".orchestrator/test_supervisor.py",
+          "docs/deployment/evidence/supervisor/SUP-POLL-WORKER-WORKTREE-FAILOPEN-20260809/"
+        ],
+        "depends_on": [],
+        "id": "SUP-POLL-WORKER-WORKTREE-FAILOPEN-20260809",
+        "owner": "Codex",
+        "phase": "Supervisor Runtime / Poll Worker Failure Isolation",
+        "reviewer": "Antigravity2",
+        "summary": "Restore fleet progress without manual cleanup: a missing workspace for one taskless, dead chair-review worker must not abort the entire reserved poll phase or strand unrelated due retries. Deliver a narrowly scoped source fix and evidence through the normal protected PR flow.",
+        "title": "Isolate missing worker worktree poll failures"
+      },
+      "task_spec_hash": "637e1e8f74f25d24b402979d87fccdb41ec9a6415f6c13cff49cafb92f1311a7"
+    },
+    "failure_streak": 1,
+    "github_review_bridge": {
+      "actor": "Human/Ops",
+      "base": "dev",
+      "decision": "approve",
+      "head_branch": "task/SUP-POLL-WORKER-WORKTREE-FAILOPEN-CI-RECOVERY-20260809",
+      "head_sha": "cc6b989a0ec1cce0d5271efad519ecd0b755059f",
+      "mode": "required_commit_status",
+      "pr": 4697,
+      "pr_url": "https://github.com/ajoe734/pantheon/pull/4697",
+      "recorded_at": "2026-08-10T00:07:50Z",
+      "repository": "ajoe734/pantheon",
+      "review_error": "gh: Unprocessable Entity (HTTP 422)",
+      "review_proof_ref": "refs/tags/pantheon-review/approve/cc6b989a0ec1cce0d5271efad519ecd0b755059f",
+      "status_context": "Pantheon canonical review gate",
+      "status_id": 51919451048,
+      "status_state": "success"
+    },
+    "id": "SUP-POLL-WORKER-WORKTREE-FAILOPEN-20260809",
+    "last_update": "2026-08-10T01:17:52Z",
+    "next": "Superseded after the evidence-only retry exceeded scope and was contained; source PR #4697 remains merged, and fresh governed closeout evidence proceeds under a new task.",
+    "owner": "Human/Ops",
+    "phase": "Supervisor Runtime / Poll Worker Failure Isolation",
+    "review_binding": {
+      "base": "dev",
+      "head_branch": "task/SUP-POLL-WORKER-WORKTREE-FAILOPEN-CI-RECOVERY-20260809",
+      "head_sha": "cc6b989a0ec1cce0d5271efad519ecd0b755059f",
+      "pr": 4697
+    },
+    "reviewer": "Codex2",
+    "status": "done",
+    "summary_zh": "Restore fleet progress without manual cleanup: a missing workspace for one taskless, dead chair-review worker must not abort the entire reserved poll phase or strand unrelated due retries. Deliver a narrowly scoped source fix and evidence through the normal protected PR flow.",
+    "title": "Restore independent review after policy reassignment: Codex2 is available closeout owner; Antigravity remains independent exact-head reviewer for PR #4697. No source scope changed.",
+    "terminal_outcome": "superseded",
+    "superseded_by": "SUP-POLL-WORKER-WORKTREE-FAILOPEN-REVIEW-EVIDENCE-20260810"
+  },
+  "handoffs": [
+    {
+      "created_at": "2026-08-09T19:57:32Z",
+      "from": "Antigravity2",
+      "message": "PR #4696 opened at bfdc8ecb0a76d6bd0dd6791732a13faec22380d0. Implemented retry_backoff lease parity matching in promotion preflight and stale retry_backoff worker reaping in supervisor queue pruning.",
+      "resolved_at": "2026-08-09T19:58:50Z",
+      "status": "done",
+      "task_id": "SUP-POLL-WORKER-WORKTREE-FAILOPEN-20260809",
+      "to": "Antigravity"
+    },
+    {
+      "created_at": "2026-08-09T20:08:50Z",
+      "from": "Human/Ops",
+      "message": "PR #4697 https://github.com/ajoe734/pantheon/pull/4697 exact head cc6b989a05a42d8a164672d9b02dfb74b2fda4e4; clean replacement of CI-rejected #4696, preserving exact verified four-file diff with compliant 64-character subject. Targeted regressions 2 passed; trailer check passed. Require fresh exact-head review and CI.",
+      "resolved_at": "2026-08-09T23:50:33Z",
+      "status": "done",
+      "task_id": "SUP-POLL-WORKER-WORKTREE-FAILOPEN-20260809",
+      "to": "Antigravity"
+    },
+    {
+      "created_at": "2026-08-09T23:49:35Z",
+      "from": "Human/Ops",
+      "message": "Auto-reassigned SUP-POLL-WORKER-WORKTREE-FAILOPEN-20260809 away from unavailable lane Human/Ops (disabled, paused, sidecar-only, or auth-down); owner Human/Ops -> Antigravity, reviewer Antigravity -> Human/Ops.",
+      "resolved_at": "2026-08-09T23:54:54Z",
+      "status": "done",
+      "task_id": "SUP-POLL-WORKER-WORKTREE-FAILOPEN-20260809",
+      "to": "Antigravity"
+    },
+    {
+      "created_at": "2026-08-09T23:54:54Z",
+      "from": "Antigravity",
+      "message": "Independent reviewer verification passed for PR #4697 (head cc6b989a0ec1cce0d5271efad519ecd0b755059f). Verified: exact head contains correct retry_backoff lease parity reconciliation and queue pruning logic; tests test_prune_event_queue_drops_finished_retry_workers_without_processes and test_evaluate_promotion_invariants_accepts_retry_backoff_worker passed.",
+      "resolved_at": "2026-08-09T23:56:36Z",
+      "status": "done",
+      "task_id": "SUP-POLL-WORKER-WORKTREE-FAILOPEN-20260809",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-08-09T23:58:12Z",
+      "from": "Human/Ops",
+      "message": "Fresh independent review only for PR #4697 exact head cc6b989a0ec1cce0d5271efad519ecd0b755059f on branch task/SUP-POLL-WORKER-WORKTREE-FAILOPEN-CI-RECOVERY-20260809 to dev. Before ai-status approve, set REVIEW_PR=4697 REVIEW_HEAD_SHA=cc6b989a0ec1cce0d5271efad519ecd0b755059f REVIEW_HEAD_BRANCH=task/SUP-POLL-WORKER-WORKTREE-FAILOPEN-CI-RECOVERY-20260809 REVIEW_BASE=dev. Do not review or merge superseded #4696.",
+      "resolved_at": "2026-08-10T00:00:30Z",
+      "status": "done",
+      "task_id": "SUP-POLL-WORKER-WORKTREE-FAILOPEN-20260809",
+      "to": "Antigravity"
+    },
+    {
+      "created_at": "2026-08-10T00:00:30Z",
+      "from": "Human/Ops",
+      "message": "Fresh independent review only for PR #4697 exact head cc6b989a0ec1cce0d5271efad519ecd0b755059f on branch task/SUP-POLL-WORKER-WORKTREE-FAILOPEN-CI-RECOVERY-20260809 to dev. Before ai-status approve, set REVIEW_PR=4697 REVIEW_HEAD_SHA=cc6b989a0ec1cce0d5271efad519ecd0b755059f REVIEW_HEAD_BRANCH=task/SUP-POLL-WORKER-WORKTREE-FAILOPEN-CI-RECOVERY-20260809 REVIEW_BASE=dev. Do not review or merge superseded #4696. The earlier Antigravity handoff is superseded because that reviewer is overloaded.",
+      "resolved_at": "2026-08-10T00:03:40Z",
+      "status": "done",
+      "task_id": "SUP-POLL-WORKER-WORKTREE-FAILOPEN-20260809",
+      "to": "Claude2"
+    },
+    {
+      "created_at": "2026-08-10T00:03:40Z",
+      "from": "Human/Ops",
+      "message": "Fresh independent review only for PR #4697 exact head cc6b989a0ec1cce0d5271efad519ecd0b755059f on branch task/SUP-POLL-WORKER-WORKTREE-FAILOPEN-CI-RECOVERY-20260809 to dev. Before ai-status approve, set REVIEW_PR=4697 REVIEW_HEAD_SHA=cc6b989a0ec1cce0d5271efad519ecd0b755059f REVIEW_HEAD_BRANCH=task/SUP-POLL-WORKER-WORKTREE-FAILOPEN-CI-RECOVERY-20260809 REVIEW_BASE=dev. Do not review or merge superseded #4696.",
+      "resolved_at": "2026-08-10T00:03:52Z",
+      "status": "done",
+      "task_id": "SUP-POLL-WORKER-WORKTREE-FAILOPEN-20260809",
+      "to": "Antigravity"
+    },
+    {
+      "created_at": "2026-08-10T00:03:52Z",
+      "from": "Human/Ops",
+      "message": "Fresh independent exact-head approval required for the already reviewed PR #4697. Target only head cc6b989a0ec1cce0d5271efad519ecd0b755059f on task/SUP-POLL-WORKER-WORKTREE-FAILOPEN-CI-RECOVERY-20260809 to dev. Run ai-status approve only after setting REVIEW_PR=4697 REVIEW_HEAD_SHA=cc6b989a0ec1cce0d5271efad519ecd0b755059f REVIEW_HEAD_BRANCH=task/SUP-POLL-WORKER-WORKTREE-FAILOPEN-CI-RECOVERY-20260809 REVIEW_BASE=dev. Do not use or merge #4696. This replaces all earlier review handoffs.",
+      "resolved_at": "2026-08-10T00:07:50Z",
+      "status": "done",
+      "task_id": "SUP-POLL-WORKER-WORKTREE-FAILOPEN-20260809",
+      "to": "Antigravity"
+    },
+    {
+      "created_at": "2026-08-10T00:07:50Z",
+      "from": "Human/Ops",
+      "message": "Human/Ops independent exact-head review: PR #4697 commit cc6b989a0ec1cce0d5271efad519ecd0b755059f on task/SUP-POLL-WORKER-WORKTREE-FAILOPEN-CI-RECOVERY-20260809 to dev. Verified the scoped retry-backoff lease parity and safe stale-worker reaping changes, the two focused regressions passed, and commit trailer validation passed. #4696 remains superseded and unmergeable.",
+      "resolved_at": "2026-08-10T00:31:37Z",
+      "status": "done",
+      "task_id": "SUP-POLL-WORKER-WORKTREE-FAILOPEN-20260809",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-08-10T00:44:03Z",
+      "from": "Codex2",
+      "message": "Helper-claimed by Codex while Codex2 is dispatch-paused previous owner Codex2 becomes reviewer.",
+      "resolved_at": "2026-08-10T00:45:12Z",
+      "status": "done",
+      "task_id": "SUP-POLL-WORKER-WORKTREE-FAILOPEN-20260809",
+      "to": "Codex"
+    }
+  ],
+  "blockers": [
+    {
+      "created_at": "2026-08-10T00:31:37Z",
+      "message": "Closeout halted: exact reviewed/merged PR #4697 head cc6b989a0ec1cce0d5271efad519ecd0b755059f has no committed task-scoped review evidence manifest and canonical review_file is absent. Focused tests (2), full supervisor/promoter suite (899 passed, 162 subtests), and git diff --check pass. Fresh review of a pre-review manifest on a new governed head is required; do not mark done or reuse superseded #4696.",
+      "owner": "Codex2",
+      "resolved_at": "2026-08-10T00:38:39Z",
+      "status": "resolved",
+      "task_id": "SUP-POLL-WORKER-WORKTREE-FAILOPEN-20260809",
+      "waiting_for": "Human/Ops"
+    },
+    {
+      "created_at": "2026-08-10T01:02:35Z",
+      "message": "Safety stop: active legacy task worktree produced 468 lines in .orchestrator/supervisor.py and .orchestrator/test_supervisor.py despite evidence-only scope. Do not commit, push, or retain these source changes. Supervisor must release the worker; a new clean evidence-only bridge task with a fresh ID/branch will be queued after receipt.",
+      "owner": "Human/Ops",
+      "status": "resolved",
+      "task_id": "SUP-POLL-WORKER-WORKTREE-FAILOPEN-20260809",
+      "waiting_for": "Human/Ops",
+      "resolved_at": "2026-08-10T01:17:52Z"
+    }
+  ]
+}

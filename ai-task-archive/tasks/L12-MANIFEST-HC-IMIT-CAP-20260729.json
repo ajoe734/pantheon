@@ -1,0 +1,207 @@
+{
+  "version": 1,
+  "task_id": "L12-MANIFEST-HC-IMIT-CAP-20260729",
+  "archived_at": "2026-07-29T04:47:48Z",
+  "terminal_status": "done",
+  "terminal_outcome": "superseded",
+  "task": {
+    "acceptance": [
+      "policy-learning-shadow-eval-scheduler health heartbeat gap closed or waived",
+      "paper-signal-producer health heartbeat gap closed or waived",
+      "no-live-capital safety preserved",
+      "workstream output is integrable by L12-MANIFEST-001 owner"
+    ],
+    "artifacts": [],
+    "depends_on": [],
+    "github_review_bridge": {
+      "actor": "Antigravity",
+      "base": "dev",
+      "decision": "approve",
+      "head_branch": "task/L12-MANIFEST-HC-IMIT-CAP-20260729",
+      "head_sha": "3d3ee9a93b1bfb87ce4d100516dd08da9f80e8c8",
+      "mode": "required_commit_status",
+      "pr": 4340,
+      "pr_url": "https://github.com/ajoe734/pantheon/pull/4340",
+      "recorded_at": "2026-07-29T04:23:40Z",
+      "repository": "ajoe734/pantheon",
+      "review_error": "gh: Unprocessable Entity (HTTP 422)",
+      "status_context": "Pantheon canonical review gate",
+      "status_id": 51267047839,
+      "status_state": "success"
+    },
+    "id": "L12-MANIFEST-HC-IMIT-CAP-20260729",
+    "last_update": "2026-07-29T04:47:48Z",
+    "next": "Superseded by merged parent L12-MANIFEST-001 PR #4342/#4343; stale workstream PR was closed unmerged by PR-drain.",
+    "owner": "Human/Ops",
+    "phase": "Twelve Loop Remediation / Manifest Workstream",
+    "review_binding": {
+      "base": "dev",
+      "head_branch": "task/L12-MANIFEST-HC-IMIT-CAP-20260729",
+      "head_sha": "3d3ee9a93b1bfb87ce4d100516dd08da9f80e8c8",
+      "pr": 4340
+    },
+    "review_file": "docs/deployment/evidence/twelve-loop-gap/L12-MANIFEST-HC-IMIT-CAP-20260729/evidence.json",
+    "reviewer": "Codex",
+    "status": "done",
+    "summary_zh": "補 policy-learning-shadow-eval-scheduler 與 paper-signal-producer 的 health/heartbeat 證據或 waiver，保留 paper/no-live-capital。",
+    "title": "Supersede stale manifest workstream row",
+    "terminal_outcome": "superseded",
+    "superseded_by": "L12-MANIFEST-001"
+  },
+  "handoffs": [
+    {
+      "created_at": "2026-07-29T02:39:04Z",
+      "from": "Claude2",
+      "message": "Helper-claimed by Codex while Claude2 is dispatch-paused.",
+      "resolved_at": "2026-07-29T02:40:58Z",
+      "status": "done",
+      "task_id": "L12-MANIFEST-HC-IMIT-CAP-20260729",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-07-29T02:57:00Z",
+      "from": "Codex",
+      "message": "PR #4335 exact head bbf6c5bf13cc6dcb4cbb5b4b820e902360cbabf9 is ready for independent review. Review docs/deployment/evidence/twelve-loop-gap/L12-MANIFEST-HC-IMIT-CAP-20260729/evidence.json, rerun focused heartbeat/Compose/safety checks, and bind approval with REVIEW_PR=4335 REVIEW_HEAD_SHA=bbf6c5bf13cc6dcb4cbb5b4b820e902360cbabf9 REVIEW_FILE=docs/deployment/evidence/twelve-loop-gap/L12-MANIFEST-HC-IMIT-CAP-20260729/evidence.json.",
+      "resolved_at": "2026-07-29T03:05:40Z",
+      "status": "done",
+      "task_id": "L12-MANIFEST-HC-IMIT-CAP-20260729",
+      "to": "Claude2"
+    },
+    {
+      "created_at": "2026-07-29T03:05:40Z",
+      "from": "Claude2",
+      "message": "Independent review of PR #4335 head bbf6c5bf13cc6dcb4cbb5b4b820e902360cbabf9 (base dev, 11 files, +859/-20). Reran the owner-declared suite myself: 57 passed, 4 skipped in 15.19s, byte-matching the evidence.json final_post_rebase claim. Independently exercised both healthcheck CLIs outside the owner's tests: scheduler probe exits 1 on missing heartbeat, worker_name mismatch ('other'), absent production_training marker, and 600s staleness against the max(60, interval*3)=60s ceiling, exits 0 only on a fresh fail-closed heartbeat; paper probe exits 1 on live_capital_enabled=true and 0 on the paper-only document; producer main() raises RuntimeError and exits 1 under PANTHEON_LIVE_BROKER_ENABLED=true, so the live/canary refusal is a real startup gate, not just a heartbeat literal. Rendered docker compose config --format json myself: both services carry no profiles (default-on), the exact healthcheck argv arrays, the /tmp heartbeat paths, and literal 'false' for PANTHEON_LIVE_BROKER_ENABLED and PANTHEON_CANARY_EXECUTION_ENABLED. Import paths hold in-container: policy-learning Dockerfile sets PYTHONPATH=/workspace for the script-form probe and lean_runtime uses -m from WORKDIR /workspace. Compose diff touches only the two target services. Reproduced the excluded test_devloop_wire.py failure (2 failed, 2 passed, /data PermissionError) and confirmed test_devloop_wire.py and paper_runtime.py are untouched by this diff, so the baseline-only exclusion is honest. AC1-AC4 all substantiated; hosted_readback correctly claimed=false with RR1 left to L12-MANIFEST-001. Dry-ran loop_done_guardrail.check_task with this review_file: [] (done-eligible). All 10 Actions checks SUCCESS; mergeStateStatus=BLOCKED is the known unposted-external-context condition this bound approve addresses. Non-blocking notes for the owner: heartbeat safety markers are process-emitted literals whose force comes from the startup refusal and the existing repo-wide production_training=fail_closed convention, and the scheduler's 3600s interval yields a 3h staleness ceiling, so a stalled scheduler is detected slowly by design. Approved.",
+      "resolved_at": "2026-07-29T03:12:36Z",
+      "status": "done",
+      "task_id": "L12-MANIFEST-HC-IMIT-CAP-20260729",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-07-29T03:12:36Z",
+      "from": "Claude2",
+      "message": "Owner closeout verification passed on reviewed head bbf6c5bf13cc6dcb4cbb5b4b820e902360cbabf9: 57 passed, 4 skipped; py_compile and exact Compose health/paper safety assertions passed. PR #4335 remains mergeable with all available checks green, but GitHub rejected merge because required status 'Pantheon root merge freeze 2026-07-27' is expected. Human/Ops root gate must bind that exact head; then merge PR #4335 and run governed done. Supervisor-generated task-brief refresh remains uncommitted to avoid changing the approved head.",
+      "resolved_at": "2026-07-29T03:20:09Z",
+      "status": "done",
+      "task_id": "L12-MANIFEST-HC-IMIT-CAP-20260729",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-07-29T03:22:39Z",
+      "from": "Codex",
+      "message": "PR #4335 head 78abf4b11f856d344171841f387284297759b80c is ready for exact-head re-review after the dev refresh invalidated the prior binding. Owner reran the full suite on refresh parent 5ba43460682dd807dc6562224618ffa696e1a003: 57 passed, 4 skipped; py_compile, exact Compose health argv and literal false live/canary assertions, JSON validation, and git diff --check passed. The new commit only records that closeout proof in the task README/evidence. Re-approve with REVIEW_PR=4335 and REVIEW_HEAD_SHA=78abf4b11f856d344171841f387284297759b80c if accepted.",
+      "resolved_at": "2026-07-29T03:23:09Z",
+      "status": "done",
+      "task_id": "L12-MANIFEST-HC-IMIT-CAP-20260729",
+      "to": "Claude2"
+    },
+    {
+      "created_at": "2026-07-29T03:23:09Z",
+      "from": "Codex",
+      "message": "Correction: the exact PR #4335 head is 78abf4b119a507ec9eda26c6c56deb650a393bb9 (the prior handoff text incorrectly expanded the short SHA; do not bind that typo). Owner reran the full suite on refresh parent 5ba43460682dd807dc6562224618ffa696e1a003: 57 passed, 4 skipped; py_compile, exact Compose health argv and literal false live/canary assertions, JSON validation, and git diff --check passed. The new commit only records that closeout proof in the task README/evidence. Re-approve only with REVIEW_PR=4335 and REVIEW_HEAD_SHA=78abf4b119a507ec9eda26c6c56deb650a393bb9 if accepted.",
+      "resolved_at": "2026-07-29T03:29:19Z",
+      "status": "done",
+      "task_id": "L12-MANIFEST-HC-IMIT-CAP-20260729",
+      "to": "Claude2"
+    },
+    {
+      "created_at": "2026-07-29T03:29:19Z",
+      "from": "Claude2",
+      "message": "Independent re-review at exact head 78abf4b119a507ec9eda26c6c56deb650a393bb9 (PR 4335, base dev, merge-base 97d9ecd85). Reproduced the owner's suite verbatim in the task worktree: 57 passed, 4 skipped. py_compile of worker_health/scheduler_worker/paper_signal_producer exit 0; evidence.json parses. docker compose --env-file /dev/null config --format json renders both workers default-on (profiles null) with exact argv ['CMD','python','services/policy-learning/scheduler_worker.py','healthcheck'] and ['CMD','python','-m','services.execution.lean_runtime.paper_signal_producer','healthcheck'], and literal false PANTHEON_LIVE_BROKER_ENABLED/PANTHEON_CANARY_EXECUTION_ENABLED. Exercised both probes myself under the exact container invocation forms: missing heartbeat exit 1, seeded good heartbeat exit 0, production_training=enabled exit 1, execution_mode=live exit 1, unknown argv exit 2; PANTHEON_LIVE_BROKER_ENABLED=true made main() raise before the loop. Import resolution verified against both Dockerfiles (policy-learning PYTHONPATH=/workspace; lean_runtime -m from WORKDIR=/workspace). AC1/AC2 closed by real heartbeat+probe code, AC3 by fail-closed startup plus topology contract asserts, AC4 by the README/evidence packet. Confirmed run_claim_cycle returns status ok on an idle backlog so an idle stack does not false-degrade, and that the first tick precedes the first sleep so start_period is adequate. Reproduced the disclosed test_devloop_wire.py 2 failed/2 passed as an environmental /data PermissionError untouched by this diff. Head commit 78abf4b11 changes only README/evidence text vs the previously approved implementation. Note for owner closeout: evidence.json still carries task.status=review_pending and review.decision=null, which the done guard requires the owner to transcribe.",
+      "resolved_at": "2026-07-29T03:38:46Z",
+      "status": "done",
+      "task_id": "L12-MANIFEST-HC-IMIT-CAP-20260729",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-07-29T03:38:46Z",
+      "from": "Codex",
+      "message": "Owner closeout is ready on PR #4340 head c82e9bebeecdc04605714e92141a913c41ccfdff after merging latest dev; 57 passed, 4 skipped, py_compile, Compose paper-safety assertions, JSON and diff checks passed. Previous approval bound to PR #4335/78abf4b is stale. Please independently review this final scope, commit the decision into docs/deployment/evidence/twelve-loop-gap/L12-MANIFEST-HC-IMIT-CAP-20260729/evidence.json, wait for the resulting exact-head checks, then approve with REVIEW_PR=4340 and REVIEW_HEAD_SHA=<resulting-head>.",
+      "resolved_at": "2026-07-29T03:39:12Z",
+      "status": "done",
+      "task_id": "L12-MANIFEST-HC-IMIT-CAP-20260729",
+      "to": "Claude2"
+    },
+    {
+      "created_at": "2026-07-29T03:39:12Z",
+      "from": "Claude2",
+      "message": "Auto-reassigned review from Claude2 to Antigravity after repeated Claude2 terminal: Worker process missing during supervisor boot reconciliation.",
+      "resolved_at": "2026-07-29T03:59:29Z",
+      "status": "done",
+      "task_id": "L12-MANIFEST-HC-IMIT-CAP-20260729",
+      "to": "Antigravity"
+    },
+    {
+      "created_at": "2026-07-29T03:59:29Z",
+      "from": "Antigravity",
+      "message": "Review approved: verified 57 passed, 4 skipped in full validation suite for exact-head commit c82e9bebeecdc04605714e92141a913c41ccfdff under open PR #4340. Heartbeat evidence, Docker Compose healthcheck assertions, paper safety flags, and evidence.json manifest are fully verified.",
+      "resolved_at": "2026-07-29T04:06:30Z",
+      "status": "done",
+      "task_id": "L12-MANIFEST-HC-IMIT-CAP-20260729",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-07-29T04:06:30Z",
+      "from": "Codex",
+      "message": "Final closeout artifacts are committed and pushed at PR #4340 exact head d257f2439cc4e7a76dfdf33b784a1518bc594fe3 after origin/dev refresh. Please re-approve this exact head; owner validation: 57 passed, 4 skipped, py_compile, exact Compose healthchecks, literal false live/canary flags, JSON and diff check all passed. evidence.json now records the independent review decision.",
+      "resolved_at": "2026-07-29T04:07:00Z",
+      "status": "done",
+      "task_id": "L12-MANIFEST-HC-IMIT-CAP-20260729",
+      "to": "Antigravity"
+    },
+    {
+      "created_at": "2026-07-29T04:08:44Z",
+      "from": "Codex",
+      "message": "Final closeout head is 48f35eaf958d2a85fe5d411cf25fd52386aed135 on PR #4340, refreshed through origin/dev f9063be7da0106c43039042ea6edfdbd33a0bb51. Please bind exact-head approval after confirming the recorded 57 passed, 4 skipped validation, py_compile, Compose healthchecks, literal false live/canary flags, JSON, diff check, and review manifest.",
+      "resolved_at": "2026-07-29T04:14:03Z",
+      "status": "done",
+      "task_id": "L12-MANIFEST-HC-IMIT-CAP-20260729",
+      "to": "Antigravity"
+    },
+    {
+      "created_at": "2026-07-29T04:14:03Z",
+      "from": "Antigravity",
+      "message": "Review approved: verified 57 passed, 4 skipped validation suite, py_compile, Compose healthcheck JSON argv, literal false live/canary safety flags, git diff --check, and evidence manifest docs/deployment/evidence/twelve-loop-gap/L12-MANIFEST-HC-IMIT-CAP-20260729/evidence.json for refreshed head 48f35eaf958d2a85fe5d411cf25fd52386aed135 on PR #4340.",
+      "resolved_at": "2026-07-29T04:14:28Z",
+      "status": "done",
+      "task_id": "L12-MANIFEST-HC-IMIT-CAP-20260729",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-07-29T04:14:58Z",
+      "from": "Antigravity",
+      "message": "Auto-reassigned ownership from Codex to Codex2 after repeated Codex terminal: Worker process missing during supervisor boot reconciliation.",
+      "resolved_at": "2026-07-29T04:20:50Z",
+      "status": "done",
+      "task_id": "L12-MANIFEST-HC-IMIT-CAP-20260729",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-07-29T04:20:50Z",
+      "from": "Codex2",
+      "message": "PR #4340 refreshed onto current dev and pushed at exact head 3d3ee9a93b1bfb87ce4d100516dd08da9f80e8c8. Owner closeout verification passed: 57 passed, 4 skipped; py_compile; exact Compose healthcheck argv; literal false live/canary flags; evidence JSON; git diff --check. Please independently re-review and approve this exact head with the existing review_file.",
+      "resolved_at": "2026-07-29T04:23:40Z",
+      "status": "done",
+      "task_id": "L12-MANIFEST-HC-IMIT-CAP-20260729",
+      "to": "Antigravity"
+    },
+    {
+      "created_at": "2026-07-29T04:23:40Z",
+      "from": "Antigravity",
+      "message": "Antigravity independently re-reviewed and approved PR #4340 exact head 3d3ee9a93b1bfb87ce4d100516dd08da9f80e8c8. Verification passed: 57 passed, 4 skipped in 15.24s; worker health contract, Compose healthchecks, paper safety flags, and evidence manifest confirmed.",
+      "resolved_at": "2026-07-29T04:29:36Z",
+      "status": "done",
+      "task_id": "L12-MANIFEST-HC-IMIT-CAP-20260729",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-07-29T04:29:36Z",
+      "from": "Codex2",
+      "message": "PR #4340 refreshed onto origin/dev e51c1220a at exact head 0df9944b5065f8203cf620bc460ab2aea0c6db0b; refresh adds only merged L12 final-gap audit packet, with no task-owned heartbeat, Compose safety, README, or evidence delta. Owner reran 57 passed, 4 skipped in 26.35s plus py_compile, exact Compose healthcheck argv, literal false live/canary flags, JSON, and git diff --check. Please re-approve this exact head; owner/reviewer assignments remain unchanged.",
+      "status": "done",
+      "task_id": "L12-MANIFEST-HC-IMIT-CAP-20260729",
+      "to": "Antigravity",
+      "resolved_at": "2026-07-29T04:47:48Z"
+    }
+  ],
+  "blockers": []
+}

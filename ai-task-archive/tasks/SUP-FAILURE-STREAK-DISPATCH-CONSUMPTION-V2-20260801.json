@@ -1,0 +1,292 @@
+{
+  "version": 1,
+  "task_id": "SUP-FAILURE-STREAK-DISPATCH-CONSUMPTION-V2-20260801",
+  "archived_at": "2026-08-02T08:15:35Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "acceptance": [
+      "Evaluate and consume the exact decision token under runtime_state_lock immediately before the governed queue/dispatch reservation. A second loop or process may not consume the same task/provider/failure/progress generation.",
+      "If reservation/queueing fails, preserve a durable fail-closed outcome that cannot create an infinite retry; define and test whether the token remains consumed or advances to an explicit failed-consumption generation.",
+      "Do not erase the record on arbitrary active-worker commit. After one recovered dispatch, a subsequent exit without newer governed progress must again reach and retain the threshold.",
+      "Emit a durable activity audit with task, logical provider, prior count/kind/timestamp, owner-at-failure, qualifying progress event/head, decision reason, consumed token, reservation/queue event, and resulting worker run when available; redact secrets.",
+      "Integrate with both failure-loop task-agent gating and chair triage without bypassing provider readiness, assignment, status, worktree, queue, or reviewer independence rules.",
+      "Add deterministic integration tests for the exact observed incident, concurrent double-consumption, next-loop replay, queue failure, worker start, subsequent failure without progress, newer second progress generation, all deny rows, audit shape, and unrelated streak preservation.",
+      "Run focused tests plus the complete relevant supervisor regression and git diff --check. No live signals, service restarts, config edits, or runtime-state test fixtures outside temporary roots.",
+      "Create a clean replacement PR from current dev. Only after it exists, close/supersede stale PR #4385 and rejected PR #4438 with links to all V2 tasks; never merge or reuse their commits.",
+      "After exact-head review and merge, hand off source evidence to Human/Ops. Human/Ops will supersede the blocked original wrapper. Live rollout waits for the separately governed supervisor runtime promotion canary after the promotion transaction chain is accepted.",
+      "Rollback is revert of the three V2 retry merge commits; no config migration is allowed.",
+      "Use a clean governed task worktree from current origin/dev on the exact task branch; do not reuse, cherry-pick, or amend rejected PR #4437 or #4438 commits.",
+      "No edits to .orchestrator/config.json, live-supervisor-mainroot-config.json, canonical JSON, provider policy, product controllers, or live services.",
+      "Keep generated task briefs, dashboard bundles, assistant packets, runtime state, and unrelated files out of the implementation commit.",
+      "Commit subjects must be at most 72 characters; use exact LLM-Agent: Antigravity, Task-ID, Reviewer: Human/Ops, and truthful Verified trailers.",
+      "Push the exact task branch, open a PR to dev, wait for all repository checks, and require independent exact-head Human/Ops approval before merge.",
+      "Evidence must remain review_pending until Human/Ops approval; do not self-write review_approved, invented test counts, or unsupported live claims."
+    ],
+    "artifacts": [
+      ".orchestrator/supervisor.py",
+      ".orchestrator/test_supervisor.py",
+      "docs/deployment/evidence/supervisor/SUP-FAILURE-STREAK-DISPATCH-CONSUMPTION-V2-20260801/"
+    ],
+    "depends_on": [
+      "SUP-FAILURE-STREAK-RECOVERY-DECISION-V2-20260801"
+    ],
+    "dev_bridge": {
+      "actor": {
+        "capabilities": [
+          "assistant.kernel.repair",
+          "dev-task.dispatch",
+          "fleet.dispatch"
+        ],
+        "id": "Human/Ops",
+        "roles": [
+          "operator"
+        ]
+      },
+      "audit_conversation_href": "codex://root/l12-current-gap-auto-sequence-20260731#v2-split-after-stale-review",
+      "conversation_id": "codex-root-l12-current-gap-auto-sequence-20260731",
+      "documents": [
+        {
+          "kind": "SUPERSEDED_IDENTITY_MONOLITH",
+          "path": ".orchestrator/assistant-dev-packets/processed/pkt-sup-runtime-promotion-split-chain-20260801T0000Z.json",
+          "sourceRefs": [
+            "PR #4437 rejected heads 07316c73 and 77af55015",
+            "same rejected 77af55015 replayed without code changes",
+            "GitHub review comments 5148931145, 5148948795, 5149092858"
+          ]
+        },
+        {
+          "kind": "SUPERSEDED_RETRY_MONOLITH",
+          "path": ".orchestrator/assistant-dev-packets/processed/pkt-sup-progress-aware-failure-streak-retry-20260801T0116Z.json",
+          "sourceRefs": [
+            "PR #4438 rejected heads 94e3b6f3, d616beaa and 35056b71",
+            "real owner/reviewer probe returned false",
+            "15-minute owner run timed out and same trees replayed",
+            "GitHub review comments 5148942746, 5149044158, 5149078704"
+          ]
+        }
+      ],
+      "emitted_at": "2026-08-01T02:18:00Z",
+      "intent": "split_repeated_stale_review_monoliths_into_governed_v2_chains",
+      "mode": "kernel_repair",
+      "packet_digest": "355ad2d403cceefb30b138a1399e95d7024427643f80c7aae422463aecf1f1e0",
+      "packet_id": "pkt-sup-runtime-identity-retry-v2-split-20260801T0218Z",
+      "source_turn_ids": [
+        "user-auto-sequence-4397-4399-antigravity-dag-hosted-l12-close",
+        "human-ops-pr4437-three-exact-head-rejections",
+        "human-ops-pr4438-three-exact-head-rejections-and-timeout"
+      ],
+      "task_spec": {
+        "acceptance": [
+          "Evaluate and consume the exact decision token under runtime_state_lock immediately before the governed queue/dispatch reservation. A second loop or process may not consume the same task/provider/failure/progress generation.",
+          "If reservation/queueing fails, preserve a durable fail-closed outcome that cannot create an infinite retry; define and test whether the token remains consumed or advances to an explicit failed-consumption generation.",
+          "Do not erase the record on arbitrary active-worker commit. After one recovered dispatch, a subsequent exit without newer governed progress must again reach and retain the threshold.",
+          "Emit a durable activity audit with task, logical provider, prior count/kind/timestamp, owner-at-failure, qualifying progress event/head, decision reason, consumed token, reservation/queue event, and resulting worker run when available; redact secrets.",
+          "Integrate with both failure-loop task-agent gating and chair triage without bypassing provider readiness, assignment, status, worktree, queue, or reviewer independence rules.",
+          "Add deterministic integration tests for the exact observed incident, concurrent double-consumption, next-loop replay, queue failure, worker start, subsequent failure without progress, newer second progress generation, all deny rows, audit shape, and unrelated streak preservation.",
+          "Run focused tests plus the complete relevant supervisor regression and git diff --check. No live signals, service restarts, config edits, or runtime-state test fixtures outside temporary roots.",
+          "Create a clean replacement PR from current dev. Only after it exists, close/supersede stale PR #4385 and rejected PR #4438 with links to all V2 tasks; never merge or reuse their commits.",
+          "After exact-head review and merge, hand off source evidence to Human/Ops. Human/Ops will supersede the blocked original wrapper. Live rollout waits for the separately governed supervisor runtime promotion canary after the promotion transaction chain is accepted.",
+          "Rollback is revert of the three V2 retry merge commits; no config migration is allowed.",
+          "Use a clean governed task worktree from current origin/dev on the exact task branch; do not reuse, cherry-pick, or amend rejected PR #4437 or #4438 commits.",
+          "No edits to .orchestrator/config.json, live-supervisor-mainroot-config.json, canonical JSON, provider policy, product controllers, or live services.",
+          "Keep generated task briefs, dashboard bundles, assistant packets, runtime state, and unrelated files out of the implementation commit.",
+          "Commit subjects must be at most 72 characters; use exact LLM-Agent: Antigravity, Task-ID, Reviewer: Human/Ops, and truthful Verified trailers.",
+          "Push the exact task branch, open a PR to dev, wait for all repository checks, and require independent exact-head Human/Ops approval before merge.",
+          "Evidence must remain review_pending until Human/Ops approval; do not self-write review_approved, invented test counts, or unsupported live claims."
+        ],
+        "artifacts": [
+          ".orchestrator/supervisor.py",
+          ".orchestrator/test_supervisor.py",
+          "docs/deployment/evidence/supervisor/SUP-FAILURE-STREAK-DISPATCH-CONSUMPTION-V2-20260801/"
+        ],
+        "depends_on": [
+          "SUP-FAILURE-STREAK-RECOVERY-DECISION-V2-20260801"
+        ],
+        "id": "SUP-FAILURE-STREAK-DISPATCH-CONSUMPTION-V2-20260801",
+        "owner": "Antigravity",
+        "phase": "Supervisor Retry V2 / 3 Dispatch Consumption",
+        "reviewer": "Human/Ops",
+        "summary": "Integrate the merged pure V2 decision into one-shot dispatch and deliver the accepted replacement for blocked wrapper SUP-PROGRESS-AWARE-FAILURE-STREAK-RETRY-20260801.",
+        "title": "Consume one retry generation in governed dispatch with audit"
+      },
+      "task_spec_hash": "f384ee6888b30d990c43100ea1859d4f1b0b121195a4da72c68f3a8b103fa424"
+    },
+    "github_review_bridge": {
+      "actor": "Human/Ops",
+      "base": "dev",
+      "decision": "approve",
+      "head_branch": "task/SUP-FAILURE-STREAK-DISPATCH-CONSUMPTION-V2-20260801",
+      "head_sha": "6d88190e8fbbd3576416eb1d3b9ddb4de3672512",
+      "mode": "required_commit_status",
+      "pr": 4491,
+      "pr_url": "https://github.com/ajoe734/pantheon/pull/4491",
+      "recorded_at": "2026-08-02T08:08:53Z",
+      "repository": "ajoe734/pantheon",
+      "review_error": "gh: Unprocessable Entity (HTTP 422)",
+      "status_context": "Pantheon canonical review gate",
+      "status_id": 51499305307,
+      "status_state": "success"
+    },
+    "id": "SUP-FAILURE-STREAK-DISPATCH-CONSUMPTION-V2-20260801",
+    "last_update": "2026-08-02T08:15:35Z",
+    "next": "Owner closeout complete: PR #4491 exact reviewed head 6d88190e8fbbd3576416eb1d3b9ddb4de3672512 merged as a385c0be5b8d4c71f6d0bd728e237b61d5eadaa4; focused 22 passed/485 deselected/45 subtests, full supervisor 507 passed/147 subtests, py_compile, evidence JSON, and diff-check passed; source-only rollout, live promotion remains separately governed.",
+    "owner": "Codex",
+    "phase": "Supervisor Retry V2 / 3 Dispatch Consumption",
+    "review_binding": {
+      "base": "dev",
+      "head_branch": "task/SUP-FAILURE-STREAK-DISPATCH-CONSUMPTION-V2-20260801",
+      "head_sha": "6d88190e8fbbd3576416eb1d3b9ddb4de3672512",
+      "pr": 4491
+    },
+    "review_file": "docs/deployment/evidence/supervisor/SUP-FAILURE-STREAK-DISPATCH-CONSUMPTION-V2-20260801/evidence.json",
+    "review_notes_zh": [
+      "Human/Ops independently re-reviewed exact refreshed head 6d88190e8fbbd3576416eb1d3b9ddb4de3672512. It is a two-parent pure merge of previously approved task head 050d8b3bbb70e703c204de423772a10c9da15879 and reviewed/merged origin/dev 11d766efbd8bf81aca447d4ccf213109d7263dac. The four task-owned files are byte-identical to 050d8b3b and the PR diff against current dev remains exactly those four files. Exact-head focused 22 passed/485 deselected/45 subtests; owner refreshed-tree full 507 passed/147 subtests; py_compile, JSON, diff-check, parent/ancestry proof and all 8 refreshed GitHub checks passed. No provider/reviewer-policy or quota-group changes; Codex and Codex2 remain distinct."
+    ],
+    "reviewer": "Human/Ops",
+    "status": "done",
+    "summary_zh": "Integrate the merged pure V2 decision into one-shot dispatch and deliver the accepted replacement for blocked wrapper SUP-PROGRESS-AWARE-FAILURE-STREAK-RETRY-20260801.",
+    "task_scoped_provider_fallback": {
+      "account_quota_policy": "Codex and Codex2 remain distinct account/quota groups; no global reviewer-policy change",
+      "assigned_owner": "Codex",
+      "assigned_reviewer": "Human/Ops",
+      "original_owner": "Antigravity",
+      "original_reviewer": "Codex2",
+      "owner_unavailable": {
+        "evidence": "live quota_reached; account quota exhausted",
+        "kind": "quota",
+        "provider": "antigravity"
+      },
+      "reviewer_unavailable": {
+        "evidence": "live token_revoked 401; local_cli_worker_supported=false",
+        "kind": "auth",
+        "provider": "codex2"
+      },
+      "scope": "SUP-FAILURE-STREAK-DISPATCH-CONSUMPTION-V2-20260801 only"
+    },
+    "title": "Consume one retry generation in governed dispatch with audit",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-08-02T08:15:35Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/sup-failure-streak-dispatch-consumption-v2-20260801",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/SUP-FAILURE-STREAK-DISPATCH-CONSUMPTION-V2-20260801",
+      "git_clean_required": false,
+      "status_command_runtime": {
+        "command_root": "/home/lupin/pantheon-ci-deploy/dev-root",
+        "source_sha": "941c15a34208e54e96cdd148ba3a5bfcd339abab",
+        "base_ref": "origin/dev",
+        "remote": "ajoe734/pantheon",
+        "status_root": "/home/lupin/pantheon",
+        "delivery_root": "/tmp/pantheon-worker-worktrees/pantheon/sup-failure-streak-dispatch-consumption-v2-20260801",
+        "wrapper_root": "/home/lupin/pantheon-ci-deploy/dev-root"
+      },
+      "commit": "6d88190e8fbbd3576416eb1d3b9ddb4de3672512",
+      "commit_subject": "Merge remote-tracking branch 'origin/dev' into task/SUP-FAILURE-STREAK-DISPATCH-CONSUMPTION-V2-20260801",
+      "commit_author": {
+        "name": "pantheon-dev",
+        "email": "bjoe734@gmail.com"
+      },
+      "commit_trailer_check_skipped": true,
+      "commit_trailer_skip_reason": "Merge",
+      "commit_metadata": {},
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "a385c0be5b8d4c71f6d0bd728e237b61d5eadaa4",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "created_at": "2026-08-01T14:25:28Z",
+      "from": "Human/Ops",
+      "message": "Auto-reassigned SUP-FAILURE-STREAK-DISPATCH-CONSUMPTION-V2-20260801 away from unavailable lane Human/Ops (disabled, paused, sidecar-only, or auth-down); reviewer Human/Ops -> Codex.",
+      "resolved_at": "2026-08-01T15:30:42Z",
+      "status": "done",
+      "task_id": "SUP-FAILURE-STREAK-DISPATCH-CONSUMPTION-V2-20260801",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-08-01T15:30:42Z",
+      "from": "Codex",
+      "message": "Auto-reassigned SUP-FAILURE-STREAK-DISPATCH-CONSUMPTION-V2-20260801 away from unavailable lane Codex (disabled, paused, sidecar-only, or auth-down); reviewer Codex -> Codex2.",
+      "resolved_at": "2026-08-02T07:17:59Z",
+      "status": "done",
+      "task_id": "SUP-FAILURE-STREAK-DISPATCH-CONSUMPTION-V2-20260801",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-08-02T07:45:32Z",
+      "from": "Codex",
+      "message": "Replacement PR #4491 is ready for independent exact-head review at 4f48e52f6997b37038fed49729e6969df3b2f40b. Human/Ops pre-review lock-amplification finding is addressed by one pre-admission cycle snapshot threaded through all decision call sites plus one fresh atomic-consume revalidation; deterministic read-count coverage added. Full supervisor regression: 506 passed, 147 subtests. Focused decision/dispatch/failure-loop: 21 passed, 45 subtests. Evidence remains review_pending at docs/deployment/evidence/supervisor/SUP-FAILURE-STREAK-DISPATCH-CONSUMPTION-V2-20260801/evidence.json. Stale PRs #4385 and #4438 closed as superseded by #4483/#4489/#4491; rejected commits absent from ancestry.",
+      "resolved_at": "2026-08-02T07:49:25Z",
+      "status": "done",
+      "task_id": "SUP-FAILURE-STREAK-DISPATCH-CONSUMPTION-V2-20260801",
+      "to": "Human/Ops"
+    },
+    {
+      "created_at": "2026-08-02T07:49:25Z",
+      "from": "Human/Ops",
+      "message": "Human/Ops approves PR #4491 exact head 4f48e52f6997b37038fed49729e6969df3b2f40b after independent detached-head review. Full supervisor 506 passed/147 subtests; focused 21 passed/45 subtests; static/evidence/ancestry checks and all required GitHub checks passed. Live rollout remains deferred to the governed final canary.",
+      "resolved_at": "2026-08-02T07:49:32Z",
+      "status": "done",
+      "task_id": "SUP-FAILURE-STREAK-DISPATCH-CONSUMPTION-V2-20260801",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-08-02T07:49:32Z",
+      "from": "Human/Ops",
+      "message": "Exact-head rejection for PR #4491 head 4f48e52f6997b37038fed49729e6969df3b2f40b: run_once prefetches correctly, but claim_next_task_for_agent enters the exclusive runtime lock before _claim_next_task_for_agent_locked reads failure_streak_recovery_activity_snapshot. Move the self-claim snapshot before lock acquisition and thread it into the locked operation; keep only the fresh atomic-consume revalidation in-lock. Add deterministic lock-order/read-count coverage for self-claim, rerun full regressions, refresh evidence and hand off a new exact head. Review comment: https://github.com/ajoe734/pantheon/pull/4491#issuecomment-5156324357",
+      "resolved_at": "2026-08-02T07:49:32Z",
+      "status": "done",
+      "task_id": "SUP-FAILURE-STREAK-DISPATCH-CONSUMPTION-V2-20260801",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-08-02T07:58:51Z",
+      "from": "Codex",
+      "message": "PR #4491 exact head 050d8b3bbb70e703c204de423772a10c9da15879 is ready for fresh independent review. Self-claim prefetch now occurs before exclusive runtime admission; deterministic coverage proves one shared pre-lock snapshot and exactly one fresh in-lock atomic consume read. Focused 16/22 tests plus 45 subtests and full 507 tests plus 147 subtests passed; evidence remains review_pending at docs/deployment/evidence/supervisor/SUP-FAILURE-STREAK-DISPATCH-CONSUMPTION-V2-20260801/evidence.json.",
+      "resolved_at": "2026-08-02T08:01:09Z",
+      "status": "done",
+      "task_id": "SUP-FAILURE-STREAK-DISPATCH-CONSUMPTION-V2-20260801",
+      "to": "Human/Ops"
+    },
+    {
+      "created_at": "2026-08-02T08:01:09Z",
+      "from": "Human/Ops",
+      "message": "Exact-head correction verified; approve PR #4491 head 050d8b3bbb70e703c204de423772a10c9da15879.",
+      "resolved_at": "2026-08-02T08:07:18Z",
+      "status": "done",
+      "task_id": "SUP-FAILURE-STREAK-DISPATCH-CONSUMPTION-V2-20260801",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-08-02T08:07:18Z",
+      "from": "Codex",
+      "message": "PR #4491 required a base refresh after exact-head approval. New head 6d88190e8fbbd3576416eb1d3b9ddb4de3672512 is a pure merge of reviewed 050d8b3bbb70e703c204de423772a10c9da15879 with origin/dev 11d766efb; task-owned files are byte-identical to the reviewed head. Fresh validation: focused 22 passed/485 deselected/45 subtests; full 507 passed/147 subtests; py_compile, evidence JSON, git diff --check passed. Please independently re-approve exact PR head 6d88190e8fbbd3576416eb1d3b9ddb4de3672512.",
+      "resolved_at": "2026-08-02T08:08:53Z",
+      "status": "done",
+      "task_id": "SUP-FAILURE-STREAK-DISPATCH-CONSUMPTION-V2-20260801",
+      "to": "Human/Ops"
+    },
+    {
+      "created_at": "2026-08-02T08:08:53Z",
+      "from": "Human/Ops",
+      "message": "Fresh exact-head approval after pure dev refresh: PR #4491 head 6d88190e8fbbd3576416eb1d3b9ddb4de3672512.",
+      "status": "done",
+      "task_id": "SUP-FAILURE-STREAK-DISPATCH-CONSUMPTION-V2-20260801",
+      "to": "Codex",
+      "resolved_at": "2026-08-02T08:15:35Z"
+    }
+  ],
+  "blockers": []
+}

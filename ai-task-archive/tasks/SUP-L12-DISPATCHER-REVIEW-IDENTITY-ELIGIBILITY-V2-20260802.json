@@ -1,0 +1,144 @@
+{
+  "version": 1,
+  "task_id": "SUP-L12-DISPATCHER-REVIEW-IDENTITY-ELIGIBILITY-V2-20260802",
+  "archived_at": "2026-08-02T10:03:59Z",
+  "terminal_status": "done",
+  "terminal_outcome": "superseded",
+  "task": {
+    "acceptance": [
+      "Supersede SUP-L12-DISPATCHER-REVIEW-IDENTITY-ELIGIBILITY-20260802 because its dependency was falsely archived done without implementation. Start only after both declared V2 dependencies are actually merged.",
+      "Consume the canonical shared reviewer-eligibility predicate from SUP-REVIEW-IDENTITY-BOUND-REASSIGN-GUARD-V2-20260802; do not duplicate or weaken identity policy in the dispatcher.",
+      "resolve_current_assignment must select a complete owner/reviewer pair with genuine review independence; display-name inequality alone is insufficient.",
+      "Codex/Codex2 in both directions must be rejected or legally replanned. With only one review identity live-ready, fail closed before queue, task-state, archive, checkpoint, or catalog mutation.",
+      "Preserve owner and reviewer preference ordering so fresh live-ready Antigravity and Claude-family capacity is preferred before Codex fallback, subject to the shared eligibility predicate.",
+      "Positive matrices cover Antigravity owner with independent Codex reviewer and other genuinely independent configured pairs. Negative matrices cover same identity both directions, one identity, stale or missing readiness, and no legal reviewer.",
+      "Provider-assignment evidence records identity-ineligible candidates and the chosen legal pair without credentials or stale slot-only capability claims.",
+      "Keep the guarded-remediation catalog byte-for-byte unchanged at SHA-256 7f67b32555341de19feaa46b98fd09ad69de2a5b2f6767c40287626d9c01fdca with 28 unique tasks, G1=25, G2=2, G3=1, and unique sink L12-VERIFY-LEARN-REAL-VERIFIER-001.",
+      "Dry-run remains truly observational through the merged snapshot dependency: no mkdir, lock creation, chmod, checkpoint refresh, journal or projection mutation, task materialization, or directory-entry change.",
+      "Run focused identity-resolution tests, complete current-remediation dispatcher tests, shared identity tests, py_compile, catalog/hash validation, evidence JSON parse, git diff --check, and a current at-least-2GB guarded dry-run under 30 seconds reaching an admission verdict without mutation.",
+      "Evidence includes objective, current evidence, gap, dependencies, file scope, out-of-scope boundaries, acceptance matrix, validation, merge order, rollout, rollback, and remains review_pending until Human/Ops exact-head approval.",
+      "No config, canonical JSON, provider/account/quota-group, catalog, product-controller, live service, deployment, G1 materialization, or closeout changes.",
+      "Merge order is policy V6, identity guard V2, snapshot scaling, dispatcher identity V2, then separately governed runtime promotion and scheduler/provider canary before G1 materialization.",
+      "Rollback is revert of this task merge; any failed eligibility check leaves canonical state and the fixed catalog unchanged."
+    ],
+    "artifacts": [
+      "scripts/dispatch_twelve_loop_gap_2026_07_26.py",
+      "scripts/test_dispatch_twelve_loop_gap_current_remediation_2026_07_31.py",
+      "docs/deployment/evidence/supervisor/SUP-L12-DISPATCHER-REVIEW-IDENTITY-ELIGIBILITY-V2-20260802/"
+    ],
+    "depends_on": [
+      "SUP-REVIEW-IDENTITY-BOUND-REASSIGN-GUARD-V2-20260802",
+      "SUP-L12-DISPATCHER-AUTHORITATIVE-SNAPSHOT-SCALING-20260802"
+    ],
+    "dev_bridge": {
+      "actor": {
+        "capabilities": [
+          "fleet.dispatch",
+          "dev-task.dispatch"
+        ],
+        "id": "Human/Ops",
+        "roles": [
+          "operator"
+        ]
+      },
+      "audit_conversation_href": "codex://root/l12-invalid-4501-governance-recovery-20260802",
+      "conversation_id": "codex-root-l12-three-pass-gap-20260802",
+      "documents": [
+        {
+          "kind": "ACTIVE_REPOSITORY_AUTHORITY",
+          "path": "AGENTS.md",
+          "sourceRefs": [
+            "current active instruction: Codex and Codex2 share one ChatGPT account",
+            "single Pantheon supervisor dispatch authority"
+          ]
+        },
+        {
+          "kind": "FALSE_TERMINAL_EVIDENCE",
+          "path": "ai-task-archive/tasks/SUP-REVIEW-IDENTITY-BOUND-REASSIGN-GUARD-20260802.json",
+          "sourceRefs": [
+            "archived 2026-08-02T09:45:53Z as superseded without implementation"
+          ]
+        },
+        {
+          "kind": "MERGED_UNSAFE_BASE",
+          "path": ".orchestrator/supervisor.py",
+          "sourceRefs": [
+            "PR #4501 head 931e1df08880bd3fa0818de373187cfdc4d9db51",
+            "merge 66621e3484a690921032d93e26ec2c9867708d2a"
+          ]
+        },
+        {
+          "kind": "THREE_PASS_GAP_AUDIT",
+          "path": "docs/reviews/archive/2026-08-01-l12-current-three-pass-gap-reaudit.md",
+          "sourceRefs": [
+            "PR #4494 merge 0a2bd446952936998996ba6ecc89b1cbacd55bce"
+          ]
+        },
+        {
+          "kind": "IMMUTABLE_28_TASK_CATALOG",
+          "path": "docs/bff/execution-tasks/2026-07-31-l12-current-gap-supervisor-dispatch/guarded-remediation-tasks.json",
+          "sourceRefs": [
+            "sha256 7f67b32555341de19feaa46b98fd09ad69de2a5b2f6767c40287626d9c01fdca",
+            "G1=25 G2=2 G3=1"
+          ]
+        }
+      ],
+      "emitted_at": "2026-08-02T09:50:00Z",
+      "intent": "restore_governance_and_correct_invalid_assignment_review_identity_merge",
+      "mode": "kernel_repair",
+      "packet_digest": "c9250f846e0cc407f9f9bf7f98c2fba866db36a502db81d06444f59c770ab9c8",
+      "packet_id": "pkt-sup-review-identity-recovery-after-invalid-merge-20260802T0950Z",
+      "source_turn_ids": [
+        "user-requires-supervisor-autoworker-dispatch",
+        "user-requires-three-pass-gap-audit",
+        "invalid-4501-merge-and-false-identity-supersession"
+      ],
+      "task_spec": {
+        "acceptance": [
+          "Supersede SUP-L12-DISPATCHER-REVIEW-IDENTITY-ELIGIBILITY-20260802 because its dependency was falsely archived done without implementation. Start only after both declared V2 dependencies are actually merged.",
+          "Consume the canonical shared reviewer-eligibility predicate from SUP-REVIEW-IDENTITY-BOUND-REASSIGN-GUARD-V2-20260802; do not duplicate or weaken identity policy in the dispatcher.",
+          "resolve_current_assignment must select a complete owner/reviewer pair with genuine review independence; display-name inequality alone is insufficient.",
+          "Codex/Codex2 in both directions must be rejected or legally replanned. With only one review identity live-ready, fail closed before queue, task-state, archive, checkpoint, or catalog mutation.",
+          "Preserve owner and reviewer preference ordering so fresh live-ready Antigravity and Claude-family capacity is preferred before Codex fallback, subject to the shared eligibility predicate.",
+          "Positive matrices cover Antigravity owner with independent Codex reviewer and other genuinely independent configured pairs. Negative matrices cover same identity both directions, one identity, stale or missing readiness, and no legal reviewer.",
+          "Provider-assignment evidence records identity-ineligible candidates and the chosen legal pair without credentials or stale slot-only capability claims.",
+          "Keep the guarded-remediation catalog byte-for-byte unchanged at SHA-256 7f67b32555341de19feaa46b98fd09ad69de2a5b2f6767c40287626d9c01fdca with 28 unique tasks, G1=25, G2=2, G3=1, and unique sink L12-VERIFY-LEARN-REAL-VERIFIER-001.",
+          "Dry-run remains truly observational through the merged snapshot dependency: no mkdir, lock creation, chmod, checkpoint refresh, journal or projection mutation, task materialization, or directory-entry change.",
+          "Run focused identity-resolution tests, complete current-remediation dispatcher tests, shared identity tests, py_compile, catalog/hash validation, evidence JSON parse, git diff --check, and a current at-least-2GB guarded dry-run under 30 seconds reaching an admission verdict without mutation.",
+          "Evidence includes objective, current evidence, gap, dependencies, file scope, out-of-scope boundaries, acceptance matrix, validation, merge order, rollout, rollback, and remains review_pending until Human/Ops exact-head approval.",
+          "No config, canonical JSON, provider/account/quota-group, catalog, product-controller, live service, deployment, G1 materialization, or closeout changes.",
+          "Merge order is policy V6, identity guard V2, snapshot scaling, dispatcher identity V2, then separately governed runtime promotion and scheduler/provider canary before G1 materialization.",
+          "Rollback is revert of this task merge; any failed eligibility check leaves canonical state and the fixed catalog unchanged."
+        ],
+        "artifacts": [
+          "scripts/dispatch_twelve_loop_gap_2026_07_26.py",
+          "scripts/test_dispatch_twelve_loop_gap_current_remediation_2026_07_31.py",
+          "docs/deployment/evidence/supervisor/SUP-L12-DISPATCHER-REVIEW-IDENTITY-ELIGIBILITY-V2-20260802/"
+        ],
+        "depends_on": [
+          "SUP-REVIEW-IDENTITY-BOUND-REASSIGN-GUARD-V2-20260802",
+          "SUP-L12-DISPATCHER-AUTHORITATIVE-SNAPSHOT-SCALING-20260802"
+        ],
+        "id": "SUP-L12-DISPATCHER-REVIEW-IDENTITY-ELIGIBILITY-V2-20260802",
+        "owner": "Antigravity",
+        "phase": "Supervisor G0 / G1 Admission V2",
+        "reviewer": "Human/Ops",
+        "summary": "Replace the invalid-dependency dispatcher task and safely bind dynamic 28-task assignment resolution to the corrected shared review identity.",
+        "title": "Apply corrected shared review identity to guarded L12 materialization"
+      },
+      "task_spec_hash": "d472b7e1917772634903b738100c81907e6c2600201f5f325c39a498496e4e8c"
+    },
+    "id": "SUP-L12-DISPATCHER-REVIEW-IDENTITY-ELIGIBILITY-V2-20260802",
+    "last_update": "2026-08-02T10:03:59Z",
+    "next": "Operator rejected the shared-account/shared-review-identity premise. Codex and Codex2 may use different accounts; preserve distinct configured quota groups, do not hardcode equivalence, and do not impose a global mutual-review ban. This task is replaced by an account-neutral governed chain.",
+    "owner": "Antigravity",
+    "phase": "Supervisor G0 / G1 Admission V2",
+    "reviewer": "Human/Ops",
+    "status": "done",
+    "summary_zh": "Replace the invalid-dependency dispatcher task and safely bind dynamic 28-task assignment resolution to the corrected shared review identity.",
+    "title": "Apply corrected shared review identity to guarded L12 materialization",
+    "terminal_outcome": "superseded"
+  },
+  "handoffs": [],
+  "blockers": []
+}

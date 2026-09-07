@@ -1,0 +1,1500 @@
+{
+  "version": 1,
+  "task_id": "SUP-RUNTIME-V10-PROMOTION-GIT-DIR-ENOTDIR-20260808",
+  "archived_at": "2026-08-13T02:01:42Z",
+  "terminal_status": "done",
+  "terminal_outcome": "superseded",
+  "task": {
+    "acceptance": [],
+    "artifacts": [
+      "scripts/promote_supervisor_runtime.py"
+    ],
+    "depends_on": [],
+    "description": "PR #4629 fixed the __pycache__ self-rejection half of the governed-promotion bug, but the second, separately-flagged failure mode is still open: `git revert`... err, `promote_supervisor_runtime.py`s _assert_relative_identity/_open_relative_descriptor raises ValueError(\"Candidate Git directory is a symlink or has the wrong type: [Errno 20] Not a directory: '.git'\") when verifying a freshly-materialized candidate at command-runtimes/<sha>, even though `ls -la`/`file` confirm .git really is a plain directory (a standalone clone, not a worktree gitlink file or symlink). Reproduced 2026-08-08 running `bash scripts/sync-dev-root.sh` against a clean candidate for commit 619acd04184e8d3fc3aef322d160e7c9106670ad (evidence: /home/lupin/pantheon-ci-deploy/runtime/promotion-evidence/supervisor-runtime-promotion-20260808T143911364247Z-100873.json). The check uses os.open(name, O_RDONLY|O_DIRECTORY|O_NOFOLLOW|O_CLOEXEC, dir_fd=parent_descriptor) inside _open_relative_descriptor (scripts/promote_supervisor_runtime.py ~line 738), called via _assert_relative_identity(handle.descriptor, \".git\", handle.git_identity, label=\"Candidate Git directory\", require_directory=True) around line 1065. ENOTDIR from an O_DIRECTORY open of a real directory usually means the dir_fd (handle.descriptor, supposed to be the candidate root) is not actually pointing at a directory by the time this runs -- worth checking how/where `handle.descriptor` and `handle.git_identity` get captured earlier in build_candidate_runtime_identity / _open_candidate_root_handle for a stale-descriptor or wrong-fd bug, rather than assuming .git itself is malformed. This blocks ALL governed supervisor promotions (sync-dev-root.sh dies with FATAL after this), forcing manual workarounds (direct git checkout + supervisor_watchdog --record-intent + SIGTERM) that skip the immutable-candidate safety guarantees entirely.",
+    "generation": 1,
+    "github_review_bridge": {
+      "actor": "Antigravity",
+      "base": "dev",
+      "decision": "approve",
+      "head_branch": "task/SUP-RUNTIME-V10-PROMOTION-GIT-DIR-ENOTDIR-20260808",
+      "head_sha": "690c2fecfb715b0e50b7f417d863043785737059",
+      "mode": "required_commit_status",
+      "pr": 4705,
+      "pr_url": "https://github.com/ajoe734/pantheon/pull/4705",
+      "recorded_at": "2026-08-10T10:18:55Z",
+      "repository": "ajoe734/pantheon",
+      "review_error": "gh: Unprocessable Entity (HTTP 422)",
+      "review_proof_ref": "refs/tags/pantheon-review/approve/690c2fecfb715b0e50b7f417d863043785737059",
+      "status_context": "Pantheon canonical review gate",
+      "status_id": 51939939073,
+      "status_state": "success"
+    },
+    "id": "SUP-RUNTIME-V10-PROMOTION-GIT-DIR-ENOTDIR-20260808",
+    "last_update": "2026-08-13T02:01:42Z",
+    "next": "Retired during the Supervisor Authority V2 board reset: this legacy control, routing, rollout, or verification row is no longer an execution authority; merged source and archive evidence remain preserved.",
+    "owner": "Codex2",
+    "phase": "Unassigned",
+    "priority": "P1",
+    "review_binding": {
+      "base": "dev",
+      "head_branch": "task/SUP-RUNTIME-V10-PROMOTION-GIT-DIR-ENOTDIR-20260808",
+      "head_sha": "690c2fecfb715b0e50b7f417d863043785737059",
+      "pr": 4705
+    },
+    "review_file": "docs/deployment/evidence/twelve-loop-gap/SUP-RUNTIME-V10-PROMOTION-GIT-DIR-ENOTDIR-20260808/evidence.json",
+    "reviewer": "Antigravity",
+    "status": "done",
+    "summary_zh": null,
+    "title": "Promote fresh PR #4680 exact-head review and runtime rollout",
+    "terminal_outcome": "superseded"
+  },
+  "handoffs": [
+    {
+      "created_at": "2026-08-08T15:10:13Z",
+      "from": "Codex",
+      "message": "PR #4639 is ready for independent exact-head review at e543e42c88c8758fbc2d141a9f29e581ccc83430. Review manifest: docs/deployment/evidence/twelve-loop-gap/SUP-RUNTIME-V10-PROMOTION-GIT-DIR-ENOTDIR-20260808/evidence.json. Base source reproduces exact real dev-root ENOTDIR; task source binds it read-only. 234 promotion tests and 7 sync contract tests pass. Confirm immutable symlink/gitfile guards remain fail closed.",
+      "resolved_at": "2026-08-08T15:13:07Z",
+      "status": "done",
+      "task_id": "SUP-RUNTIME-V10-PROMOTION-GIT-DIR-ENOTDIR-20260808",
+      "to": "Claude2"
+    },
+    {
+      "created_at": "2026-08-08T15:13:07Z",
+      "from": "Claude2",
+      "message": "Auto-reassigned SUP-RUNTIME-V10-PROMOTION-GIT-DIR-ENOTDIR-20260808 away from unavailable lane Claude2 (disabled, paused, sidecar-only, or auth-down); reviewer Claude2 -> Codex2.",
+      "resolved_at": "2026-08-08T15:13:33Z",
+      "status": "done",
+      "task_id": "SUP-RUNTIME-V10-PROMOTION-GIT-DIR-ENOTDIR-20260808",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-08-08T15:34:56Z",
+      "from": "Codex",
+      "message": "PR #4642 is ready for independent exact-head review at ebf8afe08bf5353db9f158acc496c03b5c4766a8. Authorized history rewrite preserved the three source/evidence commits, all file trees and patch content, required trailers, and archive tag e543e42c88c8758fbc2d141a9f29e581ccc83430; only the 74-char middle subject became the 66-char 'anchor gitfile' subject. Push and PR Branch CI runs 31264720516 and 31264722444 are fully green. Review the committed evidence manifest at docs/deployment/evidence/twelve-loop-gap/SUP-RUNTIME-V10-PROMOTION-GIT-DIR-ENOTDIR-20260808/evidence.json and bind approval to this exact head.",
+      "resolved_at": "2026-08-08T15:43:39Z",
+      "status": "done",
+      "task_id": "SUP-RUNTIME-V10-PROMOTION-GIT-DIR-ENOTDIR-20260808",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-08-08T15:43:39Z",
+      "from": "Codex2",
+      "message": "Independent exact-head review approved for PR #4642 at ebf8afe08bf5353db9f158acc496c03b5c4766a8: immutable candidate gitfile/symlink rejection remains isolated; mutable linked-worktree gitfile binding is no-follow, identity-revalidated, remote/HEAD/tree/index/tracked-clean checked; closed-stdio regression passes. Local 241 promotion+sync tests passed in 50.02s, focused four security/regression tests passed, Python compile and diff checks passed; both Branch CI runs 31264720516 and 31264722444 are green.",
+      "resolved_at": "2026-08-08T15:58:18Z",
+      "status": "done",
+      "task_id": "SUP-RUNTIME-V10-PROMOTION-GIT-DIR-ENOTDIR-20260808",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-08-08T15:58:18Z",
+      "from": "Codex2",
+      "message": "Owner closeout revalidated on 2026-08-08: PR #4642 is merged as fee6f738a58b82ccc269ed8481ddc5a1a7a68b85, approved head ebf8afe08bf5353db9f158acc496c03b5c4766a8 is on origin/dev, 241 promotion/sync tests pass, and git diff --check passes. Governed done under command runtime 619acd04184e8d3fc3aef322d160e7c9106670ad still fails closed because the genuine 2026-08-08T15:13:07Z Claude2->Codex2 audit uses event_id supervisor-task-reassigned-0e858331... while the verifier accepts only supervisor-reassign-0e858331.... Preserve review_approved, reviewer Codex2, reviewed head, and existing commit history; Codex2 or Human/Ops must use the governed already-merged reconciliation path, or a separate governed task must repair command-runtime/audit compatibility.",
+      "resolved_at": "2026-08-08T16:06:58Z",
+      "status": "done",
+      "task_id": "SUP-RUNTIME-V10-PROMOTION-GIT-DIR-ENOTDIR-20260808",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-08-08T16:06:58Z",
+      "from": "Codex2",
+      "message": "Owner closeout remains fail-closed after a fresh governed done attempt: PR #4642 is merged as fee6f738a58b82ccc269ed8481ddc5a1a7a68b85, approved head ebf8afe08bf5353db9f158acc496c03b5c4766a8 is on dev, and 241 promotion/sync tests plus git diff check are green. Command runtime 619acd04184e8d3fc3aef322d160e7c9106670ad rejects the genuine Claude2->Codex2 audit because event_id supervisor-task-reassigned-0e858331... does not match its required supervisor-reassign-0e858331... prefix. Preserve review_approved, reviewer Codex2, reviewed head, evidence, and existing commits; owner cannot safely finalize until governed command-runtime/audit compatibility is repaired or Human/Ops uses the already-merged reconciliation path.",
+      "resolved_at": "2026-08-08T16:18:57Z",
+      "status": "done",
+      "task_id": "SUP-RUNTIME-V10-PROMOTION-GIT-DIR-ENOTDIR-20260808",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-08-08T16:18:57Z",
+      "from": "Codex2",
+      "message": "Owner closeout revalidated again: exact approved head ebf8afe08bf5353db9f158acc496c03b5c4766a8 is clean and merged by PR #4642 as fee6f738a58b82ccc269ed8481ddc5a1a7a68b85; fresh source-only checks pass (234 promotion, 7 sync, manifest JSON, diff check). Governed done remains fail-closed under PANTHEON_COMMAND_RUNTIME_SHA 619acd04184e8d3fc3aef322d160e7c9106670ad because the genuine Claude2->Codex2 audit event uses prefix supervisor-task-reassigned- while the verifier accepts supervisor-reassign-. Preserve review_approved and exact-head approval; no owner/reviewer reassignment, post-approval commit, status-file edit, or live runtime action was performed.",
+      "resolved_at": "2026-08-08T16:31:53Z",
+      "status": "done",
+      "task_id": "SUP-RUNTIME-V10-PROMOTION-GIT-DIR-ENOTDIR-20260808",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-08-08T16:31:53Z",
+      "from": "Codex2",
+      "message": "Owner closeout revalidated and attempted under pinned command runtime 619acd04184e8d3fc3aef322d160e7c9106670ad: PR #4642 is merged as fee6f738a58b82ccc269ed8481ddc5a1a7a68b85, approved head ebf8afe08bf5353db9f158acc496c03b5c4766a8 is on origin/dev, worktree is clean, and 241 promotion/sync tests pass in 45.79s. Governed done still fails closed because the genuine 2026-08-08T15:13:07Z Claude2->Codex2 audit uses event_id supervisor-task-reassigned-0e858331... while the verifier accepts only supervisor-reassign-0e858331.... Preserve review_approved and exact-head approval; Human/Ops must use the governed already-merged reconciliation path or a separate governed task must repair command-runtime/audit compatibility.",
+      "resolved_at": "2026-08-08T16:37:36Z",
+      "status": "done",
+      "task_id": "SUP-RUNTIME-V10-PROMOTION-GIT-DIR-ENOTDIR-20260808",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-08-08T16:37:36Z",
+      "from": "Codex2",
+      "message": "Owner closeout freshly revalidated and governed done retried: PR #4642 remains merged as fee6f738a58b82ccc269ed8481ddc5a1a7a68b85; approved head ebf8afe08bf5353db9f158acc496c03b5c4766a8 is on origin/dev; clean worktree; 241 promotion/sync tests passed in 46.06s; git diff --check passed. Pinned command runtime 619acd04184e8d3fc3aef322d160e7c9106670ad still fails closed with 'the audited reviewer reassignment chain does not bind the commit reviewer to the current reviewer' because the genuine Claude2->Codex2 event uses supervisor-task-reassigned-0e858331... while the verifier requires supervisor-reassign-0e858331.... Preserve review_approved and exact-head approval; Human/Ops reconciliation or a separate governed command-runtime compatibility repair is required.",
+      "resolved_at": "2026-08-08T16:42:08Z",
+      "status": "done",
+      "task_id": "SUP-RUNTIME-V10-PROMOTION-GIT-DIR-ENOTDIR-20260808",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-08-08T16:42:08Z",
+      "from": "Codex2",
+      "message": "Owner closeout revalidated and governed done retried: PR #4642 remains merged as fee6f738a58b82ccc269ed8481ddc5a1a7a68b85; approved head ebf8afe08bf5353db9f158acc496c03b5c4766a8 is on origin/dev; 241 promotion/sync tests passed in 46.37s; evidence assertion and git diff --check passed. Pinned command runtime 619acd04184e8d3fc3aef322d160e7c9106670ad still rejects the genuine Claude2->Codex2 audit because event_id supervisor-task-reassigned-0e858331... does not match required supervisor-reassign-0e858331.... Preserve review_approved and exact-head approval; Human/Ops reconcile_merged_done or a separately governed command-runtime compatibility repair is required.",
+      "resolved_at": "2026-08-08T16:48:02Z",
+      "status": "done",
+      "task_id": "SUP-RUNTIME-V10-PROMOTION-GIT-DIR-ENOTDIR-20260808",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-08-08T16:48:02Z",
+      "from": "Codex2",
+      "message": "Owner closeout revalidated and governed done retried: PR #4642 remains merged as fee6f738a58b82ccc269ed8481ddc5a1a7a68b85; approved head ebf8afe08bf5353db9f158acc496c03b5c4766a8 is on origin/dev; 241 promotion/sync tests passed in 46.01s; evidence JSON assertions, merge ancestry, and git diff --check passed. Pinned command runtime 619acd04184e8d3fc3aef322d160e7c9106670ad still rejects genuine Claude2->Codex2 event supervisor-task-reassigned-0e858331... because it requires supervisor-reassign-0e858331.... Preserve review_approved and exact-head approval; Human/Ops reconcile_merged_done or a separately governed command-runtime compatibility repair is required.",
+      "resolved_at": "2026-08-08T16:52:33Z",
+      "status": "done",
+      "task_id": "SUP-RUNTIME-V10-PROMOTION-GIT-DIR-ENOTDIR-20260808",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-08-08T16:52:33Z",
+      "from": "Codex2",
+      "message": "Owner closeout revalidated and governed done retried: PR #4642 remains merged as fee6f738a58b82ccc269ed8481ddc5a1a7a68b85; approved head ebf8afe08bf5353db9f158acc496c03b5c4766a8 is on origin/dev; 241 promotion/sync tests passed in 44.96s; evidence assertions, merge ancestry, and git diff --check passed. Pinned command runtime 619acd04184e8d3fc3aef322d160e7c9106670ad still rejects genuine Claude2->Codex2 event supervisor-task-reassigned-0e858331aa1f34c704c1ef73fbe9618aeda0b1798a80f71ff2cd556a0b49bd5b because it requires supervisor-reassign-0e858331aa1f34c704c1ef73fbe9618aeda0b1798a80f71ff2cd556a0b49bd5b. Preserve review_approved and exact-head approval; Human/Ops reconcile_merged_done or a separately governed command-runtime compatibility repair is required.",
+      "resolved_at": "2026-08-08T16:58:59Z",
+      "status": "done",
+      "task_id": "SUP-RUNTIME-V10-PROMOTION-GIT-DIR-ENOTDIR-20260808",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-08-08T16:58:59Z",
+      "from": "Codex2",
+      "message": "Owner closeout revalidated and governed done retried: PR #4642 remains merged as fee6f738a58b82ccc269ed8481ddc5a1a7a68b85; approved head ebf8afe08bf5353db9f158acc496c03b5c4766a8 and all reviewed task files remain on origin/dev; 241 promotion/sync tests passed in 44.96s; evidence assertions, exact reviewer reassignment audit, merge ancestry, exact-head review tag, task-file identity, and git diff --check passed. Pinned command runtime 619acd04184e8d3fc3aef322d160e7c9106670ad rejects genuine Claude2->Codex2 event supervisor-task-reassigned-0e858331aa1f34c704c1ef73fbe9618aeda0b1798a80f71ff2cd556a0b49bd5b because its verifier requires supervisor-reassign-0e858331aa1f34c704c1ef73fbe9618aeda0b1798a80f71ff2cd556a0b49bd5b. Preserve review_approved and exact-head approval; Human/Ops reconcile_merged_done or a separately governed command-runtime compatibility repair is required.",
+      "resolved_at": "2026-08-08T17:04:16Z",
+      "status": "done",
+      "task_id": "SUP-RUNTIME-V10-PROMOTION-GIT-DIR-ENOTDIR-20260808",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-08-08T17:04:16Z",
+      "from": "Codex2",
+      "message": "Owner closeout revalidated and governed done retried: PR #4642 remains merged as fee6f738a58b82ccc269ed8481ddc5a1a7a68b85; approved head ebf8afe08bf5353db9f158acc496c03b5c4766a8 and all reviewed task files remain on origin/dev; 241 promotion/sync tests passed in 44.92s; evidence assertions, exact reviewer reassignment audit, merge ancestry, exact-head review tag, task-file identity, and git diff --check passed. Pinned command runtime 619acd04184e8d3fc3aef322d160e7c9106670ad rejects genuine Claude2->Codex2 event supervisor-task-reassigned-0e858331aa1f34c704c1ef73fbe9618aeda0b1798a80f71ff2cd556a0b49bd5b because its verifier requires supervisor-reassign-0e858331aa1f34c704c1ef73fbe9618aeda0b1798a80f71ff2cd556a0b49bd5b. Preserve review_approved and exact-head approval; Human/Ops reconcile_merged_done or a separately governed command-runtime compatibility repair is required.",
+      "resolved_at": "2026-08-08T17:08:37Z",
+      "status": "done",
+      "task_id": "SUP-RUNTIME-V10-PROMOTION-GIT-DIR-ENOTDIR-20260808",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-08-08T17:08:37Z",
+      "from": "Codex2",
+      "message": "Owner closeout revalidated and governed done retried: PR #4642 remains merged as fee6f738a58b82ccc269ed8481ddc5a1a7a68b85; approved head ebf8afe08bf5353db9f158acc496c03b5c4766a8 and reviewed task files remain on origin/dev; fresh 241 promotion/sync tests passed in 44.79s; Python compile, evidence assertions, exact reassignment audit, task-file identity, merge ancestry, exact-head review tag, and git diff checks passed. Pinned command runtime 619acd04184e8d3fc3aef322d160e7c9106670ad still rejects genuine Claude2->Codex2 event supervisor-task-reassigned-0e858331aa1f34c704c1ef73fbe9618aeda0b1798a80f71ff2cd556a0b49bd5b because its verifier requires supervisor-reassign-0e858331aa1f34c704c1ef73fbe9618aeda0b1798a80f71ff2cd556a0b49bd5b. Preserve review_approved and exact-head approval; a separately governed command-runtime compatibility repair or valid Human/Ops recovery is required.",
+      "resolved_at": "2026-08-08T17:14:50Z",
+      "status": "done",
+      "task_id": "SUP-RUNTIME-V10-PROMOTION-GIT-DIR-ENOTDIR-20260808",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-08-08T17:14:50Z",
+      "from": "Codex2",
+      "message": "Owner closeout revalidated a third time: PR #4642 remains merged as fee6f738a58b82ccc269ed8481ddc5a1a7a68b85; approved head ebf8afe08bf5353db9f158acc496c03b5c4766a8, exact-head review tag, reviewed evidence, and origin/dev identity remain intact; fresh 241 promotion/sync tests passed in 48.06s, Python compile and diff checks passed. Governed done still fails because pinned command runtime 619acd04184e8d3fc3aef322d160e7c9106670ad rejects the genuine Claude2-to-Codex2 reassignment event ID prefix. Preserve review_approved and exact-head approval; a separately governed command-runtime compatibility repair or valid Human/Ops reconcile_merged_done is required.",
+      "resolved_at": "2026-08-08T17:19:46Z",
+      "status": "done",
+      "task_id": "SUP-RUNTIME-V10-PROMOTION-GIT-DIR-ENOTDIR-20260808",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-08-08T17:19:46Z",
+      "from": "Codex2",
+      "message": "Owner closeout revalidated a fourth time: PR #4642 remains merged as fee6f738a58b82ccc269ed8481ddc5a1a7a68b85; approved head ebf8afe08bf5353db9f158acc496c03b5c4766a8, review tag/evidence, and origin/dev ancestry remain intact; fresh 241 promotion/sync tests passed in 47.01s, Python compile and task-range diff checks passed. Governed done still fails under pinned command runtime 619acd04184e8d3fc3aef322d160e7c9106670ad because the genuine Claude2-to-Codex2 event uses supervisor-task-reassigned-0e858331... while its verifier requires supervisor-reassign-0e858331.... Preserve review_approved/exact-head approval; requires a separately governed command-runtime compatibility repair or valid Human/Ops reconcile_merged_done.",
+      "resolved_at": "2026-08-08T17:25:25Z",
+      "status": "done",
+      "task_id": "SUP-RUNTIME-V10-PROMOTION-GIT-DIR-ENOTDIR-20260808",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-08-08T17:25:25Z",
+      "from": "Codex2",
+      "message": "Owner closeout revalidated a fifth time and governed done was retried: PR #4642 remains merged as fee6f738a58b82ccc269ed8481ddc5a1a7a68b85; approved head ebf8afe08bf5353db9f158acc496c03b5c4766a8, reviewer-bound evidence, review tag, and origin/dev ancestry remain intact; fresh 241 promotion/sync tests passed in 47.14s, Python compile and task-range diff checks passed. Pinned command runtime 619acd04184e8d3fc3aef322d160e7c9106670ad still rejects genuine Claude2-to-Codex2 event supervisor-task-reassigned-0e858331aa1f34c704c1ef73fbe9618aeda0b1798a80f71ff2cd556a0b49bd5b because its verifier requires supervisor-reassign-0e858331aa1f34c704c1ef73fbe9618aeda0b1798a80f71ff2cd556a0b49bd5b. Preserve review_approved/exact-head approval; requires a separately governed command-runtime compatibility repair or valid Human/Ops reconcile_merged_done.",
+      "resolved_at": "2026-08-08T17:30:28Z",
+      "status": "done",
+      "task_id": "SUP-RUNTIME-V10-PROMOTION-GIT-DIR-ENOTDIR-20260808",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-08-08T17:30:28Z",
+      "from": "Codex2",
+      "message": "Owner closeout revalidated a sixth time and governed done was retried: PR #4642 remains merged as fee6f738a58b82ccc269ed8481ddc5a1a7a68b85; approved head ebf8afe08bf5353db9f158acc496c03b5c4766a8, reviewer-bound evidence, review tag, CI gates, and origin/dev ancestry remain intact; fresh 241 promotion/sync tests passed in 49.40s, Python compile and task-range diff checks passed. Pinned command runtime 619acd04184e8d3fc3aef322d160e7c9106670ad still rejects the valid Claude2-to-Codex2 reassignment chain because it requires supervisor-reassign-* while canonical audit records supervisor-task-reassigned-*. Preserve review_approved/exact-head approval; requires a separately governed command-runtime compatibility repair or valid Human/Ops reconcile_merged_done.",
+      "resolved_at": "2026-08-08T17:36:06Z",
+      "status": "done",
+      "task_id": "SUP-RUNTIME-V10-PROMOTION-GIT-DIR-ENOTDIR-20260808",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-08-08T17:36:06Z",
+      "from": "Codex2",
+      "message": "Owner closeout revalidated and governed done retried: PR #4642 remains merged as fee6f738a58b82ccc269ed8481ddc5a1a7a68b85; approved head ebf8afe08bf5353db9f158acc496c03b5c4766a8 is on origin/dev; 241 promotion/sync tests passed in 46.69s; Python compile and landed-range/worktree diff checks passed. Pinned command runtime 619acd04184e8d3fc3aef322d160e7c9106670ad still rejects genuine Claude2-to-Codex2 event supervisor-task-reassigned-0e858331... because it requires supervisor-reassign-0e858331.... Preserve review_approved and exact-head approval; Human/Ops reconcile_merged_done or a separately governed command-runtime compatibility repair is required.",
+      "resolved_at": "2026-08-08T17:40:20Z",
+      "status": "done",
+      "task_id": "SUP-RUNTIME-V10-PROMOTION-GIT-DIR-ENOTDIR-20260808",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-08-08T17:40:20Z",
+      "from": "Codex2",
+      "message": "Owner closeout is complete, but governed done is blocked by pinned command runtime 619acd04184e8d3fc3aef322d160e7c9106670ad: it rejects the audited Claude2-to-Codex2 reviewer reassignment chain. Canonical activity records task_reassigned at 2026-08-08T15:13:28Z; PR #4642 is merged as fee6f738a58b82ccc269ed8481ddc5a1a7a68b85 and exact approved head ebf8afe08bf5353db9f158acc496c03b5c4766a8 is on origin/dev. Preserve review_approved and exact-head approval. Human/Ops reconcile_merged_done or a separately governed command-runtime compatibility repair is required; repeated owner redispatch cannot clear this gate.",
+      "resolved_at": "2026-08-08T17:45:37Z",
+      "status": "done",
+      "task_id": "SUP-RUNTIME-V10-PROMOTION-GIT-DIR-ENOTDIR-20260808",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-08-08T17:45:37Z",
+      "from": "Codex2",
+      "message": "Owner closeout revalidated: PR #4642 is merged as fee6f738a58b82ccc269ed8481ddc5a1a7a68b85; exact approved head ebf8afe08bf5353db9f158acc496c03b5c4766a8 is on origin/dev; 241 promotion/sync tests pass in 48.03s and git diff --check passes. Governed done was not retried because pinned command runtime 619acd04184e8d3fc3aef322d160e7c9106670ad still rejects the genuine Claude2-to-Codex2 audit event_id prefix (supervisor-task-reassigned- versus expected supervisor-reassign-), as proven by prior fail-closed attempts. Preserve review_approved and exact-head approval; Human/Ops reconciliation or a separately governed command-runtime compatibility repair is required.",
+      "resolved_at": "2026-08-08T17:54:44Z",
+      "status": "done",
+      "task_id": "SUP-RUNTIME-V10-PROMOTION-GIT-DIR-ENOTDIR-20260808",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-08-08T17:54:44Z",
+      "from": "Codex2",
+      "message": "Owner closeout revalidated again: PR #4642 merged as fee6f738a58b82ccc269ed8481ddc5a1a7a68b85; exact approved head ebf8afe08bf5353db9f158acc496c03b5c4766a8 is on origin/dev; provisioned task interpreter passed 241 promotion/sync tests in 43.32s; git diff --check passes and worktree is clean. Governed done remains fail-closed because pinned command runtime 619acd04184e8d3fc3aef322d160e7c9106670ad expects supervisor-reassign-* while the genuine Claude2-to-Codex2 audit event is supervisor-task-reassigned-*; preserve review_approved. Human/Ops reconcile_merged_done or a separately governed command-runtime compatibility repair is required; do not redispatch owner closeout until that prerequisite changes.",
+      "resolved_at": "2026-08-08T18:00:40Z",
+      "status": "done",
+      "task_id": "SUP-RUNTIME-V10-PROMOTION-GIT-DIR-ENOTDIR-20260808",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-08-08T18:00:40Z",
+      "from": "Codex2",
+      "message": "Owner closeout revalidated and governed done retried: PR #4642 merged at fee6f738a58b82ccc269ed8481ddc5a1a7a68b85; exact approved head ebf8afe08bf5353db9f158acc496c03b5c4766a8 is on origin/dev; provisioned interpreter passed 241 promotion/sync tests in 45.67s; git diff --check passed. done failed closed: pinned command runtime 619acd04184e8d3fc3aef322d160e7c9106670ad expects supervisor-reassign-* but the genuine Claude2-to-Codex2 event is supervisor-task-reassigned-0e858331aa1f34c704c1ef73fbe9618aeda0b1798a80f71ff2cd556a0b49bd5b. Preserve review_approved. Human/Ops reconcile_merged_done or a separately governed command-runtime compatibility repair is required; do not redispatch owner closeout until that prerequisite changes.",
+      "resolved_at": "2026-08-08T18:05:43Z",
+      "status": "done",
+      "task_id": "SUP-RUNTIME-V10-PROMOTION-GIT-DIR-ENOTDIR-20260808",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-08-08T18:05:43Z",
+      "from": "Codex2",
+      "message": "Owner closeout revalidated and governed done retried: PR #4642 remains merged at fee6f738a58b82ccc269ed8481ddc5a1a7a68b85; approved head ebf8afe08bf5353db9f158acc496c03b5c4766a8 is on origin/dev; provisioned promotion/sync suites passed 241 tests in 46.61s; task and worktree diff checks passed. done failed closed because pinned runtime 619acd04184e8d3fc3aef322d160e7c9106670ad requires supervisor-reassign-* while the genuine Claude2-to-Codex2 audit event is supervisor-task-reassigned-0e858331aa1f34c704c1ef73fbe9618aeda0b1798a80f71ff2cd556a0b49bd5b. Preserve review_approved. Do not redispatch owner closeout until Human/Ops reconcile_merged_done completes or a governed command runtime compatible with this canonical event is pinned.",
+      "resolved_at": "2026-08-08T18:10:04Z",
+      "status": "done",
+      "task_id": "SUP-RUNTIME-V10-PROMOTION-GIT-DIR-ENOTDIR-20260808",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-08-08T18:10:04Z",
+      "from": "Codex2",
+      "message": "Owner closeout prerequisite audit rechecked after redispatch: PR #4642 remains merged at fee6f738a58b82ccc269ed8481ddc5a1a7a68b85; exact approved head ebf8afe08bf5353db9f158acc496c03b5c4766a8 remains on current origin/dev; reviewer-bound evidence and green CI remain intact; the immediately preceding provisioned run passed 241 promotion/sync tests in 46.61s. Governed done was not retried because PANTHEON_COMMAND_RUNTIME_SHA is still 619acd04184e8d3fc3aef322d160e7c9106670ad and its verifier requires supervisor-reassign-* while canonical audit records genuine Claude2-to-Codex2 event supervisor-task-reassigned-0e858331aa1f34c704c1ef73fbe9618aeda0b1798a80f71ff2cd556a0b49bd5b. Preserve review_approved/exact-head approval. Human/Ops reconcile_merged_done or a compatible governed command runtime is required; the generated task-brief worktree diff is disposable dispatch context and must not be committed post-approval.",
+      "resolved_at": "2026-08-08T18:42:30Z",
+      "status": "done",
+      "task_id": "SUP-RUNTIME-V10-PROMOTION-GIT-DIR-ENOTDIR-20260808",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-08-08T18:42:30Z",
+      "from": "Codex2",
+      "message": "Owner closeout revalidated on exact approved head ebf8afe08bf5353db9f158acc496c03b5c4766a8: PR #4642 remains merged at fee6f738a58b82ccc269ed8481ddc5a1a7a68b85; approved head is an ancestor of origin/dev 5877b64425c8d6aede147d6cbbc6fbb9e228c259 and all five reviewed files remain byte-identical. Checkout-scoped provisioned pytest passed 241 promotion/sync tests in 44.03s; git diff --check passed. Governed done was not retried because PANTHEON_COMMAND_RUNTIME_SHA remains 619acd04184e8d3fc3aef322d160e7c9106670ad and both that runtime and current origin/dev compute supervisor-reassign-* while canonical audit records genuine Claude2-to-Codex2 event supervisor-task-reassigned-0e858331aa1f34c704c1ef73fbe9618aeda0b1798a80f71ff2cd556a0b49bd5b. Preserve review_approved, reviewer-bound evidence, and exact-head approval. Human/Ops reconcile_merged_done or a compatible governed command runtime is required; disposable task-brief dispatch diff was not committed.",
+      "resolved_at": "2026-08-08T18:47:38Z",
+      "status": "done",
+      "task_id": "SUP-RUNTIME-V10-PROMOTION-GIT-DIR-ENOTDIR-20260808",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-08-08T18:47:38Z",
+      "from": "Codex2",
+      "message": "Owner closeout revalidated and governed done retried: PR #4642 remains merged at fee6f738a58b82ccc269ed8481ddc5a1a7a68b85; exact approved head ebf8afe08bf5353db9f158acc496c03b5c4766a8 is an ancestor of origin/dev 5877b64425c8d6aede147d6cbbc6fbb9e228c259; all five reviewed files remain byte-identical; checkout-scoped pytest passed 241 promotion/sync tests in 45.27s; git diff --check passed. done failed closed because PANTHEON_COMMAND_RUNTIME_SHA 619acd04184e8d3fc3aef322d160e7c9106670ad requires supervisor-reassign-* while the genuine Claude2-to-Codex2 audit event is supervisor-task-reassigned-0e858331aa1f34c704c1ef73fbe9618aeda0b1798a80f71ff2cd556a0b49bd5b. Preserve review_approved, reviewer-bound evidence, and exact-head approval. Do not redispatch owner closeout until Human/Ops recovery completes or a compatible governed command runtime is pinned; disposable task-brief dispatch diff was not committed.",
+      "resolved_at": "2026-08-08T18:53:07Z",
+      "status": "done",
+      "task_id": "SUP-RUNTIME-V10-PROMOTION-GIT-DIR-ENOTDIR-20260808",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-08-08T18:53:07Z",
+      "from": "Codex2",
+      "message": "Owner closeout prerequisite remains unchanged after fresh revalidation: PR #4642 is merged at fee6f738a58b82ccc269ed8481ddc5a1a7a68b85; exact approved head ebf8afe08bf5353db9f158acc496c03b5c4766a8 is an ancestor of origin/dev 5877b64425c8d6aede147d6cbbc6fbb9e228c259; all five reviewed files remain byte-identical; checkout-scoped pytest passed 241 promotion/sync tests in 48.04s and git diff --check passed. Governed done was not retried because PANTHEON_COMMAND_RUNTIME_SHA remains 619acd04184e8d3fc3aef322d160e7c9106670ad and its verifier requires supervisor-reassign-* while canonical audit records genuine Claude2-to-Codex2 event supervisor-task-reassigned-0e858331aa1f34c704c1ef73fbe9618aeda0b1798a80f71ff2cd556a0b49bd5b. Preserve review_approved, reviewer-bound evidence, and exact-head approval. Human/Ops reconcile_merged_done or a compatible governed command runtime is required before owner redispatch; the task-brief worktree diff is disposable dispatch context and must not be committed post-approval.",
+      "resolved_at": "2026-08-08T19:03:31Z",
+      "status": "done",
+      "task_id": "SUP-RUNTIME-V10-PROMOTION-GIT-DIR-ENOTDIR-20260808",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-08-08T19:03:31Z",
+      "from": "Codex2",
+      "message": "Owner closeout revalidated and governed done retried: PR #4642 is merged at fee6f738a58b82ccc269ed8481ddc5a1a7a68b85; exact approved head ebf8afe08bf5353db9f158acc496c03b5c4766a8 is on origin/dev 5877b64425c8d6aede147d6cbbc6fbb9e228c259; checkout-scoped pytest passed 234 promotion tests and 7 sync tests; git diff --check passed. done failed closed because PANTHEON_COMMAND_RUNTIME_SHA 619acd04184e8d3fc3aef322d160e7c9106670ad expects supervisor-reassign-* but the genuine Claude2-to-Codex2 audit event uses supervisor-task-reassigned-*. Preserve review_approved, reviewer-bound evidence, and exact-head approval. Human/Ops reconcile_merged_done or a compatible governed command runtime is required; disposable task-brief dispatch diff was not committed.",
+      "resolved_at": "2026-08-08T19:08:31Z",
+      "status": "done",
+      "task_id": "SUP-RUNTIME-V10-PROMOTION-GIT-DIR-ENOTDIR-20260808",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-08-08T19:08:31Z",
+      "from": "Codex2",
+      "message": "Owner closeout prerequisite remains unchanged after fresh revalidation: PR #4642 is merged at fee6f738a58b82ccc269ed8481ddc5a1a7a68b85; exact approved head ebf8afe08bf5353db9f158acc496c03b5c4766a8 is an ancestor of origin/dev 5877b64425c8d6aede147d6cbbc6fbb9e228c259; all five reviewed files remain byte-identical; checkout-scoped pytest passed 241 promotion/sync tests in 45.56s, Python compile, manifest JSON, and task-range diff checks passed; worktree is clean. Governed done was not retried because PANTHEON_COMMAND_RUNTIME_SHA remains 619acd04184e8d3fc3aef322d160e7c9106670ad and its verifier requires supervisor-reassign-* while canonical audit records genuine Claude2-to-Codex2 event supervisor-task-reassigned-0e858331aa1f34c704c1ef73fbe9618aeda0b1798a80f71ff2cd556a0b49bd5b. Preserve review_approved, reviewer-bound evidence, and exact-head approval. Human/Ops reconcile_merged_done or a compatible governed command runtime is required before owner redispatch; no post-approval commit was created.",
+      "resolved_at": "2026-08-08T19:12:44Z",
+      "status": "done",
+      "task_id": "SUP-RUNTIME-V10-PROMOTION-GIT-DIR-ENOTDIR-20260808",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-08-08T19:12:44Z",
+      "from": "Codex2",
+      "message": "Review approved. Owner must finalize this task to move it from review_approved to done.",
+      "resolved_at": "2026-08-08T19:13:03Z",
+      "status": "done",
+      "task_id": "SUP-RUNTIME-V10-PROMOTION-GIT-DIR-ENOTDIR-20260808",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-08-08T19:13:03Z",
+      "from": "Codex2",
+      "message": "Owner closeout prerequisite remains unchanged after fresh revalidation: PR #4642 is merged at fee6f738a58b82ccc269ed8481ddc5a1a7a68b85; exact approved head ebf8afe08bf5353db9f158acc496c03b5c4766a8 and its five reviewed files remain byte-identical on origin/dev 5877b64425c8d6aede147d6cbbc6fbb9e228c259; checkout-scoped pytest passed 241 promotion/sync tests in 43.75s, Python source compile, manifest JSON, merge ancestry, and task-range diff checks passed. Governed done was not retried because PANTHEON_COMMAND_RUNTIME_SHA remains 619acd04184e8d3fc3aef322d160e7c9106670ad and computes supervisor-reassign-* while canonical audit records genuine Claude2-to-Codex2 event supervisor-task-reassigned-0e858331aa1f34c704c1ef73fbe9618aeda0b1798a80f71ff2cd556a0b49bd5b. Preserve review_approved, reviewer-bound evidence, and exact-head approval. Human/Ops reconcile_merged_done or a compatible governed command runtime is required before owner redispatch; disposable task-brief dispatch context was not committed.",
+      "resolved_at": "2026-08-08T19:18:44Z",
+      "status": "done",
+      "task_id": "SUP-RUNTIME-V10-PROMOTION-GIT-DIR-ENOTDIR-20260808",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-08-08T19:18:44Z",
+      "from": "Codex2",
+      "message": "Owner closeout prerequisite remains unchanged after fresh revalidation: PR #4642 is merged at fee6f738a58b82ccc269ed8481ddc5a1a7a68b85; exact approved head ebf8afe08bf5353db9f158acc496c03b5c4766a8 and all five reviewed blobs remain byte-identical on origin/dev 5877b64425c8d6aede147d6cbbc6fbb9e228c259; checkout-scoped pytest passed 241 promotion/sync tests in 44.07s; source compile, manifest assertions, review tag, merge ancestry, and task-range diff checks passed. Governed done was not retried because PANTHEON_COMMAND_RUNTIME_SHA remains 619acd04184e8d3fc3aef322d160e7c9106670ad and computes supervisor-reassign-* while canonical audit records genuine Claude2-to-Codex2 event supervisor-task-reassigned-0e858331aa1f34c704c1ef73fbe9618aeda0b1798a80f71ff2cd556a0b49bd5b. Preserve review_approved, reviewer-bound evidence, and exact-head approval. Human/Ops reconcile_merged_done or a compatible governed command runtime is required before owner redispatch; disposable task-brief dispatch context was not committed.",
+      "resolved_at": "2026-08-08T19:23:53Z",
+      "status": "done",
+      "task_id": "SUP-RUNTIME-V10-PROMOTION-GIT-DIR-ENOTDIR-20260808",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-08-08T19:23:53Z",
+      "from": "Codex2",
+      "message": "Owner closeout remains blocked after 2026-08-08 fresh revalidation: PR #4642 is merged at fee6f738a58b82ccc269ed8481ddc5a1a7a68b85; exact approved head ebf8afe08bf5353db9f158acc496c03b5c4766a8 and all five reviewed blobs remain byte-identical on origin/dev 5877b64425c8d6aede147d6cbbc6fbb9e228c259; checkout-scoped pytest passed 241 promotion/sync tests in 43.85s; source compile, review tag, merge ancestry, task-range diff, and reviewed-blob checks passed. Governed done was not retried because PANTHEON_COMMAND_RUNTIME_SHA remains 619acd04184e8d3fc3aef322d160e7c9106670ad and computes supervisor-reassign-* while canonical audit records genuine Claude2-to-Codex2 event supervisor-task-reassigned-0e858331aa1f34c704c1ef73fbe9618aeda0b1798a80f71ff2cd556a0b49bd5b. Preserve review_approved, reviewer-bound evidence, and exact-head approval. Human/Ops reconcile_merged_done under a compatible command runtime, or a governed compatibility repair and promotion, is required; disposable task-brief dispatch context remains uncommitted.",
+      "resolved_at": "2026-08-08T19:28:21Z",
+      "status": "done",
+      "task_id": "SUP-RUNTIME-V10-PROMOTION-GIT-DIR-ENOTDIR-20260808",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-08-08T19:28:21Z",
+      "from": "Codex2",
+      "message": "Owner closeout remains blocked after fresh revalidation: PR #4642 is merged at fee6f738a58b82ccc269ed8481ddc5a1a7a68b85; exact approved head ebf8afe08bf5353db9f158acc496c03b5c4766a8 and all five reviewed blobs remain byte-identical on origin/dev 5877b64425c8d6aede147d6cbbc6fbb9e228c259; checkout-scoped Python compile passed and pytest passed 241 promotion/sync tests in 45.62s; review tag, merge ancestry, task-range diff, and reviewed-blob checks passed. Governed done was not retried because PANTHEON_COMMAND_RUNTIME_SHA remains 619acd04184e8d3fc3aef322d160e7c9106670ad and computes supervisor-reassign-* while canonical audit records genuine Claude2-to-Codex2 event supervisor-task-reassigned-0e858331aa1f34c704c1ef73fbe9618aeda0b1798a80f71ff2cd556a0b49bd5b. Preserve review_approved, reviewer-bound evidence, and exact-head approval. Human/Ops reconcile_merged_done under a compatible command runtime, or a governed compatibility repair and promotion, is required; disposable task-brief dispatch context remains uncommitted.",
+      "resolved_at": "2026-08-08T19:34:16Z",
+      "status": "done",
+      "task_id": "SUP-RUNTIME-V10-PROMOTION-GIT-DIR-ENOTDIR-20260808",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-08-08T19:34:16Z",
+      "from": "Codex2",
+      "message": "Owner closeout remains blocked after fresh revalidation: PR #4642 is merged at fee6f738a58b82ccc269ed8481ddc5a1a7a68b85; approved head ebf8afe08bf5353db9f158acc496c03b5c4766a8 and all five reviewed blobs remain byte-identical on origin/dev 5877b64425c8d6aede147d6cbbc6fbb9e228c259; checkout-scoped Python compile passed and pytest passed 241 promotion/sync tests in 47.73s; review tag, merge ancestry, task-range diff, reviewed-blob checks, and provision check passed. Governed done was not retried because PANTHEON_COMMAND_RUNTIME_SHA remains 619acd04184e8d3fc3aef322d160e7c9106670ad: canonical audit event supervisor-task-reassigned-0e858331aa1f34c704c1ef73fbe9618aeda0b1798a80f71ff2cd556a0b49bd5b hashes to the same digest that runtime only accepts under supervisor-reassign-, so reviewer reassignment validation fails closed. Preserve review_approved, reviewer-bound evidence, and exact-head approval. Human/Ops reconcile_merged_done under a compatible runtime, or governed compatibility repair plus promotion, is required before owner redispatch; disposable task-brief dispatch diff was restored to the approved HEAD blob.",
+      "resolved_at": "2026-08-08T19:38:36Z",
+      "status": "done",
+      "task_id": "SUP-RUNTIME-V10-PROMOTION-GIT-DIR-ENOTDIR-20260808",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-08-08T19:38:36Z",
+      "from": "Codex2",
+      "message": "Owner closeout prerequisite is unchanged after owned_finalize redispatch: PR #4642 is merged at fee6f738a58b82ccc269ed8481ddc5a1a7a68b85; approved head ebf8afe08bf5353db9f158acc496c03b5c4766a8 and all five reviewed blobs remain byte-identical on origin/dev 5877b64425c8d6aede147d6cbbc6fbb9e228c259; immediately preceding checkout-scoped pytest passed 241 promotion/sync tests in 47.73s, and this dispatch reprovisioned the isolated interpreter then passed source compile, manifest, merge ancestry, review-tag, reviewed-blob, and task-range diff checks. Governed done was not retried because PANTHEON_COMMAND_RUNTIME_SHA remains 619acd04184e8d3fc3aef322d160e7c9106670ad: canonical event supervisor-task-reassigned-0e858331aa1f34c704c1ef73fbe9618aeda0b1798a80f71ff2cd556a0b49bd5b hashes to the same digest that runtime only accepts under supervisor-reassign-, so reviewer reassignment validation necessarily fails closed. Preserve review_approved, reviewer-bound evidence, and exact-head approval. Human/Ops reconcile_merged_done under a compatible runtime, or governed compatibility repair plus promotion, is required before owner redispatch; disposable task-brief dispatch diff was restored and no post-approval commit was created.",
+      "resolved_at": "2026-08-08T20:24:11Z",
+      "status": "done",
+      "task_id": "SUP-RUNTIME-V10-PROMOTION-GIT-DIR-ENOTDIR-20260808",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-08-08T20:24:11Z",
+      "from": "Codex2",
+      "message": "Owner closeout revalidated on 2026-08-08: PR #4642 is merged at fee6f738a58b82ccc269ed8481ddc5a1a7a68b85; approved head ebf8afe08bf5353db9f158acc496c03b5c4766a8 is an ancestor of origin/dev 5877b64425c8d6aede147d6cbbc6fbb9e228c259; checkout-scoped pytest passed 241 promotion/sync tests in 46.00s and git diff checks passed; worktree is clean. Governed done was attempted with AI_NAME=Codex and failed closed: audited reviewer reassignment chain does not bind commit reviewer Claude2 to current reviewer Codex2. Canonical audit contains genuine event supervisor-task-reassigned-0e858331aa1f34c704c1ef73fbe9618aeda0b1798a80f71ff2cd556a0b49bd5b, but PANTHEON_COMMAND_RUNTIME_SHA 619acd04184e8d3fc3aef322d160e7c9106670ad only accepts its older supervisor-reassign-* digest. Preserve review_approved and reviewer-bound evidence. Human/Ops reconcile_merged_done under a compatible runtime, or a governed command-runtime compatibility repair/promotion, is required; no owner/reviewer reassignment or live runtime mutation was performed.",
+      "resolved_at": "2026-08-08T20:30:59Z",
+      "status": "done",
+      "task_id": "SUP-RUNTIME-V10-PROMOTION-GIT-DIR-ENOTDIR-20260808",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-08-08T20:30:59Z",
+      "from": "Codex2",
+      "message": "Owner closeout remains fail-closed after fresh 2026-08-08 revalidation: PR #4642 is merged at fee6f738a58b82ccc269ed8481ddc5a1a7a68b85; exact approved head ebf8afe08bf5353db9f158acc496c03b5c4766a8, review tag, and all five reviewed blobs remain byte-identical on origin/dev 5877b64425c8d6aede147d6cbbc6fbb9e228c259; checkout-scoped pytest passed 241 promotion/sync tests in 43.09s; task/worktree diff checks and evidence JSON validation passed; worktree is clean. Governed done was not retried because PANTHEON_COMMAND_RUNTIME_SHA remains 619acd04184e8d3fc3aef322d160e7c9106670ad and deterministically accepts supervisor-reassign-* while canonical audit records genuine Claude2-to-Codex2 event supervisor-task-reassigned-0e858331aa1f34c704c1ef73fbe9618aeda0b1798a80f71ff2cd556a0b49bd5b. Preserve review_approved, owner/reviewer, exact-head approval, and reviewer-bound evidence. Human/Ops reconcile_merged_done under a compatible runtime, or a governed command-runtime compatibility repair/promotion, is required before owner redispatch; no post-approval commit or live runtime mutation was made.",
+      "resolved_at": "2026-08-08T20:36:00Z",
+      "status": "done",
+      "task_id": "SUP-RUNTIME-V10-PROMOTION-GIT-DIR-ENOTDIR-20260808",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-08-08T20:36:00Z",
+      "from": "Codex2",
+      "message": "Owner closeout prerequisite is unchanged on this redispatch: PR #4642 remains merged at fee6f738a58b82ccc269ed8481ddc5a1a7a68b85; approved head ebf8afe08bf5353db9f158acc496c03b5c4766a8, review tag, and all five reviewed blobs remain byte-identical on origin/dev 5877b64425c8d6aede147d6cbbc6fbb9e228c259. The immediately preceding fresh checkout-scoped run passed 241 promotion/sync tests in 43.09s; this run refetched origin/dev and rechecked PR state, merge ancestry, reviewed blobs, task-range diff, and evidence JSON. Governed done was not retried because PANTHEON_COMMAND_RUNTIME_SHA remains 619acd04184e8d3fc3aef322d160e7c9106670ad and accepts supervisor-reassign-* while canonical audit records the genuine Claude2-to-Codex2 event as supervisor-task-reassigned-0e858331aa1f34c704c1ef73fbe9618aeda0b1798a80f71ff2cd556a0b49bd5b. Preserve review_approved, owner/reviewer, exact-head approval, and reviewer-bound evidence. Human/Ops reconcile_merged_done under a compatible runtime, or a governed command-runtime compatibility repair/promotion, is required before owner redispatch; no post-approval commit or live runtime mutation was made.",
+      "resolved_at": "2026-08-08T20:39:52Z",
+      "status": "done",
+      "task_id": "SUP-RUNTIME-V10-PROMOTION-GIT-DIR-ENOTDIR-20260808",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-08-08T20:39:52Z",
+      "from": "Codex2",
+      "message": "Owner closeout remains fail-closed on this redispatch. PR #4642 is MERGED at fee6f738a58b82ccc269ed8481ddc5a1a7a68b85; exact approved head ebf8afe08bf5353db9f158acc496c03b5c4766a8, review tag, merge ancestry, all five reviewed blobs on origin/dev 5877b64425c8d6aede147d6cbbc6fbb9e228c259, task-range diff check, and reviewer-bound evidence were reverified. The immediately preceding checkout-scoped run passed all 241 promotion/sync tests in 43.09s. Governed done was not retried because PANTHEON_COMMAND_RUNTIME_SHA remains 619acd04184e8d3fc3aef322d160e7c9106670ad: it deterministically accepts supervisor-reassign-* while canonical audit contains the genuine Claude2-to-Codex2 event supervisor-task-reassigned-0e858331aa1f34c704c1ef73fbe9618aeda0b1798a80f71ff2cd556a0b49bd5b. Preserve review_approved, owner/reviewer, exact-head approval, and review_file. Human/Ops reconcile_merged_done under compatible runtime, or a separately governed compatibility repair/promotion, is required before redispatch; no post-approval commit or live mutation was made.",
+      "resolved_at": "2026-08-08T20:44:16Z",
+      "status": "done",
+      "task_id": "SUP-RUNTIME-V10-PROMOTION-GIT-DIR-ENOTDIR-20260808",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-08-08T20:44:16Z",
+      "from": "Codex2",
+      "message": "Owner closeout remains fail-closed after a fresh redispatch verification. PR #4642 is merged at fee6f738a58b82ccc269ed8481ddc5a1a7a68b85; exact approved head ebf8afe08bf5353db9f158acc496c03b5c4766a8 and its review tag remain valid, all five reviewed blobs are byte-identical on origin/dev 5877b64425c8d6aede147d6cbbc6fbb9e228c259, and task-range diff/evidence checks pass. Fresh checkout-scoped validation passed 241 promotion/sync tests in 41.79s. Governed done was intentionally not retried because both PANTHEON_COMMAND_RUNTIME_SHA and command-root HEAD remain 619acd04184e8d3fc3aef322d160e7c9106670ad, whose reassignment verifier accepts supervisor-reassign-* while the genuine Claude2-to-Codex2 audit event is supervisor-task-reassigned-0e858331aa1f34c704c1ef73fbe9618aeda0b1798a80f71ff2cd556a0b49bd5b. Preserve review_approved, owner Codex, reviewer Codex2, exact-head approval, and review_file. Human/Ops reconcile_merged_done under a compatible runtime, or a separately governed command-runtime compatibility repair/promotion, is required. The supervisor-generated post-approval task-brief diff remains intentionally uncommitted; no live runtime mutation was made.",
+      "resolved_at": "2026-08-08T20:49:29Z",
+      "status": "done",
+      "task_id": "SUP-RUNTIME-V10-PROMOTION-GIT-DIR-ENOTDIR-20260808",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-08-08T20:49:29Z",
+      "from": "Codex2",
+      "message": "Owner closeout remains fail-closed after fresh redispatch verification: PR #4642 is merged at fee6f738a58b82ccc269ed8481ddc5a1a7a68b85; exact approved head ebf8afe08bf5353db9f158acc496c03b5c4766a8, Codex2 review tag, and all five reviewed blobs remain byte-identical on origin/dev 5877b64425c8d6aede147d6cbbc6fbb9e228c259; checkout-scoped pytest passed 241 promotion/sync tests in 40.84s; task-range diff, evidence JSON, and worktree diff checks pass. Governed done was not retried because PANTHEON_COMMAND_RUNTIME_SHA and command-root HEAD remain 619acd04184e8d3fc3aef322d160e7c9106670ad; prior same-runtime attempt deterministically rejected the genuine Claude2-to-Codex2 supervisor-task-reassigned audit event because this verifier expects supervisor-reassign-*. Preserve review_approved, owner Codex, reviewer Codex2, exact-head approval, and review_file. Human/Ops reconcile_merged_done under a compatible runtime, or a separately governed command-runtime compatibility repair/promotion, is required. The supervisor-generated post-approval task-brief diff remains intentionally uncommitted; no live runtime mutation was made.",
+      "resolved_at": "2026-08-08T20:54:53Z",
+      "status": "done",
+      "task_id": "SUP-RUNTIME-V10-PROMOTION-GIT-DIR-ENOTDIR-20260808",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-08-08T20:54:53Z",
+      "from": "Codex2",
+      "message": "Owner closeout remains fail-closed after fresh redispatch verification: PR #4642 is MERGED at fee6f738a58b82ccc269ed8481ddc5a1a7a68b85; exact approved head ebf8afe08bf5353db9f158acc496c03b5c4766a8, Codex2 review tag, and all five reviewed blobs remain byte-identical on origin/dev 5877b64425c8d6aede147d6cbbc6fbb9e228c259. Checkout-scoped pytest passed all 241 promotion/sync tests in 40.06s; task-range diff, evidence JSON, merge ancestry, and worktree diff checks pass. Governed done was intentionally not retried because PANTHEON_COMMAND_RUNTIME_SHA and command-root HEAD remain 619acd04184e8d3fc3aef322d160e7c9106670ad: its verifier expects supervisor-reassign-* while canonical audit records the genuine Claude2-to-Codex2 event as supervisor-task-reassigned-0e858331aa1f34c704c1ef73fbe9618aeda0b1798a80f71ff2cd556a0b49bd5b. Preserve review_approved, owner Codex, reviewer Codex2, exact-head approval, and review_file. Human/Ops reconcile_merged_done under a compatible runtime, or a separately governed command-runtime compatibility repair/promotion, is required. The supervisor-generated post-approval task-brief diff remains intentionally uncommitted; no post-approval commit or live runtime mutation was made.",
+      "resolved_at": "2026-08-08T20:58:34Z",
+      "status": "done",
+      "task_id": "SUP-RUNTIME-V10-PROMOTION-GIT-DIR-ENOTDIR-20260808",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-08-08T20:58:34Z",
+      "from": "Codex2",
+      "message": "Owner closeout reverified fail-closed on this dispatch: PR #4642 remains MERGED at fee6f738a58b82ccc269ed8481ddc5a1a7a68b85; approved head ebf8afe08bf5353db9f158acc496c03b5c4766a8 and Codex2 review tag remain bound; all five reviewed blobs are byte-identical on origin/dev 5877b64425c8d6aede147d6cbbc6fbb9e228c259; checkout-scoped pytest passed all 241 promotion/sync tests in 40.30s; evidence JSON, merge ancestry, git diff --check, and worktree scope checks pass. Governed done remains intentionally uncalled because PANTHEON_COMMAND_RUNTIME_SHA and command-root HEAD are still 619acd04184e8d3fc3aef322d160e7c9106670ad: its audit verifier derives supervisor-reassign-* while the genuine reviewer reassignment is canonical event supervisor-task-reassigned-0e858331aa1f34c704c1ef73fbe9618aeda0b1798a80f71ff2cd556a0b49bd5b. Preserve review_approved, owner Codex, reviewer Codex2, exact-head approval, and existing review_file. Human/Ops reconcile_merged_done under a compatible runtime, or separately governed command-runtime compatibility repair/promotion, remains required. The supervisor-generated post-approval task-brief diff remains intentionally uncommitted; no live runtime mutation was made.",
+      "resolved_at": "2026-08-08T21:04:29Z",
+      "status": "done",
+      "task_id": "SUP-RUNTIME-V10-PROMOTION-GIT-DIR-ENOTDIR-20260808",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-08-08T21:04:29Z",
+      "from": "Codex2",
+      "message": "Owner closeout reverified fail-closed on 2026-08-08T21:00Z dispatch: PR #4642 remains MERGED at fee6f738a58b82ccc269ed8481ddc5a1a7a68b85; approved head ebf8afe08bf5353db9f158acc496c03b5c4766a8, Codex2 review tag, canonical review gate, and all five reviewed blobs remain bound and byte-identical on origin/dev 5877b64425c8d6aede147d6cbbc6fbb9e228c259. Checkout-scoped pytest passed all 241 promotion/sync tests in 43.17s; jq evidence shape, merge ancestry, blob identity, and git diff checks pass. Governed done remains intentionally uncalled because PANTHEON_COMMAND_RUNTIME_SHA and command-root HEAD remain 619acd04184e8d3fc3aef322d160e7c9106670ad: its verifier only accepts supervisor-reassign-* while the genuine reviewer reassignment audit event is supervisor-task-reassigned-0e858331aa1f34c704c1ef73fbe9618aeda0b1798a80f71ff2cd556a0b49bd5b. Preserve review_approved, owner Codex, reviewer Codex2, exact-head approval, and existing review_file. Human/Ops reconcile_merged_done under a compatible runtime, or a separately governed command-runtime compatibility repair/promotion, is required. The supervisor-generated post-approval task-brief diff remains intentionally uncommitted; no post-approval commit or live runtime mutation was made.",
+      "resolved_at": "2026-08-08T21:10:56Z",
+      "status": "done",
+      "task_id": "SUP-RUNTIME-V10-PROMOTION-GIT-DIR-ENOTDIR-20260808",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-08-08T21:10:56Z",
+      "from": "Codex2",
+      "message": "Owner closeout reverified PR #4642/fee6f738a58b82ccc269ed8481ddc5a1a7a68b85 and approved head ebf8afe08bf5353db9f158acc496c03b5c4766a8 byte-identical on origin/dev 5877b64425c8d6aede147d6cbbc6fbb9e228c259; 241 promotion/sync tests passed in 44.57s and evidence/ancestry/blob/diff checks passed. Governed done failed closed because command runtime 619acd04184e8d3fc3aef322d160e7c9106670ad cannot bind the audited Claude2-to-Codex2 reviewer reassignment. Preserve review_approved and exact-head approval; Human/Ops reconcile_merged_done under a compatible runtime or a separately governed command-runtime compatibility repair/promotion is required.",
+      "resolved_at": "2026-08-08T21:16:57Z",
+      "status": "done",
+      "task_id": "SUP-RUNTIME-V10-PROMOTION-GIT-DIR-ENOTDIR-20260808",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-08-08T21:16:57Z",
+      "from": "Codex2",
+      "message": "Owner closeout reverified and governed done retried on 2026-08-08: PR #4642 is MERGED at fee6f738a58b82ccc269ed8481ddc5a1a7a68b85; exact approved head ebf8afe08bf5353db9f158acc496c03b5c4766a8, Codex2 review tag, all five reviewed blobs, origin/dev ancestry, evidence assertions, and diff checks pass; immediately preceding checkout-scoped run passed 241 promotion/sync tests in 44.57s. done failed closed under pinned command runtime 619acd04184e8d3fc3aef322d160e7c9106670ad because its supervisor-reassign-* verifier cannot bind canonical Claude2-to-Codex2 event supervisor-task-reassigned-0e858331aa1f34c704c1ef73fbe9618aeda0b1798a80f71ff2cd556a0b49bd5b. Preserve review_approved, owner Codex, reviewer Codex2, exact-head approval, and review_file. Human/Ops reconcile_merged_done under a compatible runtime, or a separately governed command-runtime compatibility repair/promotion, is required before another owner redispatch; no post-approval commit or live runtime mutation was made.",
+      "resolved_at": "2026-08-08T21:25:50Z",
+      "status": "done",
+      "task_id": "SUP-RUNTIME-V10-PROMOTION-GIT-DIR-ENOTDIR-20260808",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-08-08T21:25:50Z",
+      "from": "Codex2",
+      "message": "Owner closeout reverified and governed done retried on 2026-08-08: PR #4642 remains MERGED at fee6f738a58b82ccc269ed8481ddc5a1a7a68b85; exact approved head ebf8afe08bf5353db9f158acc496c03b5c4766a8 and reviewer-bound review_file remain on origin/dev; fresh checkout-scoped promotion/sync validation passed 241 tests in 43.45s and scoped git diff --check passed. done failed closed under pinned command runtime 619acd04184e8d3fc3aef322d160e7c9106670ad because its supervisor-reassign-* verifier cannot bind canonical Claude2-to-Codex2 event supervisor-task-reassigned-0e858331aa1f34c704c1ef73fbe9618aeda0b1798a80f71ff2cd556a0b49bd5b. Preserve review_approved, Codex/Codex2, exact-head approval, and review_file. Human/Ops reconcile_merged_done under a compatible runtime, or a separately governed verifier compatibility repair/promotion, is required before another owner redispatch. The supervisor-generated task-brief diff is intentionally uncommitted; no post-approval commit or live runtime mutation was made.",
+      "resolved_at": "2026-08-08T21:30:49Z",
+      "status": "done",
+      "task_id": "SUP-RUNTIME-V10-PROMOTION-GIT-DIR-ENOTDIR-20260808",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-08-08T21:30:49Z",
+      "from": "Codex2",
+      "message": "Owner closeout reverified and governed done retried on 2026-08-08: PR #4642 remains MERGED at fee6f738a58b82ccc269ed8481ddc5a1a7a68b85; exact approved head ebf8afe08bf5353db9f158acc496c03b5c4766a8 and reviewer-bound review_file remain on origin/dev; fresh checkout-scoped promotion/sync validation passed 241 tests in 41.26s and git diff --check passed. done failed closed under pinned command runtime 619acd04184e8d3fc3aef322d160e7c9106670ad because its supervisor-reassign-* verifier cannot bind canonical Claude2-to-Codex2 event supervisor-task-reassigned-0e858331aa1f34c704c1ef73fbe9618aeda0b1798a80f71ff2cd556a0b49bd5b. Preserve review_approved, Codex/Codex2, exact-head approval, and review_file. Human/Ops reconcile_merged_done under a compatible runtime, or a separately governed verifier compatibility repair/promotion, is required before another owner redispatch. The supervisor-generated task-brief diff remains intentionally uncommitted; no post-approval commit or live runtime mutation was made.",
+      "resolved_at": "2026-08-08T21:34:35Z",
+      "status": "done",
+      "task_id": "SUP-RUNTIME-V10-PROMOTION-GIT-DIR-ENOTDIR-20260808",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-08-08T21:34:35Z",
+      "from": "Codex2",
+      "message": "Owner closeout remains fail-closed on this repeated redispatch: PR #4642 is MERGED at fee6f738a58b82ccc269ed8481ddc5a1a7a68b85; exact approved head ebf8afe08bf5353db9f158acc496c03b5c4766a8, canonical review gate, reviewer-bound review_file, byte-identical evidence on origin/dev, and prior fresh 241-test validation remain intact; current task-range git diff --check passes. Governed done was not retried because PANTHEON_COMMAND_RUNTIME_SHA and command-root HEAD remain 619acd04184e8d3fc3aef322d160e7c9106670ad, whose verifier requires supervisor-reassign-* while canonical Claude2-to-Codex2 audit uses supervisor-task-reassigned-0e858331aa1f34c704c1ef73fbe9618aeda0b1798a80f71ff2cd556a0b49bd5b. Preserve review_approved, Codex/Codex2, exact-head approval, and review_file. Human/Ops reconcile_merged_done under a compatible runtime, or separately governed verifier compatibility repair/promotion, is required before another owner redispatch. The supervisor-generated task-brief diff remains intentionally uncommitted; no post-approval commit or live runtime mutation was made.",
+      "resolved_at": "2026-08-08T21:41:52Z",
+      "status": "done",
+      "task_id": "SUP-RUNTIME-V10-PROMOTION-GIT-DIR-ENOTDIR-20260808",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-08-08T21:41:52Z",
+      "from": "Codex2",
+      "message": "Owner closeout revalidated fresh: PR #4642 remains merged at fee6f738a58b82ccc269ed8481ddc5a1a7a68b85; exact approved head ebf8afe08bf5353db9f158acc496c03b5c4766a8 and byte-identical review_file are on origin/dev; 241 promotion/sync tests passed in 46.31s and task-range/worktree diff checks pass. Governed done remains fail-closed because pinned command runtime 619acd04184e8d3fc3aef322d160e7c9106670ad accepts only supervisor-reassign-* while the exact Orchestrator Claude2-to-Codex2 audit is supervisor-task-reassigned-0e858331aa1f34c704c1ef73fbe9618aeda0b1798a80f71ff2cd556a0b49bd5b. Preserve review_approved, owner Codex, reviewer Codex2, exact-head approval, and review_file; Human/Ops reconcile_merged_done under a compatible runtime or a separately governed verifier compatibility repair/promotion is required.",
+      "resolved_at": "2026-08-08T21:53:16Z",
+      "status": "done",
+      "task_id": "SUP-RUNTIME-V10-PROMOTION-GIT-DIR-ENOTDIR-20260808",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-08-08T21:53:16Z",
+      "from": "Codex2",
+      "message": "Owner closeout revalidated: PR #4642 merged as fee6f738a58b82ccc269ed8481ddc5a1a7a68b85; reviewed head ebf8afe08bf5353db9f158acc496c03b5c4766a8 is clean and on origin/dev; fresh 241-test promotion/sync suite passed in 43.25s plus diff/ancestry checks. Governed done remains fail-closed because pinned runtime 619acd04184e8d3fc3aef322d160e7c9106670ad accepts supervisor-reassign-* but the genuine Claude2-to-Codex2 audit is supervisor-task-reassigned-0e858331aa1f34c704c1ef73fbe9618aeda0b1798a80f71ff2cd556a0b49bd5b. Preserve review_approved and exact-head evidence; Human/Ops reconciliation under a compatible verifier or a separately governed compatibility repair is required.",
+      "resolved_at": "2026-08-08T21:59:24Z",
+      "status": "done",
+      "task_id": "SUP-RUNTIME-V10-PROMOTION-GIT-DIR-ENOTDIR-20260808",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-08-08T21:59:24Z",
+      "from": "Codex2",
+      "message": "Owner closeout prerequisite remains unchanged after fresh 2026-08-08 revalidation: PR #4642 is MERGED at fee6f738a58b82ccc269ed8481ddc5a1a7a68b85; exact approved head ebf8afe08bf5353db9f158acc496c03b5c4766a8 remains an ancestor of origin/dev 5877b64425c8d6aede147d6cbbc6fbb9e228c259; all visible PR checks are green; checkout-scoped pytest passed all 241 promotion/sync tests in 41.87s and git diff checks pass. Governed done was not retried because PANTHEON_COMMAND_RUNTIME_SHA and command-root HEAD remain 619acd04184e8d3fc3aef322d160e7c9106670ad, whose verifier derives supervisor-reassign-* while the authentic Claude2-to-Codex2 audit is supervisor-task-reassigned-0e858331aa1f34c704c1ef73fbe9618aeda0b1798a80f71ff2cd556a0b49bd5b. Preserve review_approved, Codex/Codex2, exact-head approval, and review_file. Human/Ops reconcile_merged_done under a compatible verifier, or a separately governed verifier compatibility repair and promotion, is required; do not redispatch owner closeout until that prerequisite changes. No post-approval commit or live runtime mutation was made.",
+      "resolved_at": "2026-08-08T22:03:30Z",
+      "status": "done",
+      "task_id": "SUP-RUNTIME-V10-PROMOTION-GIT-DIR-ENOTDIR-20260808",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-08-08T22:03:30Z",
+      "from": "Codex2",
+      "message": "Owner closeout prerequisite remains unchanged on the 2026-08-08T22:01Z redispatch: PR #4642 is MERGED at fee6f738a58b82ccc269ed8481ddc5a1a7a68b85; exact approved head ebf8afe08bf5353db9f158acc496c03b5c4766a8 remains an ancestor of origin/dev 5877b64425c8d6aede147d6cbbc6fbb9e228c259; current visible PR checks are green; the immediately preceding checkout-scoped run passed all 241 promotion/sync tests in 41.87s, and current ancestry/task-range/worktree diff checks pass. Governed done was not retried because PANTHEON_COMMAND_RUNTIME_SHA and command-root HEAD remain 619acd04184e8d3fc3aef322d160e7c9106670ad, whose verifier derives supervisor-reassign-* while canonical audit records the genuine Claude2-to-Codex2 event supervisor-task-reassigned-0e858331aa1f34c704c1ef73fbe9618aeda0b1798a80f71ff2cd556a0b49bd5b. Preserve review_approved, Codex/Codex2, exact-head approval, and review_file. Human/Ops reconcile_merged_done under a compatible verifier, or a separately governed verifier compatibility repair and promotion, is required; do not redispatch owner closeout until that prerequisite changes. The supervisor-generated post-approval task-brief diff remains intentionally uncommitted; no post-approval commit or live runtime mutation was made.",
+      "resolved_at": "2026-08-08T22:08:24Z",
+      "status": "done",
+      "task_id": "SUP-RUNTIME-V10-PROMOTION-GIT-DIR-ENOTDIR-20260808",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-08-08T22:08:24Z",
+      "from": "Codex2",
+      "message": "Owner closeout no-go revalidated after the 2026-08-08T22:04Z redispatch: PR #4642 is merged at fee6f738a58b82ccc269ed8481ddc5a1a7a68b85, exact approved head ebf8afe08bf5353db9f158acc496c03b5c4766a8 is an ancestor of origin/dev 5877b64425c8d6aede147d6cbbc6fbb9e228c259, PR checks are green, and task-range/manifest checks pass. PANTHEON_COMMAND_RUNTIME_SHA and command-root HEAD remain 619acd04184e8d3fc3aef322d160e7c9106670ad; its done verifier derives supervisor-reassign-* while the genuine Claude2-to-Codex2 audit event is supervisor-task-reassigned-0e858331aa1f34c704c1ef73fbe9618aeda0b1798a80f71ff2cd556a0b49bd5b. Preserve review_approved, Codex/Codex2, exact-head approval, and review_file. Human/Ops reconcile_merged_done under a compatible verifier, or a separately governed verifier compatibility repair and promotion, is required. No done retry, post-approval commit, owner/reviewer reassignment, status-file edit, or live runtime mutation was performed.",
+      "resolved_at": "2026-08-08T22:15:14Z",
+      "status": "done",
+      "task_id": "SUP-RUNTIME-V10-PROMOTION-GIT-DIR-ENOTDIR-20260808",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-08-08T22:15:14Z",
+      "from": "Codex2",
+      "message": "Owner closeout no-go revalidated on the latest redispatch: PR #4642 remains merged at fee6f738a58b82ccc269ed8481ddc5a1a7a68b85; exact approved head ebf8afe08bf5353db9f158acc496c03b5c4766a8, merged artifact identity, exact-head review gate, review_file, and green PR checks remain intact; fresh checkout-scoped validation passed all 241 promotion/sync tests in 42.97s and merge/worktree diff checks pass. PANTHEON_COMMAND_RUNTIME_SHA and command-root HEAD remain 619acd04184e8d3fc3aef322d160e7c9106670ad, whose done verifier requires supervisor-reassign-* while canonical audit contains genuine Claude2-to-Codex2 event supervisor-task-reassigned-0e858331aa1f34c704c1ef73fbe9618aeda0b1798a80f71ff2cd556a0b49bd5b. Governed done was not retried. Preserve review_approved, Codex/Codex2, exact-head approval, and review_file; Human/Ops reconcile_merged_done under a compatible verifier or a separately governed verifier compatibility repair/promotion is required before another owner redispatch. The supervisor-generated task-brief diff remains intentionally uncommitted; no post-approval commit or live runtime mutation was made.",
+      "resolved_at": "2026-08-08T22:19:29Z",
+      "status": "done",
+      "task_id": "SUP-RUNTIME-V10-PROMOTION-GIT-DIR-ENOTDIR-20260808",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-08-08T22:19:29Z",
+      "from": "Codex2",
+      "message": "Review approved. Owner must finalize this task to move it from review_approved to done.",
+      "resolved_at": "2026-08-08T22:19:52Z",
+      "status": "done",
+      "task_id": "SUP-RUNTIME-V10-PROMOTION-GIT-DIR-ENOTDIR-20260808",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-08-08T22:19:52Z",
+      "from": "Codex2",
+      "message": "Owner closeout no-go revalidated: PR #4642 remains merged at fee6f738a58b82ccc269ed8481ddc5a1a7a68b85; exact approved head ebf8afe08bf5353db9f158acc496c03b5c4766a8, review_file, merged artifact identity, origin/dev ancestry, exact-head review gate, and green PR checks remain intact. Fresh checkout-scoped validation passed 241 promotion/sync tests in 44.68s. PANTHEON_COMMAND_RUNTIME_SHA and command-root HEAD remain 619acd04184e8d3fc3aef322d160e7c9106670ad; its done verifier requires supervisor-reassign-0e858331aa1f34c704c1ef73fbe9618aeda0b1798a80f71ff2cd556a0b49bd5b, while the canonical archived audit row is the genuine Claude2-to-Codex2 event supervisor-task-reassigned-0e858331aa1f34c704c1ef73fbe9618aeda0b1798a80f71ff2cd556a0b49bd5b. Governed done was not retried. Preserve review_approved, Codex/Codex2, exact-head approval, and review_file; Human/Ops reconcile_merged_done under a compatible verifier or a separately governed verifier compatibility repair/promotion is required before another owner redispatch.",
+      "resolved_at": "2026-08-08T22:25:11Z",
+      "status": "done",
+      "task_id": "SUP-RUNTIME-V10-PROMOTION-GIT-DIR-ENOTDIR-20260808",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-08-08T22:25:11Z",
+      "from": "Codex2",
+      "message": "Owner closeout remains fail-closed after the latest redispatch. PR #4642 is MERGED at fee6f738a58b82ccc269ed8481ddc5a1a7a68b85; approved head ebf8afe08bf5353db9f158acc496c03b5c4766a8 is on origin/dev and visible checks remain green. Pinned command runtime 619acd04184e8d3fc3aef322d160e7c9106670ad derives supervisor-reassign-0e858331aa1f34c704c1ef73fbe9618aeda0b1798a80f71ff2cd556a0b49bd5b, but authoritative archived audit records genuine event supervisor-task-reassigned-0e858331aa1f34c704c1ef73fbe9618aeda0b1798a80f71ff2cd556a0b49bd5b. The merged review_file also still records reviewer Claude2 and pending_independent_review while canonical approval is Codex2/review_approved; task-closeout-finalization forbids an owner post-approval evidence edit. No done retry, commit, owner/reviewer reassignment, status-file edit, or live runtime mutation was performed. Preserve review_approved and exact-head approval. Human/Ops needs a separately governed compatible verifier and conforming merged recovery evidence, or a fresh governed exact-head evidence/review path, before owner redispatch.",
+      "resolved_at": "2026-08-08T22:43:02Z",
+      "status": "done",
+      "task_id": "SUP-RUNTIME-V10-PROMOTION-GIT-DIR-ENOTDIR-20260808",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-08-08T22:43:02Z",
+      "from": "Codex2",
+      "message": "Owner closeout revalidated on 2026-08-08: PR #4642 merged as fee6f738a58b82ccc269ed8481ddc5a1a7a68b85; exact head ebf8afe08bf5353db9f158acc496c03b5c4766a8 is clean/merged; fresh combined promotion+sync suite passed 241 tests. Governed done under command runtime 619acd04184e8d3fc3aef322d160e7c9106670ad still rejects the authentic 2026-08-08T15:13:07Z Claude2->Codex2 task_reassigned audit because its event_id uses supervisor-task-reassigned- while the verifier recomputes supervisor-reassign-. Preserved review_approved; no reassignment, post-review commit, direct state edit, or live runtime mutation performed.",
+      "resolved_at": "2026-08-08T22:49:01Z",
+      "status": "done",
+      "task_id": "SUP-RUNTIME-V10-PROMOTION-GIT-DIR-ENOTDIR-20260808",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-08-08T22:49:01Z",
+      "from": "Codex2",
+      "message": "Owner closeout remains fail-closed after the 2026-08-08T22:45Z redispatch. PR #4642 is merged at fee6f738a58b82ccc269ed8481ddc5a1a7a68b85; exact reviewed head ebf8afe08bf5353db9f158acc496c03b5c4766a8 is published and an ancestor of origin/dev; all visible PR checks are green; fresh promotion+sync validation passed 241 tests in 40.44s. Governed done was attempted and rejected: audited reviewer reassignment chain does not bind the commit reviewer to the current reviewer. Pinned runtime 619acd04184e8d3fc3aef322d160e7c9106670ad derives supervisor-reassign-* while the authentic Claude2-to-Codex2 audit is supervisor-task-reassigned-*. The merged review_file also records Claude2/pending review, whereas canonical approval is Codex2/review_approved; owner cannot add post-review evidence. Preserve review_approved, exact-head approval, owner/reviewer, and review_file. Do not redispatch owner closeout until a separately governed compatible verifier/recovery evidence path or fresh exact-head evidence/review path exists. No commit, direct state edit, reassignment, or live runtime mutation was performed.",
+      "resolved_at": "2026-08-08T22:52:53Z",
+      "status": "done",
+      "task_id": "SUP-RUNTIME-V10-PROMOTION-GIT-DIR-ENOTDIR-20260808",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-08-08T22:52:53Z",
+      "from": "Codex2",
+      "message": "Owner closeout prerequisite rechecked after the 2026-08-08T22:50Z redispatch: PR #4642 remains merged as fee6f738a58b82ccc269ed8481ddc5a1a7a68b85; exact approved head ebf8afe08bf5353db9f158acc496c03b5c4766a8 and all five reviewed files remain byte-identical on origin/dev 5877b64425c8d6aede147d6cbbc6fbb9e228c259; all visible PR checks are green; the immediately preceding fresh run passed 241 promotion/sync tests in 40.44s, and current manifest/diff/ancestry checks pass. Governed done was not retried because PANTHEON_COMMAND_RUNTIME_SHA remains 619acd04184e8d3fc3aef322d160e7c9106670ad and both it and current origin/dev derive supervisor-reassign-* while the authentic Claude2-to-Codex2 audit is supervisor-task-reassigned-*. The merged review_file still binds Claude2/pending review, not canonical Codex2/review_approved. Preserve review_approved, exact-head approval, owner/reviewer, and review_file. A separately governed compatible verifier/recovery evidence path or fresh exact-head evidence/review path is required; do not redispatch owner closeout before that prerequisite changes. No commit, direct state edit, reassignment, or live runtime mutation was performed.",
+      "resolved_at": "2026-08-08T23:04:55Z",
+      "status": "done",
+      "task_id": "SUP-RUNTIME-V10-PROMOTION-GIT-DIR-ENOTDIR-20260808",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-08-08T23:04:55Z",
+      "from": "Codex2",
+      "message": "Owner closeout remains fail-closed after PANTHEON_COMMAND_RUNTIME_SHA advanced to 5877b64425c8d6aede147d6cbbc6fbb9e228c259. PR #4642 is MERGED at fee6f738a58b82ccc269ed8481ddc5a1a7a68b85; exact approved head ebf8afe08bf5353db9f158acc496c03b5c4766a8 is an ancestor of origin/dev and all visible checks are green; fresh checkout-scoped validation passed 241 promotion/sync tests in 44.82s; worktree and task-range diff checks pass. Runtime 5877b still derives supervisor-reassign-* in _supervisor_reassignment_event_id, so it filters the authentic Claude2-to-Codex2 audit event supervisor-task-reassigned-0e858331aa1f34c704c1ef73fbe9618aeda0b1798a80f71ff2cd556a0b49bd5b and cannot verify the commit Reviewer trailer. The merged review_file also remains Claude2/pending_independent_review while canonical approval is Codex2/review_approved; owner cannot create a post-approval evidence commit. Governed done was not retried. Preserve review_approved, owner/reviewer, exact-head approval, and review_file. A separately governed compatible verifier/recovery evidence path or fresh exact-head evidence/review path is required before owner redispatch.",
+      "resolved_at": "2026-08-08T23:10:34Z",
+      "status": "done",
+      "task_id": "SUP-RUNTIME-V10-PROMOTION-GIT-DIR-ENOTDIR-20260808",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-08-08T23:10:34Z",
+      "from": "Codex2",
+      "message": "Owner closeout revalidated fail-closed on runtime 5877b64425c8d6aede147d6cbbc6fbb9e228c259. PR 4642 remains merged at fee6f738a58b82ccc269ed8481ddc5a1a7a68b85; approved head ebf8afe08bf5353db9f158acc496c03b5c4766a8 remains on origin/dev; fresh checkout-scoped promotion plus sync validation passed 241 tests in 41.88s and diff checks pass. The authentic Claude2-to-Codex2 audit event is archived as supervisor-task-reassigned-0e858331aa1f34c704c1ef73fbe9618aeda0b1798a80f71ff2cd556a0b49bd5b, but runtime 5877b still verifies only its incompatible supervisor-reassign-derived identity, and origin/dev contains no later ai_status verifier change. The merged manifest still records Claude2 pending review while canonical approval is Codex2. No done retry or post-approval commit was made. Preserve review_approved and exact-head evidence until a governed compatible verifier or fresh exact-head evidence and review path is supplied.",
+      "resolved_at": "2026-08-08T23:14:54Z",
+      "status": "done",
+      "task_id": "SUP-RUNTIME-V10-PROMOTION-GIT-DIR-ENOTDIR-20260808",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-08-08T23:14:54Z",
+      "from": "Codex2",
+      "message": "Owner closeout remains fail-closed on command runtime 5877b64425c8d6aede147d6cbbc6fbb9e228c259. PR #4642 is merged at fee6f738a58b82ccc269ed8481ddc5a1a7a68b85; approved exact head ebf8afe08bf5353db9f158acc496c03b5c4766a8 is on origin/dev; prior fresh checkout-scoped validation passed all 241 promotion/sync tests and current diff checks pass. Runtime still derives supervisor-reassign-* and rejects the authentic archived supervisor-task-reassigned-* Claude2-to-Codex2 event, while the merged reviewed manifest remains Claude2/pending and canonical approval is Codex2. No done retry or post-approval commit was made. Preserve review_approved and exact-head evidence until a governed compatible verifier or fresh exact-head evidence/review path is supplied.",
+      "resolved_at": "2026-08-08T23:21:19Z",
+      "status": "done",
+      "task_id": "SUP-RUNTIME-V10-PROMOTION-GIT-DIR-ENOTDIR-20260808",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-08-08T23:21:19Z",
+      "from": "Codex2",
+      "message": "Owner closeout revalidated after the 2026-08-08T23:17Z redispatch: PR #4642 remains merged at fee6f738a58b82ccc269ed8481ddc5a1a7a68b85; exact approved head ebf8afe08bf5353db9f158acc496c03b5c4766a8 and all five reviewed files remain on origin/dev; all visible PR checks are green; fresh checkout-scoped pytest validation passed 241 promotion/sync tests in 42.40s; manifest, task-range diff, byte-identity, and ancestry checks pass. Governed done was not retried because PANTHEON_COMMAND_RUNTIME_SHA remains 5877b64425c8d6aede147d6cbbc6fbb9e228c259 and its verifier derives supervisor-reassign-* while the authentic archived 2026-08-08T15:13:07Z Claude2-to-Codex2 event is supervisor-task-reassigned-0e858331aa1f34c704c1ef73fbe9618aeda0b1798a80f71ff2cd556a0b49bd5b. The merged manifest remains Claude2/pending while canonical approval is Codex2/review_approved, so no post-approval commit is permitted. Preserve review_approved and exact-head evidence until a governed compatible verifier/recovery or fresh exact-head evidence/review path exists; do not redispatch owner closeout before that prerequisite changes.",
+      "resolved_at": "2026-08-08T23:26:31Z",
+      "status": "done",
+      "task_id": "SUP-RUNTIME-V10-PROMOTION-GIT-DIR-ENOTDIR-20260808",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-08-08T23:26:31Z",
+      "from": "Codex2",
+      "message": "Owner closeout revalidated on command runtime 5877b64425c8d6aede147d6cbbc6fbb9e228c259: PR #4642 is merged at fee6f738a58b82ccc269ed8481ddc5a1a7a68b85, approved head ebf8afe08bf5353db9f158acc496c03b5c4766a8 and all five reviewed files are on origin/dev byte-identically, PR checks are green, git diff --check passes, and 241 promotion/sync tests pass in 44.92s. Done remains fail-closed because the verifier derives supervisor-reassign-* while the authentic archived Claude2-to-Codex2 event is supervisor-task-reassigned-0e858331aa1f34c704c1ef73fbe9618aeda0b1798a80f71ff2cd556a0b49bd5b; the merged manifest remains Claude2/pending while canonical approval is Codex2/review_approved. No done retry or post-approval commit was made. Preserve exact-head approval and do not redispatch owner closeout until a compatible governed verifier/recovery or fresh exact-head evidence/review path exists.",
+      "resolved_at": "2026-08-08T23:35:32Z",
+      "status": "done",
+      "task_id": "SUP-RUNTIME-V10-PROMOTION-GIT-DIR-ENOTDIR-20260808",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-08-08T23:35:32Z",
+      "from": "Codex2",
+      "message": "Owner closeout revalidated on command runtime 5877b64425c8d6aede147d6cbbc6fbb9e228c259: PR #4642 is merged at fee6f738a58b82ccc269ed8481ddc5a1a7a68b85, approved head ebf8afe08bf5353db9f158acc496c03b5c4766a8 and all five reviewed files are on origin/dev byte-identically, git diff --check passes, and 241 promotion/sync tests pass in 44.46s. Done remains fail-closed and was not retried because the verifier derives supervisor-reassign-0e858331aa1f34c704c1ef73fbe9618aeda0b1798a80f71ff2cd556a0b49bd5b while the authentic archived Claude2-to-Codex2 event is supervisor-task-reassigned-0e858331aa1f34c704c1ef73fbe9618aeda0b1798a80f71ff2cd556a0b49bd5b; the merged manifest remains Claude2/pending while canonical approval is Codex2/review_approved. Preserve exact-head approval and do not redispatch owner closeout until a compatible governed verifier/recovery or fresh exact-head evidence/review path exists.",
+      "resolved_at": "2026-08-08T23:41:23Z",
+      "status": "done",
+      "task_id": "SUP-RUNTIME-V10-PROMOTION-GIT-DIR-ENOTDIR-20260808",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-08-08T23:41:23Z",
+      "from": "Codex2",
+      "message": "Owner closeout prerequisite remains unchanged after redispatch on command runtime 5877b64425c8d6aede147d6cbbc6fbb9e228c259: PR #4642 is MERGED at fee6f738a58b82ccc269ed8481ddc5a1a7a68b85 with all visible checks successful; exact approved head/review tag ebf8afe08bf5353db9f158acc496c03b5c4766a8 and all five reviewed blobs remain on origin/dev f3c3b830d9756a1a2b2bf40a42b8e086e615a469 byte-identically. This dispatch reprovisioned the checkout-scoped interpreter and passed source compile, evidence JSON, merge ancestry, review-tag, reviewed-blob, task-range diff, and worktree-scope checks; the immediately preceding fresh run passed 241 promotion/sync tests in 44.46s on the unchanged approved head. Governed done was not retried because the pinned verifier still derives supervisor-reassign-0e858331aa1f34c704c1ef73fbe9618aeda0b1798a80f71ff2cd556a0b49bd5b while canonical audit contains genuine Claude2-to-Codex2 event supervisor-task-reassigned-0e858331aa1f34c704c1ef73fbe9618aeda0b1798a80f71ff2cd556a0b49bd5b. Preserve review_approved, owner Codex, reviewer Codex2, exact-head approval, and review_file. Human/Ops reconcile_merged_done under a compatible verifier, or a separately governed verifier compatibility repair and runtime promotion, is required before another owner redispatch. The supervisor-generated post-approval task-brief diff remains intentionally uncommitted; no post-approval commit or live runtime mutation was made.",
+      "resolved_at": "2026-08-08T23:47:32Z",
+      "status": "done",
+      "task_id": "SUP-RUNTIME-V10-PROMOTION-GIT-DIR-ENOTDIR-20260808",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-08-08T23:47:32Z",
+      "from": "Codex2",
+      "message": "Owner closeout revalidated on pinned command runtime 5877b64425c8d6aede147d6cbbc6fbb9e228c259: PR #4642 remains MERGED at fee6f738a58b82ccc269ed8481ddc5a1a7a68b85; approved head/review tag ebf8afe08bf5353db9f158acc496c03b5c4766a8, merge ancestry, evidence JSON, task-range diff, and all five reviewed blobs on origin/dev f3c3b830d9756a1a2b2bf40a42b8e086e615a469 pass; fresh checkout-scoped run passes 241 promotion/sync tests in 40.11s. Governed done was not retried: canonical Claude2-to-Codex2 reassignment is authentic with digest 0e858331aa1f34c704c1ef73fbe9618aeda0b1798a80f71ff2cd556a0b49bd5b but event id prefix supervisor-task-reassigned differs from pinned verifier prefix supervisor-reassign. Preserve review_approved, owner Codex, reviewer Codex2, exact-head approval, and review_file. Human/Ops reconcile_merged_done under a compatible verifier or a separately governed verifier compatibility repair/runtime promotion is required. The only worktree diff is the supervisor-generated post-approval task brief and remains intentionally uncommitted.",
+      "resolved_at": "2026-08-08T23:52:39Z",
+      "status": "done",
+      "task_id": "SUP-RUNTIME-V10-PROMOTION-GIT-DIR-ENOTDIR-20260808",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-08-08T23:52:39Z",
+      "from": "Codex2",
+      "message": "Owner closeout revalidated again on pinned command runtime 5877b64425c8d6aede147d6cbbc6fbb9e228c259: PR #4642 remains MERGED at fee6f738a58b82ccc269ed8481ddc5a1a7a68b85; exact approved head ebf8afe08bf5353db9f158acc496c03b5c4766a8, review tag, merge ancestry, all five reviewed blobs on origin/dev, evidence JSON, Python compile, and task-range diff pass; fresh checkout-scoped validation passes 241 promotion/sync tests in 40.97s. Governed done was not retried because the pinned verifier still derives supervisor-reassign-0e858331aa1f34c704c1ef73fbe9618aeda0b1798a80f71ff2cd556a0b49bd5b while canonical audit retains authentic Claude2-to-Codex2 event supervisor-task-reassigned-0e858331aa1f34c704c1ef73fbe9618aeda0b1798a80f71ff2cd556a0b49bd5b; the merged manifest remains Claude2/pending while canonical approval is Codex2/review_approved. Preserve review_approved, owner Codex, reviewer Codex2, exact-head approval, and review_file. Do not redispatch owner closeout until a compatible governed verifier/recovery or fresh exact-head evidence/review path exists. The only worktree diff is the supervisor-generated post-approval task brief and remains intentionally uncommitted.",
+      "resolved_at": "2026-08-08T23:56:58Z",
+      "status": "done",
+      "task_id": "SUP-RUNTIME-V10-PROMOTION-GIT-DIR-ENOTDIR-20260808",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-08-08T23:56:58Z",
+      "from": "Codex2",
+      "message": "Owner closeout remains fail-closed on pinned command runtime 5877b64425c8d6aede147d6cbbc6fbb9e228c259. PR #4642 is MERGED at fee6f738a58b82ccc269ed8481ddc5a1a7a68b85 with all checks green; exact approved head/review tag ebf8afe08bf5353db9f158acc496c03b5c4766a8 and all five reviewed blobs remain on origin/dev byte-identically. This dispatch passed checkout-scoped provision/import proof, Python compile, four focused immutable/mutable Git-layout regressions, and task-range diff check; the immediately preceding unchanged-head run passed all 241 promotion/sync tests in 40.97s. Governed done was not retried: runtime 5877b still derives supervisor-reassign-0e858331aa1f34c704c1ef73fbe9618aeda0b1798a80f71ff2cd556a0b49bd5b while canonical audit retains authentic Claude2-to-Codex2 event supervisor-task-reassigned-0e858331aa1f34c704c1ef73fbe9618aeda0b1798a80f71ff2cd556a0b49bd5b; merged evidence remains Claude2/pending while canonical approval is Codex2/review_approved. Preserve review_approved, owner Codex, reviewer Codex2, exact-head approval, and review_file. A compatible governed verifier/recovery or fresh exact-head evidence/review path is required before owner closeout can reach done; do not redispatch unchanged runtime.",
+      "resolved_at": "2026-08-09T00:00:51Z",
+      "status": "done",
+      "task_id": "SUP-RUNTIME-V10-PROMOTION-GIT-DIR-ENOTDIR-20260808",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-08-09T00:00:51Z",
+      "from": "Codex2",
+      "message": "Review approved. Owner must finalize this task to move it from review_approved to done.",
+      "resolved_at": "2026-08-09T00:01:25Z",
+      "status": "done",
+      "task_id": "SUP-RUNTIME-V10-PROMOTION-GIT-DIR-ENOTDIR-20260808",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-08-09T00:01:25Z",
+      "from": "Codex2",
+      "message": "Owner closeout checked again under unchanged pinned command runtime 5877b64425c8d6aede147d6cbbc6fbb9e228c259. PR #4642 remains MERGED at fee6f738a58b82ccc269ed8481ddc5a1a7a68b85; approved head and review tag ebf8afe08bf5353db9f158acc496c03b5c4766a8 remain on origin/dev and all five reviewed blobs are byte-identical. Fresh checkout-scoped provision and import proof, Python compile, five focused immutable and mutable Git-layout regressions passed, and task-range diff check passed; preceding unchanged-head full suite remains 241 passed. Governed done was not retried because runtime 5877b still derives supervisor-reassign-0e858331aa1f34c704c1ef73fbe9618aeda0b1798a80f71ff2cd556a0b49bd5b while canonical audit retains authentic supervisor-task-reassigned-0e858331aa1f34c704c1ef73fbe9618aeda0b1798a80f71ff2cd556a0b49bd5b. Preserve review_approved, owner Codex, reviewer Codex2, exact-head approval, and review_file; do not redispatch unchanged runtime. A compatible governed verifier or recovery, or a fresh exact-head evidence and review path, is required.",
+      "resolved_at": "2026-08-09T00:08:13Z",
+      "status": "done",
+      "task_id": "SUP-RUNTIME-V10-PROMOTION-GIT-DIR-ENOTDIR-20260808",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-08-09T00:08:13Z",
+      "from": "Codex2",
+      "message": "Owner closeout revalidated under unchanged pinned command runtime 5877b64425c8d6aede147d6cbbc6fbb9e228c259. PR 4642 remains MERGED at fee6f738a58b82ccc269ed8481ddc5a1a7a68b85; exact approved head and review tag ebf8afe08bf5353db9f158acc496c03b5c4766a8 remain on origin/dev and all five reviewed blobs are byte-identical. Fresh checkout-scoped provision, supported CLI load, Python compile, five focused immutable and mutable Git-layout regressions, task-range diff, and reviewed-blob checks passed; preceding unchanged-head full suite remains 241 passed. Governed done was not retried because runtime 5877b still derives supervisor-reassign-0e858331aa1f34c704c1ef73fbe9618aeda0b1798a80f71ff2cd556a0b49bd5b while canonical audit retains authentic supervisor-task-reassigned-0e858331aa1f34c704c1ef73fbe9618aeda0b1798a80f71ff2cd556a0b49bd5b; merged evidence remains Claude2 pending while canonical approval is Codex2 review_approved. Preserve review_approved, owner Codex, reviewer Codex2, exact-head approval, and review_file. Do not redispatch unchanged runtime; a compatible governed verifier or recovery, or a fresh exact-head evidence and review path, is required.",
+      "resolved_at": "2026-08-09T00:13:05Z",
+      "status": "done",
+      "task_id": "SUP-RUNTIME-V10-PROMOTION-GIT-DIR-ENOTDIR-20260808",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-08-09T00:13:05Z",
+      "from": "Codex2",
+      "message": "Owner closeout remains fail-closed on unchanged pinned command runtime 5877b64425c8d6aede147d6cbbc6fbb9e228c259. PR 4642 is MERGED at fee6f738a58b82ccc269ed8481ddc5a1a7a68b85; exact approved head/review tag ebf8afe08bf5353db9f158acc496c03b5c4766a8 and all five reviewed blobs remain on origin/dev byte-identically, and visible PR checks are green. The immediately preceding unchanged-head closeout run passed supported CLI load, Python compile, five focused regressions, task-range diff, reviewed-blob checks, with the full promotion/sync suite at 241 passed. Canonical archived audit proves Claude2 -> Codex2 with authentic event supervisor-task-reassigned-0e858331aa1f34c704c1ef73fbe9618aeda0b1798a80f71ff2cd556a0b49bd5b, while the pinned done verifier accepts only supervisor-reassign-0e858331aa1f34c704c1ef73fbe9618aeda0b1798a80f71ff2cd556a0b49bd5b. Merged evidence remains Claude2/pending while canonical approval is Codex2/review_approved. Preserve review_approved, owner Codex, reviewer Codex2, review_file, and exact-head approval. Do not redispatch under unchanged runtime; a compatible governed verifier/recovery or a fresh exact-head evidence and independent review path is required. No done retry, post-approval commit, status-file edit, or live runtime action was performed.",
+      "resolved_at": "2026-08-09T00:18:22Z",
+      "status": "done",
+      "task_id": "SUP-RUNTIME-V10-PROMOTION-GIT-DIR-ENOTDIR-20260808",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-08-09T00:18:22Z",
+      "from": "Codex2",
+      "message": "Owner closeout revalidated on pinned command runtime 5877b64425c8d6aede147d6cbbc6fbb9e228c259: PR #4642 remains merged at fee6f738a58b82ccc269ed8481ddc5a1a7a68b85, approved head ebf8afe08bf5353db9f158acc496c03b5c4766a8 and all five reviewed blobs remain on origin/dev, visible checks are green, and CLI load, Python compile, five focused regressions, task-range diff, and evidence JSON validation pass. Done remains deterministically fail-closed because the authentic Claude2->Codex2 audit event uses supervisor-task-reassigned-0e858331aa1f34c704c1ef73fbe9618aeda0b1798a80f71ff2cd556a0b49bd5b while the pinned verifier accepts only supervisor-reassign-0e858331aa1f34c704c1ef73fbe9618aeda0b1798a80f71ff2cd556a0b49bd5b. Preserve review_approved, owner Codex, reviewer Codex2, review_file, exact-head approval, and existing commits; no done retry or live runtime mutation was performed. A compatible governed verifier/recovery or fresh exact-head evidence plus independent review is required.",
+      "resolved_at": "2026-08-09T00:25:13Z",
+      "status": "done",
+      "task_id": "SUP-RUNTIME-V10-PROMOTION-GIT-DIR-ENOTDIR-20260808",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-08-09T00:25:13Z",
+      "from": "Codex2",
+      "message": "Owner closeout revalidated under unchanged pinned command runtime 5877b64425c8d6aede147d6cbbc6fbb9e228c259: PR #4642 remains MERGED at fee6f738a58b82ccc269ed8481ddc5a1a7a68b85; exact approved head/review tag ebf8afe08bf5353db9f158acc496c03b5c4766a8 and all five reviewed blobs remain byte-identical on origin/dev f3c3b830d9756a1a2b2bf40a42b8e086e615a469. Fresh checkout-scoped provision/import proof, supported CLI load, Python compile, five focused immutable/mutable Git-layout regressions (5 passed, 229 deselected), evidence JSON, merge ancestry, reviewed-blob identity, and task-range diff checks pass; preceding unchanged-head full promotion/sync suite remains 241 passed. Governed done was not retried because canonical archived Claude2-to-Codex2 event is supervisor-task-reassigned-0e858331aa1f34c704c1ef73fbe9618aeda0b1798a80f71ff2cd556a0b49bd5b while the pinned verifier still accepts only supervisor-reassign-0e858331aa1f34c704c1ef73fbe9618aeda0b1798a80f71ff2cd556a0b49bd5b; merged evidence remains Claude2/pending while canonical approval is Codex2/review_approved. Preserve review_approved, owner Codex, reviewer Codex2, review_file, exact-head approval, and existing commits. A compatible governed verifier/recovery or fresh exact-head evidence plus independent review is required; the supervisor-generated post-approval task-brief diff remains intentionally uncommitted and no live runtime mutation was performed.",
+      "resolved_at": "2026-08-09T00:31:59Z",
+      "status": "done",
+      "task_id": "SUP-RUNTIME-V10-PROMOTION-GIT-DIR-ENOTDIR-20260808",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-08-09T00:31:59Z",
+      "from": "Codex2",
+      "message": "Owner closeout revalidated under pinned command runtime 5877b64425c8d6aede147d6cbbc6fbb9e228c259: PR #4642 remains merged at fee6f738a58b82ccc269ed8481ddc5a1a7a68b85; exact approved head ebf8afe08bf5353db9f158acc496c03b5c4766a8 and all five reviewed blobs remain byte-identical on origin/dev. Fresh checkout-scoped provision/import proof, supported CLI help, Python compile, five focused regressions (5 passed, 229 deselected), full promotion/sync suite (241 passed), evidence JSON, diff check, and merge ancestry all pass. Governed done was not retried because canonical event supervisor-task-reassigned-0e858331aa1f34c704c1ef73fbe9618aeda0b1798a80f71ff2cd556a0b49bd5b remains incompatible with the pinned verifier's supervisor-reassign prefix. Preserve review_approved, Codex/Codex2, review_file, exact-head approval, and existing commits; no post-approval commit or live runtime mutation was performed.",
+      "resolved_at": "2026-08-09T00:38:45Z",
+      "status": "done",
+      "task_id": "SUP-RUNTIME-V10-PROMOTION-GIT-DIR-ENOTDIR-20260808",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-08-09T00:38:45Z",
+      "from": "Codex2",
+      "message": "Owner closeout revalidated under pinned command runtime 5877b64425c8d6aede147d6cbbc6fbb9e228c259: PR #4642 remains merged at fee6f738a58b82ccc269ed8481ddc5a1a7a68b85; exact approved head ebf8afe08bf5353db9f158acc496c03b5c4766a8 and all five reviewed blobs remain byte-identical on origin/dev. Fresh checkout-scoped provision/import proof, supported CLI help, Python compile, full promotion/sync suite (241 passed in 66.46s), evidence JSON, task-range diff check, and merge ancestry all pass. Governed done was not retried because canonical event supervisor-task-reassigned-0e858331aa1f34c704c1ef73fbe9618aeda0b1798a80f71ff2cd556a0b49bd5b remains incompatible with the pinned verifier's supervisor-reassign prefix. Preserve review_approved, Codex/Codex2, review_file, exact-head approval, and existing commits; the generated task-brief diff is disposable dispatch context and no post-approval commit or live runtime mutation was performed. Requires a separately governed command-runtime compatibility repair or valid Human/Ops reconcile_merged_done before owner closeout can succeed.",
+      "resolved_at": "2026-08-09T00:45:00Z",
+      "status": "done",
+      "task_id": "SUP-RUNTIME-V10-PROMOTION-GIT-DIR-ENOTDIR-20260808",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-08-09T00:45:00Z",
+      "from": "Codex2",
+      "message": "Owner closeout revalidated under pinned command runtime 5877b64425c8d6aede147d6cbbc6fbb9e228c259: PR #4642 remains merged at fee6f738a58b82ccc269ed8481ddc5a1a7a68b85; exact approved head ebf8afe08bf5353db9f158acc496c03b5c4766a8 and all five reviewed blobs remain byte-identical on origin/dev. Fresh checkout-scoped provision/import proof, CLI help, Python compile, promotion/sync suite (241 passed in 44.71s), evidence JSON, task-range diff check, and merge ancestry all pass. Governed done was retried and failed closed: the authentic Claude2->Codex2 task_reassigned event has id supervisor-task-reassigned-0e858331aa1f34c704c1ef73fbe9618aeda0b1798a80f71ff2cd556a0b49bd5b, while the pinned verifier requires supervisor-reassign- with the same digest. Preserve review_approved, Codex/Codex2, review_file, exact-head approval, and existing commits; generated task-brief diff remains disposable and no post-approval commit or live runtime mutation was performed. Requires separately governed command-runtime compatibility repair or valid Human/Ops reconcile_merged_done.",
+      "resolved_at": "2026-08-09T00:52:14Z",
+      "status": "done",
+      "task_id": "SUP-RUNTIME-V10-PROMOTION-GIT-DIR-ENOTDIR-20260808",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-08-09T00:52:14Z",
+      "from": "Codex2",
+      "message": "Owner closeout revalidated under pinned command runtime 5877b64425c8d6aede147d6cbbc6fbb9e228c259: PR #4642 remains merged at fee6f738a58b82ccc269ed8481ddc5a1a7a68b85; approved head ebf8afe08bf5353db9f158acc496c03b5c4766a8 and all five reviewed blobs remain byte-identical on origin/dev. Fresh checkout provision/import, CLI help, py_compile, promotion/sync suite (241 passed in 42.98s), evidence JSON, task-range diff, and merge ancestry pass. Governed done failed closed because authentic Claude2->Codex2 event supervisor-task-reassigned-0e858331aa1f34c704c1ef73fbe9618aeda0b1798a80f71ff2cd556a0b49bd5b is rejected by the pinned verifier, which requires supervisor-reassign- with the same digest. Preserve review_approved, Codex/Codex2, review_file, exact-head approval, existing commits, and the disposable generated brief diff. Requires separately governed command-runtime compatibility repair or valid Human/Ops reconcile_merged_done; no live runtime mutation was performed.",
+      "resolved_at": "2026-08-09T01:06:21Z",
+      "status": "done",
+      "task_id": "SUP-RUNTIME-V10-PROMOTION-GIT-DIR-ENOTDIR-20260808",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-08-09T01:06:21Z",
+      "from": "Codex2",
+      "message": "Owner closeout revalidated under pinned command runtime 5877b64425c8d6aede147d6cbbc6fbb9e228c259: PR #4642 remains merged at fee6f738a58b82ccc269ed8481ddc5a1a7a68b85; approved head/review tag ebf8afe08bf5353db9f158acc496c03b5c4766a8, merge ancestry, evidence assertions, commit trailers, task-range diff, and all five reviewed blobs on origin/dev pass. Checkout-scoped provisioning/distribution imports, supported direct CLI help, py_compile, and promotion/sync suites pass (241 passed in 47.58s). Governed done was not retried because canonical Claude2-to-Codex2 event supervisor-task-reassigned-0e858331aa1f34c704c1ef73fbe9618aeda0b1798a80f71ff2cd556a0b49bd5b remains incompatible with pinned verifier-required supervisor-reassign-0e858331aa1f34c704c1ef73fbe9618aeda0b1798a80f71ff2cd556a0b49bd5b. Preserve review_approved, exact-head approval, review_file, existing commits, and disposable generated brief diff. Requires separately governed command-runtime compatibility repair or valid Human/Ops reconcile_merged_done; no live runtime mutation was performed.",
+      "resolved_at": "2026-08-09T01:12:57Z",
+      "status": "done",
+      "task_id": "SUP-RUNTIME-V10-PROMOTION-GIT-DIR-ENOTDIR-20260808",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-08-09T01:12:57Z",
+      "from": "Codex2",
+      "message": "Review approved. Owner must finalize this task to move it from review_approved to done.",
+      "resolved_at": "2026-08-09T01:13:18Z",
+      "status": "done",
+      "task_id": "SUP-RUNTIME-V10-PROMOTION-GIT-DIR-ENOTDIR-20260808",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-08-09T01:13:18Z",
+      "from": "Codex2",
+      "message": "Owner closeout revalidated under unchanged pinned command runtime 5877b64425c8d6aede147d6cbbc6fbb9e228c259: PR #4642 remains merged at fee6f738a58b82ccc269ed8481ddc5a1a7a68b85; approved head/review tag ebf8afe08bf5353db9f158acc496c03b5c4766a8, origin/dev ancestry, all five reviewed blobs, evidence assertions, commit trailers, task-range diff, and worktree diff checks pass. Fresh checkout-scoped provision/import, supported CLI help, py_compile, and promotion/sync suites pass (241 passed in 42.40s). Governed done was not retried because canonical Claude2-to-Codex2 event supervisor-task-reassigned-0e858331aa1f34c704c1ef73fbe9618aeda0b1798a80f71ff2cd556a0b49bd5b remains incompatible with the pinned verifier-required supervisor-reassign-0e858331aa1f34c704c1ef73fbe9618aeda0b1798a80f71ff2cd556a0b49bd5b. Preserve review_approved, owner Codex, reviewer Codex2, review_file, exact-head approval, existing commits, and the disposable supervisor-generated brief diff. Do not redispatch owner closeout until a separately governed compatible command runtime or valid Human/Ops reconcile_merged_done changes this prerequisite; no live runtime mutation was performed.",
+      "resolved_at": "2026-08-09T01:19:03Z",
+      "status": "done",
+      "task_id": "SUP-RUNTIME-V10-PROMOTION-GIT-DIR-ENOTDIR-20260808",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-08-09T01:19:03Z",
+      "from": "Codex2",
+      "message": "Owner closeout prerequisite remains unchanged on this redispatch under pinned command runtime 5877b64425c8d6aede147d6cbbc6fbb9e228c259: PR #4642 is MERGED at fee6f738a58b82ccc269ed8481ddc5a1a7a68b85; exact approved head/review tag ebf8afe08bf5353db9f158acc496c03b5c4766a8, origin/dev ancestry, all five reviewed blobs, evidence assertions, commit trailers, task-range diff, and worktree diff checks pass. The immediately preceding unchanged-head checkout-scoped provision/import, CLI help, py_compile, and promotion/sync suites passed 241 tests in 42.40s. Governed done was not retried because the canonical Claude2-to-Codex2 event is supervisor-task-reassigned-0e858331aa1f34c704c1ef73fbe9618aeda0b1798a80f71ff2cd556a0b49bd5b while the pinned verifier requires supervisor-reassign-0e858331aa1f34c704c1ef73fbe9618aeda0b1798a80f71ff2cd556a0b49bd5b. Preserve review_approved, Codex/Codex2, review_file, exact-head approval, existing commits, and the disposable supervisor-generated brief diff. Do not redispatch until a compatible governed runtime or valid Human/Ops reconcile_merged_done changes this prerequisite; no live runtime mutation was performed.",
+      "resolved_at": "2026-08-09T01:26:20Z",
+      "status": "done",
+      "task_id": "SUP-RUNTIME-V10-PROMOTION-GIT-DIR-ENOTDIR-20260808",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-08-09T01:26:20Z",
+      "from": "Codex2",
+      "message": "Owner closeout remains blocked under pinned command runtime 5877b64425c8d6aede147d6cbbc6fbb9e228c259: PR #4642 is MERGED at fee6f738a58b82ccc269ed8481ddc5a1a7a68b85; exact approved head ebf8afe08bf5353db9f158acc496c03b5c4766a8 is on origin/dev and all five reviewed blobs are byte-identical. Fresh evidence assertions, task-range/worktree diff checks, merge ancestry, canonical archived reassignment audit, and py_compile pass; immediately preceding unchanged-head promotion/sync suites passed 241 tests in 42.40s. Governed done was not retried because the authentic event id is supervisor-task-reassigned-0e858331aa1f34c704c1ef73fbe9618aeda0b1798a80f71ff2cd556a0b49bd5b while the pinned verifier requires supervisor-reassign- with the same digest. Preserve review_approved, Codex/Codex2, review_file, exact-head approval, existing commits, and disposable supervisor brief diff. Requires a compatible governed runtime or valid Human/Ops reconcile_merged_done; no live runtime mutation was performed.",
+      "resolved_at": "2026-08-09T01:40:00Z",
+      "status": "done",
+      "task_id": "SUP-RUNTIME-V10-PROMOTION-GIT-DIR-ENOTDIR-20260808",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-08-09T01:40:00Z",
+      "from": "Codex2",
+      "message": "Owner closeout rechecked under unchanged pinned command runtime 5877b64425c8d6aede147d6cbbc6fbb9e228c259. PR #4642 remains MERGED at fee6f738a58b82ccc269ed8481ddc5a1a7a68b85; exact approved head/review tag ebf8afe08bf5353db9f158acc496c03b5c4766a8 is an ancestor of origin/dev, all five reviewed blobs match origin/dev, and the pre-rebase validated code tree 4e06d7f2898c31e576ecd73d5e2d66c7f1b4fe6e is tree-identical to merged anchor 6ed9c072afd79abc07803975c9ad85b96aafd33d. The immediately preceding unchanged-head closeout run passed checkout-scoped provision/import, CLI help, py_compile, and 241 promotion/sync tests in 42.40s. Governed done was not retried: pinned scripts/ai_status.py still computes supervisor-reassign-<digest>, while the authentic Claude2-to-Codex2 audit event retained by canonical history is supervisor-task-reassigned-0e858331aa1f34c704c1ef73fbe9618aeda0b1798a80f71ff2cd556a0b49bd5b. Preserve review_approved, owner Codex, reviewer Codex2, review_file, exact-head approval, existing commits, and disposable supervisor-generated brief diff. Requires a separately governed compatible command runtime or valid Human/Ops reconcile_merged_done; no post-approval commit, state-file edit, done retry, or live runtime mutation was performed.",
+      "resolved_at": "2026-08-09T01:51:55Z",
+      "status": "done",
+      "task_id": "SUP-RUNTIME-V10-PROMOTION-GIT-DIR-ENOTDIR-20260808",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-08-09T01:51:55Z",
+      "from": "Codex2",
+      "message": "Owner closeout revalidated on 2026-08-09: PR #4642 remains merged as fee6f738a58b82ccc269ed8481ddc5a1a7a68b85; exact approved head ebf8afe08bf5353db9f158acc496c03b5c4766a8 is an ancestor of origin/dev; fresh checkout-scoped promotion+sync verification passed 241 tests in 45.03s and task-range git diff --check passed. Governed done under pinned command runtime 5877b64425c8d6aede147d6cbbc6fbb9e228c259 still fails closed because merged commit trailers name Claude2 while canonical reviewer is Codex2, and the authentic reviewer reassignment event uses supervisor-task-reassigned- rather than the verifier's supervisor-reassign- prefix. Preserve review_approved, Codex/Codex2, review_file, exact-head approval, merged commits, and clean worktree. Requires a separately governed compatible command runtime or valid Human/Ops reconcile_merged_done; no reassignment, post-approval commit, state-file edit, or live runtime mutation was performed.",
+      "resolved_at": "2026-08-09T01:57:52Z",
+      "status": "done",
+      "task_id": "SUP-RUNTIME-V10-PROMOTION-GIT-DIR-ENOTDIR-20260808",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-08-09T01:57:52Z",
+      "from": "Codex2",
+      "message": "Owner closeout revalidated on 2026-08-09: PR #4642 remains merged as fee6f738a58b82ccc269ed8481ddc5a1a7a68b85; exact approved head ebf8afe08bf5353db9f158acc496c03b5c4766a8 is on origin/dev; fresh checkout-scoped promotion+sync verification passed 241 tests in 49.24s; manifest and task-range diff checks passed; worktree is clean. Governed done under pinned runtime 5877b64425c8d6aede147d6cbbc6fbb9e228c259 failed closed: audited reviewer reassignment chain does not bind commit reviewer Claude2 to canonical reviewer Codex2 because the authentic event id uses supervisor-task-reassigned- while the verifier accepts supervisor-reassign-. Preserve review_approved, Codex/Codex2, review_file, exact-head approval, and merged commits. Requires a separately governed compatible command runtime or valid Human/Ops reconcile_merged_done; no reassignment, post-approval commit, state-file edit, or live runtime mutation was performed.",
+      "resolved_at": "2026-08-09T02:05:19Z",
+      "status": "done",
+      "task_id": "SUP-RUNTIME-V10-PROMOTION-GIT-DIR-ENOTDIR-20260808",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-08-09T02:05:19Z",
+      "from": "Codex2",
+      "message": "Owner closeout preflight remains fail-closed under pinned command runtime 5877b64425c8d6aede147d6cbbc6fbb9e228c259: PR #4642 is merged as fee6f738a58b82ccc269ed8481ddc5a1a7a68b85, exact approved head ebf8afe08bf5353db9f158acc496c03b5c4766a8 is on origin/dev, reviewed manifest and task-range checks pass, and the immediately preceding unchanged-head checkout-scoped suite passed 241 tests. Authentic 2026-08-08T15:13:07Z Claude2->Codex2 audit id is supervisor-task-reassigned-0e858331..., but the pinned verifier requires supervisor-reassign-0e858331.... Governed done was intentionally not retried because the deterministic prerequisite is unchanged. Preserve review_approved, Codex/Codex2, review_file, exact-head approval, merged commits, and the disposable supervisor-generated brief diff; requires a compatible governed runtime or valid Human/Ops reconcile_merged_done.",
+      "resolved_at": "2026-08-09T02:13:53Z",
+      "status": "done",
+      "task_id": "SUP-RUNTIME-V10-PROMOTION-GIT-DIR-ENOTDIR-20260808",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-08-09T02:13:53Z",
+      "from": "Codex2",
+      "message": "Owner closeout preflight remains fail-closed under pinned command runtime 5877b64425c8d6aede147d6cbbc6fbb9e228c259: PR #4642 is merged as fee6f738a58b82ccc269ed8481ddc5a1a7a68b85, exact approved head ebf8afe08bf5353db9f158acc496c03b5c4766a8 and all five reviewed task files are unchanged on origin/dev, PR checks and task-range diff checks pass, and the immediately preceding unchanged-head suite passed 241 tests. Authentic 2026-08-08T15:13:07Z Claude2-to-Codex2 audit id supervisor-task-reassigned-0e858331aa1f34c704c1ef73fbe9618aeda0b1798a80f71ff2cd556a0b49bd5b still cannot satisfy the verifier-required supervisor-reassign-0e858331aa1f34c704c1ef73fbe9618aeda0b1798a80f71ff2cd556a0b49bd5b. Governed done was not retried; preserve review_approved, Codex/Codex2, review_file, exact-head approval, merged commits, and the disposable supervisor-generated brief diff. Requires a compatible governed runtime or valid Human/Ops reconcile_merged_done.",
+      "resolved_at": "2026-08-09T02:20:27Z",
+      "status": "done",
+      "task_id": "SUP-RUNTIME-V10-PROMOTION-GIT-DIR-ENOTDIR-20260808",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-08-09T02:20:27Z",
+      "from": "Codex2",
+      "message": "Owner closeout revalidated and retried under pinned command runtime 5877b64425c8d6aede147d6cbbc6fbb9e228c259: PR #4642 remains merged as fee6f738a58b82ccc269ed8481ddc5a1a7a68b85, exact approved head ebf8afe08bf5353db9f158acc496c03b5c4766a8 and all five reviewed files remain unchanged on origin/dev, 241 focused tests passed in 46.05s, task-range diff and commit-scope gates passed. Governed done fails closed because authentic Claude2-to-Codex2 event supervisor-task-reassigned-0e858331aa1f34c704c1ef73fbe9618aeda0b1798a80f71ff2cd556a0b49bd5b does not match verifier-required supervisor-reassign-0e858331aa1f34c704c1ef73fbe9618aeda0b1798a80f71ff2cd556a0b49bd5b. Preserve review_approved, exact-head approval, review_file, merged commits, and disposable generated brief diff; requires governed legacy-event compatibility or authorized recovery under a compatible runtime.",
+      "resolved_at": "2026-08-09T02:27:55Z",
+      "status": "done",
+      "task_id": "SUP-RUNTIME-V10-PROMOTION-GIT-DIR-ENOTDIR-20260808",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-08-09T02:27:55Z",
+      "from": "Codex2",
+      "message": "Owner closeout revalidated under unchanged pinned command runtime 5877b64425c8d6aede147d6cbbc6fbb9e228c259: PR #4642 remains merged as fee6f738a58b82ccc269ed8481ddc5a1a7a68b85; exact approved head/review tag ebf8afe08bf5353db9f158acc496c03b5c4766a8 is on origin/dev and all five reviewed blobs remain byte-identical. Fresh checkout-scoped provisioning/imports, py_compile, promotion/sync suites passed 241 tests in 45.18s; evidence assertions, tree identity, merge ancestry, task-range/worktree diff, and commit-scope gates passed. Governed done was not retried because authentic archived Claude2-to-Codex2 event supervisor-task-reassigned-0e858331aa1f34c704c1ef73fbe9618aeda0b1798a80f71ff2cd556a0b49bd5b remains incompatible with verifier-required supervisor-reassign-0e858331aa1f34c704c1ef73fbe9618aeda0b1798a80f71ff2cd556a0b49bd5b. Preserve review_approved, Codex/Codex2, review_file, exact-head approval, merged commits, and disposable generated brief diff; requires governed legacy-event compatibility or authorized Human/Ops recovery.",
+      "resolved_at": "2026-08-09T02:33:46Z",
+      "status": "done",
+      "task_id": "SUP-RUNTIME-V10-PROMOTION-GIT-DIR-ENOTDIR-20260808",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-08-09T02:33:46Z",
+      "from": "Codex2",
+      "message": "Owner closeout remains fail-closed under unchanged pinned command runtime 5877b64425c8d6aede147d6cbbc6fbb9e228c259. PR #4642 is merged at fee6f738a58b82ccc269ed8481ddc5a1a7a68b85; exact approved head/tag ebf8afe08bf5353db9f158acc496c03b5c4766a8 and all five reviewed blobs remain on origin/dev byte-identically, PR gates are green, and the immediately preceding unchanged-head checkout-scoped promotion/sync validation passed 241 tests. The archived authentic Claude2-to-Codex2 event is supervisor-task-reassigned-0e858331aa1f34c704c1ef73fbe9618aeda0b1798a80f71ff2cd556a0b49bd5b, while both pinned runtime and current origin/dev verifier require supervisor-reassign-0e858331aa1f34c704c1ef73fbe9618aeda0b1798a80f71ff2cd556a0b49bd5b. Governed done was not retried because failure is deterministic and prerequisites are unchanged. Preserve review_approved, Codex/Codex2, review_file, exact-head approval, existing merged commits, and disposable generated brief diff; requires governed legacy-event compatibility or authorized Human/Ops recovery.",
+      "resolved_at": "2026-08-09T02:40:42Z",
+      "status": "done",
+      "task_id": "SUP-RUNTIME-V10-PROMOTION-GIT-DIR-ENOTDIR-20260808",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-08-09T02:40:42Z",
+      "from": "Codex2",
+      "message": "Owner closeout revalidated under unchanged pinned command runtime 5877b64425c8d6aede147d6cbbc6fbb9e228c259: PR #4642 remains merged at fee6f738a58b82ccc269ed8481ddc5a1a7a68b85; exact approved head/tag ebf8afe08bf5353db9f158acc496c03b5c4766a8 and all five reviewed blobs remain byte-identical on origin/dev; fresh checkout-scoped provisioning, py_compile, manifest assertions, ancestry/tag/diff checks, and promotion/sync suites passed (241 tests in 44.39s). Governed done was not retried because authentic archived Claude2-to-Codex2 event supervisor-task-reassigned-0e858331aa1f34c704c1ef73fbe9618aeda0b1798a80f71ff2cd556a0b49bd5b remains incompatible with verifier-required supervisor-reassign-0e858331aa1f34c704c1ef73fbe9618aeda0b1798a80f71ff2cd556a0b49bd5b. Preserve review_approved, Codex/Codex2, review_file, exact-head approval, merged commits, and disposable generated brief diff; requires governed legacy-event compatibility or authorized Human/Ops recovery.",
+      "resolved_at": "2026-08-09T02:43:58Z",
+      "status": "done",
+      "task_id": "SUP-RUNTIME-V10-PROMOTION-GIT-DIR-ENOTDIR-20260808",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-08-09T02:43:58Z",
+      "from": "Codex2",
+      "message": "Owner finalize preflight on redispatch confirms unchanged prerequisites: PR #4642 remains merged at fee6f738a58b82ccc269ed8481ddc5a1a7a68b85; exact approved head ebf8afe08bf5353db9f158acc496c03b5c4766a8, review tag, merge ancestry, all five reviewed blobs on origin/dev, and task-range diff checks pass. The immediately preceding same-head/same-runtime closeout validation passed checkout provisioning, py_compile, manifest assertions, and 241 promotion/sync tests in 44.39s. Governed done was not retried because pinned command runtime 5877b64425c8d6aede147d6cbbc6fbb9e228c259 still requires supervisor-reassign-0e858331aa1f34c704c1ef73fbe9618aeda0b1798a80f71ff2cd556a0b49bd5b while the authentic archived Claude2-to-Codex2 event remains supervisor-task-reassigned-0e858331aa1f34c704c1ef73fbe9618aeda0b1798a80f71ff2cd556a0b49bd5b. Preserve review_approved, Codex/Codex2, review_file, exact-head approval, merged commits, and disposable generated brief diff; requires governed legacy-event compatibility or authorized Human/Ops recovery.",
+      "resolved_at": "2026-08-09T02:54:06Z",
+      "status": "done",
+      "task_id": "SUP-RUNTIME-V10-PROMOTION-GIT-DIR-ENOTDIR-20260808",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-08-09T02:54:06Z",
+      "from": "Codex2",
+      "message": "Owner closeout revalidated under pinned command runtime 5877b64425c8d6aede147d6cbbc6fbb9e228c259: PR #4642 remains merged at fee6f738a58b82ccc269ed8481ddc5a1a7a68b85; exact approved head/tag ebf8afe08bf5353db9f158acc496c03b5c4766a8 and all five reviewed blobs remain byte-identical on origin/dev; fresh checkout provisioning, py_compile, manifest assertions, merge ancestry/tag/task-range diff checks, and 241 promotion/sync tests passed in 46.86s; worktree is clean. Governed done was not retried because authentic archived Claude2-to-Codex2 event supervisor-task-reassigned-0e858331aa1f34c704c1ef73fbe9618aeda0b1798a80f71ff2cd556a0b49bd5b remains incompatible with verifier-required supervisor-reassign-0e858331aa1f34c704c1ef73fbe9618aeda0b1798a80f71ff2cd556a0b49bd5b. Preserve review_approved, Codex/Codex2, review_file, exact-head approval, and merged commits; requires governed legacy-event compatibility or authorized Human/Ops recovery before redispatch.",
+      "resolved_at": "2026-08-09T03:00:44Z",
+      "status": "done",
+      "task_id": "SUP-RUNTIME-V10-PROMOTION-GIT-DIR-ENOTDIR-20260808",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-08-09T03:00:44Z",
+      "from": "Codex2",
+      "message": "Owner closeout revalidated under pinned command runtime 5877b64425c8d6aede147d6cbbc6fbb9e228c259: PR #4642 remains merged at fee6f738a58b82ccc269ed8481ddc5a1a7a68b85; exact approved head/tag ebf8afe08bf5353db9f158acc496c03b5c4766a8 and all five reviewed blobs remain on origin/dev; fresh checkout provisioning, py_compile, manifest/tag/ancestry/blob/task-range assertions, git diff --check, and 241 promotion/sync tests passed in 47.03s. Governed done failed closed because commit reviewer Claude2 cannot bind to canonical reviewer Codex2: the authentic archived event is supervisor-task-reassigned-0e858331aa1f34c704c1ef73fbe9618aeda0b1798a80f71ff2cd556a0b49bd5b while the pinned verifier requires supervisor-reassign-0e858331aa1f34c704c1ef73fbe9618aeda0b1798a80f71ff2cd556a0b49bd5b. Preserve review_approved, Codex/Codex2, review_file, exact-head approval, and merged commits. Requires governed event-ID compatibility or authorized Human/Ops reconcile_merged_done before redispatch; no reassignment, post-approval commit, audit/state edit, or live runtime mutation was performed. The only task-worktree diff is the supervisor-generated task-brief refresh and is intentionally not committed because a new head would invalidate approval.",
+      "resolved_at": "2026-08-09T03:07:03Z",
+      "status": "done",
+      "task_id": "SUP-RUNTIME-V10-PROMOTION-GIT-DIR-ENOTDIR-20260808",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-08-09T03:07:03Z",
+      "from": "Codex2",
+      "message": "Owner closeout revalidated under unchanged pinned command runtime 5877b64425c8d6aede147d6cbbc6fbb9e228c259: PR #4642 remains merged at fee6f738a58b82ccc269ed8481ddc5a1a7a68b85; exact approved head/tag ebf8afe08bf5353db9f158acc496c03b5c4766a8 and all five reviewed blobs remain byte-identical on origin/dev; fresh checkout provisioning, py_compile, manifest/tag/ancestry/blob/task-range assertions, git diff --check, and 241 promotion/sync tests passed in 44.97s. Governed done was not retried because the authentic archived Claude2-to-Codex2 event remains supervisor-task-reassigned-0e858331aa1f34c704c1ef73fbe9618aeda0b1798a80f71ff2cd556a0b49bd5b while pinned verifier ai_status.py:6619 still requires supervisor-reassign-0e858331aa1f34c704c1ef73fbe9618aeda0b1798a80f71ff2cd556a0b49bd5b. Preserve review_approved, Codex/Codex2, review_file, exact-head approval, merged commits, and disposable generated brief diff; requires governed event-ID compatibility or authorized Human/Ops reconcile_merged_done before redispatch.",
+      "resolved_at": "2026-08-09T03:11:46Z",
+      "status": "done",
+      "task_id": "SUP-RUNTIME-V10-PROMOTION-GIT-DIR-ENOTDIR-20260808",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-08-09T03:11:46Z",
+      "from": "Codex2",
+      "message": "Owner closeout revalidated under unchanged pinned command runtime 5877b64425c8d6aede147d6cbbc6fbb9e228c259: PR #4642 remains merged at fee6f738a58b82ccc269ed8481ddc5a1a7a68b85; exact approved head/tag ebf8afe08bf5353db9f158acc496c03b5c4766a8 and all five reviewed blobs remain byte-identical on origin/dev; checkout-scoped provisioning, py_compile, manifest/tag/ancestry/blob/task-range assertions, git diff --check, and 241 promotion/sync tests passed in 49.61s. Governed done was not retried because authentic archived Claude2-to-Codex2 event supervisor-task-reassigned-0e858331aa1f34c704c1ef73fbe9618aeda0b1798a80f71ff2cd556a0b49bd5b remains incompatible with verifier-required supervisor-reassign-0e858331aa1f34c704c1ef73fbe9618aeda0b1798a80f71ff2cd556a0b49bd5b. Preserve review_approved, Codex/Codex2, review_file, exact-head approval, merged commits, and disposable generated brief diff; requires governed legacy-event compatibility or authorized Human/Ops reconcile_merged_done before redispatch.",
+      "resolved_at": "2026-08-09T03:17:13Z",
+      "status": "done",
+      "task_id": "SUP-RUNTIME-V10-PROMOTION-GIT-DIR-ENOTDIR-20260808",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-08-09T03:17:13Z",
+      "from": "Codex2",
+      "message": "Owner closeout revalidated under unchanged pinned command runtime 5877b64425c8d6aede147d6cbbc6fbb9e228c259: PR #4642 remains merged at fee6f738a58b82ccc269ed8481ddc5a1a7a68b85; exact approved head/tag ebf8afe08bf5353db9f158acc496c03b5c4766a8 and all five reviewed blobs remain byte-identical on origin/dev; fresh checkout-scoped provisioning, py_compile, manifest/tag/ancestry/blob/task-range checks, git diff --check, and 241 promotion/sync tests passed in 52.82s. Governed done was not retried because authentic archived Claude2-to-Codex2 event supervisor-task-reassigned-0e858331aa1f34c704c1ef73fbe9618aeda0b1798a80f71ff2cd556a0b49bd5b remains incompatible with verifier-required supervisor-reassign-0e858331aa1f34c704c1ef73fbe9618aeda0b1798a80f71ff2cd556a0b49bd5b. Preserve review_approved, Codex/Codex2, review_file, exact-head approval, merged commits, and disposable generated brief diff; requires governed legacy-event compatibility or authorized Human/Ops reconcile_merged_done before redispatch.",
+      "resolved_at": "2026-08-09T03:28:59Z",
+      "status": "done",
+      "task_id": "SUP-RUNTIME-V10-PROMOTION-GIT-DIR-ENOTDIR-20260808",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-08-09T03:28:59Z",
+      "from": "Codex2",
+      "message": "Owner closeout revalidated under pinned command runtime 5877b64425c8d6aede147d6cbbc6fbb9e228c259: PR #4642 remains merged as fee6f738a58b82ccc269ed8481ddc5a1a7a68b85; exact approved head ebf8afe08bf5353db9f158acc496c03b5c4766a8 is on origin/dev; worktree and task-range diff checks pass; fresh checkout-scoped promotion/sync suites passed 241 tests in 43.68s. Governed done was retried and failed closed because commit reviewer Claude2 cannot bind to canonical reviewer Codex2: authentic event supervisor-task-reassigned-0e858331aa1f34c704c1ef73fbe9618aeda0b1798a80f71ff2cd556a0b49bd5b is incompatible with verifier-required supervisor-reassign-0e858331aa1f34c704c1ef73fbe9618aeda0b1798a80f71ff2cd556a0b49bd5b. Preserve review_approved, Codex/Codex2, review_file, exact-head approval, and merged commits. Requires governed legacy-event compatibility or authorized Human/Ops reconcile_merged_done before redispatch; no reassignment, post-approval commit, audit/state edit, or live runtime mutation was performed.",
+      "resolved_at": "2026-08-09T03:44:57Z",
+      "status": "done",
+      "task_id": "SUP-RUNTIME-V10-PROMOTION-GIT-DIR-ENOTDIR-20260808",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-08-09T03:44:57Z",
+      "from": "Codex2",
+      "message": "Owner closeout revalidated under pinned command runtime 5877b64425c8d6aede147d6cbbc6fbb9e228c259: PR #4642 remains merged as fee6f738a58b82ccc269ed8481ddc5a1a7a68b85; exact approved head ebf8afe08bf5353db9f158acc496c03b5c4766a8 is on origin/dev; task worktree is clean; checkout-scoped promotion/sync suites passed 241 tests in 42.16s; task-range diff check passed. Governed done was retried and failed closed because commit reviewer Claude2 cannot bind to canonical reviewer Codex2: authentic event supervisor-task-reassigned-0e858331aa1f34c704c1ef73fbe9618aeda0b1798a80f71ff2cd556a0b49bd5b is incompatible with verifier-required supervisor-reassign-0e858331aa1f34c704c1ef73fbe9618aeda0b1798a80f71ff2cd556a0b49bd5b. Preserve review_approved, Codex/Codex2, review_file, exact-head approval, and merged commits. Requires governed legacy-event ID compatibility or authorized Human/Ops recovery before redispatch; no reassignment, post-approval commit, audit/state edit, or live runtime mutation was performed.",
+      "resolved_at": "2026-08-09T03:51:47Z",
+      "status": "done",
+      "task_id": "SUP-RUNTIME-V10-PROMOTION-GIT-DIR-ENOTDIR-20260808",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-08-09T03:51:47Z",
+      "from": "Codex2",
+      "message": "Owner closeout revalidated under pinned command runtime 5877b64425c8d6aede147d6cbbc6fbb9e228c259: PR #4642 remains merged as fee6f738a58b82ccc269ed8481ddc5a1a7a68b85; exact approved head ebf8afe08bf5353db9f158acc496c03b5c4766a8 and all five reviewed blobs remain on origin/dev; checkout-scoped provisioning, py_compile, manifest/tag/ancestry/blob/task-range checks, git diff --check, and 241 promotion/sync tests passed in 49.14s. Governed done failed closed because the audited reviewer reassignment chain cannot bind commit reviewer Claude2 to canonical reviewer Codex2: authentic legacy event supervisor-task-reassigned-0e858331aa1f34c704c1ef73fbe9618aeda0b1798a80f71ff2cd556a0b49bd5b is incompatible with verifier-required supervisor-reassign-0e858331aa1f34c704c1ef73fbe9618aeda0b1798a80f71ff2cd556a0b49bd5b. Preserve review_approved, Codex/Codex2, review_file, exact-head approval, merged commits, and disposable generated task-brief diff. Requires governed legacy-event ID compatibility or authorized Human/Ops reconcile_merged_done; no reassignment, post-approval commit, audit/state edit, or live runtime mutation was performed.",
+      "resolved_at": "2026-08-09T03:59:55Z",
+      "status": "done",
+      "task_id": "SUP-RUNTIME-V10-PROMOTION-GIT-DIR-ENOTDIR-20260808",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-08-09T03:59:55Z",
+      "from": "Codex2",
+      "message": "Owner closeout revalidated under unchanged pinned command runtime 5877b64425c8d6aede147d6cbbc6fbb9e228c259: PR #4642 remains merged as fee6f738a58b82ccc269ed8481ddc5a1a7a68b85; exact approved head/tag ebf8afe08bf5353db9f158acc496c03b5c4766a8 and all five reviewed blobs remain byte-identical on origin/dev; fresh checkout-scoped provisioning, py_compile, manifest/tag/ancestry/blob/merged-PR-range checks, git diff --check, and 241 promotion/sync tests passed in 82.17s. Governed done was not retried because the authentic archived Claude2-to-Codex2 event remains supervisor-task-reassigned-0e858331aa1f34c704c1ef73fbe9618aeda0b1798a80f71ff2cd556a0b49bd5b while pinned verifier ai_status.py requires supervisor-reassign-0e858331aa1f34c704c1ef73fbe9618aeda0b1798a80f71ff2cd556a0b49bd5b. Preserve review_approved, Codex/Codex2, review_file, exact-head approval, merged commits, and disposable generated brief diff; requires governed legacy-event compatibility or authorized Human/Ops reconcile_merged_done before redispatch.",
+      "resolved_at": "2026-08-09T04:08:24Z",
+      "status": "done",
+      "task_id": "SUP-RUNTIME-V10-PROMOTION-GIT-DIR-ENOTDIR-20260808",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-08-09T04:08:24Z",
+      "from": "Codex2",
+      "message": "Owner closeout revalidated under pinned runtime 5877b64425c8d6aede147d6cbbc6fbb9e228c259: PR #4642 remains merged as fee6f738a58b82ccc269ed8481ddc5a1a7a68b85; exact approved head/tag ebf8afe08bf5353db9f158acc496c03b5c4766a8 and all five reviewed blobs remain byte-identical on origin/dev; fresh checkout provisioning, py_compile, scope/tag/ancestry/blob/diff checks, and 241 promotion/sync tests passed in 55.35s. Governed done failed closed: archived Claude2-to-Codex2 task_reassigned event is supervisor-task-reassigned-0e858331aa1f34c704c1ef73fbe9618aeda0b1798a80f71ff2cd556a0b49bd5b while pinned verifier derives supervisor-reassign-0e858331aa1f34c704c1ef73fbe9618aeda0b1798a80f71ff2cd556a0b49bd5b. Preserve review_approved, Codex/Codex2, review_file, exact-head approval, merged commits, and disposable brief diff; requires governed legacy-event compatibility or authorized Human/Ops reconcile_merged_done before redispatch.",
+      "resolved_at": "2026-08-09T04:14:19Z",
+      "status": "done",
+      "task_id": "SUP-RUNTIME-V10-PROMOTION-GIT-DIR-ENOTDIR-20260808",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-08-09T04:14:19Z",
+      "from": "Codex2",
+      "message": "Owner closeout revalidated under pinned runtime 5877b64425c8d6aede147d6cbbc6fbb9e228c259: PR #4642 remains merged as fee6f738a58b82ccc269ed8481ddc5a1a7a68b85; exact approved head/tag ebf8afe08bf5353db9f158acc496c03b5c4766a8 remains an ancestor of origin/dev and all five reviewed blobs are byte-identical there; reviewer-bound evidence, task-range git diff --check, and current merge metadata pass. Governed done was not retried because the unchanged pinned verifier still derives supervisor-reassign-0e858331aa1f34c704c1ef73fbe9618aeda0b1798a80f71ff2cd556a0b49bd5b while the authentic archived Claude2-to-Codex2 event is supervisor-task-reassigned-0e858331aa1f34c704c1ef73fbe9618aeda0b1798a80f71ff2cd556a0b49bd5b. Preserve review_approved, Codex/Codex2, review_file, exact-head approval, merged commits, and disposable brief diff; requires governed legacy-event compatibility or authorized Human/Ops reconcile_merged_done before redispatch.",
+      "resolved_at": "2026-08-09T04:20:48Z",
+      "status": "done",
+      "task_id": "SUP-RUNTIME-V10-PROMOTION-GIT-DIR-ENOTDIR-20260808",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-08-09T04:20:48Z",
+      "from": "Codex2",
+      "message": "Owner closeout prerequisite remains unchanged after retry revalidation: PR #4642 is merged as fee6f738a58b82ccc269ed8481ddc5a1a7a68b85; exact approved head/tag ebf8afe08bf5353db9f158acc496c03b5c4766a8 is an ancestor of current origin/dev and all five reviewed blobs remain byte-identical; checkout-scoped provisioning and Python compile passed, and 241 promotion/sync tests passed in 54.73s; merge ancestry and task-range diff checks passed. Governed done was not retried because PANTHEON_COMMAND_RUNTIME_SHA remains 5877b64425c8d6aede147d6cbbc6fbb9e228c259 and deterministically computes supervisor-reassign-* while canonical audit records genuine Claude2-to-Codex2 event supervisor-task-reassigned-0e858331aa1f34c704c1ef73fbe9618aeda0b1798a80f71ff2cd556a0b49bd5b. Preserve review_approved, Codex/Codex2, reviewer-bound evidence, exact-head approval, merged commits, and disposable brief diff. Human/Ops reconcile_merged_done under a compatible runtime, or a governed compatibility repair plus promotion, is required before owner redispatch; no post-approval commit or live runtime mutation was made.",
+      "resolved_at": "2026-08-09T04:27:26Z",
+      "status": "done",
+      "task_id": "SUP-RUNTIME-V10-PROMOTION-GIT-DIR-ENOTDIR-20260808",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-08-09T04:27:26Z",
+      "from": "Codex2",
+      "message": "Owner closeout revalidated under pinned runtime 5877b64425c8d6aede147d6cbbc6fbb9e228c259: PR #4642 remains merged as fee6f738a58b82ccc269ed8481ddc5a1a7a68b85; exact approved head ebf8afe08bf5353db9f158acc496c03b5c4766a8 and all five reviewed blobs remain byte-identical on current origin/dev; checkout-scoped provisioning, Python compile, task-range diff checks, merge ancestry, and 241 promotion/sync tests pass (61.00s). Governed done was not retried because the pinned verifier derives supervisor-reassign-0e858331aa1f34c704c1ef73fbe9618aeda0b1798a80f71ff2cd556a0b49bd5b while the authentic archived Claude2-to-Codex2 event is supervisor-task-reassigned-0e858331aa1f34c704c1ef73fbe9618aeda0b1798a80f71ff2cd556a0b49bd5b. Preserve review_approved, Codex/Codex2, review_file, exact-head approval, merged commits, and disposable brief diff; requires governed legacy-event compatibility or authorized Human/Ops reconcile_merged_done before redispatch. No post-approval commit or live runtime mutation was made.",
+      "resolved_at": "2026-08-09T04:35:18Z",
+      "status": "done",
+      "task_id": "SUP-RUNTIME-V10-PROMOTION-GIT-DIR-ENOTDIR-20260808",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-08-09T04:35:18Z",
+      "from": "Codex2",
+      "message": "Owner closeout fully revalidated and governed done was retried under pinned runtime 5877b64425c8d6aede147d6cbbc6fbb9e228c259. PR #4642 remains merged as fee6f738a58b82ccc269ed8481ddc5a1a7a68b85; exact approved head ebf8afe08bf5353db9f158acc496c03b5c4766a8 and all five reviewed blobs remain byte-identical on current origin/dev; checkout-scoped provisioning, Python compile, task-range diff/merge ancestry checks pass, and 241 promotion/sync tests passed in 54.59s. done failed closed because the pinned verifier derives supervisor-reassign-0e858331aa1f34c704c1ef73fbe9618aeda0b1798a80f71ff2cd556a0b49bd5b, while the authentic archived Claude2-to-Codex2 event is supervisor-task-reassigned-0e858331aa1f34c704c1ef73fbe9618aeda0b1798a80f71ff2cd556a0b49bd5b. Preserve review_approved, Codex/Codex2, review_file, exact-head approval, merged commits, and disposable brief diff. Requires governed legacy-event compatibility or authorized Human/Ops reconcile_merged_done before redispatch. No post-approval commit or live runtime mutation was made.",
+      "resolved_at": "2026-08-09T04:41:21Z",
+      "status": "done",
+      "task_id": "SUP-RUNTIME-V10-PROMOTION-GIT-DIR-ENOTDIR-20260808",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-08-09T04:41:21Z",
+      "from": "Codex2",
+      "message": "Owner closeout revalidated under unchanged pinned runtime 5877b64425c8d6aede147d6cbbc6fbb9e228c259: PR #4642 remains merged as fee6f738a58b82ccc269ed8481ddc5a1a7a68b85; exact approved head/tag ebf8afe08bf5353db9f158acc496c03b5c4766a8 and all five reviewed blobs remain byte-identical on current origin/dev; checkout-scoped provisioning, py_compile, task-range diff/merge ancestry checks passed, and 241 promotion/sync tests passed in 50.50s. Governed done was not retried because the pinned verifier remains incompatible with the authentic archived Claude2-to-Codex2 legacy event: it derives supervisor-reassign-0e858331aa1f34c704c1ef73fbe9618aeda0b1798a80f71ff2cd556a0b49bd5b while canonical audit records supervisor-task-reassigned-0e858331aa1f34c704c1ef73fbe9618aeda0b1798a80f71ff2cd556a0b49bd5b. Preserve review_approved, Codex/Codex2, review_file, exact-head approval, merged commits, and disposable brief diff. Requires governed legacy-event compatibility or authorized Human/Ops reconcile_merged_done before redispatch; no post-approval commit or live runtime mutation was made.",
+      "resolved_at": "2026-08-09T04:46:43Z",
+      "status": "done",
+      "task_id": "SUP-RUNTIME-V10-PROMOTION-GIT-DIR-ENOTDIR-20260808",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-08-09T04:46:43Z",
+      "from": "Codex2",
+      "message": "Owner closeout revalidated under unchanged pinned runtime 5877b64425c8d6aede147d6cbbc6fbb9e228c259: PR #4642 remains merged as fee6f738a58b82ccc269ed8481ddc5a1a7a68b85; approved head/tag ebf8afe08bf5353db9f158acc496c03b5c4766a8 and all five reviewed paths remain unchanged on origin/dev; checkout provisioning, py_compile, ancestry/diff checks, 234 promotion tests, and 7 sync tests passed. Governed done was not retried because the pinned verifier still derives supervisor-reassign-0e858331aa1f34c704c1ef73fbe9618aeda0b1798a80f71ff2cd556a0b49bd5b while the authentic archived audit records supervisor-task-reassigned-0e858331aa1f34c704c1ef73fbe9618aeda0b1798a80f71ff2cd556a0b49bd5b. Preserve review_approved, Codex/Codex2, review_file, exact-head approval, merged commits, and the disposable supervisor-generated brief diff; requires governed legacy-event compatibility or authorized Human/Ops reconcile_merged_done.",
+      "resolved_at": "2026-08-09T04:52:15Z",
+      "status": "done",
+      "task_id": "SUP-RUNTIME-V10-PROMOTION-GIT-DIR-ENOTDIR-20260808",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-08-09T04:52:15Z",
+      "from": "Codex2",
+      "message": "Owner closeout fresh revalidation passed under pinned runtime 5877b64425c8d6aede147d6cbbc6fbb9e228c259: PR #4642 remains merged as fee6f738a58b82ccc269ed8481ddc5a1a7a68b85; exact approved head/tag ebf8afe08bf5353db9f158acc496c03b5c4766a8 and all five reviewed blobs are unchanged on origin/dev 4b93f81005edc256eb933fdeea9aa70ea8072f03; checkout provisioning, py_compile, git diff/checks, and combined 241 promotion+sync tests passed. Governed done remains fail-closed and was not invoked: pinned and origin/dev verifier derive supervisor-reassign-0e858331aa1f34c704c1ef73fbe9618aeda0b1798a80f71ff2cd556a0b49bd5b, while the authentic archived task_reassigned audit has supervisor-task-reassigned-0e858331aa1f34c704c1ef73fbe9618aeda0b1798a80f71ff2cd556a0b49bd5b. Preserve review_approved, Codex/Codex2, review_file, exact-head approval, merged commits, and disposable supervisor-generated brief diff; unblock via governed legacy-event compatibility or authorized Human/Ops reconcile_merged_done.",
+      "resolved_at": "2026-08-09T04:58:34Z",
+      "status": "done",
+      "task_id": "SUP-RUNTIME-V10-PROMOTION-GIT-DIR-ENOTDIR-20260808",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-08-09T04:58:34Z",
+      "from": "Codex2",
+      "message": "Owner closeout fresh revalidation passed under pinned runtime 5877b64425c8d6aede147d6cbbc6fbb9e228c259: PR #4642 remains merged as fee6f738a58b82ccc269ed8481ddc5a1a7a68b85; exact approved head/tag ebf8afe08bf5353db9f158acc496c03b5c4766a8 is an ancestor of origin/dev 4b93f81005edc256eb933fdeea9aa70ea8072f03 and all five reviewed blobs remain byte-identical; checkout-scoped provisioning, py_compile, task-range git diff --check, merge/blob assertions, and 241 promotion+sync tests passed in 73.36s. Governed done was not invoked because pinned ai_status.py still derives supervisor-reassign-0e858331aa1f34c704c1ef73fbe9618aeda0b1798a80f71ff2cd556a0b49bd5b while the authentic archived Claude2-to-Codex2 task_reassigned event is supervisor-task-reassigned-0e858331aa1f34c704c1ef73fbe9618aeda0b1798a80f71ff2cd556a0b49bd5b. Preserve review_approved, Codex/Codex2, review_file, exact-head approval, merged commits, and disposable supervisor-generated brief diff; unblock via governed legacy-event compatibility or authorized Human/Ops reconcile_merged_done. No post-approval commit or live runtime mutation was made.",
+      "resolved_at": "2026-08-09T05:04:37Z",
+      "status": "done",
+      "task_id": "SUP-RUNTIME-V10-PROMOTION-GIT-DIR-ENOTDIR-20260808",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-08-09T05:04:37Z",
+      "from": "Codex2",
+      "message": "Owner closeout revalidated under pinned runtime 5877b64425c8d6aede147d6cbbc6fbb9e228c259: PR #4642 remains merged at fee6f738a58b82ccc269ed8481ddc5a1a7a68b85; exact approved head/tag ebf8afe08bf5353db9f158acc496c03b5c4766a8 is an ancestor of origin/dev 4b93f81005edc256eb933fdeea9aa70ea8072f03 and all five reviewed blobs remain byte-identical. Checkout provisioning, py_compile, manifest assertions, task-range git diff --check, merge/blob assertions, and 241 promotion+sync tests passed in 51.66s. Governed done was not invoked because pinned and origin/dev ai_status.py derive supervisor-reassign-0e858331aa1f34c704c1ef73fbe9618aeda0b1798a80f71ff2cd556a0b49bd5b while the authentic archived Claude2-to-Codex2 task_reassigned row is supervisor-task-reassigned-0e858331aa1f34c704c1ef73fbe9618aeda0b1798a80f71ff2cd556a0b49bd5b. Preserve review_approved, Codex/Codex2, review_file, exact-head approval, merged commits, and disposable supervisor-generated brief diff. Do not redispatch owner closeout until a governed legacy-event compatibility runtime is pinned or authorized Human/Ops reconcile_merged_done completes; no post-approval commit or live runtime mutation was made.",
+      "resolved_at": "2026-08-09T05:11:04Z",
+      "status": "done",
+      "task_id": "SUP-RUNTIME-V10-PROMOTION-GIT-DIR-ENOTDIR-20260808",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-08-09T05:11:04Z",
+      "from": "Codex2",
+      "message": "Owner closeout revalidated under pinned runtime 5877b64425c8d6aede147d6cbbc6fbb9e228c259: PR #4642 remains merged at fee6f738a58b82ccc269ed8481ddc5a1a7a68b85; exact approved head ebf8afe08bf5353db9f158acc496c03b5c4766a8 and all five reviewed blobs remain byte-identical on origin/dev 4b93f81005edc256eb933fdeea9aa70ea8072f03. Fresh provisioning, py_compile, manifest JSON, task-range diff check, merge/blob assertions, and 241 promotion+sync tests passed in 53.92s. Governed done was intentionally not invoked: authentic archived reassignment event is supervisor-task-reassigned-0e858331aa1f34c704c1ef73fbe9618aeda0b1798a80f71ff2cd556a0b49bd5b while pinned and origin/dev verifier expect supervisor-reassign-0e858331aa1f34c704c1ef73fbe9618aeda0b1798a80f71ff2cd556a0b49bd5b. Preserve review_approved, Codex/Codex2, review_file, exact-head approval, and merged delivery; unblock only with a pinned governed legacy-event compatibility runtime or authorized Human/Ops reconcile_merged_done.",
+      "resolved_at": "2026-08-09T05:17:43Z",
+      "status": "done",
+      "task_id": "SUP-RUNTIME-V10-PROMOTION-GIT-DIR-ENOTDIR-20260808",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-08-09T05:17:43Z",
+      "from": "Codex2",
+      "message": "Owner closeout revalidated under unchanged pinned runtime 5877b64425c8d6aede147d6cbbc6fbb9e228c259: PR #4642 remains merged as fee6f738a58b82ccc269ed8481ddc5a1a7a68b85; exact approved head/tag ebf8afe08bf5353db9f158acc496c03b5c4766a8 and all five reviewed blobs remain byte-identical on current origin/dev. Fresh checkout-scoped provisioning, py_compile, manifest JSON, merge/blob/task-range checks, git diff --check, and 241 promotion+sync tests passed in 53.39s. Governed done was not retried because the authentic archived Claude2-to-Codex2 event remains supervisor-task-reassigned-0e858331aa1f34c704c1ef73fbe9618aeda0b1798a80f71ff2cd556a0b49bd5b while pinned verifier ai_status.py:6619 still requires supervisor-reassign-0e858331aa1f34c704c1ef73fbe9618aeda0b1798a80f71ff2cd556a0b49bd5b. Preserve review_approved, Codex/Codex2, review_file, exact-head approval, merged commits, and disposable supervisor-generated brief diff; requires governed legacy-event compatibility or authorized Human/Ops reconcile_merged_done before redispatch. No post-approval commit or live runtime mutation was made.",
+      "resolved_at": "2026-08-09T05:25:17Z",
+      "status": "done",
+      "task_id": "SUP-RUNTIME-V10-PROMOTION-GIT-DIR-ENOTDIR-20260808",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-08-09T05:25:17Z",
+      "from": "Codex2",
+      "message": "Review approved. Owner must finalize this task to move it from review_approved to done.",
+      "resolved_at": "2026-08-09T05:25:50Z",
+      "status": "done",
+      "task_id": "SUP-RUNTIME-V10-PROMOTION-GIT-DIR-ENOTDIR-20260808",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-08-09T05:25:50Z",
+      "from": "Codex2",
+      "message": "Owner closeout revalidated under unchanged pinned runtime 5877b64425c8d6aede147d6cbbc6fbb9e228c259: PR #4642 remains merged as fee6f738a58b82ccc269ed8481ddc5a1a7a68b85; exact approved head/tag ebf8afe08bf5353db9f158acc496c03b5c4766a8 and all five reviewed blobs remain byte-identical on origin/dev 4b93f81005edc256eb933fdeea9aa70ea8072f03. Fresh checkout provisioning, py_compile, manifest JSON, ancestry/blob/diff checks, and 241 promotion+sync tests passed in 55.12s. Governed done was not invoked because pinned ai_status.py still derives supervisor-reassign-0e858331aa1f34c704c1ef73fbe9618aeda0b1798a80f71ff2cd556a0b49bd5b while the authentic archived Claude2-to-Codex2 task_reassigned event is supervisor-task-reassigned-0e858331aa1f34c704c1ef73fbe9618aeda0b1798a80f71ff2cd556a0b49bd5b. Preserve review_approved, Codex/Codex2, review_file, exact-head approval, merged commits, and disposable supervisor-generated brief diff. Do not redispatch owner closeout until a governed legacy-event compatibility runtime is pinned or authorized Human/Ops reconcile_merged_done completes; no post-approval commit or live runtime mutation was made.",
+      "resolved_at": "2026-08-09T05:30:54Z",
+      "status": "done",
+      "task_id": "SUP-RUNTIME-V10-PROMOTION-GIT-DIR-ENOTDIR-20260808",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-08-09T05:30:54Z",
+      "from": "Codex2",
+      "message": "Owner closeout prerequisite audit after redispatch confirms the dispatch is still premature: PANTHEON_COMMAND_RUNTIME_SHA and command-root HEAD remain 5877b64425c8d6aede147d6cbbc6fbb9e228c259; pinned ai_status.py still derives supervisor-reassign-0e858331aa1f34c704c1ef73fbe9618aeda0b1798a80f71ff2cd556a0b49bd5b, while the authentic archived Orchestrator Claude2-to-Codex2 task_reassigned event is supervisor-task-reassigned-0e858331aa1f34c704c1ef73fbe9618aeda0b1798a80f71ff2cd556a0b49bd5b. PR #4642 remains merged as fee6f738a58b82ccc269ed8481ddc5a1a7a68b85; exact approved head/tag ebf8afe08bf5353db9f158acc496c03b5c4766a8 and all five reviewed blobs remain byte-identical on origin/dev 4b93f81005edc256eb933fdeea9aa70ea8072f03; the immediately preceding fresh checkout validation passed provisioning, py_compile, manifest JSON, ancestry/blob/diff checks, and 241 promotion+sync tests in 55.12s. Governed done was not invoked. Preserve review_approved, Codex/Codex2, review_file, exact-head approval, merged commits, and the disposable supervisor-generated brief diff. Do not redispatch until a governed legacy-event-compatible runtime is pinned or authorized Human/Ops reconcile_merged_done completes; no post-approval commit or live runtime mutation was made.",
+      "resolved_at": "2026-08-09T05:47:01Z",
+      "status": "done",
+      "task_id": "SUP-RUNTIME-V10-PROMOTION-GIT-DIR-ENOTDIR-20260808",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-08-09T15:46:38Z",
+      "from": "Human/Ops",
+      "message": "Independent review requested for PR #4676, exact head d3fb403474c0ba231cf789ef272c76cd2e003662. Validate the bootstrap-only runtime-residue allowlist and legacy task-brief provenance boundary correction.",
+      "resolved_at": "2026-08-09T15:48:34Z",
+      "status": "done",
+      "task_id": "SUP-RUNTIME-V10-PROMOTION-GIT-DIR-ENOTDIR-20260808",
+      "to": "Antigravity"
+    },
+    {
+      "created_at": "2026-08-09T15:48:34Z",
+      "from": "Antigravity",
+      "message": "PR #4642 (head ebf8afe08bf5353db9f158acc496c03b5c4766a8) is merged into dev; task evidence manifest docs/deployment/evidence/twelve-loop-gap/SUP-RUNTIME-V10-PROMOTION-GIT-DIR-ENOTDIR-20260808/evidence.json is verified and bound.",
+      "resolved_at": "2026-08-09T16:00:35Z",
+      "status": "done",
+      "task_id": "SUP-RUNTIME-V10-PROMOTION-GIT-DIR-ENOTDIR-20260808",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-08-09T16:01:07Z",
+      "from": "Human/Ops",
+      "message": "Fresh independent review required: inspect PR #4678 at exact head a34a357e25b6c0f6f3a15137e86106c7afcf23bd. Approve only using REVIEW_PR=4678 and REVIEW_HEAD_SHA=a34a357e25b6c0f6f3a15137e86106c7afcf23bd; do not reuse the #4676 binding.",
+      "resolved_at": "2026-08-09T16:04:34Z",
+      "status": "done",
+      "task_id": "SUP-RUNTIME-V10-PROMOTION-GIT-DIR-ENOTDIR-20260808",
+      "to": "Antigravity"
+    },
+    {
+      "created_at": "2026-08-09T16:04:34Z",
+      "from": "Antigravity",
+      "message": "Reviewed commit a34a357e25b6c0f6f3a15137e86106c7afcf23bd / PR #4679 fix allowing bootstrap legacy environment contract in discover_incumbent_supervisor_process. All 263 tests passed cleanly.",
+      "resolved_at": "2026-08-09T16:30:56Z",
+      "status": "done",
+      "task_id": "SUP-RUNTIME-V10-PROMOTION-GIT-DIR-ENOTDIR-20260808",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-08-09T16:31:42Z",
+      "from": "Human/Ops",
+      "message": "Independently review PR #4680 at exact head 81e1ce5ad7fda3785a24efec1226237c576b6683. Verify transient FLOCK ID is normalized only for legacy mutable bootstrap and every other admission-lock/process field remains fail-closed; approve only the exact head.",
+      "resolved_at": "2026-08-09T16:33:38Z",
+      "status": "done",
+      "task_id": "SUP-RUNTIME-V10-PROMOTION-GIT-DIR-ENOTDIR-20260808",
+      "to": "Antigravity"
+    },
+    {
+      "created_at": "2026-08-09T16:33:49Z",
+      "from": "Human/Ops",
+      "message": "Independently review PR #4680 at exact head 81e1ce5ad241211ef5b10fe0fb703c07f5379815. Verify transient FLOCK ID is normalized only for legacy mutable bootstrap and every other admission-lock/process field remains fail-closed; approve only this exact head.",
+      "resolved_at": "2026-08-09T16:34:47Z",
+      "status": "done",
+      "task_id": "SUP-RUNTIME-V10-PROMOTION-GIT-DIR-ENOTDIR-20260808",
+      "to": "Antigravity"
+    },
+    {
+      "created_at": "2026-08-09T16:34:47Z",
+      "from": "Antigravity",
+      "message": "PR #4681 verified at exact head 81e1ce5ad241211ef5b10fe0fb703c07f5379815; FLOCK normalization is scoped strictly to legacy mutable bootstrap while all process identity/lock checks remain fail-closed; pytest passed (272/272)",
+      "resolved_at": "2026-08-09T16:43:38Z",
+      "status": "done",
+      "task_id": "SUP-RUNTIME-V10-PROMOTION-GIT-DIR-ENOTDIR-20260808",
+      "to": "Human/Ops"
+    },
+    {
+      "created_at": "2026-08-09T16:43:48Z",
+      "from": "Human/Ops",
+      "message": "Independently review PR #4682 at exact head d2521c50995f81993fdd8c5be5a2746def384c39. Verify PID plus starttime remains the only generation identity, scheduler state is still checked for zombies, and candidate/rollback safeguards remain fail-closed.",
+      "resolved_at": "2026-08-09T16:46:40Z",
+      "status": "done",
+      "task_id": "SUP-RUNTIME-V10-PROMOTION-GIT-DIR-ENOTDIR-20260808",
+      "to": "Antigravity"
+    },
+    {
+      "created_at": "2026-08-09T16:46:48Z",
+      "from": "Human/Ops",
+      "message": "Independently review PR #4682 at exact head d2521c50995f81993fdd8c5be5a2746def384c39. Verify PID plus starttime remains the only generation identity, scheduler state is still checked for zombies, and candidate/rollback safeguards remain fail-closed.",
+      "resolved_at": "2026-08-09T16:53:05Z",
+      "status": "done",
+      "task_id": "SUP-RUNTIME-V10-PROMOTION-GIT-DIR-ENOTDIR-20260808",
+      "to": "Antigravity"
+    },
+    {
+      "created_at": "2026-08-09T16:53:16Z",
+      "from": "Human/Ops",
+      "message": "Independent code review already passed. To record the governed approval for the same exact commit, run approve with all four bindings: REVIEW_PR=4682 REVIEW_HEAD_SHA=d2521c50995f81993fdd8c5be5a2746def384c39 REVIEW_HEAD_BRANCH=task/SUP-RUNTIME-V10-PROMOTION-GIT-DIR-ENOTDIR-20260808-process-generation REVIEW_BASE=dev. Do not use the default task branch, which maps to closed #4681.",
+      "resolved_at": "2026-08-09T16:54:20Z",
+      "status": "done",
+      "task_id": "SUP-RUNTIME-V10-PROMOTION-GIT-DIR-ENOTDIR-20260808",
+      "to": "Antigravity"
+    },
+    {
+      "created_at": "2026-08-09T16:54:20Z",
+      "from": "Antigravity",
+      "message": "Verified PR #4682 exact head d2521c50995f81993fdd8c5be5a2746def384c39 on branch task/SUP-RUNTIME-V10-PROMOTION-GIT-DIR-ENOTDIR-20260808-process-generation against base dev.",
+      "resolved_at": "2026-08-09T17:07:07Z",
+      "status": "done",
+      "task_id": "SUP-RUNTIME-V10-PROMOTION-GIT-DIR-ENOTDIR-20260808",
+      "to": "Human/Ops"
+    },
+    {
+      "created_at": "2026-08-09T17:07:18Z",
+      "from": "Human/Ops",
+      "message": "Independently review PR #4684 exact head 56a7914c15e1c0073a95f525dd9f23c089c04887. For approval bind REVIEW_PR=4684 REVIEW_HEAD_SHA=56a7914c15e1c0073a95f525dd9f23c089c04887 REVIEW_HEAD_BRANCH=task/SUP-RUNTIME-V10-PROMOTION-GIT-DIR-ENOTDIR-20260808-mutable-cwd REVIEW_BASE=dev. Verify only mutable bootstrap uses captured CWD Git identity and immutable candidate/rollback checks remain strict.",
+      "resolved_at": "2026-08-09T17:09:56Z",
+      "status": "done",
+      "task_id": "SUP-RUNTIME-V10-PROMOTION-GIT-DIR-ENOTDIR-20260808",
+      "to": "Antigravity"
+    },
+    {
+      "created_at": "2026-08-09T17:09:56Z",
+      "from": "Antigravity",
+      "message": "Independently verified PR #4684 HEAD 56a7914c15e1c0073a95f525dd9f23c089c04887 on task/SUP-RUNTIME-V10-PROMOTION-GIT-DIR-ENOTDIR-20260808-mutable-cwd against dev. Confirmed that cwd_git_identity_reader explicitly binds captured mutable HEAD and tree only for mutable incumbent bootstrap observations during prepare/revalidate, while capture_runtime_observation defaults to strict _read_process_cwd_git_identity for immutable candidates and normal postchecks. Verification passed: pytest test_promote_supervisor_runtime.py and test_sync_dev_root.py (275 passed in 54.41s).",
+      "resolved_at": "2026-08-09T17:33:23Z",
+      "status": "done",
+      "task_id": "SUP-RUNTIME-V10-PROMOTION-GIT-DIR-ENOTDIR-20260808",
+      "to": "Human/Ops"
+    },
+    {
+      "created_at": "2026-08-09T17:33:34Z",
+      "from": "Human/Ops",
+      "message": "Review PR #4685 exact head 064b98992d0f0ca6bc7f174973e7f2dc9b95f833 on task/SUP-RUNTIME-V10-PROMOTION-GIT-METADATA-RECAPTURE-20260809 targeting dev; verify 270-passing promotion suite and immutable metadata revalidation remains fail-closed.",
+      "resolved_at": "2026-08-09T17:37:42Z",
+      "status": "done",
+      "task_id": "SUP-RUNTIME-V10-PROMOTION-GIT-DIR-ENOTDIR-20260808",
+      "to": "Antigravity"
+    },
+    {
+      "created_at": "2026-08-09T17:37:42Z",
+      "from": "Antigravity",
+      "message": "Task PR #4685 head branch 'task/SUP-RUNTIME-V10-PROMOTION-GIT-METADATA-RECAPTURE-20260809' does not match task ID branch name 'task/SUP-RUNTIME-V10-PROMOTION-GIT-DIR-ENOTDIR-20260808'. Please open/target a PR from branch task/SUP-RUNTIME-V10-PROMOTION-GIT-DIR-ENOTDIR-20260808 (or align the head branch name) so that the GitHub review bridge can validate and record the exact-head review approval.",
+      "resolved_at": "2026-08-09T17:37:42Z",
+      "status": "done",
+      "task_id": "SUP-RUNTIME-V10-PROMOTION-GIT-DIR-ENOTDIR-20260808",
+      "to": "Human/Ops"
+    },
+    {
+      "created_at": "2026-08-09T17:39:38Z",
+      "from": "Human/Ops",
+      "message": "Re-review canonical replacement PR #4686: exact branch task/SUP-RUNTIME-V10-PROMOTION-GIT-DIR-ENOTDIR-20260808, exact head 064b9899243dc97ade3267c0c8b3fe112923fda9, base dev. Same independently validated fix and 270-passing suite; bind approval with REVIEW_PR=4686 REVIEW_HEAD_SHA=064b9899243dc97ade3267c0c8b3fe112923fda9 REVIEW_HEAD_BRANCH=task/SUP-RUNTIME-V10-PROMOTION-GIT-DIR-ENOTDIR-20260808 REVIEW_BASE=dev.",
+      "resolved_at": "2026-08-09T17:50:00Z",
+      "status": "done",
+      "task_id": "SUP-RUNTIME-V10-PROMOTION-GIT-DIR-ENOTDIR-20260808",
+      "to": "Antigravity"
+    },
+    {
+      "created_at": "2026-08-09T17:50:00Z",
+      "from": "Antigravity",
+      "message": "PR #4686 independently reviewed and verified. Exact head SHA 064b9899243dc97ade3267c0c8b3fe112923fda9 properly re-opens candidate root handle after cleanliness probes to bind refreshed Git metadata (index inode/device). All 270 unit tests in test_promote_supervisor_runtime.py and 7 unit tests in test_sync_dev_root.py pass.",
+      "resolved_at": "2026-08-09T18:03:36Z",
+      "status": "done",
+      "task_id": "SUP-RUNTIME-V10-PROMOTION-GIT-DIR-ENOTDIR-20260808",
+      "to": "Human/Ops"
+    },
+    {
+      "created_at": "2026-08-09T18:03:47Z",
+      "from": "Human/Ops",
+      "message": "Independent review: PR #4688; head 70cd06534357b55a1c5739a0a264257824332cf0; branch task/SUP-RUNTIME-V10-PROMOTION-GIT-DIR-ENOTDIR-20260808; base dev. Validate narrowly scoped queue recovery and approve exact head if sound.",
+      "resolved_at": "2026-08-09T18:04:19Z",
+      "status": "done",
+      "task_id": "SUP-RUNTIME-V10-PROMOTION-GIT-DIR-ENOTDIR-20260808",
+      "to": "Antigravity"
+    },
+    {
+      "created_at": "2026-08-09T18:04:19Z",
+      "from": "Human/Ops",
+      "message": "Independent review: PR #4688; head 70cd06534cea9f7cd6a52f285d9cc4db0952aed2; branch task/SUP-RUNTIME-V10-PROMOTION-GIT-DIR-ENOTDIR-20260808; base dev. Validate narrowly scoped queue recovery and approve exact head if sound.",
+      "resolved_at": "2026-08-09T18:09:23Z",
+      "status": "done",
+      "task_id": "SUP-RUNTIME-V10-PROMOTION-GIT-DIR-ENOTDIR-20260808",
+      "to": "Antigravity"
+    },
+    {
+      "created_at": "2026-08-09T18:09:23Z",
+      "from": "Antigravity",
+      "message": "Reviewed commit 70cd06534 (PR #4688, branch task/SUP-RUNTIME-V10-PROMOTION-GIT-DIR-ENOTDIR-20260808, base dev): verified queue record pruning logic in supervisor.py and test_supervisor.py (2 tests passed).",
+      "resolved_at": "2026-08-09T18:22:28Z",
+      "status": "done",
+      "task_id": "SUP-RUNTIME-V10-PROMOTION-GIT-DIR-ENOTDIR-20260808",
+      "to": "Human/Ops"
+    },
+    {
+      "created_at": "2026-08-09T18:22:52Z",
+      "from": "Human/Ops",
+      "message": "Independent review: PR #4689; head daf725ab5d3bc73fe89e63e37e111a5e98d1e020; branch task/SUP-RUNTIME-V10-PROMOTION-GIT-DIR-ENOTDIR-20260808; base dev. Verify stale retry cleanup only applies after deadline and absent process generation, then approve exact head if sound.",
+      "resolved_at": "2026-08-09T18:26:28Z",
+      "status": "done",
+      "task_id": "SUP-RUNTIME-V10-PROMOTION-GIT-DIR-ENOTDIR-20260808",
+      "to": "Antigravity"
+    },
+    {
+      "created_at": "2026-08-09T18:26:28Z",
+      "from": "Antigravity",
+      "message": "Independently verified PR #4689 head daf725ab518c53ddb7f3980861656ec34c72523f on task/SUP-RUNTIME-V10-PROMOTION-GIT-DIR-ENOTDIR-20260808. Tested prune_event_queue logic, confirming stale retry leases without live process generations are cleanly reaped while active workers and valid retries remain protected. All 3 targeted tests passed.",
+      "resolved_at": "2026-08-09T19:08:14Z",
+      "status": "done",
+      "task_id": "SUP-RUNTIME-V10-PROMOTION-GIT-DIR-ENOTDIR-20260808",
+      "to": "Human/Ops"
+    },
+    {
+      "created_at": "2026-08-09T19:09:16Z",
+      "from": "Human/Ops",
+      "message": "請獨立審查 PR #4693 exact head 67f4836ab7e66df32c23d3a4fd91019038ff4743（base dev）。修復僅允許 clean Git index inode refresh，仍驗證 root/.git/objects/config/HEAD identity、remote、HEAD/tree 與完整 cleanliness；完整 pytest scripts/test_promote_supervisor_runtime.py：271 passed。核准時請以 REVIEW_PR=4693 REVIEW_HEAD_SHA=67f4836ab7e66df32c23d3a4fd91019038ff4743 寫入 exact-head GitHub review bridge。",
+      "resolved_at": "2026-08-09T19:32:32Z",
+      "status": "done",
+      "task_id": "SUP-RUNTIME-V10-PROMOTION-GIT-DIR-ENOTDIR-20260808",
+      "to": "Antigravity"
+    },
+    {
+      "created_at": "2026-08-09T19:32:32Z",
+      "from": "Antigravity",
+      "message": "Independently verified PR #4693 exact head 67f4836ab7e66df32c23d3a4fd91019038ff4743 on branch task/SUP-RUNTIME-V10-PROMOTION-INDEX-REBIND-20260809. All 270 unit tests passed.",
+      "resolved_at": "2026-08-10T00:42:01Z",
+      "status": "done",
+      "task_id": "SUP-RUNTIME-V10-PROMOTION-GIT-DIR-ENOTDIR-20260808",
+      "to": "Human/Ops"
+    },
+    {
+      "created_at": "2026-08-10T00:48:20Z",
+      "from": "Human/Ops",
+      "message": "Fresh independent review for PR #4700 exact head b4a408bbd on branch task/SUP-RUNTIME-V10-PROMOTION-GIT-DIR-ENOTDIR-20260808-R2 to dev. Verify that dynamic runtime document churn is accepted only after current health-invariant revalidation and that process/config/source identity drift still aborts before TERM. Before approve set REVIEW_PR=4700 REVIEW_HEAD_SHA=b4a408bbd REVIEW_HEAD_BRANCH=task/SUP-RUNTIME-V10-PROMOTION-GIT-DIR-ENOTDIR-20260808-R2 REVIEW_BASE=dev.",
+      "resolved_at": "2026-08-10T00:50:20Z",
+      "status": "done",
+      "task_id": "SUP-RUNTIME-V10-PROMOTION-GIT-DIR-ENOTDIR-20260808",
+      "to": "Antigravity"
+    },
+    {
+      "created_at": "2026-08-10T00:50:20Z",
+      "from": "Human/Ops",
+      "message": "Independent Human/Ops exact-head review for PR #4700 b4a408bbd4b46b5caa6bea0c3fb48364d2822792. Verified all 274 promotion tests pass; dynamic state/status/provider churn is permitted only after current health invariant revalidation; process/config/source identity drift remains an abort-before-TERM condition. CI is green except the now-satisfied canonical review proof gate.",
+      "resolved_at": "2026-08-10T01:13:30Z",
+      "status": "done",
+      "task_id": "SUP-RUNTIME-V10-PROMOTION-GIT-DIR-ENOTDIR-20260808",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-08-10T01:22:21Z",
+      "from": "Human/Ops",
+      "message": "Independent exact-head review: external status-root logging prevents immutable candidate-root pollution; local fallback and absolute-path validation are covered. Approve PR #4701 head dd6dd12ccdeb86e16e86865375e818cb60159efb.",
+      "resolved_at": "2026-08-10T01:34:42Z",
+      "status": "done",
+      "task_id": "SUP-RUNTIME-V10-PROMOTION-GIT-DIR-ENOTDIR-20260808",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-08-10T01:34:42Z",
+      "from": "Antigravity",
+      "message": "Ownership updated",
+      "resolved_at": "2026-08-10T01:35:11Z",
+      "status": "done",
+      "task_id": "SUP-RUNTIME-V10-PROMOTION-GIT-DIR-ENOTDIR-20260808",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-08-10T01:37:11Z",
+      "from": "Human/Ops",
+      "message": "Independent exact-head review: governed sidecar routing now protects both runtime logs and failure or approval evidence; explicit evidence configuration and local fallback remain preserved. Approve PR #4702 head f6a510903fd7559d1b7be7381a4dcb4486125014.",
+      "resolved_at": "2026-08-10T01:51:29Z",
+      "status": "done",
+      "task_id": "SUP-RUNTIME-V10-PROMOTION-GIT-DIR-ENOTDIR-20260808",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-08-10T01:51:29Z",
+      "from": "Antigravity",
+      "message": "Ownership updated",
+      "resolved_at": "2026-08-10T01:51:38Z",
+      "status": "done",
+      "task_id": "SUP-RUNTIME-V10-PROMOTION-GIT-DIR-ENOTDIR-20260808",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-08-10T10:13:01Z",
+      "from": "Codex2",
+      "message": "PR #4705 is open at exact head 690c2fecfb715b0e50b7f417d863043785737059 (base dev); the only diff is the task closeout README addendum. Focused ENOTDIR boundaries plus all sync contract tests: 11 passed in 4.85s; git diff --check passes. PR #4702 source repair is already merged as e5e53f9fdb6027924045a1f488dbbc8872aadc0a. Current review_file is the earlier manifest and is not in #4705's diff; please enforce the manifest precondition, then either bind an exact-head approval or reopen with the required corrective scope.",
+      "resolved_at": "2026-08-10T10:18:55Z",
+      "status": "done",
+      "task_id": "SUP-RUNTIME-V10-PROMOTION-GIT-DIR-ENOTDIR-20260808",
+      "to": "Antigravity"
+    },
+    {
+      "created_at": "2026-08-10T10:18:55Z",
+      "from": "Antigravity",
+      "message": "Independently verified candidate descriptor ENOTDIR fix (PR #4702 merged as e5e53f9fdb6027924045a1f488dbbc8872aadc0a). Verification: 277 promotion & sync tests pass, git diff --check clean, exact-head PR #4702 evidence manifest docs/deployment/evidence/twelve-loop-gap/SUP-RUNTIME-V10-PROMOTION-GIT-DIR-ENOTDIR-20260808/evidence.json validated.",
+      "resolved_at": "2026-08-10T10:32:16Z",
+      "status": "done",
+      "task_id": "SUP-RUNTIME-V10-PROMOTION-GIT-DIR-ENOTDIR-20260808",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-08-10T10:32:16Z",
+      "from": "Antigravity",
+      "message": "Closeout verification passed: 281 promotion/sync tests in 64.55s and git diff --check origin/dev...HEAD. PR #4705 remains open/UNSTABLE because Audit signed canonical review (not required issuer) (4705) fails; canonical integrator therefore fail-closes. Await a valid review-attestation/CI-policy resolution and protected merge; task remains review_approved.",
+      "resolved_at": "2026-08-10T11:26:11Z",
+      "status": "done",
+      "task_id": "SUP-RUNTIME-V10-PROMOTION-GIT-DIR-ENOTDIR-20260808",
+      "to": "Codex2"
+    }
+  ],
+  "blockers": [
+    {
+      "created_at": "2026-08-08T15:24:26Z",
+      "message": "Recovery complete at PR #4642 with exact archived head e543e42c88c8758fbc2d141a9f29e581ccc83430. CI deterministically fails Commit trailers because commit 4e06d7f2898c31e576ecd73d5e2d66c7f1b4fe6e has a 74-character subject. Resolving this requires commit/history rewrite, which the task brief explicitly says needs separate Human/Ops authorization. PR, branch, and archive tag remain preserved; no source/runtime or history was changed.",
+      "owner": "Codex",
+      "resolved_at": "2026-08-08T15:25:51Z",
+      "status": "resolved",
+      "task_id": "SUP-RUNTIME-V10-PROMOTION-GIT-DIR-ENOTDIR-20260808",
+      "waiting_for": "Human/Ops"
+    },
+    {
+      "created_at": "2026-08-09T05:47:01Z",
+      "message": "Closeout halted: the reviewed-and-merged manifest is bound, but its committed review object still says pending_independent_exact_head_review, decision null, and reviewer Claude2 while the canonical approval is Codex2. task-closeout-finalization requires the merged manifest itself to contain the independent decision; a new governed evidence-correction task/PR and fresh exact-head review are required before done.",
+      "owner": "Codex",
+      "resolved_at": "2026-08-09T15:41:56Z",
+      "status": "resolved",
+      "task_id": "SUP-RUNTIME-V10-PROMOTION-GIT-DIR-ENOTDIR-20260808",
+      "waiting_for": "Human/Ops"
+    },
+    {
+      "check_kind": "task_dependency",
+      "check_params": {
+        "required_status": "done",
+        "task_id": "SUP-RUNTIME-PROMOTION-IGNORE-LOGS-ROLLBACK-CLEAN-20260810"
+      },
+      "created_at": "2026-08-10T02:27:01Z",
+      "message": "Runtime promotion remains fail-closed: post-#4702 admission-lock generation mismatch requires SUP-RUNTIME-PROMOTION-IGNORE-LOGS-ROLLBACK-CLEAN-20260810; its PR #4704 is open and trailer-gated because canonical reviewer Human/Ops conflicts with branch/evidence Reviewer Codex2. Await protected merge and dependency done before a new read-only preflight and three-fresh-loop promotion.",
+      "owner": "Codex2",
+      "resolved_at": "2026-08-10T09:57:31Z",
+      "status": "resolved",
+      "task_id": "SUP-RUNTIME-V10-PROMOTION-GIT-DIR-ENOTDIR-20260808",
+      "waiting_for": "Antigravity"
+    },
+    {
+      "created_at": "2026-08-10T11:26:11Z",
+      "message": "Closeout blocked after PR #4705 merged to dev as 7a7daa666498fc8eb76648eff61e2fdeb0963047: governed done rejects prior-owner trailers (LLM-Agent Codex, Reviewer Human/Ops) because no exact audited supervisor task_reassigned event matches current owner Codex2/reviewer Antigravity. Focused promotion/sync suites and git diff --check passed; do not alter approved head or evidence.",
+      "owner": "Codex2",
+      "status": "resolved",
+      "task_id": "SUP-RUNTIME-V10-PROMOTION-GIT-DIR-ENOTDIR-20260808",
+      "waiting_for": "Human/Ops",
+      "resolved_at": "2026-08-13T02:01:42Z"
+    }
+  ]
+}

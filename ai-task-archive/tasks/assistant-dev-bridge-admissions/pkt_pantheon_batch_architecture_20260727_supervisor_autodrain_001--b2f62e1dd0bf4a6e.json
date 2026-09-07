@@ -1,0 +1,192 @@
+{
+  "actor": {
+    "capabilities": [
+      "assistant.kernel.repair",
+      "dev-task.dispatch"
+    ],
+    "id": "Human/Ops",
+    "roles": [
+      "operator"
+    ]
+  },
+  "admission_record_path": "ai-task-archive/tasks/assistant-dev-bridge-admissions/pkt_pantheon_batch_architecture_20260727_supervisor_autodrain_001--b2f62e1dd0bf4a6e.json",
+  "admitted_at": "2026-07-27T14:23:26Z",
+  "audit_conversation_href": "codex://thread/pantheon-batch-architecture-20260727",
+  "constraints": {
+    "allowedRepos": [
+      "pantheon"
+    ],
+    "noDirectShellFromWeb": true,
+    "requiresBranchPrMerge": true
+  },
+  "conversation_id": "codex-thread-pantheon-batch-architecture-20260727",
+  "dispatch_records": [
+    {
+      "error": null,
+      "owner": "Codex",
+      "reviewer": "Codex2",
+      "status": "dispatched",
+      "taskId": "OPS-ASSISTANT-DEV-BRIDGE-DRAIN-001"
+    },
+    {
+      "error": null,
+      "owner": "Codex",
+      "reviewer": "Claude",
+      "status": "dispatched",
+      "taskId": "OPS-PUBLISH-ENGINE-UNIFICATION-001"
+    },
+    {
+      "error": null,
+      "owner": "Antigravity",
+      "reviewer": "Claude",
+      "status": "dispatched",
+      "taskId": "OPS-CROSS-REPO-RELEASE-CONTROLLER-001"
+    }
+  ],
+  "documents": [
+    {
+      "kind": "RUNBOOK",
+      "path": "docs/deployment/nonprod-ci-cd.md",
+      "sourceRefs": []
+    },
+    {
+      "kind": "RUNBOOK",
+      "path": "docs/frontend/execute-plans-dev-hosting.md",
+      "sourceRefs": []
+    },
+    {
+      "kind": "ARCHITECTURE",
+      "path": "docs/orchestrator-state-plane-redesign.md",
+      "sourceRefs": []
+    },
+    {
+      "kind": "CONTRACT",
+      "path": "docs/04/pantheon_agora_cross_repo_2026-06-20/contract-closure/06_compatibility_manifest_and_hash_rules.md",
+      "sourceRefs": []
+    },
+    {
+      "kind": "CONTRACT",
+      "path": "docs/contracts/agora/dev-compatibility-manifest.json",
+      "sourceRefs": []
+    },
+    {
+      "kind": "RUNBOOK",
+      "path": "docs/operations/management-ai-openclaw-dev-bridge.md",
+      "sourceRefs": []
+    },
+    {
+      "kind": "RUNBOOK",
+      "path": "docs/deployment/management-ai-dev-kernel-control-mode.md",
+      "sourceRefs": []
+    }
+  ],
+  "durable": true,
+  "emitted_at": "2026-07-27T14:21:40Z",
+  "intent": "dispatch_execution_tasks",
+  "mode": "kernel_repair",
+  "packet_digest": "b2f62e1dd0bf4a6ed3ff087b19e53ea9edf27929733bd08768fabf4fdedaa498",
+  "packet_id": "pkt_pantheon_batch_architecture_20260727_supervisor_autodrain_001",
+  "packet_version": "pantheon.assistant.dev-task.v1",
+  "record_kind": "assistant_dev_bridge_admission",
+  "record_payload_sha256": "8bbea4b3618966775f24731834d309bd6d83fc2eacef2095828f119187fd26ef",
+  "schema": "pantheon.assistant-dev-bridge-admission.v1",
+  "source_turn_ids": [
+    "user-do-the-plan-20260727",
+    "codex-supervisor-autodrain-retry-20260727"
+  ],
+  "tasks": [
+    {
+      "task_id": "OPS-ASSISTANT-DEV-BRIDGE-DRAIN-001",
+      "task_spec": {
+        "acceptance": [
+          "Reproduce the live failure where supervisor assistant_dev_bridge.last_result reports ModuleNotFoundError: No module named pydantic while a pending packet remains undrained.",
+          "Reproduce the local drain failure where signed bridge dispatch using a non-operator actor makes ai_status.py assign fail with status command lease required for auto worker.",
+          "Define the correct signed DevTaskPacket actor/admission contract: repo-local verified bridge assignment must not require an auto-worker lease, and untrusted direct worker mutations must still require leases.",
+          "Supervisor auto drain processes a fresh signed packet into processed plus a durable assistant-dev-bridge admission record without manual drain.",
+          "Regression tests cover import path/dependency availability, actor/lease behavior, replay safety, and exact materialized task provenance.",
+          "Repair is delivered through task branch, PR, visible checks, Codex2 review, merge, and then safe runtime refresh sequencing; no manual task-board JSON edits."
+        ],
+        "artifacts": [
+          ".orchestrator/supervisor.py",
+          "services/control-plane/bff/assistant/dev_bridge_dispatcher.py",
+          "services/control-plane/bff/assistant/dev_bridge_inbox.py",
+          "scripts/ai_status.py",
+          "scripts/drain_assistant_dev_task_packet_inbox.py",
+          "scripts/test_assistant_dev_packet_inbox_supervisor_contract.py",
+          "services/control-plane/bff/assistant/tests/test_dev_bridge_inbox_cli.py",
+          "docs/deployment/evidence/supervisor/OPS-ASSISTANT-DEV-BRIDGE-DRAIN-001"
+        ],
+        "depends_on": [],
+        "id": "OPS-ASSISTANT-DEV-BRIDGE-DRAIN-001",
+        "owner": "Codex",
+        "phase": "Supervisor Runtime / Dev Bridge Reliability",
+        "reviewer": "Codex2",
+        "summary": "Fix dev bridge reliability defects discovered while dispatching the release-platform batch: stale pydantic drain failure and bridge actor lease rejection.",
+        "title": "Repair supervisor DevTaskPacket drain and bridge actor admission"
+      },
+      "task_spec_hash": "9241a8f8d58d33868a03ea3706ad4034a7bdbb63a73ae500c9d375af3042e7bd"
+    },
+    {
+      "task_id": "OPS-PUBLISH-ENGINE-UNIFICATION-001",
+      "task_spec": {
+        "acceptance": [
+          "Both pantheon and execute-plans use one equivalent publish helper contract; no early-closing consumer such as head may surface SIGPIPE/141 under set -euo pipefail.",
+          "A deterministic many-tag regression reproduces the old git for-each-ref | head failure and proves repeated publish cuts are stable and idempotent.",
+          "Publish workflows no longer dispatch a dev deployment for candidates that cannot pass the exact accepted FE/BFF pair admission gate.",
+          "Frontend changes are made only in /home/lupin/code/execute-plans on base dev; no execute-plans source is copied into pantheon.",
+          "All changes go through task branches, PRs, visible checks, review, merge, and evidence; no hosted deployment is run for each intermediate fix."
+        ],
+        "artifacts": [
+          "scripts/git/nightly_publish.sh",
+          ".github/workflows/nightly-publish-cut.yml",
+          "execute-plans:scripts/git/nightly_publish.sh",
+          "execute-plans:.github/workflows/*publish*",
+          "docs/deployment/evidence/release-platform/OPS-PUBLISH-ENGINE-UNIFICATION-001"
+        ],
+        "depends_on": [
+          "OPS-ASSISTANT-DEV-BRIDGE-DRAIN-001"
+        ],
+        "id": "OPS-PUBLISH-ENGINE-UNIFICATION-001",
+        "owner": "Codex",
+        "phase": "Release Platform / Publish Cut",
+        "reviewer": "Claude",
+        "summary": "Fix duplicated nightly publish as a platform contract, including SIGPIPE/141 and inadmissible publish-to-deploy dispatch behavior.",
+        "title": "Unify nightly publish cut engine across Pantheon and execute-plans"
+      },
+      "task_spec_hash": "b4dea346aec8c04a26de270db8c2bb479bdf69289bbf71457768137d645be6b6"
+    },
+    {
+      "task_id": "OPS-CROSS-REPO-RELEASE-CONTROLLER-001",
+      "task_spec": {
+        "acceptance": [
+          "Keep the exact FE/BFF compatibility manifest fail-closed; do not relax the gate or simply advance the manifest to latest dev.",
+          "Introduce a single cross-repo candidate coordinator that qualifies a BFF candidate off the live path, builds/tests the FE against that exact BFF identity, and records an immutable pair ledger/artifact.",
+          "Acquire one shared dev environment lease before switch and perform FE+BFF switch as an atomic or compensated transaction with explicit rollback evidence.",
+          "Separate contract/capability compatibility from runtime exact pair identity so future backend publish cuts cannot deadlock against a live-only FE gate.",
+          "Frontend repo work targets ajoe734/execute-plans dev from /home/lupin/code/execute-plans only; Pantheon repo owns backend/controller/runbook changes.",
+          "Validation covers offline controller tests, GitHub workflow admission behavior, rollback path, and one final hosted write E2E only after the batch is complete."
+        ],
+        "artifacts": [
+          "docs/deployment/nonprod-ci-cd.md",
+          "scripts/deploy_nonprod_vm.sh",
+          "scripts/agora_compat_manifest.py",
+          ".github/workflows/nonprod-deploy.yml",
+          "execute-plans:.github/workflows/pantheon-integration-gate.yml",
+          "execute-plans:.github/workflows/pantheon-dev-fe-deploy.yml",
+          "execute-plans:scripts/release-candidate.mjs",
+          "docs/deployment/evidence/release-platform/OPS-CROSS-REPO-RELEASE-CONTROLLER-001"
+        ],
+        "depends_on": [
+          "OPS-PUBLISH-ENGINE-UNIFICATION-001"
+        ],
+        "id": "OPS-CROSS-REPO-RELEASE-CONTROLLER-001",
+        "owner": "Antigravity",
+        "phase": "Release Platform / Exact Pair Controller",
+        "reviewer": "Claude",
+        "summary": "Replace independent backend/frontend publish clocks with an exact-pair release controller and rollback-safe dev switch transaction.",
+        "title": "Build exact-pair cross-repo dev release controller"
+      },
+      "task_spec_hash": "1e476552f20fc8e9d8b304431adbbdb5e64f531cee655a973109066f994c60e1"
+    }
+  ]
+}

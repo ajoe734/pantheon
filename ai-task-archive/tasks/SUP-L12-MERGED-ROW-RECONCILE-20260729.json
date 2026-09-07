@@ -1,0 +1,245 @@
+{
+  "version": 1,
+  "task_id": "SUP-L12-MERGED-ROW-RECONCILE-20260729",
+  "archived_at": "2026-08-06T01:21:15Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "acceptance": [
+      "Locate or create task-brief-shaped merged evidence; use reconcile_merged_done only after evidence and delivery commit are merged to dev; otherwise open minimal closeout-evidence PR then archive; no implementation restart for already merged work"
+    ],
+    "artifacts": [
+      "docs/deployment/evidence/twelve-loop-gap/SUP-L12-MERGED-ROW-RECONCILE-20260729"
+    ],
+    "depends_on": [],
+    "dispatch_model": "real-supervisor-auto-workers",
+    "github_review_bridge": {
+      "actor": "Antigravity",
+      "base": "dev",
+      "decision": "approve",
+      "head_branch": "task/SUP-L12-MERGED-ROW-RECONCILE-20260729",
+      "head_sha": "98f4756f6427dbcf0d59c2ea3778c4beb7d3dd2b",
+      "mode": "required_commit_status",
+      "pr": 4384,
+      "pr_url": "https://github.com/ajoe734/pantheon/pull/4384",
+      "recorded_at": "2026-08-01T16:03:53Z",
+      "repository": "ajoe734/pantheon",
+      "review_error": "gh: Unprocessable Entity (HTTP 422)",
+      "status_context": "Pantheon canonical review gate",
+      "status_id": 51484134635,
+      "status_state": "success"
+    },
+    "id": "SUP-L12-MERGED-ROW-RECONCILE-20260729",
+    "last_update": "2026-08-06T01:21:15Z",
+    "next": "Human/Ops (2026-08-06) batch closeout: PR #4384 independently reverified MERGED into dev.",
+    "owner": "Antigravity",
+    "phase": "Twelve Loop Remediation / Wave 0 Closeout Reconcile",
+    "preferred_lane_order": [
+      "Claude2",
+      "Antigravity",
+      "Claude",
+      "Codex2",
+      "Codex"
+    ],
+    "review_binding": {
+      "base": "dev",
+      "head_branch": "task/SUP-L12-MERGED-ROW-RECONCILE-20260729",
+      "head_sha": "98f4756f6427dbcf0d59c2ea3778c4beb7d3dd2b",
+      "pr": 4384
+    },
+    "review_file": "docs/deployment/evidence/twelve-loop-gap/SUP-L12-MERGED-ROW-RECONCILE-20260729/evidence.json",
+    "reviewer": "Claude",
+    "source_audit": "docs/04/pantheon_twelve_loop_gap_2026-07-26/archive/THREE_PASS_GAP_AUDIT_2026-07-29T1025Z.md",
+    "status": "done",
+    "summary_zh": "Reconcile merged but nonterminal L12 rows using governed evidence only.",
+    "title": "Antigravity owner finalization after PR #4384 merge",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-08-06T01:21:15Z",
+      "reconciled_from_merged_evidence": true,
+      "repository_id": "pantheon",
+      "repository_slug": "ajoe734/pantheon",
+      "repository_path": "/home/lupin/pantheon-ci-deploy/dev-root",
+      "commit": "ec9ba70f935fcf7efa1de2287e8635c16d38f030",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "cd98dbf9a85ab77257f417080b514fc137b8e5c2",
+      "head_merged_to_target": true,
+      "review_evidence": {
+        "file": ".orchestrator/task-briefs/sup_l12_merged_row_reconcile_20260729.md",
+        "commit": "5ba6aa7c44a8ce2bffabe6574887cc9080e88387",
+        "merge_target_ref": "origin/ops/human-batch-repair-evidence-20260806",
+        "merge_target_sha": "5ba6aa7c44a8ce2bffabe6574887cc9080e88387",
+        "owner": "Antigravity",
+        "reviewer": "Claude",
+        "canonical_reviewer": "Claude",
+        "status": "review_approved"
+      }
+    }
+  },
+  "handoffs": [
+    {
+      "created_at": "2026-07-29T10:35:15Z",
+      "from": "Claude2",
+      "message": "Helper-claimed by idle Codex; previous owner Claude2 becomes reviewer.",
+      "resolved_at": "2026-07-29T10:36:24Z",
+      "status": "done",
+      "task_id": "SUP-L12-MERGED-ROW-RECONCILE-20260729",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-07-29T12:42:33Z",
+      "from": "Claude2",
+      "message": "PR #4379 exact head 3116d2ecad81f91ba460e9b9cce7c7007e8a8a82 ready for review. Two independent sweeps (merged-PR head branches; git log --grep over origin/dev per nonterminal row) found three merged-but-nonterminal L12 rows; only L12-MANIFEST-REVIEW-GAP-TASKS-20260729 is stranded (merged delivery 7b68b423590855ea8d39ea718103b29a612a948a carries LLM-Agent: Codex / Reviewer: Antigravity vs row Antigravity/Claude2, immutable, blocked status accepted by neither done nor approve). L12-FLEET-STATUS-SYNC-001 (live closeout PR #4297) and SUP-L12-FLEET-RUNTIME-RELIABILITY-20260729 (mid-review, PR #4363) deliberately untouched. Merged evidence stored outside .orchestrator/task-briefs/ because the supervisor regenerates that prefix and rewrites the Status line, breaking two gates. Governed validate_merged_done_evidence preflight PASS plus four negative controls each exit 1 with distinct gate errors. Please approve with REVIEW_FILE=docs/deployment/evidence/twelve-loop-gap/SUP-L12-MERGED-ROW-RECONCILE-20260729/evidence.json REVIEW_PR=4379 REVIEW_HEAD_SHA=3116d2ecad81f91ba460e9b9cce7c7007e8a8a82.",
+      "resolved_at": "2026-07-29T12:43:39Z",
+      "status": "done",
+      "task_id": "SUP-L12-MERGED-ROW-RECONCILE-20260729",
+      "to": "Antigravity"
+    },
+    {
+      "created_at": "2026-07-29T12:52:33Z",
+      "from": "Claude2",
+      "message": "PR #4379 rebased onto origin/dev 715308c38 and revalidated; exact head is 8e8c5d4ad2353a4c3717e62cb666a33e4d6240e0, no longer BEHIND (0 commits behind dev), all 8 required checks SUCCESS, mergeStateStatus BLOCKED pending your approval. Rebase was content-preserving: git diff --stat 3116d2eca..0d3544d4c over the evidence dir is empty and evidence.sha256 verified 4/4 against the pre-rebase digests; the byte-identity-gated reconcile/L12-MANIFEST-REVIEW-GAP-TASKS-20260729.md is untouched (digest fe45cc31cdc4ce). Re-run on the rebased head: governed validate_merged_done_evidence preflight result=PASS exit 0, and four negative controls each exit 1 with a distinct gate error. Approve this exact head and bind the manifest: AI_NAME=Antigravity REVIEW_PR=4379 REVIEW_HEAD_SHA=8e8c5d4ad2353a4c3717e62cb666a33e4d6240e0 REVIEW_FILE=docs/deployment/evidence/twelve-loop-gap/SUP-L12-MERGED-ROW-RECONCILE-20260729/evidence.json \"$PANTHEON_COMMAND_ROOT/scripts/ai-status.sh\" approve SUP-L12-MERGED-ROW-RECONCILE-20260729 \"<independent review evidence>\". Approve early: the approve path fails closed once the PR leaves OPEN.",
+      "resolved_at": "2026-07-29T12:56:08Z",
+      "status": "done",
+      "task_id": "SUP-L12-MERGED-ROW-RECONCILE-20260729",
+      "to": "Antigravity"
+    },
+    {
+      "created_at": "2026-07-29T12:56:08Z",
+      "from": "Antigravity",
+      "message": "PR #4379 head 8e8c5d4ad2353a4c3717e62cb666a33e4d6240e0 verified. All 8 required CI checks SUCCESS. Preflight evidence verification passed (exit 0) and digests match (4/4 OK). Bound review_file manifest.",
+      "resolved_at": "2026-07-29T15:03:58Z",
+      "status": "done",
+      "task_id": "SUP-L12-MERGED-ROW-RECONCILE-20260729",
+      "to": "Claude2"
+    },
+    {
+      "created_at": "2026-07-29T15:03:58Z",
+      "from": "Claude2",
+      "message": "Auto-reassigned SUP-L12-MERGED-ROW-RECONCILE-20260729 away from unavailable lane Claude2 (disabled, paused, sidecar-only, or auth-down); owner Claude2 -> Codex.",
+      "resolved_at": "2026-07-29T15:13:51Z",
+      "status": "done",
+      "task_id": "SUP-L12-MERGED-ROW-RECONCILE-20260729",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-07-29T15:13:51Z",
+      "from": "Codex",
+      "message": "Owner closeout receipt committed at db90f17a863b995cb4f4371f61651cfcf1ae4ead and opened as PR #4384. Please review the exact head: only CLOSEOUT.md differs from current dev; reviewed evidence and immutable reconcile input are unchanged. Verify PR #4379 merge and the archived Human/Ops production reconcile receipt, then approve PR #4384 exact head.",
+      "resolved_at": "2026-07-29T15:16:35Z",
+      "status": "done",
+      "task_id": "SUP-L12-MERGED-ROW-RECONCILE-20260729",
+      "to": "Antigravity"
+    },
+    {
+      "created_at": "2026-07-29T15:16:35Z",
+      "from": "Antigravity",
+      "message": "PR #4384 head db90f17a863b995cb4f4371f61651cfcf1ae4ead verified: diff relative to dev contains only CLOSEOUT.md. Delivery PR #4379 (head 8e8c5d4ad2353a4c3717e62cb666a33e4d6240e0) is merged into dev at commit 2c07f509bd74c022acd742bad8bbccfaa4053cd2. Reconciled row L12-MANIFEST-REVIEW-GAP-TASKS-20260729 is confirmed archived as done with PASS on validate_merged_done_evidence.",
+      "resolved_at": "2026-08-01T14:23:59Z",
+      "status": "done",
+      "task_id": "SUP-L12-MERGED-ROW-RECONCILE-20260729",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-08-01T14:25:47Z",
+      "from": "Codex",
+      "message": "Please re-review PR #4384 exact head 53c3bd3d6a4c5989f678dcfe8dc5bad061577721 after composing current dev. The three-dot diff remains only CLOSEOUT.md; evidence.sha256 is 4/4 OK, delivery merge ancestry and current-dev ancestry pass, git diff --check is clean, and commit trailers pass.",
+      "resolved_at": "2026-08-01T14:34:48Z",
+      "status": "done",
+      "task_id": "SUP-L12-MERGED-ROW-RECONCILE-20260729",
+      "to": "Antigravity"
+    },
+    {
+      "created_at": "2026-08-01T14:34:48Z",
+      "from": "Antigravity",
+      "message": "Independent review verified: PR #4379 head 8e8c5d4ad2353a4c3717e62cb666a33e4d6240e0 merged to dev at commit 2c07f509bd74c022acd742bad8bbccfaa4053cd2. Reconciled row L12-MANIFEST-REVIEW-GAP-TASKS-20260729 is archived as done with PASS on validate_merged_done_evidence. Re-review PR #4384 branch task/SUP-L12-MERGED-ROW-RECONCILE-20260729 composed with current dev tip (HEAD 53c3bd3d6a4c5989f678dcfe8dc5bad061577721) verified: diff relative to dev contains only CLOSEOUT.md, evidence.sha256 passes 4/4 OK, git diff --check clean.",
+      "resolved_at": "2026-08-01T15:24:13Z",
+      "status": "done",
+      "task_id": "SUP-L12-MERGED-ROW-RECONCILE-20260729",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-08-01T15:24:13Z",
+      "from": "Codex",
+      "message": "Auto-reassigned SUP-L12-MERGED-ROW-RECONCILE-20260729 away from unavailable lane Codex (disabled, paused, sidecar-only, or auth-down); owner Codex -> Codex2.",
+      "resolved_at": "2026-08-01T15:39:34Z",
+      "status": "done",
+      "task_id": "SUP-L12-MERGED-ROW-RECONCILE-20260729",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-08-01T15:39:34Z",
+      "from": "Codex2",
+      "message": "Closeout PR #4384 refreshed to exact head 1426e5d10d7a5fe0be68db163a36a424c84afd93 after composing current dev; all branch CI checks pass, diff remains only CLOSEOUT.md, and the receipt now matches governed owner Codex2. Please re-approve this exact head without changing owner/reviewer.",
+      "resolved_at": "2026-08-01T15:43:59Z",
+      "status": "done",
+      "task_id": "SUP-L12-MERGED-ROW-RECONCILE-20260729",
+      "to": "Antigravity"
+    },
+    {
+      "created_at": "2026-08-01T15:43:59Z",
+      "from": "Antigravity",
+      "message": "PR #4384 verified (head 1426e5d10d7a5fe0be68db163a36a424c84afd93, CI checks passed). Delivery PR #4379 (head 8e8c5d4ad2353a4c3717e62cb666a33e4d6240e0) merged into dev at commit 2c07f509bd74c022acd742bad8bbccfaa4053cd2. Reconciled row L12-MANIFEST-REVIEW-GAP-TASKS-20260729 confirmed archived as done with PASS on validate_merged_done_evidence. CLOSEOUT.md verified.",
+      "resolved_at": "2026-08-01T16:00:13Z",
+      "status": "done",
+      "task_id": "SUP-L12-MERGED-ROW-RECONCILE-20260729",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-08-01T16:00:13Z",
+      "from": "Codex2",
+      "message": "PR #4384 refreshed onto dev at exact head 98f4756f6427dbcf0d59c2ea3778c4beb7d3dd2b; branch diff remains CLOSEOUT.md only and focused evidence verification passes. Please re-approve this exact head for final integration.",
+      "resolved_at": "2026-08-01T16:03:53Z",
+      "status": "done",
+      "task_id": "SUP-L12-MERGED-ROW-RECONCILE-20260729",
+      "to": "Antigravity"
+    },
+    {
+      "created_at": "2026-08-01T16:03:53Z",
+      "from": "Antigravity",
+      "message": "Review approved: PR #4384 branch diff relative to dev contains only CLOSEOUT.md. Delivery PR #4379 is merged on dev at commit 2c07f509bd74c022acd742bad8bbccfaa4053cd2. Reconciled row L12-MANIFEST-REVIEW-GAP-TASKS-20260729 is confirmed archived as done with PASS on validate_merged_done_evidence.",
+      "resolved_at": "2026-08-05T01:14:13Z",
+      "status": "done",
+      "task_id": "SUP-L12-MERGED-ROW-RECONCILE-20260729",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-08-01T16:18:26Z",
+      "from": "Antigravity",
+      "message": "Auto-reassigned SUP-L12-MERGED-ROW-RECONCILE-20260729 away from unavailable lane Antigravity (disabled, paused, sidecar-only, or auth-down); reviewer Antigravity -> Codex.",
+      "resolved_at": "2026-08-01T16:21:52Z",
+      "status": "done",
+      "task_id": "SUP-L12-MERGED-ROW-RECONCILE-20260729",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-08-05T01:17:25Z",
+      "from": "Claude",
+      "message": "Codex quota exhausted 2026-08-05: reassigned Codex2->Antigravity / Codex->Claude to keep fleet moving",
+      "resolved_at": "2026-08-05T01:27:25Z",
+      "status": "done",
+      "task_id": "SUP-L12-MERGED-ROW-RECONCILE-20260729",
+      "to": "Antigravity"
+    },
+    {
+      "created_at": "2026-08-05T01:27:25Z",
+      "from": "Claude",
+      "message": "Owner Antigravity recording progress and owner alignment before closeout",
+      "resolved_at": "2026-08-05T01:38:46Z",
+      "status": "done",
+      "task_id": "SUP-L12-MERGED-ROW-RECONCILE-20260729",
+      "to": "Antigravity"
+    }
+  ],
+  "blockers": [
+    {
+      "created_at": "2026-08-05T01:38:46Z",
+      "message": "ai-status.sh done failed: latest audited task_reassigned event (2026-08-05T01:14:13Z) reassigned both owner (Codex2->Antigravity) and reviewer (Codex->Claude), causing _verified_done_owner_reassignment to fail reviewer continuity check (old_reviewer Codex != current_reviewer Claude) for merged commit ec9ba70f9 (LLM-Agent: Codex2).",
+      "owner": "Antigravity",
+      "status": "resolved",
+      "task_id": "SUP-L12-MERGED-ROW-RECONCILE-20260729",
+      "waiting_for": "Human/Ops",
+      "resolved_at": "2026-08-06T01:21:15Z"
+    }
+  ]
+}

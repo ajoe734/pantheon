@@ -1,0 +1,351 @@
+{
+  "version": 1,
+  "task_id": "SUP-SCHEDULER-FIXED-CADENCE-BATCH-MUTATIONS-OPERATOR-V9-20260802",
+  "archived_at": "2026-08-02T19:30:57Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "acceptance": [
+      "Reproduce the live 2026-08-02 cadence evidence: nominal short polling produces roughly 51 to 80 second cycles and delayed queue-to-start because serial cycle work is followed by another full sleep.",
+      "Schedule from a monotonic deadline: subtract elapsed cycle work from the target interval, do not add a full interval after slow work, and define deterministic overrun/catch-up behavior that cannot busy-loop.",
+      "Keep provider/network, git/GitHub, evidence rendering, and other slow I/O outside runtime-admission, canonical task-state, and activity locks; document and test the global lock order.",
+      "Batch logically related runtime and canonical mutations per phase and reuse one authoritative snapshot where safe instead of reloading and journaling per task; preserve fail-closed CAS and audit ordering.",
+      "Expose bounded per-phase elapsed time, lock-hold time, cycle elapsed time, cadence overshoot, queue-to-start latency, and batch counts without logging credentials or unbounded task data.",
+      "Regression tests use a fake monotonic clock and injected slow phases to prove fixed cadence, overrun behavior, no busy loop, bounded lock holds, batch atomicity, crash recovery, and unchanged dispatch decisions.",
+      "Preserve dependency, priority, worker limits, failure-loop/chair triage, task-scoped quota/auth fallback, exact-head review, active leases, explicit Human/Ops reviewer, and existing rollback semantics.",
+      "Codex and Codex2 remain separate configured account and quota groups. Do not hardcode account equivalence and do not add a global mutual-review ban.",
+      "Use a clean task worktree from current origin/dev, commit only declared scope, run focused and full supervisor plus ai-status regressions, py_compile, JSON, diff and trailer checks, open PR to dev, obtain exact-head Human/Ops review, merge and canonical archive.",
+      "No live service restart or deployment belongs to this source task. Rollback is merge revert; live promotion is the dependent governed V8 canary."
+    ],
+    "artifacts": [
+      ".orchestrator/supervisor.py",
+      ".orchestrator/test_supervisor.py",
+      "scripts/ai_status.py",
+      "scripts/test_ai_status.py",
+      "docs/deployment/evidence/supervisor/SUP-SCHEDULER-FIXED-CADENCE-BATCH-MUTATIONS-OPERATOR-V9-20260802/"
+    ],
+    "depends_on": [
+      "SUP-GOVERNANCE-HANDOFF-ACTIVE-LEASE-GUARD-OPERATOR-V8-20260802",
+      "SUP-CODEX-MODELS-CACHE-QUOTA-CLASSIFICATION-OPERATOR-V8-20260802"
+    ],
+    "dev_bridge": {
+      "actor": {
+        "capabilities": [
+          "assistant.kernel.repair",
+          "dev-task.dispatch",
+          "fleet.dispatch"
+        ],
+        "id": "Human/Ops",
+        "roles": [
+          "operator"
+        ]
+      },
+      "audit_conversation_href": "codex://root/supervisor-autoworker-full-audit-20260802#scheduler-live-canary-v9",
+      "conversation_id": "codex-root-supervisor-autoworker-full-audit-20260802",
+      "documents": [
+        {
+          "kind": "ACTIVE_REPOSITORY_AUTHORITY",
+          "path": "AGENTS.md",
+          "sourceRefs": [
+            "Pantheon supervisor is the only routine implementation dispatcher",
+            "Codex and Codex2 may be different accounts and remain distinct configured quota groups",
+            "Live rollout must use the governed gate-before-switch path with rollback"
+          ]
+        },
+        {
+          "kind": "LIVE_SCHEDULER_EVIDENCE",
+          "path": ".orchestrator/logs/supervisor-watchdog-restart-20260801T154745Z.log",
+          "sourceRefs": [
+            "Observed live cycles remain approximately 51 to 80 seconds despite configured short polling",
+            "Each cycle adds a full interval after serial provider, repository, canonical-state, and evidence work",
+            "Queue-to-start latency and lock convoying make auto-workers appear slow even when slots are free"
+          ]
+        },
+        {
+          "kind": "MERGED_DEPENDENCY",
+          "path": "ai-task-archive/tasks/SUP-GOVERNANCE-HANDOFF-ACTIVE-LEASE-GUARD-OPERATOR-V8-20260802.json",
+          "sourceRefs": [
+            "merge d15eb5266b911116d6f0c92ea33e1e5d6a2bb532",
+            "healthy worker leases and resumed process generation are protected"
+          ]
+        },
+        {
+          "kind": "MERGED_DEPENDENCY",
+          "path": "ai-task-archive/tasks/SUP-FAILURE-STREAK-DISPATCH-CONSUMPTION-V2-20260801.json",
+          "sourceRefs": [
+            "PR 4491 merge a385c0be5b8d4c71f6d0bd728e237b61d5eadaa4",
+            "newer task evidence can consume stale missing-process streaks without global threshold weakening"
+          ]
+        }
+      ],
+      "emitted_at": "2026-08-02T14:44:00Z",
+      "intent": "complete_supervisor_scheduler_quota_fallback_and_live_canary_chain",
+      "mode": "kernel_repair",
+      "packet_digest": "a5167f4743330b0994e7aa32c4386917a3d687753d5565b97632d383e3166d5a",
+      "packet_id": "pkt-sup-scheduler-and-live-canary-v9-20260802T1446Z",
+      "source_turn_ids": [
+        "operator-complete-auto-worker-quota-fallback-audit",
+        "operator-preserve-distinct-codex-accounts"
+      ],
+      "task_spec": {
+        "acceptance": [
+          "Reproduce the live 2026-08-02 cadence evidence: nominal short polling produces roughly 51 to 80 second cycles and delayed queue-to-start because serial cycle work is followed by another full sleep.",
+          "Schedule from a monotonic deadline: subtract elapsed cycle work from the target interval, do not add a full interval after slow work, and define deterministic overrun/catch-up behavior that cannot busy-loop.",
+          "Keep provider/network, git/GitHub, evidence rendering, and other slow I/O outside runtime-admission, canonical task-state, and activity locks; document and test the global lock order.",
+          "Batch logically related runtime and canonical mutations per phase and reuse one authoritative snapshot where safe instead of reloading and journaling per task; preserve fail-closed CAS and audit ordering.",
+          "Expose bounded per-phase elapsed time, lock-hold time, cycle elapsed time, cadence overshoot, queue-to-start latency, and batch counts without logging credentials or unbounded task data.",
+          "Regression tests use a fake monotonic clock and injected slow phases to prove fixed cadence, overrun behavior, no busy loop, bounded lock holds, batch atomicity, crash recovery, and unchanged dispatch decisions.",
+          "Preserve dependency, priority, worker limits, failure-loop/chair triage, task-scoped quota/auth fallback, exact-head review, active leases, explicit Human/Ops reviewer, and existing rollback semantics.",
+          "Codex and Codex2 remain separate configured account and quota groups. Do not hardcode account equivalence and do not add a global mutual-review ban.",
+          "Use a clean task worktree from current origin/dev, commit only declared scope, run focused and full supervisor plus ai-status regressions, py_compile, JSON, diff and trailer checks, open PR to dev, obtain exact-head Human/Ops review, merge and canonical archive.",
+          "No live service restart or deployment belongs to this source task. Rollback is merge revert; live promotion is the dependent governed V8 canary."
+        ],
+        "artifacts": [
+          ".orchestrator/supervisor.py",
+          ".orchestrator/test_supervisor.py",
+          "scripts/ai_status.py",
+          "scripts/test_ai_status.py",
+          "docs/deployment/evidence/supervisor/SUP-SCHEDULER-FIXED-CADENCE-BATCH-MUTATIONS-OPERATOR-V9-20260802/"
+        ],
+        "depends_on": [
+          "SUP-GOVERNANCE-HANDOFF-ACTIVE-LEASE-GUARD-OPERATOR-V8-20260802",
+          "SUP-CODEX-MODELS-CACHE-QUOTA-CLASSIFICATION-OPERATOR-V8-20260802"
+        ],
+        "id": "SUP-SCHEDULER-FIXED-CADENCE-BATCH-MUTATIONS-OPERATOR-V9-20260802",
+        "owner": "Codex2",
+        "phase": "Supervisor scheduler / fixed cadence / lock and mutation batching V9",
+        "reviewer": "Human/Ops",
+        "summary": "Remove full-sleep drift and per-task mutation convoys so dispatch cadence tracks its deadline while preserving fail-closed governance.",
+        "title": "Make supervisor cadence deadline-based and batch canonical/runtime mutations"
+      },
+      "task_spec_hash": "85c1b7e1e87a01f23c445f2840641d704cdef5612679972080331f78551be7d8"
+    },
+    "github_review_bridge": {
+      "actor": "Human/Ops",
+      "base": "dev",
+      "decision": "approve",
+      "head_branch": "task/SUP-SCHEDULER-FIXED-CADENCE-BATCH-MUTATIONS-OPERATOR-V9-20260802",
+      "head_sha": "10f0bdcb49390bd3eb493a6f5225e3fd706a9106",
+      "mode": "required_commit_status",
+      "pr": 4520,
+      "pr_url": "https://github.com/ajoe734/pantheon/pull/4520",
+      "recorded_at": "2026-08-02T19:26:29Z",
+      "repository": "ajoe734/pantheon",
+      "review_error": "gh: Unprocessable Entity (HTTP 422)",
+      "status_context": "Pantheon canonical review gate",
+      "status_id": 51511246540,
+      "status_state": "success"
+    },
+    "id": "SUP-SCHEDULER-FIXED-CADENCE-BATCH-MUTATIONS-OPERATOR-V9-20260802",
+    "last_update": "2026-08-02T19:30:57Z",
+    "next": "Owner closeout complete: Human/Ops exact-head review 10f0bdcb49390bd3eb493a6f5225e3fd706a9106 merged via PR #4520 as 0343e4b76f446735a9ee35a4a4977c33ea7b696e; reran 15 supervisor tests + 4 subtests and 5 canonical batch tests, plus py_compile, evidence JSON, final diff and trailer checks; source-only delivery, no live restart or deployment.",
+    "owner": "Codex2",
+    "phase": "Supervisor scheduler / fixed cadence / lock and mutation batching V9",
+    "review_binding": {
+      "base": "dev",
+      "head_branch": "task/SUP-SCHEDULER-FIXED-CADENCE-BATCH-MUTATIONS-OPERATOR-V9-20260802",
+      "head_sha": "10f0bdcb49390bd3eb493a6f5225e3fd706a9106",
+      "pr": 4520
+    },
+    "review_file": "docs/deployment/evidence/supervisor/SUP-SCHEDULER-FIXED-CADENCE-BATCH-MUTATIONS-OPERATOR-V9-20260802/evidence.json",
+    "review_notes_zh": [
+      "已對 PR #4520 精確 head 10f0bdcb49390bd3eb493a6f5225e3fd706a9106 完成獨立審查。確認 net diff 僅含六個宣告檔案，diff-check、evidence JSON、commit trailers 與全數 GitHub checks 通過；另在 detached exact-head worktree 重跑 13 個 supervisor 啟動恢復／固定 cadence／deferred-side-effect 邊界測試及 4 個 canonical dispatch batch 原子性／outbox 測試，合計 17 passed。確認 marker started_at 必須嚴格大於 prepared epoch（相等亦拒絕），live marker 仍需 exact /proc process proof；Codex/Codex2 帳號與 quota group 行為未被合併或硬編碼，亦未新增全域互審禁令。批准進入 governed merge gate；live promotion 與 quota/auth fallback 由相依 canary 驗證。"
+    ],
+    "reviewer": "Human/Ops",
+    "status": "done",
+    "summary_zh": "Remove full-sleep drift and per-task mutation convoys so dispatch cadence tracks its deadline while preserving fail-closed governance.",
+    "title": "Make supervisor cadence deadline-based and batch canonical/runtime mutations",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-08-02T19:30:57Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/sup-scheduler-fixed-cadence-batch-mutations-operator-v9-20260802",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/SUP-SCHEDULER-FIXED-CADENCE-BATCH-MUTATIONS-OPERATOR-V9-20260802",
+      "git_clean_required": false,
+      "status_command_runtime": {
+        "command_root": "/home/lupin/pantheon-ci-deploy/dev-root",
+        "source_sha": "941c15a34208e54e96cdd148ba3a5bfcd339abab",
+        "base_ref": "origin/dev",
+        "remote": "ajoe734/pantheon",
+        "status_root": "/home/lupin/pantheon",
+        "delivery_root": "/tmp/pantheon-worker-worktrees/pantheon/sup-scheduler-fixed-cadence-batch-mutations-operator-v9-20260802",
+        "wrapper_root": "/home/lupin/pantheon-ci-deploy/dev-root"
+      },
+      "commit": "10f0bdcb49390bd3eb493a6f5225e3fd706a9106",
+      "commit_subject": "SUP-SCHEDULER-FIXED-CADENCE-BATCH-MUTATIONS-OPERATOR-V9-20260802: U",
+      "commit_author": {
+        "name": "pantheon-dev",
+        "email": "bjoe734@gmail.com"
+      },
+      "commit_metadata": {
+        "Owned layer": "task-scoped launch-recovery evidence and validation record.",
+        "Not changing": "cadence batching, canonical mutation semantics, account/quota grouping, deployment, or live runtime configuration.",
+        "Composes with": "anchor 5e3b55868, PR #4520 Human/Ops exact-head re-review, and the dependent governed V8 live canary.",
+        "LLM-Agent": "Codex2",
+        "Task-ID": "SUP-SCHEDULER-FIXED-CADENCE-BATCH-MUTATIONS-OPERATOR-V9-20260802",
+        "Reviewer": "Human/Ops",
+        "Verified": "supervisor 579 tests + 158 subtests; ai-status 165 tests + 31 subtests; 6 focused recovery tests; py_compile, JSON, and diff checks"
+      },
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "0343e4b76f446735a9ee35a4a4977c33ea7b696e",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "created_at": "2026-08-02T17:04:16Z",
+      "from": "Codex2",
+      "message": "Review PR #4520 exact head 25df0b45f098cf6a21a3e9e8aa4a2a972f68e0bd. Evidence: docs/deployment/evidence/supervisor/SUP-SCHEDULER-FIXED-CADENCE-BATCH-MUTATIONS-OPERATOR-V9-20260802/evidence.json. Validation: supervisor 557 + 158 subtests; ai-status 165 + 31 subtests; py_compile, JSON, diff, trailers pass. No live restart/deployment.",
+      "resolved_at": "2026-08-02T17:06:44Z",
+      "status": "done",
+      "task_id": "SUP-SCHEDULER-FIXED-CADENCE-BATCH-MUTATIONS-OPERATOR-V9-20260802",
+      "to": "Human/Ops"
+    },
+    {
+      "created_at": "2026-08-02T17:06:44Z",
+      "from": "Human/Ops",
+      "message": "Human/Ops rejected PR #4520 exact head 25df0b45f: evidence diff-check mismatch; post-lock telemetry is not persisted; process/worktree/git/prune slow I/O remains under runtime admission; scheduler telemetry callback can terminate main; generated task brief is outside declared scope. Fix all findings, preserve distinct Codex/Codex2 groups, revalidate and re-handoff a new exact head.",
+      "resolved_at": "2026-08-02T17:06:44Z",
+      "status": "done",
+      "task_id": "SUP-SCHEDULER-FIXED-CADENCE-BATCH-MUTATIONS-OPERATOR-V9-20260802",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-08-02T17:36:34Z",
+      "from": "Codex2",
+      "message": "PR #4520 exact head 015d02d32239d03ebdf77b7fc888164ff893a775 addresses all rejected-head findings: diff/evidence whitespace and scope corrected; actual queue/poll/prune/provider/git/process slow paths covered outside runtime admission through reserved snapshot plus exact CAS; losing phase preserves concurrent writers; complete post-lock cycle telemetry persists; scheduler callback failures cannot stop future cycles. Evidence: docs/deployment/evidence/supervisor/SUP-SCHEDULER-FIXED-CADENCE-BATCH-MUTATIONS-OPERATOR-V9-20260802/evidence.json. Exact-head validation: supervisor 561/561, ai-status 165/165, py_compile, JSON, git diff --check, and trailer gate passed. Please perform Human/Ops exact-head review.",
+      "resolved_at": "2026-08-02T17:38:17Z",
+      "status": "done",
+      "task_id": "SUP-SCHEDULER-FIXED-CADENCE-BATCH-MUTATIONS-OPERATOR-V9-20260802",
+      "to": "Human/Ops"
+    },
+    {
+      "created_at": "2026-08-02T17:38:17Z",
+      "from": "Human/Ops",
+      "message": "Human/Ops rejected PR #4520 exact head 015d02d32239d03ebdf77b7fc888164ff893a775. Blocking crash/cleanup/telemetry findings: (1) reserved process_queue suppresses the immediate post-launch save, but the reservation persists no launch intent or receipt. Deterministic hard-crash injection after external process launch and before CAS produced supervisor exit 77 with launched_process_alive=true, runtime_worker_persisted=false, reservation_remains=true, so a live worker can be orphaned and the task/event can be redispatched. Restore durable pre/post-launch recovery/adoption or equivalent and test process death at this exact boundary. (2) _run_with_deferred_dispatch_status_syncs moved termination confirmation outside finally; if the locked operation raises after scheduling termination, the function exits before _flush_deferred_runtime_side_effects. Injection recorded one scheduled termination and zero flush calls. Cleanup that must run on exception cannot be dropped; add regression coverage. (3) reserve_started, commit_started, and lock_started are sampled before blocking acquisition, so runtime_lock_hold_seconds includes wait time rather than actual exclusive hold. Measure true hold separately so the canary's bounded-lock evidence is truthful. Preserve separate Codex/Codex2 configured account/quota groups and do not add a global mutual-review ban. Re-run full exact-head tests/evidence and re-handoff.",
+      "resolved_at": "2026-08-02T17:38:17Z",
+      "status": "done",
+      "task_id": "SUP-SCHEDULER-FIXED-CADENCE-BATCH-MUTATIONS-OPERATOR-V9-20260802",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-08-02T18:06:20Z",
+      "from": "Codex2",
+      "message": "PR #4520 repaired head ab0d79e33bb1dfff452c93c32a96721168222ad9 is ready for exact-head re-review. Evidence: docs/deployment/evidence/supervisor/SUP-SCHEDULER-FIXED-CADENCE-BATCH-MUTATIONS-OPERATOR-V9-20260802/evidence.json. It covers hard exit 77 launch-intent adoption, post-launch receipt adoption, exception-safe deferred cleanup, and acquisition-excluding lock-hold telemetry. Full supervisor 565 tests + 158 subtests and ai-status 165 tests + 31 subtests pass.",
+      "resolved_at": "2026-08-02T18:08:36Z",
+      "status": "done",
+      "task_id": "SUP-SCHEDULER-FIXED-CADENCE-BATCH-MUTATIONS-OPERATOR-V9-20260802",
+      "to": "Human/Ops"
+    },
+    {
+      "created_at": "2026-08-02T18:08:36Z",
+      "from": "Human/Ops",
+      "message": "Exact-head ab0d79e33 rejected. Three blocking gaps remain: (1) a durable launch_intent with no receipt and no unique marker is retained forever, so adapter failure before launch can permanently freeze process_queue and prevent quota/auth fallback or reassignment; add bounded, process-proven stale-intent resolution plus no-launch/ambiguous-marker regressions; (2) claim_next_task_for_agent still wraps load_provider_report, process_queue/worktree+adapter launch, and dashboard refresh in _run_with_deferred_dispatch_status_syncs exclusive runtime admission, violating the slow-I/O-outside-lock acceptance and preserving the self-claim latency path; refactor to short reservation/CAS phases and prove actual entry-point lock depth; (3) _run_with_deferred_dispatch_status_syncs flushes canonical status, archive, and activity side effects after an operation exception, even though its runtime mutation did not complete; on failure only exact termination cleanup may run unless committed state is proven, with an injected regression. Preserve distinct Codex/Codex2 account/quota groups and no global mutual-review ban.",
+      "resolved_at": "2026-08-02T18:08:36Z",
+      "status": "done",
+      "task_id": "SUP-SCHEDULER-FIXED-CADENCE-BATCH-MUTATIONS-OPERATOR-V9-20260802",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-08-02T18:30:02Z",
+      "from": "Codex2",
+      "message": "PR #4520 exact head fb923abe2182acb4b5c10a0e557040b968598008 is ready for independent re-review. Latest rejected-head blockers are covered by bounded exact-process stale-intent recovery, reservation/CAS self-claim with named slow paths at lock depth zero, and failure-path discard of uncommitted canonical/archive/activity effects while preserving exact termination cleanup. Evidence: docs/deployment/evidence/supervisor/SUP-SCHEDULER-FIXED-CADENCE-BATCH-MUTATIONS-OPERATOR-V9-20260802/evidence.json. Verified supervisor 570 tests + 158 subtests; ai-status 165 tests + 31 subtests; py_compile, JSON, diff, and trailer gates.",
+      "resolved_at": "2026-08-02T18:32:11Z",
+      "status": "done",
+      "task_id": "SUP-SCHEDULER-FIXED-CADENCE-BATCH-MUTATIONS-OPERATOR-V9-20260802",
+      "to": "Human/Ops"
+    },
+    {
+      "created_at": "2026-08-02T18:32:11Z",
+      "from": "Human/Ops",
+      "message": "Exact-head fb923abe rejected: launch recovery lacks post-intent generation binding. Independent fake-/proc reproduction proves both a worker_runner candidate whose generation necessarily predates a future prepared_epoch_seconds and a marker started in 2020 with a freshly updated heartbeat mtime are accepted as run-old. _runtime_launch_process_candidates never compares process start epoch to the intent, and _runtime_launch_marker_candidates filters mtime rather than marker started_at; recovery can therefore adopt an older same-task/agent run and bind it to the new queue_event_id. Add end-to-end temporal proof (PID start epoch from btime+ticks or exact launch token), prevent unique-marker fallback from bypassing it, and add negative pre-intent process plus fresh-heartbeat-marker tests while retaining post-intent adoption and distinct Codex/Codex2 groups.",
+      "resolved_at": "2026-08-02T18:32:11Z",
+      "status": "done",
+      "task_id": "SUP-SCHEDULER-FIXED-CADENCE-BATCH-MUTATIONS-OPERATOR-V9-20260802",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-08-02T18:46:55Z",
+      "from": "Codex2",
+      "message": "PR #4520 exact head ba3b176500f557944eb6f3e08709361281609989 is ready for independent re-review. Temporal recovery now rejects pre-intent /proc generations via btime+start ticks/CLK_TCK plus a persisted boot-tick boundary; marker selection uses immutable started_at so fresh heartbeat mtime cannot bypass unique-marker fallback; Codex/Codex2 remain distinct. Evidence: docs/deployment/evidence/supervisor/SUP-SCHEDULER-FIXED-CADENCE-BATCH-MUTATIONS-OPERATOR-V9-20260802/evidence.json. Verified supervisor 573 + 158 subtests, ai-status 165 + 31 subtests, py_compile, JSON, full-range diff and trailers.",
+      "resolved_at": "2026-08-02T18:47:45Z",
+      "status": "done",
+      "task_id": "SUP-SCHEDULER-FIXED-CADENCE-BATCH-MUTATIONS-OPERATOR-V9-20260802",
+      "to": "Human/Ops"
+    },
+    {
+      "created_at": "2026-08-02T18:47:45Z",
+      "from": "Human/Ops",
+      "message": "Exact-head ba3b1765 rejected: the unique running-marker fallback still bypasses the new exact boot-tick process proof within the same wall-clock second. Independent reproduction sets intent prepared_epoch=18:00:00.900 with prepared_boottime_ticks, an older running marker started_at=18:00:00, and a fresh heartbeat; _runtime_launch_marker_candidates accepts run-old-same-second because it floors prepared_epoch, and recovery adopts it whenever the exact /proc scan correctly returns zero pre-intent candidates. Require any running/live marker to match a post-intent process candidate that passed pid_start_ticks >= prepared_boottime_ticks; marker-only adoption may be limited to terminal/dead evidence, or use an exact token/tick in the marker. Add the same-second negative end-to-end test. Preserve the existing post-intent crash adoption and distinct Codex/Codex2 groups.",
+      "resolved_at": "2026-08-02T18:47:45Z",
+      "status": "done",
+      "task_id": "SUP-SCHEDULER-FIXED-CADENCE-BATCH-MUTATIONS-OPERATOR-V9-20260802",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-08-02T19:04:36Z",
+      "from": "Codex2",
+      "message": "PR #4520 exact head 9c3abe1759878b9eac24f21f562908020da5b06c is ready for independent re-review. ba3b1765 remediation now compares marker started_at to the full fractional intent epoch, requires running/live markers to match exact post-intent /proc generation proof, permits only strictly post-intent terminal/dead marker-only recovery, and retains true process-based hard-crash adoption. Validation: supervisor 577 + 158 subtests; ai-status 165 + 31 subtests; 9 focused recovery tests; py_compile, JSON, diff, and trailer checks passed. Evidence: docs/deployment/evidence/supervisor/SUP-SCHEDULER-FIXED-CADENCE-BATCH-MUTATIONS-OPERATOR-V9-20260802/evidence.json",
+      "resolved_at": "2026-08-02T19:05:26Z",
+      "status": "done",
+      "task_id": "SUP-SCHEDULER-FIXED-CADENCE-BATCH-MUTATIONS-OPERATOR-V9-20260802",
+      "to": "Human/Ops"
+    },
+    {
+      "created_at": "2026-08-02T19:05:26Z",
+      "from": "Human/Ops",
+      "message": "Exact-head review rejects 9c3abe1759878b9eac24f21f562908020da5b06c only for declared-scope violation: .orchestrator/task-briefs/sup_scheduler_fixed_cadence_batch_mutations_operator_v9_20260802.md is generated runtime context and is not in task.artifacts. Remove that path from the PR net diff (delete it relative to origin/dev; do not update/commit it), keep .orchestrator/assistant-dev-packets out of commits, refresh evidence only if needed, then push and re-handoff. Preserve distinct Codex/Codex2 account and quota groups. The 577+158 and 165+31 suites plus the temporal/process recovery behavior otherwise remain the review baseline.",
+      "resolved_at": "2026-08-02T19:05:26Z",
+      "status": "done",
+      "task_id": "SUP-SCHEDULER-FIXED-CADENCE-BATCH-MUTATIONS-OPERATOR-V9-20260802",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-08-02T19:09:44Z",
+      "from": "Codex2",
+      "message": "PR #4520 exact head c9299f51a4ccb6d76bd3964f060cfde87673201b removes the generated task brief from the net diff exactly as requested. Net diff now contains only declared artifacts; no implementation or evidence bytes changed from the prior validated head. Verified HEAD and full-range commit trailers, evidence JSON, git diff --check, and origin/dev scope. Existing reviewer baseline remains supervisor 577 tests + 158 subtests and ai-status 165 tests + 31 subtests. Please perform exact-head review.",
+      "resolved_at": "2026-08-02T19:13:05Z",
+      "status": "done",
+      "task_id": "SUP-SCHEDULER-FIXED-CADENCE-BATCH-MUTATIONS-OPERATOR-V9-20260802",
+      "to": "Human/Ops"
+    },
+    {
+      "created_at": "2026-08-02T19:13:05Z",
+      "from": "Human/Ops",
+      "message": "Exact-head review rejects c9299f51a4ccb6d76bd3964f060cfde87673201b for one remaining strict temporal boundary. In _runtime_launch_marker_candidates the check is marker_started_at.timestamp() < prepared_epoch, so equality is accepted. Both worker_runner utc_now() and supervisor _isoformat_utc() truncate microseconds; a legacy/reconstructed intent whose prepared epoch comes from second-resolution prepared_at can therefore accept a same-second running or terminal marker even though equality cannot prove post-intent order. Terminal/dead marker-only recovery then bypasses /proc. Change the exclusion to <= (strictly post-intent only), add exact-equality running and terminal negative tests while retaining the strictly-next-second terminal positive and exact-process hard-crash positive. Independent exact-head validation otherwise passed: 21 focused supervisor tests, 4 ai-status batch tests, JSON and diff checks; net scope is correct. Preserve distinct Codex/Codex2 account and quota groups.",
+      "resolved_at": "2026-08-02T19:13:05Z",
+      "status": "done",
+      "task_id": "SUP-SCHEDULER-FIXED-CADENCE-BATCH-MUTATIONS-OPERATOR-V9-20260802",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-08-02T19:25:16Z",
+      "from": "Codex2",
+      "message": "Please independently review PR #4520 exact head 10f0bdcb49390bd3eb493a6f5225e3fd706a9106. The remaining strict temporal boundary now excludes marker started_at <= prepared epoch; equality tests cover running marker selection and terminal marker-only recovery from legacy prepared_at. Strictly-next-second terminal and exact-process hard-crash positives remain. Evidence: docs/deployment/evidence/supervisor/SUP-SCHEDULER-FIXED-CADENCE-BATCH-MUTATIONS-OPERATOR-V9-20260802/evidence.json. Local full suites and all GitHub checks are green; auto-merge is off.",
+      "resolved_at": "2026-08-02T19:26:29Z",
+      "status": "done",
+      "task_id": "SUP-SCHEDULER-FIXED-CADENCE-BATCH-MUTATIONS-OPERATOR-V9-20260802",
+      "to": "Human/Ops"
+    },
+    {
+      "created_at": "2026-08-02T19:26:29Z",
+      "from": "Human/Ops",
+      "message": "Human/Ops exact-head review approved; governed merge gate may integrate PR #4520.",
+      "status": "done",
+      "task_id": "SUP-SCHEDULER-FIXED-CADENCE-BATCH-MUTATIONS-OPERATOR-V9-20260802",
+      "to": "Codex2",
+      "resolved_at": "2026-08-02T19:30:58Z"
+    }
+  ],
+  "blockers": []
+}

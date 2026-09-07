@@ -1,0 +1,219 @@
+{
+  "version": 1,
+  "task_id": "SUP-WORKER-FAILURE-ENVELOPE-GATE-20260802",
+  "archived_at": "2026-08-02T05:47:58Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "acceptance": [
+      "Four captured quota fixture and source lines never classify as provider failures",
+      "Authentic provider terminal envelopes still classify auth quota capacity and terminal correctly",
+      "Tool output source diffs search results and user content are ignored",
+      "Missing process without a terminal envelope remains missing_process and never quota",
+      "Focused and full supervisor regressions pass",
+      "No config runtime-state account-group or reviewer-policy changes"
+    ],
+    "artifacts": [
+      ".orchestrator/supervisor.py",
+      ".orchestrator/test_supervisor.py",
+      "docs/deployment/evidence/supervisor/SUP-WORKER-FAILURE-ENVELOPE-GATE-20260802/"
+    ],
+    "coordination_packet": {
+      "expected_branch": "task/SUP-WORKER-FAILURE-ENVELOPE-GATE-20260802",
+      "independent_reviewer_capability": "Human/Ops exact-head independent reviewer",
+      "merge_target": "dev",
+      "objective": "Replace transcript-wide regex failure inference with an authoritative terminal-envelope gate while preserving real provider failure classification.",
+      "out_of_scope": "Codex and Codex2 account grouping or reviewer policy; provider credentials; canonical runtime JSON edits; live process signals; product code.",
+      "owner_capability": "supervisor runtime reliability implementer",
+      "remote": "ajoe734/pantheon",
+      "required_artifacts": [
+        "branch",
+        "commits",
+        "PR",
+        "checks",
+        "exact-head review",
+        "merge commit"
+      ],
+      "rollback": "Revert the merge commit and restore the prior live supervisor release through the promotion transaction.",
+      "rollout": "Merge source to dev then promote only through the final governed runtime canary task.",
+      "schema_version": 1,
+      "source": "codex_chatbox_readonly_audit_20260802"
+    },
+    "depends_on": [
+      "SUP-FAILURE-STREAK-RECORD-WIRING-V3-20260801"
+    ],
+    "github_review_bridge": {
+      "actor": "Human/Ops",
+      "base": "dev",
+      "decision": "approve",
+      "head_branch": "task/SUP-WORKER-FAILURE-ENVELOPE-GATE-20260802",
+      "head_sha": "3be995f0345c355b3649bf9937904bf670b9900d",
+      "mode": "required_commit_status",
+      "pr": 4485,
+      "pr_url": "https://github.com/ajoe734/pantheon/pull/4485",
+      "recorded_at": "2026-08-02T05:42:37Z",
+      "repository": "ajoe734/pantheon",
+      "review_error": "gh: Unprocessable Entity (HTTP 422)",
+      "status_context": "Pantheon canonical review gate",
+      "status_id": 51497164146,
+      "status_state": "success"
+    },
+    "id": "SUP-WORKER-FAILURE-ENVELOPE-GATE-20260802",
+    "last_update": "2026-08-02T05:47:58Z",
+    "next": "Owner closeout complete: implementation PR #4482 merged as 4c5dcf4a55307776765bc402454e4a44c61259e2; exact-head reviewed closeout PR #4485 merged as c25471b48d1c2e476d2a639db36f341c6dc16c8a; reviewer-bound evidence.json preserved byte-identically on dev; focused 88 passed plus 10 subtests and full 480 passed plus 74 subtests; py_compile, JSON parse, diff, remote-head, and ancestry checks passed. Concurrent generated dashboard mirrors, assistant locks, and task brief were excluded from task commits.",
+    "owner": "Codex",
+    "phase": "Supervisor reliability / authoritative failure detection",
+    "review_binding": {
+      "base": "dev",
+      "head_branch": "task/SUP-WORKER-FAILURE-ENVELOPE-GATE-20260802",
+      "head_sha": "3be995f0345c355b3649bf9937904bf670b9900d",
+      "pr": 4485
+    },
+    "review_file": "docs/deployment/evidence/supervisor/SUP-WORKER-FAILURE-ENVELOPE-GATE-20260802/evidence.json",
+    "review_notes_zh": [
+      "Exact-head diff limited to four declared files; authoritative runner/provider terminal envelopes gate quota/auth classification; mixed-trust source/tool/user content is excluded; missing-process remains missing_process without terminal envelope; independent focused replay passed 88 tests plus 10 subtests; full worker regression 480 plus 74 subtests and all eight GitHub checks are green."
+    ],
+    "reviewer": "Human/Ops",
+    "status": "done",
+    "summary_zh": "停止從任意 transcript 與原始碼片段誤判 provider quota；只消費 runner/provider 的權威終止證據。",
+    "title": "Gate worker failures on authoritative terminal envelopes",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-08-02T05:47:58Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/sup-worker-failure-envelope-gate-20260802",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/SUP-WORKER-FAILURE-ENVELOPE-GATE-20260802",
+      "git_clean_required": false,
+      "status_command_runtime": {
+        "command_root": "/home/lupin/pantheon-ci-deploy/dev-root",
+        "source_sha": "941c15a34208e54e96cdd148ba3a5bfcd339abab",
+        "base_ref": "origin/dev",
+        "remote": "ajoe734/pantheon",
+        "status_root": "/home/lupin/pantheon",
+        "delivery_root": "/tmp/pantheon-worker-worktrees/pantheon/sup-worker-failure-envelope-gate-20260802",
+        "wrapper_root": "/home/lupin/pantheon-ci-deploy/dev-root"
+      },
+      "commit": "3be995f0345c355b3649bf9937904bf670b9900d",
+      "commit_subject": "SUP-WORKER-FAILURE-ENVELOPE-GATE-20260802: close evidence",
+      "commit_author": {
+        "name": "pantheon-dev",
+        "email": "bjoe734@gmail.com"
+      },
+      "commit_metadata": {
+        "Owned layer": "task review and merge evidence metadata.",
+        "Not changing": "supervisor behavior, provider configuration, runtime state, or reviewer policy.",
+        "Composes with": "merged PR #4482, Human/Ops exact-head closeout review, and governed done.",
+        "LLM-Agent": "Codex",
+        "Task-ID": "SUP-WORKER-FAILURE-ENVELOPE-GATE-20260802",
+        "Reviewer": "Human/Ops",
+        "Verified": "focused 88 tests plus 10 subtests; full 480 tests plus 74 subtests; py_compile; JSON parse; diff check"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 4,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "c25471b48d1c2e476d2a639db36f341c6dc16c8a",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "created_at": "2026-08-02T04:45:10Z",
+      "from": "Codex",
+      "message": "PR #4482 is ready for independent exact-head review at a96aa9933700845e570dc38677418e9ad631fc10. Review the authoritative terminal-envelope gate and bind REVIEW_FILE=docs/deployment/evidence/supervisor/SUP-WORKER-FAILURE-ENVELOPE-GATE-20260802/evidence.json. Verification: focused 88 passed plus 10 subtests; full supervisor 480 passed plus 74 subtests; py_compile, jq, and git diff --check passed.",
+      "resolved_at": "2026-08-02T04:50:35Z",
+      "status": "done",
+      "task_id": "SUP-WORKER-FAILURE-ENVELOPE-GATE-20260802",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-08-02T04:50:35Z",
+      "from": "Codex2",
+      "message": "PR #4482 exact head a96aa9933700845e570dc38677418e9ad631fc10 fails declared artifact scope: origin/dev...HEAD includes .orchestrator/task-briefs/sup_worker_failure_envelope_gate_20260802.md in addition to the allowed supervisor.py, test_supervisor.py, and task evidence directory. Focused independent validation passed (88 passed, 392 deselected, 10 subtests; py_compile, evidence JSON parse, and git diff --check passed), but green tests/checks do not override the scope gate. Remove the task-brief file from the PR diff and return a new exact head whose changed paths are only .orchestrator/supervisor.py, .orchestrator/test_supervisor.py, and docs/deployment/evidence/supervisor/SUP-WORKER-FAILURE-ENVELOPE-GATE-20260802/.",
+      "resolved_at": "2026-08-02T04:50:35Z",
+      "status": "done",
+      "task_id": "SUP-WORKER-FAILURE-ENVELOPE-GATE-20260802",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-08-02T04:55:43Z",
+      "from": "Codex",
+      "message": "PR #4482 scope gate repaired at exact head 2f9f77b475cf2287e44da988ccd01a02e450cef4. origin/dev...HEAD now contains only .orchestrator/supervisor.py, .orchestrator/test_supervisor.py, and the two task evidence files. Focused 88 passed (392 deselected, 10 subtests); full 480 passed (74 subtests); py_compile, evidence JSON parse, git diff --check, and declared scope gate passed. Please perform exact-head independent review.",
+      "resolved_at": "2026-08-02T05:12:03Z",
+      "status": "done",
+      "task_id": "SUP-WORKER-FAILURE-ENVELOPE-GATE-20260802",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-08-02T05:12:03Z",
+      "from": "Codex2",
+      "message": "Approved PR #4482 exact head 2f9f77b475cf2287e44da988ccd01a02e450cef4: authoritative runner/provider terminal-envelope gate satisfies all acceptance criteria; independent focused 88/10 and full 480/74 regression, py_compile, evidence JSON, diff scope/check, dependency, trailers, and eight green CI checks verified.",
+      "resolved_at": "2026-08-02T05:16:42Z",
+      "status": "done",
+      "task_id": "SUP-WORKER-FAILURE-ENVELOPE-GATE-20260802",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-08-02T05:16:42Z",
+      "from": "Codex2",
+      "message": "Ownership updated",
+      "resolved_at": "2026-08-02T05:19:44Z",
+      "status": "done",
+      "task_id": "SUP-WORKER-FAILURE-ENVELOPE-GATE-20260802",
+      "to": "Copilot"
+    },
+    {
+      "created_at": "2026-08-02T05:19:44Z",
+      "from": "Codex2",
+      "message": "Ownership updated",
+      "resolved_at": "2026-08-02T05:25:18Z",
+      "status": "done",
+      "task_id": "SUP-WORKER-FAILURE-ENVELOPE-GATE-20260802",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-08-02T05:25:18Z",
+      "from": "Codex",
+      "message": "Closeout gate requires renewed exact-head approval: after Codex2 approved PR #4482 head 2f9f77b475cf2287e44da988ccd01a02e450cef4, Human/Ops reassigned owner Codex -> Copilot -> Codex, so the authoritative integrator reports approval_revoked. Head, diff, CI, and evidence are unchanged; owner/reviewer remain Codex/Codex2. Please re-approve exact PR #4482 head after the last 2026-08-02T05:19:44Z assign event.",
+      "resolved_at": "2026-08-02T05:30:28Z",
+      "status": "done",
+      "task_id": "SUP-WORKER-FAILURE-ENVELOPE-GATE-20260802",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-08-02T05:30:28Z",
+      "from": "Human/Ops",
+      "message": "Human/Ops exact-head approval for PR #4482 at 2f9f77b475cf2287e44da988ccd01a02e450cef4; owner finalize and governed merge may proceed.",
+      "resolved_at": "2026-08-02T05:40:58Z",
+      "status": "done",
+      "task_id": "SUP-WORKER-FAILURE-ENVELOPE-GATE-20260802",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-08-02T05:40:58Z",
+      "from": "Codex",
+      "message": "Closeout-only PR #4485 is ready for exact-head review at 3be995f0345c355b3649bf9937904bf670b9900d. It records the already-approved PR #4482 review/merge evidence and supplies the Human/Ops Reviewer trailer required by governed done; no supervisor behavior changed.",
+      "resolved_at": "2026-08-02T05:42:37Z",
+      "status": "done",
+      "task_id": "SUP-WORKER-FAILURE-ENVELOPE-GATE-20260802",
+      "to": "Human/Ops"
+    },
+    {
+      "created_at": "2026-08-02T05:42:37Z",
+      "from": "Human/Ops",
+      "message": "Human/Ops exact-head approval for closeout-only PR #4485 at 3be995f0345c355b3649bf9937904bf670b9900d: diff is limited to the two declared evidence files; metadata faithfully binds merged implementation PR #4482 head 2f9f77b475cf2287e44da988ccd01a02e450cef4 and merge 4c5dcf4a55307776765bc402454e4a44c61259e2; JSON and diff checks pass; all nine visible checks are green; no supervisor, config, runtime, account-group, or global reviewer-policy behavior changed.",
+      "status": "done",
+      "task_id": "SUP-WORKER-FAILURE-ENVELOPE-GATE-20260802",
+      "to": "Codex",
+      "resolved_at": "2026-08-02T05:47:59Z"
+    }
+  ],
+  "blockers": []
+}

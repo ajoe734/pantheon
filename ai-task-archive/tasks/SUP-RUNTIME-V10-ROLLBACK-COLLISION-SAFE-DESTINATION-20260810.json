@@ -1,0 +1,263 @@
+{
+  "version": 1,
+  "task_id": "SUP-RUNTIME-V10-ROLLBACK-COLLISION-SAFE-DESTINATION-20260810",
+  "archived_at": "2026-08-10T19:12:50Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "acceptance": [
+      "Reproduce the current governed blocker with candidate 37ee6c5dfe43a60763b6d799b9dfa28bb8ea5a7d and mutable incumbent commit 0305c861f54c4082060120afdfbc012622e5ac0a: bootstrap preparation must fail closed when the direct rollback destination already exists at a different root/device/inode, before admission lock, restart intent, config write, signal, or launch.",
+      "Implement only a narrow collision-safe rollback destination contract that can produce a fresh immutable rollback runtime without deleting, moving, overwriting, or guessing-reusing the existing 0305c861 destination; preserve canonical commit/tree/origin/config/cleanliness identity and prove candidate-versus-rollback path/device/inode separation.",
+      "If a dedicated rollback-runtime parent or equivalent identity namespace is introduced, bind it explicitly in the governed launch/config contract, keep it outside the live status/event roots, and fail closed on missing, ambiguous, symlinked, pre-existing, or identity-mismatched destinations.",
+      "Preserve all existing fail-closed gates: incumbent PID/cwd/argv binding, config CAS and unchanged predecessor bytes, runtime-admission lock ordering, lease parity, authoritative projection equality, provider baseline, three fresh loops, bytecode self-rejection, and automatic rollback.",
+      "Add focused regression coverage for the existing different-root 0305 collision, fresh collision-safe destination creation, candidate/rollback identity separation, symlink or pre-existing destination rejection, and rollback readback; run the complete promotion suite, focused tests, and git diff --check.",
+      "Change only the declared scripts, focused tests, and task evidence. Do not run promotion, signal, restart, delete, move, or overwrite any live/existing command runtime; do not edit live config/state/queues, dev-root, provider/account routing, or canonical task state. Parent live promotion remains a separate supervisor dispatch after this source merge.",
+      "Deliver from a clean task/SUP-RUNTIME-V10-ROLLBACK-COLLISION-SAFE-DESTINATION-20260810 branch through protected PR to dev, required checks, independent Codex2 exact-head review, merge, and governed done closeout."
+    ],
+    "artifacts": [
+      "scripts/promote_supervisor_runtime.py",
+      "scripts/test_promote_supervisor_runtime.py",
+      "docs/deployment/evidence/supervisor/SUP-RUNTIME-V10-ROLLBACK-COLLISION-SAFE-DESTINATION-20260810/"
+    ],
+    "depends_on": [
+      "SUP-RUNTIME-V10-SAME-COMMIT-ROLLBACK-NONALIAS-20260810"
+    ],
+    "dev_bridge": {
+      "actor": {
+        "capabilities": [
+          "integration",
+          "supervisor-runtime",
+          "acceptance",
+          "dev-task.dispatch"
+        ],
+        "id": "Human/Ops",
+        "roles": [
+          "operator",
+          "integration-coordinator"
+        ]
+      },
+      "audit_conversation_href": "task:SUP-AGENT-ALIAS-GUARD-LIVE-PROMOTION-20260731",
+      "conversation_id": "SUP-AGENT-ALIAS-GUARD-LIVE-PROMOTION-20260731",
+      "documents": [
+        {
+          "kind": "RUNTIME_PROMOTION_COLLISION_BLOCKER",
+          "path": "docs/deployment/evidence/supervisor/SUP-AGENT-ALIAS-GUARD-LIVE-PROMOTION-20260731/evidence.json",
+          "sourceRefs": [
+            "blocker-event:evidence-anchor:22fef42bab2f3db48baaf095566b5ced5d4c70e5",
+            "candidate:37ee6c5dfe43a60763b6d799b9dfa28bb8ea5a7d",
+            "incumbent-commit:0305c861f54c4082060120afdfbc012622e5ac0a",
+            "existing-destination:/home/lupin/pantheon-ci-deploy/command-runtimes/0305c861f54c4082060120afdfbc012622e5ac0a",
+            "merged-source:PR-4726:37ee6c5dfe43a60763b6d799b9dfa28bb8ea5a7d"
+          ]
+        }
+      ],
+      "emitted_at": "2026-08-10T18:13:22Z",
+      "intent": "source_only_remediation_dispatch",
+      "mode": "supervisor_source_only",
+      "packet_digest": "2879d9b9dbcc74748d9acd30e446a5cc35da106a8f9155066382959a70acb0d0",
+      "packet_id": "pkt-sup-runtime-v10-rollback-collision-safe-destination-20260810T1812Z",
+      "source_turn_ids": [
+        "promotion-blocker:existing-0305-rollback-root",
+        "merged-source:PR-4726:37ee6c5dfe43a60763b6d799b9dfa28bb8ea5a7d",
+        "parent-evidence:22fef42bab2f3db48baaf095566b5ced5d4c70e5"
+      ],
+      "task_spec": {
+        "acceptance": [
+          "Reproduce the current governed blocker with candidate 37ee6c5dfe43a60763b6d799b9dfa28bb8ea5a7d and mutable incumbent commit 0305c861f54c4082060120afdfbc012622e5ac0a: bootstrap preparation must fail closed when the direct rollback destination already exists at a different root/device/inode, before admission lock, restart intent, config write, signal, or launch.",
+          "Implement only a narrow collision-safe rollback destination contract that can produce a fresh immutable rollback runtime without deleting, moving, overwriting, or guessing-reusing the existing 0305c861 destination; preserve canonical commit/tree/origin/config/cleanliness identity and prove candidate-versus-rollback path/device/inode separation.",
+          "If a dedicated rollback-runtime parent or equivalent identity namespace is introduced, bind it explicitly in the governed launch/config contract, keep it outside the live status/event roots, and fail closed on missing, ambiguous, symlinked, pre-existing, or identity-mismatched destinations.",
+          "Preserve all existing fail-closed gates: incumbent PID/cwd/argv binding, config CAS and unchanged predecessor bytes, runtime-admission lock ordering, lease parity, authoritative projection equality, provider baseline, three fresh loops, bytecode self-rejection, and automatic rollback.",
+          "Add focused regression coverage for the existing different-root 0305 collision, fresh collision-safe destination creation, candidate/rollback identity separation, symlink or pre-existing destination rejection, and rollback readback; run the complete promotion suite, focused tests, and git diff --check.",
+          "Change only the declared scripts, focused tests, and task evidence. Do not run promotion, signal, restart, delete, move, or overwrite any live/existing command runtime; do not edit live config/state/queues, dev-root, provider/account routing, or canonical task state. Parent live promotion remains a separate supervisor dispatch after this source merge.",
+          "Deliver from a clean task/SUP-RUNTIME-V10-ROLLBACK-COLLISION-SAFE-DESTINATION-20260810 branch through protected PR to dev, required checks, independent Codex2 exact-head review, merge, and governed done closeout."
+        ],
+        "artifacts": [
+          "scripts/promote_supervisor_runtime.py",
+          "scripts/test_promote_supervisor_runtime.py",
+          "docs/deployment/evidence/supervisor/SUP-RUNTIME-V10-ROLLBACK-COLLISION-SAFE-DESTINATION-20260810/"
+        ],
+        "depends_on": [
+          "SUP-RUNTIME-V10-SAME-COMMIT-ROLLBACK-NONALIAS-20260810"
+        ],
+        "id": "SUP-RUNTIME-V10-ROLLBACK-COLLISION-SAFE-DESTINATION-20260810",
+        "owner": "Antigravity2",
+        "phase": "Supervisor Runtime / Collision-safe Rollback Destination",
+        "reviewer": "Codex2",
+        "summary": "Repair the next narrow rollback-materialization collision discovered after PR #4726: keep the existing different-root 0305 runtime untouched and provide a deterministic, independently verified fresh rollback identity for the governed promotion transaction.",
+        "title": "Make rollback materialization collision-safe without root reuse"
+      },
+      "task_spec_hash": "f17956bd5bf469b822e9762613348aabeb13a1577425d3fe7883df63e6fa12fa"
+    },
+    "failure_streak": 0,
+    "github_review_bridge": {
+      "actor": "Codex2",
+      "base": "dev",
+      "decision": "approve",
+      "head_branch": "task/SUP-RUNTIME-V10-ROLLBACK-COLLISION-SAFE-DESTINATION-20260810",
+      "head_sha": "09378b8fd1628714cc23de353017288e73595b1c",
+      "mode": "required_commit_status",
+      "pr": 4728,
+      "pr_url": "https://github.com/ajoe734/pantheon/pull/4728",
+      "recorded_at": "2026-08-10T19:08:45Z",
+      "repository": "ajoe734/pantheon",
+      "review_error": "gh: Unprocessable Entity (HTTP 422)",
+      "review_proof_ref": "refs/tags/pantheon-review/approve/09378b8fd1628714cc23de353017288e73595b1c",
+      "status_context": "Pantheon canonical review gate",
+      "status_id": 51973797431,
+      "status_state": "success"
+    },
+    "id": "SUP-RUNTIME-V10-ROLLBACK-COLLISION-SAFE-DESTINATION-20260810",
+    "last_update": "2026-08-10T19:12:50Z",
+    "next": "Owner Antigravity2 finalized task SUP-RUNTIME-V10-ROLLBACK-COLLISION-SAFE-DESTINATION-20260810 after exact PR #4728 head 09378b8fd1628714cc23de353017288e73595b1c was approved by reviewer Codex2 and merged into dev.",
+    "owner": "Antigravity2",
+    "phase": "Supervisor Runtime / Collision-safe Rollback Destination",
+    "review_binding": {
+      "base": "dev",
+      "head_branch": "task/SUP-RUNTIME-V10-ROLLBACK-COLLISION-SAFE-DESTINATION-20260810",
+      "head_sha": "09378b8fd1628714cc23de353017288e73595b1c",
+      "pr": 4728
+    },
+    "review_file": "docs/deployment/evidence/supervisor/SUP-RUNTIME-V10-ROLLBACK-COLLISION-SAFE-DESTINATION-20260810/evidence.json",
+    "reviewer": "Codex2",
+    "status": "done",
+    "summary_zh": "Repair the next narrow rollback-materialization collision discovered after PR #4726: keep the existing different-root 0305 runtime untouched and provide a deterministic, independently verified fresh rollback identity for the governed promotion transaction.",
+    "title": "Make rollback materialization collision-safe without root reuse",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-08-10T19:12:50Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/sup-runtime-v10-rollback-collision-safe-destination-20260810",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/SUP-RUNTIME-V10-ROLLBACK-COLLISION-SAFE-DESTINATION-20260810",
+      "git_clean_required": false,
+      "status_command_runtime": {
+        "command_root": "/home/lupin/pantheon-ci-deploy/command-runtimes/5877b64425c8d6aede147d6cbbc6fbb9e228c259",
+        "source_sha": "0305c861f54c4082060120afdfbc012622e5ac0a",
+        "base_ref": "origin/dev",
+        "remote": "ajoe734/pantheon",
+        "status_root": "/home/lupin/pantheon",
+        "delivery_root": "/tmp/pantheon-worker-worktrees/pantheon/sup-runtime-v10-rollback-collision-safe-destination-20260810",
+        "wrapper_root": "/home/lupin/pantheon-ci-deploy/command-runtimes/5877b64425c8d6aede147d6cbbc6fbb9e228c259",
+        "worker_lease": {
+          "schema_version": 1,
+          "task_id": "SUP-RUNTIME-V10-ROLLBACK-COLLISION-SAFE-DESTINATION-20260810",
+          "worker_run_id": "antigravity2-20260810T191039Z-7102caf7",
+          "queue_event_id": "evt-20260810T191017Z-c8d709c5",
+          "pid": 3196858,
+          "pid_start_ticks": 22808745,
+          "process_generation": "worker-process-generation-sha256:7918dfffc717b67b8c41f65f102cd28da298d9d6b49b553a6ad1f25d6c048cda"
+        }
+      },
+      "commit": "09378b8fd1628714cc23de353017288e73595b1c",
+      "commit_subject": "SUP-RUNTIME-V10-ROLLBACK-COLLISION-SAFE-DESTINATION-20260810: safe dest",
+      "commit_author": {
+        "name": "pantheon-dev",
+        "email": "bjoe734@gmail.com"
+      },
+      "commit_metadata": {
+        "LLM-Agent": "Antigravity2",
+        "Task-ID": "SUP-RUNTIME-V10-ROLLBACK-COLLISION-SAFE-DESTINATION-20260810",
+        "Reviewer": "Codex2",
+        "Verified": "9 focused tests passed, 333 full tests passed, git diff --check clean"
+      },
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": "origin/task/SUP-RUNTIME-V10-ROLLBACK-COLLISION-SAFE-DESTINATION-20260810",
+      "ahead": 0,
+      "behind": 0,
+      "push_status": "in_sync",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "0bd7cf8842a622fb40eca125f490d4073b3a1044",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "created_at": "2026-08-10T18:20:09Z",
+      "from": "Antigravity2",
+      "message": "PR #4728 created at head 9626cba21afa733def9eb06221af228a8491f986; ready for independent reviewer approval.",
+      "resolved_at": "2026-08-10T18:23:52Z",
+      "status": "done",
+      "task_id": "SUP-RUNTIME-V10-ROLLBACK-COLLISION-SAFE-DESTINATION-20260810",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-08-10T18:23:52Z",
+      "from": "Codex2",
+      "message": "Review rejected for exact head 9626cba21afa733def9eb06221af228a8491f986. Acceptance requires a fresh rollback identity and fail-closed handling of every pre-existing destination. However scripts/promote_supervisor_runtime.py:6919-6952 verifies then returns an existing rollback-command-runtimes/<sha> identity, so a prior rollback destination is reused; tests replaced the former rejection regressions with success cases and do not assert a pre-existing rollback-parent destination is rejected. Remove all root/destination reuse paths for this promotion transaction; add focused tests for occupied direct 0305 -> fresh separate destination, candidate/rollback path+device+inode separation, and pre-existing/symlink rollback destination rejection with no materialization side effects. Also amend/resubmit with a <=72-char commit subject: required Commit trailers CI is red solely for 85-char subject. Re-run focused/full promotion suite and git diff --check, update the committed evidence manifest, then request a new exact-head review.",
+      "resolved_at": "2026-08-10T18:23:52Z",
+      "status": "done",
+      "task_id": "SUP-RUNTIME-V10-ROLLBACK-COLLISION-SAFE-DESTINATION-20260810",
+      "to": "Antigravity2"
+    },
+    {
+      "created_at": "2026-08-10T18:27:45Z",
+      "from": "Antigravity2",
+      "message": "Removed root and destination reuse paths from materialize_immutable_rollback_runtime, added tests for fail-closed pre-existing/symlink rollback destination rejection without side effects, verified path+device+inode separation, updated evidence manifest, and shortened commit subject to <=72 chars (HEAD 863aaa9b1). Please review for exact head.",
+      "resolved_at": "2026-08-10T18:32:44Z",
+      "status": "done",
+      "task_id": "SUP-RUNTIME-V10-ROLLBACK-COLLISION-SAFE-DESTINATION-20260810",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-08-10T18:32:44Z",
+      "from": "Codex2",
+      "message": "Independent review rejected exact head 863aaa9b1424aa1f2d058959ddc713c72df7d6d1. PR #4728 Commit trailers fails because 863aaa9b subject is 75 chars and 9626cba21 subject is 85 chars (limit 72); replace or squash the PR history so every origin/dev..HEAD commit has a <=72-char subject and required trailers. materialize_immutable_rollback_runtime still has a check-then-os.rename destination race: an empty/symlinked rollback destination created after exists()/is_symlink() can be replaced; atomically reserve or no-replace-install the destination, fail closed without overwrite or side effects, and cover an injected post-check collision. The new path/device/inode test uses fabricated Mock identity values, not real materialized identities; add an end-to-end occupied-direct-destination test that verifies real candidate and rollback path+device+inode separation plus rollback launch/config binding. Re-run focused and full promotion suites plus git diff --check, and update the committed evidence manifest for the new exact head.",
+      "resolved_at": "2026-08-10T18:32:44Z",
+      "status": "done",
+      "task_id": "SUP-RUNTIME-V10-ROLLBACK-COLLISION-SAFE-DESTINATION-20260810",
+      "to": "Antigravity2"
+    },
+    {
+      "created_at": "2026-08-10T18:33:46Z",
+      "from": "Codex2",
+      "message": "Independent review rejected exact head 863aaa9b1424aa1f2d058959ddc713c72df7d6d1. PR #4728 Commit trailers fails because 863aaa9b subject is 75 chars and 9626cba21 subject is 85 chars (limit 72); replace or squash the PR history so every origin/dev..HEAD commit has a <=72-char subject and required trailers. materialize_immutable_rollback_runtime still has a check-then-os.rename destination race: an empty or symlinked rollback destination created after exists()/is_symlink() can be replaced; atomically reserve or no-replace-install the destination, fail closed without overwrite or side effects, and cover an injected post-check collision. The new path/device/inode test uses fabricated Mock identity values, not real materialized identities; add an end-to-end occupied-direct-destination test that verifies real candidate and rollback path+device+inode separation plus rollback launch/config binding. Re-run focused and full promotion suites plus git diff --check, and update the committed evidence manifest for the new exact head.",
+      "resolved_at": "2026-08-10T18:33:46Z",
+      "status": "done",
+      "task_id": "SUP-RUNTIME-V10-ROLLBACK-COLLISION-SAFE-DESTINATION-20260810",
+      "to": "Antigravity2"
+    },
+    {
+      "created_at": "2026-08-10T18:39:18Z",
+      "from": "Antigravity2",
+      "message": "Updated commit history to a single 65-char commit 61027b74c with required trailers; implemented atomic non-replacing rename (_atomic_no_replace_rename via renameat2 RENAME_NOREPLACE) to prevent post-check destination replacement races; added injected post-check collision and end-to-end occupied-direct-destination test using real CandidateRuntimeIdentity objects verifying path/device/inode separation and rollback launch/config binding; 6 focused and 330 full tests passed.",
+      "resolved_at": "2026-08-10T18:53:54Z",
+      "status": "done",
+      "task_id": "SUP-RUNTIME-V10-ROLLBACK-COLLISION-SAFE-DESTINATION-20260810",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-08-10T18:53:54Z",
+      "from": "Codex2",
+      "message": "Reject exact head 61027b74cd146cdcefd0b3ac0b5b51fd751ac10c: _atomic_no_replace_rename falls back to check-plus-replacing os.rename when libc lacks renameat2 or returns ENOSYS/EINVAL, and it swallows other renameat2 OSErrors into that fallback. Independent probe proved an attacker-created empty destination after the fallback check is replaced. Remove every replacing fallback: use renameat2(RENAME_NOREPLACE) or an actually atomic no-replace alternative, and fail closed without installing when unavailable or any syscall error occurs. Add regression that simulates unsupported renameat2 plus a collision at install time and proves os.rename is never called, destination is untouched, and no downstream side effects occur; also exercise syscall-level EEXIST after the helper precheck. Re-run focused 6, full 330, git diff --check, update the committed evidence for the new exact head.",
+      "resolved_at": "2026-08-10T18:53:54Z",
+      "status": "done",
+      "task_id": "SUP-RUNTIME-V10-ROLLBACK-COLLISION-SAFE-DESTINATION-20260810",
+      "to": "Antigravity2"
+    },
+    {
+      "created_at": "2026-08-10T19:00:24Z",
+      "from": "Antigravity2",
+      "message": "Removed replacing os.rename fallback from _atomic_no_replace_rename; fails closed without overwrite on unsupported renameat2 or any syscall error. Added regression tests covering unsupported renameat2 plus collision, syscall-level EEXIST, and destination-free failure. Verified 9 focused, 333 full tests passed, git diff --check clean. PR #4728 updated with exact HEAD 09378b8fd1628714cc23de353017288e73595b1c.",
+      "resolved_at": "2026-08-10T19:08:45Z",
+      "status": "done",
+      "task_id": "SUP-RUNTIME-V10-ROLLBACK-COLLISION-SAFE-DESTINATION-20260810",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-08-10T19:08:45Z",
+      "from": "Codex2",
+      "message": "Independent Codex2 review approved exact PR #4728 head 09378b8fd1628714cc23de353017288e73595b1c: inspected collision-safe rollback namespace, RENAME_NOREPLACE fail-closed path and governed rollback launch/config binding; local isolated pytest passed 9 focused and 333 full tests, git diff --check passed, and required source CI checks are green.",
+      "status": "done",
+      "task_id": "SUP-RUNTIME-V10-ROLLBACK-COLLISION-SAFE-DESTINATION-20260810",
+      "to": "Antigravity2",
+      "resolved_at": "2026-08-10T19:12:51Z"
+    }
+  ],
+  "blockers": []
+}

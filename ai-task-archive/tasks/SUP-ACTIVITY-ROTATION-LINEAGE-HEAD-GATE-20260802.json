@@ -1,0 +1,58 @@
+{
+  "version": 1,
+  "task_id": "SUP-ACTIVITY-ROTATION-LINEAGE-HEAD-GATE-20260802",
+  "archived_at": "2026-08-02T04:49:46Z",
+  "terminal_status": "done",
+  "terminal_outcome": "superseded",
+  "task": {
+    "acceptance": [
+      "A fixture matching the live lineage plus active log passes offline verification while reproducing the pre-fix missing active lineage-head writer failure",
+      "Verifier and writer share one explicit authenticated active-boundary contract and malformed or mismatched lineage still fails closed",
+      "A governed note or assign crossing the rotation threshold exits zero and emits one journal event plus one logical activity row with no retry duplication",
+      "Historical archives and live runtime bytes are not rewritten by implementation tests",
+      "Full common activity and canonical status regressions pass"
+    ],
+    "artifacts": [
+      ".orchestrator/common.py",
+      ".orchestrator/test_common.py",
+      ".orchestrator/rewrite/verify_activity_integrity.py",
+      ".orchestrator/rewrite/test_verify_activity_integrity.py",
+      "docs/deployment/evidence/supervisor/SUP-ACTIVITY-ROTATION-LINEAGE-HEAD-GATE-20260802/"
+    ],
+    "coordination_packet": {
+      "expected_branch": "task/SUP-ACTIVITY-ROTATION-LINEAGE-HEAD-GATE-20260802",
+      "independent_reviewer_capability": "Human/Ops exact-head independent reviewer",
+      "merge_target": "dev",
+      "objective": "Make activity rotation writer admission and offline integrity verification agree at legacy active boundaries while preserving fail-closed lineage guarantees and exactly-once canonical command receipts.",
+      "out_of_scope": "Codex and Codex2 account grouping or reviewer policy; provider credentials; direct live activity archive rewrites; product code; trading or capital",
+      "owner_capability": "activity audit and supervisor runtime reliability implementer",
+      "remote": "ajoe734/pantheon",
+      "required_artifacts": [
+        "branch",
+        "commits",
+        "PR",
+        "checks",
+        "exact-head review",
+        "merge commit",
+        "rotation canary"
+      ],
+      "rollback": "Revert the merge commit and restore the prior runtime release through the promotion transaction.",
+      "rollout": "Merge to dev then promote only through the final governed auto-worker quota routing live canary.",
+      "schema_version": 1,
+      "source": "codex_chatbox_runtime_audit_20260802"
+    },
+    "depends_on": [],
+    "id": "SUP-ACTIVITY-ROTATION-LINEAGE-HEAD-GATE-20260802",
+    "last_update": "2026-08-02T04:49:46Z",
+    "next": "Superseded as an audit correction: the observed lineage-head error came from a manual canonical command that omitted PANTHEON_STATUS_ROOT and therefore targeted the command-root local activity log. The real central activity log validates successfully and auto-worker commands carry the correct status root. No product/runtime defect or implementation scope remains; stop the dispatched worker without committing code.",
+    "owner": "Human/Ops",
+    "phase": "Supervisor control-plane reliability",
+    "reviewer": "Codex",
+    "status": "done",
+    "summary_zh": "修正 activity audit 在 verifier 通過但 rotation writer 因缺 active lineage-head 而回傳失敗的邊界不一致，確保 canonical command 恰好一次且真實回報。",
+    "title": "Repair activity rotation lineage-head writer/verifier mismatch",
+    "terminal_outcome": "superseded"
+  },
+  "handoffs": [],
+  "blockers": []
+}

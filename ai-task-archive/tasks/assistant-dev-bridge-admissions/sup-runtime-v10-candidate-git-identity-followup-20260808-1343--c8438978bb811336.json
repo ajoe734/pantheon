@@ -1,0 +1,87 @@
+{
+  "actor": {
+    "capabilities": [
+      "integration",
+      "schema",
+      "acceptance"
+    ],
+    "id": "Codex2",
+    "roles": [
+      "auto-worker"
+    ]
+  },
+  "admission_record_path": "ai-task-archive/tasks/assistant-dev-bridge-admissions/sup-runtime-v10-candidate-git-identity-followup-20260808-1343--c8438978bb811336.json",
+  "admitted_at": "2026-08-08T14:48:07Z",
+  "audit_conversation_href": "task:SUP-RUNTIME-V10-GOVERNED-ROLLOUT-VERIFY-20260808",
+  "constraints": {
+    "allowedRepos": [
+      "pantheon"
+    ],
+    "noDirectShellFromWeb": true,
+    "requiresBranchPrMerge": true
+  },
+  "conversation_id": "SUP-RUNTIME-V10-GOVERNED-ROLLOUT-VERIFY-20260808",
+  "dispatch_records": [
+    {
+      "error": null,
+      "owner": "Codex2",
+      "reviewer": "Codex",
+      "status": "dispatched",
+      "taskId": "SUP-RUNTIME-V10-CANDIDATE-GIT-IDENTITY-FOLLOWUP-20260808"
+    }
+  ],
+  "documents": [
+    {
+      "kind": "RUNTIME_FAIL_CLOSED_EVIDENCE",
+      "path": "docs/deployment/evidence/supervisor/SUP-RUNTIME-V10-GOVERNED-ROLLOUT-VERIFY-20260808/evidence.json",
+      "sourceRefs": [
+        "/home/lupin/pantheon-ci-deploy/runtime/promotion-evidence/supervisor-runtime-promotion-20260808T134307753860Z-3911075.json",
+        "sha256:1c252fb6a3691ac47a92e2a770782b503372b4825bb1f71031828efe8e92fe0e"
+      ]
+    }
+  ],
+  "durable": true,
+  "emitted_at": "2026-08-08T13:45:52Z",
+  "intent": "source_only_remediation_dispatch",
+  "mode": "supervisor_source_only",
+  "packet_digest": "c8438978bb81133617333e958d43d8a76143e210576bb8742e67de8473489e24",
+  "packet_id": "sup-runtime-v10-candidate-git-identity-followup-20260808-1343",
+  "packet_version": "pantheon.assistant.dev-task.v1",
+  "record_kind": "assistant_dev_bridge_admission",
+  "record_payload_sha256": "db936413750924287730b36a92820bc864e3f47f4293008bf085c4c8c17995aa",
+  "schema": "pantheon.assistant-dev-bridge-admission.v1",
+  "source_turn_ids": [
+    "promotion-evidence-20260808T134307753860Z-3911075",
+    "candidate-discover-20260808T134552Z"
+  ],
+  "tasks": [
+    {
+      "task_id": "SUP-RUNTIME-V10-CANDIDATE-GIT-IDENTITY-FOLLOWUP-20260808",
+      "task_spec": {
+        "acceptance": [
+          "Reproduce or deterministically explain the transaction-time Candidate Git directory ENOTDIR that aborted the governed promotion of 619acd04184e8d3fc3aef322d160e7c9106670ad.",
+          "Preserve the real-directory, no-symlink, no-gitfile immutable candidate guard and its fail-closed behaviour.",
+          "Add focused source regression coverage plus a committed pre-review evidence manifest.",
+          "Perform no live config edit, direct process signal, manual checkout, candidate deletion, or runtime promotion; any later rollout is separately authorized."
+        ],
+        "artifacts": [
+          "scripts/promote_supervisor_runtime.py",
+          "scripts/sync-dev-root.sh",
+          "scripts/test_promote_supervisor_runtime.py",
+          "scripts/test_sync_dev_root.py",
+          "docs/deployment/evidence/supervisor/SUP-RUNTIME-V10-CANDIDATE-GIT-IDENTITY-FOLLOWUP-20260808/"
+        ],
+        "depends_on": [
+          "SUP-RUNTIME-V10-GOVERNED-ROLLOUT-VERIFY-20260808"
+        ],
+        "id": "SUP-RUNTIME-V10-CANDIDATE-GIT-IDENTITY-FOLLOWUP-20260808",
+        "owner": "Codex2",
+        "phase": "Supervisor Runtime / Source-only Candidate Identity Repair",
+        "reviewer": "Codex",
+        "summary": "The authorized governed rollout aborted before mutation with Candidate Git directory ENOTDIR, while later discover-only verification accepted the same candidate's Git identity. Diagnose and repair only the source transaction boundary; do not retry the live promotion in this task.",
+        "title": "Diagnose transaction-time immutable candidate Git identity rejection"
+      },
+      "task_spec_hash": "ee0959b3549ff7ff14abfd531b9ff36e7c538aac9e387be549e41fd9206d50cb"
+    }
+  ]
+}

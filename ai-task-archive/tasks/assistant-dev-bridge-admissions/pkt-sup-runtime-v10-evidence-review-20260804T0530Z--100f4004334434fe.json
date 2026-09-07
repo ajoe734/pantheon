@@ -1,0 +1,71 @@
+{
+  "actor": {
+    "capabilities": [
+      "fleet.dispatch",
+      "dev-task.dispatch"
+    ],
+    "id": "Claude",
+    "roles": [
+      "operator-delegate"
+    ]
+  },
+  "admission_record_path": "ai-task-archive/tasks/assistant-dev-bridge-admissions/pkt-sup-runtime-v10-evidence-review-20260804T0530Z--100f4004334434fe.json",
+  "admitted_at": "2026-08-04T05:25:13Z",
+  "audit_conversation_href": null,
+  "constraints": {
+    "allowedRepos": [
+      "pantheon"
+    ],
+    "noDirectShellFromWeb": true,
+    "requiresBranchPrMerge": true
+  },
+  "conversation_id": "claude-root-evidence-review-20260804",
+  "dispatch_records": [
+    {
+      "error": null,
+      "owner": "Antigravity",
+      "reviewer": "Codex",
+      "status": "dispatched",
+      "taskId": "SUP-RUNTIME-V10-EVIDENCE-REVIEW-20260804"
+    }
+  ],
+  "documents": [],
+  "durable": true,
+  "emitted_at": "2026-08-04T05:30:00Z",
+  "intent": "review_and_merge_evidence_sync_pr",
+  "mode": "kernel_repair",
+  "packet_digest": "100f4004334434fe6aee0d41b140c750f29bfd9e26ba7d197a8ada0cf33e5355",
+  "packet_id": "pkt-sup-runtime-v10-evidence-review-20260804T0530Z",
+  "packet_version": "pantheon.assistant.dev-task.v1",
+  "record_kind": "assistant_dev_bridge_admission",
+  "record_payload_sha256": "3bbabb8f566cae096b1fee0c8c357b3da3173cf610ac72993eca7da1ab202b16",
+  "schema": "pantheon.assistant-dev-bridge-admission.v1",
+  "source_turn_ids": [
+    "user-pushed-back-on-fake-evidence",
+    "claude-pushed-real-evidence-commit-pr-4536"
+  ],
+  "tasks": [
+    {
+      "task_id": "SUP-RUNTIME-V10-EVIDENCE-REVIEW-20260804",
+      "task_spec": {
+        "acceptance": [
+          "PR #4536 (branch task/SUP-RUNTIME-IMMUTABLE-CONFIG-DEPLOY-GUARD-OPERATOR-V10-20260802-evidence-sync) already contains the complete, correct change: it updates the task brief for SUP-RUNTIME-IMMUTABLE-CONFIG-DEPLOY-GUARD-OPERATOR-V10-20260802 from a stale pre-review 'todo' snapshot to the true, already-verified review_approved disposition (PR #4526 for that task is already merged to dev; this only fixes the evidence trail).",
+          "No further code change is needed. Owner should confirm the diff is exactly this one-line-ish brief update and hand off directly to reviewer.",
+          "Reviewer should verify the content matches the real merged PR #4526 facts (head bd7039685e75c97cf18b35e984f97193a1c68e4d, 43 focused + 349 qualification tests) and approve via the normal governed review_approved flow so the Pantheon canonical review gate status is posted for real, then merge.",
+          "Do not add scope beyond the brief-file correction."
+        ],
+        "artifacts": [
+          ".orchestrator/task-briefs/sup_runtime_immutable_config_deploy_guard_operator_v10_20260802.md"
+        ],
+        "depends_on": [],
+        "id": "SUP-RUNTIME-V10-EVIDENCE-REVIEW-20260804",
+        "owner": "Antigravity",
+        "phase": "Housekeeping",
+        "reviewer": "Codex",
+        "summary": "Tiny housekeeping fix: a task-brief evidence file was frozen at its pre-review snapshot because approval only mutates live task-state, never git. This PR corrects the record after the fact. Needs a real reviewer approval (not a Human/Ops-posted status) because the canonical review gate is bound to genuine reviewer identity.",
+        "title": "Review and merge the SUP-RUNTIME-V10 task-brief evidence-sync PR"
+      },
+      "task_spec_hash": "f1a81fb8abdc097d619b8b41e2fc546661c033e8b5fbc8f5bce803eb9d5b2762"
+    }
+  ]
+}

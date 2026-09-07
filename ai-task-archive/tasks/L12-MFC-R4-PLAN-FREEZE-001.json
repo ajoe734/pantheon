@@ -1,0 +1,70 @@
+{
+  "version": 1,
+  "task_id": "L12-MFC-R4-PLAN-FREEZE-001",
+  "archived_at": "2026-08-13T12:23:02Z",
+  "terminal_status": "done",
+  "terminal_outcome": "superseded",
+  "task": {
+    "acceptance": [
+      "PR #4832 independently reviewed and merged",
+      "18 unique IDs and acyclic DAG validated",
+      "#4834 overlap documented without duplicate tasks",
+      "merge SHA recorded"
+    ],
+    "artifacts": [
+      "docs/04/pantheon_twelve_loop_code_gap_2026-08-13"
+    ],
+    "auto_created_by": "l12_mfc_r4_catalog_20260813",
+    "catalog_source": {
+      "head_sha": "9e04f5f15d0f9c30d61aa9aafcd15ea9ddf6595e",
+      "path": "docs/04/pantheon_twelve_loop_code_gap_2026-08-13/execution-tasks.json",
+      "pull_request": 4832
+    },
+    "depends_on": [],
+    "design": [
+      "Wave 0"
+    ],
+    "expected_branch": "task/L12-MFC-R4-PLAN-FREEZE-001",
+    "generation": 1,
+    "id": "L12-MFC-R4-PLAN-FREEZE-001",
+    "last_update": "2026-08-13T12:23:02Z",
+    "merge_target": "dev",
+    "mutates_canonical": true,
+    "next": "Unclaimed row replaced because catalog_source.head_sha was malformed before worker dispatch; use the corrected catalog task.",
+    "out_of_scope": [
+      "product code",
+      "runtime mutation",
+      "old task-row edits"
+    ],
+    "owner": "Antigravity",
+    "phase": "P0-plan-freeze",
+    "program_id": "pantheon-l12-minimum-functional-closure-r4-20260813",
+    "repo": "pantheon",
+    "required_artifacts": [
+      "PR",
+      "checks",
+      "review",
+      "merge SHA"
+    ],
+    "reviewer": "Antigravity2",
+    "rollback": "revert documentation merge",
+    "rollout": "documentation merge only",
+    "root_cause": "Workers cannot safely execute an unmerged plan or replay historical L12 catalogs.",
+    "scope": [
+      "docs/04/pantheon_twelve_loop_code_gap_2026-08-13"
+    ],
+    "status": "done",
+    "summary_zh": "獨立審查 PR #4832，重查 active task/PR/branch/worktree 與 #4834 overlap，合併唯一 execution catalog。",
+    "title": "Freeze and merge the code-derived L12 GAP, SD, and execution catalog",
+    "validation": [
+      "JSON parse",
+      "dependency/reference validation",
+      "active PR/task/worktree dedupe"
+    ],
+    "wave": 0,
+    "terminal_outcome": "superseded",
+    "superseded_by": "L12-MFC-R4-PLAN-FREEZE-002"
+  },
+  "handoffs": [],
+  "blockers": []
+}

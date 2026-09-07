@@ -1,0 +1,206 @@
+{
+  "version": 1,
+  "task_id": "SUP-L12-STALE-FAILURE-STREAK-REAPER-20260729",
+  "archived_at": "2026-08-13T02:00:54Z",
+  "terminal_status": "done",
+  "terminal_outcome": "superseded",
+  "task": {
+    "acceptance": [
+      "reproduce stale L12 missing_process streak blocker",
+      "add bounded reaper or eligibility check",
+      "prove Claude2/Antigravity dispatch before Codex-family fallback",
+      "no config edits",
+      "full supervisor regression passes"
+    ],
+    "artifacts": [
+      ".orchestrator/supervisor.py",
+      ".orchestrator/test_supervisor.py",
+      "docs/deployment/evidence/twelve-loop-gap/SUP-L12-STALE-FAILURE-STREAK-REAPER-20260729"
+    ],
+    "block_reason": {
+      "kind": "legacy_task_quarantine",
+      "required_action": "operator_reopen_after_diagnosis"
+    },
+    "depends_on": [],
+    "generation": 2,
+    "id": "SUP-L12-STALE-FAILURE-STREAK-REAPER-20260729",
+    "last_update": "2026-08-13T02:00:54Z",
+    "next": "Retired during the Supervisor Authority V2 board reset: this legacy control, routing, rollout, or verification row is no longer an execution authority; merged source and archive evidence remain preserved.",
+    "owner": "Codex",
+    "phase": "L12 runtime/fleet guardrails",
+    "preferred_lane_order": [
+      "Claude2",
+      "Antigravity"
+    ],
+    "resume_status": "in_progress",
+    "review_file": "docs/deployment/evidence/twelve-loop-gap/SUP-L12-STALE-FAILURE-STREAK-REAPER-20260729/evidence.json",
+    "review_notes_zh": [
+      "審查通過",
+      "PR #4590 已合併至 dev (commit 23ae23c2185d31d2aeacafaa9b051127a6d53136)",
+      "5 個針對性測試與 611 個 supervisor 單元測試皆完全通過"
+    ],
+    "reviewer": "Antigravity",
+    "status": "done",
+    "summary_zh": "把 11:33Z 清 stale missing_process streak 的 live repair 正式做成 supervisor policy 與 regression，避免 Claude2/Antigravity L12 dispatch 再被舊 failure loop 卡死。",
+    "title": "Durable stale L12 failure-streak reaper",
+    "terminal_outcome": "superseded"
+  },
+  "handoffs": [
+    {
+      "created_at": "2026-07-29T11:49:25Z",
+      "from": "Claude2",
+      "message": "Helper-claimed by Codex while Claude2 is dispatch-paused.",
+      "resolved_at": "2026-07-29T12:59:22Z",
+      "status": "done",
+      "task_id": "SUP-L12-STALE-FAILURE-STREAK-REAPER-20260729",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-07-29T15:04:13Z",
+      "from": "Claude2",
+      "message": "Auto-reassigned SUP-L12-STALE-FAILURE-STREAK-REAPER-20260729 away from unavailable lane Claude2 (disabled, paused, sidecar-only, or auth-down); owner Claude2 -> Codex.",
+      "resolved_at": "2026-07-29T15:06:18Z",
+      "status": "done",
+      "task_id": "SUP-L12-STALE-FAILURE-STREAK-REAPER-20260729",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-07-29T15:18:41Z",
+      "from": "Codex",
+      "message": "PR #4385 is ready for independent review at exact head 86dd9006b15bba67a83886e4a2d672e511aa8709. Please verify the bounded stale missing_process eligibility, provider-first Claude2/Antigravity dispatch regressions, fail-closed exclusions, full 461-test supervisor run, and bind REVIEW_FILE=docs/deployment/evidence/twelve-loop-gap/SUP-L12-STALE-FAILURE-STREAK-REAPER-20260729/evidence.json when approving.",
+      "resolved_at": "2026-07-29T15:22:34Z",
+      "status": "done",
+      "task_id": "SUP-L12-STALE-FAILURE-STREAK-REAPER-20260729",
+      "to": "Antigravity"
+    },
+    {
+      "created_at": "2026-07-29T15:22:34Z",
+      "from": "Antigravity",
+      "message": "Review approved: PR #4385 verified at commit 86dd9006b15bba67a83886e4a2d672e511aa8709. Verified bounded stale missing_process eligibility, provider-first dispatch regressions, fail-closed exclusions, no config edits, full 461-test supervisor suite passing, and bound REVIEW_FILE=docs/deployment/evidence/twelve-loop-gap/SUP-L12-STALE-FAILURE-STREAK-REAPER-20260729/evidence.json.",
+      "resolved_at": "2026-08-01T15:24:27Z",
+      "status": "done",
+      "task_id": "SUP-L12-STALE-FAILURE-STREAK-REAPER-20260729",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-08-01T15:24:27Z",
+      "from": "Codex",
+      "message": "Auto-reassigned SUP-L12-STALE-FAILURE-STREAK-REAPER-20260729 away from unavailable lane Codex (disabled, paused, sidecar-only, or auth-down); owner Codex -> Codex2.",
+      "resolved_at": "2026-08-01T15:52:06Z",
+      "status": "done",
+      "task_id": "SUP-L12-STALE-FAILURE-STREAK-REAPER-20260729",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-08-01T16:18:36Z",
+      "from": "Antigravity",
+      "message": "Auto-reassigned SUP-L12-STALE-FAILURE-STREAK-REAPER-20260729 away from unavailable lane Antigravity (disabled, paused, sidecar-only, or auth-down); reviewer Antigravity -> Codex.",
+      "resolved_at": "2026-08-01T16:21:52Z",
+      "status": "done",
+      "task_id": "SUP-L12-STALE-FAILURE-STREAK-REAPER-20260729",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-08-06T12:02:50Z",
+      "from": "Antigravity",
+      "message": "Review approved: stale L12 failure-streak reaper implementation verified and merged in PR #4590",
+      "resolved_at": "2026-08-06T12:03:41Z",
+      "status": "done",
+      "task_id": "SUP-L12-STALE-FAILURE-STREAK-REAPER-20260729",
+      "to": "Claude"
+    },
+    {
+      "created_at": "2026-08-06T12:03:41Z",
+      "from": "Claude",
+      "message": "Ownership updated",
+      "resolved_at": "2026-08-06T12:05:23Z",
+      "status": "done",
+      "task_id": "SUP-L12-STALE-FAILURE-STREAK-REAPER-20260729",
+      "to": "Antigravity"
+    },
+    {
+      "created_at": "2026-08-06T12:05:23Z",
+      "from": "Antigravity",
+      "message": "Ownership updated",
+      "resolved_at": "2026-08-06T12:05:27Z",
+      "status": "done",
+      "task_id": "SUP-L12-STALE-FAILURE-STREAK-REAPER-20260729",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-08-06T12:05:56Z",
+      "from": "Antigravity2",
+      "message": "Ownership updated",
+      "resolved_at": "2026-08-06T12:11:49Z",
+      "status": "done",
+      "task_id": "SUP-L12-STALE-FAILURE-STREAK-REAPER-20260729",
+      "to": "Antigravity"
+    },
+    {
+      "created_at": "2026-08-06T12:07:39Z",
+      "from": "Antigravity2",
+      "message": "Auto-reassigned SUP-L12-STALE-FAILURE-STREAK-REAPER-20260729 away from unavailable lane Antigravity2 (disabled, paused, sidecar-only, or auth-down); reviewer Antigravity2 -> Claude.",
+      "resolved_at": "2026-08-06T12:08:09Z",
+      "status": "done",
+      "task_id": "SUP-L12-STALE-FAILURE-STREAK-REAPER-20260729",
+      "to": "Claude"
+    },
+    {
+      "created_at": "2026-08-07T12:22:07Z",
+      "from": "Claude",
+      "message": "Auto-reassigned SUP-L12-STALE-FAILURE-STREAK-REAPER-20260729 away from unavailable lane Claude (disabled, paused, sidecar-only, or auth-down); reviewer Claude -> Codex2.",
+      "resolved_at": "2026-08-07T12:26:49Z",
+      "status": "done",
+      "task_id": "SUP-L12-STALE-FAILURE-STREAK-REAPER-20260729",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-08-07T13:10:01Z",
+      "from": "Codex2",
+      "message": "Auto-reassigned SUP-L12-STALE-FAILURE-STREAK-REAPER-20260729 away from unavailable lane Codex2 (disabled, paused, sidecar-only, or auth-down); reviewer Codex2 -> Codex.",
+      "resolved_at": "2026-08-07T13:26:32Z",
+      "status": "done",
+      "task_id": "SUP-L12-STALE-FAILURE-STREAK-REAPER-20260729",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-08-08T14:12:06Z",
+      "from": "Antigravity",
+      "message": "Chair reassigned owner from Antigravity to Claude: The task is blocked on stale lane handoff state although PR #4590 merged to dev as 23ae23c2185d31d2aeacafaa9b051127a6d53136; Claude is auth-ready, unpaused, distinct from reviewer Codex, and can reconcile the merged artifacts against the recorded collateral-deletion regression before any governed closeout. Task returned to todo for a blocked-owner rescue dispatch.",
+      "resolved_at": "2026-08-08T14:14:33Z",
+      "status": "done",
+      "task_id": "SUP-L12-STALE-FAILURE-STREAK-REAPER-20260729",
+      "to": "Claude"
+    },
+    {
+      "created_at": "2026-08-08T14:21:39Z",
+      "from": "Antigravity",
+      "message": "Auto-reassigned SUP-L12-STALE-FAILURE-STREAK-REAPER-20260729 away from unavailable lane Antigravity (disabled, paused, sidecar-only, or auth-down); owner Antigravity -> Codex2, reviewer Codex2 -> Codex.",
+      "resolved_at": "2026-08-08T14:28:30Z",
+      "status": "done",
+      "task_id": "SUP-L12-STALE-FAILURE-STREAK-REAPER-20260729",
+      "to": "Codex2"
+    }
+  ],
+  "blockers": [
+    {
+      "created_at": "2026-08-01T15:52:06Z",
+      "message": "Closeout blocked by pre-existing non-task worktree changes: dashboard-bundle.json and docs-site/dashboard-bundle.json contain global derived dashboard/state updates, while .orchestrator/assistant-dev-packets/.drain.lock and .queue.lock are untracked runtime locks. They are outside this task's artifacts and its no-config-edits acceptance boundary. Prior worker/supervisor must reconcile or remove them; Codex2 did not stash, delete, stage, push, merge, or mark done.",
+      "owner": "Codex2",
+      "resolved_at": "2026-08-06T10:17:24Z",
+      "status": "resolved",
+      "task_id": "SUP-L12-STALE-FAILURE-STREAK-REAPER-20260729",
+      "waiting_for": "Human/Ops"
+    },
+    {
+      "created_at": "2026-08-06T12:11:49Z",
+      "message": "Task PR #4590 is merged into dev at commit 23ae23c2185d31d2aeacafaa9b051127a6d53136 with commit trailers from prior owner Codex2, but supervisor auto-reassigned owner to Antigravity without an audited task_reassigned event in ai-activity-log.jsonl. The strict ai-status done gate rejects owner drift without exact audit log continuity. Human/Ops intervention needed to reconcile audit log or state store.",
+      "owner": "Antigravity",
+      "resolution_ref": "chair_reassignment:SUP-L12-STALE-FAILURE-STREAK-REAPER-20260729",
+      "resolved_at": "2026-08-08T14:12:06Z",
+      "status": "resolved",
+      "task_id": "SUP-L12-STALE-FAILURE-STREAK-REAPER-20260729",
+      "waiting_for": "Human/Ops"
+    }
+  ]
+}

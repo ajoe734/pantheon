@@ -1,0 +1,167 @@
+{
+  "version": 1,
+  "task_id": "L12-MANIFEST-RESTART-PROOF-20260729",
+  "archived_at": "2026-07-29T04:46:52Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "acceptance": [
+      "isolated worker restart proof shows RestartCount increment or waiver exists",
+      "proof distinguishes daemon restart from operator restart",
+      "shared dev stack is not destructively tested",
+      "output is integrable by L12-MANIFEST-001 owner"
+    ],
+    "artifacts": [],
+    "depends_on": [],
+    "github_review_bridge": {
+      "actor": "Codex",
+      "base": "dev",
+      "decision": "approve",
+      "head_branch": "task/L12-MANIFEST-RESTART-PROOF-20260729",
+      "head_sha": "62057d7fa513309bb5fb04ee2b1c164816ebad0f",
+      "mode": "required_commit_status",
+      "pr": 4345,
+      "pr_url": "https://github.com/ajoe734/pantheon/pull/4345",
+      "recorded_at": "2026-07-29T04:41:50Z",
+      "repository": "ajoe734/pantheon",
+      "review_error": "gh: Unprocessable Entity (HTTP 422)",
+      "status_context": "Pantheon canonical review gate",
+      "status_id": 51267583522,
+      "status_state": "success"
+    },
+    "id": "L12-MANIFEST-RESTART-PROOF-20260729",
+    "last_update": "2026-07-29T04:46:52Z",
+    "next": "Merged PR #4345 and reconcile brief PR #4347 close restart-proof unstrand.",
+    "owner": "Codex",
+    "phase": "Twelve Loop Remediation / Manifest Workstream",
+    "review_binding": {
+      "base": "dev",
+      "head_branch": "task/L12-MANIFEST-RESTART-PROOF-20260729",
+      "head_sha": "62057d7fa513309bb5fb04ee2b1c164816ebad0f",
+      "pr": 4345
+    },
+    "review_file": "docs/deployment/evidence/twelve-loop-gap/L12-MANIFEST-RESTART-PROOF-20260729/evidence.json",
+    "review_notes_zh": [
+      "Exact-head review passed for PR #4345 head 62057d7fa513309bb5fb04ee2b1c164816ebad0f. Validated JSON parse, evidence.sha256 5/5, unchanged proof files, GitHub checks green, and no config edit."
+    ],
+    "reviewer": "Claude2",
+    "status": "done",
+    "summary_zh": "補 isolated/non-shared PID1 crash restart proof，或取得明確 governed waiver。",
+    "title": "Unstrand restart proof task-state after merged PR binding",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-07-29T04:46:52Z",
+      "reconciled_from_merged_evidence": true,
+      "repository_id": "pantheon",
+      "repository_slug": "ajoe734/pantheon",
+      "repository_path": "/tmp/l12-restart-reconcile-T6BGF9/pantheon",
+      "commit": "9394c9ac6bcc6ece9a8f7f1412fce2ac51ef58c8",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "b1527e868654fb93765b3e5788adeea1f5e869a2",
+      "head_merged_to_target": true,
+      "review_evidence": {
+        "file": ".orchestrator/task-briefs/l12_manifest_restart_proof_20260729.md",
+        "commit": "b1527e868654fb93765b3e5788adeea1f5e869a2",
+        "merge_target_ref": "origin/dev",
+        "merge_target_sha": "b1527e868654fb93765b3e5788adeea1f5e869a2",
+        "owner": "Codex",
+        "reviewer": "Claude2",
+        "canonical_reviewer": "Claude2",
+        "status": "review_approved"
+      }
+    }
+  },
+  "handoffs": [
+    {
+      "created_at": "2026-07-29T02:55:37Z",
+      "from": "Codex2",
+      "message": "Review PR #4334 exact head afac18b8fb57f574aeee037187b02806eccbb60e. Evidence: docs/deployment/evidence/twelve-loop-gap/L12-MANIFEST-RESTART-PROOF-20260729/evidence.json and proof-run.json. Verify same container ID, PID change, RestartCount 0->1, no Docker stop/kill or post-signal start/up, shared pantheon snapshot unchanged, and isolated cleanup zero. On approval bind REVIEW_PR=4334, the exact reviewed head, and REVIEW_FILE to the evidence manifest.",
+      "resolved_at": "2026-07-29T03:11:38Z",
+      "status": "done",
+      "task_id": "L12-MANIFEST-RESTART-PROOF-20260729",
+      "to": "Claude2"
+    },
+    {
+      "created_at": "2026-07-29T03:11:38Z",
+      "from": "Claude2",
+      "message": "Independent review passed at PR #4334 head 1656574ca (evidence dir byte-identical to reviewed anchor afac18b8f; merge only pulled unrelated dev files). Reviewer re-ran run-proof.sh under isolated project l12-restart-proof-review-claude2: result=pass, same container ID 818015f1e71e before/after, PID 180354->183080, RestartCount 0->1, restart_policy unless-stopped, running_after=true, 2 startup_recovery records. Source audit confirms no docker stop/kill and no start/up after the SIGKILL; only inspect/logs then compose down. Shared pantheon-policy-learning-shadow-eval-scheduler-1 unchanged across my run (0a68d104bd83, pid 2997715, RestartCount 0); my isolated project left 0 containers and 0 networks. sha256sum -c evidence.sha256 all OK; fixture mirrors docker-compose.yml:553 (same image sha256:95a8fd94d9b1, same command, unless-stopped, stop_grace_period 30s, no ports, no volumes); bash -n clean. loop_done_guardrail.check_task dry-run with this review_file returns no gaps. Owner closeout note: worktree still holds an uncommitted task-brief status edit, and evidence.json review.status is still 'pending'.",
+      "resolved_at": "2026-07-29T03:18:58Z",
+      "status": "done",
+      "task_id": "L12-MANIFEST-RESTART-PROOF-20260729",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-07-29T03:18:58Z",
+      "from": "Codex2",
+      "message": "Owner closeout is isolated in PR #4338 exact head 801852aeb59991526d37904491ceda62410ec701 after PR #4334 merged first at 97d9ecd85826296d56d323ad6d8298c05c07ce08. Please re-review only the task brief, evidence review verdict, and checksum; proof data, runner, fixture, shared stack, and parent evidence are unchanged. Approve this exact head when checksum, jq assertions, and loop_done_guardrail.check_task=[] are confirmed.",
+      "resolved_at": "2026-07-29T03:23:07Z",
+      "status": "done",
+      "task_id": "L12-MANIFEST-RESTART-PROOF-20260729",
+      "to": "Claude2"
+    },
+    {
+      "created_at": "2026-07-29T03:23:07Z",
+      "from": "Claude2",
+      "message": "Delta re-review at PR #4338 exact head 801852aeb59991526d37904491ceda62410ec701 (base dev, all 9 CI checks SUCCESS; PR #4334 merged first at 97d9ecd85826296d56d323ad6d8298c05c07ce08). Diff 1656574ca->801852aeb touches only the task brief, evidence.json review block, and evidence.sha256; diff afac18b8f->801852aeb confirms README.md, fixture.compose.yml, run-proof.sh, and proof-run.json are byte-identical to the anchor I already audited, and no parent L12-MANIFEST-001 evidence or shared Compose surface is touched. sha256sum -c evidence.sha256 = 5/5 OK including the updated evidence.json hash b59cf129afd76b03b3e1454973e5ca411c3fa312420bade170a712e14d6e93c1. jq: evidence.json and proof-run.json parse; all 4 acceptance entries status=pass with proof-run.json pointers; task.status and review.status both review_approved; review.exact_task_pr_head=1656574ca matches review_binding.head_sha and review.canonical_review_status_id=51264813501 matches github_review_bridge.status_id. review.validation transcribes my independent re-run verbatim and correctly: pass, same container ID, PID 180354->183080, RestartCount 0->1, unless-stopped, running_after=true, 2 startup_recovery records, shared snapshot unchanged, cleanup 0 containers / 0 networks. Re-confirmed the unchanged runner: bash -n OK, single 'compose up --detach' at line 80 precedes the SIGKILL at line 115, and no docker stop/kill or start/up follows the signal, so daemon restart is still distinguished from operator restart. loop_done_guardrail.check_task on the canonical row = [] via PANTHEON_COMMAND_ROOT scripts; noting for the record that this is non-vacuous only up to is_loop_autopilot_task=False, so the deep loop_product_evidence.v1 gates (record_log verdict, overall_admission, security block) are not exercised here and remain the parent L12-MANIFEST-001 owner's obligation - correct for this workstream sub-task, whose manifest is pantheon.task-evidence-manifest.v1. Approving this exact head; PR #4338 is MERGEABLE but BEHIND, so the owner must land it into dev before governed done.",
+      "resolved_at": "2026-07-29T03:24:17Z",
+      "status": "done",
+      "task_id": "L12-MANIFEST-RESTART-PROOF-20260729",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-07-29T03:24:50Z",
+      "from": "Claude2",
+      "message": "Supervisor resumed L12-MANIFEST-RESTART-PROOF-20260729 for finalize after successful dispatch.",
+      "resolved_at": "2026-07-29T03:31:56Z",
+      "status": "done",
+      "task_id": "L12-MANIFEST-RESTART-PROOF-20260729",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-07-29T03:31:56Z",
+      "from": "Codex",
+      "message": "PR #4338 refreshed onto origin/dev and pushed at exact head 46e8680d4b726fae642e59efd47b3acb0829291c. Delta since approved 801852a is the supervisor owner-handoff anchor, merge of dev commit 50a1c5af5, and task-brief closeout note only; the reviewed evidence directory is byte-identical. Focused checks pass: bash -n, Compose config, sha256 5/5, jq acceptance/proof assertions, git diff --check. Please delta-review and approve this exact head; owner and reviewer remain Codex/Claude2.",
+      "resolved_at": "2026-07-29T04:25:15Z",
+      "status": "done",
+      "task_id": "L12-MANIFEST-RESTART-PROOF-20260729",
+      "to": "Claude2"
+    },
+    {
+      "created_at": "2026-07-29T04:41:43Z",
+      "from": "Human/Ops",
+      "message": "PR #4345 exact head 62057d7fa513309bb5fb04ee2b1c164816ebad0f is clean; review metadata-only restart-proof unstrand repair.",
+      "resolved_at": "2026-07-29T04:41:50Z",
+      "status": "done",
+      "task_id": "L12-MANIFEST-RESTART-PROOF-20260729",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-07-29T04:41:50Z",
+      "from": "Codex",
+      "message": "Approved exact head 62057d7fa513309bb5fb04ee2b1c164816ebad0f for PR #4345; Human/Ops may merge/finalize.",
+      "resolved_at": "2026-07-29T04:42:10Z",
+      "status": "done",
+      "task_id": "L12-MANIFEST-RESTART-PROOF-20260729",
+      "to": "Human/Ops"
+    },
+    {
+      "created_at": "2026-07-29T04:42:10Z",
+      "from": "Human/Ops",
+      "message": "Auto-reassigned L12-MANIFEST-RESTART-PROOF-20260729 away from unavailable lane Human/Ops (disabled, paused, sidecar-only, or auth-down); owner Human/Ops -> Claude2.",
+      "resolved_at": "2026-07-29T04:42:47Z",
+      "status": "done",
+      "task_id": "L12-MANIFEST-RESTART-PROOF-20260729",
+      "to": "Claude2"
+    },
+    {
+      "created_at": "2026-07-29T04:42:47Z",
+      "from": "Claude2",
+      "message": "PR #4345 merged as 9394c9ac6bcc6ece9a8f7f1412fce2ac51ef58c8; transfer to Codex for immediate finalization because Human/Ops owner is auto-reassigned unavailable.",
+      "status": "done",
+      "task_id": "L12-MANIFEST-RESTART-PROOF-20260729",
+      "to": "Codex",
+      "resolved_at": "2026-07-29T04:46:52Z"
+    }
+  ],
+  "blockers": []
+}

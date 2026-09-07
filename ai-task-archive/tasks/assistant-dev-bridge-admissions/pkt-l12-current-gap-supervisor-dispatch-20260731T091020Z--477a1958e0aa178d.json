@@ -1,0 +1,104 @@
+{
+  "actor": {
+    "capabilities": [
+      "assistant.kernel.repair",
+      "fleet.dispatch",
+      "dev-task.dispatch"
+    ],
+    "id": "Human/Ops",
+    "roles": [
+      "operator"
+    ]
+  },
+  "admission_record_path": "ai-task-archive/tasks/assistant-dev-bridge-admissions/pkt-l12-current-gap-supervisor-dispatch-20260731T091020Z--477a1958e0aa178d.json",
+  "admitted_at": "2026-07-31T09:10:19Z",
+  "audit_conversation_href": "codex://root/l12-current-gap-supervisor-dispatch-20260731",
+  "constraints": {
+    "allowedRepos": [
+      "pantheon"
+    ],
+    "noDirectShellFromWeb": true,
+    "requiresBranchPrMerge": true
+  },
+  "conversation_id": "codex-root-l12-current-gap-supervisor-dispatch-20260731",
+  "dispatch_records": [
+    {
+      "error": null,
+      "owner": "Antigravity",
+      "reviewer": "Claude2",
+      "status": "dispatched",
+      "taskId": "SUP-L12-CURRENT-GAP-SUPERVISOR-DISPATCH-20260731"
+    }
+  ],
+  "documents": [
+    {
+      "kind": "CURRENT_THREE_PASS_GAP_AUDIT",
+      "path": "docs/04/pantheon_twelve_loop_gap_2026-07-26/archive/CURRENT_THREE_PASS_GAP_AUDIT_2026-07-31T0640Z.md",
+      "sourceRefs": [
+        "PR#4394",
+        "head 6bdfb9e683ea2abd68140b50491e02cef04b8dab"
+      ]
+    },
+    {
+      "kind": "EXECUTION_TASK_GRAPH",
+      "path": "docs/bff/execution-tasks/2026-07-31-l12-current-gap-supervisor-dispatch/tasks.json",
+      "sourceRefs": [
+        "PR#4394",
+        "origin/dev 6f87a207eabf5c6121a59cae1bb8bc5bbc5cbf8e"
+      ]
+    },
+    {
+      "kind": "EVIDENCE",
+      "path": "docs/deployment/evidence/twelve-loop-gap/L12-CURRENT-GAP-SUPERVISOR-DISPATCH-20260731/README.md",
+      "sourceRefs": [
+        "PR#4394"
+      ]
+    }
+  ],
+  "durable": true,
+  "emitted_at": "2026-07-31T09:10:20Z",
+  "intent": "dispatch_supervisor_controller_for_current_l12_gap_graph",
+  "mode": "kernel_repair",
+  "packet_digest": "477a1958e0aa178d55f48a16d196a799b1ef6d355ac9b7df6b5fa457065d3f09",
+  "packet_id": "pkt-l12-current-gap-supervisor-dispatch-20260731T091020Z",
+  "packet_version": "pantheon.assistant.dev-task.v1",
+  "record_kind": "assistant_dev_bridge_admission",
+  "record_payload_sha256": "d3509a14c5e71db50d7c5b2febf3360c7badc0ef3c0988d4864f841bed4c6989",
+  "schema": "pantheon.assistant-dev-bridge-admission.v1",
+  "source_turn_ids": [
+    "user-complete-gap-audit-and-supervisor-dispatch",
+    "codex-current-gap-graph-pr-4394",
+    "codex-artifact-conflict-scope-retry"
+  ],
+  "tasks": [
+    {
+      "task_id": "SUP-L12-CURRENT-GAP-SUPERVISOR-DISPATCH-20260731",
+      "task_spec": {
+        "acceptance": [
+          "Use supervisor and auto-workers only; do not use Codex conversation subagents as fleets",
+          "Do not edit .orchestrator/config.json",
+          "Review PR #4394 exact head 6bdfb9e683ea2abd68140b50491e02cef04b8dab or supersede it with concrete findings",
+          "Confirm Wave 0 PR #4390 exact head f13748e14145f432c4d8897e945552aef899c1a7 is merged or equivalent live command-root repair is proven by canonical readback",
+          "Only after Wave 0 is proven, materialize Wave A/C/D/E tasks from the execution graph through supervisor/dev-bridge",
+          "For every downstream task, verify presence in canonical ai-status.json and authoritative task-state checkpoint; receipt/admission alone is not success",
+          "Prefer Antigravity and Claude/Claude2 lanes when live readiness allows; fallback must be explicit and evidence-backed",
+          "Record active auto-worker run ids/PIDs or exact blocker if no worker starts",
+          "Do not claim the twelve loops are operational until L12-CLOSE-001 is archived done with hosted/verifier evidence"
+        ],
+        "artifacts": [
+          "docs/deployment/evidence/twelve-loop-gap/SUP-L12-CURRENT-GAP-SUPERVISOR-DISPATCH-20260731"
+        ],
+        "depends_on": [
+          "SUP-ASSISTANT-DEV-BRIDGE-MATERIALIZATION-20260730"
+        ],
+        "id": "SUP-L12-CURRENT-GAP-SUPERVISOR-DISPATCH-20260731",
+        "owner": "Antigravity",
+        "phase": "Twelve Loop Current Gap / Supervisor Dispatch Controller",
+        "reviewer": "Claude2",
+        "summary": "Current 2026-07-31 audit and execution graph are ready in PR #4394. This controller task tells the real supervisor to gate on Wave 0 materialization, then dispatch the remaining L12 work through auto-workers with canonical readback.",
+        "title": "Supervisor-dispatch current L12 gap execution graph"
+      },
+      "task_spec_hash": "ea5caec72879d53887ec38d5a4cfce14cfa5179281231dce73a27f1a3dc44696"
+    }
+  ]
+}

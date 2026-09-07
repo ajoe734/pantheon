@@ -1,0 +1,125 @@
+{
+  "version": 1,
+  "task_id": "SUP-DISPATCH-EVENT-PROVIDER-REFRESH-20260728",
+  "archived_at": "2026-07-28T17:40:05Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "acceptance": [
+      "watch_events main does not re-enter runtime lock; provider auth false-to-true transition persists provider_capabilities; focused regression tests pass; PR #4307 exact-head reviewed and merged"
+    ],
+    "artifacts": [
+      ".orchestrator/supervisor.py",
+      ".orchestrator/watch_events.py",
+      ".orchestrator/test_supervisor.py",
+      ".orchestrator/test_watch_events.py"
+    ],
+    "depends_on": [],
+    "github_review_bridge": {
+      "actor": "Codex2",
+      "base": "dev",
+      "decision": "approve",
+      "head_branch": "task/SUP-DISPATCH-EVENT-PROVIDER-REFRESH-20260728",
+      "head_sha": "4bcaf23296861cc0b2b7ce6b695db03ebaa75b5c",
+      "mode": "required_commit_status",
+      "pr": 4308,
+      "pr_url": "https://github.com/ajoe734/pantheon/pull/4308",
+      "recorded_at": "2026-07-28T17:29:52Z",
+      "repository": "ajoe734/pantheon",
+      "review_error": "gh: Unprocessable Entity (HTTP 422)",
+      "status_context": "Pantheon canonical review gate",
+      "status_id": 51235403058,
+      "status_state": "success"
+    },
+    "id": "SUP-DISPATCH-EVENT-PROVIDER-REFRESH-20260728",
+    "last_update": "2026-07-28T17:40:05Z",
+    "next": "Owner finalized exact-head delivery: PR #4307 merged as 4a1801df863ea6477b87c2e957320529e84d3cee and follow-up PR #4308 merged as 5f359a8e51f8f5d72ce2710534035fa3aeb510c4; head 4bcaf23296861cc0b2b7ce6b695db03ebaa75b5c is in origin/dev. Owner validation passed 453 pytest tests plus 4 subtests, py_compile, and git diff --check; dispatch lock-order and provider false-to-true capability persistence repair is closed.",
+    "owner": "Codex",
+    "phase": "Supervisor Runtime Repair",
+    "review_binding": {
+      "base": "dev",
+      "head_branch": "task/SUP-DISPATCH-EVENT-PROVIDER-REFRESH-20260728",
+      "head_sha": "4bcaf23296861cc0b2b7ce6b695db03ebaa75b5c",
+      "pr": 4308
+    },
+    "reviewer": "Codex2",
+    "status": "done",
+    "summary_zh": "修復 watcher dispatch event lock-order 與 provider capability recovery persistence，解除 fleets 無法重派/Antigravity gate stale 的 runtime blocker。",
+    "title": "Repair supervisor dispatch event and provider capability refresh",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-07-28T17:40:05Z",
+      "repository_id": "pantheon",
+      "repository_path": "/home/lupin/pantheon-task-worktrees/sup-dispatch-event-provider-refresh-20260728",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/SUP-DISPATCH-EVENT-PROVIDER-REFRESH-20260728",
+      "git_clean_required": false,
+      "status_command_runtime": {
+        "command_root": "/home/lupin/pantheon-ci-deploy/dev-root",
+        "source_sha": "4a1801df863ea6477b87c2e957320529e84d3cee",
+        "base_ref": "origin/dev",
+        "remote": "ajoe734/pantheon",
+        "status_root": "/home/lupin/pantheon",
+        "delivery_root": "/home/lupin/pantheon-task-worktrees/sup-dispatch-event-provider-refresh-20260728",
+        "wrapper_root": "/home/lupin/pantheon-ci-deploy/dev-root"
+      },
+      "commit": "4bcaf23296861cc0b2b7ce6b695db03ebaa75b5c",
+      "commit_subject": "SUP-DISPATCH-EVENT-PROVIDER-REFRESH-20260728: anchor test repair",
+      "commit_author": {
+        "name": "pantheon-dev",
+        "email": "bjoe734@gmail.com"
+      },
+      "commit_metadata": {
+        "Owned layer": "supervisor locked-scan regression compatibility and formatting.",
+        "Not changing": "watch event behavior, provider credentials, live config, or task state.",
+        "Composes with": "merged PR #4307 and Codex2 exact-head follow-up review.",
+        "LLM-Agent": "Codex",
+        "Task-ID": "SUP-DISPATCH-EVENT-PROVIDER-REFRESH-20260728",
+        "Reviewer": "Codex2",
+        "Verified": "9 focused supervisor/watch_events tests; py_compile; git diff --check"
+      },
+      "git_clean": true,
+      "dirty_entry_count": 0,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "5f359a8e51f8f5d72ce2710534035fa3aeb510c4",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "created_at": "2026-07-28T17:24:40Z",
+      "from": "Codex",
+      "message": "PR #4308 is ready for exact-head review at 4bcaf23296861cc0b2b7ce6b695db03ebaa75b5c. Follow-up fixes the full-module regression left by merged PR #4307: run-once tests now patch _run_scan_locked; provider probe exception indentation normalized. Validation: 453 passed plus 4 subtests across test_watch_events.py and test_supervisor.py; py_compile and git diff --check passed. Please approve with REVIEW_PR=4308 and REVIEW_HEAD_SHA=4bcaf23296861cc0b2b7ce6b695db03ebaa75b5c, then run the governed integrator.",
+      "resolved_at": "2026-07-28T17:29:52Z",
+      "status": "done",
+      "task_id": "SUP-DISPATCH-EVENT-PROVIDER-REFRESH-20260728",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-07-28T17:29:52Z",
+      "from": "Codex2",
+      "message": "Exact-head review passed for PR #4308 at 4bcaf23296861cc0b2b7ce6b695db03ebaa75b5c: PR #4307 is merged at 4a1801df863ea6477b87c2e957320529e84d3cee; reviewed lock-safe _run_scan_locked dispatch path and false-to-true provider capability persistence; PR #4308 fixes both stale run_once mocks and probe exception indentation; 9 GitHub checks succeeded; independent local validation passed 453 tests plus 4 subtests, py_compile, and git diff --check.",
+      "resolved_at": "2026-07-28T17:37:41Z",
+      "status": "done",
+      "task_id": "SUP-DISPATCH-EVENT-PROVIDER-REFRESH-20260728",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-07-28T17:37:41Z",
+      "from": "Codex2",
+      "message": "Owner closeout validation passed on exact reviewed head 4bcaf23296861cc0b2b7ce6b695db03ebaa75b5c: 453 pytest tests plus 4 subtests, py_compile for four supervisor/watch files, and git diff --check. PR #4308 remains open/mergeStateStatus=BLOCKED solely because required Pantheon root merge freeze 2026-07-27 status is absent; waiting for Human/Ops exact-head live-repair release before repository auto-integrator merge and governed done.",
+      "status": "done",
+      "task_id": "SUP-DISPATCH-EVENT-PROVIDER-REFRESH-20260728",
+      "to": "Codex",
+      "resolved_at": "2026-07-28T17:40:06Z"
+    }
+  ],
+  "blockers": []
+}

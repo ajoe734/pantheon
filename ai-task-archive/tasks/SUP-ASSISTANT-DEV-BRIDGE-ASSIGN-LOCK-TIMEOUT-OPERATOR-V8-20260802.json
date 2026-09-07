@@ -1,0 +1,193 @@
+{
+  "version": 1,
+  "task_id": "SUP-ASSISTANT-DEV-BRIDGE-ASSIGN-LOCK-TIMEOUT-OPERATOR-V8-20260802",
+  "archived_at": "2026-08-02T11:52:34Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "acceptance": [
+      "Operator constraint remains authoritative: Codex and Codex2 may be different accounts with distinct configured quota groups and no global mutual-review ban",
+      "This V8 replaces blocked V3 because SUP-FAILURE-STREAK-PROGRESS-EVIDENCE-V2 is archived superseded and must be evidence only rather than a scheduler dependency",
+      "Reproduce both signed packet receipts that timed out in canonical assign while direct canonical assign later succeeded",
+      "Identify exact lock owner and elapsed phases using scratch-root instrumentation",
+      "Do not wait on governed ai-status subprocesses while holding runtime-admission task-state event-log inbox or replay locks required by that subprocess",
+      "Make transient task-state timeouts retryable with bounded backoff exact packet identity replay protection and at-most-once canonical materialization",
+      "Require processed receipt durable admission exact task-spec hash and canonical active-or-archive readback for every task ID",
+      "Add concurrent real-event-log integration tests with full supervisor cycle plus approve assign note and reopen and prove governed assign under two seconds p95",
+      "Add timeout-before-task timeout-after-one crash-after-rename stale-claim forged-retry concurrent-drainer mismatched-spec and restart-recovery negatives",
+      "Preserve provider dispatch worker leases reviewer identity signature checks artifact guards and journal integrity",
+      "Run focused bridge suites relevant full supervisor regression 2000-event benchmark py_compile evidence JSON trailer gate and diff check",
+      "Do not modify config live runtime canonical JSON by hand provider policy services or product tasks",
+      "Deliver clean PR to dev exact-head Human/Ops review merge and canonical archive before rollout; rollback is merge revert"
+    ],
+    "artifacts": [
+      ".orchestrator/supervisor.py",
+      ".orchestrator/test_supervisor.py",
+      "services/control-plane/bff/assistant/dev_bridge_dispatcher.py",
+      "services/control-plane/bff/assistant/dev_bridge_inbox.py",
+      "services/control-plane/bff/assistant/tests/test_dev_bridge_reliability.py",
+      "services/control-plane/bff/assistant/tests/test_dev_bridge_inbox.py",
+      "docs/deployment/evidence/supervisor/SUP-ASSISTANT-DEV-BRIDGE-ASSIGN-LOCK-TIMEOUT-OPERATOR-V8-20260802/"
+    ],
+    "depends_on": [
+      "SUP-ASSIGNMENT-FALLBACK-ATOMIC-REBINDS-OPERATOR-V4-20260802",
+      "SUP-FAILURE-STREAK-DISPATCH-CONSUMPTION-V2-20260801"
+    ],
+    "github_review_bridge": {
+      "actor": "Human/Ops",
+      "base": "dev",
+      "decision": "approve",
+      "head_branch": "task/SUP-ASSISTANT-DEV-BRIDGE-ASSIGN-LOCK-TIMEOUT-OPERATOR-V8-20260802",
+      "head_sha": "3fbbc36c4bb1037604aaacf912236c7a0df1e36c",
+      "mode": "required_commit_status",
+      "pr": 4507,
+      "pr_url": "https://github.com/ajoe734/pantheon/pull/4507",
+      "recorded_at": "2026-08-02T11:49:23Z",
+      "repository": "ajoe734/pantheon",
+      "review_error": "gh: Unprocessable Entity (HTTP 422)",
+      "status_context": "Pantheon canonical review gate",
+      "status_id": 51502719792,
+      "status_state": "success"
+    },
+    "id": "SUP-ASSISTANT-DEV-BRIDGE-ASSIGN-LOCK-TIMEOUT-OPERATOR-V8-20260802",
+    "last_update": "2026-08-02T11:52:34Z",
+    "next": "Owner closeout complete: Human/Ops exact-head approval for PR #4507 at 3fbbc36c4bb1037604aaacf912236c7a0df1e36c; merged to dev as 0404ca01ebb6803df6a4b927bacada5739f61de1; reviewed evidence manifest preserved; 600 pytest passes plus 147 subtests, 2,000-event governed-command benchmark p95 1.572s with 8/8 commands and exact projection, py_compile/JSON/trailer/diff gates passed.",
+    "owner": "Codex",
+    "phase": "Supervisor Dispatch Pipeline / Dev Bridge Lock Boundary / operator V8",
+    "review_binding": {
+      "base": "dev",
+      "head_branch": "task/SUP-ASSISTANT-DEV-BRIDGE-ASSIGN-LOCK-TIMEOUT-OPERATOR-V8-20260802",
+      "head_sha": "3fbbc36c4bb1037604aaacf912236c7a0df1e36c",
+      "pr": 4507
+    },
+    "review_file": "docs/deployment/evidence/supervisor/SUP-ASSISTANT-DEV-BRIDGE-ASSIGN-LOCK-TIMEOUT-OPERATOR-V8-20260802/evidence.json",
+    "review_notes_zh": [
+      "Exact-head 3fbbc36c4：GitHub 8/8 checks green；Human/Ops 獨立重跑 8 個阻斷測試全通過；600+147 完整矩陣與 exact-SHA benchmark 1.572s/8-of-8/18 cycles/projection exact；parent symlink no-outside-write、processing-fence transaction lifetime、partial-admission fail-closed、16-task bound、live-TTL non-overlap、archive-aware retry 均有直接證據。",
+      "Trailer range、diff scope、JSON、benchmark SHA256 與 implementation SHA 綁定均通過；未包含 config、dashboard、runtime state 或 task brief。"
+    ],
+    "reviewer": "Human/Ops",
+    "status": "done",
+    "summary_zh": "Replace the permanently blocked V3 dependency set and repair signed-packet canonical assignment lock contention with bounded replay-safe recovery.",
+    "title": "Remove canonical assign lock timeout from supervisor dev bridge",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-08-02T11:52:34Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-worker-worktrees/pantheon/sup-assistant-dev-bridge-assign-lock-timeout-operator-v8-20260802",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/SUP-ASSISTANT-DEV-BRIDGE-ASSIGN-LOCK-TIMEOUT-OPERATOR-V8-20260802",
+      "git_clean_required": false,
+      "status_command_runtime": {
+        "command_root": "/home/lupin/pantheon-ci-deploy/dev-root",
+        "source_sha": "941c15a34208e54e96cdd148ba3a5bfcd339abab",
+        "base_ref": "origin/dev",
+        "remote": "ajoe734/pantheon",
+        "status_root": "/home/lupin/pantheon",
+        "delivery_root": "/tmp/pantheon-worker-worktrees/pantheon/sup-assistant-dev-bridge-assign-lock-timeout-operator-v8-20260802",
+        "wrapper_root": "/home/lupin/pantheon-ci-deploy/dev-root"
+      },
+      "commit": "3fbbc36c4bb1037604aaacf912236c7a0df1e36c",
+      "commit_subject": "SUP-ASSISTANT-DEV-BRIDGE-ASSIGN-LOCK-TIMEOUT-OPERATOR-V8-20260802: proof",
+      "commit_author": {
+        "name": "pantheon-dev",
+        "email": "bjoe734@gmail.com"
+      },
+      "commit_metadata": {
+        "Owned layer": "task-scoped Human/Ops remediation, exact-candidate validation, and regenerated benchmark evidence.",
+        "Not changing": "provider policy, account or quota groups, live runtime, deployment, canonical JSON, or product tasks.",
+        "Composes with": "implementation candidate a42b177be32c4b4e2fc8888179bf5eff014e6a83 and PR #4507 exact-head review.",
+        "LLM-Agent": "Codex",
+        "Task-ID": "SUP-ASSISTANT-DEV-BRIDGE-ASSIGN-LOCK-TIMEOUT-OPERATOR-V8-20260802",
+        "Reviewer": "Human/Ops",
+        "Verified": "600 passed + 147 subtests; benchmark p95 1.572s, 8/8 commands, 18 cycles, exact projection; py_compile, JSON, diff gates passed"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 1,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "0404ca01ebb6803df6a4b927bacada5739f61de1",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "created_at": "2026-08-02T10:56:57Z",
+      "from": "Codex",
+      "message": "PR #4507 exact head d2f92118c9af913605780243a8842a8c38dbb484 ready for independent review. Evidence: docs/deployment/evidence/supervisor/SUP-ASSISTANT-DEV-BRIDGE-ASSIGN-LOCK-TIMEOUT-OPERATOR-V8-20260802/evidence.json. Owner validation: 584 passed + 147 subtests; CLI 8 passed; 2000-event active-supervisor benchmark p95 1.393s, 8/8 commands, exact projection.",
+      "resolved_at": "2026-08-02T10:57:25Z",
+      "status": "done",
+      "task_id": "SUP-ASSISTANT-DEV-BRIDGE-ASSIGN-LOCK-TIMEOUT-OPERATOR-V8-20260802",
+      "to": "Human/Ops"
+    },
+    {
+      "created_at": "2026-08-02T10:57:25Z",
+      "from": "Human/Ops",
+      "message": "Human/Ops rejected PR #4507 head d2f92118c9af913605780243a8842a8c38dbb484. Blocking review: https://github.com/ajoe734/pantheon/pull/4507#issuecomment-5157345049. Implement the admission-before-execution gate or atomic packet mutation with full run_once zero-queue negative, live-claimant-past-TTL fencing/renewal/bounded-work proof, and archive-aware exact partial retry. Rebase onto origin/dev ef2b4f0a3988be6adbf56d24ec5df00df2717f39, rerun exact-head full validation/benchmark/evidence, push a new head, then request fresh Human/Ops review. Do not merge the rejected head.",
+      "resolved_at": "2026-08-02T10:57:25Z",
+      "status": "done",
+      "task_id": "SUP-ASSISTANT-DEV-BRIDGE-ASSIGN-LOCK-TIMEOUT-OPERATOR-V8-20260802",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-08-02T10:57:35Z",
+      "from": "Human/Ops",
+      "message": "Exact-head review rejected PR #4507 at d2f92118c9af913605780243a8842a8c38dbb484. Blocking correctness gap: dispatch and inbox processing claims expire after 300s, DevTaskPacket has no task-count bound, and neither lease renewal nor an OS-held per-packet fence prevents a still-running original claimant from overlapping a replacement after TTL. Add bounded packet work plus renewable/fenced ownership or equivalent non-overlap proof, with a deterministic original-claimant-alive-past-TTL concurrent negative. Branch is also BEHIND current dev ef2b4f0a3988be6adbf56d24ec5df00df2717f39; update to current dev and rerun exact-head focused/full regression, 2000-event benchmark, evidence hashes, trailer/diff gates. Keep account/quota groups and reviewer policy unchanged.",
+      "resolved_at": "2026-08-02T10:57:35Z",
+      "status": "done",
+      "task_id": "SUP-ASSISTANT-DEV-BRIDGE-ASSIGN-LOCK-TIMEOUT-OPERATOR-V8-20260802",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-08-02T10:58:05Z",
+      "from": "Human/Ops",
+      "message": "Reject PR #4507 exact head d2f92118: it is behind dev and does not implement the mandatory pre-PR safety cases recorded at 10:52Z: fence scheduler execution for partial unadmitted packets, fence/renew live claims beyond TTL, and reconcile archive-aware partial retry. Existing evidence/benchmark cannot satisfy AC4; do not merge or deploy. Amend the same governed branch with the complete code and deterministic regressions, rebase current dev, rerun all validation, then request a new exact-head review.",
+      "resolved_at": "2026-08-02T10:58:05Z",
+      "status": "done",
+      "task_id": "SUP-ASSISTANT-DEV-BRIDGE-ASSIGN-LOCK-TIMEOUT-OPERATOR-V8-20260802",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-08-02T11:16:14Z",
+      "from": "Codex",
+      "message": "PR #4507 exact head 2b956587f5eb9d35aebb95d191ab505afce6945f remediates rejected head d2f92118: full run_once partial-admission fail-closed gate; max 16 tasks plus live-owner dispatch/processing OS fences beyond JSON TTL; archive-aware partial retry without mutation/reuse; composed origin/dev ef2b4f0a; 597 passed + 147 subtests; bridge 81 passed; 2000-event active p95 1.407s with exact projection. Evidence: docs/deployment/evidence/supervisor/SUP-ASSISTANT-DEV-BRIDGE-ASSIGN-LOCK-TIMEOUT-OPERATOR-V8-20260802/evidence.json",
+      "resolved_at": "2026-08-02T11:16:46Z",
+      "status": "done",
+      "task_id": "SUP-ASSISTANT-DEV-BRIDGE-ASSIGN-LOCK-TIMEOUT-OPERATOR-V8-20260802",
+      "to": "Human/Ops"
+    },
+    {
+      "created_at": "2026-08-02T11:16:46Z",
+      "from": "Human/Ops",
+      "message": "Reject PR #4507 exact head 2b956587f5eb9d35aebb95d191ab505afce6945f. Two independently reproduced fence failures remain. (1) Parent symlink escape: .orchestrator/assistant-dev-packet-claims -> outside creates external <sha>.lock, and inbox/claims -> outside creates external pkt.json.lock; leaf O_NOFOLLOW is insufficient. Open every directory component with dirfd/O_DIRECTORY/O_NOFOLLOW or equivalent, fstat both fence leaves as regular files, and add two no-outside-write negatives. (2) Processing fence is released immediately after dispatch_task_packet, before retry/receipt/finalize/metadata commit. A pause at first receipt write plus expired claim produced dispatch_calls=2 and concurrent errors. Hold the processing fence through the full per-item transaction and add a pause-after-dispatch alive-past-TTL negative. Rerun all final-SHA tests and benchmark and regenerate evidence; do not reuse the 2b956 benchmark as proof.",
+      "resolved_at": "2026-08-02T11:16:46Z",
+      "status": "done",
+      "task_id": "SUP-ASSISTANT-DEV-BRIDGE-ASSIGN-LOCK-TIMEOUT-OPERATOR-V8-20260802",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-08-02T11:47:25Z",
+      "from": "Codex",
+      "message": "PR #4507 exact head 3fbbc36c4bb1037604aaacf912236c7a0df1e36c is ready. Review evidence: docs/deployment/evidence/supervisor/SUP-ASSISTANT-DEV-BRIDGE-ASSIGN-LOCK-TIMEOUT-OPERATOR-V8-20260802/evidence.json. Fresh implementation candidate a42b177be32c4b4e2fc8888179bf5eff014e6a83: 600 passed + 147 subtests; benchmark p95 1.572s, 8/8 commands, 18 cycles, exact projection. Please verify the two parent-symlink no-outside-write negatives and pause-after-dispatch processing-fence lifetime negative.",
+      "resolved_at": "2026-08-02T11:49:23Z",
+      "status": "done",
+      "task_id": "SUP-ASSISTANT-DEV-BRIDGE-ASSIGN-LOCK-TIMEOUT-OPERATOR-V8-20260802",
+      "to": "Human/Ops"
+    },
+    {
+      "created_at": "2026-08-02T11:49:23Z",
+      "from": "Human/Ops",
+      "message": "Human/Ops approves exact head 3fbbc36c4 after all CI, independent blocking negatives, full matrix, benchmark, hash, scope and trailer gates passed. Owner must perform governed merge/finalize; approval is bound only to PR #4507 head 3fbbc36c4.",
+      "status": "done",
+      "task_id": "SUP-ASSISTANT-DEV-BRIDGE-ASSIGN-LOCK-TIMEOUT-OPERATOR-V8-20260802",
+      "to": "Codex",
+      "resolved_at": "2026-08-02T11:52:35Z"
+    }
+  ],
+  "blockers": []
+}

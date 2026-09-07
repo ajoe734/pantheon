@@ -1,0 +1,189 @@
+{
+  "actor": {
+    "capabilities": [
+      "fleet.dispatch",
+      "dev-task.dispatch"
+    ],
+    "id": "Human/Ops",
+    "roles": [
+      "operator"
+    ]
+  },
+  "admission_record_path": "ai-task-archive/tasks/assistant-dev-bridge-admissions/pkt-codex2-recovery-and-fleet-capacity-20260802T1242Z--7d359cc63b5a960a.json",
+  "admitted_at": "2026-08-02T12:44:04Z",
+  "audit_conversation_href": "codex://root/autoworker-capacity-codex2-recovery-20260802",
+  "constraints": {
+    "allowedRepos": [
+      "pantheon"
+    ],
+    "noDirectShellFromWeb": true,
+    "requiresBranchPrMerge": true
+  },
+  "conversation_id": "codex-root-autoworker-capacity-20260802",
+  "dispatch_records": [
+    {
+      "error": null,
+      "owner": "Codex",
+      "reviewer": "Codex2",
+      "status": "dispatched",
+      "taskId": "SUP-PROVIDER-STALE-CACHE-READMISSION-PROBE-20260802"
+    },
+    {
+      "error": null,
+      "owner": "Codex2",
+      "reviewer": "Codex",
+      "status": "dispatched",
+      "taskId": "OPS-FAILURE-LOOP-CHAIR-TRIAGE-RECOVERY-20260802"
+    },
+    {
+      "error": null,
+      "owner": "Codex2",
+      "reviewer": "Codex",
+      "status": "dispatched",
+      "taskId": "SUP-PROVIDER-STALE-CACHE-READMISSION-LIVE-CANARY-20260802"
+    }
+  ],
+  "documents": [
+    {
+      "kind": "ACTIVE_REPOSITORY_AUTHORITY",
+      "path": "AGENTS.md",
+      "sourceRefs": [
+        "Pantheon supervisor is the only routine implementation dispatcher",
+        "Configured Codex and Codex2 identities remain distinct; account and reviewer relationships require current task-scoped live evidence",
+        "Urgent auth/runtime rescue may be minimal and temporary; permanent source work uses governed worktree and PR flow"
+      ]
+    },
+    {
+      "kind": "LIVE_AUTH_RECOVERY_EVIDENCE",
+      "path": ".orchestrator/provider_capabilities.json",
+      "sourceRefs": [
+        "cached Codex2 probe at 2026-08-02T05:21:10Z reported token_revoked",
+        "operator completed fresh device login into /home/lupin/.codex2",
+        "targeted supervisor refresh at 2026-08-02T12:38:30Z reported healthy/auth_ready true",
+        "Codex2 worker codex-20260802T124015Z-d11ee28f started on codex2_1 at 2026-08-02T12:40:15Z with CODEX_HOME=/home/lupin/.codex2"
+      ]
+    },
+    {
+      "kind": "SOURCE_GAP",
+      "path": ".orchestrator/supervisor.py",
+      "sourceRefs": [
+        "live config sets supervisor.auto_refresh_provider_capabilities=false",
+        "dispatch_ready_tasks calls agent_auto_dispatch_block_reason before a queue event exists",
+        "refresh_provider_auth_before_dispatch runs later in process_queue, so cached auth_ready false can prevent the recovery probe from ever being reached",
+        "SUP-PROVIDER-PAUSE-RECOVERY-PROBE-20260802 is merged but does not cover stale false cache with no already-queued delivery"
+      ]
+    },
+    {
+      "kind": "CAPACITY_GAP",
+      "path": ".orchestrator/state.json",
+      "sourceRefs": [
+        "read-only snapshot after auth recovery found 13 task-agent failure-loop pairs at chair threshold",
+        "old Codex and Codex2 primary candidates were excluded by failure_loop plus chair_triage rather than current slot capacity",
+        "current configured logical capacity remains four Codex slots and four Codex2 slots"
+      ]
+    }
+  ],
+  "durable": true,
+  "emitted_at": "2026-08-02T12:43:03.834177Z",
+  "intent": "restore_self_healing_codex2_admission_and_recover_parallel_dispatch_capacity",
+  "mode": "kernel_repair",
+  "packet_digest": "7d359cc63b5a960a0b238e579661b6c2f929ecf9aa51017e3d5f89475a14f7fc",
+  "packet_id": "pkt-codex2-recovery-and-fleet-capacity-20260802T1242Z",
+  "packet_version": "pantheon.assistant.dev-task.v1",
+  "record_kind": "assistant_dev_bridge_admission",
+  "record_payload_sha256": "d2539e0c26d47b45f58c56cec691456258824f44ca6f55e6aa83ee1a0b5c44bd",
+  "schema": "pantheon.assistant-dev-bridge-admission.v1",
+  "source_turn_ids": [
+    "user-codex-should-run-four-in-parallel",
+    "user-login-codex2-device-code",
+    "user-request-help-make-autoworker-run"
+  ],
+  "tasks": [
+    {
+      "task_id": "SUP-PROVIDER-STALE-CACHE-READMISSION-PROBE-20260802",
+      "task_spec": {
+        "acceptance": [
+          "Reproduce the exact 2026-08-02 failure: auto_refresh_provider_capabilities=false, persisted Codex2 auth_ready=false/token_revoked, credentials freshly valid, at least one otherwise dispatchable Codex2 task, and no pre-existing queued Codex2 event.",
+          "Before stale capability rejection becomes terminal, schedule one bounded targeted live probe for only the candidate provider outside runtime-admission and canonical locks; do not rebuild or probe the whole fleet.",
+          "Only a fresh authoritative live success may transition the provider to healthy and permit dispatch; failed, revoked, quota, timeout, unsupported, or ambiguous probes remain fail closed with an explicit reason.",
+          "Persist the derived auth transition through existing provider capability APIs; never hand-edit provider_capabilities.json or runtime state.",
+          "Coalesce concurrent recovery attempts, rate-limit repeated failed probes, and preserve normal pre-dispatch fresh probing so recovery cannot create a thundering herd or bypass launch checks.",
+          "Regression matrix covers stale false plus fresh success, still-revoked, quota/capacity, probe timeout/error, no eligible task, concurrent candidates, auto_refresh true/false, and provider aliases/slots.",
+          "Preserve current configured Codex/Codex2 account and quota separation, reviewer eligibility rules, worker limits, task priority, dependency, failure-loop, and chair-triage semantics.",
+          "Use a clean task worktree from current origin/dev, commit only declared scope, run focused and full relevant supervisor tests, py_compile, diff-check, evidence JSON validation, push, open PR to dev, obtain independent exact-head review, merge, and archive canonical completion.",
+          "Merge order: this source task precedes SUP-PROVIDER-STALE-CACHE-READMISSION-LIVE-CANARY-20260802. Rollback is merge revert; failed recovery leaves the lane closed and does not alter credentials or task truth."
+        ],
+        "artifacts": [
+          ".orchestrator/supervisor.py",
+          ".orchestrator/test_supervisor.py",
+          ".orchestrator/provider_permissions.py",
+          "docs/deployment/evidence/supervisor/SUP-PROVIDER-STALE-CACHE-READMISSION-PROBE-20260802/"
+        ],
+        "depends_on": [
+          "SUP-PROVIDER-PAUSE-RECOVERY-PROBE-20260802"
+        ],
+        "id": "SUP-PROVIDER-STALE-CACHE-READMISSION-PROBE-20260802",
+        "owner": "Codex",
+        "phase": "Supervisor Provider Admission / Recovery Follow-up",
+        "reviewer": "Codex2",
+        "summary": "Close the observed auto_refresh=false deadlock where cached auth_ready=false prevents the exact bounded pre-dispatch recovery probe from ever running.",
+        "title": "Recover a freshly reauthenticated provider before stale capability admission rejection"
+      },
+      "task_spec_hash": "557da4cee40087b6eeff6b457010e30b4de5e588cfc9969a54a61ecef0f2523f"
+    },
+    {
+      "task_id": "OPS-FAILURE-LOOP-CHAIR-TRIAGE-RECOVERY-20260802",
+      "task_spec": {
+        "acceptance": [
+          "Take a fresh authoritative snapshot; enumerate every task-agent pair currently at failure-loop/chair threshold with status, owner/reviewer, failure kind/count/timestamps, PID starttime, queue event, worktree/branch, PR/check/merge truth, and dependencies.",
+          "Deduplicate against active tasks, archives, open PRs, branches, worktrees, and the completed SUP-FAILURE-STREAK-DISPATCH-CONSUMPTION-V2-20260801 behavior before any decision.",
+          "For a stale missing_process pair only when no matching live process, active queue lease, current worktree progress, or unresolved PR execution exists, apply the existing canonical chair/reassignment/reopen/close decision; never clear a record directly.",
+          "Preserve true auth, quota, active-progress, retry-backoff, or unresolved implementation failures and record the exact blocker instead of forcing dispatch.",
+          "Do not weaken or reset the threshold globally. Every mutation is task-scoped, uses governed status commands, and has before/after event and canonical readback evidence.",
+          "After reconciliation, recompute Codex and Codex2 direct/helper eligibility and active/pending loads. Prove available slots dispatch independent eligible work; if fewer than four run, identify the exact dependency, review, failure-loop, or lack-of-work reason.",
+          "Do not terminate or preempt the active Codex V8 worker or Codex2 LIFECYCLE-PROJ-STORE-001 reviewer merely to free capacity.",
+          "Commit only task-scoped evidence through clean branch/PR to dev, obtain independent exact-head review, merge, and archive. Rollback reopens only an incorrectly resolved task via canonical command; no JSON restoration."
+        ],
+        "artifacts": [
+          "docs/deployment/evidence/supervisor/OPS-FAILURE-LOOP-CHAIR-TRIAGE-RECOVERY-20260802/"
+        ],
+        "depends_on": [],
+        "id": "OPS-FAILURE-LOOP-CHAIR-TRIAGE-RECOVERY-20260802",
+        "owner": "Codex2",
+        "phase": "Fleet Operations / Failure-loop Capacity Recovery",
+        "reviewer": "Codex",
+        "summary": "Use existing canonical chair/recovery mechanisms to classify the current failure-loop pairs and recover only stale task-agent records, without weakening thresholds.",
+        "title": "Reconcile stale missing-process failure loops that suppress parallel worker slots"
+      },
+      "task_spec_hash": "0c99b5c5190b1a32684aca23ced53af85b79471d7f11f4d1dd6f6ad62973666d"
+    },
+    {
+      "task_id": "SUP-PROVIDER-STALE-CACHE-READMISSION-LIVE-CANARY-20260802",
+      "task_spec": {
+        "acceptance": [
+          "Start only after the source task is merged, checks are green, independently reviewed, and canonically complete; bind the exact dev merge commit.",
+          "Promote through the existing gate-before-switch transactional runtime path with automatic rollback; do not patch dev-root or restart an unreviewed tree.",
+          "Canary begins with a derived cached auth_ready=false fixture or supported isolated equivalent, then uses fresh valid task-scoped Codex2 auth; no credential contents appear in evidence.",
+          "Without manual provider-capability or runtime-state edits and with auto_refresh_provider_capabilities=false, one bounded targeted probe changes only Codex2 to healthy and an eligible Codex2 worker starts with CODEX_HOME=/home/lupin/.codex2.",
+          "Negative canary proves failed/revoked/timeout auth remains closed and does not burn a worker; unrelated Codex lane, quota groups, reviewer policy, queues, and active workers remain unchanged.",
+          "Observe at least three fresh supervisor cycles, worker heartbeats, PID starttime, queue/task binding, no duplicate recovery probes, no lock hold caused by network probing, and exact live source/config hashes.",
+          "Rollback automatically on any auth, identity, queue, lease, lock, config, or source invariant failure and prove the prior runtime PID/root/commit/config hash resumes for three cycles.",
+          "Commit exact canary and rollback evidence through clean PR to dev, independent exact-head review, merge, and canonical archive."
+        ],
+        "artifacts": [
+          "docs/deployment/evidence/supervisor/SUP-PROVIDER-STALE-CACHE-READMISSION-LIVE-CANARY-20260802/"
+        ],
+        "depends_on": [
+          "SUP-PROVIDER-STALE-CACHE-READMISSION-PROBE-20260802"
+        ],
+        "id": "SUP-PROVIDER-STALE-CACHE-READMISSION-LIVE-CANARY-20260802",
+        "owner": "Codex2",
+        "phase": "Supervisor Provider Admission / Live Promotion Canary",
+        "reviewer": "Codex",
+        "summary": "Transactionally promote the merged stale-cache recovery and prove a revoked-to-new-login Codex2 lane resumes without manual cache edits.",
+        "title": "Promote and prove self-healing provider readmission after fresh login"
+      },
+      "task_spec_hash": "0f3ffcb81163a871dded5d70fbe04cd64be475945a3fecb47da2c369a633b813"
+    }
+  ]
+}

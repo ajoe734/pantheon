@@ -1,0 +1,303 @@
+{
+  "version": 1,
+  "task_id": "SUP-PROVIDER-STALE-CACHE-READMISSION-PROBE-20260802",
+  "archived_at": "2026-08-02T15:29:54Z",
+  "terminal_status": "done",
+  "terminal_outcome": "completed",
+  "task": {
+    "acceptance": [
+      "Reproduce the exact 2026-08-02 failure: auto_refresh_provider_capabilities=false, persisted Codex2 auth_ready=false/token_revoked, credentials freshly valid, at least one otherwise dispatchable Codex2 task, and no pre-existing queued Codex2 event.",
+      "Before stale capability rejection becomes terminal, schedule one bounded targeted live probe for only the candidate provider outside runtime-admission and canonical locks; do not rebuild or probe the whole fleet.",
+      "Only a fresh authoritative live success may transition the provider to healthy and permit dispatch; failed, revoked, quota, timeout, unsupported, or ambiguous probes remain fail closed with an explicit reason.",
+      "Persist the derived auth transition through existing provider capability APIs; never hand-edit provider_capabilities.json or runtime state.",
+      "Coalesce concurrent recovery attempts, rate-limit repeated failed probes, and preserve normal pre-dispatch fresh probing so recovery cannot create a thundering herd or bypass launch checks.",
+      "Regression matrix covers stale false plus fresh success, still-revoked, quota/capacity, probe timeout/error, no eligible task, concurrent candidates, auto_refresh true/false, and provider aliases/slots.",
+      "Preserve current configured Codex/Codex2 account and quota separation, reviewer eligibility rules, worker limits, task priority, dependency, failure-loop, and chair-triage semantics.",
+      "Use a clean task worktree from current origin/dev, commit only declared scope, run focused and full relevant supervisor tests, py_compile, diff-check, evidence JSON validation, push, open PR to dev, obtain independent exact-head review, merge, and archive canonical completion.",
+      "Merge order: this source task precedes SUP-PROVIDER-STALE-CACHE-READMISSION-LIVE-CANARY-20260802. Rollback is merge revert; failed recovery leaves the lane closed and does not alter credentials or task truth."
+    ],
+    "artifacts": [
+      ".orchestrator/supervisor.py",
+      ".orchestrator/test_supervisor.py",
+      ".orchestrator/provider_permissions.py",
+      "docs/deployment/evidence/supervisor/SUP-PROVIDER-STALE-CACHE-READMISSION-PROBE-20260802/"
+    ],
+    "depends_on": [
+      "SUP-PROVIDER-PAUSE-RECOVERY-PROBE-20260802"
+    ],
+    "dev_bridge": {
+      "actor": {
+        "capabilities": [
+          "fleet.dispatch",
+          "dev-task.dispatch"
+        ],
+        "id": "Human/Ops",
+        "roles": [
+          "operator"
+        ]
+      },
+      "audit_conversation_href": "codex://root/autoworker-capacity-codex2-recovery-20260802",
+      "conversation_id": "codex-root-autoworker-capacity-20260802",
+      "documents": [
+        {
+          "kind": "ACTIVE_REPOSITORY_AUTHORITY",
+          "path": "AGENTS.md",
+          "sourceRefs": [
+            "Pantheon supervisor is the only routine implementation dispatcher",
+            "Configured Codex and Codex2 identities remain distinct; account and reviewer relationships require current task-scoped live evidence",
+            "Urgent auth/runtime rescue may be minimal and temporary; permanent source work uses governed worktree and PR flow"
+          ]
+        },
+        {
+          "kind": "LIVE_AUTH_RECOVERY_EVIDENCE",
+          "path": ".orchestrator/provider_capabilities.json",
+          "sourceRefs": [
+            "cached Codex2 probe at 2026-08-02T05:21:10Z reported token_revoked",
+            "operator completed fresh device login into /home/lupin/.codex2",
+            "targeted supervisor refresh at 2026-08-02T12:38:30Z reported healthy/auth_ready true",
+            "Codex2 worker codex-20260802T124015Z-d11ee28f started on codex2_1 at 2026-08-02T12:40:15Z with CODEX_HOME=/home/lupin/.codex2"
+          ]
+        },
+        {
+          "kind": "SOURCE_GAP",
+          "path": ".orchestrator/supervisor.py",
+          "sourceRefs": [
+            "live config sets supervisor.auto_refresh_provider_capabilities=false",
+            "dispatch_ready_tasks calls agent_auto_dispatch_block_reason before a queue event exists",
+            "refresh_provider_auth_before_dispatch runs later in process_queue, so cached auth_ready false can prevent the recovery probe from ever being reached",
+            "SUP-PROVIDER-PAUSE-RECOVERY-PROBE-20260802 is merged but does not cover stale false cache with no already-queued delivery"
+          ]
+        },
+        {
+          "kind": "CAPACITY_GAP",
+          "path": ".orchestrator/state.json",
+          "sourceRefs": [
+            "read-only snapshot after auth recovery found 13 task-agent failure-loop pairs at chair threshold",
+            "old Codex and Codex2 primary candidates were excluded by failure_loop plus chair_triage rather than current slot capacity",
+            "current configured logical capacity remains four Codex slots and four Codex2 slots"
+          ]
+        }
+      ],
+      "emitted_at": "2026-08-02T12:43:03.834177Z",
+      "intent": "restore_self_healing_codex2_admission_and_recover_parallel_dispatch_capacity",
+      "mode": "kernel_repair",
+      "packet_digest": "7d359cc63b5a960a0b238e579661b6c2f929ecf9aa51017e3d5f89475a14f7fc",
+      "packet_id": "pkt-codex2-recovery-and-fleet-capacity-20260802T1242Z",
+      "source_turn_ids": [
+        "user-codex-should-run-four-in-parallel",
+        "user-login-codex2-device-code",
+        "user-request-help-make-autoworker-run"
+      ],
+      "task_spec": {
+        "acceptance": [
+          "Reproduce the exact 2026-08-02 failure: auto_refresh_provider_capabilities=false, persisted Codex2 auth_ready=false/token_revoked, credentials freshly valid, at least one otherwise dispatchable Codex2 task, and no pre-existing queued Codex2 event.",
+          "Before stale capability rejection becomes terminal, schedule one bounded targeted live probe for only the candidate provider outside runtime-admission and canonical locks; do not rebuild or probe the whole fleet.",
+          "Only a fresh authoritative live success may transition the provider to healthy and permit dispatch; failed, revoked, quota, timeout, unsupported, or ambiguous probes remain fail closed with an explicit reason.",
+          "Persist the derived auth transition through existing provider capability APIs; never hand-edit provider_capabilities.json or runtime state.",
+          "Coalesce concurrent recovery attempts, rate-limit repeated failed probes, and preserve normal pre-dispatch fresh probing so recovery cannot create a thundering herd or bypass launch checks.",
+          "Regression matrix covers stale false plus fresh success, still-revoked, quota/capacity, probe timeout/error, no eligible task, concurrent candidates, auto_refresh true/false, and provider aliases/slots.",
+          "Preserve current configured Codex/Codex2 account and quota separation, reviewer eligibility rules, worker limits, task priority, dependency, failure-loop, and chair-triage semantics.",
+          "Use a clean task worktree from current origin/dev, commit only declared scope, run focused and full relevant supervisor tests, py_compile, diff-check, evidence JSON validation, push, open PR to dev, obtain independent exact-head review, merge, and archive canonical completion.",
+          "Merge order: this source task precedes SUP-PROVIDER-STALE-CACHE-READMISSION-LIVE-CANARY-20260802. Rollback is merge revert; failed recovery leaves the lane closed and does not alter credentials or task truth."
+        ],
+        "artifacts": [
+          ".orchestrator/supervisor.py",
+          ".orchestrator/test_supervisor.py",
+          ".orchestrator/provider_permissions.py",
+          "docs/deployment/evidence/supervisor/SUP-PROVIDER-STALE-CACHE-READMISSION-PROBE-20260802/"
+        ],
+        "depends_on": [
+          "SUP-PROVIDER-PAUSE-RECOVERY-PROBE-20260802"
+        ],
+        "id": "SUP-PROVIDER-STALE-CACHE-READMISSION-PROBE-20260802",
+        "owner": "Codex",
+        "phase": "Supervisor Provider Admission / Recovery Follow-up",
+        "reviewer": "Codex2",
+        "summary": "Close the observed auto_refresh=false deadlock where cached auth_ready=false prevents the exact bounded pre-dispatch recovery probe from ever running.",
+        "title": "Recover a freshly reauthenticated provider before stale capability admission rejection"
+      },
+      "task_spec_hash": "557da4cee40087b6eeff6b457010e30b4de5e588cfc9969a54a61ecef0f2523f"
+    },
+    "github_review_bridge": {
+      "actor": "Human/Ops",
+      "base": "dev",
+      "decision": "approve",
+      "head_branch": "task/SUP-PROVIDER-STALE-CACHE-READMISSION-PROBE-20260802",
+      "head_sha": "a6efcd594d488b74380ec21cbbb79f191d14430a",
+      "mode": "required_commit_status",
+      "pr": 4517,
+      "pr_url": "https://github.com/ajoe734/pantheon/pull/4517",
+      "recorded_at": "2026-08-02T15:11:57Z",
+      "repository": "ajoe734/pantheon",
+      "review_error": "gh: Unprocessable Entity (HTTP 422)",
+      "status_context": "Pantheon canonical review gate",
+      "status_id": 51506424115,
+      "status_state": "success"
+    },
+    "id": "SUP-PROVIDER-STALE-CACHE-READMISSION-PROBE-20260802",
+    "last_update": "2026-08-02T15:29:54Z",
+    "next": "Owner finalized merged source PR #4510 and exact-head Human/Ops-approved closeout PR #4517 (merge ba0afb1d9031e1b8be332c21b19009f1ac7c0c4d); verified focused supervisor 11 passed + 5 subtests, provider permissions 83 + 7, full supervisor 543 + 154, py_compile, evidence JSON, diff check, and origin/dev ancestry. Supervisor-generated task brief remains intentionally outside git per reviewed evidence; no runtime rollout performed.",
+    "owner": "Codex2",
+    "phase": "Supervisor Provider Admission / Recovery Follow-up",
+    "review_binding": {
+      "base": "dev",
+      "head_branch": "task/SUP-PROVIDER-STALE-CACHE-READMISSION-PROBE-20260802",
+      "head_sha": "a6efcd594d488b74380ec21cbbb79f191d14430a",
+      "pr": 4517
+    },
+    "review_file": "docs/deployment/evidence/supervisor/SUP-PROVIDER-STALE-CACHE-READMISSION-PROBE-20260802/evidence.json",
+    "review_notes_zh": [
+      "exact-head ea358fa7 已獨立核對，五檔 scope 且無 task-brief history",
+      "focused 11+5、provider 83+7、supervisor 523+152、py_compile、JSON、diff、trailers 與 GitHub checks 全通過",
+      "僅 stale-auth preflight 放寬；account/quota/reviewer/slot/failure-loop/chair-triage/launch probe 邊界與 no-rollout 均保留"
+    ],
+    "reviewer": "Human/Ops",
+    "status": "done",
+    "summary_zh": "Close the observed auto_refresh=false deadlock where cached auth_ready=false prevents the exact bounded pre-dispatch recovery probe from ever running.",
+    "title": "Recover a freshly reauthenticated provider before stale capability admission rejection",
+    "terminal_outcome": "completed",
+    "delivery": {
+      "recorded_at": "2026-08-02T15:29:54Z",
+      "repository_id": "pantheon",
+      "repository_path": "/tmp/pantheon-pr4517-exact.Tb7HOx",
+      "repository_slug": "ajoe734/pantheon",
+      "branch": "task/SUP-PROVIDER-STALE-CACHE-READMISSION-PROBE-20260802",
+      "git_clean_required": false,
+      "status_command_runtime": {
+        "command_root": "/home/lupin/pantheon-ci-deploy/dev-root",
+        "source_sha": "941c15a34208e54e96cdd148ba3a5bfcd339abab",
+        "base_ref": "origin/dev",
+        "remote": "ajoe734/pantheon",
+        "status_root": "/home/lupin/pantheon",
+        "delivery_root": "/tmp/pantheon-pr4517-exact.Tb7HOx",
+        "wrapper_root": "/home/lupin/pantheon-ci-deploy/dev-root"
+      },
+      "commit": "ba0afb1d9031e1b8be332c21b19009f1ac7c0c4d",
+      "commit_subject": "Merge pull request #4517 from ajoe734/task/SUP-PROVIDER-STALE-CACHE-READMISSION-PROBE-20260802",
+      "commit_author": {
+        "name": "ajoe734",
+        "email": "bjoe734@gmail.com"
+      },
+      "commit_trailer_check_skipped": true,
+      "commit_trailer_skip_reason": "Merge",
+      "commit_metadata": {
+        "SUP-PROVIDER-STALE-CACHE-READMISSION-PROBE-20260802": "close"
+      },
+      "git_clean": false,
+      "dirty_entry_count": 4,
+      "remote_present": true,
+      "remote_names": [
+        "origin"
+      ],
+      "upstream": null,
+      "push_status": "no_upstream",
+      "merge_target_branch": "dev",
+      "merge_target_ref": "origin/dev",
+      "merge_target_sha": "ba0afb1d9031e1b8be332c21b19009f1ac7c0c4d",
+      "head_merged_to_target": true
+    }
+  },
+  "handoffs": [
+    {
+      "created_at": "2026-08-02T12:59:25Z",
+      "from": "Codex",
+      "message": "PR #4510 is ready for independent exact-head review at c3ccf57b6774a2ab2c53eb5ed9f6aa1136f2e71e. Scope: provider_permissions.py due gate, supervisor.py pre-lock stale-auth candidate/probe, test_supervisor.py matrix, generated task brief, and two evidence files. Owner validation: focused 22 tests + 5 subtests, full provider/supervisor 606 tests + 159 subtests, py_compile, JSON parse, dependency ancestry, and diff check passed. Please review source/lock/fail-closed semantics, re-run focused/full relevant tests, then bind REVIEW_FILE=docs/deployment/evidence/supervisor/SUP-PROVIDER-STALE-CACHE-READMISSION-PROBE-20260802/evidence.json with REVIEW_PR=4510 and REVIEW_HEAD_SHA=c3ccf57b6774a2ab2c53eb5ed9f6aa1136f2e71e when approving.",
+      "resolved_at": "2026-08-02T13:10:28Z",
+      "status": "done",
+      "task_id": "SUP-PROVIDER-STALE-CACHE-READMISSION-PROBE-20260802",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-08-02T13:10:28Z",
+      "from": "Codex2",
+      "message": "Codex2 exact-head approval for PR #4510 at c3ccf57b6774a2ab2c53eb5ed9f6aa1136f2e71e: independent source/lock/fail-closed review passed; focused 11+5, broader 22+5, full 606+159, py_compile, JSON, diff, dependency ancestry, and all 9 GitHub checks passed. Owner may proceed with merge and governed closeout.",
+      "resolved_at": "2026-08-02T13:16:29Z",
+      "status": "done",
+      "task_id": "SUP-PROVIDER-STALE-CACHE-READMISSION-PROBE-20260802",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-08-02T13:27:19Z",
+      "from": "Codex",
+      "message": "PR #4510 rebuilt from origin/dev at exact head ea358fa7c2bfc8e5b9042736d5776cf9421c2ab0 with only the five declared source/test/evidence files and empty task-brief history. Runtime source/tests are byte-identical to the prior technically approved head. Revalidate focused 11+5, provider 83+7, supervisor 523+152, trailers/diff/JSON, and preserve no-rollout plus all account/quota/reviewer boundaries.",
+      "resolved_at": "2026-08-02T13:36:38Z",
+      "status": "done",
+      "task_id": "SUP-PROVIDER-STALE-CACHE-READMISSION-PROBE-20260802",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-08-02T13:36:38Z",
+      "from": "Codex2",
+      "message": "PR #4510 exact head ea358fa7c2bfc8e5b9042736d5776cf9421c2ab0 independently reviewed against origin/dev 0404ca01ebb6803df6a4b927bacada5739f61de1: five declared source/test/evidence files only, empty task-brief history, runtime/test blobs byte-identical to prior reviewed c3ccf57; focused 11+5, provider 83+7, supervisor 523+152, py_compile, JSON, diff and trailer gates passed; dependency merges are ancestors and all 8 pre-review GitHub checks succeeded. Bounded due-limited live-source-only stale-auth readmission remains fail closed and preserves account/quota/reviewer/slot/failure-loop/chair-triage/normal launch-probe boundaries; no rollout performed.",
+      "resolved_at": "2026-08-02T13:44:26Z",
+      "status": "done",
+      "task_id": "SUP-PROVIDER-STALE-CACHE-READMISSION-PROBE-20260802",
+      "to": "Codex"
+    },
+    {
+      "created_at": "2026-08-02T13:44:26Z",
+      "from": "Human/Ops",
+      "message": "Post-merge closeout fallback only: source PR #4510 is merged and exact-head reviewed; healthy Codex2 owner must record merge/evidence and hand back to Human/Ops. No source, account, quota, reviewer-policy, credential or rollout change.",
+      "resolved_at": "2026-08-02T15:03:04Z",
+      "status": "done",
+      "task_id": "SUP-PROVIDER-STALE-CACHE-READMISSION-PROBE-20260802",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-08-02T15:03:04Z",
+      "from": "Codex2",
+      "message": "Evidence-only post-merge closeout PR #4517 is ready for Human/Ops exact-head review at c59ccb00ed0778edb8da912259c630a29ac910f8. The three-dot PR diff is exactly evidence.json plus evidence.md; it records source PR #4510 review/merge and the Codex2/Human/Ops closeout boundary, excludes the supervisor-generated task brief, and makes no source, account, quota, reviewer-policy, credential, runtime, or rollout change. After merging current origin/dev, focused 11 tests + 5 subtests, provider 83 + 7, full supervisor 543 + 154, py_compile, JSON, diff, and all 8 GitHub checks passed. Approve with REVIEW_FILE=docs/deployment/evidence/supervisor/SUP-PROVIDER-STALE-CACHE-READMISSION-PROBE-20260802/evidence.json REVIEW_PR=4517 REVIEW_HEAD_SHA=c59ccb00ed0778edb8da912259c630a29ac910f8, then governed integration returns the task to Codex2 for done.",
+      "resolved_at": "2026-08-02T15:04:38Z",
+      "status": "done",
+      "task_id": "SUP-PROVIDER-STALE-CACHE-READMISSION-PROBE-20260802",
+      "to": "Human/Ops"
+    },
+    {
+      "created_at": "2026-08-02T15:04:38Z",
+      "from": "Human/Ops",
+      "message": "Human/Ops exact-head review rejects only stale successor metadata at PR #4517 head c59ccb00ed0778edb8da912259c630a29ac910f8: evidence.json delivery.merge_order_successor still names SUP-PROVIDER-STALE-CACHE-READMISSION-LIVE-CANARY-20260802, which was canonically superseded and archived at 2026-08-02T14:48:34Z. Replace it with bridge-admitted SUP-AUTOWORKER-QUOTA-ROUTING-LIVE-CANARY-OPERATOR-V9-20260802 and align any prose references. Keep the two-evidence-file scope and all account/quota/reviewer/runtime boundaries. Independent exact-head checks otherwise pass: two-file diff, JSON, trailers, focused 11+5, provider 83+7, and all 8 GitHub checks.",
+      "resolved_at": "2026-08-02T15:04:38Z",
+      "status": "done",
+      "task_id": "SUP-PROVIDER-STALE-CACHE-READMISSION-PROBE-20260802",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-08-02T15:08:29Z",
+      "from": "Codex2",
+      "message": "PR #4517 exact head a6efcd594d488b74380ec21cbbb79f191d14430a fixes only the rejected successor metadata: evidence now names bridge-admitted SUP-AUTOWORKER-QUOTA-ROUTING-LIVE-CANARY-OPERATOR-V9-20260802, contains no stale standalone-canary reference, passes jq assertions and git diff --check, and preserves the two-evidence-file scope plus all source/account/quota/reviewer/runtime boundaries. Please perform independent exact-head review and merge-gate handling.",
+      "resolved_at": "2026-08-02T15:11:57Z",
+      "status": "done",
+      "task_id": "SUP-PROVIDER-STALE-CACHE-READMISSION-PROBE-20260802",
+      "to": "Human/Ops"
+    },
+    {
+      "created_at": "2026-08-02T15:11:57Z",
+      "from": "Human/Ops",
+      "message": "Human/Ops exact-head evidence review passed: only the two declared closeout evidence files changed; successor now resolves to the bridge-admitted integrated V9 canary; stale standalone successor is absent; JSON, diff/trailers, 11 focused plus 5 subtests, and 83 provider-permission plus 7 subtests pass; all eight GitHub checks are green; Codex/Codex2 remain separate account and quota groups with no global reviewer-policy change.",
+      "resolved_at": "2026-08-02T15:17:24Z",
+      "status": "done",
+      "task_id": "SUP-PROVIDER-STALE-CACHE-READMISSION-PROBE-20260802",
+      "to": "Codex2"
+    },
+    {
+      "created_at": "2026-08-02T15:25:01Z",
+      "from": "Human/Ops",
+      "message": "Restored the exact-head Human/Ops approval for merged PR #4517 after supervisor dispatch downgraded this terminal-closeout-only task; no files or reviewed scope changed.",
+      "status": "done",
+      "task_id": "SUP-PROVIDER-STALE-CACHE-READMISSION-PROBE-20260802",
+      "to": "Codex2",
+      "resolved_at": "2026-08-02T15:29:55Z"
+    }
+  ],
+  "blockers": [
+    {
+      "created_at": "2026-08-02T13:16:29Z",
+      "message": "PR #4510 exact approved head c3ccf57b6774a2ab2c53eb5ed9f6aa1136f2e71e passed owner focused verification and the canonical review gate, but dev branch protection still requires Human/Ops context 'Pantheon root merge freeze 2026-07-27'; GitHub mergeStateStatus=BLOCKED. Await Human/Ops exact-head root gate, then owner resumes conservative integration, durable review/delivery evidence closeout, and governed done.",
+      "owner": "Codex",
+      "resolved_at": "2026-08-02T13:18:57Z",
+      "status": "resolved",
+      "task_id": "SUP-PROVIDER-STALE-CACHE-READMISSION-PROBE-20260802",
+      "waiting_for": "Human/Ops"
+    }
+  ]
+}

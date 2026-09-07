@@ -1,0 +1,181 @@
+{
+  "version": 1,
+  "task_id": "SUP-AUTHORITY-V2-SCHEDULER-ROUTING-20260811",
+  "archived_at": "2026-08-13T02:01:49Z",
+  "terminal_status": "done",
+  "terminal_outcome": "superseded",
+  "task": {
+    "acceptance": [
+      "Build one pure deterministic DispatchPlan from one task head, one runtime snapshot and one cached account-health snapshot. It alone decides dependency readiness, actor role, assignment, capacity, priority and dispatch generation.",
+      "Normal and claim-agent operation must consume the same plan. Review and finalize are ordinary roles in the same planner; routine reviewer or owner fallback must not wait for chair.",
+      "Use explicit enabled state plus global, account and agent capacities. Zero always means zero; it may never be clamped to one or treated as unlimited. Normalize provider aliases before planning and use one health record per real auth/quota account.",
+      "Fill every safe available slot until there is no runnable task or no eligible capacity. Never exceed shared account caps, duplicate a task generation, preempt a valid execution lease or bypass Human/Ops and reviewer-independence gates.",
+      "Keep chair only for explicit governance exceptions. Provider unavailability, quota retry, routine reassignment and deterministic worker recovery are not chair decisions.",
+      "Replace current dispatch_ready_tasks, task_execution_dispatch_candidate, higher_priority_ready_task_exists and assignment planning callers with the one planner. Delete dispatch_priority_for_task, current_dispatch_event_key, agent_has_dispatchable_primary_work, chair_reassignment_triage_needed_for_task and rewrite/legacy flags and fallbacks.",
+      "Replace worker_matches_current_assignment routing guesses with exact execution-lease generation validation. scripts/explain_dispatch.py must call the same planner and return the first real rejection reason.",
+      "Test multiple runnable roots, review/finalize priority, true dependency chains, owner/reviewer failover, shared quota, auth recovery, disabled and zero capacity, legacy ready migration, catalog routing changes, Human/Ops gates and full-slot utilization within two fast ticks.",
+      "Do not copy PR #4755's blanket removal of admission checks or task_assignment_is_catalog_locked returning False. Replace the authority boundary and delete the conflicting paths. Deliver by clean PR, independent exact-head review and required checks."
+    ],
+    "artifacts": [
+      ".orchestrator/supervisor.py",
+      ".orchestrator/test_supervisor.py",
+      ".orchestrator/rewrite/concurrency.py",
+      ".orchestrator/rewrite/provider_health.py",
+      "scripts/explain_dispatch.py",
+      ".orchestrator/test_explain_dispatch.py"
+    ],
+    "depends_on": [
+      "SUP-AUTHORITY-V2-LIFECYCLE-REVIEW-20260811"
+    ],
+    "dev_bridge": {
+      "actor": {
+        "capabilities": [
+          "integration",
+          "status-system",
+          "supervisor-runtime",
+          "fleet-dispatch",
+          "deployment"
+        ],
+        "id": "Human/Ops",
+        "roles": [
+          "operator",
+          "integration-coordinator"
+        ]
+      },
+      "audit_conversation_href": null,
+      "conversation_id": "codex-root-supervisor-authority-v2-20260811",
+      "documents": [
+        {
+          "kind": "GOVERNANCE",
+          "path": "AGENTS.md",
+          "sourceRefs": [
+            "Integration And Coordination Lane",
+            "Single Dispatch Authority",
+            "Completion Definition For Repo Changes"
+          ]
+        },
+        {
+          "kind": "CURRENT_IMPLEMENTATION",
+          "path": ".orchestrator/supervisor.py",
+          "sourceRefs": [
+            "run_once",
+            "dispatch_ready_tasks",
+            "process_queue",
+            "persist_task_reassignment",
+            "chair_reassignment_triage_needed_for_task"
+          ]
+        },
+        {
+          "kind": "CURRENT_IMPLEMENTATION",
+          "path": ".orchestrator/rewrite/task_state_store.py",
+          "sourceRefs": [
+            "append_state_commit",
+            "load_snapshot",
+            "full-state journal"
+          ]
+        },
+        {
+          "kind": "CURRENT_IMPLEMENTATION",
+          "path": "scripts/ai_status.py",
+          "sourceRefs": [
+            "command_start",
+            "command_reopen",
+            "command_approve",
+            "command_done",
+            "canonical task-state lock"
+          ]
+        },
+        {
+          "kind": "CURRENT_IMPLEMENTATION",
+          "path": "scripts/promote_supervisor_runtime.py",
+          "sourceRefs": [
+            "PromotionTransaction",
+            "mutable incumbent compatibility",
+            "rollback"
+          ]
+        },
+        {
+          "kind": "HISTORICAL_NONAUTHORITATIVE_PLAN",
+          "path": "docs/02-architecture/SUPERVISOR_REWRITE_PLAN.md",
+          "sourceRefs": [
+            "retain useful findings only",
+            "do not preserve dual paths"
+          ]
+        }
+      ],
+      "emitted_at": "2026-08-11T15:08:43Z",
+      "intent": "replace_conflicting_supervisor_control_paths",
+      "mode": "supervisor_architecture_governed_delivery",
+      "packet_digest": "1dae7fbc85c31410e339ec68a992fc2f46df94a5ced0798136240dbe23480f40",
+      "packet_id": "pkt-supervisor-authority-v2-cutover-20260811T150843Z",
+      "source_turn_ids": [
+        "operator-approved-authoritative-supervisor-spec-20260811",
+        "operator-approved-complete-implementation-20260811",
+        "function-level-call-path-and-deletion-map-20260811"
+      ],
+      "task_spec": {
+        "acceptance": [
+          "Build one pure deterministic DispatchPlan from one task head, one runtime snapshot and one cached account-health snapshot. It alone decides dependency readiness, actor role, assignment, capacity, priority and dispatch generation.",
+          "Normal and claim-agent operation must consume the same plan. Review and finalize are ordinary roles in the same planner; routine reviewer or owner fallback must not wait for chair.",
+          "Use explicit enabled state plus global, account and agent capacities. Zero always means zero; it may never be clamped to one or treated as unlimited. Normalize provider aliases before planning and use one health record per real auth/quota account.",
+          "Fill every safe available slot until there is no runnable task or no eligible capacity. Never exceed shared account caps, duplicate a task generation, preempt a valid execution lease or bypass Human/Ops and reviewer-independence gates.",
+          "Keep chair only for explicit governance exceptions. Provider unavailability, quota retry, routine reassignment and deterministic worker recovery are not chair decisions.",
+          "Replace current dispatch_ready_tasks, task_execution_dispatch_candidate, higher_priority_ready_task_exists and assignment planning callers with the one planner. Delete dispatch_priority_for_task, current_dispatch_event_key, agent_has_dispatchable_primary_work, chair_reassignment_triage_needed_for_task and rewrite/legacy flags and fallbacks.",
+          "Replace worker_matches_current_assignment routing guesses with exact execution-lease generation validation. scripts/explain_dispatch.py must call the same planner and return the first real rejection reason.",
+          "Test multiple runnable roots, review/finalize priority, true dependency chains, owner/reviewer failover, shared quota, auth recovery, disabled and zero capacity, legacy ready migration, catalog routing changes, Human/Ops gates and full-slot utilization within two fast ticks.",
+          "Do not copy PR #4755's blanket removal of admission checks or task_assignment_is_catalog_locked returning False. Replace the authority boundary and delete the conflicting paths. Deliver by clean PR, independent exact-head review and required checks."
+        ],
+        "artifacts": [
+          ".orchestrator/supervisor.py",
+          ".orchestrator/test_supervisor.py",
+          ".orchestrator/rewrite/concurrency.py",
+          ".orchestrator/rewrite/provider_health.py",
+          "scripts/explain_dispatch.py",
+          ".orchestrator/test_explain_dispatch.py"
+        ],
+        "depends_on": [
+          "SUP-AUTHORITY-V2-LIFECYCLE-REVIEW-20260811"
+        ],
+        "id": "SUP-AUTHORITY-V2-SCHEDULER-ROUTING-20260811",
+        "owner": "Antigravity",
+        "phase": "Supervisor Authority V2 / Scheduler and Routing",
+        "reviewer": "Codex2",
+        "summary": "Implement one work-conserving scheduler and one capacity model, then delete all independently re-derived eligibility, routine chair routing and legacy fallback paths.",
+        "title": "Replace duplicate dispatch ladders with one work-conserving scheduler"
+      },
+      "task_spec_hash": "2868fc325680317f120ce779fe559fca28832842a4afedc92d7839ddf85cbfa0"
+    },
+    "generation": 1,
+    "id": "SUP-AUTHORITY-V2-SCHEDULER-ROUTING-20260811",
+    "last_update": "2026-08-13T02:01:49Z",
+    "next": "Retired during the Supervisor Authority V2 board reset: this legacy control, routing, rollout, or verification row is no longer an execution authority; merged source and archive evidence remain preserved.",
+    "owner": "Antigravity",
+    "phase": "Supervisor Authority V2 / Scheduler and Routing",
+    "reviewer": "Codex",
+    "status": "done",
+    "summary_zh": "Implement one work-conserving scheduler and one capacity model, then delete all independently re-derived eligibility, routine chair routing and legacy fallback paths.",
+    "title": "Replace duplicate dispatch ladders with one work-conserving scheduler",
+    "terminal_outcome": "superseded"
+  },
+  "handoffs": [
+    {
+      "created_at": "2026-08-12T03:14:20Z",
+      "from": "Codex2",
+      "message": "Auto-reassigned SUP-AUTHORITY-V2-SCHEDULER-ROUTING-20260811 away from unavailable lane Codex2 (disabled, paused, sidecar-only, or auth-down); reviewer Codex2 -> Claude.",
+      "resolved_at": "2026-08-12T04:44:46Z",
+      "status": "done",
+      "task_id": "SUP-AUTHORITY-V2-SCHEDULER-ROUTING-20260811",
+      "to": "Claude"
+    },
+    {
+      "created_at": "2026-08-12T04:44:46Z",
+      "from": "Claude",
+      "message": "Auto-reassigned SUP-AUTHORITY-V2-SCHEDULER-ROUTING-20260811 away from unavailable lane Claude (disabled, paused, sidecar-only, or auth-down); reviewer Claude -> Codex.",
+      "status": "done",
+      "task_id": "SUP-AUTHORITY-V2-SCHEDULER-ROUTING-20260811",
+      "to": "Codex",
+      "resolved_at": "2026-08-13T02:01:49Z"
+    }
+  ],
+  "blockers": []
+}
