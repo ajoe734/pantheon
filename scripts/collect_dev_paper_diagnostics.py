@@ -16,7 +16,7 @@ import selectors
 import subprocess
 import time
 
-SERVICES = ("operator-bff", "capital", "registry", "governance", "deployment", "postgres")
+SERVICES = ("operator-bff", "persona", "capital", "registry", "governance", "deployment", "postgres")
 MAX_BYTES = 256 * 1024
 COMMAND_SECONDS = 5
 SHA = re.compile(r"[0-9a-f]{40}")
@@ -25,11 +25,109 @@ FRAME = re.compile(
     r'File "(?:/workspace/|/usr/local/lib/python[0-9.]+/site-packages/)'
     r'([A-Za-z_0-9./-]{1,240}\.py)", line ([0-9]{1,7}), in (' + IDENTIFIER + r'|<module>)$'
 )
+# Explicit bounded allowlist of trusted exception names only (SD D2).
+# Arbitrary regex admission on Error/Exception suffixes or arbitrary dotted
+# prefixes is strictly forbidden: untrusted request bodies or free-form strings
+# like SYNTHETIC_PRIVATE_SENTINELError must never be admitted as exception types.
+TRUSTED_EXCEPTION_NAMES = (
+    # Builtins
+    "ArithmeticError",
+    "AssertionError",
+    "AttributeError",
+    "BufferError",
+    "BlockingIOError",
+    "BrokenPipeError",
+    "ChildProcessError",
+    "ConnectionAbortedError",
+    "ConnectionError",
+    "ConnectionRefusedError",
+    "ConnectionResetError",
+    "EOFError",
+    "Exception",
+    "FileExistsError",
+    "FileNotFoundError",
+    "FloatingPointError",
+    "ImportError",
+    "IndexError",
+    "InterruptedError",
+    "IsADirectoryError",
+    "KeyError",
+    "LookupError",
+    "MemoryError",
+    "ModuleNotFoundError",
+    "NameError",
+    "NotADirectoryError",
+    "NotImplementedError",
+    "OSError",
+    "OverflowError",
+    "PermissionError",
+    "ProcessLookupError",
+    "RecursionError",
+    "ReferenceError",
+    "RuntimeError",
+    "StopAsyncIteration",
+    "StopIteration",
+    "SyntaxError",
+    "SystemError",
+    "TabError",
+    "TimeoutError",
+    "TypeError",
+    "UnboundLocalError",
+    "UnicodeDecodeError",
+    "UnicodeEncodeError",
+    "UnicodeError",
+    "UnicodeTranslateError",
+    "ValueError",
+    "ZeroDivisionError",
+    # Standard library / framework exceptions (exact qualified and unqualified)
+    "urllib.error.HTTPError",
+    "HTTPError",
+    "urllib.error.URLError",
+    "URLError",
+    "json.decoder.JSONDecodeError",
+    "json.JSONDecodeError",
+    "JSONDecodeError",
+    "asyncio.TimeoutError",
+    "asyncio.CancelledError",
+    "asyncio.exceptions.CancelledError",
+    "asyncio.exceptions.TimeoutError",
+    # Psycopg / database exceptions (exact qualified and unqualified)
+    "psycopg.errors.UndefinedTable",
+    "UndefinedTable",
+    "psycopg.errors.UndefinedColumn",
+    "UndefinedColumn",
+    "psycopg.errors.InsufficientPrivilege",
+    "InsufficientPrivilege",
+    "psycopg.errors.UniqueViolation",
+    "UniqueViolation",
+    "psycopg.errors.ForeignKeyViolation",
+    "ForeignKeyViolation",
+    "psycopg.errors.NotNullViolation",
+    "NotNullViolation",
+    "psycopg.errors.SerializationFailure",
+    "SerializationFailure",
+    "psycopg.errors.DeadlockDetected",
+    "DeadlockDetected",
+    "psycopg.OperationalError",
+    "OperationalError",
+    "psycopg.DatabaseError",
+    "DatabaseError",
+    "psycopg.DataError",
+    "DataError",
+    "psycopg.IntegrityError",
+    "IntegrityError",
+    "psycopg.ProgrammingError",
+    "ProgrammingError",
+    # Domain / project exceptions (exact names only, qualified and unqualified)
+    "services.control_plane.bff.ports.persona_write_owner.PersonaWriteOwnerUnavailable",
+    "PersonaWriteOwnerUnavailable",
+    "services.control_plane.bff.persona_provisioning.ProvisioningLeaseLost",
+    "ProvisioningLeaseLost",
+)
 EXCEPTION = re.compile(
-    r"(?:^|\s)((?:[A-Za-z_][A-Za-z_0-9]*\.)*"
-    r"(?:[A-Za-z_][A-Za-z_0-9]*(?:Error|Exception)|"
-    r"UndefinedTable|UndefinedColumn|InsufficientPrivilege|UniqueViolation|"
-    r"ForeignKeyViolation|NotNullViolation|SerializationFailure|DeadlockDetected)):\s*(.*)$"
+    r"(?:^|(?<=\s))("
+    + "|".join(re.escape(name) for name in sorted(TRUSTED_EXCEPTION_NAMES, key=len, reverse=True))
+    + r"):\s*(.*)$"
 )
 
 
@@ -132,12 +230,18 @@ def container_state(container_id: str) -> dict:
     return result
 
 
-def collect(expected_sha: str) -> dict:
+def collect(expected_sha: str, *, run_id: str | None = None, attempt: str | None = None,
+            phase: str | None = None, expected_fe_sha: str | None = None,
+            bootstrap_exit: str | None = None) -> dict:
     if not SHA.fullmatch(expected_sha):
         raise ValueError("expected BFF SHA must be a full commit")
     result = {"schema_version": "pantheon.dev-paper-diagnostics.v1", "environment": "dev",
-              "expected_bff_sha": expected_sha, "collected_at": dt.datetime.now(dt.timezone.utc).isoformat(),
+              "run_id": run_id, "attempt": attempt, "phase": phase,
+              "expected_fe_sha": expected_fe_sha, "expected_bff_sha": expected_sha,
+              "bootstrap_exit": bootstrap_exit,
+              "collected_at": dt.datetime.now(dt.timezone.utc).isoformat(),
               "read_only": True, "raw_logs_included": False, "services": {}}
+    statuses = set()
     for service in SERVICES:
         row = {}
         result["services"][service] = row
@@ -148,21 +252,56 @@ def collect(expected_sha: str) -> dict:
             ids = raw.split()
             if status != "ok" or len(ids) != 1 or not re.fullmatch(r"[0-9a-f]{64}", ids[0]):
                 row["collection_status"] = status if status != "ok" else "container_missing_or_ambiguous"
+                statuses.add(row["collection_status"])
                 continue
-            row.update(container_id=ids[0], state=container_state(ids[0]))
+            state = container_state(ids[0])
+            row.update(container_id=ids[0], state=state)
+            # The inspect call's own collection_status must feed the aggregate
+            # status too; a docker-inspect timeout/error previously vanished
+            # once docker-ps and docker-logs both happened to return "ok".
+            statuses.add(state.get("collection_status", "collector_error"))
             if service == "operator-bff":
-                result["identity_matches"] = row["state"].get("source_sha") == expected_sha
+                result["identity_matches"] = state.get("source_sha") == expected_sha
+                result["container_id"] = ids[0]
+                result["image_id"] = state.get("image_id")
+                result["observed_source_sha"] = state.get("source_sha")
             raw, status = command(["docker", "logs", "--timestamps", "--since=15m", "--tail=240", ids[0]])
             row.update(collection_status=status, events=log_events(raw))
+            statuses.add(status)
         except Exception:
             # Even local Docker/JSON exceptions can embed raw output. Fail closed.
             row["collection_status"] = "collector_error"
+            statuses.add("collector_error")
     result.setdefault("identity_matches", False)
+    result.setdefault("container_id", None)
+    result.setdefault("image_id", None)
+    result.setdefault("observed_source_sha", None)
+    # A clean set of per-command "ok" statuses is not itself sufficient: the
+    # candidate operator-bff container can be fully inspectable yet running
+    # the wrong source SHA. That must never be folded into "ok".
+    if statuses - {"ok"}:
+        result["collection_status"] = "partial"
+    elif not result["identity_matches"]:
+        result["collection_status"] = "identity_mismatch"
+    else:
+        result["collection_status"] = "ok"
     return result
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--expected-bff-sha", required=True)
+    parser.add_argument("--expected-fe-sha", default=None)
+    parser.add_argument("--run-id", default=None)
+    parser.add_argument("--attempt", default=None)
+    parser.add_argument("--phase", default=None)
+    parser.add_argument("--bootstrap-exit", default=None)
     args = parser.parse_args()
-    print(json.dumps(collect(args.expected_bff_sha), indent=2, sort_keys=True))
+    print(json.dumps(collect(
+        args.expected_bff_sha,
+        run_id=args.run_id,
+        attempt=args.attempt,
+        phase=args.phase,
+        expected_fe_sha=args.expected_fe_sha,
+        bootstrap_exit=args.bootstrap_exit,
+    ), indent=2, sort_keys=True))

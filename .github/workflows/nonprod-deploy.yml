@@ -1283,94 +1283,76 @@ jobs:
           DEV_VM: ${{ vars.DEV_VM || 'pantheon-dev-deploy' }}
           DEV_ZONE: ${{ vars.DEV_ZONE || 'asia-east1-b' }}
           GCP_DEPLOY_PROJECT_ID: ${{ vars.DEV_GCP_DEPLOY_PROJECT_ID || 'pantheon-dev-20260902' }}
-        shell: /bin/bash --noprofile --norc -euo pipefail {0}
-        run: |
-          lease_token="${PANTHEON_ENVIRONMENT_LEASE_TOKEN}"
-          unset PANTHEON_ENVIRONMENT_LEASE_TOKEN
-          controller="${GITHUB_WORKSPACE}/.lease-controller"
-          [[ -f "${controller}/scripts/run_with_dev_environment_lease.sh" && ! -L "${controller}/scripts/run_with_dev_environment_lease.sh" ]]
-          printf '%s  %s\n' \
-            52276793f99162fc7ca307a1370addd8d99478208ebf7beb67eab23b97b83048 "${controller}/scripts/dev_environment_lease.py" \
-            6c82021b93621f16776d5d67a9e20cb9d690f7ebfa257ebf8c329f7d158fb2c2 "${controller}/scripts/run_with_dev_environment_lease.sh" \
-            | sha256sum --check --strict
-          PANTHEON_ENVIRONMENT_LEASE_TOKEN="${lease_token}" \
-            exec "${GITHUB_WORKSPACE}/.lease-controller/scripts/run_with_dev_environment_lease.sh" \
-            bash -c '
-              set -euo pipefail
-              "${GITHUB_WORKSPACE}/.agora-gate-controller/scripts/dev_vm_ssh.sh" exec \
-                "set -euo pipefail; docker exec pantheon-operator-bff-1 python /workspace/scripts/bootstrap_dev_paper_baseline.py --timeout-seconds 420 --poll-seconds 5"
-            '
-
-      - name: Capture dev paper failure diagnostics before rollback
-        id: paper_bootstrap_diagnostics
-        if: ${{ always() && steps.paper_bootstrap.outcome == 'failure' && steps.lease.outcome == 'success' }}
-        continue-on-error: true
-        timeout-minutes: 2
-        env:
-          PATH: ${{ steps.runtime.outputs.safe_path }}
-          BASH_ENV: ""
-          ENV: ""
-          PYTHONPATH: ""
-          PYTHONHOME: ""
-          PYTHONNOUSERSITE: "1"
-          PYTHONSAFEPATH: "1"
-          PYTHONSTARTUP: ""
-          PYTHONINSPECT: ""
-          CDPATH: ""
-          LD_PRELOAD: ""
-          LD_LIBRARY_PATH: ""
-          GIT_CONFIG_COUNT: "0"
-          GIT_CONFIG_NOSYSTEM: "1"
-          GIT_CONFIG_GLOBAL: /dev/null
-          GIT_CONFIG_SYSTEM: /dev/null
-          GIT_CONFIG_PARAMETERS: ""
-          GIT_SSH_COMMAND: ""
-          GIT_ASKPASS: ""
-          SSH_ASKPASS: ""
-          PANTHEON_ENVIRONMENT_LEASE_TOKEN: ${{ secrets.COORDINATION_REPO_TOKEN }}
-          PANTHEON_DEV_ENVIRONMENT_LEASE_STATE_FILE: ${{ steps.lease.outputs.state_file }}
-          PANTHEON_DEV_ENVIRONMENT_LEASE_HEARTBEAT_PID_FILE: ${{ steps.lease.outputs.pid_file }}
-          PANTHEON_DEV_ENVIRONMENT_LEASE_HEARTBEAT_IDENTITY_FILE: ${{ steps.lease.outputs.identity_file }}
-          PANTHEON_DEV_ENVIRONMENT_LEASE_FAILURE_FILE: ${{ steps.lease.outputs.failure_file }}
-          PANTHEON_DEV_ENVIRONMENT_LEASE_HEARTBEAT_LOG: ${{ steps.lease.outputs.heartbeat_log }}
           EXPECTED_BFF_SHA: ${{ steps.target.outputs.sha }}
+          EXPECTED_FE_SHA: ${{ steps.frontend.outputs.sha }}
+          DEV_PAPER_RUN_ID: ${{ github.run_id }}
+          DEV_PAPER_ATTEMPT: ${{ github.run_attempt }}
+          DEV_PAPER_PHASE: paper_bootstrap
         shell: /bin/bash --noprofile --norc -euo pipefail {0}
         run: |
           lease_token="${PANTHEON_ENVIRONMENT_LEASE_TOKEN}"
           unset PANTHEON_ENVIRONMENT_LEASE_TOKEN
           [[ "${EXPECTED_BFF_SHA}" =~ ^[0-9a-f]{40}$ ]]
           controller="${GITHUB_WORKSPACE}/.lease-controller"
+          [[ -f "${controller}/scripts/run_with_dev_environment_lease.sh" && ! -L "${controller}/scripts/run_with_dev_environment_lease.sh" ]]
           printf '%s  %s\n' \
             52276793f99162fc7ca307a1370addd8d99478208ebf7beb67eab23b97b83048 "${controller}/scripts/dev_environment_lease.py" \
             6c82021b93621f16776d5d67a9e20cb9d690f7ebfa257ebf8c329f7d158fb2c2 "${controller}/scripts/run_with_dev_environment_lease.sh" \
             | sha256sum --check --strict
-          diagnostic_dir="$(mktemp -d "${RUNNER_TEMP}/dev-paper-diagnostics-XXXXXX")"
-          export DIAGNOSTIC_FILE="${diagnostic_dir}/diagnostics.json"
-          # Send trusted collector bytes through SSH stdin. Raw logs stay on the
-          # VM; only structural exception fields and selected state leave it.
+          # The guard binary above is the immutable pinned trust root; the
+          # guarded command below comes from the accepted dev-tip controller
+          # checkout, so a merged CAPTURE change here takes effect on the
+          # next deploy run without moving the lease guard's pin.
+          #
+          # The guarded script runs, inside the same guarded child so
+          # failure diagnostics can still be captured before quarantine:
+          #   docker exec pantheon-operator-bff-1 python /workspace/scripts/bootstrap_dev_paper_baseline.py --timeout-seconds 420 --poll-seconds 5
+          diagnostics_script="${GITHUB_WORKSPACE}/.agora-gate-controller/scripts/run_dev_paper_baseline_with_diagnostics.sh"
+          [[ -f "${diagnostics_script}" && ! -L "${diagnostics_script}" ]]
+          collector="${GITHUB_WORKSPACE}/.agora-gate-controller/scripts/collect_dev_paper_diagnostics.py"
+          [[ -f "${collector}" && ! -L "${collector}" ]]
+          diagnostic_dir="${RUNNER_TEMP}/dev-paper-diagnostics-${DEV_PAPER_RUN_ID}-${DEV_PAPER_ATTEMPT}"
+          mkdir -p "${diagnostic_dir}"
+          # Predeclare fixed run/attempt runner paths and initialize terminal
+          # evidence before guard invocation. A cancellation or lease loss that
+          # terminates the step mid-flight still leaves behind durable status on
+          # disk, and the upload step finds it via the fixed path without depending
+          # on outputs written only after the guarded command returns.
+          echo "diagnostic_dir=${diagnostic_dir}" >> "${GITHUB_OUTPUT}"
+          echo "diagnostics_file=${diagnostic_dir}/diagnostics.json" >> "${GITHUB_OUTPUT}"
+          echo "status_file=${diagnostic_dir}/collection-status.json" >> "${GITHUB_OUTPUT}"
+          echo "checksum_file=${diagnostic_dir}/SHA256SUMS" >> "${GITHUB_OUTPUT}"
+          python3 -c "import datetime as dt, json, sys; doc = {'schemaVersion': 1, 'collectionStatus': 'not_started', 'bootstrapExit': None, 'collectedAt': dt.datetime.now(dt.timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ'), 'collectorExit': None, 'collectorErrorCategory': None, 'collectorStderrSummary': None}; open(sys.argv[1], 'w', encoding='utf-8').write(json.dumps(doc, sort_keys=True) + '\n')" "${diagnostic_dir}/collection-status.json"
+          baseline_status=0
+          # Collection happens inside this same guarded child, before the
+          # guard observes the failure and quarantines the lease/heartbeat.
+          # A later, separate guard invocation cannot do this: the guard's
+          # own EXIT trap already stops the heartbeat for quarantine as soon
+          # as this command returns non-zero.
           PANTHEON_ENVIRONMENT_LEASE_TOKEN="${lease_token}" \
-            "${controller}/scripts/run_with_dev_environment_lease.sh" bash -c '
-              set -euo pipefail
-              collector="${GITHUB_WORKSPACE}/.agora-gate-controller/scripts/collect_dev_paper_diagnostics.py"
-              [[ -f "${collector}" && ! -L "${collector}" ]]
-              "${GITHUB_WORKSPACE}/.agora-gate-controller/scripts/dev_vm_ssh.sh" exec \
-                "python3 - --expected-bff-sha ${EXPECTED_BFF_SHA}" \
-                < "${collector}" > "${DIAGNOSTIC_FILE}"
-            '
-          python3 -m json.tool "${DIAGNOSTIC_FILE}" >/dev/null
-          (cd "${diagnostic_dir}" && sha256sum diagnostics.json > SHA256SUMS)
-          echo "artifact_path=${diagnostic_dir}" >> "${GITHUB_OUTPUT}"
+            DEV_PAPER_DIAGNOSTICS_DIR="${diagnostic_dir}" \
+            DEV_PAPER_DIAGNOSTICS_COLLECTOR="${collector}" \
+            EXPECTED_FE_SHA="${EXPECTED_FE_SHA}" \
+            DEV_PAPER_RUN_ID="${DEV_PAPER_RUN_ID}" \
+            DEV_PAPER_ATTEMPT="${DEV_PAPER_ATTEMPT}" \
+            DEV_PAPER_PHASE="${DEV_PAPER_PHASE}" \
+            "${GITHUB_WORKSPACE}/.lease-controller/scripts/run_with_dev_environment_lease.sh" \
+            "${diagnostics_script}" || baseline_status=$?
+          exit "${baseline_status}"
 
       - name: Upload dev paper failure diagnostics
         id: paper_bootstrap_diagnostics_upload
-        if: ${{ always() && steps.paper_bootstrap_diagnostics.outputs.artifact_path != '' }}
+        if: ${{ always() && steps.paper_bootstrap.conclusion != 'skipped' }}
         continue-on-error: true
         timeout-minutes: 2
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: pantheon-dev-paper-diagnostics-${{ github.run_id }}-${{ github.run_attempt }}
-          path: ${{ steps.paper_bootstrap_diagnostics.outputs.artifact_path }}
-          if-no-files-found: error
+          path: |
+            ${{ runner.temp }}/dev-paper-diagnostics-${{ github.run_id }}-${{ github.run_attempt }}/diagnostics.json
+            ${{ runner.temp }}/dev-paper-diagnostics-${{ github.run_id }}-${{ github.run_attempt }}/collection-status.json
+            ${{ runner.temp }}/dev-paper-diagnostics-${{ github.run_id }}-${{ github.run_attempt }}/SHA256SUMS
+          if-no-files-found: warn
           retention-days: 7
 
       - name: Dev evolution dispatch hosted probe
