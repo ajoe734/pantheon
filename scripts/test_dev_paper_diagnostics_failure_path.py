@@ -508,6 +508,26 @@ def valid_d2_envelope(
                 "collection_status": "ok",
                 "events": [],
             },
+            "capital": {
+                "collection_status": "ok",
+                "events": [],
+            },
+            "registry": {
+                "collection_status": "ok",
+                "events": [],
+            },
+            "governance": {
+                "collection_status": "ok",
+                "events": [],
+            },
+            "deployment": {
+                "collection_status": "ok",
+                "events": [],
+            },
+            "postgres": {
+                "collection_status": "ok",
+                "events": [],
+            },
         },
     }
 
@@ -520,6 +540,7 @@ def verify_diagnostic_acceptance(
     expected_phase: str | None = None,
     expected_bff_sha: str | None = None,
     expected_fe_sha: str | None = None,
+    expected_bootstrap_exit: int | str | None = None,
 ) -> tuple[bool, str]:
     """Verify that a diagnostics directory meets diagnostic acceptance criteria (SD D2 & D3.6)."""
     diag_file = diag_dir / "diagnostics.json"
@@ -544,6 +565,16 @@ def verify_diagnostic_acceptance(
 
     if "bootstrapExit" not in status_data:
         return False, "missing_bootstrap_exit_in_status"
+
+    raw_status_exit = status_data["bootstrapExit"]
+    if isinstance(raw_status_exit, bool) or not (
+        isinstance(raw_status_exit, int)
+        or (isinstance(raw_status_exit, str) and raw_status_exit.isdigit())
+    ):
+        return False, "invalid_status_bootstrap_exit_type"
+    status_exit_val = int(raw_status_exit)
+    if status_exit_val <= 0 or status_exit_val > 255:
+        return False, "invalid_status_bootstrap_exit_range"
 
     if not diag_file.exists():
         return False, "missing_diagnostics_file"
@@ -603,6 +634,58 @@ def verify_diagnostic_acceptance(
         return False, "invalid_field_type_collected_at"
     if not re.match(r"^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(?:\.\d+)?(?:Z|\+00:00)$", diag_data["collected_at"]):
         return False, "invalid_collected_at_format"
+
+    # Validate bootstrap exit type and range in diagnostics.json
+    raw_diag_exit = diag_data["bootstrap_exit"]
+    if isinstance(raw_diag_exit, bool) or not (
+        isinstance(raw_diag_exit, int)
+        or (isinstance(raw_diag_exit, str) and raw_diag_exit.isdigit())
+    ):
+        return False, "invalid_field_type_bootstrap_exit"
+    diag_exit_val = int(raw_diag_exit)
+    if diag_exit_val <= 0 or diag_exit_val > 255:
+        return False, "invalid_bootstrap_exit_range"
+
+    # Bind both artifacts to the same known original baseline exit
+    if diag_exit_val != status_exit_val:
+        return False, "bootstrap_exit_mismatch_status_vs_diagnostics"
+
+    # Bind to expected baseline exit if caller provided one
+    if expected_bootstrap_exit is not None:
+        try:
+            exp_exit = int(expected_bootstrap_exit)
+        except (ValueError, TypeError):
+            return False, "invalid_expected_bootstrap_exit"
+        if diag_exit_val != exp_exit or status_exit_val != exp_exit:
+            return False, "bootstrap_exit_mismatch_expected"
+
+    # Validate required service evidence and schema (SD D2)
+    services = diag_data["services"]
+    if not services:
+        return False, "empty_services"
+
+    for req_svc in ("operator-bff", "persona"):
+        if req_svc not in services:
+            return False, f"missing_required_service_{req_svc.replace('-', '_')}"
+
+    for s_name, s_val in services.items():
+        if not isinstance(s_val, dict):
+            return False, f"invalid_service_schema_{s_name.replace('-', '_')}"
+        if "collection_status" not in s_val or not isinstance(s_val["collection_status"], str):
+            return False, f"missing_service_collection_status_{s_name.replace('-', '_')}"
+        if "events" in s_val:
+            if not isinstance(s_val["events"], list):
+                return False, f"invalid_service_events_{s_name.replace('-', '_')}"
+            for ev in s_val["events"]:
+                if not isinstance(ev, dict):
+                    return False, f"invalid_service_event_item_{s_name.replace('-', '_')}"
+                if "kind" not in ev or not isinstance(ev["kind"], str):
+                    return False, f"missing_service_event_kind_{s_name.replace('-', '_')}"
+        if "container_id" in s_val:
+            if not isinstance(s_val["container_id"], str) or not re.fullmatch(r"[0-9a-f]{64}", s_val["container_id"]):
+                return False, f"invalid_service_container_id_{s_name.replace('-', '_')}"
+        if "state" in s_val and not isinstance(s_val["state"], dict):
+            return False, f"invalid_service_state_{s_name.replace('-', '_')}"
 
     # Identity and fail-closed checks
     if diag_data["identity_matches"] is not True:
@@ -2122,6 +2205,83 @@ def test_d3_6_artifact_output_missing_or_bad_checksum_cannot_declare_acceptance(
         assert accepted is False
         assert reason == "identity_mismatch"
 
+        # Case J: bootstrap_exit=0 in diagnostics.json fails acceptance (must be non-zero baseline failure exit)
+        zero_exit_env = valid_d2_envelope(bootstrap_exit=0)
+        zero_exit_json = json.dumps(zero_exit_env)
+        (d / "diagnostics.json").write_text(zero_exit_json)
+        (d / "SHA256SUMS").write_text(f"{hashlib.sha256(zero_exit_json.encode()).hexdigest()}  diagnostics.json\n")
+        accepted, reason = verify_diagnostic_acceptance(d)
+        assert accepted is False
+        assert reason == "invalid_bootstrap_exit_range"
+
+        # Case K: bootstrap_exit as JSON object fails acceptance
+        obj_exit_env = valid_d2_envelope()
+        obj_exit_env["bootstrap_exit"] = {"invalid": "object"}
+        obj_exit_json = json.dumps(obj_exit_env)
+        (d / "diagnostics.json").write_text(obj_exit_json)
+        (d / "SHA256SUMS").write_text(f"{hashlib.sha256(obj_exit_json.encode()).hexdigest()}  diagnostics.json\n")
+        accepted, reason = verify_diagnostic_acceptance(d)
+        assert accepted is False
+        assert reason == "invalid_field_type_bootstrap_exit"
+
+        # Case L: services={} (empty services dict) fails acceptance
+        empty_svc_env = valid_d2_envelope()
+        empty_svc_env["services"] = {}
+        empty_svc_json = json.dumps(empty_svc_env)
+        (d / "diagnostics.json").write_text(empty_svc_json)
+        (d / "SHA256SUMS").write_text(f"{hashlib.sha256(empty_svc_json.encode()).hexdigest()}  diagnostics.json\n")
+        accepted, reason = verify_diagnostic_acceptance(d)
+        assert accepted is False
+        assert reason == "empty_services"
+
+        # Case M: bootstrap_exit mismatch between status and diagnostics fails acceptance
+        mismatch_exit_env = valid_d2_envelope(bootstrap_exit=2)
+        mismatch_exit_json = json.dumps(mismatch_exit_env)
+        (d / "diagnostics.json").write_text(mismatch_exit_json)
+        (d / "SHA256SUMS").write_text(f"{hashlib.sha256(mismatch_exit_json.encode()).hexdigest()}  diagnostics.json\n")
+        accepted, reason = verify_diagnostic_acceptance(d)
+        assert accepted is False
+        assert reason == "bootstrap_exit_mismatch_status_vs_diagnostics"
+
+        # Case N: Missing required service operator-bff fails acceptance
+        missing_bff_svc_env = valid_d2_envelope()
+        del missing_bff_svc_env["services"]["operator-bff"]
+        missing_bff_json = json.dumps(missing_bff_svc_env)
+        (d / "diagnostics.json").write_text(missing_bff_json)
+        (d / "SHA256SUMS").write_text(f"{hashlib.sha256(missing_bff_json.encode()).hexdigest()}  diagnostics.json\n")
+        accepted, reason = verify_diagnostic_acceptance(d)
+        assert accepted is False
+        assert reason == "missing_required_service_operator_bff"
+
+        # Case O: Missing required service persona fails acceptance
+        missing_persona_svc_env = valid_d2_envelope()
+        del missing_persona_svc_env["services"]["persona"]
+        missing_persona_json = json.dumps(missing_persona_svc_env)
+        (d / "diagnostics.json").write_text(missing_persona_json)
+        (d / "SHA256SUMS").write_text(f"{hashlib.sha256(missing_persona_json.encode()).hexdigest()}  diagnostics.json\n")
+        accepted, reason = verify_diagnostic_acceptance(d)
+        assert accepted is False
+        assert reason == "missing_required_service_persona"
+
+        # Case P: Invalid service schema (e.g. string instead of dict) fails acceptance
+        invalid_svc_env = valid_d2_envelope()
+        invalid_svc_env["services"]["operator-bff"] = "not_a_dict"
+        invalid_svc_json = json.dumps(invalid_svc_env)
+        (d / "diagnostics.json").write_text(invalid_svc_json)
+        (d / "SHA256SUMS").write_text(f"{hashlib.sha256(invalid_svc_json.encode()).hexdigest()}  diagnostics.json\n")
+        accepted, reason = verify_diagnostic_acceptance(d)
+        assert accepted is False
+        assert reason == "invalid_service_schema_operator_bff"
+
+        # Case Q: Expected bootstrap exit mismatch fails acceptance
+        valid_env = valid_d2_envelope(bootstrap_exit=1)
+        valid_json = json.dumps(valid_env)
+        (d / "diagnostics.json").write_text(valid_json)
+        (d / "SHA256SUMS").write_text(f"{hashlib.sha256(valid_json.encode()).hexdigest()}  diagnostics.json\n")
+        accepted, reason = verify_diagnostic_acceptance(d, expected_bootstrap_exit=42)
+        assert accepted is False
+        assert reason == "bootstrap_exit_mismatch_expected"
+
 
 def test_d3_6_artifact_upload_download_failure_and_acceptance_pipeline():
     """SD D3.6b: executable runner artifact upload and acceptance download pipeline composed with guarded output & compensation."""
@@ -2142,8 +2302,45 @@ def test_d3_6_artifact_upload_download_failure_and_acceptance_pipeline():
         attempt = "1"
         phase = "paper_bootstrap"
 
+        # Set up mock docker for genuine collector execution
+        mock_bin = root / "mock_bin"
+        mock_bin.mkdir()
+        mock_docker = mock_bin / "docker"
+        docker_script = f"""#!/usr/bin/env bash
+set -uo pipefail
+cmd="${{1:-}}"
+shift || true
+
+if [[ "${{cmd}}" == "ps" ]]; then
+  for arg in "$@"; do
+    if [[ "${{arg}}" == *"label=com.docker.compose.service=operator-bff"* ]]; then
+      echo "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+      exit 0
+    elif [[ "${{arg}}" == *"label=com.docker.compose.service=persona"* ]]; then
+      echo "fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210"
+      exit 0
+    elif [[ "${{arg}}" == *"label=com.docker.compose.service="* ]]; then
+      echo "1111111111111111111111111111111111111111111111111111111111111111"
+      exit 0
+    fi
+  done
+  echo ""
+  exit 0
+elif [[ "${{cmd}}" == "inspect" ]]; then
+  echo '{{"status":"running","health":"healthy","exit_code":0,"oom_killed":false,"restart_count":0,"image_id":"sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef","source_sha":"{TEST_BFF_SHA}"}}'
+  exit 0
+elif [[ "${{cmd}}" == "logs" ]]; then
+  echo "2026-09-07T00:17:20.000Z Server listening on port 8000"
+  exit 0
+fi
+exit 0
+"""
+        mock_docker.write_text(docker_script, encoding="utf-8")
+        mock_docker.chmod(0o755)
+
         env = {
             **os.environ,
+            "PATH": f"{mock_bin}:{os.environ['PATH']}",
             "TARGET_ENV": "dev",
             TOKEN_ENV: TEST_TOKEN,
             "PANTHEON_DEV_ENVIRONMENT_LEASE_STATE_FILE": str(paths["state"]),
@@ -2165,22 +2362,10 @@ def test_d3_6_artifact_upload_download_failure_and_acceptance_pipeline():
             "DEV_PAPER_PHASE": phase,
             "FAKE_SSH_LOG": str(ssh_log),
             "FAKE_BOOTSTRAP_EXIT": "1",
-            "FAKE_COLLECTOR_STDOUT": json.dumps(
-                valid_d2_envelope(
-                    expected_bff=TEST_BFF_SHA,
-                    expected_fe=TEST_FE_SHA,
-                    observed_source=TEST_BFF_SHA,
-                    bootstrap_exit=1,
-                    status="ok",
-                    run_id=run_id,
-                    attempt=attempt,
-                    phase=phase,
-                )
-            ),
-            "FAKE_COLLECTOR_EXIT": "0",
+            "FAKE_EXECUTE_REAL_COLLECTOR": "1",
         }
 
-        # 1. Execute guarded wrapper to produce actual generated guarded artifacts
+        # 1. Execute guarded wrapper to produce actual generated guarded artifacts via real collector
         proc = subprocess.run(
             ["bash", str(paths["guard"]), str(WRAPPER_SCRIPT)],
             cwd=str(root),
@@ -2270,6 +2455,7 @@ def test_d3_6_artifact_upload_download_failure_and_acceptance_pipeline():
 
             # -------------------------------------------------------------
             # Part 2: Successful runner upload, download, and acceptance validation
+            # (retaining a positive downloaded real-collector case)
             # -------------------------------------------------------------
             upload_ok, upload_msg = simulate_runner_upload(diag_dir, fail_transport=False)
             assert upload_ok is True
@@ -2280,7 +2466,9 @@ def test_d3_6_artifact_upload_download_failure_and_acceptance_pipeline():
             assert dl_ok is True
             assert dl_msg == "downloaded"
 
-            # Deep acceptance verification of downloaded artifact: validates JSON, schema, run, and source identity
+            # Deep acceptance verification of downloaded real-collector artifact:
+            # validates JSON, schema, run, and source identity, bootstrap exit binding,
+            # and required service evidence across all 7 collected services.
             accepted, reason = verify_diagnostic_acceptance(
                 dl_success_dir,
                 expected_run_id=run_id,
@@ -2288,9 +2476,20 @@ def test_d3_6_artifact_upload_download_failure_and_acceptance_pipeline():
                 expected_phase=phase,
                 expected_bff_sha=TEST_BFF_SHA,
                 expected_fe_sha=TEST_FE_SHA,
+                expected_bootstrap_exit=1,
             )
             assert accepted is True, f"expected accepted, got {reason}"
             assert reason == "accepted"
+
+            # Assert downloaded real-collector artifact structural evidence
+            dl_diag_data = json.loads((dl_success_dir / "diagnostics.json").read_text(encoding="utf-8"))
+            assert dl_diag_data["identity_matches"] is True
+            assert dl_diag_data["collection_status"] == "ok"
+            assert dl_diag_data["bootstrap_exit"] == "1"
+            assert len(dl_diag_data["services"]) == 7
+            for svc in ("operator-bff", "persona", "capital", "registry", "governance", "deployment", "postgres"):
+                assert svc in dl_diag_data["services"]
+                assert dl_diag_data["services"][svc]["collection_status"] == "ok"
 
             # -------------------------------------------------------------
             # Part 3: Corrupted checksum in downloaded artifact fails acceptance
@@ -2314,6 +2513,62 @@ def test_d3_6_artifact_upload_download_failure_and_acceptance_pipeline():
             accepted, reason = verify_diagnostic_acceptance(dl_malformed_dir)
             assert accepted is False
             assert reason == "malformed_diagnostics_json"
+
+            # -------------------------------------------------------------
+            # Part 5: Downloaded artifact with bootstrap_exit=0 fails acceptance
+            # -------------------------------------------------------------
+            dl_zero_exit_dir = root / "download_zero_bootstrap_exit"
+            simulate_acceptance_download(dl_zero_exit_dir)
+            zero_env = json.loads((dl_zero_exit_dir / "diagnostics.json").read_text(encoding="utf-8"))
+            zero_env["bootstrap_exit"] = 0
+            zero_bytes = json.dumps(zero_env).encode("utf-8")
+            (dl_zero_exit_dir / "diagnostics.json").write_bytes(zero_bytes)
+            (dl_zero_exit_dir / "SHA256SUMS").write_text(f"{hashlib.sha256(zero_bytes).hexdigest()}  diagnostics.json\n")
+            accepted, reason = verify_diagnostic_acceptance(dl_zero_exit_dir)
+            assert accepted is False
+            assert reason == "invalid_bootstrap_exit_range"
+
+            # -------------------------------------------------------------
+            # Part 6: Downloaded artifact with bootstrap_exit as JSON object fails acceptance
+            # -------------------------------------------------------------
+            dl_obj_exit_dir = root / "download_object_bootstrap_exit"
+            simulate_acceptance_download(dl_obj_exit_dir)
+            obj_env = json.loads((dl_obj_exit_dir / "diagnostics.json").read_text(encoding="utf-8"))
+            obj_env["bootstrap_exit"] = {"invalid": "object"}
+            obj_bytes = json.dumps(obj_env).encode("utf-8")
+            (dl_obj_exit_dir / "diagnostics.json").write_bytes(obj_bytes)
+            (dl_obj_exit_dir / "SHA256SUMS").write_text(f"{hashlib.sha256(obj_bytes).hexdigest()}  diagnostics.json\n")
+            accepted, reason = verify_diagnostic_acceptance(dl_obj_exit_dir)
+            assert accepted is False
+            assert reason == "invalid_field_type_bootstrap_exit"
+
+            # -------------------------------------------------------------
+            # Part 7: Downloaded artifact with services={} fails acceptance
+            # -------------------------------------------------------------
+            dl_empty_svc_dir = root / "download_empty_services"
+            simulate_acceptance_download(dl_empty_svc_dir)
+            empty_env = json.loads((dl_empty_svc_dir / "diagnostics.json").read_text(encoding="utf-8"))
+            empty_env["services"] = {}
+            empty_bytes = json.dumps(empty_env).encode("utf-8")
+            (dl_empty_svc_dir / "diagnostics.json").write_bytes(empty_bytes)
+            (dl_empty_svc_dir / "SHA256SUMS").write_text(f"{hashlib.sha256(empty_bytes).hexdigest()}  diagnostics.json\n")
+            accepted, reason = verify_diagnostic_acceptance(dl_empty_svc_dir)
+            assert accepted is False
+            assert reason == "empty_services"
+
+            # -------------------------------------------------------------
+            # Part 8: Downloaded artifact with bootstrap_exit mismatch between status and diagnostics fails acceptance
+            # -------------------------------------------------------------
+            dl_mismatch_dir = root / "download_exit_mismatch"
+            simulate_acceptance_download(dl_mismatch_dir)
+            mismatch_env = json.loads((dl_mismatch_dir / "diagnostics.json").read_text(encoding="utf-8"))
+            mismatch_env["bootstrap_exit"] = 2
+            mismatch_bytes = json.dumps(mismatch_env).encode("utf-8")
+            (dl_mismatch_dir / "diagnostics.json").write_bytes(mismatch_bytes)
+            (dl_mismatch_dir / "SHA256SUMS").write_text(f"{hashlib.sha256(mismatch_bytes).hexdigest()}  diagnostics.json\n")
+            accepted, reason = verify_diagnostic_acceptance(dl_mismatch_dir)
+            assert accepted is False
+            assert reason == "bootstrap_exit_mismatch_status_vs_diagnostics"
         finally:
             if heartbeat.poll() is None:
                 heartbeat.kill()

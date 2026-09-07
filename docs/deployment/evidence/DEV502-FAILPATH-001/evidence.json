@@ -19,7 +19,7 @@
   ],
   "checksums": {
     "scripts/run-acceptance.sh": "01b335f4a1f354b5bb9e586f5ee06172dfdf4cdfc4796d01560383940f8139c2",
-    "scripts/test_dev_paper_diagnostics_failure_path.py": "4aeca1e4f4728b299a38ca5cd1a0bea35c724907dbe7e622e5742dbc27cb10ba"
+    "scripts/test_dev_paper_diagnostics_failure_path.py": "eb9a85982b411f5ed7619c0ff82270dadbc52e2a61830859927623f088cb6f5c"
   },
   "acceptance_matrix": {
     "d3_1_baseline_success": {
@@ -219,7 +219,7 @@
       "status": "passed"
     },
     "d3_6_artifact_output_verification": {
-      "requirement": "Artifact output missing, upload failure, bad checksum, or malformed JSON cannot declare diagnostic acceptance; guarded artifacts composed with transport failure & compensation",
+      "requirement": "Artifact output missing, upload failure, bad checksum, malformed JSON, invalid/zero bootstrap exit, or empty/invalid services schema cannot declare diagnostic acceptance; guarded artifacts composed with transport failure, real collector execution, positive downloaded acceptance, negative downloaded acceptance, & compensation",
       "tests": [
         "scripts/test_dev_paper_diagnostics_failure_path.py::test_d3_6_artifact_output_missing_or_bad_checksum_cannot_declare_acceptance",
         "scripts/test_dev_paper_diagnostics_failure_path.py::test_d3_6_artifact_upload_download_failure_and_acceptance_pipeline"
@@ -239,7 +239,15 @@
           "checksum_mismatch",
           "malformed_diagnostics_json",
           "missing_schema_field_identity_matches",
-          "identity_mismatch"
+          "identity_mismatch",
+          "invalid_bootstrap_exit_range",
+          "invalid_field_type_bootstrap_exit",
+          "empty_services",
+          "bootstrap_exit_mismatch_status_vs_diagnostics",
+          "missing_required_service_operator_bff",
+          "missing_required_service_persona",
+          "invalid_service_schema_operator_bff",
+          "bootstrap_exit_mismatch_expected"
         ],
         "observed_upload_failure_pipeline": {
           "upload_transport_error": "transport_error_503_service_unavailable",
@@ -255,13 +263,29 @@
           "upload_status": "uploaded",
           "download_status": "downloaded",
           "acceptance_verdict": "accepted",
-          "verified_envelope_fields_count": 14
+          "collector_execution": "real_collector",
+          "downloaded_real_collector_services_count": 7,
+          "verified_envelope_fields_count": 14,
+          "negative_downloaded_cases_verified": [
+            "download_zero_bootstrap_exit: invalid_bootstrap_exit_range",
+            "download_object_bootstrap_exit: invalid_field_type_bootstrap_exit",
+            "download_empty_services: empty_services",
+            "download_exit_mismatch: bootstrap_exit_mismatch_status_vs_diagnostics",
+            "download_bad_checksum: checksum_mismatch",
+            "download_malformed_json: malformed_diagnostics_json"
+          ]
         },
         "negative_artifact_paths": [
-          "download_after_upload_failure/diagnostics.json"
+          "download_after_upload_failure/diagnostics.json",
+          "download_bad_checksum/diagnostics.json (rejected)",
+          "download_malformed_json/diagnostics.json (rejected)",
+          "download_zero_bootstrap_exit/diagnostics.json (rejected)",
+          "download_object_bootstrap_exit/diagnostics.json (rejected)",
+          "download_empty_services/diagnostics.json (rejected)",
+          "download_exit_mismatch/diagnostics.json (rejected)"
         ],
         "observed_test_count": 2,
-        "observed_duration_seconds": 2.64
+        "observed_duration_seconds": 2.75
       },
       "status": "passed"
     },
@@ -338,7 +362,7 @@
     "total": 19,
     "passed": 19,
     "failed": 0,
-    "duration_seconds": 33.78,
+    "duration_seconds": 33.99,
     "all_passed": true,
     "ci_smoke_command": "./scripts/run-acceptance.sh smoke",
     "ci_smoke_status": "passed"
