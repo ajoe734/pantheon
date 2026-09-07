@@ -1,0 +1,133 @@
+{
+  "task_id": "DEV502-FAILPATH-001",
+  "title": "Execute guard-to-diagnostic-to-compensation failure-path integration tests",
+  "owner": "Antigravity",
+  "reviewer": "Codex2",
+  "scope": "SD.md D3 only. Executable failure-path integration tests covering guard-to-diagnostic-to-compensation with real subprocesses and isolated lease/bootstrap/SSH/HTTP fixtures. D1-D2 were delivered in DEV502-CAPTURE-001. D4-D6 (hosted TRACE/RCA, product FIX, durable diagnostics) and step 5 belong to follow-on tasks. Local fixtures are not hosted runtime proof.",
+  "source_documents": {
+    "SA": "/home/chloe_ong_dev_cctech_support_com/code/pantheon-artifacts/dev-diagnostics-20260907/SA.md",
+    "SD": "/home/chloe_ong_dev_cctech_support_com/code/pantheon-artifacts/dev-diagnostics-20260907/SD.md",
+    "root_cause_and_repair_plan": "/home/chloe_ong_dev_cctech_support_com/code/pantheon-artifacts/dev-diagnostics-20260907/root-cause-and-repair-plan.md"
+  },
+  "source_sha": "77ba705bc4e48263b5facbad0e27e99db4655236",
+  "test_suite": "scripts/test_dev_paper_diagnostics_failure_path.py",
+  "artifacts": [
+    "scripts/test_dev_paper_diagnostics_failure_path.py",
+    "docs/deployment/evidence/DEV502-FAILPATH-001/evidence.json"
+  ],
+  "checksums": {
+    "scripts/test_dev_paper_diagnostics_failure_path.py": "4c230e934b8f1b2b08e98e2017032e1099894c4d917a603b9ace6d40aef02b45"
+  },
+  "acceptance_matrix": {
+    "d3_1_baseline_success": {
+      "requirement": "Baseline success does not execute failure collector",
+      "test": "scripts/test_dev_paper_diagnostics_failure_path.py::test_d3_1_baseline_success_does_not_execute_collector",
+      "verifications": [
+        "Real guard executable scripts/run_with_dev_environment_lease.sh exits 0",
+        "Guard failure file is not created",
+        "SSH execution log confirms baseline ran and collector was never invoked",
+        "collection-status.json records collectionStatus='not_required', bootstrapExit=0, collectorExit=0",
+        "diagnostics.json is not created",
+        "Heartbeat process remains healthy throughout"
+      ],
+      "status": "passed"
+    },
+    "d3_2_baseline_exit1_capture_before_heartbeat_stop": {
+      "requirement": "Baseline exit 1: capture precedes heartbeat stop; outer guard exits 75 and records original exit 1",
+      "test": "scripts/test_dev_paper_diagnostics_failure_path.py::test_d3_2_baseline_exit1_capture_precedes_heartbeat_stop_and_guard_quarantines",
+      "verifications": [
+        "Timing probe during collector execution proves heartbeat process is ALIVE",
+        "Timing probe during collector execution proves guard failure file does NOT exist yet",
+        "Outer guard terminates with exit 75",
+        "Guard failure file records original baseline exitStatus=1",
+        "Diagnostics directory contains valid diagnostics.json, matching SHA256SUMS, and collectionStatus='ok'",
+        "Guard cleanup stops heartbeat for quarantine"
+      ],
+      "status": "passed"
+    },
+    "d3_3_collector_failure_paths": {
+      "requirement": "Collector timeout, command exit, and corrupted JSON: bootstrap failure exit preserved, rollback reachable",
+      "tests": [
+        "scripts/test_dev_paper_diagnostics_failure_path.py::test_d3_3_collector_timeout_preserves_bootstrap_exit_and_retains_quarantine",
+        "scripts/test_dev_paper_diagnostics_failure_path.py::test_d3_3_collector_error_exit_preserves_bootstrap_exit",
+        "scripts/test_dev_paper_diagnostics_failure_path.py::test_d3_3_collector_corrupted_json_preserves_bootstrap_exit"
+      ],
+      "verifications": [
+        "Collector timeout (deadline exceeded) preserves original bootstrap exit 1, records collectionStatus='timeout', and quarantines lease",
+        "Collector error exit (e.g. exit 2, ssh connection refused) preserves bootstrap exit 1 and records collectorErrorCategory='ssh_connection_refused'",
+        "Corrupted JSON output preserves bootstrap exit 1, records collectionStatus='invalid_json', and cleans up broken artifact files"
+      ],
+      "status": "passed"
+    },
+    "d3_4_heartbeat_and_cas_loss": {
+      "requirement": "Heartbeat or remote CAS loss: command process group terminated, no further remote command runs",
+      "tests": [
+        "scripts/test_dev_paper_diagnostics_failure_path.py::test_d3_4_heartbeat_loss_during_command_terminates_process_group",
+        "scripts/test_dev_paper_diagnostics_failure_path.py::test_d3_4_remote_cas_loss_terminates_process_group"
+      ],
+      "verifications": [
+        "Mid-command heartbeat loss triggers guard fail_guarded_command; terminates COMMAND_PGID; guard exits 75; collector never runs",
+        "Remote CAS verification failure triggers guard fail_guarded_command; terminates COMMAND_PGID; guard exits 75"
+      ],
+      "status": "passed"
+    },
+    "d3_5_cancellation_and_identity_mismatch_fail_closed": {
+      "requirement": "Cancellation, missing/expired state, wrong source, ambiguous containers fail closed",
+      "tests": [
+        "scripts/test_dev_paper_diagnostics_failure_path.py::test_d3_5_baseline_cancellation_terminates_immediately_without_collector",
+        "scripts/test_dev_paper_diagnostics_failure_path.py::test_d3_5_missing_lease_state_fails_closed",
+        "scripts/test_dev_paper_diagnostics_failure_path.py::test_d3_5_identity_mismatch_fails_closed"
+      ],
+      "verifications": [
+        "Baseline cancellation (SIGTERM exit 143) terminates wrapper immediately without running collector; status remains 'not_started'",
+        "Missing lease token, missing state file, or missing wrapper env variables fail closed with exit 75 before command execution",
+        "Candidate source SHA mismatch sets identity_matches=false, collectionStatus='identity_mismatch', and fails acceptance"
+      ],
+      "status": "passed"
+    },
+    "d3_6_artifact_output_verification": {
+      "requirement": "Artifact output missing, upload failure, or bad checksum cannot declare diagnostic acceptance",
+      "test": "scripts/test_dev_paper_diagnostics_failure_path.py::test_d3_6_artifact_output_missing_or_bad_checksum_cannot_declare_acceptance",
+      "verifications": [
+        "Missing collection-status.json fails acceptance",
+        "Non-ok collectionStatus (e.g. timeout) fails acceptance",
+        "Missing diagnostics.json fails acceptance",
+        "Missing SHA256SUMS fails acceptance",
+        "Corrupted or mismatched checksum in SHA256SUMS fails acceptance",
+        "Valid files and correct checksum pass acceptance"
+      ],
+      "status": "passed"
+    },
+    "d3_7_project_exceptions_and_secret_sentinels": {
+      "requirement": "Project domain exceptions and Persona owner positively captured; secret sentinels never leak",
+      "test": "scripts/test_dev_paper_diagnostics_failure_path.py::test_d3_7_project_exceptions_captured_and_secret_sentinels_never_leak",
+      "verifications": [
+        "Positive capture of services.control_plane.bff.ports.persona_write_owner.PersonaWriteOwnerUnavailable",
+        "Positive capture of services.control_plane.bff.persona_provisioning.ProvisioningLeaseLost",
+        "Positive capture of standard exceptions (e.g. ConnectionRefusedError)",
+        "Zero leakage of sensitive sentinels (tokens, passwords, DSNs, JWTs) into parsed events or envelope"
+      ],
+      "status": "passed"
+    },
+    "d3_8_compensation_independent_outcomes": {
+      "requirement": "Normal compensation and failed compensation retain true independent outcomes",
+      "tests": [
+        "scripts/test_dev_paper_diagnostics_failure_path.py::test_d3_8_successful_compensation_produces_real_evidence_and_releases_lease",
+        "scripts/test_dev_paper_diagnostics_failure_path.py::test_d3_8_failed_compensation_fails_closed_and_leaves_quarantine"
+      ],
+      "verifications": [
+        "Successful compensation runs real scripts/compensate_cross_repo_release.sh under pinned lease controller commit 9e564718da8c39199a4c311f1a667b74226e3428, restores pair, verifies endpoints, produces release-compensation.json with outcome='compensated', stops heartbeat safely, and releases lease (exit 0)",
+        "Failed compensation (e.g. deploy failure or endpoint mismatch) exits 75 without creating release-compensation.json, leaving lease quarantined"
+      ],
+      "status": "passed"
+    }
+  },
+  "test_execution": {
+    "command": "/tmp/dev502-capture-review-venv/bin/python -m pytest -v scripts/test_dev_paper_diagnostics_failure_path.py",
+    "total": 14,
+    "passed": 14,
+    "failed": 0,
+    "duration_seconds": 15.12,
+    "all_passed": true
+  }
+}
