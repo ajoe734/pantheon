@@ -172,7 +172,7 @@
         "failed": 0,
         "skipped": 0,
         "exit_code": 0,
-        "terminal_output": "2 passed, 292 deselected in 1.68s",
+        "terminal_output": "2 passed, 292 deselected in 1.48s",
         "note": "test_archived_task_owner_reviewer_with_receipt_proof_binds_exact_archive_root and test_active_worker_governance_lease_decision_rejects_foreign_root_archive_receipt still pass unchanged after removing the ai_status.load_state() disk-read fallback, since every call site already supplies a Mapping state."
       },
       {
@@ -183,7 +183,7 @@
         "failed": 0,
         "skipped": 0,
         "exit_code": 0,
-        "terminal_output": "1 passed, 293 deselected in 24.22s",
+        "terminal_output": "1 passed, 293 deselected in 22.61s",
         "note": "Verified passing with added actionable failure diagnostics and hardened child exception/stderr reporting."
       },
       {
@@ -194,7 +194,7 @@
         "failed": 0,
         "skipped": 0,
         "exit_code": 0,
-        "terminal_output": "294 passed, 61 subtests passed in 158.11s (0:02:38)"
+        "terminal_output": "294 passed, 61 subtests passed in 126.76s (0:02:06)"
       },
       {
         "name": "orchestrator_recovery_runner_ai_status_dispatch_execution_batch",
@@ -204,7 +204,7 @@
         "failed": 0,
         "skipped": 0,
         "exit_code": 0,
-        "terminal_output": "652 passed, 195 subtests passed in 358.00s (0:05:57)"
+        "terminal_output": "652 passed, 195 subtests passed in 273.55s (0:04:33)"
       }
     ],
     "totals": {
@@ -214,7 +214,7 @@
       "skipped": 0
     },
     "collection": "Every foreground batch in this verification pass reached a collected terminal exit; no batch was killed or timed out. (Historical record: earlier development run at head 464d7f by Claude had toolu_01JyAHCpWB6LW7N2GaMddM7u interrupted after 2m due to outer default timeout, exit 143, followed by successful retry toolu_01UPscfuGze7WcnhD2ZxyakZ completing in 146.79s.)",
-    "development_failures": "None in this Antigravity verification pass; all batches passed cleanly. Historical development record notes the previous tool timeout at 464d7f prior to retry, and subsequent CI run 34077414625 failing on empty child evidence leading to the diagnostic assertion enhancement.",
+    "development_failures": "None in this Antigravity verification pass; all batches passed cleanly. Historical development record notes the previous tool timeout at 464d7f prior to retry, and subsequent CI run 34077414625 failing on empty child evidence leading to the diagnostic assertion enhancement. CI prerequisite PR #5651 (OPS-CI-WORKER-SANDBOX-PREREQUISITE-001) merged into dev at 46bbfe935df1e68740569fb5dc6233897de98b0b, provisioning real bwrap in CI workflows and resolving the missing-bwrap error observed in run 34080680425. Merged current dev into task branch cleanly, and verified all 946 tests pass without skips or errors.",
     "not_yet_verified_here": "The required Smoke acceptance CI check itself (github actions run) can only be reverified after this commit is pushed and a fresh CI run completes; the reviewer's cited flaky run (34075525997/job 101600803840 and 34077414625/job 101606204163) cannot be re-triggered from this worktree, only its root cause fixed and locally reverified above.",
     "prior_batches_reverified_at_earlier_heads": "probe_cancellation_evidence_2212.py, probe_cancellation_and_drift_suite, probe_queue_fixture_auth, probe_reserved_phase_task_drift, probe_actual_supersede_shape, probe_cross_transition_binding, probe_pending_intent_reviewer_reproducer, review-handoff-3fc35127-receipt-producer.py, and probe_d657_classifier_receipt_binding_0132.py were verified passing at earlier heads (862cfa2c3 / d65778d01 / 3fc35127e / 39e064ba1) per this file's prior revisions and are unaffected by this head's narrowly-scoped SystemExit-escape/flaky-test-timing change, so were not re-run in this pass."
   },
