@@ -24,6 +24,7 @@ def _load():
 
 
 CHECK = _load()
+from common import canonical_commit_subject_prefix  # noqa: E402
 REQUIRED = ("LLM-Agent", "Task-ID", "Reviewer")
 
 
@@ -101,7 +102,7 @@ LONG_TASK_ID = (
 
 
 def test_accepts_bounded_subject_prefix_for_a_generated_long_task_id() -> None:
-    bounded_prefix = CHECK.canonical_commit_subject_prefix(LONG_TASK_ID)
+    bounded_prefix = canonical_commit_subject_prefix(LONG_TASK_ID)
     message = (
         f"{bounded_prefix}: repair merge state\n"
         "\n"

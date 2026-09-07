@@ -17,6 +17,7 @@ for path in (str(ORCHESTRATOR_DIR), str(SCRIPTS_GIT_DIR)):
         sys.path.insert(0, path)
 
 import worker_commit
+from common import canonical_commit_subject_prefix
 
 
 class WorkerCommitPreflightTests(unittest.TestCase):
@@ -120,7 +121,7 @@ class WorkerCommitPreflightTests(unittest.TestCase):
             "INTEGRATION-UNBLOCK-GOV-APPROVAL-AUTHORITY-PREREQUISITE-001-"
             "MERGE-STATE-BLOCKED-B14932FE23E9"
         )
-        bounded_prefix = worker_commit.canonical_commit_subject_prefix(long_task_id)
+        bounded_prefix = canonical_commit_subject_prefix(long_task_id)
         subject = f"{bounded_prefix}: repair merge state"
         self.assertLessEqual(len(subject), 72)
 

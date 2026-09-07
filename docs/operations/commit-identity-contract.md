@@ -110,9 +110,11 @@ done/reconciliation. There are no divergent parsers or secondary validators.
    - short-ID suffix collisions (`ABC-001-OTHER:`, `ABC-0010:`) and duplicate
      identical/conflicting trailers are rejected identically to CI and worker
      preflight.
-   - for exempt subjects (`commit_subject_skips_trailer_check`), the task id
-     must still appear in the subject, and any present `Task-ID:` trailer must
-     match the task id exactly.
+   - every selected authored message passes the same checker, including
+     `Merge`, `Revert`, `promote`, `hotfix`, and `publish` subject styles.
+     Text never waives mandatory trailers, duplicate rejection, actor or
+     reviewer validation. Existing structural approved-head/merge-parent
+     selection runs before this check and remains unchanged.
    - `check_commit_trailers` is imported lazily inside `_commit_trailer_checker()`,
      so synthetic test fixtures that omit `scripts/git/` can still run every
      `ai_status.py` command that does not perform commit-identity validation.
@@ -122,6 +124,49 @@ direct-tooling-delivery reconciliation path) likewise delegates directly to
 the shared `checker.check_message(commit_message, required=("Task-ID",), prefix_required=True, expected_task_id=task_id, delivery_class="tooling")`,
 ensuring tooling delivery reconciliation enforces the exact same identity, prefix,
 and trailer constraints without drift.
+
+## Configuration and command-source boundary
+
+The existing `subject_must_include_task_id` setting now means the shared
+bounded-prefix convention. Its default remains true. The existing
+`TASK_REQUIRE_SUBJECT_TASK_ID` override affects subject formatting only;
+an exact, unique `Task-ID` trailer remains mandatory. No task-specific
+setting or new override is needed for long IDs. CI retains its existing
+`subject_prefix_required` configuration with the same prefix convention.
+
+Worker commits resolve modules from the explicitly issued
+`PANTHEON_COMMAND_ROOT`, or the target repository when no runtime is issued.
+They do not search `GITHUB_WORKSPACE`, parent process directories or another
+checkout for missing modules. Tests provide the complete candidate module
+set explicitly. Missing modules in an issued runtime fail closed even if
+the target repository has a competing module.
+
+## Qualified activation handoff (pending merge)
+
+This source PR is not runtime activation. The incumbent issued runtime at
+owner dispatch is `18065bf29e917f5b5f08691632543619f19374f7`. Workers retain
+its issued command-root/SHA for governed commands throughout this task.
+The scoped commits are made by that runtime's existing worker wrapper;
+candidate test subprocesses clear the runtime binding and use the isolated
+checkout environment provisioned by `scripts/dev/provision_python_distribution.py`.
+
+After Antigravity independently approves the frozen PR #5654 head, required
+checks pass and the sole supervisor integrator merges that exact head, the
+activation coordinator records the actual merge SHA and verifies that it is
+on `origin/dev`. Use the existing `scripts/sync-dev-root.sh` entrypoint with
+`SYNC_REF` pinned to that full accepted merge SHA and the provisioned host's
+dev-root, live-config, coordination-root and verifier-file arguments. This
+entrypoint materializes the immutable command runtime, validates/provisions
+its per-SHA Python environment, and calls the existing promotion path under
+the integration lock. Do not copy candidate modules into the incumbent or
+rebind this worker's command environment to the candidate.
+
+The coordinator must collect the promotion command's terminal exit status
+and evidence, then verify the live config's command root/SHA, selected Python
+and actual supervisor heartbeat agree with the accepted runtime. A passing
+source test, GitHub check or merge alone proves none of those live facts.
+On failed activation, preserve the incumbent and the original task's hold;
+use the existing exact-version promotion flow for any needed rollback.
 
 ## Recovering PR #5639
 
