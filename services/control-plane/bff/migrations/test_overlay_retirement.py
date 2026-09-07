@@ -30,6 +30,9 @@ from services.control_plane.bff.migrations.overlay_retirement import (
     build_canonical_owner_adapter,
     assert_mandatory_symbol_retirements,
     deterministic_checksum,
+    IncidentCanonicalAdapter,
+    StrategyCanonicalAdapter,
+    RankingCanonicalAdapter,
 )
 
 
@@ -574,3 +577,93 @@ def test_genuine_five_owner_disk_backed_multi_replica_restart_durability() -> No
             readback_beta = replica_beta.read_canonical(key)
             assert readback_beta is not None
             assert readback_beta == replica_alpha.read_canonical(key)
+
+
+def test_incident_adapter_status_update_parity() -> None:
+    """Verify that status updates on authoritative IncidentStore reflect immediately on fresh adapter instances."""
+    from services.incident.incident import IncidentStore
+
+    with tempfile.TemporaryDirectory() as td:
+        store_path = Path(td) / "incident.json"
+        adapter1 = IncidentCanonicalAdapter(store_path)
+        inserted = adapter1.insert({
+            "incident_id": "inc-parity-1",
+            "title": "Parity Incident",
+            "status": "open",
+            "severity": "high",
+            "tenant_id": "tenant-parity",
+        })
+        assert inserted is True
+
+        # Directly update status on domain owner store
+        owner = IncidentStore(store_path)
+        owner.update_incident_status("inc-parity-1", "resolved")
+
+        # Fresh adapter instance simulating a second process or subsequent read
+        adapter2 = IncidentCanonicalAdapter(store_path)
+        record = adapter2.get("inc-parity-1")
+        assert record is not None
+        assert record["status"] == "resolved"
+        assert record["tenant_id"] == "tenant-parity"
+        assert record["title"] == "Parity Incident"
+
+
+def test_strategy_write_governance_rejects_unreviewed_approval() -> None:
+    """Verify that StrategyCanonicalAdapter enforces governance state transitions and rejects unreviewed approval."""
+    with tempfile.TemporaryDirectory() as td:
+        store_path = Path(td) / "strategy.json"
+        adapter = StrategyCanonicalAdapter(store_path)
+
+        # Direct unreviewed approval without approval_decision_id must be rejected
+        rejected = adapter.insert({
+            "strategy_id": "strat-unreviewed-1",
+            "name": "Unreviewed Strategy",
+            "status": "approved",
+            "tenant_id": "tenant-corp",
+        })
+        assert rejected is False
+        assert adapter.get("strat-unreviewed-1") is None
+
+        # Valid draft state must be accepted
+        accepted = adapter.insert({
+            "strategy_id": "strat-draft-1",
+            "name": "Draft Strategy",
+            "status": "draft",
+            "tenant_id": "tenant-corp",
+        })
+        assert accepted is True
+        fetched = adapter.get("strat-draft-1")
+        assert fetched is not None
+        assert fetched["status"] == "draft"
+
+
+def test_multi_replica_rejected_write_negative_control_no_fallback() -> None:
+    """Negative control: verify that rejected writes are never persisted to secondary files or read back."""
+    from unittest.mock import patch
+
+    class RejectingOwner:
+        def save(self, record):
+            return False
+
+        def get(self, key):
+            return None
+
+    with tempfile.TemporaryDirectory() as td:
+        harness = MultiReplicaReadbackHarness(shared_durable_storage=td)
+        replica = harness.spawn_replica("replica-test")
+
+        with patch(
+            "services.control_plane.bff.migrations.overlay_retirement.build_canonical_owner_adapter",
+            return_value=RejectingOwner(),
+        ):
+            # Attempt write that is rejected by owner
+            result = replica.write_canonical("rejected-key", {
+                "id": "rejected-key",
+                "aggregate": "ranking",
+                "score": 42,
+            })
+            assert result is False
+
+            # Verify no fallback file exists and readback returns None
+            assert replica.read_canonical("rejected-key") is None
+            assert replica.read_canonical_via_restarted_process("rejected-key") is None

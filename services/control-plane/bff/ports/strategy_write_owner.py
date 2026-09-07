@@ -90,7 +90,7 @@ class CanonicalStrategyWriteOwner:
         if hasattr(target, "create_if_absent") and hasattr(target, "list_by_strategy"):
             import re
             from services.registry.models import ArtifactState, ArtifactType, Lineage, RegistryEntryCreate
-            raw_state = str(record.get("lifecycle_state") or record.get("state") or "draft").lower()
+            raw_state = str(record.get("lifecycle_state") or record.get("state") or record.get("status") or "draft").lower()
             try:
                 art_state = ArtifactState(raw_state)
             except ValueError:

@@ -23,11 +23,18 @@ import os
 import subprocess
 import sys
 import tempfile
+import threading
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from enum import Enum
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional, Sequence, Set, Tuple
+from typing import Any, Callable, Dict, Iterator, List, Optional, Sequence, Set, Tuple
+
+try:
+    import fcntl
+except ImportError:
+    fcntl = None
 
 logger = logging.getLogger(__name__)
 
@@ -628,57 +635,118 @@ class StrategyCanonicalAdapter:
         self._write_owner = CanonicalStrategyWriteOwner(self._store)
 
     def insert(self, record: Dict[str, Any]) -> bool:
-        from services.registry.models import ArtifactType, ArtifactState, RegistryEntryCreate
         sid = str(record.get("strategy_id") or record.get("id") or "").strip()
         if not sid:
             return False
+        from services.registry.models import ArtifactType
         existing = [
             e for e in self._store.list_by_strategy(sid)
-            if getattr(e, "artifact_type", None) in (ArtifactType.STRATEGY_SPEC, ArtifactType.STRATEGY_SPEC.value)
+            if getattr(e, "artifact_type", None) in (
+                ArtifactType.STRATEGY_SPEC,
+                ArtifactType.STRATEGY_SPEC.value,
+                "strategy_spec",
+            )
         ]
         if existing:
             return False
-        reg_id = f"reg-{sid}"
-        raw_state = str(record.get("artifact_state") or record.get("status") or "draft").lower()
-        state = (
-            ArtifactState(raw_state)
-            if raw_state in ("draft", "candidate", "approved", "retired")
-            else ArtifactState.DRAFT
-        )
-        payload = RegistryEntryCreate(
-            artifact_type=ArtifactType.STRATEGY_SPEC,
-            strategy_id=sid,
-            version=str(record.get("version") or "1.0.0"),
-            artifact_state=state,
-            metadata=dict(record),
-        )
-        _, created = self._store.create_if_absent(payload, reg_id)
-        return created
+        # Route backfill through legitimate tenant-scoped owner/governance validation
+        try:
+            payload = dict(record)
+            payload["_provenance"] = dict(record)
+            receipt = self._write_owner.upsert_strategy(payload)
+            return bool(receipt)
+        except (ValueError, RuntimeError, Exception):
+            return False
 
     def save(self, record: Dict[str, Any]) -> bool:
         sid = str(record.get("strategy_id") or record.get("id") or "").strip()
         if not sid:
             return False
-        receipt = self._write_owner.upsert_strategy(dict(record))
-        return bool(receipt)
+        try:
+            payload = dict(record)
+            payload["_provenance"] = dict(record)
+            receipt = self._write_owner.upsert_strategy(payload)
+            return bool(receipt)
+        except (ValueError, RuntimeError, Exception):
+            return False
 
     def get(self, key: str) -> Optional[Dict[str, Any]]:
         from services.registry.models import ArtifactType
         specs = [
             e for e in self._store.list_by_strategy(key)
-            if getattr(e, "artifact_type", None) in (ArtifactType.STRATEGY_SPEC, ArtifactType.STRATEGY_SPEC.value)
+            if getattr(e, "artifact_type", None) in (
+                ArtifactType.STRATEGY_SPEC,
+                ArtifactType.STRATEGY_SPEC.value,
+                "strategy_spec",
+            )
         ]
         if specs:
             entry = specs[-1]
             meta = dict(entry.metadata) if isinstance(entry.metadata, dict) and entry.metadata else entry.to_dict()
+            provenance = meta.get("_provenance")
+            if isinstance(provenance, dict):
+                data = dict(provenance)
+                art_val = getattr(entry.artifact_state, "value", str(entry.artifact_state))
+                if "status" in data:
+                    if art_val in ("approved", "retired", "candidate"):
+                        data["status"] = art_val
+                    else:
+                        data["status"] = data["status"] if data["status"] in ("active", "draft") else art_val
+                if "artifact_state" in data:
+                    data["artifact_state"] = art_val
+                if "lifecycle_state" in data:
+                    data["lifecycle_state"] = art_val
+                if "state" in data:
+                    data["state"] = art_val
+                if entry.owner_tenant:
+                    data["tenant_id"] = entry.owner_tenant
+                return data
             if "strategy_id" not in meta:
                 meta["strategy_id"] = entry.strategy_id
+            if "id" not in meta:
+                meta["id"] = entry.strategy_id
+            if "artifact_state" not in meta:
+                meta["artifact_state"] = getattr(entry.artifact_state, "value", str(entry.artifact_state))
+            if "status" not in meta:
+                meta["status"] = getattr(entry.artifact_state, "value", str(entry.artifact_state))
+            if "tenant_id" not in meta and entry.owner_tenant:
+                meta["tenant_id"] = entry.owner_tenant
             return meta
         entry = self._store.get(key)
-        if entry and getattr(entry, "artifact_type", None) in (ArtifactType.STRATEGY_SPEC, ArtifactType.STRATEGY_SPEC.value):
+        if entry and getattr(entry, "artifact_type", None) in (
+            ArtifactType.STRATEGY_SPEC,
+            ArtifactType.STRATEGY_SPEC.value,
+            "strategy_spec",
+        ):
             meta = dict(entry.metadata) if isinstance(entry.metadata, dict) and entry.metadata else entry.to_dict()
+            provenance = meta.get("_provenance")
+            if isinstance(provenance, dict):
+                data = dict(provenance)
+                art_val = getattr(entry.artifact_state, "value", str(entry.artifact_state))
+                if "status" in data:
+                    if art_val in ("approved", "retired", "candidate"):
+                        data["status"] = art_val
+                    else:
+                        data["status"] = data["status"] if data["status"] in ("active", "draft") else art_val
+                if "artifact_state" in data:
+                    data["artifact_state"] = art_val
+                if "lifecycle_state" in data:
+                    data["lifecycle_state"] = art_val
+                if "state" in data:
+                    data["state"] = art_val
+                if entry.owner_tenant:
+                    data["tenant_id"] = entry.owner_tenant
+                return data
             if "strategy_id" not in meta:
                 meta["strategy_id"] = entry.strategy_id
+            if "id" not in meta:
+                meta["id"] = entry.strategy_id
+            if "artifact_state" not in meta:
+                meta["artifact_state"] = getattr(entry.artifact_state, "value", str(entry.artifact_state))
+            if "status" not in meta:
+                meta["status"] = getattr(entry.artifact_state, "value", str(entry.artifact_state))
+            if "tenant_id" not in meta and entry.owner_tenant:
+                meta["tenant_id"] = entry.owner_tenant
             return meta
         return None
 
@@ -699,9 +767,28 @@ class StrategyCanonicalAdapter:
             if getattr(entry, "artifact_type", None) not in (ArtifactType.STRATEGY_SPEC, ArtifactType.STRATEGY_SPEC.value):
                 continue
             meta = dict(entry.metadata) if isinstance(entry.metadata, dict) and entry.metadata else entry.to_dict()
-            if "strategy_id" not in meta:
-                meta["strategy_id"] = entry.strategy_id
-            records.append(meta)
+            provenance = meta.get("_provenance")
+            if isinstance(provenance, dict):
+                data = dict(provenance)
+                art_val = getattr(entry.artifact_state, "value", str(entry.artifact_state))
+                if "status" in data:
+                    if art_val in ("approved", "retired", "candidate"):
+                        data["status"] = art_val
+                    else:
+                        data["status"] = data["status"] if data["status"] in ("active", "draft") else art_val
+                if "artifact_state" in data:
+                    data["artifact_state"] = art_val
+                if "lifecycle_state" in data:
+                    data["lifecycle_state"] = art_val
+                if "state" in data:
+                    data["state"] = art_val
+                if entry.owner_tenant:
+                    data["tenant_id"] = entry.owner_tenant
+                records.append(data)
+            else:
+                if "strategy_id" not in meta:
+                    meta["strategy_id"] = entry.strategy_id
+                records.append(meta)
         if tenant_id:
             records = [
                 r for r in records
@@ -756,7 +843,10 @@ class IncidentCanonicalAdapter:
         created_at_val = str(record.get("created_at") or record.get("createdAt") or record.get("updated_at") or utc_now_iso())
         resolved_at_val = str(record.get("resolved_at") or created_at_val) if status_val in ("resolved", "closed") else None
 
-        evidence_summary_val = json.dumps({"__pantheon_record__": dict(record)})
+        evidence_summary_val = json.dumps({
+            "__pantheon_record__": dict(record),
+            "provenance": dict(record),
+        })
 
         return IncidentCase(
             incident_id=rec_id,
@@ -782,48 +872,90 @@ class IncidentCanonicalAdapter:
 
     def _case_to_record(self, case: Any) -> Dict[str, Any]:
         ev = getattr(case, "evidence_summary", None)
-        if ev and isinstance(ev, str) and ev.startswith('{"__pantheon_record__":'):
+        provenance: Optional[Dict[str, Any]] = None
+        if ev and isinstance(ev, str):
             try:
                 unpacked = json.loads(ev)
-                if "__pantheon_record__" in unpacked and isinstance(unpacked["__pantheon_record__"], dict):
-                    return dict(unpacked["__pantheon_record__"])
+                if isinstance(unpacked, dict):
+                    if "provenance" in unpacked and isinstance(unpacked["provenance"], dict):
+                        provenance = dict(unpacked["provenance"])
+                    elif "__pantheon_record__" in unpacked and isinstance(unpacked["__pantheon_record__"], dict):
+                        provenance = dict(unpacked["__pantheon_record__"])
             except Exception:
                 pass
-        data = case.to_dict()
+
+        if provenance:
+            data = dict(provenance)
+            # Project current authoritative IncidentCase fields
+            if case.status in ("resolved", "closed", "investigating"):
+                data["status"] = case.status
+            else:
+                data["status"] = provenance.get("status") if provenance.get("status") in ("active", "open") else case.status
+            if "severity" in data and case.severity:
+                data["severity"] = case.severity
+            if case.title:
+                if "title" in data:
+                    data["title"] = case.title
+                if "name" in data:
+                    data["name"] = case.title
+            if case.resolved_at is not None:
+                data["resolved_at"] = case.resolved_at
+            elif "resolved_at" in data and case.status not in ("resolved", "closed"):
+                data.pop("resolved_at", None)
+            return data
+
+        from dataclasses import asdict
+        data = case.to_dict() if hasattr(case, "to_dict") else asdict(case)
         data["id"] = case.incident_id
-        if "incident_id" not in data:
-            data["incident_id"] = case.incident_id
+        data["incident_id"] = case.incident_id
+        data["title"] = case.title
+        data["status"] = case.status
+        data["severity"] = case.severity
+        data["created_at"] = case.created_at
+        if case.resolved_at is not None:
+            data["resolved_at"] = case.resolved_at
         return data
 
     def insert(self, record: Dict[str, Any]) -> bool:
         rec_id = str(record.get("incident_id") or record.get("id") or "").strip()
         if not rec_id:
             return False
-        with self._incident_store._write_guard():
-            if self._incident_store.get_incident(rec_id) is not None:
-                return False
-            case = self._record_to_case(record)
-            self._incident_store._incidents[rec_id] = case
-            self._incident_store._save(
-                aggregate_type="incident",
-                record_id=rec_id,
-                expected_snapshot=None,
-            )
+        from services.incident.incident import validate_incident_case, IncidentError
+        case = self._record_to_case(record)
+        errors = validate_incident_case(case)
+        if errors:
+            return False
+        try:
+            self._incident_store.create_incident(case)
             return True
+        except IncidentError:
+            return False
 
     def save(self, record: Dict[str, Any]) -> bool:
         rec_id = str(record.get("incident_id") or record.get("id") or "").strip()
         if not rec_id:
             return False
+        from services.incident.incident import validate_incident_case, IncidentError
         case = self._record_to_case(record)
-        with self._incident_store._write_guard():
-            self._incident_store._incidents[rec_id] = case
-            self._incident_store._save(
-                aggregate_type="incident",
-                record_id=rec_id,
-                expected_snapshot=None,
-            )
-            return True
+        errors = validate_incident_case(case)
+        if errors:
+            return False
+        existing = self._incident_store.get_incident(rec_id)
+        if existing is None:
+            try:
+                self._incident_store.create_incident(case)
+                return True
+            except IncidentError:
+                return False
+        else:
+            with self._incident_store._write_guard():
+                self._incident_store._incidents[rec_id] = case
+                self._incident_store._save(
+                    aggregate_type="incident",
+                    record_id=rec_id,
+                    expected_snapshot=existing.to_dict(),
+                )
+                return True
 
     def get(self, key: str) -> Optional[Dict[str, Any]]:
         case = self._incident_store.get_incident(key)
@@ -951,96 +1083,313 @@ class JobCanonicalAdapter:
         assert "OK:" in res.stdout.strip()
 
 
-class RankingCanonicalAdapter:
-    """Canonical owner adapter for Ranking domain, backed by canonical ranking disk store."""
+class FileBackedPostgresJsonOwnerStore:
+    """File-backed storage implementing PostgresJsonOwnerStore's interface for filesystem durability."""
 
     def __init__(self, path: Path | str) -> None:
-        self._path = Path(path)
+        self.path = Path(path)
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        self._lock_file = self.path.with_suffix(".lock")
 
-    def _read_disk(self) -> Dict[str, List[Dict[str, Any]]]:
-        if not self._path.exists():
-            return {"snapshots": [], "rankings": []}
+    @contextmanager
+    def _lock(self):
+        self._lock_file.parent.mkdir(parents=True, exist_ok=True)
+        with open(self._lock_file, "w") as lf:
+            if fcntl is not None:
+                fcntl.flock(lf.fileno(), fcntl.LOCK_EX)
+            try:
+                yield
+            finally:
+                if fcntl is not None:
+                    fcntl.flock(lf.fileno(), fcntl.LOCK_UN)
+
+    def _read_data(self) -> Dict[str, Any]:
+        if not self.path.exists():
+            return {}
         try:
-            with open(self._path, "r", encoding="utf-8") as f:
+            with open(self.path, "r", encoding="utf-8") as f:
                 data = json.load(f)
-                if isinstance(data, dict):
-                    return {
-                        "snapshots": list(data.get("snapshots") or []),
-                        "rankings": list(data.get("rankings") or []),
-                    }
+                return data if isinstance(data, dict) else {}
         except Exception:
-            pass
-        return {"snapshots": [], "rankings": []}
+            return {}
 
-    def _write_disk(self, data: Dict[str, List[Dict[str, Any]]]) -> None:
-        self._path.parent.mkdir(parents=True, exist_ok=True)
-        tmp = self._path.with_name(f".{self._path.name}.tmp")
+    def _write_data(self, data: Dict[str, Any]) -> None:
+        tmp = self.path.with_name(f".{self.path.name}.tmp")
         with open(tmp, "w", encoding="utf-8") as f:
             json.dump(data, f, indent=2, default=str)
             f.flush()
             os.fsync(f.fileno())
-        os.replace(tmp, self._path)
+        os.replace(tmp, self.path)
+
+    def put(self, record_id: str, payload: Dict[str, Any]) -> None:
+        if not record_id:
+            raise ValueError("record_id is required")
+        with self._lock():
+            data = self._read_data()
+            data[record_id] = copy.deepcopy(payload)
+            self._write_data(data)
+
+    def compare_and_set(
+        self,
+        record_id: str,
+        expected_payload: Optional[Dict[str, Any]],
+        payload: Dict[str, Any],
+        *,
+        conn: Optional[Any] = None,
+    ) -> tuple[bool, Optional[Dict[str, Any]]]:
+        if not record_id:
+            raise ValueError("record_id is required")
+        with self._lock():
+            data = self._read_data()
+            if expected_payload is None:
+                if record_id in data:
+                    return False, copy.deepcopy(data[record_id])
+                data[record_id] = copy.deepcopy(payload)
+                self._write_data(data)
+                return True, copy.deepcopy(payload)
+            else:
+                current = data.get(record_id)
+                if current != expected_payload:
+                    return False, copy.deepcopy(current)
+                data[record_id] = copy.deepcopy(payload)
+                self._write_data(data)
+                return True, copy.deepcopy(payload)
+
+    def get(self, record_id: str) -> Optional[Dict[str, Any]]:
+        with self._lock():
+            data = self._read_data()
+            val = data.get(record_id)
+            return copy.deepcopy(val) if val is not None else None
+
+    def list_all(self) -> List[Dict[str, Any]]:
+        with self._lock():
+            data = self._read_data()
+            return [copy.deepcopy(v) for v in data.values()]
+
+    def delete_if_matches(self, record_id: str, expected_payload: Dict[str, Any]) -> bool:
+        with self._lock():
+            data = self._read_data()
+            current = data.get(record_id)
+            if current != expected_payload:
+                return False
+            data.pop(record_id, None)
+            self._write_data(data)
+            return True
+
+
+def create_file_backed_ranking_store(path: Path | str) -> Any:
+    """Create genuine RankingWriteStore backed by FileBackedPostgresJsonOwnerStore."""
+    from services.rankings.store import RankingWriteStore
+    backend = FileBackedPostgresJsonOwnerStore(path)
+    store = RankingWriteStore.__new__(RankingWriteStore)
+    store._records_table = backend
+    store._thread_lock = threading.RLock()
+    return store
+
+
+class RankingCanonicalAdapter:
+    """Canonical owner adapter for Ranking domain, backed by genuine RankingWriteStore."""
+
+    def __init__(self, store_or_path: Any) -> None:
+        from services.rankings.store import RankingWriteStore
+        if isinstance(store_or_path, RankingWriteStore):
+            self._store = store_or_path
+            self._backend = getattr(store_or_path, "_records_table", None)
+            self._path = getattr(self._backend, "path", None)
+        else:
+            self._path = Path(store_or_path)
+            self._backend = FileBackedPostgresJsonOwnerStore(self._path)
+            self._store = create_file_backed_ranking_store(self._path)
 
     def _is_snapshot(self, record: Dict[str, Any]) -> bool:
-        return bool(
-            record.get("snapshot_id")
-            or record.get("ranking_snapshot_id")
-            or record.get("record_type") == "ranking_snapshot"
-            or "period" in record
-            or "formula_version" in record
+        if record.get("record_type") == "ranking_snapshot":
+            return True
+        if "ranking_snapshot_id" in record and ("period" in record or "formula_version" in record or "items" in record):
+            return True
+        return False
+
+    def _is_evaluation(self, record: Dict[str, Any]) -> bool:
+        if record.get("record_type") == "allocation_evaluation":
+            return True
+        if "allocation_evaluation_id" in record and "allocation_policy_version" in record:
+            return True
+        return False
+
+    def _record_to_ranking(self, record: Dict[str, Any]) -> Any:
+        from services.rankings.store import RankingRecord
+        rec_id = str(record.get("ranking_id") or record.get("snapshot_id") or record.get("id") or "").strip()
+        title = str(record.get("title") or record.get("name") or (f"Ranking {rec_id}" if rec_id else "")).strip()
+        criteria = str(record.get("criteria") or record.get("formula") or "default").strip()
+        status = str(record.get("status") or "active").strip()
+        created_at = str(record.get("created_at") or utc_now_iso())
+        updated_at = str(record.get("updated_at") or created_at)
+
+        standard_keys = {"ranking_id", "title", "criteria", "entries", "status", "created_at", "updated_at"}
+        entries = []
+        if isinstance(record.get("entries"), list):
+            entries = [dict(e) for e in record["entries"] if isinstance(e, dict)]
+        entries.append({"_provenance": dict(record)})
+
+        return RankingRecord(
+            ranking_id=rec_id,
+            title=title,
+            criteria=criteria,
+            entries=entries,
+            status=status,
+            created_at=created_at,
+            updated_at=updated_at,
         )
 
-    def _extract_id(self, record: Dict[str, Any]) -> str:
-        return str(
-            record.get("snapshot_id")
-            or record.get("ranking_snapshot_id")
-            or record.get("ranking_id")
-            or record.get("id")
-            or ""
-        ).strip()
+    def _ranking_to_record(self, ranking: Any) -> Dict[str, Any]:
+        data = ranking.to_dict()
+        data["id"] = ranking.ranking_id
+        provenance = None
+        clean_entries = []
+        for item in ranking.entries:
+            if isinstance(item, dict) and "_provenance" in item and isinstance(item["_provenance"], dict):
+                provenance = item["_provenance"]
+            elif isinstance(item, dict) and "_extra_fields" in item and isinstance(item["_extra_fields"], dict):
+                provenance = item["_extra_fields"]
+            else:
+                clean_entries.append(item)
+        if provenance:
+            res = dict(provenance)
+            res["status"] = ranking.status
+            return res
+        data["entries"] = clean_entries
+        return data
+
+    def _record_to_snapshot(self, record: Dict[str, Any]) -> Any:
+        from services.rankings.store import RankingSnapshotRecord
+        import hashlib
+        rec_id = str(record.get("ranking_snapshot_id") or record.get("snapshot_id") or record.get("id") or "").strip()
+        surface = str(record.get("surface") or "default")
+        period = str(record.get("period") or "default")
+        formula_version = str(record.get("formula_version") or "v1")
+        items = list(record.get("items") or [])
+        evidence_digests = dict(record.get("evidence_assertion_digests") or {})
+        content_digest = str(record.get("content_digest") or "")
+        if not content_digest:
+            content_digest = hashlib.sha256(json.dumps(items, sort_keys=True, default=str).encode()).hexdigest()
+        created_at = str(record.get("created_at") or utc_now_iso())
+        return RankingSnapshotRecord(
+            ranking_snapshot_id=rec_id,
+            surface=surface,
+            period=period,
+            formula_version=formula_version,
+            content_digest=content_digest,
+            items=items,
+            evidence_assertion_digests=evidence_digests,
+            created_at=created_at,
+        )
+
+    def _record_to_evaluation(self, record: Dict[str, Any]) -> Any:
+        from services.rankings.store import AllocationEvaluationRecord
+        import hashlib
+        rec_id = str(record.get("allocation_evaluation_id") or record.get("id") or "").strip()
+        ranking_snapshot_id = str(record.get("ranking_snapshot_id") or "")
+        allocation_policy_version = str(record.get("allocation_policy_version") or "v1")
+        lines = list(record.get("lines") or [])
+        content_digest = str(record.get("content_digest") or "")
+        if not content_digest:
+            content_digest = hashlib.sha256(json.dumps(lines, sort_keys=True, default=str).encode()).hexdigest()
+        created_at = str(record.get("created_at") or utc_now_iso())
+        applied = bool(record.get("applied", False))
+        return AllocationEvaluationRecord(
+            allocation_evaluation_id=rec_id,
+            ranking_snapshot_id=ranking_snapshot_id,
+            allocation_policy_version=allocation_policy_version,
+            content_digest=content_digest,
+            lines=lines,
+            created_at=created_at,
+            applied=applied,
+            authority_mode=record.get("authority_mode"),
+            promotion_review_id=record.get("promotion_review_id"),
+        )
 
     def insert(self, record: Dict[str, Any]) -> bool:
-        rec_id = self._extract_id(record)
-        if not rec_id:
+        from services.rankings.store import RankingWriteOwnerError, RankingConflictError
+        try:
+            if self._is_snapshot(record):
+                snap = self._record_to_snapshot(record)
+                self._store.create_ranking_snapshot(snap)
+                return True
+            elif self._is_evaluation(record):
+                eval_rec = self._record_to_evaluation(record)
+                self._store.create_allocation_evaluation(eval_rec)
+                return True
+            else:
+                ranking = self._record_to_ranking(record)
+                self._store.create_ranking(ranking)
+                return True
+        except (RankingWriteOwnerError, RankingConflictError, Exception):
             return False
-        data = self._read_disk()
-        for item in data["snapshots"] + data["rankings"]:
-            if self._extract_id(item) == rec_id:
-                return False
-        rec = dict(record)
-        if self._is_snapshot(rec):
-            data["snapshots"].append(rec)
-        else:
-            data["rankings"].append(rec)
-        self._write_disk(data)
-        return True
 
     def save(self, record: Dict[str, Any]) -> bool:
-        rec_id = self._extract_id(record)
-        if not rec_id:
-            return False
-        data = self._read_disk()
-        rec = dict(record)
-        target_list = data["snapshots"] if self._is_snapshot(rec) else data["rankings"]
-        for idx, item in enumerate(target_list):
-            if self._extract_id(item) == rec_id:
-                target_list[idx] = rec
-                self._write_disk(data)
+        from services.rankings.store import RankingWriteOwnerError, RankingConflictError
+        try:
+            if self._is_snapshot(record):
+                snap = self._record_to_snapshot(record)
+                self._store.create_ranking_snapshot(snap)
                 return True
-        target_list.append(rec)
-        self._write_disk(data)
-        return True
+            elif self._is_evaluation(record):
+                eval_rec = self._record_to_evaluation(record)
+                self._store.create_allocation_evaluation(eval_rec)
+                return True
+            else:
+                ranking = self._record_to_ranking(record)
+                self._store.put_ranking(ranking)
+                return True
+        except (RankingWriteOwnerError, RankingConflictError, Exception):
+            return False
 
     def get(self, key: str) -> Optional[Dict[str, Any]]:
-        data = self._read_disk()
-        for item in data["snapshots"] + data["rankings"]:
-            if self._extract_id(item) == key:
-                return dict(item)
+        try:
+            ranking = self._store.get_ranking(key)
+            if ranking is not None:
+                return self._ranking_to_record(ranking)
+        except Exception:
+            pass
+        try:
+            snap = self._store.get_ranking_snapshot(key)
+            if snap is not None:
+                d = snap.to_canonical_dict()
+                d["id"] = snap.ranking_snapshot_id
+                d["snapshot_id"] = snap.ranking_snapshot_id
+                return d
+        except Exception:
+            pass
+        try:
+            eval_rec = self._store.get_allocation_evaluation(key)
+            if eval_rec is not None:
+                d = eval_rec.to_canonical_dict()
+                d["id"] = eval_rec.allocation_evaluation_id
+                return d
+        except Exception:
+            pass
         return None
 
     def list_records(self, tenant_id: Optional[str] = None) -> List[Dict[str, Any]]:
-        data = self._read_disk()
-        records = [dict(item) for item in (data["snapshots"] + data["rankings"])]
+        records: List[Dict[str, Any]] = []
+        try:
+            for ranking in self._store.list_rankings():
+                records.append(self._ranking_to_record(ranking))
+        except Exception:
+            pass
+        if self._backend is not None:
+            try:
+                for payload in self._backend.list_all():
+                    if payload.get("record_type") == "ranking_snapshot":
+                        d = dict(payload)
+                        d["id"] = d.get("ranking_snapshot_id", "")
+                        d["snapshot_id"] = d.get("ranking_snapshot_id", "")
+                        records.append(d)
+                    elif payload.get("record_type") == "allocation_evaluation":
+                        d = dict(payload)
+                        d["id"] = d.get("allocation_evaluation_id", "")
+                        records.append(d)
+            except Exception:
+                pass
         if tenant_id:
             records = [
                 r for r in records
@@ -1051,16 +1400,18 @@ class RankingCanonicalAdapter:
         return records
 
     def restart_process(self) -> None:
+        """Simulate process restart with genuine subprocess verification against RankingWriteStore."""
+        if self._path is None:
+            return
         script = (
-            "import json, sys\n"
+            "import sys\n"
             "from pathlib import Path\n"
+            "from services.control_plane.bff.migrations.overlay_retirement import create_file_backed_ranking_store\n"
             "p = Path(sys.argv[1])\n"
             "if not p.exists(): sys.exit(1)\n"
-            "data = json.loads(p.read_text())\n"
-            "if not isinstance(data, dict) or 'snapshots' not in data:\n"
-            "    sys.exit(1)\n"
-            "count = len(data.get('snapshots', [])) + len(data.get('rankings', []))\n"
-            "print(f'OK:{count}')\n"
+            "store = create_file_backed_ranking_store(p)\n"
+            "rankings = store.list_rankings()\n"
+            "print(f'OK:{len(rankings)}')\n"
         )
         res = subprocess.run([sys.executable, "-c", script, str(self._path)], capture_output=True, text=True, check=True)
         assert "OK:" in res.stdout.strip()
@@ -1120,41 +1471,33 @@ class _ReplicaInstance:
             return build_canonical_owner_adapter(agg_val, self._storage)
         return None
 
-    def write_canonical(self, key: str, value: Dict[str, Any]) -> None:
-        # Write through genuine domain owner adapter if storage is path and aggregate is known
+    def write_canonical(self, key: str, value: Dict[str, Any]) -> bool:
+        # Write strictly through genuine domain owner adapter without secondary file fallbacks
         if isinstance(self._storage, (str, Path)):
             adapter = self._resolve_adapter(value)
             if adapter is not None:
                 record = copy.deepcopy(value)
                 if "id" not in record:
                     record["id"] = key
-                adapter.save(record)
-            # Also persist raw file for direct storage compatibility
-            storage_path = Path(self._storage)
-            storage_path.mkdir(parents=True, exist_ok=True)
-            target = storage_path / f"{key}.json"
-            tmp = storage_path / f"{key}.json.tmp"
-            with open(tmp, "w", encoding="utf-8") as f:
-                json.dump(value, f, default=str)
-            os.replace(tmp, target)
+                return bool(adapter.save(record))
+            return False
+        elif hasattr(self._storage, "save"):
+            return bool(self._storage.save(value))
         elif hasattr(self._storage, "insert"):
-            self._storage.insert(value)
+            return bool(self._storage.insert(value))
         else:
             self._storage[key] = copy.deepcopy(value)
+            return True
 
     def read_canonical(self, key: str) -> Optional[Dict[str, Any]]:
-        # Strictly reads from durable storage via domain adapters first
+        # Strictly reads from durable storage via domain adapters
         if isinstance(self._storage, (str, Path)):
             for agg in AggregateKind:
                 adapter = build_canonical_owner_adapter(agg, self._storage)
                 val = adapter.get(key)
                 if val is not None:
                     return copy.deepcopy(val)
-            target = Path(self._storage) / f"{key}.json"
-            if not target.exists():
-                return None
-            with open(target, "r", encoding="utf-8") as f:
-                return json.load(f)
+            return None
         elif hasattr(self._storage, "get"):
             val = self._storage.get(key)
             return copy.deepcopy(val) if val is not None else None
@@ -1177,11 +1520,6 @@ class _ReplicaInstance:
                 "    if val is not None:\n"
                 "        print(json.dumps(val, default=str))\n"
                 "        sys.exit(0)\n"
-                "target = Path(storage_dir) / f'{key}.json'\n"
-                "if target.exists():\n"
-                "    with open(target, 'r', encoding='utf-8') as f:\n"
-                "        print(f.read())\n"
-                "    sys.exit(0)\n"
                 "sys.exit(2)\n"
             )
             res = subprocess.run(

@@ -116,15 +116,19 @@
     "review_reject_p1_incident_canonical_adapter_uses_canonical_incident_store": true,
     "review_reject_p1_research_knowledge_source_filters_strategy_spec_and_overrides_shadow": true,
     "review_reject_p1_strategy_write_owner_forbids_unreviewed_approval": true,
-    "review_reject_p1_all_four_review_probe_defects_verified_fixed": true
+    "review_reject_p1_all_four_review_probe_defects_verified_fixed": true,
+    "review_reject_p2_incident_adapter_projects_authoritative_incident_case_status_and_resolution": true,
+    "review_reject_p2_strategy_write_governance_rejects_unreviewed_approval": true,
+    "review_reject_p2_ranking_canonical_adapter_backed_by_ranking_write_store": true,
+    "review_reject_p2_replica_instance_removed_secondary_file_fallback": true
   },
   "verification": {
     "commands": [
       {
         "command": ".venv-pantheon/bin/python3 -m pytest services/control-plane/bff/tests/test_overlay_retirement.py services/control-plane/bff/migrations/test_overlay_retirement.py services/control-plane/bff/tests/test_strategy_ranking_router.py services/control-plane/bff/tests/test_incident_router.py services/control-plane/bff/strategies/test_router_isolation.py services/control-plane/bff/personas/test_router_isolation.py -v -W ignore",
-        "result": "71 passed in 44.31s",
-        "executed": 71,
-        "collected": 71
+        "result": "74 passed in 57.00s",
+        "executed": 74,
+        "collected": 74
       },
       {
         "command": ".venv-pantheon/bin/python3 -m pytest services/control-plane/bff/tests/test_strategy_ranking_router.py -v -W ignore",
@@ -134,9 +138,9 @@
       },
       {
         "command": ".venv-pantheon/bin/python3 -m pytest services/control-plane/bff/migrations/test_overlay_retirement.py -v -W ignore",
-        "result": "25 passed in 15.19s",
-        "executed": 25,
-        "collected": 25
+        "result": "28 passed in 17.58s",
+        "executed": 28,
+        "collected": 28
       },
       {
         "command": "python3 scripts/dev/provision_python_distribution.py --check-only",
@@ -157,7 +161,7 @@
         "collected": 142
       }
     ],
-    "total_manifest_tests_passed": 71,
+    "total_manifest_tests_passed": 74,
     "total_regression_tests_passed": 142
   },
   "rollback_strategy": {
