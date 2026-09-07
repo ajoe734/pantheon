@@ -207,6 +207,35 @@ def test_jobs_router_reads_strictly_canonical_read_store(monkeypatch: pytest.Mon
         bff_main.read_store = original_store
 
 
+def test_routers_reject_retired_overlay_parameters() -> None:
+    """Routers must fail immediately with AttributeError if retired overlay arguments are passed."""
+    from services.control_plane.bff.strategies.router import create_strategies_router
+    from services.control_plane.bff.incidents.router import create_incident_router
+    from services.control_plane.bff.jobs.router import create_jobs_router
+
+    with pytest.raises(AttributeError, match="strategy_overlay is retired"):
+        create_strategies_router(strategy_overlay={"strat-1": {}})
+
+    with pytest.raises(AttributeError, match="incident_overlay is retired"):
+        create_incident_router(incident_overlay={"inc-1": {}})
+
+    with pytest.raises(AttributeError, match="get_job_overlay is retired"):
+        create_jobs_router(
+            extract_identity=lambda *a: None,
+            require_read_role=lambda *a: None,
+            bff_error=lambda *a, **k: Exception(),
+            utc_now=lambda: "",
+            page_slice=lambda *a: None,
+            read_surface_meta=lambda *a: {},
+            dataset_surface_status=lambda *a: {},
+            raise_if_read_surface_unavailable=lambda *a: None,
+            get_job_overlay=lambda: {},
+            reject_body_idempotency_key=lambda *a: None,
+            resolve_final_idempotency_key=lambda *a: "",
+            submit_job_action=lambda *a: {},
+        )
+
+
 # ---------------------------------------------------------------------------
 # 3. Multi-Replica Readback and Restart Durability (SD §5.1, §5.2)
 # ---------------------------------------------------------------------------

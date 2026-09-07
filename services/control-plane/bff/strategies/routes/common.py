@@ -236,8 +236,6 @@ class StrategyRouteContext:
             "labelKey": f"strategy.{strategy_id}" if strategy_id else None,
             "lifecycleStatus": str(lifecycle_raw or ""),
         }
-        if overlay:
-            for k, v in overlay.items():
-                if v is not None:
-                    dto[k] = v
+        if overlay is not None:
+            raise AttributeError("strategy overlay is retired; process-local state overlays are deleted")
         return dto

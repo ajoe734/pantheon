@@ -22308,7 +22308,6 @@ app.include_router(
         read_surface_meta=_read_surface_meta,
         dataset_surface_status=_dataset_surface_status,
         raise_if_read_surface_unavailable=_raise_if_read_surface_unavailable,
-        get_job_overlay=lambda: {},
         reject_body_idempotency_key=_reject_body_idempotency_key,
         resolve_final_idempotency_key=_resolve_final_idempotency_key,
         submit_job_action=lambda job_id, action_id, resolved_key, identity, payload: _evol_exp_bff_action_command(
@@ -22580,7 +22579,6 @@ app.include_router(
         normalize_risk_level=_normalize_risk_level,
         strategy_persona_idempotency_check=_strategy_persona_idempotency_check,
         strategy_persona_action_command=_strategy_persona_action_command,
-        strategy_overlay=None,
         strategy_persona_idempotency_store=_STRATEGY_PERSONA_BFF_IDEMPOTENCY,
         strategy_seed_replication_idempotency_store=_STRATEGY_SEED_REPLICATION_BFF_IDEMPOTENCY,
         strategy_seed_review_idempotency_store=_STRATEGY_SEED_REVIEW_BFF_IDEMPOTENCY,
@@ -22625,7 +22623,6 @@ app.include_router(
         incident_events=_incident_events,
         incident_subscribers=_incident_subscribers,
         acknowledged_alerts=_ACKNOWLEDGED_ALERTS,
-        incident_overlay=None,
         idempotency_ledger=_GOV_BFF_IDEMPOTENCY,
     )
 )

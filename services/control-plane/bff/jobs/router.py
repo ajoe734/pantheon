@@ -39,6 +39,8 @@ def create_jobs_router(
     submit_job_action: SubmitJobAction,
 ) -> APIRouter:
     """Build the canonical Jobs router. Mount with ``app.include_router(...)``."""
+    if get_job_overlay is not None:
+        raise AttributeError("get_job_overlay is retired; process-local state overlays are deleted")
 
     router = APIRouter()
 

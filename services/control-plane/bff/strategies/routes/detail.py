@@ -54,7 +54,7 @@ def build_detail_router(ctx: StrategyRouteContext) -> APIRouter:
                 detail = detail_getter(strategy_id, version_selector="current")
             except Exception:
                 pass
-        dto = ctx.project_strategy_dto(summary, detail=detail, overlay=None)
+        dto = ctx.project_strategy_dto(summary, detail=detail)
         return {
             "data": dto,
             "meta": ctx.read_surface_meta(
@@ -134,20 +134,6 @@ def build_detail_router(ctx: StrategyRouteContext) -> APIRouter:
             elif hasattr(read_store, "create_strategy_spec"):
                 read_store.create_strategy_spec(base)
                 written = True
-            elif hasattr(read_store, "_data") and isinstance(read_store._data, dict):
-                strats = read_store._data.setdefault("strategies", {})
-                if isinstance(strats, dict):
-                    strats[strategy_id] = base
-                    written = True
-                elif isinstance(strats, list):
-                    for idx, s in enumerate(strats):
-                        if (s.get("strategy_id") or s.get("id")) == strategy_id:
-                            strats[idx] = base
-                            written = True
-                            break
-                    if not written:
-                        strats.append(base)
-                        written = True
         except Exception as exc:
             raise ctx.bff_error(
                 503,

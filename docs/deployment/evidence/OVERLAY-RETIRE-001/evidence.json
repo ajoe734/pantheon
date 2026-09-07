@@ -5,7 +5,7 @@
   "depends_on": "DOMAIN-WRITERS-001 (done), JOURNAL-OWNER-001 (done)",
   "normative_plan": "SD §5.1, §12.3; pkt-pantheon-structural-closure-functional-v2-20260903",
   "owner": "Antigravity",
-  "reviewer": "Claude",
+  "reviewer": "Codex",
   "mandatory_deletions": [
     "_PERSONA_BFF_OVERLAY",
     "_STRATEGY_BFF_OVERLAY",
@@ -43,10 +43,14 @@
   "implementation": {
     "files_modified": [
       "services/control-plane/bff/main.py",
+      "services/control-plane/bff/incidents/router.py",
+      "services/control-plane/bff/jobs/router.py",
+      "services/control-plane/bff/personas/service.py",
       "services/control-plane/bff/strategies/router.py",
       "services/control-plane/bff/strategies/routes/collection.py",
       "services/control-plane/bff/strategies/routes/common.py",
       "services/control-plane/bff/strategies/routes/detail.py",
+      "services/control-plane/bff/tests/test_overlay_retirement.py",
       "services/control-plane/bff/tests/test_strategy_ranking_router.py"
     ],
     "files_created": [
@@ -79,36 +83,42 @@
     "commands": [
       {
         "command": ".venv-pantheon/bin/pytest services/control-plane/bff/tests/test_overlay_retirement.py",
-        "result": "21 passed in 14.99s",
-        "executed": 21,
-        "collected": 21
+        "result": "22 passed in 8.35s",
+        "executed": 22,
+        "collected": 22
       },
       {
         "command": ".venv-pantheon/bin/pytest services/control-plane/bff/migrations/test_overlay_retirement.py",
-        "result": "14 passed in 10.32s",
-        "executed": 14,
-        "collected": 14
-      },
-      {
-        "command": ".venv-pantheon/bin/pytest services/control-plane/bff/tests/test_strategy_ranking_router.py",
-        "result": "6 passed in 11.27s",
-        "executed": 6,
-        "collected": 6
-      },
-      {
-        "command": ".venv-pantheon/bin/pytest services/control-plane/bff/test_bff_strategy_persona_contract.py",
-        "result": "19 passed in 17.20s",
+        "result": "19 passed in 6.47s",
         "executed": 19,
         "collected": 19
       },
       {
-        "command": ".venv-pantheon/bin/pytest services/control-plane/bff/tests/test_persona_router.py",
-        "result": "41 passed in 30.49s",
-        "executed": 41,
-        "collected": 41
+        "command": ".venv-pantheon/bin/pytest services/control-plane/bff/tests/test_strategy_ranking_router.py",
+        "result": "9 passed in 7.79s",
+        "executed": 9,
+        "collected": 9
+      },
+      {
+        "command": ".venv-pantheon/bin/pytest services/control-plane/bff/tests/test_incident_router.py",
+        "result": "11 passed in 9.50s",
+        "executed": 11,
+        "collected": 11
+      },
+      {
+        "command": ".venv-pantheon/bin/pytest services/control-plane/bff/strategies/test_router_isolation.py",
+        "result": "2 passed in 0.65s",
+        "executed": 2,
+        "collected": 2
+      },
+      {
+        "command": ".venv-pantheon/bin/pytest services/control-plane/bff/personas/test_router_isolation.py",
+        "result": "1 passed in 0.58s",
+        "executed": 1,
+        "collected": 1
       }
     ],
-    "total_tests_passed": 101
+    "total_tests_passed": 64
   },
   "rollback_strategy": {
     "rule": "Deploy the exact prior compatible release; never re-enable dual writes.",
@@ -116,7 +126,7 @@
     "fallback_acknowledgement_permitted": false
   },
   "review": {
-    "reviewer": "Claude",
+    "reviewer": "Codex",
     "decision": "pending independent exact-head review"
   }
 }

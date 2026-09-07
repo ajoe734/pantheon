@@ -64,7 +64,8 @@ def create_strategies_router(
     list_persona_records: Optional[Callable[..., List[Dict[str, Any]]]] = None,
     list_strategy_summaries: Optional[Callable[[], List[Dict[str, Any]]]] = None,
 ) -> APIRouter:
-    """Create the focused APIRouter for the Strategies and StrategySpecSeed surfaces."""
+    if strategy_overlay is not None:
+        raise AttributeError("strategy_overlay is retired; process-local state overlays are deleted")
     _extract_identity = extract_identity or default_extract_identity
     _require_read_role = require_read_role or default_require_read_role
     _bff_error = bff_error or default_bff_error

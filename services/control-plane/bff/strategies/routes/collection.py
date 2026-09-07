@@ -40,7 +40,7 @@ def build_collection_router(ctx: StrategyRouteContext) -> APIRouter:
         for summary in summaries:
             strategy_id = str(summary.get("strategy_id") or "")
             detail = read_store.get_strategy_spec_detail(strategy_id, version_selector="current")
-            items.append(ctx.project_strategy_dto(summary, detail=detail, overlay=None))
+            items.append(ctx.project_strategy_dto(summary, detail=detail))
         if state:
             items = [s for s in items if s.get("state") == state]
         total = len(items)
@@ -115,14 +115,6 @@ def build_collection_router(ctx: StrategyRouteContext) -> APIRouter:
             elif hasattr(rs, "create_strategy_spec"):
                 rs.create_strategy_spec(record)
                 written = True
-            elif hasattr(rs, "_data") and isinstance(rs._data, dict):
-                strats = rs._data.setdefault("strategies", {})
-                if isinstance(strats, dict):
-                    strats[strategy_id] = record
-                    written = True
-                elif isinstance(strats, list):
-                    strats.append(record)
-                    written = True
         except Exception as exc:
             raise ctx.bff_error(
                 503,

@@ -19,6 +19,7 @@ from contextlib import contextmanager
 from pathlib import Path
 
 from fastapi.testclient import TestClient
+import pytest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
@@ -91,9 +92,9 @@ class _StrategyRankingTestReadPorts(ReadSurfacePorts):
 
 
 @contextmanager
-def _client():
+def _client(store: Optional[Any] = None):
     original_store = bff_main.read_store
-    bff_main.read_store = _StrategyRankingTestReadPorts(create_in_memory_read_surface_ports())
+    bff_main.read_store = store if store is not None else _StrategyRankingTestReadPorts(create_in_memory_read_surface_ports())
     bff_main._STRATEGY_PERSONA_BFF_IDEMPOTENCY.clear()
     try:
         yield TestClient(bff_main.app)
@@ -274,3 +275,69 @@ def test_bff_strategy_seed_review_and_merge_round_trip() -> None:
         )
         assert card_resp.status_code == 200
         assert card_resp.json()["data"]["status"] == "accepted"
+
+
+def test_bff_strategy_write_fails_closed_without_canonical_writer() -> None:
+    """Strategy write must fail closed with 503 and never fall back to mutating read_store._data."""
+    class OnlyDataReadStore:
+        def __init__(self) -> None:
+            self._data: dict = {"strategies": {}}
+
+        def list_strategy_specs(self) -> list:
+            return []
+
+    only_data_store = OnlyDataReadStore()
+    with _client(store=only_data_store) as client:
+        resp = client.post(
+            "/bff/strategies",
+            headers={**OPERATOR_HEADERS, "Idempotency-Key": "strat-fail-closed-test-1"},
+            json={"name": "Fail Closed Strategy", "risk": "medium"},
+        )
+        assert resp.status_code == 503, resp.text
+        # Crucially: _data must NOT have been written to
+        assert len(only_data_store._data["strategies"]) == 0
+
+
+def test_bff_create_strategies_router_rejects_strategy_overlay() -> None:
+    from services.control_plane.bff.strategies.router import create_strategies_router
+
+    with pytest.raises(AttributeError, match="strategy_overlay is retired"):
+        create_strategies_router(strategy_overlay={"s-1": {"name": "illegal"}})
+
+
+def test_project_strategy_dto_rejects_overlay() -> None:
+    from services.control_plane.bff.strategies.routes.common import StrategyRouteContext
+
+    ctx = StrategyRouteContext(
+        read_surface=None,
+        get_read_store=lambda: None,
+        extract_identity=lambda *a: {},
+        require_read_role=lambda *a: None,
+        require_operator_role=lambda *a: None,
+        bff_error=lambda *a, **k: Exception(),
+        utc_now=lambda: "2026-09-07T00:00:00Z",
+        page_slice=lambda items, *a: (items, None),
+        read_surface_meta=lambda *a, **k: {},
+        reject_body_idempotency_key=lambda *a: None,
+        resolve_final_idempotency_key=lambda *a: "",
+        stable_json_hash=lambda *a: "",
+        request_dry_run_requested=lambda: False,
+        dry_run_success_response=lambda *a, **k: {},
+        normalize_lifecycle_state=lambda s: str(s or "draft"),
+        normalize_risk_level=lambda r: str(r or "medium"),
+        strategy_persona_idempotency_check=lambda *a: None,
+        strategy_persona_action_command=None,
+        strategy_persona_idempotency={},
+        strategy_seed_replication_idempotency={},
+        strategy_seed_review_idempotency={},
+        list_governance_audit_events=None,
+        ooda_packet_list_payload=None,
+        require_ooda_packet_routes_enabled=None,
+        deprecated_bff_path_response=None,
+        bff_me_tenant_payload=None,
+        list_persona_records=None,
+        list_strategy_summaries=None,
+    )
+
+    with pytest.raises(AttributeError, match="strategy overlay is retired"):
+        ctx.project_strategy_dto({"id": "s-1"}, overlay={"name": "illegal"})
