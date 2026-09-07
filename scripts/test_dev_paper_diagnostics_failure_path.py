@@ -659,12 +659,20 @@ def verify_diagnostic_acceptance(
         if diag_exit_val != exp_exit or status_exit_val != exp_exit:
             return False, "bootstrap_exit_mismatch_expected"
 
-    # Validate required service evidence and schema (SD D2)
+    # Validate required service evidence and schema (SD D2: Persona plus original six services)
     services = diag_data["services"]
-    if not services:
+    if not isinstance(services, dict) or not services:
         return False, "empty_services"
 
-    for req_svc in ("operator-bff", "persona"):
+    for req_svc in (
+        "operator-bff",
+        "persona",
+        "capital",
+        "registry",
+        "governance",
+        "deployment",
+        "postgres",
+    ):
         if req_svc not in services:
             return False, f"missing_required_service_{req_svc.replace('-', '_')}"
 
@@ -673,6 +681,8 @@ def verify_diagnostic_acceptance(
             return False, f"invalid_service_schema_{s_name.replace('-', '_')}"
         if "collection_status" not in s_val or not isinstance(s_val["collection_status"], str):
             return False, f"missing_service_collection_status_{s_name.replace('-', '_')}"
+        if s_val["collection_status"] != "ok":
+            return False, f"service_collection_status_{s_val['collection_status']}_{s_name.replace('-', '_')}"
         if "events" in s_val:
             if not isinstance(s_val["events"], list):
                 return False, f"invalid_service_events_{s_name.replace('-', '_')}"
@@ -684,8 +694,12 @@ def verify_diagnostic_acceptance(
         if "container_id" in s_val:
             if not isinstance(s_val["container_id"], str) or not re.fullmatch(r"[0-9a-f]{64}", s_val["container_id"]):
                 return False, f"invalid_service_container_id_{s_name.replace('-', '_')}"
-        if "state" in s_val and not isinstance(s_val["state"], dict):
-            return False, f"invalid_service_state_{s_name.replace('-', '_')}"
+        if "state" in s_val:
+            if not isinstance(s_val["state"], dict):
+                return False, f"invalid_service_state_{s_name.replace('-', '_')}"
+            state_status = s_val["state"].get("collection_status")
+            if state_status != "ok":
+                return False, f"service_state_collection_status_{state_status}_{s_name.replace('-', '_')}"
 
     # Identity and fail-closed checks
     if diag_data["identity_matches"] is not True:
@@ -1448,6 +1462,19 @@ def test_d3_4_heartbeat_loss_during_command_terminates_process_group_and_descend
             # Assert BOTH bootstrap shell and descendant process were killed
             assert_processes_terminated(bootstrap_pids, timeout=3.0)
 
+            # Assert actual guard failure recording and collection status:
+            # guard exits 75, failure record exitStatus=75, collection-status.json PRESENT with not_started and bootstrapExit=null
+            assert paths["failure"].exists()
+            assert json.loads(paths["failure"].read_text())["exitStatus"] == 75
+
+            status_file = diag_dir / "collection-status.json"
+            assert status_file.exists()
+            status_data = json.loads(status_file.read_text())
+            assert status_data["collectionStatus"] == "not_started"
+            assert status_data["bootstrapExit"] is None
+            assert not (diag_dir / "diagnostics.json").exists()
+            assert not (diag_dir / "SHA256SUMS").exists()
+
             # Assert remote invocation markers were never called
             log_lines = ssh_log.read_text().splitlines() if ssh_log.exists() else []
             assert not any("python3 -" in line or "--expected-bff-sha" in line for line in log_lines)
@@ -1455,6 +1482,9 @@ def test_d3_4_heartbeat_loss_during_command_terminates_process_group_and_descend
             if guard_proc.poll() is None:
                 guard_proc.kill()
                 guard_proc.wait()
+            if heartbeat.poll() is None:
+                heartbeat.kill()
+                heartbeat.wait()
 
 
 def test_d3_4_remote_cas_loss_terminates_process_group_and_descendants():
@@ -1518,6 +1548,19 @@ def test_d3_4_remote_cas_loss_terminates_process_group_and_descendants():
             assert guard_proc.returncode == 75
             assert "remote lease verification failed" in stderr or "quarantine" in stderr
             assert_processes_terminated(bootstrap_pids, timeout=3.0)
+
+            # Assert actual guard failure recording and collection status:
+            # guard exits 75, failure record exitStatus=75, collection-status.json PRESENT with not_started and bootstrapExit=null
+            assert paths["failure"].exists()
+            assert json.loads(paths["failure"].read_text())["exitStatus"] == 75
+
+            status_file = diag_dir / "collection-status.json"
+            assert status_file.exists()
+            status_data = json.loads(status_file.read_text())
+            assert status_data["collectionStatus"] == "not_started"
+            assert status_data["bootstrapExit"] is None
+            assert not (diag_dir / "diagnostics.json").exists()
+            assert not (diag_dir / "SHA256SUMS").exists()
 
             # Assert actual remote invocation markers were never called
             log_lines = ssh_log.read_text().splitlines() if ssh_log.exists() else []
@@ -1743,10 +1786,21 @@ def test_d3_5_cancellation_during_collector_terminates_group_and_descendants():
             os.kill(guard_proc.pid, signal.SIGTERM)
 
             stdout, stderr = guard_proc.communicate(timeout=10)
-            assert guard_proc.returncode in (75, 143)
+            assert guard_proc.returncode == 143, f"guard must exit 143 on SIGTERM during collector, got {guard_proc.returncode}"
+            assert paths["failure"].exists()
+            assert json.loads(paths["failure"].read_text())["exitStatus"] == 143
 
             # Both collector parent and descendant are killed
             assert_processes_terminated(collector_pids, timeout=3.0)
+
+            # Assert collection-status.json is PRESENT with collectionStatus=collecting and bootstrapExit=1
+            status_file = diag_dir / "collection-status.json"
+            assert status_file.exists()
+            status_data = json.loads(status_file.read_text())
+            assert status_data["collectionStatus"] == "collecting"
+            assert status_data["bootstrapExit"] == 1
+            assert not (diag_dir / "diagnostics.json").exists()
+            assert not (diag_dir / "SHA256SUMS").exists()
         finally:
             if guard_proc.poll() is None:
                 guard_proc.kill()
@@ -2282,6 +2336,46 @@ def test_d3_6_artifact_output_missing_or_bad_checksum_cannot_declare_acceptance(
         assert accepted is False
         assert reason == "bootstrap_exit_mismatch_expected"
 
+        # Case R: Missing required service capital fails acceptance
+        missing_capital_env = valid_d2_envelope()
+        del missing_capital_env["services"]["capital"]
+        missing_capital_json = json.dumps(missing_capital_env)
+        (d / "diagnostics.json").write_text(missing_capital_json)
+        (d / "SHA256SUMS").write_text(f"{hashlib.sha256(missing_capital_json.encode()).hexdigest()}  diagnostics.json\n")
+        accepted, reason = verify_diagnostic_acceptance(d)
+        assert accepted is False
+        assert reason == "missing_required_service_capital"
+
+        # Case S: Service collection_status timeout (e.g. persona) fails acceptance
+        persona_timeout_env = valid_d2_envelope()
+        persona_timeout_env["services"]["persona"]["collection_status"] = "timeout"
+        persona_timeout_json = json.dumps(persona_timeout_env)
+        (d / "diagnostics.json").write_text(persona_timeout_json)
+        (d / "SHA256SUMS").write_text(f"{hashlib.sha256(persona_timeout_json.encode()).hexdigest()}  diagnostics.json\n")
+        accepted, reason = verify_diagnostic_acceptance(d)
+        assert accepted is False
+        assert reason == "service_collection_status_timeout_persona"
+
+        # Case T: Service state collection_status timeout (inspect failure) fails acceptance
+        persona_inspect_timeout_env = valid_d2_envelope()
+        persona_inspect_timeout_env["services"]["persona"]["state"] = {"collection_status": "timeout"}
+        persona_inspect_timeout_json = json.dumps(persona_inspect_timeout_env)
+        (d / "diagnostics.json").write_text(persona_inspect_timeout_json)
+        (d / "SHA256SUMS").write_text(f"{hashlib.sha256(persona_inspect_timeout_json.encode()).hexdigest()}  diagnostics.json\n")
+        accepted, reason = verify_diagnostic_acceptance(d)
+        assert accepted is False
+        assert reason == "service_state_collection_status_timeout_persona"
+
+        # Case U: Services reduced to operator-bff/persona with only collection_status=ok fails acceptance
+        reduced_services_env = valid_d2_envelope()
+        reduced_services_env["services"] = {s: {"collection_status": "ok"} for s in ("operator-bff", "persona")}
+        reduced_services_json = json.dumps(reduced_services_env)
+        (d / "diagnostics.json").write_text(reduced_services_json)
+        (d / "SHA256SUMS").write_text(f"{hashlib.sha256(reduced_services_json.encode()).hexdigest()}  diagnostics.json\n")
+        accepted, reason = verify_diagnostic_acceptance(d)
+        assert accepted is False
+        assert reason == "missing_required_service_capital"
+
 
 def test_d3_6_artifact_upload_download_failure_and_acceptance_pipeline():
     """SD D3.6b: executable runner artifact upload and acceptance download pipeline composed with guarded output & compensation."""
@@ -2569,6 +2663,62 @@ exit 0
             accepted, reason = verify_diagnostic_acceptance(dl_mismatch_dir)
             assert accepted is False
             assert reason == "bootstrap_exit_mismatch_status_vs_diagnostics"
+
+            # -------------------------------------------------------------
+            # Part 9: Downloaded artifact with missing required service capital fails acceptance
+            # -------------------------------------------------------------
+            dl_missing_capital_dir = root / "download_missing_capital"
+            simulate_acceptance_download(dl_missing_capital_dir)
+            missing_cap_env = json.loads((dl_missing_capital_dir / "diagnostics.json").read_text(encoding="utf-8"))
+            del missing_cap_env["services"]["capital"]
+            missing_cap_bytes = json.dumps(missing_cap_env).encode("utf-8")
+            (dl_missing_capital_dir / "diagnostics.json").write_bytes(missing_cap_bytes)
+            (dl_missing_capital_dir / "SHA256SUMS").write_text(f"{hashlib.sha256(missing_cap_bytes).hexdigest()}  diagnostics.json\n")
+            accepted, reason = verify_diagnostic_acceptance(dl_missing_capital_dir)
+            assert accepted is False
+            assert reason == "missing_required_service_capital"
+
+            # -------------------------------------------------------------
+            # Part 10: Downloaded artifact with persona collection_status=timeout fails acceptance
+            # -------------------------------------------------------------
+            dl_persona_timeout_dir = root / "download_persona_timeout"
+            simulate_acceptance_download(dl_persona_timeout_dir)
+            p_timeout_env = json.loads((dl_persona_timeout_dir / "diagnostics.json").read_text(encoding="utf-8"))
+            p_timeout_env["services"]["persona"]["collection_status"] = "timeout"
+            p_timeout_bytes = json.dumps(p_timeout_env).encode("utf-8")
+            (dl_persona_timeout_dir / "diagnostics.json").write_bytes(p_timeout_bytes)
+            (dl_persona_timeout_dir / "SHA256SUMS").write_text(f"{hashlib.sha256(p_timeout_bytes).hexdigest()}  diagnostics.json\n")
+            accepted, reason = verify_diagnostic_acceptance(dl_persona_timeout_dir)
+            assert accepted is False
+            assert reason == "service_collection_status_timeout_persona"
+
+            # -------------------------------------------------------------
+            # Part 11: Downloaded artifact with persona inspect collection_status=timeout fails acceptance
+            # -------------------------------------------------------------
+            dl_persona_inspect_timeout_dir = root / "download_persona_inspect_timeout"
+            simulate_acceptance_download(dl_persona_inspect_timeout_dir)
+            p_inspect_env = json.loads((dl_persona_inspect_timeout_dir / "diagnostics.json").read_text(encoding="utf-8"))
+            p_inspect_env["services"]["persona"]["state"] = {"collection_status": "timeout"}
+            p_inspect_bytes = json.dumps(p_inspect_env).encode("utf-8")
+            (dl_persona_inspect_timeout_dir / "diagnostics.json").write_bytes(p_inspect_bytes)
+            (dl_persona_inspect_timeout_dir / "SHA256SUMS").write_text(f"{hashlib.sha256(p_inspect_bytes).hexdigest()}  diagnostics.json\n")
+            accepted, reason = verify_diagnostic_acceptance(dl_persona_inspect_timeout_dir)
+            assert accepted is False
+            assert reason == "service_state_collection_status_timeout_persona"
+
+            # -------------------------------------------------------------
+            # Part 12: Downloaded artifact with services reduced to operator-bff/persona fails acceptance
+            # -------------------------------------------------------------
+            dl_reduced_dir = root / "download_reduced_services"
+            simulate_acceptance_download(dl_reduced_dir)
+            reduced_env = json.loads((dl_reduced_dir / "diagnostics.json").read_text(encoding="utf-8"))
+            reduced_env["services"] = {s: {"collection_status": "ok"} for s in ("operator-bff", "persona")}
+            reduced_bytes = json.dumps(reduced_env).encode("utf-8")
+            (dl_reduced_dir / "diagnostics.json").write_bytes(reduced_bytes)
+            (dl_reduced_dir / "SHA256SUMS").write_text(f"{hashlib.sha256(reduced_bytes).hexdigest()}  diagnostics.json\n")
+            accepted, reason = verify_diagnostic_acceptance(dl_reduced_dir)
+            assert accepted is False
+            assert reason == "missing_required_service_capital"
         finally:
             if heartbeat.poll() is None:
                 heartbeat.kill()

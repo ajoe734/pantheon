@@ -19,7 +19,7 @@
   ],
   "checksums": {
     "scripts/run-acceptance.sh": "01b335f4a1f354b5bb9e586f5ee06172dfdf4cdfc4796d01560383940f8139c2",
-    "scripts/test_dev_paper_diagnostics_failure_path.py": "eb9a85982b411f5ed7619c0ff82270dadbc52e2a61830859927623f088cb6f5c"
+    "scripts/test_dev_paper_diagnostics_failure_path.py": "c36c8c640dab7bc8bab0ce8eac1ed9dbd91473d5de303488c791aeeb33f538c6"
   },
   "acceptance_matrix": {
     "d3_1_baseline_success": {
@@ -132,11 +132,16 @@
           "test_d3_4_remote_cas_loss_terminates_process_group_and_descendants"
         ],
         "observed_command_exit": 75,
-        "observed_bootstrap_exit": 143,
+        "observed_failure_exit_status": 75,
+        "observed_bootstrap_exit": null,
+        "observed_collection_status": "not_started",
         "observed_descendant_termination": "all_descendants_terminated",
+        "present_artifact_paths": [
+          "diagnostics/collection-status.json"
+        ],
         "negative_artifact_paths": [
           "diagnostics/diagnostics.json",
-          "diagnostics/collection-status.json"
+          "diagnostics/SHA256SUMS"
         ],
         "observed_test_count": 2,
         "observed_duration_seconds": 2.17
@@ -185,7 +190,7 @@
         ],
         "observed_collection_statuses": [
           "not_started",
-          "terminated",
+          "collecting",
           "unexecuted",
           "unexecuted",
           "identity_mismatch",
@@ -247,7 +252,10 @@
           "missing_required_service_operator_bff",
           "missing_required_service_persona",
           "invalid_service_schema_operator_bff",
-          "bootstrap_exit_mismatch_expected"
+          "bootstrap_exit_mismatch_expected",
+          "missing_required_service_capital",
+          "service_collection_status_timeout_persona",
+          "service_state_collection_status_timeout_persona"
         ],
         "observed_upload_failure_pipeline": {
           "upload_transport_error": "transport_error_503_service_unavailable",
@@ -272,7 +280,11 @@
             "download_empty_services: empty_services",
             "download_exit_mismatch: bootstrap_exit_mismatch_status_vs_diagnostics",
             "download_bad_checksum: checksum_mismatch",
-            "download_malformed_json: malformed_diagnostics_json"
+            "download_malformed_json: malformed_diagnostics_json",
+            "download_missing_capital: missing_required_service_capital",
+            "download_persona_timeout: service_collection_status_timeout_persona",
+            "download_persona_inspect_timeout: service_state_collection_status_timeout_persona",
+            "download_reduced_services: missing_required_service_capital"
           ]
         },
         "negative_artifact_paths": [
@@ -282,7 +294,11 @@
           "download_zero_bootstrap_exit/diagnostics.json (rejected)",
           "download_object_bootstrap_exit/diagnostics.json (rejected)",
           "download_empty_services/diagnostics.json (rejected)",
-          "download_exit_mismatch/diagnostics.json (rejected)"
+          "download_exit_mismatch/diagnostics.json (rejected)",
+          "download_missing_capital/diagnostics.json (rejected)",
+          "download_persona_timeout/diagnostics.json (rejected)",
+          "download_persona_inspect_timeout/diagnostics.json (rejected)",
+          "download_reduced_services/diagnostics.json (rejected)"
         ],
         "observed_test_count": 2,
         "observed_duration_seconds": 2.75
@@ -362,7 +378,7 @@
     "total": 19,
     "passed": 19,
     "failed": 0,
-    "duration_seconds": 33.99,
+    "duration_seconds": 35.94,
     "all_passed": true,
     "ci_smoke_command": "./scripts/run-acceptance.sh smoke",
     "ci_smoke_status": "passed"
