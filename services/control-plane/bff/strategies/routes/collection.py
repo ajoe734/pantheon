@@ -4,7 +4,7 @@ from __future__ import annotations
 import uuid
 from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter, Body, Header, Query
+from fastapi import APIRouter, Body, Header, HTTPException, Query
 
 from .common import StrategyRouteContext
 
@@ -116,11 +116,12 @@ def build_collection_router(ctx: StrategyRouteContext) -> APIRouter:
             )
         written = False
         try:
+            res = None
             if hasattr(writer, "upsert_strategy"):
-                writer.upsert_strategy(record)
-                written = True
+                res = writer.upsert_strategy(record)
             elif hasattr(writer, "create_strategy_spec"):
-                writer.create_strategy_spec(record)
+                res = writer.create_strategy_spec(record)
+            if res:
                 written = True
         except HTTPException:
             raise

@@ -231,6 +231,17 @@ class StrategyRouteContext:
         if isinstance(allowed, dict):
             available_actions = sorted([k for k, v in allowed.items() if v])
         risk_raw = governance.get("risk_level") or summary.get("risk") or (detail or {}).get("risk")
+        if not risk_raw and strategy_id:
+            try:
+                from services.registry.storage import get_store
+                reg_store = get_store()
+                if hasattr(reg_store, "list_by_strategy"):
+                    entries = reg_store.list_by_strategy(strategy_id)
+                    if entries:
+                        meta = dict(entries[-1].metadata) if isinstance(entries[-1].metadata, dict) else entries[-1].to_dict()
+                        risk_raw = meta.get("risk") or (meta.get("governance") or {}).get("risk_level")
+            except Exception:
+                pass
         dto: Dict[str, Any] = {
             "id": strategy_id,
             "name": title,

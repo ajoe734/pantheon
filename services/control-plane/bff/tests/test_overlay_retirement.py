@@ -244,7 +244,6 @@ from services.control_plane.bff.migrations.overlay_retirement import (
     AggregateKind,
     CanonicalWriterCoordinator,
     DualWriteForbiddenError,
-    DurableCanonicalOwnerStore,
     FallbackAcknowledgementForbiddenError,
     MultiReplicaReadbackHarness,
     OverlayMigrationEngine,
@@ -448,6 +447,13 @@ def test_genuine_five_owner_disk_backed_restart_durability_and_multi_replica() -
             assert readback_alpha is not None
             assert readback_alpha["id"] == key
             assert readback_alpha["aggregate"] == agg.value
+
+            # Independent restarted process proof via subprocess.run
+            readback_proc = rep_alpha.read_canonical_via_restarted_process(key)
+            assert readback_proc is not None
+            assert readback_proc["id"] == key
+            assert readback_proc["aggregate"] == agg.value
+            assert readback_proc == readback_alpha
 
         # Replica Beta (separate process replica) reads directly from disk without local state
         for agg, key, payload in aggregates:

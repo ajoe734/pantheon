@@ -1452,6 +1452,39 @@ class DefaultResearchKnowledgeSourcePort(ResearchKnowledgeSourcePort):
                 }
             )
 
+        known_sids = {str(item.get("strategy_id")) for item in items}
+        try:
+            from services.registry.storage import get_store
+            reg_store = get_store()
+            if hasattr(reg_store, "_entries"):
+                for entry in reg_store._entries.values():
+                    sid = entry.strategy_id
+                    if sid in known_sids:
+                        continue
+                    known_sids.add(sid)
+                    meta = dict(entry.metadata) if isinstance(entry.metadata, dict) else entry.to_dict()
+                    name = meta.get("title") or meta.get("name") or sid
+                    state = meta.get("lifecycle_state") or meta.get("status") or meta.get("state") or (entry.artifact_state.value if hasattr(entry.artifact_state, "value") else str(entry.artifact_state))
+                    if lifecycle_state and lifecycle_state != "all" and state != lifecycle_state:
+                        continue
+                    if not include_retired and lifecycle_state in {None, "", "all"} and state == "retired":
+                        continue
+                    items.append({
+                        "object_ref": {"uri": f"registry://strategy/{sid}"},
+                        "strategy_id": sid,
+                        "current_spec_version_id": "v1",
+                        "current_spec_version": entry.version or "1.0.0",
+                        "title": name,
+                        "lifecycle_state": state,
+                        "source_kind": "registry",
+                        "hypothesis_excerpt": "",
+                        "version_count": 1,
+                        "last_modified_at": entry.updated_at or entry.created_at,
+                        "route_href": self._kw05_strategy_route_href(sid),
+                    })
+        except Exception:
+            pass
+
         items.sort(
             key=lambda item: (
                 _naive_utc(_parse_rfc3339(item.get("last_modified_at"))),
@@ -1483,6 +1516,39 @@ class DefaultResearchKnowledgeSourcePort(ResearchKnowledgeSourcePort):
         if not strategy_id:
             return None
         strategy_spec = self._strategy_specs.get(str(strategy_id))
+        if not isinstance(strategy_spec, dict):
+            try:
+                from services.registry.storage import get_store
+                reg_store = get_store()
+                if hasattr(reg_store, "list_by_strategy"):
+                    entries = reg_store.list_by_strategy(str(strategy_id))
+                    if entries:
+                        entry = entries[-1]
+                        meta = dict(entry.metadata) if isinstance(entry.metadata, dict) else entry.to_dict()
+                        if "versions" in meta and meta["versions"]:
+                            strategy_spec = meta
+                        else:
+                            name = meta.get("title") or meta.get("name") or str(strategy_id)
+                            risk = meta.get("risk") or "medium"
+                            state = meta.get("lifecycle_state") or meta.get("status") or meta.get("state") or "draft"
+                            strategy_spec = {
+                                "strategy_id": str(strategy_id),
+                                "versions": [
+                                    {
+                                        "spec_version_id": "v1",
+                                        "spec_version": "v1",
+                                        "title": name,
+                                        "name": name,
+                                        "risk": risk,
+                                        "lifecycle_state": state,
+                                        "persona_ids": meta.get("personaIds") or meta.get("persona_ids") or [],
+                                        "governance": {"risk_level": risk},
+                                    }
+                                ],
+                                "current_version_id": "v1",
+                            }
+            except Exception:
+                pass
         if not isinstance(strategy_spec, dict):
             return None
         version = self._kw05_find_version(strategy_spec, version_selector)

@@ -4,7 +4,7 @@ from __future__ import annotations
 import uuid
 from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter, Body, Header, Query
+from fastapi import APIRouter, Body, Header, HTTPException, Query
 
 from .common import StrategyRouteContext
 
@@ -42,26 +42,11 @@ def build_detail_router(ctx: StrategyRouteContext) -> APIRouter:
                 except Exception:
                     pass
         if not summary:
-            writer = ctx.get_strategy_write_owner_port()
-            if writer and hasattr(writer, "get_strategy"):
-                summary = writer.get_strategy(strategy_id)
-        if not summary:
             raise ctx.bff_error(
                 404, ErrorCode.RESOURCE_NOT_FOUND,
                 "Strategy not found",
                 f"Strategy {strategy_id} does not exist",
             )
-        if summary:
-            writer = ctx.get_strategy_write_owner_port()
-            if writer and hasattr(writer, "get_strategy"):
-                w_strat = writer.get_strategy(strategy_id)
-                if w_strat:
-                    if not summary.get("risk") and w_strat.get("risk"):
-                        summary = dict(summary)
-                        summary["risk"] = w_strat["risk"]
-                    if not summary.get("state") and w_strat.get("state"):
-                        summary = dict(summary)
-                        summary["state"] = w_strat["state"]
         detail = None
         detail_getter = getattr(read_store, "get_strategy_spec_detail", None)
         if callable(detail_getter):
@@ -113,26 +98,11 @@ def build_detail_router(ctx: StrategyRouteContext) -> APIRouter:
                 except Exception:
                     pass
         if not summary:
-            writer = ctx.get_strategy_write_owner_port()
-            if writer and hasattr(writer, "get_strategy"):
-                summary = writer.get_strategy(strategy_id)
-        if not summary:
             raise ctx.bff_error(
                 404, ErrorCode.RESOURCE_NOT_FOUND,
                 "Strategy not found",
                 f"Strategy {strategy_id} does not exist",
             )
-        if summary:
-            writer = ctx.get_strategy_write_owner_port()
-            if writer and hasattr(writer, "get_strategy"):
-                w_strat = writer.get_strategy(strategy_id)
-                if w_strat:
-                    if not summary.get("risk") and w_strat.get("risk"):
-                        summary = dict(summary)
-                        summary["risk"] = w_strat["risk"]
-                    if not summary.get("state") and w_strat.get("state"):
-                        summary = dict(summary)
-                        summary["state"] = w_strat["state"]
         snapshot_at = ctx.utc_now()
         detail = None
         detail_getter = getattr(read_store, "get_strategy_spec_detail", None)
@@ -166,11 +136,12 @@ def build_detail_router(ctx: StrategyRouteContext) -> APIRouter:
             )
         written = False
         try:
+            res = None
             if hasattr(writer, "upsert_strategy"):
-                writer.upsert_strategy(base)
-                written = True
+                res = writer.upsert_strategy(base)
             elif hasattr(writer, "create_strategy_spec"):
-                writer.create_strategy_spec(base)
+                res = writer.create_strategy_spec(base)
+            if res:
                 written = True
         except HTTPException:
             raise

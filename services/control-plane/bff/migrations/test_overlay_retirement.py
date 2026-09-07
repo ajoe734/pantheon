@@ -23,11 +23,11 @@ from services.control_plane.bff.migrations.overlay_retirement import (
     CanonicalWriterCoordinator,
     ConflictReport,
     DualWriteForbiddenError,
-    DurableCanonicalOwnerStore,
     FallbackAcknowledgementForbiddenError,
     MultiReplicaReadbackHarness,
     OverlayMigrationEngine,
     RollbackPolicy,
+    build_canonical_owner_adapter,
     assert_mandatory_symbol_retirements,
     deterministic_checksum,
 )
@@ -421,7 +421,7 @@ def test_genuine_five_owner_backfill_shadow_conflicts_and_idempotency(
     dry-run protection, and parity across each of the five domain aggregates.
     """
     with tempfile.TemporaryDirectory() as td:
-        durable_store = DurableCanonicalOwnerStore(storage_dir=td, aggregate=aggregate)
+        durable_store = build_canonical_owner_adapter(aggregate=aggregate, storage_dir=td)
 
         # 1. Seed durable store with initial existing canonical record
         initial_canon = {
@@ -561,6 +561,13 @@ def test_genuine_five_owner_disk_backed_multi_replica_restart_durability() -> No
             assert readback_alpha is not None
             assert readback_alpha["id"] == key
             assert readback_alpha["aggregate"] == agg.value
+
+            # Verify genuine independent subprocess readback
+            readback_proc = replica_alpha.read_canonical_via_restarted_process(key)
+            assert readback_proc is not None
+            assert readback_proc["id"] == key
+            assert readback_proc["aggregate"] == agg.value
+            assert readback_proc == readback_alpha
 
         # Replica Beta (completely independent replica) reads directly from durable storage
         for agg, key, payload in aggregates:

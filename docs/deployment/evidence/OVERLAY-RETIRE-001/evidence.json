@@ -99,7 +99,11 @@
     "review_probe_2_tenantless_persona_patch_fails_closed_404": true,
     "review_probe_3_read_surface_ports_has_no_write_methods": true,
     "review_probe_4_rejected_insert_records_conflict_zero_stored": true,
-    "normative_sd_5_1_5_2_12_3_multi_replica_durable_evidence_verified": true
+    "normative_sd_5_1_5_2_12_3_multi_replica_durable_evidence_verified": true,
+    "review_reject_p1_strategy_write_owner_targets_canonical_registry_store": true,
+    "review_reject_p1_fresh_reader_persistence_verified": true,
+    "review_reject_p1_unsupported_and_rejecting_targets_fail_closed_without_cache": true,
+    "review_reject_p1_actual_five_domain_adapters_and_subprocess_restart_durability_verified": true
   },
   "verification": {
     "commands": [

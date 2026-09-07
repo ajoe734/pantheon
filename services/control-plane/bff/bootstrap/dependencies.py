@@ -134,9 +134,7 @@ class AppDependencies:
         resolved_strategy_write_owner = strategy_write_owner
         if resolved_strategy_write_owner is None:
             if create_strategy_write_owner is not None:
-                resolved_strategy_write_owner = create_strategy_write_owner(
-                    store=lambda: resolved_read_surface
-                )
+                resolved_strategy_write_owner = create_strategy_write_owner()
             if resolved_strategy_write_owner is None:
                 raise RuntimeError("Required strategy write owner is absent; failing startup closed.")
         if not isinstance(resolved_strategy_write_owner, StrategyWriteOwnerPort):

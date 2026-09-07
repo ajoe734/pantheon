@@ -47,7 +47,7 @@ def _client(store: Optional[Any] = None):
         else:
             bff_main.strategy_write_owner = None
     else:
-        bff_main.strategy_write_owner = create_strategy_write_owner(store=read_store)
+        bff_main.strategy_write_owner = create_strategy_write_owner()
     bff_main._STRATEGY_PERSONA_BFF_IDEMPOTENCY.clear()
     try:
         yield TestClient(bff_main.app)
