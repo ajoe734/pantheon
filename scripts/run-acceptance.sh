@@ -63,6 +63,9 @@ case "$MODE" in
   smoke)
     run_step "stage0-validate" stage0_validate
     run_step "stage0-baseline" stage0_baseline
+    if [[ -f scripts/test_dev_paper_diagnostics_failure_path.py ]]; then
+      run_step "dev-paper-diagnostics-failure-path" "$PYTHON" -m pytest -q scripts/test_dev_paper_diagnostics_failure_path.py
+    fi
     ;;
   full)
     run_step "stage0-validate" stage0_validate
