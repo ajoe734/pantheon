@@ -18,6 +18,7 @@ import multiprocessing
 import copy
 import hashlib
 import inspect
+import importlib
 import json
 import itertools
 import os
@@ -9837,7 +9838,31 @@ class RuntimeAndFailureSemanticsTests(unittest.TestCase):
         _safe_load_canonical_status returns None and _safe_phase executes the lease decision
         cleanly without SystemExit escaping, returning preserve with missing_or_ambiguous_task_truth.
         """
-        original_status_root = getattr(ai_status, "STATUS_ROOT", None)
+        import importlib
+        scripts_dir = Path(__file__).resolve().parent.parent / "scripts"
+        scripts_path = str(scripts_dir)
+        added_sys_path = False
+        if scripts_path not in sys.path:
+            sys.path.insert(0, scripts_path)
+            added_sys_path = True
+
+        status_modules = []
+        if "scripts.ai_status" in sys.modules:
+            status_modules.append(sys.modules["scripts.ai_status"])
+        try:
+            cli_module = importlib.import_module("ai_status")
+            if cli_module not in status_modules:
+                status_modules.append(cli_module)
+        except ImportError:
+            pass
+        if hasattr(ai_status, "configure_status_root_paths") and ai_status not in status_modules:
+            status_modules.append(ai_status)
+
+        original_status_roots = [
+            (mod, getattr(mod, "STATUS_ROOT", None))
+            for mod in status_modules
+            if hasattr(mod, "STATUS_ROOT")
+        ]
         try:
             with tempfile.TemporaryDirectory(prefix="review-empty-store-") as tmp:
                 root = Path(tmp)
@@ -9864,8 +9889,10 @@ class RuntimeAndFailureSemanticsTests(unittest.TestCase):
                     ],
                     check=True,
                 )
-                ai_status.configure_status_root_paths(central)
-                self.assertTrue(ai_status.STATUS_FILE.is_relative_to(central))
+                for mod in status_modules:
+                    if hasattr(mod, "configure_status_root_paths"):
+                        mod.configure_status_root_paths(central)
+                        self.assertTrue(mod.STATUS_FILE.is_relative_to(central))
                 task = task_fixture(status="in_progress", owner="Codex", reviewer="Codex2")
                 state = {"tasks": [task], "agents": [], "handoffs": [], "blockers": []}
                 cfg = config_fixture(central)
@@ -9920,8 +9947,11 @@ class RuntimeAndFailureSemanticsTests(unittest.TestCase):
                 self.assertEqual(decision["action"], "preserve")
                 self.assertEqual(decision["reason_code"], "missing_or_ambiguous_task_truth")
         finally:
-            if original_status_root is not None:
-                ai_status.configure_status_root_paths(original_status_root)
+            for mod, orig_root in original_status_roots:
+                if orig_root is not None and hasattr(mod, "configure_status_root_paths"):
+                    mod.configure_status_root_paths(orig_root)
+            if added_sys_path and scripts_path in sys.path:
+                sys.path.remove(scripts_path)
 
     def test_process_queue_failure_cannot_refresh_successful_loop(self) -> None:
         metrics = {
