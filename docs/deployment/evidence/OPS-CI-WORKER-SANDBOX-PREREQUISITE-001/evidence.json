@@ -1,0 +1,47 @@
+{
+  "task_id": "OPS-CI-WORKER-SANDBOX-PREREQUISITE-001",
+  "owner": "Codex2",
+  "reviewer": "Claude",
+  "status": "implementation_anchor_pending_validation",
+  "source_base_sha": "4cd939078372332b76c288dd257b9e6ca06fb6b8",
+  "sources": {
+    "plan": {
+      "path": "/tmp/pantheon-ci-sandbox-prerequisite-20260907.hOWroL/SA_SD.md",
+      "sha256": "6adb80970dafb807b6eb04f38f0a8a095d7c84b47753f5fd97cf5a7375354c86",
+      "byte_identical_copy": "docs/operations/ci-worker-sandbox-prerequisite.md"
+    },
+    "recheck": {
+      "path": "/tmp/pantheon-ci-sandbox-prerequisite-20260907.hOWroL/RECHECK.md",
+      "sha256": "7c863860f49c600fb7c4c2b5b2b55904c33d466e31f7e4612d27f14ff550f418"
+    }
+  },
+  "original_failure": {
+    "source_head_sha": "97c8d4ca880609f3dfe69c8aa85cbba99ece7bea",
+    "job_url": "https://github.com/ajoe734/pantheon/actions/runs/34079580708/job/101612323383",
+    "log_sha256": "856529ea5a104dd20d6647f376c34b5756e3d6b8bbfbcf102b0c9d8a4f790e3a",
+    "error": "RuntimeError: bubblewrap (bwrap) is required to enforce the read-only PANTHEON_COMMAND_ROOT worker boundary",
+    "tests": 858,
+    "failures": 1,
+    "duration_seconds": 272.445,
+    "exit_code": 1
+  },
+  "required_real_tests": [
+    "TestCoordinationRootValidation.test_provider_cannot_chmod_or_write_command_runtime",
+    "TestCrossRepoLeasedWorktreeWriteBoundary.test_reproduce_and_prevent_20260827_reviewer_checkout_mutation",
+    "TestCrossRepoLeasedWorktreeWriteBoundary.test_prevent_cross_repo_file_mutations"
+  ],
+  "validation": [],
+  "github_acceptance": null,
+  "delivery": {
+    "pr": null,
+    "merge_commit": null,
+    "identity_binding": "The governed handoff freezes the final PR head and this manifest blob. CI prints source base/head, checkout SHA, and manifest blob without a self-referential manifest hash."
+  },
+  "coordination": {
+    "classifier_task": "OPS-REVIEW-HANDOFF-RECOVERY-CONTRACT-001",
+    "closure_task": "SYS-SIMPLIFY-IMPLEMENTATION-CLOSURE-001",
+    "required_followup": "After prerequisite merge, deliver exact merged SHA and CI proof to both owners. Classifier owner must remove its transparent fake_bwrap shortcut, rebase current dev and rerun its original genuine queue/TaskStore/runner test in GitHub CI.",
+    "existing_diagnostic_comment": "https://github.com/ajoe734/pantheon/pull/5637#issuecomment-5564611808"
+  },
+  "scope": "Only existing Branch CI prerequisites and the two declared documents. No classifier/runtime/test-source changes, live host policy changes, deployment, product readiness, or twelve-loop acceptance."
+}
