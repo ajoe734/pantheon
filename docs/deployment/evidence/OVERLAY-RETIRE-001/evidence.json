@@ -112,25 +112,29 @@
     "review_reject_p1_fresh_reader_persistence_verified": true,
     "review_reject_p1_unsupported_and_rejecting_targets_fail_closed_without_cache": true,
     "review_reject_p1_actual_five_domain_adapters_and_subprocess_restart_durability_verified": true,
-    "review_reject_p1_isolated_test_fixtures_configured_memory_backend": true
+    "review_reject_p1_isolated_test_fixtures_configured_memory_backend": true,
+    "review_reject_p1_incident_canonical_adapter_uses_canonical_incident_store": true,
+    "review_reject_p1_research_knowledge_source_filters_strategy_spec_and_overrides_shadow": true,
+    "review_reject_p1_strategy_write_owner_forbids_unreviewed_approval": true,
+    "review_reject_p1_all_four_review_probe_defects_verified_fixed": true
   },
   "verification": {
     "commands": [
       {
         "command": ".venv-pantheon/bin/python3 -m pytest services/control-plane/bff/tests/test_overlay_retirement.py services/control-plane/bff/migrations/test_overlay_retirement.py services/control-plane/bff/tests/test_strategy_ranking_router.py services/control-plane/bff/tests/test_incident_router.py services/control-plane/bff/strategies/test_router_isolation.py services/control-plane/bff/personas/test_router_isolation.py -v -W ignore",
-        "result": "71 passed in 48.35s",
+        "result": "71 passed in 44.31s",
         "executed": 71,
         "collected": 71
       },
       {
         "command": ".venv-pantheon/bin/python3 -m pytest services/control-plane/bff/tests/test_strategy_ranking_router.py -v -W ignore",
-        "result": "9 passed in 7.87s",
+        "result": "9 passed in 7.78s",
         "executed": 9,
         "collected": 9
       },
       {
         "command": ".venv-pantheon/bin/python3 -m pytest services/control-plane/bff/migrations/test_overlay_retirement.py -v -W ignore",
-        "result": "25 passed in 18.10s",
+        "result": "25 passed in 15.19s",
         "executed": 25,
         "collected": 25
       },
@@ -141,14 +145,14 @@
         "collected": 1
       },
       {
-        "command": "python3 -c '<three review rejection probes: durable fresh-adapter readback, unrelated artifact preservation, and fail-closed rejection propagation>'",
-        "result": "PROBE 1 PASSED: durable readback across adapter instances verified; PROBE 2 PASSED: unrelated artifact preserved; PROBE 3 PASSED: rejection propagated and persistence failure not acknowledged",
-        "executed": 3,
-        "collected": 3
+        "command": "python3 -c '<four review rejection defect verification probes: incident canonical store schema parity, strategy artifact filtering, unapproved state rejection, registry cache coherence>'",
+        "result": "ALL FOUR DEFECT VERIFICATIONS COMPLETED SUCCESSFULLY: probe 1 IncidentStore schema parity verified, probe 2 STRATEGY_SPEC filtering verified, probe 3 unapproved transition rejection verified, probe 4 registry cache coherence verified",
+        "executed": 4,
+        "collected": 4
       },
       {
         "command": ".venv-pantheon/bin/python3 -m pytest services/control-plane/bff/test_bff_consol_008_fixture_pack_a.py services/control-plane/bff/test_bff_consol_009_fixture_pack_b.py services/control-plane/bff/test_bff_consol_010_fixture_pack_c.py services/control-plane/bff/test_bff_consol_017_detail_smoke_b.py services/control-plane/bff/test_bff_evolution_experiment_jobs_events_contract.py services/control-plane/bff/test_bff_governance_runtime_risk_audit_contract.py services/control-plane/bff/test_inc001_rebaseline_incidents_contract.py services/control-plane/bff/test_persona_provisioning_readback.py services/control-plane/bff/tests/test_bff_b2_002_evolution_jobs_ops.py -W ignore",
-        "result": "142 passed in 64.41s",
+        "result": "142 passed in 60.44s",
         "executed": 142,
         "collected": 142
       }

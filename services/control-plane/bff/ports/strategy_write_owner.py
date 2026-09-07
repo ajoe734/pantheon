@@ -52,6 +52,13 @@ class CanonicalStrategyWriteOwner:
         sid = str(strategy.get("id") or strategy.get("strategy_id") or "").strip()
         if not sid:
             raise ValueError("Strategy record missing strategy_id / id")
+        raw_state_check = str(strategy.get("lifecycle_state") or strategy.get("state") or strategy.get("status") or strategy.get("artifact_state") or "").lower()
+        if raw_state_check == "approved" and not strategy.get("approval_decision_id"):
+            raise ValueError(
+                "Direct transition to 'approved' state is forbidden without a verified "
+                "governance approval_decision_id. Strategies must be reviewed and advanced "
+                "through the governed state machine."
+            )
         record = dict(strategy)
         if "strategy_id" not in record:
             record["strategy_id"] = sid
@@ -89,12 +96,17 @@ class CanonicalStrategyWriteOwner:
             except ValueError:
                 art_state = ArtifactState.DRAFT
 
-            actor = {
-                "actor_id": str(record.get("actor_id") or "bff-strategy-write-owner"),
-                "roles": ["operator"],
-                "tenant": str(record.get("tenant_id") or record.get("tenantId") or "default"),
-                "token_kind": "service",
-            }
+            if isinstance(record.get("actor"), dict):
+                actor = dict(record["actor"])
+            elif isinstance(record.get("principal"), dict):
+                actor = dict(record["principal"])
+            else:
+                actor = {
+                    "actor_id": str(record.get("actor_id") or record.get("operator_id") or record.get("owner") or "bff-strategy-write-owner"),
+                    "roles": list(record.get("roles") or ["operator"]),
+                    "tenant": str(record.get("tenant_id") or record.get("tenantId") or "default"),
+                    "token_kind": str(record.get("token_kind") or "service"),
+                }
 
             def _next_ver(ver: str) -> str:
                 if re.match(r"^\d+\.\d+\.\d+$", str(ver)):
@@ -112,6 +124,38 @@ class CanonicalStrategyWriteOwner:
                     "strategy_spec",
                 )
             ]
+
+            if art_state == ArtifactState.APPROVED:
+                from services.registry.service import RegistryService
+                reg_service = RegistryService(target)
+                approval_decision_id = str(record["approval_decision_id"]).strip()
+                command_key = str(record.get("command_key") or record.get("idempotency_key") or f"cmd-approve-{sid}").strip()
+                if not strategy_spec_entries:
+                    raise ValueError(f"Cannot approve strategy {sid}: no existing strategy spec found to advance.")
+                entry = strategy_spec_entries[-1]
+                if getattr(entry, "artifact_state", None) in (ArtifactState.DRAFT, "draft"):
+                    cand_cmd_key = f"cmd-cand-{sid}-{entry.version}"
+                    reg_service.advance_artifact_state(
+                        entry.registry_id,
+                        ArtifactState.CANDIDATE,
+                        command_key=cand_cmd_key,
+                        actor=actor,
+                        expected_artifact_state=ArtifactState.DRAFT,
+                        expected_version=entry.version,
+                        expected_updated_at=entry.updated_at,
+                    )
+                    entry = target.get(entry.registry_id)
+                reg_service.advance_artifact_state(
+                    entry.registry_id,
+                    ArtifactState.APPROVED,
+                    approval_decision_id=approval_decision_id,
+                    command_key=command_key,
+                    actor=actor,
+                    expected_artifact_state=entry.artifact_state,
+                    expected_version=entry.version,
+                    expected_updated_at=entry.updated_at,
+                )
+                return record
 
             if strategy_spec_entries:
                 draft_entries = [

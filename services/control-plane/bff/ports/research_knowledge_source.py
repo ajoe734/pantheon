@@ -1409,6 +1409,22 @@ class DefaultResearchKnowledgeSourcePort(ResearchKnowledgeSourcePort):
         include_retired: bool = False,
         include_fixture_pack: bool = False,
     ) -> List[Dict[str, Any]]:
+        try:
+            from services.registry.storage import get_store
+            from services.registry.models import ArtifactType
+            reg_store = get_store()
+            if hasattr(reg_store, "list_all"):
+                for entry in reg_store.list_all():
+                    if getattr(entry, "artifact_type", None) in (
+                        ArtifactType.STRATEGY_SPEC,
+                        ArtifactType.STRATEGY_SPEC.value,
+                        "strategy_spec",
+                    ):
+                        sid = getattr(entry, "strategy_id", None)
+                        if sid:
+                            self._resolve_canonical_strategy_spec(sid)
+        except Exception:
+            pass
         items: List[Dict[str, Any]] = []
         for strategy_spec in self._strategy_specs.values():
             if not isinstance(strategy_spec, dict):
@@ -1527,6 +1543,67 @@ class DefaultResearchKnowledgeSourcePort(ResearchKnowledgeSourcePort):
             "lifecycle_state": detail.get("lifecycle_state"),
         }
 
+    def _resolve_canonical_strategy_spec(self, strategy_id: Optional[str]) -> Optional[Dict[str, Any]]:
+        if not strategy_id:
+            return None
+        sid = str(strategy_id).strip()
+
+        reg_spec: Optional[Dict[str, Any]] = None
+        try:
+            from services.registry.storage import get_store
+            from services.registry.models import ArtifactType
+            reg_store = get_store()
+            if hasattr(reg_store, "list_by_strategy"):
+                raw_entries = reg_store.list_by_strategy(sid)
+                strategy_spec_entries = [
+                    e for e in raw_entries
+                    if getattr(e, "artifact_type", None) in (
+                        ArtifactType.STRATEGY_SPEC,
+                        ArtifactType.STRATEGY_SPEC.value,
+                        "strategy_spec",
+                    )
+                ]
+                if strategy_spec_entries:
+                    latest_entry = strategy_spec_entries[-1]
+                    meta = dict(latest_entry.metadata) if isinstance(latest_entry.metadata, dict) else latest_entry.to_dict()
+                    if "versions" in meta and meta["versions"]:
+                        reg_spec = dict(meta)
+                    else:
+                        name = meta.get("title") or meta.get("name") or sid
+                        risk = meta.get("risk") or "medium"
+                        state = meta.get("lifecycle_state") or meta.get("status") or meta.get("state") or (
+                            latest_entry.artifact_state.value if hasattr(latest_entry.artifact_state, "value") else str(latest_entry.artifact_state)
+                        ) or "draft"
+                        ver_id = meta.get("spec_version_id") or meta.get("version") or getattr(latest_entry, "version", "v1")
+                        reg_spec = {
+                            "strategy_id": sid,
+                            "versions": [
+                                {
+                                    "spec_version_id": ver_id,
+                                    "spec_version": ver_id,
+                                    "title": name,
+                                    "name": name,
+                                    "risk": risk,
+                                    "lifecycle_state": state,
+                                    "persona_ids": meta.get("personaIds") or meta.get("persona_ids") or [],
+                                    "governance": {"risk_level": risk},
+                                }
+                            ],
+                            "current_version_id": ver_id,
+                        }
+        except Exception:
+            pass
+
+        if reg_spec is not None:
+            self._strategy_specs[sid] = reg_spec
+            return reg_spec
+
+        cached = self._strategy_specs.get(sid)
+        if isinstance(cached, dict):
+            return cached
+
+        return None
+
     def get_strategy_spec_detail(
         self,
         strategy_id: Optional[str],
@@ -1535,40 +1612,7 @@ class DefaultResearchKnowledgeSourcePort(ResearchKnowledgeSourcePort):
     ) -> Optional[Dict[str, Any]]:
         if not strategy_id:
             return None
-        strategy_spec = self._strategy_specs.get(str(strategy_id))
-        if not isinstance(strategy_spec, dict):
-            try:
-                from services.registry.storage import get_store
-                reg_store = get_store()
-                if hasattr(reg_store, "list_by_strategy"):
-                    entries = reg_store.list_by_strategy(str(strategy_id))
-                    if entries:
-                        entry = entries[-1]
-                        meta = dict(entry.metadata) if isinstance(entry.metadata, dict) else entry.to_dict()
-                        if "versions" in meta and meta["versions"]:
-                            strategy_spec = meta
-                        else:
-                            name = meta.get("title") or meta.get("name") or str(strategy_id)
-                            risk = meta.get("risk") or "medium"
-                            state = meta.get("lifecycle_state") or meta.get("status") or meta.get("state") or "draft"
-                            strategy_spec = {
-                                "strategy_id": str(strategy_id),
-                                "versions": [
-                                    {
-                                        "spec_version_id": "v1",
-                                        "spec_version": "v1",
-                                        "title": name,
-                                        "name": name,
-                                        "risk": risk,
-                                        "lifecycle_state": state,
-                                        "persona_ids": meta.get("personaIds") or meta.get("persona_ids") or [],
-                                        "governance": {"risk_level": risk},
-                                    }
-                                ],
-                                "current_version_id": "v1",
-                            }
-            except Exception:
-                pass
+        strategy_spec = self._resolve_canonical_strategy_spec(strategy_id)
         if not isinstance(strategy_spec, dict):
             return None
         version = self._kw05_find_version(strategy_spec, version_selector)
@@ -1577,7 +1621,7 @@ class DefaultResearchKnowledgeSourcePort(ResearchKnowledgeSourcePort):
     def list_strategy_spec_versions(self, strategy_id: Optional[str]) -> List[Dict[str, Any]]:
         if not strategy_id:
             return []
-        strategy_spec = self._strategy_specs.get(str(strategy_id))
+        strategy_spec = self._resolve_canonical_strategy_spec(strategy_id)
         if not isinstance(strategy_spec, dict):
             return []
         return [
@@ -1605,7 +1649,7 @@ class DefaultResearchKnowledgeSourcePort(ResearchKnowledgeSourcePort):
     ) -> Optional[Dict[str, Any]]:
         if not strategy_id:
             return None
-        strategy_spec = self._strategy_specs.get(str(strategy_id))
+        strategy_spec = self._resolve_canonical_strategy_spec(strategy_id)
         if not isinstance(strategy_spec, dict):
             return None
         left = self._kw05_find_version(strategy_spec, left_selector)

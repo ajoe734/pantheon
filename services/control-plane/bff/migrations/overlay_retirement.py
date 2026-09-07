@@ -730,34 +730,110 @@ class StrategyCanonicalAdapter:
 
 
 class IncidentCanonicalAdapter:
-    """Canonical owner adapter for Incident domain, backed by IncidentStore and AtomicJsonRecordStore."""
+    """Canonical owner adapter for Incident domain, backed by IncidentStore."""
 
     def __init__(self, path: Path | str) -> None:
         from services.incident.incident import IncidentStore
-        from services.foundation.reliable_delivery import AtomicJsonRecordStore
         self._path = Path(path)
         self._incident_store = IncidentStore(self._path)
-        self._store = AtomicJsonRecordStore(self._path)
+
+    def _record_to_case(self, record: Dict[str, Any]) -> Any:
+        from services.incident.incident import IncidentCase, IncidentSeverity, IncidentStatus
+        rec_id = str(record.get("incident_id") or record.get("id") or "").strip()
+
+        status_val = str(record.get("status") or "open").lower()
+        if status_val not in [e.value for e in IncidentStatus]:
+            status_val = "open"
+
+        severity_val = str(record.get("severity") or "medium").lower()
+        if severity_val not in [e.value for e in IncidentSeverity]:
+            severity_val = "medium"
+
+        stage_val = str(record.get("deployment_stage") or record.get("stage") or "canary").lower()
+        if stage_val not in {"paper", "canary", "live", "frozen"}:
+            stage_val = "canary"
+
+        created_at_val = str(record.get("created_at") or record.get("createdAt") or record.get("updated_at") or utc_now_iso())
+        resolved_at_val = str(record.get("resolved_at") or created_at_val) if status_val in ("resolved", "closed") else None
+
+        evidence_summary_val = json.dumps({"__pantheon_record__": dict(record)})
+
+        return IncidentCase(
+            incident_id=rec_id,
+            title=str(record.get("title") or record.get("headline") or record.get("name") or f"Incident {rec_id}"),
+            status=status_val,
+            severity=severity_val,
+            created_at=created_at_val,
+            binding_id=str(record.get("binding_id") or f"binding-{rec_id}"),
+            deployment_stage=stage_val,
+            deployment_plan_id=str(record.get("deployment_plan_id") or f"plan-{rec_id}"),
+            capital_pool_id=str(record.get("capital_pool_id") or f"pool-{rec_id}"),
+            persona_capital_binding_id=str(record.get("persona_capital_binding_id") or f"pcb-{rec_id}"),
+            artifact_id=str(record.get("artifact_id") or f"art-{rec_id}"),
+            artifact_version=str(record.get("artifact_version") or "1.0.0"),
+            runtime_id=str(record.get("runtime_id") or f"runtime-{rec_id}"),
+            trace_id=str(record.get("trace_id") or f"trace-{rec_id}"),
+            resolved_at=resolved_at_val,
+            evidence_summary=evidence_summary_val,
+            incident_cluster_id=record.get("incident_cluster_id"),
+            lineage_ref=record.get("lineage_ref"),
+            threshold_identity=record.get("threshold_identity"),
+        )
+
+    def _case_to_record(self, case: Any) -> Dict[str, Any]:
+        ev = getattr(case, "evidence_summary", None)
+        if ev and isinstance(ev, str) and ev.startswith('{"__pantheon_record__":'):
+            try:
+                unpacked = json.loads(ev)
+                if "__pantheon_record__" in unpacked and isinstance(unpacked["__pantheon_record__"], dict):
+                    return dict(unpacked["__pantheon_record__"])
+            except Exception:
+                pass
+        data = case.to_dict()
+        data["id"] = case.incident_id
+        if "incident_id" not in data:
+            data["incident_id"] = case.incident_id
+        return data
 
     def insert(self, record: Dict[str, Any]) -> bool:
         rec_id = str(record.get("incident_id") or record.get("id") or "").strip()
         if not rec_id:
             return False
-        return self._store.insert_if_absent(rec_id, dict(record))[0]
+        with self._incident_store._write_guard():
+            if self._incident_store.get_incident(rec_id) is not None:
+                return False
+            case = self._record_to_case(record)
+            self._incident_store._incidents[rec_id] = case
+            self._incident_store._save(
+                aggregate_type="incident",
+                record_id=rec_id,
+                expected_snapshot=None,
+            )
+            return True
 
     def save(self, record: Dict[str, Any]) -> bool:
         rec_id = str(record.get("incident_id") or record.get("id") or "").strip()
         if not rec_id:
             return False
-        self._store.put(rec_id, dict(record))
-        return True
+        case = self._record_to_case(record)
+        with self._incident_store._write_guard():
+            self._incident_store._incidents[rec_id] = case
+            self._incident_store._save(
+                aggregate_type="incident",
+                record_id=rec_id,
+                expected_snapshot=None,
+            )
+            return True
 
     def get(self, key: str) -> Optional[Dict[str, Any]]:
-        val = self._store.get(key)
-        return dict(val) if val is not None else None
+        case = self._incident_store.get_incident(key)
+        if case is None:
+            return None
+        return self._case_to_record(case)
 
     def list_records(self, tenant_id: Optional[str] = None) -> List[Dict[str, Any]]:
-        records = [dict(v) for v in self._store.list_all()]
+        cases = self._incident_store.list_incidents()
+        records = [self._case_to_record(c) for c in cases]
         if tenant_id:
             records = [
                 r for r in records
@@ -770,45 +846,87 @@ class IncidentCanonicalAdapter:
     def restart_process(self) -> None:
         """Simulate process restart with genuine subprocess verification against IncidentStore."""
         script = (
-            "import sys\n"
+            "import json, sys\n"
             "from pathlib import Path\n"
             "from services.incident.incident import IncidentStore\n"
             "p = Path(sys.argv[1])\n"
             "if not p.exists(): sys.exit(1)\n"
+            "data = json.loads(p.read_text())\n"
+            "if not isinstance(data, dict) or 'incidents' not in data:\n"
+            "    sys.exit(1)\n"
             "store = IncidentStore(p)\n"
-            "print('OK')\n"
+            "incidents = store.list_incidents()\n"
+            "print(f'OK:{len(incidents)}')\n"
         )
         res = subprocess.run([sys.executable, "-c", script, str(self._path)], capture_output=True, text=True, check=True)
-        assert "OK" in res.stdout.strip()
+        assert "OK:" in res.stdout.strip()
 
 
 class JobCanonicalAdapter:
-    """Canonical owner adapter for Job domain, backed by AtomicJsonRecordStore."""
+    """Canonical owner adapter for Job domain, backed by structured canonical JSON job store."""
 
     def __init__(self, path: Path | str) -> None:
-        from services.foundation.reliable_delivery import AtomicJsonRecordStore
         self._path = Path(path)
-        self._store = AtomicJsonRecordStore(self._path)
+
+    def _read_disk(self) -> Dict[str, List[Dict[str, Any]]]:
+        if not self._path.exists():
+            return {"jobs": []}
+        try:
+            with open(self._path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+                if isinstance(data, dict):
+                    return {"jobs": list(data.get("jobs") or [])}
+        except Exception:
+            pass
+        return {"jobs": []}
+
+    def _write_disk(self, data: Dict[str, List[Dict[str, Any]]]) -> None:
+        self._path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = self._path.with_name(f".{self._path.name}.tmp")
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(data, f, indent=2, default=str)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp, self._path)
 
     def insert(self, record: Dict[str, Any]) -> bool:
         rec_id = str(record.get("job_id") or record.get("id") or "").strip()
         if not rec_id:
             return False
-        return self._store.insert_if_absent(rec_id, dict(record))[0]
+        data = self._read_disk()
+        for item in data["jobs"]:
+            if str(item.get("job_id") or item.get("id") or "").strip() == rec_id:
+                return False
+        rec = dict(record)
+        data["jobs"].append(rec)
+        self._write_disk(data)
+        return True
 
     def save(self, record: Dict[str, Any]) -> bool:
         rec_id = str(record.get("job_id") or record.get("id") or "").strip()
         if not rec_id:
             return False
-        self._store.put(rec_id, dict(record))
+        data = self._read_disk()
+        rec = dict(record)
+        for idx, item in enumerate(data["jobs"]):
+            if str(item.get("job_id") or item.get("id") or "").strip() == rec_id:
+                data["jobs"][idx] = rec
+                self._write_disk(data)
+                return True
+        data["jobs"].append(rec)
+        self._write_disk(data)
         return True
 
     def get(self, key: str) -> Optional[Dict[str, Any]]:
-        val = self._store.get(key)
-        return dict(val) if val is not None else None
+        data = self._read_disk()
+        for item in data["jobs"]:
+            if str(item.get("job_id") or item.get("id") or "").strip() == key:
+                return dict(item)
+        return None
 
     def list_records(self, tenant_id: Optional[str] = None) -> List[Dict[str, Any]]:
-        records = [dict(v) for v in self._store.list_all()]
+        data = self._read_disk()
+        records = [dict(item) for item in data["jobs"]]
         if tenant_id:
             records = [
                 r for r in records
@@ -822,43 +940,107 @@ class JobCanonicalAdapter:
         script = (
             "import json, sys\n"
             "from pathlib import Path\n"
-            "from services.foundation.reliable_delivery import AtomicJsonRecordStore\n"
             "p = Path(sys.argv[1])\n"
             "if not p.exists(): sys.exit(1)\n"
-            "store = AtomicJsonRecordStore(p)\n"
-            "print(f'OK:{len(store.list_all())}')\n"
+            "data = json.loads(p.read_text())\n"
+            "if not isinstance(data, dict) or 'jobs' not in data:\n"
+            "    sys.exit(1)\n"
+            "print(f'OK:{len(data[\"jobs\"])}')\n"
         )
         res = subprocess.run([sys.executable, "-c", script, str(self._path)], capture_output=True, text=True, check=True)
         assert "OK:" in res.stdout.strip()
 
 
 class RankingCanonicalAdapter:
-    """Canonical owner adapter for Ranking domain, backed by AtomicJsonRecordStore."""
+    """Canonical owner adapter for Ranking domain, backed by canonical ranking disk store."""
 
     def __init__(self, path: Path | str) -> None:
-        from services.foundation.reliable_delivery import AtomicJsonRecordStore
         self._path = Path(path)
-        self._store = AtomicJsonRecordStore(self._path)
+
+    def _read_disk(self) -> Dict[str, List[Dict[str, Any]]]:
+        if not self._path.exists():
+            return {"snapshots": [], "rankings": []}
+        try:
+            with open(self._path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+                if isinstance(data, dict):
+                    return {
+                        "snapshots": list(data.get("snapshots") or []),
+                        "rankings": list(data.get("rankings") or []),
+                    }
+        except Exception:
+            pass
+        return {"snapshots": [], "rankings": []}
+
+    def _write_disk(self, data: Dict[str, List[Dict[str, Any]]]) -> None:
+        self._path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = self._path.with_name(f".{self._path.name}.tmp")
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(data, f, indent=2, default=str)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp, self._path)
+
+    def _is_snapshot(self, record: Dict[str, Any]) -> bool:
+        return bool(
+            record.get("snapshot_id")
+            or record.get("ranking_snapshot_id")
+            or record.get("record_type") == "ranking_snapshot"
+            or "period" in record
+            or "formula_version" in record
+        )
+
+    def _extract_id(self, record: Dict[str, Any]) -> str:
+        return str(
+            record.get("snapshot_id")
+            or record.get("ranking_snapshot_id")
+            or record.get("ranking_id")
+            or record.get("id")
+            or ""
+        ).strip()
 
     def insert(self, record: Dict[str, Any]) -> bool:
-        rec_id = str(record.get("snapshot_id") or record.get("ranking_snapshot_id") or record.get("id") or "").strip()
+        rec_id = self._extract_id(record)
         if not rec_id:
             return False
-        return self._store.insert_if_absent(rec_id, dict(record))[0]
+        data = self._read_disk()
+        for item in data["snapshots"] + data["rankings"]:
+            if self._extract_id(item) == rec_id:
+                return False
+        rec = dict(record)
+        if self._is_snapshot(rec):
+            data["snapshots"].append(rec)
+        else:
+            data["rankings"].append(rec)
+        self._write_disk(data)
+        return True
 
     def save(self, record: Dict[str, Any]) -> bool:
-        rec_id = str(record.get("snapshot_id") or record.get("ranking_snapshot_id") or record.get("id") or "").strip()
+        rec_id = self._extract_id(record)
         if not rec_id:
             return False
-        self._store.put(rec_id, dict(record))
+        data = self._read_disk()
+        rec = dict(record)
+        target_list = data["snapshots"] if self._is_snapshot(rec) else data["rankings"]
+        for idx, item in enumerate(target_list):
+            if self._extract_id(item) == rec_id:
+                target_list[idx] = rec
+                self._write_disk(data)
+                return True
+        target_list.append(rec)
+        self._write_disk(data)
         return True
 
     def get(self, key: str) -> Optional[Dict[str, Any]]:
-        val = self._store.get(key)
-        return dict(val) if val is not None else None
+        data = self._read_disk()
+        for item in data["snapshots"] + data["rankings"]:
+            if self._extract_id(item) == key:
+                return dict(item)
+        return None
 
     def list_records(self, tenant_id: Optional[str] = None) -> List[Dict[str, Any]]:
-        records = [dict(v) for v in self._store.list_all()]
+        data = self._read_disk()
+        records = [dict(item) for item in (data["snapshots"] + data["rankings"])]
         if tenant_id:
             records = [
                 r for r in records
@@ -872,11 +1054,13 @@ class RankingCanonicalAdapter:
         script = (
             "import json, sys\n"
             "from pathlib import Path\n"
-            "from services.foundation.reliable_delivery import AtomicJsonRecordStore\n"
             "p = Path(sys.argv[1])\n"
             "if not p.exists(): sys.exit(1)\n"
-            "store = AtomicJsonRecordStore(p)\n"
-            "print(f'OK:{len(store.list_all())}')\n"
+            "data = json.loads(p.read_text())\n"
+            "if not isinstance(data, dict) or 'snapshots' not in data:\n"
+            "    sys.exit(1)\n"
+            "count = len(data.get('snapshots', [])) + len(data.get('rankings', []))\n"
+            "print(f'OK:{count}')\n"
         )
         res = subprocess.run([sys.executable, "-c", script, str(self._path)], capture_output=True, text=True, check=True)
         assert "OK:" in res.stdout.strip()
