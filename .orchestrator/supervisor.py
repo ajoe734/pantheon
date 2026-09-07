@@ -157,6 +157,7 @@ from runtime_state import (
     save_runtime_state,
     trim_terminal_queue_records,
 )
+import task_archive
 from task_archive import (
     TaskResolver,
     archive_task_path_in_dir,
@@ -968,6 +969,7 @@ def archived_task_owner_reviewer_with_receipt_proof(
     archived_snapshot: Mapping[str, Any],
     arch_task: Mapping[str, Any],
     *,
+    expected_archive_root: str,
     state: Mapping[str, Any] | None = None,
 ) -> tuple[str, str]:
     """Return canonicalized ``(owner, reviewer)`` from an archived task snapshot.
@@ -980,6 +982,13 @@ def archived_task_owner_reviewer_with_receipt_proof(
     ``terminal_facts`` entry proves the same generation under canonical
     lock/CAS. Missing or conflicting proof fails closed to ``("", "")``.
 
+    ``expected_archive_root`` is the exact archive root the caller actually
+    read ``archived_snapshot`` from (see ``archive_tasks_dir_for_status_root``
+    at the call site). A receipt recorded against a different, foreign
+    archive root proves nothing about the archive this caller is looking at
+    and must not be trusted, even if its snapshot hash and generation happen
+    to match: it fails closed to ``("", "")`` the same as a missing receipt.
+
     ``state`` is the caller's own freshly reloaded canonical task-state
     mapping (already carrying normalized ``archive_receipts``/
     ``terminal_facts``) when the caller has one on hand; this avoids a second,
@@ -990,6 +999,9 @@ def archived_task_owner_reviewer_with_receipt_proof(
 
     task_id = str(task_id or "").strip()
     if not task_id:
+        return "", ""
+    expected_archive_root = str(expected_archive_root or "").strip()
+    if not expected_archive_root:
         return "", ""
     canonical_state: Mapping[str, Any]
     if isinstance(state, Mapping):
@@ -1018,6 +1030,8 @@ def archived_task_owner_reviewer_with_receipt_proof(
     fact = facts.get(task_id)
     if not isinstance(receipt, Mapping) or not isinstance(fact, Mapping):
         return "", ""
+    if str(receipt.get("archive_root") or "").strip() != expected_archive_root:
+        return "", ""
     try:
         snapshot_hash_matches = canonical_json_sha256(archived_snapshot) == receipt.get("snapshot_sha256")
     except Exception:
@@ -1032,6 +1046,21 @@ def archived_task_owner_reviewer_with_receipt_proof(
     except (TypeError, ValueError):
         generation_matches = False
     if not generation_matches:
+        return "", ""
+    # Matching generation alone does not prove the fact and the archive agree
+    # on *what happened* at that generation: a freshly reloaded terminal_facts
+    # entry that disagrees with the archived snapshot's own recorded
+    # status/terminal_outcome for the same generation is a conflicting fact,
+    # not corroborating proof, and must fail closed the same as a missing one.
+    fact_status = str(fact.get("status") or "").strip().lower()
+    arch_status = str(arch_task.get("status") or "").strip().lower()
+    if not fact_status or not arch_status or fact_status != arch_status:
+        return "", ""
+    fact_outcome = str(fact.get("terminal_outcome") or "").strip().lower()
+    arch_outcome = str(
+        arch_task.get("terminal_outcome") or archived_snapshot.get("terminal_outcome") or ""
+    ).strip().lower()
+    if not fact_outcome or not arch_outcome or fact_outcome != arch_outcome:
         return "", ""
     snapshot_task_id = str(
         (archived_snapshot.get("task") or {}).get("id")
@@ -8619,6 +8648,12 @@ def active_worker_governance_lease_decision(
                 if not status_root_val and (config.get("paths") or {}).get("status_file"):
                     status_root_val = Path(config["paths"]["status_file"]).parent
                 if status_root_val:
+                    expected_archive_root = str(
+                        Path(status_root_val).expanduser().resolve() / "ai-task-archive"
+                    )
+                else:
+                    expected_archive_root = str(task_archive.ARCHIVE_DIR.expanduser().resolve())
+                if status_root_val:
                     arch_dir = archive_tasks_dir_for_status_root(status_root_val)
                     arch_file = archive_task_path_in_dir(str(task.get("id") or ""), arch_dir)
                     if arch_file.is_file():
@@ -8654,6 +8689,7 @@ def active_worker_governance_lease_decision(
                             str(task.get("id") or ""),
                             archived_snapshot,
                             arch_task,
+                            expected_archive_root=expected_archive_root,
                             state=state,
                         )
 

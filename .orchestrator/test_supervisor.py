@@ -9986,6 +9986,214 @@ class RuntimeAndFailureSemanticsTests(unittest.TestCase):
                 )
         self.assertEqual(len(writes), 4)
 
+    def test_archived_task_owner_reviewer_with_receipt_proof_binds_exact_archive_root(
+        self,
+    ) -> None:
+        """P1 regression: a receipt recorded for a foreign archive root, or a
+        terminal_facts entry whose status/terminal_outcome contradicts the
+        archived snapshot at the same generation, must not authorize terminal
+        cancellation even with a matching snapshot hash (Codex reopen of PR
+        #5637 head 3fc35127e, 2026-09-07: foreign-root receipt-producer probe
+        and probe_d657_classifier_receipt_binding_0132.py's contradictory
+        supplied fact)."""
+        config = config_fixture()
+        task_id = "TASK-ARCHIVE-ROOT-1"
+        archived_snapshot = {
+            "task_id": task_id,
+            "task": {
+                "id": task_id,
+                "owner": "Codex",
+                "reviewer": "Codex2",
+                "generation": 3,
+                "status": "done",
+                "terminal_outcome": "superseded",
+            },
+        }
+        arch_task = supervisor.task_from_archive_snapshot(archived_snapshot) or {}
+        snapshot_sha = supervisor._canonical_json_sha256_for_receipt_proof(archived_snapshot)
+        configured_root = "/configured/ai-task-archive"
+
+        def _state(*, archive_root: str, terminal_outcome: str = "superseded") -> dict[str, object]:
+            return {
+                "archive_receipts": {
+                    task_id: {
+                        "schema_version": 1,
+                        "archive_root": archive_root,
+                        "snapshot_sha256": snapshot_sha,
+                        "index_sha256": "0" * 64,
+                        "recorded_at": "2026-09-07T00:00:00Z",
+                    }
+                },
+                "terminal_facts": {
+                    task_id: {
+                        "status": "done",
+                        "terminal_outcome": terminal_outcome,
+                        "generation": 3,
+                        "recorded_at": "2026-09-07T00:00:00Z",
+                    }
+                },
+            }
+
+        # Positive: receipt.archive_root matches the exact root this caller
+        # actually read the archived snapshot from, and the fresh terminal
+        # fact agrees with the archived snapshot's own outcome.
+        owner, reviewer = supervisor.archived_task_owner_reviewer_with_receipt_proof(
+            config,
+            task_id,
+            archived_snapshot,
+            arch_task,
+            expected_archive_root=configured_root,
+            state=_state(archive_root=configured_root),
+        )
+        self.assertEqual((owner, reviewer), ("codex", "codex2"))
+
+        # Negative: identical snapshot hash and generation, but the receipt was
+        # recorded against a foreign archive root -- must fail closed instead
+        # of minting owner/reviewer authority from an unrelated archive.
+        foreign_owner, foreign_reviewer = supervisor.archived_task_owner_reviewer_with_receipt_proof(
+            config,
+            task_id,
+            archived_snapshot,
+            arch_task,
+            expected_archive_root=configured_root,
+            state=_state(archive_root="/other/foreign/ai-task-archive"),
+        )
+        self.assertEqual((foreign_owner, foreign_reviewer), ("", ""))
+
+        # Negative: no expected root supplied at all fails closed.
+        empty_owner, empty_reviewer = supervisor.archived_task_owner_reviewer_with_receipt_proof(
+            config,
+            task_id,
+            archived_snapshot,
+            arch_task,
+            expected_archive_root="",
+            state=_state(archive_root=configured_root),
+        )
+        self.assertEqual((empty_owner, empty_reviewer), ("", ""))
+
+        # Negative: same exact archive root and snapshot hash, but the fresh
+        # terminal_facts entry disagrees with what the archived snapshot
+        # itself recorded for this generation (completed vs. superseded) --
+        # a conflicting fact is not corroborating proof.
+        conflicting_owner, conflicting_reviewer = supervisor.archived_task_owner_reviewer_with_receipt_proof(
+            config,
+            task_id,
+            archived_snapshot,
+            arch_task,
+            expected_archive_root=configured_root,
+            state=_state(archive_root=configured_root, terminal_outcome="completed"),
+        )
+        self.assertEqual((conflicting_owner, conflicting_reviewer), ("", ""))
+
+    def test_active_worker_governance_lease_decision_rejects_foreign_root_archive_receipt(
+        self,
+    ) -> None:
+        """End-to-end producer/consumer regression for the same P1 defect: a
+        stripped-owner superseded task must only resolve terminal authority
+        from the archive actually configured for this status root."""
+        task_id = "TASK-ARCHIVE-ROOT-2"
+        archived_snapshot = {
+            "task_id": task_id,
+            "task": {
+                "id": task_id,
+                "owner": "Codex",
+                "reviewer": "Codex2",
+                "generation": 3,
+                "status": "done",
+                "terminal_outcome": "superseded",
+            },
+        }
+        task = {
+            "id": task_id,
+            "status": "done",
+            "terminal_outcome": "superseded",
+            "owner": "",
+            "reviewer": "",
+            "generation": 3,
+        }
+        worker = {
+            "run_id": "run-antigravity",
+            "task_id": task_id,
+            "task_generation": 3,
+            "provider": "antigravity",
+            "agent_id": "antigravity",
+            "logical_agent_id": "antigravity",
+            "queue_event_id": "evt-antigravity",
+            "status": "running",
+            "lease_acquired_at": "2026-09-07T00:00:00Z",
+            "request_snapshot": {
+                "reason": supervisor.REASON_OWNED_IN_PROGRESS,
+                "task_generation": 3,
+                "metadata": {"task_generation": 3},
+            },
+        }
+        cancel_event = {
+            "type": "superseded",
+            "task_id": task_id,
+            "agent": "Codex",
+            "ts": "2026-09-07T00:05:00Z",
+            "task_generation": 3,
+        }
+        cancel_event["event_id"] = "ai-status-event-" + hashlib.sha256(
+            json.dumps(cancel_event, sort_keys=True, separators=(",", ":")).encode()
+        ).hexdigest()
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            status_root = Path(temp_dir)
+            config = config_fixture(root=status_root)
+            archive_tasks_dir = status_root / "ai-task-archive" / "tasks"
+            archive_tasks_dir.mkdir(parents=True)
+            (archive_tasks_dir / f"{task_id}.json").write_text(
+                json.dumps(archived_snapshot), encoding="utf-8"
+            )
+            configured_root = str((status_root / "ai-task-archive").resolve())
+            snapshot_sha = supervisor._canonical_json_sha256_for_receipt_proof(archived_snapshot)
+
+            def _receipt_state(archive_root: str) -> dict[str, object]:
+                return {
+                    "archive_receipts": {
+                        task_id: {
+                            "schema_version": 1,
+                            "archive_root": archive_root,
+                            "snapshot_sha256": snapshot_sha,
+                            "index_sha256": "0" * 64,
+                            "recorded_at": "2026-09-07T00:00:00Z",
+                        }
+                    },
+                    "terminal_facts": {
+                        task_id: {
+                            "status": "done",
+                            "terminal_outcome": "superseded",
+                            "generation": 3,
+                            "recorded_at": "2026-09-07T00:00:00Z",
+                        }
+                    },
+                }
+
+            # Positive: the exact configured archive root authorizes terminal
+            # cancellation.
+            positive_decision = supervisor.active_worker_governance_lease_decision(
+                config,
+                worker,
+                task,
+                activity_events=[cancel_event],
+                state=_receipt_state(configured_root),
+            )
+            self.assertEqual(positive_decision["action"], "terminate")
+            self.assertEqual(positive_decision["reason_code"], "authorized_terminal_cancellation")
+
+            # Negative: a receipt for a foreign archive root must not
+            # authorize the same terminal cancellation.
+            foreign_decision = supervisor.active_worker_governance_lease_decision(
+                config,
+                worker,
+                task,
+                activity_events=[cancel_event],
+                state=_receipt_state("/other/foreign/ai-task-archive"),
+            )
+            self.assertEqual(foreign_decision["action"], "preserve")
+            self.assertEqual(foreign_decision["reason_code"], "missing_or_ambiguous_task_truth")
+
     def test_file_worktree_quarantine_is_not_task_state(self) -> None:
         source = inspect.getsource(supervisor._quarantine_incomplete_worker_path)
         self.assertIn("ORCHESTRATOR_QUARANTINE.txt", source)

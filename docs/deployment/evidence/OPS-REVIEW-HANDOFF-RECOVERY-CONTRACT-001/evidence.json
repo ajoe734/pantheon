@@ -22,11 +22,11 @@
   },
   "prior_review_verdict": {
     "pr": 5637,
-    "head_sha_rejected": "a6eb5501fd1ec2674cf94d2f06621d77309eb6d1",
+    "head_sha_rejected": "3fc35127e2db9bc729f730bcf261506b2be48240",
     "reviewer": "Codex",
-    "reopened_at": "2026-09-07T00:57:12Z",
-    "summary": "Independent exact-head review REJECT for PR #5637 head a6eb5501fd1ec2674cf94d2f06621d77309eb6d1, frozen base 4cd939078372332b76c288dd257b9e6ca06fb6b8, manifest blob 75282d240b8180e43a3e87db518f2985bda43e60. [P1] .orchestrator/supervisor.py:8447-8479 (archived_snapshot owner/reviewer fallback inside active_worker_governance_lease_decision) promoted a physical archive owner/reviewer into terminal cancellation authority using only task ID and generation; it never validated canonical archive_receipt/digest or role lineage. Independently reran probe_cancellation_evidence_2212.py: exit 1, compact_fact_unanchored_scoped_archive_roles returned terminate/authorized_terminal_cancellation for configured Claude with no dispatched roles and no canonical archive proof (isolated physical-read boundary injection, not a live exploit). [P2] .orchestrator/test_supervisor.py:13187 fake_worker only slept 300s then exited; the SAME queue-launched child never actually read/verified the latest negative findings and exact task/head/generation -- the parent's own re-read of the brief file did not satisfy that combined flow.",
-    "response": "Resolved both findings on PR #5637 head d65778d01420f558b276c302505988a74c3bdbe5 (built on a6eb5501f). [P1] Added archived_task_owner_reviewer_with_receipt_proof: the archived-snapshot fallback in active_worker_governance_lease_decision now only trusts arch_task's owner/reviewer once the exact snapshot's canonical-json sha256 matches a canonical archive_receipts entry for that task id and a matching terminal_facts entry proves the same generation; missing or conflicting proof leaves task_owner/task_reviewer unset, which fails closed to the existing \"preserve\"/missing_or_ambiguous_task_truth branch instead of an unproven \"terminate\". Reused scripts/ai_status.py's own ARCHIVE_RECEIPTS_KEY/TERMINAL_FACTS_KEY and its exact _canonical_json_sha256 algorithm (duplicated as a pure, global-free helper to avoid a second, differently-configured ai_status module instance); threaded a fresh same-cycle canonical state load (_safe_load_canonical_status(config)) through all three active_worker_governance_lease_decision call sites so the proof check runs against the caller's own canonical read rather than an unrelated disk root. No second archive/receipt store, no generation resets, and every prior strict negative in probe_cancellation_evidence_2212.py (wrong_actor, wrong_generation, absent_actor, known_actor_wrong_role, compact_fact_stale_archive_role, compact_fact_foreign_same_generation_roles) still returns preserve; the previously-failing compact_fact_unanchored_scoped_archive_roles now also returns preserve. [P2] test_real_runner_queue_consumer_launches_exactly_one_owner_across_restart's fake_worker is now the real process_queue-launched child (via worker_runner.py, never a separately/manually launched proof): it reads its own materialized task-context brief, independently calls the governed `ai-status.sh show` command to fetch canonical task truth, cross-checks the exact task id, the exact generation supervisor bound to its own launch env (ORCH_TASK_GENERATION) against the canonical generation, and the exact negative review_requeue_intent finding, then writes bounded evidence keyed to its own ORCH_RUN_ID. The test now waits for and asserts on that child-published evidence (run_id match, task id match, generation match, finding match, brief_verified, canonical_verified) instead of only re-reading the brief file from the parent."
+    "reopened_at": "2026-09-07T01:36:42Z",
+    "summary": "Independent exact-head review REJECT for PR #5637 head 3fc35127e2db9bc729f730bcf261506b2be48240, frozen base 4cd939078372332b76c288dd257b9e6ca06fb6b8, manifest blob 8be59c3f0ba2ce3cb861a2b188c59edf427d2ac0. [P1] .orchestrator/supervisor.py:1017-1035 archived_task_owner_reviewer_with_receipt_proof checks snapshot hash and generation but never binds receipt.archive_root to the archive actually read for this configured canonical root, so active_worker_governance_lease_decision authorizes terminal cancellation from a foreign-root receipt, contrary to the existing archive contract (rewrite/status_projection.py:213 requires exact archive_root). Independently reproduced with /tmp/review-handoff-3fc35127-receipt-producer.py (genuine isolated command_supersede + recover_status_archive_outbox with real archive files, foreign-root fault injected only into copied state): exit 1, valid control receipt_valid=true and terminate, foreign-root receipt_valid=false yet still terminate/authorized_terminal_cancellation. Also reran probe_d657_classifier_receipt_binding_0132.py: exit 1 for foreign root and a contradictory supplied fact (terminal_facts terminal_outcome diverging from the archived snapshot's own recorded outcome at the same generation). Required fix: bind archive role proof to the exact configured archive root and consistent current terminal fact/snapshot lineage, fail closed on missing/conflicting proof, and add positive and negative producer-to-consumer regressions.",
+    "response": "Resolved on PR #5637 head 153e1fc8c1ac8023c18bd1ff4a2fbd65f4b71b3d (built on 3fc35127e). [P1a archive_root binding] archived_task_owner_reviewer_with_receipt_proof now takes a required expected_archive_root parameter and fails closed to (\"\", \"\") unless receipt.get(\"archive_root\") equals it exactly. The sole call site in active_worker_governance_lease_decision computes expected_archive_root the same way it already locates the archived snapshot on disk (status_root_val + \"ai-task-archive\" when a configured status_root/status_file is present, else the module-global task_archive.ARCHIVE_DIR), so the receipt is always checked against the same root the caller actually read from, matching rewrite/status_projection.py's own archive_receipt_valid contract. [P1b conflicting fresh fact] Added an additional check requiring the caller's fresh terminal_facts entry's status and terminal_outcome to both be present and match the archived snapshot's own recorded status/terminal_outcome at the proven generation; a fresh fact that disagrees with what the archive itself recorded (e.g. terminal_outcome flipped from \"superseded\" to \"completed\" at the same generation) now fails closed instead of being treated as corroborating proof. No new archive/receipt store, no generation resets; only this one function and its sole call site changed. Added test_archived_task_owner_reviewer_with_receipt_proof_binds_exact_archive_root (direct positive/negative/conflicting-fact unit coverage) and test_active_worker_governance_lease_decision_rejects_foreign_root_archive_receipt (end-to-end producer/consumer regression through active_worker_governance_lease_decision with real archive files on disk) to .orchestrator/test_supervisor.py. Independently reran both reviewer reproducers against this head: /tmp/review-handoff-3fc35127-receipt-producer.py now exits 0 (foreign_receipt_root resolves to preserve/missing_or_ambiguous_task_truth, archive_receipt_valid=false) and probe_d657_classifier_receipt_binding_0132.py now exits 0 (both different_receipt_root and conflicting_fresh_fact_outcome resolve to preserve/missing_or_ambiguous_task_truth, source_unchanged=true)."
   },
   "defect_reproduced": {
     "description": "canonical_worker_terminal_status (the one classifier both poll_workers and boot reconciliation call before recover_lost_worker_lease) only recognized handoff/review_approved/done event types. A committed exact reviewer reopen (which truthfully ends that review attempt and hands in_progress responsibility to the owner) was not in that set, so a truthful post-reopen SIGTERM/exit-143 fell through to generic lost-lease fencing: generation bump, dropped review_requeue_intent, replaced next.",
@@ -80,6 +80,14 @@
       {
         "function": "_safe_load_canonical_status (new)",
         "change": "Small wrapper around load_status(config) returning None on any failure; used at all three active_worker_governance_lease_decision call sites (deferred-signal CAS gate, superseded-worker CAS branch, poll_worker_assignment_stage) to supply the same-cycle canonical state for the archive-receipt proof above."
+      },
+      {
+        "function": "archived_task_owner_reviewer_with_receipt_proof",
+        "change": "Added a required expected_archive_root parameter; fails closed to (\"\", \"\") unless receipt.get(\"archive_root\") equals it exactly, so a receipt recorded for a foreign archive root can no longer authorize terminal cancellation even with a matching snapshot hash and generation. Also now requires the caller's fresh terminal_facts entry's status and terminal_outcome to both be present and equal the archived snapshot's own recorded status/terminal_outcome at the proven generation, failing closed on a conflicting fresh fact (e.g. terminal_outcome diverging from what the archive itself recorded)."
+      },
+      {
+        "function": "active_worker_governance_lease_decision",
+        "change": "Its sole call into archived_task_owner_reviewer_with_receipt_proof now computes expected_archive_root the same way it already locates the archived snapshot on disk: str(status_root_val/\"ai-task-archive\") when a configured status_root/status_file is present, else the module-global task_archive.ARCHIVE_DIR, matching rewrite/status_projection.py's own archive_receipt_valid contract."
       }
     ],
     "not_changed": [
@@ -125,60 +133,66 @@
     },
     "governed_delivery": {
       "status": "pending",
-      "detail": "Pushed branch task/OPS-REVIEW-HANDOFF-RECOVERY-CONTRACT-001 at head d65778d01420f558b276c302505988a74c3bdbe5, resuming PR #5637 for a fresh exact-head independent review by Codex, required checks, and dev merge."
+      "detail": "Pushed branch task/OPS-REVIEW-HANDOFF-RECOVERY-CONTRACT-001 at head 153e1fc8c1ac8023c18bd1ff4a2fbd65f4b71b3d, resuming PR #5637 for a fresh exact-head independent review by Codex, required checks, and dev merge."
     }
   },
   "verification": {
     "status": "passed",
-    "preparation": "Executed by owner Claude in the task worktree using the pre-provisioned interpreter at /home/chloe_ong_dev_cctech_support_com/code/pantheon/.venv/bin/python3 against head d65778d01420f558b276c302505988a74c3bdbe5.",
+    "preparation": "Executed by owner Claude in the task worktree using a checkout-scoped .venv-pantheon interpreter (dependencies inherited from /home/chloe_ong_dev_cctech_support_com/code/pantheon/.venv/bin/python3) against head 153e1fc8c1ac8023c18bd1ff4a2fbd65f4b71b3d.",
     "commands": [
       {
-        "name": "probe_cancellation_evidence_reproducer",
-        "command": "timeout 60 python3 -B /tmp/pantheon-review-handoff-contract-20260906.N5IA5r/probe_cancellation_evidence_2212.py --source-root <worktree>",
+        "name": "review_handoff_receipt_producer_reproducer",
+        "command": "timeout 60 .venv-pantheon/bin/python3 -B /tmp/review-handoff-3fc35127-receipt-producer.py <task-worktree>",
         "exit_code": 0,
-        "note": "Exact reviewer reproducer for the rejected a6eb5501f head; previously exit 1 (compact_fact_unanchored_scoped_archive_roles returned terminate/authorized_terminal_cancellation), now exit 0 with every listed negative case (including compact_fact_unanchored_scoped_archive_roles) returning preserve/missing_or_ambiguous_task_truth, and source_unchanged still true."
+        "note": "Exact reviewer reproducer for the rejected 3fc35127e head; previously exit 1 (foreign_receipt_root resolved to terminate/authorized_terminal_cancellation despite archive_receipt_valid=false), now exit 0 with foreign_receipt_root resolving to preserve/missing_or_ambiguous_task_truth and valid_receipt still resolving to terminate/authorized_terminal_cancellation."
       },
       {
-        "name": "supervisor_full_suite",
-        "command": ".venv/bin/python3 -m pytest -q .orchestrator/test_supervisor.py",
-        "passed": 292,
-        "subtests_passed": 61,
-        "failed": 0,
-        "skipped": 0,
+        "name": "probe_d657_classifier_receipt_binding_reproducer",
+        "command": "timeout 60 .venv-pantheon/bin/python3 -B /tmp/pantheon-review-handoff-contract-20260906.N5IA5r/probe_d657_classifier_receipt_binding_0132.py --source-root <task-worktree>",
         "exit_code": 0,
-        "terminal_output": "292 passed, 61 subtests passed in 150.17s (0:02:30)"
+        "note": "Exact reviewer reproducer for the rejected 3fc35127e head; previously exit 1 (different_receipt_root and conflicting_fresh_fact_outcome both resolved to terminate), now exit 0 with both resolving to preserve/missing_or_ambiguous_task_truth, matching_shape_control still resolving to terminate/authorized_terminal_cancellation, and source_unchanged=true."
       },
       {
-        "name": "orchestrator_recovery_runner_ai_status_batch",
-        "command": ".venv/bin/python3 -m pytest -q .orchestrator/rewrite/test_worker_recovery.py .orchestrator/test_worker_runner_heartbeat.py scripts/test_ai_status.py",
-        "passed": 507,
-        "subtests_passed": 156,
-        "failed": 0,
-        "skipped": 0,
-        "exit_code": 0,
-        "terminal_output": "507 passed, 156 subtests passed in 294.82s (0:04:54)"
-      },
-      {
-        "name": "targeted_regressions_named_by_prior_reviewer_response",
-        "command": ".venv/bin/python3 -m pytest -q .orchestrator/test_supervisor.py -k 'producer_to_consumer_supersede_retained_and_compact_shapes or real_runner_queue_consumer_launches_exactly_one_owner_across_restart'",
+        "name": "new_archive_root_and_conflicting_fact_regressions",
+        "command": ".venv-pantheon/bin/python3 -m pytest -q .orchestrator/test_supervisor.py -k 'archive_root or foreign_root'",
         "passed": 2,
         "subtests_passed": 0,
         "failed": 0,
         "skipped": 0,
         "exit_code": 0,
-        "terminal_output": "2 passed, 290 deselected in 23.72s",
-        "note": "test_producer_to_consumer_supersede_retained_and_compact_shapes exercises the real archived_task_owner_reviewer_with_receipt_proof positive path (genuine command_supersede + recover_status_archive_outbox producing real archive_receipts/terminal_facts, passed as state=state); test_real_runner_queue_consumer_launches_exactly_one_owner_across_restart exercises the rewritten fake_worker child-evidence flow end to end through the real process_queue dispatch."
+        "terminal_output": "2 passed, 292 deselected in 1.92s",
+        "note": "test_archived_task_owner_reviewer_with_receipt_proof_binds_exact_archive_root (direct positive/foreign-root/empty-root/conflicting-fact unit coverage) and test_active_worker_governance_lease_decision_rejects_foreign_root_archive_receipt (end-to-end producer/consumer regression with real archive files on disk), both new in this pass."
+      },
+      {
+        "name": "supervisor_full_suite",
+        "command": ".venv-pantheon/bin/python3 -m pytest -q .orchestrator/test_supervisor.py",
+        "passed": 294,
+        "subtests_passed": 61,
+        "failed": 0,
+        "skipped": 0,
+        "exit_code": 0,
+        "terminal_output": "294 passed, 61 subtests passed in 143.87s (0:02:23)"
+      },
+      {
+        "name": "orchestrator_recovery_runner_ai_status_batch",
+        "command": ".venv-pantheon/bin/python3 -m pytest -q .orchestrator/rewrite/test_worker_recovery.py .orchestrator/test_worker_runner_heartbeat.py scripts/test_ai_status.py",
+        "passed": 507,
+        "subtests_passed": 156,
+        "failed": 0,
+        "skipped": 0,
+        "exit_code": 0,
+        "terminal_output": "507 passed, 156 subtests passed in 296.23s (0:04:56)"
       }
     ],
     "totals": {
-      "passed": 801,
+      "passed": 803,
       "subtests_passed": 217,
       "failed": 0,
       "skipped": 0
     },
     "collection": "Every foreground batch reached a collected terminal exit; no batch was killed or timed out.",
-    "development_failures": "First pass of the P1 fix (unconditional ai_status.load_state() disk read with no state parameter) broke test_producer_to_consumer_supersede_retained_and_compact_shapes, which mutates a purely in-memory TaskStore state and never persists to STATUS_FILE; resolved by adding the optional state parameter and threading a same-cycle canonical load through the three production call sites instead of a second unrelated disk read.",
-    "prior_batches_reverified_at_earlier_heads": "probe_cancellation_and_drift_suite, probe_queue_fixture_auth, probe_reserved_phase_task_drift, probe_actual_supersede_shape, probe_cross_transition_binding, and probe_pending_intent_reviewer_reproducer were verified passing at the 862cfa2c3 head per this file's prior revision and are unaffected by this head's change (archived-snapshot receipt-proof branch and fake_worker evidence only), so were not re-run in this pass."
+    "development_failures": "None in this pass; the archive_root parameter and conflicting-fact check are additive to the existing archived_task_owner_reviewer_with_receipt_proof contract and its sole call site, and the two reviewer reproducers plus the full supervisor/orchestrator/ai_status suites all passed on the first run after the change.",
+    "prior_batches_reverified_at_earlier_heads": "probe_cancellation_evidence_2212.py, probe_cancellation_and_drift_suite, probe_queue_fixture_auth, probe_reserved_phase_task_drift, probe_actual_supersede_shape, probe_cross_transition_binding, and probe_pending_intent_reviewer_reproducer were verified passing at earlier heads (862cfa2c3 / d65778d01) per this file's prior revisions and are unaffected by this head's narrowly-scoped archive_root/conflicting-fact change, so were not re-run in this pass."
   },
   "not_claimed": [
     "Any change to the generic lost-lease receipt/CAS machinery, review_decision_intent handling, or worker_recovery.py typed receipts",
@@ -187,8 +201,8 @@
     "Resolution of PPL-ALLOC-007, PPL-ALLOC-009, or any unrelated open task"
   ],
   "source_git_blobs": {
-    ".orchestrator/supervisor.py": "ef0cc09a6d5fd4a713525b0ed9050ed1942833fb",
-    ".orchestrator/test_supervisor.py": "8b015b7497abb618e0392dc20c437440a2c58f41"
+    ".orchestrator/supervisor.py": "153e1fc8c1ac8023c18bd1ff4a2fbd65f4b71b3d",
+    ".orchestrator/test_supervisor.py": "07bbba413a9bc10fa3d82cb50d61abba4899045b"
   },
   "qualification_handoff": {
     "source_acceptance": "pending independent exact-head review by Codex on PR #5637, required checks, and dev merge",
