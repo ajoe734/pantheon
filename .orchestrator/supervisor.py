@@ -900,24 +900,6 @@ def refresh_dashboard_runtime_artifacts(config: dict[str, Any]) -> None:
         )
 
 
-def _canonical_json_sha256_for_receipt_proof(value: Any) -> str:
-    """Mirror ``scripts/ai_status.py::_canonical_json_sha256`` exactly.
-
-    Pure and global-free (unlike an ``ai_status`` module import, which can
-    resolve to a differently-configured module instance), so it is safe to use
-    against a caller-supplied canonical state without any risk of comparing
-    against the wrong archive root's configuration.
-    """
-
-    payload = json.dumps(
-        value,
-        sort_keys=True,
-        separators=(",", ":"),
-        ensure_ascii=False,
-    ).encode("utf-8")
-    return hashlib.sha256(payload).hexdigest()
-
-
 def archived_task_owner_reviewer_with_receipt_proof(
     config: dict[str, Any],
     task_id: str,
@@ -965,7 +947,7 @@ def archived_task_owner_reviewer_with_receipt_proof(
     canonical_state: Mapping[str, Any] = state
     receipts = canonical_state.get("archive_receipts")
     facts = canonical_state.get("terminal_facts")
-    canonical_json_sha256 = _canonical_json_sha256_for_receipt_proof
+    canonical_json_sha256 = task_archive._canonical_json_sha256
     if not isinstance(receipts, Mapping) or not isinstance(facts, Mapping):
         return "", ""
     receipt = receipts.get(task_id)

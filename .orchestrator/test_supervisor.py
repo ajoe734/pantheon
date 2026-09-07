@@ -45,6 +45,7 @@ from adapters.base import DeliveryResult
 from rewrite import worker_workspace
 from scripts.git import auto_integrator
 from scripts import ai_status
+import task_archive
 from rewrite import task_state_store as rewrite_task_state_store
 
 
@@ -9826,6 +9827,102 @@ class RuntimeAndFailureSemanticsTests(unittest.TestCase):
         )
         self.assertIsNone(result)
 
+    def test_empty_task_store_canonical_read_failure_through_safe_phase_preserves_worker(
+        self,
+    ) -> None:
+        """Genuine failed fresh canonical read / empty TaskStore through _safe_phase preserves worker.
+
+        Isolated real TaskStore/CLI read failure without mocked loaders or generic RuntimeError.
+        A real empty TaskStore journal raises SystemExit in ai_status.load_state(); this verifies
+        _safe_load_canonical_status returns None and _safe_phase executes the lease decision
+        cleanly without SystemExit escaping, returning preserve with missing_or_ambiguous_task_truth.
+        """
+        original_status_root = getattr(ai_status, "STATUS_ROOT", None)
+        try:
+            with tempfile.TemporaryDirectory(prefix="review-empty-store-") as tmp:
+                root = Path(tmp)
+                central = root / "central"
+                central.mkdir()
+                (central / "scripts").mkdir()
+                subprocess.run(["git", "init", "-q", "-b", "dev", str(central)], check=True)
+                subprocess.run(
+                    [
+                        "git",
+                        "-C",
+                        str(central),
+                        "-c",
+                        "user.name=Fixture",
+                        "-c",
+                        "user.email=fixture@example.invalid",
+                        "-c",
+                        "commit.gpgsign=false",
+                        "commit",
+                        "-q",
+                        "--allow-empty",
+                        "-m",
+                        "Fixture",
+                    ],
+                    check=True,
+                )
+                ai_status.configure_status_root_paths(central)
+                self.assertTrue(ai_status.STATUS_FILE.is_relative_to(central))
+                task = task_fixture(status="in_progress", owner="Codex", reviewer="Codex2")
+                state = {"tasks": [task], "agents": [], "handoffs": [], "blockers": []}
+                cfg = config_fixture(central)
+                worker = RuntimeAndFailureSemanticsTests._owner_worker(generation=1)
+                worker["request_snapshot"].get("metadata", {}).pop("task", None)
+                worker["request_snapshot"].pop("task", None)
+                with (
+                    mock.patch.dict(os.environ, {"AI_NAME": "Codex", "ORCH_RUN_ID": ""}),
+                    ai_status.buffer_activity_events() as buffer,
+                ):
+                    ai_status.command_supersede(state, [task["id"], "Isolated genuine owner supersede"])
+                    events = copy.deepcopy(buffer)
+                self.assertTrue(ai_status.recover_status_archive_outbox(state))
+                ai_status.normalize_terminal_facts(state)
+                ai_status.normalize_archive_receipts(state)
+                compact = supervisor.task_index_from_status(cfg, state)[task["id"]]
+                control = supervisor.active_worker_governance_lease_decision(
+                    cfg, worker, compact, activity_events=events, state=state
+                )
+                self.assertEqual(control["action"], "terminate")
+
+                # Fault scenario: after a task view was obtained, the configured journal
+                # is empty/unavailable. Both actual loaders read the same isolated store.
+                empty_log = root / "runtime" / "empty.jsonl"
+                empty_log.parent.mkdir(parents=True, exist_ok=True)
+                empty_log.touch()
+                cfg["task_state_store"] = {
+                    "mode": "authoritative",
+                    "event_log": str(empty_log),
+                }
+                supplied = supervisor._safe_load_canonical_status(cfg)
+                self.assertIsNone(supplied)
+                try:
+                    decision = supervisor._safe_phase(
+                        "isolated_classifier",
+                        supervisor.active_worker_governance_lease_decision,
+                        cfg,
+                        worker,
+                        compact,
+                        activity_events=events,
+                        state=supplied,
+                    )
+                    system_exit_escaped = False
+                except SystemExit:
+                    system_exit_escaped = True
+                    decision = None
+                self.assertFalse(
+                    system_exit_escaped,
+                    "real ai_status.load_state SystemExit escaped classifier after real canonical read failure",
+                )
+                self.assertIsNotNone(decision)
+                self.assertEqual(decision["action"], "preserve")
+                self.assertEqual(decision["reason_code"], "missing_or_ambiguous_task_truth")
+        finally:
+            if original_status_root is not None:
+                ai_status.configure_status_root_paths(original_status_root)
+
     def test_process_queue_failure_cannot_refresh_successful_loop(self) -> None:
         metrics = {
             "started_monotonic": 0.0,
@@ -10010,7 +10107,7 @@ class RuntimeAndFailureSemanticsTests(unittest.TestCase):
             },
         }
         arch_task = supervisor.task_from_archive_snapshot(archived_snapshot) or {}
-        snapshot_sha = supervisor._canonical_json_sha256_for_receipt_proof(archived_snapshot)
+        snapshot_sha = task_archive._canonical_json_sha256(archived_snapshot)
         configured_root = "/configured/ai-task-archive"
 
         def _state(*, archive_root: str, terminal_outcome: str = "superseded") -> dict[str, object]:
@@ -10147,7 +10244,7 @@ class RuntimeAndFailureSemanticsTests(unittest.TestCase):
                 json.dumps(archived_snapshot), encoding="utf-8"
             )
             configured_root = str((status_root / "ai-task-archive").resolve())
-            snapshot_sha = supervisor._canonical_json_sha256_for_receipt_proof(archived_snapshot)
+            snapshot_sha = task_archive._canonical_json_sha256(archived_snapshot)
 
             def _receipt_state(archive_root: str) -> dict[str, object]:
                 return {

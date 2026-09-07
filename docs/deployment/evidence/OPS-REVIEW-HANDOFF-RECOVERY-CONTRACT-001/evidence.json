@@ -4,7 +4,7 @@
     "id": "OPS-REVIEW-HANDOFF-RECOVERY-CONTRACT-001",
     "title": "Unify exact reviewer-to-owner handoff and worker recovery classification",
     "owner": "Antigravity",
-    "owner_at_this_head": "Antigravity (supervisor lost-lease recovery reassigned owner lane to Antigravity on 2026-09-07T03:05:34Z; canonical row is the source of truth)",
+    "owner_at_this_head": "Antigravity (supervisor lost-lease recovery reassigned owner lane to Antigravity on 2026-09-07T02:57:54Z via event sequence 4617, distinguished from the later Human/Ops note; canonical row is the source of truth)",
     "reviewer": "Codex",
     "base_branch": "dev",
     "base_sha_at_dispatch": "a9557a6002e8170eb92415cc61e9d6a584cc610f",
@@ -44,6 +44,14 @@
       "reopened_at": "2026-09-07T02:55:53Z",
       "summary": "Required Smoke acceptance failed at this exact head (CI run 34077414625 / job 101606204163): test_real_runner_queue_consumer_launches_exactly_one_owner_across_restart failed on empty child evidence assertion after 40s wait. Wider wait did not repair the failing check and the cause of the child's failure remained unproven. Required: include bounded fixture-only tails from new_worker_rec['log_path'] and new_worker_rec['runner_status_path'], plus exact run/PID/start-ticks and whether the process still exists at the existing failed evidence assertion before finally cleanup. Correct factual errata in evidence.json regarding blob 153e1fc8 provenance and tool timeout interruption.",
       "response": "Added actionable diagnostic reporting to test_real_runner_queue_consumer_launches_exactly_one_owner_across_restart: if fake_worker_evidence is empty, constructs a detailed diagnostic message capturing runner_pid (alive status, ticks), child_pid (alive status from runner_status), evidence_path existence/contents, runner_status_path tail, heartbeat_path tail, and log_path tail (up to 4000 characters) before assertion. Hardened fake_worker with top-level try/except, flushed stderr reporting, captured subprocess show stdout/stderr on non-zero exit, and fallback error evidence write so any child crash is exposed. Corrected blob 153e1fc8 provenance in prior review verdicts (carried by commit 39e064ba1, while 3fc35127e carried ef0cc09a) and recorded tool timeout interruption separately in verification."
+    },
+    {
+      "pr": 5637,
+      "head_sha_rejected": "a0f15d5656b834a5c1ddf868ead190ee9b6b69b9",
+      "reviewer": "Codex",
+      "reopened_at": "2026-09-07T04:38:35Z",
+      "summary": "Independent Codex exact-head review confirmed live CI run 34083100555/Smoke 101622049086 passed (858 tooling unittest, 76 pytest, 285 integration authority) and independent full suite AI_NAME=Codex timeout 400 .venv/bin/pytest -q .orchestrator/test_supervisor.py passed (294 passed, 61 subtests in 126.79s). Reopened for three P2 acceptance gaps: (1) [P2] .orchestrator/test_supervisor.py:9445,9821,9989: commit the explicitly required genuine failed-fresh-canonical-read/empty-TaskStore consumer through _safe_phase regression in the granted test suite, preserving the real empty-store SystemExit reproducer (/tmp/review-handoff-39e-real-empty-store.py); (2) [P2] supervisor.py:903-918,968 and test_supervisor.py:10013,10150 retain the new _canonical_json_sha256_for_receipt_proof mirror despite the explicit reuse requirement; reuse existing imported task_archive._canonical_json_sha256 and update granted tests without editing ungranted files; (3) [P2] evidence.json:7,158-202 has inaccurate provenance (owner reassignment attributed to 03:05:34 instead of 02:57:54/event 4617) and command entries use relative .venv/bin/pytest rather than the absolute central interpreter.",
+      "response": "Resolved all three items: (1) Added test_empty_task_store_canonical_read_failure_through_safe_phase_preserves_worker to RuntimeAndFailureSemanticsTests in .orchestrator/test_supervisor.py, reproducing the real empty-TaskStore journal / failed canonical read without mocks, proving _safe_load_canonical_status returns None and _safe_phase executes cleanly without SystemExit escaping, returning preserve with missing_or_ambiguous_task_truth; (2) Removed _canonical_json_sha256_for_receipt_proof from .orchestrator/supervisor.py and reused task_archive._canonical_json_sha256 directly in archived_task_owner_reviewer_with_receipt_proof and test_supervisor.py (lines 10014, 10151); (3) Corrected owner reassignment provenance to 2026-09-07T02:57:54Z (event sequence 4617) in evidence.json, and updated all verification command entries to cite the exact executed absolute central interpreter (/home/chloe_ong_dev_cctech_support_com/code/pantheon/.venv/bin/pytest and /home/chloe_ong_dev_cctech_support_com/code/pantheon/.venv/bin/python3)."
     }
   ],
   "defect_reproduced": {
@@ -89,7 +97,7 @@
       },
       {
         "function": "archived_task_owner_reviewer_with_receipt_proof (new)",
-        "change": "New helper called only from active_worker_governance_lease_decision's archived-snapshot fallback (the compact-terminal-fact case where the live task row has no owner/reviewer left). Only returns a non-empty (owner, reviewer) once the archived_snapshot's canonical-json sha256 matches a recorded archive_receipts[task_id].snapshot_sha256 and a matching terminal_facts[task_id] entry proves the same generation as the archived task; any missing receipt, missing fact, hash mismatch, or generation mismatch returns (\"\", \"\"), which the caller treats as still-unauthorized (falls through to \"preserve\"). Accepts an optional caller-supplied canonical `state` (validated directly, using a local pure _canonical_json_sha256_for_receipt_proof mirror of scripts/ai_status.py's algorithm) and otherwise falls back to a fresh ai_status.load_state() disk read via _load_ai_status_archive_provenance."
+        "change": "New helper called only from active_worker_governance_lease_decision's archived-snapshot fallback (the compact-terminal-fact case where the live task row has no owner/reviewer left). Only returns a non-empty (owner, reviewer) once the archived_snapshot's canonical-json sha256 matches a recorded archive_receipts[task_id].snapshot_sha256 and a matching terminal_facts[task_id] entry proves the same generation as the archived task; any missing receipt, missing fact, hash mismatch, or generation mismatch returns (\"\", \"\"), which the caller treats as still-unauthorized (falls through to \"preserve\"). Accepts an optional caller-supplied canonical `state` (validated directly, reusing task_archive._canonical_json_sha256) and fails closed to (\"\", \"\") when state is not a Mapping, avoiding second CLI disk fallbacks."
       },
       {
         "function": "active_worker_governance_lease_decision",
@@ -106,6 +114,14 @@
       {
         "function": "active_worker_governance_lease_decision",
         "change": "Its sole call into archived_task_owner_reviewer_with_receipt_proof now computes expected_archive_root the same way it already locates the archived snapshot on disk: str(status_root_val/\"ai-task-archive\") when a configured status_root/status_file is present, else the module-global task_archive.ARCHIVE_DIR, matching rewrite/status_projection.py's own archive_receipt_valid contract."
+      },
+      {
+        "function": "archived_task_owner_reviewer_with_receipt_proof",
+        "change": "Retired the local _canonical_json_sha256_for_receipt_proof mirror; reuses existing imported task_archive._canonical_json_sha256 directly per the codebase reuse requirement, verified pure and identical across valid JSON and error inputs."
+      },
+      {
+        "function": "RuntimeAndFailureSemanticsTests.test_empty_task_store_canonical_read_failure_through_safe_phase_preserves_worker (new test)",
+        "change": "Added unmocked regression test in .orchestrator/test_supervisor.py reproducing the real empty-TaskStore journal / failed canonical read without mocks, proving _safe_load_canonical_status returns None and _safe_phase executes the lease decision cleanly without SystemExit escaping, returning preserve with missing_or_ambiguous_task_truth."
       }
     ],
     "not_changed": [
@@ -156,65 +172,65 @@
   },
   "verification": {
     "status": "passed",
-    "preparation": "Executed by owner Antigravity in the task worktree using /home/chloe_ong_dev_cctech_support_com/code/pantheon/.venv/bin/python3 against the working tree carrying the diagnostic assertion and hardened child error handling described above, prior to committing.",
+    "preparation": "Executed by owner Antigravity in the task worktree using /home/chloe_ong_dev_cctech_support_com/code/pantheon/.venv/bin/python3 and /home/chloe_ong_dev_cctech_support_com/code/pantheon/.venv/bin/pytest against the working tree carrying the permanent empty-store regression test and task_archive helper reuse, prior to committing.",
     "commands": [
       {
         "name": "review_handoff_39e_real_empty_store_reproducer",
-        "command": "timeout 60 python3 -B /tmp/review-handoff-39e-real-empty-store.py <task-worktree>",
+        "command": "timeout 60 /home/chloe_ong_dev_cctech_support_com/code/pantheon/.venv/bin/python3 -B /tmp/review-handoff-39e-real-empty-store.py /tmp/pantheon-worker-worktrees/pantheon/ops-review-handoff-recovery-contract-001",
         "exit_code": 0,
         "note": "Exact reviewer reproducer (sha256 a6e7ba61995611a0ae9a3868a1073a935687884f606749b63d1ead17e136d3bf) for the P2 SystemExit-escape defect at the rejected 39e064ba1 head; previously exit 1 with SystemExit escaping _safe_phase, now exit 0 with system_exit_escaped=false and decision preserve/missing_or_ambiguous_task_truth via canonical_read_returned_none=true, through_real_safe_phase=true."
       },
       {
         "name": "new_archive_root_and_foreign_root_regressions",
-        "command": "AI_NAME=Antigravity timeout 90 .venv/bin/pytest -q .orchestrator/test_supervisor.py -k 'archive_root or foreign_root'",
+        "command": "AI_NAME=Antigravity timeout 90 /home/chloe_ong_dev_cctech_support_com/code/pantheon/.venv/bin/pytest -q .orchestrator/test_supervisor.py -k 'archive_root or foreign_root'",
         "passed": 2,
         "subtests_passed": 0,
         "failed": 0,
         "skipped": 0,
         "exit_code": 0,
-        "terminal_output": "2 passed, 292 deselected in 1.48s",
-        "note": "test_archived_task_owner_reviewer_with_receipt_proof_binds_exact_archive_root and test_active_worker_governance_lease_decision_rejects_foreign_root_archive_receipt still pass unchanged after removing the ai_status.load_state() disk-read fallback, since every call site already supplies a Mapping state."
+        "terminal_output": "2 passed, 293 deselected in 1.78s",
+        "note": "test_archived_task_owner_reviewer_with_receipt_proof_binds_exact_archive_root and test_active_worker_governance_lease_decision_rejects_foreign_root_archive_receipt still pass unchanged after removing the ai_status.load_state() disk-read fallback and reusing task_archive._canonical_json_sha256, since every call site already supplies a Mapping state."
       },
       {
         "name": "flaky_queue_consumer_regression",
-        "command": "AI_NAME=Antigravity timeout 120 .venv/bin/pytest -q .orchestrator/test_supervisor.py -k test_real_runner_queue_consumer_launches_exactly_one_owner_across_restart",
+        "command": "AI_NAME=Antigravity timeout 120 /home/chloe_ong_dev_cctech_support_com/code/pantheon/.venv/bin/pytest -q .orchestrator/test_supervisor.py -k test_real_runner_queue_consumer_launches_exactly_one_owner_across_restart",
         "passed": 1,
         "subtests_passed": 0,
         "failed": 0,
         "skipped": 0,
         "exit_code": 0,
-        "terminal_output": "1 passed, 293 deselected in 22.61s",
+        "terminal_output": "1 passed, 294 deselected in 22.42s",
         "note": "Verified passing with added actionable failure diagnostics and hardened child exception/stderr reporting."
       },
       {
         "name": "supervisor_full_suite",
-        "command": "AI_NAME=Antigravity timeout 400 .venv/bin/pytest -q .orchestrator/test_supervisor.py",
-        "passed": 294,
+        "command": "AI_NAME=Antigravity timeout 400 /home/chloe_ong_dev_cctech_support_com/code/pantheon/.venv/bin/pytest -q .orchestrator/test_supervisor.py",
+        "passed": 295,
         "subtests_passed": 61,
         "failed": 0,
         "skipped": 0,
         "exit_code": 0,
-        "terminal_output": "294 passed, 61 subtests passed in 126.76s (0:02:06)"
+        "terminal_output": "295 passed, 61 subtests passed in 127.29s (0:02:07)"
       },
       {
         "name": "orchestrator_recovery_runner_ai_status_dispatch_execution_batch",
-        "command": "AI_NAME=Antigravity timeout 600 .venv/bin/pytest -q .orchestrator/rewrite/test_worker_recovery.py .orchestrator/test_worker_runner_heartbeat.py scripts/test_ai_status.py .orchestrator/rewrite/test_task_state_store.py .orchestrator/test_dispatch_policy.py .orchestrator/rewrite/test_dispatch_admission.py .orchestrator/test_execution_authorization.py",
+        "command": "AI_NAME=Antigravity timeout 600 /home/chloe_ong_dev_cctech_support_com/code/pantheon/.venv/bin/pytest -q .orchestrator/rewrite/test_worker_recovery.py .orchestrator/test_worker_runner_heartbeat.py scripts/test_ai_status.py .orchestrator/rewrite/test_task_state_store.py .orchestrator/test_dispatch_policy.py .orchestrator/rewrite/test_dispatch_admission.py .orchestrator/test_execution_authorization.py",
         "passed": 652,
         "subtests_passed": 195,
         "failed": 0,
         "skipped": 0,
         "exit_code": 0,
-        "terminal_output": "652 passed, 195 subtests passed in 273.55s (0:04:33)"
+        "terminal_output": "652 passed, 195 subtests passed in 276.22s (0:04:36)"
       }
     ],
     "totals": {
-      "passed": 946,
+      "passed": 947,
       "subtests_passed": 256,
       "failed": 0,
       "skipped": 0
     },
     "collection": "Every foreground batch in this verification pass reached a collected terminal exit; no batch was killed or timed out. (Historical record: earlier development run at head 464d7f by Claude had toolu_01JyAHCpWB6LW7N2GaMddM7u interrupted after 2m due to outer default timeout, exit 143, followed by successful retry toolu_01UPscfuGze7WcnhD2ZxyakZ completing in 146.79s.)",
-    "development_failures": "None in this Antigravity verification pass; all batches passed cleanly. Historical development record notes the previous tool timeout at 464d7f prior to retry, and subsequent CI run 34077414625 failing on empty child evidence leading to the diagnostic assertion enhancement. CI prerequisite PR #5651 (OPS-CI-WORKER-SANDBOX-PREREQUISITE-001) merged into dev at 46bbfe935df1e68740569fb5dc6233897de98b0b, provisioning real bwrap in CI workflows and resolving the missing-bwrap error observed in run 34080680425. Merged current dev into task branch cleanly, and verified all 946 tests pass without skips or errors.",
+    "development_failures": "None in this Antigravity verification pass; all batches passed cleanly. Historical development record notes the previous tool timeout at 464d7f prior to retry, subsequent CI run 34077414625 failing on empty child evidence leading to the diagnostic assertion enhancement, and Codex review reopen at a0f15d leading to: (1) permanent unmocked test_empty_task_store_canonical_read_failure_through_safe_phase_preserves_worker in test_supervisor.py; (2) retirement of duplicate purehash mirror in favor of existing task_archive._canonical_json_sha256; (3) exact absolute interpreter and provenance corrections in evidence.json. Verified all 947 tests pass without skips or errors.",
     "not_yet_verified_here": "The required Smoke acceptance CI check itself (github actions run) can only be reverified after this commit is pushed and a fresh CI run completes; the reviewer's cited flaky run (34075525997/job 101600803840 and 34077414625/job 101606204163) cannot be re-triggered from this worktree, only its root cause fixed and locally reverified above.",
     "prior_batches_reverified_at_earlier_heads": "probe_cancellation_evidence_2212.py, probe_cancellation_and_drift_suite, probe_queue_fixture_auth, probe_reserved_phase_task_drift, probe_actual_supersede_shape, probe_cross_transition_binding, probe_pending_intent_reviewer_reproducer, review-handoff-3fc35127-receipt-producer.py, and probe_d657_classifier_receipt_binding_0132.py were verified passing at earlier heads (862cfa2c3 / d65778d01 / 3fc35127e / 39e064ba1) per this file's prior revisions and are unaffected by this head's narrowly-scoped SystemExit-escape/flaky-test-timing change, so were not re-run in this pass."
   },
@@ -227,8 +243,8 @@
   ],
   "source_git_blobs": {
     "_note": "These are git blob shas (content hashes of the tracked file), never commit or PR head identity. The exact PR head commit oid is recorded at handoff via REVIEW_HEAD_SHA and in prior_review_verdicts/head_sha_rejected, not here.",
-    ".orchestrator/supervisor.py": "c2bf06965917ece0e61d737b6ebb200723d680cf",
-    ".orchestrator/test_supervisor.py": "d6ea43c1770e7f41055acf8b4fdcf7af11ad1bd9"
+    ".orchestrator/supervisor.py": "560457e7390096c634fbe299f9bc48d5805b43e4",
+    ".orchestrator/test_supervisor.py": "e68df45daab4a079ab5e9d1f5038186fe149a9e6"
   },
   "qualification_handoff": {
     "source_acceptance": "pending independent exact-head review by Codex on PR #5637, required checks, and dev merge",
