@@ -1,0 +1,59 @@
+# Pantheon Execution Grant Issuer — Deployment Guide
+
+OPS-EXECUTION-MFA-ISSUER-001.
+Source of record: `ISSUER-SA-SD-20260908.md`.
+
+## 1. Security Architecture & Boundary
+
+The Execution Grant Issuer is a small development-tooling service that verifies genuine Google Cloud Identity Platform user ID tokens with completed second-factor (MFA) claims against an explicit operator UID allowlist. Once verified, it signs an exact task-bound execution authorization grant conforming to `execution_authorization.py`.
+
+### Critical Security Boundaries
+- **Isolated Authority:** The service runs under its own system identity (`pantheon-issuer`) outside worker authority. Workers must NOT have sudo rights or write permissions to the issuer's key or configuration.
+- **Dedicated Signing Key:** The service signs grants using an Ed25519 private key generated specifically for execution authorization. The private key never leaves the issuer host.
+- **No Client Policy Substitutions:** Challenges bind the full canonical task policy snapshot. The issuer rejects any client-selected policy changes at issue time.
+- **Strict S5 / Step 5 Pause:** The service strictly rejects tasks associated with Step 5 / S5.
+- **Redacted Audit Receipts:** Audit logs record only non-sensitive metadata (`task_id`, `generation`, `actor_uid`, `nonce`, `policy_digest`). No raw ID tokens, bearer secrets, or private keys are ever printed or committed.
+
+## 2. Deployment Instructions
+
+### Step 2.1: Key Generation
+On the dedicated issuer host (or secure enclave):
+```bash
+python3 deploy/execution-grant-issuer/run_server.py \
+  --generate-key-pair /etc/pantheon/execution-grant-issuer/ed25519-private.pem \
+  --key-id pantheon-mfa-issuer-dev-20260908
+```
+This generates the private key with permissions `0600` and outputs the public key base64url trust string and fingerprint.
+
+### Step 2.2: Configure Service
+Copy `issuer-config.example.json` to `/etc/pantheon/execution-grant-issuer/config.json` and configure:
+1. `identity_platform.project_id`: Target identity project (default: `pantheon-dev-20260902`).
+2. `identity_platform.allowed_operator_uids`: Allowlist of human operator UIDs permitted to authorize execution.
+3. `signing.private_key_file`: Path to the generated Ed25519 private key.
+4. `signing.key_id`: Matching key ID.
+
+### Step 2.3: Configure Systemd Service
+```bash
+sudo cp deploy/execution-grant-issuer/pantheon-execution-grant-issuer.service /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable pantheon-execution-grant-issuer
+sudo systemctl start pantheon-execution-grant-issuer
+sudo systemctl status pantheon-execution-grant-issuer
+```
+
+### Step 2.4: Configure Public Trust in Pantheon
+Promote the issuer public key into `.orchestrator/config.json`:
+```json
+{
+  "execution_authorization": {
+    "mfa_issuer_public_keys": {
+      "pantheon-mfa-issuer-dev-20260908": "<base64url-public-key>"
+    }
+  }
+}
+```
+Deploy / promote this configuration into the live supervisor runtime using `scripts/promote_supervisor_runtime.py`.
+
+## 3. Health & Verification Probes
+- Health endpoint: `curl -s http://127.0.0.1:8090/healthz`
+- Tooling UI: `http://127.0.0.1:8090/tooling`

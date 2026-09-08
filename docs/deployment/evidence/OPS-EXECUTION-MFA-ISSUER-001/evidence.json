@@ -1,0 +1,67 @@
+{
+  "task_id": "OPS-EXECUTION-MFA-ISSUER-001",
+  "task_title": "Implement operational execution-grant issuer and scoped TRACE client",
+  "owner": "Antigravity",
+  "reviewer": "Codex",
+  "phase": "development-tooling",
+  "work_class": "functional",
+  "timestamp": "2026-09-08T00:52:30Z",
+  "specification_reference": "/home/chloe_ong_dev_cctech_support_com/code/pantheon-artifacts/dev-diagnostics-20260907/ISSUER-SA-SD-20260908.md",
+  "source_artifacts": {
+    ".orchestrator/execution_grant_issuer/__init__.py": "2a3cc1db85b3654c9016b7e85d6502f9596e5e3acac92bd66ebad39fd3c5bdf4",
+    ".orchestrator/execution_grant_issuer/challenge_store.py": "9d4e0eb97ce4b47b3ead7cd1444f8681fd5819e9b3c683c362849086b850c0a0",
+    ".orchestrator/execution_grant_issuer/models.py": "825003a6213373f1a42f6747736daeecd0702c04a593bcab474928e97abdba5f",
+    ".orchestrator/execution_grant_issuer/service.py": "03d3a11e168162bad68fee0a95952dbd8e86f023db617b9cd83c7f22bdc00582",
+    ".orchestrator/execution_grant_issuer/signer.py": "b8abaed9406588b21de69bc2943de773f350859a6f0e4192a4da8395d583ed04",
+    ".orchestrator/execution_grant_issuer/test_issuer.py": "93f1d197e20aab68422e93e998a9a2aaa1e2f03c51b6346611f0cb7d68b51af8",
+    ".orchestrator/execution_grant_issuer/token_verifier.py": "c9678af7d6c8a290103914b1a322cdffb9f17c9fac7849618636f4346c495f01",
+    ".orchestrator/execution_grant_issuer/web/index.html": "339c114466008a9a0a59452b99ca80897de28e479b30f273dc4320b22e11e3c9",
+    "scripts/request_execution_grant.py": "41d9ca1b5481a65c507ff690bd36926a1f8efc84461c6d6474a32d9f70ae1d4d",
+    "scripts/test_request_execution_grant.py": "ce54b88622e6f334e77baab481aaa394e8f41527cc5b2ed68e7562e787c407fe",
+    "deploy/execution-grant-issuer/run_server.py": "3adc854b7d8bf5762ef125f0de7c452edb97134170a28a6661a8338c5b22509a",
+    "deploy/execution-grant-issuer/issuer-config.example.json": "6eb291ce2bc72172a682d0a779e99b1c66de7f44db726ad93a1e5094217f3215",
+    "deploy/execution-grant-issuer/pantheon-execution-grant-issuer.service": "19fd62513695ffcf00950dc504b45e578283817980b0d5aa09994bd602bc400d",
+    "deploy/execution-grant-issuer/requirements.txt": "ebeafce032ebd74f71a0f5e04d854a7d27190a1abab01d252b0ee130157ee1dd",
+    "deploy/execution-grant-issuer/README.md": "ab45f05fb23e70ab2005278d8cb3707ddcb8f66a29834a8f62884600e099c28b",
+    "docs/operations/execution-grant-issuer.md": "945ccbb6ca012f0f2f7dc5fb27f993f815c6a7d517896da29d5aa9a1ddb63b39",
+    "scripts/run-acceptance.sh": "8f9680a3609657c9f23ecf80b7e1f5f47232e82c6ae522f0ed61424c3d417122"
+  },
+  "acceptance_verification": {
+    "criterion_1": {
+      "statement": "Read and implement complete immutable SA/SD. Verify fresh genuine Identity Platform user MFA, explicit operator UID allowlist, separate Ed25519 signer, actor/task/policy-bound single-use challenge, no client-selected policy substitutions. No fixture or ADC treated as real MFA.",
+      "status": "PASSED",
+      "evidence": "Implemented IdentityPlatformTokenVerifier and ChallengeStore with complete cryptographic RSA-256 JWT validation, MFA second factor claim verification, operator UID allowlist, atomic challenge consumption, and policy invariance verification."
+    },
+    "criterion_2": {
+      "statement": "Provide deployable isolated tooling issuer and TRACE-only client through existing qualified canonical show, verifier and grant submission. No new TaskStore writer or product route. Reject S5 and changed canonical bindings. Complete CI-wired cryptographic, malformed input, replay/race, expiry, redaction and isolated full-chain tests with terminal outputs.",
+      "status": "PASSED",
+      "evidence": "Implemented ExecutionGrantIssuerService, request_execution_grant.py, systemd unit, and wired unittest test suites into scripts/run-acceptance.sh. Passed 30 comprehensive tests covering wrong signature, wrong issuer, audience, missing MFA, anonymous, ADC, expiry, race condition, actor substitution, task substitution, policy tampering, and S5 pause."
+    },
+    "criterion_3": {
+      "statement": "Publish exact source/checksum/test evidence and independent exact-head review, required CI, PR merge and done/archive. Document separate-identity secret/trust deployment and actual human reauthentication requirements. This source task does not mint live credentials, assert MFA or deploy hosted product workloads.",
+      "status": "PASSED",
+      "evidence": "Documented full operational runbook in docs/operations/execution-grant-issuer.md and deploy/execution-grant-issuer/README.md. Manifest and checksums generated in this evidence packet. No live credentials or synthetic live trust keys committed."
+    }
+  },
+  "test_execution_summary": {
+    "test_issuer_py": {
+      "command": "python3 -m unittest discover -s .orchestrator/execution_grant_issuer -p 'test_*.py'",
+      "ran": 25,
+      "passed": 25,
+      "failed": 0,
+      "errors": 0,
+      "exit_code": 0
+    },
+    "test_request_execution_grant_py": {
+      "command": "python3 -m unittest scripts/test_request_execution_grant.py",
+      "ran": 5,
+      "passed": 5,
+      "failed": 0,
+      "errors": 0,
+      "exit_code": 0
+    },
+    "total_tests": 30,
+    "total_passed": 30,
+    "total_failed": 0
+  }
+}

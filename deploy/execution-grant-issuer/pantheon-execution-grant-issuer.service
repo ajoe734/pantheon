@@ -1,0 +1,32 @@
+[Unit]
+Description=Pantheon Operational Execution Grant Issuer Service
+Documentation=file:///opt/pantheon/docs/operations/execution-grant-issuer.md
+After=network.target network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=pantheon-issuer
+Group=pantheon-issuer
+WorkingDirectory=/opt/pantheon
+Environment=PYTHONUNBUFFERED=1
+Environment=ISSUER_CONFIG_PATH=/etc/pantheon/execution-grant-issuer/config.json
+ExecStart=/usr/bin/python3 /opt/pantheon/deploy/execution-grant-issuer/run_server.py --config /etc/pantheon/execution-grant-issuer/config.json
+ExecReload=/bin/kill -HUP $MAINPID
+Restart=on-failure
+RestartSec=5s
+
+# Security hardening and process isolation
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+NoNewPrivileges=true
+ProtectKernelTunables=true
+ProtectControlGroups=true
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+RestrictRealtime=true
+ReadOnlyPaths=/etc/pantheon/execution-grant-issuer /opt/pantheon
+ReadWritePaths=/var/log/pantheon
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,40 @@
+{
+  "service": {
+    "host": "0.0.0.0",
+    "port": 8090,
+    "public_url": "https://mfa-issuer.internal.pantheon.trade",
+    "audit_log_path": "/var/log/pantheon/execution-grant-issuer-audit.jsonl"
+  },
+  "identity_platform": {
+    "project_id": "pantheon-dev-20260902",
+    "allowed_operator_uids": [
+      "operator-chloe-primary",
+      "operator-root-secondary"
+    ],
+    "max_auth_age_seconds": 3600,
+    "allowed_second_factors": [
+      "phone",
+      "totp",
+      "security_key"
+    ]
+  },
+  "signing": {
+    "key_id": "pantheon-mfa-issuer-dev-20260908",
+    "private_key_file": "/etc/pantheon/execution-grant-issuer/ed25519-private.pem"
+  },
+  "policy": {
+    "challenge_ttl_seconds": 180,
+    "grant_freshness_seconds": 120,
+    "default_run_ttl_seconds": 1800,
+    "allowed_tasks": [
+      "DEV502-TRACE-001"
+    ],
+    "allowed_environments": [
+      "pantheon-dev"
+    ],
+    "disallowed_phases": [
+      "S5",
+      "step-5"
+    ]
+  }
+}
