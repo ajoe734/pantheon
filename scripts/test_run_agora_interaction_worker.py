@@ -212,6 +212,25 @@ class AgoraInteractionWorkerLauncherTests(unittest.TestCase):
         self.assertNotEqual(proc.returncode, 0)
         self.assertIn("Unsupported AGORA_RESEARCH_STORE_BACKEND", proc.stderr + proc.stdout)
 
+    def test_healthcheck_subprocess_fails_when_research_client_cannot_construct(self) -> None:
+        """A container healthcheck must fail if required research backend clients cannot be constructed."""
+        clean_env = os.environ.copy()
+        clean_env.pop("PYTHONPATH", None)
+        clean_env["AGORA_RESEARCH_ADAPTER_MODE"] = "real"
+        clean_env["AGORA_RESEARCH_FAIL_BACKEND_CLIENT"] = "1"
+
+        proc = subprocess.run(
+            [sys.executable, str(LAUNCHER_PATH), "--healthcheck"],
+            cwd=str(REPO_ROOT),
+            env=clean_env,
+            capture_output=True,
+            text=True,
+            timeout=15,
+        )
+
+        self.assertNotEqual(proc.returncode, 0)
+        self.assertIn("Healthcheck failed", proc.stdout + proc.stderr)
+
     def test_e2e_bff_enqueue_separate_worker_restart_persistence(self) -> None:
         """Prove BFF enqueue -> separate worker -> fresh read/restart parity across store reconstruction."""
         for path in (
@@ -223,7 +242,12 @@ class AgoraInteractionWorkerLauncherTests(unittest.TestCase):
 
         from types import SimpleNamespace
         from agora.interaction.worker import AgoraInteractionWorker
-        from agora.research.dispatcher import AuthenticStageAdapter, ResearchDispatcher
+        from agora.research.dispatcher import (
+            AuthenticStageAdapter,
+            ResearchDispatcher,
+            build_authentic_adapter_registry,
+            build_canonical_research_backend_clients,
+        )
         from agora.research.receipt import resolve_run_provenance
         from agora.research.store import MemoryResearchPlanStore
 
@@ -283,18 +307,14 @@ class AgoraInteractionWorkerLauncherTests(unittest.TestCase):
 
             # 2. Separate worker opens the store from disk with authentic adapter and drains outbox
             worker_store = MemoryResearchPlanStore(storage_path=storage_path)
-            dispatcher = ResearchDispatcher(store=worker_store)
-            dispatcher.registry.register_authentic_adapter(
-                "prototype_backtest",
-                preferred_backend="vectorbt",
-                executor="vectorbt_executor",
+            backend_clients = build_canonical_research_backend_clients(mode="real")
+            adapter_registry = build_authentic_adapter_registry(
                 mode="real",
-                backend_reference="vectorbt://runs/99",
-                execute_fn=lambda *args, **kwargs: {
-                    "backend_reference": "vectorbt://runs/99",
-                    "artifact_digest": "sha256:d8a9e102f4c8b",
-                    "metrics": [{"name": "sharpe_ratio", "value": 2.5}],
-                },
+                execution_owners=backend_clients,
+            )
+            dispatcher = ResearchDispatcher(
+                store=worker_store,
+                adapter_registry=adapter_registry,
             )
             worker = AgoraInteractionWorker(
                 research_store=worker_store,
@@ -320,7 +340,7 @@ class AgoraInteractionWorkerLauncherTests(unittest.TestCase):
             self.assertIsNotNone(receipt)
             self.assertEqual(receipt["mode"], "real")
             self.assertEqual(receipt["run_id"], run_id)
-            self.assertEqual(receipt["backend_reference"], "vectorbt://runs/99")
+            self.assertTrue(receipt["backend_reference"].startswith("vectorbt://runs/"))
 
             prov, resolved_receipt = resolve_run_provenance(
                 reconstructed_store,

@@ -48,7 +48,7 @@ class ResearchExecutionReceipt:
             receipt_id=str(data["receipt_id"]),
             run_id=str(data["run_id"]),
             executor=str(data["executor"]),
-            mode="real" if data.get("mode") == "real" else "simulation",
+            mode=str(data.get("mode") or ""),
             correlation_id=str(data.get("correlation_id") or ""),
             completed_at=str(data.get("completed_at") or datetime.now(timezone.utc).isoformat()),
             backend_reference=data.get("backend_reference"),

@@ -221,6 +221,8 @@ def test_complete_agora_product_journey(temp_workspace: Path) -> None:
     # 2. Authentic execution owner returning authentic backend metrics and reference
     def authentic_execution_backend(*args, **kwargs):
         return {
+            "status": "succeeded",
+            "outcome": "succeeded",
             "backend_reference": "qlib://runs/42",
             "artifact_digest": "sha256:d8a9e102f4c8b",
             "metrics": [

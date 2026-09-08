@@ -23,7 +23,11 @@ from agora.governance.store import ProposalStore
 from agora.interaction.persona_client import build_canonical_persona_client
 from agora.interaction.store import InteractionLifecycleStore
 from agora.interaction.worker import AgoraInteractionWorker
-from agora.research.dispatcher import ResearchDispatcher, build_authentic_adapter_registry
+from agora.research.dispatcher import (
+    ResearchDispatcher,
+    build_authentic_adapter_registry,
+    build_canonical_research_backend_clients,
+)
 from agora.research.routes.common import publish_research_progress
 from agora.research.store import (
     MemoryResearchPlanStore,
@@ -51,12 +55,15 @@ def main() -> int:
     if args.healthcheck:
         # A healthcheck must not return before required dependency factories
         # are proven constructible. It skips the long-running loop and any
-        # live database mutation, but a Persona discovery client that cannot
-        # be built is a real startup failure, not something to hide.
+        # live database mutation, but a Persona discovery client or required
+        # research backend client that cannot be built is a real startup failure.
         try:
             build_canonical_persona_client()
+            adapter_mode = os.getenv("AGORA_RESEARCH_ADAPTER_MODE", "real").strip().lower()
+            if adapter_mode == "real":
+                build_canonical_research_backend_clients(mode=adapter_mode)
         except Exception:
-            logger.exception("Healthcheck failed: could not construct required Persona discovery client")
+            logger.exception("Healthcheck failed: could not construct required clients")
             return 1
         logger.info("Healthcheck OK")
         return 0
@@ -115,7 +122,14 @@ def main() -> int:
 
     # Wire authentic backend adapters for research stages
     adapter_mode = os.getenv("AGORA_RESEARCH_ADAPTER_MODE", "real").strip().lower()
-    adapter_registry = build_authentic_adapter_registry(mode=adapter_mode)
+    if adapter_mode == "real":
+        backend_clients = build_canonical_research_backend_clients(mode=adapter_mode)
+    else:
+        backend_clients = None
+    adapter_registry = build_authentic_adapter_registry(
+        mode=adapter_mode,
+        execution_owners=backend_clients,
+    )
 
     research_dispatcher = ResearchDispatcher(
         store=research_store,

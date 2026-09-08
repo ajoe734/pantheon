@@ -7,6 +7,7 @@ transaction.  It stores no broker command or execution authority.
 """
 from __future__ import annotations
 
+from datetime import datetime, timezone
 import hashlib
 import json
 import os
@@ -97,7 +98,44 @@ class PerformanceSuggestionStore:
                     event_json TEXT NOT NULL,
                     recorded_at TEXT NOT NULL
                 );
+
+                CREATE TABLE IF NOT EXISTS performance_published_events (
+                    topic TEXT NOT NULL,
+                    entity_id TEXT NOT NULL,
+                    published_at TEXT NOT NULL,
+                    payload_json TEXT NOT NULL,
+                    PRIMARY KEY (topic, entity_id)
+                );
                 """
+            )
+
+    def is_event_published(self, topic: str, entity_id: str) -> bool:
+        """Check if an event for the given topic and entity_id was already published."""
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT 1 FROM performance_published_events WHERE topic = ? AND entity_id = ?",
+                (topic, entity_id),
+            ).fetchone()
+            return row is not None
+
+    def mark_event_published(
+        self,
+        topic: str,
+        entity_id: str,
+        payload: Dict[str, Any],
+        published_at: Optional[str] = None,
+    ) -> None:
+        """Durably record that an event was published to prevent duplicate publications."""
+        now_str = published_at or datetime.now(timezone.utc).isoformat()
+        payload_json = json.dumps(payload, sort_keys=True, separators=(",", ":"), default=str)
+        with self._connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO performance_published_events (topic, entity_id, published_at, payload_json)
+                VALUES (?, ?, ?, ?)
+                ON CONFLICT(topic, entity_id) DO NOTHING
+                """,
+                (topic, entity_id, now_str, payload_json),
             )
 
     @staticmethod

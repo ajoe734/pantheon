@@ -200,33 +200,281 @@ def test_simulation_stage_result_preserves_provenance_and_receipt_mode() -> None
     assert resolved_prov != "real"
 
 
-def test_missing_backend_artifacts_in_real_mode_raises() -> None:
-    """Authentic real execution without backend reference or artifact digest must raise."""
+def test_absent_status_dict_raises_in_real_mode() -> None:
+    """Dict with absent status/outcome must fail closed and raise RuntimeError."""
+    adapter = AuthenticStageAdapter(
+        stage_type="prototype_backtest",
+        preferred_backend="vectorbt",
+        mode="real",
+        execute_fn=lambda *args, **kwargs: {"backend_reference": "vectorbt://runs/1"},
+    )
+    with pytest.raises(RuntimeError, match="returned invalid or nonterminal status 'absent'"):
+        adapter.execute(
+            stage=_stage(),
+            plan=_plan(),
+            context=_context(),
+            downstream_key="key-absent",
+        )
+
+
+def test_cancelled_status_dict_raises_in_real_mode() -> None:
+    """Dict with status='cancelled' must fail closed and raise RuntimeError."""
+    adapter = AuthenticStageAdapter(
+        stage_type="prototype_backtest",
+        preferred_backend="vectorbt",
+        mode="real",
+        execute_fn=lambda *args, **kwargs: {"status": "cancelled", "error": "Job cancelled by operator"},
+    )
+    with pytest.raises(RuntimeError, match="Authentic execution failed"):
+        adapter.execute(
+            stage=_stage(),
+            plan=_plan(),
+            context=_context(),
+            downstream_key="key-cancelled",
+        )
+
+
+def test_timed_out_status_dict_raises_in_real_mode() -> None:
+    """Dict with status='timed_out' must fail closed and raise RuntimeError."""
+    adapter = AuthenticStageAdapter(
+        stage_type="prototype_backtest",
+        preferred_backend="vectorbt",
+        mode="real",
+        execute_fn=lambda *args, **kwargs: {"status": "timed_out", "error": "Execution deadline exceeded"},
+    )
+    with pytest.raises(RuntimeError, match="Authentic execution failed"):
+        adapter.execute(
+            stage=_stage(),
+            plan=_plan(),
+            context=_context(),
+            downstream_key="key-timedout",
+        )
+
+
+def test_unknown_status_dict_raises_in_real_mode() -> None:
+    """Dict with status='unknown' must fail closed and raise RuntimeError."""
+    adapter = AuthenticStageAdapter(
+        stage_type="prototype_backtest",
+        preferred_backend="vectorbt",
+        mode="real",
+        execute_fn=lambda *args, **kwargs: {"status": "unknown"},
+    )
+    with pytest.raises(RuntimeError, match="returned invalid or nonterminal status 'unknown'"):
+        adapter.execute(
+            stage=_stage(),
+            plan=_plan(),
+            context=_context(),
+            downstream_key="key-unknown",
+        )
+
+
+def test_missing_backend_reference_in_real_mode_raises() -> None:
+    """Authentic real execution without backend reference must raise."""
     adapter = AuthenticStageAdapter(
         stage_type="prototype_backtest",
         preferred_backend="vectorbt",
         mode="real",
         backend_reference=None,
-        execute_fn=lambda *args, **kwargs: {"metrics": [{"name": "sharpe", "value": 1.5}]},
+        execute_fn=lambda *args, **kwargs: {
+            "status": "succeeded",
+            "artifact_digest": "sha256:abc123digest",
+            "metrics": [{"name": "sharpe", "value": 1.5}],
+        },
     )
-    with pytest.raises(RuntimeError, match="missing backend reference and artifact digest"):
+    with pytest.raises(RuntimeError, match="missing backend reference"):
         adapter.execute(
             stage=_stage(),
             plan=_plan(),
             context=_context(),
-            downstream_key="key-7",
+            downstream_key="key-noref",
         )
 
 
-def test_invalid_owner_emitted_receipt_raises() -> None:
-    """An owner-emitted receipt with mismatched run_id or invalid spec_version must raise."""
+def test_missing_artifact_digest_in_real_mode_raises() -> None:
+    """Authentic real execution without artifact digest must raise."""
+    adapter = AuthenticStageAdapter(
+        stage_type="prototype_backtest",
+        preferred_backend="vectorbt",
+        mode="real",
+        backend_reference="vectorbt://runs/1",
+        execute_fn=lambda *args, **kwargs: {
+            "status": "succeeded",
+            "metrics": [{"name": "sharpe", "value": 1.5}],
+        },
+    )
+    with pytest.raises(RuntimeError, match="missing genuine backend artifact digest"):
+        adapter.execute(
+            stage=_stage(),
+            plan=_plan(),
+            context=_context(),
+            downstream_key="key-nodigest",
+        )
+
+
+def test_missing_metrics_in_real_mode_raises() -> None:
+    """Authentic real execution without genuine backend metrics must raise."""
+    adapter = AuthenticStageAdapter(
+        stage_type="prototype_backtest",
+        preferred_backend="vectorbt",
+        mode="real",
+        backend_reference="vectorbt://runs/1",
+        execute_fn=lambda *args, **kwargs: {
+            "status": "succeeded",
+            "artifact_digest": "sha256:abc123digest",
+            "metrics": [],
+        },
+    )
+    with pytest.raises(RuntimeError, match="missing genuine backend metrics"):
+        adapter.execute(
+            stage=_stage(),
+            plan=_plan(),
+            context=_context(),
+            downstream_key="key-nometrics",
+        )
+
+
+def test_synthetic_score_metrics_never_retained_from_super() -> None:
+    """AuthenticStageAdapter must not retain synthetic score=1.0 metrics from DefaultAllowlistedAdapter."""
+    adapter = AuthenticStageAdapter(
+        stage_type="prototype_backtest",
+        preferred_backend="vectorbt",
+        mode="real",
+        backend_reference="vectorbt://runs/1",
+        execute_fn=lambda *args, **kwargs: {
+            "status": "succeeded",
+            "artifact_digest": "sha256:abc123digest",
+            "metrics": [{"name": "custom_metric", "value": 42.0}],
+        },
+    )
+    result = adapter.execute(
+        stage=_stage(),
+        plan=_plan(),
+        context=_context(),
+        downstream_key="key-metrics-clean",
+    )
+    assert len(result.metrics) == 1
+    assert result.metrics[0]["name"] == "custom_metric"
+    assert not any("score" in m.get("metric_name", "") for m in result.metrics)
+
+
+def test_valid_owner_emitted_receipt_dict_succeeds() -> None:
+    """A valid owner-emitted receipt dictionary must parse without NameError (VALID_MODES) and succeed."""
+    run_id = "run-valid-receipt-001"
+    corr_id = "corr-valid-receipt-001"
     adapter = AuthenticStageAdapter(
         stage_type="prototype_backtest",
         preferred_backend="vectorbt",
         mode="real",
         execute_fn=lambda *args, **kwargs: {
+            "status": "succeeded",
+            "backend_reference": "vectorbt://runs/42",
+            "artifact_digest": "sha256:digest42",
+            "metrics": [{"name": "sharpe", "value": 2.1}],
+            "receipt": {
+                "receipt_id": "rcpt-owner-42",
+                "run_id": run_id,
+                "executor": "vectorbt_executor",
+                "mode": "real",
+                "spec_version": "1.0",
+                "correlation_id": corr_id,
+                "completed_at": "2026-09-08T00:00:00Z",
+                "backend_reference": "vectorbt://runs/42",
+                "artifact_digest": "sha256:digest42",
+            },
+        },
+    )
+    result = adapter.execute(
+        stage=_stage(),
+        plan=_plan(),
+        context=_context(run_id=run_id, correlation_id=corr_id),
+        downstream_key="key-valid-receipt",
+    )
+    assert result.receipt is not None
+    assert result.receipt.receipt_id == "rcpt-owner-42"
+    assert result.receipt.mode == "real"
+    assert result.receipt.run_id == run_id
+
+
+def test_valid_owner_emitted_receipt_object_succeeds() -> None:
+    """A valid ResearchExecutionReceipt object emitted by the backend must succeed without NameError."""
+    run_id = "run-valid-obj-001"
+    corr_id = "corr-valid-obj-001"
+    receipt_obj = ResearchExecutionReceipt(
+        receipt_id="rcpt-obj-99",
+        run_id=run_id,
+        executor="vectorbt_executor",
+        mode="real",
+        correlation_id=corr_id,
+        completed_at="2026-09-08T00:00:00Z",
+        backend_reference="vectorbt://runs/99",
+        artifact_digest="sha256:digest99",
+        spec_version="1.0",
+    )
+    adapter = AuthenticStageAdapter(
+        stage_type="prototype_backtest",
+        preferred_backend="vectorbt",
+        mode="real",
+        execute_fn=lambda *args, **kwargs: {
+            "status": "succeeded",
+            "backend_reference": "vectorbt://runs/99",
+            "artifact_digest": "sha256:digest99",
+            "metrics": [{"name": "sharpe", "value": 2.5}],
+            "receipt": receipt_obj,
+        },
+    )
+    result = adapter.execute(
+        stage=_stage(),
+        plan=_plan(),
+        context=_context(run_id=run_id, correlation_id=corr_id),
+        downstream_key="key-valid-obj",
+    )
+    assert result.receipt is not None
+    assert result.receipt.receipt_id == "rcpt-obj-99"
+    assert result.receipt.mode == "real"
+
+
+def test_invalid_owner_emitted_receipt_mode_raises() -> None:
+    """An owner-emitted receipt with invalid mode must fail closed and raise RuntimeError."""
+    run_id = "run-invalid-mode-001"
+    adapter = AuthenticStageAdapter(
+        stage_type="prototype_backtest",
+        preferred_backend="vectorbt",
+        mode="real",
+        execute_fn=lambda *args, **kwargs: {
+            "status": "succeeded",
             "backend_reference": "vectorbt://runs/1",
             "artifact_digest": "sha256:abc",
+            "metrics": [{"name": "sharpe", "value": 1.5}],
+            "receipt": {
+                "receipt_id": "rcpt-invalid-mode",
+                "run_id": run_id,
+                "executor": "vectorbt_executor",
+                "mode": "unauthorized_mode",
+                "spec_version": "1.0",
+                "completed_at": "2026-09-08T00:00:00Z",
+            },
+        },
+    )
+    with pytest.raises(RuntimeError, match="invalid mode"):
+        adapter.execute(
+            stage=_stage(),
+            plan=_plan(),
+            context=_context(run_id=run_id),
+            downstream_key="key-invalid-mode",
+        )
+
+
+def test_invalid_owner_emitted_receipt_run_id_raises() -> None:
+    """An owner-emitted receipt with mismatched run_id must raise."""
+    adapter = AuthenticStageAdapter(
+        stage_type="prototype_backtest",
+        preferred_backend="vectorbt",
+        mode="real",
+        execute_fn=lambda *args, **kwargs: {
+            "status": "succeeded",
+            "backend_reference": "vectorbt://runs/1",
+            "artifact_digest": "sha256:abc",
+            "metrics": [{"name": "sharpe", "value": 1.5}],
             "receipt": {
                 "receipt_id": "rcpt-invalid",
                 "run_id": "wrong-run-id",

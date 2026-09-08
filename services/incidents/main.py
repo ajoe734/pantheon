@@ -134,6 +134,8 @@ try:
     )
     from .consumer import (
         DriftReportIncidentConsumer,
+        DurableDeliveredIncidentsStore,
+        DurableDownstreamWorkStore,
         InfrastructureHealthIncidentConsumer,
         IncidentConsumerError,
         IncidentConsumerRetryableError,
@@ -148,6 +150,8 @@ except ImportError:
     )
     from consumer import (  # type: ignore
         DriftReportIncidentConsumer,
+        DurableDeliveredIncidentsStore,
+        DurableDownstreamWorkStore,
         InfrastructureHealthIncidentConsumer,
         IncidentConsumerError,
         IncidentConsumerRetryableError,
@@ -309,7 +313,10 @@ def create_incident(body: CreateIncidentRequest) -> IncidentResponse:
 
 
 _SUGGESTION_CONSUMER: Optional[Any] = None
-_DELIVERED_SUGGESTION_INCIDENT_IDS: set[str] = set()
+DELIVERED_SUGGESTIONS_PATH = Path(DATA_DIR) / "delivered_suggestions.json"
+_DELIVERED_SUGGESTION_INCIDENT_IDS = DurableDeliveredIncidentsStore(DELIVERED_SUGGESTIONS_PATH)
+DOWNSTREAM_WORK_PATH = Path(DATA_DIR) / "downstream_pending_work.json"
+_DOWNSTREAM_WORK_STORE = DurableDownstreamWorkStore(DOWNSTREAM_WORK_PATH)
 
 
 def attach_incident_suggestion_consumer(consumer_fn: Any) -> None:
@@ -328,10 +335,13 @@ def _build_default_suggestion_consumer() -> Optional[Any]:
         sys.path.remove(bff_dir)
     sys.path.insert(0, bff_dir)
     try:
-        from agora.performance.consumer import EvaluationTelemetryConsumer
+        from agora.performance.consumer import EvaluationTelemetryConsumer, canonical_performance_publisher
         from agora.performance.store import PerformanceSuggestionStore
         perf_store = PerformanceSuggestionStore()
-        eval_consumer = EvaluationTelemetryConsumer(store=perf_store)
+        eval_consumer = EvaluationTelemetryConsumer(
+            store=perf_store,
+            publish_event_fn=canonical_performance_publisher,
+        )
         return eval_consumer.consume
     except Exception:
         return None
@@ -354,6 +364,7 @@ def consume_threshold_incident(
         reference_validator=reference_validator,
         suggestion_consumer=suggestion_cb,
         delivered_incident_ids=_DELIVERED_SUGGESTION_INCIDENT_IDS,
+        downstream_work_store=_DOWNSTREAM_WORK_STORE,
     )
     try:
         result = consumer.consume(body)

@@ -59,21 +59,21 @@
     "commands": [
       {
         "command": "python3 -m pytest tests/agora_write_owner/ tests/agora_product_journey/ -q",
-        "result": "33 passed in 9.77s",
+        "result": "33 passed in 9.89s",
         "executed": 33,
         "collected": 33
       },
       {
         "command": "python3 -m pytest services/control-plane/bff/agora/interaction/test_worker.py services/control-plane/bff/agora/performance/ services/control-plane/bff/tests/test_agora_candidate_truth.py services/control-plane/bff/tests/test_agora_research_store_backend.py services/control-plane/bff/tests/test_agora_research_run_projection.py -q",
-        "result": "52 passed, 2 skipped, 210 warnings in 34.13s",
+        "result": "52 passed, 2 skipped, 210 warnings in 33.92s",
         "executed": 52,
         "collected": 54
       },
       {
         "command": "python3 -m pytest services/control-plane/bff/tests/test_agora_research_candidate_governed.py scripts/test_run_agora_interaction_worker.py services/incidents/test_main_routes.py services/control-plane/bff/tests/test_agora_authentic_adapter_negative_controls.py -q",
-        "result": "81 passed, 72 warnings in 37.19s",
-        "executed": 81,
-        "collected": 81
+        "result": "94 passed, 72 warnings in 42.04s",
+        "executed": 94,
+        "collected": 94
       },
       {
         "command": "git diff --check",
@@ -92,7 +92,11 @@
     "rollback_safe": true,
     "p1_authentic_stage_adapter_negative_controls": true,
     "p1_worker_durable_store_and_authentic_adapter_wiring": true,
-    "p1_downstream_suggestion_retryable_surfacing_and_zero_duplicates": true
+    "p1_downstream_suggestion_retryable_surfacing_and_zero_duplicates": true,
+    "p1_explicit_terminal_success_and_genuine_metrics": true,
+    "p1_valid_modes_imported_no_nameerror": true,
+    "p1_worker_authentic_backend_clients_and_healthcheck": true,
+    "p1_durable_publisher_retry_recovery_and_process_reconstruction": true
   },
   "review": {
     "reviewer": "Codex",

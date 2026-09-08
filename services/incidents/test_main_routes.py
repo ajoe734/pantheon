@@ -680,6 +680,155 @@ def test_threshold_consumer_unit_retry_pending_downstream_work(tmp_path):
     assert len(published_events) == 1
 
 
+def test_consume_threshold_publisher_outage_recovery_and_no_duplicates(tmp_path):
+    """Test publisher failure propagates (HTTP 503), recovery succeeds, and replay produces 0 duplicate events."""
+    bff_dir = str(Path(__file__).resolve().parents[2] / "services" / "control-plane" / "bff")
+    if bff_dir in sys.path:
+        sys.path.remove(bff_dir)
+    sys.path.insert(0, bff_dir)
+
+    from services.incidents.main import attach_incident_suggestion_consumer
+    from agora.performance.consumer import EvaluationTelemetryConsumer
+    from agora.performance.store import PerformanceSuggestionStore
+
+    perf_db_path = str(tmp_path / "perf_suggestions_pub.sqlite3")
+    perf_store = PerformanceSuggestionStore(path=perf_db_path)
+    published_events = []
+    should_fail = True
+
+    def flaky_publisher(topic, entity_id, payload):
+        if should_fail:
+            raise RuntimeError("Event bus unreachable: 503 Service Unavailable")
+        published_events.append({"topic": topic, "entity_id": entity_id, "payload": payload})
+
+    eval_consumer = EvaluationTelemetryConsumer(
+        store=perf_store,
+        publish_event_fn=flaky_publisher,
+    )
+
+    attach_incident_suggestion_consumer(eval_consumer.consume)
+    try:
+        payload = _threshold_fixture()
+        payload["incident_id"] = "inc-pub-retry-001"
+        payload["strategy_id"] = "strat-pub-retry"
+        payload["tenant_id"] = "tenant-pub-1"
+
+        # 1. First attempt fails inside publisher -> must NOT be swallowed -> surfaces HTTP 503
+        r1 = client.post("/api/incidents/consume-threshold", json=payload)
+        assert r1.status_code == 503
+        assert "Downstream suggestion persistence failed" in r1.text
+
+        # The incident was created, but event was NOT marked published
+        assert store.get_incident("inc-pub-retry-001") is not None
+        assert not perf_store.is_event_published("agora.performance.suggestion.created", "inc-pub-retry-001")
+        assert len(published_events) == 0
+
+        # 2. Publisher recovers -> replay successfully publishes and returns 200
+        should_fail = False
+        r2 = client.post("/api/incidents/consume-threshold", json=payload)
+        assert r2.status_code == 200
+        assert len(published_events) == 1
+        assert published_events[0]["topic"] == "agora.performance.suggestion.created"
+        assert published_events[0]["payload"]["strategy_id"] == "strat-pub-retry"
+
+        # 3. Third call (replay) produces 0 duplicate published events
+        r3 = client.post("/api/incidents/consume-threshold", json=payload)
+        assert r3.status_code == 200
+        assert len(published_events) == 1
+    finally:
+        attach_incident_suggestion_consumer(None)
+
+
+def test_process_reconstruction_durable_delivered_ids_and_published_events_dedup(tmp_path):
+    """Test process reconstruction: durable delivered IDs and published event tracking prevent duplicate events across restarts."""
+    bff_dir = str(Path(__file__).resolve().parents[2] / "services" / "control-plane" / "bff")
+    if bff_dir in sys.path:
+        sys.path.remove(bff_dir)
+    sys.path.insert(0, bff_dir)
+
+    from services.incidents.consumer import (
+        DurableDeliveredIncidentsStore,
+        DurableDownstreamWorkStore,
+        ThresholdTelemetryIncidentConsumer,
+    )
+    from agora.performance.consumer import EvaluationTelemetryConsumer
+    from agora.performance.store import PerformanceSuggestionStore
+
+    delivered_path = tmp_path / "delivered_store.json"
+    downstream_path = tmp_path / "downstream_work.json"
+    perf_db_path = str(tmp_path / "perf_store_restart.sqlite3")
+
+    published_events = []
+    dispatched_events = []
+
+    def publisher(topic, entity_id, payload):
+        published_events.append({"topic": topic, "entity_id": entity_id, "payload": payload})
+
+    # Process generation 1: initial run
+    delivered_store_1 = DurableDeliveredIncidentsStore(delivered_path)
+    downstream_store_1 = DurableDownstreamWorkStore(downstream_path)
+    perf_store_1 = PerformanceSuggestionStore(path=perf_db_path)
+    eval_consumer_1 = EvaluationTelemetryConsumer(
+        store=perf_store_1,
+        publish_event_fn=publisher,
+    )
+
+    def recording_consumer(ev):
+        dispatched_events.append(ev)
+        return eval_consumer_1.consume(ev)
+
+    consumer_1 = ThresholdTelemetryIncidentConsumer(
+        incident_store=store,
+        suggestion_consumer=recording_consumer,
+        delivered_incident_ids=delivered_store_1,
+        downstream_work_store=downstream_store_1,
+    )
+
+    payload = _threshold_fixture()
+    payload["incident_id"] = "inc-restart-recon-001"
+    payload["strategy_id"] = "strat-restart-recon"
+    payload["tenant_id"] = "tenant-restart-1"
+
+    res1 = consumer_1.consume(payload)
+    assert res1.created is True
+    assert len(published_events) == 1
+    assert len(dispatched_events) == 1
+    assert "inc-restart-recon-001" in delivered_store_1
+
+    # Simulate process termination: discard generation 1 in-memory objects
+    del consumer_1
+    del eval_consumer_1
+    del perf_store_1
+    del downstream_store_1
+    del delivered_store_1
+
+    # Process generation 2 (reconstructed process after restart)
+    delivered_store_2 = DurableDeliveredIncidentsStore(delivered_path)
+    downstream_store_2 = DurableDownstreamWorkStore(downstream_path)
+    perf_store_2 = PerformanceSuggestionStore(path=perf_db_path)
+    eval_consumer_2 = EvaluationTelemetryConsumer(
+        store=perf_store_2,
+        publish_event_fn=publisher,
+    )
+    consumer_2 = ThresholdTelemetryIncidentConsumer(
+        incident_store=store,
+        suggestion_consumer=eval_consumer_2.consume,
+        delivered_incident_ids=delivered_store_2,
+        downstream_work_store=downstream_store_2,
+    )
+
+    assert "inc-restart-recon-001" in delivered_store_2
+
+    # Replay through reconstructed incident consumer
+    res2 = consumer_2.consume(payload)
+    assert res2.created is False
+    assert len(published_events) == 1  # ZERO duplicate events published
+
+    # Direct replay through reconstructed evaluation consumer with the same outcome event
+    eval_consumer_2.replay(dispatched_events[0])
+    assert len(published_events) == 1  # Still exactly 1, idempotent publication deduplication held
+
+
 
 
 

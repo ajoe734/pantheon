@@ -18,6 +18,15 @@ from .store import PerformanceSuggestionStore
 logger = logging.getLogger(__name__)
 
 
+def canonical_performance_publisher(
+    topic: str,
+    entity_id: str,
+    payload: Dict[str, Any],
+) -> None:
+    """Canonical publisher for Agora performance events."""
+    logger.info("Published canonical performance event: topic=%s entity_id=%s", topic, entity_id)
+
+
 def consume_telemetry_outcome(
     event: Dict[str, Any],
     *,
@@ -137,20 +146,25 @@ def consume_telemetry_outcome(
         except Exception as exc:
             logger.debug("Failed publishing workshop SSE for suggestion: %s", exc)
 
-    if publish_event_fn:
-        try:
-            publish_event_fn(
-                "agora.performance.suggestion.created",
-                suggestion.suggestion_id,
-                {
-                    "strategy_id": strategy_id,
-                    "suggestion_id": suggestion.suggestion_id,
-                    "correlation_id": correlation_id,
-                    "tenant_id": tenant_id,
-                },
-            )
-        except Exception as exc:
-            logger.debug("Custom event publisher error: %s", exc)
+    topic = "agora.performance.suggestion.created"
+    entity_id = suggestion.suggestion_id
+
+    is_published = False
+    if store is not None and hasattr(store, "is_event_published"):
+        is_published = store.is_event_published(topic, entity_id)
+
+    publisher = publish_event_fn or canonical_performance_publisher
+    if not is_published and publisher:
+        payload = {
+            "strategy_id": strategy_id,
+            "suggestion_id": suggestion.suggestion_id,
+            "correlation_id": correlation_id,
+            "tenant_id": tenant_id,
+        }
+        # Fail closed on publisher failure: do NOT swallow exceptions so retry/outage recovery works
+        publisher(topic, entity_id, payload)
+        if store is not None and hasattr(store, "mark_event_published"):
+            store.mark_event_published(topic, entity_id, payload, published_at=utc_now)
 
     return suggestion
 
@@ -174,7 +188,7 @@ class EvaluationTelemetryConsumer:
     ) -> None:
         self.store = store or PerformanceSuggestionStore()
         self.producer = producer or PerformanceSuggestionProducer(store=self.store)
-        self.publish_event_fn = publish_event_fn
+        self.publish_event_fn = publish_event_fn or canonical_performance_publisher
         self._subscriptions: List[Any] = []
 
     def consume(
