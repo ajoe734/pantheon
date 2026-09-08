@@ -1,0 +1,33 @@
+name: Persona Owner Contract
+
+on:
+  pull_request:
+    branches: [dev]
+    paths:
+      - services/persona/**
+      - services/control-plane/bff/**
+      - tests/persona_capital_write_owner/**
+      - .github/workflows/persona-owner-contract.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  contract:
+    name: Persona create owner contract
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - name: Provision isolated runner distribution
+        run: |
+          python3 -m pip install --upgrade pip "setuptools>=68"
+          python3 -m pip install -r requirements.txt -r services/control-plane/bff/requirements.txt
+          python3 scripts/dev/provision_python_distribution.py --mode current --allow-system-interpreter
+      - name: Verify real owner creation and scoped BFF progress
+        run: |
+          python3 -m pytest -q services/control-plane/bff/tests/test_persona_create_owner_contract.py
