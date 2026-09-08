@@ -13,6 +13,7 @@ from __future__ import annotations
 import json
 import logging
 import re
+import ssl
 import sys
 from datetime import datetime, timezone
 from http import HTTPStatus
@@ -377,6 +378,8 @@ def create_issuer_server(
     *,
     host: str = "127.0.0.1",
     port: int = 8090,
+    ssl_cert_file: str | Path | None = None,
+    ssl_key_file: str | Path | None = None,
 ) -> ThreadingHTTPServer:
     """Create and return a configured ThreadingHTTPServer instance."""
 
@@ -384,4 +387,9 @@ def create_issuer_server(
         pass
 
     BoundHandler.service = service
-    return ThreadingHTTPServer((host, port), BoundHandler)
+    server = ThreadingHTTPServer((host, port), BoundHandler)
+    if ssl_cert_file and ssl_key_file:
+        context = ssl.create_default_context(ssl.Purpose.CLIENT_AUTH)
+        context.load_cert_chain(certfile=str(ssl_cert_file), keyfile=str(ssl_key_file))
+        server.socket = context.wrap_socket(server.socket, server_side=True)
+    return server

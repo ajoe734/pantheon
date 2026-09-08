@@ -19,6 +19,7 @@ import logging
 import os
 import signal
 import sys
+import threading
 from pathlib import Path
 from typing import Any
 
@@ -61,8 +62,22 @@ def generate_key_pair(output_path: Path, key_id: str = "pantheon-mfa-issuer-dev-
         format=PrivateFormat.PKCS8,
         encryption_algorithm=NoEncryption(),
     )
-    output_path.write_bytes(pem_bytes)
-    output_path.chmod(0o600)
+    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
+    if hasattr(os, "O_NOFOLLOW"):
+        flags |= os.O_NOFOLLOW
+
+    try:
+        fd = os.open(str(output_path), flags, 0o600)
+    except FileExistsError as exc:
+        raise RuntimeError(f"Private key destination already exists or is a symlink: {output_path}") from exc
+    except OSError as exc:
+        raise RuntimeError(f"Failed to create exclusive private key file {output_path}: {exc}") from exc
+
+    try:
+        with open(fd, "wb") as f:
+            f.write(pem_bytes)
+    except Exception:
+        raise
 
     signer = Ed25519GrantSigner(priv_key, key_id=key_id)
     pub_b64 = signer.public_key_base64url
@@ -95,9 +110,26 @@ def run_service(config: dict[str, Any]) -> None:
     sign_cfg = config.get("signing", {})
     pol_cfg = config.get("policy", {})
 
-    host = svc_cfg.get("host", "0.0.0.0")
+    host = svc_cfg.get("host", "127.0.0.1")
     port = int(svc_cfg.get("port", 8090))
     audit_log = svc_cfg.get("audit_log_path")
+
+    tls_cfg = svc_cfg.get("tls", {})
+    tls_enabled = tls_cfg.get("enabled", False)
+    ssl_cert_file = tls_cfg.get("cert_file")
+    ssl_key_file = tls_cfg.get("key_file")
+
+    if host not in ("127.0.0.1", "localhost", "::1") and not tls_enabled:
+        raise ValueError(
+            f"Plaintext HTTP on non-loopback host {host!r} is strictly prohibited. "
+            "Configure 'service.tls.enabled': true with cert_file and key_file, or bind host to 127.0.0.1."
+        )
+
+    if tls_enabled:
+        if not ssl_cert_file or not Path(ssl_cert_file).is_file():
+            raise FileNotFoundError(f"TLS certificate file not found: {ssl_cert_file}")
+        if not ssl_key_file or not Path(ssl_key_file).is_file():
+            raise FileNotFoundError(f"TLS private key file not found: {ssl_key_file}")
 
     # Initialize Token Verifier
     project_id = id_cfg.get("project_id", "pantheon-dev-20260902")
@@ -144,7 +176,13 @@ def run_service(config: dict[str, Any]) -> None:
         audit_log_path=audit_log,
     )
 
-    server = create_issuer_server(service, host=host, port=port)
+    server = create_issuer_server(
+        service,
+        host=host,
+        port=port,
+        ssl_cert_file=ssl_cert_file if tls_enabled else None,
+        ssl_key_file=ssl_key_file if tls_enabled else None,
+    )
     logger.info("Pantheon Execution Grant Issuer starting on %s:%d", host, port)
     logger.info("Identity Platform Project: %s", project_id)
     logger.info("Signer Key ID: %s (fingerprint: %s)", key_id, signer.public_key_fingerprint)

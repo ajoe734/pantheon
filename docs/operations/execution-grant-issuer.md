@@ -206,3 +206,83 @@ If an issuer key is compromised or needs to be revoked:
    ```bash
    sudo systemctl stop pantheon-execution-grant-issuer
    ```
+
+---
+
+## 7. Verified Worker sudo/key/unit/config Isolation
+
+To ensure background auto-workers cannot forge or mint execution grants:
+1. **Dedicated Service Identity:**
+   - The issuer runs under dedicated system user `pantheon-issuer` (group `pantheon-issuer`).
+   - Auto-workers run under unprivileged user accounts and MUST NOT possess `sudo` privileges over the `pantheon-issuer` service, systemd units, configuration files, or private keys.
+2. **Filesystem Permissions & Host Isolation:**
+   - Private key `/etc/pantheon/execution-grant-issuer/ed25519-private.pem` is strictly mode `0600`, owned by `pantheon-issuer:pantheon-issuer`.
+   - The directory `/etc/pantheon/execution-grant-issuer/` is mode `0750`, owned by `root:pantheon-issuer`.
+   - Ideal topology: deploy the issuer on a separate isolated VM / control host remote to the shared worker VM. If co-located, verify via `sudo -l -U <worker-user>` that workers cannot read `/etc/pantheon/execution-grant-issuer/` or restart `pantheon-execution-grant-issuer.service`.
+
+---
+
+## 8. Readiness & Liveness Failure Conditions
+
+The `/healthz` and `/livez` endpoints expose service health. The service fails closed and marks itself unready under the following conditions:
+1. **Certificate Outage / Cache Expiry:**
+   - Google Cloud Identity Platform public certificates cannot be fetched from `https://www.googleapis.com/robot/v1/metadata/x509/securetoken@system.gserviceaccount.com` and the local certificate cache has expired (`now >= cache_expires_at`).
+2. **Signer Key Inaccessibility:**
+   - Private key file cannot be loaded, has wrong permissions, or does not contain a valid Ed25519 private key.
+3. **Insecure Network Binding:**
+   - Service configured to bind to a non-loopback address (e.g. `0.0.0.0`) without TLS configuration (`service.tls.enabled = false`).
+4. **Policy Misconfiguration:**
+   - Missing or corrupted policy constraints in `config.json`.
+
+---
+
+## 9. Current-Project Human Reauthentication & Fresh MFA Token Acquisition
+
+The execution grant issuer enforces current-project tokens from `pantheon-dev-20260902` and rejects tokens from retired projects (`pantheon-benjamin-20260528`) or single-factor authentication.
+
+### Acquiring a Fresh MFA ID Token
+The tooling web interface (`index.html`) and CLI accept an already-obtained fresh Identity Platform user ID token. To acquire one:
+1. **Interactive gcloud login (Operator Workstation):**
+   ```bash
+   gcloud auth login --project=pantheon-dev-20260902 --update-adc
+   ```
+2. **Identity Platform REST Authentication with Second Factor:**
+   - Step 1: Sign in with password to initiate MFA challenge:
+     ```bash
+     curl -X POST "https://identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key=${IDENTITY_PLATFORM_API_KEY}" \
+       -H "Content-Type: application/json" \
+       -d '{"email":"operator-chloe@pantheon.trade","password":"<password>","returnSecureToken":true}'
+     ```
+     If MFA is enrolled, this returns an `mfaPendingCredential`.
+   - Step 2: Finalize second factor (TOTP / SMS / Phone):
+     ```bash
+     curl -X POST "https://identitytoolkit.googleapis.com/v1/accounts:mfaSignIn:finalize?key=${IDENTITY_PLATFORM_API_KEY}" \
+       -H "Content-Type: application/json" \
+       -d '{"mfaPendingCredential":"<pending-cred>","totpVerificationCode":{"verificationCode":"<totp-code>"}}'
+     ```
+     The returned `idToken` contains the verified `sign_in_second_factor` claim and `auth_time`.
+3. **Feeding the Token to the CLI:**
+   ```bash
+   # Save securely to a 0600 file:
+   echo -n "<idToken>" > /tmp/operator-token.txt
+   chmod 0600 /tmp/operator-token.txt
+
+   # Run the scoped TRACE client:
+   python3 scripts/request_execution_grant.py request \
+     --task DEV502-TRACE-001 \
+     --token-file /tmp/operator-token.txt \
+     --submit
+   ```
+
+---
+
+## 10. Single-Process Deployment & Safe Restart Semantics
+
+The in-memory `ChallengeStore` coordinates atomic single-use challenge consumption within a single process:
+1. **Single-Process Enforcement:**
+   - The issuer service runs as a single process (`Type=simple` in systemd with `Restart=on-failure`).
+   - Do NOT run multi-worker prefork servers (such as gunicorn with multiple worker processes) without shared transactional persistence (e.g., PostgreSQL or Redis with atomic Lua scripts), as in-memory challenges are not shared across process boundaries.
+2. **Safe Restart Semantics:**
+   - Challenges are ephemeral with a default TTL of 180 seconds.
+   - On service restart (`SIGTERM` / `SIGINT`), active pending challenges are discarded. Operators simply re-request a challenge with their fresh ID token; no orphan durable state or partial grants remain.
+

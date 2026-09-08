@@ -1,8 +1,13 @@
 {
   "service": {
-    "host": "0.0.0.0",
-    "port": 8090,
-    "public_url": "https://mfa-issuer.internal.pantheon.trade",
+    "host": "127.0.0.1",
+    "port": 8443,
+    "tls": {
+      "enabled": true,
+      "cert_file": "/etc/pantheon/execution-grant-issuer/tls-cert.pem",
+      "key_file": "/etc/pantheon/execution-grant-issuer/tls-key.pem"
+    },
+    "public_url": "https://mfa-issuer.internal.pantheon.trade:8443",
     "audit_log_path": "/var/log/pantheon/execution-grant-issuer-audit.jsonl"
   },
   "identity_platform": {

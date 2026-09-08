@@ -149,16 +149,17 @@ class TestRequestExecutionGrantCLI(unittest.TestCase):
             cli.validate_task_eligibility(s5_phase_task)
         self.assertIn("remains paused", str(cm.exception))
 
-        # Reject unexpected task ID unless overridden
+        # Reject unexpected task ID
         other_task = deepcopy(self.canonical_task)
         other_task["id"] = "OTHER-001"
         with self.assertRaises(ValueError) as cm:
             cli.validate_task_eligibility(other_task)
         self.assertIn("limited to DEV502-TRACE-001", str(cm.exception))
 
-        # Allow unexpected task ID with allow_any_task flag
-        p, _ = cli.validate_task_eligibility(other_task, allow_any_task=True)
-        self.assertIsNotNone(p)
+        # Ensure bypasses like allow_any_task or allowed_task are NOT permitted
+        with self.assertRaises(ValueError) as cm:
+            cli.validate_task_eligibility(other_task, allow_any_task=True)
+        self.assertIn("limited to DEV502-TRACE-001", str(cm.exception))
 
     def test_token_loading_mechanisms(self) -> None:
         """Verify token loading from file and stdin, and empty token rejection."""
@@ -219,8 +220,8 @@ class TestRequestExecutionGrantCLI(unittest.TestCase):
         with self.assertRaises(ea.ExecutionAuthorizationError):
             cli.verify_grant_locally(signed_grant, canonical_task_row, self.policy, wrong_keys)
 
-    def test_end_to_end_prepare_and_request_flow(self) -> None:
-        """Run full HTTP server and execute prepare and request flow."""
+    def test_end_to_end_qualified_chain(self) -> None:
+        """Run full HTTP server and execute real qualified show -> issuance -> verifier -> submit chain."""
         service = ExecutionGrantIssuerService(
             verifier=self.verifier,
             signer=self.signer,
@@ -236,85 +237,224 @@ class TestRequestExecutionGrantCLI(unittest.TestCase):
         issuer_url = f"http://127.0.0.1:{port}"
         token = self._mint_token()
 
-        with tempfile.NamedTemporaryFile(mode="w", delete=False) as tf:
-            tf.write(token)
-            token_file = tf.name
+        with tempfile.TemporaryDirectory() as td:
+            td_path = Path(td)
+            token_file = td_path / "token.txt"
+            token_file.write_text(token, encoding="utf-8")
 
-        with tempfile.NamedTemporaryFile(mode="w", delete=False) as gf:
-            grant_file = gf.name
-
-        config_data = {
-            "execution_authorization": {
-                "mfa_issuer_public_keys": {
-                    self.signer_key_id: self.signer.public_key_base64url
+            grant_file = td_path / "grant.json"
+            config_file = td_path / "config.json"
+            config_file.write_text(json.dumps({
+                "execution_authorization": {
+                    "mfa_issuer_public_keys": {
+                        self.signer_key_id: self.signer.public_key_base64url
+                    }
                 }
+            }), encoding="utf-8")
+
+            # Create an isolated qualified command root with scripts/ai-status.sh
+            cmd_root = td_path / "command_root"
+            scripts_dir = cmd_root / "scripts"
+            scripts_dir.mkdir(parents=True, exist_ok=True)
+            ai_status_sh = scripts_dir / "ai-status.sh"
+            submitted_file = td_path / "submitted_receipt.json"
+            counter_file = td_path / "show_counter.txt"
+            counter_file.write_text("0", encoding="utf-8")
+
+            canonical_task_row = {
+                **deepcopy(self.spec),
+                "id": self.task_id,
+                "generation": 3,
+                "summary_zh": self.spec["summary"],
+                "target_repo": "pantheon",
+                "execution_resources": ["pantheon-dev"],
+                "artifacts": ["docs/deployment/evidence/DEV502-TRACE-001/"],
+                "dev_bridge": {
+                    "work_class": "hosted",
+                    "operator_authorization_required": True,
+                    "task_spec": deepcopy(self.spec),
+                    "task_spec_hash": self.policy["task_spec_hash"],
+                },
+                "execution_authorization": {
+                    "state": "pending_authorization",
+                    "policy": self.policy,
+                },
             }
-        }
+            task_json_file = td_path / "task.json"
+            task_json_file.write_text(json.dumps({"task": canonical_task_row}), encoding="utf-8")
+
+            # Write ai-status.sh runner script
+            ai_status_script = f"""#!/bin/sh
+set -e
+CMD="$1"
+TASK="$2"
+if [ "$CMD" = "show" ]; then
+  COUNT=$(cat "{counter_file}")
+  COUNT=$((COUNT + 1))
+  echo "$COUNT" > "{counter_file}"
+  cat "{task_json_file}"
+  exit 0
+elif [ "$CMD" = "execution-grant-submit" ]; then
+  if [ "$AI_NAME" != "Human/Ops" ]; then
+    echo "ERROR: AI_NAME must be Human/Ops" >&2
+    exit 1
+  fi
+  echo "$EXECUTION_GRANT_JSON" > "{submitted_file}"
+  exit 0
+else
+  echo "Unknown command: $CMD" >&2
+  exit 1
+fi
+"""
+            ai_status_sh.write_text(ai_status_script, encoding="utf-8")
+            ai_status_sh.chmod(0o755)
+
+            env_patch = {
+                "PANTHEON_COMMAND_ROOT": str(cmd_root),
+            }
+
+            try:
+                with patch.dict(os.environ, env_patch):
+                    # 1. Prepare
+                    prep_out_file = td_path / "prep.json"
+                    prep_args = MagicMock(
+                        task=self.task_id,
+                        out=str(prep_out_file),
+                    )
+                    cli.cmd_prepare(prep_args)
+                    prep_data = json.loads(prep_out_file.read_text(encoding="utf-8"))
+                    self.assertEqual(prep_data["task_id"], self.task_id)
+                    self.assertEqual(prep_data["generation"], 3)
+
+                    # 2. Request with local verification and immediate submit
+                    req_args = MagicMock(
+                        task=self.task_id,
+                        issuer_url=issuer_url,
+                        token_file=str(token_file),
+                        token_stdin=False,
+                        config_file=str(config_file),
+                        grant_out=str(grant_file),
+                        submit=True,
+                    )
+
+                    with patch("sys.stdout", new=io.StringIO()) as fake_out:
+                        cli.cmd_request(req_args)
+                        stdout_str = fake_out.getvalue()
+
+                    # Verify stdout does not contain raw bearer or secret credentials
+                    self.assertNotIn("EXECUTION_GRANT_JSON=", stdout_str)
+                    self.assertNotIn(token, stdout_str)
+
+                    # Verify grant was saved to grant_file and permissions are 0600
+                    self.assertTrue(grant_file.is_file())
+                    self.assertEqual(os.stat(grant_file).st_mode & 0o777, 0o600)
+                    saved_grant = json.loads(grant_file.read_text(encoding="utf-8"))
+                    self.assertEqual(saved_grant["task_id"], self.task_id)
+                    self.assertEqual(saved_grant["signature"]["key_id"], self.signer_key_id)
+
+                    # Verify submit was executed and saved to submitted_file
+                    self.assertTrue(submitted_file.is_file())
+                    submitted_grant = json.loads(submitted_file.read_text(encoding="utf-8"))
+                    self.assertEqual(submitted_grant["task_id"], self.task_id)
+
+                    # Verify show was called twice: once at start, once right before submission
+                    show_count = int(counter_file.read_text(encoding="utf-8").strip())
+                    self.assertEqual(show_count, 3)  # 1 for prepare, 2 for request (initial + before submit)
+            finally:
+                server.shutdown()
+                server.server_close()
+
+    def test_empty_trust_rejects_before_request(self) -> None:
+        """Verify that empty public trust aborts request before contacting issuer."""
         with tempfile.NamedTemporaryFile(mode="w", delete=False) as cf:
-            json.dump(config_data, cf)
-            config_file = cf.name
+            json.dump({"execution_authorization": {"mfa_issuer_public_keys": {}}}, cf)
+            empty_cfg = cf.name
 
         try:
-            # Mock fetch_canonical_task to return self.canonical_task
-            with patch("scripts.request_execution_grant.fetch_canonical_task", return_value=self.canonical_task):
-                # 1. Prepare
-                prep_args = MagicMock(
-                    task=self.task_id,
-                    allowed_task=self.task_id,
-                    allow_any_task=False,
-                    out=None,
-                )
-                with patch("sys.stdout", new=io.StringIO()) as fake_out:
-                    cli.cmd_prepare(prep_args)
-                    prep_json = json.loads(fake_out.getvalue())
-                    self.assertEqual(prep_json["task_id"], self.task_id)
-
-                # 2. Request with local verification and output to file
-                req_args = MagicMock(
-                    task=self.task_id,
-                    allowed_task=self.task_id,
-                    allow_any_task=False,
-                    issuer_url=issuer_url,
-                    token_file=token_file,
-                    token_stdin=False,
-                    config_file=config_file,
-                    grant_out=grant_file,
-                    submit=False,
-                )
-
-                canonical_task_row = {
-                    **deepcopy(self.spec),
-                    "id": self.task_id,
-                    "generation": 3,
-                    "summary_zh": self.spec["summary"],
-                    "target_repo": "pantheon",
-                    "execution_resources": ["pantheon-dev"],
-                    "artifacts": ["docs/deployment/evidence/DEV502-TRACE-001/"],
-                    "dev_bridge": {
-                        "work_class": "hosted",
-                        "operator_authorization_required": True,
-                        "task_spec": deepcopy(self.spec),
-                        "task_spec_hash": self.policy["task_spec_hash"],
-                    },
-                    "execution_authorization": {
-                        "state": "pending_authorization",
-                        "policy": self.policy,
-                    },
-                }
-
-                with patch("scripts.request_execution_grant.fetch_canonical_task", return_value=canonical_task_row):
+            req_args = MagicMock(
+                task=self.task_id,
+                issuer_url="http://127.0.0.1:8090",
+                token_file=None,
+                token_stdin=True,
+                config_file=empty_cfg,
+                grant_out=None,
+                submit=False,
+            )
+            with patch("scripts.request_execution_grant.fetch_canonical_task", return_value=self.canonical_task), \
+                 patch("scripts.request_execution_grant.post_json") as mock_post:
+                with self.assertRaises(RuntimeError) as cm:
                     cli.cmd_request(req_args)
-
-                saved_grant = json.loads(Path(grant_file).read_text(encoding="utf-8"))
-                self.assertEqual(saved_grant["task_id"], self.task_id)
-                self.assertEqual(saved_grant["audience"], self.task_id)
-                self.assertEqual(saved_grant["signature"]["key_id"], self.signer_key_id)
+                self.assertIn("missing trusted mfa issuer", str(cm.exception).lower())
+                mock_post.assert_not_called()
         finally:
-            server.shutdown()
-            server.server_close()
-            for p in (token_file, grant_file, config_file):
-                if os.path.exists(p):
-                    os.unlink(p)
+            if os.path.exists(empty_cfg):
+                os.unlink(empty_cfg)
+
+    def test_grant_out_symlink_rejection_prevents_clobber(self) -> None:
+        """Verify that writing grant to a symlink path fails closed without clobbering target."""
+        with tempfile.TemporaryDirectory() as td:
+            td_path = Path(td)
+            target = td_path / "sensitive-target.txt"
+            target.write_text("DO_NOT_OVERWRITE", encoding="utf-8")
+
+            symlink_path = td_path / "grant-out-link"
+            symlink_path.symlink_to(target)
+
+            with self.assertRaises(RuntimeError) as cm:
+                cli.write_private_exclusive_json(symlink_path, {"marker": "INTRUDER_GRANT"})
+
+            self.assertIn("already exists or is a symlink", str(cm.exception))
+            self.assertEqual(target.read_text(encoding="utf-8"), "DO_NOT_OVERWRITE")
+
+    def test_insecure_remote_http_and_userinfo_rejected(self) -> None:
+        """Verify that remote plaintext HTTP, embedded userinfo, and fragments are rejected."""
+        with self.assertRaises(ValueError) as cm:
+            cli.validate_issuer_url("http://remote-server.invalid:8090/v1")
+        self.assertIn("insecure http is only permitted for loopback", str(cm.exception).lower())
+
+        with self.assertRaises(ValueError) as cm:
+            cli.validate_issuer_url("https://user:password@secure.example.com/v1")
+        self.assertIn("embedded userinfo", str(cm.exception).lower())
+
+        with self.assertRaises(ValueError) as cm:
+            cli.validate_issuer_url("http://127.0.0.1:8090/v1#fragment")
+        self.assertIn("fragments", str(cm.exception).lower())
+
+        # Valid loopback HTTP and remote HTTPS pass
+        cli.validate_issuer_url("http://127.0.0.1:8090")
+        cli.validate_issuer_url("http://localhost:8090")
+        cli.validate_issuer_url("https://secure-issuer.pantheon.trade:8443")
+
+    def test_refetch_canonical_detects_concurrent_change(self) -> None:
+        """Verify that a concurrent modification to the canonical task aborts submission."""
+        fake_grant = {
+            "task_id": self.task_id,
+            "audience": self.task_id,
+            "signature": {"key_id": self.signer_key_id, "algorithm": "Ed25519", "value": "dummy"},
+        }
+        modified_task = deepcopy(self.canonical_task)
+        modified_task["generation"] = 4  # Generation bumped concurrently
+
+        req_args = MagicMock(
+            task=self.task_id,
+            issuer_url="http://127.0.0.1:8090",
+            token_file=None,
+            token_stdin=True,
+            config_file=None,
+            grant_out=None,
+            submit=True,
+        )
+
+        with patch("scripts.request_execution_grant.fetch_canonical_task", side_effect=[self.canonical_task, modified_task]), \
+             patch("scripts.request_execution_grant.load_trusted_keys", return_value={self.signer_key_id: "test"}), \
+             patch("scripts.request_execution_grant.load_token", return_value="fake-token"), \
+             patch("scripts.request_execution_grant.post_json", side_effect=[{"challenge_id": "c1"}, {"grant": fake_grant}]), \
+             patch("scripts.request_execution_grant.verify_grant_locally", return_value="test-fp"), \
+             patch("scripts.request_execution_grant.submit_grant_via_cli") as mock_submit:
+            with self.assertRaises(RuntimeError) as cm:
+                cli.cmd_request(req_args)
+            self.assertIn("generation changed", str(cm.exception).lower())
+            mock_submit.assert_not_called()
 
 
 if __name__ == "__main__":

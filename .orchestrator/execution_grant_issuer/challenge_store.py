@@ -100,8 +100,7 @@ class ChallengeStore:
 
         with self._lock:
             self._challenges[challenge_id] = challenge
-
-        return challenge
+            return deepcopy(challenge)
 
     def consume_challenge(
         self,
@@ -131,29 +130,25 @@ class ChallengeStore:
             if current_time >= challenge.expires_at:
                 raise ChallengeError("Challenge has expired", status_code=410)
 
-            # Atomically mark as consumed immediately before running remaining binding validations
-            challenge.consumed = True
-            challenge.consumed_at = current_time
-
-            # Validate actor binding
+            # Validate actor binding before consuming
             if challenge.actor_uid != actor_uid.strip():
                 raise ChallengeError("Challenge actor mismatch: challenge was not issued to this actor", status_code=403)
 
-            # Validate task ID binding
+            # Validate task ID binding before consuming
             if challenge.task_id != task_id.strip():
                 raise ChallengeError(
                     f"Challenge task mismatch: challenged for {challenge.task_id!r}, requested for {task_id!r}",
                     status_code=400,
                 )
 
-            # Validate generation binding
+            # Validate generation binding before consuming
             if challenge.generation != generation:
                 raise ChallengeError(
                     f"Challenge generation mismatch: challenged for {challenge.generation}, requested for {generation}",
                     status_code=400,
                 )
 
-            # Validate policy snapshot byte-for-byte canonical match (prevents client policy substitutions)
+            # Validate policy snapshot byte-for-byte canonical match before consuming
             expected_canonical = _canonical_json(challenge.policy_snapshot)
             actual_canonical = _canonical_json(policy_snapshot)
             if expected_canonical != actual_canonical:
@@ -162,7 +157,11 @@ class ChallengeStore:
                     status_code=400,
                 )
 
-            return challenge
+            # Atomically mark as consumed only after all validations pass
+            challenge.consumed = True
+            challenge.consumed_at = current_time
+
+            return deepcopy(challenge)
 
     def get_challenge(self, challenge_id: str) -> Challenge | None:
         """Read challenge state without consuming (for inspection)."""

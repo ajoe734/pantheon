@@ -1,3 +1,4 @@
-cryptography>=41.0.0
-PyJWT>=2.7.0
-requests>=2.28.0
+cryptography==41.0.7
+PyJWT==2.7.0
+requests==2.31.0
+

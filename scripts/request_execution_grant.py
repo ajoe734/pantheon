@@ -20,6 +20,7 @@ import os
 import subprocess
 import sys
 import urllib.error
+import urllib.parse
 import urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
@@ -52,26 +53,31 @@ def _check_no_token_in_argv() -> None:
             sys.exit(2)
 
 
+def _canonical_json(val: Any) -> bytes:
+    return json.dumps(val, sort_keys=True, separators=(",", ":"), ensure_ascii=True, allow_nan=False).encode("utf-8")
+
+
 def get_command_root() -> Path:
-    """Resolve the governed command root or fall back to repository root."""
+    """Resolve the governed command root strictly from environment."""
     env_root = os.environ.get("PANTHEON_COMMAND_ROOT")
-    if env_root and Path(env_root).is_dir():
-        return Path(env_root).resolve()
-    return ROOT_DIR
+    if not env_root or not Path(env_root).is_dir():
+        raise RuntimeError(
+            "PANTHEON_COMMAND_ROOT environment variable must be set and point to a valid directory; "
+            "unqualified checkout fallbacks are strictly prohibited"
+        )
+    return Path(env_root).resolve()
 
 
 def fetch_canonical_task(task_id: str) -> dict[str, Any]:
     """Read authoritative task row via qualified ai-status.sh show command."""
     command_root = get_command_root()
     script = command_root / "scripts" / "ai-status.sh"
-
     if not script.is_file():
-        script = ROOT_DIR / "scripts" / "ai-status.sh"
-    if not script.is_file():
-        # Fallback to python directly
-        cmd = [sys.executable, str(ROOT_DIR / "scripts" / "ai_status.py"), "show", task_id]
-    else:
-        cmd = [str(script), "show", task_id]
+        raise RuntimeError(
+            f"Qualified status script not found at {script}; "
+            "checkout and python fallbacks are not permitted"
+        )
+    cmd = [str(script), "show", task_id]
 
     try:
         proc = subprocess.run(
@@ -96,12 +102,13 @@ def fetch_canonical_task(task_id: str) -> dict[str, Any]:
 
 def validate_task_eligibility(
     task: Mapping[str, Any],
-    *,
-    allowed_task: str = DEFAULT_ALLOWED_TASK,
-    allowed_env: str = DEFAULT_ALLOWED_ENV,
-    allow_any_task: bool = False,
+    **kwargs: Any,
 ) -> tuple[dict[str, Any], int]:
-    """Validate task against S5 restrictions, target scope, and execution policy."""
+    """Validate task against S5 restrictions, target scope, and execution policy.
+    
+    Bypasses and alternative tasks are strictly prohibited. Scope is immutably
+    DEV502-TRACE-001 in pantheon-dev.
+    """
     task_id = str(task.get("id") or "").strip()
 
     # Strict S5 / Step 5 guard
@@ -112,10 +119,10 @@ def validate_task_eligibility(
     if "s5" in phase or "step-5" in phase or "step5" in phase:
         raise ValueError(f"Task {task_id} is in phase {phase!r}, which remains paused")
 
-    # Scope limit
-    if not allow_any_task and task_id != allowed_task:
+    # Immutable Scope limit (no bypasses permitted)
+    if task_id != DEFAULT_ALLOWED_TASK:
         raise ValueError(
-            f"Execution grant preparation is limited to {allowed_task}; "
+            f"Execution grant preparation is strictly limited to {DEFAULT_ALLOWED_TASK}; "
             f"task {task_id} is not authorized for live issuance"
         )
 
@@ -131,8 +138,8 @@ def validate_task_eligibility(
         raise ValueError(f"Task {task_id} policy does not require execution authorization")
 
     env = str(policy.get("environment") or "").strip()
-    if not allow_any_task and env != allowed_env:
-        raise ValueError(f"Task {task_id} environment {env!r} does not match required {allowed_env!r}")
+    if env != DEFAULT_ALLOWED_ENV:
+        raise ValueError(f"Task {task_id} environment {env!r} does not match required {DEFAULT_ALLOWED_ENV!r}")
 
     generation = task.get("generation", 0)
     if type(generation) is not int or generation < 0:
@@ -162,8 +169,36 @@ def load_token(token_file: str | None, token_stdin: bool) -> str:
     return token
 
 
+class NoRedirectHandler(urllib.request.HTTPRedirectHandler):
+    """Refuse redirects on authenticated requests to prevent credential leaks."""
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        raise urllib.error.HTTPError(
+            req.full_url,
+            code,
+            f"Redirects are not permitted for authenticated requests: {newurl}",
+            headers,
+            fp,
+        )
+
+
+def validate_issuer_url(url: str) -> None:
+    """Validate issuer URL against scheme, userinfo, fragment, and remote HTTP rules."""
+    parsed = urllib.parse.urlsplit(url)
+    if parsed.scheme not in ("http", "https"):
+        raise ValueError(f"Unsupported URL scheme: {parsed.scheme!r}")
+    if parsed.username or parsed.password:
+        raise ValueError("URLs with embedded userinfo (credentials) are strictly prohibited")
+    if parsed.fragment:
+        raise ValueError("URLs with fragments are not permitted")
+    hostname = (parsed.hostname or "").lower()
+    if parsed.scheme == "http" and hostname not in ("127.0.0.1", "localhost", "::1"):
+        raise ValueError(f"Insecure HTTP is only permitted for loopback testing; remote URL {url!r} must use HTTPS")
+
+
 def post_json(url: str, payload: dict[str, Any], auth_token: str) -> dict[str, Any]:
-    """Execute HTTP POST with JSON body and Bearer token."""
+    """Execute HTTP POST with JSON body and Bearer token, refusing redirects and insecure remote URLs."""
+    validate_issuer_url(url)
     req_data = json.dumps(payload).encode("utf-8")
     req = urllib.request.Request(
         url,
@@ -175,8 +210,9 @@ def post_json(url: str, payload: dict[str, Any], auth_token: str) -> dict[str, A
         },
         method="POST",
     )
+    opener = urllib.request.build_opener(NoRedirectHandler)
     try:
-        with urllib.request.urlopen(req, timeout=15) as resp:
+        with opener.open(req, timeout=15) as resp:
             content = resp.read().decode("utf-8")
             return json.loads(content)
     except urllib.error.HTTPError as exc:
@@ -191,17 +227,40 @@ def post_json(url: str, payload: dict[str, Any], auth_token: str) -> dict[str, A
         raise RuntimeError(f"Connection failed to issuer ({url}): {exc}") from exc
 
 
+def write_private_exclusive_json(path_str: str | Path, data: Any) -> Path:
+    """Atomically create and write JSON to a private 0600 file without following symlinks or clobbering."""
+    out_path = Path(path_str)
+    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
+    if hasattr(os, "O_NOFOLLOW"):
+        flags |= os.O_NOFOLLOW
+
+    try:
+        fd = os.open(str(out_path), flags, 0o600)
+    except FileExistsError as exc:
+        raise RuntimeError(f"Output file already exists or is a symlink: {out_path}") from exc
+    except OSError as exc:
+        raise RuntimeError(f"Failed to open exclusive output file {out_path}: {exc}") from exc
+
+    try:
+        with open(fd, "w", encoding="utf-8") as f:
+            json.dump(data, f, indent=2)
+            f.write("\n")
+    except Exception:
+        raise
+    return out_path
+
+
 def load_trusted_keys(config_path: Path | None = None) -> dict[str, str]:
-    """Load trusted MFA issuer public keys from orchestrator config."""
+    """Load trusted MFA issuer public keys from config."""
     paths_to_try: list[Path] = []
     if config_path:
         paths_to_try.append(config_path)
 
-    cmd_root = get_command_root()
-    paths_to_try.extend([
-        cmd_root / ".orchestrator" / "config.json",
-        ROOT_DIR / ".orchestrator" / "config.json",
-    ])
+    try:
+        cmd_root = get_command_root()
+        paths_to_try.append(cmd_root / ".orchestrator" / "config.json")
+    except Exception:
+        pass
 
     for p in paths_to_try:
         if p.is_file():
@@ -228,7 +287,7 @@ def verify_grant_locally(
 
     if not trusted_keys:
         raise RuntimeError(
-            "No trusted MFA issuer public keys found in .orchestrator/config.json; "
+            "No trusted MFA issuer public keys found in configuration; "
             "cannot verify grant locally"
         )
 
@@ -253,7 +312,10 @@ def submit_grant_via_cli(task_id: str, grant: Mapping[str, Any]) -> None:
     command_root = get_command_root()
     script = command_root / "scripts" / "ai-status.sh"
     if not script.is_file():
-        script = ROOT_DIR / "scripts" / "ai-status.sh"
+        raise RuntimeError(
+            f"Qualified status script not found at {script}; "
+            "checkout and python fallbacks are not permitted"
+        )
 
     grant_json = json.dumps(grant, separators=(",", ":"))
     env = dict(os.environ)
@@ -261,18 +323,14 @@ def submit_grant_via_cli(task_id: str, grant: Mapping[str, Any]) -> None:
     env["EXECUTION_GRANT_JSON"] = grant_json
 
     cmd = [str(script), "execution-grant-submit", task_id]
-    proc = subprocess.run(cmd, env=env, text=True, check=False)
+    proc = subprocess.run(cmd, env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, check=False)
     if proc.returncode != 0:
-        raise RuntimeError(f"CLI grant submission failed with exit code {proc.returncode}")
+        raise RuntimeError(f"CLI grant submission failed with exit code {proc.returncode}: {proc.stderr.strip()}")
 
 
 def cmd_prepare(args: argparse.Namespace) -> None:
     task = fetch_canonical_task(args.task)
-    policy, generation = validate_task_eligibility(
-        task,
-        allowed_task=args.allowed_task,
-        allow_any_task=args.allow_any_task,
-    )
+    policy, generation = validate_task_eligibility(task)
     payload = {
         "task_id": task["id"],
         "generation": generation,
@@ -280,25 +338,28 @@ def cmd_prepare(args: argparse.Namespace) -> None:
         "environment": policy.get("environment"),
         "resources": policy.get("resources"),
     }
-    output_str = json.dumps(payload, indent=2)
     if args.out:
-        out_path = Path(args.out).resolve()
-        out_path.write_text(output_str, encoding="utf-8")
-        out_path.chmod(0o600)
+        out_path = write_private_exclusive_json(args.out, payload)
         print(f"Wrote prepared challenge request to {out_path}")
     else:
-        print(output_str)
+        print(json.dumps(payload, indent=2))
 
 
 def cmd_request(args: argparse.Namespace) -> None:
     task = fetch_canonical_task(args.task)
-    policy, generation = validate_task_eligibility(
-        task,
-        allowed_task=args.allowed_task,
-        allow_any_task=args.allow_any_task,
-    )
-    token = load_token(args.token_file, args.token_stdin)
+    policy, generation = validate_task_eligibility(task)
+
+    # Missing trust MUST reject before any request
+    trusted_keys = load_trusted_keys(Path(args.config_file) if args.config_file else None)
+    if not trusted_keys:
+        raise RuntimeError(
+            "Missing trusted MFA issuer public keys in configuration; "
+            "cannot proceed with grant request without configured trust"
+        )
+
     issuer_url = args.issuer_url.rstrip("/")
+    validate_issuer_url(issuer_url)
+    token = load_token(args.token_file, args.token_stdin)
 
     # Step 1: Challenge
     challenge_payload = {
@@ -323,33 +384,45 @@ def cmd_request(args: argparse.Namespace) -> None:
     if not grant:
         raise RuntimeError(f"Issuer did not return a signed grant: {issue_resp}")
 
-    # Step 3: Local verification
-    trusted_keys = load_trusted_keys(Path(args.config_file) if args.config_file else None)
-    if trusted_keys:
-        try:
-            fp = verify_grant_locally(grant, task, policy, trusted_keys)
-            print(f"✓ Grant locally verified against trusted issuer {grant.get('signature', {}).get('key_id')!r} (fp: {fp[:16]}...)")
-        except Exception as exc:
-            raise RuntimeError(f"Local grant verification FAILED: {exc}") from exc
-    else:
-        print("! Notice: No trusted keys configured in config.json; local verification skipped.")
+    # Step 3: Local verification (NEVER skipped)
+    try:
+        fp = verify_grant_locally(grant, task, policy, trusted_keys)
+        key_id = grant.get("signature", {}).get("key_id", "unknown")
+        print(f"✓ Grant locally verified against trusted issuer {key_id!r} (fp: {fp[:16]}...)")
+    except Exception as exc:
+        raise RuntimeError(f"Local grant verification FAILED: {exc}") from exc
 
-    # Save to file if requested
+    # Save to file if requested (atomic exclusive 0600 without symlink clobber)
     if args.grant_out:
-        out_path = Path(args.grant_out).resolve()
-        out_path.write_text(json.dumps(grant, indent=2), encoding="utf-8")
-        out_path.chmod(0o600)
+        out_path = write_private_exclusive_json(args.grant_out, grant)
         print(f"Wrote signed execution grant to {out_path}")
 
     # Step 4: Submission if requested
     if args.submit:
+        # Refetch and compare full canonical task/generation/policy/owner immediately before submission
+        task_refetched = fetch_canonical_task(task["id"])
+        policy_refetched, gen_refetched = validate_task_eligibility(task_refetched)
+
+        if task_refetched.get("id") != task.get("id"):
+            raise RuntimeError("Canonical task ID mismatch on refetch before submission")
+        if gen_refetched != generation:
+            raise RuntimeError(
+                f"Canonical task generation changed from {generation} to {gen_refetched} before submission"
+            )
+        if task_refetched.get("owner") != task.get("owner"):
+            raise RuntimeError(
+                f"Canonical task owner changed from {task.get('owner')!r} to {task_refetched.get('owner')!r} before submission"
+            )
+        if _canonical_json(policy_refetched) != _canonical_json(policy):
+            raise RuntimeError("Canonical task policy changed concurrently before submission")
+
         print(f"Submitting execution grant for {task['id']} via governed CLI...")
         submit_grant_via_cli(task["id"], grant)
         print(f"✓ Execution grant successfully verified and submitted for {task['id']}.")
     else:
-        compact_grant = json.dumps(grant, separators=(",", ":"))
-        print("\nGrant issued successfully. To submit via Human/Ops:")
-        print(f"AI_NAME=Human/Ops EXECUTION_GRANT_JSON='{compact_grant}' scripts/ai-status.sh execution-grant-submit {task['id']}")
+        # Never print bearer or shell command containing grant JSON
+        if not args.grant_out:
+            print("✓ Grant issued and locally verified successfully. (Specify --grant-out to save or --submit to submit)")
 
 
 def main() -> None:
@@ -363,15 +436,11 @@ def main() -> None:
     # prepare
     prep_p = subparsers.add_parser("prepare", help="Prepare task challenge request payload")
     prep_p.add_argument("--task", default=DEFAULT_ALLOWED_TASK, help="Task ID (default: %(default)s)")
-    prep_p.add_argument("--allowed-task", default=DEFAULT_ALLOWED_TASK, help="Allowed task ID limit")
-    prep_p.add_argument("--allow-any-task", action="store_true", help="Development override for any task")
     prep_p.add_argument("--out", help="Write output JSON to file")
 
     # request
     req_p = subparsers.add_parser("request", help="Request, verify, and optionally submit grant")
     req_p.add_argument("--task", default=DEFAULT_ALLOWED_TASK, help="Task ID (default: %(default)s)")
-    req_p.add_argument("--allowed-task", default=DEFAULT_ALLOWED_TASK, help="Allowed task ID limit")
-    req_p.add_argument("--allow-any-task", action="store_true", help="Development override for any task")
     req_p.add_argument("--issuer-url", default=os.environ.get("EXECUTION_GRANT_ISSUER_URL", DEFAULT_ISSUER_URL))
     req_p.add_argument("--token-file", help="Path to file containing Identity Platform ID token")
     req_p.add_argument("--token-stdin", action="store_true", help="Read ID token from standard input")

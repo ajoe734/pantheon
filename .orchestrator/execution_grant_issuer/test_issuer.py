@@ -24,6 +24,7 @@ from copy import deepcopy
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
+from unittest.mock import MagicMock, patch
 
 import jwt
 from cryptography.hazmat.primitives.asymmetric import ed25519, rsa
@@ -676,6 +677,208 @@ class TestExecutionGrantIssuer(unittest.TestCase):
                 now=self.now + timedelta(seconds=11),
                 issuer_fingerprint=issuer_fingerprint,
             )
+
+    # -------------------------------------------------------------------------
+    # 6. Additional Regression Tests for Reviewer Findings
+    # -------------------------------------------------------------------------
+
+    def test_rejects_empty_allowlist(self) -> None:
+        v = IdentityPlatformTokenVerifier(
+            project_id=self.project_id,
+            allowed_operator_uids=[],
+            trusted_public_keys={self.key_id: self.rsa_public_key},
+        )
+        token = self._mint_id_token()
+        with self.assertRaises(AuthenticationError) as cm:
+            v.verify_token(token, now=self.now)
+        self.assertIn("allowlist is empty", str(cm.exception).lower())
+
+    def test_revocation_check_fails_closed_on_lookup_error(self) -> None:
+        v = IdentityPlatformTokenVerifier(
+            project_id=self.project_id,
+            allowed_operator_uids=[self.operator_uid],
+            trusted_public_keys={self.key_id: self.rsa_public_key},
+            check_revocation=True,
+        )
+        token = self._mint_id_token()
+        with patch("urllib.request.urlopen", side_effect=RuntimeError("synthetic account lookup outage")):
+            with self.assertRaises(AuthenticationError) as cm:
+                v.verify_token(token, now=self.now)
+            self.assertIn("revocation check failed", str(cm.exception).lower())
+
+    def test_revocation_check_fails_closed_on_disabled_account(self) -> None:
+        v = IdentityPlatformTokenVerifier(
+            project_id=self.project_id,
+            allowed_operator_uids=[self.operator_uid],
+            trusted_public_keys={self.key_id: self.rsa_public_key},
+            check_revocation=True,
+        )
+        token = self._mint_id_token()
+        mock_resp = MagicMock()
+        mock_resp.read.return_value = json.dumps({
+            "users": [{"localId": self.operator_uid, "disabled": True}]
+        }).encode("utf-8")
+        mock_resp.__enter__.return_value = mock_resp
+
+        with patch("urllib.request.urlopen", return_value=mock_resp):
+            with self.assertRaises(AuthenticationError) as cm:
+                v.verify_token(token, now=self.now)
+            self.assertIn("disabled", str(cm.exception).lower())
+
+    def test_revocation_check_fails_closed_on_revoked_tokens(self) -> None:
+        v = IdentityPlatformTokenVerifier(
+            project_id=self.project_id,
+            allowed_operator_uids=[self.operator_uid],
+            trusted_public_keys={self.key_id: self.rsa_public_key},
+            check_revocation=True,
+        )
+        token = self._mint_id_token()
+        auth_ts = int(self.now.timestamp())
+        mock_resp = MagicMock()
+        mock_resp.read.return_value = json.dumps({
+            "users": [{"localId": self.operator_uid, "disabled": False, "validSince": str(auth_ts + 100)}]
+        }).encode("utf-8")
+        mock_resp.__enter__.return_value = mock_resp
+
+        with patch("urllib.request.urlopen", return_value=mock_resp):
+            with self.assertRaises(AuthenticationError) as cm:
+                v.verify_token(token, now=self.now)
+            self.assertIn("revoked", str(cm.exception).lower())
+
+    def test_rejects_wrong_tenant_or_unexpected_tenant(self) -> None:
+        token = self._mint_id_token(
+            custom_claims={"firebase": {"sign_in_provider": "password", "sign_in_second_factor": "totp", "tenant": "untrusted-tenant"}}
+        )
+        with self.assertRaises(AuthenticationError) as cm:
+            self.verifier.verify_token(token, now=self.now)
+        self.assertIn("tenant", str(cm.exception).lower())
+
+        v_tenant = IdentityPlatformTokenVerifier(
+            project_id=self.project_id,
+            allowed_operator_uids=[self.operator_uid],
+            trusted_public_keys={self.key_id: self.rsa_public_key},
+            expected_tenant_id="my-tenant-1",
+        )
+        with self.assertRaises(AuthenticationError) as cm:
+            v_tenant.verify_token(token, now=self.now)
+        self.assertIn("tenant mismatch", str(cm.exception).lower())
+
+        valid_tenant_token = self._mint_id_token(
+            custom_claims={"firebase": {"sign_in_provider": "password", "sign_in_second_factor": "totp", "tenant": "my-tenant-1"}}
+        )
+        op = v_tenant.verify_token(valid_tenant_token, now=self.now)
+        self.assertEqual(op.uid, self.operator_uid)
+
+    def test_rejects_factor_identifier_without_method(self) -> None:
+        token = self._mint_id_token(
+            second_factor=None,
+            custom_claims={"firebase": {"sign_in_provider": "password", "second_factor_identifier": "totp"}}
+        )
+        with self.assertRaises(AuthenticationError) as cm:
+            self.verifier.verify_token(token, now=self.now)
+        self.assertIn("sign_in_second_factor", str(cm.exception).lower())
+
+    def test_rejects_custom_provider(self) -> None:
+        token = self._mint_id_token(
+            sign_in_provider="custom",
+            second_factor="totp",
+        )
+        with self.assertRaises(AuthenticationError) as cm:
+            self.verifier.verify_token(token, now=self.now)
+        self.assertIn("custom", str(cm.exception).lower())
+
+    def test_expired_cert_cache_fails_closed_on_refresh_error(self) -> None:
+        v = IdentityPlatformTokenVerifier(
+            project_id=self.project_id,
+            allowed_operator_uids=[self.operator_uid],
+        )
+        v._certs_cache = {self.key_id: self.rsa_public_key}
+        v._certs_cache_expires_at = 1.0  # Expired
+        token = self._mint_id_token()
+
+        with patch("urllib.request.urlopen", side_effect=RuntimeError("synthetic cert network failure")):
+            with self.assertRaises(AuthenticationError) as cm:
+                v.verify_token(token, now=self.now)
+            self.assertIn("failed to fetch identity platform public keys", str(cm.exception).lower())
+
+    def test_wrong_actor_does_not_burn_challenge(self) -> None:
+        token = self._mint_id_token(uid=self.operator_uid)
+        challenge_resp = self.service.handle_create_challenge(
+            token,
+            {
+                "task_id": self.task_id,
+                "generation": self.generation,
+                "policy_snapshot": self.policy,
+            },
+            now=self.now,
+        )
+        cid = challenge_resp["challenge_id"]
+
+        with self.assertRaises(ChallengeError):
+            self.service.challenge_store.consume_challenge(
+                challenge_id=cid,
+                actor_uid="synthetic-wrong-actor",
+                task_id=self.task_id,
+                generation=self.generation,
+                policy_snapshot=self.policy,
+                now=self.now,
+            )
+
+        stored = self.service.challenge_store.get_challenge(cid)
+        self.assertIsNotNone(stored)
+        self.assertFalse(stored.consumed)
+
+        consumed = self.service.challenge_store.consume_challenge(
+            challenge_id=cid,
+            actor_uid=self.operator_uid,
+            task_id=self.task_id,
+            generation=self.generation,
+            policy_snapshot=self.policy,
+            now=self.now,
+        )
+        self.assertTrue(consumed.consumed)
+
+    def test_challenge_store_returns_defensive_copies(self) -> None:
+        store = ChallengeStore()
+        challenge = store.create_challenge(
+            actor_uid=self.operator_uid,
+            actor_email=self.operator_email,
+            task_id=self.task_id,
+            generation=self.generation,
+            policy_snapshot=self.policy,
+            policy_digest=self.policy["policy_digest"],
+            environment="pantheon-dev",
+            resources=["pantheon-dev"],
+            now=self.now,
+        )
+        cid = challenge.challenge_id
+        challenge.actor_uid = "tampered-uid"
+        challenge.policy_snapshot["action_scope"] = "tampered"
+
+        stored = store.get_challenge(cid)
+        self.assertEqual(stored.actor_uid, self.operator_uid)
+        self.assertEqual(stored.policy_snapshot["action_scope"], "execute")
+
+    def test_malformed_numeric_claims_rejected(self) -> None:
+        t_exp_bool = self._mint_id_token(custom_claims={"exp": True})
+        with self.assertRaises(AuthenticationError) as cm:
+            self.verifier.verify_token(t_exp_bool, now=self.now)
+        self.assertIn("exp", str(cm.exception).lower())
+
+        t_exp_str = self._mint_id_token(custom_claims={"exp": "1234567890"})
+        with self.assertRaises(AuthenticationError) as cm:
+            self.verifier.verify_token(t_exp_str, now=self.now)
+        self.assertIn("exp", str(cm.exception).lower())
+
+        t_iat_bool = self._mint_id_token(custom_claims={"iat": False})
+        with self.assertRaises(AuthenticationError) as cm:
+            self.verifier.verify_token(t_iat_bool, now=self.now)
+        self.assertIn("iat", str(cm.exception).lower())
+
+        t_auth_str = self._mint_id_token(custom_claims={"auth_time": "invalid"})
+        with self.assertRaises(AuthenticationError) as cm:
+            self.verifier.verify_token(t_auth_str, now=self.now)
+        self.assertIn("auth_time", str(cm.exception).lower())
 
 
 if __name__ == "__main__":

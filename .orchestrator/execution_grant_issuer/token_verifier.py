@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 import logging
 import time
+import urllib.error
 import urllib.request
 from datetime import datetime, timezone
 from typing import Any, Mapping, Sequence
@@ -23,6 +24,9 @@ logger = logging.getLogger("execution_grant_issuer.token_verifier")
 
 GOOGLE_SECURETOKEN_CERTS_URL = (
     "https://www.googleapis.com/robot/v1/metadata/x509/securetoken@system.gserviceaccount.com"
+)
+GOOGLE_ACCOUNT_LOOKUP_URL = (
+    "https://identitytoolkit.googleapis.com/v1/projects/{project_id}/accounts:lookup"
 )
 SUPPORTED_SECOND_FACTORS = frozenset({"phone", "totp", "sms", "email", "security_key"})
 DEFAULT_MAX_AUTH_AGE_SECONDS = 3600
@@ -39,24 +43,27 @@ class IdentityPlatformTokenVerifier:
         allowed_operator_uids: Sequence[str] | None = None,
         max_auth_age_seconds: int = DEFAULT_MAX_AUTH_AGE_SECONDS,
         allowed_second_factors: Sequence[str] | None = None,
+        expected_tenant_id: str | None = None,
         trusted_public_keys: Mapping[str, RSAPublicKey | str] | None = None,
         certs_url: str = GOOGLE_SECURETOKEN_CERTS_URL,
+        account_lookup_url: str | None = None,
         check_revocation: bool = False,
     ) -> None:
         if not project_id or not project_id.strip():
             raise ValueError("project_id must be non-empty")
         self.project_id = project_id.strip()
         self.allowed_operator_uids = (
-            frozenset(uid.strip() for uid in allowed_operator_uids if uid.strip())
+            frozenset(uid.strip() for uid in allowed_operator_uids if uid and uid.strip())
             if allowed_operator_uids is not None
             else frozenset()
         )
         self.max_auth_age_seconds = max_auth_age_seconds
         self.allowed_second_factors = (
-            frozenset(f.strip().lower() for f in allowed_second_factors if f.strip())
+            frozenset(f.strip().lower() for f in allowed_second_factors if f and f.strip())
             if allowed_second_factors is not None
             else SUPPORTED_SECOND_FACTORS
         )
+        self.expected_tenant_id = expected_tenant_id.strip() if expected_tenant_id and expected_tenant_id.strip() else None
         self._trusted_public_keys: dict[str, RSAPublicKey] = {}
         if trusted_public_keys:
             for kid, key in trusted_public_keys.items():
@@ -65,6 +72,11 @@ class IdentityPlatformTokenVerifier:
                 elif isinstance(key, str):
                     self._trusted_public_keys[kid] = self._load_public_key_from_pem(key)
         self.certs_url = certs_url
+        self.account_lookup_url = (
+            account_lookup_url.strip()
+            if account_lookup_url and account_lookup_url.strip()
+            else GOOGLE_ACCOUNT_LOOKUP_URL.format(project_id=self.project_id)
+        )
         self.check_revocation = check_revocation
         self._certs_cache: dict[str, RSAPublicKey] = {}
         self._certs_cache_expires_at: float = 0.0
@@ -111,8 +123,8 @@ class IdentityPlatformTokenVerifier:
                 self._certs_cache_expires_at = now + max_age
                 return self._certs_cache
         except Exception as exc:
-            if self._certs_cache:
-                logger.warning("Failed to refresh Google certs, using cached: %s", exc)
+            # Fail closed if certificate refresh fails and the cache is expired
+            if self._certs_cache and now < self._certs_cache_expires_at:
                 return self._certs_cache
             raise AuthenticationError(
                 f"Failed to fetch Identity Platform public keys: {exc}"
@@ -125,6 +137,48 @@ class IdentityPlatformTokenVerifier:
         if kid in google_keys:
             return google_keys[kid]
         raise AuthenticationError(f"Token key ID {kid!r} not found in trusted certificates")
+
+    def _check_account_revocation(self, uid: str, auth_time_int: int) -> None:
+        """Check user revocation/disabled status against Identity Platform account lookup.
+        
+        Fails closed on any network error, missing user, disabled account, or revocation.
+        """
+        try:
+            req_data = json.dumps({"localId": [uid]}).encode("utf-8")
+            req = urllib.request.Request(
+                self.account_lookup_url,
+                data=req_data,
+                headers={
+                    "Content-Type": "application/json",
+                    "User-Agent": "pantheon-execution-grant-issuer/1.0",
+                },
+                method="POST",
+            )
+            with urllib.request.urlopen(req, timeout=10) as resp:
+                content = resp.read().decode("utf-8")
+                lookup_data = json.loads(content)
+                users = lookup_data.get("users", [])
+                if not users:
+                    raise AuthenticationError(f"Account lookup returned no user record for UID {uid!r}")
+                user = users[0]
+                if user.get("disabled") is True:
+                    raise AuthenticationError(f"Operator account {uid!r} is disabled")
+                valid_since = user.get("validSince") or user.get("tokensValidAfterTime")
+                if valid_since is not None:
+                    try:
+                        valid_since_epoch = int(valid_since)
+                        if auth_time_int < valid_since_epoch:
+                            raise AuthenticationError(
+                                f"Operator ID token for UID {uid!r} has been revoked (valid since {valid_since_epoch})"
+                            )
+                    except ValueError:
+                        pass
+        except AuthenticationError:
+            raise
+        except Exception as exc:
+            raise AuthenticationError(
+                f"Account revocation check failed for UID {uid!r}: {exc}"
+            ) from exc
 
     def verify_token(self, token_str: str, *, now: datetime | None = None) -> VerifiedOperator:
         """Cryptographically verify an Identity Platform ID token and its MFA claim."""
@@ -185,13 +239,13 @@ class IdentityPlatformTokenVerifier:
 
         # Timestamp validations against current_time (supporting caller-provided time)
         exp_val = claims.get("exp")
-        if not isinstance(exp_val, (int, float)):
+        if type(exp_val) is not int and type(exp_val) is not float:
             raise AuthenticationError("Token 'exp' claim must be a numeric timestamp")
         if int(exp_val) <= current_epoch - CLOCK_SKEW_TOLERANCE_SECONDS:
             raise AuthenticationError("Token has expired")
 
         iat_val = claims.get("iat")
-        if not isinstance(iat_val, (int, float)):
+        if type(iat_val) is not int and type(iat_val) is not float:
             raise AuthenticationError("Token 'iat' claim must be a numeric timestamp")
         if int(iat_val) > current_epoch + CLOCK_SKEW_TOLERANCE_SECONDS:
             raise AuthenticationError("Token 'iat' is in the future")
@@ -203,17 +257,36 @@ class IdentityPlatformTokenVerifier:
         if not sub or sub.endswith(".gserviceaccount.com"):
             raise AuthenticationError("Service account and ADC tokens are not permitted")
 
-        # Disallow anonymous tokens
+        # Disallow anonymous and custom provider tokens
         firebase_claims = claims.get("firebase")
         if not isinstance(firebase_claims, Mapping):
             raise AuthenticationError("Token is missing required 'firebase' claims object")
 
         sign_in_provider = str(firebase_claims.get("sign_in_provider") or "").strip()
-        if sign_in_provider == "anonymous" or claims.get("provider_id") == "anonymous":
-            raise AuthenticationError("Anonymous authentication is not permitted")
+        provider_id = str(claims.get("provider_id") or "").strip()
+        if sign_in_provider in ("anonymous", "custom") or provider_id in ("anonymous", "custom"):
+            raise AuthenticationError(
+                f"Authentication provider {sign_in_provider or provider_id!r} is not permitted; "
+                "custom and anonymous providers are rejected"
+            )
+
+        # Enforce project-only or expected tenant
+        tenant = claims.get("tenant") or firebase_claims.get("tenant")
+        if self.expected_tenant_id is None:
+            if tenant:
+                raise AuthenticationError(
+                    f"Tenant tokens are not permitted for project-level operator authentication; found tenant {tenant!r}"
+                )
+        else:
+            if tenant != self.expected_tenant_id:
+                raise AuthenticationError(
+                    f"Tenant mismatch: expected {self.expected_tenant_id!r}, got {tenant!r}"
+                )
 
         # Explicit operator UID allowlist verification
-        if self.allowed_operator_uids and sub not in self.allowed_operator_uids:
+        if not self.allowed_operator_uids:
+            raise AuthenticationError("No operator UIDs are allowed; allowlist is empty")
+        if sub not in self.allowed_operator_uids:
             raise AuthenticationError(f"Operator UID {sub!r} is not in the allowed operators list")
 
         # Email and verified status check
@@ -225,7 +298,7 @@ class IdentityPlatformTokenVerifier:
 
         # auth_time freshness checks
         auth_time_epoch = claims.get("auth_time")
-        if not isinstance(auth_time_epoch, (int, float)):
+        if type(auth_time_epoch) is not int and type(auth_time_epoch) is not float:
             raise AuthenticationError("Token 'auth_time' claim must be a numeric timestamp")
         auth_time_int = int(auth_time_epoch)
 
@@ -240,13 +313,11 @@ class IdentityPlatformTokenVerifier:
             )
 
         # Multi-factor authentication (MFA) second-factor verification
-        second_factor = (
-            firebase_claims.get("sign_in_second_factor")
-            or firebase_claims.get("second_factor_identifier")
-        )
+        # Requires actual signed 'sign_in_second_factor'; second_factor_identifier alone is insufficient
+        second_factor = firebase_claims.get("sign_in_second_factor")
         if not second_factor or not str(second_factor).strip():
             raise AuthenticationError(
-                "ID token does not contain a verified second-factor MFA assertion (single-factor password is insufficient)"
+                "ID token does not contain a verified second-factor MFA assertion ('sign_in_second_factor' is required; single-factor password or identifier-only is insufficient)"
             )
 
         second_factor_str = str(second_factor).strip().lower()
@@ -254,6 +325,10 @@ class IdentityPlatformTokenVerifier:
             raise AuthenticationError(
                 f"Unsupported MFA second factor {second_factor_str!r}; allowed: {sorted(self.allowed_second_factors)}"
             )
+
+        # Account revocation and disabled check
+        if self.check_revocation:
+            self._check_account_revocation(sub, auth_time_int)
 
         auth_time_dt = datetime.fromtimestamp(auth_time_int, tz=timezone.utc)
         return VerifiedOperator(
