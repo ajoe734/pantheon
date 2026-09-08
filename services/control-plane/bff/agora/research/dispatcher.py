@@ -645,13 +645,45 @@ class AuthenticResearchBackendClient:
                 f"Backend execution owner for stage '{self.stage_type}' returned non-dict response: {type(resp_data)}"
             )
 
-        status_val = str(resp_data.get("status") or resp_data.get("outcome") or "").lower().strip()
-        outcome_val = str(resp_data.get("outcome") or status_val).lower().strip()
+        raw_status = resp_data.get("status") or resp_data.get("execution_status")
+        raw_outcome = resp_data.get("outcome")
+        status_val = str(raw_status or "").lower().strip()
+        outcome_val = str(raw_outcome or "").lower().strip()
+
         terminal_success_values = {"succeeded", "completed", "success", "passed", "pass"}
-        if status_val not in terminal_success_values and outcome_val not in terminal_success_values:
-            err = resp_data.get("error") or resp_data.get("error_message") or f"status={status_val or outcome_val}"
+        terminal_failure_values = {"failed", "error", "fail", "cancelled", "canceled", "timed_out", "timeout"}
+        nonterminal_values = {"running", "queued", "pending", "in_progress", "scheduled", "dispatching"}
+
+        # Reject failure statuses
+        if status_val in terminal_failure_values or outcome_val in terminal_failure_values:
+            err = (
+                resp_data.get("error")
+                or resp_data.get("error_message")
+                or resp_data.get("message")
+                or f"status={status_val or outcome_val}"
+            )
             raise RuntimeError(
-                f"Backend execution owner returned non-success outcome for stage '{self.stage_type}': {err}"
+                f"Backend execution owner returned failure outcome for stage '{self.stage_type}': {err}"
+            )
+
+        # Reject nonterminal statuses
+        if status_val in nonterminal_values or outcome_val in nonterminal_values:
+            raise RuntimeError(
+                f"Backend execution owner for stage '{self.stage_type}' returned nonterminal status '{status_val or outcome_val}'."
+            )
+
+        # Reject unknown/invalid statuses
+        if status_val and status_val not in terminal_success_values:
+            raise RuntimeError(
+                f"Backend execution owner returned invalid or unrecognized status '{status_val}' for stage '{self.stage_type}'."
+            )
+        if outcome_val and outcome_val not in terminal_success_values:
+            raise RuntimeError(
+                f"Backend execution owner returned invalid or unrecognized outcome '{outcome_val}' for stage '{self.stage_type}'."
+            )
+        if not status_val and not outcome_val:
+            raise RuntimeError(
+                f"Backend execution owner for stage '{self.stage_type}' returned missing status and outcome."
             )
 
         backend_ref = str(resp_data.get("backend_reference") or "").strip()
@@ -665,6 +697,12 @@ class AuthenticResearchBackendClient:
         metrics = resp_data.get("metrics")
         if not metrics or not isinstance(metrics, list) or len(metrics) == 0:
             raise RuntimeError(f"Backend execution owner response for stage '{self.stage_type}' missing genuine metrics")
+
+        observed_prov = str(resp_data.get("provenance") or "").lower().strip()
+        if not observed_prov:
+            observed_prov = "real"
+        elif observed_prov not in VALID_PROVENANCE_VALUES:
+            observed_prov = "unavailable"
 
         receipt_raw = resp_data.get("receipt")
         receipt: Optional[ResearchExecutionReceipt] = None
@@ -682,11 +720,12 @@ class AuthenticResearchBackendClient:
             if str(getattr(receipt, "spec_version", "1.0")) != "1.0":
                 raise RuntimeError(f"Backend receipt has invalid spec_version: {receipt.spec_version}")
         else:
+            receipt_mode = "real" if observed_prov == "real" else "simulation"
             receipt = ResearchExecutionReceipt(
                 receipt_id=f"rcpt-{uuid.uuid4().hex[:10]}",
                 run_id=run_id,
                 executor=self.executor,
-                mode="real",
+                mode=receipt_mode,
                 correlation_id=correlation_id,
                 completed_at=_utc_now_iso(),
                 backend_reference=backend_ref,
@@ -701,7 +740,7 @@ class AuthenticResearchBackendClient:
             "artifact_digest": artifact_digest,
             "metrics": metrics,
             "receipt": receipt,
-            "provenance": "real",
+            "provenance": observed_prov,
         }
 
 
@@ -714,6 +753,7 @@ def build_canonical_research_backend_clients(
     default_base_url: Optional[str] = None,
     transports: Optional[Dict[str, Callable[..., Any]]] = None,
     default_transport: Optional[Callable[..., Any]] = None,
+    allow_missing_endpoints: bool = False,
 ) -> Dict[str, AuthenticResearchBackendClient]:
     """Construct real research backend clients for allowlisted stages.
 
@@ -732,7 +772,12 @@ def build_canonical_research_backend_clients(
         backend = ALLOWLISTED_STAGE_BACKENDS.get(stage_type)
         if not backend:
             raise RuntimeError(f"Unknown allowlisted backend for stage '{stage_type}'")
-        base_url = base_urls.get(stage_type) or default_base_url
+        base_url = (
+            base_urls.get(stage_type)
+            or os.getenv(f"AGORA_RESEARCH_{backend.upper()}_URL")
+            or os.getenv("AGORA_RESEARCH_BACKEND_URL")
+            or default_base_url
+        )
         transport = custom_transports.get(stage_type) or default_transport
         client = AuthenticResearchBackendClient(
             stage_type=stage_type,
@@ -742,6 +787,12 @@ def build_canonical_research_backend_clients(
             backend_fn=overrides.get(stage_type),
             transport=transport,
         )
+        if mode == "real" and not allow_missing_endpoints:
+            if not client.base_url and not client.backend_fn and not client._transport:
+                raise RuntimeError(
+                    f"Backend execution owner for stage '{stage_type}' ({backend}) is absent: "
+                    f"neither base_url (AGORA_RESEARCH_{backend.upper()}_URL / AGORA_RESEARCH_BACKEND_URL) nor backend_fn is configured."
+                )
         clients[stage_type] = client
 
     return clients
@@ -756,6 +807,7 @@ def build_authentic_adapter_registry(
     default_base_url: Optional[str] = None,
     transports: Optional[Dict[str, Callable[..., Any]]] = None,
     default_transport: Optional[Callable[..., Any]] = None,
+    allow_missing_endpoints: bool = True,
 ) -> AdapterRegistry:
     """Build an AdapterRegistry populated with authentic stage adapters for all allowlisted stages."""
     registry = AdapterRegistry()
@@ -767,6 +819,7 @@ def build_authentic_adapter_registry(
             default_base_url=default_base_url,
             transports=transports,
             default_transport=default_transport,
+            allow_missing_endpoints=allow_missing_endpoints,
         )
     owners = owners or {}
     for stage_type, backend in ALLOWLISTED_STAGE_BACKENDS.items():

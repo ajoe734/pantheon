@@ -1223,3 +1223,102 @@ def test_operator_payload_evidence_fields_present():
     ):
         assert field in body, f"Missing evidence field: {field}"
         assert body[field], f"Evidence field should not be empty: {field}"
+
+
+# ---------------------------------------------------------------------------
+# AGORA-CHAIN-001: Unacknowledged publish durability & restart retry
+# ---------------------------------------------------------------------------
+
+def test_consume_threshold_route_unacknowledged_publish_retryable_across_restart(tmp_path: Path, monkeypatch):
+    """Prove that unacknowledged publish fails closed (HTTP 503), persists pending work to disk,
+    survives restart, and on replay with restored subscriber delivers the event and deduplicates.
+    """
+    import sys
+    bff_dir = str(Path(__file__).resolve().parents[2] / "services" / "control-plane" / "bff")
+    if bff_dir not in sys.path:
+        sys.path.insert(0, bff_dir)
+
+    import services.incidents.main as main_mod
+    from services.incidents.consumer import (
+        DurableDeliveredIncidentsStore,
+        DurableDownstreamWorkStore,
+    )
+    from agora.performance.consumer import (
+        clear_performance_subscribers,
+        canonical_performance_publisher,
+    )
+
+    # Isolate storage to tmp_path
+    perf_db_path = str(tmp_path / "agora_performance.sqlite3")
+    downstream_path = tmp_path / "downstream_pending_work.json"
+    delivered_path = tmp_path / "delivered_suggestions.json"
+
+    monkeypatch.setenv("PANTHEON_BFF_AGORA_PERFORMANCE_STORE_PATH", perf_db_path)
+    monkeypatch.setattr(main_mod, "_DEFAULT_SUGGESTION_STORE", None)
+    monkeypatch.setattr(main_mod, "DOWNSTREAM_WORK_PATH", downstream_path)
+    monkeypatch.setattr(main_mod, "DELIVERED_SUGGESTIONS_PATH", delivered_path)
+    isolated_work_store = DurableDownstreamWorkStore(downstream_path)
+    isolated_delivered = DurableDeliveredIncidentsStore(delivered_path)
+    monkeypatch.setattr(main_mod, "_DOWNSTREAM_WORK_STORE", isolated_work_store)
+    monkeypatch.setattr(main_mod, "_DELIVERED_SUGGESTION_INCIDENT_IDS", isolated_delivered)
+
+    # Ensure clean state with no registered subscribers
+    clear_performance_subscribers()
+    # Reset suggestion consumer to default (which uses canonical_performance_publisher)
+    main_mod.attach_incident_suggestion_consumer(None)
+
+    payload = _threshold_fixture()
+    incident_id = "inc-unack-restart-001"
+    payload["incident_id"] = incident_id
+    payload["strategy_id"] = "strat-unack-99"
+    payload["tenant_id"] = "tenant-unack-1"
+
+    # Step 1: No subscribers registered -> publish fails closed -> HTTP 503 retryable
+    r1 = client.post("/api/incidents/consume-threshold", json=payload)
+    assert r1.status_code == 503
+    assert "Downstream suggestion persistence failed" in r1.text
+
+    # Incident created in store
+    assert store.get_incident(incident_id) is not None
+    # NOT marked delivered
+    assert incident_id not in isolated_delivered
+    # Pending work saved to disk
+    pending_disk = isolated_work_store.get_pending_work()
+    assert any(w.get("incident_id") == incident_id for w in pending_disk)
+
+    # Step 2: Simulate restart by reloading downstream work store from disk
+    reloaded_work_store = DurableDownstreamWorkStore(downstream_path)
+    reloaded_delivered = DurableDeliveredIncidentsStore(delivered_path)
+    assert any(w.get("incident_id") == incident_id for w in reloaded_work_store.get_pending_work())
+    assert incident_id not in reloaded_delivered
+
+    # Step 3: Wire working subscriber
+    received_events = []
+
+    def record_subscriber(topic, entity_id, event_payload):
+        received_events.append({"topic": topic, "entity_id": entity_id, "payload": event_payload})
+
+    canonical_performance_publisher.subscribe(record_subscriber)
+    main_mod._wire_canonical_performance_subscriber()
+
+    try:
+        # Step 4: Replay payload through the incidents route
+        r2 = client.post("/api/incidents/consume-threshold", json=payload)
+        assert r2.status_code == 200
+
+        # Event delivered
+        assert len(received_events) == 1
+        assert received_events[0]["topic"] == "agora.performance.suggestion.created"
+        assert received_events[0]["payload"]["strategy_id"] == "strat-unack-99"
+
+        # Marked delivered and removed from disk pending work
+        assert incident_id in isolated_delivered
+        pending_after = isolated_work_store.get_pending_work()
+        assert not any(w.get("incident_id") == incident_id for w in pending_after)
+
+        # Step 5: Deduplication - subsequent replay does NOT emit duplicate events
+        r3 = client.post("/api/incidents/consume-threshold", json=payload)
+        assert r3.status_code == 200
+        assert len(received_events) == 1
+    finally:
+        clear_performance_subscribers()

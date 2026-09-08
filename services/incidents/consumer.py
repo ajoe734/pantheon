@@ -218,7 +218,14 @@ class ThresholdTelemetryIncidentConsumer:
             "failed_at": datetime.now(timezone.utc).isoformat(),
             "last_error": str(exc),
         }
-        self._pending_downstream_work.append(work_item)
+        existing_indices = [
+            i for i, w in enumerate(self._pending_downstream_work) if w.get("incident_id") == incident.incident_id
+        ]
+        if existing_indices:
+            for i in existing_indices:
+                self._pending_downstream_work[i] = work_item
+        else:
+            self._pending_downstream_work.append(work_item)
         if self._downstream_work_store is not None and hasattr(self._downstream_work_store, "record_pending_work"):
             try:
                 self._downstream_work_store.record_pending_work(work_item)
@@ -325,6 +332,9 @@ class ThresholdTelemetryIncidentConsumer:
                     self._delivered_incident_ids.add(existing.incident_id)
                     if self._downstream_work_store is not None and hasattr(self._downstream_work_store, "remove_pending_work"):
                         self._downstream_work_store.remove_pending_work(existing.incident_id)
+                    self._pending_downstream_work = [
+                        w for w in self._pending_downstream_work if w.get("incident_id") != existing.incident_id
+                    ]
                 except Exception as exc:
                     self._record_pending_downstream_work(payload, existing, exc)
                     raise IncidentConsumerRetryableError(
@@ -347,6 +357,9 @@ class ThresholdTelemetryIncidentConsumer:
                         self._delivered_incident_ids.add(existing.incident_id)
                         if self._downstream_work_store is not None and hasattr(self._downstream_work_store, "remove_pending_work"):
                             self._downstream_work_store.remove_pending_work(existing.incident_id)
+                        self._pending_downstream_work = [
+                            w for w in self._pending_downstream_work if w.get("incident_id") != existing.incident_id
+                        ]
                     except Exception as exc:
                         self._record_pending_downstream_work(payload, existing, exc)
                         raise IncidentConsumerRetryableError(
@@ -361,6 +374,9 @@ class ThresholdTelemetryIncidentConsumer:
                 self._delivered_incident_ids.add(created.incident_id)
                 if self._downstream_work_store is not None and hasattr(self._downstream_work_store, "remove_pending_work"):
                     self._downstream_work_store.remove_pending_work(created.incident_id)
+                self._pending_downstream_work = [
+                    w for w in self._pending_downstream_work if w.get("incident_id") != created.incident_id
+                ]
             except Exception as exc:
                 self._record_pending_downstream_work(payload, created, exc)
                 raise IncidentConsumerRetryableError(

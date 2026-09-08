@@ -13,6 +13,7 @@ Verifies:
 """
 from __future__ import annotations
 
+import os
 import uuid
 from typing import Any, Dict
 import pytest
@@ -599,3 +600,140 @@ def test_authentic_research_backend_client_empty_metrics_fails_closed() -> None:
             context=_context(),
             downstream_key="key-empty-metrics",
         )
+
+
+def test_authentic_research_backend_client_failed_status_raises() -> None:
+    """AuthenticResearchBackendClient must reject conflicting status='failed' even if outcome='succeeded'."""
+    client = AuthenticResearchBackendClient(
+        stage_type="prototype_backtest",
+        preferred_backend="vectorbt",
+        base_url="http://vectorbt-service:8000",
+        transport=lambda req: {
+            "status": "failed",
+            "outcome": "succeeded",
+            "backend_reference": "vectorbt://runs/failed",
+            "artifact_digest": "sha256:digest_failed",
+            "metrics": [{"name": "sharpe", "value": 0.0}],
+            "error": "Execution aborted due to division by zero",
+        },
+    )
+    with pytest.raises(RuntimeError, match="returned failure outcome"):
+        client.execute(
+            stage=_stage(),
+            plan=_plan(),
+            context=_context(),
+            downstream_key="key-fail-status",
+        )
+
+
+def test_authentic_research_backend_client_running_status_raises() -> None:
+    """AuthenticResearchBackendClient must reject non-terminal status='running' even if outcome='succeeded'."""
+    client = AuthenticResearchBackendClient(
+        stage_type="prototype_backtest",
+        preferred_backend="vectorbt",
+        base_url="http://vectorbt-service:8000",
+        transport=lambda req: {
+            "status": "running",
+            "outcome": "succeeded",
+            "backend_reference": "vectorbt://runs/running",
+            "artifact_digest": "sha256:digest_running",
+            "metrics": [{"name": "sharpe", "value": 0.5}],
+        },
+    )
+    with pytest.raises(RuntimeError, match="returned nonterminal status"):
+        client.execute(
+            stage=_stage(),
+            plan=_plan(),
+            context=_context(),
+            downstream_key="key-running-status",
+        )
+
+
+def test_authentic_research_backend_client_failed_outcome_raises() -> None:
+    """AuthenticResearchBackendClient must reject outcome='failed' even if status='succeeded'."""
+    client = AuthenticResearchBackendClient(
+        stage_type="prototype_backtest",
+        preferred_backend="vectorbt",
+        base_url="http://vectorbt-service:8000",
+        transport=lambda req: {
+            "status": "succeeded",
+            "outcome": "failed",
+            "backend_reference": "vectorbt://runs/outcome-fail",
+            "artifact_digest": "sha256:digest_outcome_fail",
+            "metrics": [{"name": "sharpe", "value": 0.0}],
+            "error": "Parameter constraints violated",
+        },
+    )
+    with pytest.raises(RuntimeError, match="returned failure outcome"):
+        client.execute(
+            stage=_stage(),
+            plan=_plan(),
+            context=_context(),
+            downstream_key="key-fail-outcome",
+        )
+
+
+def test_authentic_research_backend_client_running_outcome_raises() -> None:
+    """AuthenticResearchBackendClient must reject non-terminal outcome='running' even if status='succeeded'."""
+    client = AuthenticResearchBackendClient(
+        stage_type="prototype_backtest",
+        preferred_backend="vectorbt",
+        base_url="http://vectorbt-service:8000",
+        transport=lambda req: {
+            "status": "succeeded",
+            "outcome": "running",
+            "backend_reference": "vectorbt://runs/outcome-running",
+            "artifact_digest": "sha256:digest_outcome_running",
+            "metrics": [{"name": "sharpe", "value": 0.5}],
+        },
+    )
+    with pytest.raises(RuntimeError, match="returned nonterminal status"):
+        client.execute(
+            stage=_stage(),
+            plan=_plan(),
+            context=_context(),
+            downstream_key="key-running-outcome",
+        )
+
+
+def test_authentic_research_backend_client_preserves_simulation_provenance_and_receipt_mode() -> None:
+    """AuthenticResearchBackendClient and AuthenticStageAdapter must preserve reported provenance='simulation'."""
+    body = {
+        "status": "succeeded",
+        "outcome": "succeeded",
+        "provenance": "simulation",
+        "backend_reference": "vectorbt://run-sim-test",
+        "artifact_digest": "a" * 64,
+        "metrics": [{"name": "sharpe", "value": 0.3}],
+    }
+    client = AuthenticResearchBackendClient(
+        "prototype_backtest",
+        "vectorbt",
+        base_url="http://vectorbt-service:8000",
+        transport=lambda req: body,
+    )
+    adapter = AuthenticStageAdapter("prototype_backtest", "vectorbt", execution_owner=client)
+    result = adapter.execute(
+        stage=_stage(),
+        plan=_plan(),
+        context=_context(),
+        downstream_key="key-sim-prov",
+    )
+    assert result.outcome == "succeeded"
+    assert result.provenance == "simulation"
+    assert result.receipt is not None
+    assert result.receipt.mode == "simulation"
+
+
+def test_build_canonical_research_backend_clients_rejects_missing_endpoints(monkeypatch: pytest.MonkeyPatch) -> None:
+    """build_canonical_research_backend_clients must fail fast when mode='real' and no endpoints are configured."""
+    for key in list(os.environ):
+        if key.startswith("AGORA_RESEARCH_") and (key.endswith("_URL") or key == "AGORA_RESEARCH_BACKEND_URL"):
+            monkeypatch.delenv(key, raising=False)
+
+    with pytest.raises(RuntimeError, match="Backend execution owner for stage .* is absent"):
+        build_canonical_research_backend_clients(mode="real")
+
+    # With allow_missing_endpoints=True, it constructs clients without error
+    clients = build_canonical_research_backend_clients(mode="real", allow_missing_endpoints=True)
+    assert len(clients) == len(ALLOWLISTED_STAGE_BACKENDS)

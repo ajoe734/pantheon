@@ -248,7 +248,13 @@ def consume_telemetry_outcome(
             t_has = publisher.transport.has_subscribers
             is_acked = bool(t_has() if callable(t_has) else t_has)
 
-        if is_acked and store is not None and hasattr(store, "mark_event_published"):
+        if not is_acked:
+            raise RuntimeError(
+                f"Canonical performance event publish was unacknowledged for topic={topic} entity_id={entity_id}: "
+                f"no subscribers registered or delivery unacknowledged"
+            )
+
+        if store is not None and hasattr(store, "mark_event_published"):
             store.mark_event_published(topic, entity_id, payload, published_at=utc_now)
 
     return suggestion

@@ -1463,6 +1463,7 @@ services:
       AGORA_RESEARCH_STORE_BACKEND: ${AGORA_RESEARCH_STORE_BACKEND:-postgres}
       AGORA_RESEARCH_STORE_DSN: ${AGORA_RESEARCH_STORE_DSN:-postgresql://pantheon_app:pantheon_app@postgres:5432/pantheon}
       AGORA_RESEARCH_STORE_SCHEMA: ${AGORA_RESEARCH_STORE_SCHEMA:-agora_research}
+      AGORA_RESEARCH_BACKEND_URL: ${AGORA_RESEARCH_BACKEND_URL:-http://research-orchestrator-svc:8101}
       PANTHEON_ENV: ${PANTHEON_ENV:-dev}
       PANTHEON_TENANT_ID: ${PANTHEON_TENANT_ID:-default}
       PANTHEON_AGORA_WORKER_ID: agora-interaction-worker
@@ -1472,6 +1473,8 @@ services:
       postgres:
         condition: service_healthy
       operator-bff:
+        condition: service_healthy
+      research-orchestrator-svc:
         condition: service_healthy
     healthcheck:
       test: ["CMD", "python", "scripts/run_agora_interaction_worker.py", "--healthcheck"]

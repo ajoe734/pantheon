@@ -95,14 +95,17 @@ def test_unacknowledged_on_absent_subscribers_and_replay_on_installed_subscriber
         store=store,
         publish_event_fn=canonical_performance_publisher,
     )
-    sugg = consumer.consume(event)
-    assert sugg is not None
-    assert sugg.strategy_id == "strat-perf-001"
+    with pytest.raises(RuntimeError, match="unacknowledged"):
+        consumer.consume(event)
+
+    suggestions = store.list_suggestions(tenant_id="tenant-alpha", strategy_id="strat-perf-001")
+    assert len(suggestions) == 1
+    sugg_id = suggestions[0]["suggestion_id"]
 
     # Crucial check: event was accepted by producer, but delivery was UNACKNOWLEDGED,
     # so store.is_event_published MUST be False!
     topic = "agora.performance.suggestion.created"
-    assert store.is_event_published(topic, sugg.suggestion_id) is False
+    assert store.is_event_published(topic, sugg_id) is False
 
     # Step 2: Now install a working subscriber
     received_events: List[Dict[str, Any]] = []
@@ -116,17 +119,17 @@ def test_unacknowledged_on_absent_subscribers_and_replay_on_installed_subscriber
         # Step 3: Replay after installing a working subscriber
         # MUST deliver exactly 1 event (resolves reviewer's rejection: "Replay after installing a working publisher delivered 0 events")
         replay_sugg = consumer.replay(event)
-        assert replay_sugg.suggestion_id == sugg.suggestion_id
+        assert replay_sugg.suggestion_id == sugg_id
 
         assert len(received_events) == 1
         delivered = received_events[0]
         assert delivered["topic"] == topic
-        assert delivered["entity_id"] == sugg.suggestion_id
+        assert delivered["entity_id"] == sugg_id
         assert delivered["payload"]["strategy_id"] == "strat-perf-001"
-        assert delivered["payload"]["suggestion_id"] == sugg.suggestion_id
+        assert delivered["payload"]["suggestion_id"] == sugg_id
 
         # Now delivery is acknowledged, so store.is_event_published MUST be True!
-        assert store.is_event_published(topic, sugg.suggestion_id) is True
+        assert store.is_event_published(topic, sugg_id) is True
 
         # Step 4: Retry-safe durable identity: Subsequent replay must NOT deliver duplicate events
         consumer.replay(event)

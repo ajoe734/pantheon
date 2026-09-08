@@ -333,11 +333,22 @@ def get_incident_suggestion_consumer() -> Optional[Any]:
 _DEFAULT_SUGGESTION_STORE: Optional[Any] = None
 
 
-def _get_default_suggestion_store() -> Any:
-    global _DEFAULT_SUGGESTION_STORE
+def _ensure_bff_agora_path() -> None:
     bff_dir = str(Path(__file__).resolve().parent.parent / "control-plane" / "bff")
     if bff_dir not in sys.path:
         sys.path.insert(0, bff_dir)
+    try:
+        import agora
+        bff_agora = str(Path(bff_dir) / "agora")
+        if hasattr(agora, "__path__") and bff_agora not in agora.__path__:
+            agora.__path__.insert(0, bff_agora)
+    except Exception:
+        pass
+
+
+def _get_default_suggestion_store() -> Any:
+    global _DEFAULT_SUGGESTION_STORE
+    _ensure_bff_agora_path()
     from agora.performance.store import PerformanceSuggestionStore
     store_path = os.environ.get("PANTHEON_BFF_AGORA_PERFORMANCE_STORE_PATH")
     if not store_path:
@@ -347,11 +358,38 @@ def _get_default_suggestion_store() -> Any:
     return _DEFAULT_SUGGESTION_STORE
 
 
+def _canonical_performance_read_model_receiver(topic: str, entity_id: str, payload: Dict[str, Any]) -> None:
+    """Canonical production read-model event receiver for performance suggestion events."""
+    log.info(
+        "Delivered canonical performance read-model event: topic=%s entity_id=%s payload=%s",
+        topic,
+        entity_id,
+        payload,
+    )
+    store = _get_default_suggestion_store()
+    if store is not None and hasattr(store, "mark_event_published"):
+        store.mark_event_published(topic, entity_id, payload)
+
+
+def _wire_canonical_performance_subscriber() -> None:
+    _ensure_bff_agora_path()
+    try:
+        from agora.performance.consumer import (
+            get_canonical_performance_transport,
+            register_performance_subscriber,
+        )
+        transport = get_canonical_performance_transport()
+        if _canonical_performance_read_model_receiver not in transport._subscribers:
+            register_performance_subscriber(_canonical_performance_read_model_receiver)
+    except Exception as exc:
+        log.warning("Could not wire canonical performance subscriber: %s", exc)
+
+
+_wire_canonical_performance_subscriber()
+
+
 def _build_default_suggestion_consumer() -> Optional[Any]:
-    bff_dir = str(Path(__file__).resolve().parent.parent / "control-plane" / "bff")
-    if bff_dir in sys.path:
-        sys.path.remove(bff_dir)
-    sys.path.insert(0, bff_dir)
+    _ensure_bff_agora_path()
     try:
         from agora.performance.consumer import EvaluationTelemetryConsumer, canonical_performance_publisher
         perf_store = _get_default_suggestion_store()
@@ -360,7 +398,8 @@ def _build_default_suggestion_consumer() -> Optional[Any]:
             publish_event_fn=canonical_performance_publisher,
         )
         return eval_consumer.consume
-    except Exception:
+    except Exception as exc:
+        log.exception("Failed building default suggestion consumer: %s", exc)
         return None
 
 
@@ -790,6 +829,7 @@ async def incidents_outbox_loop():
 
 @app.on_event("startup")
 def start_incidents_outbox_worker():
+    _wire_canonical_performance_subscriber()
     import sys
     if "pytest" in sys.modules or os.getenv("PYTEST_CURRENT_TEST"):
         return
