@@ -40,7 +40,9 @@
       "Unmatched higher-provenance next-consumer chains are preserved as deterministic candidates even when unrelated terminal/stimulus candidates exist, preserving newer live evidence across all receipt arrival orderings and clean rebuild from source receipts",
       "Equal-timestamp stimulus arrivals reduce identically between incremental stream ingestion and full rebuild across all receipt arrival permutations",
       "Older replay or backfill stimulus arrival cannot steal a live next-consumer receipt or regress observed_at timestamps in Memory or PostgreSQL stores",
-      "Provenance-aware candidate selection strictly matches stimuli, terminals, and next-consumers within the same provenance class, preventing lower-provenance candidates from consuming live next-consumer evidence"
+      "Provenance-aware candidate selection strictly matches stimuli, terminals, and next-consumers within the same provenance class, preventing lower-provenance candidates from consuming live next-consumer evidence",
+      "rebuild() fences non-durable cache entries: a startup/rebuild observation write failure is never cached as a completed observation, so a subsequent ingest_receipt() of the same receipts retries persistence instead of short-circuiting on an unpersisted 'complete' idempotency cache hit",
+      "project_twelve_canonical_loops release-wide (no correlation filter) selection across correlations sharing a loop breaks equal-observed_at ties deterministically on (observed_at, correlation_id), independent of dict/receipt insertion or reload iteration order, so live and freshly-reloaded projectors resolve to the same winning correlation"
     ],
     "mandatory_deletions": {
       "static_or_incident_derived_success_substitution": "Static or incident-derived success substitution excised; unobserved or failed loops remain explicit without synthetic fallback."
@@ -50,22 +52,28 @@
   "verification": {
     "commands": [
       {
-        "command": "PYTHONPATH=. .venv-pantheon/bin/python -m pytest services/control-plane/bff/management_read_models/test_twelve_loop_projector.py -vv",
-        "result": "40 passed (including equal-time stimuli reduction invariance across arrival orders, older stimulus next-consumer protection for replay/backfill, unmatched live next-consumer preservation across both arrival orderings, late lower-provenance stimulus preservation, equal-timestamp interleaving, late-stimulus incremental equals rebuild, and duplicate race rejection in memory store)",
-        "executed": 40,
-        "collected": 40
+        "command": "PYTHONPATH=. /tmp/psd-bff-composition-venv/bin/python -m pytest services/control-plane/bff/management_read_models/test_twelve_loop_projector.py -q",
+        "result": "42 passed (adds test_rebuild_persistence_failure_does_not_cache_unpersisted_complete for P1 and test_release_wide_correlation_tie_break_is_order_independent for P2, plus prior equal-time stimuli reduction invariance, older stimulus next-consumer protection, unmatched live next-consumer preservation, late lower-provenance stimulus preservation, equal-timestamp interleaving, late-stimulus incremental equals rebuild, and duplicate race rejection coverage in memory store)",
+        "executed": 42,
+        "collected": 42
       },
       {
-        "command": "REVIEW_TEST_DSN=postgresql://postgres:postgres@127.0.0.1:15432/pantheon PYTHONPATH=. .venv-pantheon/bin/python -m pytest services/control-plane/bff/migrations/test_twelve_loop_truth.py -vv",
-        "result": "20 passed (including postgres equal-time stimuli reduction invariance across arrival orders, postgres older stimulus next-consumer protection for replay/backfill, postgres unmatched live next-consumer preservation across both arrival orderings, postgres late lower-provenance stimulus preservation, postgres receipt-set containment and provenance fencing, real PostgreSQL reload, two-projector interleaving fence, cross-key duplicate rejection, partial-write retry, postgres equal-timestamp interleaving, postgres late-stimulus incremental equals rebuild, postgres duplicate race rejection, and mocked interface check)",
+        "command": "REVIEW_TEST_DSN=postgresql://postgres:postgres@127.0.0.1:15432/pantheon PYTHONPATH=. /tmp/psd-bff-composition-venv/bin/python -m pytest services/control-plane/bff/migrations/test_twelve_loop_truth.py -q",
+        "result": "20 passed in 134.59s (postgres equal-time stimuli reduction invariance across arrival orders, postgres older stimulus next-consumer protection for replay/backfill, postgres unmatched live next-consumer preservation across both arrival orderings, postgres late lower-provenance stimulus preservation, postgres receipt-set containment and provenance fencing, real PostgreSQL reload, two-projector interleaving fence, cross-key duplicate rejection, partial-write retry, postgres equal-timestamp interleaving, postgres late-stimulus incremental equals rebuild, postgres duplicate race rejection, and mocked interface check)",
         "executed": 20,
         "collected": 20
       },
       {
-        "command": "PYTHONPATH=services/control-plane/bff .venv-pantheon/bin/python -m pytest services/control-plane/bff/tests/test_management_read_models_router.py -q",
+        "command": "PYTHONPATH=services/control-plane/bff /tmp/psd-bff-composition-venv/bin/python -m pytest services/control-plane/bff/tests/test_management_read_models_router.py -q",
         "result": "43 passed, 137 warnings",
         "executed": 43,
         "collected": 43
+      },
+      {
+        "command": "env PYTHONPATH=. REVIEW_TEST_DSN=postgresql://postgres:postgres@127.0.0.1:15432/pantheon /tmp/psd-bff-composition-venv/bin/python -m pytest /tmp/test_loop_truth_040e715_review.py -q --tb=short",
+        "result": "4 passed in 4.94s (independent review reproduction suite for 040e715 P1 rebuild-persistence-failure durability and P2 release-wide equal-timestamp correlation tie-break, on both Memory and real PostgreSQL stores; previously 4 failed in 4.24s before this fix)",
+        "executed": 4,
+        "collected": 4
       },
       {
         "command": "timeout 120 env PYTHONPATH=. .venv-pantheon/bin/python -m pytest /tmp/test_loop_truth_2f2ccba_review.py -vv",
@@ -106,6 +114,12 @@
   },
   "review": {
     "reviewer": "Codex",
-    "decision": "pending independent exact-head review"
+    "decision": "pending independent exact-head review",
+    "prior_review_pr": "https://github.com/ajoe734/pantheon/pull/5676",
+    "prior_review_head": "040e715106f6e19e52c7047393af88b71ed9b5cd",
+    "prior_review_defects": [
+      "P1: twelve_loop_projector.py rebuild() swallowed observation-write failure and cached an unpersisted 'complete' observation; ingest_receipt() then short-circuited duplicate retry on that non-durable cache entry instead of retrying persistence. Fixed by fencing rebuild() so a store write failure (raised exception or a get_observation() miss after upsert) is never cached in self._observations.",
+      "P2: project_twelve_canonical_loops() selected equal-timestamp correlations for a release by dict/receipt insertion order, so live vs. freshly-reloaded projectors could resolve different winners for identical receipts. Fixed by making the tie-break a deterministic (observed_at, correlation_id) total order over the observation values, independent of iteration order."
+    ]
   }
 }

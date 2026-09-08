@@ -700,11 +700,20 @@ class TwelveLoopTruthProjector:
                 try:
                     self.store.upsert_observation(obs)
                     durable_obs = self.store.get_observation(obs.release_id, obs.correlation_id, obs.loop_id)
-                    if durable_obs is not None:
-                        obs = durable_obs
-                        self._recompute_freshness(obs, now=now)
                 except Exception as exc:
                     logger.warning("Failed to upsert observation to store during rebuild: %s", exc)
+                    # Fence: do not cache an observation that failed to persist durably.
+                    # Leaving this key absent from self._observations means a later
+                    # ingest_receipt() for the same receipts cannot short-circuit on the
+                    # in-memory idempotency check and will retry persistence instead of
+                    # returning an unpersisted "complete" observation as if it were durable.
+                    continue
+                if durable_obs is None:
+                    # Write reported success but the store cannot confirm the row; treat
+                    # as non-durable rather than caching an unconfirmed observation.
+                    continue
+                obs = durable_obs
+                self._recompute_freshness(obs, now=now)
             self._observations[key] = obs
         return list(self._observations.values())
 
@@ -788,7 +797,15 @@ class TwelveLoopTruthProjector:
                 if correlation_id is None or corr == correlation_id:
                     self._recompute_freshness(obs, now=now)
                     existing = obs_by_loop.get(loop_id)
-                    if existing is None or obs.observed_at > existing.observed_at:
+                    # Deterministic tie-breaking across correlations sharing a release:
+                    # (observed_at, correlation_id) is a total order over the observation
+                    # values themselves, independent of dict/iteration insertion order, so
+                    # restart/reload from store cannot pick a different winner for an
+                    # identical set of receipts than the live in-memory projector did.
+                    if existing is None or (obs.observed_at, obs.correlation_id) > (
+                        existing.observed_at,
+                        existing.correlation_id,
+                    ):
                         obs_by_loop[loop_id] = obs
 
         for loop_id in range(1, 13):

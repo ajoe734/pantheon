@@ -1151,3 +1151,114 @@ class TestTwelveLoopProjectorReviewRegressions:
             before["next_consumer_receipt_id"],
             before["observed_at"],
         )
+
+    def test_rebuild_persistence_failure_does_not_cache_unpersisted_complete(self) -> None:
+        """P1: A rebuild-time observation write failure must not be cached as durable truth.
+
+        If rebuild() swallows the store write exception and still caches the
+        reduced observation in-memory, a subsequent ingest_receipt() of the
+        same receipt short-circuits on the in-memory idempotency check and
+        returns "complete" even though store.get_observation() is None (the
+        write never actually landed).
+        """
+        key = "rebuild-fail-" + uuid4().hex
+        now = datetime.now(timezone.utc)
+
+        def receipt(name: str, kind: str, status: str, seconds: int) -> CanonicalLoopReceipt:
+            return CanonicalLoopReceipt(
+                receipt_id=key + name,
+                receipt_type=kind,
+                loop_id=1,
+                correlation_id=key,
+                release_id=key,
+                owner="review",
+                provenance="live",
+                status=status,
+                observed_at=now + timedelta(seconds=seconds),
+                causation_id=key + "cause" if kind != "stimulus" else None,
+            )
+
+        store = MemoryTwelveLoopStore()
+        stimulus = receipt("s", "stimulus", "", -20)
+        terminal = receipt("t", "terminal", "completed", -10)
+        next_consumer = receipt("n", "next_consumer", "accepted", 0)
+        store.record_receipt(stimulus)
+        store.record_receipt(terminal)
+        store.record_receipt(next_consumer)
+
+        offline = {"value": True}
+        original_upsert = store.upsert_observation
+
+        def flaky_upsert(obs: LoopObservation) -> None:
+            if offline["value"]:
+                raise ConnectionError("review simulated rebuild write failure")
+            return original_upsert(obs)
+
+        store.upsert_observation = flaky_upsert  # type: ignore[assignment]
+
+        projector = TwelveLoopTruthProjector(store)  # auto_load triggers rebuild() while offline
+        assert store.get_observation(key, key, 1) is None
+        assert projector.get_observation(key, key, 1) is None
+
+        # Store recovers: re-ingesting the already-recorded terminal must retry
+        # persistence rather than short-circuit on a cached non-durable "complete".
+        offline["value"] = False
+        obs = projector.ingest_receipt(terminal)
+        assert obs.status == "complete"
+        durable = store.get_observation(key, key, 1)
+        assert durable is not None
+        assert durable.status == "complete"
+
+    def test_release_wide_correlation_tie_break_is_order_independent(self) -> None:
+        """P2: Cross-correlation release-wide selection must not depend on insertion/iteration order.
+
+        Two correlations under the same release/loop observed at the exact
+        same timestamp must resolve to the same winner regardless of the
+        order receipts were ingested in, and regardless of whether the
+        projection is served from live in-memory state or a fresh reload
+        from the store (dict iteration order differs across the two paths).
+        """
+        release = "release-tie-" + uuid4().hex
+        now = datetime.now(timezone.utc)
+
+        def receipt(corr: str, status: str) -> CanonicalLoopReceipt:
+            return CanonicalLoopReceipt(
+                receipt_id=release + corr,
+                receipt_type="terminal",
+                loop_id=1,
+                correlation_id=corr,
+                release_id=release,
+                owner="review",
+                provenance="live",
+                status=status,
+                observed_at=now,
+            )
+
+        z_failed = receipt("z-correlation", "failed")
+        a_open = receipt("a-correlation", "")
+
+        store_forward = MemoryTwelveLoopStore()
+        forward = TwelveLoopTruthProjector(store_forward, auto_load=False)
+        forward.ingest_receipts([z_failed, a_open])
+        forward_rows = {
+            row["loop_id"]: row for row in forward.project_twelve_canonical_loops(release)
+        }
+
+        store_reverse = MemoryTwelveLoopStore()
+        reverse = TwelveLoopTruthProjector(store_reverse, auto_load=False)
+        reverse.ingest_receipts([a_open, z_failed])
+        reverse_rows = {
+            row["loop_id"]: row for row in reverse.project_twelve_canonical_loops(release)
+        }
+
+        assert forward_rows[1]["correlation_id"] == reverse_rows[1]["correlation_id"]
+        assert forward_rows[1]["status"] == reverse_rows[1]["status"]
+
+        # A fresh reload from the (forward-ingested) store must pick the same
+        # winner as the live projector that produced it.
+        reloaded = TwelveLoopTruthProjector(store_forward)
+        reloaded_rows = {
+            row["loop_id"]: row for row in reloaded.project_twelve_canonical_loops(release)
+        }
+        assert reloaded_rows[1]["correlation_id"] == forward_rows[1]["correlation_id"]
+        assert reloaded_rows[1]["status"] == forward_rows[1]["status"]
