@@ -240,7 +240,8 @@ def run_service(config: dict[str, Any]) -> None:
     logger.info("Pantheon Execution Grant Issuer starting on %s:%d", host, port)
     logger.info("Identity Platform Project: %s", project_id)
     logger.info("Signer Key ID: %s (fingerprint: %s)", key_id, signer.public_key_fingerprint)
-    logger.info("Allowed Tasks: %s", sorted(allowed_tasks))
+    logger.info("Allowed Tasks: %s", sorted(service.allowed_tasks))
+    logger.info("Allowed Environments: %s", sorted(service.allowed_environments))
 
     def _shutdown_handler(signum, frame):
         logger.info("Received termination signal %d; shutting down...", signum)

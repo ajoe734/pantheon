@@ -1,0 +1,91 @@
+{
+  "task_id": "OPS-EXECUTION-SCOPE-RESUME-001",
+  "task_title": "Support exact configured execution scope after explicit Step 5 resume",
+  "owner": "Antigravity",
+  "reviewer": "Codex",
+  "phase": "development-tooling",
+  "work_class": "functional",
+  "timestamp": "2026-09-08T08:35:00Z",
+  "specification_reference": "docs/deployment/evidence/OPS-EXECUTION-SCOPE-RESUME-001/SA-SD.md",
+  "source_artifacts": {
+    ".orchestrator/execution_grant_issuer/service.py": "2336b0d17a774e62fea634b1d96d35fba357459a20a8609874779668a0ddbb93",
+    ".orchestrator/execution_grant_issuer/test_issuer.py": "e095fb3e7eb843711e754faba97d144d06a3b52384250d7dff138538a39c2c2f",
+    "deploy/execution-grant-issuer/README.md": "e19694de8d2ac700dfcc87d00d611be8b33960a34563d87936e7e5e2c16433c3",
+    "deploy/execution-grant-issuer/issuer-config.example.json": "54c39a3791aae5aa66788c35000eac83f47eee15dda89bb55c0c636eb63c6b35",
+    "deploy/execution-grant-issuer/issuer-config.step5-resume.example.json": "2dc26672e8f2b5aebcee659a805fced0b1b7b5175e6fc33c9d4d84f4ee25493a",
+    "deploy/execution-grant-issuer/run_server.py": "08f293f26bbccad66c665ebb4d8cd4cc69da84c4f6a085b73a191acede033a92",
+    "deploy/execution-grant-issuer/test_run_server.py": "de2cecfbb47d69b02f9898ea80ddc10693973caf5420ce06c58ceb385e919737",
+    "docs/operations/execution-grant-issuer.md": "1dc961251513cf9772a341afb816b4fb6711084678f3dbdfa1bb170867403b63",
+    "scripts/request_execution_grant.py": "79fe682cc345010b7bf849c9c4f34795a1fc2a42df7884174b02d16b6bd42dee",
+    "scripts/run-acceptance.sh": "789f4f6f90dfefac3815e91e3f803e76b30c30a9e0b73d0369f1eba591418615",
+    "scripts/test_request_execution_grant.py": "361117950988f7e660cc2e37341f2e2a09e2b0582bba23e77fd374867e93b36f",
+    "docs/deployment/evidence/OPS-EXECUTION-SCOPE-RESUME-001/SA-SD.md": "5301fbe0ecdddd7811408979093e8ac4bd17e0b6a53ab4c4b8833bc544daa1fe"
+  },
+  "acceptance_verification": {
+    "criterion_1": {
+      "statement": "Replace obsolete unconditional lexical S5 prohibition with explicit trusted issuer configuration of exact allowed task IDs. Default configuration must remain TRACE-only (DEV502-TRACE-001 in pantheon-dev) and fail closed on Step 5. Wildcards, non-list, empty, or unknown scopes must fail closed.",
+      "status": "PASSED",
+      "evidence": "ExecutionGrantIssuerService implements validate_allowed_tasks and validate_allowed_environments, strictly rejecting None, non-list, empty, wildcards (*, ?, all, any), and whitespace. validate_task_policy rejects unlisted S5 tasks with explicit fail-closed message. Default allowed_tasks remains ('DEV502-TRACE-001',) and allowed_environments remains ('pantheon-dev',). All six canonical S5 IDs (S5-PAIR-001, S5-LOOPS-001, S5-PROVENANCE-001, S5-JOURNEYS-001, S5-ROLLBACK-001, S5-REPORT-001) fail closed on default configuration. Explicitly configured S5 tasks succeed with valid cryptographic binding and canonical verification."
+    },
+    "criterion_2": {
+      "statement": "Provide documented explicit-resume example configuration listing only the six existing canonical S5 task IDs and pantheon-dev; do not enable on live issuer. The request CLI must support requesting exact task IDs without inventing local authorization authority.",
+      "status": "PASSED",
+      "evidence": "deploy/execution-grant-issuer/issuer-config.step5-resume.example.json lists exclusively the six canonical S5 task IDs and 'pantheon-dev'. run_server.py loads and validates the configuration. scripts/request_execution_grant.py validates task eligibility against canonical task contract without local ID restrictions; authorization authority resides in issuer service and canonical task state. docs/operations/execution-grant-issuer.md and deploy/execution-grant-issuer/README.md updated with configuration runbook and Step 5 explicit resume guidance."
+    },
+    "criterion_3": {
+      "statement": "Deliver focused CI-wired tests and comprehensive evidence under docs/deployment/evidence/OPS-EXECUTION-SCOPE-RESUME-001/. Ensure all simulation fixtures are explicitly labeled. Preserve clean worktree, commit trailers, and pass local acceptance.",
+      "status": "READY_FOR_REVIEW",
+      "evidence": "Added test_validate_allowed_tasks_fails_closed, test_validate_allowed_environments_fails_closed, test_default_config_denies_all_six_canonical_s5_tasks, test_configured_s5_allowed_tasks_accepts_configured_task_with_valid_binding, test_configured_s5_issuer_denies_unlisted_s5_and_unknown_tasks, test_configured_s5_issuer_rejects_wrong_environment, test_configured_s5_issuer_rejects_tampered_policy_digest, test_configured_s5_issuer_rejects_missing_mfa, test_configured_s5_issuer_rejects_replayed_challenge in test_issuer.py; TestRunServiceExecutionScopeConfiguration in test_run_server.py; and S5 CLI request/issue/submit integration tests in test_request_execution_grant.py. All fixtures are explicitly labeled as simulations. Acceptance smoke suite passes 100%."
+    }
+  },
+  "test_execution_summary": {
+    "test_issuer_py": {
+      "command": "/tmp/issuer-venv/bin/python -m unittest discover -s .orchestrator/execution_grant_issuer -p 'test_*.py'",
+      "ran": 67,
+      "passed": 67,
+      "failed": 0,
+      "errors": 0,
+      "exit_code": 0
+    },
+    "test_run_server_py": {
+      "command": "/tmp/issuer-venv/bin/python -m unittest deploy/execution-grant-issuer/test_run_server.py",
+      "ran": 16,
+      "passed": 16,
+      "failed": 0,
+      "errors": 0,
+      "exit_code": 0
+    },
+    "test_request_execution_grant_py": {
+      "command": "/tmp/issuer-venv/bin/python -m unittest scripts/test_request_execution_grant.py",
+      "ran": 22,
+      "passed": 22,
+      "failed": 0,
+      "errors": 0,
+      "exit_code": 0
+    },
+    "component_boundary_and_config_drift_regression": {
+      "command": "/tmp/issuer-venv/bin/pytest -q scripts/test_component_boundary.py scripts/test_check_config_drift.py",
+      "ran": 27,
+      "passed": 27,
+      "failed": 0,
+      "errors": 0,
+      "exit_code": 0
+    },
+    "acceptance_smoke_script": {
+      "command": "PATH=\"/tmp/issuer-venv/bin:$PATH\" PYTHON=/tmp/issuer-venv/bin/python ./scripts/run-acceptance.sh smoke",
+      "steps": [
+        "stage0-validate",
+        "stage0-baseline",
+        "dev-paper-diagnostics-failure-path",
+        "execution-grant-issuer-suite",
+        "execution-grant-issuer-server-suite",
+        "request-execution-grant-suite"
+      ],
+      "result": "PASS",
+      "exit_code": 0
+    },
+    "total_tests": 132,
+    "total_passed": 132,
+    "total_failed": 0
+  }
+}
