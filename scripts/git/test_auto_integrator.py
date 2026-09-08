@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import ast
+import fcntl
 import io
 import json
 import os
@@ -4122,6 +4123,113 @@ class IntegrationReceiptWiringTests(unittest.TestCase):
 
         self.assertEqual(result.action, "merged")
         self.assertIn("left ABC-001 in review_approved for owner finalization", result.detail)
+
+    def test_record_merge_integration_receipt_binds_held_descriptor_device_and_inode(
+        self,
+    ) -> None:
+        candidate = auto_integrator.TaskCandidate(
+            task_id="ABC-001",
+            title="Ready",
+            owner="Codex",
+            reviewer="Claude",
+            branch="task/ABC-001",
+            raw_task={"generation": 1},
+        )
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            lock_path = Path(tmp_dir) / "lock.json"
+            status_file = self._fresh_state_file(tmp_dir)
+            with auto_integrator.lock_file(lock_path):
+                held_stat = os.stat(lock_path)
+                with mock.patch.object(
+                    auto_integrator.integration_receipt, "record_integration_receipt"
+                ) as record:
+                    auto_integrator._record_merge_integration_receipt(
+                        candidate,
+                        observation="reconciled_already_merged",
+                        pr=44,
+                        head_sha=APPROVED_HEAD,
+                        merge_commit_sha="e" * 40,
+                        status_root=Path(tmp_dir),
+                        status_file=status_file,
+                        config={"paths": {"status_file": str(status_file)}},
+                        lock_path=lock_path,
+                    )
+                authority = record.call_args.kwargs["authority"]
+                self.assertEqual(authority.lock_inode, held_stat.st_ino)
+                self.assertEqual(authority.lock_device, held_stat.st_dev)
+                self.assertEqual(authority.lock_pid, os.getpid())
+
+    def test_replaced_lock_inode_fails_authority_and_leaves_flat_state_and_v2_journal_unchanged(
+        self,
+    ) -> None:
+        candidate = auto_integrator.TaskCandidate(
+            task_id="ABC-001",
+            title="Ready",
+            owner="Codex",
+            reviewer="Claude",
+            branch="task/ABC-001",
+            raw_task={
+                "id": "ABC-001",
+                "status": "review_approved",
+                "generation": 1,
+                "owner": "Codex",
+                "reviewer": "Claude",
+                "review_binding": {
+                    "pr": 44,
+                    "head_sha": APPROVED_HEAD,
+                    "head_branch": "task/ABC-001",
+                    "base": "dev",
+                },
+            },
+        )
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            status_file = self._fresh_state_file(tmp_dir)
+            event_path = tmp_path / "task-state-events-v2.jsonl"
+            task_state_store.append_state_commit(
+                event_path,
+                json.loads(status_file.read_text(encoding="utf-8")),
+                source="test-seed",
+            )
+            state_before = status_file.read_bytes()
+            events_before = event_path.read_bytes()
+
+            lock_path = tmp_path / "auto-integrator.lock"
+            with auto_integrator.lock_file(lock_path):
+                original_inode = lock_path.stat().st_ino
+                replacement = tmp_path / "replacement.lock"
+                replacement.write_bytes(lock_path.read_bytes())
+                with replacement.open("r+") as second:
+                    fcntl.flock(second, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    os.replace(replacement, lock_path)
+                    self.assertNotEqual(lock_path.stat().st_ino, original_inode)
+                    config = {
+                        "paths": {"status_file": str(status_file)},
+                        "task_state_store": {
+                            "mode": "authoritative",
+                            "event_log": str(event_path),
+                        },
+                    }
+                    with mock.patch.object(
+                        auto_integrator.integration_receipt,
+                        "validate_status_command_runtime",
+                        return_value={},
+                    ):
+                        auto_integrator._record_merge_integration_receipt(
+                            candidate,
+                            observation=auto_integrator.integration_receipt.RECEIPT_OBSERVATION_RECONCILED,
+                            pr=44,
+                            head_sha=APPROVED_HEAD,
+                            merge_commit_sha="e" * 40,
+                            status_root=tmp_path,
+                            status_file=status_file,
+                            config=config,
+                            lock_path=lock_path,
+                        )
+
+            # Flat state and V2 journal remain unchanged
+            self.assertEqual(status_file.read_bytes(), state_before)
+            self.assertEqual(event_path.read_bytes(), events_before)
 
     def test_canonical_review_gate_red_with_proof_tag_re_dispatches_and_waits(self) -> None:
         candidate = auto_integrator.TaskCandidate(

@@ -1249,6 +1249,35 @@ def _publish_new_lock(
                 _release_lock_handle(handle)
 
 
+_HELD_INTEGRATION_LOCKS: dict[str, os.stat_result] = {}
+
+
+def _register_held_lock(lock_path: Path, stat: os.stat_result) -> None:
+    _HELD_INTEGRATION_LOCKS[str(lock_path)] = stat
+    try:
+        _HELD_INTEGRATION_LOCKS[str(lock_path.expanduser().resolve())] = stat
+    except OSError:
+        pass
+
+
+def _unregister_held_lock(lock_path: Path) -> None:
+    _HELD_INTEGRATION_LOCKS.pop(str(lock_path), None)
+    try:
+        _HELD_INTEGRATION_LOCKS.pop(str(lock_path.expanduser().resolve()), None)
+    except OSError:
+        pass
+
+
+def _get_held_lock_stat(lock_path: Path) -> os.stat_result | None:
+    stat = _HELD_INTEGRATION_LOCKS.get(str(lock_path))
+    if stat is not None:
+        return stat
+    try:
+        return _HELD_INTEGRATION_LOCKS.get(str(lock_path.expanduser().resolve()))
+    except OSError:
+        return None
+
+
 @contextmanager
 def lock_file(lock_path: Path, *, enabled: bool = True) -> Iterator[None]:
     """Hold the integration lock with kernel lifetime and durable owner metadata.
@@ -1367,9 +1396,12 @@ def lock_file(lock_path: Path, *, enabled: bool = True) -> Iterator[None]:
                 _release_lock_handle(candidate_handle)
             raise
 
+    held_stat = os.fstat(handle.fileno())
+    _register_held_lock(lock_path, held_stat)
     try:
         yield
     finally:
+        _unregister_held_lock(lock_path)
         if owner_metadata:
             released = {
                 **owner_metadata,
@@ -2145,12 +2177,9 @@ def _record_merge_integration_receipt(
         pr=pr,
         head_sha=head_sha,
     )
-    lock_inode: int | None = None
-    try:
-        if lock_path.exists():
-            lock_inode = lock_path.stat().st_ino
-    except OSError:
-        lock_inode = None
+    held_stat = _get_held_lock_stat(lock_path)
+    lock_inode: int | None = held_stat.st_ino if held_stat is not None else None
+    lock_device: int | None = held_stat.st_dev if held_stat is not None else None
     authority = integration_receipt.IntegrationAuthority(
         command_root=ROOT,
         command_sha=ROOT.name,
@@ -2161,6 +2190,7 @@ def _record_merge_integration_receipt(
         lock_schema=LOCK_SCHEMA,
         lock_pid=os.getpid(),
         lock_inode=lock_inode,
+        lock_device=lock_device,
     )
     try:
         integration_receipt.record_integration_receipt(

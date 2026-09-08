@@ -340,6 +340,7 @@ def _make_authority(
     lock_path: Path,
     lock_pid: int,
     lock_inode: int | None = None,
+    lock_device: int | None = None,
 ) -> ir.IntegrationAuthority:
     return ir.IntegrationAuthority(
         command_root=root,
@@ -351,6 +352,7 @@ def _make_authority(
         lock_schema="test-lock/v1",
         lock_pid=lock_pid,
         lock_inode=lock_inode,
+        lock_device=lock_device,
     )
 
 
@@ -373,12 +375,13 @@ def _held_authority(
         _write_lock(lock_path, pid=pid)
     with lock_path.open("r+") as held:
         fcntl.flock(held, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        inode = os.fstat(held.fileno()).st_ino
+        stat = os.fstat(held.fileno())
         yield _make_authority(
             command_root,
             lock_path=lock_path,
             lock_pid=pid,
-            lock_inode=kwargs.pop("lock_inode", inode),
+            lock_inode=kwargs.pop("lock_inode", stat.st_ino),
+            lock_device=kwargs.pop("lock_device", stat.st_dev),
             **kwargs,
         )
 
@@ -1183,3 +1186,138 @@ def test_record_exact_replay_does_not_mutate_v2_journal(
     assert result.replay is True
     events_after = store.load_events(event_path)
     assert len(events_after) == 1
+
+
+def test_shared_lock_must_not_authorize_receipt_write_and_leaves_state_and_v2_journal_unchanged(
+    command_root: Path,
+) -> None:
+    task = task_row()
+    status_file = _setup_status_file(command_root, task)
+    event_path = command_root / "task-state.jsonl"
+    store.append_state_commit(event_path, {"tasks": [task]}, source="test-seed")
+    before_state = status_file.read_bytes()
+    before_events = event_path.read_bytes()
+
+    lock_path = command_root / "lock.json"
+    _write_lock(lock_path, pid=os.getpid())
+    binding = ir.IntegrationBinding(
+        repository="ajoe734/pantheon", target_branch="dev", pr=5411, head_sha=HEAD_A
+    )
+    with lock_path.open("r+") as held:
+        fcntl.flock(held, fcntl.LOCK_SH | fcntl.LOCK_NB)
+        stat = os.fstat(held.fileno())
+        authority = _make_authority(
+            command_root,
+            lock_path=lock_path,
+            lock_pid=os.getpid(),
+            lock_inode=stat.st_ino,
+            lock_device=stat.st_dev,
+        )
+        with pytest.raises(ir.IntegrationReceiptAuthorityError):
+            ir.record_integration_receipt(
+                config=_config_for(status_file),
+                task_id=task["id"],
+                expected_generation=4,
+                expected_delivery_binding=binding,
+                observation=ir.RECEIPT_OBSERVATION_RECONCILED,
+                merge_commit_sha=MERGE_A,
+                observed_at="2026-09-08T04:45:00Z",
+                status_file=status_file,
+                event_path=event_path,
+                authority=authority,
+            )
+
+    assert status_file.read_bytes() == before_state
+    assert event_path.read_bytes() == before_events
+
+
+def test_replaced_lock_inode_rejection_leaves_state_and_v2_journal_unchanged(
+    command_root: Path,
+) -> None:
+    task = task_row()
+    status_file = _setup_status_file(command_root, task)
+    event_path = command_root / "task-state.jsonl"
+    store.append_state_commit(event_path, {"tasks": [task]}, source="test-seed")
+    before_state = status_file.read_bytes()
+    before_events = event_path.read_bytes()
+
+    lock_path = command_root / "lock.json"
+    _write_lock(lock_path, pid=os.getpid())
+    binding = ir.IntegrationBinding(
+        repository="ajoe734/pantheon", target_branch="dev", pr=5411, head_sha=HEAD_A
+    )
+    with lock_path.open("r+") as old:
+        fcntl.flock(old, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        original_stat = os.fstat(old.fileno())
+        replacement = command_root / "replacement.json"
+        _write_lock(replacement, pid=os.getpid())
+        with replacement.open("r+") as second:
+            fcntl.flock(second, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            os.replace(replacement, lock_path)
+            assert os.fstat(second.fileno()).st_ino != original_stat.st_ino
+
+            authority = _make_authority(
+                command_root,
+                lock_path=lock_path,
+                lock_pid=os.getpid(),
+                lock_inode=original_stat.st_ino,
+                lock_device=original_stat.st_dev,
+            )
+            with pytest.raises(ir.IntegrationReceiptAuthorityError):
+                ir.record_integration_receipt(
+                    config=_config_for(status_file),
+                    task_id=task["id"],
+                    expected_generation=4,
+                    expected_delivery_binding=binding,
+                    observation=ir.RECEIPT_OBSERVATION_RECONCILED,
+                    merge_commit_sha=MERGE_A,
+                    observed_at="2026-09-08T04:45:00Z",
+                    status_file=status_file,
+                    event_path=event_path,
+                    authority=authority,
+                )
+
+    assert status_file.read_bytes() == before_state
+    assert event_path.read_bytes() == before_events
+
+
+def test_lock_held_by_other_pid_leaves_state_and_v2_journal_unchanged(
+    command_root: Path,
+) -> None:
+    task = task_row()
+    status_file = _setup_status_file(command_root, task)
+    event_path = command_root / "task-state.jsonl"
+    store.append_state_commit(event_path, {"tasks": [task]}, source="test-seed")
+    before_state = status_file.read_bytes()
+    before_events = event_path.read_bytes()
+
+    lock_path = command_root / "lock.json"
+    _write_lock(lock_path, pid=os.getpid() + 999999)
+    binding = ir.IntegrationBinding(
+        repository="ajoe734/pantheon", target_branch="dev", pr=5411, head_sha=HEAD_A
+    )
+    with _held_lock(lock_path) as held:
+        stat = os.fstat(held.fileno())
+        authority = _make_authority(
+            command_root,
+            lock_path=lock_path,
+            lock_pid=os.getpid(),
+            lock_inode=stat.st_ino,
+            lock_device=stat.st_dev,
+        )
+        with pytest.raises(ir.IntegrationReceiptAuthorityError):
+            ir.record_integration_receipt(
+                config=_config_for(status_file),
+                task_id=task["id"],
+                expected_generation=4,
+                expected_delivery_binding=binding,
+                observation=ir.RECEIPT_OBSERVATION_PERFORMED_MERGE,
+                merge_commit_sha=MERGE_A,
+                observed_at="2026-08-29T23:05:12Z",
+                status_file=status_file,
+                event_path=event_path,
+                authority=authority,
+            )
+
+    assert status_file.read_bytes() == before_state
+    assert event_path.read_bytes() == before_events

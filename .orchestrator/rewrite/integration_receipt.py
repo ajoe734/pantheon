@@ -144,6 +144,7 @@ class IntegrationAuthority:
     lock_schema: str
     lock_pid: int
     lock_inode: int | None = None
+    lock_device: int | None = None
 
 
 @dataclass(frozen=True)
@@ -323,6 +324,7 @@ def _verify_lock_authority(
     expected_schema: str,
     expected_pid: int,
     expected_inode: int | None = None,
+    expected_device: int | None = None,
 ) -> None:
     try:
         flags = os.O_RDONLY
@@ -337,24 +339,63 @@ def _verify_lock_authority(
     try:
         opened_stat = os.fstat(fd)
         try:
-            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            fcntl.flock(fd, fcntl.LOCK_SH | fcntl.LOCK_NB)
             try:
                 fcntl.flock(fd, fcntl.LOCK_UN)
             except OSError:
                 pass
-            is_held = False
+            raise IntegrationReceiptAuthorityError(
+                "canonical auto-integrator flock is not held exclusively by this process generation"
+            )
         except (BlockingIOError, OSError) as exc:
-            if exc.errno in {errno.EACCES, errno.EAGAIN}:
-                is_held = True
-            else:
+            if exc.errno not in {errno.EACCES, errno.EAGAIN}:
                 raise IntegrationReceiptAuthorityError(
                     f"cannot inspect canonical auto-integrator lock {lock_path}: {exc}"
                 ) from exc
 
-        if not is_held:
-            raise IntegrationReceiptAuthorityError(
-                "canonical auto-integrator flock is not held by this process generation"
-            )
+        proc_locks = Path("/proc/locks")
+        if proc_locks.exists():
+            expected_dev_pair = (os.major(opened_stat.st_dev), os.minor(opened_stat.st_dev))
+            matches: list[tuple[str, ...]] = []
+            try:
+                for row in proc_locks.read_text(encoding="ascii", errors="strict").splitlines():
+                    fields = tuple(row.split())
+                    if len(fields) < 8 or fields[1] == "->":
+                        continue
+                    try:
+                        major_hex, minor_hex, inode_text = fields[5].split(":", 2)
+                        row_device = (int(major_hex, 16), int(minor_hex, 16))
+                        row_inode = int(inode_text)
+                    except (IndexError, ValueError):
+                        continue
+                    if row_device == expected_dev_pair and row_inode == opened_stat.st_ino:
+                        matches.append(fields)
+            except OSError as exc:
+                raise IntegrationReceiptAuthorityError(
+                    f"cannot inspect kernel lock table /proc/locks: {exc}"
+                ) from exc
+
+            if not matches:
+                raise IntegrationReceiptAuthorityError(
+                    f"canonical auto-integrator lock {lock_path} has no kernel lock record"
+                )
+            if len(matches) != 1:
+                raise IntegrationReceiptAuthorityError(
+                    f"canonical auto-integrator lock {lock_path} has multiple kernel lock records"
+                )
+            fields = matches[0]
+            if fields[1:4] != ("FLOCK", "ADVISORY", "WRITE") or fields[6:8] != ("0", "EOF"):
+                raise IntegrationReceiptAuthorityError(
+                    f"canonical auto-integrator lock {lock_path} has wrong kernel mode: {fields[1:4]}"
+                )
+            try:
+                kernel_pid = int(fields[4])
+            except (IndexError, ValueError):
+                kernel_pid = -1
+            if kernel_pid != expected_pid:
+                raise IntegrationReceiptAuthorityError(
+                    f"canonical auto-integrator lock kernel owner differs: expected pid {expected_pid}, found {kernel_pid}"
+                )
 
         try:
             current_stat = os.stat(lock_path)
@@ -366,6 +407,12 @@ def _verify_lock_authority(
         if (opened_stat.st_dev, opened_stat.st_ino) != (current_stat.st_dev, current_stat.st_ino):
             raise IntegrationReceiptAuthorityError(
                 f"canonical auto-integrator lock inode changed: {lock_path}"
+            )
+
+        if expected_device is not None and opened_stat.st_dev != expected_device:
+            raise IntegrationReceiptAuthorityError(
+                f"canonical auto-integrator lock device changed: expected {expected_device}, "
+                f"found {opened_stat.st_dev}"
             )
 
         if expected_inode is not None and opened_stat.st_ino != expected_inode:
@@ -433,6 +480,7 @@ def _verify_authority(
         expected_schema=authority.lock_schema,
         expected_pid=authority.lock_pid,
         expected_inode=authority.lock_inode,
+        expected_device=authority.lock_device,
     )
 
 

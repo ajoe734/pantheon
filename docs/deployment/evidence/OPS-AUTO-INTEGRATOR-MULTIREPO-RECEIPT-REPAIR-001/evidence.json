@@ -13,11 +13,11 @@
   "scope": {
     "owned": [
       ".orchestrator/multi_repo_registry.py repository scope validation and task_repository_slug_and_default_branch helper",
-      ".orchestrator/rewrite/integration_receipt.py frozen_delivery_binding multi-repo resolution, flock/inode lock authority, and malformed receipt rejection",
-      "scripts/git/auto_integrator.py thread config to integration_receipt_consumes_candidate and lock_inode binding",
+      ".orchestrator/rewrite/integration_receipt.py frozen_delivery_binding multi-repo resolution, exclusive flock/inode/device lock authority, and malformed receipt rejection",
+      "scripts/git/auto_integrator.py thread config to integration_receipt_consumes_candidate and held descriptor device/inode binding",
       ".orchestrator/test_multi_repo_registry.py registry resolution unit tests",
-      ".orchestrator/rewrite/test_integration_receipt.py multi-repo receipt, flock authority, and malformed receipt unit tests",
-      "scripts/git/test_auto_integrator.py candidate consumption, lock context, and execute-plans regression tests",
+      ".orchestrator/rewrite/test_integration_receipt.py multi-repo receipt, exclusive flock authority, and unchanged state/journal regression tests",
+      "scripts/git/test_auto_integrator.py candidate consumption, descriptor binding, and execute-plans regression tests",
       "docs/deployment/evidence/OPS-AUTO-INTEGRATOR-MULTIREPO-RECEIPT-REPAIR-001/evidence.json review evidence"
     ],
     "not_changing": [
@@ -28,11 +28,15 @@
     ]
   },
   "root_cause_analysis": {
-    "defect": "The sole canonical auto-integrator merged execute-plans PR #747, but receipt reconciliation failed with 'delivery binding no longer matches the revalidated snapshot'. Subsequent re-review identified P1 (missing flock/inode kernel lock verification) and P2 (silent overwrite of malformed/unknown-version receipts).",
-    "mechanism": "1) Multi-repo delivery binding: scripts/git/auto_integrator.py passed selected registry repo slug ('ajoe734/execute-plans') to rewrite.integration_receipt, but frozen_delivery_binding hardcoded repo validation to {'pantheon', 'ajoe734/pantheon'}, returning None and causing mismatch rejection.\n2) P1 (Lock authority): rewrite/integration_receipt.py checked only file existence, JSON schema/state, and PID, but did not prove an active exclusive flock was held or that lock_path matched the held inode.\n3) P2 (Malformed receipt): _apply_receipt_to_state treated parse_integration_receipt failure as absence, silently overwriting unknown-version or malformed receipts on disk.",
-    "repair": "1) Multi-repo delivery binding: Extended frozen_delivery_binding and integration_receipt_consumes_candidate to resolve repo slug and default branch via multi_repo_registry.task_repository_slug_and_default_branch with pure predicate semantics.\n2) P1 (Flock/inode authority): Implemented _verify_lock_authority to assert exclusive flock is actively held (EACCES/EAGAIN on nonblocking probe), verify lock_path resolves to the same device and inode, verify expected_inode if bound by auto_integrator, and check JSON metadata. Added regressions for unheld and replaced locks.\n3) P2 (Malformed receipt rejection): In _apply_receipt_to_state, if raw_existing = task.get(RECEIPT_KEY) is not None and parse_integration_receipt returns None, raise IntegrationReceiptConflictError immediately before mutating flat state or V2 journal. Preserved absent-receipt creation and exact valid replay."
+    "defect": "The sole canonical auto-integrator merged execute-plans PR #747, but receipt reconciliation failed with 'delivery binding no longer matches the revalidated snapshot'. Subsequent re-review identified P1 (missing flock/inode kernel lock verification) and P2 (silent overwrite of malformed/unknown-version receipts). Further re-review identified that lock authority accepted shared locks (LOCK_SH caused EAGAIN on LOCK_EX probe) and auto_integrator captured expected inode via stat(lock_path) rather than fstat of the descriptor acquired by lock_file.",
+    "mechanism": "1) Multi-repo delivery binding: scripts/git/auto_integrator.py passed selected registry repo slug ('ajoe734/execute-plans') to rewrite.integration_receipt, but frozen_delivery_binding hardcoded repo validation to {'pantheon', 'ajoe734/pantheon'}, returning None and causing mismatch rejection.\n2) Exclusive lock authority: rewrite/integration_receipt.py probed with LOCK_EX which raised EAGAIN when only LOCK_SH was held. auto_integrator.py captured expected inode from stat(lock_path) at receipt time rather than fstat of the descriptor acquired by lock_file, allowing a replaced file with matching metadata to pass.\n3) Malformed receipt rejection: _apply_receipt_to_state treated parse_integration_receipt failure as absence, silently overwriting unknown-version or malformed receipts on disk.",
+    "repair": "1) Multi-repo delivery binding: Extended frozen_delivery_binding and integration_receipt_consumes_candidate to resolve repo slug and default branch via multi_repo_registry.task_repository_slug_and_default_branch with pure predicate semantics.\n2) Exclusive lock authority: Implemented _verify_lock_authority to probe with nonblocking LOCK_SH (which succeeds on shared or unlocked locks and fails only when exclusively held), verify /proc/locks kernel table for unique FLOCK ADVISORY WRITE ownership by expected PID, device, and inode, and verify expected_device and expected_inode bound from fstat of descriptor acquired by lock_file in auto_integrator.\n3) Malformed receipt rejection: In _apply_receipt_to_state, if raw_existing = task.get(RECEIPT_KEY) is not None and parse_integration_receipt returns None, raise IntegrationReceiptConflictError immediately before mutating flat state or V2 journal. Added writer and integrator regressions verifying unchanged state and journal on rejection."
   },
   "acceptance_verification": {
+    "codex_receipt_lock_rereview_tests": {
+      "command": "PYTHONPATH=.orchestrator/rewrite:.orchestrator .venv-pantheon/bin/python -m pytest -q /tmp/test_codex_receipt_lock_rereview.py",
+      "result": "2 passed"
+    },
     "codex_multirepo_receipt_review_tests": {
       "command": "PYTHONPATH=.orchestrator/rewrite:.orchestrator .venv-pantheon/bin/python -m pytest -q /tmp/test_codex_multirepo_receipt_review.py",
       "result": "3 passed"
@@ -43,14 +47,14 @@
     },
     "integration_receipt_tests": {
       "command": "PYTHONPATH=.orchestrator/rewrite:.orchestrator .venv-pantheon/bin/python -m pytest -q .orchestrator/rewrite/test_integration_receipt.py",
-      "result": "88 passed"
+      "result": "91 passed"
     },
     "auto_integrator_tests": {
       "command": "python3 -m unittest scripts/git/test_auto_integrator.py",
-      "result": "131 passed"
+      "result": "133 passed"
     },
     "syntax": {
-      "command": "python3 -m py_compile .orchestrator/multi_repo_registry.py .orchestrator/rewrite/integration_receipt.py scripts/git/auto_integrator.py",
+      "command": "python3 -m py_compile .orchestrator/multi_repo_registry.py .orchestrator/rewrite/integration_receipt.py scripts/git/auto_integrator.py .orchestrator/rewrite/test_integration_receipt.py scripts/git/test_auto_integrator.py",
       "result": "pass"
     },
     "diff_integrity": {
@@ -63,10 +67,16 @@
     "target_repo": "execute-plans",
     "pr": 747,
     "regression_tests": [
+      "/tmp/test_codex_receipt_lock_rereview.py (2 passed: test_shared_lock_must_not_authorize_receipt_write, test_receipt_authority_must_bind_original_held_descriptor)",
       "/tmp/test_codex_multirepo_receipt_review.py (3 passed: test_rejects_unheld_lock_even_with_matching_metadata, test_rejects_replaced_lock_inode_even_if_metadata_matches, test_rejects_malformed_existing_receipt_without_mutation)",
+      "scripts.git.test_auto_integrator.IntegrationReceiptWiringTests.test_record_merge_integration_receipt_binds_held_descriptor_device_and_inode",
+      "scripts.git.test_auto_integrator.IntegrationReceiptWiringTests.test_replaced_lock_inode_fails_authority_and_leaves_flat_state_and_v2_journal_unchanged",
       "scripts.git.test_auto_integrator.IntegrationReceiptWiringTests.test_execute_plans_already_merged_writes_reconciled_receipt_and_consumes_candidate",
       "scripts.git.test_auto_integrator.IntegrationReceiptWiringTests.test_execute_plans_performed_merge_writes_receipt_and_consumes_candidate",
       "scripts.git.test_auto_integrator.IntegrationReceiptWiringTests.test_candidates_skip_execute_plans_row_with_matching_receipt",
+      ".orchestrator.rewrite.test_integration_receipt test_shared_lock_must_not_authorize_receipt_write_and_leaves_state_and_v2_journal_unchanged",
+      ".orchestrator.rewrite.test_integration_receipt test_replaced_lock_inode_rejection_leaves_state_and_v2_journal_unchanged",
+      ".orchestrator.rewrite.test_integration_receipt test_lock_held_by_other_pid_leaves_state_and_v2_journal_unchanged",
       ".orchestrator.rewrite.test_integration_receipt test_record_integration_receipt_execute_plans_matching_binding_succeeds",
       ".orchestrator.rewrite.test_integration_receipt test_reject_unheld_or_replaced_lock",
       ".orchestrator.rewrite.test_integration_receipt test_reject_lock_inode_mismatch",
