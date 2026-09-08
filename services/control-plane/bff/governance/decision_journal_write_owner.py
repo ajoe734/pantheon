@@ -26,6 +26,7 @@ from services.governance.decision_journal import (
     DecisionJournalStores,
     build_decision_journal_stores,
     create_entry,
+    domain_creation_idempotency_key,
     get_entry,
     list_entries,
     patch_entry,
@@ -235,7 +236,11 @@ class DecisionJournalOwnerAdapter:
         # 5. Verify creation transaction commitment in journal idempotency store
         effective_tenant = rec_tenant or p_tenant
         effective_actor = p_actor or rec_user
-        create_idem_key = f"create:{effective_tenant}:{effective_actor}:{clean_target_id}"
+        create_idem_key = domain_creation_idempotency_key(
+            tenant_id=effective_tenant,
+            actor_id=effective_actor,
+            entry_id=clean_target_id,
+        )
         if self._stores.idempotency is not None:
             idem_rec = self._stores.idempotency.get(create_idem_key)
             if idem_rec is None or idem_rec.get("status") != "succeeded":

@@ -30,6 +30,7 @@ from services.governance.decision_journal import (
     DecisionJournalValidationError,
     build_decision_journal_stores,
     create_entry,
+    domain_creation_idempotency_key,
     get_entry,
     list_audit_events,
     list_entries,
@@ -1537,7 +1538,75 @@ class TestDecisionJournalRecoveryAndIsolationRegressions(unittest.TestCase):
                 "Source disposed without checksum-bound migration audit",
             )
 
+    def test_domain_creation_idempotency_key_format(self) -> None:
+        key = domain_creation_idempotency_key(
+            tenant_id="tenant-alpha",
+            actor_id="alice",
+            entry_id="entry-100",
+        )
+        self.assertEqual(key, "domain:create:tenant-alpha:alice:entry-100")
+        self.assertTrue(key.startswith("domain:create:"))
+
+    def test_fresh_process_persistent_outbox_failure_and_recovery(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_path:
+            script = (
+                "import os, sys\n"
+                "from services.governance.decision_journal import build_decision_journal_stores, create_entry\n"
+                "stores = build_decision_journal_stores(sys.argv[1])\n"
+                "stores.outbox.put = lambda event: os._exit(74)\n"
+                "create_entry(stores, entry_id='crash-entry', title='t', body='b', actor_id='alice', tenant_id='tenant-a', created_at='2026-09-08')\n"
+            )
+            child = subprocess.run([sys.executable, "-c", script, tmp_path], timeout=10)
+            self.assertEqual(child.returncode, 74)
+
+            domain_key = domain_creation_idempotency_key(
+                tenant_id="tenant-a",
+                actor_id="alice",
+                entry_id="crash-entry",
+            )
+
+            # Fresh process store with persistent outbox failure
+            fresh = build_decision_journal_stores(tmp_path)
+            def fail_outbox(event: Any) -> None:
+                raise OSError("injected persistent outbox failure")
+            fresh.outbox.put = fail_outbox  # type: ignore[assignment]
+
+            # 1. Scoped get_entry must fail closed while creation is incomplete
+            entry = get_entry(fresh, "crash-entry", tenant_id="tenant-a", actor_id="alice")
+            self.assertIsNone(entry, "Uncommitted entry was exposed during persistent outbox failure")
+
+            # 2. list_entries must exclude incomplete entry
+            entries = list_entries(fresh, tenant_id="tenant-a", actor_id="alice")
+            self.assertEqual(len(entries), 0, "Uncommitted entry was listed during persistent outbox failure")
+
+            # 3. Domain idempotency status must remain pending, outbox must remain zero
+            idem_rec = fresh.idempotency.get(domain_key)
+            self.assertIsNotNone(idem_rec)
+            self.assertEqual(idem_rec.get("status"), "pending", "Idempotency falsely marked succeeded without durable outbox")
+            self.assertEqual(len(fresh.outbox.list_all()), 0)
+
+            # 4. Replay while outbox is unavailable must raise and fail closed
+            with self.assertRaises(OSError):
+                create_entry(
+                    fresh,
+                    entry_id="crash-entry",
+                    title="t",
+                    body="b",
+                    actor_id="alice",
+                    tenant_id="tenant-a",
+                    created_at="2026-09-08",
+                )
+
+            # 5. Outbox recovers: fresh store successfully publishes and commits entry
+            recovered = build_decision_journal_stores(tmp_path)
+            entry_recovered = get_entry(recovered, "crash-entry", tenant_id="tenant-a", actor_id="alice")
+            self.assertIsNotNone(entry_recovered)
+            self.assertEqual(entry_recovered["id"], "crash-entry")
+            self.assertEqual(len(recovered.outbox.list_all()), 1)
+            self.assertEqual(recovered.idempotency.get(domain_key).get("status"), "succeeded")
+
 
 if __name__ == "__main__":
     unittest.main()
+
 

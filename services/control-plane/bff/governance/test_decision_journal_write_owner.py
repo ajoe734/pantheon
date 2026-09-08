@@ -39,6 +39,7 @@ from services.governance.decision_journal import (
     DecisionJournalValidationError,
     build_decision_journal_stores,
     create_entry,
+    domain_creation_idempotency_key,
 )
 
 
@@ -755,7 +756,161 @@ sys.exit(0)
             self.assertIsNone(owner.get_decision_journal_entry("entry-1", tenant_id="tenant-a", user_id="alice"))
             self.assertEqual(stores.idempotency.get("create:tenant-a:alice:request-1")["status"], "failed")
 
+    def test_supplied_entry_id_overlap_with_bff_request_key_does_not_alias(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            stores = build_decision_journal_stores(tmp_dir)
+            owner = DecisionJournalOwnerAdapter(stores=stores)
+            service = AgoraService(journal_write_owner=owner)
+
+            identity = OperatorIdentity(operator_id="alice", roles=["operator"], mfa_verified=True)
+
+            # 1. Create entry-a with idempotency key request-a
+            res1 = service.create_journal_entry(
+                payload={"id": "entry-a", "title": "First", "body": "Body 1"},
+                identity=identity,
+                idempotency_key="request-a",
+                x_idempotency_key=None,
+                tenant_id="tenant-a",
+                user_id="alice",
+            )
+            self.assertFalse(res1["meta"]["idempotency"]["replayed"])
+            self.assertEqual(res1["data"]["id"], "entry-a")
+
+            # 2. Replay request-a: must return replayed result
+            res1_replay = service.create_journal_entry(
+                payload={"id": "entry-a", "title": "First", "body": "Body 1"},
+                identity=identity,
+                idempotency_key="request-a",
+                x_idempotency_key=None,
+                tenant_id="tenant-a",
+                user_id="alice",
+            )
+            self.assertTrue(res1_replay["meta"]["idempotency"]["replayed"])
+
+            # 3. Create entry where supplied ID is "request-a" (overlapping previous request key!) and key is "request-b"
+            res2 = service.create_journal_entry(
+                payload={"id": "request-a", "title": "Second", "body": "Body 2"},
+                identity=identity,
+                idempotency_key="request-b",
+                x_idempotency_key=None,
+                tenant_id="tenant-a",
+                user_id="alice",
+            )
+            self.assertFalse(res2["meta"]["idempotency"]["replayed"])
+            self.assertEqual(res2["data"]["id"], "request-a")
+
+            # 4. Verify request-level idempotency record was NOT overwritten by domain write
+            req_a_record = stores.idempotency.get("create:tenant-a:alice:request-a")
+            self.assertIsNotNone(req_a_record)
+            self.assertEqual(req_a_record.get("entry_id"), "entry-a")
+            self.assertEqual(req_a_record.get("status"), "succeeded")
+            self.assertIsNotNone(req_a_record.get("request_hash"))
+            self.assertIsNotNone(req_a_record.get("result"))
+
+            # Verify domain creation transaction record is isolated
+            domain_key = domain_creation_idempotency_key(
+                tenant_id="tenant-a",
+                actor_id="alice",
+                entry_id="request-a",
+            )
+            self.assertEqual(domain_key, "domain:create:tenant-a:alice:request-a")
+            domain_rec = stores.idempotency.get(domain_key)
+            self.assertIsNotNone(domain_rec)
+            self.assertEqual(domain_rec.get("entry_id"), "request-a")
+            self.assertEqual(domain_rec.get("status"), "succeeded")
+
+            # 5. Replay request-a again: MUST NOT raise HTTP 409 IDEMPOTENCY_CONFLICT
+            res1_replay2 = service.create_journal_entry(
+                payload={"id": "entry-a", "title": "First", "body": "Body 1"},
+                identity=identity,
+                idempotency_key="request-a",
+                x_idempotency_key=None,
+                tenant_id="tenant-a",
+                user_id="alice",
+            )
+            self.assertTrue(res1_replay2["meta"]["idempotency"]["replayed"])
+            self.assertEqual(res1_replay2["data"]["id"], "entry-a")
+
+            # 6. Replay request-b: must return replayed result
+            res2_replay = service.create_journal_entry(
+                payload={"id": "request-a", "title": "Second", "body": "Body 2"},
+                identity=identity,
+                idempotency_key="request-b",
+                x_idempotency_key=None,
+                tenant_id="tenant-a",
+                user_id="alice",
+            )
+            self.assertTrue(res2_replay["meta"]["idempotency"]["replayed"])
+            self.assertEqual(res2_replay["data"]["id"], "request-a")
+
+    def test_crash_recovery_dead_process_with_supplied_id_overlap(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            stores = build_decision_journal_stores(tmp_dir)
+            owner = DecisionJournalOwnerAdapter(stores=stores)
+            service = AgoraService(journal_write_owner=owner)
+
+            identity = OperatorIdentity(operator_id="alice", roles=["operator"], mfa_verified=True)
+
+            # Create entry with supplied ID "key-x" and request key "key-y"
+            res = service.create_journal_entry(
+                payload={"id": "key-x", "title": "Title", "body": "Body"},
+                identity=identity,
+                idempotency_key="key-y",
+                x_idempotency_key=None,
+                tenant_id="tenant-a",
+                user_id="alice",
+            )
+            self.assertEqual(res["data"]["id"], "key-x")
+
+            # Simulate dead creator process on a new request key "key-x" whose target ID is "entry-z"
+            dead_pid = 99999999  # Guaranteed dead PID
+            scoped_key = "create:tenant-a:alice:key-x"
+            req_payload = {"id": "entry-z", "title": "Z", "body": "Z", "visibility": "private"}
+            req_hash = service.stable_json_hash({"route": "POST /bff/agora/journal", "payload": req_payload})
+            stores.idempotency.put({
+                "idempotency_key": scoped_key,
+                "raw_idempotency_key": "key-x",
+                "tenant_id": "tenant-a",
+                "user_id": "alice",
+                "actor_id": "alice",
+                "request_hash": req_hash,
+                "entry_id": "entry-z",
+                "status": "pending",
+                "created_pid": dead_pid,
+                "created_at": 100.0,
+                "result": None,
+            })
+
+            # service.create_journal_entry detects dead creator without committed entry and reclaims reservation
+            res_z = service.create_journal_entry(
+                payload={"id": "entry-z", "title": "Z", "body": "Z"},
+                identity=identity,
+                idempotency_key="key-x",
+                x_idempotency_key=None,
+                tenant_id="tenant-a",
+                user_id="alice",
+            )
+            self.assertEqual(res_z["data"]["id"], "entry-z")
+            self.assertFalse(res_z["meta"]["idempotency"]["replayed"])
+
+            # Replay request key-x: must return replayed result
+            res_z_replay = service.create_journal_entry(
+                payload={"id": "entry-z", "title": "Z", "body": "Z"},
+                identity=identity,
+                idempotency_key="key-x",
+                x_idempotency_key=None,
+                tenant_id="tenant-a",
+                user_id="alice",
+            )
+            self.assertTrue(res_z_replay["meta"]["idempotency"]["replayed"])
+            self.assertEqual(res_z_replay["data"]["id"], "entry-z")
+
+            # Both entry-z and key-x exist without aliasing
+            self.assertIsNotNone(owner.get_decision_journal_entry("entry-z", tenant_id="tenant-a", user_id="alice"))
+            self.assertIsNotNone(owner.get_decision_journal_entry("key-x", tenant_id="tenant-a", user_id="alice"))
+
 
 if __name__ == "__main__":
     unittest.main()
+
 

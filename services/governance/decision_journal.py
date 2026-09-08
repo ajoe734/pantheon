@@ -375,6 +375,19 @@ def _project(record: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
+def domain_creation_idempotency_key(
+    *,
+    tenant_id: Optional[str] = None,
+    actor_id: Optional[str] = None,
+    entry_id: str,
+) -> str:
+    """Format a collision-free idempotency key for domain-layer entry creation transactions."""
+    clean_tenant = str(tenant_id or "").strip()
+    clean_actor = str(actor_id or "").strip()
+    clean_id = str(entry_id or "").strip()
+    return f"domain:create:{clean_tenant}:{clean_actor}:{clean_id}"
+
+
 def _coordinate_pending_txs(stores: DecisionJournalStores, entry: Optional[Dict[str, Any]]) -> None:
     """Coordinate pending transactions and outbox events for committed entries across crashes."""
     if not isinstance(entry, dict):
@@ -386,29 +399,44 @@ def _coordinate_pending_txs(stores: DecisionJournalStores, entry: Optional[Dict[
 
     # 1. Coordinate creation outbox
     creation_outbox = entry.get("_creation_outbox")
-    if creation_outbox and stores.outbox is not None:
+    if creation_outbox:
         evt_id = str(creation_outbox.get("event_id") or creation_outbox.get("id") or "")
         clean_tenant = str(entry.get("tenant_id") or entry.get("tenantId") or "").strip()
         clean_actor = str(entry.get("createdBy") or entry.get("actor_id") or "").strip()
         clean_id = str(entry.get("id") or "").strip()
-        create_idem_key = f"create:{clean_tenant}:{clean_actor}:{clean_id}"
+        create_idem_key = domain_creation_idempotency_key(
+            tenant_id=clean_tenant,
+            actor_id=clean_actor,
+            entry_id=clean_id,
+        )
         idem_rec = None
         if stores.idempotency is not None:
             idem_rec = stores.idempotency.get(create_idem_key)
 
-        if evt_id and stores.outbox.get(evt_id) is None:
-            try:
-                stores.outbox.put(creation_outbox)
-            except Exception:
-                pass
-        if stores.idempotency is not None and idem_rec is not None and idem_rec.get("status") == _IDEM_STATUS_PENDING:
-            try:
-                stores.idempotency.put({
-                    **idem_rec,
-                    "status": _IDEM_STATUS_SUCCEEDED,
-                })
-            except Exception:
-                pass
+        secondary_ok = True
+        if stores.outbox is not None and creation_outbox:
+            if not evt_id or stores.outbox.get(evt_id) is None:
+                try:
+                    stores.outbox.put(creation_outbox)
+                except Exception:
+                    secondary_ok = False
+
+        if secondary_ok:
+            if stores.idempotency is not None and idem_rec is not None and idem_rec.get("status") == _IDEM_STATUS_PENDING:
+                try:
+                    stores.idempotency.put({
+                        **idem_rec,
+                        "status": _IDEM_STATUS_SUCCEEDED,
+                    })
+                except Exception:
+                    pass
+            if "_creation_outbox" in entry:
+                committed_entry = dict(entry)
+                committed_entry.pop("_creation_outbox", None)
+                try:
+                    stores.entries.put(committed_entry)
+                except Exception:
+                    pass
 
     # 2. Coordinate patch transaction history
     tx_history = entry.get("_tx_history")
@@ -520,7 +548,11 @@ def create_entry(
             },
         }
 
-        create_idem_key = f"create:{clean_tenant}:{clean_actor}:{clean_id}"
+        create_idem_key = domain_creation_idempotency_key(
+            tenant_id=clean_tenant,
+            actor_id=clean_actor,
+            entry_id=clean_id,
+        )
 
         record = {
             "id": clean_id,
@@ -567,7 +599,7 @@ def create_entry(
             creation_outbox_to_publish = canonical.get("_creation_outbox")
             if stores.outbox is not None and creation_outbox_to_publish is not None:
                 evt_id = str(creation_outbox_to_publish.get("event_id") or creation_outbox_to_publish.get("id") or "")
-                if evt_id and stores.outbox.get(evt_id) is None:
+                if not evt_id or stores.outbox.get(evt_id) is None:
                     stores.outbox.put(creation_outbox_to_publish)
 
             if stores.idempotency is not None:
@@ -717,7 +749,11 @@ def get_entry(
         elif record.get("_creation_outbox") is not None:
             clean_tenant = str(record.get("tenant_id") or record.get("tenantId") or "").strip()
             clean_actor = str(record.get("createdBy") or record.get("actor_id") or "").strip()
-            create_idem_key = f"create:{clean_tenant}:{clean_actor}:{clean_id}"
+            create_idem_key = domain_creation_idempotency_key(
+                tenant_id=clean_tenant,
+                actor_id=clean_actor,
+                entry_id=clean_id,
+            )
             is_committed = False
             if stores.idempotency is not None:
                 idem_rec = stores.idempotency.get(create_idem_key)
@@ -730,6 +766,39 @@ def get_entry(
         record = stores.entries.get(clean_id)
         if record is None:
             return None
+
+        if record.get("_creation_outbox") is not None:
+            clean_tenant = str(record.get("tenant_id") or record.get("tenantId") or "").strip()
+            clean_actor = str(record.get("createdBy") or record.get("actor_id") or "").strip()
+            create_idem_key = domain_creation_idempotency_key(
+                tenant_id=clean_tenant,
+                actor_id=clean_actor,
+                entry_id=clean_id,
+            )
+            is_committed = False
+            if stores.idempotency is not None:
+                idem_rec = stores.idempotency.get(create_idem_key)
+                if idem_rec is not None and idem_rec.get("status") == _IDEM_STATUS_SUCCEEDED:
+                    is_committed = True
+            if not is_committed:
+                return None
+
+        tx_history = record.get("_tx_history")
+        if isinstance(tx_history, list) and tx_history:
+            latest_tx = tx_history[-1]
+            if isinstance(latest_tx, dict):
+                idem_key = latest_tx.get("idempotency_key")
+                is_committed = False
+                if idem_key and stores.idempotency is not None:
+                    idem_rec = stores.idempotency.get(idem_key)
+                    if idem_rec is not None and idem_rec.get("status") == _IDEM_STATUS_SUCCEEDED:
+                        is_committed = True
+                if not is_committed:
+                    before_entry = latest_tx.get("before_entry")
+                    if before_entry is not None and isinstance(before_entry, dict):
+                        record = before_entry
+                    else:
+                        return None
 
     clean_tenant = str(tenant_id).strip() if tenant_id is not None else None
     target_actors = {str(actor_id or "").strip(), str(user_id or "").strip()} - {""}
@@ -781,7 +850,11 @@ def list_entries(
             elif record.get("_creation_outbox") is not None:
                 clean_tenant = str(record.get("tenant_id") or record.get("tenantId") or "").strip()
                 clean_actor = str(record.get("createdBy") or record.get("actor_id") or "").strip()
-                create_idem_key = f"create:{clean_tenant}:{clean_actor}:{clean_rec_id}"
+                create_idem_key = domain_creation_idempotency_key(
+                    tenant_id=clean_tenant,
+                    actor_id=clean_actor,
+                    entry_id=clean_rec_id,
+                )
                 is_committed = False
                 if stores.idempotency is not None:
                     idem_rec = stores.idempotency.get(create_idem_key)
@@ -796,6 +869,39 @@ def list_entries(
             if latest is None:
                 all_records[i] = None
                 continue
+            if latest.get("_creation_outbox") is not None:
+                clean_tenant = str(latest.get("tenant_id") or latest.get("tenantId") or "").strip()
+                clean_actor = str(latest.get("createdBy") or latest.get("actor_id") or "").strip()
+                create_idem_key = domain_creation_idempotency_key(
+                    tenant_id=clean_tenant,
+                    actor_id=clean_actor,
+                    entry_id=clean_rec_id,
+                )
+                is_committed = False
+                if stores.idempotency is not None:
+                    idem_rec = stores.idempotency.get(create_idem_key)
+                    if idem_rec is not None and idem_rec.get("status") == _IDEM_STATUS_SUCCEEDED:
+                        is_committed = True
+                if not is_committed:
+                    all_records[i] = None
+                    continue
+            tx_history = latest.get("_tx_history")
+            if isinstance(tx_history, list) and tx_history:
+                latest_tx = tx_history[-1]
+                if isinstance(latest_tx, dict):
+                    idem_key = latest_tx.get("idempotency_key")
+                    is_committed = False
+                    if idem_key and stores.idempotency is not None:
+                        idem_rec = stores.idempotency.get(idem_key)
+                        if idem_rec is not None and idem_rec.get("status") == _IDEM_STATUS_SUCCEEDED:
+                            is_committed = True
+                    if not is_committed:
+                        before_entry = latest_tx.get("before_entry")
+                        if before_entry is not None and isinstance(before_entry, dict):
+                            all_records[i] = before_entry
+                        else:
+                            all_records[i] = None
+                            continue
             all_records[i] = latest
 
     clean_tenant = str(tenant_id).strip() if tenant_id is not None else None
