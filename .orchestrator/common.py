@@ -37,6 +37,30 @@ CANONICAL_TASK_STATE_IDENTITY_ENV = "PANTHEON_CANONICAL_TASK_STATE_IDENTITY_JSON
 WORKER_EXECUTION_RESOURCES_ENV = "ORCH_TASK_EXECUTION_RESOURCES"
 DEFAULT_CONFIG_PATH = ORCHESTRATOR_DIR / "config.json"
 LOCAL_CONFIG_PATH = ORCHESTRATOR_DIR / "config.local.json"
+
+
+def github_review_bridge_required(config: Mapping[str, Any]) -> bool:
+    """Return whether development review must publish GitHub proof.
+
+    The default is fail-closed.  Development may explicitly disable only this
+    publication bridge while workers share a GitHub transport identity; the
+    TaskStore reviewer decision, exact-head binding, intent CAS, and audit
+    event remain mandatory.
+
+    This stays in ``common`` because command-runtime fixtures already carry
+    that module.  All consumers therefore use one policy without introducing
+    a new runtime packaging dependency.
+    """
+
+    review_gate = config.get("review_gate")
+    if not isinstance(review_gate, Mapping):
+        return True
+    value = review_gate.get("github_review_bridge_required")
+    if value is None:
+        return True
+    if isinstance(value, bool):
+        return value
+    raise ValueError("review_gate.github_review_bridge_required must be a boolean")
 CLAUDE_OAUTH_TOKEN_URL = "https://platform.claude.com/v1/oauth/token"
 CLAUDE_OAUTH_CLIENT_ID = "9d1c250a-e61b-44d9-88ed-5944d1962f5e"
 CLAUDE_OAUTH_SCOPES = (

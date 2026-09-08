@@ -13846,14 +13846,15 @@ class PortableStateRenderingTests(unittest.TestCase):
         resolver = mock.Mock()
         resolver.source.return_value = "active"
 
-        _workers, mismatches = ai_status.detect_truth_mismatches(
-            {"tasks": [task]},
-            [],
-            [],
-            {"pending": []},
-            resolver,
-            {},
-        )
+        with mock.patch.object(ai_status, "load_config", return_value={}):
+            _workers, mismatches = ai_status.detect_truth_mismatches(
+                {"tasks": [task]},
+                [],
+                [],
+                {"pending": []},
+                resolver,
+                {},
+            )
 
         mismatch = next(
             item for item in mismatches
@@ -13865,6 +13866,35 @@ class PortableStateRenderingTests(unittest.TestCase):
         )
         self.assertEqual(mismatch["severity"], "high")
         self.assertIn("不得把 internal review_approved", mismatch["resolution_hint"])
+
+    def test_dashboard_suppresses_legacy_gate_alert_when_bridge_is_disabled(self) -> None:
+        task = {
+            "id": "AUDIT-002",
+            "owner": "Codex",
+            "reviewer": "Codex2",
+            "status": "review_approved",
+            "review_binding": {
+                "pr": 4270,
+                "head_sha": "a" * 40,
+                "head_branch": "task/AUDIT-002",
+                "base": "dev",
+            },
+        }
+        resolver = mock.Mock()
+        resolver.source.return_value = "active"
+
+        with mock.patch.object(
+            ai_status,
+            "load_config",
+            return_value={"review_gate": {"github_review_bridge_required": False}},
+        ):
+            _workers, mismatches = ai_status.detect_truth_mismatches(
+                {"tasks": [task]}, [], [], {"pending": []}, resolver, {}
+            )
+
+        self.assertNotIn(
+            "github_review_gate_missing", {item["type"] for item in mismatches}
+        )
 
     def test_dashboard_accepts_matching_branch_policy_review_evidence(self) -> None:
         binding = {

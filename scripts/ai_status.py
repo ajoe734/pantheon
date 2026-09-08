@@ -195,6 +195,7 @@ from common import (
     canonical_task_state_lock_path,
     durable_write_bytes,
     first_symlink_component,
+    github_review_bridge_required,
     git_toplevel,
     normalize_github_repo_slug,
     prepare_activity_audit_unlocked,
@@ -7993,50 +7994,6 @@ def _github_review_bridge_module():
     except ImportError as exc:  # pragma: no cover - deployment packaging guard
         raise SystemExit("GitHub review bridge is unavailable") from exc
     return github_review_bridge
-
-
-def github_review_bridge_required(config: Mapping[str, Any]) -> bool:
-    """Return whether a canonical reviewer decision must write GitHub proof.
-
-    The default remains fail-closed so deployments which have not explicitly
-    opted out keep the GitHub review/proof bridge. The temporary canonical task
-    mode still revalidates the exact PR admission before it records the
-    existing task-store decision; it only skips the GitHub write that a shared
-    account cannot perform on its own pull request.
-    """
-
-    review_gate = config.get("review_gate")
-    if not isinstance(review_gate, Mapping):
-        return True
-    value = review_gate.get("github_review_bridge_required")
-    if value is None:
-        return True
-    if isinstance(value, bool):
-        return value
-    raise SystemExit("review_gate.github_review_bridge_required must be a boolean")
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 
 
