@@ -437,8 +437,20 @@ class ResearchDispatcher:
 
         # 6. Apply completed results and artifact checksum readback
         complete_now = self.utc_now()
+        exec_status = "succeeded" if result.outcome == "succeeded" else result.outcome
+        from .receipt import resolve_run_provenance
+        resolved_provenance, _ = resolve_run_provenance(
+            self.store,
+            {
+                "run_id": run_id,
+                "execution_status": exec_status,
+                "backend": {"mode": stage.get("routing", {}).get("backend_mode") or "real"},
+                "provenance": result.provenance,
+            },
+            expected_correlation_id=plan.get("correlation_id") or plan.get("trace_id"),
+        )
         run_updates = {
-            "execution_status": "succeeded" if result.outcome == "succeeded" else result.outcome,
+            "execution_status": exec_status,
             "outcome": "pass" if result.outcome == "succeeded" else ("fail" if result.outcome == "failed" else result.outcome),
             "backend": {
                 "requested": stage.get("routing", {}).get("preferred_backend") or ALLOWLISTED_STAGE_BACKENDS.get(stage_type, ""),
@@ -450,6 +462,7 @@ class ResearchDispatcher:
                 "mode": stage.get("routing", {}).get("backend_mode") or "real",
                 "version": result.backend_version,
             },
+            "provenance": resolved_provenance,
             "metrics": result.metrics,
             "findings": result.findings,
             "warnings": result.warnings,
@@ -511,7 +524,7 @@ class ResearchDispatcher:
                 {
                     "status": "completed",
                     "partial_effects": result.partial_effects,
-                    "provenance": result.provenance,
+                    "provenance": resolved_provenance,
                     "updated_at": complete_now,
                 },
                 tenant_id=scope.tenant_id,

@@ -36,6 +36,7 @@ class MemoryResearchPlanStore:
         self._candidate_metrics: Dict[str, Dict[str, Dict[str, Any]]] = {}
         self._outbox: Dict[str, Dict[str, Any]] = {}
         self._audit_actions: List[Dict[str, Any]] = []
+        self._receipts: Dict[str, Dict[str, Any]] = {}
         self._idempotency: Dict[str, bool] = {}
         self._lock = threading.Lock()
 
@@ -179,6 +180,21 @@ class MemoryResearchPlanStore:
                     continue
                 runs.append(dict(r))
             return runs
+
+    # ------------------------------------------------------------------
+    # Receipts
+    # ------------------------------------------------------------------
+
+    def record_execution_receipt(self, receipt: Dict[str, Any]) -> Dict[str, Any]:
+        with self._lock:
+            data = dict(receipt)
+            self._receipts[str(data["run_id"])] = data
+            return dict(data)
+
+    def get_execution_receipt(self, run_id: str) -> Optional[Dict[str, Any]]:
+        with self._lock:
+            entry = self._receipts.get(run_id)
+            return dict(entry) if entry is not None else None
 
     # ------------------------------------------------------------------
     # Candidate pools
@@ -830,6 +846,19 @@ class PostgresResearchPlanStore:
             if (tenant_id is None or not r.get("tenant_id") or r.get("tenant_id") == tenant_id)
             and (user_id is None or not r.get("user_id") or r.get("user_id") == user_id)
         ]
+
+    # Receipts
+    def record_execution_receipt(self, receipt: Dict[str, Any]) -> Dict[str, Any]:
+        return self._put(
+            "research_receipt",
+            str(receipt["run_id"]),
+            dict(receipt),
+            parent_id=receipt.get("plan_id"),
+            subject_id=receipt.get("receipt_id"),
+        )
+
+    def get_execution_receipt(self, run_id: str) -> Optional[Dict[str, Any]]:
+        return self._get("research_receipt", run_id)
 
     # Candidate Pools
     def create_candidate_pool(

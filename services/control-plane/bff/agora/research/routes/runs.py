@@ -35,7 +35,7 @@ def build_runs_router(ctx: AgoraResearchRouteContext) -> APIRouter:
             user_id=scope.user_id,
         )
         return {
-            "items": [_run_projection_with_defaults(r) for r in runs],
+            "items": [_run_projection_with_defaults(r, store=ctx.store) for r in runs],
             "page_info": {
                 "next_page_token": None,
                 "page_size": len(runs),
@@ -183,7 +183,7 @@ def build_runs_router(ctx: AgoraResearchRouteContext) -> APIRouter:
     ) -> Dict[str, Any]:
         scope = ctx.read_scope(authorization, x_tenant_id)
         run = ctx.get_run_or_404(run_id, scope)
-        return _run_projection_with_defaults(run)
+        return _run_projection_with_defaults(run, store=ctx.store)
 
     # -------------------------------------------------------------------
     # POST /bff/agora/research-runs/{run_id}/cancel

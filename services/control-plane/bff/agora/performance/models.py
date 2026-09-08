@@ -135,6 +135,7 @@ class SuggestionProvenance(BaseModel):
     produced_at: str = Field(min_length=1)
     source_version: Optional[str] = None
     evidence_refs: List[str] = Field(default_factory=list)
+    correlation_id: Optional[str] = Field(default=None, exclude=True)
 
 
 class AdjustmentSuggestion(BaseModel):
@@ -152,6 +153,7 @@ class AdjustmentSuggestion(BaseModel):
     provenance: SuggestionProvenance
     as_of: str = Field(min_length=1)
     updated_at: Optional[str] = None
+    correlation_id: Optional[str] = Field(default=None, exclude=True)
     no_order_route_proof: Literal["agora_suggestion_state_only"] = (
         "agora_suggestion_state_only"
     )
