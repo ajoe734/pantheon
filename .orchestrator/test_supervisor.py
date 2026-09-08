@@ -10644,6 +10644,60 @@ class WorkerLeaseApprovalWaitProgressTests(unittest.TestCase):
         }
         self.assertFalse(supervisor.worker_lease_progress_is_fresh(config, worker, self.now))
 
+    def test_stale_provider_loop_is_fenced_for_existing_lease_recovery(self) -> None:
+        config = {"worker_runtime": {"work_progress_stale_seconds": 300}}
+        worker = {
+            "status": "running",
+            "run_id": "run-stale",
+            "provider": "antigravity2",
+            "task_id": "TASK-1",
+            "lease_acquired_at": (self.now - timedelta(seconds=301)).isoformat(),
+            "lease_expires_at": (self.now + timedelta(hours=2)).isoformat(),
+            "last_event_at": self.fresh_event_at,
+        }
+        with mock.patch.object(supervisor, "write_activity_log") as activity:
+            result = supervisor.poll_worker_stall_stage(
+                config,
+                {},
+                worker,
+                alive=True,
+                progress_advanced=False,
+                now=self.now,
+                stall_after=300,
+            )
+        self.assertEqual(result, {"changed": True, "stop": True})
+        self.assertEqual(worker["status"], "stalled")
+        self.assertEqual(worker["lease_expires_at"], "2026-01-01T00:00:00Z")
+        self.assertIn("fenced for typed recovery", activity.call_args.args[1]["message"])
+
+    def test_quiet_foreground_validation_is_not_fenced_as_stalled(self) -> None:
+        config = {
+            "worker_runtime": {"work_progress_stale_seconds": 300},
+            "providers": {"antigravity2": {"antigravity": {"print_timeout": "2h"}}},
+        }
+        worker = {
+            "status": "running",
+            "run_id": "run-validation",
+            "provider": "antigravity2",
+            "task_id": "TASK-1",
+            "lease_acquired_at": (self.now - timedelta(minutes=45)).isoformat(),
+            "lease_expires_at": (self.now + timedelta(hours=2)).isoformat(),
+            "last_active_process_at": self.fresh_event_at,
+        }
+        with mock.patch.object(supervisor, "write_activity_log") as activity:
+            result = supervisor.poll_worker_stall_stage(
+                config,
+                {},
+                worker,
+                alive=True,
+                progress_advanced=False,
+                now=self.now,
+                stall_after=300,
+            )
+        self.assertEqual(result, {"changed": False, "stop": True})
+        self.assertEqual(worker["status"], "running")
+        self.assertEqual(activity.call_count, 0)
+
     def test_active_child_without_provider_timeout_cannot_renew_quiet_lease(self) -> None:
         worker = {
             "status": "running",
