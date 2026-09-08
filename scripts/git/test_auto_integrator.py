@@ -1672,6 +1672,26 @@ class IntegrationPlanTests(unittest.TestCase):
             self.assertIsNone(replay)
             self.assertEqual(list((root / auto_integrator.UNBLOCK_REQUEST_INBOX).glob("*.json")), [])
 
+    def test_coalesced_receipt_replay_requires_same_source_delivery_identity(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            root = Path(tmp_dir)
+            payload = {"source_task_id": "ABC-001", "repository_slug": "ajoe734/pantheon",
+                       "pr": 44, "head_sha": APPROVED_HEAD, "unblock_task_id": "INTEGRATION-UNBLOCK-NEW"}
+            name = auto_integrator.unblock_contract.request_filename(payload)
+            directory = root / auto_integrator.unblock_contract.RECEIPT_ROOT / "processed"
+            directory.mkdir(parents=True)
+            receipt = {"schema": auto_integrator.unblock_contract.RECEIPT_SCHEMA,
+                       "request_sha256": Path(name).stem, "outcome": "processed",
+                       "task_id": "INTEGRATION-UNBLOCK-EXISTING",
+                       "coalesced_identity": auto_integrator.unblock_contract.repair_identity(payload)}
+            (directory / name).write_text(json.dumps(receipt))
+            result = auto_integrator._write_unblock_request(root, payload)
+            self.assertEqual(result.task_id, "INTEGRATION-UNBLOCK-EXISTING")
+            receipt["coalesced_identity"]["head_sha"] = "c" * 40
+            (directory / name).write_text(json.dumps(receipt))
+            with self.assertRaises(auto_integrator.AutoIntegratorError):
+                auto_integrator._write_unblock_request(root, payload)
+
     def test_processed_terminal_receipt_requires_exact_task_id(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:
             root = Path(tmp_dir)

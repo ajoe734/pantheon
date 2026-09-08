@@ -2279,6 +2279,25 @@ class AutoIntegratorUnblockAuthorityTests(unittest.TestCase):
         receipts = self.status_root / supervisor.AUTO_INTEGRATOR_UNBLOCK_RECEIPTS / "rejected"
         self.assertIn("source task", json.loads(next(receipts.glob("*.json")).read_text())["detail"])
 
+    def test_generation_retry_coalesces_but_different_head_is_new_scope(self) -> None:
+        self._publish()
+        self.assertTrue(self._materialize())
+        state = supervisor.load_status(self.config)
+        state["tasks"][0]["generation"] = 2
+        supervisor.rewrite_task_state_store.append_state_commit(
+            self.config["task_state_store"]["event_log"], state, source="isolated-retry")
+        self._publish(source_task_generation=2,
+                      unblock_task_id=self._task_id(source_task_generation=2))
+        self.assertFalse(self._materialize())
+        self.assertEqual(len(supervisor.load_status(self.config)["tasks"]), 2)
+        state["tasks"][0]["delivery_binding"]["head_sha"] = "c" * 40
+        supervisor.rewrite_task_state_store.append_state_commit(
+            self.config["task_state_store"]["event_log"], state, source="isolated-new-head")
+        self._publish(source_task_generation=2, head_sha="c" * 40,
+                      unblock_task_id=self._task_id(source_task_generation=2, head_sha="c" * 40))
+        self.assertTrue(self._materialize())
+        self.assertEqual(len(supervisor.load_status(self.config)["tasks"]), 3)
+
     def test_existing_canonical_id_requires_exact_request_provenance(self) -> None:
         request = self._publish()
         task_id = self._task_id()
