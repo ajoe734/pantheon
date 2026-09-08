@@ -119,9 +119,14 @@ class MemoryTwelveLoopStore(TwelveLoopStore):
             cur_prov = prov_rank.get(existing.provenance, 0)
             if new_prov < cur_prov:
                 return
-            if new_prov == cur_prov and obs.observed_at < existing.observed_at:
-                return
-        self._observations[key] = obs
+            if new_prov == cur_prov:
+                # Receipt-set ordering: new observation must contain all receipts of existing observation
+                existing_receipts = set(existing.receipt_ids or [])
+                new_receipts = set(obs.receipt_ids or [])
+                if not existing_receipts.issubset(new_receipts):
+                    return
+        import copy
+        self._observations[key] = copy.copy(obs)
 
     def get_observation(
         self, release_id: str, correlation_id: str, loop_id: int
@@ -408,7 +413,7 @@ class PostgresTwelveLoopStore(TwelveLoopStore):
             ) OR (
                 CASE EXCLUDED.provenance WHEN 'live' THEN 2 WHEN 'replay' THEN 1 ELSE 0 END =
                 CASE {self.schema}.twelve_loop_observations.provenance WHEN 'live' THEN 2 WHEN 'replay' THEN 1 ELSE 0 END
-                AND EXCLUDED.observed_at >= {self.schema}.twelve_loop_observations.observed_at
+                AND EXCLUDED.receipt_ids @> COALESCE({self.schema}.twelve_loop_observations.receipt_ids, '[]'::jsonb)
             );
         """
         with self._connect() as conn:
@@ -477,7 +482,7 @@ class PostgresTwelveLoopStore(TwelveLoopStore):
                     ) OR (
                         CASE EXCLUDED.provenance WHEN 'live' THEN 2 WHEN 'replay' THEN 1 ELSE 0 END =
                         CASE {self.schema}.twelve_loop_observations.provenance WHEN 'live' THEN 2 WHEN 'replay' THEN 1 ELSE 0 END
-                        AND EXCLUDED.observed_at >= {self.schema}.twelve_loop_observations.observed_at
+                        AND EXCLUDED.receipt_ids @> COALESCE({self.schema}.twelve_loop_observations.receipt_ids, '[]'::jsonb)
                     );
                 """
                 await conn.execute(

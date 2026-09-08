@@ -31,7 +31,10 @@
       "Static registry supplies labels and order only; registry maturity never sets runtime completion",
       "All writes are idempotent by receipt identity",
       "Freshness status is evaluated dynamically on read; transitions to stale when age exceeds max_age_seconds",
-      "Fresh projector instances wired to Postgres reload full truth and rebuild identical observations"
+      "Fresh projector instances wired to Postgres reload full truth and rebuild identical observations",
+      "Receipt-set ordering CAS fences stale reduction writers in Memory and PostgreSQL stores, preventing interleaved equal-timestamp writes from overwriting failed observations with stale complete status",
+      "Late stimulus arrival properly invalidates old reduction chain, and store receipt-set containment ensures incremental reduction equals rebuild",
+      "Atomic resolution of persisted receipt identity after insert rejects conflicting key/type and prevents projection of unpersisted duplicate content"
     ],
     "mandatory_deletions": {
       "static_or_incident_derived_success_substitution": "Static or incident-derived success substitution excised; unobserved or failed loops remain explicit without synthetic fallback."
@@ -41,19 +44,19 @@
   "verification": {
     "commands": [
       {
-        "command": "PYTHONPATH=. /tmp/pantheon-worker-worktrees/pantheon/loop-truth-001/.venv-pantheon/bin/python3 -m pytest services/control-plane/bff/management_read_models/test_twelve_loop_projector.py -vv",
-        "result": "27 passed",
-        "executed": 27,
-        "collected": 27
+        "command": "PYTHONPATH=. python3 -m pytest services/control-plane/bff/management_read_models/test_twelve_loop_projector.py -vv",
+        "result": "30 passed (including equal-timestamp interleaving, late-stimulus incremental equals rebuild, and duplicate race rejection in memory store)",
+        "executed": 30,
+        "collected": 30
       },
       {
-        "command": "PYTHONPATH=. /tmp/pantheon-worker-worktrees/pantheon/loop-truth-001/.venv-pantheon/bin/python3 -m pytest services/control-plane/bff/migrations/test_twelve_loop_truth.py -vv",
-        "result": "7 passed (including real PostgreSQL reload, two-projector interleaving fence, cross-key duplicate rejection, partial-write retry, and mocked interface check)",
-        "executed": 7,
-        "collected": 7
+        "command": "REVIEW_TEST_DSN=postgresql://postgres:postgres@127.0.0.1:15432/pantheon PYTHONPATH=. python3 -m pytest services/control-plane/bff/migrations/test_twelve_loop_truth.py -vv",
+        "result": "10 passed (including real PostgreSQL reload, two-projector interleaving fence, cross-key duplicate rejection, partial-write retry, postgres equal-timestamp interleaving, postgres late-stimulus incremental equals rebuild, postgres duplicate race rejection, and mocked interface check)",
+        "executed": 10,
+        "collected": 10
       },
       {
-        "command": "PYTHONPATH=services/control-plane/bff /tmp/pantheon-worker-worktrees/pantheon/loop-truth-001/.venv-pantheon/bin/python3 -m pytest services/control-plane/bff/tests/test_management_read_models_router.py -q",
+        "command": "PYTHONPATH=services/control-plane/bff python3 -m pytest services/control-plane/bff/tests/test_management_read_models_router.py -q",
         "result": "43 passed, 137 warnings",
         "executed": 43,
         "collected": 43

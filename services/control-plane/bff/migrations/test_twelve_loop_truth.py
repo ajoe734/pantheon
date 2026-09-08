@@ -355,3 +355,115 @@ def test_postgres_partial_write_retry() -> None:
     assert obs_db is not None
     assert obs_db.status == "open"
     assert obs_db.stimulus_id == stimulus.receipt_id
+
+
+def test_postgres_equal_timestamp_interleaving_cannot_restore_complete() -> None:
+    """P1 regression: interleaved terminal persistence at equal timestamp cannot be overwritten by stale complete in PostgreSQL."""
+    from uuid import uuid4
+
+    store = PostgresTwelveLoopStore(POSTGRES_TEST_DSN)
+    store.apply_migration_sync()
+
+    prefix = f"pg_eq_{uuid4().hex[:12]}"
+    now = datetime.now(timezone.utc)
+
+    def make(name: str, kind: str, status: str = "", offset: int = 0, cause: Optional[str] = None, corr: str = "c") -> CanonicalLoopReceipt:
+        return CanonicalLoopReceipt(
+            receipt_id=f"{prefix}_{name}",
+            receipt_type=kind,
+            release_id=prefix,
+            correlation_id=corr,
+            loop_id=1,
+            owner="review",
+            provenance="live",
+            status=status,
+            observed_at=now + timedelta(seconds=offset),
+            causation_id=f"{prefix}_{cause}" if cause else None,
+        )
+
+    p1 = TwelveLoopTruthProjector(store, auto_load=False)
+    p2 = TwelveLoopTruthProjector(store, auto_load=False)
+    p1.ingest_receipts([make("s", "stimulus"), make("t", "terminal", "completed", cause="s")])
+    original = store.upsert_observation
+
+    def interleave(obs: LoopObservation) -> None:
+        store.upsert_observation = original
+        p2.ingest_receipt(make("z", "terminal", "failed", cause="s"))
+        assert store.get_observation(prefix, "c", 1).status == "failed"
+        original(obs)
+
+    store.upsert_observation = interleave
+    p1.ingest_receipt(make("n", "next_consumer", "accepted", cause="t"))
+    assert store.get_observation(prefix, "c", 1).status == "failed"
+
+
+def test_postgres_late_stimulus_incremental_equals_rebuild() -> None:
+    """P1 regression: late stimulus invalidates old chain and incremental reduction equals rebuild in PostgreSQL."""
+    from uuid import uuid4
+
+    store = PostgresTwelveLoopStore(POSTGRES_TEST_DSN)
+    store.apply_migration_sync()
+
+    prefix = f"pg_late_{uuid4().hex[:12]}"
+    now = datetime.now(timezone.utc)
+
+    def make(name: str, kind: str, status: str = "", offset: int = 0, cause: Optional[str] = None, corr: str = "c") -> CanonicalLoopReceipt:
+        return CanonicalLoopReceipt(
+            receipt_id=f"{prefix}_{name}",
+            receipt_type=kind,
+            release_id=prefix,
+            correlation_id=corr,
+            loop_id=1,
+            owner="review",
+            provenance="live",
+            status=status,
+            observed_at=now + timedelta(seconds=offset),
+            causation_id=f"{prefix}_{cause}" if cause else None,
+        )
+
+    p = TwelveLoopTruthProjector(store, auto_load=False)
+    p.ingest_receipts([
+        make("s", "stimulus", offset=-30),
+        make("t", "terminal", "completed", offset=-20, cause="s"),
+        make("n", "next_consumer", "accepted", offset=-10, cause="t"),
+    ])
+    incremental = p.ingest_receipt(make("s2", "stimulus", offset=-15)).status
+    rebuilt = p.rebuild()[0].status
+    assert incremental == rebuilt == "open"
+
+
+def test_postgres_duplicate_race_cannot_project_unpersisted_cross_key_receipt() -> None:
+    """P1 regression: concurrent duplicate insert after get_receipt cannot project unpersisted content under another correlation in PostgreSQL."""
+    from uuid import uuid4
+
+    store = PostgresTwelveLoopStore(POSTGRES_TEST_DSN)
+    store.apply_migration_sync()
+
+    prefix = f"pg_dup_{uuid4().hex[:12]}"
+    now = datetime.now(timezone.utc)
+
+    def make(name: str, kind: str, status: str = "", offset: int = 0, cause: Optional[str] = None, corr: str = "c") -> CanonicalLoopReceipt:
+        return CanonicalLoopReceipt(
+            receipt_id=f"{prefix}_{name}",
+            receipt_type=kind,
+            release_id=prefix,
+            correlation_id=corr,
+            loop_id=1,
+            owner="review",
+            provenance="live",
+            status=status,
+            observed_at=now + timedelta(seconds=offset),
+            causation_id=f"{prefix}_{cause}" if cause else None,
+        )
+
+    p = TwelveLoopTruthProjector(store, auto_load=False)
+    original = store.record_receipt
+
+    def interleave(receipt: CanonicalLoopReceipt) -> None:
+        store.record_receipt = original
+        original(make("t", "terminal", "failed", corr="other"))
+        original(receipt)
+
+    store.record_receipt = interleave
+    with pytest.raises(ValueError, match="Conflicting receipt identity"):
+        p.ingest_receipt(make("t", "terminal", "completed"))

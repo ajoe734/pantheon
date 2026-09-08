@@ -16,8 +16,8 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 import json
-from pathlib import Path
 from unittest.mock import patch
+from uuid import uuid4
 import pytest
 
 
@@ -845,3 +845,100 @@ class TestTwelveLoopProjectorReviewRegressions:
         assert obs3 is not None
         assert obs3.status == "complete"
         assert obs3.provenance == "live"
+
+    def test_equal_timestamp_interleaving_cannot_restore_complete(self) -> None:
+        """P1 regression: interleaved terminal persistence at equal timestamp cannot be overwritten by stale complete."""
+        prefix = uuid4().hex
+        now = datetime.now(timezone.utc)
+
+        def make(name: str, kind: str, status: str = "", offset: int = 0, cause: Optional[str] = None, corr: str = "c") -> CanonicalLoopReceipt:
+            return CanonicalLoopReceipt(
+                receipt_id=prefix + name,
+                receipt_type=kind,
+                release_id=prefix,
+                correlation_id=corr,
+                loop_id=1,
+                owner="review",
+                provenance="live",
+                status=status,
+                observed_at=now + timedelta(seconds=offset),
+                causation_id=prefix + cause if cause else None,
+            )
+
+        store = MemoryTwelveLoopStore()
+        p1 = TwelveLoopTruthProjector(store, auto_load=False)
+        p2 = TwelveLoopTruthProjector(store, auto_load=False)
+        p1.ingest_receipts([make("s", "stimulus"), make("t", "terminal", "completed", cause="s")])
+        original = store.upsert_observation
+
+        def interleave(obs: LoopObservation) -> None:
+            store.upsert_observation = original
+            p2.ingest_receipt(make("z", "terminal", "failed", cause="s"))
+            assert store.get_observation(prefix, "c", 1).status == "failed"
+            original(obs)
+
+        store.upsert_observation = interleave
+        p1.ingest_receipt(make("n", "next_consumer", "accepted", cause="t"))
+        assert store.get_observation(prefix, "c", 1).status == "failed"
+
+    def test_late_stimulus_incremental_equals_rebuild(self) -> None:
+        """P1 regression: late stimulus invalidates old chain and incremental reduction equals rebuild."""
+        prefix = uuid4().hex
+        now = datetime.now(timezone.utc)
+
+        def make(name: str, kind: str, status: str = "", offset: int = 0, cause: Optional[str] = None, corr: str = "c") -> CanonicalLoopReceipt:
+            return CanonicalLoopReceipt(
+                receipt_id=prefix + name,
+                receipt_type=kind,
+                release_id=prefix,
+                correlation_id=corr,
+                loop_id=1,
+                owner="review",
+                provenance="live",
+                status=status,
+                observed_at=now + timedelta(seconds=offset),
+                causation_id=prefix + cause if cause else None,
+            )
+
+        store = MemoryTwelveLoopStore()
+        p = TwelveLoopTruthProjector(store, auto_load=False)
+        p.ingest_receipts([
+            make("s", "stimulus", offset=-30),
+            make("t", "terminal", "completed", offset=-20, cause="s"),
+            make("n", "next_consumer", "accepted", offset=-10, cause="t"),
+        ])
+        incremental = p.ingest_receipt(make("s2", "stimulus", offset=-15)).status
+        rebuilt = p.rebuild()[0].status
+        assert incremental == rebuilt == "open"
+
+    def test_duplicate_race_cannot_project_unpersisted_cross_key_receipt(self) -> None:
+        """P1 regression: concurrent duplicate insert after get_receipt cannot project unpersisted content under another correlation."""
+        prefix = uuid4().hex
+        now = datetime.now(timezone.utc)
+
+        def make(name: str, kind: str, status: str = "", offset: int = 0, cause: Optional[str] = None, corr: str = "c") -> CanonicalLoopReceipt:
+            return CanonicalLoopReceipt(
+                receipt_id=prefix + name,
+                receipt_type=kind,
+                release_id=prefix,
+                correlation_id=corr,
+                loop_id=1,
+                owner="review",
+                provenance="live",
+                status=status,
+                observed_at=now + timedelta(seconds=offset),
+                causation_id=prefix + cause if cause else None,
+            )
+
+        store = MemoryTwelveLoopStore()
+        p = TwelveLoopTruthProjector(store, auto_load=False)
+        original = store.record_receipt
+
+        def interleave(receipt: CanonicalLoopReceipt) -> None:
+            store.record_receipt = original
+            original(make("t", "terminal", "failed", corr="other"))
+            original(receipt)
+
+        store.record_receipt = interleave
+        with pytest.raises(ValueError, match="Conflicting receipt identity"):
+            p.ingest_receipt(make("t", "terminal", "completed"))

@@ -302,6 +302,25 @@ class TwelveLoopTruthProjector:
         # Exceptions propagate so callers can retry, without polluting in-memory idempotency cache.
         if self.store is not None:
             self.store.record_receipt(receipt)
+            # Atomically resolve persisted identity/content after insert:
+            # In concurrent race where a duplicate was inserted after get_receipt but before/during record_receipt,
+            # bind to the actual persisted receipt and reject conflicting key/type.
+            persisted = self.store.get_receipt(receipt.receipt_id)
+            if persisted is not None:
+                if (
+                    persisted.release_id != receipt.release_id
+                    or persisted.correlation_id != receipt.correlation_id
+                    or persisted.loop_id != receipt.loop_id
+                    or persisted.receipt_type != receipt.receipt_type
+                ):
+                    raise ValueError(
+                        f"Conflicting receipt identity: receipt_id '{receipt.receipt_id}' already registered with key "
+                        f"(release_id={persisted.release_id}, correlation_id={persisted.correlation_id}, loop_id={persisted.loop_id}, type={persisted.receipt_type}), "
+                        f"cannot re-ingest under conflicting key "
+                        f"(release_id={receipt.release_id}, correlation_id={receipt.correlation_id}, loop_id={receipt.loop_id}, type={receipt.receipt_type})"
+                    )
+                # Never overwrite persisted content with incoming data
+                receipt = persisted
 
         # 2. Serialize reduction against canonical stored receipts
         if self.store is not None:
@@ -325,6 +344,13 @@ class TwelveLoopTruthProjector:
             if durable_obs is not None:
                 obs = durable_obs
                 self._recompute_freshness(obs, now=datetime.now(timezone.utc))
+                if set(durable_obs.receipt_ids) != set(key_receipts.keys()):
+                    stored_receipts = self.store.list_receipts(
+                        release_id=receipt.release_id,
+                        correlation_id=receipt.correlation_id,
+                        loop_id=receipt.loop_id,
+                    )
+                    key_receipts = {r.receipt_id: r for r in stored_receipts}
 
         # 4. Durable persistence succeeded: commit to in-memory caches
         self._receipts[receipt.receipt_id] = receipt
