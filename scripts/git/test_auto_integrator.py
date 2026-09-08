@@ -3703,16 +3703,6 @@ class IntegrationReceiptWiringTests(unittest.TestCase):
                 source="test-seed",
             )
             lock_path = Path(tmp_dir) / "auto-integrator.lock"
-            lock_path.write_text(
-                json.dumps(
-                    {
-                        "schema": auto_integrator.LOCK_SCHEMA,
-                        "state": "held",
-                        "pid": os.getpid(),
-                    }
-                ),
-                encoding="utf-8",
-            )
             config = {
                 "paths": {"status_file": str(status_file)},
                 "task_state_store": {"mode": "authoritative", "event_log": str(event_path)},
@@ -3721,7 +3711,7 @@ class IntegrationReceiptWiringTests(unittest.TestCase):
                 auto_integrator.integration_receipt,
                 "validate_status_command_runtime",
                 return_value={},
-            ):
+            ), auto_integrator.lock_file(lock_path):
                 # This test's own worktree is not named after its HEAD sha (unlike a
                 # promoted command-runtimes/<sha> checkout), so the promoted-runtime
                 # identity check -- already exhaustively covered in
@@ -3842,16 +3832,6 @@ class IntegrationReceiptWiringTests(unittest.TestCase):
                 reviewer="Codex",
             )
             lock_path = Path(tmp_dir) / "auto-integrator.lock"
-            lock_path.write_text(
-                json.dumps(
-                    {
-                        "schema": auto_integrator.LOCK_SCHEMA,
-                        "state": "held",
-                        "pid": os.getpid(),
-                    }
-                ),
-                encoding="utf-8",
-            )
             config = {
                 "paths": {"status_file": str(status_file)},
             }
@@ -3859,7 +3839,7 @@ class IntegrationReceiptWiringTests(unittest.TestCase):
                 auto_integrator.integration_receipt,
                 "validate_status_command_runtime",
                 return_value={},
-            ):
+            ), auto_integrator.lock_file(lock_path):
                 os.environ.pop("PANTHEON_TASK_STATE_STORE_MODE", None)
                 os.environ.pop("PANTHEON_TASK_STATE_EVENT_LOG", None)
                 result = auto_integrator.integrate_candidate(
@@ -3943,16 +3923,6 @@ class IntegrationReceiptWiringTests(unittest.TestCase):
                 reviewer="Codex",
             )
             lock_path = Path(tmp_dir) / "auto-integrator.lock"
-            lock_path.write_text(
-                json.dumps(
-                    {
-                        "schema": auto_integrator.LOCK_SCHEMA,
-                        "state": "held",
-                        "pid": os.getpid(),
-                    }
-                ),
-                encoding="utf-8",
-            )
             config = {
                 "paths": {"status_file": str(status_file)},
             }
@@ -3960,7 +3930,7 @@ class IntegrationReceiptWiringTests(unittest.TestCase):
                 auto_integrator.integration_receipt,
                 "validate_status_command_runtime",
                 return_value={},
-            ):
+            ), auto_integrator.lock_file(lock_path):
                 os.environ.pop("PANTHEON_TASK_STATE_STORE_MODE", None)
                 os.environ.pop("PANTHEON_TASK_STATE_EVENT_LOG", None)
                 result = auto_integrator.integrate_candidate(

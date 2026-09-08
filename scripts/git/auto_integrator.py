@@ -2145,6 +2145,12 @@ def _record_merge_integration_receipt(
         pr=pr,
         head_sha=head_sha,
     )
+    lock_inode: int | None = None
+    try:
+        if lock_path.exists():
+            lock_inode = lock_path.stat().st_ino
+    except OSError:
+        lock_inode = None
     authority = integration_receipt.IntegrationAuthority(
         command_root=ROOT,
         command_sha=ROOT.name,
@@ -2154,6 +2160,7 @@ def _record_merge_integration_receipt(
         lock_path=lock_path,
         lock_schema=LOCK_SCHEMA,
         lock_pid=os.getpid(),
+        lock_inode=lock_inode,
     )
     try:
         integration_receipt.record_integration_receipt(

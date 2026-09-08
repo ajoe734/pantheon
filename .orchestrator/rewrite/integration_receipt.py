@@ -23,6 +23,8 @@ the existing projection contract, not a new one.
 """
 from __future__ import annotations
 
+import errno
+import fcntl
 import json
 import os
 import re
@@ -125,12 +127,12 @@ class IntegrationReceipt:
 class IntegrationAuthority:
     """Concrete proofs the caller already holds, re-verified before writing.
 
-    ``lock_path``/``lock_schema``/``lock_pid`` re-check the canonical
-    auto-integrator flock this process acquired in
-    ``scripts/git/auto_integrator.py:lock_file`` -- the metadata file it
-    publishes under that flock is re-read here to prove *this* process still
-    owns it (SD.md 6.4 point 3), without this module importing
-    ``auto_integrator`` itself.
+    ``lock_path``/``lock_schema``/``lock_pid``/``lock_inode`` re-check the
+    canonical auto-integrator flock this process acquired in
+    ``scripts/git/auto_integrator.py:lock_file`` -- the metadata file and held
+    kernel lock it publishes under that flock are re-read and validated here to
+    prove *this* process still owns it (SD.md 6.4 point 3), without this module
+    importing ``auto_integrator`` itself.
     """
 
     command_root: Path
@@ -141,6 +143,7 @@ class IntegrationAuthority:
     lock_path: Path
     lock_schema: str
     lock_pid: int
+    lock_inode: int | None = None
 
 
 @dataclass(frozen=True)
@@ -314,17 +317,87 @@ def integration_receipt_consumes_candidate(
     )
 
 
-def _read_lock_owner_pid(lock_path: Path, *, expected_schema: str) -> int | None:
+def _verify_lock_authority(
+    lock_path: Path,
+    *,
+    expected_schema: str,
+    expected_pid: int,
+    expected_inode: int | None = None,
+) -> None:
     try:
-        payload = json.loads(lock_path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return None
-    if not isinstance(payload, Mapping):
-        return None
-    if payload.get("schema") != expected_schema or payload.get("state") != "held":
-        return None
-    pid = payload.get("pid")
-    return pid if isinstance(pid, int) and not isinstance(pid, bool) else None
+        flags = os.O_RDONLY
+        if hasattr(os, "O_NOFOLLOW"):
+            flags |= os.O_NOFOLLOW
+        fd = os.open(str(lock_path), flags)
+    except OSError as exc:
+        raise IntegrationReceiptAuthorityError(
+            f"cannot open canonical auto-integrator lock {lock_path}: {exc}"
+        ) from exc
+
+    try:
+        opened_stat = os.fstat(fd)
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            try:
+                fcntl.flock(fd, fcntl.LOCK_UN)
+            except OSError:
+                pass
+            is_held = False
+        except (BlockingIOError, OSError) as exc:
+            if exc.errno in {errno.EACCES, errno.EAGAIN}:
+                is_held = True
+            else:
+                raise IntegrationReceiptAuthorityError(
+                    f"cannot inspect canonical auto-integrator lock {lock_path}: {exc}"
+                ) from exc
+
+        if not is_held:
+            raise IntegrationReceiptAuthorityError(
+                "canonical auto-integrator flock is not held by this process generation"
+            )
+
+        try:
+            current_stat = os.stat(lock_path)
+        except OSError as exc:
+            raise IntegrationReceiptAuthorityError(
+                f"canonical auto-integrator lock {lock_path} disappeared: {exc}"
+            ) from exc
+
+        if (opened_stat.st_dev, opened_stat.st_ino) != (current_stat.st_dev, current_stat.st_ino):
+            raise IntegrationReceiptAuthorityError(
+                f"canonical auto-integrator lock inode changed: {lock_path}"
+            )
+
+        if expected_inode is not None and opened_stat.st_ino != expected_inode:
+            raise IntegrationReceiptAuthorityError(
+                f"canonical auto-integrator lock inode changed: expected {expected_inode}, "
+                f"found {opened_stat.st_ino}"
+            )
+
+        try:
+            with open(fd, "r", encoding="utf-8", closefd=False) as handle:
+                handle.seek(0)
+                payload = json.load(handle)
+        except (OSError, json.JSONDecodeError) as exc:
+            raise IntegrationReceiptAuthorityError(
+                f"canonical auto-integrator lock metadata is unreadable: {exc}"
+            ) from exc
+
+        if not isinstance(payload, Mapping):
+            raise IntegrationReceiptAuthorityError(
+                "canonical auto-integrator lock metadata is not an object"
+            )
+        if payload.get("schema") != expected_schema or payload.get("state") != "held":
+            raise IntegrationReceiptAuthorityError(
+                "canonical auto-integrator lock is not in held state"
+            )
+        pid = payload.get("pid")
+        if isinstance(pid, bool) or not isinstance(pid, int) or pid != expected_pid:
+            raise IntegrationReceiptAuthorityError(
+                "canonical auto-integrator flock is not held by this process generation"
+            )
+    finally:
+        os.close(fd)
 
 
 def _verify_authority(
@@ -355,11 +428,12 @@ def _verify_authority(
             f"{authority.status_root} != {expected_status_root}"
         )
 
-    owner_pid = _read_lock_owner_pid(authority.lock_path, expected_schema=authority.lock_schema)
-    if owner_pid is None or owner_pid != authority.lock_pid:
-        raise IntegrationReceiptAuthorityError(
-            "canonical auto-integrator flock is not held by this process generation"
-        )
+    _verify_lock_authority(
+        authority.lock_path,
+        expected_schema=authority.lock_schema,
+        expected_pid=authority.lock_pid,
+        expected_inode=authority.lock_inode,
+    )
 
 
 def _find_task(state: Mapping[str, Any], task_id: str) -> dict[str, Any] | None:
@@ -512,8 +586,13 @@ def _apply_receipt_to_state(
         observed_at=observed_at,
     ).as_dict()
 
-    existing = parse_integration_receipt(task.get(RECEIPT_KEY))
-    if existing is not None:
+    raw_existing = task.get(RECEIPT_KEY)
+    if raw_existing is not None:
+        existing = parse_integration_receipt(raw_existing)
+        if existing is None:
+            raise IntegrationReceiptConflictError(
+                f"task {task_id} already carries a malformed or unknown-version {RECEIPT_KEY}"
+            )
         identity_fields = (
             "task_generation",
             "repository",
