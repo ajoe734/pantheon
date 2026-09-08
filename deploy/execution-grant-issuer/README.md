@@ -71,7 +71,7 @@ Publishing or rotating issuer keys requires materializing a new immutable comman
 1. Run `--discover-only --json` to validate candidate invariants and live config.
 2. Run `--promote` to replace the supervisor runtime and update `PANTHEON_COMMAND_ROOT`.
 3. Verify **both** effective key fingerprints:
-   - The active signer fingerprint from the issuer service (`--inspect-key` or startup log).
+   - The active signer fingerprint from the issuer service: inspect via `python3 deploy/execution-grant-issuer/run_server.py --inspect-key /etc/pantheon/execution-grant-issuer/ed25519-private.pem` (safely outputs public trust info and fingerprint without secret disclosure) or read from the service startup log (`journalctl -u pantheon-execution-grant-issuer.service | grep 'Signer Key ID'`).
    - The promoted runtime config fingerprint from `$PANTHEON_COMMAND_ROOT/.orchestrator/config.json`.
 4. For rollback or key revocation, follow this exact same qualified promotion path (promoting a new runtime with the key removed, or re-promoting a prior known-good command runtime). Never mutate or patch immutable runtimes in place.
 

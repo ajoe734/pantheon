@@ -231,9 +231,13 @@ Note on `--authority-env-file`: This parameter sets `BRIDGE_SIGNING_PUBLIC_KEYS_
 
 4. **Verify Both Key Fingerprints:**
    After promotion, verify that the active signer fingerprint matches the promoted runtime config fingerprint:
-   - **Active Signer Fingerprint:** Read from the issuer service startup log or query the signer directly:
+   - **Active Signer Fingerprint:** Inspect the active key directly via `--inspect-key` (which validates 0600 mode and ownership, and outputs public trust info without disclosing private key material) or read from the service startup log:
      ```bash
+     # Option 1: Direct key inspection (scoped public-only output):
      python3 deploy/execution-grant-issuer/run_server.py --inspect-key /etc/pantheon/execution-grant-issuer/ed25519-private.pem
+
+     # Option 2: Service startup log:
+     journalctl -u pantheon-execution-grant-issuer.service -b | grep "Signer Key ID"
      ```
    - **Promoted Runtime Config Fingerprint:** Verify the fingerprint calculated from the promoted runtime's `.orchestrator/config.json`:
      ```bash
@@ -316,18 +320,30 @@ The tooling web interface (`index.html`) and CLI accept an already-obtained
 fresh Identity Platform user ID token. To acquire one entirely on the
 operator's own workstation, without ever putting a password, pending
 credential, or the resulting `idToken` on the command line, in shell
-history, or on stdout:
+history, or on stdout, and ensuring all intermediate and output files are
+exclusively private without symlink-following or reusing existing non-private paths:
 
-1. Sign in with password to initiate the MFA challenge. The password is read
-   interactively with the shell's non-echoing `read -s` and passed to Python
+### Initializing Private Working Directory & Bounded Cleanup Trap
+
+Create a fresh private `0700` temporary directory owned strictly by the current user.
+Set an exit trap to ensure sensitive credential files are securely shredded and removed
+on normal exit or bounded error:
+
+```bash
+MFA_DIR="$(mktemp -d "${TMPDIR:-/tmp}/pantheon-mfa.XXXXXX")"
+chmod 0700 "$MFA_DIR"
+trap 'if [ -n "${MFA_DIR:-}" ] && [ -d "$MFA_DIR" ]; then shred -u "$MFA_DIR"/* 2>/dev/null || true; rm -rf "$MFA_DIR"; fi' EXIT INT TERM
+```
+
+1. **Sign in with password to initiate the MFA challenge.**
+   The password is read interactively with the shell's non-echoing `read -s` and passed to Python
    strictly via the process environment (never typed into an interactive heredoc,
    which Bash history records despite stdin redirection), formatted to JSON, and
    piped directly into `curl --data @-` before unsetting the variable immediately.
-   The response body is captured to an exclusive private file (`-o`, mode `0600`
-   via restrictive `umask 0177`), so neither the password nor the pending credential
-   is ever recorded in shell history or printed to stdout:
+   The response is captured exclusively via Python with `os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW`
+   and mode `0600` into `$MFA_DIR/signin-step1.json`. If the file already exists or is a symlink,
+   it fails closed immediately rather than overwriting or retaining pre-existing permissions:
    ```bash
-   umask 0177
    read -r -s -p "Enter operator password: " OPERATOR_PASSWORD
    echo
    export OPERATOR_PASSWORD
@@ -341,34 +357,62 @@ history, or on stdout:
    ' | curl -sS -X POST \
      "https://identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key=${IDENTITY_PLATFORM_API_KEY}" \
      -H "Content-Type: application/json" \
-     --data @- -o /tmp/signin-step1.json
+     --data @- | python3 -c '
+   import json, os, sys
+   dest = sys.argv[1]
+   data = sys.stdin.buffer.read()
+   try:
+       parsed = json.loads(data.decode("utf-8"))
+   except Exception as e:
+       sys.exit(f"Failed to parse Identity Platform response: {e}")
+   if "error" in parsed:
+       sys.exit(f"Identity Platform sign-in failed: {parsed['error'].get('message', 'Unknown error')}")
+   if "mfaPendingCredential" not in parsed:
+       sys.exit("Expected MFA challenge response (mfaPendingCredential), but not present")
+   flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0)
+   fd = os.open(dest, flags, 0o600)
+   with open(fd, "wb") as f:
+       f.write(data)
+   ' "$MFA_DIR/signin-step1.json"
    unset OPERATOR_PASSWORD
    ```
-   If MFA is enrolled, `/tmp/signin-step1.json` (mode `0600` from the
-   `umask` above) contains `mfaPendingCredential` and the enrolled
-   `mfaEnrollmentId`(s) under `mfaInfo`.
-2. Finalize the second factor using the official **v2** endpoint (the v1
-   path used previously does not exist for this operation). The request body
-   is `mfaPendingCredential`, `mfaEnrollmentId`, and
-   `totpVerificationInfo.verificationCode` -- not the v1-shaped
-   `totpVerificationCode`. None of `mfaPendingCredential`, the enrollment id,
-   or the TOTP code are ever passed as a command-line argument (visible to
-   every user on the host via `ps`); the TOTP code is read interactively
-   with the shell's non-echoing `read -s` and handed to the child process
-   only through its environment (visible only to this UID or root via
-   `/proc/<pid>/environ`), and `mfaPendingCredential`/the enrollment id are
-   read directly out of the private step-1 file inside the same Python
-   process rather than being re-serialized onto a command line:
+   If MFA is enrolled, `$MFA_DIR/signin-step1.json` (exclusive mode `0600`) contains
+   `mfaPendingCredential` and the enrolled `mfaEnrollmentId`(s) under `mfaInfo`.
+
+2. **Finalize the second factor using the official v2 endpoint.**
+   The request body is `mfaPendingCredential`, `mfaEnrollmentId`, and
+   `totpVerificationInfo.verificationCode` -- not the legacy v1-shaped `totpVerificationCode`.
+   None of `mfaPendingCredential`, the enrollment id, or the TOTP code are ever passed as
+   command-line arguments (visible in `ps`); the TOTP code is read interactively with the shell's
+   non-echoing `read -s` and handed to the child process only through its environment.
+   `mfaPendingCredential` and the enrollment id are read directly from the private step-1 file
+   inside Python. The response is verified and written exclusively to `$MFA_DIR/signin-step2.json`
+   (mode `0600`, `O_CREAT | O_EXCL | O_NOFOLLOW`):
    ```bash
-   umask 0177
    read -r -s -p "Enter TOTP code: " TOTP_CODE
    echo
    export TOTP_CODE
-   python3 - /tmp/signin-step1.json <<'PYEOF' \
+   python3 - "$MFA_DIR/signin-step1.json" <<'PYEOF' \
      | curl -sS -X POST \
        "https://identitytoolkit.googleapis.com/v2/accounts/mfaSignIn:finalize?key=${IDENTITY_PLATFORM_API_KEY}" \
        -H "Content-Type: application/json" \
-       --data @- -o /tmp/signin-step2.json
+       --data @- | python3 -c '
+   import json, os, sys
+   dest = sys.argv[1]
+   data = sys.stdin.buffer.read()
+   try:
+       parsed = json.loads(data.decode("utf-8"))
+   except Exception as e:
+       sys.exit(f"Failed to parse MFA finalize response: {e}")
+   if "error" in parsed:
+       sys.exit(f"MFA finalize failed: {parsed['error'].get('message', 'Unknown error')}")
+   if "idToken" not in parsed:
+       sys.exit("Expected idToken in finalize response, but not present")
+   flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0)
+   fd = os.open(dest, flags, 0o600)
+   with open(fd, "wb") as f:
+       f.write(data)
+   ' "$MFA_DIR/signin-step2.json"
    import json, os, sys
    step1 = json.load(open(sys.argv[1]))
    print(json.dumps({
@@ -378,51 +422,81 @@ history, or on stdout:
    }))
    PYEOF
    unset TOTP_CODE
-   shred -u /tmp/signin-step1.json
+   shred -u "$MFA_DIR/signin-step1.json"
    ```
-   The returned `idToken` in `/tmp/signin-step2.json` (mode `0600`) contains
+   The returned `idToken` in `$MFA_DIR/signin-step2.json` (mode `0600`) contains
    the verified `sign_in_second_factor` claim and `auth_time`. Neither the
-   TOTP code nor the resulting `idToken` is ever printed to the terminal by
-   this sequence.
-3. **Feeding the Token or Grant to the Qualified Client:**
-   Extract only the `idToken` into its own private `0600` file; the file is
-   created with the restrictive umask still in effect, so there is no
-   echo-then-chmod window during which the token is world/group readable:
+   TOTP code nor the resulting `idToken` is ever printed to the terminal.
+
+3. **Extracting Token and Feeding to the Qualified Client:**
+   Extract only the `idToken` into its own private `0600` file inside `$MFA_DIR`.
+   The file is created with `O_CREAT | O_EXCL | O_NOFOLLOW` so no pre-existing file or symlink
+   can be overwritten and there is no post-hoc chmod window:
    ```bash
-   umask 0177
    python3 -c '
-   import json, sys
-   with open(sys.argv[2], "w") as f:
-       f.write(json.load(open(sys.argv[1]))["idToken"])
-   ' /tmp/signin-step2.json /tmp/operator-token.txt
-   shred -u /tmp/signin-step2.json
+   import json, os, sys
+   src, dest = sys.argv[1], sys.argv[2]
+   with open(src, "r", encoding="utf-8") as f:
+       data = json.load(f)
+   token = data.get("idToken")
+   if not token:
+       sys.exit("No idToken found in step 2 output")
+   flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0)
+   try:
+       fd = os.open(dest, flags, 0o600)
+   except FileExistsError:
+       sys.exit(f"Security error: destination {dest} already exists or is a symlink")
+   except OSError as exc:
+       sys.exit(f"Security error creating exclusive file {dest}: {exc}")
+   with open(fd, "w", encoding="utf-8") as f:
+       f.write(token.strip())
+   ' "$MFA_DIR/signin-step2.json" "$MFA_DIR/operator-token.txt"
+   shred -u "$MFA_DIR/signin-step2.json"
    ```
 
-   **Option A: Scoped TRACE Request + Automatic Submit via CLI:**
+   **Option A: Scoped TRACE Request + Automatic Submit via CLI (Recommended):**
    ```bash
    python3 scripts/request_execution_grant.py request \
      --task DEV502-TRACE-001 \
-     --token-file /tmp/operator-token.txt \
+     --token-file "$MFA_DIR/operator-token.txt" \
      --submit
-   shred -u /tmp/operator-token.txt
+   shred -u "$MFA_DIR/operator-token.txt"
+   rm -rf "$MFA_DIR"
    ```
+   Alternatively, to save the signed grant to an exclusive private file without submitting:
+   ```bash
+   python3 scripts/request_execution_grant.py request \
+     --task DEV502-TRACE-001 \
+     --token-file "$MFA_DIR/operator-token.txt" \
+     --grant-out "$MFA_DIR/grant-DEV502-TRACE-001.json"
+   ```
+   `request_execution_grant.py` uses `write_private_exclusive_json` (`O_CREAT | O_EXCL | O_NOFOLLOW`, mode `0600`),
+   ensuring the grant file is created securely without exposure.
 
-   **Option B: Submitting a Grant File from the Tooling Web UI:**
-   If the operator obtained an execution grant via the web tooling interface (`/tooling`),
-   download the private grant JSON file to a mode-`0600` location and submit via the qualified client
+   **Option B: Submitting an Existing Private Grant File:**
+   To submit a previously saved execution grant file via the qualified client
    (which performs local Ed25519 signature verification against `.orchestrator/config.json`,
    validates the task policy snapshot, checks CAS generation, and submits via the governed CLI):
    ```bash
-   # Submit from private file (verifies mode 0600):
+   # Submit from private file (strictly enforces mode 0600, owner-only, non-symlink):
    python3 scripts/request_execution_grant.py submit \
      --task DEV502-TRACE-001 \
-     --grant-file ~/Downloads/grant-DEV502-TRACE-001.json
+     --grant-file /path/to/private-grant-DEV502-TRACE-001.json
 
    # Or submit via stdin from private file without shell history:
    python3 scripts/request_execution_grant.py submit \
      --task DEV502-TRACE-001 \
-     --grant-stdin < ~/Downloads/grant-DEV502-TRACE-001.json
+     --grant-stdin < /path/to/private-grant-DEV502-TRACE-001.json
    ```
+
+   **Security Notice Regarding Web UI Browser Downloads:**
+   Standard browser downloads (`/tooling`) save to public browser download directories
+   with default system umask (typically mode `0644`), making files group- or world-readable.
+   Browsers cannot guarantee the mode-`0600` requirement of `request_execution_grant.py submit --grant-file`.
+   Relying on `chmod 0600` after a browser download is unsafe because an exposure window exists
+   between download and chmod. Therefore, operators should route bearer saving directly through
+   the qualified CLI (`request_execution_grant.py request --grant-out <path>`) or ensure the browser
+   downloads directly into a pre-configured private `0700` directory.
 
    **No Secrets in Command Arguments:** Never pass raw token or grant JSON directly as command-line arguments (such as `--token <secret>` or `--grant '<json>'`). The client strictly enforces `_check_no_secrets_in_argv` to prevent credential exposure in `ps`, system audit logs, or shell history.
 

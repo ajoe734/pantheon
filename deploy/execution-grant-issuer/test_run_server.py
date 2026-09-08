@@ -8,6 +8,7 @@ wiring fails closed on bad input before a server is ever created.
 """
 from __future__ import annotations
 
+import io
 import os
 import stat
 import sys
@@ -137,6 +138,71 @@ class TestRunServiceRevocationCannotBeDisabled(unittest.TestCase):
             self.assertTrue(out_path.is_file())
             self.assertEqual(stat.S_IMODE(out_path.stat().st_mode), 0o600)
 
+    def test_inspect_key_valid_private_key_prints_public_info(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            priv_path = Path(td) / "key.pem"
+            _write_private_key(priv_path)
+            from execution_grant_issuer.signer import Ed25519GrantSigner
+
+            expected_signer = Ed25519GrantSigner(priv_path, key_id="custom-key-id")
+
+            with patch("sys.stdout", new_callable=io.StringIO) as mock_out:
+                run_server.inspect_key(priv_path, key_id="custom-key-id")
+                output = mock_out.getvalue()
+
+            self.assertIn("Key ID: custom-key-id", output)
+            self.assertIn(f"Public Key (base64url): {expected_signer.public_key_base64url}", output)
+            self.assertIn(f"SHA-256 Fingerprint: {expected_signer.public_key_fingerprint}", output)
+            self.assertNotIn("BEGIN PRIVATE KEY", output)
+
+    def test_inspect_key_rejects_symlink(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            priv_path = Path(td) / "key.pem"
+            _write_private_key(priv_path)
+            symlink_path = Path(td) / "link.pem"
+            symlink_path.symlink_to(priv_path)
+
+            with self.assertRaises(SystemExit) as cm:
+                run_server.inspect_key(symlink_path, key_id="test-id")
+            self.assertIn("must not be a symlink", str(cm.exception))
+
+    def test_inspect_key_rejects_group_readable_file(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            priv_path = Path(td) / "key.pem"
+            _write_private_key(priv_path)
+            os.chmod(priv_path, 0o644)
+
+            with self.assertRaises(SystemExit) as cm:
+                run_server.inspect_key(priv_path, key_id="test-id")
+            self.assertIn("require mode 0600", str(cm.exception))
+
+    def test_inspect_key_rejects_nonexistent_file(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            nonexistent = Path(td) / "does-not-exist.pem"
+            with self.assertRaises(SystemExit) as cm:
+                run_server.inspect_key(nonexistent, key_id="test-id")
+            self.assertIn("not found or inaccessible", str(cm.exception))
+
+    def test_main_cli_inspect_key_flag(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            priv_path = Path(td) / "key.pem"
+            _write_private_key(priv_path)
+            test_argv = ["run_server.py", "--inspect-key", str(priv_path), "--key-id", "cli-test-id"]
+            with patch("sys.argv", test_argv), patch("sys.stdout", new_callable=io.StringIO) as mock_out:
+                run_server.main()
+                output = mock_out.getvalue()
+            self.assertIn("Key ID: cli-test-id", output)
+            self.assertIn("SHA-256 Fingerprint:", output)
+
+    def test_main_cli_inspect_key_nonexistent_fails(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            nonexistent = Path(td) / "does-not-exist.pem"
+            test_argv = ["run_server.py", "--inspect-key", str(nonexistent)]
+            with patch("sys.argv", test_argv), self.assertRaises(SystemExit) as cm:
+                run_server.main()
+            self.assertIn("not found or inaccessible", str(cm.exception))
+
 
 if __name__ == "__main__":
     unittest.main()
+

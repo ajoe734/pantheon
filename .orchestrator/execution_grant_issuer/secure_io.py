@@ -57,3 +57,41 @@ def read_private_file_strict(path: str | Path, *, description: str) -> bytes:
             return f.read()
     except Exception as exc:
         raise UnsafeCredentialFileError(f"Failed to read {description}: {raw_path}") from exc
+
+
+def write_private_exclusive_file(
+    path: str | Path,
+    data: bytes | str,
+    *,
+    description: str = "Private output file",
+) -> Path:
+    """Atomically create and write to a private 0600 file without following symlinks or overwriting.
+
+    Fails closed if the destination already exists, is a symlink, or cannot be created
+    with exclusive 0600 permissions.
+    """
+    out_path = Path(path)
+    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
+    if hasattr(os, "O_NOFOLLOW"):
+        flags |= os.O_NOFOLLOW
+
+    try:
+        fd = os.open(str(out_path), flags, 0o600)
+    except FileExistsError as exc:
+        raise UnsafeCredentialFileError(
+            f"{description} destination already exists or is a symlink: {out_path}"
+        ) from exc
+    except OSError as exc:
+        raise UnsafeCredentialFileError(
+            f"Failed to create exclusive {description} at {out_path}: {exc}"
+        ) from exc
+
+    try:
+        mode = "wb" if isinstance(data, bytes) else "w"
+        encoding = None if isinstance(data, bytes) else "utf-8"
+        with open(fd, mode, encoding=encoding) as f:
+            f.write(data)
+    except Exception:
+        raise
+    return out_path
+

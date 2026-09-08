@@ -21,7 +21,9 @@ from __future__ import annotations
 import concurrent.futures
 import json
 import os
+import stat
 import sys
+import tempfile
 import time
 import unittest
 from copy import deepcopy
@@ -50,6 +52,11 @@ if str(_orchestrator_dir) not in sys.path:
 import execution_authorization as ea
 from execution_grant_issuer.challenge_store import ChallengeStore
 from execution_grant_issuer.models import AuthenticationError, ChallengeError, PolicyValidationError
+from execution_grant_issuer.secure_io import (
+    UnsafeCredentialFileError,
+    read_private_file_strict,
+    write_private_exclusive_file,
+)
 from execution_grant_issuer.service import ExecutionGrantIssuerService
 from execution_grant_issuer.signer import Ed25519GrantSigner
 from execution_grant_issuer.token_verifier import IdentityPlatformTokenVerifier
@@ -1303,5 +1310,116 @@ class TestExecutionGrantIssuer(unittest.TestCase):
         self.assertEqual(stored.policy_snapshot["action_scope"], "execute")
 
 
+class TestSecureIoAndOperationalPatterns(unittest.TestCase):
+    """OPS-EXECUTION-MFA-ISSUER-001.
+
+    Validates:
+    - write_private_exclusive_file writes private mode 0600 files atomically.
+    - Reused-path attempts (pre-existing 0644 or 0600 file) fail closed without overwrite.
+    - Symlink attempts fail closed and do not clobber target files.
+    - Synthetic reproduction of documented operational MFA pattern validates that
+      writing outputs exclusively inside a freshly created private 0700 dir succeeds,
+      while pre-existing or symlinked outputs are strictly rejected.
+    """
+
+    def test_write_private_exclusive_file_creates_0600(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            target = Path(td) / "secret.txt"
+            written = write_private_exclusive_file(target, "super-secret-token", description="Test token")
+            self.assertEqual(written, target)
+            self.assertTrue(target.is_file())
+            self.assertEqual(stat.S_IMODE(target.stat().st_mode), 0o600)
+            self.assertEqual(target.read_text(encoding="utf-8"), "super-secret-token")
+
+    def test_write_private_exclusive_file_rejects_reused_path_preserving_target(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            target = Path(td) / "reused.txt"
+            target.write_text("ORIGINAL_0644_CONTENT", encoding="utf-8")
+            os.chmod(target, 0o644)
+
+            with self.assertRaises(UnsafeCredentialFileError) as cm:
+                write_private_exclusive_file(target, "NEW_SECRET_ATTEMPT", description="Reused test")
+            self.assertIn("already exists or is a symlink", str(cm.exception))
+            self.assertEqual(target.read_text(encoding="utf-8"), "ORIGINAL_0644_CONTENT")
+            self.assertEqual(stat.S_IMODE(target.stat().st_mode), 0o644)
+
+    def test_write_private_exclusive_file_rejects_symlink_preserving_target(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            real_target = Path(td) / "real_file.txt"
+            real_target.write_text("SENSITIVE_FILE_DO_NOT_CLOBBER", encoding="utf-8")
+
+            symlink = Path(td) / "symlink_dest.txt"
+            symlink.symlink_to(real_target)
+
+            with self.assertRaises(UnsafeCredentialFileError) as cm:
+                write_private_exclusive_file(symlink, "ATTACKER_CONTENT", description="Symlink test")
+            self.assertIn("already exists or is a symlink", str(cm.exception))
+            self.assertEqual(real_target.read_text(encoding="utf-8"), "SENSITIVE_FILE_DO_NOT_CLOBBER")
+
+    def test_read_private_file_strict_enforcements(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            nonexistent = Path(td) / "absent.txt"
+            with self.assertRaises(UnsafeCredentialFileError) as cm:
+                read_private_file_strict(nonexistent, description="Absent test")
+            self.assertIn("not found or inaccessible", str(cm.exception))
+
+            real_file = Path(td) / "real.txt"
+            real_file.write_text("payload", encoding="utf-8")
+            os.chmod(real_file, 0o600)
+            symlink = Path(td) / "link.txt"
+            symlink.symlink_to(real_file)
+            with self.assertRaises(UnsafeCredentialFileError) as cm:
+                read_private_file_strict(symlink, description="Symlink test")
+            self.assertIn("must not be a symlink", str(cm.exception))
+
+            os.chmod(real_file, 0o644)
+            with self.assertRaises(UnsafeCredentialFileError) as cm:
+                read_private_file_strict(real_file, description="Mode test")
+            self.assertIn("require mode 0600", str(cm.exception))
+
+            os.chmod(real_file, 0o600)
+            data = read_private_file_strict(real_file, description="Valid test")
+            self.assertEqual(data, b"payload")
+
+    def test_synthetic_operational_curl_and_python_pattern_symlink_and_reused_rejection(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            mfa_dir = Path(td) / "pantheon-mfa-test"
+            mfa_dir.mkdir(mode=0o700)
+            self.assertEqual(stat.S_IMODE(mfa_dir.stat().st_mode), 0o700)
+
+            step1_dest = mfa_dir / "signin-step1.json"
+            token_dest = mfa_dir / "operator-token.txt"
+
+            step1_dest.write_text('{"initial": "0644_data"}', encoding="utf-8")
+            os.chmod(step1_dest, 0o644)
+
+            flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0)
+            with self.assertRaises(FileExistsError):
+                os.open(str(step1_dest), flags, 0o600)
+            self.assertEqual(step1_dest.read_text(encoding="utf-8"), '{"initial": "0644_data"}')
+            self.assertEqual(stat.S_IMODE(step1_dest.stat().st_mode), 0o644)
+            step1_dest.unlink()
+
+            target_outside = Path(td) / "target_sensitive.txt"
+            target_outside.write_text("PRESERVED_TARGET", encoding="utf-8")
+            token_dest.symlink_to(target_outside)
+
+            with self.assertRaises((FileExistsError, OSError)):
+                os.open(str(token_dest), flags, 0o600)
+            self.assertEqual(target_outside.read_text(encoding="utf-8"), "PRESERVED_TARGET")
+            token_dest.unlink()
+
+            fd = os.open(str(step1_dest), flags, 0o600)
+            with open(fd, "w", encoding="utf-8") as f:
+                f.write('{"mfaPendingCredential": "cred", "mfaInfo": [{"mfaEnrollmentId": "id"}]}')
+            self.assertEqual(stat.S_IMODE(step1_dest.stat().st_mode), 0o600)
+
+            fd2 = os.open(str(token_dest), flags, 0o600)
+            with open(fd2, "w", encoding="utf-8") as f:
+                f.write("mock-id-token")
+            self.assertEqual(stat.S_IMODE(token_dest.stat().st_mode), 0o600)
+
+
 if __name__ == "__main__":
     unittest.main()
+

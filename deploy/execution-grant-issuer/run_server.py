@@ -8,6 +8,9 @@ Usage:
   # Generate a fresh Ed25519 key pair and print config snippet:
   python3 run_server.py --generate-key-pair /etc/pantheon/execution-grant-issuer/ed25519-private.pem
 
+  # Inspect an existing private key and print public trust snippet (without disclosing private key):
+  python3 run_server.py --inspect-key /etc/pantheon/execution-grant-issuer/ed25519-private.pem
+
   # Run the service with configuration:
   python3 run_server.py --config /etc/pantheon/execution-grant-issuer/config.json
 """
@@ -40,7 +43,11 @@ for d in (REPO_ROOT, ORCHESTRATOR_DIR):
         sys.path.insert(0, str(d))
 
 from execution_grant_issuer.challenge_store import ChallengeStore
-from execution_grant_issuer.secure_io import UnsafeCredentialFileError, read_private_file_strict
+from execution_grant_issuer.secure_io import (
+    UnsafeCredentialFileError,
+    read_private_file_strict,
+    write_private_exclusive_file,
+)
 from execution_grant_issuer.service import ExecutionGrantIssuerService, create_issuer_server
 from execution_grant_issuer.signer import Ed25519GrantSigner
 from execution_grant_issuer.token_verifier import IdentityPlatformTokenVerifier
@@ -63,22 +70,12 @@ def generate_key_pair(output_path: Path, key_id: str = "pantheon-mfa-issuer-dev-
         format=PrivateFormat.PKCS8,
         encryption_algorithm=NoEncryption(),
     )
-    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
-    if hasattr(os, "O_NOFOLLOW"):
-        flags |= os.O_NOFOLLOW
-
     try:
-        fd = os.open(str(output_path), flags, 0o600)
-    except FileExistsError as exc:
-        raise RuntimeError(f"Private key destination already exists or is a symlink: {output_path}") from exc
-    except OSError as exc:
-        raise RuntimeError(f"Failed to create exclusive private key file {output_path}: {exc}") from exc
-
-    try:
-        with open(fd, "wb") as f:
-            f.write(pem_bytes)
-    except Exception:
-        raise
+        write_private_exclusive_file(
+            output_path, pem_bytes, description="Private key"
+        )
+    except UnsafeCredentialFileError as exc:
+        raise RuntimeError(str(exc)) from exc
 
     signer = Ed25519GrantSigner(priv_key, key_id=key_id)
     pub_b64 = signer.public_key_base64url
@@ -97,6 +94,41 @@ def generate_key_pair(output_path: Path, key_id: str = "pantheon-mfa-issuer-dev-
         }
     }
     print(json.dumps(config_snippet, indent=2))
+
+
+def inspect_key(key_path: Path, key_id: str = "pantheon-mfa-issuer-dev-20260908") -> None:
+    """Inspect an Ed25519 private key file and print only public trust metadata.
+
+    OPS-EXECUTION-MFA-ISSUER-001.
+    Strictly validates key file safety (regular file, non-symlink, current user ownership,
+    mode 0600) before reading. Discloses only the public key, fingerprint, and config snippet;
+    never exposes the private key material.
+    """
+    try:
+        priv_bytes = read_private_file_strict(
+            key_path.expanduser(), description="Signer private key file"
+        )
+    except UnsafeCredentialFileError as exc:
+        raise SystemExit(f"Error inspecting key: {exc}") from exc
+
+    signer = Ed25519GrantSigner(priv_bytes, key_id=key_id)
+    pub_b64 = signer.public_key_base64url
+    fp = signer.public_key_fingerprint
+
+    print(f"Inspected Ed25519 private key: {key_path}")
+    print(f"Key ID: {key_id}")
+    print(f"Public Key (base64url): {pub_b64}")
+    print(f"SHA-256 Fingerprint: {fp}")
+    print("\nAdd the following public trust snippet to Pantheon's .orchestrator/config.json:")
+    config_snippet = {
+        "execution_authorization": {
+            "mfa_issuer_public_keys": {
+                key_id: pub_b64
+            }
+        }
+    }
+    print(json.dumps(config_snippet, indent=2))
+
 
 
 def load_config(config_path: Path) -> dict[str, Any]:
@@ -228,12 +260,17 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Run Pantheon Execution Grant Issuer service.")
     parser.add_argument("--config", help="Path to JSON configuration file")
     parser.add_argument("--generate-key-pair", help="Generate Ed25519 key pair to destination path")
-    parser.add_argument("--key-id", default="pantheon-mfa-issuer-dev-20260908", help="Key ID for generated key")
+    parser.add_argument("--inspect-key", metavar="PATH", help="Inspect Ed25519 private key and print public trust info")
+    parser.add_argument("--key-id", default="pantheon-mfa-issuer-dev-20260908", help="Key ID for generated or inspected key")
 
     args = parser.parse_args()
 
     if args.generate_key_pair:
         generate_key_pair(Path(args.generate_key_pair), key_id=args.key_id)
+        return
+
+    if args.inspect_key:
+        inspect_key(Path(args.inspect_key), key_id=args.key_id)
         return
 
     config_path = (

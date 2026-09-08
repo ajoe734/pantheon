@@ -158,7 +158,10 @@
     <div id="outputArea" class="output-area">
       <label>Signed Execution Grant JSON</label>
       <pre id="grantOutput"></pre>
-      <button id="downloadBtn" class="btn-secondary" onclick="downloadGrantFile()">Download Private Grant JSON File</button>
+      <button id="downloadBtn" class="btn-secondary" onclick="downloadGrantFile()">Download Grant JSON (Browser Download)</button>
+      <p style="font-size: 12px; color: #64748b; margin-top: 6px;">
+        <strong>Security Notice:</strong> Browser downloads save with default permissions (mode 0644) and cannot guarantee private mode 0600 required by the submit client. To avoid credential exposure, route bearer saving directly through the qualified CLI (<code>request_execution_grant.py request --grant-out &lt;path&gt;</code>) or ensure your download destination is a pre-existing private 0700 directory before downloading.
+      </p>
 
       <label>Governed CLI Submission Command (No Secrets in Shell History)</label>
       <pre id="cliCommand"></pre>
@@ -258,10 +261,12 @@
         const grantStr = JSON.stringify(issueData.grant, null, 2);
         grantOut.textContent = grantStr;
 
-        cliOut.textContent = `# Securely submit via the qualified client (reads from private file or stdin):\n` +
-          `# Option 1: Submit downloaded file:\n` +
-          `python3 scripts/request_execution_grant.py submit --task ${taskId} --grant-file ~/Downloads/grant-${taskId}.json\n\n` +
-          `# Option 2: Pipe via stdin from a private file:\n` +
+        cliOut.textContent = `# Recommended: Route bearer issuance and saving directly via the qualified CLI\n` +
+          `# (which atomically writes mode-0600 private files via O_CREAT|O_EXCL|O_NOFOLLOW):\n` +
+          `python3 scripts/request_execution_grant.py request --task ${taskId} --token-file /path/to/operator-token.txt --grant-out /path/to/private-grant.json\n\n` +
+          `# To submit an existing private grant file (strictly enforces mode 0600 in private directory):\n` +
+          `python3 scripts/request_execution_grant.py submit --task ${taskId} --grant-file /path/to/private-grant.json\n\n` +
+          `# Or submit via stdin from private file without shell history:\n` +
           `python3 scripts/request_execution_grant.py submit --task ${taskId} --grant-stdin < /path/to/private-grant.json`;
         outArea.style.display = 'block';
 

@@ -5,39 +5,37 @@
   "reviewer": "Codex",
   "phase": "development-tooling",
   "work_class": "functional",
-  "timestamp": "2026-09-08T03:13:00Z",
+  "timestamp": "2026-09-08T03:32:00Z",
   "specification_reference": "/home/chloe_ong_dev_cctech_support_com/code/pantheon-artifacts/dev-diagnostics-20260907/ISSUER-SA-SD-20260908.md",
   "reviewer_rejection_addressed": {
     "reviewer_log": ".orchestrator/logs/20260908T025437428303Z-codex-codex1_1-ea5297.log",
-    "frozen_head_rejected": "4c022557823493c90a24fec5aabc656770c101bc",
+    "frozen_head_rejected": "97fcd7409d16f285ca01d66a659a0c7e9351c627",
     "items_fixed": [
-      "1. (P1) Firebase Auth Emulator Host Rejection: token_verifier.py now implements check_no_firebase_auth_emulator(), strictly refusing FIREBASE_AUTH_EMULATOR_HOST, _auth_utils.is_emulated(), and cached emulated Auth clients (app._services['_auth'].emulated) prior to app/client creation, readiness checks, and token verification. run_server.py's run_service() refuses FIREBASE_AUTH_EMULATOR_HOST at startup before constructing verifier or signer. Added real-SDK negative regressions in test_issuer.py (test_real_sdk_rejects_firebase_auth_emulator_host_env_var, test_real_sdk_rejects_cached_emulated_auth_client, test_real_sdk_probe_alg_none_and_emulator_cannot_obtain_challenge_or_sign_grant) and test_run_server.py (test_run_service_rejects_firebase_auth_emulator_host) proving emulator mode cannot obtain challenges or sign execution grants.",
-      "2. (P1) Synthetic SDK Credentials in Test Fixtures: In TestRealFirebaseSdkCryptographicVerification in test_issuer.py, supplied synthetic credentials via google.auth.credentials.AnonymousCredentials() patched onto app.credential.get_credential, completely decoupling test execution from ambient host ADC while keeping all firebase-admin SDK cryptographic verification and revocation logic genuine. Asserted specific failure reasons (kid, algorithm, signature, audience, issuer, revoked, disabled) and asserted transport execution (mock_cert_fetch.called, mock_get_user.called). Confirmed that with GOOGLE_APPLICATION_CREDENTIALS=/tmp/codex-review-deliberately-absent-adc.json, the entire real-SDK suite passes in 2.95s.",
-      "3. (P2) Command-Runtime Promotion for Key Publication, Rotation, & Rollback: Documented in docs/operations/execution-grant-issuer.md (\u00a7 6.3, 6.4) and deploy/execution-grant-issuer/README.md (\u00a7 2.5) that PANTHEON_COMMAND_ROOT is an immutable runtime whose scripts/ai_status.py:311 reads its own committed .orchestrator/config.json. Publishing or rotating keys requires materializing a new immutable command runtime under $DEPLOY_ROOT/command-runtimes/<TARGET_SHA> and promoting it via scripts/promote_supervisor_runtime.py (--discover-only then --promote), verifying BOTH effective key fingerprints (active signer and promoted runtime config). Rollback and revocation strictly use this exact same qualified promotion path; immutable command runtimes are never patched in place.",
-      "4. (P2) Credential & Grant Secret Exposure Protection: Replaced literal grant-bearing shell command in web/index.html with private file download (downloadGrantFile()) and qualified client instructions. In scripts/request_execution_grant.py, added submit subcommand supporting --grant-file (strict 0600 mode check) and --grant-stdin, performing local Ed25519 verification against .orchestrator/config.json and CAS task checks before submitting. Extended _check_no_secrets_in_argv to reject --token, --grant, --grant-json. In docs/operations/execution-grant-issuer.md \u00a7 9 step 1, replaced interactive heredoc with non-echoing read -r -s password input passed via environment to Python and immediately unset, writing output to a private 0600 file. In \u00a7 9 step 3, documented submit subcommand via file or stdin."
+      "1. (P1) Exclusive Private Operational MFA Outputs & Browser Download Guidance: In docs/operations/execution-grant-issuer.md § 9, replaced static /tmp paths, curl -o, and Python open(w) with a freshly created private 0700 temporary directory ($MFA_DIR via mktemp -d with chmod 0700) and an automated cleanup trap (shred -u and rm -rf on EXIT INT TERM). Intermediate and final credentials (signin-step1.json, signin-step2.json, operator-token.txt) are exclusively created and verified via Python with os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW at mode 0600 with bounded failure handling, preventing path reuse, symlink following, and 0644 permission retention. Added write_private_exclusive_file() in secure_io.py and comprehensive tests in test_issuer.py (TestSecureIoAndOperationalPatterns) validating synthetic MFA flow, symlink rejection, and reused-path rejection. In web/index.html, replaced the misleading 'Download Private Grant JSON File' label with 'Download Grant JSON (Browser Download)', added an explicit security notice regarding default browser download permissions (0644), and updated CLI instructions to route bearer saving directly through request_execution_grant.py request --grant-out <path> or require a pre-configured private directory.",
+      "2. (P2) Scoped Public-Only Key Inspection Command: Implemented inspect_key() and --inspect-key <path> in deploy/execution-grant-issuer/run_server.py, strictly reading the private key via read_private_file_strict() (enforcing regular file, mode 0600, owner-only, non-symlink) and outputting only public trust metadata (Key ID, base64url public key, SHA-256 fingerprint, and orchestrator config snippet) without disclosing private key material. Added 6 unit and CLI regression tests in test_run_server.py. Updated docs/operations/execution-grant-issuer.md § 6.3 and deploy/execution-grant-issuer/README.md § 2.5 to document both the --inspect-key direct command and the systemd startup-log fingerprint procedure."
     ]
   },
   "source_artifacts": {
+    ".github/workflows/branch-ci.yml": "45906ff45e2b99315946ffd6e2bf73ba5340f8ac4d17bc30161d9453434158fd",
     ".orchestrator/execution_grant_issuer/__init__.py": "2a3cc1db85b3654c9016b7e85d6502f9596e5e3acac92bd66ebad39fd3c5bdf4",
     ".orchestrator/execution_grant_issuer/challenge_store.py": "60b6f3147aa1af670efe096f8f6c88b23b5f06f65216081e381f26e06759636c",
     ".orchestrator/execution_grant_issuer/models.py": "825003a6213373f1a42f6747736daeecd0702c04a593bcab474928e97abdba5f",
-    ".orchestrator/execution_grant_issuer/secure_io.py": "876fceceeeefd54635703092111c9b136fadcb596bd2ea3aec7b99b1e87113b6",
+    ".orchestrator/execution_grant_issuer/secure_io.py": "9073646b4f912ba1cabad1ec5d90f1fee0779620c30a4d23bbff2e2ad6e1f08e",
     ".orchestrator/execution_grant_issuer/service.py": "6afae2503378d05dc033b3280af8a55e747d4dc14dddba4d833a25d8abe9fd60",
     ".orchestrator/execution_grant_issuer/signer.py": "c606d69ebeeca63278803023ae01be86bcc9753a3b18c2132a52aeed9e088c32",
-    ".orchestrator/execution_grant_issuer/test_issuer.py": "d57478ccc8b3938e86423e4dbfe7f3cb31603c90a68ca6e0fe71994bf2853865",
+    ".orchestrator/execution_grant_issuer/test_issuer.py": "1fc69c32bc189ffb295cd6baed61b04acf8a99ae2e5b75ae9c475577a3c2d441",
     ".orchestrator/execution_grant_issuer/token_verifier.py": "e6eeeb73973b470e5d04b4d52311c560531941bcbb11693a11c5d257a26b75d9",
-    ".orchestrator/execution_grant_issuer/web/index.html": "75ec1aa1b01ad65fe0a73ecf5da8b7c79a39d7786fdb7ebcd4dbb194b22b638f",
-    "scripts/request_execution_grant.py": "d54d20d9b8b2d6f7a043f989134fc9c555f055ac279501fde84290bc87273b30",
-    "scripts/test_request_execution_grant.py": "c3845c5443d33371a1537a9f1bd89a2ff4eb6089c72436931031c116af859814",
-    "deploy/execution-grant-issuer/run_server.py": "7f79a9b690954a045db63952a18583999ea588f78da43d44dd90ea9ddce9784c",
-    "deploy/execution-grant-issuer/test_run_server.py": "877528eb557c17fbea382708cbaf84dc4ff0326353f2fcf8309720e023e67864",
+    ".orchestrator/execution_grant_issuer/web/index.html": "8ae95802ce99e92141cd267ee9a0af01138d12f0b8cfa367d674fa40819ed912",
+    "deploy/execution-grant-issuer/README.md": "3b33fe069528e715c9ccc0b44f5aae63740901462a776785071219687acbaf03",
     "deploy/execution-grant-issuer/issuer-config.example.json": "0daf913f5104b48cb740e0cf4173de50be296baff3d10c2e68ef26d6ba975598",
     "deploy/execution-grant-issuer/pantheon-execution-grant-issuer.service": "19fd62513695ffcf00950dc504b45e578283817980b0d5aa09994bd602bc400d",
     "deploy/execution-grant-issuer/requirements.txt": "a5df28eb7a0d25a96918aa16bd4a52da47940e0c71e7535070d5ffa339202ff6",
-    "deploy/execution-grant-issuer/README.md": "3847202ad0d8e67c19ad04b155601344eb01b5ac228bbb1f6d6071dcd0777455",
-    "docs/operations/execution-grant-issuer.md": "ec7f8d83348507989c7f35dec3d103f167d1a32995500ad7be576e9df4a5ad13",
+    "deploy/execution-grant-issuer/run_server.py": "e8ece6da9b326526b4ad34ac5f95c580b6dd3088905844b6d04eca2e2464a39e",
+    "deploy/execution-grant-issuer/test_run_server.py": "59d65f0709c3383df127c1d87845062e67e4b11a9328bb4c68ec414fd172cc8b",
+    "docs/operations/execution-grant-issuer.md": "47bd79e831422b8b13f2315acaf8ba07dba4bc464e9e4bafd47cb7c268eee9a7",
+    "scripts/request_execution_grant.py": "d54d20d9b8b2d6f7a043f989134fc9c555f055ac279501fde84290bc87273b30",
     "scripts/run-acceptance.sh": "8f9680a3609657c9f23ecf80b7e1f5f47232e82c6ae522f0ed61424c3d417122",
-    ".github/workflows/branch-ci.yml": "45906ff45e2b99315946ffd6e2bf73ba5340f8ac4d17bc30161d9453434158fd"
+    "scripts/test_request_execution_grant.py": "c3845c5443d33371a1537a9f1bd89a2ff4eb6089c72436931031c116af859814"
   },
   "acceptance_verification": {
     "criterion_1": {
@@ -48,19 +46,19 @@
     "criterion_2": {
       "statement": "Provide deployable isolated tooling issuer and TRACE-only client through existing qualified canonical show, verifier and grant submission. No new TaskStore writer or product route. Reject S5 and changed canonical bindings. Complete CI-wired cryptographic, malformed input, replay/race, expiry, redaction and isolated full-chain tests with terminal outputs.",
       "status": "PASSED",
-      "evidence": "branch-ci.yml gates execution-grant-issuer changes directly. scripts/request_execution_grant.py provides request and submit subcommands supporting private 0600 files and stdin without secret argv exposure. Full-chain tests in test_request_execution_grant.py verify authoritative TaskStore journal interaction, CAS generation checks, replay rejection, and local signature validation against .orchestrator/config.json. 59 tests in test_issuer.py + test_run_server.py and 17 tests in test_request_execution_grant.py pass (76 total)."
+      "evidence": "branch-ci.yml gates execution-grant-issuer changes directly. scripts/request_execution_grant.py provides request and submit subcommands supporting private 0600 files and stdin without secret argv exposure. Full-chain tests in test_request_execution_grant.py verify authoritative TaskStore journal interaction, CAS generation checks, replay rejection, and local signature validation against .orchestrator/config.json. 70 tests in test_issuer.py + test_run_server.py and 17 tests in test_request_execution_grant.py pass (87 total issuer/client tests)."
     },
     "criterion_3": {
       "statement": "Publish exact source/checksum/test evidence and independent exact-head review, required CI, PR merge and done/archive. Document separate-identity secret/trust deployment and actual human reauthentication requirements. This source task does not mint live credentials, assert MFA or deploy hosted product workloads.",
       "status": "READY_FOR_REVIEW",
-      "evidence": "docs/operations/execution-grant-issuer.md and deploy/execution-grant-issuer/README.md document immutable PANTHEON_COMMAND_ROOT promotion for key publication/rotation/rollback via promote_supervisor_runtime.py, dual key fingerprint verification, non-echoing password input without bash history, and private file/stdin grant submission. All 20 source artifact checksums updated. Terminal test evidence verified for 103 passing tests. No live credentials, hosted deployment, or grant issuance performed."
+      "evidence": "docs/operations/execution-grant-issuer.md and deploy/execution-grant-issuer/README.md document immutable PANTHEON_COMMAND_ROOT promotion for key publication/rotation/rollback via promote_supervisor_runtime.py, dual key fingerprint verification via --inspect-key and service startup logs, fresh private 0700 temporary directory ($MFA_DIR) with automated cleanup trap, exclusive mode-0600 file creation via Python os.O_WRONLY|os.O_CREAT|os.O_EXCL|os.O_NOFOLLOW, and private file/stdin grant submission. All 20 source artifact checksums updated. Terminal test evidence verified for 114 passing tests (10 subtests). No live credentials, hosted deployment, or grant issuance performed."
     }
   },
   "test_execution_summary": {
     "test_issuer_and_run_server": {
       "command": "PYTHONPATH=.orchestrator python3 -m pytest -q .orchestrator/execution_grant_issuer/test_issuer.py deploy/execution-grant-issuer/test_run_server.py",
-      "ran": 59,
-      "passed": 59,
+      "ran": 70,
+      "passed": 70,
       "failed": 0,
       "errors": 0,
       "exit_code": 0
@@ -89,8 +87,8 @@
       "errors": 0,
       "exit_code": 0
     },
-    "total_tests": 103,
-    "total_passed": 103,
+    "total_tests": 114,
+    "total_passed": 114,
     "total_failed": 0,
     "dependency_python": "checkout-scoped venv with deploy/execution-grant-issuer/requirements.txt installed (cryptography==41.0.7, PyJWT==2.7.0, requests==2.31.0, firebase-admin==6.5.0)"
   }
