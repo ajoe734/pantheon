@@ -69,6 +69,9 @@ case "$MODE" in
     if [[ -d .orchestrator/execution_grant_issuer ]]; then
       run_step "execution-grant-issuer-suite" "$PYTHON" -m unittest discover -s .orchestrator/execution_grant_issuer -p 'test_*.py'
     fi
+    if [[ -f deploy/execution-grant-issuer/test_run_server.py ]]; then
+      run_step "execution-grant-issuer-server-suite" "$PYTHON" -m unittest deploy/execution-grant-issuer/test_run_server.py
+    fi
     if [[ -f scripts/test_request_execution_grant.py ]]; then
       run_step "request-execution-grant-suite" "$PYTHON" -m unittest scripts/test_request_execution_grant.py
     fi
@@ -78,6 +81,9 @@ case "$MODE" in
     run_step "stage0-baseline" stage0_baseline
     if [[ -d .orchestrator/execution_grant_issuer ]]; then
       run_step "execution-grant-issuer-suite" "$PYTHON" -m unittest discover -s .orchestrator/execution_grant_issuer -p 'test_*.py'
+    fi
+    if [[ -f deploy/execution-grant-issuer/test_run_server.py ]]; then
+      run_step "execution-grant-issuer-server-suite" "$PYTHON" -m unittest deploy/execution-grant-issuer/test_run_server.py
     fi
     if [[ -f scripts/test_request_execution_grant.py ]]; then
       run_step "request-execution-grant-suite" "$PYTHON" -m unittest scripts/test_request_execution_grant.py

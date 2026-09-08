@@ -280,31 +280,54 @@ class TestRequestExecutionGrantCLI(unittest.TestCase):
         self.assertEqual(gen, 3)
         self.assertTrue(policy["requires_execution_authorization"])
 
-        # Reject S5 task ID
+        # Accept valid exact S5 task
         s5_task = deepcopy(self.canonical_task)
-        s5_task["id"] = "DEV502-S5-DEPLOY"
-        with self.assertRaises(ValueError) as cm:
-            cli.validate_task_eligibility(s5_task)
-        self.assertIn("Step 5 / S5", str(cm.exception))
+        s5_task["id"] = "S5-PAIR-001"
+        s5_policy, s5_gen = cli.validate_task_eligibility(s5_task)
+        self.assertEqual(s5_gen, 3)
+        self.assertTrue(s5_policy["requires_execution_authorization"])
 
-        # Reject S5 phase
+        # Accept valid exact S5 task with s5 phase
         s5_phase_task = deepcopy(self.canonical_task)
+        s5_phase_task["id"] = "S5-LOOPS-001"
         s5_phase_task["phase"] = "step-5"
-        with self.assertRaises(ValueError) as cm:
-            cli.validate_task_eligibility(s5_phase_task)
-        self.assertIn("remains paused", str(cm.exception))
+        p2, g2 = cli.validate_task_eligibility(s5_phase_task)
+        self.assertEqual(g2, 3)
 
-        # Reject unexpected task ID
-        other_task = deepcopy(self.canonical_task)
-        other_task["id"] = "OTHER-001"
+        # Reject empty task ID
+        empty_id_task = deepcopy(self.canonical_task)
+        empty_id_task["id"] = ""
         with self.assertRaises(ValueError) as cm:
-            cli.validate_task_eligibility(other_task)
-        self.assertIn("limited to DEV502-TRACE-001", str(cm.exception))
+            cli.validate_task_eligibility(empty_id_task)
+        self.assertIn("no 'id'", str(cm.exception).lower())
 
-        # Ensure bypasses like allow_any_task or allowed_task are NOT permitted
+        # Reject wildcard in task ID
+        wildcard_task = deepcopy(self.canonical_task)
+        wildcard_task["id"] = "S5-*"
         with self.assertRaises(ValueError) as cm:
-            cli.validate_task_eligibility(other_task, allow_any_task=True)
-        self.assertIn("limited to DEV502-TRACE-001", str(cm.exception))
+            cli.validate_task_eligibility(wildcard_task)
+        self.assertIn("invalid characters or wildcards", str(cm.exception).lower())
+
+        # Reject missing execution_authorization
+        no_ea_task = deepcopy(self.canonical_task)
+        del no_ea_task["execution_authorization"]
+        with self.assertRaises(ValueError) as cm:
+            cli.validate_task_eligibility(no_ea_task)
+        self.assertIn("no execution_authorization record", str(cm.exception).lower())
+
+        # Reject wrong environment
+        wrong_env_task = deepcopy(self.canonical_task)
+        wrong_env_task["execution_authorization"]["policy"]["environment"] = "production"
+        with self.assertRaises(ValueError) as cm:
+            cli.validate_task_eligibility(wrong_env_task)
+        self.assertIn("does not match required", str(cm.exception).lower())
+
+        # Reject negative generation
+        bad_gen_task = deepcopy(self.canonical_task)
+        bad_gen_task["generation"] = -1
+        with self.assertRaises(ValueError) as cm:
+            cli.validate_task_eligibility(bad_gen_task)
+        self.assertIn("invalid generation", str(cm.exception).lower())
 
     def test_token_loading_mechanisms(self) -> None:
         """Verify token loading from file and stdin, and empty token rejection."""
@@ -998,6 +1021,272 @@ class TestRequestExecutionGrantCLI(unittest.TestCase):
             with self.assertRaises(RuntimeError) as cm:
                 cli.cmd_submit(submit_args)
             self.assertIn("missing trusted mfa issuer", str(cm.exception).lower())
+
+    def test_cmd_prepare_s5_task_payload(self) -> None:
+        """Verify cmd_prepare produces valid challenge request payload for S5 task."""
+        s5_spec = deepcopy(self.spec)
+        s5_spec["id"] = "S5-PAIR-001"
+        s5_policy = ea.derive_execution_policy(
+            task_id="S5-PAIR-001",
+            work_class="hosted",
+            repository="pantheon",
+            environment="pantheon-dev",
+            resources=["pantheon-dev"],
+            action_scope="execute",
+            artifacts=["docs/deployment/evidence/S5-PAIR-001/"],
+            task_spec=s5_spec,
+        )
+        s5_task = {
+            **s5_spec,
+            "generation": 1,
+            "execution_authorization": {"policy": s5_policy},
+        }
+
+        prepare_args = MagicMock(task="S5-PAIR-001", out=None)
+        with patch("scripts.request_execution_grant.fetch_canonical_task", return_value=s5_task), \
+             patch("sys.stdout", new_callable=io.StringIO) as mock_stdout:
+            cli.cmd_prepare(prepare_args)
+            output = json.loads(mock_stdout.getvalue())
+            self.assertEqual(output["task_id"], "S5-PAIR-001")
+            self.assertEqual(output["generation"], 1)
+            self.assertEqual(output["environment"], "pantheon-dev")
+
+    def test_cmd_request_s5_denied_by_default_issuer(self) -> None:
+        """All fixtures and transport-mocked results in this test are simulations, not hosted acceptance.
+
+        Verify requesting an S5 task against default issuer (TRACE-only) fails closed.
+        """
+        service = ExecutionGrantIssuerService(
+            verifier=self.verifier,
+            signer=self.signer,
+            challenge_store=ChallengeStore(),
+        )
+        server = create_issuer_server(service, host="127.0.0.1", port=0)
+        port = server.server_port
+        server_thread = threading.Thread(target=server.serve_forever, daemon=True)
+        server_thread.start()
+
+        s5_spec = deepcopy(self.spec)
+        s5_spec["id"] = "S5-PAIR-001"
+        s5_policy = ea.derive_execution_policy(
+            task_id="S5-PAIR-001",
+            work_class="hosted",
+            repository="pantheon",
+            environment="pantheon-dev",
+            resources=["pantheon-dev"],
+            action_scope="execute",
+            artifacts=["docs/deployment/evidence/S5-PAIR-001/"],
+            task_spec=s5_spec,
+        )
+        s5_task = {
+            **s5_spec,
+            "generation": 1,
+            "dev_bridge": {
+                "work_class": "hosted",
+                "operator_authorization_required": True,
+                "task_spec": deepcopy(s5_spec),
+                "task_spec_hash": s5_policy["task_spec_hash"],
+            },
+            "execution_authorization": {"policy": s5_policy},
+        }
+
+        req_args = MagicMock(
+            task="S5-PAIR-001",
+            issuer_url=f"http://127.0.0.1:{port}",
+            token_file=None,
+            token_stdin=False,
+            config_file=None,
+            grant_out=None,
+            submit=False,
+        )
+
+        try:
+            with patch("scripts.request_execution_grant.fetch_canonical_task", return_value=s5_task), \
+                 patch("scripts.request_execution_grant.load_trusted_keys", return_value={self.signer_key_id: "test"}), \
+                 patch("scripts.request_execution_grant.load_token", return_value=self._mint_token()):
+                with self.assertRaises(RuntimeError) as cm:
+                    cli.cmd_request(req_args)
+                self.assertIn("403", str(cm.exception))
+        finally:
+            server.shutdown()
+            server.server_close()
+
+    def test_cmd_request_s5_accepted_by_configured_issuer(self) -> None:
+        """All fixtures and transport-mocked results in this test are simulations, not hosted acceptance.
+
+        Verify requesting an S5 task against an issuer configured with exact S5 scope succeeds.
+        """
+        service = ExecutionGrantIssuerService(
+            verifier=self.verifier,
+            signer=self.signer,
+            challenge_store=ChallengeStore(),
+            allowed_tasks=["DEV502-TRACE-001", "S5-PAIR-001"],
+            allowed_environments=["pantheon-dev"],
+        )
+        server = create_issuer_server(service, host="127.0.0.1", port=0)
+        port = server.server_port
+        server_thread = threading.Thread(target=server.serve_forever, daemon=True)
+        server_thread.start()
+
+        s5_spec = deepcopy(self.spec)
+        s5_spec["id"] = "S5-PAIR-001"
+        s5_spec["artifacts"] = ["docs/deployment/evidence/S5-PAIR-001/"]
+        s5_policy = ea.derive_execution_policy(
+            task_id="S5-PAIR-001",
+            work_class="hosted",
+            repository="pantheon",
+            environment="pantheon-dev",
+            resources=["pantheon-dev"],
+            action_scope="execute",
+            artifacts=["docs/deployment/evidence/S5-PAIR-001/"],
+            task_spec=s5_spec,
+        )
+        s5_task = {
+            **s5_spec,
+            "id": "S5-PAIR-001",
+            "generation": 1,
+            "status": "todo",
+            "owner": "Antigravity",
+            "reviewer": "Codex",
+            "summary_zh": s5_spec["summary"],
+            "target_repo": "pantheon",
+            "execution_resources": ["pantheon-dev"],
+            "artifacts": ["docs/deployment/evidence/S5-PAIR-001/"],
+            "dev_bridge": {
+                "work_class": "hosted",
+                "operator_authorization_required": True,
+                "task_spec": deepcopy(s5_spec),
+                "task_spec_hash": s5_policy["task_spec_hash"],
+            },
+            "execution_authorization": {
+                "state": "pending_authorization",
+                "policy": s5_policy,
+            },
+        }
+
+        req_args = MagicMock(
+            task="S5-PAIR-001",
+            issuer_url=f"http://127.0.0.1:{port}",
+            token_file=None,
+            token_stdin=False,
+            config_file=None,
+            grant_out=None,
+            submit=False,
+        )
+
+        try:
+            with patch("scripts.request_execution_grant.fetch_canonical_task", return_value=s5_task), \
+                 patch("scripts.request_execution_grant.load_trusted_keys", return_value={self.signer_key_id: self.signer.public_key_base64url}), \
+                 patch("scripts.request_execution_grant.load_token", return_value=self._mint_token()), \
+                 patch("sys.stdout", new_callable=io.StringIO) as mock_stdout:
+                cli.cmd_request(req_args)
+                self.assertIn("locally verified", mock_stdout.getvalue())
+        finally:
+            server.shutdown()
+            server.server_close()
+
+    def test_cmd_request_unlisted_s5_denied_by_configured_issuer(self) -> None:
+        """All fixtures and transport-mocked results in this test are simulations, not hosted acceptance.
+
+        Verify requesting unlisted S5-LOOPS-001 against an issuer configured only for S5-PAIR-001 fails closed.
+        """
+        service = ExecutionGrantIssuerService(
+            verifier=self.verifier,
+            signer=self.signer,
+            challenge_store=ChallengeStore(),
+            allowed_tasks=["DEV502-TRACE-001", "S5-PAIR-001"],
+            allowed_environments=["pantheon-dev"],
+        )
+        server = create_issuer_server(service, host="127.0.0.1", port=0)
+        port = server.server_port
+        server_thread = threading.Thread(target=server.serve_forever, daemon=True)
+        server_thread.start()
+
+        unlisted_spec = deepcopy(self.spec)
+        unlisted_spec["id"] = "S5-LOOPS-001"
+        unlisted_policy = ea.derive_execution_policy(
+            task_id="S5-LOOPS-001",
+            work_class="hosted",
+            repository="pantheon",
+            environment="pantheon-dev",
+            resources=["pantheon-dev"],
+            action_scope="execute",
+            artifacts=["docs/deployment/evidence/S5-LOOPS-001/"],
+            task_spec=unlisted_spec,
+        )
+        unlisted_task = {
+            **unlisted_spec,
+            "generation": 1,
+            "dev_bridge": {
+                "work_class": "hosted",
+                "operator_authorization_required": True,
+                "task_spec": deepcopy(unlisted_spec),
+                "task_spec_hash": unlisted_policy["task_spec_hash"],
+            },
+            "execution_authorization": {"policy": unlisted_policy},
+        }
+
+        req_args = MagicMock(
+            task="S5-LOOPS-001",
+            issuer_url=f"http://127.0.0.1:{port}",
+            token_file=None,
+            token_stdin=False,
+            config_file=None,
+            grant_out=None,
+            submit=False,
+        )
+
+        try:
+            with patch("scripts.request_execution_grant.fetch_canonical_task", return_value=unlisted_task), \
+                 patch("scripts.request_execution_grant.load_trusted_keys", return_value={self.signer_key_id: "test"}), \
+                 patch("scripts.request_execution_grant.load_token", return_value=self._mint_token()):
+                with self.assertRaises(RuntimeError) as cm:
+                    cli.cmd_request(req_args)
+                self.assertIn("403", str(cm.exception))
+        finally:
+            server.shutdown()
+            server.server_close()
+
+    def test_cmd_submit_s5_task_success(self) -> None:
+        """Verify cmd_submit for S5-PAIR-001 verifies grant locally and invokes governed CLI."""
+        fake_grant = {
+            "task_id": "S5-PAIR-001",
+            "audience": "S5-PAIR-001",
+            "signature": {"key_id": self.signer_key_id, "algorithm": "Ed25519", "value": "dummy"},
+        }
+        submit_args = MagicMock(
+            task="S5-PAIR-001",
+            grant_file=None,
+            grant_stdin=True,
+            config_file=None,
+        )
+
+        s5_spec = deepcopy(self.spec)
+        s5_spec["id"] = "S5-PAIR-001"
+        s5_policy = ea.derive_execution_policy(
+            task_id="S5-PAIR-001",
+            work_class="hosted",
+            repository="pantheon",
+            environment="pantheon-dev",
+            resources=["pantheon-dev"],
+            action_scope="execute",
+            artifacts=["docs/deployment/evidence/S5-PAIR-001/"],
+            task_spec=s5_spec,
+        )
+        s5_task = {
+            **s5_spec,
+            "generation": 1,
+            "owner": "Antigravity",
+            "execution_authorization": {"policy": s5_policy},
+        }
+
+        with patch("scripts.request_execution_grant.fetch_canonical_task", return_value=s5_task), \
+             patch("scripts.request_execution_grant.load_trusted_keys", return_value={self.signer_key_id: "test"}), \
+             patch("scripts.request_execution_grant.verify_grant_locally", return_value="test-fp"), \
+             patch("sys.stdin", io.StringIO(json.dumps(fake_grant))), \
+             patch("scripts.request_execution_grant.submit_grant_via_cli") as mock_submit:
+            cli.cmd_submit(submit_args)
+            mock_submit.assert_called_once_with("S5-PAIR-001", fake_grant)
 
 
 if __name__ == "__main__":
