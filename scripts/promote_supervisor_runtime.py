@@ -876,31 +876,129 @@ def qualify_incumbent_identity(
     return ident
 
 
+def _is_retired_path_fence(path: Path) -> bool:
+    try:
+        st = os.lstat(str(path))
+    except OSError:
+        return False
+    mode = st.st_mode
+    if stat.S_ISFIFO(mode):
+        return True
+    if stat.S_ISDIR(mode):
+        return True
+    return False
+
+
 def _create_retired_path_fence(path: Path) -> None:
     p = Path(path)
-    if p.exists() or p.is_symlink():
+    if _is_retired_path_fence(p):
         return
+    if p.exists() or p.is_symlink():
+        raise RuntimeError(f"cannot establish retired-path fence: {p} already exists and is not a fence")
+
+    fifo_err: Exception | None = None
     if hasattr(os, "mkfifo"):
         try:
             os.mkfifo(str(p), 0o600)
-            return
-        except OSError:
+        except OSError as exc:
+            fifo_err = exc
+
+    if not _is_retired_path_fence(p):
+        try:
+            p.mkdir(mode=0o700, exist_ok=False)
+        except OSError as exc:
+            err_msg = (
+                f"cannot establish retired-path fence at {p}: "
+                f"mkfifo failed ({fifo_err}); mkdir fallback failed ({exc})"
+                if fifo_err
+                else f"cannot establish retired-path fence at {p}: mkdir fallback failed ({exc})"
+            )
+            raise RuntimeError(err_msg) from exc
+
+    if not _is_retired_path_fence(p):
+        try:
+            _remove_retired_path_fence(p)
+        except Exception:
             pass
-    try:
-        p.mkdir(mode=0o700, exist_ok=True)
-    except OSError:
-        pass
+        raise RuntimeError(f"retired-path fence verification failed at {p}")
 
 
 def _remove_retired_path_fence(path: Path) -> None:
     p = Path(path)
     try:
-        if p.is_dir():
-            p.rmdir()
-        else:
-            p.unlink(missing_ok=True)
+        st = os.lstat(str(p))
     except OSError:
-        pass
+        return
+    mode = st.st_mode
+    if stat.S_ISFIFO(mode):
+        try:
+            os.unlink(str(p))
+        except OSError:
+            pass
+    elif stat.S_ISDIR(mode):
+        try:
+            os.rmdir(str(p))
+        except OSError:
+            pass
+
+
+def _rollback_storage_files(
+    files: list[tuple[str, str]],
+) -> tuple[bool, list[str], list[tuple[str, str]], list[str]]:
+    """Idempotently roll back moved storage files in reverse order, preserving restored originals.
+
+    Returns (restoration_verified, rollback_errors, unrestored_files, fsynced_directories).
+    """
+    rollback_errors: list[str] = []
+    unrestored_files: list[tuple[str, str]] = []
+    rollback_dirs: set[Path] = set()
+
+    for old_file, new_file in reversed(files):
+        old_p = Path(old_file)
+        new_p = Path(new_file)
+
+        # 1. If already restored (old file exists as non-fence, and new file is absent):
+        if old_p.exists() and not _is_retired_path_fence(old_p) and not new_p.exists():
+            rollback_dirs.add(old_p.parent)
+            continue
+
+        # 2. If retired path fence exists at old path, remove it before replacing
+        if _is_retired_path_fence(old_p):
+            _remove_retired_path_fence(old_p)
+            if _is_retired_path_fence(old_p):
+                rollback_errors.append(f"failed to remove retired-path fence before rollback: {old_file}")
+                unrestored_files.append((old_file, new_file))
+                continue
+
+        # 3. If new file exists, roll back new -> old
+        if new_p.exists():
+            try:
+                os.replace(str(new_p), str(old_p))
+                rollback_dirs.add(old_p.parent)
+                rollback_dirs.add(new_p.parent)
+            except Exception as r_exc:
+                rollback_errors.append(f"file rollback failed ({new_file} -> {old_file}): {r_exc}")
+                unrestored_files.append((old_file, new_file))
+        else:
+            # Neither new_p exists nor valid old_p exists
+            if not (old_p.exists() and not _is_retired_path_fence(old_p)):
+                rollback_errors.append(f"neither old nor new path exists for rollback ({old_file}, {new_file})")
+                unrestored_files.append((old_file, new_file))
+
+    for d in rollback_dirs:
+        try:
+            _fsync_dir(d)
+        except Exception as r_exc:
+            rollback_errors.append(f"fsync rollback dir failed ({d}): {r_exc}")
+
+    storage_verified = (len(unrestored_files) == 0) and all(
+        Path(old_file).exists()
+        and not _is_retired_path_fence(Path(old_file))
+        and not Path(new_file).exists()
+        for old_file, new_file in files
+    )
+    restoration_verified = (len(rollback_errors) == 0) and storage_verified
+    return restoration_verified, rollback_errors, unrestored_files, sorted(str(d) for d in rollback_dirs)
 
 
 def qualify_and_drain_incumbent_writers(
@@ -1091,31 +1189,10 @@ def _migrate_storage_paths(
             _fsync_dir(d)
 
     except Exception as exc:
-        rollback_errors: list[str] = []
-        rollback_dirs: set[Path] = set()
-        unrestored_files: list[tuple[str, str]] = []
-
-        for old_file, new_file in reversed(moved_files):
-            _remove_retired_path_fence(Path(old_file))
-            if os.path.exists(new_file):
-                try:
-                    os.replace(new_file, old_file)
-                    rollback_dirs.add(Path(old_file).parent)
-                    rollback_dirs.add(Path(new_file).parent)
-                except Exception as r_exc:
-                    rollback_errors.append(f"file rollback failed ({new_file} -> {old_file}): {r_exc}")
-                    unrestored_files.append((old_file, new_file))
-
-        for d in rollback_dirs:
-            try:
-                _fsync_dir(d)
-            except Exception as r_exc:
-                rollback_errors.append(f"fsync rollback dir failed ({d}): {r_exc}")
-
-        restoration_verified = (len(rollback_errors) == 0) and all(
-            Path(old_file).exists() and not Path(new_file).exists()
-            for old_file, new_file in moved_files
+        restoration_verified, rollback_errors, unrestored_files, fsynced_rollback_dirs = (
+            _rollback_storage_files(moved_files)
         )
+        all_fsynced = sorted(set(str(d) for d in dirs_to_fsync) | set(fsynced_rollback_dirs))
 
         migration_record = {
             "migrated": bool(moved_files),
@@ -1124,7 +1201,7 @@ def _migrate_storage_paths(
             "lock_fd": old_lock_fd,
             "restoration_verified": restoration_verified,
             "rollback_errors": rollback_errors,
-            "fsynced_directories": sorted(str(d) for d in dirs_to_fsync),
+            "fsynced_directories": all_fsynced,
         }
 
         # Retain exclusion through verified recovery:
@@ -1298,24 +1375,21 @@ def _replace_supervisor_locked(
             if getattr(launch_exc, "lock_fd", None) is not None:
                 lock_fd = launch_exc.lock_fd
             if getattr(launch_exc, "rollback_errors", None):
-                rollback_errors.extend(launch_exc.rollback_errors)
+                for err in launch_exc.rollback_errors:
+                    if err not in rollback_errors:
+                        rollback_errors.append(err)
 
             if migration_record and not getattr(launch_exc, "restoration_verified", False):
-                rollback_dirs: set[Path] = set()
-                for old_file, new_file in reversed(migration_record.get("files", [])):
-                    _remove_retired_path_fence(Path(old_file))
-                    if os.path.exists(new_file):
-                        try:
-                            os.replace(new_file, old_file)
-                            rollback_dirs.add(Path(old_file).parent)
-                            rollback_dirs.add(Path(new_file).parent)
-                        except Exception as r_exc:
-                            rollback_errors.append(f"file rollback failed ({new_file} -> {old_file}): {r_exc}")
-                for d in rollback_dirs:
-                    try:
-                        _fsync_dir(d)
-                    except Exception as r_exc:
-                        rollback_errors.append(f"fsync rollback dir failed ({d}): {r_exc}")
+                files_to_rollback = migration_record.get("files", [])
+                if files_to_rollback:
+                    r_verified, r_errors, r_unrestored, _ = _rollback_storage_files(files_to_rollback)
+                    for err in r_errors:
+                        if err not in rollback_errors:
+                            rollback_errors.append(err)
+                    if not r_verified:
+                        migration_record["restoration_verified"] = False
+                    if r_unrestored:
+                        migration_record["unrestored_files"] = r_unrestored
 
             config_restored_and_verified = False
             if incumbent:
@@ -1344,7 +1418,9 @@ def _replace_supervisor_locked(
             storage_verified = True
             if migration_record:
                 storage_verified = all(
-                    Path(old_file).exists() and not Path(new_file).exists()
+                    Path(old_file).exists()
+                    and not _is_retired_path_fence(Path(old_file))
+                    and not Path(new_file).exists()
                     for old_file, new_file in migration_record.get("files", [])
                 )
 

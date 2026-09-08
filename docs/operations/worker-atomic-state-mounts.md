@@ -101,6 +101,12 @@ When promoting a new supervisor runtime version:
 7. **Post-Rename Config Durability and Rollback Verification**:
    - In case of directory fsync EIO after atomic replacement of live config, the rollback handler restores and verifies incumbent config on disk, rolls back migrated storage files, and verifies disk state before restarting incumbent supervisor.
    - If restoration or verification fails, incumbent supervisor restart is refused and the single-writer exclusion lock is retained.
+8. **Fence Cleanup Restriction, Fail-Closed Fence Creation, and Idempotent Rollback**:
+   - `_remove_retired_path_fence` checks `lstat` and restricts fence removal strictly to verified fence objects (FIFOs or directories). Regular files and symlinks are never unlinked.
+   - `_create_retired_path_fence` fails closed: if neither FIFO nor fallback directory fence can be established (e.g. ENOSPC), it raises an exception, triggering transactional rollback of moved files and restoring original paths instead of reporting false migration success with missing paths.
+   - `_rollback_storage_files` provides idempotent reverse rollback: already-restored files (where the original exists as a non-fence and destination is absent) are preserved untouched, ensuring repeated outer rollback never deletes restored state or head files.
+   - Retained immutable writers continue operating safely against restored incumbent state after fence-creation failure.
+
 
 ### Verification Commands
 ```bash

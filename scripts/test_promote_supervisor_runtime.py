@@ -1990,3 +1990,249 @@ def test_qualify_and_drain_incumbent_writers_fails_closed_on_active_reservations
     with pytest.raises(RuntimeError, match="active supervisor reservations exist"):
         promotion.qualify_and_drain_incumbent_writers(incumbent, timeout_seconds=1.0)
 
+
+def test_remove_retired_path_fence_restricted_to_verified_fences(tmp_path: Path) -> None:
+    reg_file = tmp_path / "regular.json"
+    reg_file.write_text("{}", encoding="utf-8")
+    promotion._remove_retired_path_fence(reg_file)
+    assert reg_file.exists()
+    assert reg_file.is_file()
+
+    target = tmp_path / "target.json"
+    target.write_text("{}", encoding="utf-8")
+    symlink_file = tmp_path / "symlink.json"
+    symlink_file.symlink_to(target)
+    promotion._remove_retired_path_fence(symlink_file)
+    assert symlink_file.is_symlink()
+
+    empty_dir = tmp_path / "empty_dir_fence"
+    empty_dir.mkdir(mode=0o700)
+    promotion._remove_retired_path_fence(empty_dir)
+    assert not empty_dir.exists()
+
+    if hasattr(os, "mkfifo"):
+        fifo_file = tmp_path / "fifo_fence"
+        os.mkfifo(str(fifo_file), 0o600)
+        assert fifo_file.is_fifo()
+        promotion._remove_retired_path_fence(fifo_file)
+        assert not fifo_file.exists()
+
+
+def test_partial_rollback_preserves_already_restored_head_and_idempotent(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    candidate, status = _candidate(tmp_path)
+    runtime = tmp_path / "runtime"
+    runtime.mkdir()
+    old_log = runtime / "task-state-events-v2.jsonl"
+    old_head = Path(str(old_log) + ".head.json")
+    old_lock = Path(str(old_log) + ".lock")
+    old_log.write_text("canonical journal bytes\n", encoding="utf-8")
+    old_head.write_text("canonical head bytes\n", encoding="utf-8")
+    old_lock.touch()
+    state = status / ".orchestrator" / "state.json"
+    queue = status / ".orchestrator" / "approval-queue.json"
+    state.write_text("{}", encoding="utf-8")
+    queue.write_text('{"version":2,"pending":[],"history":[]}', encoding="utf-8")
+    incumbent = {
+        "command_root": str(candidate),
+        "paths": {"state_file": str(state), "approval_queue": str(queue)},
+        "task_state_store": {"mode": "authoritative", "event_log": str(old_log)},
+    }
+    live = runtime / "live.json"
+    live.write_text(json.dumps(incumbent), encoding="utf-8")
+    monkeypatch.setattr(promotion, "stop_existing_supervisor", lambda *a, **k: 41)
+    monkeypatch.setattr(promotion, "launch_v2_supervisor", lambda *a, **k: 999)
+    new_log = runtime / "task-state" / old_log.name
+    new_head = Path(str(new_log) + ".head.json")
+    real_replace = os.replace
+    failed = []
+
+    def injected(src, dst):
+        if Path(src) == old_lock:
+            raise OSError(errno.EIO, "review forward lock rename failure")
+        if Path(src) == new_log and Path(dst) == old_log and not failed:
+            failed.append(True)
+            raise OSError(errno.EIO, "review first journal rollback failure")
+        return real_replace(src, dst)
+
+    monkeypatch.setattr(os, "replace", injected)
+    result = promotion.replace_supervisor(
+        candidate,
+        status_root=status,
+        live_config_path=live,
+        python_executable=Path(sys.executable),
+        termination_timeout=1,
+    )
+    assert result["outcome"] == "failed"
+    assert old_head.exists()
+    assert old_head.read_text(encoding="utf-8") == "canonical head bytes\n"
+    assert not new_head.exists()
+
+
+def test_replace_supervisor_mixed_restored_unrestored_files_and_durability_errors(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    candidate, status = _candidate(tmp_path)
+    runtime = tmp_path / "runtime"
+    runtime.mkdir()
+    old_log = runtime / "task-state-events-v2.jsonl"
+    old_head = Path(str(old_log) + ".head.json")
+    old_lock = Path(str(old_log) + ".lock")
+    old_log.write_text("canonical journal bytes\n", encoding="utf-8")
+    old_head.write_text("canonical head bytes\n", encoding="utf-8")
+    old_lock.touch()
+
+    state = status / ".orchestrator" / "state.json"
+    queue = status / ".orchestrator" / "approval-queue.json"
+    state.write_text('{"state": 1}', encoding="utf-8")
+    queue.write_text('{"version": 2, "pending": [], "history": []}', encoding="utf-8")
+
+    incumbent = {
+        "command_root": str(candidate),
+        "paths": {"state_file": str(state), "approval_queue": str(queue)},
+        "task_state_store": {"mode": "authoritative", "event_log": str(old_log)},
+    }
+    live = runtime / "live.json"
+    live.write_text(json.dumps(incumbent), encoding="utf-8")
+
+    stopped = []
+    restarted = []
+    monkeypatch.setattr(promotion, "stop_existing_supervisor", lambda *a, **k: stopped.append(True) or 41)
+    monkeypatch.setattr(promotion, "launch_v2_supervisor", lambda *a, **k: restarted.append(True) or 999)
+
+    new_log = runtime / "task-state" / old_log.name
+    new_head = Path(str(new_log) + ".head.json")
+
+    real_replace = os.replace
+    def injected_replace(src, dst):
+        if Path(src) == old_lock:
+            raise OSError(errno.EIO, "forward lock rename failure")
+        if Path(src) == new_log and Path(dst) == old_log:
+            raise OSError(errno.EIO, "reverse journal rollback failure")
+        return real_replace(src, dst)
+
+    monkeypatch.setattr(os, "replace", injected_replace)
+
+    def injected_fsync_dir(path: Path) -> None:
+        raise OSError(errno.EIO, f"injected rollback directory durability fsync failure for {path}")
+
+    monkeypatch.setattr(promotion, "_fsync_dir", injected_fsync_dir)
+
+    result = promotion.replace_supervisor(
+        candidate,
+        status_root=status,
+        live_config_path=live,
+        python_executable=Path(sys.executable),
+        termination_timeout=1,
+    )
+
+    assert result["outcome"] == "failed"
+    assert result["restoration_verified"] is False
+    assert len(restarted) == 0
+    assert "refusing to restart incumbent against incomplete restoration / split storage" in result["error"]
+    assert any("reverse journal rollback failure" in err for err in result["rollback_errors"])
+    assert any("injected rollback directory durability fsync failure" in err for err in result["rollback_errors"])
+
+    # Restored head file is preserved and intact
+    assert old_head.exists()
+    assert old_head.read_text(encoding="utf-8") == "canonical head bytes\n"
+    assert not new_head.exists()
+
+    # Unrestored journal remains at new location
+    assert not old_log.exists()
+    assert new_log.exists()
+
+
+def test_migration_fails_closed_and_rolls_back_when_fence_creation_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    orch = tmp_path / "status" / ".orchestrator"
+    orch.mkdir(parents=True)
+    old_state = orch / "state.json"
+    old_queue = orch / "approval-queue.json"
+    old_state.write_text('{"state": "original"}', encoding="utf-8")
+    old_queue.write_text('{"queue": "original"}', encoding="utf-8")
+
+    old_cfg = {"paths": {"state_file": str(old_state), "approval_queue": str(old_queue)}}
+    new_cfg = {"paths": {k: str(orch / "worker-runtime" / Path(v).name) for k, v in old_cfg["paths"].items()}}
+
+    def fail_fifo(*a, **k):
+        raise OSError(errno.ENOSPC, "disk full: cannot create fifo fence")
+
+    real_mkdir = Path.mkdir
+    def fail_fallback(self, *a, **k):
+        if self in (old_state, old_queue):
+            raise OSError(errno.ENOSPC, "disk full: cannot create mkdir fence")
+        return real_mkdir(self, *a, **k)
+
+    monkeypatch.setattr(os, "mkfifo", fail_fifo)
+    monkeypatch.setattr(Path, "mkdir", fail_fallback)
+
+    with pytest.raises(promotion.StorageMigrationError) as exc_info:
+        promotion._migrate_storage_paths(old_cfg, new_cfg)
+
+    err = exc_info.value
+    assert "cannot establish retired-path fence" in str(err)
+    # Both paths rolled back and restored to regular files
+    assert old_state.exists() and old_state.is_file()
+    assert old_queue.exists() and old_queue.is_file()
+    assert json.loads(old_state.read_text()) == {"state": "original"}
+    assert json.loads(old_queue.read_text()) == {"queue": "original"}
+    # Neither new path was left behind
+    assert not (orch / "worker-runtime" / "state.json").exists()
+    assert not (orch / "worker-runtime" / "approval-queue.json").exists()
+
+
+def test_retained_immutable_writer_after_fence_creation_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    orch = tmp_path / "status" / ".orchestrator"
+    orch.mkdir(parents=True)
+    old_state = orch / "state.json"
+    old_queue = orch / "approval-queue.json"
+    import runtime_state
+    state = runtime_state.default_state()
+    state["auto_commit_archive"]["pending_token"] = "incumbent-valid-token"
+    old_state.write_text(json.dumps(state), encoding="utf-8")
+    old_queue.write_text('{"version": 2, "pending": [], "history": []}', encoding="utf-8")
+
+    old_cfg = {
+        "paths": {
+            "status_file": str(tmp_path / "status" / "ai-status.json"),
+            "state_file": str(old_state),
+            "approval_queue": str(old_queue),
+        }
+    }
+    new_cfg = {
+        "paths": dict(
+            old_cfg["paths"],
+            state_file=str(orch / "worker-runtime" / "state.json"),
+            approval_queue=str(orch / "worker-runtime" / "approval-queue.json"),
+        )
+    }
+
+    def fail_fifo(*a, **k):
+        raise OSError(errno.ENOSPC, "fifo fail")
+
+    real_mkdir = Path.mkdir
+    def fail_mkdir(self, *a, **k):
+        if self in (old_state, old_queue):
+            raise OSError(errno.ENOSPC, "mkdir fail")
+        return real_mkdir(self, *a, **k)
+
+    monkeypatch.setattr(os, "mkfifo", fail_fifo)
+    monkeypatch.setattr(Path, "mkdir", fail_mkdir)
+
+    with pytest.raises(promotion.StorageMigrationError):
+        promotion._migrate_storage_paths(old_cfg, new_cfg)
+
+    # Immutable writer with incumbent config still successfully reads/updates restored incumbent state
+    with runtime_state.runtime_state_update(old_cfg) as s:
+        assert s["auto_commit_archive"]["pending_token"] == "incumbent-valid-token"
+        s["auto_commit_archive"]["pending_token"] = "incumbent-updated-token"
+
+    updated = json.loads(old_state.read_text(encoding="utf-8"))
+    assert updated["auto_commit_archive"]["pending_token"] == "incumbent-updated-token"
+
+
