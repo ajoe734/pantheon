@@ -178,6 +178,11 @@ class DecisionJournalOwnerAdapter:
     ) -> Optional[Dict[str, Any]]:
         if not hasattr(self, "_stores") or self._stores is None or not hasattr(self._stores, "entries"):
             return None
+
+        # 1. Never recover while a bundle write lock is actively held
+        if hasattr(self._stores, "is_bundle_locked") and self._stores.is_bundle_locked():
+            return None
+
         target_id = entry_id or record.get("entry_id")
         if not target_id:
             all_entries = self._stores.entries.list_all()
@@ -191,35 +196,81 @@ class DecisionJournalOwnerAdapter:
                 if (not rec_tenant or e_tenant == rec_tenant) and (not rec_user or e_user == rec_user):
                     target_id = ent.get("id")
                     break
-        if target_id:
-            persisted = self._stores.entries.get(str(target_id).strip())
-            if persisted is not None and isinstance(persisted, dict):
-                rec_tenant = str(record.get("tenant_id") or "").strip()
-                rec_user = str(record.get("user_id") or record.get("actor_id") or "").strip()
-                p_tenant = str(persisted.get("tenant_id") or persisted.get("tenantId") or "").strip()
-                p_user = str(persisted.get("userId") or persisted.get("user_id") or persisted.get("createdBy") or "").strip()
-                if rec_tenant and p_tenant and rec_tenant != p_tenant:
-                    return None
-                if rec_user and p_user and rec_user != p_user:
-                    return None
-                resolved_raw_key = raw_key or record.get("raw_idempotency_key") or ""
-                reconstructed = {
-                    "data": _project(persisted),
-                    "meta": {
-                        "snapshot_at": str(persisted.get("createdAt") or persisted.get("updatedAt") or ""),
-                        "idempotency": {"idempotencyKey": resolved_raw_key, "replayed": True},
-                        "surfaces": {"agora_journal_detail": {"status": "ok", "source": "bff_local"}},
-                    },
-                }
-                record_succeeded = {
-                    **record,
-                    "status": "succeeded",
-                    "result": reconstructed,
-                    "entry_id": str(target_id).strip(),
-                }
-                self._stores.idempotency.put(record_succeeded)
-                return reconstructed
-        return None
+
+        if not target_id:
+            return None
+
+        clean_target_id = str(target_id).strip()
+        persisted = self._stores.entries.get(clean_target_id)
+        if persisted is None or not isinstance(persisted, dict):
+            return None
+
+        # 2. Never promote a live provisional row: uncommitted creation outbox must be None
+        if persisted.get("_creation_outbox") is not None:
+            return None
+
+        # 3. Tenant and actor/user scoping match
+        rec_tenant = str(record.get("tenant_id") or "").strip()
+        rec_user = str(record.get("user_id") or record.get("actor_id") or "").strip()
+        p_tenant = str(persisted.get("tenant_id") or persisted.get("tenantId") or "").strip()
+        p_user = str(persisted.get("userId") or persisted.get("user_id") or persisted.get("createdBy") or "").strip()
+        p_actor = str(persisted.get("createdBy") or persisted.get("actor_id") or p_user).strip()
+
+        if rec_tenant and p_tenant and rec_tenant != p_tenant:
+            return None
+        if rec_user and p_user and rec_user != p_user and rec_user != p_actor:
+            return None
+
+        # 4. Scoped get_entry must succeed (fail-closed tenant/visibility/isolation check)
+        scoped_entry = get_entry(
+            self._stores,
+            clean_target_id,
+            tenant_id=rec_tenant or p_tenant,
+            actor_id=rec_user or p_actor,
+            user_id=rec_user or p_user,
+        )
+        if scoped_entry is None:
+            return None
+
+        # 5. Verify creation transaction commitment in journal idempotency store
+        effective_tenant = rec_tenant or p_tenant
+        effective_actor = p_actor or rec_user
+        create_idem_key = f"create:{effective_tenant}:{effective_actor}:{clean_target_id}"
+        if self._stores.idempotency is not None:
+            idem_rec = self._stores.idempotency.get(create_idem_key)
+            if idem_rec is None or idem_rec.get("status") != "succeeded":
+                return None
+
+        # 6. Verify successful secondary writes (creation event in outbox if outbox configured)
+        if self._stores.outbox is not None:
+            outbox_events = self._stores.outbox.list_all()
+            has_created_event = any(
+                isinstance(e, dict)
+                and e.get("event_type") == "decision_journal.entry.created"
+                and str(e.get("aggregate_id") or (e.get("data") or {}).get("id") or "").strip() == clean_target_id
+                for e in outbox_events
+            )
+            if not has_created_event:
+                return None
+
+        resolved_raw_key = raw_key or record.get("raw_idempotency_key") or ""
+        reconstructed = {
+            "data": _project(persisted),
+            "meta": {
+                "snapshot_at": str(persisted.get("createdAt") or persisted.get("updatedAt") or ""),
+                "idempotency": {"idempotencyKey": resolved_raw_key, "replayed": True},
+                "surfaces": {"agora_journal_detail": {"status": "ok", "source": "bff_local"}},
+            },
+        }
+        record_succeeded = {
+            **record,
+            "status": "succeeded",
+            "result": reconstructed,
+            "entry_id": clean_target_id,
+        }
+        if self._stores.idempotency is not None:
+            self._stores.idempotency.put(record_succeeded)
+        return reconstructed
 
     def check_create_idempotency(
         self,
@@ -255,12 +306,6 @@ class DecisionJournalOwnerAdapter:
 
         status = str(existing.get("status") or "")
         if status == "pending":
-            target_id = entry_id or existing.get("entry_id")
-            if target_id and self._stores.entries.get(target_id) is not None:
-                recovered = self._recover_committed_entry_result(existing, entry_id=target_id, raw_key=raw_key)
-                if recovered is not None:
-                    return {"conflict": False, "result": recovered}
-
             created_pid = existing.get("created_pid")
             is_dead = False
             if created_pid and created_pid != os.getpid():
@@ -272,6 +317,11 @@ class DecisionJournalOwnerAdapter:
                     pass
 
             if is_dead:
+                target_id = entry_id or existing.get("entry_id")
+                if target_id:
+                    recovered = self._recover_committed_entry_result(existing, entry_id=target_id, raw_key=raw_key)
+                    if recovered is not None:
+                        return {"conflict": False, "result": recovered}
                 # Previous creator crashed before durable entry was committed: reclaim reservation
                 self._stores.idempotency.put(reservation)
                 return None
@@ -307,17 +357,16 @@ class DecisionJournalOwnerAdapter:
                 if status == "failed":
                     return {"conflict": False, "failed": True}
 
-                target_id = entry_id or record.get("entry_id")
-                if target_id and self._stores.entries.get(target_id) is not None:
-                    recovered = self._recover_committed_entry_result(record, entry_id=target_id, raw_key=raw_key)
-                    if recovered is not None:
-                        return {"conflict": False, "result": recovered}
-
                 created_pid = record.get("created_pid")
                 if created_pid and created_pid != os.getpid():
                     try:
                         os.kill(created_pid, 0)
                     except ProcessLookupError:
+                        target_id = entry_id or record.get("entry_id")
+                        if target_id:
+                            recovered = self._recover_committed_entry_result(record, entry_id=target_id, raw_key=raw_key)
+                            if recovered is not None:
+                                return {"conflict": False, "result": recovered}
                         return {"conflict": False, "failed": True}
                     except PermissionError:
                         pass
@@ -326,8 +375,10 @@ class DecisionJournalOwnerAdapter:
         # Final deadline check
         record = self._stores.idempotency.get(scoped_key)
         if record is not None:
+            if str(record.get("status") or "") == "succeeded":
+                return {"conflict": False, "result": record.get("result")}
             target_id = entry_id or record.get("entry_id")
-            if target_id and self._stores.entries.get(target_id) is not None:
+            if target_id:
                 recovered = self._recover_committed_entry_result(record, entry_id=target_id, raw_key=raw_key)
                 if recovered is not None:
                     return {"conflict": False, "result": recovered}

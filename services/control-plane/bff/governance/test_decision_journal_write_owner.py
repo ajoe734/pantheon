@@ -695,6 +695,66 @@ sys.exit(0)
             )
             self.assertTrue(result["meta"]["idempotency"]["replayed"])
 
+    def test_bff_concurrent_retry_does_not_promote_provisional_entry(self) -> None:
+        import threading
+        from concurrent.futures import ThreadPoolExecutor
+
+        with tempfile.TemporaryDirectory() as tmp:
+            stores = build_decision_journal_stores(tmp)
+            owner = DecisionJournalOwnerAdapter(stores=stores)
+            service = AgoraService(journal_write_owner=owner)
+            entered = threading.Event()
+            release = threading.Event()
+
+            def blocked_failure(event: Any) -> None:
+                entered.set()
+                release.wait(5)
+                raise OSError("injected outbox failure")
+
+            stores.outbox.put = blocked_failure  # type: ignore[assignment]
+            args = dict(
+                payload={"id": "entry-1", "title": "provisional", "body": "synthetic"},
+                identity=OperatorIdentity(operator_id="alice", roles=["operator"], mfa_verified=True),
+                idempotency_key="request-1",
+                x_idempotency_key=None,
+                tenant_id="tenant-a",
+                user_id="alice",
+            )
+            with ThreadPoolExecutor(max_workers=1) as pool:
+                writer = pool.submit(service.create_journal_entry, **args)
+                self.assertTrue(entered.wait(5), "writer did not reach outbox")
+
+                # While create is pending:
+                # 1. Scoped get_entry must return None
+                self.assertIsNone(owner.get_decision_journal_entry("entry-1", tenant_id="tenant-a", user_id="alice"))
+
+                # 2. check_create_idempotency must return pending without promoting provisional row
+                check = owner.check_create_idempotency(
+                    scoped_key="create:tenant-a:alice:request-1",
+                    request_hash=service.stable_json_hash({"route": "POST /bff/agora/journal", "payload": dict(args["payload"], visibility="private")}),
+                    entry_id="entry-1",
+                    raw_key="request-1",
+                    tenant_id="tenant-a",
+                    user_id="alice",
+                )
+                self.assertIsNotNone(check)
+                self.assertTrue(check.get("pending"))
+                self.assertIsNone(check.get("result"))
+
+                # 3. _recover_committed_entry_result must return None for live provisional row
+                pending_rec = stores.idempotency.get("create:tenant-a:alice:request-1")
+                self.assertIsNotNone(pending_rec)
+                self.assertIsNone(owner._recover_committed_entry_result(pending_rec, entry_id="entry-1", raw_key="request-1"))
+
+                # Release writer to fail
+                release.set()
+                with self.assertRaises(OSError):
+                    writer.result(timeout=5)
+
+            # After rollback: entry is None, idempotency is failed, no ghost success
+            self.assertIsNone(owner.get_decision_journal_entry("entry-1", tenant_id="tenant-a", user_id="alice"))
+            self.assertEqual(stores.idempotency.get("create:tenant-a:alice:request-1")["status"], "failed")
+
 
 if __name__ == "__main__":
     unittest.main()

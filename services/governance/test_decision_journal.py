@@ -1464,6 +1464,41 @@ class TestDecisionJournalRecoveryAndIsolationRegressions(unittest.TestCase):
         self.assertIsNone(observed[0], "Reader observed entry that subsequently rolled back")
         self.assertEqual(reader.outbox.list_all(), [])
 
+    def test_recreate_failure_preserves_committed_entry(self) -> None:
+        self._create()
+        def fail_outbox(_: Any) -> None:
+            raise OSError("injected outbox failure on recreate")
+        self.stores.outbox.put = fail_outbox  # type: ignore[assignment]
+        # Recreate should not delete the already committed row
+        result = self._create()
+        self.assertEqual(result["title"], "initial")
+        entry = get_entry(self.stores, "entry", tenant_id="tenant-a", actor_id="alice")
+        self.assertIsNotNone(entry, "Committed entry was deleted on recreate outbox failure")
+        self.assertEqual(entry["title"], "initial")
+
+    def test_recreate_does_not_emit_duplicate_or_mutated_event(self) -> None:
+        self._create()
+        events_before = self.stores.outbox.list_all()
+        self.assertEqual(len(events_before), 1)
+        self.assertEqual(events_before[0]["data"]["title"], "initial")
+
+        # Second create with different title / payload
+        create_entry(
+            self.stores,
+            entry_id="entry",
+            title="different retry payload",
+            body="different body",
+            actor_id="alice",
+            tenant_id="tenant-a",
+            created_at="2026-09-08",
+        )
+        events_after = self.stores.outbox.list_all()
+        self.assertEqual(len(events_after), 1, "Recreate emitted a second outbox event")
+        self.assertEqual(events_after[0]["data"]["title"], "initial", "Original event title was altered")
+        entry = get_entry(self.stores, "entry", tenant_id="tenant-a", actor_id="alice")
+        self.assertIsNotNone(entry)
+        self.assertEqual(entry["title"], "initial", "Original entry title was overwritten")
+
     def test_before_snapshot_must_not_recursively_duplicate_history(self) -> None:
         self._create()
         for index in range(1, 10):

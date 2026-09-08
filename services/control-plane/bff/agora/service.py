@@ -1638,33 +1638,28 @@ class AgoraService:
                 elif existing.get("request_hash") != request_hash:
                     idem_check = {"conflict": True, "record": existing}
                 elif existing.get("status") == "pending":
-                    target_id = entry_id or existing.get("entry_id")
-                    if target_id and owner.stores.entries.get(target_id) is not None:
-                        persisted = owner.stores.entries.get(target_id)
-                        reconstructed = {
-                            "data": copy.deepcopy(persisted),
-                            "meta": {
-                                "snapshot_at": str(persisted.get("createdAt") or ""),
-                                "idempotency": {"idempotencyKey": resolved_key, "replayed": True},
-                                "surfaces": {"agora_journal_detail": {"status": "ok", "source": "bff_local"}},
-                            },
-                        }
-                        idem_check = {"conflict": False, "result": reconstructed}
-                    else:
-                        created_pid = existing.get("created_pid")
-                        is_dead = False
-                        if created_pid and created_pid != os.getpid():
-                            try:
-                                os.kill(created_pid, 0)
-                            except ProcessLookupError:
-                                is_dead = True
-                            except PermissionError:
-                                pass
-                        if is_dead:
+                    created_pid = existing.get("created_pid")
+                    is_dead = False
+                    if created_pid and created_pid != os.getpid():
+                        try:
+                            os.kill(created_pid, 0)
+                        except ProcessLookupError:
+                            is_dead = True
+                        except PermissionError:
+                            pass
+                    if is_dead:
+                        if hasattr(owner, "_recover_committed_entry_result"):
+                            recovered = owner._recover_committed_entry_result(existing, entry_id=entry_id, raw_key=resolved_key)
+                            if recovered is not None:
+                                idem_check = {"conflict": False, "result": recovered}
+                            else:
+                                owner.stores.idempotency.put(reservation)
+                                idem_check = None
+                        else:
                             owner.stores.idempotency.put(reservation)
                             idem_check = None
-                        else:
-                            idem_check = {"conflict": False, "pending": True, "scoped_key": scoped_idem_key}
+                    else:
+                        idem_check = {"conflict": False, "pending": True, "scoped_key": scoped_idem_key}
                 elif existing.get("status") == "failed":
                     owner.stores.idempotency.put(reservation)
                     idem_check = None
@@ -1708,24 +1703,16 @@ class AgoraService:
                                 if rec.get("status") == "failed":
                                     resolved_idem = {"conflict": False, "failed": True}
                                     break
-                                target_id = entry_id or rec.get("entry_id")
-                                if target_id and owner.stores.entries.get(target_id) is not None:
-                                    persisted = owner.stores.entries.get(target_id)
-                                    reconstructed = {
-                                        "data": copy.deepcopy(persisted),
-                                        "meta": {
-                                            "snapshot_at": str(persisted.get("createdAt") or ""),
-                                            "idempotency": {"idempotencyKey": resolved_key, "replayed": True},
-                                            "surfaces": {"agora_journal_detail": {"status": "ok", "source": "bff_local"}},
-                                        },
-                                    }
-                                    resolved_idem = {"conflict": False, "result": reconstructed}
-                                    break
                                 created_pid = rec.get("created_pid")
                                 if created_pid and created_pid != os.getpid():
                                     try:
                                         os.kill(created_pid, 0)
                                     except ProcessLookupError:
+                                        if hasattr(owner, "_recover_committed_entry_result"):
+                                            recovered = owner._recover_committed_entry_result(rec, entry_id=entry_id, raw_key=resolved_key)
+                                            if recovered is not None:
+                                                resolved_idem = {"conflict": False, "result": recovered}
+                                                break
                                         resolved_idem = {"conflict": False, "failed": True}
                                         break
                                     except PermissionError:
@@ -1733,18 +1720,12 @@ class AgoraService:
                             time.sleep(0.005)
                         else:
                             rec = owner.stores.idempotency.get(scoped_idem_key)
-                            target_id = entry_id or (rec or {}).get("entry_id")
-                            if target_id and owner.stores.entries.get(target_id) is not None:
-                                persisted = owner.stores.entries.get(target_id)
-                                reconstructed = {
-                                    "data": copy.deepcopy(persisted),
-                                    "meta": {
-                                        "snapshot_at": str(persisted.get("createdAt") or ""),
-                                        "idempotency": {"idempotencyKey": resolved_key, "replayed": True},
-                                        "surfaces": {"agora_journal_detail": {"status": "ok", "source": "bff_local"}},
-                                    },
-                                }
-                                resolved_idem = {"conflict": False, "result": reconstructed}
+                            if rec and rec.get("status") == "succeeded":
+                                resolved_idem = {"conflict": False, "result": rec.get("result")}
+                            elif hasattr(owner, "_recover_committed_entry_result"):
+                                recovered = owner._recover_committed_entry_result(rec or {}, entry_id=entry_id, raw_key=resolved_key)
+                                if recovered is not None:
+                                    resolved_idem = {"conflict": False, "result": recovered}
                     if resolved_idem and resolved_idem.get("conflict"):
                         raise self.bff_error(
                             409,

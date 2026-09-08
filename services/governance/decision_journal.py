@@ -521,18 +521,6 @@ def create_entry(
         }
 
         create_idem_key = f"create:{clean_tenant}:{clean_actor}:{clean_id}"
-        if stores.idempotency is not None:
-            stores.idempotency.put({
-                "idempotency_key": create_idem_key,
-                "tenant_id": clean_tenant,
-                "actor_id": clean_actor,
-                "user_id": clean_user,
-                "entry_id": clean_id,
-                "status": _IDEM_STATUS_PENDING,
-                "created_at": time.time(),
-                "created_pid": os.getpid(),
-                "staged_outbox": creation_outbox,
-            })
 
         record = {
             "id": clean_id,
@@ -573,18 +561,14 @@ def create_entry(
                 raise DecisionJournalCollisionError(
                     f"Supplied entry ID {clean_id!r} collides with an existing record owned by another principal or tenant."
                 )
-            # If the entry was left with uncommitted creation outbox from a prior crash, publish it now
-            creation_outbox_to_publish = canonical.get("_creation_outbox") or creation_outbox
+            # If the entry was left with uncommitted creation outbox from a prior crash, publish it now.
+            # Never publish a new/duplicate event for an already-committed entry, and never roll back
+            # a pre-existing entry that this attempt did not insert.
+            creation_outbox_to_publish = canonical.get("_creation_outbox")
             if stores.outbox is not None and creation_outbox_to_publish is not None:
                 evt_id = str(creation_outbox_to_publish.get("event_id") or creation_outbox_to_publish.get("id") or "")
                 if evt_id and stores.outbox.get(evt_id) is None:
-                    try:
-                        stores.outbox.put(creation_outbox_to_publish)
-                    except Exception:
-                        _delete_record(stores.entries, clean_id)
-                        if stores.idempotency is not None:
-                            _delete_record(stores.idempotency, create_idem_key)
-                        raise
+                    stores.outbox.put(creation_outbox_to_publish)
 
             if stores.idempotency is not None:
                 stores.idempotency.put({
@@ -603,6 +587,19 @@ def create_entry(
                 canonical = committed_canonical
             # Authorized idempotent recreate by same owner in same tenant
             return _project(canonical)
+
+        if stores.idempotency is not None:
+            stores.idempotency.put({
+                "idempotency_key": create_idem_key,
+                "tenant_id": clean_tenant,
+                "actor_id": clean_actor,
+                "user_id": clean_user,
+                "entry_id": clean_id,
+                "status": _IDEM_STATUS_PENDING,
+                "created_at": time.time(),
+                "created_pid": os.getpid(),
+                "staged_outbox": creation_outbox,
+            })
 
         # Publish outbox event
         if stores.outbox is not None:
