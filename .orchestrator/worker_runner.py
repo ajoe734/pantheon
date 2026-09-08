@@ -409,6 +409,7 @@ def _append_task_store_mounts(
     *,
     workspace_path: Path | None = None,
     coordination_root: Path | None = None,
+    read_only_worktree: bool = False,
 ) -> None:
     """Expose the atomic TaskStore surface without exposing sibling runtime data."""
 
@@ -448,16 +449,26 @@ def _append_task_store_mounts(
     # Enforce that the dedicated task-state directory contains ONLY allowed task-state files
     # and atomic publication temporary files. Any unrelated sibling file (e.g. live-supervisor.json)
     # renders the layout unqualified and must be rejected.
+    import stat
     for child in parent.iterdir():
         if child.name in allowed_names:
+            if child.is_symlink():
+                raise RuntimeError(f"task-state governed file cannot be a symlink: {child}")
             continue
         if (
-            child.is_file()
-            and not child.is_symlink()
-            and child.name.startswith(f"{event_path.name}.")
+            child.name.startswith(f"{event_path.name}.")
             and (".tmp" in child.name or child.name.endswith(".tmp"))
         ):
-            continue
+            try:
+                st = child.lstat()
+            except FileNotFoundError:
+                # Disappeared during scan (e.g. published atomically via os.replace)
+                continue
+            if stat.S_ISREG(st.st_mode) and not stat.S_ISLNK(st.st_mode):
+                continue
+            raise RuntimeError(
+                f"unqualified task-state layout: directory {parent} contains non-task-state entry: {child.name}"
+            )
         raise RuntimeError(
             f"unqualified task-state layout: directory {parent} contains non-task-state entry: {child.name}"
         )
@@ -481,11 +492,16 @@ def _append_task_store_mounts(
     bwrap_cmd.extend(["--ro-bind-try", str(outer_runtime), str(outer_runtime)])
 
     # If workspace_path is inside outer_runtime (overlapping outer-root case), re-assert
-    # writable mount because bubblewrap applies later mounts on top of earlier mounts.
+    # read-only or writable mount according to read_only_worktree because bubblewrap
+    # applies later mounts on top of earlier mounts.
     if workspace_path is not None:
         try:
             workspace_path.resolve().relative_to(outer_runtime.resolve())
-            bwrap_cmd.extend(["--bind", str(workspace_path.resolve()), str(workspace_path.resolve())])
+            bwrap_cmd.extend([
+                "--ro-bind" if read_only_worktree else "--bind",
+                str(workspace_path.resolve()),
+                str(workspace_path.resolve()),
+            ])
         except ValueError:
             pass
 
@@ -666,6 +682,7 @@ def bind_worker_sandbox(
                 event_log.strip(),
                 workspace_path=ws_resolved,
                 coordination_root=coord_resolved,
+                read_only_worktree=read_only_worktree,
             )
 
         for p in governed_candidates:

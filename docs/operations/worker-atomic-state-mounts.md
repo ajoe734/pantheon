@@ -50,8 +50,8 @@ External V2 TaskStore files are placed in a dedicated directory:
 2. Layout qualification check: The event log must reside in a dedicated directory named `task-state`. Legacy or mixed parent layouts are rejected fail-closed.
 3. Strict containment: The `task-state/` directory must contain only allowed TaskStore files (`events.jsonl`, `.head.json`, `.lock`, `.legacy-anchor.json`) and transient publication temporary files (`*.tmp`). Sibling files such as supervisor configuration or certificates are forbidden and trigger immediate rejection.
 4. Outer runtime sibling protection: The outer runtime directory (`runtime_parent`) is mounted `--ro-bind-try` (read-only) at the directory level, preventing atomic file replacement, linking, unlinking, or modification of siblings (e.g. `live-supervisor.json`).
-5. Overlapping workspace write preservation: If the leased worktree (`workspace_path`) is nested under `runtime_parent`, `--bind` is re-asserted after the read-only outer runtime mount, preserving full writeability of the leased worktree.
-6. Transient file resilience: Mounting the dedicated directory eliminates `ENOENT` races from ephemeral temp files that may disappear during sandbox launch.
+5. Overlapping workspace mount policy propagation: If the leased worktree (`workspace_path`) is nested under `runtime_parent`, the workspace mount is re-asserted after the read-only outer runtime mount respecting the caller's `read_only_worktree` flag (`--ro-bind` when `read_only_worktree=True` such as for reviewer or finalize steps, `--bind` when writable), ensuring reviewer/finalize sandboxes cannot modify the worktree.
+6. Transient file resilience: Mounting the dedicated directory eliminates `ENOENT` races from ephemeral temp files that may disappear during sandbox launch. In addition, directory qualification handles transient legitimate publication temporary files (`*.tmp`) that vanish mid-scan due to concurrent atomic replacement, while strictly failing closed on symlinks and unrecognized sibling entries.
 
 ### 3. Strict Authority Precondition in `common.write_status`
 To prevent retired or uninitialized state journals from being recreated:
@@ -78,7 +78,7 @@ When promoting a new supervisor runtime version:
 2. **Preflight Validation (`_preflight_storage_migration`)**:
    - Ensures all source and destination paths are absolute.
    - Rejects any symlinks across the entire path hierarchy for incumbent and rendered files.
-   - Verifies target destination files do not already exist (collision preflight).
+   - Verifies target destination files and all related sidecars (`.head.json`, `.lock`, `.legacy-anchor.json`) do not already exist, rejecting collisions before any moves occur.
    - Verifies source and destination reside on the same filesystem (`st_dev` check) to guarantee atomic renames.
 3. **Writer Drain & Lock Acquisition (`_migrate_storage_paths`)**:
    - Acquires `events.jsonl.lock` nonblocking via `fcntl.flock(LOCK_EX | LOCK_NB)` to ensure no active writers or legacy processes are mutating state during cutover. Fails closed if the lock is held.
@@ -86,8 +86,8 @@ When promoting a new supervisor runtime version:
    - Atomically relocates store files (`events.jsonl`, `.head.json`, `.lock`, `.legacy-anchor.json`, and worker runtime paths) using `os.replace`.
    - Flushes directory metadata changes durably using `_fsync_dir` on source and target directories.
 4. **Durable Rollback**:
-   - If an unexpected error occurs during migration (e.g. partial rename failure), all moved files are rolled back in reverse order, directory changes are fsynced, and single recoverable authority is restored at the incumbent path.
-   - If supervisor launch fails after migration, `_replace_supervisor_locked` restores migrated files, writes back incumbent configuration, and restarts the incumbent supervisor.
+   - If an unexpected error occurs during migration (e.g. partial rename failure), all moved files are rolled back in reverse order, directory changes are fsynced via `_fsync_dir`, and single recoverable authority is restored at the incumbent path.
+   - If candidate supervisor launch fails after migration, `_replace_supervisor_locked` retains the single-writer lock exclusion throughout rollback, restores migrated files, writes back incumbent configuration, fsyncs rollback directories, qualifies the incumbent identity, and restarts the incumbent supervisor. Any rollback or restart errors are accumulated and raised rather than silently swallowed.
 
 ### Verification Commands
 ```bash
