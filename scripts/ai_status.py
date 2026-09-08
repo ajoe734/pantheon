@@ -7928,8 +7928,6 @@ REQUIRED_REVIEW_MERGE_METHOD = "MERGE"
 GITHUB_CANONICAL_REVIEW_CONTEXT = "Pantheon canonical review gate"
 GITHUB_REVIEW_MODES = {
     "pull_request_review",
-    "pull_request_review_and_required_status",
-    "required_commit_status",
 }
 REVIEW_BINDING_MISMATCH_PREFLIGHT_KEY = "review_binding_mismatch"
 
@@ -8084,6 +8082,12 @@ def bridge_github_review_decision(
     payload = result.as_dict()
     if not isinstance(payload, dict):
         raise SystemExit("GitHub review bridge returned invalid evidence")
+    mode = str(payload.get("mode") or "").strip()
+    if mode not in GITHUB_REVIEW_MODES:
+        raise SystemExit(
+            f"GitHub review bridge returned unsupported mode {mode!r}; "
+            f"must be one of {sorted(GITHUB_REVIEW_MODES)}"
+        )
     if intent_nonce and str(payload.get("intent_nonce") or "") != intent_nonce:
         raise SystemExit("GitHub review bridge returned evidence for a different intent")
     return payload
