@@ -68,6 +68,7 @@ from services.control_plane.bff.models import (
     RedactedEvidenceRef,
     redact_evidence_refs,
 )
+from services.control_plane.bff.management_read_models.models import ManagementObservation
 
 
 def _default_bff_error(
@@ -2029,6 +2030,38 @@ class ManagementService:
     # unavailable domain returns an explicit degraded row instead of being
     # silently omitted or backed by seed data.
     # -----------------------------------------------------------------------
+    # Maps a context subject to where its real availability lives inside
+    # ReadSurfacePorts.get_surface_status(); subjects without an entry here
+    # (e.g. incidents) have no upstream unconfigured/unavailable signal
+    # distinct from "no records", so they keep the list-call-based inference.
+    _DOMAIN_SURFACE_STATUS_PATH: Dict[str, Tuple[str, ...]] = {
+        "runtime_bindings": ("persona_capital_runtime", "runtime"),
+        "capital_pools": ("persona_capital_runtime", "capital"),
+        "evolution_decisions": ("persona_capital_runtime", "evolution", "surfaces", "evolution_decisions"),
+    }
+
+    def _resolve_domain_surface_status(self, subject_type: str, store: Optional[Any]) -> Optional[Dict[str, Any]]:
+        path = self._DOMAIN_SURFACE_STATUS_PATH.get(subject_type)
+        if path is None or store is None or not hasattr(store, "get_surface_status"):
+            return None
+        try:
+            node: Any = store.get_surface_status()
+        except Exception:
+            return None
+        for key in path:
+            if not isinstance(node, dict) or key not in node:
+                return None
+            node = node[key]
+        return node if isinstance(node, dict) else None
+
+    def _observed_at_freshness(self, observed_at: Optional[str]) -> Tuple[str, Optional[float]]:
+        resolved_observed_at = observed_at or self._utc_now()
+        parsed_observed_at = _parse_time(resolved_observed_at)
+        if parsed_observed_at == datetime.min.replace(tzinfo=timezone.utc):
+            return resolved_observed_at, None
+        parsed_now = _parse_time(self._utc_now())
+        return resolved_observed_at, max(0.0, (parsed_now - parsed_observed_at).total_seconds())
+
     def _context_observation(
         self,
         *,
@@ -2036,21 +2069,39 @@ class ManagementService:
         status: str,
         owner: str,
         source_kind: str,
+        subject_id: Optional[str] = None,
+        source_version: Optional[str] = None,
+        observed_at: Optional[str] = None,
+        freshness_seconds: Optional[float] = None,
         degradation_reason: Optional[str] = None,
         correlation_id: Optional[str] = None,
     ) -> Dict[str, Any]:
-        return {
-            "subject_type": subject_type,
-            "subject_id": subject_type,
-            "status": status,
-            "owner": owner,
-            "source_kind": source_kind,
-            "source_version": None,
-            "observed_at": self._utc_now(),
-            "freshness_seconds": 0.0 if source_kind in ("live", "replayed", "backfill") else None,
-            "degradation_reason": degradation_reason,
-            "correlation_id": correlation_id,
-        }
+        if source_kind in ("live", "replayed", "backfill"):
+            if freshness_seconds is None:
+                observed_at, freshness_seconds = self._observed_at_freshness(observed_at)
+            elif observed_at is None:
+                observed_at = self._utc_now()
+        elif observed_at is None:
+            observed_at = self._utc_now()
+        return ManagementObservation(
+            subject_type=subject_type,
+            subject_id=subject_id or subject_type,
+            status=status,
+            owner=owner,
+            source_kind=source_kind,
+            source_version=source_version,
+            observed_at=observed_at,
+            freshness_seconds=freshness_seconds,
+            degradation_reason=degradation_reason,
+            correlation_id=correlation_id,
+        ).model_dump()
+
+    @staticmethod
+    def _record_provenance(items: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+        for item in items:
+            if isinstance(item, dict) and "source_kind" in item:
+                return item
+        return None
 
     def _typed_context_list(
         self,
@@ -2061,6 +2112,16 @@ class ManagementService:
         args: Tuple[Any, ...] = (),
     ) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
         store = self._resolve_store()
+        domain_status = self._resolve_domain_surface_status(subject_type, store)
+        if domain_status is not None and domain_status.get("status") == "unavailable":
+            return [], self._context_observation(
+                subject_type=subject_type,
+                status="unavailable",
+                owner=owner,
+                source_kind="unavailable",
+                degradation_reason=domain_status.get("message")
+                or f"{subject_type} read surface is unavailable or unconfigured.",
+            )
         if store is None or not hasattr(store, method_name):
             return [], self._context_observation(
                 subject_type=subject_type,
@@ -2079,9 +2140,23 @@ class ManagementService:
                 source_kind="unavailable",
                 degradation_reason=f"{subject_type} read failed: {exc}",
             )
+        status = "ok"
+        if not items and domain_status is not None and domain_status.get("status") == "degraded":
+            status = "degraded"
+        provenance = self._record_provenance(items)
+        if provenance is not None:
+            return items, self._context_observation(
+                subject_type=subject_type,
+                status=status,
+                owner=str(provenance.get("owner") or owner),
+                source_kind=str(provenance.get("source_kind") or "live"),
+                source_version=provenance.get("source_version"),
+                observed_at=provenance.get("observed_at"),
+                correlation_id=provenance.get("correlation_id"),
+            )
         return items, self._context_observation(
             subject_type=subject_type,
-            status="ok",
+            status=status,
             owner=owner,
             source_kind="live",
         )
@@ -2108,14 +2183,47 @@ class ManagementService:
             "list_evolution_decisions", subject_type="evolution_decisions", owner=owner
         )
 
-    def get_context_telemetry_summary(self, runtime_id: str) -> Optional[Dict[str, Any]]:
+    def get_context_telemetry_summary(
+        self, runtime_id: str, *, owner: Optional[str] = None
+    ) -> Tuple[Optional[Dict[str, Any]], Dict[str, Any]]:
+        observation_owner = owner or runtime_id or "management_ai_context"
         store = self._resolve_store()
         if store is None or not hasattr(store, "get_telemetry_summary") or not runtime_id:
-            return None
+            return None, self._context_observation(
+                subject_type="telemetry",
+                subject_id=runtime_id or "telemetry",
+                status="unavailable",
+                owner=observation_owner,
+                source_kind="unavailable",
+                degradation_reason="telemetry read surface is unavailable or unconfigured.",
+            )
         try:
-            return store.get_telemetry_summary(runtime_id)
-        except Exception:
-            return None
+            summary = store.get_telemetry_summary(runtime_id)
+        except Exception as exc:
+            return None, self._context_observation(
+                subject_type="telemetry",
+                subject_id=runtime_id,
+                status="unavailable",
+                owner=observation_owner,
+                source_kind="unavailable",
+                degradation_reason=f"telemetry read failed: {exc}",
+            )
+        if summary is None:
+            return None, self._context_observation(
+                subject_type="telemetry",
+                subject_id=runtime_id,
+                status="degraded",
+                owner=observation_owner,
+                source_kind="live",
+                degradation_reason="telemetry summary not found for this runtime.",
+            )
+        return summary, self._context_observation(
+            subject_type="telemetry",
+            subject_id=runtime_id,
+            status="ok",
+            owner=observation_owner,
+            source_kind="live",
+        )
 
     # -----------------------------------------------------------------------
     # 1. Shell Summary

@@ -2,6 +2,8 @@
   "schema_version": "pantheon.task-evidence.v1",
   "task_id": "MGMT-READ-001",
   "base_ref": "dev@0b85363e45618b632ff1f791e79d3ed67ecb482f",
+  "prior_head": "cb6820a6b977db1144707fd5249ebbd68cbdcb69",
+  "prior_review_decision": "REJECT (PR #5698 head cb6820a6b977db1144707fd5249ebbd68cbdcb69, manifest blob 4b13ca2e780a847166b4bca1b0299214dafc542e): _typed_context_list inferred ok/live from list-call success alone instead of consulting owner/provider availability; observations replaced real owner/source_version/correlation_id/observed_at with management_ai_context/None/now/freshness=0 and promoted replay/backfill to live; telemetry read failures became None and were silently filtered, and portfolio_book stayed ok whenever pools/bindings existed regardless of telemetry health.",
   "depends_on": "LOOP-TRUTH-001 (done), DOMAIN-WRITERS-001 (done)",
   "normative_plan": "SD sec7 ManagementObservation row shape and Management AI product/development boundary, SA invariants 11-12 and ADR-01/ADR-08; pkt-pantheon-structural-closure-functional-v2-20260903",
   "implementation": {
@@ -9,36 +11,38 @@
       "docs/deployment/evidence/MGMT-READ-001/evidence.json",
       "services/control-plane/bff/main.py",
       "services/control-plane/bff/management_read_models/models.py",
-      "services/control-plane/bff/management_read_models/service.py"
+      "services/control-plane/bff/management_read_models/service.py",
+      "services/control-plane/bff/management_read_models/test_management_service_context_observations.py"
     ],
     "summary": "Management AI context collection (_mgmt_nl_collect_context in main.py) previously reached the Management domain by calling the module-global ReadSurfacePorts object (read_store.list_runtime_bindings/list_capital_pools/list_incidents/list_evolution_decisions/get_telemetry_summary) directly -- generic store access bypassing the purpose-built ManagementService. Replaced every such call with new purpose-built ManagementService context accessors (get_context_runtime_bindings, get_context_capital_pools, get_context_incidents, get_context_evolution_decisions, get_context_telemetry_summary), instantiated once as module-level _management_ai_context_service bound to the same app_deps.read_surface used by the Management read-model routers. Each accessor returns (items, ManagementObservation) instead of a bare list: an unavailable or failing domain now returns an explicit typed degraded row (source_kind=unavailable, degradation_reason set) rather than an ad hoc {\"status\": \"unavailable\"} dict or a silently empty list, and the row is threaded into the NL context surfaces payload (owner_observation / owner_observations) so unavailable owners are never silently omitted.",
-    "row_shape_added": "ManagementObservation pydantic model added to management_read_models/models.py (subject_type, subject_id, status, owner, source_kind: live|replayed|backfill|unavailable, source_version, observed_at, freshness_seconds, degradation_reason, correlation_id) per SD sec7.1.",
+    "post_reject_fix_summary": "Addressed the three P1 defects from the independent reject: (1) _typed_context_list now resolves each subject's real domain surface status via ReadSurfacePorts.get_surface_status() (persona_capital_runtime.runtime/capital/evolution.surfaces.evolution_decisions) before trusting a non-raising empty list; an unconfigured/provider-failed owner is reported status=unavailable even though the underlying port call itself did not raise (subjects with no such upstream signal, e.g. incidents, keep the prior try/except-based inference, documented in _DOMAIN_SURFACE_STATUS_PATH). (2) _context_observation is now built through the previously-unused ManagementObservation pydantic model (model_dump()) instead of a hand-rolled dict, and _typed_context_list inspects returned records for real owner/source_kind/source_version/observed_at/correlation_id provenance (via _record_provenance) and preserves it verbatim -- including computing freshness_seconds from the real observed_at instead of always stamping now()/freshness=0 or promoting replay/backfill to live. (3) get_context_telemetry_summary now returns (summary, ManagementObservation) instead of swallowing exceptions into None; _mgmt_nl_collect_context's portfolio branch aggregates every telemetry observation into owner_observations and sets portfolio_book status=degraded whenever any telemetry read failed, instead of staying ok solely because pools/runtime bindings existed.",
+    "row_shape_added": "ManagementObservation pydantic model added to management_read_models/models.py (subject_type, subject_id, status, owner, source_kind: live|replayed|backfill|unavailable, source_version, observed_at, freshness_seconds, degradation_reason, correlation_id) per SD sec7.1; now constructed directly by service.py instead of being unused.",
     "mandatory_deletions": {
       "generic_store_access_in_management_ai_context": "_mgmt_nl_collect_context in main.py no longer calls the bare module-global read_store.* surface; it exclusively calls the new typed ManagementService context accessors, matching how the Management read-model router already reaches the domain through ManagementService.",
       "seed_task_status_product_truth": "Verified absent from the declared MGMT-READ-001 scope prior to this change (no ai-status.json / seed / task-status reads in services/control-plane/bff/management_read_models or services/control-plane/bff/main.py Management AI path); confirmed still absent after this change.",
       "development_task_authority_from_management_ai": "Verified unchanged: _mgmt_nl_reject_development_payload continues to reject repair/task-shaped payloads before context collection, and test_management_nl_context_pack_excludes_development_orchestrator_status continues to assert orchestrator/task state never enters the context pack."
     },
-    "rollback_plan": "Revert the three modified files; _mgmt_nl_collect_context reverts to direct read_store access and the new ManagementService context accessors and ManagementObservation model are simply unused/removed. No data migration or persisted state is introduced by this change."
+    "rollback_plan": "Revert the modified files; _mgmt_nl_collect_context reverts to direct read_store access and the ManagementService context accessors/ManagementObservation model return to their prior (rejected) unavailable-inference and provenance-erasing behavior. No data migration or persisted state is introduced by this change; rollback must not resurrect seed/synthetic data for unavailable owners."
   },
   "verification": {
     "commands": [
       {
-        "command": "PYTHONPATH=services/control-plane/bff .venv-pantheon/bin/python -m pytest -q services/control-plane/bff/tests/test_bff_b6_management_nl_ask.py services/control-plane/bff/management_read_models/test_twelve_loop_projector.py services/control-plane/bff/tests/test_management_read_models_router.py",
-        "result": "100 passed, 1 pre-existing failure (test_nl_ask_dry_run_returns_compact_receipt_without_context_work) reproduced identically on the unmodified base_ref main.py (confirmed by temporarily restoring the base_ref file and rerunning the single test in isolation with fresh BFF_DATA_DIR/PANTHEON_MANAGEMENT_AI_STORE_PATH); unrelated to this change",
-        "executed": 101,
-        "collected": 101
+        "command": ".venv-pantheon/bin/python -m pytest /tmp/test_mgmt_read_001_review.py -q --tb=short --disable-warnings",
+        "result": "3 passed (previously 3 failed at the rejected head cb6820a6b977db1144707fd5249ebbd68cbdcb69): test_replay_owner_provenance_is_preserved, test_unconfigured_domain_is_not_healthy_live, test_telemetry_failure_remains_explicit_in_portfolio_context",
+        "executed": 3,
+        "collected": 3
       },
       {
-        "command": "PYTHONPATH=services/control-plane/bff .venv-pantheon/bin/python -m pytest -q services/control-plane/bff/test_architecture_boundaries.py",
-        "result": "8 passed, 1 pre-existing collection/import failure (test_domain_router_factory_contracts, ImportError in services/control-plane/bff/agora/router.py unrelated to any file touched by this task) reproduced identically on the unmodified base_ref main.py",
-        "executed": 9,
-        "collected": 9
+        "command": ".venv-pantheon/bin/python -m pytest -q services/control-plane/bff/management_read_models/test_management_service_context_observations.py --tb=short --disable-warnings",
+        "result": "5 passed (new durable regressions committed in task scope, covering the same three rejected defects plus a capital_pools unconfigured-domain case and a direct get_context_telemetry_summary failure case)",
+        "executed": 5,
+        "collected": 5
       },
       {
-        "command": "python3 -c \"ManagementService(...).get_context_runtime_bindings()/get_context_incidents() sanity check against a working store, a raising store, and no store at all\" (inline interpreter session, see task closeout notes)",
-        "result": "typed (items, ManagementObservation) pairs verified: ok/live on success, unavailable/unavailable with degradation_reason on store exception and on absent store; no silent omission",
-        "executed": 1,
-        "collected": 1
+        "command": "PYTHONPATH=services/control-plane/bff .venv-pantheon/bin/python -m pytest -q services/control-plane/bff/tests/test_bff_b6_management_nl_ask.py services/control-plane/bff/management_read_models/test_twelve_loop_projector.py services/control-plane/bff/tests/test_management_read_models_router.py services/control-plane/bff/test_architecture_boundaries.py services/control-plane/bff/management_read_models/test_management_service_context_observations.py --tb=short --disable-warnings",
+        "result": "113 passed, 2 pre-existing failures (test_nl_ask_dry_run_returns_compact_receipt_without_context_work, test_domain_router_factory_contracts) reproduced identically on the unmodified base_ref -- unchanged from the pre-fix baseline (108 passed/2 pre-existing failures) plus the 5 new tests, confirming no regression",
+        "executed": 115,
+        "collected": 115
       }
     ]
   },
@@ -48,10 +52,13 @@
     "management_ai_remains_product_only": true,
     "provider_failure_independent_from_ordinary_reads": true,
     "generic_store_access_removed_from_management_ai_context": true,
-    "no_seed_or_task_status_product_truth_reintroduced": true
+    "no_seed_or_task_status_product_truth_reintroduced": true,
+    "owner_health_not_inferred_from_non_raising_empty_list": true,
+    "real_owner_provenance_preserved_not_overwritten": true,
+    "telemetry_failures_reported_explicitly_not_filtered_to_healthy": true
   },
   "review": {
     "reviewer": "Codex",
-    "decision": "pending independent exact-head review"
+    "decision": "pending independent exact-head review of the post-reject fix commit"
   }
 }

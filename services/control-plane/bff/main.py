@@ -15189,14 +15189,16 @@ def _mgmt_nl_collect_context(focus: str, snapshot_at: str, tenant_id: Optional[s
             _mgmt_nl_add_record_entities(evidence_entities, pools, "capital_pool", "pool_id", "id")
             _mgmt_nl_add_record_entities(evidence_entities, runtime_bindings, "runtime", "runtime_id", "id", "binding_id")
             evidence_source_types.update({"capital_pool", "runtime", "runtime_binding", "telemetry"})
-            telemetry_values = [
+            telemetry_results = [
                 _management_ai_context_service.get_context_telemetry_summary(
                     str(r.get("runtime_id") or r.get("id") or r.get("binding_id") or "")
                 )
                 for r in runtime_bindings
                 if r.get("runtime_id") or r.get("id") or r.get("binding_id")
             ]
-            telemetry_values = [t for t in telemetry_values if t is not None]
+            telemetry_values = [t for t, _obs in telemetry_results if t is not None]
+            telemetry_observations = [obs for _t, obs in telemetry_results]
+            telemetry_failed = any(obs.get("status") != "ok" for obs in telemetry_observations)
             portfolio_rollup = _management_telemetry_rollup(telemetry_values)
             snippets["portfolio"] = {
                 "capital_pool_count": len(pools),
@@ -15206,11 +15208,16 @@ def _mgmt_nl_collect_context(focus: str, snapshot_at: str, tenant_id: Optional[s
                 "average_fill_rate": portfolio_rollup.get("average_fill_rate"),
                 "total_trades": portfolio_rollup.get("total_trades"),
             }
-            portfolio_status = "ok" if pools or runtime_bindings else pools_obs["status"]
+            if telemetry_failed:
+                portfolio_status = "degraded"
+            elif pools or runtime_bindings:
+                portfolio_status = "ok"
+            else:
+                portfolio_status = pools_obs["status"]
             surfaces["portfolio_book"] = {
                 "status": portfolio_status,
                 "source": "bff_composed",
-                "owner_observations": [pools_obs, runtime_bindings_obs],
+                "owner_observations": [pools_obs, runtime_bindings_obs, *telemetry_observations],
             }
         except Exception:
             surfaces["portfolio_book"] = {"status": "unavailable", "source": "error"}
