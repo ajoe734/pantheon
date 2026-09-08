@@ -403,6 +403,7 @@ class TwelveLoopTruthProjector:
         # Each candidate chain is a tuple (stimulus, terminal, next_consumer)
         candidates: List[Tuple[Optional[CanonicalLoopReceipt], Optional[CanonicalLoopReceipt], Optional[CanonicalLoopReceipt]]] = []
         matched_stimulus_ids: Set[str] = set()
+        matched_next_ids: Set[str] = set()
 
         # 1. Chains anchored on terminal executions
         for t in terminal_receipts:
@@ -460,6 +461,7 @@ class TwelveLoopTruthProjector:
                     matching_n,
                     key=lambda r: (provenance_rank.get(r.provenance, 0), r.observed_at, r.receipt_id),
                 )
+                matched_next_ids.add(n_for_t.receipt_id)
 
             candidates.append((s_for_t, t, n_for_t))
 
@@ -472,6 +474,8 @@ class TwelveLoopTruthProjector:
             # Find matching next_consumer for stimulus s (orphan next linking directly to stimulus):
             matching_n_s: List[CanonicalLoopReceipt] = []
             for n in next_receipts:
+                if n.receipt_id in matched_next_ids:
+                    continue
                 n_prov = provenance_rank.get(n.provenance, 0)
                 if n_prov < s_prov:
                     continue
@@ -491,12 +495,13 @@ class TwelveLoopTruthProjector:
                     matching_n_s,
                     key=lambda r: (provenance_rank.get(r.provenance, 0), r.observed_at, r.receipt_id),
                 )
+                matched_next_ids.add(n_for_s.receipt_id)
 
             candidates.append((s, None, n_for_s))
 
-        # 3. Chains anchored on orphan next_consumer receipts (if no candidates yet)
-        if not candidates:
-            for n in next_receipts:
+        # 3. Chains anchored on unmatched next_consumer receipts
+        for n in next_receipts:
+            if n.receipt_id not in matched_next_ids:
                 candidates.append((None, None, n))
 
         def candidate_key(

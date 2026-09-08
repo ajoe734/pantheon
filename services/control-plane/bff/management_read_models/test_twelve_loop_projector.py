@@ -1028,3 +1028,50 @@ class TestTwelveLoopProjectorReviewRegressions:
         store.upsert_observation(obs_backfill)
         assert store.get_observation("r1", "c1", 1).provenance == "live"
         assert store.get_observation("r1", "c1", 1).status == "complete"
+
+    @pytest.mark.parametrize("provenance", ["replay", "backfill"])
+    @pytest.mark.parametrize("arrival_order", ["live_first", "terminal_first"])
+    def test_unmatched_live_next_consumer_keeps_incremental_rebuild_equal_memory(
+        self, provenance: str, arrival_order: str
+    ) -> None:
+        """P1 regression: unmatched higher-provenance live next-consumer chain is preserved as deterministic candidate
+        even when unrelated replay/backfill terminal candidate exists, across both arrival orders on Memory store."""
+        store = MemoryTwelveLoopStore()
+        prefix = "mem-orphan-next-" + uuid4().hex
+        now = datetime.now(timezone.utc)
+
+        def receipt(name: str, kind: str, status: str = "", r_prov: str = "live", offset: int = 0, cause: Optional[str] = None) -> CanonicalLoopReceipt:
+            return CanonicalLoopReceipt(
+                receipt_id=prefix + name,
+                receipt_type=kind,
+                loop_id=1,
+                correlation_id=prefix,
+                release_id=prefix,
+                owner="review",
+                provenance=r_prov,
+                status=status,
+                observed_at=now + timedelta(seconds=offset),
+                causation_id=prefix + cause if cause else None,
+            )
+
+        live_next = receipt("live-next", "next_consumer", "accepted", r_prov="live", offset=-10, cause="live-terminal-not-yet-delivered")
+        unrelated_terminal = receipt("historical-terminal", "terminal", "failed", r_prov=provenance, offset=-100, cause="historical-stimulus")
+
+        order = [live_next, unrelated_terminal] if arrival_order == "live_first" else [unrelated_terminal, live_next]
+
+        projector = TwelveLoopTruthProjector(store, auto_load=False)
+        incremental = projector.ingest_receipts(order)[-1]
+        rebuilt = projector.rebuild()[0]
+        durable = store.get_observation(prefix, prefix, 1)
+
+        clean = TwelveLoopTruthProjector()
+        clean.ingest_receipts(store.list_receipts(release_id=prefix, correlation_id=prefix, loop_id=1))
+        clean_rebuilt = clean.rebuild()[0]
+
+        assert incremental.to_dict() == rebuilt.to_dict() == durable.to_dict() == clean_rebuilt.to_dict()
+        assert incremental.status == "open"
+        assert incremental.provenance == "live"
+        assert incremental.terminal_id is None
+        assert incremental.terminal_observed_at is None
+        assert incremental.next_consumer_receipt_id == prefix + "live-next"
+        assert set(incremental.receipt_ids) == {prefix + "live-next", prefix + "historical-terminal"}
