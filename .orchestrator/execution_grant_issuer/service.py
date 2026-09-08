@@ -57,6 +57,70 @@ def _is_s5_restricted(task_id: str, policy: Mapping[str, Any] | None = None) -> 
     return False
 
 
+DEFAULT_ALLOWED_TASKS: tuple[str, ...] = ("DEV502-TRACE-001",)
+DEFAULT_ALLOWED_ENVIRONMENTS: tuple[str, ...] = ("pantheon-dev",)
+
+
+def validate_allowed_tasks(allowed_tasks: Any) -> frozenset[str]:
+    """Validate and freeze exact allowed tasks scope.
+
+    Fails closed on missing, malformed, non-list, empty, or wildcard scopes.
+    """
+    if allowed_tasks is None:
+        raise ValueError("allowed_tasks cannot be None; explicit exact allowed task scope is required")
+    if isinstance(allowed_tasks, (str, bytes, Mapping)) or not isinstance(allowed_tasks, Sequence):
+        raise ValueError(
+            f"allowed_tasks must be a list/sequence of task ID strings, got {type(allowed_tasks).__name__}"
+        )
+    if not allowed_tasks:
+        raise ValueError("allowed_tasks cannot be empty; explicit exact allowed task scope is required")
+
+    cleaned: list[str] = []
+    for item in allowed_tasks:
+        if not isinstance(item, str):
+            raise ValueError(f"allowed_tasks entries must be strings, got {type(item).__name__}: {item!r}")
+        val = item.strip()
+        if not val:
+            raise ValueError("allowed_tasks entry cannot be empty or whitespace-only")
+        if any(c in val for c in ("*", "?", "[", "]", "{", "}", " ", "\t", "\n")):
+            raise ValueError(f"Wildcards and whitespace are strictly prohibited in allowed_tasks: {val!r}")
+        if val.lower() in ("all", "any", "*"):
+            raise ValueError(f"Wildcard scopes are strictly prohibited in allowed_tasks: {val!r}")
+        cleaned.append(val)
+
+    return frozenset(cleaned)
+
+
+def validate_allowed_environments(allowed_envs: Any) -> frozenset[str]:
+    """Validate and freeze exact allowed environments scope.
+
+    Fails closed on missing, malformed, non-list, empty, or wildcard scopes.
+    """
+    if allowed_envs is None:
+        raise ValueError("allowed_environments cannot be None; explicit exact allowed environment scope is required")
+    if isinstance(allowed_envs, (str, bytes, Mapping)) or not isinstance(allowed_envs, Sequence):
+        raise ValueError(
+            f"allowed_environments must be a list/sequence of environment strings, got {type(allowed_envs).__name__}"
+        )
+    if not allowed_envs:
+        raise ValueError("allowed_environments cannot be empty; explicit exact allowed environment scope is required")
+
+    cleaned: list[str] = []
+    for item in allowed_envs:
+        if not isinstance(item, str):
+            raise ValueError(f"allowed_environments entries must be strings, got {type(item).__name__}: {item!r}")
+        val = item.strip()
+        if not val:
+            raise ValueError("allowed_environments entry cannot be empty or whitespace-only")
+        if any(c in val for c in ("*", "?", "[", "]", "{", "}", " ", "\t", "\n")):
+            raise ValueError(f"Wildcards and whitespace are strictly prohibited in allowed_environments: {val!r}")
+        if val.lower() in ("all", "any", "*"):
+            raise ValueError(f"Wildcard scopes are strictly prohibited in allowed_environments: {val!r}")
+        cleaned.append(val)
+
+    return frozenset(cleaned)
+
+
 class ExecutionGrantIssuerService:
     """Core domain service for execution grant issuance."""
 
@@ -66,8 +130,8 @@ class ExecutionGrantIssuerService:
         verifier: IdentityPlatformTokenVerifier,
         signer: Ed25519GrantSigner,
         challenge_store: ChallengeStore | None = None,
-        allowed_tasks: Sequence[str] | None = ("DEV502-TRACE-001",),
-        allowed_environments: Sequence[str] | None = ("pantheon-dev",),
+        allowed_tasks: Sequence[str] = DEFAULT_ALLOWED_TASKS,
+        allowed_environments: Sequence[str] = DEFAULT_ALLOWED_ENVIRONMENTS,
         grant_freshness_seconds: int = 120,
         run_ttl_seconds: int = 1800,
         audit_log_path: Path | str | None = None,
@@ -75,16 +139,8 @@ class ExecutionGrantIssuerService:
         self.verifier = verifier
         self.signer = signer
         self.challenge_store = challenge_store or ChallengeStore()
-        self.allowed_tasks = (
-            frozenset(t.strip() for t in allowed_tasks if t.strip())
-            if allowed_tasks is not None
-            else None
-        )
-        self.allowed_environments = (
-            frozenset(e.strip() for e in allowed_environments if e.strip())
-            if allowed_environments is not None
-            else None
-        )
+        self.allowed_tasks = validate_allowed_tasks(allowed_tasks)
+        self.allowed_environments = validate_allowed_environments(allowed_environments)
         self.grant_freshness_seconds = grant_freshness_seconds
         self.run_ttl_seconds = run_ttl_seconds
         self.audit_log_path = Path(audit_log_path) if audit_log_path else None
@@ -103,18 +159,21 @@ class ExecutionGrantIssuerService:
 
     def validate_task_policy(self, task_id: str, policy: Mapping[str, Any]) -> None:
         """Validate that task policy is privileged, well-formed, and permissible."""
-        if _is_s5_restricted(task_id, policy):
-            raise PolicyValidationError(
-                f"Task {task_id} is associated with Step 5 / S5, which remains strictly paused"
-            )
+        if not isinstance(task_id, str) or not task_id.strip():
+            raise PolicyValidationError("Task ID must be a non-empty string")
+        task_id = task_id.strip()
 
-        if self.allowed_tasks is not None and task_id not in self.allowed_tasks:
+        if task_id not in self.allowed_tasks:
+            if _is_s5_restricted(task_id, policy):
+                raise PolicyValidationError(
+                    f"Task {task_id} is associated with Step 5 / S5 and is not in the allowed task scope for this issuer: {sorted(self.allowed_tasks)}"
+                )
             raise PolicyValidationError(
                 f"Task {task_id} is not in the allowed task scope for this issuer: {sorted(self.allowed_tasks)}"
             )
 
         env = str(policy.get("environment") or "").strip()
-        if self.allowed_environments is not None and env not in self.allowed_environments:
+        if not env or env not in self.allowed_environments:
             raise PolicyValidationError(
                 f"Environment {env!r} is not permitted for task {task_id}: allowed {sorted(self.allowed_environments)}"
             )
