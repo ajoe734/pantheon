@@ -340,6 +340,8 @@ jobs:
         if: steps.boundary.outputs.development_tooling_touched == 'true'
         run: |
           PYTHONPATH=.orchestrator python3 -m pytest -q \
+            .orchestrator/test_recovery_contract_boundaries.py \
+            .orchestrator/rewrite/test_integration_receipt.py \
             scripts/git/test_auto_integrator.py \
             scripts/git/test_task_review_merge_gate.py \
             scripts/git/test_github_review_bridge.py \

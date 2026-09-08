@@ -228,6 +228,38 @@ class PolicyResolutionTests(unittest.TestCase):
 
 
 class ApprovedPathTests(unittest.TestCase):
+    def test_diagnostic_rejection_words_are_not_review_decisions(self) -> None:
+        for message in (
+            "Owner done rejected by canonical commit metadata gate",
+            "GitHub rejects the request due to an unavailable endpoint",
+            "Documented revert procedure for a failed deploy",
+        ):
+            with self.subTest(message=message):
+                self.assertTrue(decide(events=[approval_event(), {
+                    "type": "note", "task_id": "ABC-001", "agent": "Codex",
+                    "ts": "2026-07-26T13:00:00Z", "message": message,
+                }]).allow_merge)
+
+    def test_resume_and_merge_share_non_resumable_audit_decision(self) -> None:
+        task = task_row(review_binding=approval_binding())
+        for message in gate.REVOCATION_NOTE_MARKERS:
+            events = [approval_event(), {
+                "type": "note", "task_id": "ABC-001", "agent": "Claude",
+                "ts": "2026-07-26T13:00:00Z", "message": message,
+            }, {"type": "blocker", "task_id": "ABC-001", "agent": "Codex",
+                "ts": "2026-07-26T14:00:00Z"}]
+            with self.subTest(message=message):
+                record = gate.load_approval_record("ABC-001", events=events)
+                self.assertTrue(gate.integration_resume_error(task, record))
+                self.assertFalse(decide(events=events).allow_merge)
+        record = gate.load_approval_record("ABC-001", events=[approval_event(), {
+            "type": "blocker", "task_id": "ABC-001", "agent": "Codex",
+            "ts": "2026-07-26T14:00:00Z",
+        }])
+        self.assertEqual(gate.integration_resume_error(task, record), "")
+        self.assertTrue(gate.integration_resume_error(
+            task_row(review_binding=approval_binding(head_sha="c" * 40)), record))
+
     def test_exact_head_approval_allows_merge_but_never_auto_merge(self) -> None:
         decision = decide()
 

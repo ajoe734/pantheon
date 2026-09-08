@@ -8321,6 +8321,12 @@ class ReviewApprovedWorkflowTests(unittest.TestCase):
         frozen_delivery = deepcopy(task[ai_status.DELIVERY_BINDING_KEY])
         frozen_approval = deepcopy(task[ai_status.APPROVAL_BINDING_KEY])
 
+        ai_status.LOG_FILE.write_text(json.dumps({
+            "type": "review_approved", "task_id": "REG-002",
+            "agent": task["reviewer"], "ts": "2026-04-06T14:00:00Z",
+            "review_binding": frozen_approval,
+        }) + "\n", encoding="utf-8")
+
         with (
             mock.patch.dict(os.environ, {"AI_NAME": "Human/Ops"}, clear=False),
             mock.patch.object(ai_status, "append_log"),
@@ -8335,6 +8341,34 @@ class ReviewApprovedWorkflowTests(unittest.TestCase):
         self.assertEqual(task[ai_status.DELIVERY_BINDING_KEY], frozen_delivery)
         self.assertEqual(task[ai_status.APPROVAL_BINDING_KEY], frozen_approval)
         self.assertEqual(self.state["blockers"][0]["status"], "resolved")
+
+    def test_resume_integration_rejects_explicit_hold_even_before_later_blocker(self) -> None:
+        task = self.state["tasks"][0]
+        task["status"] = "blocked"
+        self._set_pr_delivery_binding(pr=4269, head_sha="a" * 40)
+        task[ai_status.APPROVAL_BINDING_KEY] = {
+            field: task[ai_status.DELIVERY_BINDING_KEY][field]
+            for field in ("pr", "head_sha", "head_branch", "base")}
+        task[ai_status.GITHUB_REVIEW_BRIDGE_KEY] = {
+            **task[ai_status.APPROVAL_BINDING_KEY], "decision": "approve",
+            "mode": "required_commit_status", "status_id": 101,
+            "status_context": ai_status.GITHUB_CANONICAL_REVIEW_CONTEXT,
+            "status_state": "success"}
+        events = [{"type": "review_approved", "task_id": "REG-002",
+                   "agent": task["reviewer"], "ts": "2026-04-06T14:00:00Z",
+                   "review_binding": task[ai_status.APPROVAL_BINDING_KEY]},
+                  {"type": "note", "task_id": "REG-002", "agent": task["reviewer"],
+                   "ts": "2026-04-06T14:01:00Z", "message": "do not merge"},
+                  {"type": "blocker", "task_id": "REG-002", "agent": task["owner"],
+                   "ts": "2026-04-06T14:02:00Z", "message": "mount unavailable"}]
+        ai_status.LOG_FILE.write_text("".join(json.dumps(e) + "\n" for e in events), encoding="utf-8")
+        before = deepcopy(self.state)
+        with (mock.patch.dict(os.environ, {"AI_NAME": "Human/Ops"}, clear=False),
+              mock.patch.object(ai_status, "append_log") as append,
+              self.assertRaisesRegex(SystemExit, "non-resumable")):
+            ai_status.command_resume_integration(self.state, ["REG-002", "mount restored"])
+        self.assertEqual(self.state, before)
+        append.assert_not_called()
 
     def test_resume_integration_rejects_missing_exact_approval_without_mutation(self) -> None:
         task = self.state["tasks"][0]

@@ -281,11 +281,22 @@ def integration_receipt_consumes_candidate(task: Mapping[str, Any]) -> bool:
             return False
     except Exception:
         return False
-    if receipt["task_generation"] != current_generation:
+    # Generation fences worker assignments, not an immutable Git delivery.
+    # A receipt is historical merge evidence, NEVER approval for a future
+    # merge. Keep its original generation; new receipt writes still require
+    # exact-generation CAS. Future-generation receipts remain invalid.
+    if current_generation < 1 or receipt["task_generation"] > current_generation:
         return False
     binding = frozen_delivery_binding(task)
     if binding is None:
         return False
+    delivery = task.get("delivery_binding")
+    if delivery is not None:
+        if not isinstance(delivery, Mapping) or delivery.get("kind") != "pull_request":
+            return False
+        if any(delivery.get(key) != task["review_binding"].get(key)
+               for key in ("pr", "head_sha", "head_branch", "base")):
+            return False
     return (
         receipt["repository"] == binding["repository"]
         and receipt["target_branch"] == binding["target_branch"]

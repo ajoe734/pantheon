@@ -2250,12 +2250,53 @@ class AutoIntegratorUnblockAuthorityTests(unittest.TestCase):
         )
         self.assertIsNotNone(decision)
         self.assertEqual(decision[0], supervisor.REASON_OWNED_READY)
+
         self.assertEqual(task_map["ABC-001"]["status"], "review_approved")
         self.assertEqual(snapshot["last_event"]["source"], "supervisor-auto-integrator-unblock")
         receipts = self.status_root / supervisor.AUTO_INTEGRATOR_UNBLOCK_RECEIPTS / "processed"
         archives = self.status_root / supervisor.AUTO_INTEGRATOR_UNBLOCK_ARCHIVE / "processed"
         self.assertEqual(len(list(receipts.glob("*.json"))), 1)
         self.assertEqual(len(list(archives.glob("*.json"))), 1)
+
+    def test_same_delivery_different_reason_coalesces_without_mutating_original(self) -> None:
+        self._publish()
+        self.assertTrue(self._materialize())
+        before = supervisor.load_status(self.config)
+        request = self._publish(reason="final-ci-red", unblock_task_id=self._task_id("final-ci-red"))
+        self.assertFalse(self._materialize())
+        after = supervisor.load_status(self.config)
+        self.assertEqual(before, after)
+        receipt = json.loads((self.status_root / supervisor.AUTO_INTEGRATOR_UNBLOCK_RECEIPTS
+                              / "processed" / request.name).read_text())
+        self.assertEqual(receipt["task_id"], self._task_id())
+        self.assertEqual(receipt["coalesced_identity"]["source_task_id"], "ABC-001")
+
+    def test_review_authority_failure_cannot_materialize_another_repair(self) -> None:
+        reason = "review-gate-approval-revoked"
+        self._publish(reason=reason, unblock_task_id=self._task_id(reason))
+        self.assertFalse(self._materialize())
+        self.assertEqual(len(supervisor.load_status(self.config)["tasks"]), 1)
+        receipts = self.status_root / supervisor.AUTO_INTEGRATOR_UNBLOCK_RECEIPTS / "rejected"
+        self.assertIn("source task", json.loads(next(receipts.glob("*.json")).read_text())["detail"])
+
+    def test_generation_retry_coalesces_but_different_head_is_new_scope(self) -> None:
+        self._publish()
+        self.assertTrue(self._materialize())
+        state = supervisor.load_status(self.config)
+        state["tasks"][0]["generation"] = 2
+        supervisor.rewrite_task_state_store.append_state_commit(
+            self.config["task_state_store"]["event_log"], state, source="isolated-retry")
+        self._publish(source_task_generation=2,
+                      unblock_task_id=self._task_id(source_task_generation=2))
+        self.assertFalse(self._materialize())
+        self.assertEqual(len(supervisor.load_status(self.config)["tasks"]), 2)
+        state["tasks"][0]["delivery_binding"]["head_sha"] = "c" * 40
+        supervisor.rewrite_task_state_store.append_state_commit(
+            self.config["task_state_store"]["event_log"], state, source="isolated-new-head")
+        self._publish(source_task_generation=2, head_sha="c" * 40,
+                      unblock_task_id=self._task_id(source_task_generation=2, head_sha="c" * 40))
+        self.assertTrue(self._materialize())
+        self.assertEqual(len(supervisor.load_status(self.config)["tasks"]), 3)
 
     def test_existing_canonical_id_requires_exact_request_provenance(self) -> None:
         request = self._publish()
