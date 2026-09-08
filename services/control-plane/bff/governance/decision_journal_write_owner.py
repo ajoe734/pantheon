@@ -95,7 +95,7 @@ class DecisionJournalOwnerAdapter:
     ) -> Optional[Dict[str, Any]]:
         resolved_actor = actor_id or _kwargs.get("actor_id")
         resolved_user = user_id or _kwargs.get("user_id") or resolved_actor
-        entry = get_entry(
+        return get_entry(
             self._stores,
             entry_id,
             tenant_id=tenant_id,
@@ -103,18 +103,6 @@ class DecisionJournalOwnerAdapter:
             user_id=resolved_user,
             include_unscoped_legacy=include_unscoped_legacy,
         )
-        if entry is None:
-            return None
-
-        # Adapter detail boundary: unscoped query cannot view tenant-scoped records
-        rec_tenant = str(entry.get("tenant_id") or entry.get("tenantId") or "").strip()
-        if rec_tenant and not tenant_id:
-            return None
-        rec_visibility = str(entry.get("visibility") or "private").strip().lower()
-        if rec_visibility == "private" and not tenant_id and not (resolved_actor or resolved_user):
-            return None
-
-        return entry
 
     def create_decision_journal_entry(
         self,

@@ -613,6 +613,37 @@ sys.exit(0)
             adapter = DecisionJournalOwnerAdapter(stores=stores)
             self.assertIsNone(adapter.get_decision_journal_entry("private-a"))
 
+    def test_adapter_tenant_only_detail_denies_private(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            stores = build_decision_journal_stores(tmp)
+            create_entry(
+                stores,
+                entry_id="e",
+                title="original",
+                body="original",
+                actor_id="alice",
+                tenant_id="tenant-a",
+                created_at="2026-09-08T00:00:00Z",
+            )
+            self.assertIsNone(
+                DecisionJournalOwnerAdapter(stores=stores).get_decision_journal_entry("e", tenant_id="tenant-a")
+            )
+
+    def test_global_reader_unscoped_detail_denies_private(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            stores = build_decision_journal_stores(tmp)
+            create_entry(
+                stores,
+                entry_id="e",
+                title="original",
+                body="original",
+                actor_id="alice",
+                tenant_id="tenant-a",
+                created_at="2026-09-08T00:00:00Z",
+            )
+            self.assertIsNone(DomainDecisionJournalReaderPort(stores=stores).get_decision_journal_entry("e"))
+
 
 if __name__ == "__main__":
     unittest.main()
+

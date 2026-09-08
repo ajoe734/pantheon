@@ -11,7 +11,7 @@
   "scorecard_status": {
     "transactional_cas_writes": {
       "status": "satisfied",
-      "implementation": "services/governance/decision_journal.py: _tx_lock acquired for critical write operations; staged outbox and audit events are emitted before entry compare_and_set commit. In case of CAS retry or error, staged outbox and audit events are cleaned up via _delete_record, preventing failed patches from contaminating concurrent interleaved patches."
+      "implementation": "services/governance/decision_journal.py: _tx_lock acquired for critical write operations; idempotency succeeded reservation happens prior to entry store CAS commit. Staged outbox and audit events are emitted before entry compare_and_set commit. In case of CAS retry, failure, or synthetic error, staged outbox and audit events are cleanly rolled back and idempotency resets to pending, preventing failed mutations from leaking into concurrent successful patches."
     },
     "append_only_audit_with_diff": {
       "status": "satisfied",
@@ -23,7 +23,7 @@
     },
     "tenant_and_user_isolation": {
       "status": "satisfied",
-      "implementation": "Scoped get_entry, list_entries, create_entry, patch_entry, list_audit_events, and list_outbox_events across actor_id, user_id, and tenant_id. Unscoped adapter detail queries fail closed against private/tenant-scoped records; tenant-only list queries without actor do not disclose private records; patch with missing tenant on tenant-scoped record is rejected; cross-tenant patches and idempotency conflicts fail closed."
+      "implementation": "services/governance/decision_journal.py: Unified fail-closed _is_entry_accessible policy across get_entry, list_entries, DecisionJournalOwnerAdapter detail/list, DomainDecisionJournalReaderPort detail/list, and InMemoryOperationsConsultationPort. Tenant-scoped records strictly require matching tenant; tenant-only queries without actor deny private records; unscoped queries deny tenant-scoped records; legacy records with authored principal deny mismatched actors; and unauthored legacy records require explicit include_unscoped_legacy=True."
     },
     "caller_supplied_id_collision_rejection": {
       "status": "satisfied",
@@ -31,7 +31,7 @@
     },
     "controlled_legacy_migration": {
       "status": "satisfied",
-      "implementation": "services/governance/migrations/journal_migration.py: JournalMigrationEngine with SHA-256 checksums, author preservation, destination tenant collision detection (rejecting cross-tenant or different-principal collisions), dry-run mode, checkpointing bound to tenant/actor/entry ID with readback verification, verified source disposition via _dispose_source_record readback, destination legacy scoping for existing unscoped rows with verified tenant readback, and inventory/evidence reporting."
+      "implementation": "services/governance/migrations/journal_migration.py: JournalMigrationEngine verifies principal ownership (createdBy/actor_id/userId) and SHA-256 checksum parity before destination mutation or disposition. Unscoped destination collisions with mismatched author or content are strictly rejected as conflicts. Checkpoints are recorded durably with verified readback, and source records are only disposed after parity verification."
     },
     "unscoped_legacy_isolation": {
       "status": "satisfied",
@@ -83,23 +83,31 @@
       {
         "name": "services/governance/test_decision_journal.py",
         "runner": "python3 -m unittest",
-        "tests": 26,
+        "tests": 29,
         "failures": 0,
         "errors": 0,
         "status": "PASSED"
       },
       {
         "name": "services/control-plane/bff/governance/test_decision_journal_write_owner.py",
-        "runner": "python3 -m unittest",
-        "tests": 20,
+        "runner": "/tmp/bff-package-001-venv/bin/python -m unittest",
+        "tests": 22,
         "failures": 0,
         "errors": 0,
         "status": "PASSED"
       },
       {
         "name": "tests/agora_write_owner/",
-        "runner": "python3 -m pytest",
+        "runner": "/tmp/bff-package-001-venv/bin/python -m pytest",
         "tests": 19,
+        "failures": 0,
+        "errors": 0,
+        "status": "PASSED"
+      },
+      {
+        "name": "/tmp/journal-codex-review-63363d16b.py",
+        "runner": "GOVERNANCE_STORE_BACKEND=json PYTHONPATH=. /tmp/bff-package-001-venv/bin/python",
+        "tests": 5,
         "failures": 0,
         "errors": 0,
         "status": "PASSED"
@@ -129,7 +137,7 @@
         "status": "PASSED"
       }
     ],
-    "total_tests_passed": 86
+    "total_tests_passed": 96
   },
   "artifacts": [
     "services/governance/decision_journal.py",

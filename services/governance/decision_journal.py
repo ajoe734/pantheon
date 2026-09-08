@@ -400,6 +400,63 @@ def create_entry(
         return _project(canonical)
 
 
+def _is_entry_accessible(
+    record: Dict[str, Any],
+    *,
+    clean_tenant: Optional[str] = None,
+    target_actors: Optional[Set[str]] = None,
+    include_unscoped_legacy: bool = False,
+) -> bool:
+    """Fail-closed access control policy for decision journal entries.
+
+    - Tenant-scoped records require exact matching tenant_id. Unscoped queries
+      or mismatched tenants are strictly denied.
+    - Legacy records missing tenant_id are excluded when querying with a specific tenant
+      unless include_unscoped_legacy=True. Unscoped unauthored legacy records require
+      include_unscoped_legacy=True.
+    - Private visibility records require authenticated author match whenever tenant scope
+      is specified or when an actor identity is supplied. Mismatched actor is strictly denied.
+    """
+    record_tenant = str(record.get("tenant_id") or record.get("tenantId") or "").strip()
+    record_actors = {
+        str(record.get("createdBy") or "").strip(),
+        str(record.get("actor_id") or "").strip(),
+        str(record.get("userId") or "").strip(),
+        str(record.get("user_id") or "").strip(),
+    } - {""}
+    visibility = str(record.get("visibility") or "private").strip().lower()
+    actors = target_actors or set()
+
+    # 1. Tenant boundary
+    if record_tenant:
+        if clean_tenant is None or clean_tenant != record_tenant:
+            return False
+    else:
+        # Legacy row missing tenant
+        if clean_tenant is not None and not include_unscoped_legacy:
+            return False
+        if clean_tenant is None and not record_actors and not include_unscoped_legacy:
+            return False
+
+    # 2. Visibility & Principal / Author boundary
+    if visibility == "private":
+        if clean_tenant is not None:
+            # When querying within a tenant, private records strictly require matching author
+            if record_actors:
+                if not actors or not (record_actors & actors):
+                    return False
+            elif not include_unscoped_legacy:
+                return False
+        else:
+            # Unscoped query: if caller supplies actor, must match author; cannot cross-access
+            if actors and record_actors and not (record_actors & actors):
+                return False
+
+    return True
+
+
+
+
 def get_entry(
     stores: DecisionJournalStores,
     entry_id: str,
@@ -409,7 +466,7 @@ def get_entry(
     user_id: Optional[str] = None,
     include_unscoped_legacy: bool = False,
 ) -> Optional[Dict[str, Any]]:
-    """Retrieve a single decision journal entry by ID with scope enforcement."""
+    """Retrieve a single decision journal entry by ID with fail-closed scope enforcement."""
     clean_id = str(entry_id or "").strip()
     if not clean_id:
         return None
@@ -418,30 +475,16 @@ def get_entry(
     if record is None:
         return None
 
-    record_tenant = str(record.get("tenant_id") or record.get("tenantId") or "").strip()
     clean_tenant = str(tenant_id).strip() if tenant_id is not None else None
-
-    # Tenant isolation
-    if record_tenant:
-        if clean_tenant is not None and clean_tenant != record_tenant:
-            return None
-    else:
-        if clean_tenant is not None and not include_unscoped_legacy:
-            return None
-
-    # User private visibility isolation
-    visibility = str(record.get("visibility") or "private").strip().lower()
     target_actors = {str(actor_id or "").strip(), str(user_id or "").strip()} - {""}
-    record_actors = {
-        str(record.get("createdBy") or "").strip(),
-        str(record.get("actor_id") or "").strip(),
-        str(record.get("userId") or "").strip(),
-        str(record.get("user_id") or "").strip(),
-    } - {""}
 
-    if visibility == "private" and target_actors:
-        if not (record_actors & target_actors):
-            return None
+    if not _is_entry_accessible(
+        record,
+        clean_tenant=clean_tenant,
+        target_actors=target_actors,
+        include_unscoped_legacy=include_unscoped_legacy,
+    ):
+        return None
 
     return _project(record)
 
@@ -454,49 +497,20 @@ def list_entries(
     user_id: Optional[str] = None,
     include_unscoped_legacy: bool = False,
 ) -> List[Dict[str, Any]]:
-    """List decision journal entries with tenant and user isolation.
-
-    When querying with a specific tenant_id, legacy rows missing tenant scope
-    are excluded unless include_unscoped_legacy is True.
-    """
+    """List decision journal entries with fail-closed tenant and user isolation."""
     all_records = stores.entries.list_all()
     clean_tenant = str(tenant_id).strip() if tenant_id is not None else None
     target_actors = {str(actor_id or "").strip(), str(user_id or "").strip()} - {""}
 
     filtered: List[Dict[str, Any]] = []
     for record in all_records:
-        record_tenant = str(record.get("tenant_id") or record.get("tenantId") or "").strip()
-        record_actors = {
-            str(record.get("createdBy") or "").strip(),
-            str(record.get("actor_id") or "").strip(),
-            str(record.get("userId") or "").strip(),
-            str(record.get("user_id") or "").strip(),
-        } - {""}
-        visibility = str(record.get("visibility") or "private").strip().lower()
-
-        # An unscoped legacy row is one missing both tenant and author
-        is_legacy = (not record_tenant and not record_actors)
-
-        if clean_tenant is not None:
-            if record_tenant:
-                if record_tenant != clean_tenant:
-                    continue
-            else:
-                # Legacy row missing scope: do not default to globally visible when a specific tenant is requested
-                if not include_unscoped_legacy:
-                    continue
-        else:
-            # Caller has NO tenant scope: exclude any record that belongs to a specific tenant
-            if record_tenant:
-                continue
-            if is_legacy and not include_unscoped_legacy:
-                continue
-
-        # Tenant-only query without authenticated actor must not see private actor records
-        if clean_tenant is not None and visibility == "private" and record_tenant:
-            if not target_actors or not (record_actors & target_actors):
-                continue
-
+        if not _is_entry_accessible(
+            record,
+            clean_tenant=clean_tenant,
+            target_actors=target_actors,
+            include_unscoped_legacy=include_unscoped_legacy,
+        ):
+            continue
         filtered.append(_project(record))
 
     filtered.sort(key=lambda entry: (entry.get("updatedAt") or entry.get("createdAt") or ""), reverse=True)
@@ -727,43 +741,42 @@ def patch_entry(
                 }
                 stores.audit.put({"audit_id": audit_id, **audit})
 
-                # 3. Commit entry via CAS
+                # 3. Mark idempotency succeeded BEFORE committing entry to shared store
+                stores.idempotency.put(
+                    {
+                        "idempotency_key": scoped_idem_key,
+                        "raw_idempotency_key": idempotency_key,
+                        "tenant_id": clean_tenant,
+                        "actor_id": clean_actor,
+                        "user_id": clean_user,
+                        "request_hash": request_hash,
+                        "patch_id": audit_id,
+                        "status": _IDEM_STATUS_SUCCEEDED,
+                        "entry": after_projected,
+                        "audit": audit,
+                    }
+                )
+
+                # 4. Final atomic durable commit via CAS
                 updated, canonical = stores.entries.compare_and_set(before, candidate)
                 if updated:
                     after = canonical if canonical is not None else candidate
-                    break
+                    return {"status": "updated", "entry": after_projected, "audit": audit}
 
-                # CAS failed: clean up staged outbox and audit before next attempt
+                # CAS failed: clean up staged outbox, audit, and reset idempotency before next attempt
                 if event_id and stores.outbox is not None:
                     _delete_record(stores.outbox, event_id)
                     event_id = None
                 if audit_id and stores.audit is not None:
                     _delete_record(stores.audit, audit_id)
                     audit_id = None
+                stores.idempotency.put({**reservation, "status": _IDEM_STATUS_PENDING})
             else:
                 stores.idempotency.put({**reservation, "status": _IDEM_STATUS_FAILED})
                 raise DecisionJournalConcurrencyError(
                     f"decision journal entry {clean_id} could not be updated after "
                     f"{_MAX_CAS_ATTEMPTS} compare-and-set attempts"
                 )
-
-            # 4. Mark idempotency succeeded
-            stores.idempotency.put(
-                {
-                    "idempotency_key": scoped_idem_key,
-                    "raw_idempotency_key": idempotency_key,
-                    "tenant_id": clean_tenant,
-                    "actor_id": clean_actor,
-                    "user_id": clean_user,
-                    "request_hash": request_hash,
-                    "patch_id": audit_id,
-                    "status": _IDEM_STATUS_SUCCEEDED,
-                    "entry": after_projected,
-                    "audit": audit,
-                }
-            )
-
-            return {"status": "updated", "entry": after_projected, "audit": audit}
         except Exception:
             if event_id and stores.outbox is not None:
                 _delete_record(stores.outbox, event_id)

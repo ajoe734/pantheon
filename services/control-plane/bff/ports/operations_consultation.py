@@ -2592,6 +2592,7 @@ class DomainDecisionJournalReaderPort:
             tenant_id=tenant_id,
             actor_id=resolved_actor,
             user_id=resolved_user,
+            include_unscoped_legacy=kwargs.get("include_unscoped_legacy", False),
         )
 
 
@@ -3264,16 +3265,30 @@ class InMemoryOperationsConsultationPort:
         **kwargs: Any,
     ) -> List[Dict[str, Any]]:
         results = []
+        clean_tenant = str(tenant_id).strip() if tenant_id is not None else None
+        target_actors = {str(kwargs.get("actor_id") or "").strip(), str(user_id or "").strip()} - {""}
         for e in self.decision_journal_entries.values():
             rec_tenant = str(e.get("tenant_id") or e.get("tenantId") or "").strip()
-            if not rec_tenant and not include_unscoped_legacy:
-                continue
-            if tenant_id and rec_tenant and rec_tenant != tenant_id:
-                continue
+            if rec_tenant:
+                if clean_tenant is None or clean_tenant != rec_tenant:
+                    continue
+            else:
+                if not include_unscoped_legacy:
+                    continue
             vis = str(e.get("visibility") or "private").strip().lower()
             if vis == "private":
-                owner = str(e.get("createdBy") or e.get("created_by") or e.get("author") or e.get("actor_id") or e.get("user_id") or "").strip()
-                if user_id and owner and owner != user_id:
+                record_actors = {
+                    str(e.get("createdBy") or "").strip(),
+                    str(e.get("created_by") or "").strip(),
+                    str(e.get("author") or "").strip(),
+                    str(e.get("actor_id") or "").strip(),
+                    str(e.get("user_id") or "").strip(),
+                    str(e.get("userId") or "").strip(),
+                } - {""}
+                if record_actors:
+                    if not target_actors or not (record_actors & target_actors):
+                        continue
+                elif not include_unscoped_legacy:
                     continue
             results.append(dict(e))
         return results
@@ -3289,15 +3304,33 @@ class InMemoryOperationsConsultationPort:
         e = self.decision_journal_entries.get(entry_id)
         if not e:
             return None
+        clean_tenant = str(tenant_id).strip() if tenant_id is not None else None
+        target_actors = {str(kwargs.get("actor_id") or "").strip(), str(user_id or "").strip()} - {""}
+        include_unscoped_legacy = kwargs.get("include_unscoped_legacy", False)
         rec_tenant = str(e.get("tenant_id") or e.get("tenantId") or "").strip()
-        if tenant_id and rec_tenant and rec_tenant != tenant_id:
-            return None
+        if rec_tenant:
+            if clean_tenant is None or clean_tenant != rec_tenant:
+                return None
+        else:
+            if not include_unscoped_legacy:
+                return None
         vis = str(e.get("visibility") or "private").strip().lower()
         if vis == "private":
-            owner = str(e.get("createdBy") or e.get("created_by") or e.get("author") or e.get("actor_id") or e.get("user_id") or "").strip()
-            if user_id and owner and owner != user_id:
+            record_actors = {
+                str(e.get("createdBy") or "").strip(),
+                str(e.get("created_by") or "").strip(),
+                str(e.get("author") or "").strip(),
+                str(e.get("actor_id") or "").strip(),
+                str(e.get("user_id") or "").strip(),
+                str(e.get("userId") or "").strip(),
+            } - {""}
+            if record_actors:
+                if not target_actors or not (record_actors & target_actors):
+                    return None
+            elif not include_unscoped_legacy:
                 return None
         return dict(e)
+
 
 
 def create_operations_consultation_port(

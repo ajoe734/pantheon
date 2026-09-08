@@ -432,7 +432,7 @@ class TestDecisionJournalGovernanceOwner(unittest.TestCase):
 
         # Re-build stores pointing to the exact same path (fresh process simulation)
         fresh_stores = build_decision_journal_stores(self.tmp_dir.name)
-        fresh_entry = get_entry(fresh_stores, "dje-restart-01", tenant_id="tenant-gamma")
+        fresh_entry = get_entry(fresh_stores, "dje-restart-01", tenant_id="tenant-gamma", actor_id="operator-chloe")
         self.assertIsNotNone(fresh_entry)
         self.assertEqual(fresh_entry["title"], "Durable Persistence")
         self.assertEqual(fresh_entry["tags"], ["restart", "proof"])
@@ -474,7 +474,7 @@ class TestDecisionJournalGovernanceOwner(unittest.TestCase):
                     patched_at="2026-09-08T00:01:00Z",
                 )
         fresh = build_decision_journal_stores(self.tmp_dir.name)
-        entry = get_entry(fresh, "dje-fail-audit", tenant_id="tenant-alpha")
+        entry = get_entry(fresh, "dje-fail-audit", tenant_id="tenant-alpha", actor_id="alice")
         self.assertIsNotNone(entry)
         self.assertEqual(entry["version"], 1)
         self.assertEqual(entry["title"], "Initial Title")
@@ -502,7 +502,7 @@ class TestDecisionJournalGovernanceOwner(unittest.TestCase):
                     patched_at="2026-09-08T00:01:00Z",
                 )
         fresh = build_decision_journal_stores(self.tmp_dir.name)
-        entry = get_entry(fresh, "dje-fail-patch-outbox", tenant_id="tenant-alpha")
+        entry = get_entry(fresh, "dje-fail-patch-outbox", tenant_id="tenant-alpha", actor_id="alice")
         self.assertIsNotNone(entry)
         self.assertEqual(entry["version"], 1)
         self.assertEqual(entry["title"], "Initial Title")
@@ -547,7 +547,7 @@ class TestDecisionJournalGovernanceOwner(unittest.TestCase):
             dry_run=False,
             dispose_source=True,
         )
-        entry = get_entry(self.stores, "old-agora-entry", tenant_id="tenant-alpha")
+        entry = get_entry(self.stores, "old-agora-entry", tenant_id="tenant-alpha", actor_id="alice-agora")
         self.assertIsNotNone(entry)
         self.assertEqual(entry["createdBy"], "alice-agora")
         self.assertEqual(report.total_migrated, 1)
@@ -630,7 +630,7 @@ class TestDecisionJournalGovernanceOwner(unittest.TestCase):
                     patched_at="2026-09-08T00:01:00Z",
                 )
         fresh = build_decision_journal_stores(self.tmp_dir.name)
-        entry = get_entry(fresh, "dje-cas-conflict", tenant_id="tenant-alpha")
+        entry = get_entry(fresh, "dje-cas-conflict", tenant_id="tenant-alpha", actor_id="alice")
         self.assertEqual(entry["version"], 1)
         self.assertEqual(entry["title"], "Base Title")
 
@@ -823,6 +823,75 @@ class TestDecisionJournalGovernanceOwner(unittest.TestCase):
         self.assertEqual(len(report.items), 1)
         self.assertFalse(report.items[0]["disposed"])
 
+    def test_legacy_author_without_tenant_not_globally_visible(self) -> None:
+        self.stores.entries.put(
+            {"id": "legacy", "title": "legacy", "body": "private", "createdBy": "alice", "visibility": "private"}
+        )
+        self.assertEqual(list_entries(self.stores, actor_id="bob"), [])
+
+    def test_migration_unscoped_destination_collision_preserves_author_and_source(self) -> None:
+        old = {"id": "legacy", "title": "bob data", "body": "private bob", "createdBy": "bob", "visibility": "private"}
+        self.stores.entries.put(old)
+        source = {"id": "legacy", "title": "alice data", "body": "private alice", "createdBy": "alice", "visibility": "private"}
+        source_store = build_decision_journal_stores(self.tmp_dir.name + "/source").entries
+        source_store.put(source)
+        report = JournalMigrationEngine(self.stores).run_migration(
+            [source],
+            target_tenant_id="tenant-alpha",
+            dry_run=False,
+            dispose_source=True,
+            source_store=source_store,
+        )
+        self.assertEqual(report.total_conflicts, 1, str(report.to_dict()))
+        self.assertEqual(self.stores.entries.get("legacy"), old)
+        self.assertIsNotNone(source_store.get("legacy"))
+
+    def test_idempotency_failure_cannot_survive_concurrent_success(self) -> None:
+        create_entry(
+            self.stores,
+            entry_id="e-idem-fail",
+            title="original",
+            body="original",
+            actor_id="alice",
+            tenant_id="tenant-alpha",
+            created_at="2026-09-08T00:00:00Z",
+        )
+        second = build_decision_journal_stores(self.tmp_dir.name)
+        original_put = self.stores.idempotency.put
+
+        def fail_success(record):
+            if record.get("status") == "succeeded":
+                patch_entry(
+                    second,
+                    "e-idem-fail",
+                    patch={"title": "successful B"},
+                    actor_id="alice",
+                    tenant_id="tenant-alpha",
+                    idempotency_key="key-success-b",
+                    request_hash="hash-success-b",
+                    patched_at="2026-09-08T00:01:00Z",
+                )
+                raise OSError("synthetic idempotency commit failure")
+            return original_put(record)
+
+        with unittest.mock.patch.object(self.stores.idempotency, "put", side_effect=fail_success):
+            with self.assertRaises(OSError):
+                patch_entry(
+                    self.stores,
+                    "e-idem-fail",
+                    patch={"body": "failed A"},
+                    actor_id="alice",
+                    tenant_id="tenant-alpha",
+                    idempotency_key="key-fail-a",
+                    request_hash="hash-fail-a",
+                    patched_at="2026-09-08T00:01:00Z",
+                )
+        fresh = build_decision_journal_stores(self.tmp_dir.name)
+        row = get_entry(fresh, "e-idem-fail", tenant_id="tenant-alpha", actor_id="alice")
+        self.assertEqual(row["title"], "successful B")
+        self.assertEqual(row["body"], "original", "failed A remains in B while its audit/outbox were deleted")
+
 
 if __name__ == "__main__":
     unittest.main()
+
