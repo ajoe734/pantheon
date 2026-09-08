@@ -24,6 +24,8 @@ class WorkshopMessageRequest(BaseModel):
 
     content: str = Field(min_length=1)
     attachment_refs: List[str] = Field(default_factory=list)
+    trace_id: Optional[str] = None
+    correlation_id: Optional[str] = None
 
 
 class WorkshopReadinessReassessRequest(BaseModel):

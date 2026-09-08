@@ -112,6 +112,8 @@ def test_complete_agora_product_journey(temp_workspace: Path) -> None:
             "actor_type": "user",
             "event_type": "user_message",
             "payload": msg_payload,
+            "trace_id": trace_id,
+            "correlation_id": trace_id,
             "created_at": _utc_now(),
         },
     )
@@ -181,7 +183,9 @@ def test_complete_agora_product_journey(temp_workspace: Path) -> None:
             "plan_id": plan_id,
             "tenant_id": tenant_id,
             "user_id": user_id,
+            "execution_status": "succeeded",
             "status": "completed",
+            "backend": {"mode": "real"},
             "metrics": {"sharpe_ratio": 2.1, "max_drawdown": 0.065, "profit_factor": 1.78},
             "artifact_refs": [f"pantheon://artifacts/research/{run_id}/model.bin"],
             "artifact_checksum": artifact_checksum,
@@ -189,6 +193,60 @@ def test_complete_agora_product_journey(temp_workspace: Path) -> None:
         }
     )
     assert run["status"] == "completed"
+
+    # Emit authentic ResearchExecutionReceipt (SD §6.2)
+    from agora.research.receipt import ResearchExecutionReceipt, resolve_run_provenance
+
+    receipt_id = f"rcpt-{uuid.uuid4().hex[:10]}"
+    research_receipt = ResearchExecutionReceipt(
+        receipt_id=receipt_id,
+        run_id=run_id,
+        executor="qlib_executor",
+        mode="real",
+        correlation_id=trace_id,
+        completed_at=_utc_now(),
+        artifact_digest=artifact_checksum,
+        backend_reference="qlib://runs/42",
+    )
+    research_store.record_execution_receipt(research_receipt.to_dict())
+
+    # Server-side provenance resolution verifies owner, correlation, and terminal state
+    prov, resolved_receipt = resolve_run_provenance(
+        research_store,
+        run,
+        expected_correlation_id=trace_id,
+        expected_owner="qlib_executor",
+    )
+    assert prov == "real"
+    assert resolved_receipt is not None
+    assert resolved_receipt["receipt_id"] == receipt_id
+
+    # Negative controls: correlation mismatch downgrades to unavailable
+    prov_bad_corr, _ = resolve_run_provenance(
+        research_store,
+        run,
+        expected_correlation_id="trace-wrong-id",
+        expected_owner="qlib_executor",
+    )
+    assert prov_bad_corr == "unavailable"
+
+    # Negative controls: owner mismatch downgrades to unavailable
+    prov_bad_owner, _ = resolve_run_provenance(
+        research_store,
+        run,
+        expected_correlation_id=trace_id,
+        expected_owner="wrong_executor",
+    )
+    assert prov_bad_owner == "unavailable"
+
+    # Negative controls: unreceipted real run downgrades to simulation
+    unreceipted_run = dict(run, run_id=f"rrun-unreceipted-{uuid.uuid4().hex[:6]}")
+    prov_unreceipted, _ = resolve_run_provenance(
+        research_store,
+        unreceipted_run,
+    )
+    assert prov_unreceipted == "simulation"
+    lineage["receipt_id"] = receipt_id
 
     pool = research_store.create_candidate_pool(
         {
@@ -310,38 +368,68 @@ def test_complete_agora_product_journey(temp_workspace: Path) -> None:
     }
     tr_store.upsert_intent(intent_record)
     assert intent_record["has_broker_order_authority"] is False
+
+    # One Trading Room decision transaction writes:
+    # - canonical DecisionEvent;
+    # - journal/audit reference; and
+    # - exactly one outbox handoff to the selected policy or consultation owner (SD §6.3).
+    handoff_id = f"handoff-{uuid.uuid4().hex[:10]}"
+    handoff = tr_store.upsert_handoff({
+        "handoff_id": handoff_id,
+        "intent_id": intent_id,
+        "state": "submitted",
+        "no_order_route_proof": "agora_request_only_no_order_route",
+        "target_owner": "policy_learning",
+        "correlation_id": trace_id,
+        "submitted_at": _utc_now(),
+    })
+    assert handoff["handoff_id"] == handoff_id
+
+    # Retries reuse the same IDs; assert no second decision or handoff
+    with pytest.raises(ValueError, match="Duplicate handoff_id"):
+        tr_store.upsert_handoff({
+            "handoff_id": handoff_id,
+            "intent_id": intent_id,
+            "state": "submitted",
+            "no_order_route_proof": "agora_request_only_no_order_route",
+        })
+
     lineage["decision_event_id"] = decision_event_id
     lineage["trading_intent_id"] = intent_id
+    lineage["handoff_id"] = handoff_id
 
     # =========================================================================
     # Stage 7: Strategy Performance Index & Governed Suggestions
     # =========================================================================
-    from agora.performance.models import AdjustmentSuggestion, SuggestionProvenance
+    # Telemetry-triggered suggestion produced via canonical consumer (SD §6.4, OP-G02)
+    from agora.performance.consumer import consume_telemetry_outcome
     from agora.performance.store import PerformanceSuggestionStore
 
     perf_db = str(temp_workspace / "perf.sqlite3")
     perf_store = PerformanceSuggestionStore(path=perf_db)
-    sugg_id = f"sugg-{uuid.uuid4().hex[:10]}"
 
-    suggestion = AdjustmentSuggestion(
-        suggestion_id=sugg_id,
-        strategy_id=strategy_id,
-        period="latest",
-        status="proposed",
-        version=1,
-        title="Tighten Max Position Hold Time",
-        rationale="Reduce overnight hold window from 8h to 6.5h based on drift decay curve",
-        provenance=SuggestionProvenance(
-            source_id="gov-perf-v2.1",
-            source_type="rule_engine",
-            produced_at=_utc_now(),
-            evidence_refs=[f"pantheon://trade-journey/{strategy_id}/drift-decay"],
-        ),
-        as_of=_utc_now(),
-    )
-    perf_store.upsert_suggestion(tenant_id=tenant_id, owner_user_id=user_id, suggestion=suggestion)
+    telemetry_event = {
+        "tenant_id": tenant_id,
+        "owner_user_id": user_id,
+        "strategy_id": strategy_id,
+        "outcome_type": "drawdown_breach",
+        "period": "latest",
+        "correlation_id": trace_id,
+        "title": "Tighten Max Position Hold Time",
+        "rationale": "Reduce overnight hold window from 8h to 6.5h based on drift decay curve",
+        "metrics": {"current_drawdown": 0.082, "threshold": 0.065},
+        "source_id": "gov-perf-v2.1",
+        "source_type": "telemetry_engine",
+        "evidence_refs": [f"pantheon://trade-journey/{strategy_id}/drift-decay"],
+        "as_of": _utc_now(),
+    }
+    suggestion = consume_telemetry_outcome(telemetry_event, store=perf_store, utc_now=_utc_now())
+    sugg_id = suggestion.suggestion_id
+    assert suggestion.strategy_id == strategy_id
+    assert suggestion.correlation_id == trace_id
+    assert suggestion.provenance.correlation_id == trace_id
 
-    receipt, replayed = perf_store.act(
+    act_receipt, replayed = perf_store.act(
         tenant_id=tenant_id,
         owner_user_id=user_id,
         strategy_id=strategy_id,
@@ -353,7 +441,7 @@ def test_complete_agora_product_journey(temp_workspace: Path) -> None:
         idempotency_key=f"idemp-perf-{uuid.uuid4().hex[:8]}",
         recorded_at=_utc_now(),
     )
-    assert receipt["status"] == "applied"
+    assert act_receipt["status"] == "applied"
     assert replayed is False
     lineage["suggestion_id"] = sugg_id
 
@@ -526,8 +614,23 @@ def test_complete_agora_product_journey(temp_workspace: Path) -> None:
     assert lineage["strategy_id"] == strategy_id
     assert lineage["version_id"] == version_id
     assert lineage["plan_id"] == plan_id
+    assert lineage["run_id"] == run_id
+    assert lineage["receipt_id"] == receipt_id
+    assert lineage["candidate_pool_id"] == pool_id
     assert lineage["workspace_id"] == workspace_id
     assert lineage["decision_event_id"] == decision_event_id
     assert lineage["trading_intent_id"] == intent_id
+    assert lineage["handoff_id"] == handoff_id
+    assert lineage["suggestion_id"] == sugg_id
     assert lineage["policy_candidate_id"] == pl_candidate_id
     assert lineage["consultation_memo_id"] == memo_id
+
+    # Single continuous correlation chain verified across every stage
+    assert lineage["trace_id"] == trace_id
+    assert event["trace_id"] == trace_id
+    assert research_receipt.correlation_id == trace_id
+    assert handoff["correlation_id"] == trace_id
+    assert suggestion.correlation_id == trace_id
+    assert suggestion.provenance.correlation_id == trace_id
+    assert consult_req.trace_id == trace_id
+    assert memo.trace_id == trace_id
