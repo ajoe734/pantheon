@@ -231,20 +231,26 @@ class AgoraDatasetStore:
         self._inbox_table = f'{q}."agora_evidence_inbox"'
         self._records_table = f'{q}."agora_dataset_records"'
         self._handoffs_table = f'{q}."agora_evidence_handoffs"'
-        self._bootstrap()
-        _logger.info("Agora dataset store initialized backend=postgres schema=%s", self.schema)
+        self._bootstrapped = False
+        try:
+            self._bootstrap()
+            _logger.info("Agora dataset store initialized backend=postgres schema=%s", self.schema)
+        except Exception as exc:
+            _logger.warning("Agora dataset store deferred bootstrap: %s", exc)
 
-    def _connect(self) -> Any:
+    def _connect(self, *, bootstrap: bool = True) -> Any:
         try:
             import psycopg  # type: ignore[import]
         except ImportError as exc:
             raise RuntimeError("psycopg is required for Postgres Agora dataset store") from exc
+        if bootstrap and not self._bootstrapped:
+            self._bootstrap()
         return psycopg.connect(self.dsn)
 
     def _bootstrap(self) -> None:
         """Create the v2 scoped schema and migrate prior tables."""
 
-        with self._connect() as conn:
+        with self._connect(bootstrap=False) as conn:
             conn.execute("SELECT pg_advisory_xact_lock(hashtext(%s))", ("agora_dataset_extraction_v2",))
             try:
                 conn.execute(f'CREATE SCHEMA IF NOT EXISTS "{self.schema}"')
@@ -431,6 +437,7 @@ class AgoraDatasetStore:
                 f"CREATE UNIQUE INDEX IF NOT EXISTS uq_agora_handoff_scope_version "
                 f"ON {self._handoffs_table} (tenant_id, user_id, dataset_version_id)"
             )
+        self._bootstrapped = True
 
     @staticmethod
     def _constraint_names(conn: Any, table: str, constraint_type: str) -> List[str]:
@@ -1158,6 +1165,111 @@ class AgoraDatasetStore:
             ).fetchone()
             return self._dataset_row(row) if row else None
 
+    def save_record(self, record: DatasetRecord) -> DatasetRecord:
+        """Persist a DatasetRecord directly into the durable store."""
+        key = _scope_key(record.tenant_id, record.user_id, record.evidence_id)
+        if self.backend == "memory":
+            with self._lock:
+                self._records[key] = record
+                return record
+
+        with self._connect() as conn:
+            conn.execute(
+                f"""
+                INSERT INTO {self._records_table} (
+                    evidence_id, dataset_version_id, dataset_kind, interaction_kind,
+                    persona_id, session_id, tenant_id, user_id, content, source_refs,
+                    learning_eligible, captured_at, extracted_at, version,
+                    consent_verified, redaction_applied, purpose, retention_days,
+                    admission_receipt_id
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                ON CONFLICT (tenant_id, user_id, evidence_id) DO UPDATE SET
+                    content = EXCLUDED.content,
+                    dataset_version_id = EXCLUDED.dataset_version_id,
+                    extracted_at = EXCLUDED.extracted_at
+                """,
+                (
+                    record.evidence_id,
+                    record.dataset_version_id,
+                    record.dataset_kind.value if hasattr(record.dataset_kind, "value") else str(record.dataset_kind),
+                    record.interaction_kind.value if hasattr(record.interaction_kind, "value") else str(record.interaction_kind),
+                    record.persona_id,
+                    record.session_id,
+                    record.tenant_id,
+                    record.user_id,
+                    json.dumps(record.content) if isinstance(record.content, (dict, list)) else record.content,
+                    json.dumps(record.source_refs) if isinstance(record.source_refs, (dict, list)) else record.source_refs,
+                    record.learning_eligible,
+                    record.captured_at,
+                    record.extracted_at,
+                    record.version,
+                    record.consent_verified,
+                    record.redaction_applied,
+                    record.purpose,
+                    record.retention_days,
+                    record.admission_receipt_id,
+                ),
+            )
+            return record
+
+    def get_by_ref(
+        self,
+        ref: str,
+        *,
+        tenant_id: Optional[str] = None,
+        user_id: Optional[str] = None,
+    ) -> Optional[DatasetRecord]:
+        """Look up a record by evidence_id, dataset_version_id, or full dataset ref."""
+        clean_ref = str(ref or "").strip()
+        if not clean_ref:
+            return None
+        stripped = clean_ref.split(":", 1)[-1] if ":" in clean_ref else clean_ref
+        t = str(tenant_id or "").strip()
+        u = str(user_id or "").strip()
+
+        if self.backend == "memory":
+            with self._lock:
+                if t and u:
+                    rec = self._records.get(_scope_key(t, u, clean_ref))
+                    if rec is not None:
+                        return rec
+                    if stripped != clean_ref:
+                        rec = self._records.get(_scope_key(t, u, stripped))
+                        if rec is not None:
+                            return rec
+                for r in self._records.values():
+                    if t and r.tenant_id != t:
+                        continue
+                    if u and r.user_id != u:
+                        continue
+                    if r.evidence_id in (clean_ref, stripped) or r.dataset_version_id in (clean_ref, stripped):
+                        return r
+            return None
+
+        with self._connect() as conn:
+            where_parts = ["(evidence_id = %s OR dataset_version_id = %s OR evidence_id = %s OR dataset_version_id = %s)"]
+            params: List[Any] = [clean_ref, clean_ref, stripped, stripped]
+            if t:
+                where_parts.append("tenant_id = %s")
+                params.append(t)
+            if u:
+                where_parts.append("user_id = %s")
+                params.append(u)
+            row = conn.execute(
+                f"""
+                SELECT evidence_id, dataset_version_id, dataset_kind, interaction_kind,
+                       persona_id, session_id, tenant_id, user_id, content, source_refs,
+                       learning_eligible, captured_at, extracted_at, version,
+                       consent_verified, redaction_applied, purpose, retention_days,
+                       admission_receipt_id
+                FROM {self._records_table}
+                WHERE {" AND ".join(where_parts)}
+                LIMIT 1
+                """,
+                params,
+            ).fetchone()
+            return self._dataset_row(row) if row else None
+
     def get_inbox_entry(self, evidence_id: str, *, tenant_id: str, user_id: str) -> Optional[Dict[str, Any]]:
         """Return one raw inbox entry by scoped evidence_id."""
         key = _scope_key(tenant_id, user_id, evidence_id)
@@ -1185,6 +1297,12 @@ class AgoraDatasetStore:
 
     @staticmethod
     def _dataset_row(row: Any) -> DatasetRecord:
+        content_val = row[8]
+        if isinstance(content_val, str):
+            try:
+                content_val = json.loads(content_val)
+            except Exception:
+                pass
         return DatasetRecord(
             evidence_id=row[0],
             dataset_version_id=row[1],
@@ -1194,8 +1312,8 @@ class AgoraDatasetStore:
             session_id=row[5],
             tenant_id=row[6],
             user_id=row[7],
-            content=row[8],
-            source_refs=row[9],
+            content=content_val if isinstance(content_val, dict) else {},
+            source_refs=row[9] if isinstance(row[9], list) else (json.loads(row[9]) if isinstance(row[9], str) else []),
             learning_eligible=row[10],
             captured_at=row[11],
             extracted_at=row[12],

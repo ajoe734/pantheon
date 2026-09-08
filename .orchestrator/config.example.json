@@ -241,6 +241,8 @@
       "account": "codex1",
       "codex": {
         "cli": "codex",
+        "model": "gpt-6-astra",
+        "model_reasoning_effort": "high",
         "ask_for_approval": "never",
         "sandbox_mode": "workspace-write",
         "dangerously_bypass": true

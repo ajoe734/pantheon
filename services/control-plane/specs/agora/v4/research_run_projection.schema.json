@@ -222,6 +222,15 @@
     "updated_at": {
       "type": "string",
       "format": "date-time"
+    },
+    "provenance": {
+      "type": "string",
+      "enum": [
+        "real",
+        "simulation",
+        "fixture",
+        "unavailable"
+      ]
     }
   },
   "definitions": {

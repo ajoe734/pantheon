@@ -1522,6 +1522,8 @@ EOF
                         "codex": {
                             "codex_home": str(home),
                             "api_key_env": "OPENAI_API_KEY_CODEX2",
+                            "model": "gpt-6-astra",
+                            "model_reasoning_effort": "high",
                         }
                     }
                 }
@@ -1538,6 +1540,8 @@ EOF
         command = run_command.call_args.args[0]
         self.assertEqual(command[:2], ["/usr/bin/codex", "exec"])
         self.assertIn("--skip-git-repo-check", command)
+        self.assertEqual(command[command.index("--model") + 1], "gpt-6-astra")
+        self.assertIn('model_reasoning_effort="high"', command)
         env = run_command.call_args.kwargs["env"]
         self.assertEqual(env["CODEX_HOME"], str(home))
         self.assertNotIn("CODEX_SESSION_ID", env)

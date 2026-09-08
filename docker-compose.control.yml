@@ -215,6 +215,7 @@ services:
       INCIDENT_STORE_BACKEND: ${INCIDENT_STORE_BACKEND:-postgres}
       INCIDENT_STORE_DSN: ${INCIDENT_STORE_DSN:-}
       PANTHEON_NATS_URL: ${PANTHEON_NATS_URL:-nats://nats:4222}
+      PANTHEON_BFF_AGORA_PERFORMANCE_STORE_PATH: ${PANTHEON_BFF_AGORA_PERFORMANCE_STORE_PATH:-/data/incidents/agora_performance.sqlite3}
     volumes:
       - incident-data:/data/incidents
     depends_on:

@@ -522,17 +522,35 @@ def test_end_to_end_outbox_consumer_dispatch(monkeypatch: pytest.MonkeyPatch) ->
     dispatch_data = res_dispatch.json()["data"]
     run_id = dispatch_data["run_id"]
 
-    # 4. Verify research run status via GET endpoint (should be succeeded after consumer drain)
+    # 4. Verify research run status via GET endpoint is queued before worker processing
     res_run = client.get(
         f"/bff/agora/research-runs/{run_id}",
         headers=_headers(),
     )
     assert res_run.status_code == 200, res_run.text
     run_info = res_run.json()
-    assert run_info["execution_status"] == "succeeded"
-    assert run_info["outcome"] == "pass"
-    assert run_info["backend"]["mode"] == "real"
-    assert len(run_info["artifact_refs"]) == 1
+    assert run_info["execution_status"] == "queued"
+
+    # 5. Execute actual worker to drain outbox
+    from agora.interaction.worker import AgoraInteractionWorker
+    worker = AgoraInteractionWorker(
+        research_store=bff_main.research_store,
+        worker_id="test-worker-e2e",
+    )
+    drained = worker.drain_research_outbox(tenant_id=_TENANT_A, user_id="agora-user-a")
+    assert drained >= 1
+
+    # 6. Verify research run status via GET endpoint is now succeeded after worker drain
+    res_run_after = client.get(
+        f"/bff/agora/research-runs/{run_id}",
+        headers=_headers(),
+    )
+    assert res_run_after.status_code == 200, res_run_after.text
+    run_info_after = res_run_after.json()
+    assert run_info_after["execution_status"] == "succeeded"
+    assert run_info_after["outcome"] == "pass"
+    assert run_info_after["backend"]["mode"] == "real"
+    assert len(run_info_after["artifact_refs"]) == 1
 
 
 def test_drain_outbox_lease_conflict_and_duplicate_idempotency() -> None:
