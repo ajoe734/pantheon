@@ -18,9 +18,12 @@
     "projector_architecture": "TwelveLoopTruthProjector consumes canonical stimulus, terminal, and next_consumer receipts to persist (release_id, correlation_id, loop_id) observations. Terminal plus next-consumer receipt is strictly required for loop completion; unreceipted or pending next_consumer receipts remain open. Deterministic reduction ensures incremental stream ingestion identically equals rebuild from raw receipts across all arrival orderings. Backfill receipts cannot overwrite newer live truth. Downstream next-consumer failure or rejection fails the loop and prevents false completion. Read operations dynamically recompute freshness against current time. Static loop registry supplies labels and order only and never sets runtime completion.",
     "receipt_storage": "002_create_twelve_loop_truth_schema.sql establishes loop_truth_projection schema with loop_receipts (immutable source receipt store) and twelve_loop_observations (projected truth table). twelve_loop_truth.py exposes TwelveLoopStore, MemoryTwelveLoopStore, and PostgresTwelveLoopStore supporting synchronous and async PostgreSQL persistence and fresh instance reload.",
     "invariants_enforced": [
-      "Terminal plus next-consumer receipt is required for completion (absent next receipt = open)",
+      "Terminal plus next-consumer receipt is required for completion (absent, pending, or unacknowledged next receipt = open)",
       "Downstream next-consumer rejection or failure prevents false completion and marks loop failed",
       "Incremental output strictly equals rebuild output via deterministic reduction (_reduce_key)",
+      "Causation continuity binds stimulus, terminal, and next-consumer receipts; mismatched or cross-chain causation prevents false completion",
+      "Persistence failure on store write is explicit and retryable without polluting in-memory idempotency cache",
+      "Freshness and provenance are derived strictly from accepted evidence receipts; ignored backfill cannot refresh live observation",
       "Backfill never overwrites a newer live observation and cannot complete a live stimulus",
       "Static registry supplies labels and order only; registry maturity never sets runtime completion",
       "All writes are idempotent by receipt identity",
@@ -35,19 +38,19 @@
   "verification": {
     "commands": [
       {
-        "command": "PYTHONPATH=. /home/chloe_ong_dev_cctech_support_com/code/pantheon/.venv/bin/pytest services/control-plane/bff/management_read_models/test_twelve_loop_projector.py -vv",
-        "result": "17 passed",
-        "executed": 17,
-        "collected": 17
+        "command": "PYTHONPATH=. /tmp/pantheon-worker-worktrees/pantheon/loop-truth-001/.venv-pantheon/bin/python3 -m pytest services/control-plane/bff/management_read_models/test_twelve_loop_projector.py -vv",
+        "result": "23 passed",
+        "executed": 23,
+        "collected": 23
       },
       {
-        "command": "PYTHONPATH=. /home/chloe_ong_dev_cctech_support_com/code/pantheon/.venv/bin/pytest services/control-plane/bff/migrations/test_twelve_loop_truth.py -vv",
+        "command": "PYTHONPATH=. /tmp/pantheon-worker-worktrees/pantheon/loop-truth-001/.venv-pantheon/bin/python3 -m pytest services/control-plane/bff/migrations/test_twelve_loop_truth.py -vv",
         "result": "3 passed (including real PostgreSQL reload and interface check)",
         "executed": 3,
         "collected": 3
       },
       {
-        "command": "PYTHONPATH=services/control-plane/bff /home/chloe_ong_dev_cctech_support_com/code/pantheon/.venv/bin/pytest services/control-plane/bff/tests/test_management_read_models_router.py -q",
+        "command": "PYTHONPATH=services/control-plane/bff /tmp/pantheon-worker-worktrees/pantheon/loop-truth-001/.venv-pantheon/bin/python3 -m pytest services/control-plane/bff/tests/test_management_read_models_router.py -q",
         "result": "43 passed, 137 warnings",
         "executed": 43,
         "collected": 43
@@ -72,7 +75,7 @@
     "postgresql_migration_and_store_durability": true
   },
   "review": {
-    "reviewer": "Claude",
+    "reviewer": "Codex",
     "decision": "pending independent exact-head review"
   }
 }

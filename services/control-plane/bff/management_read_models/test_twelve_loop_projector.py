@@ -149,6 +149,7 @@ class TestTwelveLoopProjectorInvariants:
             release_id="rel-20260908",
             owner="persona-teaching-controller",
             provenance="live",
+            status="accepted",
             observed_at=now + timedelta(seconds=2),
         )
 
@@ -281,6 +282,7 @@ class TestTwelveLoopProjectorInvariants:
             release_id="rel-v1",
             owner="capital pool execution",
             provenance="live",
+            status="accepted",
             observed_at=now + timedelta(seconds=3),
         )
 
@@ -481,7 +483,14 @@ class TestTwelveLoopProjectorReviewRegressions:
     """Independent review regression coverage for deterministic reduction, durability, and freshness."""
 
     @staticmethod
-    def _receipt(rid: str, kind: str, status: str = "", provenance: str = "live", offset: float = 0.0) -> CanonicalLoopReceipt:
+    def _receipt(
+        rid: str,
+        kind: str,
+        status: str = "",
+        provenance: str = "live",
+        offset: float = 0.0,
+        cause: Optional[str] = None,
+    ) -> CanonicalLoopReceipt:
         now = datetime.now(timezone.utc)
         return CanonicalLoopReceipt(
             receipt_id=rid,
@@ -492,6 +501,7 @@ class TestTwelveLoopProjectorReviewRegressions:
             owner="source-owner",
             provenance=provenance,  # type: ignore[arg-type]
             status=status,
+            causation_id=cause,
             observed_at=now + timedelta(seconds=offset),
         )
 
@@ -547,3 +557,122 @@ class TestTwelveLoopProjectorReviewRegressions:
         with patch("services.control_plane.bff.management_read_models.twelve_loop_projector.datetime", Later):
             row = p.project_twelve_canonical_loops("review-release", "review-corr")[0]
         assert row["freshness_status"] == "stale"
+
+    def test_pending_consumer_does_not_complete(self) -> None:
+        """P1: Next-consumer status pending or unknown keeps observation open."""
+        p = TwelveLoopTruthProjector()
+        p.ingest_receipts([
+            self._receipt("s", "stimulus"),
+            self._receipt("t", "terminal", "completed", cause="s"),
+            self._receipt("n", "next_consumer", "pending", cause="t"),
+        ])
+        obs = p.get_observation("review-release", "review-corr", 1)
+        assert obs is not None
+        assert obs.status == "open"
+        assert "awaiting acknowledgement or completion" in (obs.degradation_reason or "")
+
+    def test_unrelated_causation_does_not_complete(self) -> None:
+        """P1: Causation continuity binds receipts to the selected causal chain."""
+        p = TwelveLoopTruthProjector()
+        p.ingest_receipts([
+            self._receipt("s", "stimulus"),
+            self._receipt("t", "terminal", "completed", cause="different-stimulus"),
+            self._receipt("n", "next_consumer", "accepted", cause="different-terminal"),
+        ])
+        obs = p.get_observation("review-release", "review-corr", 1)
+        assert obs is not None
+        assert obs.status != "complete"
+        assert obs.status == "open"
+
+    def test_retry_chain_causation_continuity(self) -> None:
+        """P1: Retry chain correctly binds retry terminal and consumer; aborted consumer cannot satisfy retry."""
+        p = TwelveLoopTruthProjector()
+        stimulus = self._receipt("s", "stimulus", offset=0)
+        t1_failed = self._receipt("t1", "terminal", "failed", offset=1, cause="s")
+        n1_aborted = self._receipt("n1", "next_consumer", "rejected", offset=2, cause="t1")
+        t2_retry = self._receipt("t2", "terminal", "completed", offset=3, cause="s")
+
+        # Ingest up to retry terminal without retry consumer: must remain open
+        p.ingest_receipts([stimulus, t1_failed, n1_aborted, t2_retry])
+        obs_mid = p.get_observation("review-release", "review-corr", 1)
+        assert obs_mid is not None
+        assert obs_mid.terminal_id == "t2"
+        assert obs_mid.status == "open"
+        assert obs_mid.next_consumer_receipt_id is None
+
+        # Ingest matching consumer for retry terminal: completes
+        n2_retry = self._receipt("n2", "next_consumer", "accepted", offset=4, cause="t2")
+        p.ingest_receipt(n2_retry)
+        obs_done = p.get_observation("review-release", "review-corr", 1)
+        assert obs_done is not None
+        assert obs_done.terminal_id == "t2"
+        assert obs_done.next_consumer_receipt_id == "n2"
+        assert obs_done.status == "complete"
+
+    def test_failed_persistence_can_be_retried_before_reporting_durable_truth(self) -> None:
+        """P1: Store outage raises explicit retryable exception; retry succeeds and fresh projector reloads."""
+        class InitiallyOffline(MemoryTwelveLoopStore):
+            offline = True
+            def record_receipt(self, r: CanonicalLoopReceipt) -> None:
+                if self.offline:
+                    raise ConnectionError("review simulated database outage")
+                return super().record_receipt(r)
+            def upsert_observation(self, o: LoopObservation) -> None:
+                if self.offline:
+                    raise ConnectionError("review simulated database outage")
+                return super().upsert_observation(o)
+
+        store = InitiallyOffline()
+        p = TwelveLoopTruthProjector(store)
+        receipts = [
+            self._receipt("s", "stimulus"),
+            self._receipt("t", "terminal", "completed"),
+            self._receipt("n", "next_consumer", "accepted"),
+        ]
+        for r in receipts:
+            with pytest.raises(ConnectionError):
+                p.ingest_receipt(r)
+
+        # Store was offline; nothing was recorded
+        assert len(store.list_receipts()) == 0
+
+        # Store recovers; retry ingestion
+        store.offline = False
+        p.ingest_receipts(receipts)
+        assert len(store.list_receipts()) == 3
+
+        # Fresh instance reloads from store and verifies complete status
+        fresh = TwelveLoopTruthProjector(store)
+        obs = fresh.get_observation("review-release", "review-corr", 1)
+        assert obs is not None
+        assert obs.status == "complete"
+
+    def test_ignored_backfill_does_not_refresh_live_observation(self) -> None:
+        """P2: Freshness is derived only from accepted evidence; ignored backfill cannot refresh live observation."""
+        p = TwelveLoopTruthProjector(max_age_seconds=60)
+        p.ingest_receipts([
+            self._receipt("s", "stimulus", offset=-120),
+            self._receipt("t", "terminal", "completed", offset=-120),
+            self._receipt("n", "next_consumer", "accepted", offset=-120),
+        ])
+        obs_stale = p.get_observation("review-release", "review-corr", 1)
+        assert obs_stale is not None
+        assert obs_stale.freshness_status == "stale"
+
+        # Ignored backfill arrives with newer timestamp
+        p.ingest_receipt(self._receipt("historical", "terminal", "failed", provenance="backfill", offset=0))
+        obs_after = p.get_observation("review-release", "review-corr", 1)
+        assert obs_after is not None
+        assert obs_after.terminal_id == "t"
+        assert obs_after.freshness_status == "stale"
+
+    def test_stale_degradation_reason_does_not_duplicate(self) -> None:
+        """P2: Repeated freshness evaluations do not duplicate 'exceeds freshness window' strings."""
+        p = TwelveLoopTruthProjector(max_age_seconds=60)
+        p.ingest_receipt(self._receipt("s", "stimulus", offset=-120))
+        obs1 = p.get_observation("review-release", "review-corr", 1)
+        assert obs1 is not None
+        obs2 = p.get_observation("review-release", "review-corr", 1)
+        assert obs2 is not None
+        reason = obs2.degradation_reason or ""
+        assert reason.count("exceeds freshness window") == 1

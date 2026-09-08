@@ -89,12 +89,13 @@ def test_postgres_store_persistence_and_fresh_projector_reload() -> None:
     store = PostgresTwelveLoopStore(POSTGRES_TEST_DSN)
     store.apply_migration_sync()
 
-    release_id = "rel-pg-reload-01"
-    correlation_id = "corr-pg-reload-01"
+    unique_suffix = f"{int(datetime.now(timezone.utc).timestamp())}_{os.getpid()}"
+    release_id = f"rel-pg-reload-{unique_suffix}"
+    correlation_id = f"corr-pg-reload-{unique_suffix}"
 
     now = datetime.now(timezone.utc)
     stimulus = CanonicalLoopReceipt(
-        receipt_id="rcpt-pg-stim-01",
+        receipt_id=f"rcpt-pg-stim-{unique_suffix}",
         receipt_type="stimulus",
         loop_id=1,
         correlation_id=correlation_id,
@@ -104,7 +105,7 @@ def test_postgres_store_persistence_and_fresh_projector_reload() -> None:
         observed_at=now,
     )
     terminal = CanonicalLoopReceipt(
-        receipt_id="rcpt-pg-term-01",
+        receipt_id=f"rcpt-pg-term-{unique_suffix}",
         receipt_type="terminal",
         loop_id=1,
         correlation_id=correlation_id,
@@ -115,7 +116,7 @@ def test_postgres_store_persistence_and_fresh_projector_reload() -> None:
         observed_at=now,
     )
     next_consumer = CanonicalLoopReceipt(
-        receipt_id="rcpt-pg-next-01",
+        receipt_id=f"rcpt-pg-next-{unique_suffix}",
         receipt_type="next_consumer",
         loop_id=1,
         correlation_id=correlation_id,
@@ -141,8 +142,8 @@ def test_postgres_store_persistence_and_fresh_projector_reload() -> None:
     obs_in_db = store.get_observation(release_id, correlation_id, 1)
     assert obs_in_db is not None
     assert obs_in_db.status == "complete"
-    assert obs_in_db.terminal_id == "rcpt-pg-term-01"
-    assert obs_in_db.next_consumer_receipt_id == "rcpt-pg-next-01"
+    assert obs_in_db.terminal_id == f"rcpt-pg-term-{unique_suffix}"
+    assert obs_in_db.next_consumer_receipt_id == f"rcpt-pg-next-{unique_suffix}"
 
     # Restart scenario: fresh projector instance reloads from Postgres
     p2 = TwelveLoopTruthProjector(store=store)

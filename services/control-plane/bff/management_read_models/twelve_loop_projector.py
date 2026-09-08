@@ -48,7 +48,7 @@ LOOP_INT_TO_ID: Dict[int, str] = {
 
 _TERMINAL_SUCCESS_STATUSES = {"completed", "success", "ok", "passed", "healthy"}
 _TERMINAL_FAILURE_STATUSES = {"failed", "error", "rejected", "degraded", "aborted"}
-_CONSUMER_SUCCESS_STATUSES = {"completed", "success", "ok", "passed", "healthy", "acknowledged", "accepted", "admitted", "consumed", "valid", ""}
+_CONSUMER_SUCCESS_STATUSES = {"completed", "success", "ok", "passed", "healthy", "acknowledged", "accepted", "admitted", "consumed", "valid"}
 _CONSUMER_FAILURE_STATUSES = {"failed", "error", "rejected", "aborted", "degraded", "declined", "invalid"}
 
 DEFAULT_MAX_AGE_SECONDS = 900
@@ -267,32 +267,31 @@ class TwelveLoopTruthProjector:
         """Ingest a single receipt incrementally and update projection."""
         key = (receipt.release_id, receipt.correlation_id, receipt.loop_id)
 
-        # Idempotency check: receipt already ingested
+        # Idempotency check: receipt already ingested and durable
         if receipt.receipt_id in self._receipts:
             obs = self._observations.get(key)
             if obs is not None:
                 self._recompute_freshness(obs, now=datetime.now(timezone.utc))
                 return obs
 
-        # Store raw receipt
+        # 1. Persist receipt to store if store is present.
+        # Exceptions propagate so callers can retry, without polluting in-memory idempotency cache.
+        if self.store is not None:
+            self.store.record_receipt(receipt)
+
+        # 2. Compute projection with this candidate receipt included
+        temp_receipts = dict(self._receipts_by_key.get(key, {}))
+        temp_receipts[receipt.receipt_id] = receipt
+        obs = self._reduce_key(key, temp_receipts)
+
+        # 3. Persist observation to store if store is present
+        if self.store is not None:
+            self.store.upsert_observation(obs)
+
+        # 4. Durable persistence succeeded: commit to in-memory caches
         self._receipts[receipt.receipt_id] = receipt
         self._receipts_by_key.setdefault(key, {})[receipt.receipt_id] = receipt
-
-        if self.store is not None:
-            try:
-                self.store.record_receipt(receipt)
-            except Exception as exc:
-                logger.warning("Failed to record receipt to store: %s", exc)
-
-        # Update projection using deterministic reduction
-        obs = self._reduce_key(key, self._receipts_by_key[key])
         self._observations[key] = obs
-
-        if self.store is not None:
-            try:
-                self.store.upsert_observation(obs)
-            except Exception as exc:
-                logger.warning("Failed to upsert observation to store: %s", exc)
 
         return obs
 
@@ -328,12 +327,7 @@ class TwelveLoopTruthProjector:
             )
 
         provenance_rank = {"backfill": 0, "replay": 1, "live": 2}
-        overall_provenance_val = max(provenance_rank.get(r.provenance, 0) for r in receipts)
-        overall_provenance: Literal["live", "replay", "backfill"] = {
-            0: "backfill",
-            1: "replay",
-            2: "live",
-        }[overall_provenance_val]
+        has_live_receipt = any(r.provenance == "live" for r in receipts)
 
         stimulus_receipts = [r for r in receipts if r.receipt_type == "stimulus"]
         terminal_receipts = [r for r in receipts if r.receipt_type == "terminal"]
@@ -349,23 +343,31 @@ class TwelveLoopTruthProjector:
             )
 
         # Select terminal:
-        # 1. Backfill cannot replace newer live truth. If stimulus is live, terminal must not be backfill.
+        # 1. Backfill cannot replace newer live truth. If stimulus is live or key has live receipts,
+        #    terminal must not be backfill.
         # 2. Terminal must be causally and temporally compatible with stimulus.
-        chosen_terminal: Optional[CanonicalLoopReceipt] = None
-        valid_terminals = terminal_receipts
-        if chosen_stimulus is not None:
-            min_prov = provenance_rank.get(chosen_stimulus.provenance, 0)
-            valid_terminals = [
-                r for r in valid_terminals
-                if provenance_rank.get(r.provenance, 0) >= min_prov
-                and r.observed_at >= (chosen_stimulus.observed_at - timedelta(seconds=self.max_future_skew_seconds))
-            ]
-        elif overall_provenance == "live":
-            valid_terminals = [
-                r for r in valid_terminals
-                if r.provenance != "backfill"
-            ]
+        #    Causation continuity: if stimulus exists and terminal has causation_id,
+        #    terminal.causation_id must match stimulus.receipt_id or stimulus.causation_id.
+        valid_terminals: List[CanonicalLoopReceipt] = []
+        for r in terminal_receipts:
+            if chosen_stimulus is not None:
+                min_prov = provenance_rank.get(chosen_stimulus.provenance, 0)
+                if provenance_rank.get(r.provenance, 0) < min_prov:
+                    continue
+                if r.observed_at < (chosen_stimulus.observed_at - timedelta(seconds=self.max_future_skew_seconds)):
+                    continue
+                if r.causation_id:
+                    allowed_causes = {chosen_stimulus.receipt_id}
+                    if chosen_stimulus.causation_id:
+                        allowed_causes.add(chosen_stimulus.causation_id)
+                    if r.causation_id not in allowed_causes:
+                        continue
+            else:
+                if has_live_receipt and r.provenance == "backfill":
+                    continue
+            valid_terminals.append(r)
 
+        chosen_terminal: Optional[CanonicalLoopReceipt] = None
         if valid_terminals:
             chosen_terminal = max(
                 valid_terminals,
@@ -373,21 +375,51 @@ class TwelveLoopTruthProjector:
             )
 
         # Select next_consumer:
-        chosen_next: Optional[CanonicalLoopReceipt] = None
-        valid_nexts = next_receipts
-        if chosen_stimulus is not None:
-            min_prov = provenance_rank.get(chosen_stimulus.provenance, 0)
-            valid_nexts = [
-                r for r in valid_nexts
-                if provenance_rank.get(r.provenance, 0) >= min_prov
-                and r.observed_at >= (chosen_stimulus.observed_at - timedelta(seconds=self.max_future_skew_seconds))
-            ]
-        elif overall_provenance == "live":
-            valid_nexts = [
-                r for r in valid_nexts
-                if r.provenance != "backfill"
-            ]
+        # 1. Provenance: cannot be lower rank than chosen_stimulus or chosen_terminal.
+        # 2. Temporal: cannot precede chosen_terminal (or chosen_stimulus) by more than max_future_skew_seconds.
+        # 3. Causation continuity:
+        #    If chosen_terminal exists and next_consumer has causation_id:
+        #      next_consumer.causation_id must match chosen_terminal.receipt_id (or chosen_terminal.causation_id,
+        #      or chosen_stimulus.receipt_id).
+        #    If chosen_terminal does not exist but chosen_stimulus exists and next_consumer has causation_id:
+        #      next_consumer.causation_id must match chosen_stimulus.receipt_id (or chosen_stimulus.causation_id).
+        valid_nexts: List[CanonicalLoopReceipt] = []
+        for r in next_receipts:
+            if chosen_stimulus is not None:
+                min_prov = provenance_rank.get(chosen_stimulus.provenance, 0)
+                if provenance_rank.get(r.provenance, 0) < min_prov:
+                    continue
+            if chosen_terminal is not None:
+                min_prov = provenance_rank.get(chosen_terminal.provenance, 0)
+                if provenance_rank.get(r.provenance, 0) < min_prov:
+                    continue
+                if r.observed_at < (chosen_terminal.observed_at - timedelta(seconds=self.max_future_skew_seconds)):
+                    continue
+                if r.causation_id:
+                    allowed_consumer_causes = {chosen_terminal.receipt_id}
+                    if chosen_terminal.causation_id:
+                        allowed_consumer_causes.add(chosen_terminal.causation_id)
+                    if chosen_stimulus:
+                        allowed_consumer_causes.add(chosen_stimulus.receipt_id)
+                        if chosen_stimulus.causation_id:
+                            allowed_consumer_causes.add(chosen_stimulus.causation_id)
+                    if r.causation_id not in allowed_consumer_causes:
+                        continue
+            elif chosen_stimulus is not None:
+                if r.observed_at < (chosen_stimulus.observed_at - timedelta(seconds=self.max_future_skew_seconds)):
+                    continue
+                if r.causation_id:
+                    allowed_consumer_causes = {chosen_stimulus.receipt_id}
+                    if chosen_stimulus.causation_id:
+                        allowed_consumer_causes.add(chosen_stimulus.causation_id)
+                    if r.causation_id not in allowed_consumer_causes:
+                        continue
+            else:
+                if has_live_receipt and r.provenance == "backfill":
+                    continue
+            valid_nexts.append(r)
 
+        chosen_next: Optional[CanonicalLoopReceipt] = None
         if valid_nexts:
             chosen_next = max(
                 valid_nexts,
@@ -410,9 +442,25 @@ class TwelveLoopTruthProjector:
             or (chosen_next.causation_id if chosen_next else None)
         )
 
-        # Max observed_at
-        all_observed = [r.observed_at for r in receipts]
-        max_observed_at = max(all_observed) if all_observed else curr_time
+        # Accepted evidence drives freshness and provenance (P2 fix)
+        accepted_receipts = [r for r in (chosen_stimulus, chosen_terminal, chosen_next) if r is not None]
+        if accepted_receipts:
+            max_observed_at = max(r.observed_at for r in accepted_receipts)
+            best_prov_val = max(provenance_rank.get(r.provenance, 0) for r in accepted_receipts)
+            overall_provenance: Literal["live", "replay", "backfill"] = {
+                0: "backfill",
+                1: "replay",
+                2: "live",
+            }[best_prov_val]
+        else:
+            all_observed = [r.observed_at for r in receipts]
+            max_observed_at = max(all_observed) if all_observed else curr_time
+            best_prov_val = max(provenance_rank.get(r.provenance, 0) for r in receipts)
+            overall_provenance = {
+                0: "backfill",
+                1: "replay",
+                2: "live",
+            }[best_prov_val]
 
         obs = LoopObservation(
             release_id=release_id,
@@ -452,9 +500,15 @@ class TwelveLoopTruthProjector:
                             chosen_next.degradation_reason
                             or f"next-consumer receipt {chosen_next.receipt_id} rejected with status {chosen_next.status}"
                         )
-                    else:
+                    elif next_status in _CONSUMER_SUCCESS_STATUSES:
                         obs.status = "complete"
                         obs.degradation_reason = None
+                    else:
+                        obs.status = "open"
+                        obs.degradation_reason = (
+                            chosen_next.degradation_reason
+                            or f"next-consumer receipt in status {chosen_next.status or 'pending/unknown'}; awaiting acknowledgement or completion"
+                        )
                 else:
                     obs.status = "open"
                     obs.degradation_reason = "awaiting next-consumer receipt acknowledgement"
@@ -483,13 +537,17 @@ class TwelveLoopTruthProjector:
             age = (curr_time - obs.observed_at).total_seconds()
             if -self.max_future_skew_seconds <= age <= self.max_age_seconds:
                 obs.freshness_status = "fresh"
+                if obs.degradation_reason and "exceeds freshness window" in obs.degradation_reason:
+                    parts = [p.strip() for p in obs.degradation_reason.split(";") if "exceeds freshness window" not in p]
+                    obs.degradation_reason = "; ".join(parts) if parts else None
             else:
                 obs.freshness_status = "stale"
                 stale_msg = f"observation age ({int(age)}s) exceeds freshness window ({self.max_age_seconds}s)"
                 if obs.status != "failed":
                     if obs.degradation_reason:
-                        if stale_msg not in obs.degradation_reason:
-                            obs.degradation_reason = f"{obs.degradation_reason}; {stale_msg}"
+                        parts = [p.strip() for p in obs.degradation_reason.split(";") if "exceeds freshness window" not in p]
+                        parts.append(stale_msg)
+                        obs.degradation_reason = "; ".join(parts)
                     else:
                         obs.degradation_reason = stale_msg
 
