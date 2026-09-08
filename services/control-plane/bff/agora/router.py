@@ -441,12 +441,24 @@ def create_agora_router(
         x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
         x_correlation_id: Optional[str] = Header(default=None, alias="X-Correlation-Id"),
         x_request_id: Optional[str] = Header(default=None, alias="X-Request-Id"),
+        x_tenant_id: Optional[str] = Header(default=None, alias="X-Tenant-Id"),
+        x_pantheon_tenant: Optional[str] = Header(default=None, alias="X-Pantheon-Tenant"),
     ) -> CommandResponse[DecisionJournalEntryDTO]:
         identity = extract_identity(authorization, mfa_token=x_mfa_token)
         (require_journal_write_role or require_write_role)(identity)
         scope = None
+        requested_tenant = (
+            x_tenant_id
+            or x_pantheon_tenant
+            or (payload.get("tenant_id") if isinstance(payload, dict) else None)
+            or (payload.get("tenantId") if isinstance(payload, dict) else None)
+        )
         try:
-            scope = resolve_agora_user_scope(identity, utc_now=utc_now)
+            scope = resolve_agora_user_scope(
+                identity,
+                utc_now=utc_now,
+                requested_tenant_id=requested_tenant,
+            )
         except AgoraScopeResolutionError as exc:
             _raise_scope_error(exc, bff_error)
         agora_service.reject_body_idempotency_key(payload)
@@ -660,12 +672,18 @@ def create_agora_router(
         page_token: Optional[str] = None,
         page_size: int = Query(default=20, ge=1, le=200),
         authorization: Optional[str] = Header(default=None),
+        x_tenant_id: Optional[str] = Header(default=None, alias="X-Tenant-Id"),
+        x_pantheon_tenant: Optional[str] = Header(default=None, alias="X-Pantheon-Tenant"),
     ) -> Dict[str, Any]:
         identity = extract_identity(authorization)
         require_read_role(identity)
         scope = None
         try:
-            scope = resolve_agora_user_scope(identity, utc_now=utc_now)
+            scope = resolve_agora_user_scope(
+                identity,
+                utc_now=utc_now,
+                requested_tenant_id=x_tenant_id or x_pantheon_tenant,
+            )
         except AgoraScopeResolutionError as exc:
             _raise_scope_error(exc, bff_error)
         return agora_service.list_journal_entries(
@@ -683,12 +701,24 @@ def create_agora_router(
         idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
         x_idempotency_key: Optional[str] = Header(default=None, alias="X-Idempotency-Key"),
         x_dry_run: Optional[str] = Header(default=None, alias="X-Dry-Run"),
+        x_tenant_id: Optional[str] = Header(default=None, alias="X-Tenant-Id"),
+        x_pantheon_tenant: Optional[str] = Header(default=None, alias="X-Pantheon-Tenant"),
     ) -> Any:
         identity = extract_identity(authorization)
         (require_journal_write_role or require_write_role)(identity)
         scope = None
+        requested_tenant = (
+            x_tenant_id
+            or x_pantheon_tenant
+            or (payload.get("tenant_id") if isinstance(payload, dict) else None)
+            or (payload.get("tenantId") if isinstance(payload, dict) else None)
+        )
         try:
-            scope = resolve_agora_user_scope(identity, utc_now=utc_now)
+            scope = resolve_agora_user_scope(
+                identity,
+                utc_now=utc_now,
+                requested_tenant_id=requested_tenant,
+            )
         except AgoraScopeResolutionError as exc:
             _raise_scope_error(exc, bff_error)
         return agora_service.create_journal_entry(

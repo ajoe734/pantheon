@@ -1296,7 +1296,14 @@ patch_entry(
 
     def test_env_tenant_precedence_over_claims(self) -> None:
         from unittest.mock import patch
-        from services.control_plane.bff.agora.identity.scope import resolve_agora_user_scope
+        from fastapi import FastAPI, HTTPException
+        from fastapi.testclient import TestClient
+        from services.control_plane.bff.agora.identity.scope import (
+            AgoraScopeResolutionError,
+            resolve_agora_user_scope,
+            resolve_canonical_agora_scope,
+        )
+        from services.control_plane.bff.agora.router import create_agora_router
 
         env_vars = [
             "PANTHEON_BFF_TENANT_ID",
@@ -1306,6 +1313,7 @@ patch_entry(
         for env_var in env_vars:
             with self.subTest(env_var=env_var):
                 with tempfile.TemporaryDirectory() as tmp:
+                    # 1. Authorized env positive test: env override takes precedence when within authorized scope
                     with patch.dict(os.environ, {env_var: "tenant-env-override"}, clear=True):
                         owner = DecisionJournalOwnerAdapter(stores=build_decision_journal_stores(tmp))
                         reader = DomainDecisionJournalReaderPort(data_dir=tmp)
@@ -1314,7 +1322,11 @@ patch_entry(
                             operator_id="alice",
                             roles=["operator"],
                             mfa_verified=True,
-                            claims={"tid": "tenant-claim-ignored", "sub": "alice"},
+                            claims={
+                                "tid": "tenant-claim-fallback",
+                                "sub": "alice",
+                                "allowed_tenants": ["tenant-claim-fallback", "tenant-env-override"],
+                            },
                         )
                         scope = resolve_agora_user_scope(identity, utc_now=lambda: "2026-09-08T00:00:00Z")
                         self.assertEqual(scope.tenant_id, "tenant-env-override")
@@ -1346,6 +1358,91 @@ patch_entry(
                             user_id=scope.user_id,
                         )
                         self.assertEqual(patched.data.title, "Patched Env")
+
+                    # 2. Denied env negative test: env default must not grant tenant membership when unauthorized
+                    with patch.dict(os.environ, {env_var: "tenant-env-denied"}, clear=True):
+                        denied_identity = OperatorIdentity(
+                            operator_id="alice",
+                            roles=["operator"],
+                            mfa_verified=True,
+                            claims={"tid": "tenant-a", "sub": "alice", "allowed_tenants": ["tenant-a"]},
+                        )
+                        with self.assertRaises(AgoraScopeResolutionError) as ctx:
+                            resolve_agora_user_scope(denied_identity, utc_now=lambda: "2026-09-08T00:00:00Z")
+                        self.assertEqual(ctx.exception.reason, "AGORA_SCOPE_TENANT_DENIED")
+
+                        with self.assertRaises(AgoraScopeResolutionError):
+                            resolve_canonical_agora_scope(denied_identity, tenant_id="tenant-env-denied")
+
+                        # Denied through router path
+                        app = FastAPI()
+                        app_router = create_agora_router(
+                            extract_identity=lambda *a, **k: denied_identity,
+                            require_read_role=lambda *a, **k: None,
+                            require_write_role=lambda *a, **k: None,
+                            bff_error=lambda status, code, msg, details=None, **k: HTTPException(status_code=status, detail=msg),
+                            utc_now=lambda: "2026-09-08T00:00:00Z",
+                            sync_servant_agent=lambda payload: payload,
+                            get_read_store=lambda: reader,
+                            service=service,
+                        )
+                        app.include_router(app_router)
+                        client = TestClient(app)
+
+                        # GET journal fails with 403 when env default tenant is unauthorized
+                        res_get = client.get("/bff/agora/journal")
+                        self.assertEqual(res_get.status_code, 403)
+
+                        # POST journal fails with 403
+                        res_post = client.post("/bff/agora/journal", json={"title": "T", "body": "B"})
+                        self.assertEqual(res_post.status_code, 403)
+
+                    # 3. Denied requested-tenant negative test: caller requested tenant cannot elevate access
+                    with patch.dict(os.environ, {}, clear=True):
+                        restricted_identity = OperatorIdentity(
+                            operator_id="alice",
+                            roles=["operator"],
+                            mfa_verified=True,
+                            claims={"tid": "tenant-a", "sub": "alice", "allowed_tenants": ["tenant-a"]},
+                        )
+                        with self.assertRaises(AgoraScopeResolutionError) as ctx:
+                            resolve_agora_user_scope(
+                                restricted_identity,
+                                utc_now=lambda: "2026-09-08T00:00:00Z",
+                                requested_tenant_id="tenant-b",
+                            )
+                        self.assertEqual(ctx.exception.reason, "AGORA_SCOPE_TENANT_DENIED")
+
+                        with self.assertRaises(AgoraScopeResolutionError):
+                            resolve_canonical_agora_scope(restricted_identity, tenant_id="tenant-b")
+
+                        # Denied requested tenant through router headers
+                        app = FastAPI()
+                        app_router = create_agora_router(
+                            extract_identity=lambda *a, **k: restricted_identity,
+                            require_read_role=lambda *a, **k: None,
+                            require_write_role=lambda *a, **k: None,
+                            bff_error=lambda status, code, msg, details=None, **k: HTTPException(status_code=status, detail=msg),
+                            utc_now=lambda: "2026-09-08T00:00:00Z",
+                            sync_servant_agent=lambda payload: payload,
+                            get_read_store=lambda: reader,
+                            service=service,
+                        )
+                        app.include_router(app_router)
+                        client = TestClient(app)
+
+                        res_denied_hdr = client.get("/bff/agora/journal", headers={"X-Tenant-Id": "tenant-b"})
+                        self.assertEqual(res_denied_hdr.status_code, 403)
+
+                        res_denied_post = client.post(
+                            "/bff/agora/journal",
+                            json={"title": "T", "body": "B", "tenant_id": "tenant-b"},
+                        )
+                        self.assertEqual(res_denied_post.status_code, 403)
+
+                        # Authorized requested tenant succeeds through router
+                        res_auth_hdr = client.get("/bff/agora/journal", headers={"X-Tenant-Id": "tenant-a"})
+                        self.assertEqual(res_auth_hdr.status_code, 200)
 
     def test_fail_closed_cross_tenant_and_cross_user_isolation(self) -> None:
         from unittest.mock import patch

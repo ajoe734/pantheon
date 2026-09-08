@@ -185,9 +185,9 @@ def resolve_agora_user_scope(
     )
     allowed_tenants = _claim_strings(claims, _ALLOWED_TENANT_CLAIM_PATHS)
     if not allowed_tenants:
-        allowed_tenants = _env_csv("PANTHEON_BFF_ALLOWED_TENANTS") or [default_tenant]
-    elif env_default_tenant and env_default_tenant not in allowed_tenants:
-        allowed_tenants.append(env_default_tenant)
+        allowed_tenants = _env_csv("PANTHEON_BFF_ALLOWED_TENANTS") or [
+            requested_tenant_id or default_tenant
+        ]
     tenant_id = _first_nonblank(requested_tenant_id, default_tenant)
 
     if not tenant_id or not user_id:
@@ -332,52 +332,37 @@ def resolve_canonical_agora_scope(
     """Consistently resolve canonical (tenant_id, user_id) for Agora callers.
 
     Precedence:
-    1. Explicitly provided non-blank tenant_id / user_id arguments.
-    2. resolve_agora_user_scope if identity is a valid OperatorIdentity.
-    3. Fallback extraction:
-       - user_id: getattr(identity, 'user_id'), claims user aliases, operator_id
-       - tenant_id: env vars (PANTHEON_BFF_TENANT_ID, PANTHEON_BFF_DEFAULT_TENANT_ID,
-         PANTHEON_TENANT_ID), getattr(identity, 'tenant_id'), claims tenant aliases,
-         'pantheon-dev'.
+    1. If identity is present, resolve and validate via resolve_agora_user_scope.
+       Authorization errors (such as denied tenant) are propagated fail-closed.
+       Caller-supplied tenant_id or user_id cannot elevate access beyond authorized scope.
+    2. If identity is None, fallback to clean_tenant / clean_user or env defaults.
     """
     clean_tenant = str(tenant_id or "").strip()
     clean_user = str(user_id or "").strip()
-    if clean_tenant and clean_user:
-        return clean_tenant, clean_user
 
     if identity is not None:
-        try:
-            now_fn = utc_now or (lambda: datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"))
-            scope = resolve_agora_user_scope(
-                identity,
-                utc_now=now_fn,
-                requested_tenant_id=clean_tenant or None,
-            )
-            return (
-                clean_tenant or str(scope.tenant_id or "").strip(),
-                clean_user or str(scope.user_id or "").strip(),
-            )
-        except Exception:
-            pass
-
-        claims = _claims(identity)
-        operator_id = str(getattr(identity, "operator_id", "") or "").strip()
-        if not clean_user:
-            clean_user = _first_nonblank(
-                getattr(identity, "user_id", None),
-                *_claim_strings(claims, _USER_CLAIM_PATHS),
-                operator_id,
-            )
-        if not clean_tenant:
-            clean_tenant = _first_nonblank(
-                os.getenv("PANTHEON_BFF_TENANT_ID"),
-                os.getenv("PANTHEON_BFF_DEFAULT_TENANT_ID"),
-                os.getenv("PANTHEON_TENANT_ID"),
-                getattr(identity, "tenant_id", None),
-                *_claim_strings(claims, _TENANT_CLAIM_PATHS),
-                "pantheon-dev",
-            )
-        return clean_tenant, clean_user
+        now_fn = utc_now or (
+            lambda: datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+        )
+        scope = resolve_agora_user_scope(
+            identity,
+            utc_now=now_fn,
+            requested_tenant_id=clean_tenant or None,
+        )
+        resolved_tenant = str(scope.tenant_id or "").strip()
+        resolved_user = str(scope.user_id or "").strip()
+        if clean_user and clean_user != resolved_user:
+            roles = set(getattr(identity, "roles", []) or [])
+            operator_id = str(getattr(identity, "operator_id", "") or "").strip()
+            if clean_user != operator_id and not ({"admin", "system"} & roles):
+                raise AgoraScopeResolutionError(
+                    f"User scope {clean_user!r} denied for operator {operator_id!r}",
+                    reason="AGORA_SCOPE_USER_DENIED",
+                    status_code=403,
+                    details={"requestedUserId": clean_user, "authorizedUserId": resolved_user},
+                )
+            resolved_user = clean_user
+        return resolved_tenant, resolved_user
 
     if not clean_tenant:
         clean_tenant = _first_nonblank(
